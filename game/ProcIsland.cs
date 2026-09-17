@@ -878,9 +878,13 @@ namespace UnturnedGodot
                     // lattice line from this coordinate, and on an odd lattice the centre is a street line --
                     // so a moved gate asks for the one cell it is guaranteed to be able to use.
                     var c = outp[move];
-                    outp[move] = new Connector(c.Poi, c.Link,
-                                               poi.X + best.dx * poi.HalfSize, poi.Z + best.dz * poi.HalfSize,
-                                               best.dx, best.dz, c.Kind);
+                    // ⚠ THE SAME CLOSEST-POINT RULE as Gate, not the face centre. A moved gate that snaps to
+                    // the middle of its new face throws away the whole reason the gates are placed where they
+                    // are, and this pass moves several per island.
+                    var lk2 = links[c.Link];
+                    int partner = lk2.A == c.Poi ? lk2.B : lk2.A;
+                    var gp = GateOnFace(poi, pois[partner], best.dx, best.dz);
+                    outp[move] = new Connector(c.Poi, c.Link, gp.X, gp.Y, best.dx, best.dz, c.Kind);
                     GateFacesMoved++;
                 }
             }
@@ -912,7 +916,27 @@ namespace UnturnedGodot
             // Whichever slab the ray exited is the side it is on, so the normal is that axis.
             float nx = tx <= tz ? Mathf.Sign(dx) : 0f;
             float nz = tx <= tz ? 0f : Mathf.Sign(dz);
-            return new Connector(from, link, a.X + dx * t, a.Z + dz * t, nx, nz, kind);
+            return new Connector(from, link, GateOnFace(a, b, nx, nz).X, GateOnFace(a, b, nx, nz).Y, nx, nz, kind);
+        }
+
+        /// <summary>Where on a face a gate goes: the point CLOSEST TO THE PARTNER, not where the centre-to-centre
+        /// ray happens to cross (strawberry 2026-09-17: "towns should connect to eachother via the closest
+        /// points together, not randomly").
+        ///
+        /// The ray exit is a diagonal: two towns side by side but offset a little get gates at the far corners
+        /// of their facing edges, and the road then runs at a slant across the gap instead of straight over it.
+        /// Clamping the partner's own coordinate to this face's extent is the closest point on the face, so two
+        /// towns whose pads overlap at all connect square-on, and one offset past the end connects at the
+        /// corner nearest it -- which is the closest point too.
+        ///
+        /// ⚠ It also makes the ROUTES shorter and straighter, which is the real prize: two roads laid along
+        /// slants across the same gap are far likelier to cross each other than two laid straight.</summary>
+        static Vector2 GateOnFace(in Poi a, in Poi b, float nx, float nz)
+        {
+            float h = a.HalfSize;
+            if (Mathf.Abs(nx) > 0.5f)
+                return new Vector2(a.X + nx * h, Mathf.Clamp(b.Z, a.Z - h, a.Z + h));
+            return new Vector2(Mathf.Clamp(b.X, a.X - h, a.X + h), a.Z + nz * h);
         }
 
         // ------------------------------------------------------------- ROADS

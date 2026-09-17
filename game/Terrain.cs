@@ -818,8 +818,14 @@ void fragment() {
                                        float radius, float feather)
         {
             if (_grid == null || lines == null) return;
-            var claim = new System.Collections.Generic.Dictionary<(int, int), (float target, float w)>();
-            foreach (var pts in lines) GatherConform(pts, radius, feather, claim);
+            var claim = new System.Collections.Generic.Dictionary<(int, int), (float target, float w, float d, int line)>();
+            // ⚠ THE CEILING IS PER-LINE. Within ONE road the nearest segment is always the right answer, and
+            // capping a cell by its own road's lowest nearby segment just re-creates the downhill drag the
+            // nearest rule exists to remove (measured: float 163 -> 414 when the cap ignored which road it came
+            // from). Only a DIFFERENT road's tarmac is a reason to hold ground down.
+            var cap = new System.Collections.Generic.Dictionary<(int, int), (float y, int line)>();
+            for (int li = 0; li < lines.Count; li++)
+                GatherConform(lines[li], radius, feather, claim, cap, ProcIsland.RenderedRoadHalf, li);
             if (claim.Count == 0) return;
             // ⚠ SMOOTH THE CLAIMS BEFORE WRITING THEM (strawberry 2026-09-17: "the ground below road splines
             // isnt smooth at all. its really jagged. needs a real smoothing pass before placing the actual
@@ -853,14 +859,16 @@ void fragment() {
                             if (snap.TryGetValue((key.Item1 + ox, key.Item2 + oy), out float nv)) { sum += nv; cnt++; }
                         }
                     var cur = claim[key];
-                    claim[key] = (sum / cnt, cur.w);
+                    claim[key] = (sum / cnt, cur.w, cur.d, cur.line);
                 }
             }
             int minX = int.MaxValue, maxX = int.MinValue, minY = int.MaxValue, maxY = int.MinValue;
             foreach (var kv in claim)
             {
                 int gx = kv.Key.Item1, gy = kv.Key.Item2;
-                float nv = kv.Value.w >= 0.999f ? kv.Value.target : Mathf.Lerp(_grid[gx, gy], kv.Value.target, kv.Value.w);
+                float tgt = kv.Value.target;
+                if (cap.TryGetValue(kv.Key, out var ceil) && ceil.line != kv.Value.line && tgt > ceil.y) tgt = ceil.y;
+                float nv = kv.Value.w >= 0.999f ? tgt : Mathf.Lerp(_grid[gx, gy], tgt, kv.Value.w);
                 JournalH(gx, gy);
                 _grid[gx, gy] = Mathf.Clamp(nv, 0f, 1f);
                 if (gx < minX) minX = gx; if (gx > maxX) maxX = gx;
@@ -877,8 +885,14 @@ void fragment() {
             RebuildChunksIn(minX, maxX, minY, maxY, withCollider: true);
         }
 
+        /// <summary>A/B: at equal weight, does a contested cell take the LOWER road (default) or the HIGHER?
+        /// Lower keeps ground out of the low road's tarmac and leaves the high one floating; higher does the
+        /// reverse. Which is worse is a measurement, not an opinion, and both signs are now counted.</summary>
+        static readonly bool ConformPreferHigh = System.Environment.GetEnvironmentVariable("UG_CONFORMHIGH") == "1";
+
         void GatherConform(System.Collections.Generic.IReadOnlyList<Vector3> pts, float radius, float feather,
-                           System.Collections.Generic.Dictionary<(int, int), (float target, float w)> claim)
+                           System.Collections.Generic.Dictionary<(int, int), (float target, float w, float d, int line)> claim,
+                           System.Collections.Generic.Dictionary<(int, int), (float y, int line)> cap, float cover, int line)
         {
             if (pts == null || pts.Count < 2) return;
             float outer = radius + feather;
@@ -934,8 +948,36 @@ void fragment() {
                         // came out 0.87 m when the sink alone should have made it 0.25.
                         // A full-weight claim is a road that is genuinely ON this cell; a partial one is a
                         // shoulder. The road always outranks the shoulder, and two roads resolve to the lower.
-                        if (!claim.TryGetValue(key, out var cur)) claim[key] = (target, w);
-                        else if (w > cur.w || (w >= cur.w && target < cur.target)) claim[key] = (target, w);
+                        // ⭐⭐ NEAREST SEGMENT WINS, NOT LOWEST TARGET -- and that swap is the float.
+                        //
+                        // Every segment within `radius` claims a cell at FULL weight, so w cannot separate
+                        // them and the tie-break decided everything. It preferred the lower target, which on a
+                        // gradient means the ground under a road is set to the height of that road FIFTEEN
+                        // METRES DOWNHILL. On a 10% grade that is 1.5 m of float; on a steep one, several
+                        // metres -- systemic, proportional to slope, and present on every road rather than
+                        // only where two of them meet.
+                        //
+                        // ⚠ THE A/B PROVED IT IS A TIE-BREAK PROBLEM AND NOT A TUNING ONE. Flipping the same
+                        // comparison to prefer the HIGHER target took float from 836 samples to 135 and sent
+                        // ground-through-the-tarmac from 1 sample to 16660: a pure see-saw, which is what you
+                        // get when the rule is picking between two wrong answers. Distance is the right
+                        // question -- the ground under a road should match the bit of road ABOVE it.
+                        //
+                        // Lower-target survives only as the last tie-break, for two DIFFERENT roads genuinely
+                        // equidistant from one cell, where keeping the lower avoids burying one of them.
+                        // ⚠ AND A SEPARATE CEILING. Nearest-segment fixes the float and, on its own, buys a
+                        // little burial back: where two ribbons genuinely overlap, a cell under road B can be
+                        // NEAREST to road A and take A's height, which on a crossing is metres above B's
+                        // tarmac. So alongside the height claim, track the LOWEST ribbon that actually COVERS
+                        // this cell -- within the carriageway, not within the whole feathered radius -- and
+                        // never let the final target exceed it. Height comes from the road above; the ceiling
+                        // comes from every road above.
+                        if (d <= cover && (!cap.TryGetValue(key, out var cv) || target < cv.y)) cap[key] = (target, line);
+                        if (!claim.TryGetValue(key, out var cur)) claim[key] = (target, w, d, line);
+                        else if (w > cur.w
+                                 || (w >= cur.w && d < cur.d - 0.01f)
+                                 || (w >= cur.w && d <= cur.d + 0.01f && target < cur.target))
+                            claim[key] = (target, w, d, line);
                     }
             }
         }
