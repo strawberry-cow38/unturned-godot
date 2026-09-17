@@ -2699,6 +2699,7 @@ namespace UnturnedGodot
                 // can only happen on an undersized span. If the tightest sample is the LAST one, these are an
                 // artifact of the sampler and not folds at all.
                 int tightWhere = -1, tightOf = 0; float tightSpan = 0f;
+                int foldsOnThinSpan = 0;
                 int folds = 0, tight20 = 0, samples = 0;
                 // WHICH routes fold, in carve order. Routes are carved one at a time and each stamps `used[]`
                 // for the next, so the last ones route through whatever corridor is left -- if folding is a
@@ -2730,7 +2731,16 @@ namespace UnturnedGodot
                         // gets this right a different way -- it takes the tangents at i-W and i+W, which span
                         // the same arc as its chord does -- and the fence pass uses this same mean-segment form.
                         float radius = (a.Length() + b2.Length()) * 0.5f / turn;
-                        if (radius < ProcIsland.RenderedRoadHalf)
+                        // ⚠ AN UNDERSIZED SPAN IS NOT A TIGHT CORNER. SampleWalk steps 5 m and then
+                        // force-appends a final sample at t=1 however close it lands, so the last gap of any
+                        // curve is whatever is left over. radius = span/turn, so that short span reports a
+                        // radius the ribbon does not have -- it is how seed 12345 reported 1.5 m when the
+                        // floor for a genuine 5 m pair is 5/pi = 1.59. Counted and reported SEPARATELY rather
+                        // than silently dropped, because an exclusion I cannot see is the thing that hid the
+                        // overlap for six hours. If this number is ever large, the sampler is the story.
+                        bool thinSpan = a.Length() < 3f || b2.Length() < 3f;
+                        if (radius < ProcIsland.RenderedRoadHalf && thinSpan) foldsOnThinSpan++;
+                        if (radius < ProcIsland.RenderedRoadHalf && !thinSpan)
                         {
                             folds++; foldOn.Add(curveRoute[ci]);
                             // ⚠⚠ WHICH KIND. Relax -- the smoothing, the Hermite ease AND the 90 m curvature
@@ -2779,7 +2789,9 @@ namespace UnturnedGodot
                             }
                         }
                         if (radius < 20f) tight20++;
-                        if (radius < tightest)
+                        // ...and the HEADLINE number must exclude them too, or the first figure anyone reads
+                        // is still the artifact. It reported "tightest 1.5 m" off a 2.53 m span all evening.
+                        if (radius < tightest && !thinSpan)
                         {
                             tightest = radius; tightRoute = curveRoute[ci]; tightAt = new Vector2(c[i].X, c[i].Z);
                             tightWhere = i; tightOf = c.Count; tightSpan = (a.Length() + b2.Length()) * 0.5f;
@@ -2801,7 +2813,11 @@ namespace UnturnedGodot
                     : "";
                 Log.Print($"[island-curve] {folds} of {samples} centreline sample(s) turn tighter than the "
                           + $"{ProcIsland.RenderedRoadHalf:0.0} m half-width (the ribbon inverts there); "
-                          + $"{tight20} tighter than 20 m{worst}{onRoutes}");
+                          + $"{tight20} tighter than 20 m{worst}{onRoutes}"
+                          + (foldsOnThinSpan > 0
+                             ? $" (+{foldsOnThinSpan} more on a sample span under 3 m -- the sampler's leftover"
+                               + " final gap, not a corner; counted apart so it cannot be quoted as a defect)"
+                             : ""));
                 if (jointR.Count > 0)
                 {
                     jointR.Sort();
