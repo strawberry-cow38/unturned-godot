@@ -490,12 +490,42 @@ namespace UnturnedGodot
                 }
             }
 
+            // ⚠ HOW MANY BUILDINGS A TOWN ACTUALLY GOT, by size class. The tally above says how many towns are
+            // Small; it does not say whether a Small town has eight buildings or one, and "up the minimum
+            // number of buildings for the very small towns" is a claim about exactly that number. Measure it
+            // before picking a floor, so the floor is chosen against the distribution instead of by feel.
+            {
+                var bCount = new System.Collections.Generic.Dictionary<int, int>();
+                if (terr.IslandBuildings != null)
+                    foreach (var b in terr.IslandBuildings)
+                    { bCount.TryGetValue(b.Poi, out int c4); bCount[b.Poi] = c4 + 1; }
+                var perSize = new System.Collections.Generic.Dictionary<ProcIsland.TownSize, System.Collections.Generic.List<int>>();
+                foreach (var kv in byPoi)
+                {
+                    var sz2 = ProcIsland.SizeOf(kv.Value.Count);
+                    if (!perSize.TryGetValue(sz2, out var l4)) { l4 = new System.Collections.Generic.List<int>(); perSize[sz2] = l4; }
+                    l4.Add(bCount.TryGetValue(kv.Key, out int c5) ? c5 : 0);
+                }
+                var bits2 = new System.Collections.Generic.List<string>();
+                foreach (ProcIsland.TownSize sz2 in System.Enum.GetValues(typeof(ProcIsland.TownSize)))
+                {
+                    if (!perSize.TryGetValue(sz2, out var l4) || l4.Count == 0) continue;
+                    l4.Sort();
+                    int sum = 0; foreach (int v in l4) sum += v;
+                    int zero = 0; foreach (int v in l4) if (v == 0) zero++;
+                    bits2.Add($"{sz2} x{l4.Count}: {l4[0]}-{l4[^1]} buildings (mean {sum / (float)l4.Count:0.#}"
+                              + (zero > 0 ? $", {zero} with NONE" : "") + ")");
+                }
+                if (bits2.Count > 0) Log.Print($"[island-towns] buildings per town -- {string.Join("; ", bits2)}");
+            }
+
             var sb = new System.Text.StringBuilder("[island-towns]");
             foreach (ProcIsland.TownSize sz in System.Enum.GetValues(typeof(ProcIsland.TownSize)))
                 sb.Append($" {sz}={(tally.TryGetValue(sz, out int c2) ? c2 : 0)}");
             sb.Append($" | worst junction share {worstJunction * 100f:0}%, most adjacent junctions in one town {worstAdj}");
             sb.Append($" | {bizTotal} business building(s), most in one town {bizMax}, {dupTowns} town(s) with a duplicate");
-            sb.Append($" | {ProcIsland.CapFrontagesRefused} block face(s) refused for fronting a dead-end road");
+            sb.Append($" | {ProcIsland.CapFrontagesRefused} block face(s) refused for fronting a dead-end road, "
+                      + $"{ProcIsland.CapFrontagesRelaxed} allowed back to meet the small-town floor");
             sb.Append($" | {ProcIsland.LinksTrimmed} link(s) trimmed by the connection cap, busiest place has {ProcIsland.MaxPoiDegree}");
             Log.Print(sb.ToString());
         }
@@ -693,6 +723,7 @@ namespace UnturnedGodot
         /// paints the whole map layer 2 (Grass), so that is what untouched ground is.</summary>
         public const int GrassLayer = 2;
         public const int DirtLayer = 0;   // Terrain.DefaultLayerNames[0]
+        public const int RoadLayer = 4;   // Terrain.DefaultLayerNames[4] == "Road"
 
         /// <summary>Steepness at or above which ground stops being grass. ⚠ SHARED with the splat paint, so a
         /// boulder lands on exactly the ground that was painted -- two thresholds would put rocks on grass and
@@ -1866,6 +1897,46 @@ namespace UnturnedGodot
                     PaintFootprint(terr, w, t.YawDeg, TileSpan, TileSpan, TileBorder); tiles++;
                 }
 
+            // ---- THE SMALLEST POIs BECOME CAR PARKS ------------------------------------------------------
+            // strawberry: "change the POIs that are 2 road line caps to be a square of Road terrain material,
+            // to be parking lots."
+            //
+            // A Monument-class POI is one whose surviving street set is 3 tiles or fewer -- master's own
+            // example is "the monuments with just 2 road line caps". PlaceBuildings returns empty for these by
+            // design (a town of two caps is not a settlement), and measured across three seeds that is 17-19
+            // POIs an island with NOTHING on them. Painting the square as Road turns a bare stub into somewhere
+            // -- a lay-by, a depot apron, a car park at the end of a spur.
+            //
+            // ⚠ AFTER the tile loop, deliberately: the tiles paint their own footprint DIRT, and the car park
+            // is meant to run underneath and between the cap pieces as one continuous surface. Painting first
+            // would let every tile stamp a dirt square back out of the middle of it.
+            int carParks = 0;
+            if (terr.IslandTiles != null)
+            {
+                var byPoiTiles = new System.Collections.Generic.Dictionary<int, System.Collections.Generic.List<ProcIsland.MonumentTile>>();
+                foreach (var t in terr.IslandTiles)
+                {
+                    if (!byPoiTiles.TryGetValue(t.Poi, out var l)) { l = new System.Collections.Generic.List<ProcIsland.MonumentTile>(); byPoiTiles[t.Poi] = l; }
+                    l.Add(t);
+                }
+                foreach (var kv in byPoiTiles)
+                {
+                    if (ProcIsland.SizeOf(kv.Value.Count) != ProcIsland.TownSize.Monument) continue;
+                    float minX = float.MaxValue, maxX = float.MinValue, minZ = float.MaxValue, maxZ = float.MinValue;
+                    foreach (var t in kv.Value)
+                    {
+                        if (t.X < minX) minX = t.X; if (t.X > maxX) maxX = t.X;
+                        if (t.Z < minZ) minZ = t.Z; if (t.Z > maxZ) maxZ = t.Z;
+                    }
+                    // Square, and at least one tile across even for a single-piece stub, so the smallest of
+                    // them still reads as a surface rather than a smear around one prop.
+                    float span = Mathf.Max(Mathf.Max(maxX - minX, maxZ - minZ), 0f) + ProcIsland.TileSize;
+                    var c = PosFor(terr, (minX + maxX) * 0.5f, (minZ + maxZ) * 0.5f);
+                    PaintFootprint(terr, c, 0f, span, span, TileBorder, RoadLayer);
+                    carParks++;
+                }
+            }
+
             if (terr.IslandBuildings != null)
                 foreach (var b in terr.IslandBuildings)
                 {
@@ -1946,6 +2017,7 @@ namespace UnturnedGodot
             Log.Print($"[island-paint] {trailPts} trail point(s) @{ProcIsland.TrailHalf + TrailVerge:0.#}m + {campN} camp clearing(s) @{ProcIsland.CampPadHalf:0.#}m + {markN} landmark(s)");
             Log.Print($"[island-paint] dirt under {tiles} road tile(s) @{RoadHalf + TileBorder:0.#}m, routes @{RouteHalf + RouteBorder:0.#}m, "
                       + $"{builds} building(s) ({sized} to their real footprint), {routePts} route point(s), {rocks} boulder skirt(s)");
+            Log.Print($"[island-paint] {carParks} car park(s) painted in Road material on POIs too small to be a town");
         }
 
         /// <summary>Stamp a rotated RECTANGLE of dirt under a building.
@@ -1958,7 +2030,8 @@ namespace UnturnedGodot
         ///
         /// PaintSplat only draws circles, so the rectangle is stamped as an overlapping grid of them at a
         /// spacing below the radius -- gaps between stamps would show as grass islands inside the plot.</summary>
-        static void PaintFootprint(Terrain terr, Vector3 centre, float yawDeg, float width, float depth, float border)
+        static void PaintFootprint(Terrain terr, Vector3 centre, float yawDeg, float width, float depth, float border,
+                                   int layer = DirtLayer)
         {
             var basis = RotFor(yawDeg);
             var ax = Flatten(basis * new Vector3(1f, 0f, 0f));   // the prop's local X, in world
@@ -1970,7 +2043,7 @@ namespace UnturnedGodot
                 for (float v = -halfD; v <= halfD; v += step)
                 {
                     var pt = centre + ax * u + az * v;
-                    terr.PaintSplat(pt.X, pt.Z, Brush, DirtLayer);
+                    terr.PaintSplat(pt.X, pt.Z, Brush, layer);
                 }
         }
 

@@ -3467,9 +3467,73 @@ namespace UnturnedGodot
                         break;   // one building per block cell, fronting the first street in cardinal order
                     }
                 }
+            // ---- A FLOOR, FOR THE TOWNS THAT STARVE ------------------------------------------------------
+            // strawberry: "up the minimum number of buildings for the very small towns."
+            //
+            // Measured across three seeds before touching anything: a Small town gets 1-6 buildings, and on two
+            // of the three the WHOLE CLASS sits at exactly 1. A settlement with one house in it is not a
+            // settlement. Cities are fine (19-35) and Medium is fine (7-17), so this is a floor for the bottom
+            // of the range and must not touch the rest.
+            //
+            // The cause is the cap rule, not a shortage of room: 56-68 block faces an island are refused for
+            // fronting a dead-end road, and a small town is mostly dead ends -- so the rule that stops houses
+            // being dropped on the outskirts of a CITY empties a hamlet completely. Both things are wanted, so
+            // the cap rule stays as the default and is relaxed only where it has starved a town.
+            //
+            // ⚠ THE RELAXED PASS SETS BACK FURTHER. A cap's ramp IS the town's edge, and the reason a cap is
+            // not frontage is that a building on the kerb line there stands in the mouth of the road out. Half
+            // a tile more clearance puts it beside the ramp instead of on it.
+            int want = MinBuildingsFor(size);
+            if (outp.Count < want && n > 0)
+            {
+                for (int i = 0; i < n && outp.Count < want; i++)
+                    for (int j = 0; j < n && outp.Count < want; j++)
+                    {
+                        if (street.Contains((i, j))) continue;
+                        bool already = false;
+                        foreach (var have in outp)
+                        {
+                            float bi = (have.X - poi.X) / TileSize + (n - 1) * 0.5f;
+                            float bj = (have.Z - poi.Z) / TileSize + (n - 1) * 0.5f;
+                            if (Mathf.Abs(bi - i) < 0.75f && Mathf.Abs(bj - j) < 0.75f) { already = true; break; }
+                        }
+                        if (already) continue;
+                        foreach (var d in Card)
+                        {
+                            var sc = (i - d.dx, j - d.dz);
+                            if (!street.Contains(sc)) continue;
+                            if (!caps.Contains(sc)) continue;        // the main pass already had every non-cap
+                            float scx = poi.X + ((i - d.dx) - (n - 1) * 0.5f) * TileSize;
+                            float scz = poi.Z + ((j - d.dz) - (n - 1) * 0.5f) * TileSize;
+                            bool through = street.Contains((i + d.dx, j + d.dz));
+                            var houses = through ? ThruHouses : FitHouses;
+                            if (houses.Length == 0) break;
+                            var hb = houses[(int)(Hash01(i * 17 + poiIndex * 5, j * 23 + slot, p.Seed + 1303) * (houses.Length - 1) + 0.5f)];
+                            float set2 = SetbackForFlipped(hb) + TileSize * 0.5f;
+                            outp.Add(new MonumentBuilding(poiIndex, hb.Name,
+                                                          scx + d.dx * set2, scz + d.dz * set2, YawFor(-d.dx, -d.dz)));
+                            slot++; CapFrontagesRelaxed++;
+                            break;
+                        }
+                    }
+            }
+
             if (skippedCap > 0) CapFrontagesRefused += skippedCap;
             return outp;
         }
+
+        /// <summary>The fewest buildings a town of this class should end up with. Cities and Medium towns are
+        /// measured well clear of their floor and are here only so the number has one definition.</summary>
+        public static int MinBuildingsFor(TownSize s) => s switch
+        {
+            TownSize.Small => 5,
+            TownSize.Medium => 8,
+            TownSize.City => 14,
+            _ => 0,                 // a Monument is not a settlement -- it gets a car park instead
+        };
+
+        /// <summary>How many buildings were placed by relaxing the cap-frontage rule to meet the floor.</summary>
+        public static int CapFrontagesRelaxed;
 
         /// <summary>Snap every gate onto its face's lattice line, so a Cap's connector lands exactly on it.
         ///
