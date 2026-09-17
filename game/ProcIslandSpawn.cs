@@ -2730,6 +2730,59 @@ namespace UnturnedGodot
             }
             builtIdx = keptIdx;
 
+            // ---- THE LENGTH LADDER, so this can be compared with a retail map -----------------------------
+            // Parsed PEI/Washington/Russia Paths.dat: retail road networks are strongly HIERARCHICAL. PEI is
+            // 23 roads and its LONGEST SINGLE ROAD is 33% of all road on the map; the top 3 are 60%; 19 of the
+            // 23 are under 300 m; and there are ZERO loops -- a dominant spine with spurs hanging off it, not
+            // a ring. Washington top-3 = 33%, Russia = 22%, same shape.
+            //
+            // This generator builds every link as a town-to-town chord, so the lengths should come out far
+            // flatter. Printing the same three statistics is what makes that a comparison rather than an
+            // impression.
+            {
+                var lens = new System.Collections.Generic.List<float>();
+                foreach (var c in curves)
+                {
+                    float L = 0f;
+                    for (int i = 1; i < c.Count; i++)
+                        L += new Vector2(c[i].X - c[i - 1].X, c[i].Z - c[i - 1].Z).Length();
+                    lens.Add(L);
+                }
+                lens.Sort((a, b) => b.CompareTo(a));
+                float tot = 0f; foreach (float L in lens) tot += L;
+                if (tot > 1f && lens.Count >= 3)
+                {
+                    float top1 = lens[0], top3 = lens[0] + lens[1] + lens[2];
+                    int under300 = 0; foreach (float L in lens) if (L < 300f) under300++;
+                    var ladder = new System.Collections.Generic.List<string>();
+                    for (int i = 0; i < Mathf.Min(8, lens.Count); i++) ladder.Add($"{lens[i]:0}");
+                    // ⚠ IS THE LONGEST ROAD A SPINE OR A WANDERER? A dominant road is what retail looks like
+                    // (PEI's longest is 33% of the map's road), so "longest = 38%" reads like the generator is
+                    // accidentally closer to retail than expected. But the island is ~3 km across and this is
+                    // 5.2-5.7 km, so the other reading is a single link taking a wildly circuitous path. The
+                    // discriminator is the DETOUR RATIO: route length over the straight line between its own
+                    // two ends. ~1.2-1.5x is a road following terrain; 3x is a defect wearing a spine's hat.
+                    float worstDetour = 0f; int worstLen = 0; float worstChord = 0f;
+                    foreach (var c in curves)
+                    {
+                        if (c.Count < 2) continue;
+                        float L2 = 0f;
+                        for (int i = 1; i < c.Count; i++)
+                            L2 += new Vector2(c[i].X - c[i - 1].X, c[i].Z - c[i - 1].Z).Length();
+                        float chord = new Vector2(c[^1].X - c[0].X, c[^1].Z - c[0].Z).Length();
+                        if (chord < 50f) continue;                   // a loop or a stub: ratio is meaningless
+                        float ratio = L2 / chord;
+                        if (ratio > worstDetour) { worstDetour = ratio; worstLen = Mathf.RoundToInt(L2); worstChord = chord; }
+                    }
+                    Log.Print($"[island-topology] {lens.Count} roads, {tot / 1000f:0.0} km total; longest "
+                              + $"{top1 / 1000f:0.00} km = {top1 / tot * 100f:0}% of all road, top 3 = "
+                              + $"{top3 / tot * 100f:0}%, {under300} under 300 m. Ladder (m): {string.Join(" ", ladder)}. "
+                              + $"[retail for comparison: PEI longest 33%/top3 60%/19 of 23 short; Washington top3 33%; Russia top3 22%]");
+                    Log.Print($"[island-topology] worst detour: a route {worstLen} m long between ends only "
+                              + $"{worstChord:0} m apart = {worstDetour:0.0}x the straight line");
+                }
+            }
+
             // ---- HOW TIGHT DOES THE BUILT CURVE ACTUALLY TURN? -------------------------------------------
             // ⚠⚠ THE BARRIER PASS ALREADY REPORTS "corner radii median N m / sharpest N m" AND IT CANNOT SEE
             // A FOLD. It walks the JOINTS (24 m apart) with a W=2 window, which averages heading change over
