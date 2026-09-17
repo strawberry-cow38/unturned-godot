@@ -94,6 +94,45 @@ namespace UnturnedGodot
 
         static (int, int) Key(float x, float z) => (Mathf.FloorToInt(x / ChunkSize), Mathf.FloorToInt(z / ChunkSize));
 
+        /// <summary>Chunk one spawn point in. Shared by the retail .dat parse and the generated-island loader
+        /// below, so a procedural map's horde streams, caps and wakes by exactly the same rules as PEI's --
+        /// which is the whole reason this was pulled out of the parse rather than copied beside it.</summary>
+        void AddSpawnPoint(float gx, float gz)
+        {
+            var k = Key(gx, gz);
+            if (!_chunks.TryGetValue(k, out var c))
+            {
+                c = new Chunk
+                {
+                    Cx = k.Item1, Cz = k.Item2,
+                    Center = new Vector3((k.Item1 + 0.5f) * ChunkSize, 0f, (k.Item2 + 0.5f) * ChunkSize),
+                    Seed = (uint)(k.Item1 * 73856093) ^ (uint)(k.Item2 * 19349663) ^ 0x9E3779B9u,
+                };
+                _chunks[k] = c;
+            }
+            float gy = Terr != null ? Terr.SampleHeight(gx, gz) : 0f;
+            c.SpawnPts.Add(new Vector3(gx, gy, gz));
+        }
+
+        /// <summary>Generated spawn points, already in Godot space (no negate-Z: the caller is working in world
+        /// coordinates, not reading a retail file).</summary>
+        public void LoadGenerated(System.Collections.Generic.IReadOnlyList<Vector3> pts)
+        {
+            int water = 0;
+            foreach (var q in pts)
+            {
+                if (Terr != null && Terrain.IsWater(Terr.SampleDominantLayer(q.X, q.Z))) { water++; continue; }
+                AddSpawnPoint(q.X, q.Z);
+            }
+            int capSum = 0;
+            foreach (var c in _chunks.Values)
+            {
+                c.Cap = Mathf.Min(ChunkMaxLive, Mathf.CeilToInt(c.SpawnPts.Count * SpawnChance));
+                capSum += c.Cap;
+            }
+            Log.Print($"[zchunk] {pts.Count - water} GENERATED pts ({water} water dropped) -> {_chunks.Count} chunks @ {ChunkSize}m; cap {capSum}");
+        }
+
         public void LoadFromPei(string peiRoot)
         {
             string path = System.IO.Path.Combine(peiRoot, "Spawns", "Animals.dat");
@@ -115,19 +154,7 @@ namespace UnturnedGodot
                         total++;
                         float gx = px, gz = -pz;                             // negate-Z into Godot space
                         if (Terr != null && Terrain.IsWater(Terr.SampleDominantLayer(gx, gz))) { water++; continue; }
-                        var k = Key(gx, gz);
-                        if (!_chunks.TryGetValue(k, out var c))
-                        {
-                            c = new Chunk
-                            {
-                                Cx = k.Item1, Cz = k.Item2,
-                                Center = new Vector3((k.Item1 + 0.5f) * ChunkSize, 0f, (k.Item2 + 0.5f) * ChunkSize),
-                                Seed = (uint)(k.Item1 * 73856093) ^ (uint)(k.Item2 * 19349663) ^ 0x9E3779B9u,
-                            };
-                            _chunks[k] = c;
-                        }
-                        float gy = Terr != null ? Terr.SampleHeight(gx, gz) : 0f;
-                        c.SpawnPts.Add(new Vector3(gx, gy, gz));
+                        AddSpawnPoint(gx, gz);
                         kept++;
                     }
                 }

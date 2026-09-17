@@ -68,6 +68,21 @@ namespace UnturnedGodot
             }
         }
 
+        /// <summary>Retail loot TABLES with GENERATED points -- what a procedural island needs.
+        ///
+        /// ⚠ THE TABLES STILL COME FROM PEI, deliberately: a loot table is a curated list of what belongs in a
+        /// kitchen versus a police station, and generating one would be inventing game balance rather than
+        /// terrain. Only WHERE the points are is procedural. Same split the editor's new-map path already makes
+        /// ("new maps use PEI's loot tables as the pool").
+        /// <paramref name="pts"/> carries the table index per point, because a spawn outside a shop and one
+        /// inside a military base are the same geometry and completely different loot.</summary>
+        public void LoadGenerated(string peiRootForTables, System.Collections.Generic.IReadOnlyList<(Vector3 Pos, byte Table)> pts)
+        {
+            LoadTables(System.IO.Path.Combine(peiRootForTables, "Spawns", "Items.dat"));
+            foreach (var q in pts) _pts.Add(new Pt { Type = q.Table, X = q.Pos.X, Y = q.Pos.Y, Z = q.Pos.Z });
+            Log.Print($"[loot] {_pts.Count} GENERATED item spawn points, {(_tblName?.Length ?? 0)} tables");
+        }
+
         void LoadPoints(string path)
         {
             if (!System.IO.File.Exists(path)) return;

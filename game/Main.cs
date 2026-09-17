@@ -6456,6 +6456,7 @@ namespace UnturnedGodot
             // visuals on -- the editor builds the cycle with VisualsEnabled off, which is right for editing and
             // wrong for playing.
             play.SetWorldLighting(sun, env, dayNight);
+            play.SetIsland(genSeed, _mapRoot);   // seed -> a reproducible horde; _mapRoot -> PEI's loot TABLES
             // Workshop's per-map Play opens the editor and goes straight in, so the map you play is the
             // map the editor built -- one world-building path, not two that can disagree.
             if (loading != null)

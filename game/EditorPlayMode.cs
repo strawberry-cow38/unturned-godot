@@ -29,6 +29,16 @@ namespace UnturnedGodot
         public void SetWorldLighting(DirectionalLight3D sun, Godot.Environment env, DayNightCycle dn)
         { _sun = sun; _env = env; _dayNight = dn; }
 
+        /// <summary>The island's seed and where to read loot TABLES from. ⚠ The seed is what makes a playtest
+        /// reproducible: the same island must produce the same horde, or two people "on seed 12345" are not
+        /// playing the same map. Null on a hand-built custom map, which is why every use is guarded.</summary>
+        int? _islandSeed; string _mapRootForTables;
+        ZombieChunkField _zombies; LootField _loot;
+        public void SetIsland(int? seed, string mapRootForTables)
+        { _islandSeed = seed; _mapRootForTables = mapRootForTables; }
+
+        static bool ZombiesOff => System.Environment.GetEnvironmentVariable("UG_NOZOMBIES") == "1";
+
         CanvasLayer _ui;
         Button _playBtn;
         Label _hint;
@@ -129,6 +139,24 @@ namespace UnturnedGodot
             if (_sun != null && _env != null) _player.LinkWorldLighting(_sun, _env);
             if (_dayNight != null) _dayNight.VisualsEnabled = true;   // the editor builds it with visuals OFF
 
+            // ---- ZOMBIES AND LOOT ---------------------------------------------------------------------------
+            // ⚠ Only on a GENERATED island: a blank or hand-built custom map has no island data to scatter
+            // against, and populating one with nothing is an empty field plus a log line.
+            var terr = Terrain.Active;
+            if (_islandSeed.HasValue && terr?.IslandTiles != null && terr.IslandTiles.Count > 0)
+            {
+                var (zom, loot) = ProcIslandSpawn.GenerateSpawnTables(terr, _islandSeed.Value);
+                if (!ZombiesOff)
+                {
+                    _zombies = new ZombieChunkField { Player = _player, Terr = terr };
+                    _editor.AddChild(_zombies);
+                    _zombies.LoadGenerated(zom);
+                }
+                _loot = new LootField { Player = _player, Terr = terr };
+                _loot.LoadGenerated(_mapRootForTables, loot);
+                _editor.AddChild(_loot);
+            }
+
             // Handles, selection outlines and the gizmo are EDITOR furniture; they were still drawn over
             // the game because EnterPlay only hid the UI layer, which does not own them. strawberry:
             // "kill all handles, selection boxes etc when going into play mode".
@@ -155,6 +183,11 @@ namespace UnturnedGodot
             // list of names copied here would fall out of step the first time it gains a node.
             foreach (var c in _editor.GetChildren())
                 if (c is DevConsole or BugReporter or CropManager or MapUI or HUD) c.QueueFree();
+            // ⚠ THE POPULATION GOES TOO. A horde keyed to a player that no longer exists is both a leak and a
+            // second horde the next time you press play -- and the zombies would keep pathing at a freed node.
+            if (GodotObject.IsInstanceValid(_zombies)) _zombies.QueueFree();
+            if (GodotObject.IsInstanceValid(_loot)) _loot.QueueFree();
+            _zombies = null; _loot = null;
             if (GodotObject.IsInstanceValid(_player)) _player.QueueFree();
             _player = null;
             if (_dayNight != null) _dayNight.VisualsEnabled = false;

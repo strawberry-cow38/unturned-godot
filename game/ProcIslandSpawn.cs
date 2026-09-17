@@ -891,6 +891,119 @@ namespace UnturnedGodot
             return !Terrain.HasWater || w.Y >= Terrain.SeaLevelY + 0.5f;
         }
 
+        /// <summary>Where zombies and loot come from on an island nobody authored.
+        ///
+        /// ⚠ THE FIELDS CANNOT BE HANDED A MAP, ONLY POINTS. ZombieChunkField and LootField both load by parsing
+        /// a retail .dat off the map root -- there is no map here and never will be, so the generator has to
+        /// produce the same thing those parses produce: world positions, plus a loot table index per item point.
+        /// Both fields gained a LoadGenerated that funnels into the SAME chunking and rolling the retail path
+        /// uses, so a procedural island streams, caps and rolls by identical rules rather than by a parallel
+        /// implementation that can drift.
+        ///
+        /// ⚠ LOOT TABLES ARE STILL PEI'S, deliberately. A table is a curated list of what belongs in a kitchen
+        /// versus a police station; generating one would be inventing game balance rather than terrain. Only
+        /// WHERE the points are is procedural -- the same split the new-map path already makes for containers.</summary>
+        public static (System.Collections.Generic.List<Vector3> Zombies,
+                       System.Collections.Generic.List<(Vector3 Pos, byte Table)> Loot)
+            GenerateSpawnTables(Terrain terr, int seed)
+        {
+            var zom = new System.Collections.Generic.List<Vector3>();
+            var loot = new System.Collections.Generic.List<(Vector3, byte)>();
+            if (terr == null) return (zom, loot);
+            var rng = new System.Random(seed ^ 0x5EED10);
+
+            // ---- ZOMBIES: thick where people were, thin everywhere else --------------------------------------
+            // Two scans rather than one weighted one, because the densities differ by 25x and a single scan fine
+            // enough for a town wastes most of its samples on empty moorland.
+            const float WildStep = 46f;
+            // ⚠⚠ THE SCAN RUNS IN PROCISLAND COORDINATES, and getting that wrong produced ZERO zombie points on
+            // the first run. WorldBoundsXZ is in WORLD space, where Z is the NEGATIVE of ProcIsland's -- so
+            // iterating the world Z range and handing those numbers to PosFor (which negates) asked about the
+            // mirror image of the island, which is open sea, which fails the dry-land test every time.
+            // Converting the bounds once here is the fix; mixing the two frames per call site is what produced
+            // this bug for the third time today -- the boulder corridor filter and the boulder scan before it.
+            // ⭐ The only reason it was a two-minute fix rather than a hunt is that the pass COUNTS what it
+            // emitted. "0 zombie point(s) (0 urban, 0 wild)" is unmissable; a silent scatter would have shipped.
+            var b = terr.WorldBoundsXZ();
+            float pzLo = -b.MaxZ, pzHi = -b.MinZ;
+            int wild = 0, urban = 0;
+            for (float x = b.MinX; x < b.MaxX; x += WildStep)
+                for (float z = pzLo; z < pzHi; z += WildStep)
+                {
+                    float px = x + (float)(rng.NextDouble() * 2 - 1) * WildStep * 0.4f;
+                    float pz = z + (float)(rng.NextDouble() * 2 - 1) * WildStep * 0.4f;
+                    if (!SpawnGroundOk(terr, px, pz)) continue;
+                    zom.Add(PosFor(terr, px, pz)); wild++;
+                }
+            if (terr.IslandTiles != null)
+                foreach (var t in terr.IslandTiles)
+                {
+                    // Around each road tile, not on it: the street is where they walk, the verge is where they
+                    // start. Four per tile is roughly TownStep across a 24 m piece.
+                    for (int k = 0; k < 4; k++)
+                    {
+                        float px = t.X + (float)(rng.NextDouble() * 2 - 1) * TileHalfSpan;
+                        float pz = t.Z + (float)(rng.NextDouble() * 2 - 1) * TileHalfSpan;
+                        if (!SpawnGroundOk(terr, px, pz)) continue;
+                        zom.Add(PosFor(terr, px, pz)); urban++;
+                    }
+                }
+
+            // ---- LOOT: at the buildings, because that is what anyone searches -------------------------------
+            // A handful of points per building, scattered inside its own footprint rather than at its origin --
+            // a single point per house is one pickup and a wasted walk.
+            int inHouse = 0, onStreet = 0;
+            if (terr.IslandBuildings != null)
+                foreach (var bd in terr.IslandBuildings)
+                {
+                    var info = ProcIsland.PropInfo(bd.Prop);
+                    float halfW = info.HasValue ? info.Value.Width * 0.4f : 6f;
+                    float halfD = info.HasValue ? (info.Value.Front + info.Value.Back) * 0.35f : 6f;
+                    int n = 2 + rng.Next(3);
+                    for (int k = 0; k < n; k++)
+                    {
+                        float ox = (float)(rng.NextDouble() * 2 - 1) * halfW;
+                        float oz = (float)(rng.NextDouble() * 2 - 1) * halfD;
+                        var at = BuildingPosFor(terr, bd.X + ox, bd.Z + oz);
+                        // ⚠ LIFTED OFF THE GROUND, because retail's Jars.dat carries an AUTHORED Y -- shelves,
+                        // counters, first floors -- and LootField preserves it. A generated point sampling the
+                        // terrain puts every item on the floor under the building; half a metre up is a table.
+                        loot.Add((new Vector3(at.X, at.Y + 0.5f, at.Z), CivilianTable));
+                        inHouse++;
+                    }
+                }
+            if (terr.IslandTiles != null)
+                foreach (var t in terr.IslandTiles)
+                {
+                    if (rng.NextDouble() > 0.35) continue;   // not every street corner has something on it
+                    float px = t.X + (float)(rng.NextDouble() * 2 - 1) * TileHalfSpan;
+                    float pz = t.Z + (float)(rng.NextDouble() * 2 - 1) * TileHalfSpan;
+                    if (!SpawnGroundOk(terr, px, pz)) continue;
+                    loot.Add((PosFor(terr, px, pz) + new Vector3(0f, 0.3f, 0f), CivilianTable));
+                    onStreet++;
+                }
+
+            Log.Print($"[island-spawns] {zom.Count} zombie point(s) ({urban} urban, {wild} wild), "
+                      + $"{loot.Count} loot point(s) ({inHouse} at buildings, {onStreet} on streets)");
+            return (zom, loot);
+        }
+
+        /// <summary>PEI table 21, "Civilian Canada" -- the same table the map's own trash cans, filing cabinets
+        /// and garbage bags draw from (WorldBuilder.ContainerShelf). Named rather than inlined so the day this
+        /// wants a military table for base POIs there is one place to branch.</summary>
+        const byte CivilianTable = 21;
+        const float TileHalfSpan = 11f;   // just inside the 24 m road piece
+
+        /// <summary>Somewhere a spawn may stand: dry land, not a cliff. ⚠ Takes PROCISLAND-frame coordinates,
+        /// like everything else in this file -- the boulder scatter's "0 refused" bug was exactly this test
+        /// being handed world coordinates instead.</summary>
+        static bool SpawnGroundOk(Terrain terr, float px, float pz)
+        {
+            var w = PosFor(terr, px, pz);
+            if (Terrain.HasWater && w.Y < Terrain.SeaLevelY + 0.5f) return false;
+            return terr.SlopeAt(w.X, w.Z) < SteepRise;
+        }
+
         /// <summary>Roadside furniture along the routes between towns: crash barriers on the bends and a power
         /// line down one side (strawberry 2026-09-16: "place fence road props along sharp-ish road spline
         /// corners. place power lines along one side of the road splines, off to the side on the dirt beside
