@@ -94,7 +94,7 @@ namespace UnturnedGodot
         }
 
         // --- deterministic integer hash -> [0,1). Wang-style avalanche; no library, no float seeding. ---
-        static float Hash01(int x, int y, int seed)
+        public static float Hash01(int x, int y, int seed)
         {
             unchecked
             {
@@ -1314,6 +1314,230 @@ namespace UnturnedGodot
             float d = Mathf.Pow(Mathf.Pow(dx, 4f) + Mathf.Pow(dz, 4f), 0.25f);
             float wob = (ValueNoise(wx / PadEdgeNoiseScale, wz / PadEdgeNoiseScale, PadSeed + 9311) - 0.5f) * 2f * PadEdgeNoise;
             return d - (pad.Half + wob);
+        }
+
+        // ---- TRAIL SPURS AND THE CAMPS AT THE END OF THEM -------------------------------------------------
+        // strawberry 2026-09-17: "add new tiny monuments. branching off road splines with trail splines. they
+        // just end somewhere, in a couple tents on a tiny flat patch or something."
+        //
+        // ⚠ THESE ARE DELIBERATELY NOT ROUTES. A Route is a road between two gates and SpawnRoutes treats it
+        // as one -- it pins both ends to a road prop's cap height, walks the stub the gate guarantees, and
+        // reports itself against the cap-join measurements. A trail has a gate at NEITHER end: it starts
+        // partway along a road's spline and stops in a clearing. Handing one to that code would have meant
+        // teaching every one of those rules an exception, so trails get their own list and their own builder.
+        public readonly struct Camp
+        {
+            public readonly float X, Z;      // ProcIsland frame, metres
+            public readonly float Yaw;       // the direction the trail ARRIVES from -- the camp faces back down it
+            public readonly int Tents;
+            public Camp(float x, float z, float yaw, int tents) { X = x; Z = z; Yaw = yaw; Tents = tents; }
+        }
+
+        /// <summary>The trail ribbon's rendered half-width, and therefore what has to be levelled under it:
+        /// Roads.dat row 5 is width 4.0 and RoadField scales every road by WidthScale 1.15. Derived for
+        /// the same reason RenderedRoadHalf is -- a carve narrower than the thing drawn on it leaves the
+        /// ribbon's edges cutting into the hillside, which is what bald patches beside a road ARE.</summary>
+        public const float TrailHalf = 4.6f;
+        // ⚠ SIZED OFF THE TENTS, not picked. Tent_2/_3 measure 12.63 x 8.84 m, so a ring of them has to
+        // stand ~11 m out from the middle and the pad has to reach past their far edge or half of every tent
+        // hangs over the lip of the clearing.
+        public const float CampPadHalf = 16f;
+        const float TrailStraight = 44f;             // ⭐ the straight run off the road BEFORE any curve
+        const float TrailReachMin = 96f, TrailReachMax = 210f;
+
+        /// <summary>Branch trails off the road network and put a camp at the end of each.
+        ///
+        /// The departure is STRAIGHT for TrailStraight metres before anything bends (strawberry: "road splines
+        /// leaving a road must leave straight for a distance, then smoothing into curves"). A spur that starts
+        /// curving at the junction reads as a road that changed its mind; one that leaves square-on and then
+        /// bends reads as a track someone wore into the hillside.
+        ///
+        /// The site is chosen by SCANNING A FAN rather than routing to a picked point: a trail has no
+        /// destination it must reach, so "walk out and stop at the best clearing you can see" is both the
+        /// cheaper algorithm and the more honest description of what a trail IS.</summary>
+        public static (System.Collections.Generic.List<Route> Trails, System.Collections.Generic.List<Camp> Camps)
+            CarveTrails(float[,] grid, int gw, int gh, System.Collections.Generic.List<Poi> pois,
+                        System.Collections.Generic.List<Route> routes, Params p)
+        {
+            const float Unit = 4f;
+            var trails = new System.Collections.Generic.List<Route>();
+            var camps = new System.Collections.Generic.List<Camp>();
+            if (routes == null || routes.Count == 0) return (trails, camps);
+
+            float WorldAt(float wx, float wz)
+            {
+                int gx = Mathf.Clamp(Mathf.RoundToInt(wx / Unit), 0, gw - 1);
+                int gy = Mathf.Clamp(Mathf.RoundToInt(wz / Unit), 0, gh - 1);
+                return ToWorld(grid[gx, gy]);
+            }
+
+            // How flat is a disc, and is all of it dry land clear of everything already built? Returns -1 for
+            // "not a site at all" so a caller can score and reject with one number.
+            float SiteScore(float wx, float wz)
+            {
+                if (wx < CampPadHalf * 2f || wz < CampPadHalf * 2f ||
+                    wx > (gw - 1) * Unit - CampPadHalf * 2f || wz > (gh - 1) * Unit - CampPadHalf * 2f) return -1f;
+                if (InsideAnyTownPad(wx, wz, 40f)) return -1f;
+                float lo = float.MaxValue, hi = float.MinValue;
+                for (int a = 0; a < 8; a++)
+                {
+                    float ang = a * Mathf.Tau / 8f;
+                    float h = WorldAt(wx + Mathf.Cos(ang) * CampPadHalf, wz + Mathf.Sin(ang) * CampPadHalf);
+                    if (h < lo) lo = h; if (h > hi) hi = h;
+                }
+                float c = WorldAt(wx, wz);
+                if (c < p.SeaLevel + 3.5f || lo < p.SeaLevel + 2f) return -1f;   // dry, and not a beach
+                float spread = hi - lo;
+                if (spread > 9f) return -1f;
+                return 1f - spread / 9f;   // 1 = billiard table, 0 = the steepest still allowed
+            }
+
+            // Every camp and every trail keeps clear of the ones already placed, and of the roads.
+            bool NearExisting(float wx, float wz, float minDist)
+            {
+                float m2 = minDist * minDist;
+                foreach (var c in camps) { float dx = c.X - wx, dz = c.Z - wz; if (dx * dx + dz * dz < m2) return true; }
+                foreach (var r in routes)
+                    for (int i = 0; i < r.Points.Count; i += 3)
+                    { float dx = r.Points[i].X - wx, dz = r.Points[i].Y - wz; if (dx * dx + dz * dz < m2) return true; }
+                foreach (var t in trails)
+                    for (int i = 0; i < t.Points.Count; i += 3)
+                    { float dx = t.Points[i].X - wx, dz = t.Points[i].Y - wz; if (dx * dx + dz * dz < m2) return true; }
+                return false;
+            }
+
+            int attempts = 0, noSite = 0, tooClose = 0;
+            // ⚠ Hash01 KEYED ON (route, try), not a running RNG. Every other choice in this file is drawn the
+            // same way, and for the reason that matters here: a stateful generator makes each roll depend on
+            // how many rolls came before it, so adding one road at the far end of the island would re-roll
+            // every trail on it. A pure hash is the same answer no matter what order the routes arrive in.
+            for (int ri = 0; ri < routes.Count; ri++)
+            {
+                var route = routes[ri];
+                if (route.Kind != LinkKind.Road || route.Points.Count < StubPoints * 4) continue;
+                int n = route.Points.Count;
+                // At most one spur per road, and only off the middle of it: near either end the trail would
+                // leave inside a town's ramp, where the ground is already owned by the pad.
+                for (int t0 = 0; t0 < 3; t0++)
+                {
+                    attempts++;
+                    int i = Mathf.RoundToInt(Mathf.Lerp(n * 0.25f, n * 0.75f, Hash01(ri * 131 + t0, 3, p.Seed + 70001)));
+                    i = Mathf.Clamp(i, StubPoints + 2, n - StubPoints - 3);
+                    var a0 = route.Points[i];
+                    if (InsideAnyTownPad(a0.X, a0.Y, 70f)) continue;
+
+                    var tan = (route.Points[Mathf.Min(n - 1, i + 3)] - route.Points[Mathf.Max(0, i - 3)]).Normalized();
+                    float side = Hash01(ri * 131 + t0, 17, p.Seed + 70003) < 0.5f ? 1f : -1f;
+                    var perp = new Vector2(-tan.Y, tan.X) * side;
+
+                    // ---- the straight departure, and the fan beyond it -------------------------------------
+                    var straightEnd = a0 + perp * TrailStraight;
+                    if (InsideAnyTownPad(straightEnd.X, straightEnd.Y, 40f)) continue;
+                    if (WorldAt(straightEnd.X, straightEnd.Y) < p.SeaLevel + 2f) continue;
+
+                    float bestScore = -1f; Vector2 bestSite = default;
+                    for (int fa = -4; fa <= 4; fa++)
+                    {
+                        float ang = fa * (Mathf.Pi / 14f);   // +-64 degrees off the straight run
+                        var dir = new Vector2(perp.X * Mathf.Cos(ang) - perp.Y * Mathf.Sin(ang),
+                                              perp.X * Mathf.Sin(ang) + perp.Y * Mathf.Cos(ang));
+                        for (float d = TrailReachMin; d <= TrailReachMax; d += 14f)
+                        {
+                            var site = straightEnd + dir * d;
+                            float sc = SiteScore(site.X, site.Y);
+                            if (sc < 0f) continue;
+                            if (NearExisting(site.X, site.Y, 90f)) continue;
+                            // Prefer flat, then prefer FURTHER: a camp 100 m off the road is a layby, and the
+                            // point of the thing is that you have to walk to it.
+                            sc += Mathf.Min(1f, d / TrailReachMax) * 0.45f;
+                            if (sc > bestScore) { bestScore = sc; bestSite = site; }
+                        }
+                    }
+                    if (bestScore < 0f) { noSite++; continue; }
+                    if (NearExisting(bestSite.X, bestSite.Y, 90f)) { tooClose++; continue; }
+
+                    // ---- the polyline: straight, THEN a Hermite that starts along the straight run ---------
+                    var pts = new System.Collections.Generic.List<Vector2>();
+                    int straightN = Mathf.Max(2, Mathf.RoundToInt(TrailStraight / Unit));
+                    for (int k = 0; k <= straightN; k++) pts.Add(a0 + perp * (TrailStraight * k / straightN));
+                    var toSite = bestSite - straightEnd;
+                    float span = toSite.Length();
+                    // ⚠ The outgoing tangent IS the straight run's direction, scaled to the span -- that is
+                    // what makes the join C1 and the bend start AFTER the straight bit rather than at the road.
+                    var m0 = perp * span;
+                    var m1 = toSite;   // arrive pointing at the site, so the last stretch is straight too
+                    int curveN = Mathf.Max(6, Mathf.RoundToInt(span / Unit));
+                    for (int k = 1; k <= curveN; k++)
+                    {
+                        float t = k / (float)curveN, t2 = t * t, t3 = t2 * t;
+                        var q = straightEnd * (2f * t3 - 3f * t2 + 1f) + m0 * (t3 - 2f * t2 + t)
+                              + bestSite * (-2f * t3 + 3f * t2) + m1 * (t3 - t2);
+                        pts.Add(q);
+                    }
+                    trails.Add(new Route(LinkKind.Trail, pts));
+                    float yaw = Mathf.Atan2(-(bestSite.X - pts[^2].X), -(bestSite.Y - pts[^2].Y));
+                    camps.Add(new Camp(bestSite.X, bestSite.Y, yaw,
+                                       Hash01(ri * 131 + t0, 29, p.Seed + 70011) < 0.35f ? 3 : 2));
+                    break;
+                }
+            }
+
+            // ---- cut the corridor and level the pads ---------------------------------------------------
+            // Narrow, shallow and NOT smoothed flat: a trail is allowed to ride the ground (SlopeCostFor says
+            // so), so this only takes the worst of the roughness out from under it rather than grading it.
+            const float Feather = 5f;
+            foreach (var t in trails)
+            {
+                int m = t.Points.Count;
+                var prof = new float[m];
+                for (int i = 0; i < m; i++) prof[i] = WorldAt(t.Points[i].X, t.Points[i].Y);
+                var sm = new float[m];
+                for (int i = 0; i < m; i++)
+                {
+                    float sum = 0f; int cnt = 0;
+                    for (int k = -5; k <= 5; k++) { int j = i + k; if (j < 0 || j >= m) continue; sum += prof[j]; cnt++; }
+                    sm[i] = sum / cnt;
+                }
+                int rad = Mathf.CeilToInt((TrailHalf + Feather) / Unit) + 1;
+                for (int i = 0; i < m; i++)
+                {
+                    int cx = Mathf.RoundToInt(t.Points[i].X / Unit), cy = Mathf.RoundToInt(t.Points[i].Y / Unit);
+                    for (int x = Mathf.Max(0, cx - rad); x <= Mathf.Min(gw - 1, cx + rad); x++)
+                        for (int y = Mathf.Max(0, cy - rad); y <= Mathf.Min(gh - 1, cy + rad); y++)
+                        {
+                            float dx = x * Unit - t.Points[i].X, dy = y * Unit - t.Points[i].Y;
+                            float d = Mathf.Sqrt(dx * dx + dy * dy);
+                            if (d > TrailHalf + Feather) continue;
+                            if (InsideTown(x * Unit, y * Unit, pois)) continue;   // the town still owns its ground
+                            float w = d <= TrailHalf ? 1f : 1f - (d - TrailHalf) / Feather;
+                            // ⚠ 0.7 at full weight, not 1: a trail that levels its corridor exactly is a road.
+                            grid[x, y] = Mathf.Lerp(grid[x, y], ToGrid(sm[i]), w * 0.7f);
+                        }
+                }
+            }
+            foreach (var c in camps)
+            {
+                float y = WorldAt(c.X, c.Z);
+                int rad = Mathf.CeilToInt((CampPadHalf + Feather) / Unit) + 1;
+                int cx = Mathf.RoundToInt(c.X / Unit), cy = Mathf.RoundToInt(c.Z / Unit);
+                for (int x = Mathf.Max(0, cx - rad); x <= Mathf.Min(gw - 1, cx + rad); x++)
+                    for (int y2 = Mathf.Max(0, cy - rad); y2 <= Mathf.Min(gh - 1, cy + rad); y2++)
+                    {
+                        float dx = x * Unit - c.X, dz = y2 * Unit - c.Z;
+                        float d = Mathf.Sqrt(dx * dx + dz * dz);
+                        // The same rounded-and-roughened edge the town pads get, for the same reason: a camp
+                        // clearing with a drawn circular boundary reads as a crop circle.
+                        float wob = (ValueNoise(x * Unit / 19f, y2 * Unit / 19f, p.Seed + 5507) - 0.5f) * 5f;
+                        float edge = CampPadHalf + wob;
+                        if (d > edge + Feather) continue;
+                        if (InsideTown(x * Unit, y2 * Unit, pois)) continue;
+                        float w = d <= edge ? 1f : 1f - (d - edge) / Feather;
+                        grid[x, y2] = Mathf.Lerp(grid[x, y2], ToGrid(y), w);
+                    }
+            }
+            Log.Print($"[island-trails] {trails.Count} trail spur(s) and camp(s) from {attempts} attempt(s) "
+                      + $"({noSite} no flat site, {tooClose} too close to something)");
+            return (trails, camps);
         }
 
         static bool InsideTown(float wx, float wz, System.Collections.Generic.List<Poi> pois)

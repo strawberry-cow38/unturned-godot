@@ -670,6 +670,12 @@ void fragment() {
         System.Collections.Generic.List<ProcIsland.Connector> _islandConnectors = new();
         public System.Collections.Generic.List<ProcIsland.Route> IslandRoutes => _islandRoutes;
         System.Collections.Generic.List<ProcIsland.Route> _islandRoutes = new();
+        /// <summary>Trail spurs and their camps. Kept SEPARATE from IslandRoutes -- see ProcIsland.CarveTrails
+        /// for why a trail cannot go through the road builder.</summary>
+        public System.Collections.Generic.List<ProcIsland.Route> IslandTrails => _islandTrails;
+        System.Collections.Generic.List<ProcIsland.Route> _islandTrails = new();
+        public System.Collections.Generic.List<ProcIsland.Camp> IslandCamps => _islandCamps;
+        System.Collections.Generic.List<ProcIsland.Camp> _islandCamps = new();
         public System.Collections.Generic.List<ProcIsland.MonumentTile> IslandTiles => _islandTiles;
         readonly System.Collections.Generic.List<ProcIsland.MonumentTile> _islandTiles = new();
         public System.Collections.Generic.List<ProcIsland.MonumentBuilding> IslandBuildings => _islandBuildings;
@@ -705,6 +711,9 @@ void fragment() {
             ProcIsland.FlattenTownsExactly(_grid, _gw, _gh, pois, _islandTiles, pars.Seed);
             // Routed and carved BEFORE RebuildAll, because carving edits the same grid the meshes are built from.
             _islandRoutes = ProcIsland.CarveRoutes(_grid, _gw, _gh, pois, _islandLinks, _islandConnectors, pars);
+            // AFTER the roads, because a trail branches off one: it needs the finished spline to pick an
+            // anchor on, and the ground it cuts is ground the roads have already had their say about.
+            (_islandTrails, _islandCamps) = ProcIsland.CarveTrails(_grid, _gw, _gh, pois, _islandRoutes, pars);
             RebuildAll();
             return pois;
         }

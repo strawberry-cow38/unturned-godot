@@ -6397,6 +6397,21 @@ namespace UnturnedGodot
                     camAlt = topAlt;
                 }
             }
+            // UG_GENCAM=<x>,<z>: put the editor camera over an arbitrary world point. A generated island is
+            // 3 km across and the interesting thing is usually a 20 m clearing somewhere in it, which the
+            // town-focus default cannot frame -- so a render of anything but a town needed a code edit.
+            var camEnv = System.Environment.GetEnvironmentVariable("UG_GENCAM");
+            if (!string.IsNullOrEmpty(camEnv))
+            {
+                var cb = camEnv.Split(',');
+                if (cb.Length == 2
+                    && float.TryParse(cb[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float cxw)
+                    && float.TryParse(cb[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float czw))
+                {
+                    camPos = new Vector3(cxw, terr.SampleHeight(cxw, czw) + camAlt, czw);
+                    camTop = true;
+                }
+            }
             var cam = new EditorCamera { Position = camPos, RotationDegrees = new Vector3(camTop ? -90f : camPitch, 0f, 0f) };
             editor.AddChild(cam);
             editor.Setup(mapName, null, cam);
@@ -6514,6 +6529,11 @@ namespace UnturnedGodot
             // profile, so anything standing beside a spline has to be seated once that ground has stopped
             // moving -- placed earlier, poles and barriers end up floating or buried in a band along every road.
             if (genPois != null) ProcIslandSpawn.SpawnRoadside(terr, objs);
+            // TRAIL SPURS AND THEIR CAMPS (strawberry 2026-09-17: "branching off road splines with trail
+            // splines. they just end somewhere, in a couple tents on a tiny flat patch"). After the roads for
+            // the same reason the roadside props are: the ground under a trail's junction is ground the road's
+            // conform has just finished moving.
+            if (genPois != null) { ProcIslandSpawn.SpawnTrails(terr, rf); ProcIslandSpawn.SpawnCamps(terr, objs); }
             if (genPois != null && genSeed.HasValue)
             {
                 await Phase("Seeding grass and flowers");

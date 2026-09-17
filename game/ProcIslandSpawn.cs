@@ -1661,6 +1661,29 @@ namespace UnturnedGodot
                         terr.PaintSplat(w.X, w.Z, RouteHalf + RouteBorder, DirtLayer); routePts++;
                     }
                 }
+            // ---- the trail spurs and the clearings they end in ---------------------------------------------
+            // Narrower than a road's band, because the trail itself is narrower: ProcIsland.TrailHalf is the
+            // levelled corridor and the border is the worn edge either side of it. Same reason as the roads --
+            // the splat is what the foliage scatter reads, so an unpainted trail grows grass and trees through
+            // the middle of the track.
+            int trailPts = 0, campN = 0;
+            if (terr.IslandTrails != null)
+                foreach (var t in terr.IslandTrails)
+                {
+                    if (t.Points == null) continue;
+                    foreach (var q in t.Points)
+                    {
+                        var w = PosFor(terr, q.X, q.Y);
+                        terr.PaintSplat(w.X, w.Z, ProcIsland.TrailHalf + 2.5f, DirtLayer); trailPts++;
+                    }
+                }
+            if (terr.IslandCamps != null)
+                foreach (var c in terr.IslandCamps)
+                {
+                    var w = PosFor(terr, c.X, c.Z);
+                    terr.PaintSplat(w.X, w.Z, ProcIsland.CampPadHalf, DirtLayer); campN++;
+                }
+
             // ---- and a skirt of dirt around every boulder --------------------------------------------------
             // strawberry: "then do a pass of adding dirt terrain paint around the boulders".
             //
@@ -1673,6 +1696,7 @@ namespace UnturnedGodot
             // 1.35x the rock's own radius: enough to cover the skirt without painting a crater around it.
             foreach (var b in BoulderMarks) { terr.PaintSplat(b.X, b.Z, b.R * 1.35f, DirtLayer); rocks++; }
 
+            Log.Print($"[island-paint] {trailPts} trail point(s) @{ProcIsland.TrailHalf + 2.5f:0.#}m + {campN} camp clearing(s) @{ProcIsland.CampPadHalf:0.#}m");
             Log.Print($"[island-paint] dirt under {tiles} road tile(s) @{RoadHalf + TileBorder:0.#}m, routes @{RouteHalf + RouteBorder:0.#}m, "
                       + $"{builds} building(s) ({sized} to their real footprint), {routePts} route point(s), {rocks} boulder skirt(s)");
         }
@@ -1728,6 +1752,114 @@ namespace UnturnedGodot
         /// that is all control and no curve -- Catmull-Rom through dense collinear points is just the polyline
         /// back again, with a mesh segment per step. Endpoints are always kept: they are where the route meets
         /// the town, and moving one leaves the road pointing at where the gate used to be.</summary>
+        // ---- TRAILS AND CAMPS -----------------------------------------------------------------------------
+        /// <summary>PEI's dirt track: Roads.dat row 5 is 8 m wide and concrete=0, so it builds through
+        /// RoadField's plain non-concrete path -- no wet sheen, no puddles, no rain rings. Row 0 (the 16 m
+        /// carriageway) is what every other spline here uses.</summary>
+        public const int TrailMaterial = 5;
+
+        /// <summary>Lay the trail spurs. Far simpler than SpawnRoutes and deliberately so: a trail has no cap
+        /// to join, no town pad to sit exactly on and no grade to hold, so it does the one thing a road cannot
+        /// -- FOLLOW THE GROUND (ignoreTerrain: false) instead of making the ground follow it. That is also
+        /// why it cannot float: there is no profile for it to float above.</summary>
+        public static int SpawnTrails(Terrain terr, RoadField rf)
+        {
+            if (terr == null || rf == null || terr.IslandTrails == null) return 0;
+            int built = 0;
+            float total = 0f;
+            foreach (var t in terr.IslandTrails)
+            {
+                if (t.Points == null || t.Points.Count < 2) continue;
+                var pts = new System.Collections.Generic.List<Vector3>(t.Points.Count);
+                foreach (var q in t.Points) pts.Add(PosFor(terr, q.X, q.Y));
+                for (int i = 1; i < pts.Count; i++) total += pts[i].DistanceTo(pts[i - 1]);
+                if (rf.AddRoadFromPolyline(pts, TrailMaterial, loop: false, ignoreTerrain: false) >= 0) built++;
+            }
+            // The JUNCTIONS, because "leaves the road straight before it bends" is a claim about this exact
+            // point and nowhere else, and it is not something a length can show.
+            var heads = new System.Text.StringBuilder();
+            foreach (var t in terr.IslandTrails)
+            { if (t.Points is { Count: > 0 }) { var w = PosFor(terr, t.Points[0].X, t.Points[0].Y); heads.Append($" ({w.X:0},{w.Z:0})"); } }
+            Log.Print($"[island-trails] {built} trail spline(s) laid, {total:0} m of track, "
+                      + $"{ProcIsland.TrailHalf * 2f:0.#} m wide, joining roads at{heads}");
+            return built;
+        }
+
+        /// <summary>A couple of tents on the flat patch at the end of a trail.
+        ///
+        /// ⭐ THE ARRANGEMENT IS RETAIL'S AND SO ARE THE DIMENSIONS. PEI has three camps in placements.txt:
+        /// Tent_0+Tent_1 38 m apart with two Barrel_0 beside them, and two Tent_2+Tent_3 pairs at 12.8 m and
+        /// 26 m. Tents at unrelated yaws, a barrel or two, and NO fire -- PEI's Fire_0 props are nowhere near
+        /// a camp, which turns out to be for a good reason: the mesh is 16.1 x 24.5 x 11.8 m and sits 6 m into
+        /// the ground. It is a burning BUILDING, not a campfire. I put one at the centre of every camp before
+        /// measuring it and it swallowed the tents.
+        ///
+        /// ⚠ AND THE TENTS ARE NOT SMALL EITHER: Tent_0/_1 are 15.87 x 12.20 m and Tent_2/_3 are
+        /// 12.63 x 8.84 m -- marquees, not pup tents. The first pass ringed them at a 12-16 m radius, which
+        /// for a 16 m tent means they intersect. Tent_2/_3 only (the smaller pair, and the ones retail pairs
+        /// up), ringed at a radius that clears their own half-depth, with the separation derived from the
+        /// mesh rather than picked.</summary>
+        const float TentHalfDepth = 4.42f;   // Tent_2/_3 measured: 8.84 m deep
+        const float TentHalfWide = 6.32f;    // ...and 12.63 m wide
+        public static int SpawnCamps(Terrain terr, EditorObjects objs)
+        {
+            if (terr == null || objs == null || terr.IslandCamps == null) return 0;
+            string[] tents = { "Tent_2", "Tent_3" };
+            int seed = terr.IslandSeed;
+            int placed = 0, camps = 0;
+            float worstGap = float.MaxValue;
+            foreach (var c in terr.IslandCamps)
+            {
+                camps++;
+                var centre = PosFor(terr, c.X, c.Z);
+                float baseYaw = Mathf.RadToDeg(c.Yaw);
+                // Ring radius: far enough that a tent's own footprint clears the middle of the clearing, close
+                // enough that all of it is still on the levelled pad. Separation: the chord between two
+                // neighbours at this radius has to exceed the widest the tents can present to each other.
+                float ring = ProcIsland.CampPadHalf - TentHalfDepth - 1f;
+                float sep = Mathf.Max(360f / Mathf.Max(3, c.Tents + 1),
+                                      Mathf.RadToDeg(2f * Mathf.Asin(Mathf.Min(1f, (TentHalfWide + 1.5f) / ring))));
+                var spots = new System.Collections.Generic.List<Vector3>();
+                for (int k = 0; k < c.Tents; k++)
+                {
+                    // Spread around the clearing starting on the side the trail does NOT arrive from, so the
+                    // approach stays open, with a little jitter so a three-tent camp is not a perfect fan.
+                    float a = baseYaw + 180f + (k - (c.Tents - 1) * 0.5f) * sep
+                            + (ProcIsland.Hash01(k * 7 + camps * 31, 5, seed + 81001) - 0.5f) * 14f;
+                    float r = ring * (0.92f + ProcIsland.Hash01(k * 7 + camps * 31, 11, seed + 81003) * 0.08f);
+                    float ar = Mathf.DegToRad(a);
+                    float wx = centre.X + Mathf.Sin(ar) * r, wz = centre.Z + Mathf.Cos(ar) * r;
+                    string tent = tents[(int)(ProcIsland.Hash01(k * 7 + camps * 31, 17, seed + 81007) * (tents.Length - 0.01f))];
+                    // Face the clearing: the prop's +Y runs along (dx,dz), so aim it back at the centre.
+                    float yaw = ProcIsland.YawForDir(centre.X - wx, centre.Z - wz);
+                    var at = new Vector3(wx, terr.SampleHeight(wx, wz), wz);
+                    foreach (var q in spots)
+                    { float d = new Vector2(q.X - wx, q.Z - wz).Length(); if (d < worstGap) worstGap = d; }
+                    spots.Add(at);
+                    if (objs.Place(tent, at, RotFor(yaw)) != null) placed++;
+                }
+                // A barrel or two by the fire ring that is not there, exactly as PEI's camp has.
+                int clutter = ProcIsland.Hash01(camps * 31, 41, seed + 81013) < 0.5f ? 2 : 1;
+                for (int k = 0; k < clutter; k++)
+                {
+                    float h = ProcIsland.Hash01(camps * 31 + k * 13, 43, seed + 81017);
+                    float ar = Mathf.DegToRad(baseYaw + 40f + h * 280f);
+                    float r = 2.5f + h * 2.5f;
+                    float wx = centre.X + Mathf.Sin(ar) * r, wz = centre.Z + Mathf.Cos(ar) * r;
+                    string prop = h < 0.5f ? "Barrel_0" : "Crate_0";
+                    if (objs.Place(prop, new Vector3(wx, terr.SampleHeight(wx, wz), wz), RotFor(h * 720f)) != null) placed++;
+                }
+            }
+            // The POSITIONS and the tightest tent pair, not just the count: "13 camps" is equally true of
+            // thirteen of them stacked on one rock, and a tent gap under 12.63 m means two are intersecting.
+            var where = new System.Text.StringBuilder();
+            foreach (var c in terr.IslandCamps)
+            { var w = PosFor(terr, c.X, c.Z); where.Append($" ({w.X:0},{w.Z:0})"); }
+            Log.Print($"[island-trails] {camps} camp(s) dressed, {placed} prop(s), closest tent pair "
+                      + $"{(worstGap == float.MaxValue ? 0f : worstGap):0.0} m (tents are 12.6 x 8.8) at{where}");
+            return placed;
+        }
+
         public static int SpawnRoutes(Terrain terr, RoadField rf, int material = 0)
         {
             if (terr == null || rf == null || terr.IslandRoutes == null) return 0;
