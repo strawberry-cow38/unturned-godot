@@ -237,11 +237,19 @@ namespace UnturnedGodot
             var tabs = new HBoxContainer();
             tabs.AddThemeConstantOverride("separation", 3);
             ccol.AddChild(tabs);
-            string[] cats = { "Official", "Curated", "Workshop", "Misc" };
+            // ⚠ "Proc" IS A REAL TAB, the others stay dummies (strawberry 2026-09-17: "proc maps get listed in
+            // the play mode maps list under a new 'proc' tab"). Enabling a tab that lists nothing would be worse
+            // than a greyed-out one, so Curated/Workshop/Misc are untouched.
+            string[] cats = { "Official", "Proc", "Curated", "Workshop", "Misc" };
+            _catButtons = new Button[cats.Length];
             for (int i = 0; i < cats.Length; i++)
             {
-                var tb = new Button { Text = cats[i], ToggleMode = true, ButtonPressed = i == 0, Disabled = i != 0, CustomMinimumSize = new Vector2(100f, 40f) };
+                bool real = i <= 1;
+                var tb = new Button { Text = cats[i], ToggleMode = true, ButtonPressed = i == 0, Disabled = !real, CustomMinimumSize = new Vector2(84f, 40f) };
                 tb.AddThemeFontSizeOverride("font_size", 13);
+                int idx = i;
+                if (real) tb.Pressed += () => ShowCategory(idx);
+                _catButtons[i] = tb;
                 tabs.AddChild(tb);
             }
             var scroll = new ScrollContainer { CustomMinimumSize = new Vector2(420f, 330f), HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled };
@@ -261,6 +269,14 @@ namespace UnturnedGodot
             list.AddChild(pgBtn);
             list.AddChild(new HSeparator());
             foreach (var m in OfficialMaps) list.AddChild(MapRow(m.name, m.key, m.playable, m.desc));
+            _officialList = list;
+            // The Proc list shares the scroll and hides until its tab is pressed.
+            _procList = new VBoxContainer { CustomMinimumSize = new Vector2(400f, 0f), Visible = false };
+            _procList.AddThemeConstantOverride("separation", 3);
+            scroll.AddChild(_procList);
+            // UG_MENUTAB=proc opens straight onto it, for the same reason UG_MENUOPEN exists: a tab you can only
+            // reach by clicking is a tab no offline render can photograph.
+            if (System.Environment.GetEnvironmentVariable("UG_MENUTAB") == "proc") CallDeferred(nameof(ShowProcTab));
 
             // ---- RIGHT column: selected-map name + description
             var rcol = new VBoxContainer { CustomMinimumSize = new Vector2(260f, 0f) };
@@ -311,6 +327,65 @@ namespace UnturnedGodot
             b.Pressed += () => SelectMap(name, key, playable, desc);
             return b;
         }
+
+        Button[] _catButtons; VBoxContainer _officialList, _procList;
+
+        void ShowProcTab() => ShowCategory(1);
+
+        void ShowCategory(int idx)
+        {
+            for (int i = 0; i < _catButtons.Length; i++)
+                if (_catButtons[i] != null) _catButtons[i].ButtonPressed = i == idx;
+            if (_officialList != null) _officialList.Visible = idx == 0;
+            if (_procList != null) { _procList.Visible = idx == 1; if (idx == 1) RebuildProcList(); }
+            if (idx == 1 && _genRow != null) _genRow.Visible = false;   // the seed field belongs to Generate Island, not to a saved map
+        }
+
+        /// <summary>One row per saved generated island: PLAY it, or bin it.
+        /// ⚠ The delete button asks for a SECOND press rather than opening a modal. This list is the only place
+        /// these maps exist and a mis-click is unrecoverable, but a confirm dialog for a one-click action in a
+        /// menu nobody reads carefully is the same protection with more ceremony.
+        /// ⚠ REBUILT on every show: a map can be generated or deleted while this panel is alive, and a list
+        /// built once is a list that lies the second time you open it.</summary>
+        void RebuildProcList()
+        {
+            if (_procList == null) return;
+            foreach (var c in _procList.GetChildren()) c.QueueFree();
+            var maps = EditorMaps.ListProc();
+            if (maps.Count == 0)
+            {
+                var empty = new Label { Text = "  No generated islands yet -- make one with Generate Island.",
+                                        CustomMinimumSize = new Vector2(400f, 46f), VerticalAlignment = VerticalAlignment.Center };
+                empty.AddThemeFontSizeOverride("font_size", 13);
+                empty.AddThemeColorOverride("font_color", new Color(0.7f, 0.7f, 0.72f));
+                _procList.AddChild(empty);
+                return;
+            }
+            foreach (var (name, seed) in maps)
+            {
+                var row = new HBoxContainer { CustomMinimumSize = new Vector2(400f, 46f) };
+                row.AddThemeConstantOverride("separation", 4);
+                var open = new Button { Text = $"  \u2691  {name}   (seed {seed})", CustomMinimumSize = new Vector2(346f, 46f), Alignment = HorizontalAlignment.Left };
+                open.AddThemeFontSizeOverride("font_size", 15);
+                string mapName = name;
+                open.Pressed += () => OnOpenProcMap?.Invoke(mapName);
+                row.AddChild(open);
+
+                var del = new Button { Text = "X", CustomMinimumSize = new Vector2(46f, 46f), TooltipText = "Delete this island" };
+                bool armed = false;
+                del.Pressed += () =>
+                {
+                    if (!armed) { armed = true; del.Text = "?"; del.TooltipText = "Press again to delete permanently"; return; }
+                    EditorMaps.Delete(mapName);
+                    RebuildProcList();
+                };
+                row.AddChild(del);
+                _procList.AddChild(row);
+            }
+        }
+
+        /// <summary>Play a SAVED generated island, as opposed to generating a fresh one.</summary>
+        public System.Action<string> OnOpenProcMap;
 
         // The seed field + a randomiser. Only shown while the generated entry is selected -- on a retail map it
         // is a control that does nothing, which reads as broken rather than as inapplicable.

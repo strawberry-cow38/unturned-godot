@@ -1088,6 +1088,10 @@ namespace UnturnedGodot
                     // Generate Map -> a brand new map whose terrain is a generated island, played immediately.
                     // The name carries the seed so two generated maps do not overwrite each other's save.
                     menu.OnGenerateMap = (seed, lakes) => { menu.QueueFree(); BuildEditorNew(EditorMaps.Unique($"Island {seed}"), genSeed: seed, autoPlay: true, genLakes: lakes); };
+                    // A SAVED generated island: open the map that is on disk, do NOT regenerate. Re-rolling the
+                    // seed would rebuild the terrain and then load the saved props on top of it, which is two of
+                    // everything the moment the generator changes -- the same trap the "NewMap" name once sprang.
+                    menu.OnOpenProcMap = name => { menu.QueueFree(); BuildEditorNew(name, autoPlay: true); };
                     AddChild(menu);
                 });
                 return;
@@ -6471,6 +6475,16 @@ namespace UnturnedGodot
                 loading.SetStatus("Ready");
                 loading.Advance();
                 loading.Finish(genTimings);   // drops the cover and logs the per-step timing, same as a retail load
+            }
+            // ⚠ SAVED AT CREATION (strawberry 2026-09-17: "should save the map to a file on creation"). The
+            // editor only wrote a map out when you pressed playtest or exited, so generating one and closing the
+            // window lost it -- and a generator whose output you can only keep by remembering to press
+            // something is a generator you cannot browse the results of. The proc marker goes down with it, so
+            // the map list can tell a generated island from a hand-built map of the same name.
+            if (genSeed.HasValue)
+            {
+                editor.Save();
+                EditorMaps.MarkProc(mapName, genSeed.Value);
             }
             if (autoPlay) play.CallDeferred(nameof(EditorPlayMode.EnterPlay));
             _worldReady = true;

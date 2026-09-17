@@ -55,6 +55,79 @@ namespace UnturnedGodot
             return new List<string>(found);
         }
 
+        /// <summary>A generated map's own marker: the seed it came from. ⚠ A FILE, not a name convention.
+        /// "Island 12345 8" looks like a proc map and so does a hand-made map somebody called that, and the
+        /// difference matters -- the proc tab lists these, the delete button erases them, and player saves are
+        /// keyed by them. Inferring it from a prefix would put a hand-built map one rename away from being
+        /// deleted by a button labelled for something else.</summary>
+        public static string ProcPath(string map) =>
+            ProjectSettings.GlobalizePath($"res://content/objects/editor_{map}_proc.txt");
+
+        public static void MarkProc(string map, int seed)
+        {
+            try { System.IO.File.WriteAllText(ProcPath(map), seed.ToString(System.Globalization.CultureInfo.InvariantCulture)); }
+            catch (System.Exception e) { Log.Err($"[editor-maps] could not mark '{map}' as generated: {e.Message}"); }
+        }
+
+        /// <summary>The seed a map was generated from, or null if it was not generated.</summary>
+        public static int? ProcSeed(string map)
+        {
+            try
+            {
+                string p = ProcPath(map);
+                if (!System.IO.File.Exists(p)) return null;
+                return int.TryParse(System.IO.File.ReadAllText(p).Trim(),
+                                    System.Globalization.NumberStyles.Integer,
+                                    System.Globalization.CultureInfo.InvariantCulture, out int v) ? v : null;
+            }
+            catch { return null; }
+        }
+
+        /// <summary>Every generated map, newest first by write time -- the order a list of things you made wants
+        /// to be in.</summary>
+        public static List<(string Name, int Seed)> ListProc()
+        {
+            var outp = new List<(string, int, System.DateTime)>();
+            foreach (var m in List())
+            {
+                var sd = ProcSeed(m);
+                if (sd == null) continue;
+                System.DateTime when;
+                try { when = System.IO.File.GetLastWriteTimeUtc(ProcPath(m)); } catch { when = System.DateTime.MinValue; }
+                outp.Add((m, sd.Value, when));
+            }
+            outp.Sort((a, b) => b.Item3.CompareTo(a.Item3));
+            var res = new List<(string, int)>(outp.Count);
+            foreach (var e in outp) res.Add((e.Item1, e.Item2));
+            return res;
+        }
+
+        /// <summary>Erase every file belonging to a map (strawberry 2026-09-17: "here they can be deleted via a
+        /// button").
+        /// ⚠ DERIVED FROM Sources AND Tails, the same two tables List() reads, rather than a hand-written list
+        /// of filenames. A delete that knows about fewer files than the lister does leaves a map that still
+        /// appears in the menu with half its contents gone -- which is worse than not deleting it.</summary>
+        public static int Delete(string map)
+        {
+            int n = 0;
+            foreach (var (dir, pattern) in Sources)
+            {
+                string d = ProjectSettings.GlobalizePath(dir);
+                if (!System.IO.Directory.Exists(d)) continue;
+                foreach (var path in System.IO.Directory.GetFiles(d, pattern.Replace("*", map)))
+                    try { System.IO.File.Delete(path); n++; } catch { }
+                // ...and every per-feature tail for this map, which Sources' patterns do not all cover.
+                foreach (var tail in Tails)
+                    foreach (var path in System.IO.Directory.GetFiles(d, $"editor_{map}{tail}"))
+                        try { System.IO.File.Delete(path); n++; } catch { }
+                foreach (var path in System.IO.Directory.GetFiles(d, $"editor_{map}.txt"))
+                    try { System.IO.File.Delete(path); n++; } catch { }
+            }
+            try { if (System.IO.File.Exists(ProcPath(map))) { System.IO.File.Delete(ProcPath(map)); n++; } } catch { }
+            Log.Print($"[editor-maps] deleted '{map}' ({n} file(s))");
+            return n;
+        }
+
         /// <summary>"editor_Foo_Walls.dat" -> "Foo". Null if it is not a map file.</summary>
         public static string NameFromFile(string file)
         {
