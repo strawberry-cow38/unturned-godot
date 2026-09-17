@@ -335,7 +335,27 @@ namespace UnturnedGodot
         /// copy it would measure chords the road does not have, and report a number about a road nobody builds.
         /// It did exactly that once: the road moved to 8 m joints while the probe still sampled 20 m ones, and
         /// the "worse" reading was the instrument, not the road.</summary>
-        public const int RouteJointStride = 6;   // ~24 m between joints
+        /// <summary>Raw A* points per road joint. 6 gives ~24 m between joints.
+        ///
+        /// ⚠⚠ WIDENING THIS DOES NOT FIX FOLDS. IT WAS TRIED AND MEASURED. The reasoning was sound on its face:
+        /// R_built = s*cos^2(phi/2)/(4*sin(phi/2)) is LINEAR in the joint spacing s, so at retail PEI's ~72 m
+        /// median spacing the fold threshold sits near 102 deg instead of our 59 deg. A/B at stride 6 / 9 / 12:
+        ///
+        ///     folds              1/2/2  ->  2/6/2  ->  1/3/1
+        ///     drawn self-crossings 3/5/4 ->  8/6/10 -> 10/10/12
+        ///     samples under 20 m 20/19/18 -> 39/33/44 -> 44/40/64
+        ///     joints over 26 deg 21/17/16 -> 33/29/39 -> 38/35/46
+        ///
+        /// ⚠ THE ERROR: phi IS NOT INDEPENDENT OF s. You cannot hold the turn angle fixed while widening the
+        /// spacing on a FIXED path -- the same total curvature simply lands on fewer joints, so phi grows with
+        /// s and eats the linear gain in R. "joints over 26 deg" more than doubles, which is the mechanism
+        /// caught in the act. Retail gets away with 72 m because its paths are hand-authored and gentle, not
+        /// because the spacing is wide; spacing is a consequence of its smoothness, not a cause.
+        ///
+        /// So the fold fix has to reduce the PATH's curvature, not resample it. Kept overridable via
+        /// `UG_JOINTSTRIDE` because this question will be asked again and the answer should cost one run.</summary>
+        public static readonly int RouteJointStride =
+            int.TryParse(System.Environment.GetEnvironmentVariable("UG_JOINTSTRIDE"), out int js) && js >= 2 && js <= 24 ? js : 6;
 
         /// <summary>What the road kit actually laid, and how much of it opens onto nothing.
         ///
@@ -666,7 +686,7 @@ namespace UnturnedGodot
             // ---- splines: how far terrain rises above the straight line BETWEEN joints ---------------------
             // The joints are on the ground by construction; the question is only what happens in the gap, which
             // is exactly what decimating to 20 m traded away.
-            const int Stride = RouteJointStride;
+            int Stride = RouteJointStride;
             float worstGap = 0f, sumGap = 0f; int nGap = 0, over = 0;
             if (terr.IslandRoutes != null)
                 foreach (var route in terr.IslandRoutes)
@@ -2529,7 +2549,7 @@ namespace UnturnedGodot
         public static int SpawnRoutes(Terrain terr, RoadField rf, int material = 0)
         {
             if (terr == null || rf == null || terr.IslandRoutes == null) return 0;
-            const int Stride = RouteJointStride;
+            int Stride = RouteJointStride;
             const float MinLen = 24f;      // a route shorter than this is a stub inside a town, not a road between them
             int built = 0, skipped = 0;
             float clipWorst = 0f, clipSum = 0f; int clipOver = 0, clipN = 0, clipTown = 0;
