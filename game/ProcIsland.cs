@@ -1170,6 +1170,58 @@ namespace UnturnedGodot
             // the island quietly lost roads. Town-to-town routes dropped 27 -> 23 on seed 424242 after the
             // road-crossing penalty was extended to town approaches, and nothing said so.
             Log.Print($"[island-routes] {links.Count} link(s) planned -> {routes.Count} route(s) carved");
+
+            // ---- THE SUITE'S TWO ROUTE-QUALITY NUMBERS, MEASURED AT PRODUCT SCALE ------------------------
+            // world.proc_island asserts worst per-step gradient < 35% and sharpest turn < 50 deg, and reads
+            // 41.2% and 155.8 deg -- both on a Trail. But it measures a Gen(1,...) fixture: a 257-cell grid,
+            // a ~1 km island, a NINTH of the area of the 769-cell one that actually ships. tinyclaw's
+            // hypothesis is that at a ninth the room a trail has a ninth the space to get anywhere, so steep
+            // and hairpinned is what that grid produces regardless of the generator.
+            //
+            // That is testable from this side: compute the SAME two quantities, by the same definitions, on a
+            // real island. If a 769-cell island is inside both thresholds, the fixture is the story and the
+            // two reds are not defects. If it is outside, they are real and the suite was right.
+            {
+                float worstGrade = 0f; string gradeOn = "";
+                float worstTurn = 0f; string turnOn = ""; int turnAt = 0, turnOf = 0;
+                // ⚠⚠ CARRY THE LENGTH THE RATIO IS TAKEN OVER. Both of these are ratios, and the suite guards
+                // them at 0.01 f -- ONE CENTIMETRE. A 1 cm step with a 27 cm rise is a 2694% "gradient"; two
+                // 1 cm segments meeting anyhow are a perfect 180 deg "turn". Neither is something a vehicle
+                // could notice. I have already been fooled by exactly this today, twice, and printed "the
+                // ribbon turns at 1.5 m radius" off a half-width sample span. So the span goes in the log
+                // beside the number, and whether these are defects is then readable rather than arguable.
+                float gradeRun = 0f, gradeRise = 0f, turnV1 = 0f, turnV2 = 0f;
+                foreach (var rt in routes)
+                {
+                    for (int i = 1; i < rt.Points.Count; i++)
+                    {
+                        var pa = rt.Points[i - 1]; var pb = rt.Points[i];
+                        int ax = Mathf.Clamp(Mathf.RoundToInt(pa.X / 4f), 0, gw - 1), ay = Mathf.Clamp(Mathf.RoundToInt(pa.Y / 4f), 0, gh - 1);
+                        int bx = Mathf.Clamp(Mathf.RoundToInt(pb.X / 4f), 0, gw - 1), by = Mathf.Clamp(Mathf.RoundToInt(pb.Y / 4f), 0, gh - 1);
+                        float ha = ToWorld(grid[ax, ay]), hb = ToWorld(grid[bx, by]);
+                        float run = pa.DistanceTo(pb);
+                        if (run > 0.01f)
+                        {
+                            float g = Mathf.Abs(hb - ha) / run;
+                            if (g > worstGrade) { worstGrade = g; gradeOn = rt.Kind.ToString(); gradeRun = run; gradeRise = Mathf.Abs(hb - ha); }
+                        }
+                    }
+                    for (int i = 2; i < rt.Points.Count; i++)
+                    {
+                        var v1 = rt.Points[i - 1] - rt.Points[i - 2];
+                        var v2 = rt.Points[i] - rt.Points[i - 1];
+                        if (v1.Length() < 0.01f || v2.Length() < 0.01f) continue;
+                        float ang = Mathf.RadToDeg(Mathf.Acos(Mathf.Clamp(v1.Normalized().Dot(v2.Normalized()), -1f, 1f)));
+                        if (ang > worstTurn)
+                        { worstTurn = ang; turnOn = rt.Kind.ToString(); turnAt = i; turnOf = rt.Points.Count; turnV1 = v1.Length(); turnV2 = v2.Length(); }
+                    }
+                }
+                Log.Print($"[island-quality] worst per-step gradient {worstGrade * 100f:0.#}% on a {gradeOn} "
+                          + $"[{gradeRise:0.00} m rise over a {gradeRun:0.00} m step] (suite asserts < 35%); "
+                          + $"sharpest turn {worstTurn:0.#} deg on a {turnOn} at pt {turnAt}/{turnOf} "
+                          + $"[between a {turnV1:0.00} m and a {turnV2:0.00} m segment] (suite asserts < 50 deg) "
+                          + $"-- {gw}x{gh} grid; the suite fixture is 257x257");
+            }
             ReportRoutePairs(routes);
             ReportCrossings(routes, pois);
             return routes;
