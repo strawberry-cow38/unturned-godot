@@ -940,12 +940,14 @@ namespace UnturnedGodot
         /// versus a police station; generating one would be inventing game balance rather than terrain. Only
         /// WHERE the points are is procedural -- the same split the new-map path already makes for containers.</summary>
         public static (System.Collections.Generic.List<Vector3> Zombies,
-                       System.Collections.Generic.List<(Vector3 Pos, byte Table)> Loot)
+                       System.Collections.Generic.List<(Vector3 Pos, byte Table)> Loot,
+                       System.Collections.Generic.List<Vector3> Animals)
             GenerateSpawnTables(Terrain terr, int seed)
         {
             var zom = new System.Collections.Generic.List<Vector3>();
             var loot = new System.Collections.Generic.List<(Vector3, byte)>();
-            if (terr == null) return (zom, loot);
+            var animals = new System.Collections.Generic.List<Vector3>();
+            if (terr == null) return (zom, loot, animals);
             var rng = new System.Random(seed ^ 0x5EED10);
 
             // ---- ZOMBIES: thick where people were, thin everywhere else --------------------------------------
@@ -1019,9 +1021,73 @@ namespace UnturnedGodot
                     onStreet++;
                 }
 
+            // ---- ANIMALS: open country, away from the built-up parts -----------------------------------------
+            // ⚠ Deliberately the INVERSE of the zombie distribution rather than a thinner copy of it. Deer and
+            // cows in a town square is the tell that a scatter is uniform noise with a density knob; the reason
+            // to have a separate pass at all is that wildlife belongs where people are not.
+            const float FaunaStep = 78f;
+            int fauna = 0;
+            for (float x = b.MinX; x < b.MaxX; x += FaunaStep)
+                for (float z = pzLo; z < pzHi; z += FaunaStep)
+                {
+                    float px = x + (float)(rng.NextDouble() * 2 - 1) * FaunaStep * 0.4f;
+                    float pz = z + (float)(rng.NextDouble() * 2 - 1) * FaunaStep * 0.4f;
+                    if (!SpawnGroundOk(terr, px, pz)) continue;
+                    if (ProcIsland.InsideAnyTownPad(px, pz, 60f)) continue;   // not in anybody's high street
+                    animals.Add(PosFor(terr, px, pz)); fauna++;
+                }
+
             Log.Print($"[island-spawns] {zom.Count} zombie point(s) ({urban} urban, {wild} wild), "
-                      + $"{loot.Count} loot point(s) ({inHouse} at buildings, {onStreet} on streets)");
-            return (zom, loot);
+                      + $"{loot.Count} loot point(s) ({inHouse} at buildings, {onStreet} on streets), "
+                      + $"{animals.Count} fauna point(s)");
+            return (zom, loot, animals);
+        }
+
+        /// <summary>Park a handful of vehicles along the island's roads.
+        ///
+        /// ⚠ NOT THROUGH WorldBuilder'S SPAWNER, deliberately. That one is a local function inside
+        /// BuildFullWorld that parses Vehicles.dat -- tables, weighted tiers, the lot -- and master fixed its
+        /// tier reading two days ago ("every Farm point in the world was a tractor"). Extracting it to reach it
+        /// from here means moving code somebody is actively correcting, to gain a parser for a file a generated
+        /// island does not have. Building the vehicles directly by name is the same result without touching it.
+        ///
+        /// ⚠ ON THE ROAD, FACING ALONG IT: a car parked across the carriageway or dropped in a field reads as
+        /// debris rather than as somebody's car. Offset to one side so the lane stays driveable.</summary>
+        public static int SpawnVehicles(Terrain terr, Node world, int seed)
+        {
+            if (terr?.IslandRoutes == null || world == null) return 0;
+            // Weighted toward the ordinary. PEI's roads are civilian, so a firetruck every third junction would
+            // be the giveaway that this is a list being cycled rather than a road with traffic on it.
+            string[] kinds = { "sedan", "hatchback", "offroader", "van", "truck", "jeep", "golf", "wagon",
+                               "quad", "tractor", "police", "ambulance" };
+            var rng = new System.Random(seed ^ 0x7E41C1E);
+            int n = 0;
+            foreach (var route in terr.IslandRoutes)
+            {
+                var pts = route.Points;
+                if (pts == null || pts.Count < 12) continue;
+                // One per route at most, a little way in from the gate so it is not parked in a junction.
+                int idx = 6 + rng.Next(Mathf.Max(1, pts.Count - 12));
+                var here = pts[idx];
+                var fwd = pts[Mathf.Min(pts.Count - 1, idx + 2)] - pts[Mathf.Max(0, idx - 2)];
+                if (fwd.Length() < 1e-3f) continue;
+                fwd = fwd.Normalized();
+                var side = new Vector2(-fwd.Y, fwd.X) * ((rng.Next(2) == 0) ? 4.5f : -4.5f);
+                float px = here.X + side.X, pz = here.Y + side.Y;
+                if (ProcIsland.InsideAnyTownPad(px, pz, 4f)) continue;
+                var w = PosFor(terr, px, pz);
+                if (Terrain.HasWater && w.Y < Terrain.SeaLevelY + 0.5f) continue;
+                var v = Vehicle.BuildByName(kinds[rng.Next(kinds.Length)], rng.Next(4));
+                if (v == null) continue;
+                world.AddChild(v);
+                // Lifted clear: a VehicleBody3D dropped exactly on the surface can start interpenetrating the
+                // terrain collider and get flung. Let it settle instead.
+                v.GlobalPosition = w + new Vector3(0f, 1.1f, 0f);
+                v.RotationDegrees = new Vector3(0f, ProcIsland.YawForDir(fwd.X, fwd.Y), 0f);
+                n++;
+            }
+            Log.Print($"[island-vehicles] {n} vehicle(s) parked on the island's roads");
+            return n;
         }
 
         /// <summary>PEI table 21, "Civilian Canada" -- the same table the map's own trash cans, filing cabinets

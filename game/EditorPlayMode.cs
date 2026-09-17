@@ -33,7 +33,8 @@ namespace UnturnedGodot
         /// reproducible: the same island must produce the same horde, or two people "on seed 12345" are not
         /// playing the same map. Null on a hand-built custom map, which is why every use is guarded.</summary>
         int? _islandSeed; string _mapRootForTables;
-        ZombieChunkField _zombies; LootField _loot; DiscordPresenceTicker _presence;
+        ZombieChunkField _zombies; LootField _loot; AnimalField _animals; DiscordPresenceTicker _presence;
+        bool _vehiclesDone;
         public void SetIsland(int? seed, string mapRootForTables)
         { _islandSeed = seed; _mapRootForTables = mapRootForTables; }
 
@@ -162,7 +163,7 @@ namespace UnturnedGodot
             var terr = Terrain.Active;
             if (_islandSeed.HasValue && terr?.IslandTiles != null && terr.IslandTiles.Count > 0)
             {
-                var (zom, loot) = ProcIslandSpawn.GenerateSpawnTables(terr, _islandSeed.Value);
+                var (zom, loot, fauna) = ProcIslandSpawn.GenerateSpawnTables(terr, _islandSeed.Value);
                 if (!ZombiesOff)
                 {
                     _zombies = new ZombieChunkField { Player = _player, Terr = terr };
@@ -172,6 +173,14 @@ namespace UnturnedGodot
                 _loot = new LootField { Player = _player, Terr = terr };
                 _loot.LoadGenerated(_mapRootForTables, loot);
                 _editor.AddChild(_loot);
+
+                _animals = new AnimalField { Player = _player, Terr = terr };
+                _animals.LoadGenerated(_mapRootForTables, fauna);
+                _editor.AddChild(_animals);
+
+                // ⚠ ONCE PER PLAYTEST, not per EnterPlay: vehicles are real bodies parked in the world, and
+                // re-running this on every Escape-and-play would stack another set on top of the last.
+                if (!_vehiclesDone) { ProcIslandSpawn.SpawnVehicles(terr, _editor, _islandSeed.Value); _vehiclesDone = true; }
             }
 
             // Handles, selection outlines and the gizmo are EDITOR furniture; they were still drawn over
@@ -208,7 +217,8 @@ namespace UnturnedGodot
             DiscordPresence.SetEditor(_editor?.MapName);
             if (GodotObject.IsInstanceValid(_zombies)) _zombies.QueueFree();
             if (GodotObject.IsInstanceValid(_loot)) _loot.QueueFree();
-            _zombies = null; _loot = null;
+            if (GodotObject.IsInstanceValid(_animals)) _animals.QueueFree();
+            _zombies = null; _loot = null; _animals = null;
             if (GodotObject.IsInstanceValid(_player)) _player.QueueFree();
             _player = null;
             if (_dayNight != null) _dayNight.VisualsEnabled = false;

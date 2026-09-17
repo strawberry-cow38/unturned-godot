@@ -39,6 +39,44 @@ namespace UnturnedGodot
             { AnimalCatalog.HorseId, ("horse", "Animal_Horse_tex.png", 1.81f, 170f) },
         };
 
+        /// <summary>Retail fauna TABLES with GENERATED points. Same split the loot field makes and for the same
+        /// reason: a fauna table says which animals belong on this map, which is content rather than terrain --
+        /// only WHERE they graze is procedural.
+        /// ⚠ Points arrive in Godot space already (no negate-Z): the caller is working in world coordinates,
+        /// not reading a retail file.</summary>
+        public void LoadGenerated(string peiRootForTables, System.Collections.Generic.IReadOnlyList<Vector3> pts)
+        {
+            LoadTablesOnly(System.IO.Path.Combine(peiRootForTables, "Spawns", "Fauna.dat"));
+            foreach (var q in pts) _pts.Add(new Pt { Type = 0, X = q.X, Z = q.Z });
+            Log.Print($"[animals] {_pts.Count} GENERATED fauna points, {(_tableIds?.Length ?? 0)} tables");
+        }
+
+        /// <summary>Just the tables from a Fauna.dat, stopping before its points. ⚠ Split out of LoadFromPei
+        /// rather than copied: the table format has a version-conditional field in it, and a second parser that
+        /// drifts on `ver > 2` would read the animal lists off by two bytes and populate the island with
+        /// whatever that happened to decode to.</summary>
+        void LoadTablesOnly(string path)
+        {
+            if (!System.IO.File.Exists(path)) return;
+            var b = System.IO.File.ReadAllBytes(path); int o = 0;
+            byte U8() => b[o++];
+            ushort U16() { var v = System.BitConverter.ToUInt16(b, o); o += 2; return v; }
+            void RStr() { int n = U8(); o += n; }
+            byte ver = U8();
+            byte tcount = U8();
+            _tableIds = new ushort[tcount][];
+            for (int t = 0; t < tcount; t++)
+            {
+                o += 3; RStr();
+                if (ver > 2) o += 2;
+                byte tiers = U8();
+                var ids = new List<ushort>();
+                for (int ti = 0; ti < tiers; ti++) { RStr(); o += 4; byte sc = U8(); for (int s = 0; s < sc; s++) ids.Add(U16()); }
+                AnimalCatalog.IncludeHorse(ids);
+                _tableIds[t] = ids.ToArray();
+            }
+        }
+
         public void LoadFromPei(string peiRoot)
         {
             string path = System.IO.Path.Combine(peiRoot, "Spawns", "Fauna.dat");
