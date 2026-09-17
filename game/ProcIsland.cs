@@ -1191,6 +1191,18 @@ namespace UnturnedGodot
                 // ribbon turns at 1.5 m radius" off a half-width sample span. So the span goes in the log
                 // beside the number, and whether these are defects is then readable rather than arguable.
                 float gradeRun = 0f, gradeRise = 0f, turnV1 = 0f, turnV2 = 0f;
+                // ⚠ AND THE DISTRIBUTION, NOT JUST THE WORST. "Sharpest turn 179.7 deg at pt 93 of 99" names
+                // ONE seam. Whether the tail seam is THE cause or merely the worst instance needs every
+                // offending turn bucketed by where it sits: at the head seam (StubPoints in), at the tail seam
+                // (StubPoints from the end), or out in the middle where the search itself is at fault.
+                //
+                // tinyclaw's asymmetry claim is the thing this tests: A* STARTS at the head stub's outer end
+                // heading outward, so that join is a continuation and cannot reverse -- only the REVERSED tail
+                // can be entered from the wrong bearing. If that is right, head must read ~0 and tail must
+                // carry them. If head is non-zero the claim is wrong and fixing the tail alone will not do it.
+                // Both counts ignore sub-metre segments, since a ratio over 18 cm is not a defect.
+                int turnHead = 0, turnTail = 0, turnMid = 0;
+                int gradeHead = 0, gradeTail = 0, gradeMid = 0;
                 foreach (var rt in routes)
                 {
                     for (int i = 1; i < rt.Points.Count; i++)
@@ -1204,6 +1216,13 @@ namespace UnturnedGodot
                         {
                             float g = Mathf.Abs(hb - ha) / run;
                             if (g > worstGrade) { worstGrade = g; gradeOn = rt.Kind.ToString(); gradeRun = run; gradeRise = Mathf.Abs(hb - ha); }
+                            if (g > 0.35f && run >= 1f)
+                            {
+                                int fromEnd = rt.Points.Count - 1 - i;
+                                if (Mathf.Abs(i - StubPoints) <= 2) gradeHead++;
+                                else if (Mathf.Abs(fromEnd - StubPoints) <= 2) gradeTail++;
+                                else gradeMid++;
+                            }
                         }
                     }
                     for (int i = 2; i < rt.Points.Count; i++)
@@ -1214,6 +1233,13 @@ namespace UnturnedGodot
                         float ang = Mathf.RadToDeg(Mathf.Acos(Mathf.Clamp(v1.Normalized().Dot(v2.Normalized()), -1f, 1f)));
                         if (ang > worstTurn)
                         { worstTurn = ang; turnOn = rt.Kind.ToString(); turnAt = i; turnOf = rt.Points.Count; turnV1 = v1.Length(); turnV2 = v2.Length(); }
+                        if (ang > 50f && v1.Length() >= 1f && v2.Length() >= 1f)
+                        {
+                            int fromEnd = rt.Points.Count - 1 - i;
+                            if (Mathf.Abs(i - StubPoints) <= 2) turnHead++;
+                            else if (Mathf.Abs(fromEnd - StubPoints) <= 2) turnTail++;
+                            else turnMid++;
+                        }
                     }
                 }
                 Log.Print($"[island-quality] worst per-step gradient {worstGrade * 100f:0.#}% on a {gradeOn} "
@@ -1221,6 +1247,10 @@ namespace UnturnedGodot
                           + $"sharpest turn {worstTurn:0.#} deg on a {turnOn} at pt {turnAt}/{turnOf} "
                           + $"[between a {turnV1:0.00} m and a {turnV2:0.00} m segment] (suite asserts < 50 deg) "
                           + $"-- {gw}x{gh} grid; the suite fixture is 257x257");
+                Log.Print($"[island-quality] over-threshold on segments >= 1 m, by position: turns over 50 deg "
+                          + $"-- {turnHead} at the HEAD seam, {turnTail} at the TAIL seam, {turnMid} mid-route; "
+                          + $"gradients over 35% -- {gradeHead} head, {gradeTail} tail, {gradeMid} mid "
+                          + $"(seam = within 2 points of StubPoints={StubPoints} from that end)");
             }
             ReportRoutePairs(routes);
             ReportCrossings(routes, pois);
