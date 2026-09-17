@@ -720,6 +720,11 @@ void fragment() {
             _islandRoutes = ProcIsland.CarveRoutes(_grid, _gw, _gh, pois, _islandLinks, _islandConnectors, pars);
             // AFTER the roads, because a trail branches off one: it needs the finished spline to pick an
             // anchor on, and the ground it cuts is ground the roads have already had their say about.
+            // ROADS THAT JOIN ROADS. Added to IslandRoutes itself, so the conform, the splines, the paint and
+            // the roadside props all treat them as the roads they are -- only the two things that assume a
+            // route ends at a cap tell them apart, by Kind.
+            // ⚠ BEFORE the trails, so a trail's "keep clear of the roads" test sees these too.
+            _islandRoutes.AddRange(ProcIsland.CarveJunctions(_grid, _gw, _gh, pois, _islandRoutes, pars));
             (_islandTrails, _islandCamps) = ProcIsland.CarveTrails(_grid, _gw, _gh, pois, _islandRoutes, pars);
             // LAST of the ground-shaping passes: a landmark refuses to sit near a road, a trail or a camp, so
             // all three have to exist before it can tell.

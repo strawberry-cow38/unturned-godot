@@ -333,6 +333,10 @@ namespace UnturnedGodot
             foreach (var route in terr.IslandRoutes)
             {
                 if (route.Points == null || route.Points.Count < 2) continue;
+                // ⚠ A JUNCTION ROAD HAS NO CAP AT EITHER END -- that is what it is for. Measuring its ends
+                // against the nearest cap prop would report two enormous gaps per junction and drown the number
+                // this check exists to protect, which is that every TOWN road meets its cap exactly.
+                if (route.Kind == ProcIsland.LinkKind.Junction) continue;
                 foreach (var end in new[] { route.Points[0], route.Points[^1] })
                 {
                     // The cap's MOUTH, not its centre: the ramp is the piece's local +Y and the tile is 24 m
@@ -2042,9 +2046,16 @@ namespace UnturnedGodot
                 // ⚠ THE END JOINTS ARE THE CAP'S HEIGHT, NOT THE LOCAL MAXIMUM. A route's first and last points
                 // ARE its gate, and the cap prop is seated by TilePosFor -- pad height plus the lift, with no
                 // hunting -- so seating the ends the same way makes them agree by construction.
-                var last = route.Points[^1];
-                pts[0] = TilePosFor(terr, route.Points[0].X, route.Points[0].Y);
-                pts[^1] = TilePosFor(terr, last.X, last.Y);
+                // ⚠ ...unless there is no cap. A junction road ends in the middle of another road, so there
+                // is no cap prop whose height its end should take -- seating it at the nearest one would drag
+                // the end to a height hundreds of metres away. Its ends keep the seat JointPosAlong gave them,
+                // which is the ground it actually meets.
+                if (route.Kind != ProcIsland.LinkKind.Junction)
+                {
+                    var last = route.Points[^1];
+                    pts[0] = TilePosFor(terr, route.Points[0].X, route.Points[0].Y);
+                    pts[^1] = TilePosFor(terr, last.X, last.Y);
+                }
 
                 // ⭐ CONFORM THE GROUND TO THE ROAD (strawberry: "road splines are floating. a LOT"). The road
                 // owns its Y so it can hold a grade; the ground under it has no such need, so it is the half

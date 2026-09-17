@@ -533,7 +533,13 @@ namespace UnturnedGodot
         /// <summary>What runs between two monuments. Paved road for permanent places, dirt trail whenever a
         /// construction site is an end (a site is temporary -- nobody lays asphalt to one), rail only for long
         /// hauls between towns and bases, which is where rail earns its keep over a road.</summary>
-        public enum LinkKind { Road, Trail, Rail }
+        /// <summary>⚠ Junction is a ROAD that ends on another road rather than at a town's cap
+        /// (strawberry 2026-09-17: "allow road splines to connect to eachother instead of only
+        /// connecting to line caps"). It is its own kind and not just a Road because two things
+        /// downstream MUST tell them apart: SpawnRoutes pins a route's ends to a cap prop's exact
+        /// height, and ReportCapJoins measures every end against the nearest cap. Both are right
+        /// for a road between towns and both are nonsense for one that stops in open country.</summary>
+        public enum LinkKind { Road, Trail, Rail, Junction }
 
         public readonly struct Link
         {
@@ -951,7 +957,7 @@ namespace UnturnedGodot
         /// because the day a Trail gets a narrower material this is the number that should shrink.</summary>
         static float DesignHalfFor(LinkKind k) => k switch
         {
-            LinkKind.Road => 4.0f,    // 8 m carriageway
+            LinkKind.Road or LinkKind.Junction => 4.0f,    // 8 m carriageway
             LinkKind.Rail => 3.0f,    // single track + ballast shoulder
             _ => 2.5f,                // dirt trail
         };
@@ -965,7 +971,7 @@ namespace UnturnedGodot
         static float SlopeCostFor(LinkKind k) => k switch
         {
             LinkKind.Rail => 14f,
-            LinkKind.Road => 6f,
+            LinkKind.Road or LinkKind.Junction => 6f,
             _ => 2.5f,                // a trail is allowed to be steep; that is what makes it a trail
         };
 
@@ -1074,7 +1080,7 @@ namespace UnturnedGodot
                     int gy = Mathf.Clamp(Mathf.RoundToInt(r.Points[i].Y / Unit), 0, gh - 1);
                     prof[i] = ToWorld(grid[gx, gy]);
                 }
-                int win = r.Kind == LinkKind.Rail ? 24 : r.Kind == LinkKind.Road ? 14 : 9;
+                int win = r.Kind == LinkKind.Rail ? 24 : r.Kind is LinkKind.Road or LinkKind.Junction ? 14 : 9;
                 var sm = new float[m];
                 for (int i = 0; i < m; i++)
                 {
@@ -1708,6 +1714,170 @@ namespace UnturnedGodot
             return (trails, camps);
         }
 
+        // ---- ROADS THAT JOIN OTHER ROADS ------------------------------------------------------------------
+        // strawberry 2026-09-17: "allow road splines to connect to eachother instead of only connecting to
+        // line caps."
+        //
+        // Every road on the island runs gate-to-gate: it starts at one town's cap prop and ends at another's,
+        // because that is the only way a road was ever allowed to terminate. So the network is a graph whose
+        // only vertices are towns, and two roads passing 300 m apart in open country never meet.
+        //
+        // A junction road fixes that by having NO gate at either end: it leaves one existing road at a right
+        // angle, crosses to another, and stops on it. Both ends are T-junctions with a spline, not caps.
+        public const int MaxJunctions = 4;
+        const float JuncMin = 150f, JuncMax = 620f;     // shorter is a layby, longer is just another road
+        const float JuncStraight = 30f;                  // leave the parent road square-on before bending
+        // Between junction roads, so they do not braid. ⚠ 300, down from 420: the exclusion applies around
+        // BOTH ends of one that is already built, so 420 knocked out most of the network after the first
+        // and every seed produced one or two. The cap is what limits the count; this only stops two
+        // junctions being built beside each other.
+        const float JuncApart = 300f;
+        // ⚠ 110, not 190. At 190 there were ZERO anchors on every seed -- and not because the roads are
+        // short: a road RUNS BETWEEN TOWNS, so most of its length is near one of them by definition, and
+        // 28 pads each claiming a 190 m apron covers the network. The bar has to keep a junction out of
+        // a town's approach, not out of the half of the island that has towns in it.
+        const float JuncFromTown = 110f;
+        public static int JunctionPairsSeen;
+
+        /// <summary>Run a few roads between roads. Same shape as the trail spurs -- leave square-on, bend, and
+        /// arrive square-on -- but at road width, and joining a spline at BOTH ends instead of one.
+        ///
+        /// ⚠ Kind is Junction, not Road, and the whole point is what that turns OFF downstream: SpawnRoutes
+        /// seats a route's first and last joints at a cap prop's exact height, and ReportCapJoins then measures
+        /// every end against the nearest cap. A road that ends in the middle of another road has no cap to be
+        /// measured against, and pinning its end to one would drag it to a height 400 m away.</summary>
+        public static System.Collections.Generic.List<Route> CarveJunctions(
+            float[,] grid, int gw, int gh, System.Collections.Generic.List<Poi> pois,
+            System.Collections.Generic.List<Route> routes, Params p)
+        {
+            const float Unit = 4f;
+            var made = new System.Collections.Generic.List<Route>();
+            JunctionPairsSeen = 0;
+            if (routes == null || routes.Count < 2) return made;
+
+            float H(float wx, float wz)
+            {
+                int gx = Mathf.Clamp(Mathf.RoundToInt(wx / Unit), 0, gw - 1);
+                int gy = Mathf.Clamp(Mathf.RoundToInt(wz / Unit), 0, gh - 1);
+                return ToWorld(grid[gx, gy]);
+            }
+
+            // Candidate anchors: sampled along each road, away from its ends (the ends are town approaches)
+            // and away from every town pad.
+            var anchors = new System.Collections.Generic.List<(int R, int I, Vector2 P, Vector2 T)>();
+            int anchorNearTown = 0;
+            for (int ri = 0; ri < routes.Count; ri++)
+            {
+                var r = routes[ri];
+                if (r.Kind != LinkKind.Road || r.Points.Count < StubPoints * 4) continue;
+                for (int i = StubPoints * 2; i < r.Points.Count - StubPoints * 2; i += 6)
+                {
+                    var q = r.Points[i];
+                    if (InsideAnyTownPad(q.X, q.Y, JuncFromTown)) { anchorNearTown++; continue; }
+                    var t = (r.Points[Mathf.Min(r.Points.Count - 1, i + 3)] - r.Points[Mathf.Max(0, i - 3)]).Normalized();
+                    anchors.Add((ri, i, q, t));
+                }
+            }
+
+            // Pair them up: different roads, a sane gap, and the two roads must be roughly PARALLEL where they
+            // face each other -- a spur between two roads that already converge is a triangle with a pointless
+            // third side, and it is also the shape most likely to cross a third road on the way.
+            var pairs = new System.Collections.Generic.List<(float S, int A, int B)>();
+            int rejSame = 0, rejDist = 0, rejAngle = 0;
+            for (int a = 0; a < anchors.Count; a++)
+                for (int b = a + 1; b < anchors.Count; b++)
+                {
+                    if (anchors[a].R == anchors[b].R) { rejSame++; continue; }
+                    float d = (anchors[a].P - anchors[b].P).Length();
+                    if (d < JuncMin || d > JuncMax) { rejDist++; continue; }
+                    var ab = (anchors[b].P - anchors[a].P).Normalized();
+                    // Leave each road near-perpendicular, or the junction is a merge rather than a T.
+                    float pa = Mathf.Abs(ab.Dot(anchors[a].T)), pb = Mathf.Abs(ab.Dot(anchors[b].T));
+                    if (pa > 0.55f || pb > 0.55f) { rejAngle++; continue; }
+                    JunctionPairsSeen++;
+                    // Prefer SHORT and prefer square: a long diagonal reads as a road someone forgot to finish.
+                    pairs.Add((d + (pa + pb) * 260f, a, b));
+                }
+            pairs.Sort((x, y) => x.S.CompareTo(y.S));
+
+            var taken = new System.Collections.Generic.List<Vector2>();
+            int crossed = 0;
+            var whyN = new int[4];   // 0 town, 1 water, 2 too steep, 3 crosses a third road
+            var joins = new System.Text.StringBuilder();
+            foreach (var pr in pairs)
+            {
+                if (made.Count >= MaxJunctions) break;
+                var A = anchors[pr.A]; var B = anchors[pr.B];
+                bool near = false;
+                foreach (var t in taken)
+                    if ((t - A.P).Length() < JuncApart || (t - B.P).Length() < JuncApart) near = true;
+                if (near) continue;
+
+                // Square-on departures at both ends, toward each other.
+                var ab = (B.P - A.P).Normalized();
+                var na = new Vector2(-A.T.Y, A.T.X); if (na.Dot(ab) < 0f) na = -na;
+                var nb = new Vector2(-B.T.Y, B.T.X); if (nb.Dot(-ab) < 0f) nb = -nb;
+                var a0 = A.P + na * JuncStraight;
+                var b0 = B.P + nb * JuncStraight;
+                float span = (b0 - a0).Length();
+                if (span < 40f) continue;
+
+                // Hermite between the straight runs, with each tangent along its own departure -- the same
+                // construction the trails use, and for the same reason: the bend must start AFTER the straight.
+                var pts = new System.Collections.Generic.List<Vector2> { A.P };
+                int sn = Mathf.Max(2, Mathf.RoundToInt(JuncStraight / Unit));
+                for (int k = 1; k <= sn; k++) pts.Add(A.P + na * (JuncStraight * k / sn));
+                var m0 = na * span; var m1 = -nb * span;
+                int cn = Mathf.Max(8, Mathf.RoundToInt(span / Unit));
+                for (int k = 1; k <= cn; k++)
+                {
+                    float t = k / (float)cn, t2 = t * t, t3 = t2 * t;
+                    pts.Add(a0 * (2f * t3 - 3f * t2 + 1f) + m0 * (t3 - 2f * t2 + t)
+                          + b0 * (-2f * t3 + 3f * t2) + m1 * (t3 - t2));
+                }
+                for (int k = sn - 1; k >= 0; k--) pts.Add(B.P + nb * (JuncStraight * k / sn));
+
+                // ⚠ REFUSE ONE THAT CROSSES A THIRD ROAD. Two roads meeting at a T is a junction; a road
+                // passing THROUGH another with no junction piece is a level crossing with no crossing on it.
+                bool bad = false; int why = -1;
+                float prevH = H(pts[0].X, pts[0].Y);
+                for (int k = 2; k < pts.Count - 2 && !bad; k++)
+                {
+                    if (InsideAnyTownPad(pts[k].X, pts[k].Y, 60f)) { bad = true; why = 0; break; }
+                    float hk = H(pts[k].X, pts[k].Y);
+                    if (hk < p.SeaLevel + 2f) { bad = true; why = 1; break; }
+                    // ⚠ AND REFUSE STEEP GROUND. Unlike every other road here this one is NOT A*-routed -- it
+                    // is a plan-space Hermite between two fixed points, so it has no way to go round a hill.
+                    // SpawnRoutes would then conform the ground to it and cut a trench through one. A junction
+                    // road is a convenience, so it is allowed to simply not exist where the ground says no.
+                    if (Mathf.Abs(hk - prevH) > 2.6f) { bad = true; why = 2; break; }
+                    prevH = hk;
+                    for (int ri = 0; ri < routes.Count && !bad; ri++)
+                    {
+                        if (ri == A.R || ri == B.R) continue;
+                        var rr = routes[ri];
+                        for (int i = 0; i < rr.Points.Count; i += 2)
+                            if ((rr.Points[i] - pts[k]).LengthSquared() < 26f * 26f) { bad = true; why = 3; break; }
+                    }
+                }
+                if (bad) { crossed++; if (why >= 0) whyN[why]++; continue; }
+
+                made.Add(new Route(LinkKind.Junction, pts));
+                taken.Add(A.P); taken.Add(B.P);
+                // WHERE, so the two T-junctions can be looked at. A junction road's whole claim is about its
+                // two ENDS, and no count can say whether they meet the road they are supposed to meet.
+                joins.Append($" ({A.P.X:0},{-A.P.Y:0})->({B.P.X:0},{-B.P.Y:0})");
+            }
+
+            Log.Print($"[island-junctions] {anchors.Count} anchor(s) ({anchorNearTown} dropped within {JuncFromTown:0} m of a town); pairs rejected: {rejSame} same road, "
+                      + $"{rejDist} out of range {JuncMin:0}-{JuncMax:0} m, {rejAngle} not square enough");
+            Log.Print($"[island-junctions] {made.Count} road(s) joining other roads, from {JunctionPairsSeen} "
+                      + $"candidate pair(s) ({crossed} refused: {whyN[0]} into a town, {whyN[1]} into water, "
+                      + $"{whyN[2]} too steep, {whyN[3]} crossing a third road), "
+                      + $"cap {MaxJunctions}, {JuncApart:0} m apart, joining at{joins}");
+            return made;
+        }
+
         // ---- PEAKS AND VIEWPOINTS -------------------------------------------------------------------------
         // strawberry 2026-09-17: "add radar tower props to the top of peaks (but dont spam them) add benches
         // with views, (dont spam, obv)".
@@ -2012,7 +2182,7 @@ namespace UnturnedGodot
             // takes whatever slope sits outside that wall, and the worst trail grade jumped 17.5% -> 33% on the
             // stub alone. Smoothing further along the path grades that out -- it costs more cut-and-fill, which
             // is exactly what a real road does at a junction rather than rearing up at the gate.
-            int win = r.Kind == LinkKind.Rail ? 24 : r.Kind == LinkKind.Road ? 14 : 9;
+            int win = r.Kind == LinkKind.Rail ? 24 : r.Kind is LinkKind.Road or LinkKind.Junction ? 14 : 9;
             var sm = new float[m];
             for (int i = 0; i < m; i++)
             {
