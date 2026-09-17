@@ -905,14 +905,11 @@ namespace UnturnedGodot
         /// is not.</summary>
         static Vector3 PavementPos(Terrain terr, ProcIsland.MonumentTile t, float px, float pz)
         {
-            // ⚠⚠ A TURN DOES NOT COVER ITS OUTER CORNER (strawberry: "streetlights on road turns still arent
-            // positioned on the sidewalk"). Measured off Road_Turn_0: bucket its vertices into thirds of the
-            // 24 m tile and the (-X,+Y) third -- the outside of the bend, which is exactly where FreeSide puts
-            // the furniture -- contains NO VERTICES AT ALL. The piece is an L, not a square. So seating a pole
-            // there at the tile's pavement height stands it 0.4 m above a prop that is not underneath it.
-            // The geometry was right and the HEIGHT was wrong, which is why moving the pole sideways (twice)
-            // never fixed it.
-            if (t.Piece == ProcIsland.RoadPiece.Turn) return PosFor(terr, px, pz);
+            // ⚠ REVERTED: I read "no VERTEX in that plan third" as "no SURFACE there" and dropped Turn furniture
+            // onto the terrain. Master, who can see it: "the height wasnt the issue." A 28-vertex fan has no
+            // vertex in most of its thirds and is still spanned by triangles across them -- absence of a vertex
+            // is not absence of a face, and I inferred one from the other. Sinking the pole 0.46 m was a new
+            // fault introduced while chasing a real one that is somewhere else.
             float y = TilePosFor(terr, t.X, t.Z).Y + PavementTop;
             var w = PosFor(terr, px, pz);
             return new Vector3(w.X, y, w.Z);
