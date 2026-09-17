@@ -1238,9 +1238,11 @@ namespace UnturnedGodot
             // What counts as a corner worth a barrier. Radius of curvature, in metres, measured over the
             // joint spacing: below this the bend is tight enough to want protecting.
             const float CornerRadius = 90f;
+            // Below this the bend turns faster than a 16.25 m bar can follow -- see the note at the refusal.
+            const float MinFenceRadius = 55f;
             const int CornerPad = 1;         // joints of barrier carried either side, so a run reads as a rail
 
-            int fences = 0, poles = 0, miss = 0, corners = 0;
+            int fences = 0, poles = 0, miss = 0, corners = 0, fenceTooTight = 0;
             float sharpest = float.MaxValue; var radii = new System.Collections.Generic.List<float>();
             int ri = -1;
 
@@ -1358,6 +1360,22 @@ namespace UnturnedGodot
                     float cross = tan[lo].X * tan[hi].Y - tan[lo].Y * tan[hi].X;
                     fenceSide[i] = cross >= 0f ? -1f : 1f;
                 }
+                // ⚠⚠ SPLIT A RUN AT AN INFLECTION -- DO NOT HOLD ONE SIGN ACROSS IT. Holding was the previous
+                // fix and it is what produced the worst panels on the island.
+                //
+                // A barrier is offset to the OUTSIDE of a bend, and outward offsetting is always well behaved.
+                // Offsetting INWARD by more than the radius inverts the curve -- the offset crosses itself and
+                // lands on the far side of the road. So a run that spans an inflection, with one sign held
+                // across it, offsets part of itself the wrong way; on a tight bend that is catastrophic.
+                //
+                // The dump says exactly that: the worst panel was 81.5 deg off, sitting 2.5 m from a road it
+                // should be 11 m from, on a 21 m radius turn -- and the next worst 23 deg at 10.3 m on a 7 m
+                // radius. Tight turns, and much closer in than the offset they were built with.
+                //
+                // The outside of a bend genuinely swaps sides at an inflection, so a barrier run has no
+                // business spanning one. Break it there and let each half take its own outward sign.
+                for (int i = 1; i < m; i++)
+                    if (fenceSide[i] != fenceSide[i - 1]) wantFence[i] = false;
                 for (int i = 0; i < m; i++)
                 {
                     if (!wantFence[i]) continue;
@@ -1410,6 +1428,26 @@ namespace UnturnedGodot
                         // points where the edge itself used to jump.
                         float outward2 = fenceSide[home];
                         float px = at.X, pz = at.Y;
+                        // ⚠⚠ A RIGID 16.25 m PANEL CANNOT FOLLOW A TIGHT BEND, and forcing one to is what put
+                        // barriers across the carriageway. Over its own length the road's heading changes by
+                        // (panel length / radius) radians: on the 21 m radius the dump found, that is 16.25/21
+                        // = 0.77 rad = 44 degrees from end to end, so the straight bar chords clean across the
+                        // curve no matter where its centre sits or which way it is aimed. Measured worst cases
+                        // were 81.5 deg off at a 21 m radius and 23 deg at 7 m -- the tightest bends on the
+                        // island, every time.
+                        //
+                        // So the panel is refused where the bend is tighter than it can express. A gap on a
+                        // hairpin is better than a rail lying across the road, and it is the honest answer for
+                        // a kit whose only barrier is a straight 16 m bar.
+                        int lo3 = Mathf.Max(1, home - 1), hi3 = Mathf.Min(m - 2, home + 1);
+                        var s1 = edge[lo3] - edge[lo3 - 1];
+                        var s2 = edge[hi3 + 1] - edge[hi3];
+                        if (s1.Length() > 1e-3f && s2.Length() > 1e-3f)
+                        {
+                            float turn = Mathf.Abs(Mathf.Acos(Mathf.Clamp(s1.Normalized().Dot(s2.Normalized()), -1f, 1f)));
+                            float radius = turn > 1e-4f ? (s1.Length() + s2.Length()) * 0.5f / turn : 9999f;
+                            if (radius < MinFenceRadius) { fenceTooTight++; continue; }
+                        }
                         if (!RoadsideOk(terr, px, pz, ri)) continue;
                         // ⚠ THE RAIL FACE HAS TO FACE THE ROAD. Measured off the mesh: in the rail height band
                         // Fence_Road_0 has 158 vertices at local x > 0 spanning z 0.50..1.28 -- the beam --
@@ -1467,7 +1505,8 @@ namespace UnturnedGodot
             Log.Print($"[island-roadside] fence tilt off vertical: max {fenceTiltMax:0.0}°, median "
                       + $"{(fenceTilts.Count > 0 ? fenceTilts[fenceTilts.Count / 2] : 0f):0.0}°, "
                       + $"{fenceTilts.FindAll(t => t > 3f).Count}/{fenceTilts.Count} panel(s) past 3°");
-            Log.Print($"[island-roadside] {RoadsideOnRoad} prop(s) refused for standing on another road or trail");
+            Log.Print($"[island-roadside] {RoadsideOnRoad} prop(s) refused for standing on another road or trail, "
+                      + $"{fenceTooTight} barrier(s) refused for a bend tighter than {MinFenceRadius:0} m");
             Log.Print($"[island-roadside] {poles} power pole(s) at {PoleSpan:0} m, {fences} barrier panel(s) over {corners} bend(s) tighter than {CornerRadius:0} m{spread}"
                       + (miss > 0 ? $" ({miss} prop name(s) not in the catalogue)" : ""));
         }
@@ -2173,6 +2212,41 @@ namespace UnturnedGodot
             }
             Log.Print($"[island-fence] panel vs road tangent: mean {(angN > 0 ? angSum / angN : 0f):0.0}°, worst {angWorst:0.0}° "
                       + "(a barrier runs ALONG its road, so this must be near 0)");
+            // ⚠ DUMP THE TAIL, because the mean moved twice and the worst did not -- which means the bad
+            // panels have a different cause from the ordinary ones, and no aggregate can say what. For each of
+            // the worst few: where it is, how far off it is, how far from the road it sits, and how sharply
+            // that road is turning there. One of those four columns is what they have in common.
+            if (System.Environment.GetEnvironmentVariable("UG_FENCEDBG") == "1")
+            {
+                var rows = new System.Collections.Generic.List<(float A, float X, float Z, float D, float R)>();
+                foreach (var f in FenceMarks)
+                {
+                    float bestD = float.MaxValue; Vector2 tg = Vector2.Zero; float radius = 0f;
+                    foreach (var c in DebugCurves)
+                        for (int i = 2; i < c.Count - 1; i++)
+                        {
+                            float d = new Vector2(f.X - c[i].X, f.Z - c[i].Z).LengthSquared();
+                            if (d >= bestD) continue;
+                            bestD = d;
+                            tg = new Vector2(c[i].X - c[i - 1].X, c[i].Z - c[i - 1].Z);
+                            // Turn radius from three consecutive samples: chord over the angle between them.
+                            var a1 = new Vector2(c[i].X - c[i - 1].X, c[i].Z - c[i - 1].Z);
+                            var a2 = new Vector2(c[i + 1].X - c[i].X, c[i + 1].Z - c[i].Z);
+                            if (a1.Length() > 1e-3f && a2.Length() > 1e-3f)
+                            {
+                                float turn = Mathf.Abs(Mathf.Acos(Mathf.Clamp(a1.Normalized().Dot(a2.Normalized()), -1f, 1f)));
+                                radius = turn > 1e-4f ? a1.Length() / turn : 9999f;
+                            }
+                        }
+                    if (tg.Length() < 1e-4f) continue;
+                    float ang = Mathf.RadToDeg(Mathf.Acos(Mathf.Clamp(Mathf.Abs(tg.Normalized().Dot(new Vector2(f.DX, f.DZ))), 0f, 1f)));
+                    rows.Add((ang, f.X, f.Z, Mathf.Sqrt(bestD), radius));
+                }
+                rows.Sort((x, y) => y.A.CompareTo(x.A));
+                for (int i = 0; i < rows.Count && i < 8; i++)
+                    Log.Print($"[island-fencedbg] {rows[i].A:0.0}° off at ({rows[i].X:0},{rows[i].Z:0}), "
+                              + $"{rows[i].D:0.0} m from the road, local turn radius {rows[i].R:0} m");
+            }
             Log.Print($"[island-fence] {over} fence sample(s) inside the carriageway of {FenceMarks.Count} panel(s), "
                       + $"worst {worst:0.0} m in" + (over > 0 ? $" at ({at.X:0},{at.Y:0})" : ""));
         }
@@ -2701,19 +2775,33 @@ namespace UnturnedGodot
                 for (int k = idx + 1; k < c.Count; k++) tail += c[k].DistanceTo(c[k - 1]);
                 return run < 25f || tail < 25f;
             }
+            // ⚠⚠ j STARTS AT i: A ROAD CAN OVERLAP ITSELF, and excluding that is why this read 38.9 m while a
+            // photograph showed a hairpin whose two limbs are 2.5 m apart. A road doubling back on itself IS
+            // two pieces of road in the same place -- it does not stop being an overlap because both halves
+            // belong to the same route. For i == j the points must be far apart ALONG the road (60+ samples,
+            // ~300 m) or every road trivially overlaps its own neighbour.
             for (int i = 0; i < curves.Count; i++)
-                for (int j = i + 1; j < curves.Count; j++)
+                for (int j = i; j < curves.Count; j++)
                     for (int a = 0; a < curves[i].Count; a += 2)
                     {
                         var pa = curves[i][a];
-                        if (ProcIsland.InsideAnyTownPad(pa.X, -pa.Z, 90f)) continue;
+                        // ⚠ THE TOWN EXEMPTION IS FOR TWO ROADS CONVERGING ON A GATE. It has no business
+                        // covering a road folded back on ITSELF -- that is a hairpin, and a hairpin 90 m from
+                        // a town is exactly as wrong as one in open country. Applying it to the self case is
+                        // why this read 38.9 m with a photograph of limbs 2.5 m apart.
+                        if (i != j && ProcIsland.InsideAnyTownPad(pa.X, -pa.Z, 90f)) continue;
                         if (NearOwnEnd(i, a)) continue;
-                        for (int b = 0; b < curves[j].Count; b += 2)
+                        // ⚠ 16 SAMPLES (~80 m along the road), NOT 60. At 60 (~300 m) this still read 38.9 m
+                        // with a hairpin in the picture: a U-turn at 21 m radius is only pi*21 = 66 m of arc,
+                        // so its two limbs are ~13 samples apart and the gate excluded the very thing it was
+                        // added to find. 80 m is still far enough that two points that close in SPACE can only
+                        // mean the road doubled back.
+                        for (int b = (i == j ? a + 16 : 0); b < curves[j].Count; b += 2)
                         {
                             if (NearOwnEnd(j, b)) continue;
                             var pb = curves[j][b];
                             float d = new Vector2(pa.X - pb.X, pa.Z - pb.Z).Length();
-                            if (d < nearest) { nearest = d; nearAt = new Vector2(pa.X, pa.Z); nearKinds = $"{curveKind[i]}+{curveKind[j]}"; }
+                            if (d < nearest) { nearest = d; nearAt = new Vector2(pa.X, pa.Z); nearKinds = i == j ? $"{curveKind[i]} DOUBLING BACK ON ITSELF" : $"{curveKind[i]}+{curveKind[j]}"; }
                             if (d < ProcIsland.RenderedRoadHalf * 2f) tarmacShared++;
                         }
                     }
