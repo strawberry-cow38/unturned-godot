@@ -864,6 +864,18 @@ namespace UnturnedGodot
                         int have = perFace.TryGetValue((d.dx, d.dz), out var l3) ? l3.Count : 0;
                         if (have >= CapFor(d)) continue;
                         float al = bm.bx * d.dx + bm.bz * d.dz;
+                        // ⚠⚠ A FLOOR ON HOW BAD THE NEW FACE MAY BE. This used to take the best face with room
+                        // no matter how bad "best" was, and when the only room was behind the town it put the
+                        // gate THERE -- measured at 157, 149 and 127 degrees off on the three reference seeds,
+                        // 3 gates an island facing away from the town they exist to reach. The road then loops
+                        // 180 degrees around the pad to get going, which is what strawberry saw and named:
+                        // "it will just send 2 random connect points to eachother and loop around and overlap
+                        // on itself". Below the floor the gate is NOT moved -- it stays on the crowded face and
+                        // the snapper's existing over-capacity fallback takes it, which is the same path that
+                        // already runs whenever there is nowhere to move a gate at all. A crowded face is a
+                        // worse street grid; a backwards gate is a hairpin at the wall and a loop around the
+                        // pad, and the folds all land on hairpins.
+                        if (!NoGateFloor && al < MinMoveAlign) continue;
                         if (al > bestAlign) { bestAlign = al; best = d; }
                     }
                     if (bestAlign == float.MinValue)
@@ -927,6 +939,15 @@ namespace UnturnedGodot
         /// <summary>How many gates were turned onto another face. Reported, because "the towns look better" is
         /// not a measurement and this pass is invisible in every other number until it fails.</summary>
         public static int GateFacesMoved;
+
+        /// <summary>The worst face a crowded gate may be moved onto: cos 75 deg. A gate leaving up to 75 degrees
+        /// off its bearing still turns the right way; past that it is heading across or away and the road has to
+        /// double back around the pad.</summary>
+        const float MinMoveAlign = 0.259f;
+
+        /// <summary>Control for the floor above. `UG_NOGATEFLOOR=1` restores the old take-anything behaviour, so
+        /// the fix can be A/B'd against itself on one seed instead of being believed.</summary>
+        static readonly bool NoGateFloor = System.Environment.GetEnvironmentVariable("UG_NOGATEFLOOR") == "1";
 
         /// <summary>Where a ray from `from`'s centre toward `to`'s centre leaves `from`'s square.</summary>
         static Connector Gate(System.Collections.Generic.List<Poi> pois, int from, int to, int link, LinkKind kind)
