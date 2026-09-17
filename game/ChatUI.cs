@@ -46,8 +46,13 @@ namespace UnturnedGodot
 
         const int ScrollbackLines = 8;
         const double FadeAfterSeconds = 12.0;   // a line stays readable long enough to answer it
-        const int AvatarPx = 18;                // matches the cap height of FontBody, so a row reads as one line
-        const int PanelWidth = 680;
+        const double FadeSeconds = 1.5;         // and then goes out over this, rather than blinking off
+        // BIGGER (strawberry 2026-09-17: "make the whole chat bigger"). One size up from FontBody, with the
+        // avatar and the input grown to match -- a bigger font in an unchanged row just crowds the picture.
+        const int ChatFont = UITheme.FontHeading;
+        const int AvatarPx = 26;
+        const int InputHeight = 34;
+        const int PanelWidth = 820;
 
         readonly List<(ushort speaker, string name, string text, bool server, double at)> _lines = new();
         // Decoded once per speaker, not once per line: the same person talking twenty times is one texture,
@@ -65,7 +70,7 @@ namespace UnturnedGodot
         {
             Layer = 20;   // above the HUD, below the pause overlay
 
-            _panel = new PanelContainer { Position = new Vector2(14, 14) };
+            _panel = new PanelContainer { Position = new Vector2(14, 14), Visible = false };   // nothing said yet
             _panel.AddThemeStyleboxOverride("panel", UITheme.Box(UITheme.Bg, UITheme.RadiusPanel));
             AddChild(_panel);
 
@@ -86,7 +91,7 @@ namespace UnturnedGodot
             {
                 PlaceholderText = "say something…   (Enter sends, Esc cancels)",
                 Visible = false,
-                CustomMinimumSize = new Vector2(PanelWidth, 28),
+                CustomMinimumSize = new Vector2(PanelWidth, InputHeight),
                 MaxLength = ChatRules.MaxMessageChars,   // the server would truncate anyway; better to feel the limit
             };
             UITheme.Field(_input);   // the one call that stops it rendering in Godot's default light chrome
@@ -95,7 +100,13 @@ namespace UnturnedGodot
 
             Reflow();
             GetViewport().SizeChanged += Reflow;
-            SetProcess(true);
+            // ⚠ PHYSICS, not _Process, and this is about being TESTABLE rather than about timing. TestHost
+            // steps _PhysicsProcess; it does not drive _Process at all, so a fade living there could not be
+            // observed by a test at any tick count -- the first version of the fade test failed on its very
+            // first assertion because the panel had never been told to hide. The player sees no difference
+            // (50 Hz is plenty for an alpha ramp, and a paused tree stops both), and the behaviour stops
+            // being something only a human with a stopwatch could check.
+            SetPhysicsProcess(true);
         }
 
         /// <summary>Top-left, and only the WIDTH tracks the viewport -- the position is a fixed inset now, so
@@ -105,7 +116,7 @@ namespace UnturnedGodot
         {
             var vp = GetViewport()?.GetVisibleRect().Size ?? new Vector2(1280, 720);
             float w = Mathf.Min(PanelWidth, vp.X - 28);
-            _input.CustomMinimumSize = new Vector2(w, 28);
+            _input.CustomMinimumSize = new Vector2(w, InputHeight);
             _panel.CustomMinimumSize = new Vector2(w + UITheme.PadPanel * 2, 0);
         }
 
@@ -119,16 +130,24 @@ namespace UnturnedGodot
             Repaint();
         }
 
-        public override void _Process(double delta)
+        public override void _PhysicsProcess(double delta)
         {
             _now += delta;
-            // Repaint only when something can actually have changed appearance: a line ageing past the fade
-            // threshold, or the input opening. Otherwise this is a rebuild every frame for nothing.
-            if (_lines.Count > 0 && !IsTyping)
-            {
-                double oldest = _now - _lines[^1].at;
-                if (oldest > FadeAfterSeconds && _panel.Visible) _panel.Visible = false;
-            }
+            // VISIBLE WHEN IT HAS SOMETHING TO SAY, OR WHEN YOU ARE TALKING (strawberry 2026-09-17). Typing
+            // pins it fully opaque -- you cannot be composing a line into a box that is fading out from under
+            // you. Otherwise it rides the age of the newest line and goes out over FadeSeconds.
+            //
+            // ⚠ Only the ALPHA moves here, never the rows. Repaint() rebuilds nodes and stays event-driven;
+            // this runs every frame and must stay a property write, which is what the old "must not repaint at
+            // 60 fps" note was protecting.
+            if (IsTyping) { _panel.Visible = true; _panel.Modulate = Colors.White; return; }
+            if (_lines.Count == 0) { _panel.Visible = false; return; }
+            double age = _now - _lines[^1].at;
+            if (age <= FadeAfterSeconds) { _panel.Visible = true; _panel.Modulate = Colors.White; return; }
+            float a = 1f - (float)((age - FadeAfterSeconds) / FadeSeconds);
+            if (a <= 0f) { _panel.Visible = false; return; }
+            _panel.Visible = true;
+            _panel.Modulate = new Color(1f, 1f, 1f, a);
         }
 
         /// <summary>The speaker's picture, decoded once and cached. Server lines (id 0) never have one.</summary>
@@ -180,13 +199,14 @@ namespace UnturnedGodot
 
                 // A server line carries NO name -- rendered from the CHANNEL, never from the text.
                 if (!ln.server && ln.name.Length > 0)
-                    row.AddChild(UITheme.Label(new Label { Text = ln.name + ":" }, UITheme.FontBody, UITheme.Text));
+                    row.AddChild(UITheme.Label(new Label { Text = ln.name + ":" }, ChatFont, UITheme.Text));
 
-                row.AddChild(UITheme.Label(new Label { Text = ln.text }, UITheme.FontBody,
+                row.AddChild(UITheme.Label(new Label { Text = ln.text }, ChatFont,
                                            ln.server ? UITheme.Accent : UITheme.TextBody));
                 _rows.AddChild(row);
             }
             _panel.Visible = true;
+            _panel.Modulate = Colors.White;   // a new line brings it back to full, whatever it faded to
         }
 
         public override void _Input(InputEvent e)
@@ -230,6 +250,7 @@ namespace UnturnedGodot
             // review note); chat is the second text field in the game and inherited the same requirement.
             Input.MouseMode = Input.MouseModeEnum.Visible;
             _panel.Visible = true;   // show the history you are replying to, and the box even with no history
+            _panel.Modulate = Colors.White;   // un-fade: a half-gone panel must not stay half-gone once you open it
             Repaint();
         }
 
@@ -257,6 +278,11 @@ namespace UnturnedGodot
         /// picture -- so a test can assert the avatar actually reached the row rather than that the lookup
         /// was merely called.</summary>
         public int DebugRowCount => _rows?.GetChildCount() ?? 0;
+        /// <summary>Whether the panel is on screen, and how faded -- the two halves of "only appear if there
+        /// is a recent message or you are typing". Separate, because visible-at-alpha-0 and invisible are
+        /// different states and only one of them is a bug.</summary>
+        public bool DebugPanelVisible => _panel != null && _panel.Visible;
+        public float DebugPanelAlpha => _panel?.Modulate.A ?? 0f;
         public int DebugAvatarsShown
         {
             get

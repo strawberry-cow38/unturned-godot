@@ -167,4 +167,56 @@ namespace UnturnedGodot.Testing
             yield break;
         }
     }
+
+    // "should only appear if theres a recent message in chat or if we have the chat input box focused,
+    // otherwise fade after no new chat msg" (strawberry 2026-09-17).
+    //
+    // ⚠ The third leg costs ~14 sim seconds and is the only one that matters. "Visible when fresh" and
+    // "visible while typing" both pass on a panel that is ALWAYS visible -- which is exactly the bug being
+    // guarded against -- so a suite without the slow leg would be green on the broken behaviour.
+    public sealed class ChatFadeTests : GameTest
+    {
+        public override string Name => "chat.fades_when_idle";
+        public override int Tier => 1;
+
+        static ChatUI Panel(Node world)
+        {
+            var ui = new ChatUI { Send = _ => true };
+            world.AddChild(ui);
+            return ui;
+        }
+
+        public override IEnumerable<Step> Run()
+        {
+            var ui = Panel(World);
+            yield return Ticks(2);
+            T.Check("nothing said yet: no panel", !ui.DebugPanelVisible);
+
+            ui.Receive(new ChatMessageEvent { Channel = (byte)ChatChannel.Global, SpeakerId = 5, Name = "Alice", Text = "hello" });
+            yield return Ticks(2);
+            T.Check($"a fresh line shows it at full opacity (alpha {ui.DebugPanelAlpha:0.00})",
+                    ui.DebugPanelVisible && ui.DebugPanelAlpha > 0.99f);
+
+            // TYPING PINS IT. Opened well after the line would otherwise have started fading.
+            ui.Open();
+            T.Check("opening the input shows it", ui.DebugPanelVisible && ui.IsTyping);
+            yield return Ticks(14 * Engine.PhysicsTicksPerSecond);   // burn past the fade window while typing
+            T.Check($"still fully visible while typing, {14}s after the last message (alpha {ui.DebugPanelAlpha:0.00})",
+                    ui.DebugPanelVisible && ui.DebugPanelAlpha > 0.99f);
+
+            // ...and once you stop typing, the same old line goes out.
+            ui.Close();
+            yield return Until(() => !ui.DebugPanelVisible, maxSimSeconds: 6);
+            T.Check("closing the box lets the stale line fade away", !ui.DebugPanelVisible);
+
+            // A new line brings it back from faded rather than leaving it half-gone.
+            ui.Receive(new ChatMessageEvent { Channel = (byte)ChatChannel.Global, SpeakerId = 5, Name = "Alice", Text = "still here" });
+            yield return Ticks(2);
+            T.Check($"a new line restores it to full (alpha {ui.DebugPanelAlpha:0.00})",
+                    ui.DebugPanelVisible && ui.DebugPanelAlpha > 0.99f);
+
+            ui.QueueFree();
+            yield break;
+        }
+    }
 }

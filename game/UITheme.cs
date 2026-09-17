@@ -114,7 +114,16 @@ namespace UnturnedGodot
         // ---- semantic ----------------------------------------------------------------------------------
         /// <summary>The one accent. Used for the player's own name, currency, and the single most important
         /// number on a screen. Spending it on more than that is what makes an accent stop working.</summary>
-        public static Color Accent => new(1f, 0.84f, 0.22f);
+        // ⚠ NOT YELLOW ANY MORE (strawberry 2026-09-17: "minus yellow... no idea where it came from lol").
+        // It came from here -- every screen that looked yellow was reading this one property, which is why
+        // chat and the inventory both had it and why removing it is one edit rather than twelve. Now a light
+        // steel blue, which is the palette's own family (Bg/Bar/Slot are all cool blue-greys) instead of a
+        // hue that belonged to nothing else on screen.
+        //
+        // ⚠⚠ Warn below is STILL yellow and deliberately so: that one is semantic -- it means caution, and a
+        // warning that matches the ordinary highlight colour stops being a warning. If yellow turns up
+        // somewhere it should not, it is Warn being used as decoration, not this.
+        public static Color Accent => new(0.62f, 0.78f, 0.94f);
         /// <summary>Affordable, satisfied, succeeded.</summary>
         public static Color Good => new(0.62f, 0.82f, 0.60f);
         /// <summary>A refusal the player should act on: unaffordable, incompatible, full, blocked.
