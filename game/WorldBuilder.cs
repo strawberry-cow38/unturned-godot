@@ -1303,7 +1303,14 @@ namespace UnturnedGodot
                     _ when IsSinkProp(name) => SinkSource.Make(basis, 180f - ey),   // Counter_1 + Counter_3, both on the ordinary path now
                     _ => null,
                 };
-                if (mains != null && mode == WorldMode.Playable)
+                // ⚠ CLIENT TOO, but deliberately NOT Dedicated. A joined player could not drink from a sink
+                // or a well at all before this, because the source node only existed in Playable. The server
+                // is left out on purpose rather than by symmetry: NOTHING replicates fluid -- neither setup
+                // path so much as mentions it -- so a FluidManager ticking on a headless server would be work
+                // nobody reads. The honest consequence is that world water is LOCAL to each player, same as
+                // every other fluid device already is; syncing the fluid net is a separate piece of work and
+                // this does not pretend to be it.
+                if (mains != null && (mode == WorldMode.Playable || mode == WorldMode.Client))
                 {
                     mains.Position = gpos;
                     mains.RotationDegrees = new Vector3(0f, 180f - ey, 0f);
@@ -1452,8 +1459,20 @@ namespace UnturnedGodot
                 else if (placedSignals.Count > 0)
                     placedTap = LightTap.Attach(root, gpos, basis, LightTap.LightKind.Traffic, TapInLocal, TapOutLocal);
 
-                // OPENABLE PROP DOORS (MVP: Fridge_0 + Wardrobe_0, SP-local -- mirrors the Tower_Water_0
-                // Playable-only gating above: no dedicated/MP support yet). doors.txt (tools/extract_doors.py)
+                // OPENABLE PROP DOORS (Fridge_0 + Wardrobe_0). BUILT IN EVERY MODE as of 2026-09-17, for the
+                // reason the seat branch below spells out: InteractableNetSync assigns NetIds by WORLD-BUILD
+                // ORDER, so a mode that skips doors does not merely lack doors -- it renumbers every
+                // interactable built after them and silently points ids at the wrong objects.
+                //
+                // ⚠ It used to read `mode == WorldMode.Playable` and the comment said "SP-local... no
+                // dedicated/MP support yet". The wire had since been built underneath it and nobody came back:
+                // RegisterObjectDoor, EventObjectDoorState and SendToggleDoor all exist and all work. The
+                // server just never had an ObjectDoor node to register, because it walks the tree to find them,
+                // and the client never had one to apply the state to -- its handler is
+                // `if (ObjectDoor.TryGetByNetId(...))`, which found nothing and said nothing. A complete
+                // replication path with no nodes under it, which is exactly how the dedicated-server mains sat
+                // switched off for weeks (strawberry 2026-09-17: "a lot of stuff that exists on singleplayer
+                // loopback but not on the vox server"). doors.txt (tools/extract_doors.py)
                 // catalogs the door leaf mesh plus hinge pivot/axis/angle/duration per LEAF -- a prop can
                 // have MULTIPLE leaves (Wardrobe_0's Left/Right doors), grouped by LoadDoorCatalog into a
                 // list under the same prop name. Spawns one ObjectDoor per leaf and, for a multi-leaf prop,
@@ -1474,14 +1493,17 @@ namespace UnturnedGodot
                 // this thing does not hinge. Its Hinge bone's rotation curve is two identical keys and only
                 // its POSITION moves, so an ObjectDoor would swing a platform that is meant to rise.
                 _SEG(8);
-                if (mode == WorldMode.Playable && name == "Car_Lift_0")
+                // EVERY MODE, because the ramp is a moving COLLIDER, not decoration. The server envelope-checks
+                // player positions against its own world, so a lift the server does not have is a lift the server
+                // thinks you are standing in mid-air on.
+                if (name == "Car_Lift_0")
                 {
                     var rampMesh = ObjMesh.Load(dir + "Car_Lift_0_ramp.obj");
                     if (rampMesh != null) CarLift.Spawn(root, gpos, basis, rampMesh, MatFor(matName));
                 }
 
                 ObjectDoor doorForBody = null;   // issue 3/5: carry the first door out of this branch to link the prop BODY collider to it
-                if (mode == WorldMode.Playable && doorCatalog.TryGetValue(name, out var doorLeaves))
+                if (doorCatalog.TryGetValue(name, out var doorLeaves))
                 {
                     var spawnedDoors = new System.Collections.Generic.List<ObjectDoor>();
                     foreach (var doorCfg in doorLeaves)
@@ -1495,7 +1517,10 @@ namespace UnturnedGodot
                     }
                     if (spawnedDoors.Count > 1)
                         foreach (var d in spawnedDoors) d.SetGroup(spawnedDoors);
-                    if (spawnedDoors.Count > 0 && !name.StartsWith("Container_"))   // issue 3/5: whole-prop body-link + outline -- SHIPPING CONTAINERS excluded (master): door-only interact (look at the doors, not the whole big prop)
+                    // The OUTLINE is the only render-only half, so it is the only half the server skips -- the
+                    // door nodes themselves it needs, for the collider and for the position it reach-checks a
+                    // toggle against.
+                    if (spawnedDoors.Count > 0 && mode != WorldMode.Dedicated && !name.StartsWith("Container_"))   // issue 3/5: whole-prop body-link + outline -- SHIPPING CONTAINERS excluded (master): door-only interact (look at the doors, not the whole big prop)
                     {
                         doorForBody = spawnedDoors[0];
                         var bodyGlow = OutlineOverlay.MakeOutline(mesh, new Transform3D(basis, gpos));
@@ -1841,7 +1866,10 @@ namespace UnturnedGodot
                     if (ph != activeHoliday) { holidaySkipped++; continue; }                          // out-of-season holiday prop (index stays reserved+unbuilt)
                 }
                 if (TryContainer(p)) continue;   // registered map prop -> lootable container (SP), skip the decoration mesh (no destructible overlap)
-                if (mode == WorldMode.Playable && NoteTexts.TryGet(p[0], out var noteName, out var noteLines)) { PlaceNote(p, name, noteName, noteLines); continue; }   // readable lore note -> a NoteBody (mesh + look-focus, F reads it); non-Playable just shows the mesh
+                // Client too: a note is something you walk up to and READ, so a joined player needs it. Not the
+                // server -- it is text on a surface, with nothing to validate.
+                if ((mode == WorldMode.Playable || mode == WorldMode.Client)
+                    && NoteTexts.TryGet(p[0], out var noteName, out var noteLines)) { PlaceNote(p, name, noteName, noteLines); continue; }   // readable lore note -> a NoteBody (mesh + look-focus, F reads it); non-Playable just shows the mesh
                 PlaceObject(p, name, destIdx);
             }
             // Build the batches. AFTER the scan, because a MultiMesh's instance count has to be known before its
