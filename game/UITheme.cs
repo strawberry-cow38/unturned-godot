@@ -211,6 +211,15 @@ namespace UnturnedGodot
 
         /// <summary>The dark chip that sits on top of an icon. Carries its own L/R content margin so the
         /// text is not jammed against the rounded corners.</summary>
+        /// <summary>Give a stylebox room to breathe inside its border. A LineEdit draws its text at the
+        /// content edge, so a box with no margins clips the first glyph.</summary>
+        public static StyleBoxFlat Pad(StyleBoxFlat sb, int x = 6, int y = 3)
+        {
+            sb.ContentMarginLeft = x; sb.ContentMarginRight = x;
+            sb.ContentMarginTop = y; sb.ContentMarginBottom = y;
+            return sb;
+        }
+
         public static StyleBoxFlat ChipBox(Color outline)
         {
             var sb = Box(Chip, RadiusChip, outline, 1);
@@ -244,8 +253,13 @@ namespace UnturnedGodot
         /// colour anyone chose.</summary>
         public static void Field(LineEdit e)
         {
-            e.AddThemeStyleboxOverride("normal", Box(new Color(0.09f, 0.09f, 0.10f, 0.98f), RadiusCell));
-            e.AddThemeStyleboxOverride("focus", Box(new Color(0.09f, 0.09f, 0.10f, 0.98f), RadiusCell, Accent, 1));
+            // ⚠ CONTENT MARGINS, because overriding the stylebox THREW AWAY the ones Godot's default had.
+            // Box() sets none, so the caret and the first character sat flush against the border and the
+            // leading glyph was visibly clipped -- "say something" rendering as "ay something". It looked
+            // like a font problem rather than a padding one, which is why it survived: found by rendering
+            // the chat panel (2026-09-17), and the crafting search field had it too, from this same helper.
+            e.AddThemeStyleboxOverride("normal", Pad(Box(new Color(0.09f, 0.09f, 0.10f, 0.98f), RadiusCell)));
+            e.AddThemeStyleboxOverride("focus", Pad(Box(new Color(0.09f, 0.09f, 0.10f, 0.98f), RadiusCell, Accent, 1)));
             e.AddThemeFontSizeOverride("font_size", FontBody);
             e.AddThemeColorOverride("font_color", Text);
             e.AddThemeColorOverride("font_placeholder_color", TextDim);

@@ -63,6 +63,7 @@ SCENES = {
                {"UG_ANIMALFOOT": "0"}, False, 180,
                "calibrated wildlife stage (ANIMAL=horse,cow,deer UG_ANIMALCAM=side|rear|top|threequarter UG_ANIMALCLIP=Idle UG_ANIMALTIME=0)"),
     "deploy":   (["--deploytest", "--shot={OUT}"], {}, False, 120, "generator + spotlight rig (the golden scene)"),
+    "chat":     (["--chatshot", "--shot={OUT}"], {}, False, 120, "the chat panel: server line, two speakers with avatars, one without, input open"),
     # The only single-zombie view there is. --zface was built as a FACING diagnostic and could not be
     # captured at all (its branch returns before the general --shot wiring), so the zombie body -- clothes,
     # skin, face -- had no way of being looked at. That is why it went unnoticed that they wore a baked

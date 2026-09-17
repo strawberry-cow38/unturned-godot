@@ -110,4 +110,61 @@ namespace UnturnedGodot.Testing
             BanStore.Path = prev;
         }
     }
+
+    // Profile pictures beside the speaker (strawberry 2026-09-17). Three cases, because the interesting
+    // ones are the absences: a picture must appear for a speaker who HAS one, must NOT appear on a server
+    // line (which has no speaker at all), and a speaker WITHOUT one must still render a normal row rather
+    // than vanishing or throwing -- a missing avatar is the common case, not an error path.
+    //
+    // ⚠ Asserts on the ROW, via DebugAvatarsShown, not on the lookup being called. A test that counted
+    // AvatarFor invocations would pass with the texture dropped on the floor between decode and display,
+    // which is exactly the bug worth catching here.
+    public sealed class ChatAvatarTests : GameTest
+    {
+        public override string Name => "chat.avatars";
+        public override int Tier => 1;
+
+        static byte[] Avatar128()
+        {
+            var img = Image.CreateEmpty(SDG.Unturned.ProfileRules.AvatarPixels,
+                                        SDG.Unturned.ProfileRules.AvatarPixels, false, Image.Format.Rgba8);
+            img.Fill(new Color(0.2f, 0.7f, 0.9f));
+            return img.SavePngToBuffer();
+        }
+
+        public override IEnumerable<Step> Run()
+        {
+            var ui = new ChatUI();
+            World.AddChild(ui);
+            yield return Ticks(1);
+
+            var png = Avatar128();
+            T.Check($"the fixture really is a decodable {SDG.Unturned.ProfileRules.AvatarPixels}px avatar",
+                    PlayerProfile.DecodeAvatar(png) != null);
+
+            ui.AvatarFor = id => id == 5 ? png : null;   // only Alice has a picture
+
+            ui.Receive(new ChatMessageEvent { Channel = (byte)ChatChannel.Global, SpeakerId = 5, Name = "Alice", Text = "hello" });
+            T.Check($"a speaker with a picture draws it ({ui.DebugAvatarsShown} shown)", ui.DebugAvatarsShown == 1);
+
+            ui.Receive(new ChatMessageEvent { Channel = (byte)ChatChannel.Server, SpeakerId = 0, Name = "", Text = "restarting" });
+            T.Check($"a server line adds no picture (still {ui.DebugAvatarsShown})", ui.DebugAvatarsShown == 1);
+
+            ui.Receive(new ChatMessageEvent { Channel = (byte)ChatChannel.Global, SpeakerId = 7, Name = "Bob", Text = "hi" });
+            T.Check($"a speaker with NO picture still gets a row ({ui.DebugRowCount} rows)", ui.DebugRowCount == 3);
+            T.Check($"...and adds no picture ({ui.DebugAvatarsShown} shown)", ui.DebugAvatarsShown == 1);
+
+            // The hook being absent entirely is singleplayer, and must render plain rows rather than fail.
+            var solo = new ChatUI();
+            World.AddChild(solo);
+            yield return Ticks(1);
+            solo.Receive(new ChatMessageEvent { Channel = (byte)ChatChannel.Global, SpeakerId = 5, Name = "Alice", Text = "hello" });
+            T.Check($"no AvatarFor hook at all: a row still renders ({solo.DebugRowCount})", solo.DebugRowCount == 1);
+            T.Check("...with no picture", solo.DebugAvatarsShown == 0);
+
+            ui.QueueFree();
+            solo.QueueFree();
+            yield break;
+        }
+    }
 }

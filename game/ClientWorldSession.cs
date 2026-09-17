@@ -207,6 +207,11 @@ namespace UnturnedGodot
             Chat = new ChatUI
             {
                 Send = text => Client.SendChat(text),
+                // Profile pictures beside the speaker (strawberry 2026-09-17: "show profile pictures to the
+                // left of the username of the user typing in chat"). Needed NO wire change -- ChatMessageEvent
+                // has carried SpeakerId since v49 and the profile block already replicates avatars for the 3P
+                // nameplates, so this is two existing pieces meeting rather than anything new on the network.
+                AvatarFor = id => Client.Profiles.TryGetAvatar(id, out var png) ? png : null,
                 // Shell arrives later (first authoritative sample), so this is a delegate rather than a
                 // captured reference -- closing chat must ask the CURRENT player whether some other UI
                 // still wants the cursor.

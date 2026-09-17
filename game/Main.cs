@@ -260,6 +260,7 @@ namespace UnturnedGodot
             bool rainMatTest = false;
             bool windowBarrTest = false;
             string arenaSpawns = null;   // --arenaspawns[=POIname] : debug-render the 8 arena spawn points in a POI (master 2026-09-02)
+            bool chatshot = false;
             bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, playground = false, objects = false, peidrive = false, craftmenu = false, stationtest = false, editorMode = false, impactTest = false, throwTest = false, doorGallery = false, lampTest = false, cctvTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false, netobserve = false, zombieTier = false, zflow = false, zhunt = false, zkill = false, zsound = false, zface = false, zpath = false;
             bool puppetAnim = false;   // --puppetanim: prove RemotePlayers locomotion animates
             foreach (var arg in OS.GetCmdlineUserArgs())
@@ -363,6 +364,7 @@ namespace UnturnedGodot
                 else if (arg == "--zhunt") zhunt = true;             // zombie AI rewrite phase-3 verify: near zombies promote to visible HOT bodies + shamble in (log; --write-movie for the visual)
                 else if (arg == "--zkill") zkill = true;             // zombie AI rewrite phase-3b verify: player auto-fires at a chasing cluster -> bullet damage + kills climb
                 else if (arg == "--zsound") zsound = true;           // zombie AI rewrite phase-4 verify: a gunshot lures out-of-sight zombies to the NOISE, not the player (sound-lure + stealth)
+                else if (arg == "--chatshot") chatshot = true;   // the chat panel with real rows + avatars, so a UI change can be LOOKED at
                 else if (arg == "--zface") zface = true;             // facing DIAGNOSTIC: one zombie, DesiredVel forced world +X; top-down w/ RED=+X BLUE=+Z markers -> read the exact yaw offset unambiguously
                 else if (arg == "--zpath") zpath = true;             // pathfinding demo: horde behind a WALL, target beyond it -> the flow field routes them around the wall's open end (master: "show how they path around objects")
                 else if (arg.StartsWith("--landmarkshot=")) _lmShotDir = arg["--landmarkshot=".Length..];   // fly a camera past the big landmarks at range -> verify they render across the map
@@ -465,6 +467,7 @@ namespace UnturnedGodot
             if (zhunt) { BuildZombieHunt(); return; }             // zombie AI rewrite phase 3 verify
             if (zkill) { BuildZombieKill(); return; }             // zombie AI rewrite phase 3b verify
             if (zsound) { BuildZombieSound(); return; }           // zombie AI rewrite phase 4 verify
+            if (chatshot) { BuildChatShot(); if (shot != null) _shotPath = shot; return; }
             if (zface) { BuildZombieFace(); if (shot != null) _shotPath = shot; return; }   // facing diagnostic (+ --shot: it is also the only single-zombie view, so it is how the BODY gets looked at)
             if (zpath) { BuildZombiePath(); return; }            // pathfinding-around-obstacles demo
 
@@ -3334,6 +3337,43 @@ namespace UnturnedGodot
             Log.Print($"[zsound] after {_zsT:0}s: avg dist to GUNSHOT {(n > 0 ? toSound / n : 0):0}m (started ~37 -> SHRINKS = lured by the noise); avg dist to PLAYER {(n > 0 ? toPlayer / n : 0):0}m (started ~35 -> GROWS = they chased the sound, NOT the player)");
             _zsMode = false;
             GetTree().Quit();
+        }
+
+        // --chatshot: the CHAT PANEL, populated. A UI change that is never rendered is shipped blind, and
+        // chat only exists inside a client session normally -- which is a lot of machinery to stand up just to
+        // see whether a panel is in the right corner. ChatUI is a self-contained CanvasLayer that takes its
+        // lines through a public Receive() and its pictures through a hook, so it can simply be built.
+        void BuildChatShot()
+        {
+            GetWindow().Size = new Vector2I(1280, 720);   // shoot at a real resolution, not the 640x480 default
+            var bg = new ColorRect { Color = new Color(0.36f, 0.45f, 0.30f) };   // a world-ish ground, so translucency reads
+            bg.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+            AddChild(bg);
+
+            var chat = new ChatUI();
+            AddChild(chat);
+
+            // Two speakers with pictures and one without, plus a server line: the four row shapes the layout
+            // has to keep aligned. Distinct colours so it is obvious WHICH avatar landed on which row.
+            var pics = new System.Collections.Generic.Dictionary<ushort, byte[]>();
+            pics[5] = SolidAvatar(new Color(0.85f, 0.35f, 0.30f));
+            pics[7] = SolidAvatar(new Color(0.30f, 0.55f, 0.85f));
+            chat.AvatarFor = id => pics.TryGetValue(id, out var b) ? b : null;
+
+            chat.Receive(new Net.ChatMessageEvent { Channel = (byte)SDG.Unturned.ChatChannel.Server, SpeakerId = 0, Name = "", Text = "server restarting in 5 minutes" });
+            chat.Receive(new Net.ChatMessageEvent { Channel = (byte)SDG.Unturned.ChatChannel.Global, SpeakerId = 5, Name = "strawberry", Text = "anyone got a medkit" });
+            chat.Receive(new Net.ChatMessageEvent { Channel = (byte)SDG.Unturned.ChatChannel.Global, SpeakerId = 7, Name = "cowtools", Text = "north of the police station" });
+            chat.Receive(new Net.ChatMessageEvent { Channel = (byte)SDG.Unturned.ChatChannel.Global, SpeakerId = 9, Name = "nopicture", Text = "i have no avatar and my row still lines up" });
+            chat.Send = _ => true;   // Open() refuses without a sender, and the typing state is half the UI
+            chat.Open();
+            Log.Print("[chatshot] chat panel, 4 rows, 2 avatars, input open");
+        }
+
+        static byte[] SolidAvatar(Color c)
+        {
+            var img = Image.CreateEmpty(SDG.Unturned.ProfileRules.AvatarPixels, SDG.Unturned.ProfileRules.AvatarPixels, false, Image.Format.Rgba8);
+            img.Fill(c);
+            return img.SavePngToBuffer();
         }
 
         // --zface: FACING DIAGNOSTIC. ONE zombie, DesiredVel forced to world +X, viewed TOP-DOWN so the world axes are
