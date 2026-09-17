@@ -1087,6 +1087,11 @@ namespace UnturnedGodot
             // So: blur wide, then assign the ribbon's own footprint flat, the same way FlattenTownsExactly is
             // the last word on a town. Only terrain ABOVE a surface clips; after this there is none.
             LevelCorridors(grid, gw, gh, routes, pois);
+            // ⚠ LINKS IN, ROUTES OUT. A link with no route is a road that was planned and never built -- and
+            // the connectivity check walks the LINKS, so it would keep reporting every town reachable while
+            // the island quietly lost roads. Town-to-town routes dropped 27 -> 23 on seed 424242 after the
+            // road-crossing penalty was extended to town approaches, and nothing said so.
+            Log.Print($"[island-routes] {links.Count} link(s) planned -> {routes.Count} route(s) carved");
             ReportRoutePairs(routes);
             ReportCrossings(routes, pois);
             return routes;
@@ -1478,12 +1483,20 @@ namespace UnturnedGodot
                         float dx = x * Unit - pt.X, dy = y * Unit - pt.Y;
                         float d = Mathf.Sqrt(dx * dx + dy * dy);
                         if (d > UsedOuterR) continue;
-                        // ⚠ NOT INSIDE A TOWN. Every road on the island converges on the same few monuments, so
-                        // penalising the ground around a town would price the LAST-routed link out of its own
-                        // gate and send it round the houses. The pads are already off-limits to the carve for
-                        // the same reason -- the town owns that ground, and its own street grid is what roads
-                        // are supposed to share there.
-                        if (InsideAnyTownPad(x * Unit, y * Unit, UsedOuterR)) continue;
+                        // ⚠⚠ THE TOWN EXCLUSION IS GONE, AND IT WAS THE LAST PLACE ROADS COULD CROSS.
+                        //
+                        // It read "not inside a town -- penalising the ground around a town would price the
+                        // LAST-routed link out of its own gate". The concern is real; the blanket answer was
+                        // not. Every road converges on the same few monuments, so refusing to stamp there left
+                        // the approaches completely unpriced, and a road could drive straight across another
+                        // one a few metres from a gate. Rendered on seed 424242 at (1096,-1888): two
+                        // carriageways crossing at right angles with no junction piece, tarmac merged, lane
+                        // markings running through each other.
+                        //
+                        // The route's OWN gates are exempted instead, in Route2D where the penalty is read and
+                        // the endpoints are known -- the same shape as the town-pad wall. A road pays nothing
+                        // to reach its own town and pays full price to cross somebody else's approach.
+                        if (InsideAnyTownPad(x * Unit, y * Unit, 0f)) continue;   // the pad proper is still the town's
                         float v = d <= UsedInnerR ? UsedInner : UsedOuter;
                         if (v > used[x, y]) used[x, y] = v;   // MAX, not sum: two crossings do not make a wall
                     }
@@ -1563,7 +1576,17 @@ namespace UnturnedGodot
                         float climb = Mathf.Abs(nh - ch) / Unit;              // gradient of THIS step
                         float cost = step * (1f + slopeCost * climb);
                         if (nh <= p.SeaLevel) cost += 400f;
-                        if (used != null) cost += used[nx, ny] * step;   // another road is already here
+                        if (used != null && used[nx, ny] > 0f)
+                        {
+                            // ⚠ FREE NEAR THIS ROUTE'S OWN GATES. Without this the stamp around a town prices
+                            // every later link out of the gate it is trying to reach -- which is exactly what
+                            // the old blanket exclusion was protecting against, kept, but scoped to the route
+                            // that actually needs it instead of to everybody.
+                            float gfx = nx * Unit - from.X, gfz = ny * Unit - from.Z;
+                            float gtx = nx * Unit - to.X, gtz = ny * Unit - to.Z;
+                            if (gfx * gfx + gfz * gfz > 110f * 110f && gtx * gtx + gtz * gtz > 110f * 110f)
+                                cost += used[nx, ny] * step;
+                        }
                         // ⚠ A TOWN IS NOT GROUND YOU DRIVE OVER. Priced like water rather than forbidden, so
                         // a route that has no other way through still finds one instead of failing outright --
                         // and exempted near this route's OWN two gates, which sit on their pads' perimeters

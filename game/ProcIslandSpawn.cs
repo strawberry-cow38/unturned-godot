@@ -2149,18 +2149,24 @@ namespace UnturnedGodot
                     if (f.Length() < 1e-4f) continue;
                     var per = new Vector2(-f.Y, f.X).Normalized() * ProcIsland.RenderedRoadHalf;
                     Seg(c[i - 1], c[i], mid);
+                    // ⚠ MODE 2 DRAWS CENTRELINES ONLY. With the green/red edges on every road as well, the
+                    // per-road colours are drowned out and the picture cannot answer the one question mode 2
+                    // exists for -- "is that two roads or one". Master looked at exactly that render and could
+                    // not tell, which is my fault for shipping a view that shows two things at once.
+                    if (perRoad) continue;
                     Seg(new Vector3(c[i - 1].X + per.X, c[i - 1].Y, c[i - 1].Z + per.Y),
                         new Vector3(c[i].X + per.X, c[i].Y, c[i].Z + per.Y), new Color(0.1f, 1f, 0.2f));
                     Seg(new Vector3(c[i - 1].X - per.X, c[i - 1].Y, c[i - 1].Z - per.Y),
                         new Vector3(c[i].X - per.X, c[i].Y, c[i].Z - per.Y), new Color(1f, 0.15f, 0.1f));
                 }
             }
-            foreach (var f in FenceMarks)
-            {
-                float y = terr.SampleHeight(f.X, f.Z);
-                Seg(new Vector3(f.X - f.DX * f.Half, y, f.Z - f.DZ * f.Half),
-                    new Vector3(f.X + f.DX * f.Half, y, f.Z + f.DZ * f.Half), new Color(0.2f, 0.9f, 1f));
-            }
+            if (!perRoad)
+                foreach (var f in FenceMarks)
+                {
+                    float y = terr.SampleHeight(f.X, f.Z);
+                    Seg(new Vector3(f.X - f.DX * f.Half, y, f.Z - f.DZ * f.Half),
+                        new Vector3(f.X + f.DX * f.Half, y, f.Z + f.DZ * f.Half), new Color(0.2f, 0.9f, 1f));
+                }
             im.SurfaceEnd();
             terr.AddChild(new MeshInstance3D { Mesh = im, Name = "SplineDebugDraw" });
             Log.Print($"[island-splinedraw] {DebugCurves.Count} road(s) with edges + {FenceMarks.Count} fence line(s) drawn");
@@ -2535,7 +2541,12 @@ namespace UnturnedGodot
             var dropCurve = new System.Collections.Generic.List<int>();
             for (int i = 0; i < curves.Count; i++)
             {
-                if (curveKind[i] == ProcIsland.LinkKind.Road) continue;   // a town road is not optional
+                // ⚠⚠ ONLY A JUNCTION MAY BE DROPPED. This read "not a Road", which is not the same set:
+                // IslandRoutes also holds TRAIL-kind routes -- the access roads tier 2 gives every construction
+                // site -- and they are real connectivity, not an optional shortcut. So the drop was deleting
+                // four of them per island, which is exactly what master called out: "you did it by just killing
+                // the road spline entirely?" It cost cap joins 54 -> 46 ends and nothing said a word.
+                if (curveKind[i] != ProcIsland.LinkKind.Junction) continue;
                 for (int j = 0; j < curves.Count; j++)
                 {
                     if (i == j || dropCurve.Contains(j)) continue;
@@ -2568,7 +2579,15 @@ namespace UnturnedGodot
             }
             dropRoutes.Sort();
             for (int k = dropRoutes.Count - 1; k >= 0; k--)
-                if (dropRoutes[k] >= 0 && dropRoutes[k] < terr.IslandRoutes.Count) terr.IslandRoutes.RemoveAt(dropRoutes[k]);
+            {
+                if (dropRoutes[k] < 0 || dropRoutes[k] >= terr.IslandRoutes.Count) continue;
+                // ⚠ SAY WHAT IS BEING DELETED. Only a Junction may ever be removed here; anything else is a
+                // town's road going missing, which is the failure master named directly. Loud, not silent.
+                var kindGoing = terr.IslandRoutes[dropRoutes[k]].Kind;
+                if (kindGoing != ProcIsland.LinkKind.Junction)
+                    Log.Err($"[island-roads] ⚠ DROP WOULD DELETE A {kindGoing} ROUTE at index {dropRoutes[k]} -- refused");
+                else terr.IslandRoutes.RemoveAt(dropRoutes[k]);
+            }
             if (dropCurve.Count > 0)
                 Log.Print($"[island-roads] dropped {dropCurve.Count} junction road(s) whose ribbon crossed or overlapped another road -- tarmac, route entry and dirt corridor all removed");
 
@@ -2673,7 +2692,7 @@ namespace UnturnedGodot
             // ---- do the built ribbons cross? ----------------------------------------------------------------
             // ⚠ ON THE CURVES, not on the A* polylines. The generator-side check reports 0 crossings on every
             // seed and master is still looking at one, which is what a check on the wrong geometry looks like.
-            int ribbonCross = 0, crossRoad = 0, crossJunc = 0, crossNearTown = 0;
+            int ribbonCross = 0, crossRoad = 0, crossJunc = 0, crossNearTown = 0, crossOnPiece = 0;
             var crossAt = Vector2.Zero;
             // ⚠ j STARTS AT i, NOT i+1 -- a road crossing ITSELF is the one case every check here has been
             // blind to, and it is the only hypothesis left after a top-down render showed two full asphalt
@@ -2698,7 +2717,20 @@ namespace UnturnedGodot
                                 // design" is true of the last few metres of a stub; it is not a licence to stop
                                 // looking within 90 m of every pad, which on this island is most of the
                                 // inhabited part of it.
+                                // ⚠ IS THERE A JUNCTION PIECE THERE? Two roads crossing AT a Quad or Tee prop
+                                // is a crossroads -- the kit's own geometry, and correct. Two roads crossing
+                                // over bare ground is the defect. "Near a town" was standing in for that and
+                                // it is not the same question: a monument's crossroads tile is what makes a
+                                // crossing legitimate, not its distance from a pad.
+                                bool onPiece = false;
+                                if (terr.IslandTiles != null)
+                                    foreach (var t in terr.IslandTiles)
+                                    {
+                                        var w = PosFor(terr, t.X, t.Z);
+                                        if (new Vector2(at.X - w.X, at.Z - w.Z).Length() < ProcIsland.TileSize * 0.8f) { onPiece = true; break; }
+                                    }
                                 if (i == j) { selfCross++; }
+                                else if (onPiece) crossOnPiece++;
                                 else if (ProcIsland.InsideAnyTownPad(at.X, -at.Z, 90f)) crossNearTown++;
                                 else
                                 {
@@ -2917,10 +2949,26 @@ namespace UnturnedGodot
                 Log.Print($"[island-roads] connectivity after drops: {seen.Count} of {maxPoi + 1} POI(s) reachable, {isolated} isolated");
             }
 
+            // ⚠ WHAT SURVIVED, BY KIND. The drop is only ever supposed to remove Junction routes, and cap
+            // joins reporting 46 ends (23 town roads) when 27 links were carved says otherwise. If a town road
+            // is being deleted, that is the exact failure master warned about -- "you just killed the road
+            // spline entirely?" -- and it must be impossible to miss.
+            {
+                int nRoad = 0, nJunc = 0, nOther = 0;
+                foreach (var r2 in terr.IslandRoutes)
+                {
+                    if (r2.Kind == ProcIsland.LinkKind.Road) nRoad++;
+                    else if (r2.Kind == ProcIsland.LinkKind.Junction) nJunc++;
+                    else nOther++;
+                }
+                Log.Print($"[island-roads] IslandRoutes after drops: {nRoad} Road, {nJunc} Junction, {nOther} other; "
+                          + $"{profiles.Count} profile(s) built from them");
+            }
             Log.Print($"[island-roads] RoadField holds {rf.RoadCount} road(s); {curves.Count} tracked here");
 
             Log.Print($"[island-roads] built ribbons: {ribbonCross} crossing(s) away from a town "
-                      + $"({crossRoad} road-on-road, {crossJunc} involving a junction road), plus {crossNearTown} within 90 m of a town, {selfCross} where a road crosses ITSELF"
+                      + $"({crossRoad} road-on-road, {crossJunc} involving a junction road), plus {crossOnPiece} ON a crossroads prop (correct), "
+                      + $"{crossNearTown} near a town with NO prop, {selfCross} where a road crosses ITSELF"
                       + ((ribbonCross + crossNearTown) > 0 ? $" [last at ({crossAt.X:0},{crossAt.Y:0})]" : "") + "; "
                       + $"worst float {floatWorst:0.00} m ({floatOver} of {floatN} sample(s) over 0.6 m in open country, "
                       + $"{floatTown} more on a town pad the conform does not own); "
