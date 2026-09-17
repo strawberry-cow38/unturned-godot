@@ -50,6 +50,23 @@ namespace SDG.Unturned
         public const float DETECT_FORWARD = 48f;   // DRIVING, scaled by forward speed
         public const float MIN = 1f, MAX = 64f;
 
+        /// <summary>ON-FOOT detection scale (strawberry 2026-09-17: "reduce em by a lot"). The four DETECT_*
+        /// stance values above are RETAIL's, ported verbatim, and they stay that way -- the divergence is this one
+        /// factor rather than four rewritten constants, so the source numbers remain readable and there is exactly
+        /// one knob to turn if 0.4 is wrong.
+        ///
+        /// Gives stand 4.8 m, crouch 2.4, prone 1.2, sprint 8.0 (x1.1 while moving).
+        ///
+        /// ⚠ NOT applied to DrivingRadius. "Reduce em" followed a conversation about FOOTSTEPS, and a car is not
+        /// sneaking -- quietening the engine to a fifth of a garden would be a change nobody asked for, hidden
+        /// inside one they did.
+        ///
+        /// ⚠⚠ This pushes PRONE under PlayerController's `loud > 2f` emit floor, so crawling now makes NO noise at
+        /// all rather than a little. That reads as the intent of "a lot" -- crawling should be how you get past
+        /// something -- but it is a threshold interaction rather than a scaling, so it is called out rather than
+        /// discovered later. Crouching stands at 2.4 and still just clears the floor.</summary>
+        public const float DETECT_SCALE = 0.4f;
+
         public static float Radius(EPlayerStance stance, bool moving)
         {
             float move = moving ? DETECT_MOVE : 1f;
@@ -60,6 +77,10 @@ namespace SDG.Unturned
                 EPlayerStance.PRONE => DETECT_PRONE * move,
                 _ => DETECT_STAND * move,
             };
+            r *= DETECT_SCALE;
+            // ⚠ Clamp AFTER the scale, and MIN is 1 m: without care every quiet stance would pile onto the floor
+            // and crouch, prone and standing-still would all detect at exactly the same distance -- the scale
+            // would look applied and change nothing about how they RANK, which is the whole point of it.
             return Math.Clamp(r, MIN, MAX);
         }
 

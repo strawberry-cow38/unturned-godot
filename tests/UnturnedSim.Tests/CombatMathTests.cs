@@ -59,12 +59,17 @@ namespace UnturnedSim.Tests
             Assert.That(FallMath.BreaksLegs(-10f, preventsBoneBreak: false), Is.False);  // soft landing
         }
 
-        // --- stealth detection radius: STAND 12 / CROUCH 6 / PRONE 3 / SPRINT 20, x1.1 moving, clamp [1,64] ---
+        // --- stealth detection radius. Retail's table is STAND 12 / CROUCH 6 / PRONE 3 / SPRINT 20, x1.1 moving,
+        // clamp [1,64]; DETECT_SCALE 0.4 shrinks the ON-FOOT four (strawberry 2026-09-17 "reduce em by a lot").
+        //
+        // ⚠ These are the SCALED ABSOLUTE numbers on purpose, not `DETECT_STAND * DETECT_SCALE`. Writing the
+        // arithmetic back would restate the implementation and pass for any scale whatsoever, including one
+        // changed by accident -- the point is that moving the knob has to be a deliberate edit here too.
 
-        [TestCase(EPlayerStance.STAND, 12f)]
-        [TestCase(EPlayerStance.CROUCH, 6f)]
-        [TestCase(EPlayerStance.PRONE, 3f)]
-        [TestCase(EPlayerStance.SPRINT, 20f)]
+        [TestCase(EPlayerStance.STAND, 4.8f)]
+        [TestCase(EPlayerStance.CROUCH, 2.4f)]
+        [TestCase(EPlayerStance.PRONE, 1.2f)]
+        [TestCase(EPlayerStance.SPRINT, 8f)]
         public void Stance_Radius_Table_Matches_Source(EPlayerStance stance, float expected)
         {
             Assert.That(StealthDetection.Radius(stance, moving: false), Is.EqualTo(expected).Within(1e-4f));
@@ -73,14 +78,42 @@ namespace UnturnedSim.Tests
         [Test]
         public void Moving_Multiplies_By_1_1()
         {
-            Assert.That(StealthDetection.Radius(EPlayerStance.STAND, moving: true), Is.EqualTo(13.2f).Within(1e-4f));
-            Assert.That(StealthDetection.Radius(EPlayerStance.PRONE, moving: true), Is.EqualTo(3.3f).Within(1e-4f));
+            Assert.That(StealthDetection.Radius(EPlayerStance.STAND, moving: true), Is.EqualTo(5.28f).Within(1e-4f));
+            Assert.That(StealthDetection.Radius(EPlayerStance.PRONE, moving: true), Is.EqualTo(1.32f).Within(1e-4f));
         }
 
         [Test]
         public void Unlisted_Stances_Fall_Back_To_Stand()
         {
-            Assert.That(StealthDetection.Radius(EPlayerStance.SWIM, moving: false), Is.EqualTo(12f).Within(1e-4f));
+            Assert.That(StealthDetection.Radius(EPlayerStance.SWIM, moving: false), Is.EqualTo(4.8f).Within(1e-4f));
+        }
+
+        // The invariant that OUTLIVES any retune: the stances have to keep ranking in that order, and none may
+        // land on the MIN clamp, or several stances detect at exactly the same distance and the whole stealth
+        // system reads as applied while doing nothing. A scale of 0.05 would pass every absolute check above if
+        // someone updated them to match, and would fail this.
+        [Test]
+        public void Quieter_Stances_Stay_Strictly_Quieter()
+        {
+            float sprint = StealthDetection.Radius(EPlayerStance.SPRINT, false);
+            float stand  = StealthDetection.Radius(EPlayerStance.STAND, false);
+            float crouch = StealthDetection.Radius(EPlayerStance.CROUCH, false);
+            float prone  = StealthDetection.Radius(EPlayerStance.PRONE, false);
+            Assert.That(prone, Is.LessThan(crouch), "prone must beat crouching");
+            Assert.That(crouch, Is.LessThan(stand), "crouching must beat standing");
+            Assert.That(stand, Is.LessThan(sprint), "standing must beat sprinting");
+            Assert.That(prone, Is.GreaterThan(StealthDetection.MIN), "nothing may sit ON the clamp -- it flattens the table");
+        }
+
+        // DELIBERATE, and recorded because it is a THRESHOLD crossing rather than a scaling: PlayerController only
+        // emits a footstep when the radius exceeds 2 m, so at this scale crawling is completely silent while
+        // crouching (2.4) still just clears it. If that floor ever moves, this is the test that notices.
+        [Test]
+        public void Prone_Falls_Under_The_Game_Emit_Floor_And_Crouch_Does_Not()
+        {
+            const float EmitFloor = 2f;   // PlayerController: `if (loud > 2f) SoundBus.Emit(...)`
+            Assert.That(StealthDetection.Radius(EPlayerStance.PRONE, moving: true), Is.LessThan(EmitFloor));
+            Assert.That(StealthDetection.Radius(EPlayerStance.CROUCH, moving: true), Is.GreaterThan(EmitFloor));
         }
 
         [Test]
