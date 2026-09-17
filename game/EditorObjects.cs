@@ -259,7 +259,17 @@ namespace UnturnedGodot
         public const string GridPowerName = "⚡ Grid Power";   // the Circuit_0 breaker box AS a configurable mains SOURCE -- name + wattage (custom or preset) set in the editor, spawns a GridPowerSource in SP
         public const string GasPumpName = "⛽ Gas Pump";   // a Gas_Pump_0 fuel pump with an editable STATION ID -- pumps sharing an id share one underground tank (master); spawns a GasPump in SP
 
-        public Node3D Place(string name, Vector3 pos, Basis rot)
+        public Node3D Place(string name, Vector3 pos, Basis rot) => Place(name, pos, rot, null);
+
+        /// <summary><paramref name="materialName"/> draws this prop with ANOTHER prop's texture.
+        ///
+        /// ⭐ THIS IS RETAIL'S OWN MECHANISM, read off placements.txt rather than invented: PEI places a
+        /// House_00 mesh wearing House_01's, House_02's and House_09's materials, and 23 such rows exist across
+        /// the house family. Each house's _tex.png is a different colour scheme and any house MESH can wear any
+        /// house TEXTURE, which is how a street of the same four models reads as a street of different homes.
+        /// WorldBuilder has always honoured it (the 11th placements token); the editor's placer never could.
+        /// Null -> the prop's own material, exactly as before.</summary>
+        public Node3D Place(string name, Vector3 pos, Basis rot, string materialName)
         {
             if (name == LootCrateName) return PlaceLootCrate(pos, rot);
             if (name == StoreShelfName) return PlaceStoreShelf(pos, rot);
@@ -270,7 +280,8 @@ namespace UnturnedGodot
             var root = new Node3D { Transform = new Transform3D(rot, pos) };
             root.SetMeta("obj_name", name);
             root.SetMeta("guid", _nameToGuid.TryGetValue(name, out var g) ? g : "");   // for the placements save
-            var mat = MatFor(name);
+            if (!string.IsNullOrEmpty(materialName) && materialName != name) root.SetMeta("mat_name", materialName);
+            var mat = MatFor(string.IsNullOrEmpty(materialName) ? name : materialName);
             var mainMi = new MeshInstance3D { Mesh = mesh, MaterialOverride = mat };
             root.AddChild(mainMi);   // FIRST: PositionMarkers reads child 0 for the selection outline's bounds
 
@@ -863,7 +874,13 @@ namespace UnturnedGodot
                 var b = p.GlobalTransform.Basis;
                 var (ex, ey, ez) = DecomposeEuler(b.Orthonormalized());   // live basis -> PEI euler (any gizmo rotation)
                 var sc = b.Scale;                                          // + gizmo scale (sx sy sz)
-                w.WriteLine($"{guid} {gp.X:0.###} {gp.Y:0.###} {(-gp.Z):0.###} {ex:0.###} {ey:0.###} {ez:0.###} {sc.X:0.###} {sc.Y:0.###} {sc.Z:0.###}");
+                // ⚠ THE 11TH TOKEN IS THE MATERIAL, the same slot and meaning WorldBuilder.PlaceObjectInner
+                // already reads ("materialIndexOverride... writes the chosen variant's material name as an 11th
+                // token"). Appended rather than invented, so an editor save stays readable by the world loader
+                // and a loader that stops at ten tokens simply ignores it.
+                string matMeta = p.HasMeta("mat_name") ? (string)p.GetMeta("mat_name") : null;
+                w.WriteLine($"{guid} {gp.X:0.###} {gp.Y:0.###} {(-gp.Z):0.###} {ex:0.###} {ey:0.###} {ez:0.###} {sc.X:0.###} {sc.Y:0.###} {sc.Z:0.###}"
+                            + (string.IsNullOrEmpty(matMeta) ? "" : " " + matMeta));
                 n++;
             }
             SaveLootCrates();
@@ -918,7 +935,8 @@ namespace UnturnedGodot
                 float sx = 1f, sy = 1f, sz = 1f;
                 float.TryParse(p[7], out sx); float.TryParse(p[8], out sy); float.TryParse(p[9], out sz);
                 if (sx == 0f) sx = 1f; if (sy == 0f) sy = 1f; if (sz == 0f) sz = 1f;
-                Place(name, new Vector3(px, py, -pz), FromEuler(ex, ey, ez) * Basis.FromScale(new Vector3(sx, sy, sz)));   // gpos=(px,py,-pz); PEI euler + scale
+                string matName = p.Length >= 11 ? p[10] : null;   // 11th token = material variant (see the save)
+                Place(name, new Vector3(px, py, -pz), FromEuler(ex, ey, ez) * Basis.FromScale(new Vector3(sx, sy, sz)), matName);   // gpos=(px,py,-pz); PEI euler + scale
                 n++;
             }
             if (n > 0) Log.Print($"[editor] loaded {n} saved props");

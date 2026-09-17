@@ -2021,6 +2021,21 @@ namespace UnturnedGodot
         /// <summary>Is this prop one of the business buildings? ⚠ Derived from the Businesses table rather than
         /// listed again -- a second copy of "which props are shops" is how adding a new one silently escapes the
         /// one-per-town rule.</summary>
+        /// <summary>Another prop from the SAME family whose material this one should wear, or null to keep its
+        /// own. Families are the arrays themselves, so a prop added to Houses is in the house palette the moment
+        /// it is added and nothing else has to be told.
+        /// ⚠ Keyed on the building's own WORLD POSITION, not on an index: an index shifts every downstream
+        /// building the moment one block changes its mind, so a one-tile edit would repaint the whole town.</summary>
+        public static string MaterialVariantFor(string prop, float x, float z, int seed)
+        {
+            BuildingProp[] family = null;
+            foreach (var set in new[] { Houses, Offices, Apartments })
+                foreach (var b in set) if (b.Name == prop) { family = set; break; }
+            if (family == null || family.Length < 2) return null;   // civic/business props have no family palette
+            float r = Hash01(Mathf.RoundToInt(x), Mathf.RoundToInt(z), seed + 7331);
+            return family[Mathf.Clamp((int)(r * family.Length), 0, family.Length - 1)].Name;
+        }
+
         public static bool IsBusinessProp(string name) => IsBusiness(name);
 
         static bool IsBusiness(string name)

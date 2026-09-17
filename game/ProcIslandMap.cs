@@ -107,6 +107,8 @@ namespace UnturnedGodot
                         }
                 }
 
+            BakeNodes(terr, seed, cx, cz);
+
             string name = $"island_{seed}_map.png";
             string path = ProjectSettings.GlobalizePath("res://content/" + name);
             var err = img.SavePng(path);
@@ -121,6 +123,65 @@ namespace UnturnedGodot
             MapUI.IslandSize = size;
             MapUI.MapCentre = new Vector2(cx, cz);
             return name;
+        }
+
+        /// <summary>Fruit. ⚠ A LIST, not a generator: a name has to be pronounceable and recognisable, and the
+        /// two ways to get that are a curated list or a syllable grammar -- and a grammar that produces
+        /// "Brelmond" also produces "Xqualt" on some seed nobody will test.</summary>
+        static readonly string[] Fruits =
+        {
+            "Apple", "Cherry", "Peach", "Plum", "Quince", "Damson", "Medlar", "Mulberry", "Bramble",
+            "Sloe", "Rowan", "Elder", "Juniper", "Hazel", "Chestnut", "Walnut", "Almond", "Fig",
+            "Olive", "Citron", "Bergamot", "Lychee", "Papaya", "Guava", "Tamarind", "Persimmon",
+            "Pomelo", "Nectarine", "Apricot", "Greengage", "Loganberry", "Cloudberry",
+        };
+
+        /// <summary>Name every town and write the node file the map + the `teleport` console command read
+        /// (strawberry 2026-09-17: "the map still has the node positions and names of pei. give each town a
+        /// random name node in its center from a list of fruits and the town suffix for towns and city suffix
+        /// for cities").
+        ///
+        /// ⚠ MapNodes IS A FILE, NOT A LIST IN MEMORY -- it reads content/&lt;MapNodeFile&gt; and caches. So a
+        /// generated island needs its own .tsv and a Reload(), or the map keeps showing PEI's Alberton and
+        /// Fernwood Farm over an island that has neither.
+        ///
+        /// ⚠ NAMES ARE DRAWN WITHOUT REPLACEMENT. Seeded picks collide -- two towns rolling "Cherry" on one
+        /// island is not rare at 32 fruits and a dozen towns, it is the birthday problem -- and two places with
+        /// the same name is worse than an odd one, because directions stop working.</summary>
+        static void BakeNodes(Terrain terr, int seed, float cx, float cz)
+        {
+            if (terr?.IslandTiles == null) return;
+            // Tiles grouped per monument -> its centre and its size class, the same count SizeOf reads.
+            var byPoi = new System.Collections.Generic.Dictionary<int, (float sx, float sz, int n)>();
+            foreach (var t in terr.IslandTiles)
+            {
+                byPoi.TryGetValue(t.Poi, out var a);
+                byPoi[t.Poi] = (a.sx + t.X, a.sz + t.Z, a.n + 1);
+            }
+            var rng = new System.Random(seed ^ 0x4A3B21);
+            var pool = new System.Collections.Generic.List<string>(Fruits);
+            var sb = new System.Text.StringBuilder();
+            int named = 0;
+            foreach (var kv in byPoi)
+            {
+                var size = ProcIsland.SizeOf(kv.Value.n);
+                if (size == ProcIsland.TownSize.Monument) continue;   // two caps and a road does not get a name
+                if (pool.Count == 0) break;
+                int pick = rng.Next(pool.Count);
+                string fruit = pool[pick]; pool.RemoveAt(pick);       // without replacement
+                string label = fruit + (size == ProcIsland.TownSize.City ? " City" : " Town");
+                var w = ProcIslandSpawn.PosFor(terr, kv.Value.sx / kv.Value.n, kv.Value.sz / kv.Value.n);
+                sb.Append(label).Append('\t')
+                  .Append(w.X.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)).Append(',')
+                  .Append(w.Y.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)).Append(',')
+                  .Append(w.Z.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)).Append('\n');
+                named++;
+            }
+            string file = $"nodes_island_{seed}.tsv";
+            System.IO.File.WriteAllText(ProjectSettings.GlobalizePath("res://content/" + file), sb.ToString());
+            MapNodes.MapNodeFile = file;
+            MapNodes.Reload();   // drop PEI's cached nodes, or the map shows Alberton over an island without one
+            Log.Print($"[island-map] {named} town node(s) named -> content/{file}");
         }
     }
 }

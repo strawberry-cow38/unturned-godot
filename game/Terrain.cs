@@ -577,6 +577,11 @@ void fragment() {
         /// thread them through -- they are read-only outputs of the same generate.</summary>
         public System.Collections.Generic.List<ProcIsland.Link> IslandLinks => _islandLinks;
         public System.Collections.Generic.List<ProcIsland.Connector> IslandConnectors => _islandConnectors;
+        /// <summary>The seed this island was generated from. ⚠ Stored rather than passed around: the prop
+        /// crossover runs long after GenerateIsland returned, and "deterministic" means every one of those
+        /// later choices keys off the SAME number rather than off whatever the caller still happens to hold.</summary>
+        public int IslandSeed => _islandSeed;
+        int _islandSeed;
         System.Collections.Generic.List<ProcIsland.Link> _islandLinks = new();
         System.Collections.Generic.List<ProcIsland.Connector> _islandConnectors = new();
         public System.Collections.Generic.List<ProcIsland.Route> IslandRoutes => _islandRoutes;
@@ -592,6 +597,7 @@ void fragment() {
             if (_grid == null) return none;
             var pars = ProcIsland.Params.Default(seed);
             pars.Lakes = lakes;   // off unless the generator UI asked for them
+            _islandSeed = seed;   // crossover passes key deterministic choices off this (materials, town names)
             ProcIsland.Fill(_grid, _gw, _gh, pars);
             // POIs are placed AFTER the terrain exists and BEFORE the mesh is built: they read the heights to
             // choose somewhere buildable, then rewrite them to flatten their pads. Returned rather than stored

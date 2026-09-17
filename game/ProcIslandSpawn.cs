@@ -1854,7 +1854,14 @@ namespace UnturnedGodot
             }
             foreach (var b in terr.IslandBuildings)
             {
-                if (objs.Place(b.Prop, BuildingPosFor(terr, b.X, b.Z), RotFor(b.YawDeg)) != null) buildings++; else missing++;
+                // ⚠ A SEEDED MATERIAL FROM THE SAME FAMILY (strawberry 2026-09-17: "randomize the material id of
+                // houses/offices/apartments (based off our seed so muh determinism)"). Retail's own trick, read
+                // off placements.txt: 23 rows there put a House_00 mesh in House_01/_02/_09's material. Each
+                // house's texture is a different colour scheme, so a street of four models reads as a street of
+                // different homes. Keyed on the building's own position, so the same island paints the same
+                // street every time and moving one house does not repaint its neighbours.
+                string mat = ProcIsland.MaterialVariantFor(b.Prop, b.X, b.Z, terr.IslandSeed);
+                if (objs.Place(b.Prop, BuildingPosFor(terr, b.X, b.Z), RotFor(b.YawDeg), mat) != null) buildings++; else missing++;
             }
             ScatterBoulders(terr, objs, ref missing);
             ReportPieces(terr);
