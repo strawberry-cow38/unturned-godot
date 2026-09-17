@@ -382,9 +382,44 @@ namespace UnturnedGodot.Testing
             foreach (var t in tiles) GD.Print($"[island]   {t}");
 
             // ---- BUILDINGS, set back from the streets they front.
+            // ⚠⚠ THE ISLAND FIXTURE CANNOT EXERCISE THIS RULE, AND READ AS A PRODUCT BUG WHEN IT SAID SO.
+            // Gen(1,1234) is a 257-cell grid -- a ~1 km island, a NINTH of the area of the 769-cell one a real
+            // generation uses -- so every monument on it comes out a stub: about ten road props across the
+            // whole island, which makes SizeOf(<=3 tiles) class each one as Monument, and PlaceBuildings then
+            // returns empty BY DESIGN ("two caps and a road is not a settlement"). The old check reported "the
+            // town got buildings (0)": true, unactionable, and a statement about the fixture rather than the
+            // product. It went red the day the Monument early-return shipped and sat hidden behind an earlier
+            // failing check until that one was fixed -- so "the first failure moved" was a check being
+            // un-hidden, not a regression.
+            //
+            // So the rule gets a town big enough for the rule to apply, assembled exactly the way the generator
+            // assembles one. ⚠ AND THE FIXTURE ASSERTS ITSELF FIRST: if it ever degenerates the same way it
+            // must report THAT, rather than report a buildings bug that is not there. A check whose failure
+            // message names the wrong subsystem costs more than no check.
+            int townIdx = pois.Count;
+            float townHalf = 5 * ProcIsland.TileSize * 0.5f;                     // a 5-tile town, the old default
+            var townPoi = new ProcIsland.Poi(ProcIsland.PoiKind.Town, 600f, 600f, townHalf, 10f, 5);
+            // Gates on the lattice, where SnapConnectorsToLattice would put them: the outermost cell centre is
+            // at +/-48 and a cap's connector sits 12 past it, which is exactly the face at +/-60.
+            var townCons = new System.Collections.Generic.List<ProcIsland.Connector>
+            {
+                new ProcIsland.Connector(townIdx, 0, 600f + townHalf, 600f,  1f, 0f, ProcIsland.LinkKind.Road),
+                new ProcIsland.Connector(townIdx, 1, 600f - townHalf, 600f, -1f, 0f, ProcIsland.LinkKind.Road),
+            };
+            var townTiles = ProcIsland.BuildMonument(townIdx, townPoi, townCons);
+            var townSize = ProcIsland.SizeOf(townTiles.Count);
+            T.Check($"the buildings fixture is a real town rather than a stub ({townTiles.Count} street tiles -> {townSize})",
+                townSize != ProcIsland.TownSize.Monument);
+            tiles.AddRange(townTiles);
+
             var builds = new System.Collections.Generic.List<ProcIsland.MonumentBuilding>();
             for (int i = 0; i < pois.Count; i++) builds.AddRange(ProcIsland.PlaceBuildings(i, pois[i], tiles, ProcIsland.Params.Default(1234)));
-            T.Check($"the town got buildings ({builds.Count})", builds.Count >= 4);
+            builds.AddRange(ProcIsland.PlaceBuildings(townIdx, townPoi, tiles, ProcIsland.Params.Default(1234)));
+            // ⚠ THE FLOOR, NOT A LITERAL. `>= 4` was a number someone picked; MinBuildingsFor IS the rule the
+            // generator implements, so this cannot drift green the way a copied budget does.
+            int wantBuilds = ProcIsland.MinBuildingsFor(townSize);
+            T.Check($"a {townSize} town reaches its building floor ({builds.Count} placed, floor {wantBuilds})",
+                builds.Count >= wantBuilds);
 
             // WHERE THE FRONT WALL LANDS, not where the origin does. The old check asserted every building sat
             // at the SAME distance from its street, which is only the right property if every prop is the same
