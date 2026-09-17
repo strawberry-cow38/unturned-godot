@@ -6097,20 +6097,7 @@ namespace UnturnedGodot
             // it is a property of the camera rather than of who is looking through it -- and because it must
             // exist for the settings row to have something to drive. Off by default; GraphicsOptions decides.
             MountChromaticAberration();
-            // CONTAMINATED-GROUND GRAIN (strawberry 2026-09-11). Mounted here for the same reason the lens is:
-            // it is a property of the view, not of the player, and it has to exist before anyone walks into a
-            // zone. Costs nothing while clear -- the rect stays hidden until exposure is non-zero.
-            if (DeadzoneOverlay.Current == null)
-            {
-                var dzo = new DeadzoneOverlay { Player = res.Player };
-                AddChild(dzo);
-                if (GeigerCounter.Current == null) AddChild(new GeigerCounter { Player = res.Player });
-                // UG_DEADZONE=<seconds> forces the ramp for render verification, same argument as UG_CHROMATIC:
-                // a purely visual effect has to be lookable-at without first finding a deadzone and standing
-                // in it for 40 seconds.
-                if (System.Environment.GetEnvironmentVariable("UG_DEADZONE") is string dzs && float.TryParse(dzs, out float dzDose) && res.Player != null)
-                    res.Player.Radiation = dzDose;
-            }
+            MountDeadzoneVisuals(res.Player);
             if (res.DayNight != null && WeatherManager.Current == null)
             {
                 var wm = WeatherManager.Attach(this, null, res.DayNight);
@@ -9263,6 +9250,31 @@ namespace UnturnedGodot
         // server-adopted spawn, predicted + reconciled -- its camera IS the view (no overhead cam). Bare
         // --client keeps the C1 demo shape: overhead cam + ClientNode's capsule renderer (used by the
         // --server 2-process demo; no player shell).
+        /// CONTAMINATED-GROUND GRAIN + GEIGER (strawberry 2026-09-11), mounted by singleplayer AND by a joined
+        /// client. Same reason the lens is mounted on the build path: these are properties of the view, not of
+        /// the player, and they have to exist before anyone walks into a zone. Costs nothing while clear -- the
+        /// rect stays hidden until exposure is non-zero.
+        ///
+        /// ⚠ `player` IS NULL ON A CLIENT AND THAT IS CORRECT. A joined client has no local player when the
+        /// world finishes building -- the shell arrives later, over the wire -- which is exactly why this used
+        /// to be skipped there and a joined player got no grain and no clicking at all. Both readers re-check
+        /// Player for null and validity every frame and simply show nothing while it is unset, so mounting
+        /// early and binding late is safe; ClientWorldSession binds them at its one `Shell = shell` site.
+        /// The DATA half already worked on a client: SpawnInteractables builds the DeadzoneField in Client mode
+        /// too, and the field ticks every player in PlayerRegistry, so the shell was accumulating exposure that
+        /// nothing was drawing.
+        void MountDeadzoneVisuals(PlayerController player)
+        {
+            if (DeadzoneOverlay.Current != null) return;
+            AddChild(new DeadzoneOverlay { Player = player });
+            if (GeigerCounter.Current == null) AddChild(new GeigerCounter { Player = player });
+            // UG_DEADZONE=<seconds> forces the ramp for render verification, same argument as UG_CHROMATIC:
+            // a purely visual effect has to be lookable-at without first finding a deadzone and standing
+            // in it for 40 seconds.
+            if (System.Environment.GetEnvironmentVariable("UG_DEADZONE") is string dzs && float.TryParse(dzs, out float dzDose) && player != null)
+                player.Radiation = dzDose;
+        }
+
         /// The camera lens, mounted by singleplayer AND by a joined client. It lived inline on the playable
         /// path only, so on a server ChromaticAberration.Current stayed null forever and the graphics-panel
         /// toggle drove nothing at all -- GraphicsOptions.ApplyChromatic ends in `Current?.Apply()`, and a
@@ -9345,6 +9357,7 @@ namespace UnturnedGodot
                                                       ApplyServerHoliday = res.ApplyHoliday });              // P3: the deferred holiday content builds with the SERVER's holiday at Accept
                     PlayMapMusic();             // a joined player gets the map loop too -- see PlayMapMusic
                     MountChromaticAberration();   // ...and a lens for the graphics toggle to drive -- see MountChromaticAberration
+                    MountDeadzoneVisuals(null);   // radiation grain + geiger; the shell binds itself when it lands -- see MountDeadzoneVisuals
                     Log.Print($"[CLIENT] real world up ({System.IO.Path.GetFileName(_mapRoot)}); connecting to {_connectHost}:{PortEnv()} -- the local shell spawns at the server-adopted spawn, predicted + reconciled");
                 }
                 else   // bare --client (C1 demo shape): overhead cam over the spawn region + ClientNode capsules
