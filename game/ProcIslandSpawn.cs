@@ -2621,6 +2621,8 @@ namespace UnturnedGodot
                 // Three seeds put the TIGHTEST fold on route 24/27, 24/27 and 26/28, which is suggestive of
                 // exactly that and is also only three data points. This prints the whole distribution.
                 var foldOn = new System.Collections.Generic.List<int>();
+                var jointR = new System.Collections.Generic.List<float>();
+                int fitBlame = 0, pathBlame = 0;
                 for (int ci = 0; ci < curves.Count; ci++)
                 {
                     var c = curves[ci];
@@ -2640,7 +2642,40 @@ namespace UnturnedGodot
                         // gets this right a different way -- it takes the tangents at i-W and i+W, which span
                         // the same arc as its chord does -- and the fence pass uses this same mean-segment form.
                         float radius = (a.Length() + b2.Length()) * 0.5f / turn;
-                        if (radius < ProcIsland.RenderedRoadHalf) { folds++; foldOn.Add(curveRoute[ci]); }
+                        if (radius < ProcIsland.RenderedRoadHalf)
+                        {
+                            folds++; foldOn.Add(curveRoute[ci]);
+                            // ⚠ IS THE HAIRPIN IN THE PATH, OR DID THE CURVE FIT INVENT IT? The joints are
+                            // CONTROL POINTS of a Catmull-Rom whose tangent handles are MIRRORED and scaled off
+                            // neighbour span, so a short span next to a long one overshoots and the curve bows
+                            // far off the polyline that produced it. If the joints here turn gently and the
+                            // curve still folds, the defect is the fit and belongs in the tangents; if the
+                            // joints turn just as hard, the path hairpins and the fix belongs upstream in A*
+                            // or Relax. Same question, two completely different files.
+                            int jc = rf.JointCount(builtIdx[ci]);
+                            int nearJoint = -1; float nd = float.MaxValue;
+                            for (int j = 0; j < jc; j++)
+                            {
+                                var jp = rf.JointPos(builtIdx[ci], j);
+                                float d2 = new Vector2(jp.X - c[i].X, jp.Z - c[i].Z).LengthSquared();
+                                if (d2 < nd) { nd = d2; nearJoint = j; }
+                            }
+                            if (nearJoint > 0 && nearJoint < jc - 1)
+                            {
+                                var jm = rf.JointPos(builtIdx[ci], nearJoint - 1);
+                                var j0 = rf.JointPos(builtIdx[ci], nearJoint);
+                                var jp2 = rf.JointPos(builtIdx[ci], nearJoint + 1);
+                                var g1 = new Vector2(j0.X - jm.X, j0.Z - jm.Z);
+                                var g2 = new Vector2(jp2.X - j0.X, jp2.Z - j0.Z);
+                                if (g1.Length() > 1e-3f && g2.Length() > 1e-3f)
+                                {
+                                    float jt = Mathf.Acos(Mathf.Clamp(g1.Normalized().Dot(g2.Normalized()), -1f, 1f));
+                                    float jr = jt > 1e-4f ? (g1.Length() + g2.Length()) * 0.5f / jt : 9999f;
+                                    jointR.Add(jr);
+                                    if (jr > 40f) fitBlame++; else pathBlame++;
+                                }
+                            }
+                        }
                         if (radius < 20f) tight20++;
                         if (radius < tightest) { tightest = radius; tightRoute = curveRoute[ci]; tightAt = new Vector2(c[i].X, c[i].Z); }
                     }
@@ -2653,6 +2688,13 @@ namespace UnturnedGodot
                 Log.Print($"[island-curve] {folds} of {samples} centreline sample(s) turn tighter than the "
                           + $"{ProcIsland.RenderedRoadHalf:0.0} m half-width (the ribbon inverts there); "
                           + $"{tight20} tighter than 20 m{worst}{onRoutes}");
+                if (jointR.Count > 0)
+                {
+                    jointR.Sort();
+                    Log.Print($"[island-curve] at those folds the JOINTS turn at a median {jointR[jointR.Count / 2]:0} m radius "
+                              + $"(min {jointR[0]:0}, max {jointR[^1]:0}) -- {fitBlame} fold(s) sit where the joints turn "
+                              + $"gently (>40 m) so the CURVE FIT made the hairpin, {pathBlame} where the path hairpins too");
+                }
             }
 
             // ---- DROP ANY JUNCTION ROAD WHOSE BUILT RIBBON CROSSES ANOTHER ROAD --------------------------

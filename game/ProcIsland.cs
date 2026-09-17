@@ -888,6 +888,39 @@ namespace UnturnedGodot
                     GateFacesMoved++;
                 }
             }
+
+            // ---- DOES EVERY GATE ACTUALLY FACE WHERE ITS ROAD IS GOING? ----------------------------------
+            // strawberry, 2026-09-17: "its supposed to find the nearest connection points of 2 POIs and then
+            // connect them. but it just... doesnt? it will just send 2 random connect points to eachother and
+            // loop around and overlap on itself."
+            //
+            // GateOnFace picks the closest point ON A FACE, and it is right. But the loop above CHOOSES the
+            // face, and when the aligned faces are full it takes "the face with room whose normal best matches
+            // where it is going" -- with no floor on how bad that match may be. If every face with room points
+            // sideways or backwards, bestAlign is negative and the gate is placed on it anyway. A road leaving
+            // on a face pointing away from its partner has to turn 180 degrees around the pad to get going,
+            // which is a hairpin at the town wall, which is where the fold measurements keep landing.
+            //
+            // So: the angle between each FINAL gate's face normal and the bearing to its partner. 0 deg is
+            // straight at it, 90 is leaving sideways, >90 is leaving backwards.
+            {
+                int back = 0, side = 0, ahead = 0; float worst = 1f; int worstPoi = -1;
+                foreach (var c in outp)
+                {
+                    var lk = links[c.Link];
+                    int other = lk.A == c.Poi ? lk.B : lk.A;
+                    float bx = pois[other].X - pois[c.Poi].X, bz = pois[other].Z - pois[c.Poi].Z;
+                    float len = Mathf.Sqrt(bx * bx + bz * bz);
+                    if (len < 1e-4f) continue;
+                    float al = (bx / len) * c.DirX + (bz / len) * c.DirZ;
+                    if (al < 0f) back++; else if (al < 0.383f) side++; else ahead++;   // 0.383 = cos 67.5 deg
+                    if (al < worst) { worst = al; worstPoi = c.Poi; }
+                }
+                Log.Print($"[island-gates] {outp.Count} gate(s): {ahead} leave within 67 deg of their partner, "
+                          + $"{side} leave sideways, {back} leave BACKWARDS (the road must loop around the pad); "
+                          + $"worst {Mathf.RadToDeg(Mathf.Acos(Mathf.Clamp(worst, -1f, 1f))):0} deg off on poi#{worstPoi}; "
+                          + $"{GateFacesMoved} gate(s) were moved off their preferred face to get here");
+            }
             return outp;
         }
 
