@@ -28,7 +28,8 @@ public class MainWindow : Window
     // published launcher.version is GREATER than this. I shipped the report-key field without bumping it,
     // so nobody's launcher updated and the field simply did not exist for them. The code change is only
     // half of a launcher change; the other half is this number plus the release.
-    const int LauncherVersion = 15;   // v15: sign-in goes through stmauth -- what is stored is a SIGNED token bound to a keypair this box holds (AuthClient), not a SteamID only this launcher believes. UG_AUTH_TOKEN + UG_AUTH_KEY (path, never the value)
+    const int LauncherVersion = 16;   // v16: UI restyled to the in-game theme; Options disclosure (debug console / offline / report key / launcher log); "Check for update" button; debug-console toggle now works in BOTH directions; branch selection no longer dropped when made mid-operation
+    // v15: sign-in goes through stmauth -- what is stored is a SIGNED token bound to a keypair this box holds (AuthClient), not a SteamID only this launcher believes. UG_AUTH_TOKEN + UG_AUTH_KEY (path, never the value)
     // ⚠ THE LINE ABOVE DESCRIBED v13 WHILE THE CONSTANT SAID 15, because I bumped it twice today and updated
     // neither. That is the same rot the NetProtocol "the live server is v45" comment had -- a fact stapled to
     // a number that moves without it. The number is the release; the note is what shipped in it. Move both.
@@ -45,6 +46,24 @@ public class MainWindow : Window
     string _unturnedDir;   // resolved (env / default / saved / user-picked), passed to the game as UG_UNTURNED_DIR on launch
     static readonly HttpClient Http = new() { Timeout = TimeSpan.FromMinutes(5) };
 
+    // ---- palette ------------------------------------------------------------------------------------
+    // The in-game UI's colours, so the launcher and the game look like one product (strawberry 2026-09-17:
+    // "more closely match the style of the inventory, etc ui"). Hex transcribed from game/UITheme.cs, which
+    // stays the source of truth -- it is a Godot file (Godot.Color) and cannot be linked into Avalonia, so
+    // the float values are written beside each one to make a drift review possible by eye rather than by
+    // guess. UITheme.FontHeading is 16 and FontBody 13; those are used verbatim below.
+    static SolidColorBrush B(string hex) => new(Color.Parse(hex));
+    static readonly IBrush BgSolid    = B("#212124");   // UITheme.BgSolid   0.13 0.13 0.14
+    static readonly IBrush BarSolid   = B("#303033");   // UITheme.BarSolid  0.19 0.19 0.20
+    static readonly IBrush PanelEdge  = B("#3c3c41");   // the hairline on a raised card (UITheme.Border over BarSolid)
+    static readonly IBrush TextMain   = B("#E0E0E8");   // UITheme.Text      0.88 0.88 0.91
+    static readonly IBrush TextBody   = B("#C9C9C9");   // UITheme.TextBody  0.79 0.79 0.79
+    static readonly IBrush TextDim    = B("#8C8F99");   // UITheme.TextDim   0.55 0.56 0.60
+    static readonly IBrush Accent     = B("#9EC7F0");   // UITheme.Accent    0.62 0.78 0.94  (steel blue)
+    static readonly IBrush Good       = B("#9ED199");   // UITheme.Good      0.62 0.82 0.60
+    static readonly IBrush Bad        = B("#DB8575");   // UITheme.Bad       0.86 0.52 0.46
+    const int FontHeading = 16, FontBody = 13;          // UITheme.FontHeading / FontBody
+
     enum Mode { Busy, Update, Play, Broken }
 
     readonly string _baseDir, _srcDir, _gameDir, _builtMarker;
@@ -52,7 +71,7 @@ public class MainWindow : Window
 
     readonly TextBlock _currentLabel = new() { TextWrapping = TextWrapping.Wrap };
     readonly TextBlock _latestLabel = new() { TextWrapping = TextWrapping.Wrap };
-    readonly TextBlock _status = new() { Foreground = Brushes.Gray };
+    readonly TextBlock _status = new();   // Foreground set from the palette in BuildLayout
     readonly TextBox _log;
     readonly Button _steamButton = new() { Content = "Sign in through Steam", MinWidth = 170 };
     readonly TextBlock _nameStatus = new() { VerticalAlignment = VerticalAlignment.Center, FontSize = 12 };
@@ -65,6 +84,16 @@ public class MainWindow : Window
     readonly ComboBox _branchBox = new() { MinWidth = 220, FontSize = 13, VerticalAlignment = VerticalAlignment.Center };   // branch selector (populated from the remote after clone)
     // (The old "Multiplayer test" checkbox was removed -- MP is now a top-level "Multiplayer" button on the
     // in-game main menu, which connects to claw.bitvox.me itself. Server browser later.)
+    readonly Button _checkBtn = new() { Content = "Check for update", MinWidth = 130, FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
+    // OPTIONS live behind a disclosure rather than on the front page (strawberry 2026-09-17: "hide the debug
+    // console we have behind an options menu, which also holds the feedback key stuff"). The launcher's job
+    // is branch + Play; everything you set once belongs one click away, not in the way every launch.
+    readonly ToggleButton _optionsToggle = new() { Content = "Options", MinWidth = 90, FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
+    Border _optionsPanel;          // the disclosure body -- built in BuildLayout, shown by the toggle
+    StackPanel _logPanel;          // the launcher's own output; hidden unless asked for
+    readonly CheckBox _showLogCheck = new() { Content = "Show launcher log", FontSize = FontBody, VerticalAlignment = VerticalAlignment.Center };
+    // Serialises branch refreshes so a selection made mid-refresh is QUEUED, never dropped. See RefreshCoalescer.
+    readonly RefreshCoalescer _refreshes = new();
     Mode _mode = Mode.Busy;
 
     public MainWindow()
@@ -81,17 +110,23 @@ public class MainWindow : Window
         // replacing a single exe, so a loose icon file beside it is one the updater never refreshes.
         try { Icon = new WindowIcon(Avalonia.Platform.AssetLoader.Open(new Uri("avares://UnturnedGodotLauncher/Assets/unturned.png"))); }
         catch { }   // a missing icon must never stop the launcher opening -- it is decoration, the Play button is not
-        Width = 680; Height = 520; MinWidth = 560; MinHeight = 420;
+        // ⚠ SIZES TO ITS CONTENT rather than to a fixed 680x520. With Options and the log both collapsed the
+        // old fixed height left a large empty band between the build box and the Play button -- the window
+        // looked like it had failed to finish drawing. Every row is Auto and the log has an explicit height,
+        // so opening either disclosure grows the window and closing it takes the space back.
+        Width = 700; MinWidth = 560;
+        SizeToContent = SizeToContent.Height;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
-        Background = new SolidColorBrush(Color.Parse("#16181d"));
+        Background = BgSolid;   // cards sit on this in BarSolid, the same panel-on-backdrop relationship the in-game UI uses
 
         _log = new TextBox
         {
             IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.NoWrap,
             FontFamily = new FontFamily("Cascadia Mono,Consolas,Menlo,monospace"), FontSize = 12,
-            Background = new SolidColorBrush(Color.Parse("#0d0f13")), Foreground = new SolidColorBrush(Color.Parse("#c8d0d8")),
-            BorderThickness = new Avalonia.Thickness(1), BorderBrush = new SolidColorBrush(Color.Parse("#2a2e36")),
+            Background = B("#17171A"), Foreground = TextBody,   // a well, darker than the backdrop -- it is output, not chrome
+            BorderThickness = new Avalonia.Thickness(1), BorderBrush = PanelEdge,
         };
+        _log.Height = 260;   // explicit, because the grid is all-Auto now -- see SizeToContent in the ctor
         ScrollViewer.SetVerticalScrollBarVisibility(_log, ScrollBarVisibility.Auto);
         ScrollViewer.SetHorizontalScrollBarVisibility(_log, ScrollBarVisibility.Auto);
 
@@ -103,117 +138,122 @@ public class MainWindow : Window
 
     Control BuildLayout()
     {
-        var header = new TextBlock { Text = "UNTURNED · GODOT", FontSize = 22, FontWeight = FontWeight.Bold, Foreground = Brushes.White };
-        var sub = new TextBlock { Text = "1:1 port launcher", FontSize = 12, Foreground = new SolidColorBrush(Color.Parse("#7a828c")), Margin = new Avalonia.Thickness(0, 0, 0, 8) };
-
-        var buildBox = new Border
+        // ⚠ NO TAGLINE. The old layout opened with "1:1 port launcher" under the title -- a line that told a
+        // player nothing they could act on and cost a row on a 520px window (strawberry 2026-09-17: "remove
+        // unecessary crap, '1:1 port launcher' text"). The title alone says what this is.
+        var header = new TextBlock
         {
-            Background = new SolidColorBrush(Color.Parse("#1d2027")), CornerRadius = new Avalonia.CornerRadius(6),
-            Padding = new Avalonia.Thickness(12, 10), Margin = new Avalonia.Thickness(0, 0, 0, 10),
-            Child = new StackPanel { Spacing = 6, Children = { _currentLabel, _latestLabel } },
-        };
-        _currentLabel.Foreground = new SolidColorBrush(Color.Parse("#c8d0d8"));
-        _latestLabel.Foreground = new SolidColorBrush(Color.Parse("#c8d0d8"));
-
-        var logHeader = new TextBlock { Text = "Debug console", FontSize = 11, Foreground = new SolidColorBrush(Color.Parse("#7a828c")), Margin = new Avalonia.Thickness(2, 0, 0, 3) };
-
-        var footer = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), Margin = new Avalonia.Thickness(0, 10, 0, 0) };
-        // right side: just the Play button (the MP-test checkbox moved in-game).
-        var rightSide = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 14, VerticalAlignment = VerticalAlignment.Center, Children = { _action } };
-        Grid.SetColumn(_status, 0); Grid.SetColumn(rightSide, 1);
-        _status.VerticalAlignment = VerticalAlignment.Center;
-        footer.Children.Add(_status); footer.Children.Add(rightSide);
-
-        var branchRow = new StackPanel
-        {
-            Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Avalonia.Thickness(0, 0, 0, 10),
-            Children =
-            {
-                new TextBlock { Text = "Branch:", Foreground = new SolidColorBrush(Color.Parse("#7a828c")), VerticalAlignment = VerticalAlignment.Center, FontSize = 13 },
-                _branchBox,
-            },
+            Text = "UNTURNED · GODOT", FontSize = 22, FontWeight = FontWeight.Bold,
+            Foreground = TextMain, Margin = new Avalonia.Thickness(0, 0, 0, 12),
         };
 
-        // ---- report key: paste once, never again ----------------------------------------------------
-        // Same shape as Branch and the Unturned folder above -- a small file beside the launcher plus one
-        // control -- because a third bespoke mechanism for "remember this string" is how a settings screen
-        // starts to rot.
-        _keyBox.PasswordChar = '\u2022';   // not security (the file it writes is plaintext) -- a key you
-                                            // paste is a key someone screen-sharing can otherwise read back
-        _keyStatus.Foreground = new SolidColorBrush(Color.Parse("#7a828c"));
-        var saveKey = new Button { Content = "Save", MinWidth = 70 };
-        saveKey.Click += (_, _) => SaveReportKey(_keyBox.Text ?? "");
-        var keyRow = new StackPanel
+        TextBlock Dim(string t) => new() { Text = t, Foreground = TextDim, VerticalAlignment = VerticalAlignment.Center, FontSize = FontBody };
+        Border Card(Control body) => new()
         {
-            Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 8,
-            Margin = new Avalonia.Thickness(0, 8, 0, 0),
-            Children =
-            {
-                new TextBlock { Text = "Report key:", Foreground = new SolidColorBrush(Color.Parse("#7a828c")), VerticalAlignment = VerticalAlignment.Center, FontSize = 13 },
-                _keyBox,
-                saveKey,
-                _keyStatus,
-            },
+            Background = BarSolid, CornerRadius = new Avalonia.CornerRadius(4),
+            BorderThickness = new Avalonia.Thickness(1), BorderBrush = PanelEdge,
+            Padding = new Avalonia.Thickness(12, 10), Child = body,
         };
-        RefreshKeyStatus();
+
+        // ---- build state ---------------------------------------------------------------------------
+        _currentLabel.Foreground = TextBody; _currentLabel.FontSize = FontBody;
+        _latestLabel.Foreground = TextBody;  _latestLabel.FontSize = FontBody;
+        var buildBox = Card(new StackPanel { Spacing = 6, Children = { _currentLabel, _latestLabel } });
+        buildBox.Margin = new Avalonia.Thickness(0, 0, 0, 10);
+
+        // ---- branch + the two things you do to it --------------------------------------------------
+        // "Check for update" is explicit now (strawberry: "add a refresh 'check for update' button for the
+        // currently selected branch"). It was only ever implicit -- a refresh happened on launch and on a
+        // branch change, so a user watching for a commit that landed a minute ago had to restart the launcher.
+        _checkBtn.Click += async (_, _) => await RequestRefreshAsync();
+        var branchRow = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto,Auto,*,Auto"), Margin = new Avalonia.Thickness(0, 0, 0, 10) };
+        var bLabel = Dim("Branch:"); bLabel.Margin = new Avalonia.Thickness(0, 0, 8, 0);
+        _checkBtn.Margin = new Avalonia.Thickness(8, 0, 0, 0);
+        Grid.SetColumn(bLabel, 0); Grid.SetColumn(_branchBox, 1); Grid.SetColumn(_checkBtn, 2); Grid.SetColumn(_optionsToggle, 4);
+        branchRow.Children.Add(bLabel); branchRow.Children.Add(_branchBox);
+        branchRow.Children.Add(_checkBtn); branchRow.Children.Add(_optionsToggle);
 
         // ---- profile: the name and picture other players see --------------------------------------
-        // Same one-small-file-per-setting shape as Branch, the Unturned folder and the report key above.
-        // IDENTITY COMES FROM STEAM NOW, not from a box you type in (strawberry 2026-09-16: "just the steam
-        // auth. one button on the launcher, opens in browser, sign in, get ID. remove the name set and the pfp
-        // set from our launcher and get them via steam."). The typed name and the picture picker are gone:
-        // a self-asserted name is not an identity, and the thing that actually needed fixing is that bans key
-        // on ip+name, both of which a player can change at will.
-        _nameStatus.Foreground = new SolidColorBrush(Color.Parse("#7a828c"));
+        // IDENTITY COMES FROM STEAM, not from a box you type in (strawberry 2026-09-16: "just the steam
+        // auth. one button on the launcher, opens in browser, sign in, get ID"). A self-asserted name is not
+        // an identity, and bans used to key on ip+name, both of which a player can change at will.
+        _nameStatus.Foreground = TextDim;
         _steamButton.Click += async (_, _) => await SignInWithSteamAsync();
-        var signOut = new Button { Content = "Sign out", MinWidth = 80 };
+        var signOut = new Button { Content = "Sign out", MinWidth = 80, FontSize = 12 };
         signOut.Click += (_, _) => SignOutOfSteam();
         var profileRow = new StackPanel
         {
-            Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 8,
-            Margin = new Avalonia.Thickness(0, 8, 0, 0),
-            Children =
-            {
-                new TextBlock { Text = "Profile:", Foreground = new SolidColorBrush(Color.Parse("#7a828c")), VerticalAlignment = VerticalAlignment.Center, FontSize = 13 },
-                _steamButton,
-                signOut,
-                _pfpPreview,
-                _nameStatus,
-            },
+            Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Avalonia.Thickness(0, 0, 0, 10),
+            Children = { Dim("Profile:"), _steamButton, signOut, _pfpPreview, _nameStatus },
         };
         RefreshProfileStatus();
 
-        // ---- options: per-machine launch switches -------------------------------------------------
-        // Deliberately a ROW that holds several checkboxes rather than one control, so the next switch is an
-        // entry in this panel instead of another grid restructure (tinyclaw's offline-mode toggle lands here).
-        // Same one-small-file-per-setting shape as Branch / the Unturned folder / the report key.
-        //
+        // ---- options (collapsed) -------------------------------------------------------------------
         // Godot mono ships BOTH godot.exe and godot_console.exe; the console build is a separate binary that
-        // allocates a Windows console, it is not a flag. So the toggle picks the executable -- see Play().
+        // allocates a Windows console, it is not a flag. So the toggle picks the executable -- see Play(),
+        // which routes through LauncherRules.GodotExeFor so the choice is SYMMETRIC (the old code could only
+        // ever turn the console on, never off).
         // ⚠ DEFAULT ON, which is the behaviour every existing install already has. A launcher that quietly
         // stops showing you the log the day it updates is a worse surprise than an unticked box.
         _consoleCheck.IsChecked = LoadDebugConsole();
         _consoleCheck.IsCheckedChanged += (_, _) => SaveDebugConsole(_consoleCheck.IsChecked == true);
+        ToolTip.SetTip(_consoleCheck, "Launches the game through Godot's console build, which opens a log window alongside it.");
         // ⚠ DEFAULT OFF, for the same reason the console defaults ON: a fresh install must behave like every
         // existing one, and every existing one has multiplayer. Nobody's launcher grows a new restriction.
         _offlineCheck.IsChecked = LoadOfflineMode();
         _offlineCheck.IsCheckedChanged += (_, _) => SaveOfflineMode(_offlineCheck.IsChecked == true);
         ToolTip.SetTip(_offlineCheck, "Hides Multiplayer and Direct Connect in game. Singleplayer is unaffected.");
-        var optionsRow = new StackPanel
+
+        _keyBox.PasswordChar = '\u2022';   // not security (the file it writes is plaintext) -- a key you
+                                            // paste is a key someone screen-sharing can otherwise read back
+        _keyStatus.Foreground = TextDim;
+        var saveKey = new Button { Content = "Save", MinWidth = 70, FontSize = 12 };
+        saveKey.Click += (_, _) => SaveReportKey(_keyBox.Text ?? "");
+        var keyRow = new StackPanel
         {
-            Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 14,
-            Margin = new Avalonia.Thickness(0, 8, 0, 0),
+            Orientation = Orientation.Horizontal, Spacing = 8,
+            Children = { Dim("Report key:"), _keyBox, saveKey, _keyStatus },
+        };
+        RefreshKeyStatus();
+
+        _showLogCheck.Foreground = TextBody;
+        _showLogCheck.IsChecked = false;
+        _showLogCheck.IsCheckedChanged += (_, _) => { if (_logPanel != null) _logPanel.IsVisible = _showLogCheck.IsChecked == true; };
+        _consoleCheck.Foreground = TextBody; _offlineCheck.Foreground = TextBody;
+
+        _optionsPanel = Card(new StackPanel
+        {
+            Spacing = 10,
             Children =
             {
-                new TextBlock { Text = "Options:", Foreground = new SolidColorBrush(Color.Parse("#7a828c")), VerticalAlignment = VerticalAlignment.Center, FontSize = 13 },
-                _consoleCheck,
-                _offlineCheck,
+                new StackPanel { Orientation = Orientation.Horizontal, Spacing = 16, Children = { _consoleCheck, _offlineCheck } },
+                keyRow,
+                _showLogCheck,
             },
-        };
+        });
+        _optionsPanel.Margin = new Avalonia.Thickness(0, 0, 0, 10);
+        _optionsPanel.IsVisible = false;
+        _optionsToggle.IsCheckedChanged += (_, _) => _optionsPanel.IsVisible = _optionsToggle.IsChecked == true;
 
-        var grid = new Grid { RowDefinitions = new RowDefinitions("Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,*,Auto"), Margin = new Avalonia.Thickness(16) };
+        // ---- the launcher's own output, hidden by default ------------------------------------------
+        // This is the "debug console we have" -- our git/build/godot transcript, not the game's. It is the
+        // thing a player never needs and the thing I always need, so it collapses instead of going away.
+        var logHeader = new TextBlock { Text = "Launcher log", FontSize = 11, Foreground = TextDim, Margin = new Avalonia.Thickness(2, 0, 0, 3) };
+        _logPanel = new StackPanel { Spacing = 0, IsVisible = false, Children = { logHeader, _log } };
+
+        // ---- footer --------------------------------------------------------------------------------
+        var footer = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), Margin = new Avalonia.Thickness(0, 10, 0, 0) };
+        _status.VerticalAlignment = VerticalAlignment.Center;
+        _status.FontSize = FontBody;
+        _status.Foreground = TextDim;
+        Grid.SetColumn(_status, 0); Grid.SetColumn(_action, 1);
+        footer.Children.Add(_status); footer.Children.Add(_action);
+
+        // All Auto (see SizeToContent above): a * row would keep claiming the slack while its child is hidden,
+        // which is exactly the empty band this replaces.
+        var grid = new Grid { RowDefinitions = new RowDefinitions("Auto,Auto,Auto,Auto,Auto,Auto,Auto"), Margin = new Avalonia.Thickness(18) };
         void Row(Control c, int r) { Grid.SetRow(c, r); grid.Children.Add(c); }
-        Row(header, 0); Row(sub, 1); Row(branchRow, 2); Row(profileRow, 3); Row(keyRow, 4); Row(optionsRow, 5); Row(buildBox, 6); Row(logHeader, 7); Row(_log, 8); Row(footer, 9);
+        Row(header, 0); Row(branchRow, 1); Row(profileRow, 2); Row(_optionsPanel, 3); Row(buildBox, 4); Row(_logPanel, 5); Row(footer, 6);
         return grid;
     }
 
@@ -239,7 +279,7 @@ public class MainWindow : Window
             if (await RunAsync(_git, new[] { "clone", "--depth", "1", "--single-branch", "--branch", _branch, RepoUrl, _srcDir }, _baseDir) != 0) { Fail($"git clone failed (branch '{_branch}' exists + auth set up?)."); return; }
         }
         await PopulateBranchesAsync();   // fill the dropdown from the remote (origin exists now)
-        await RefreshAsync();
+        await RequestRefreshAsync();     // through the lock like every other refresh -- a branch picked during startup queues
     }
 
     // Self-update the launcher exe. Returns true if an update is underway (caller must stop -- we're closing). Windows
@@ -409,18 +449,38 @@ public class MainWindow : Window
 
     async void OnBranchChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_mode == Mode.Busy) return;   // ignore selection churn mid-operation
         if (_branchBox.SelectedItem is not string sel || sel == _branch) return;
+
+        // ⚠ RECORD FIRST, ALWAYS. This used to open with `if (_mode == Mode.Busy) return;`, which threw the
+        // selection away BEFORE _branch and branch.txt were written -- so the dropdown showed the new branch
+        // while everything that acts on it still held the old one, and the next Update fetched the old one
+        // (strawberry 2026-09-17: "sometimes when i switch branches from the dropdown too quickly, it doesnt
+        // register the new branch i selected, so i download the other branch instead"). A user's selection is
+        // not something an in-flight operation gets to discard; what can wait is the REFRESH, not the choice.
         _branch = sel;
         SaveBranch(sel);
         Log($"Branch -> {sel}");
-        await RefreshAsync();   // re-fetch the new branch + show if a switch/build is needed (the switch itself happens on Update)
+        await RequestRefreshAsync();
     }
+
+    /// <summary>Run one operation against the working copy at a time, and drain any refresh queued while it
+    /// ran. EVERY entry point goes through here -- refresh, Check for update, Update, Play -- because they
+    /// all drive git/dotnet in ONE clone: two at once is not slow, it is a corrupt tree. The queued refresh
+    /// is what makes a branch change during a long update still land: the choice is recorded immediately,
+    /// and the view catches up the moment the update finishes.</summary>
+    async Task WithExclusiveAsync(Func<Task> op)
+    {
+        if (!_refreshes.Request()) { Log("(busy — queued; it will re-check when the current one finishes)"); return; }
+        try { await op(); }
+        finally { while (_refreshes.Done()) await RefreshAsync(); }
+    }
+
+    Task RequestRefreshAsync() => WithExclusiveAsync(RefreshAsync);
 
     async Task OnActionAsync()
     {
-        if (_mode == Mode.Update) await DoUpdateAsync();
-        else if (_mode == Mode.Play) await LaunchGame();
+        if (_mode == Mode.Update) await WithExclusiveAsync(DoUpdateAsync);
+        else if (_mode == Mode.Play) await WithExclusiveAsync(LaunchGame);
     }
 
     async Task DoUpdateAsync()
@@ -494,14 +554,22 @@ public class MainWindow : Window
             Environment.SetEnvironmentVariable("UG_BUGREPORT_KEY", reportKey.Length > 0 ? reportKey : null);
             if (reportKey.Length == 0) Log("(no report key set — bug reports will file anonymously)");
 
+            // THE TOGGLE, BOTH WAYS. Godot mono ships godot.exe AND godot_console.exe; the console build is a
+            // separate binary that allocates a Windows console, not a flag, so the toggle picks the executable.
+            // The old code here only ever APPENDED "_console" and did nothing when the box was unticked --
+            // which is a no-op on any machine whose resolved Godot already IS the console build (UNTURNED_GODOT_EXE
+            // or a bare "godot" on PATH can both be). It then logged "launching the windowed build" while
+            // launching the console one. LauncherRules.GodotExeFor strips as well as adds, and reports whether
+            // it managed it so the line below states what happened instead of what was asked for.
             string exe = _godot;
-            if (OperatingSystem.IsWindows() && LoadDebugConsole())   // Godot mono ships a *_console.exe that pops a debug console window
+            if (OperatingSystem.IsWindows())
             {
-                string con = exe.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? exe[..^4] + "_console.exe" : exe + "_console";
-                if (File.Exists(con)) exe = con;
-                else Log("(no *_console.exe next to godot — launching without a separate debug window)");
+                bool wantConsole = LoadDebugConsole();
+                var pick = LauncherRules.GodotExeFor(_godot, wantConsole, File.Exists);
+                exe = pick.Exe;
+                if (pick.Satisfied) Log(wantConsole ? "Debug console: on." : "Debug console: off.");
+                else Log($"(wanted the {(wantConsole ? "console" : "windowed")} build but it isn't next to godot — launching {Path.GetFileName(exe)})");
             }
-            else if (OperatingSystem.IsWindows()) Log("(debug console off — launching the windowed build)");
             var psi = new ProcessStartInfo(exe) { UseShellExecute = true, WorkingDirectory = _gameDir };
             psi.ArgumentList.Add("--path");
             psi.ArgumentList.Add(_gameDir);
@@ -524,8 +592,10 @@ public class MainWindow : Window
             _mode = m;
             _action.Content = label;
             _action.IsEnabled = m is Mode.Update or Mode.Play;
-            _action.Background = new SolidColorBrush(Color.Parse(m == Mode.Play ? "#2e7d32" : "#1565c0"));
-            _action.Foreground = Brushes.White;
+            // UITheme's Accent and Good are TEXT colours (light steel blue / light green) and read as washed
+            // out behind white text, so the fills are those same hues darkened rather than a different family.
+            _action.Background = m == Mode.Play ? B("#3E6B45") : B("#3A5A78");
+            _action.Foreground = TextMain;
             _status.Text = status;
         });
     }
@@ -538,7 +608,7 @@ public class MainWindow : Window
     void Fail(string msg)
     {
         Log("ERROR: " + msg);
-        Dispatcher.UIThread.Post(() => { _mode = Mode.Broken; _action.IsEnabled = false; _action.Content = "—"; _status.Text = msg; _status.Foreground = new SolidColorBrush(Color.Parse("#e57373")); });
+        Dispatcher.UIThread.Post(() => { _mode = Mode.Broken; _action.IsEnabled = false; _action.Content = "—"; _status.Text = msg; _status.Foreground = Bad; });
     }
 
     void Log(string line)
