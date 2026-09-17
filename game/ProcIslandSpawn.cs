@@ -2623,6 +2623,7 @@ namespace UnturnedGodot
                 var foldOn = new System.Collections.Generic.List<int>();
                 var jointR = new System.Collections.Generic.List<float>();
                 var foldSeg = new System.Collections.Generic.List<float>();
+                var foldKind = new System.Collections.Generic.List<ProcIsland.LinkKind>();
                 var foldTurn = new System.Collections.Generic.List<float>();
                 int fitBlame = 0, pathBlame = 0;
                 for (int ci = 0; ci < curves.Count; ci++)
@@ -2647,6 +2648,13 @@ namespace UnturnedGodot
                         if (radius < ProcIsland.RenderedRoadHalf)
                         {
                             folds++; foldOn.Add(curveRoute[ci]);
+                            // ⚠⚠ WHICH KIND. Relax -- the smoothing, the Hermite ease AND the 90 m curvature
+                            // limiter -- is called from exactly ONE place, CarveRoutes L1118. CarveTrails
+                            // builds its own points and never calls it, so a trail gets NO smoothing and NO
+                            // radius floor while being rendered as a real 9.2 m ribbon. IslandRoutes is only
+                            // half Road (14 Road, 14 other on these seeds), so "route 26" was never evidence
+                            // about the road A* and I reported it as though it were.
+                            foldKind.Add(curveKind[ci]);
                             // ⚠ IS THE HAIRPIN IN THE PATH, OR DID THE CURVE FIT INVENT IT? The joints are
                             // CONTROL POINTS of a Catmull-Rom whose tangent handles are MIRRORED and scaled off
                             // neighbour span, so a short span next to a long one overshoots and the curve bows
@@ -2693,7 +2701,14 @@ namespace UnturnedGodot
                     ? $", tightest {tightest:0.0} m on route {tightRoute} at ({tightAt.X:0},{tightAt.Y:0})"
                     : "";
                 foldOn.Sort();
-                string onRoutes = foldOn.Count > 0 ? $" -- on route(s) {string.Join(",", foldOn)} of {curves.Count}" : "";
+                var kindTally = new System.Collections.Generic.Dictionary<ProcIsland.LinkKind, int>();
+                foreach (var k2 in foldKind) kindTally[k2] = kindTally.TryGetValue(k2, out int c2) ? c2 + 1 : 1;
+                var kindBits = new System.Collections.Generic.List<string>();
+                foreach (var kv2 in kindTally) kindBits.Add($"{kv2.Value} {kv2.Key}");
+                string onRoutes = foldOn.Count > 0
+                    ? $" -- on route(s) {string.Join(",", foldOn)} of {curves.Count}"
+                      + (kindBits.Count > 0 ? $", by kind: {string.Join(" + ", kindBits)}" : "")
+                    : "";
                 Log.Print($"[island-curve] {folds} of {samples} centreline sample(s) turn tighter than the "
                           + $"{ProcIsland.RenderedRoadHalf:0.0} m half-width (the ribbon inverts there); "
                           + $"{tight20} tighter than 20 m{worst}{onRoutes}");
