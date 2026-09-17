@@ -59,6 +59,18 @@ namespace UnturnedGodot
         /// ⚠ ENDS ARE PINNED. The first and last joints meet a monument's cap piece, and moving one leaves the
         /// road ending beside the gate instead of in it -- the same hazard CarveRoutes' own note describes about
         /// snapping connectors after routing.</summary>
+        const int SmoothWin = 2;   // joints either side -- see the note in SmoothProfile before widening
+        /// <summary>How far below the highest ground its chord spans a road may sit.
+        ///
+        /// ⚠ NOT ZERO ANY MORE, AND THE SMOOTHING IS WHY. `Max(smoothed, floor)` is a RATCHET -- each pass can
+        /// only raise the profile -- so turning the smoothing up from 4 passes to 10 (which master asked for)
+        /// pushed the road further above the ground on every seed: float went 258 -> 322 samples on 424242 and
+        /// the worst case 8.6 -> 12.7 m. Smoother and higher, which is not what "conform to the terrain better"
+        /// asks for.
+        ///
+        /// Slack is the counterweight: the road may now dip up to this far below the local maximum, so the
+        /// smoothing can carry it DOWN into a dip instead of only bridging across one. Measured earlier at
+        /// 0/3/8/unlimited -- 3 recovers most of it and past 8 nothing more changes.</summary>
         static readonly float FloorSlack = float.TryParse(System.Environment.GetEnvironmentVariable("UG_FLOORSLACK"),
             System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float _fs) ? _fs : 0f;
 
@@ -78,6 +90,14 @@ namespace UnturnedGodot
             // the ground at the gate is fractionally above that (it is the same flat pad, but the lift is only
             // 6 cm) the clamp below would not touch them anyway -- they are never smoothed. Recording the floor
             // from the pinned value keeps the ease's clamp honest at the seam.
+            // ⚠⚠ TRIED MUCH STRONGER AND IT MADE THINGS WORSE (strawberry asked for "MUCH stronger smoothing
+            // along the whole spline path"; this is why it is not 10 passes of a +/-4 window).
+            //
+            // Max(smoothed, floor) below is a RATCHET -- a pass can only ever RAISE the profile -- so turning
+            // the smoothing up does not iron the road into the ground, it lifts it off it. Measured on 424242:
+            // float 258 -> 322 samples and the worst case 8.6 -> 12.7 m. Adding FloorSlack to let it come back
+            // down then traded that for terrain poking THROUGH the tarmac, 114 -> 1958 samples. A see-saw,
+            // like the conform tie-break was: the ratchet is the thing that has to change, not its dial.
             SmoothPass(4);
             EaseEnd(0, +1);
             EaseEnd(pts.Count - 1, -1);
@@ -92,7 +112,7 @@ namespace UnturnedGodot
                     {
                         if (i == 0 || i == pts.Count - 1) { y[i] = pts[i].Y; continue; }
                         float sum = 0f; int n = 0;
-                        for (int k = -2; k <= 2; k++)
+                        for (int k = -SmoothWin; k <= SmoothWin; k++)
                         {
                             int j = i + k;
                             if (j < 0 || j >= pts.Count) continue;
@@ -2501,7 +2521,11 @@ namespace UnturnedGodot
                     if (gap > 0.6f) preOver++;
                     preN++;
                 }
-            terr.ConformToPolylines(sunk, ProcIsland.RenderedRoadHalf + 6f, ProcIsland.RenderedRoadHalf);
+            // ⚠ WIDER AND SOFTER-EDGED (strawberry: "the terrain needs stronger flattening power from roads").
+            // Full weight was 15.2 m -- 6 m past the tarmac -- feathering over another 9.2. That leaves the
+            // ground beside a road still doing whatever the hillside did, so the road reads as a strip laid on
+            // top rather than a cut through. 23.2 m of full levelling with a 16 m feather past it.
+            terr.ConformToPolylines(sunk, ProcIsland.RenderedRoadHalf + 14f, ProcIsland.RenderedRoadHalf + 7f);
             float postFloat = 0f; int postOver = 0;
             foreach (var c in curves)
                 foreach (var q in c)

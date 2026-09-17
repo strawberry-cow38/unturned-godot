@@ -1996,16 +1996,25 @@ namespace UnturnedGodot
                 var ab = (B.P - A.P).Normalized();
                 var na = new Vector2(-A.T.Y, A.T.X); if (na.Dot(ab) < 0f) na = -na;
                 var nb = new Vector2(-B.T.Y, B.T.X); if (nb.Dot(-ab) < 0f) nb = -nb;
-                var a0 = A.P + na * JuncStraight;
-                var b0 = B.P + nb * JuncStraight;
+                // ⭐ STOP AT THE ROAD'S EDGE, NOT ITS MIDDLE (strawberry: "when roads intersect (for junctions)
+                // dont meet all the way in the middle, meet at the edges").
+                //
+                // The anchor is a point on the parent's CENTRELINE, and running the spur all the way to it
+                // means the last 9.2 m of this ribbon is laid on top of the parent's tarmac -- two surfaces in
+                // the same place, which is the merged blob at every junction. The parent's carriageway already
+                // covers that ground; the spur only has to reach the edge of it.
+                var aEdge = A.P + na * RenderedRoadHalf;
+                var bEdge = B.P + nb * RenderedRoadHalf;
+                var a0 = aEdge + na * JuncStraight;
+                var b0 = bEdge + nb * JuncStraight;
                 float span = (b0 - a0).Length();
                 if (span < 40f) continue;
 
                 // Hermite between the straight runs, with each tangent along its own departure -- the same
                 // construction the trails use, and for the same reason: the bend must start AFTER the straight.
-                var pts = new System.Collections.Generic.List<Vector2> { A.P };
+                var pts = new System.Collections.Generic.List<Vector2> { aEdge };
                 int sn = Mathf.Max(2, Mathf.RoundToInt(JuncStraight / Unit));
-                for (int k = 1; k <= sn; k++) pts.Add(A.P + na * (JuncStraight * k / sn));
+                for (int k = 1; k <= sn; k++) pts.Add(aEdge + na * (JuncStraight * k / sn));
                 var m0 = na * span; var m1 = -nb * span;
                 int cn = Mathf.Max(8, Mathf.RoundToInt(span / Unit));
                 for (int k = 1; k <= cn; k++)
@@ -2014,7 +2023,7 @@ namespace UnturnedGodot
                     pts.Add(a0 * (2f * t3 - 3f * t2 + 1f) + m0 * (t3 - 2f * t2 + t)
                           + b0 * (-2f * t3 + 3f * t2) + m1 * (t3 - t2));
                 }
-                for (int k = sn - 1; k >= 0; k--) pts.Add(B.P + nb * (JuncStraight * k / sn));
+                for (int k = sn - 1; k >= 0; k--) pts.Add(bEdge + nb * (JuncStraight * k / sn));
 
                 // ⚠ REFUSE ONE THAT CROSSES A THIRD ROAD. Two roads meeting at a T is a junction; a road
                 // passing THROUGH another with no junction piece is a level crossing with no crossing on it.
