@@ -1867,6 +1867,7 @@ namespace UnturnedGodot
             const float MinLen = 24f;      // a route shorter than this is a stub inside a town, not a road between them
             int built = 0, skipped = 0;
             float clipWorst = 0f, clipSum = 0f; int clipOver = 0, clipN = 0;
+            float segWorstRatio = 0f, segWorstLen = 0f, segWorstNb = 0f, segShortest = float.MaxValue;
             var clipBad = new System.Collections.Generic.List<(float X, float Z, float Rise, float Off, bool Town)>();
 
             // ⚠ TWO PASSES, AND THE SPLIT IS LOAD-BEARING. Every route conforms the ground to its own profile,
@@ -1895,6 +1896,13 @@ namespace UnturnedGodot
                 if (tailStub > idxs[^1]) idxs.Add(tailStub);
                 if (n0 - 1 > idxs[^1]) idxs.Add(n0 - 1);
 
+                // Which joints may NOT be moved or dropped: the two gates and the two stub ends. Everything
+                // between them is a sample of a curve and can be thinned; those four are the geometry.
+                var pinned = new bool[idxs.Count];
+                pinned[0] = pinned[^1] = true;
+                for (int k = 0; k < idxs.Count; k++)
+                    if (idxs[k] == stub || idxs[k] == tailStub) pinned[k] = true;
+
                 var pts = new System.Collections.Generic.List<Vector3>();
                 var floor = new float[idxs.Count];
                 for (int k = 0; k < idxs.Count; k++)
@@ -1912,11 +1920,63 @@ namespace UnturnedGodot
                     floor[k] = onPad ? TilePosFor(terr, p.X, p.Y).Y
                                      : JointClearanceFor(terr, p.X, p.Y, dirv);   // what it must CLEAR
                 }
+
+                // ⭐ NO JOINT MAY CROWD THE ONE BEFORE IT (strawberry: "sometimes there are flipped inside out
+                // road nodes").
+                //
+                // RetangentRoad runs MIRROR mode, where a joint's handle is sized off the span to its
+                // NEIGHBOURS -- so a short segment next to a long one gets a handle several times its own
+                // length, the curve overshoots, doubles back, and the ribbon built along it winds BACKWARDS
+                // for one node. A backwards-wound quad is backface-culled, which is why it reads as a node
+                // turned inside out rather than as a kink.
+                //
+                // ⚠ IT IS NOT AN INDEX PROBLEM, which is why the stride walk above could not prevent it. The
+                // route's points come out of Relax's Hermite sampled at uniform t, and uniform t is not
+                // uniform ARC -- through a tight bend the spacing collapses, so joints a fixed six indices
+                // apart can be 30 m apart on one stretch and half a metre apart on another. Measured before
+                // this filter: 0.46 m beside 22.6 m (49x) on seed 12345, 2.47 beside 30.4 (12x) on 771177,
+                // 4.8 beside 38.7 (8x) on 424242 -- every seed, which is exactly the "sometimes".
+                //
+                // So the test is in METRES, on the polyline actually built. A pinned joint outranks an
+                // interior one; two interior joints too close, the later one goes.
+                const float MinJointGap = 10f;   // stride is ~24 m nominal, so this bounds the ratio near 2x
+                if (pts.Count > 2)
+                {
+                    var keepP = new System.Collections.Generic.List<Vector3> { pts[0] };
+                    var keepF = new System.Collections.Generic.List<float> { floor[0] };
+                    var keepPin = new System.Collections.Generic.List<bool> { pinned[0] };
+                    for (int k = 1; k < pts.Count; k++)
+                    {
+                        if (pts[k].DistanceTo(keepP[^1]) >= MinJointGap) { keepP.Add(pts[k]); keepF.Add(floor[k]); keepPin.Add(pinned[k]); continue; }
+                        if (!pinned[k]) continue;                                  // interior and crowding -> drop it
+                        if (!keepPin[^1] && keepP.Count > 1)                       // pinned beats the interior joint it crowds
+                        { keepP[^1] = pts[k]; keepF[^1] = floor[k]; keepPin[^1] = true; continue; }
+                        keepP.Add(pts[k]); keepF.Add(floor[k]); keepPin.Add(pinned[k]);   // two pins: both stay
+                    }
+                    // ⚠ The LAST point is a gate and is pinned, so it is still here -- but if it crowded an
+                    // interior joint that joint is gone, not the gate.
+                    pts = keepP;
+                    floor = keepF.ToArray();
+                }
                 if (pts.Count < 2) { skipped++; continue; }
 
                 float len = 0f;
                 for (int i = 1; i < pts.Count; i++) len += pts[i].DistanceTo(pts[i - 1]);
                 if (len < MinLen) { skipped++; continue; }
+                // ⚠ A SHORT SEGMENT BESIDE A LONG ONE IS A CUSP WAITING TO HAPPEN (strawberry: "sometimes
+                // there are flipped inside out road nodes"). RetangentRoad runs MIRROR mode: the handle at a
+                // joint is sized off the span to its NEIGHBOURS, so a 4 m segment sitting next to a 24 m one
+                // gets a handle four times its own length, the curve overshoots and doubles back, and the
+                // ribbon built along it winds backwards for one node -- which renders as a hole you can see
+                // through. Reported as a RATIO, because the length alone is not the fault; the MISMATCH is.
+                for (int i = 1; i < pts.Count; i++)
+                {
+                    float sl = pts[i].DistanceTo(pts[i - 1]);
+                    float nb = Mathf.Max(i > 1 ? pts[i - 1].DistanceTo(pts[i - 2]) : 0f,
+                                         i < pts.Count - 1 ? pts[i + 1].DistanceTo(pts[i]) : 0f);
+                    if (sl > 0.01f && nb / sl > segWorstRatio) { segWorstRatio = nb / sl; segWorstLen = sl; segWorstNb = nb; }
+                    if (sl < segShortest) segShortest = sl;
+                }
                 SmoothProfile(pts, floor);
 
                 // ⚠ THE END JOINTS ARE THE CAP'S HEIGHT, NOT THE LOCAL MAXIMUM. A route's first and last points
@@ -1990,6 +2050,8 @@ namespace UnturnedGodot
             }
 
             Log.Print($"[island-roads] {built} spline road(s) between towns" + (skipped > 0 ? $" ({skipped} route(s) skipped as too short or degenerate)" : ""));
+            Log.Print($"[island-roads] joint spacing: shortest segment {segShortest:0.00} m, worst neighbour ratio "
+                      + $"{segWorstRatio:0.0}x ({segWorstLen:0.0} m beside {segWorstNb:0.0} m) -- a mirrored handle cusps past ~2x");
             if (clipN > 0)
                 Log.Print($"[island-roads] ribbon vs ground: worst rise {clipWorst:0.00} m, mean {clipSum / clipN:0.00} m, "
                           + $"{clipOver}/{clipN} sample(s) above the surface (measured on the profile actually built)");
