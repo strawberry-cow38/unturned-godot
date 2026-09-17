@@ -44,7 +44,7 @@ namespace SDG.Unturned
     {
         public const float DETECT_STAND = 12f;
         public const float DETECT_CROUCH = 6f;
-        public const float DETECT_PRONE = 3f;
+        public const float DETECT_PRONE = 3f;       // retail's. NO LONGER what crawling uses -- see DETECT_PRONE_CRAWL
         public const float DETECT_SPRINT = 20f;
         public const float DETECT_MOVE = 1.1f;
         public const float DETECT_FORWARD = 48f;   // DRIVING, scaled by forward speed
@@ -67,9 +67,24 @@ namespace SDG.Unturned
         /// discovered later. Crouching stands at 2.4 and still just clears the floor.</summary>
         public const float DETECT_SCALE = 0.4f;
 
+        /// <summary>Crawling, near enough silent (strawberry 2026-09-17: "prone should be almost zero").
+        ///
+        /// ⚠ EXPLICIT, because prone was only silent BY ACCIDENT before this. At 0.4x it landed on 1.2 m, which
+        /// happens to sit under PlayerController's `loud > 2f` emit floor -- so crawling made no noise because of
+        /// a threshold in a different file that was never written with prone in mind. Move that floor for any
+        /// unrelated reason and crawling starts making noise again, with nothing naming the connection. The
+        /// quietness belongs on the stance.
+        ///
+        /// ⚠⚠ Deliberately BELOW MIN, and returned without the clamp: MIN (1 m) would raise it straight back to a
+        /// metre, which is the opposite of "almost zero". Not zero either -- something standing on top of you
+        /// should still have a chance, and a real radius keeps it a distance question rather than a special case.</summary>
+        public const float DETECT_PRONE_CRAWL = 0.25f;
+
         public static float Radius(EPlayerStance stance, bool moving)
         {
             float move = moving ? DETECT_MOVE : 1f;
+            // Returned before the clamp on purpose -- see DETECT_PRONE_CRAWL. Everything else still clamps.
+            if (stance == EPlayerStance.PRONE) return DETECT_PRONE_CRAWL * move;
             float r = stance switch
             {
                 EPlayerStance.SPRINT => DETECT_SPRINT * move,

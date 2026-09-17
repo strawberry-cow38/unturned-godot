@@ -68,7 +68,7 @@ namespace UnturnedSim.Tests
 
         [TestCase(EPlayerStance.STAND, 4.8f)]
         [TestCase(EPlayerStance.CROUCH, 2.4f)]
-        [TestCase(EPlayerStance.PRONE, 1.2f)]
+        [TestCase(EPlayerStance.PRONE, 0.25f)]   // crawl, deliberately under MIN
         [TestCase(EPlayerStance.SPRINT, 8f)]
         public void Stance_Radius_Table_Matches_Source(EPlayerStance stance, float expected)
         {
@@ -79,7 +79,7 @@ namespace UnturnedSim.Tests
         public void Moving_Multiplies_By_1_1()
         {
             Assert.That(StealthDetection.Radius(EPlayerStance.STAND, moving: true), Is.EqualTo(5.28f).Within(1e-4f));
-            Assert.That(StealthDetection.Radius(EPlayerStance.PRONE, moving: true), Is.EqualTo(1.32f).Within(1e-4f));
+            Assert.That(StealthDetection.Radius(EPlayerStance.PRONE, moving: true), Is.EqualTo(0.275f).Within(1e-4f));
         }
 
         [Test]
@@ -102,7 +102,11 @@ namespace UnturnedSim.Tests
             Assert.That(prone, Is.LessThan(crouch), "prone must beat crouching");
             Assert.That(crouch, Is.LessThan(stand), "crouching must beat standing");
             Assert.That(stand, Is.LessThan(sprint), "standing must beat sprinting");
-            Assert.That(prone, Is.GreaterThan(StealthDetection.MIN), "nothing may sit ON the clamp -- it flattens the table");
+            // Prone is deliberately BELOW MIN now, so "above the clamp" is the wrong invariant. The property that
+            // actually mattered was that the stances stay DISTINCT -- pile them onto one floor and the table reads
+            // as applied while ranking nothing. Strict ordering above already says that; this pins the gaps are real.
+            Assert.That(crouch - prone, Is.GreaterThan(0.5f), "crouch and prone must be meaningfully apart");
+            Assert.That(stand - crouch, Is.GreaterThan(0.5f), "stand and crouch must be meaningfully apart");
         }
 
         // DELIBERATE, and recorded because it is a THRESHOLD crossing rather than a scaling: PlayerController only
