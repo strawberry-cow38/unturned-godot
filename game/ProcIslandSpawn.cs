@@ -2294,7 +2294,7 @@ namespace UnturnedGodot
             const int Stride = RouteJointStride;
             const float MinLen = 24f;      // a route shorter than this is a stub inside a town, not a road between them
             int built = 0, skipped = 0;
-            float clipWorst = 0f, clipSum = 0f; int clipOver = 0, clipN = 0;
+            float clipWorst = 0f, clipSum = 0f; int clipOver = 0, clipN = 0, clipTown = 0;
             float segWorstRatio = 0f, segWorstLen = 0f, segWorstNb = 0f, segShortest = float.MaxValue;
             float floatWorst = 0f; int floatOver = 0, floatTown = 0, floatN = 0; var floatAt = Vector2.Zero;
             float centreWorst = 0f; int centreOver = 0, centreN = 0;
@@ -2677,7 +2677,15 @@ namespace UnturnedGodot
                                     if (gap > 0.6f) centreOver++;
                                 }
                             }
-                            if (rise > 0.20f)   // 0.20 m = a poke you can SEE; 5 cm is 4 m-grid noise
+                            // ⚠ SPLIT PAD FROM OPEN COUNTRY, the same way the float probe already does. The
+                            // conform does not touch a town pad -- the town levels its own ground exactly -- so
+                            // ground standing above the ribbon in there is a rule working, not a defect. Lumped
+                            // together it hid which was which: when I tried master's stronger smoothing, clip
+                            // went 114 -> 1958 samples and I reverted on that number without knowing whether
+                            // any of it was on ground the conform owns.
+                            bool onPad = ProcIsland.InsideAnyTownPad(mid.X + perp.X * off, -(mid.Z + perp.Y * off), 0f);
+                            if (rise > 0.20f && onPad) clipTown++;
+                            else if (rise > 0.20f)   // 0.20 m = a poke you can SEE; 5 cm is 4 m-grid noise
                             {
                                 clipOver++;
                                 if (rise > 0.5f && clipBad.Count < 8)
@@ -2982,7 +2990,8 @@ namespace UnturnedGodot
                       + $"{segWorstRatio:0.0}x ({segWorstLen:0.0} m beside {segWorstNb:0.0} m) -- a mirrored handle cusps past ~2x");
             if (clipN > 0)
                 Log.Print($"[island-roads] ribbon vs ground: worst rise {clipWorst:0.00} m, mean {clipSum / clipN:0.00} m, "
-                          + $"{clipOver}/{clipN} sample(s) above the surface (measured on the profile actually built)");
+                          + $"{clipOver}/{clipN} sample(s) above the surface in OPEN COUNTRY, {clipTown} more on a town pad "
+                          + "the conform does not own (measured on the profile actually built)");
             foreach (var c in clipBad)
                 Log.Print($"[island-roads] clip at ({c.X:0},{c.Z:0}) rise {c.Rise:0.00} m, lateral offset {c.Off:0.0} m, inTown={c.Town}");
             ReportCapJoins(terr);
