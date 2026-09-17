@@ -649,9 +649,12 @@ namespace UnturnedGodot
             // Trimmed LAST and by LENGTH, so what goes is the longest redundant edge. ⚠ And only edges whose
             // removal leaves both ends still reachable -- dropping a bridge is how an island ends up with a
             // town no road goes to, which is a worse defect than a busy junction.
+            // ⚠ AT METHOD SCOPE, not inside the trim block, because tier 2 below adds links too and has to
+            // honour the same number. It used to be local to the trim, which is precisely how tier 2 came to
+            // ignore it.
+            int Cap(int p) => pois[p].Kind != PoiKind.Town ? 3
+                            : SizeOf(pois[p].Tiles * pois[p].Tiles) == TownSize.City ? 4 : 3;
             {
-                int Cap(int p) => pois[p].Kind != PoiKind.Town ? 3
-                                : SizeOf(pois[p].Tiles * pois[p].Tiles) == TownSize.City ? 4 : 3;
                 var deg = new int[n];
                 foreach (var l in links) { deg[l.A]++; deg[l.B]++; }
                 var order = new System.Collections.Generic.List<int>();
@@ -695,17 +698,44 @@ namespace UnturnedGodot
 
             // --- tier 2: every construction site gets ONE trail, to its nearest spine member. A spur, not part
             // of the network -- nothing should route THROUGH a building site to get somewhere else.
+            // ⚠⚠ TIER 2 HAS TO RESPECT THE CAP TOO, and for a year it did not (strawberry 2026-09-17: "how
+            // are there still towns spamming quads?" and, earlier, "towns should only have 1-3 connections").
+            //
+            // The cap above trims tier-1 links and then reports MaxPoiDegree -- and THIS loop runs afterwards
+            // and adds more, choosing the nearest spine member with no regard for how many roads it already
+            // has. Several construction sites near one place all pick it. Found by dumping the geometry behind
+            // the last QuadCap exits: "poi#10 n=3 kind=MilitaryBase capX=1 capZ=1 gates=5" -- five gates on a
+            // 3-tile lattice with four faces, so two of them share a face by pigeonhole and deadlock into
+            // QuadCaps no matter how cleverly they are spread.
+            //
+            // ⚠ AND THE METRIC SAID "busiest place has 3" THE WHOLE TIME, because it was computed before this
+            // loop ran. That is the second time this session a counter agreed with me by measuring the wrong
+            // moment; MaxPoiDegree is now taken at the END, over the links that actually exist.
+            var degNow = new int[n];
+            foreach (var l2 in links) { degNow[l2.A]++; degNow[l2.B]++; }
             foreach (int t in temporary)
             {
                 if (spine.Contains(t)) continue;   // the no-permanent-places fallback already joined it
                 float best = float.MaxValue; int bj = -1;
+                float bestAny = float.MaxValue; int bjAny = -1;
                 foreach (int j in spine)
                 {
                     float d = Dist(pois[t], pois[j]);
+                    if (d < bestAny) { bestAny = d; bjAny = j; }
+                    if (degNow[j] >= Cap(j)) continue;       // already has all the roads it can seat
                     if (d < best) { best = d; bj = j; }
                 }
-                if (bj >= 0) links.Add(new Link(t, bj, KindFor(pois[t].Kind, pois[bj].Kind, best), best));
+                // A site must reach the network somehow, so if every spine member is full it still joins the
+                // nearest -- but that is now the exception it was always meant to be, not the rule.
+                if (bj < 0) { bj = bjAny; best = bestAny; }
+                if (bj >= 0)
+                {
+                    links.Add(new Link(t, bj, KindFor(pois[t].Kind, pois[bj].Kind, best), best));
+                    degNow[t]++; degNow[bj]++;
+                }
             }
+            int worstFinal = 0; foreach (int d in degNow) if (d > worstFinal) worstFinal = d;
+            MaxPoiDegree = worstFinal;
             return links;
         }
 
@@ -722,6 +752,138 @@ namespace UnturnedGodot
             }
             return cons;
         }
+
+        /// <summary>Move gates off a face that cannot seat them all, BEFORE the lattice line is chosen.
+        ///
+        /// ⭐ THIS IS WHERE THE LAST QUADCAP EXITS COME FROM (strawberry 2026-09-17: "how are there still towns
+        /// spamming quads?"), and it took dumping the geometry to see it. Two earlier guesses -- tightening the
+        /// snapper's adjacency rule, and capping connections by what the lattice can seat -- BOTH left the
+        /// count at exactly 5/3/2 on seeds 771177/424242/12345, which is what a wrong model looks like. The
+        /// dump said every single failure was the same shape:
+        ///
+        ///     n=3 cell=(0,1) ramp=(-1,0) streets (1,0) (0,1)
+        ///     n=3 cell=(0,2) ramp=(-1,0) streets (0,-1) (1,0)
+        ///
+        /// -- two gates on the SAME FACE of a 3-tile town, one lattice line apart. A face offers only its
+        /// street lines, and a stride-2 plan on n=3 has exactly ONE. So two gates on that face cannot both sit
+        /// on a street line; the snapper's "never share a cell" rule (which holds at every level) then forces
+        /// them apart onto ADJACENT cells, and adjacent exit cells deadlock -- neither may delete the other's
+        /// cell to reduce itself to a LineCap, so both fall through to QuadCap with a spare arm each.
+        ///
+        /// Nothing downstream can fix it, because by then the face is already chosen. Gate() picks the face by
+        /// which slab the ray to the partner exits, so two partners in roughly the same direction get the same
+        /// face regardless of whether the town can take two. The fix is to notice that here and turn one of
+        /// them onto a face with room: a road can perfectly well approach from the next side round, and does
+        /// so by bending well before it arrives.</summary>
+        public static System.Collections.Generic.List<Connector> SpreadGateFaces(
+            System.Collections.Generic.List<Poi> pois, System.Collections.Generic.List<Connector> cons,
+            System.Collections.Generic.List<Link> links, int seed = 0)
+        {
+            var outp = new System.Collections.Generic.List<Connector>(cons);
+            var byPoi = new System.Collections.Generic.Dictionary<int, System.Collections.Generic.List<int>>();
+            for (int i = 0; i < outp.Count; i++)
+            {
+                if (!byPoi.TryGetValue(outp[i].Poi, out var l)) { l = new System.Collections.Generic.List<int>(); byPoi[outp[i].Poi] = l; }
+                l.Add(i);
+            }
+
+            foreach (var kv in byPoi)
+            {
+                var poi = pois[kv.Key];
+                if (!FillsGrid(poi.Kind)) continue;   // the others already refuse adjacency at level 0
+                // How many gates a face can seat = how many of ITS street lines are pairwise non-adjacent.
+                // ⚠ READ OFF THE ACTUAL PLAN, not off n. (n-1)/2 was the first guess and it assumes every town
+                // runs stride-2 streets; StreetPlanFor also rolls stride 3, which gives a 5-tile town {1,4}
+                // or {2} -- one or two lines, not two guaranteed. The cap has to be the plan's, or it promises
+                // a face room it does not have and the deadlock survives.
+                // ⚠ AND IT IS PER AXIS. A gate on an X face varies its ej, so its line must come from the
+                // plan's J set; a Z-face gate is the mirror. One shared number would be wrong whenever the two
+                // sets differ, which is most of the time.
+                var plan = StreetPlanFor(kv.Key, poi.Tiles, seed);
+                static int NonAdjacent(int[] lines)
+                {
+                    if (lines == null || lines.Length == 0) return 1;
+                    var sorted = (int[])lines.Clone();
+                    System.Array.Sort(sorted);
+                    int cnt = 0, last = int.MinValue;
+                    foreach (int v in sorted) if (v - last > 1) { cnt++; last = v; }
+                    return Mathf.Max(1, cnt);
+                }
+                int capX = NonAdjacent(plan.J), capZ = NonAdjacent(plan.I);
+
+                (int dx, int dz) FaceOf(int i) => (Mathf.RoundToInt(outp[i].DirX), Mathf.RoundToInt(outp[i].DirZ));
+                int CapFor((int dx, int dz) f) => f.dx != 0 ? capX : capZ;
+
+                // Where this gate's road is actually going, so a moved gate is turned toward its partner and
+                // not just onto whichever face happened to be empty.
+                (float bx, float bz) BearingOf(int i)
+                {
+                    var lk = links[outp[i].Link];
+                    int other = lk.A == outp[i].Poi ? lk.B : lk.A;
+                    float bx = pois[other].X - poi.X, bz = pois[other].Z - poi.Z;
+                    float len = Mathf.Sqrt(bx * bx + bz * bz);
+                    return len < 1e-4f ? (1f, 0f) : (bx / len, bz / len);
+                }
+
+                for (int guard = 0; guard < 8; guard++)
+                {
+                    var perFace = new System.Collections.Generic.Dictionary<(int, int), System.Collections.Generic.List<int>>();
+                    foreach (int i in kv.Value)
+                    {
+                        var f = FaceOf(i);
+                        if (!perFace.TryGetValue(f, out var l2)) { l2 = new System.Collections.Generic.List<int>(); perFace[f] = l2; }
+                        l2.Add(i);
+                    }
+                    (int, int) worstFace = default; int worstN = 0;
+                    foreach (var f in perFace) if (f.Value.Count > CapFor(f.Key) && f.Value.Count > worstN) { worstN = f.Value.Count; worstFace = f.Key; }
+                    if (worstN == 0) break;
+
+                    // The gate that wants this face LEAST goes: its bearing is the least aligned with the face
+                    // normal, so it is the one already arriving most obliquely.
+                    int move = -1; float worstAlign = float.MaxValue;
+                    foreach (int i in perFace[worstFace])
+                    {
+                        var b = BearingOf(i);
+                        float al = b.bx * worstFace.Item1 + b.bz * worstFace.Item2;
+                        if (al < worstAlign) { worstAlign = al; move = i; }
+                    }
+                    if (move < 0) break;
+
+                    // ...onto the face with room whose normal best matches where it is going.
+                    var bm = BearingOf(move);
+                    (int dx, int dz) best = default; float bestAlign = float.MinValue;
+                    foreach (var d in Card)
+                    {
+                        if (d.dx == worstFace.Item1 && d.dz == worstFace.Item2) continue;
+                        int have = perFace.TryGetValue((d.dx, d.dz), out var l3) ? l3.Count : 0;
+                        if (have >= CapFor(d)) continue;
+                        float al = bm.bx * d.dx + bm.bz * d.dz;
+                        if (al > bestAlign) { bestAlign = al; best = d; }
+                    }
+                    if (bestAlign == float.MinValue)
+                    {
+                        if (GrowDbg) Log.Print($"[island-exitdbg] poi#{kv.Key} n={poi.Tiles} kind={poi.Kind} "
+                                               + $"capX={capX} capZ={capZ} gates={kv.Value.Count}: face "
+                                               + $"({worstFace.Item1},{worstFace.Item2}) holds {worstN}, nowhere to move one");
+                        break;   // nowhere to go; the snapper's fallback takes it
+                    }
+
+                    // ⚠ THE FACE CENTRE, not the old along-position. The snapper derives each gate's PREFERRED
+                    // lattice line from this coordinate, and on an odd lattice the centre is a street line --
+                    // so a moved gate asks for the one cell it is guaranteed to be able to use.
+                    var c = outp[move];
+                    outp[move] = new Connector(c.Poi, c.Link,
+                                               poi.X + best.dx * poi.HalfSize, poi.Z + best.dz * poi.HalfSize,
+                                               best.dx, best.dz, c.Kind);
+                    GateFacesMoved++;
+                }
+            }
+            return outp;
+        }
+
+        /// <summary>How many gates were turned onto another face. Reported, because "the towns look better" is
+        /// not a measurement and this pass is invisible in every other number until it fails.</summary>
+        public static int GateFacesMoved;
 
         /// <summary>Where a ray from `from`'s centre toward `to`'s centre leaves `from`'s square.</summary>
         static Connector Gate(System.Collections.Generic.List<Poi> pois, int from, int to, int link, LinkKind kind)
@@ -766,6 +928,12 @@ namespace UnturnedGodot
         /// <summary>Diagnostics for the exit-growing pass: how many street cells it added, how many it could
         /// not add because the lattice ended, and how many exits still came up short of an exact cap fit.</summary>
         public static int GrowAdded, GrowBlocked, GrowShort, GrowTrimmed;
+        /// <summary>WHY an exit could not be reduced to a LineCap. "still short" on its own says the rule
+        /// was broken without saying which of two quite different things broke it, and they need different
+        /// fixes: a lateral that is ANOTHER GATE's exit cell (which this pass refuses to delete, correctly --
+        /// deleting it strands that gate's road) against an exit whose street simply does not run inward.</summary>
+        public static int GrowShortAdjacentGate, GrowShortNoInward;
+        static readonly bool GrowDbg = System.Environment.GetEnvironmentVariable("UG_EXITDBG") == "1";
         /// <summary>How many block faces were refused because the street they would front is a dead end.
         /// ⚠ Counted because "buildings no longer front exposed ends" is otherwise unfalsifiable from a render:
         /// zero of them is what success looks like AND what a rule that never fires looks like.</summary>
@@ -2050,11 +2218,21 @@ namespace UnturnedGodot
                 // ⚠ AN EXIT WITH NO STREET AT ALL still gets a LineCap, whose single street arm then points
                 // inward at nothing -- a gate opening onto its own empty lattice cell. The inward neighbour is
                 // always on the lattice for an edge cell, so there is no reason to leave it unconnected.
-                if (streets.Count == 0)
+                // ⚠ THE TEST IS "HAS NO INWARD STREET", NOT "HAS NO STREETS AT ALL" -- and the difference was
+                // half of every island's QuadCaps. An exit whose only neighbour is a LATERAL skipped this
+                // branch (it has a street, just not the right one), then skipped the trim loop below too
+                // (which stops at one street), and fell through to QuadCap with the lateral as a spare arm.
+                // Measured on seed 771177: 5 of 10 short exits, and 5 of its 10 QuadCaps.
+                // Adding the inward cell is always legal for an edge cell -- inward is, by definition, into
+                // the lattice -- and it is what turns the shape into the ramp + opposite street a LineCap is.
+                bool hasInward = false;
+                foreach (var d in streets) if (d.dx == inward.dx && d.dz == inward.dz) hasInward = true;
+                if (!hasInward)
                 {
                     var ic = (cell.Item1 + inward.dx, cell.Item2 + inward.dz);
                     if (ic.Item1 >= 0 && ic.Item2 >= 0 && ic.Item1 < n && ic.Item2 < n)
                     { skel.Add(ic); streets.Add(inward); GrowAdded++; }
+                    else GrowBlocked++;
                 }
                 foreach (var d in new System.Collections.Generic.List<(int dx, int dz)>(streets))
                 {
@@ -2076,7 +2254,25 @@ namespace UnturnedGodot
                     GrowTrimmed++;
                 }
                 if (streets.Count > 1 || (streets.Count == 1 && !(streets[0].dx == inward.dx && streets[0].dz == inward.dz)))
+                {
                     GrowShort++;   // could not reach a LineCap: the report says so rather than it passing silently
+                    bool blockedByGate = false;
+                    foreach (var d in streets)
+                        if (!(d.dx == inward.dx && d.dz == inward.dz)
+                            && exits.ContainsKey((cell.Item1 + d.dx, cell.Item2 + d.dz))) blockedByGate = true;
+                    if (blockedByGate) GrowShortAdjacentGate++; else GrowShortNoInward++;
+                    // ⚠ DUMP THE SHAPE, not just the tally. Two guesses at this (tighten the snapper's
+                    // adjacency rule; cap connections by what the lattice can seat) both left this count at
+                    // exactly 5/3/2 on seeds 771177/424242/12345 -- which says the model behind both guesses
+                    // was wrong, and a tally cannot say how. n, the cell, the ramp and the streets can.
+                    if (GrowDbg)
+                    {
+                        var sb = new System.Text.StringBuilder();
+                        foreach (var d in streets) sb.Append($" ({d.dx},{d.dz})");
+                        Log.Print($"[island-exitdbg] n={n} cell=({cell.Item1},{cell.Item2}) ramp=({ramp.dx},{ramp.dz})"
+                                  + $" inward=({inward.dx},{inward.dz}) streets{sb} blockedByGate={blockedByGate}");
+                    }
+                }
             }
 
             // ⚠ DROP ANYTHING LEFT COMPLETELY ISOLATED. The nb==0 branch below falls through to Quad -- four
@@ -2615,7 +2811,14 @@ namespace UnturnedGodot
                                 if ((cx.ei, cx.ej) == (cy.ii, cy.ij)) return;
                                 // Adjacency between two gates' cells only matters when the monument is NOT
                                 // grid-filled. In a full grid every cell is already a street, so a neighbouring
-                                // exit is just another junction -- and QuadCap serves all four directions.
+                                // exit is just another junction.
+                                // ⚠ TRIED AND REVERTED 2026-09-17: dropping the !FillsGrid exemption, so the
+                                // rule applied everywhere, did NOT reduce "blocked by an adjacent gate" at all
+                                // (5/3/2 before and after on seeds 771177/424242/12345) -- those towns cannot
+                                // satisfy it, so they fall to level 1 where the rule is dropped again -- while
+                                // the extra strictness shuffled other gates and pushed QuadCaps UP (8->9 on
+                                // 771177). The gates are not adjacent because the rule is too lax; they are
+                                // adjacent because the lattice has nowhere else to put them. See TilesForPoi.
                                 if (level >= 1) continue;
                                 if (!FillsGrid(poi.Kind))
                                     foreach (var d in Card)

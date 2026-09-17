@@ -696,7 +696,11 @@ void fragment() {
             _islandLinks = ProcIsland.BuildLinks(pois);
             // Snap BEFORE routing: the routes start at the gates, so moving a gate afterwards would leave the
             // road pointing at where the gate used to be.
-            _islandConnectors = ProcIsland.SnapConnectorsToLattice(pois, ProcIsland.BuildConnectors(pois, _islandLinks), pars.Seed);
+            // ⚠ SPREAD THE FACES BEFORE SNAPPING THE LINES. Which face a gate is on is decided by Gate()
+            // from the bearing to its partner, and the snapper can only choose a LINE on the face it is
+            // given -- so a face that cannot seat all its gates is unfixable by the time snapping runs.
+            _islandConnectors = ProcIsland.SnapConnectorsToLattice(
+                pois, ProcIsland.SpreadGateFaces(pois, ProcIsland.BuildConnectors(pois, _islandLinks), _islandLinks, pars.Seed), pars.Seed);
             _islandTiles.Clear();
             for (int i = 0; i < pois.Count; i++) _islandTiles.AddRange(ProcIsland.BuildMonument(i, pois[i], _islandConnectors, pars.Seed));
             _islandBuildings.Clear();

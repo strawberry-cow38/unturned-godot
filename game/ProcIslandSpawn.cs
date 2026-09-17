@@ -514,7 +514,7 @@ namespace UnturnedGodot
                 Log.Print($"[island-pads] {ProcIsland.PadCount} town pad(s): mean half-size "
                           + $"{ProcIsland.PadWas / ProcIsland.PadCount:0.#} -> {ProcIsland.PadNow / ProcIsland.PadCount:0.#} m, "
                           + $"smallest now {ProcIsland.PadSmallest:0.#} m");
-            Log.Print($"[island-pieces] exit-grow: added {ProcIsland.GrowAdded}, blocked by lattice edge {ProcIsland.GrowBlocked}, trimmed {ProcIsland.GrowTrimmed}, still short {ProcIsland.GrowShort}");
+            Log.Print($"[island-pieces] exit-grow: added {ProcIsland.GrowAdded}, blocked by lattice edge {ProcIsland.GrowBlocked}, trimmed {ProcIsland.GrowTrimmed}, gates turned onto another face {ProcIsland.GateFacesMoved}, still short {ProcIsland.GrowShort} ({ProcIsland.GrowShortAdjacentGate} blocked by an adjacent gate, {ProcIsland.GrowShortNoInward} with no inward street)");
             Log.Print($"[island-pieces] {exposed} arm(s) of {checkedArms} open onto air"
                       + (blame.Count > 0 ? $" -- from {string.Join(", ", blame)}" : ""));
         }
@@ -1160,6 +1160,8 @@ namespace UnturnedGodot
 
         static void ScatterRoadside(Terrain terr, EditorObjects objs, ref int missing)
         {
+            var fenceTilts = new System.Collections.Generic.List<float>();
+            float fenceTiltMax = 0f;
             if (terr == null || objs == null || terr.IslandRoutes == null) return;
 
             const float FenceSpan = 16f;     // retail's measured run spacing; the mesh is 16.25 m long
@@ -1328,6 +1330,15 @@ namespace UnturnedGodot
                         var fBasis = fAxis.LengthSquared() < 1e-8f
                             ? fStand
                             : new Basis(fAxis.Normalized(), Vector3.Up.AngleTo(fN)) * fStand;
+                        // ⚠ MEASURE THE TILT THAT IS ACTUALLY APPLIED (strawberry: "im not seeing fence roads
+                        // following the terrain on multiple rotation axis"). The code above plainly builds a
+                        // tilted basis, so the interesting question is not whether it runs but how big the
+                        // angle comes out -- and a fence stands beside a road whose ground ConformToPolylines
+                        // has just levelled, so "the tilt is applied and is half a degree" is a live answer
+                        // that looks identical to "the tilt never runs".
+                        float tiltDeg = Mathf.RadToDeg(Vector3.Up.AngleTo(fN));
+                        fenceTilts.Add(tiltDeg);
+                        if (tiltDeg > fenceTiltMax) fenceTiltMax = tiltDeg;
                         if (objs.Place("Fence_Road_0", pos, fBasis) != null) fences++;
                         else miss++;
                     }
@@ -1337,6 +1348,10 @@ namespace UnturnedGodot
             missing += miss;
             radii.Sort();
             string spread = radii.Count > 0 ? $", corner radii median {radii[radii.Count / 2]:0} m / sharpest {sharpest:0} m" : "";
+            fenceTilts.Sort();
+            Log.Print($"[island-roadside] fence tilt off vertical: max {fenceTiltMax:0.0}°, median "
+                      + $"{(fenceTilts.Count > 0 ? fenceTilts[fenceTilts.Count / 2] : 0f):0.0}°, "
+                      + $"{fenceTilts.FindAll(t => t > 3f).Count}/{fenceTilts.Count} panel(s) past 3°");
             Log.Print($"[island-roadside] {poles} power pole(s) at {PoleSpan:0} m, {fences} barrier panel(s) over {corners} bend(s) tighter than {CornerRadius:0} m{spread}"
                       + (miss > 0 ? $" ({miss} prop name(s) not in the catalogue)" : ""));
         }
