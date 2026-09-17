@@ -693,10 +693,30 @@ namespace UnturnedGodot
             /// rotation was right and the pole was standing in the bend. Dividing by the larger component is
             /// the Chebyshev distance to the square's edge, which turns 10 m into 14.1 m on a diagonal and
             /// leaves every axis-aligned case exactly as it was.
+            /// ⚠⚠ MEASURED OFF THE PIECES, after three wrong answers and a photograph from master.
+            /// I assumed a road piece is a 24 m SQUARE, reasoned that a diagonal reaches further than an axis,
+            /// and scaled a Turn's lamp from 10 m out to 14.1 m. The photo shows it standing in the DIRT well
+            /// past the pavement. Projecting each piece's surface vertices onto the direction furniture
+            /// actually goes says why:
+            ///     Line  flank  (1,0)   reaches 12.00 m
+            ///     Tee   free   (0,-1)  reaches 12.00 m
+            ///     TeeCap free  (0,-1)  reaches 12.00 m
+            ///     Turn  outer  (-1,1)  reaches  6.21 m   <- CHAMFERED, 10.76 m short of a square corner
+            /// A Turn's outer corner is cut off, so its diagonal reach is HALF an axis reach, not 1.41x of it.
+            /// The scaling was not the wrong size, it was the wrong DIRECTION.
+            /// ⭐ And the earlier "no vertices in that third" reading was this chamfer all along: the missing
+            /// verts were the CORNER being absent, which I read as the SURFACE being absent and answered with a
+            /// height change. The measurement was right; the conclusion drawn from it was not.
+            /// Two metres in from the edge lands mid-pavement either way -- 10 m on a full side, 4.21 m on the
+            /// Turn's chamfer.
             static float VergeAlong((float x, float z) d)
             {
-                float m = Mathf.Max(Mathf.Abs(d.x), Mathf.Abs(d.z));
-                return m < 0.05f ? Verge : Verge / m;
+                float ax = Mathf.Abs(d.x), az = Mathf.Abs(d.z);
+                if (ax < 0.05f && az < 0.05f) return Verge;
+                // A diagonal free side only ever comes from a Turn: Line/Tee/Cap free sides are axis-aligned by
+                // construction, so the direction itself identifies the chamfer.
+                bool diagonal = Mathf.Abs(ax - az) < 0.25f;
+                return (diagonal ? 6.21f : 12f) - 2f;
             }
             var rng = new System.Random(20260917);
             int lights = 0, signals = 0, hydrants = 0, bins = 0, miss = 0;

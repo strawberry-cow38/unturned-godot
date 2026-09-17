@@ -618,7 +618,7 @@ void fragment() {
             // ⚠ THE OTHER ORDER WAS TRIED AND MEASURED. Carving first and flattening after erased the corridor
             // where a route enters a town, and the splines' worst rise went 0.31 m -> 2.73 m. Layering these
             // two in either order has one undoing the other; giving each its own territory is what stops it.
-            ProcIsland.FlattenTownsExactly(_grid, _gw, _gh, pois, _islandTiles);
+            ProcIsland.FlattenTownsExactly(_grid, _gw, _gh, pois, _islandTiles, pars.Seed);
             // Routed and carved BEFORE RebuildAll, because carving edits the same grid the meshes are built from.
             _islandRoutes = ProcIsland.CarveRoutes(_grid, _gw, _gh, pois, _islandLinks, _islandConnectors, pars);
             RebuildAll();
@@ -727,6 +727,14 @@ void fragment() {
                 foreach (var kv in claim) snap[kv.Key] = kv.Value.target;
                 foreach (var key in new System.Collections.Generic.List<(int, int)>(claim.Keys))
                 {
+                    // ⚠⚠ THE FEATHER ONLY. Master: "the terrain conforms to what the road SHOULD look like, but
+                    // the road spline itself has a mind of its own, and ignores the terrain." It does -- the
+                    // ribbon rides its own profile (IgnoreTerrain), and smoothing the FULL-WEIGHT cells moved
+                    // the ground off that profile after the fact, so the two stopped agreeing and the road
+                    // floated. The jaggedness this pass was added for is in the SHOULDER, where neighbouring
+                    // cells are claimed by different segments; under the ribbon itself the target is already
+                    // the smoothed profile and must be left exactly alone.
+                    if (claim[key].w >= 0.999f) continue;
                     float sum = snap[key]; int cnt = 1;
                     for (int ox = -1; ox <= 1; ox++)
                         for (int oy = -1; oy <= 1; oy++)

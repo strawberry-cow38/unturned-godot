@@ -1286,10 +1286,39 @@ namespace UnturnedGodot
         /// already written there.</summary>
         static System.Collections.Generic.List<(float X, float Z, float Half, float Y)> TownPads = new();
 
+        /// <summary>The seed the pads were built with, so the edge noise is reproducible and every reader of a
+        /// pad boundary computes the SAME boundary.</summary>
+        static int PadSeed;
+
+        /// <summary>How far a point is inside or outside a pad, in metres, with the edge ROUNDED and ROUGHENED
+        /// (strawberry 2026-09-17: "round off the edges / give some slightly noisy rougher edges to the
+        /// flattened areas created by POIs").
+        ///
+        /// ⚠⚠ ONE FUNCTION, because the pad boundary has FOUR readers -- FlattenTownsExactly draws it, Carve
+        /// and SmoothCorridor refuse to touch inside it, ConformToPolylines excludes it, and the joint seating
+        /// asks whether it is on it. The moment the drawn edge and the tested edge differ by so much as a
+        /// noise term, the conform starts cutting ground the town believes it owns, which is the exact bug that
+        /// produced the "hump down into towns" an hour ago.
+        ///
+        /// A SQUIRCLE, not a square: p = 4 keeps the sides straight where the street grid needs them and rounds
+        /// the corners, which is what "round off the edges" asks for and also what stops the four corners of
+        /// every town being the one place the flattening ends in a right angle. The noise then wobbles the
+        /// radius by a few metres so the boundary is not a drawn shape at all.</summary>
+        const float PadEdgeNoise = 5f;      // metres of wobble either way
+        const float PadEdgeNoiseScale = 34f;
+        static float PadDistance(in (float X, float Z, float Half, float Y) pad, float wx, float wz)
+        {
+            float dx = Mathf.Abs(wx - pad.X), dz = Mathf.Abs(wz - pad.Z);
+            // Superellipse |dx|^4 + |dz|^4 = r^4 -- Chebyshev keeps hard corners, Euclidean loses the flat
+            // sides the lattice sits on, and 4 is the exponent that keeps both.
+            float d = Mathf.Pow(Mathf.Pow(dx, 4f) + Mathf.Pow(dz, 4f), 0.25f);
+            float wob = (ValueNoise(wx / PadEdgeNoiseScale, wz / PadEdgeNoiseScale, PadSeed + 9311) - 0.5f) * 2f * PadEdgeNoise;
+            return d - (pad.Half + wob);
+        }
+
         static bool InsideTown(float wx, float wz, System.Collections.Generic.List<Poi> pois)
         {
-            foreach (var pad in TownPads)
-                if (Mathf.Max(Mathf.Abs(wx - pad.X), Mathf.Abs(wz - pad.Z)) <= pad.Half) return true;
+            foreach (var pad in TownPads) if (PadDistance(pad, wx, wz) <= 0f) return true;
             return false;
         }
 
@@ -1299,8 +1328,7 @@ namespace UnturnedGodot
         /// pole sitting a few metres off the pad edge still counts as in the town.</summary>
         public static bool InsideAnyTownPad(float wx, float wz, float margin = 0f)
         {
-            foreach (var pad in TownPads)
-                if (Mathf.Max(Mathf.Abs(wx - pad.X), Mathf.Abs(wz - pad.Z)) <= pad.Half + margin) return true;
+            foreach (var pad in TownPads) if (PadDistance(pad, wx, wz) <= margin) return true;
             return false;
         }
 
@@ -1333,7 +1361,7 @@ namespace UnturnedGodot
             float bestGap = float.MaxValue, padY = 0f;
             foreach (var pad in TownPads)
             {
-                float gap = Mathf.Max(Mathf.Abs(wx - pad.X), Mathf.Abs(wz - pad.Z)) - pad.Half;
+                float gap = PadDistance(pad, wx, wz);   // same rounded, roughened edge every other reader sees
                 if (gap < bestGap) { bestGap = gap; padY = pad.Y; }
             }
             if (bestGap >= TownRampBand || bestGap == float.MaxValue) return want;
@@ -1419,10 +1447,11 @@ namespace UnturnedGodot
         /// than being enforced separately: on ground that is exactly level, sampling the terrain under each
         /// tile returns the same number for every tile in the town.</summary>
         public static void FlattenTownsExactly(float[,] grid, int gw, int gh, System.Collections.Generic.List<Poi> pois,
-                                               System.Collections.Generic.List<MonumentTile> tiles = null)
+                                               System.Collections.Generic.List<MonumentTile> tiles = null, int seed = 0)
         {
             if (pois == null) return;
             TownPads.Clear();   // rebuilt per generation; a stale pad would protect ground that no longer has a town on it
+            PadSeed = seed;   // the edge noise must be the same number for everyone who reads a boundary
             PadWas = PadNow = 0f; PadSmallest = float.MaxValue; PadCount = 0;
             const float Unit = 4f;
             for (int pi = 0; pi < pois.Count; pi++)
@@ -1468,12 +1497,16 @@ namespace UnturnedGodot
                 for (int x = Mathf.Max(0, cx - rad); x <= Mathf.Min(gw - 1, cx + rad); x++)
                     for (int y = Mathf.Max(0, cy - rad); y <= Mathf.Min(gh - 1, cy + rad); y++)
                     {
-                        // Chebyshev, because the pad is a SQUARE and a radial test would leave its corners
-                        // unflattened -- which is precisely where the corner tiles sit.
-                        float d = Mathf.Max(Mathf.Abs(x * Unit - cxW), Mathf.Abs(y * Unit - czW));
-                        if (d > outer) continue;
-                        if (d <= inner) grid[x, y] = target;                       // EXACT
-                        else grid[x, y] = Mathf.Lerp(grid[x, y], target, 1f - Mathf.SmoothStep(inner, outer, d));
+                        // ⚠ THE SAME BOUNDARY EVERY OTHER READER USES -- PadDistance returns metres past the
+                        // rounded, roughened edge, so `<= 0` here is exactly what InsideTown answers true to.
+                        // It used to be an open-coded Chebyshev test in this one place, which is how a drawn
+                        // edge and a tested edge come to disagree.
+                        var padHere = (cxW, czW, half, poi.GroundY);
+                        float d = PadDistance(padHere, x * Unit, y * Unit);
+                        float skirt = inner * 0.5f;                                 // how far the grade runs past the edge
+                        if (d > skirt) continue;
+                        if (d <= 0f) grid[x, y] = target;                           // EXACT
+                        else grid[x, y] = Mathf.Lerp(grid[x, y], target, 1f - Mathf.SmoothStep(0f, skirt, d));
                     }
             }
         }
@@ -1765,27 +1798,21 @@ namespace UnturnedGodot
                     if (!(d.dx == ramp.dx && d.dz == ramp.dz) && skel.Contains((cell.Item1 + d.dx, cell.Item2 + d.dz)))
                         streets.Add(d);
 
-                bool exact = streets.Count == 3
-                          || (streets.Count == 1 && streets[0].dx == -ramp.dx && streets[0].dz == -ramp.dz)
-                          || (streets.Count == 2
-                              && streets[0].dx == -streets[1].dx && streets[0].dz == -streets[1].dz
-                              && streets[0].dx * ramp.dx + streets[0].dz * ramp.dz == 0);
+                // ⚠⚠ A TOWN EXIT IS ALWAYS A LINE CAP NOW (strawberry 2026-09-17: "new rule. roads can only
+                // leave a town via road line caps").
+                //
+                // The kit fits an exit exactly at three shapes -- ramp + 1 street OPPOSITE (LineCap), ramp + a
+                // BAR across it (TeeCap), ramp + 3 (QuadCap) -- and this used to GROW toward the QuadCap,
+                // because three streets was the easiest of the three to reach by adding cells. That is why
+                // every island had QuadCap exits with a spare arm to police, and why the exposure report has
+                // been fighting them all session. Master's rule removes the whole problem class: shrink to the
+                // one shape with no spare arm at all, always, instead of growing toward the one with three.
+                //
+                // ⚠ A trimmed lateral is NOT disconnected -- it keeps whatever other neighbours it had, and if
+                // that leaves it a dead end it terminates in its own LineCap, whose outward ramp is a
+                // legitimate cap end.
+                bool exact = streets.Count == 1 && streets[0].dx == -ramp.dx && streets[0].dz == -ramp.dz;
                 if (exact) continue;
-
-                // Grow toward 3 streets, which QuadCap fits exactly. Inward first: it is always on the lattice
-                // (a gate is never a corner), where a lateral may not be.
-                foreach (var d in Card)
-                {
-                    if (streets.Count >= 3) break;
-                    if (d.dx == ramp.dx && d.dz == ramp.dz) continue;
-                    var nc = (cell.Item1 + d.dx, cell.Item2 + d.dz);
-                    if (nc.Item1 < 0 || nc.Item2 < 0 || nc.Item1 >= n || nc.Item2 >= n) { GrowBlocked++; continue; }
-                    if (skel.Contains(nc)) continue;
-                    skel.Add(nc);
-                    streets.Add(d);
-                    GrowAdded++;
-                }
-                if (streets.Count >= 3) continue;
 
                 // ⚠ CANNOT GROW -> SHRINK. Measured: 22 exits per island come up short because the third
                 // street cell would fall OUTSIDE the lattice, which happens on the small monuments (n=2, where
@@ -1825,7 +1852,7 @@ namespace UnturnedGodot
                     GrowTrimmed++;
                 }
                 if (streets.Count > 1 || (streets.Count == 1 && !(streets[0].dx == inward.dx && streets[0].dz == inward.dz)))
-                    GrowShort++;
+                    GrowShort++;   // could not reach a LineCap: the report says so rather than it passing silently
             }
 
             // ⚠ DROP ANYTHING LEFT COMPLETELY ISOLATED. The nb==0 branch below falls through to Quad -- four
