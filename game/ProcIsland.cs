@@ -1007,6 +1007,24 @@ namespace UnturnedGodot
             // every cell of the way. Perpendicular intersections survive exactly as master asked, and the
             // routes that used to pair up are pushed onto their own line instead.
             var used = new float[gw, gh];
+            // ⭐ A PAD MASK, BUILT ONCE (strawberry 2026-09-17: "prevent road splines ... crossing over
+            // towns"). The A* had no idea a town was there: it weighted slope, water and other roads, so a
+            // town sitting on the straight line between two others was simply cheap ground to drive across.
+            // Measured before this: 22 route points inside a pad on seed 771177 and 41 on 424242 -- roughly
+            // 90 and 160 m of through-road each.
+            // ⚠ A MASK AND NOT A CALL. InsideAnyTownPad loops every pad and PadDistance raises two powers per
+            // pad; in an A* inner loop that is tens of millions of Pow() calls. Precomputed here for the same
+            // reason `used` is.
+            const float PadRouteMargin = 26f;
+            var padCell = new bool[gw, gh];
+            for (int x = 0; x < gw; x++)
+                for (int y = 0; y < gh; y++)
+                    // ⚠ A MARGIN, NOT THE PAD EDGE, and this is the same trap the road-penalty halo already
+                    // documents one screen down: the A* dodges, and then Relax's Hermite ease walks the path
+                    // partway BACK. Masking exactly the pad halved the count (22 -> 12 on seed 771177) and no
+                    // more, because the search was already outside and the smoothing put it back in. The
+                    // exclusion has to be wider than the distance the ease can move a point.
+                    padCell[x, y] = InsideAnyTownPad(x * 4f, y * 4f, PadRouteMargin);
             for (int li = 0; li < links.Count; li++)
             {
                 Connector a = default, b = default;
@@ -1018,7 +1036,7 @@ namespace UnturnedGodot
                     else { b = c; gb = true; }
                 }
                 if (!ga || !gb) continue;
-                var pts = Relax(Route2D(grid, gw, gh, a, b, links[li].Kind, p, used));
+                var pts = Relax(Route2D(grid, gw, gh, a, b, links[li].Kind, p, used, padCell));
                 if (pts.Count < 2) continue;
                 routes.Add(new Route(links[li].Kind, pts));
                 // ⚠ UG_NOROADPENALTY=1 SKIPS THE STAMP. The penalty and the probe that scores it were written
@@ -1045,6 +1063,7 @@ namespace UnturnedGodot
             // the last word on a town. Only terrain ABOVE a surface clips; after this there is none.
             LevelCorridors(grid, gw, gh, routes, pois);
             ReportRoutePairs(routes);
+            ReportCrossings(routes, pois);
             return routes;
         }
 
@@ -1115,6 +1134,107 @@ namespace UnturnedGodot
         /// "crossings" would condemn the junctions this generator is supposed to make. Shallow is the defect;
         /// square-on is a crossroads.</summary>
         public static float PairParallelMetres, PairWorstAngle; public static float PairSquareMetres, PairFanMetres;
+
+        public static int RouteCrossings, RouteTownPoints, CrossJunction, CrossGateFan, RouteOwnTownPoints;
+
+        /// <summary>Count where routes actually CROSS each other, and where one runs through a town it is not
+        /// connected to (strawberry 2026-09-17: "prevent road splines crossing over eachother and crossing
+        /// over towns").
+        ///
+        /// ⚠ DIFFERENT FROM ReportRoutePairs, which measures roads running NEAR and PARALLEL. Two roads can
+        /// share a valley without ever meeting, and two roads can cross at a clean right angle without ever
+        /// being near-parallel -- so the existing number says nothing at all about this one.
+        ///
+        /// ⚠ SPATIAL HASH, not the O(n^2) segment sweep the pair report uses. That one is already 435 route
+        /// pairs x 700 x 700 segment tests; a second copy of it is not free, and bucketing by 48 m makes this
+        /// one effectively linear.
+        ///
+        /// A crossing NEAR A TOWN is not counted: routes converge on a gate by design, and their stubs pass
+        /// within metres of each other on the way in. Counting those makes the number un-actionable -- it could
+        /// never reach zero, so it could never say whether the thing master is looking at got fixed.</summary>
+        static void ReportCrossings(System.Collections.Generic.List<Route> routes,
+                                    System.Collections.Generic.List<Poi> pois)
+        {
+            RouteCrossings = 0; RouteTownPoints = 0; CrossJunction = 0; CrossGateFan = 0; RouteOwnTownPoints = 0;
+            const float Cell = 48f;
+            var bucket = new System.Collections.Generic.Dictionary<(int, int), System.Collections.Generic.List<(int R, int I)>>();
+            void Add((int, int) k, (int, int) v)
+            {
+                if (!bucket.TryGetValue(k, out var l)) { l = new System.Collections.Generic.List<(int, int)>(); bucket[k] = l; }
+                l.Add(v);
+            }
+            for (int r = 0; r < routes.Count; r++)
+            {
+                var pl = routes[r].Points;
+                if (pl == null) continue;
+                for (int i = 1; i < pl.Count; i++)
+                {
+                    var mid = (pl[i - 1] + pl[i]) * 0.5f;
+                    Add((Mathf.FloorToInt(mid.X / Cell), Mathf.FloorToInt(mid.Y / Cell)), (r, i));
+                }
+            }
+
+            static bool Hits(Vector2 a0, Vector2 a1, Vector2 b0, Vector2 b1)
+            {
+                // Standard orientation test. Touching endpoints count as a hit, which is right here: a road
+                // ending ON another is what a Junction does deliberately and what a Road must never do.
+                float D(Vector2 p, Vector2 q, Vector2 r2) => (q.X - p.X) * (r2.Y - p.Y) - (q.Y - p.Y) * (r2.X - p.X);
+                float d1 = D(a0, a1, b0), d2 = D(a0, a1, b1), d3 = D(b0, b1, a0), d4 = D(b0, b1, a1);
+                return ((d1 > 0f) != (d2 > 0f)) && ((d3 > 0f) != (d4 > 0f));
+            }
+
+            var counted = new System.Collections.Generic.HashSet<(int, int, int, int)>();
+            foreach (var kv in bucket)
+                for (int dx = -1; dx <= 1; dx++)
+                    for (int dz = -1; dz <= 1; dz++)
+                    {
+                        if (!bucket.TryGetValue((kv.Key.Item1 + dx, kv.Key.Item2 + dz), out var other)) continue;
+                        foreach (var a in kv.Value)
+                            foreach (var b in other)
+                            {
+                                if (a.R >= b.R) continue;
+                                var A = routes[a.R].Points; var B = routes[b.R].Points;
+                                if (!Hits(A[a.I - 1], A[a.I], B[b.I - 1], B[b.I])) continue;
+                                if (!counted.Add((a.R, b.R, a.I, b.I))) continue;
+                                // ⚠ REPORT THE EXCLUSIONS, DO NOT JUST DROP THEM. "0 crossings" is worth
+                                // nothing if two whole categories were quietly filtered out first -- and both
+                                // of these ARE crossings, they are just ones with an explanation. A junction
+                                // road is SUPPOSED to end on another road; roads converging on a gate pass
+                                // within metres of each other by design. Counting them separately is what lets
+                                // the open-country number mean "none" rather than "none that I looked at".
+                                bool junc = routes[a.R].Kind != LinkKind.Road || routes[b.R].Kind != LinkKind.Road;
+                                var at = (A[a.I - 1] + A[a.I]) * 0.5f;
+                                bool fan = InsideAnyTownPad(at.X, at.Y, 90f);
+                                if (junc) CrossJunction++;
+                                else if (fan) CrossGateFan++;
+                                else RouteCrossings++;
+                            }
+                    }
+
+            // ---- and through a town. A gate sits ON the pad perimeter, so a route is only ever meant to
+            // TOUCH a pad at its two ends; any point strictly inside one, away from those ends, is a road
+            // driven through somebody's high street.
+            for (int r = 0; r < routes.Count; r++)
+            {
+                var pl = routes[r].Points;
+                if (pl == null || routes[r].Kind != LinkKind.Road) continue;
+                for (int i = StubPoints; i < pl.Count - StubPoints; i++)
+                {
+                    if (!InsideAnyTownPad(pl[i].X, pl[i].Y, -6f)) continue;
+                    // ⚠ WHOSE town. Clipping the corner of the pad you are ARRIVING AT is not the defect --
+                    // the gate sits on that pad's perimeter, so the approach hugs it by construction. Driving
+                    // across a town you have no business in is. One number for both cannot reach zero and so
+                    // cannot say whether the real one is fixed.
+                    float d0 = pl[i].DistanceTo(pl[0]), d1 = pl[i].DistanceTo(pl[^1]);
+                    if (d0 < 130f || d1 < 130f) RouteOwnTownPoints++; else RouteTownPoints++;
+                }
+            }
+
+            Log.Print($"[island-crossings] {RouteCrossings} place(s) where two roads cross in open country "
+                      + $"(plus {CrossJunction} at a junction road and {CrossGateFan} in a town's gate fan, both by design), "
+                      + $"{RouteTownPoints} route point(s) driven through a town they do not belong to "
+                      + $"({RouteOwnTownPoints} more clip the pad of a town the route is arriving at, which is the approach)");
+        }
 
         static void ReportRoutePairs(System.Collections.Generic.List<Route> routes)
         {
@@ -1346,7 +1466,8 @@ namespace UnturnedGodot
         }
 
         static System.Collections.Generic.List<Vector2> Route2D(
-            float[,] grid, int gw, int gh, Connector from, Connector to, LinkKind kind, Params p, float[,] used = null)
+            float[,] grid, int gw, int gh, Connector from, Connector to, LinkKind kind, Params p, float[,] used = null,
+            bool[,] padCell = null)
         {
             const float Unit = 4f;
             // PERPENDICULAR DEPARTURE. A* is free to pick any of eight directions out of the first cell, so left
@@ -1418,6 +1539,19 @@ namespace UnturnedGodot
                         float cost = step * (1f + slopeCost * climb);
                         if (nh <= p.SeaLevel) cost += 400f;
                         if (used != null) cost += used[nx, ny] * step;   // another road is already here
+                        // ⚠ A TOWN IS NOT GROUND YOU DRIVE OVER. Priced like water rather than forbidden, so
+                        // a route that has no other way through still finds one instead of failing outright --
+                        // and exempted near this route's OWN two gates, which sit on their pads' perimeters
+                        // and whose first and last cells are therefore legitimately on the boundary.
+                        if (padCell != null && padCell[nx, ny])
+                        {
+                            float dfx = nx * Unit - from.X, dfz = ny * Unit - from.Z;
+                            float dtx = nx * Unit - to.X, dtz = ny * Unit - to.Z;
+                            // ⚠ The exemption has to clear the MARGIN, not the pad: at 40 m it sat inside
+                            // the masked band and every route paid the wall to reach its own gate.
+                            if (dfx * dfx + dfz * dfz > 90f * 90f && dtx * dtx + dtz * dtz > 90f * 90f)
+                                cost += 400f;
+                        }
                         float cand = best[cur] + cost;
                         if (cand < best[ni]) { best[ni] = cand; prev[ni] = cur; open.Enqueue(ni, cand + H(nx, ny)); }
                     }
