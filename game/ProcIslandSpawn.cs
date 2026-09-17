@@ -2800,6 +2800,35 @@ namespace UnturnedGodot
             // ⚠ IS ANYTHING BUILT THAT I AM NOT COUNTING? Every geometric check here runs over `curves`, so a
             // road RoadField holds that never reached that list is invisible to all of them -- which is exactly
             // what a render showing a crossing beside a counter reading zero looks like.
+            // ⚠ CAN A DROPPED ROAD STRAND A TOWN? (strawberry: "the problem is that it can lead to isolated
+            // POIs"). The answer should be no by construction -- a JUNCTION road joins two roads that are each
+            // already part of the network, so removing one cannot disconnect anything -- but "should be by
+            // construction" is exactly the kind of claim that has been wrong all day, so it is checked.
+            // Walked over the links, after every drop, from POI 0.
+            if (terr.IslandLinks != null && terr.IslandLinks.Count > 0)
+            {
+                int maxPoi = 0;
+                foreach (var l in terr.IslandLinks) { if (l.A > maxPoi) maxPoi = l.A; if (l.B > maxPoi) maxPoi = l.B; }
+                var adj = new System.Collections.Generic.Dictionary<int, System.Collections.Generic.List<int>>();
+                foreach (var l in terr.IslandLinks)
+                {
+                    if (!adj.TryGetValue(l.A, out var la)) { la = new System.Collections.Generic.List<int>(); adj[l.A] = la; }
+                    if (!adj.TryGetValue(l.B, out var lb)) { lb = new System.Collections.Generic.List<int>(); adj[l.B] = lb; }
+                    la.Add(l.B); lb.Add(l.A);
+                }
+                var seen = new System.Collections.Generic.HashSet<int> { 0 };
+                var stack = new System.Collections.Generic.Stack<int>(); stack.Push(0);
+                while (stack.Count > 0)
+                {
+                    int cur2 = stack.Pop();
+                    if (!adj.TryGetValue(cur2, out var nbs)) continue;
+                    foreach (int nb in nbs) if (seen.Add(nb)) stack.Push(nb);
+                }
+                int isolated = 0;
+                for (int i = 0; i <= maxPoi; i++) if (!seen.Contains(i)) isolated++;
+                Log.Print($"[island-roads] connectivity after drops: {seen.Count} of {maxPoi + 1} POI(s) reachable, {isolated} isolated");
+            }
+
             Log.Print($"[island-roads] RoadField holds {rf.RoadCount} road(s); {curves.Count} tracked here");
 
             Log.Print($"[island-roads] built ribbons: {ribbonCross} crossing(s) away from a town "
