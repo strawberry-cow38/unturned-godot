@@ -6087,14 +6087,7 @@ namespace UnturnedGodot
                 if (t.HasValue) { _pdPlayer.ShowMenu(t.Value); Log.Print($"[menuopen] {t.Value}"); }
                 else Log.Err($"[menuopen] unknown tab '{menuTab}'");
             }
-            if (_peiPlayable)
-            {
-                string mk = System.IO.Path.GetFileName(_mapRoot).ToLowerInvariant().Replace(" ", "");
-                // Washington's shipped "loop" is the 2016 trailer track, never meant to play in-game (strawberry
-                // 2026-09-04 "kill the music on washington") -> no map music there at all, no PEI fallback either.
-                if (mk != "washington")
-                    MusicPlayer.Get(this)?.PlayLoop(GameAudio.Clip("music", mk + "_loop") != null ? mk + "_loop" : "pei_loop");   // retail per-map loop (pei shipped; others fall back to PEI)
-            }
+            if (_peiPlayable) PlayMapMusic();
             // WEATHER on PEI: BuildFullWorld never attached a WeatherManager, so the `weather` console command did
             // NOTHING in the real game (master 2026-08-29 "no weather manager on pei"). Attach it here on the REAL
             // PEI clock so `weather rain|heavy|clear|lightning` drives the worldspace 3D rain + terrain wetness
@@ -9278,6 +9271,28 @@ namespace UnturnedGodot
         // server-adopted spawn, predicted + reconciled -- its camera IS the view (no overhead cam). Bare
         // --client keeps the C1 demo shape: overhead cam + ClientNode's capsule renderer (used by the
         // --server 2-process demo; no player shell).
+        /// The map's music KEY, or null for a map that should play nothing. Pure and static so the rule can be
+        /// asserted without booting a world: Washington's shipped "loop" is the 2016 trailer track, never meant
+        /// to play in-game (strawberry 2026-09-04 "kill the music on washington"), so it gets no music at all
+        /// and no PEI fallback either.
+        internal static string MapMusicKey(string mapRoot)
+        {
+            if (string.IsNullOrEmpty(mapRoot)) return null;
+            string mk = System.IO.Path.GetFileName(mapRoot.TrimEnd('/', '\\')).ToLowerInvariant().Replace(" ", "");
+            return mk == "washington" ? null : mk;
+        }
+
+        /// ONE map-music routine, called by singleplayer AND by a joined client. It used to live inline in the
+        /// _peiPlayable block and nowhere else, so joining a server got you silence -- the world came up, the
+        /// music did not, and nothing said so. Same shape as the vehicle-puppet glass and the container
+        /// decoration: two paths through the same feature, one of them never wired.
+        void PlayMapMusic()
+        {
+            string mk = MapMusicKey(_mapRoot);
+            if (mk == null) return;
+            MusicPlayer.Get(this)?.PlayLoop(GameAudio.Clip("music", mk + "_loop") != null ? mk + "_loop" : "pei_loop");   // retail per-map loop (pei shipped; others fall back to PEI)
+        }
+
         async void BuildClient()
         {
             // async void swallows exceptions silently (the trap BuildDedicated hit) -- surface anything that breaks.
@@ -9320,6 +9335,7 @@ namespace UnturnedGodot
                                                       Terr = res.Terr,                                       // C6: terrain-snaps the vehicle-exit spot (§7 risk 6)
                                                       Loading = res.Loading, LoadingTimings = res.Timings,   // the build's cover, still up: the session drops it when the shell lands, not when the world does
                                                       ApplyServerHoliday = res.ApplyHoliday });              // P3: the deferred holiday content builds with the SERVER's holiday at Accept
+                    PlayMapMusic();   // a joined player gets the map loop too -- see PlayMapMusic
                     Log.Print($"[CLIENT] real world up ({System.IO.Path.GetFileName(_mapRoot)}); connecting to {_connectHost}:{PortEnv()} -- the local shell spawns at the server-adopted spawn, predicted + reconciled");
                 }
                 else   // bare --client (C1 demo shape): overhead cam over the spawn region + ClientNode capsules
