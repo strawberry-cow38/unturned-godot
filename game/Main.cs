@@ -6486,6 +6486,11 @@ namespace UnturnedGodot
                 editor.Save();
                 EditorMaps.MarkProc(mapName, genSeed.Value);
             }
+            // ⚠ THE PRESENCE ONLY EVER FOLLOWED THE --editor CLI FLAG (strawberry 2026-09-17: "discord RPC says
+            // im in menu when im in a map"). SetEditor was called on that one branch and nowhere else, so every
+            // map opened FROM THE MENU -- generated or custom -- left the presence on whatever the menu last
+            // pushed, which is "In the main menu". The state has to follow the world, not the command line.
+            DiscordPresence.SetEditor(mapName);
             if (autoPlay) play.CallDeferred(nameof(EditorPlayMode.EnterPlay));
             _worldReady = true;
             Log.Print(genSeed.HasValue

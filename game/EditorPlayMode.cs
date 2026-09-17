@@ -33,7 +33,7 @@ namespace UnturnedGodot
         /// reproducible: the same island must produce the same horde, or two people "on seed 12345" are not
         /// playing the same map. Null on a hand-built custom map, which is why every use is guarded.</summary>
         int? _islandSeed; string _mapRootForTables;
-        ZombieChunkField _zombies; LootField _loot;
+        ZombieChunkField _zombies; LootField _loot; DiscordPresenceTicker _presence;
         public void SetIsland(int? seed, string mapRootForTables)
         { _islandSeed = seed; _mapRootForTables = mapRootForTables; }
 
@@ -147,6 +147,15 @@ namespace UnturnedGodot
             if (_sun != null && _env != null) _player.LinkWorldLighting(_sun, _env);
             if (_dayNight != null) _dayNight.VisualsEnabled = true;   // the editor builds it with visuals OFF
 
+            // Discord: playing, not editing. ⚠ TICKED rather than pushed once, because the day counter MOVES --
+            // the same DiscordPresenceTicker the real singleplayer path uses, and the push is dropped unless a
+            // field actually changed, so a repeat costs one struct compare.
+            _presence = new DiscordPresenceTicker
+            {
+                Push = () => DiscordPresence.SetSingleplayer(_editor?.MapName ?? "Island", _dayNight?.Day ?? 1),
+            };
+            _editor.AddChild(_presence);
+
             // ---- ZOMBIES AND LOOT ---------------------------------------------------------------------------
             // ⚠ Only on a GENERATED island: a blank or hand-built custom map has no island data to scatter
             // against, and populating one with nothing is an empty field plus a log line.
@@ -193,6 +202,10 @@ namespace UnturnedGodot
                 if (c is DevConsole or BugReporter or CropManager or MapUI or HUD) c.QueueFree();
             // ⚠ THE POPULATION GOES TOO. A horde keyed to a player that no longer exists is both a leak and a
             // second horde the next time you press play -- and the zombies would keep pathing at a freed node.
+            // Back to the editor in the panel as well as on screen.
+            if (GodotObject.IsInstanceValid(_presence)) _presence.QueueFree();
+            _presence = null;
+            DiscordPresence.SetEditor(_editor?.MapName);
             if (GodotObject.IsInstanceValid(_zombies)) _zombies.QueueFree();
             if (GodotObject.IsInstanceValid(_loot)) _loot.QueueFree();
             _zombies = null; _loot = null;

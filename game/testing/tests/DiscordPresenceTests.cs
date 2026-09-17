@@ -120,9 +120,18 @@ namespace UnturnedGodot.Testing
             // panel. These are the exact keys the uploaded art carries.
             T.Check("PEI -> map_pei", DiscordPresence.MapAssetForTest("PEI") == "map_pei");
             T.Check("Washington -> map_washington", DiscordPresence.MapAssetForTest("Washington") == "map_washington");
-            // A map folder is free to contain a space or a dash; an asset key is not.
-            T.Check("Alpha Valley -> map_alpha_valley", DiscordPresence.MapAssetForTest("Alpha Valley") == "map_alpha_valley");
-            T.Check("Paintball-Arena -> map_paintball_arena", DiscordPresence.MapAssetForTest("Paintball-Arena") == "map_paintball_arena");
+            // ⚠ A MAP WITH NO UPLOADED ART RESOLVES TO THE LOGO, NOT TO A PLAUSIBLE KEY (changed 2026-09-17).
+            // This used to assert map_alpha_valley and map_paintball_arena -- correctly describing the
+            // SANITISER, and describing a behaviour that draws nothing. The note below has always said why:
+            // Discord answers an unknown key with no image and no error. Generated islands forced the issue,
+            // since "Island 20260917" produces a key that will never exist for any seed, but the same was true
+            // of every map whose art was never uploaded. The sanitising is still asserted -- via the keys that
+            // DO exist -- and the fallback is now asserted too.
+            T.Check("a map with no uploaded art falls back to the logo",
+                    DiscordPresence.MapAssetForTest("Alpha Valley") == "logo");
+            T.Check("a generated island falls back to the logo",
+                    DiscordPresence.MapAssetForTest("Island 20260917") == "logo");
+            T.Check("Yukon has art, so it keeps its key", DiscordPresence.MapAssetForTest("Yukon") == "map_yukon");
             // ⚠ No map -> the generic logo, NOT "map_" with nothing after it, which would match no asset and
             // silently blank the picture on every menu frame.
             T.Check("no map falls back to logo", DiscordPresence.MapAssetForTest("") == "logo");

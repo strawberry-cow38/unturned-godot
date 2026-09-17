@@ -363,6 +363,14 @@ namespace UnturnedGodot
         /// would go stale the first time someone adds one.
         /// Lowercased and reduced to [a-z0-9_] because Discord asset keys are, and a map folder is free to
         /// contain a space or a dash that would silently never match.</summary>
+        /// <summary>The set of map keys that actually have art uploaded to the Discord app. ⚠ A KEY THAT
+        /// MATCHES NOTHING DRAWS NOTHING, silently -- Discord neither errors nor falls back, the panel just
+        /// comes up blank -- so a map we have no art for has to resolve to the generic logo rather than to a
+        /// plausible-looking key. Generated islands are the case that forced this: "Island 20260917" produces
+        /// map_island_20260917, which will never be an uploaded asset for any seed.</summary>
+        static readonly System.Collections.Generic.HashSet<string> UploadedMapArt = new()
+        { "map_pei", "map_washington", "map_yukon" };
+
         static string MapAsset(string mapName)
         {
             string m = Clean(mapName);
@@ -373,7 +381,8 @@ namespace UnturnedGodot
                 if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) sb.Append(c);
                 else if (c == ' ' || c == '-' || c == '_') sb.Append('_');
             }
-            return sb.Length > 4 ? sb.ToString() : "logo";
+            string key = sb.Length > 4 ? sb.ToString() : "logo";
+            return UploadedMapArt.Contains(key) ? key : "logo";
         }
 
         static string Esc(string s) => JsonEncodedText.Encode(s ?? "").ToString();
