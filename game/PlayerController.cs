@@ -8045,9 +8045,31 @@ namespace UnturnedGodot
                 CallDeferred(Node.MethodName.AddSibling, _body);
             }
             _ppB = System.Diagnostics.Stopwatch.GetTimestamp();
-            _viewmodel = new Viewmodel { GunName = _gunName, LeftHook = Gun?.LeftHook ?? false };   // per-gun visuals
-            AddChild(_viewmodel);
-            ApplyGunToViewmodel();
+            // ⚠⚠ A PHANTOM EAGLEFIRE (strawberry 2026-09-17: "do we spawn with an eaglefire or is it a bugged
+            // fake one?" -- a fake one).
+            //
+            // _gunName is a FIELD DEFAULT of "eaglefire", and this line built the viewmodel from it whether or
+            // not a gun was ever equipped. So a player who spawns with nothing -- which is every player, since
+            // PopulateSpawnKit was emptied on master's own "no mag no bandage no backpack. shirt n pants. no
+            // eaglefire" -- stood there holding a rifle with `Gun == null` and no backing Item: it cannot fire,
+            // cannot reload, has no ammo and vanishes the moment anything equips for real. The gun was never in
+            // the inventory; only its picture was.
+            //
+            // ⚠ NOT the same as the harnesses, which are unaffected: BuildPlayable and the gun tests call
+            // LoadGun BEFORE AddChild, so Gun is already set when _Ready runs and they still get their gun.
+            // What changes is only the case where nothing was equipped at all, and fists are what that is.
+            if (Gun != null)
+            {
+                _viewmodel = new Viewmodel { GunName = _gunName, LeftHook = Gun.LeftHook };   // per-gun visuals
+                AddChild(_viewmodel);
+                ApplyGunToViewmodel();
+            }
+            else
+            {
+                _melee = MeleeDef.Fists; _heldMeleeName = "fists";   // fists ARE a melee -> LMB/RMB punches
+                _viewmodel = new Viewmodel { Fists = true };
+                AddChild(_viewmodel);
+            }
             _rng.Randomize();
 
             // the ported inventory + its dashboard. Demo-populate it (real items) so there's something to show.
