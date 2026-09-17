@@ -2763,8 +2763,10 @@ namespace UnturnedGodot
                     // discriminator is the DETOUR RATIO: route length over the straight line between its own
                     // two ends. ~1.2-1.5x is a road following terrain; 3x is a defect wearing a spine's hat.
                     float worstDetour = 0f; int worstLen = 0; float worstChord = 0f;
-                    foreach (var c in curves)
+                    int worstCi = -1;
+                    for (int ci2 = 0; ci2 < curves.Count; ci2++)
                     {
+                        var c = curves[ci2];
                         if (c.Count < 2) continue;
                         float L2 = 0f;
                         for (int i = 1; i < c.Count; i++)
@@ -2772,14 +2774,32 @@ namespace UnturnedGodot
                         float chord = new Vector2(c[^1].X - c[0].X, c[^1].Z - c[0].Z).Length();
                         if (chord < 50f) continue;                   // a loop or a stub: ratio is meaningless
                         float ratio = L2 / chord;
-                        if (ratio > worstDetour) { worstDetour = ratio; worstLen = Mathf.RoundToInt(L2); worstChord = chord; }
+                        if (ratio > worstDetour) { worstDetour = ratio; worstLen = Mathf.RoundToInt(L2); worstChord = chord; worstCi = ci2; }
+                    }
+                    // ⚠ AND SAY WHAT IT IS. An 8.5x detour is either the A* fleeing an obstacle for 5 km, or a
+                    // route whose two ends were never where I think they are. Those want opposite fixes, and
+                    // the difference is visible from the route's KIND and where its ends actually sit -- the
+                    // same "print the kind, not the index" that cost me three wrong claims today.
+                    string worstWhat = "";
+                    if (worstCi >= 0)
+                    {
+                        var wc = curves[worstCi];
+                        int ri2 = curveRoute[worstCi];
+                        var raw2 = (ri2 >= 0 && terr.IslandRoutes != null && ri2 < terr.IslandRoutes.Count)
+                                   ? terr.IslandRoutes[ri2].Points : null;
+                        float rawLen = 0f;
+                        if (raw2 != null) for (int i = 1; i < raw2.Count; i++) rawLen += raw2[i].DistanceTo(raw2[i - 1]);
+                        worstWhat = $" -- it is a {curveKind[worstCi]} (route {ri2}), ends ({wc[0].X:0},{wc[0].Z:0}) "
+                                  + $"-> ({wc[^1].X:0},{wc[^1].Z:0}); the A* polyline it was built from is "
+                                  + $"{rawLen:0} m over {(raw2 == null ? 0 : raw2.Count)} point(s), so the wander is "
+                                  + (rawLen > worstLen * 0.8f ? "ALREADY IN THE PATH" : "ADDED AFTER THE PATH");
                     }
                     Log.Print($"[island-topology] {lens.Count} roads, {tot / 1000f:0.0} km total; longest "
                               + $"{top1 / 1000f:0.00} km = {top1 / tot * 100f:0}% of all road, top 3 = "
                               + $"{top3 / tot * 100f:0}%, {under300} under 300 m. Ladder (m): {string.Join(" ", ladder)}. "
                               + $"[retail for comparison: PEI longest 33%/top3 60%/19 of 23 short; Washington top3 33%; Russia top3 22%]");
                     Log.Print($"[island-topology] worst detour: a route {worstLen} m long between ends only "
-                              + $"{worstChord:0} m apart = {worstDetour:0.0}x the straight line");
+                              + $"{worstChord:0} m apart = {worstDetour:0.0}x the straight line{worstWhat}");
                 }
             }
 
