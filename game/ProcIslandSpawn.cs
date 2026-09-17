@@ -1681,6 +1681,9 @@ namespace UnturnedGodot
             // levelled corridor and the border is the worn edge either side of it. Same reason as the roads --
             // the splat is what the foliage scatter reads, so an unpainted trail grows grass and trees through
             // the middle of the track.
+            // strawberry 2026-09-17: "expand the dirt paint footprint of the trails". The ribbon is 9.2 m
+            // wide; this is the worn ground either side of it, and it was 2.5 m -- barely past the tarmac.
+            const float TrailVerge = 7f;
             int trailPts = 0, campN = 0;
             if (terr.IslandTrails != null)
                 foreach (var t in terr.IslandTrails)
@@ -1689,7 +1692,7 @@ namespace UnturnedGodot
                     foreach (var q in t.Points)
                     {
                         var w = PosFor(terr, q.X, q.Y);
-                        terr.PaintSplat(w.X, w.Z, ProcIsland.TrailHalf + 2.5f, DirtLayer); trailPts++;
+                        terr.PaintSplat(w.X, w.Z, ProcIsland.TrailHalf + TrailVerge, DirtLayer); trailPts++;
                     }
                 }
             if (terr.IslandCamps != null)
@@ -1697,6 +1700,17 @@ namespace UnturnedGodot
                 {
                     var w = PosFor(terr, c.X, c.Z);
                     terr.PaintSplat(w.X, w.Z, ProcIsland.CampPadHalf, DirtLayer); campN++;
+                }
+            // ...and the worked ground a landmark stands on. A radar tower on untouched grass reads as dropped
+            // there; the pad under it was levelled, so the splat should say so too. The bench gets a small
+            // scuff rather than a clearing -- someone walks to it, they do not build it a car park.
+            int markN = 0;
+            if (terr.IslandLandmarks != null)
+                foreach (var l in terr.IslandLandmarks)
+                {
+                    var w = PosFor(terr, l.X, l.Z);
+                    terr.PaintSplat(w.X, w.Z, l.Kind == ProcIsland.LandmarkKind.Radar ? ProcIsland.RadarPadHalf + 4f : 3f, DirtLayer);
+                    markN++;
                 }
 
             // ---- and a skirt of dirt around every boulder --------------------------------------------------
@@ -1711,7 +1725,7 @@ namespace UnturnedGodot
             // 1.35x the rock's own radius: enough to cover the skirt without painting a crater around it.
             foreach (var b in BoulderMarks) { terr.PaintSplat(b.X, b.Z, b.R * 1.35f, DirtLayer); rocks++; }
 
-            Log.Print($"[island-paint] {trailPts} trail point(s) @{ProcIsland.TrailHalf + 2.5f:0.#}m + {campN} camp clearing(s) @{ProcIsland.CampPadHalf:0.#}m");
+            Log.Print($"[island-paint] {trailPts} trail point(s) @{ProcIsland.TrailHalf + TrailVerge:0.#}m + {campN} camp clearing(s) @{ProcIsland.CampPadHalf:0.#}m + {markN} landmark(s)");
             Log.Print($"[island-paint] dirt under {tiles} road tile(s) @{RoadHalf + TileBorder:0.#}m, routes @{RouteHalf + RouteBorder:0.#}m, "
                       + $"{builds} building(s) ({sized} to their real footprint), {routePts} route point(s), {rocks} boulder skirt(s)");
         }
@@ -1873,6 +1887,37 @@ namespace UnturnedGodot
             Log.Print($"[island-trails] {camps} camp(s) dressed, {placed} prop(s), closest tent pair "
                       + $"{(worstGap == float.MaxValue ? 0f : worstGap):0.0} m (tents are 12.6 x 8.8) at{where}");
             return placed;
+        }
+
+        /// <summary>Stand the radar towers and the benches.
+        ///
+        /// ⭐ Radar_1, not Radar_0: measured, Radar_1 is 7.8 x 6.8 x 28.2 m and Radar_0 is a 7.9 m base. PEI
+        /// puts its single Radar_1 at y=109 -- the top of the island -- which is exactly the placement being
+        /// asked for here, so the prop choice is retail's rather than mine.
+        ///
+        /// ⚠ Bench_Wood_0, NOT the commoner Bench_Wood_1, and the mesh is why. A bench at a viewpoint has to
+        /// FACE the view, so it needs a front -- and Bench_Wood_1 is symmetric in y (28 backrest verts either
+        /// side of centre, y from -1.56 to +1.56): it is a picnic bench you sit at from both sides, and aiming
+        /// it is meaningless. Bench_Wood_0 puts all 36 of its backrest verts at y -0.89..0, so its back is the
+        /// local -Y side and the sitter looks down local +Y -- which is exactly where YawForDir points a prop.
+        /// PEI has 19 of the symmetric one and 5 of this one; the count is not the deciding fact here.</summary>
+        public static int SpawnLandmarks(Terrain terr, EditorObjects objs)
+        {
+            if (terr == null || objs == null || terr.IslandLandmarks == null) return 0;
+            int radars = 0, benches = 0;
+            var where = new System.Text.StringBuilder();
+            foreach (var l in terr.IslandLandmarks)
+            {
+                var at = PosFor(terr, l.X, l.Z);
+                string prop = l.Kind == ProcIsland.LandmarkKind.Radar ? "Radar_1" : "Bench_Wood_0";
+                if (objs.Place(prop, at, RotFor(l.Yaw)) == null) continue;
+                if (l.Kind == ProcIsland.LandmarkKind.Radar) { radars++; where.Append($" radar({at.X:0},{at.Z:0},y{at.Y:0})"); }
+                // The benches carry their FACING too: "8 benches" is equally true of eight of them looking at a
+                // bank, and the whole ask was "benches with views".
+                else { benches++; where.Append($" bench({at.X:0},{at.Z:0},y{at.Y:0},yaw{l.Yaw:0})"); }
+            }
+            Log.Print($"[island-landmarks] placed {radars} radar tower(s) and {benches} bench(es):{where}");
+            return radars + benches;
         }
 
         public static int SpawnRoutes(Terrain terr, RoadField rf, int material = 0)

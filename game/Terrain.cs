@@ -676,6 +676,9 @@ void fragment() {
         System.Collections.Generic.List<ProcIsland.Route> _islandTrails = new();
         public System.Collections.Generic.List<ProcIsland.Camp> IslandCamps => _islandCamps;
         System.Collections.Generic.List<ProcIsland.Camp> _islandCamps = new();
+        /// <summary>Radar towers on peaks and benches at viewpoints.</summary>
+        public System.Collections.Generic.List<ProcIsland.Landmark> IslandLandmarks => _islandLandmarks;
+        System.Collections.Generic.List<ProcIsland.Landmark> _islandLandmarks = new();
         public System.Collections.Generic.List<ProcIsland.MonumentTile> IslandTiles => _islandTiles;
         readonly System.Collections.Generic.List<ProcIsland.MonumentTile> _islandTiles = new();
         public System.Collections.Generic.List<ProcIsland.MonumentBuilding> IslandBuildings => _islandBuildings;
@@ -718,6 +721,9 @@ void fragment() {
             // AFTER the roads, because a trail branches off one: it needs the finished spline to pick an
             // anchor on, and the ground it cuts is ground the roads have already had their say about.
             (_islandTrails, _islandCamps) = ProcIsland.CarveTrails(_grid, _gw, _gh, pois, _islandRoutes, pars);
+            // LAST of the ground-shaping passes: a landmark refuses to sit near a road, a trail or a camp, so
+            // all three have to exist before it can tell.
+            _islandLandmarks = ProcIsland.PlaceLandmarks(_grid, _gw, _gh, pois, _islandRoutes, _islandTrails, _islandCamps, pars);
             RebuildAll();
             return pois;
         }

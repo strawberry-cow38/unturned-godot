@@ -6408,8 +6408,13 @@ namespace UnturnedGodot
                     && float.TryParse(cb[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float cxw)
                     && float.TryParse(cb[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float czw))
                 {
-                    camPos = new Vector3(cxw, terr.SampleHeight(cxw, czw) + camAlt, czw);
-                    camTop = true;
+                    // ⚠ UG_GENTOP still decides the ANGLE. Forcing straight down here made the flag useless
+                    // exactly where it matters -- a 28 m radar tower photographed from directly overhead is a
+                    // dot, and nothing about whether it stands up straight is visible in that picture.
+                    camTop = camTopEnv;
+                    camPos = camTop
+                        ? new Vector3(cxw, terr.SampleHeight(cxw, czw) + camAlt, czw)
+                        : new Vector3(cxw, terr.SampleHeight(cxw, czw) + camAlt * 0.55f, czw + camAlt * 0.9f);
                 }
             }
             var cam = new EditorCamera { Position = camPos, RotationDegrees = new Vector3(camTop ? -90f : camPitch, 0f, 0f) };
@@ -6534,6 +6539,7 @@ namespace UnturnedGodot
             // the same reason the roadside props are: the ground under a trail's junction is ground the road's
             // conform has just finished moving.
             if (genPois != null) { ProcIslandSpawn.SpawnTrails(terr, rf); ProcIslandSpawn.SpawnCamps(terr, objs); }
+            if (genPois != null) ProcIslandSpawn.SpawnLandmarks(terr, objs);
             if (genPois != null && genSeed.HasValue)
             {
                 await Phase("Seeding grass and flowers");

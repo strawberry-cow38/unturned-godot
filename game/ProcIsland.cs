@@ -1708,6 +1708,240 @@ namespace UnturnedGodot
             return (trails, camps);
         }
 
+        // ---- PEAKS AND VIEWPOINTS -------------------------------------------------------------------------
+        // strawberry 2026-09-17: "add radar tower props to the top of peaks (but dont spam them) add benches
+        // with views, (dont spam, obv)".
+        //
+        // ⭐ "DON'T SPAM" IS THE WHOLE SPEC, so it is enforced three ways rather than by tuning a probability:
+        // a hard count per island, a minimum separation, and a quality bar each candidate has to clear. A
+        // rarity rolled from a hash still clusters -- two peaks 80 m apart both roll well and you get two radar
+        // towers on one hilltop.
+        public enum LandmarkKind { Radar, Bench }
+        public readonly struct Landmark
+        {
+            public readonly float X, Z, Yaw;     // ProcIsland frame; Yaw is what the prop should FACE
+            public readonly LandmarkKind Kind;
+            public Landmark(float x, float z, float yaw, LandmarkKind k) { X = x; Z = z; Yaw = yaw; Kind = k; }
+        }
+
+        const int MaxRadars = 3, MaxBenches = 8;
+        const float RadarApart = 400f, BenchApart = 260f, BenchFromRadar = 150f;
+        public const float RadarPadHalf = 7f;    // Radar_1 measures 7.8 x 6.8 m
+        public static int LandmarkPeaksSeen, LandmarkViewsSeen;
+
+        /// <summary>Pick the island's high points and its best views, and level just enough ground to stand on.
+        ///
+        /// A PEAK is prominence, not height: the tallest thing within PeakRadius, by a margin. Absolute height
+        /// alone picks three points on the shoulder of the same mountain.
+        ///
+        /// A VIEW is a flat spot with a long DROP in one direction -- which is also the direction the bench
+        /// faces. Scored on how far the ground falls away, so a bench never ends up facing a bank.</summary>
+        public static System.Collections.Generic.List<Landmark> PlaceLandmarks(
+            float[,] grid, int gw, int gh, System.Collections.Generic.List<Poi> pois,
+            System.Collections.Generic.List<Route> routes, System.Collections.Generic.List<Route> trails,
+            System.Collections.Generic.List<Camp> camps, Params p)
+        {
+            const float Unit = 4f;
+            var outp = new System.Collections.Generic.List<Landmark>();
+            LandmarkPeaksSeen = LandmarkViewsSeen = 0;
+
+            float H(float wx, float wz)
+            {
+                int gx = Mathf.Clamp(Mathf.RoundToInt(wx / Unit), 0, gw - 1);
+                int gy = Mathf.Clamp(Mathf.RoundToInt(wz / Unit), 0, gh - 1);
+                return ToWorld(grid[gx, gy]);
+            }
+
+            bool Clear(float wx, float wz, float fromRoads, float fromTown)
+            {
+                if (InsideAnyTownPad(wx, wz, fromTown)) return false;
+                float m2 = fromRoads * fromRoads;
+                foreach (var r in routes)
+                    for (int i = 0; i < r.Points.Count; i += 3)
+                    { float dx = r.Points[i].X - wx, dz = r.Points[i].Y - wz; if (dx * dx + dz * dz < m2) return false; }
+                if (trails != null)
+                    foreach (var t in trails)
+                        for (int i = 0; i < t.Points.Count; i += 3)
+                        { float dx = t.Points[i].X - wx, dz = t.Points[i].Y - wz; if (dx * dx + dz * dz < m2) return false; }
+                if (camps != null)
+                    foreach (var c in camps)
+                    { float dx = c.X - wx, dz = c.Z - wz; if (dx * dx + dz * dz < 90f * 90f) return false; }
+                return true;
+            }
+
+            bool FarFromKept(float wx, float wz, LandmarkKind k, float apart)
+            {
+                foreach (var l in outp)
+                {
+                    if (l.Kind != k) continue;
+                    float dx = l.X - wx, dz = l.Z - wz;
+                    if (dx * dx + dz * dz < apart * apart) return false;
+                }
+                return true;
+            }
+
+            // ---- candidates, on a coarse scan. 32 m is finer than either minimum separation, so nothing is
+            // missed for want of resolution, and 96x96 samples is nothing next to the rest of generation.
+            const int Step = 8;
+            var peaks = new System.Collections.Generic.List<(float S, float X, float Z)>();
+            var views = new System.Collections.Generic.List<(float S, float X, float Z, float Yaw)>();
+            // ⚠ SIZED AGAINST THE ISLAND THIS GENERATOR ACTUALLY MAKES. The first pass asked for 45 m of
+            // rise and 16 m of prominence, which on a coast that tops out near y78 over a 25.6 m sea
+            // left exactly ONE candidate on every seed -- not 'don't spam', just 'only one hill is tall
+            // enough to be noticed'. The separation and the cap are what stop spam; the bar only has to
+            // say 'this is a summit and not a shoulder'.
+            const float PeakRadius = 130f, MinPeakRise = 32f, MinProminence = 11f;
+            for (int gx = Step; gx < gw - Step; gx += Step)
+                for (int gy = Step; gy < gh - Step; gy += Step)
+                {
+                    float wx = gx * Unit, wz = gy * Unit;
+                    float h = ToWorld(grid[gx, gy]);
+                    if (h < p.SeaLevel + 8f) continue;
+
+                    // ---- peak: tallest within PeakRadius, by MinProminence -------------------------------
+                    if (h >= p.SeaLevel + MinPeakRise)
+                    {
+                        float ringMax = float.MinValue; bool taller = false;
+                        for (int a = 0; a < 16 && !taller; a++)
+                        {
+                            float ang = a * Mathf.Tau / 16f;
+                            float rh = H(wx + Mathf.Cos(ang) * PeakRadius, wz + Mathf.Sin(ang) * PeakRadius);
+                            if (rh > h) taller = true;
+                            if (rh > ringMax) ringMax = rh;
+                        }
+                        if (!taller && h - ringMax >= MinProminence)
+                        {
+                            LandmarkPeaksSeen++;
+                            // Flat enough to stand a 7.8 m tower on -- levelled below, but a tower on a needle
+                            // means levelling a needle, which leaves a plinth.
+                            float lo = h, hi = h;
+                            for (int a = 0; a < 8; a++)
+                            {
+                                float ang = a * Mathf.Tau / 8f;
+                                float ph = H(wx + Mathf.Cos(ang) * RadarPadHalf, wz + Mathf.Sin(ang) * RadarPadHalf);
+                                if (ph < lo) lo = ph; if (ph > hi) hi = ph;
+                            }
+                            if (hi - lo <= 7f) peaks.Add((h - ringMax, wx, wz));
+                        }
+                    }
+
+                    // ---- view: flat underfoot, with a long drop one way ----------------------------------
+                    float flatLo = h, flatHi = h;
+                    for (int a = 0; a < 8; a++)
+                    {
+                        float ang = a * Mathf.Tau / 8f;
+                        float ph = H(wx + Mathf.Cos(ang) * 5f, wz + Mathf.Sin(ang) * 5f);
+                        if (ph < flatLo) flatLo = ph; if (ph > flatHi) flatHi = ph;
+                    }
+                    if (flatHi - flatLo > 2.2f) continue;
+                    float bestDrop = 0f, bestYaw = 0f;
+                    for (int a = 0; a < 16; a++)
+                    {
+                        float ang = a * Mathf.Tau / 16f;
+                        float dx = Mathf.Cos(ang), dz = Mathf.Sin(ang);
+                        // The drop over the WHOLE sweep, not just the endpoint: a dip and a rise back up is a
+                        // hollow, not a view, and the endpoint alone cannot tell them apart.
+                        float worst = 0f; bool blocked = false;
+                        for (float d = 20f; d <= 110f; d += 15f)
+                        {
+                            float dh = h - H(wx + dx * d, wz + dz * d);
+                            if (dh < worst - 3f) { blocked = true; break; }
+                            if (dh > worst) worst = dh;
+                        }
+                        if (!blocked && worst > bestDrop) { bestDrop = worst; bestYaw = YawForDir(dx, dz); }
+                    }
+                    if (bestDrop >= 14f) { LandmarkViewsSeen++; views.Add((bestDrop, wx, wz, bestYaw)); }
+                }
+
+            peaks.Sort((a, b) => b.S.CompareTo(a.S));
+            int peakNotClear = 0, peakTooNear = 0;
+            foreach (var c in peaks)
+            {
+                if (outp.Count >= MaxRadars) break;
+                // ⚠ COUNT THE REJECTIONS. "6 peaks considered, 1 tower" says the bar is not the binding
+                // constraint without saying what is -- and the two candidates are opposites: a peak next to a
+                // road (loosen Clear) against six peaks on one ridge (loosen the separation).
+                // 30 m of road clearance, not 70: the tower is a 7.8 m object and the carriageway is
+                // 18.4 m wide, so 13 m separates them at all. A hill with a road round its foot is an
+                // ordinary hill, and at 70 m the one peak seed 424242 has was refused for it -- an
+                // island with no radar tower at all, because of a clearance picked by feel.
+                // ⚠ 30 m off a road but 200 m off a TOWN, and the two are not the same judgement. A hill
+                // with a road round its foot is an ordinary hill; a radio mast 80 m from an apartment
+                // block is a mast in a suburb, which is not what "top of peaks" describes. The first
+                // render put one exactly there -- it stood up correctly and looked wrong.
+                // ⚠ 120, not 200: at 200 every seed produced ZERO towers. With ~28 POIs on a 3 km island
+                // every peak is within 200 m of something, so that bar does not mean "away from town", it
+                // means "nowhere". 120 clears the built-up edge and still leaves one or two standing.
+                if (!Clear(c.X, c.Z, 30f, 120f)) { peakNotClear++; continue; }
+                if (!FarFromKept(c.X, c.Z, LandmarkKind.Radar, RadarApart)) { peakTooNear++; continue; }
+                // Face anywhere; a radar dish has no front that matters. Seeded so it is not all one bearing.
+                outp.Add(new Landmark(c.X, c.Z, Hash01(Mathf.RoundToInt(c.X), Mathf.RoundToInt(c.Z), p.Seed + 91001) * 360f,
+                                      LandmarkKind.Radar));
+            }
+            // ⚠ AN ISLAND WITH NO TOWER AT ALL IS A MISS, not restraint. "Don't spam them" is a CAP; it does
+            // not ask for zero. At a 120 m town clearance two of five seeds produced none, because on a 3 km
+            // island with ~28 POIs the high ground and the towns want the same places. So if nothing cleared
+            // that bar, take the most prominent peak that at least keeps off the roads -- one mast on the
+            // skyline above a town, which is where real ones are, rather than an island with a bare horizon.
+            int relaxed = 0;
+            if (outp.Count == 0)
+                foreach (var c in peaks)
+                {
+                    if (!Clear(c.X, c.Z, 30f, 60f)) continue;
+                    outp.Add(new Landmark(c.X, c.Z,
+                                          Hash01(Mathf.RoundToInt(c.X), Mathf.RoundToInt(c.Z), p.Seed + 91001) * 360f,
+                                          LandmarkKind.Radar));
+                    relaxed++;
+                    break;
+                }
+            int radars = outp.Count;
+
+            views.Sort((a, b) => b.S.CompareTo(a.S));
+            int benches = 0;
+            foreach (var c in views)
+            {
+                if (benches >= MaxBenches) break;
+                if (!Clear(c.X, c.Z, 40f, 60f) || !FarFromKept(c.X, c.Z, LandmarkKind.Bench, BenchApart)) continue;
+                bool nearRadar = false;
+                for (int i = 0; i < radars; i++)
+                {
+                    float dx = outp[i].X - c.X, dz = outp[i].Z - c.Z;
+                    if (dx * dx + dz * dz < BenchFromRadar * BenchFromRadar) nearRadar = true;
+                }
+                if (nearRadar) continue;
+                outp.Add(new Landmark(c.X, c.Z, c.Yaw, LandmarkKind.Bench));
+                benches++;
+            }
+
+            // ---- level what each one stands on ---------------------------------------------------------
+            foreach (var l in outp)
+            {
+                float half = l.Kind == LandmarkKind.Radar ? RadarPadHalf : 2.6f;
+                float feather = l.Kind == LandmarkKind.Radar ? 9f : 4f;
+                float y = H(l.X, l.Z);
+                int cx = Mathf.RoundToInt(l.X / Unit), cy = Mathf.RoundToInt(l.Z / Unit);
+                int rad = Mathf.CeilToInt((half + feather) / Unit) + 1;
+                for (int x = Mathf.Max(0, cx - rad); x <= Mathf.Min(gw - 1, cx + rad); x++)
+                    for (int y2 = Mathf.Max(0, cy - rad); y2 <= Mathf.Min(gh - 1, cy + rad); y2++)
+                    {
+                        float dx = x * Unit - l.X, dz = y2 * Unit - l.Z;
+                        float d = Mathf.Sqrt(dx * dx + dz * dz);
+                        float wob = (ValueNoise(x * Unit / 17f, y2 * Unit / 17f, p.Seed + 6607) - 0.5f) * 3f;
+                        float edge = half + wob;
+                        if (d > edge + feather) continue;
+                        if (InsideTown(x * Unit, y2 * Unit, pois)) continue;
+                        float w = d <= edge ? 1f : 1f - (d - edge) / feather;
+                        grid[x, y2] = Mathf.Lerp(grid[x, y2], ToGrid(y), w);
+                    }
+            }
+
+            Log.Print($"[island-landmarks] {radars} radar tower(s) of {LandmarkPeaksSeen} peak(s) considered "
+                      + $"({peakNotClear} too near a road or town, {peakTooNear} too near another tower, {relaxed} taken on the relaxed pass), "
+                      + $"{benches} bench(es) of {LandmarkViewsSeen} viewpoint(s) considered "
+                      + $"(caps {MaxRadars}/{MaxBenches}, {RadarApart:0} m / {BenchApart:0} m apart)");
+            return outp;
+        }
+
         static bool InsideTown(float wx, float wz, System.Collections.Generic.List<Poi> pois)
         {
             foreach (var pad in TownPads) if (PadDistance(pad, wx, wz) <= 0f) return true;
