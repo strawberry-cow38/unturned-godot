@@ -78,4 +78,57 @@ namespace UnturnedGodot.Testing
             yield break;
         }
     }
+
+    // "zombies seem to agro on me no matter what" (strawberry 2026-09-17). The loudness on every noise has always
+    // been a RADIUS IN METRES -- Walk 10, Gunshot 48 -- and nothing treated it as one: it only picked which noise
+    // won, after which every non-frozen zombie in the flow field's ±160 m walked at it. A moving player emits every
+    // 0.4 s, so the 8 s alert never lapsed and the map aggroed permanently the moment you took a step.
+    //
+    // ⚠ The quiet leg alone would pass on a harness where the field never builds and NOTHING ever moves, so the
+    // loud leg is the control that proves the setup can actually produce movement. Neither is worth much alone.
+    public sealed class ZombieEarshotTests : GameTest
+    {
+        public override string Name => "zombie.hears_by_radius";
+        public override int Tier => 1;
+
+        static Vector3 FirstPos(ZombieChunkField f)
+        {
+            foreach (var kv in f.Chunks) if (kv.Value.Live != null && kv.Value.Live.Count > 0) return kv.Value.Live[0].Pos;
+            return Vector3.Zero;
+        }
+
+        public override IEnumerable<Step> Run()
+        {
+            // 100 m out: the chunk is WARM (<=128) so it simulates, but past HotBodyDist (90) so nobody gets a body
+            // and the drift is pure arithmetic -- no physics, no ground needed.
+            var at = new Vector3(100f, 0f, 0f);
+            var f = new ZombieChunkField();
+            World.AddChild(f);
+            f.DebugSeed(at, 6, 2f);
+            f.DebugAnchor = Vector3.Zero;
+            f.ForceReclassify();
+            yield return Ticks(20);                      // let the 4 Hz tier/field pass run
+
+            var before = FirstPos(f);
+            T.Check($"zombies seeded ~100 m out ({before.X:0.0}, {before.Z:0.0})", before.X > 90f);
+
+            // QUIET, and far: a footstep at the origin is 100 m away and carries 10 m. They must not care.
+            SoundBus.Emit(World.GetTree(), Vector3.Zero, SoundBus.Walk);
+            yield return Ticks(40);
+            var afterQuiet = FirstPos(f);
+            float movedQuiet = (afterQuiet - before).Length();
+            T.Check($"a 10 m footstep 100 m away does NOT pull them (moved {movedQuiet:0.00} m)", movedQuiet < 0.5f);
+
+            // LOUD, and close: a gunshot 20 m away carries 48 m. This is the control -- if this does not move them
+            // the harness cannot drive movement at all and the check above proved nothing.
+            SoundBus.Emit(World.GetTree(), new Vector3(80f, 0f, 0f), SoundBus.Gunshot);
+            yield return Ticks(40);
+            var afterLoud = FirstPos(f);
+            float movedLoud = (afterLoud - afterQuiet).Length();
+            T.Check($"CONTROL: a 48 m gunshot 20 m away DOES pull them (moved {movedLoud:0.00} m)", movedLoud > 0.5f);
+
+            f.QueueFree();
+            yield break;
+        }
+    }
 }

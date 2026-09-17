@@ -64,8 +64,12 @@ namespace UnturnedGodot
         public ZombieFlowField Field => _field;   // --zflow verify render reads the baked arrows
 
         // ---- phase 3: HOT (visible body) promotion + separation ----
-        const float HotBodyDist = 45f;    // a zombie within this of a player gets a visible ZombieBody...
-        const float HotBodyDrop = 60f;    // ...and loses it past this (hysteresis, so the edge doesn't flicker)
+        // RAISED 45 -> 90 (strawberry 2026-09-17: "their render distance is super short"). This was the only
+        // thing bounding the cost of visible zombies, so it had to be small. MaxHotBodies bounds it directly now,
+        // and 48 rigs cost 48 rigs whatever radius they were chosen from -- so the radius is free to describe how
+        // far you can SEE a zombie rather than how many the machine can afford.
+        const float HotBodyDist = 90f;    // a zombie within this of a player gets a visible ZombieBody...
+        const float HotBodyDrop = 110f;   // ...and loses it past this (hysteresis, so the edge doesn't flicker)
         const float SepR = 2.8f;          // separation radius -- HOT bodies steer apart (boids) so a horde SPREADS instead of stacking into one blob (master: "make them aware of eachother")
         const float SepStrength = 1.7f;
         readonly List<Zombie> _hotList = new();
@@ -179,6 +183,23 @@ namespace UnturnedGodot
             Move(delta);   // sight-chase / sound-drift every frame; COLD steps coarsely inside
         }
 
+        /// <summary>Can a zombie at this position HEAR the live alert? ⚠ The loudness has always been a RADIUS IN
+        /// METRES -- Walk 10, Sprint 18, CrouchWalk 5, Gunshot 48 -- and GetStealthDetectionRadius is documented as
+        /// "the radius within which a zombie can sense this player". Nothing used it that way: it only decided which
+        /// noise WON, and then every non-frozen zombie in the ±160 m field walked at the anchor regardless.
+        ///
+        /// So a footstep reached exactly as far as a gunshot, and since a moving player emits every 0.4 s the 8 s
+        /// alert never lapsed -- the whole map aggroed permanently the moment you walked (strawberry 2026-09-17:
+        /// "zombies seem to agro on me no matter what"). Sneaking, crouching and suppressors all had a number that
+        /// went nowhere. This is what makes standing-around-until-they-hear-you the default rather than the
+        /// exception: no alert in earshot, and the WARM/COLD drift and the HOT sound-follow both decline.</summary>
+        bool Hears(Vector3 pos)
+        {
+            if (_clock >= _alertExpiry) return false;
+            float dx = pos.X - _alertPos.X, dz = pos.Z - _alertPos.Z;
+            return dx * dx + dz * dz <= _alertLoud * _alertLoud;
+        }
+
         // A sound was emitted (footstep/gunshot/horn/door). Make it the field's target if it's LOUDER than the current
         // still-live alert (a gunshot beats footsteps), or the old one has faded. Footsteps keep it fresh near a moving player.
         void HearNoise(Vector3 pos, float loudness)
@@ -280,6 +301,7 @@ namespace UnturnedGodot
         }
 
         int _hotBodies;                    // bodies alive RIGHT NOW, recounted every Move (see the note there)
+        readonly List<(float d, Zombie z)> _promote = new();   // this frame's body candidates, promoted nearest-first
         readonly List<Vector3> _anchors = new();
         readonly List<Chunk> _active = new();
 
@@ -405,6 +427,7 @@ namespace UnturnedGodot
             if (coldStep) _coldAcc = 0;
 
             _hotList.Clear();
+            _promote.Clear();
             // ⚠ RECOUNTED, never accumulated. A body is dropped on demote AND on death AND by QueueFree, so an
             // increment/decrement pair has three places to get out of step -- and a counter that drifts upward
             // silently stops every future spawn, which looks exactly like the bug this cap was added to fix.
@@ -430,14 +453,17 @@ namespace UnturnedGodot
                         continue;
                     }
                     float d = NearestAnchorDist(z.Pos);             // XZ distance to the nearest player
-                    if (z.Body == null && d < HotBodyDist && _hotBodies < MaxHotBodies)
-                    { z.Body = new ZombieBody(z.Table, z.Outfit); AddChild(z.Body); z.Body.GlobalPosition = z.Pos; _hotBodies++; }
+                    // ⚠ CANDIDATE, not a promotion. Taking the cap's slots in dictionary order hands bodies to
+                    // whichever chunk the map happened to enumerate first, so in a crowd the ones you are looking
+                    // AT could stay invisible while something 80 m behind you got a rig. Harmless while the radius
+                    // was 45 m and nothing capped the count; both of those just changed. Sorted by distance below.
+                    if (z.Body == null && d < HotBodyDist) _promote.Add((d, z));
                     else if (z.Body != null && d > HotBodyDrop) { z.Body.QueueFree(); z.Body = null; }
 
                     if (z.Body != null) { z.Pos = z.Body.GlobalPosition; _hotList.Add(z); continue; }   // HOT -> steered in pass 2
 
                     // WARM/COLD drift toward the last SOUND -- only when there's a live alert (else they stay put / wander)
-                    if (!_hasField) continue;
+                    if (!_hasField || !Hears(z.Pos)) continue;   // out of earshot -> stay where you are
                     if (cold && !coldStep) continue;
                     float step = cold ? ZombieSpeed * ColdStep : ZombieSpeed * dt;
                     float ddx = _fieldAnchor.X - z.Pos.X, ddz = _fieldAnchor.Z - z.Pos.Z;
@@ -452,6 +478,21 @@ namespace UnturnedGodot
             // pass 2: HOT bodies -- SIGHT overrides the sound (a zombie that can SEE a player chases it directly; else it
             // paths to the last sound), plus boids separation so a horde surrounds rather than stacks.
             var space = GetWorld3D()?.DirectSpaceState;
+            // NEAREST FIRST, up to the cap. A frame's newly-promoted bodies steer from the next frame, which is
+            // a tick of latency on something that just came into view and cheaper than re-walking every chunk.
+            if (_promote.Count > 0)
+            {
+                _promote.Sort((a, b) => a.d.CompareTo(b.d));
+                foreach (var (_, z) in _promote)
+                {
+                    if (_hotBodies >= MaxHotBodies) break;
+                    z.Body = new ZombieBody(z.Table, z.Outfit);
+                    AddChild(z.Body);
+                    z.Body.GlobalPosition = z.Pos;
+                    _hotBodies++;
+                }
+            }
+
             for (int i = 0; i < _hotList.Count; i++)
             {
                 var z = _hotList[i];
@@ -471,7 +512,7 @@ namespace UnturnedGodot
                     want = (sx * sx + sz * sz <= StopDist * StopDist) ? Vector2.Zero : new Vector2(sx, sz).Normalized();
                     HearNoise(seen, 6f);   // seeing a player also refreshes the alert, so nearby unseen zombies get pulled in
                 }
-                else if (_hasField)                          // can't see -> path to the last SOUND
+                else if (_hasField && Hears(z.Pos))          // can't see, but CAN hear -> path to the last SOUND
                 {
                     float dx = _fieldAnchor.X - z.Pos.X, dz = _fieldAnchor.Z - z.Pos.Z;
                     want = (dx * dx + dz * dz <= StopDist * StopDist) ? Vector2.Zero : _field.Sample(z.Pos);
