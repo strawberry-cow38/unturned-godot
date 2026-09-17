@@ -460,6 +460,7 @@ namespace UnturnedGodot
                 sb.Append($" {sz}={(tally.TryGetValue(sz, out int c2) ? c2 : 0)}");
             sb.Append($" | worst junction share {worstJunction * 100f:0}%, most adjacent junctions in one town {worstAdj}");
             sb.Append($" | {bizTotal} business building(s), most in one town {bizMax}, {dupTowns} town(s) with a duplicate");
+            sb.Append($" | {ProcIsland.CapFrontagesRefused} block face(s) refused for fronting a dead-end road");
             Log.Print(sb.ToString());
         }
 
@@ -698,13 +699,34 @@ namespace UnturnedGodot
             }
             var rng = new System.Random(20260917);
             int lights = 0, signals = 0, hydrants = 0, bins = 0, miss = 0;
-            var taken = new System.Collections.Generic.List<(float X, float Z)>();
+            // ⚠ EACH ENTRY REMEMBERS ITS OWN RADIUS (strawberry 2026-09-17: "sometimes trash spawns inside the
+            // streetlights too"). Free() tested only the CALLER's radius against a list of bare points, so a
+            // bin asking for 1.2 m of space happily stood 2 m from a lamp post that had asked for 5 -- the
+            // light's claim was recorded and then never consulted. A clearance is a property of the pair, not
+            // of whoever happens to be placing second.
+            var taken = new System.Collections.Generic.List<(float X, float Z, float R)>();
 
+            // ⚠⚠ THESE ARE MEASURED HALF-FOOTPRINTS, NOT "how much room I would like". The first radius-aware
+            // cut kept the old call values -- 5 m for a lamp, 6 for a signal, 3 for a hydrant -- which had been
+            // fine when only the CALLER's number was tested and became a sum the moment both sides counted.
+            // A hydrant 6 m from a lamp then needed 3 + 3.5 = 6.5 m and was refused, and the island went from
+            // 46 hydrants and 57 bins to TWO OF EACH. Radii off the meshes (Street_Light_0 is 0.60 x 2.60 in
+            // plan, Fire_Hydrant_0 0.65, the bins 1.11) plus one shared margin means the test asks what it
+            // sounds like it asks: do these two objects overlap.
+            const float PropMargin = 0.6f;
             bool Free(float x, float z, float r)
             {
-                foreach (var q in taken) if (Near(x, q.X, z, q.Z, r)) return false;
+                foreach (var q in taken)
+                {
+                    float dx = x - q.X, dz = z - q.Z, need = r + q.R + PropMargin;
+                    if (dx * dx + dz * dz < need * need) return false;
+                }
                 return true;
             }
+            void Take(float x, float z, float r) => taken.Add((x, z, r));
+            // Street_Light_0 0.60 x 2.60 -> 1.30. Traffic_Light_0's 9.16 m span is the mast arm SEVEN METRES UP,
+            // so its footprint is the pole, not the arm. Hydrant 0.65 -> 0.33. Dumpster/Garbage 1.11 -> 0.56.
+            const float RLight = 1.3f, RSignal = 1.0f, RHydrant = 0.4f, RBin = 0.6f;
 
             // The street directions a piece serves, in ProcIsland's frame. Each piece has its connectors on
             // FIXED local axes (Line +Y/-Y, Turn +X/-Y, Tee +X/-X/+Y, Quad all four, and a Cap's ramp is +Y),
@@ -782,7 +804,7 @@ namespace UnturnedGodot
                         var flank = (-app.z, app.x);
                         float px = t.X + app.x * VergeAlong(app) + flank.Item1 * VergeAlong((flank.Item1, flank.Item2));
                         float pz = t.Z + app.z * VergeAlong(app) + flank.Item2 * VergeAlong((flank.Item1, flank.Item2));
-                        if (!Free(px, pz, 6f) || !TownPropOk(terr, px, pz)) continue;
+                        if (!Free(px, pz, RSignal) || !TownPropOk(terr, px, pz)) continue;
                         // ⚠ AND THE ARM REACHES ACROSS THE ROAD, not along it (strawberry: "overhanging over
                         // the road"). +Y is the mast arm's 9.16 m half; pointing it back along -flank takes it
                         // from the corner out over this approach's carriageway. Pointing it along the approach
@@ -790,7 +812,7 @@ namespace UnturnedGodot
                         // nothing.
                         if (objs.Place("Traffic_Light_0", PavementPos(terr, t, px, pz),
                                        RotFor(ProcIsland.YawForDir(-flank.Item1, -flank.Item2))) != null)
-                        { signals++; taken.Add((px, pz)); }
+                        { signals++; Take(px, pz, RSignal); }
                         else miss++;
                     }
                 }
@@ -819,11 +841,11 @@ namespace UnturnedGodot
                     if (side != (0f, 0f))
                     {
                         float px = t.X + side.x * VergeAlong(side), pz = t.Z + side.z * VergeAlong(side);
-                        if (Free(px, pz, 5f) && TownPropOk(terr, px, pz))
+                        if (Free(px, pz, RLight) && TownPropOk(terr, px, pz))
                         {
                             // +Y toward the street: the lamp arm reaches over the carriageway, not the verge.
                             if (objs.Place("Street_Light_0", PavementPos(terr, t, px, pz), RotFor(ProcIsland.YawForDir(-side.x, -side.z))) != null)
-                            { lights++; taken.Add((px, pz)); }
+                            { lights++; Take(px, pz, RLight); }
                             else miss++;
                         }
                     }
@@ -834,10 +856,10 @@ namespace UnturnedGodot
                 {
                     var along = wArms[0];
                     float px = t.X + side.x * VergeAlong(side) + along.x * 6f, pz = t.Z + side.z * VergeAlong(side) + along.z * 6f;
-                    if (Free(px, pz, 3f) && TownPropOk(terr, px, pz))
+                    if (Free(px, pz, RHydrant) && TownPropOk(terr, px, pz))
                     {
                         if (objs.Place("Fire_Hydrant_0", PavementPos(terr, t, px, pz), RotFor(ProcIsland.YawForDir(-side.x, -side.z))) != null)
-                        { hydrants++; taken.Add((px, pz)); }
+                        { hydrants++; Take(px, pz, RHydrant); }
                         else miss++;
                     }
                 }
@@ -849,17 +871,23 @@ namespace UnturnedGodot
                     int group = 2 + rng.Next(2);
                     for (int k = 0; k < group; k++)
                     {
-                        float step = (k - (group - 1) * 0.5f) * 1.6f;   // retail's bins sit ~1.1-3.6 m apart
+                        // ⚠ FURTHER DOWN THE VERGE THAN THE LAMP, which is the real fix for "trash spawns inside
+                        // the streetlights". The clearance test now refuses that overlap, but a bin group
+                        // centred on the lamp's own spot just gets refused -- the island went to TWO bins, which
+                        // is a rule working and a feature gone. The lamp stands at the verge point, the hydrant
+                        // sits 6 m along it; the bins take the other end.
+                        const float BinAlong = -8f;
+                        float step = BinAlong + (k - (group - 1) * 0.5f) * 1.6f;   // retail's bins sit ~1.1-3.6 m apart
                         float px = t.X + side.x * VergeAlong(side) + along.x * step;
                         float pz = t.Z + side.z * VergeAlong(side) + along.z * step;
-                        if (!Free(px, pz, 1.2f) || !TownPropOk(terr, px, pz)) continue;
+                        if (!Free(px, pz, RBin) || !TownPropOk(terr, px, pz)) continue;
                         // Dumpster_3/4 is the wheelie bin the container table already labels "Trash Can";
                         // Garbage_0/1 are the tied-off bags that stand next to one.
                         string prop = k == 0
                             ? (rng.Next(2) == 0 ? "Dumpster_3" : "Dumpster_4")
                             : (rng.Next(2) == 0 ? "Garbage_0" : "Garbage_1");
                         if (objs.Place(prop, PavementPos(terr, t, px, pz), RotFor((float)(rng.NextDouble() * 360.0))) != null)
-                        { bins++; taken.Add((px, pz)); }
+                        { bins++; Take(px, pz, RBin); }
                         else miss++;
                     }
                 }
@@ -876,6 +904,14 @@ namespace UnturnedGodot
         /// is not.</summary>
         static Vector3 PavementPos(Terrain terr, ProcIsland.MonumentTile t, float px, float pz)
         {
+            // ⚠⚠ A TURN DOES NOT COVER ITS OUTER CORNER (strawberry: "streetlights on road turns still arent
+            // positioned on the sidewalk"). Measured off Road_Turn_0: bucket its vertices into thirds of the
+            // 24 m tile and the (-X,+Y) third -- the outside of the bend, which is exactly where FreeSide puts
+            // the furniture -- contains NO VERTICES AT ALL. The piece is an L, not a square. So seating a pole
+            // there at the tile's pavement height stands it 0.4 m above a prop that is not underneath it.
+            // The geometry was right and the HEIGHT was wrong, which is why moving the pole sideways (twice)
+            // never fixed it.
+            if (t.Piece == ProcIsland.RoadPiece.Turn) return PosFor(terr, px, pz);
             float y = TilePosFor(terr, t.X, t.Z).Y + PavementTop;
             var w = PosFor(terr, px, pz);
             return new Vector3(w.X, y, w.Z);
@@ -1145,52 +1181,66 @@ namespace UnturnedGodot
                         if (i + k >= 0 && i + k < m) wantFence[i + k] = true;
                 }
 
-                // Lay the barrier in RUNS, stepping 16 m along the arc like retail does, on the OUTSIDE of the
-                // bend -- which is the side a vehicle leaves the road on, and the side a real crash barrier is
-                // on. The outside is away from the centre of curvature, i.e. opposite the direction the tangent
-                // is turning toward.
+                // ⚠⚠ WALK THE OUTER EDGE, NOT THE CENTRELINE (strawberry 2026-09-17: "the angles of fence
+                // roads are incorrect, have it measure the outer line curve of the road spline").
+                //
+                // The old pass stepped 16 m along the CENTRELINE, placed each panel by offsetting sideways, and
+                // took its yaw from the centreline's tangent. Every part of that is wrong on a bend, which is
+                // the only place barriers go: the outer edge of a curve is LONGER than the centreline through
+                // it, so 16 m of centreline is more than 16 m of edge and the panels pull apart; and the
+                // tangent at the centreline point is not the tangent of the offset curve at the panel's actual
+                // position, so each one sits at a slight angle to the run it belongs to. On a tight bend those
+                // two errors compound into the fence visibly fanning away from the road.
+                //
+                // Building the offset polyline FIRST and then walking THAT by arc length fixes both at once:
+                // spacing is measured where the panels are, and the heading comes from the curve they follow.
+                var edge = new System.Collections.Generic.List<Vector2>(m);
+                var edgeOk = new System.Collections.Generic.List<bool>(m);
+                for (int i = 0; i < m; i++)
+                {
+                    var tg = tan[i];
+                    int lo = Mathf.Max(0, i - 2), hi = Mathf.Min(m - 1, i + 2);
+                    float cross = tan[lo].X * tan[hi].Y - tan[lo].Y * tan[hi].X;
+                    float outward = cross >= 0f ? -1f : 1f;
+                    var nrm = new Vector2(-tg.Y, tg.X) * outward;
+                    edge.Add(pts[i] + nrm * FenceOffset);
+                    edgeOk.Add(wantFence[i]);
+                }
+                // Arc length along the OFFSET curve, which is what the spacing has to be measured in.
+                var eArc = new float[m];
+                for (int i = 1; i < m; i++) eArc[i] = eArc[i - 1] + edge[i].DistanceTo(edge[i - 1]);
+
                 float nextFence = 0f;
                 for (int i = 1; i < m; i++)
                 {
-                    while (nextFence <= arc[i])
+                    while (nextFence <= eArc[i])
                     {
-                        float segT = (arc[i] - arc[i - 1]) > 1e-4f ? (nextFence - arc[i - 1]) / (arc[i] - arc[i - 1]) : 0f;
+                        float span = eArc[i] - eArc[i - 1];
+                        float segT = span > 1e-4f ? (nextFence - eArc[i - 1]) / span : 0f;
                         int home = segT < 0.5f ? i - 1 : i;
                         nextFence += FenceSpan;
-                        if (!wantFence[home]) continue;
-                        var at = pts[i - 1].Lerp(pts[i], segT);
-                        var tg = tan[home];
-                        // Which way the road is turning here: the sign of the 2D cross product of the tangents
-                        // either side. Outside of the bend is the opposite normal.
-                        int lo = Mathf.Max(0, home - 2), hi = Mathf.Min(m - 1, home + 2);
-                        float cross = tan[lo].X * tan[hi].Y - tan[lo].Y * tan[hi].X;
-                        float outward = cross >= 0f ? -1f : 1f;
-                        var nrm = new Vector2(-tg.Y, tg.X) * outward;
-                        float px = at.X + nrm.X * FenceOffset, pz = at.Y + nrm.Y * FenceOffset;
+                        if (!edgeOk[home]) continue;
+                        var at = edge[i - 1].Lerp(edge[i], segT);
+                        // Heading from the EDGE curve either side of the panel, not from the centreline.
+                        var eDir = edge[Mathf.Min(m - 1, home + 1)] - edge[Mathf.Max(0, home - 1)];
+                        if (eDir.Length() < 1e-4f) continue;
+                        eDir = eDir.Normalized();
+                        // Which side of the road this edge is on decides which way the rail must face, and it
+                        // is the same outward sign the offset was built with.
+                        int lo2 = Mathf.Max(0, home - 2), hi2 = Mathf.Min(m - 1, home + 2);
+                        float cross2 = tan[lo2].X * tan[hi2].Y - tan[lo2].Y * tan[hi2].X;
+                        float outward2 = cross2 >= 0f ? -1f : 1f;
+                        float px = at.X, pz = at.Y;
                         if (!RoadsideOk(terr, px, pz)) continue;
-                        // ⚠ THE RAIL FACE HAS TO FACE THE ROAD (strawberry: "make sure the guardrail side of the
-                        // fence road is facing the road spline"). Measured off the mesh rather than guessed: in
-                        // the rail height band (local z 0..1.3) Fence_Road_0 has 158 vertices at local x > 0
-                        // spanning z 0.50..1.28 -- the beam -- against 30 at x < 0 sitting on a single plane at
-                        // z 1.25, which is the back edge. So the guardrail is the LOCAL +X half.
-                        //
-                        // With the yaw that points local +Y along the tangent, local +X lands on (tz, -tx), the
-                        // tangent's RIGHT normal -- which faces the road only when the fence was put on the
-                        // left. Yawing by the OUTWARD sign reverses both local axes at once: +Y just runs the
-                        // other way along the road, which is invisible on panels that butt end to end, and +X
-                        // comes back round to face the carriageway.
-                        // ⚠ TILTED ONTO THE GROUND, not stood bolt upright on it (strawberry: "allow the road
-                        // fences to be rotated on all axis to fit terrain better"). A 16 m barrier panel is long
-                        // enough that a couple of degrees of cross-fall leaves one end buried and the other in
-                        // the air; laying it over the terrain normal puts the whole run on the slope. Same
-                        // composition the boulders use -- tilt * stand, so the yaw happens in the prop's own
-                        // frame before the whole thing is laid over, or turning a panel also changes which way
-                        // it leans.
-                        // Fence_Road_0's mesh also runs a metre below its origin, for the same reason.
+                        // ⚠ THE RAIL FACE HAS TO FACE THE ROAD. Measured off the mesh: in the rail height band
+                        // Fence_Road_0 has 158 vertices at local x > 0 spanning z 0.50..1.28 -- the beam --
+                        // against 30 at x < 0 on a single plane at z 1.25, the back edge. So the guardrail is
+                        // the local +X half, which lands on the tangent's RIGHT normal; yawing by the outward
+                        // sign turns both local axes at once so it comes back round to the carriageway.
                         var pos = PosFor(terr, px, pz);
                         var fN = terr.NormalAt(px, pz);
                         var fAxis = Vector3.Up.Cross(fN);
-                        var fStand = RotFor(ProcIsland.YawForDir(tg.X * outward, tg.Y * outward));
+                        var fStand = RotFor(ProcIsland.YawForDir(eDir.X * outward2, eDir.Y * outward2));
                         var fBasis = fAxis.LengthSquared() < 1e-8f
                             ? fStand
                             : new Basis(fAxis.Normalized(), Vector3.Up.AngleTo(fN)) * fStand;

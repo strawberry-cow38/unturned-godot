@@ -709,6 +709,10 @@ namespace UnturnedGodot
         /// <summary>Diagnostics for the exit-growing pass: how many street cells it added, how many it could
         /// not add because the lattice ended, and how many exits still came up short of an exact cap fit.</summary>
         public static int GrowAdded, GrowBlocked, GrowShort, GrowTrimmed;
+        /// <summary>How many block faces were refused because the street they would front is a dead end.
+        /// ⚠ Counted because "buildings no longer front exposed ends" is otherwise unfalsifiable from a render:
+        /// zero of them is what success looks like AND what a rule that never fires looks like.</summary>
+        public static int CapFrontagesRefused;
         public static float PadWas, PadNow, PadSmallest = float.MaxValue; public static int PadCount;
 
         public const float RenderedRoadHalf = 9.2f;
@@ -1983,6 +1987,12 @@ namespace UnturnedGodot
         /// computed once, for a 20 m-deep building, and then applied to all of them.</summary>
         static float SetbackFor(in BuildingProp b) => FrontWallFromCentreline + b.Front;
 
+        /// <summary>The same setback for a building turned to face the street with its +Y: the wall that now
+        /// looks at the road is the one Back measures, so that is the one held at the clearance line.
+        /// ⚠ Fits() still tests the pair as a SUM (Front + Back against the block depth), so which of the two
+        /// faces the street changes where the building sits and not whether it fits.</summary>
+        static float SetbackForFlipped(in BuildingProp b) => FrontWallFromCentreline + b.Back;
+
         /// <summary>Whether a prop fits a block with a street on ONE side: narrow enough not to spill into its
         /// neighbours, and short enough to stay inside its own block cell.
         /// ⚠ Derived from TileSize, not hardcoded, so a bigger lattice re-admits the props it rules out
@@ -2097,12 +2107,19 @@ namespace UnturnedGodot
             int n = poi.Tiles;
 
             var street = new System.Collections.Generic.HashSet<(int, int)>();
+            // ⚠ CAPS ARE STREET, BUT THEY ARE NOT FRONTAGE (strawberry 2026-09-17: "prevent buildings in
+            // towns/cities from being placed on the exposed ends of roads"). A Cap is where a street STOPS --
+            // its ramp is the town's edge, opening onto the route out or onto nothing at all. A house fronting
+            // one faces the end of the road rather than the road, which is why they read as dropped on the
+            // outskirts rather than built along a street.
+            var caps = new System.Collections.Generic.HashSet<(int, int)>();
             foreach (var t in tiles)
             {
                 if (t.Poi != poiIndex) continue;
                 int i = Mathf.RoundToInt((t.X - poi.X) / TileSize + (n - 1) * 0.5f);
                 int j = Mathf.RoundToInt((t.Z - poi.Z) / TileSize + (n - 1) * 0.5f);
                 street.Add((i, j));
+                if (t.Piece is RoadPiece.LineCap or RoadPiece.TeeCap or RoadPiece.QuadCap) caps.Add((i, j));
             }
 
             // ⚠ THE CLASS COMES FROM THE TILES THAT EXIST, counted here rather than from poi.Tiles: the lattice
@@ -2113,6 +2130,7 @@ namespace UnturnedGodot
             // Business props already standing in THIS town. Per-monument, not per-island: two towns each having
             // a petrol station is a map; one town having two is a bug.
             var usedBiz = new System.Collections.Generic.HashSet<string>();
+            int skippedCap = 0;
 
             int slot = 0;
             for (int i = 0; i < n; i++)
@@ -2122,12 +2140,22 @@ namespace UnturnedGodot
                     foreach (var d in Card)
                     {
                         if (!street.Contains((i - d.dx, j - d.dz))) continue;   // the street this block fronts
+                        // ...and it must be a street, not the END of one. `continue` rather than `break`, so a
+                        // corner block whose OTHER neighbour is a real street still gets built facing that one
+                        // -- breaking here would empty every block touching a cap, which is most of the edge of
+                        // a small town.
+                        if (caps.Contains((i - d.dx, j - d.dz))) { skippedCap++; continue; }
                         // Position measured out from the STREET cell, not the block cell.
                         float scx = poi.X + ((i - d.dx) - (n - 1) * 0.5f) * TileSize;
                         float scz = poi.Z + ((j - d.dz) - (n - 1) * 0.5f) * TileSize;
 
-                        // Front (-Y) toward the street means +Y points AWAY from it, i.e. along d.
-                        float yaw = YawFor(d.dx, d.dz);
+                        // ⚠ THE FRONT IS LOCAL +Y, NOT -Y (strawberry 2026-09-17: "all buildings placed by proc
+                        // should be 180'd yaw"). The old line assumed a building faces its -Y, so it pointed +Y
+                        // AWAY from the street -- and every house on every island had its back to the road.
+                        // Symmetric props hid it completely, which is why it survived this long: a box with
+                        // windows on both sides looks fine either way round, and only the porched ones gave it
+                        // away. Pointing +Y at the street is `d` reversed.
+                        float yaw = YawFor(-d.dx, -d.dz);
 
                         // ⚠ WHICH TABLE DEPENDS ON THE BLOCK, not just on the roll. A block cell with a street
                         // behind it as well as in front has a 24 m road piece at BOTH ends, so only the shallow
@@ -2173,13 +2201,20 @@ namespace UnturnedGodot
                                 }
                             }
                         }
-                        // Setback is per PROP, measured out from the street cell it fronts.
-                        float set = SetbackFor(b);
+                        // ⚠ AND THE SETBACK MEASURES FROM THE OTHER END NOW. SetbackFor puts the origin so that
+                        // the face `b.Front` away from it lands on the kerb line -- which was the correct face
+                        // while the building faced -Y and is the BACK of it once turned. Flipping the yaw
+                        // without this would keep the clearance number and apply it to the wrong wall, moving
+                        // every asymmetric building by Front-Back metres: House_00 by 5.9 m, House_09 by 6.5,
+                        // straight through the clearance the last few commits established. Most props are near
+                        // symmetric and would never have shown it.
+                        float set = SetbackForFlipped(b);
                         outp.Add(new MonumentBuilding(poiIndex, b.Name, scx + d.dx * set, scz + d.dz * set, yaw));
                         slot++;
                         break;   // one building per block cell, fronting the first street in cardinal order
                     }
                 }
+            if (skippedCap > 0) CapFrontagesRefused += skippedCap;
             return outp;
         }
 
