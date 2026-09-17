@@ -1023,6 +1023,8 @@ namespace UnturnedGodot
         /// ⚠ Counted because "buildings no longer front exposed ends" is otherwise unfalsifiable from a render:
         /// zero of them is what success looks like AND what a rule that never fires looks like.</summary>
         public static int CapFrontagesRefused;
+
+        public static float TrailSegMin = float.MaxValue, TrailSegMax, TrailSegSum; public static int TrailSegN, TrailSegTiny;
         /// <summary>How many links the connection cap removed, and the worst degree left standing. ⚠ Both,
         /// because "trimmed 4" alone cannot say whether the cap was reached -- a bridge that could not be cut
         /// leaves a town over its limit and that has to be visible rather than assumed away.</summary>
@@ -1936,6 +1938,22 @@ namespace UnturnedGodot
                               + bestSite * (-2f * t3 + 3f * t2) + m1 * (t3 - t2);
                         pts.Add(q);
                     }
+                    // ⚠ HOW EVENLY SPACED IS THIS? The trail is a cubic Hermite sampled at uniform t, with
+                    // tangent magnitudes scaled to the WHOLE SPAN (m0 = perp * span). A cubic with handles that
+                    // long is very non-uniform in arc length: points bunch hard at the ends and stretch in the
+                    // middle. SpawnTrails then uses EVERY point as a road joint -- no 6:1 decimation like a
+                    // road gets -- so a pair of points 30 cm apart becomes a 30 cm joint span, and radius is
+                    // arc/turn, so a tiny span with any turn at all is a tiny radius. That is the shape of a
+                    // fold, and every fold left on the island is on a trail.
+                    for (int k = 1; k < pts.Count; k++)
+                    {
+                        float seg = pts[k].DistanceTo(pts[k - 1]);
+                        if (seg < TrailSegMin) TrailSegMin = seg;
+                        if (seg > TrailSegMax) TrailSegMax = seg;
+                        TrailSegSum += seg; TrailSegN++;
+                        if (seg < 2f) TrailSegTiny++;
+                    }
+
                     // ⚠⚠ CHECK THE PATH, NOT JUST THE SITE (strawberry: "and you didnt test for trails?").
                     // NearExisting above vets the CAMP -- where the trail ends -- and nothing vetted the route
                     // it takes to get there. So a spur could leave its road square-on, bend through the fan,

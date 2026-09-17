@@ -2018,6 +2018,10 @@ namespace UnturnedGodot
             Log.Print($"[island-paint] dirt under {tiles} road tile(s) @{RoadHalf + TileBorder:0.#}m, routes @{RouteHalf + RouteBorder:0.#}m, "
                       + $"{builds} building(s) ({sized} to their real footprint), {routePts} route point(s), {rocks} boulder skirt(s)");
             Log.Print($"[island-paint] {carParks} car park(s) painted in Road material on POIs too small to be a town");
+            if (ProcIsland.TrailSegN > 0)
+                Log.Print($"[island-trails] joint spacing on trails: {ProcIsland.TrailSegMin:0.00}-{ProcIsland.TrailSegMax:0.0} m "
+                          + $"(mean {ProcIsland.TrailSegSum / ProcIsland.TrailSegN:0.0} m), {ProcIsland.TrailSegTiny} span(s) under 2 m "
+                          + $"-- a trail uses EVERY point as a joint, so these ARE the road's joints");
         }
 
         /// <summary>Stamp a rotated RECTANGLE of dirt under a building.
@@ -2687,6 +2691,14 @@ namespace UnturnedGodot
             // report float noise on a straight. Flat: a road's drivable radius is its radius in plan.
             {
                 float tightest = float.MaxValue; int tightRoute = -1; Vector2 tightAt = Vector2.Zero;
+                // ⚠ WHERE ALONG THE CURVE, and over what span. SampleWalk steps 5 m and then FORCE-APPENDS a
+                // final sample at t=1 regardless of how far it is from the previous one, so the last gap is
+                // whatever is left over -- anywhere from 0 to 5 m. radius = span/turn, so a near-zero final
+                // span with any turn at all reports a radius the ribbon does not have. The floor for a genuine
+                // 5 m-spaced sample is 5/pi = 1.59 m, and seed 12345 reports 1.5 -- BELOW that floor, which
+                // can only happen on an undersized span. If the tightest sample is the LAST one, these are an
+                // artifact of the sampler and not folds at all.
+                int tightWhere = -1, tightOf = 0; float tightSpan = 0f;
                 int folds = 0, tight20 = 0, samples = 0;
                 // WHICH routes fold, in carve order. Routes are carved one at a time and each stamps `used[]`
                 // for the next, so the last ones route through whatever corridor is left -- if folding is a
@@ -2767,11 +2779,16 @@ namespace UnturnedGodot
                             }
                         }
                         if (radius < 20f) tight20++;
-                        if (radius < tightest) { tightest = radius; tightRoute = curveRoute[ci]; tightAt = new Vector2(c[i].X, c[i].Z); }
+                        if (radius < tightest)
+                        {
+                            tightest = radius; tightRoute = curveRoute[ci]; tightAt = new Vector2(c[i].X, c[i].Z);
+                            tightWhere = i; tightOf = c.Count; tightSpan = (a.Length() + b2.Length()) * 0.5f;
+                        }
                     }
                 }
                 string worst = tightRoute >= 0
                     ? $", tightest {tightest:0.0} m on route {tightRoute} at ({tightAt.X:0},{tightAt.Y:0})"
+                      + $" [sample {tightWhere} of {tightOf}, over a {tightSpan:0.00} m span]"
                     : "";
                 foldOn.Sort();
                 var kindTally = new System.Collections.Generic.Dictionary<ProcIsland.LinkKind, int>();
