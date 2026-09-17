@@ -2404,7 +2404,16 @@ namespace UnturnedGodot.Testing
             yield return Until(() => client.Deployables.WireCount == 1, 5);
             T.Check("grid source Output wired to the spotlight Consumer", client.Deployables.WireCount == 1);
 
-            // mains OFF (default) -> the consumer is dark on BOTH the replicated-entity solve and the materialized node graph
+            // ⚠ TOGGLE THE MAINS OFF EXPLICITLY. This used to read "mains OFF (default)" and lean on the dedicated
+            // server booting with its grid sources off -- which stopped being true on 2026-09-16, when the mains
+            // were switched on at boot to match the loopback and singleplayer ("grid mains ON by DEFAULT",
+            // 2026-07-20) because every electric appliance on a dedicated server was sitting in an unpowered
+            // building cooking nothing. The OFF assertions below are worth keeping, so they now CONTROL the state
+            // they test instead of inheriting it from a default that was free to change underneath them.
+            client.SendConsole("toggleglobalpower off");
+            yield return Until(() => client.Deployables.TryGet(gridId, out var g0) && !g0.ToggledOn, 5);
+
+            // mains OFF -> the consumer is dark on BOTH the replicated-entity solve and the materialized node graph
             ded.Server.Deployables.Solve();
             client.Deployables.Solve();
             ded.Server.Deployables.TryGet(spotId, out var sOff);
