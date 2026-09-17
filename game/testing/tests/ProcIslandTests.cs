@@ -233,20 +233,32 @@ namespace UnturnedGodot.Testing
                 }
                 if (!found) everyGateOnACap = false;
             }
-            // ...and no Cap anywhere that is not serving a gate.
+            // ...and no Cap FACING INTO THE MONUMENT, which is the failure the note above actually names.
+            //
+            // ⚠ THIS USED TO READ "no Cap exists that is not serving a gate", and that is a stricter claim than
+            // the one it was written to make. It held while every monument had at least two links, so every cap
+            // was somebody's gate. It stopped holding when master capped connections ("towns should only have
+            // 1-3 connections", 2026-09-17): a 2-tile monument is a short run of street with a cap at each end,
+            // and a monument with ONE link has one cap serving its gate and one CUL-DE-SAC. Measured on seed
+            // 771177: exactly 14 such caps, one each on poi14..poi27 -- every small monument, none of them a
+            // defect. I aimed three different fixes at them (extend the stub, prune it, join it to the grid)
+            // before dumping the data, and the count sat at 14/14/15 through all three, which is what chasing
+            // the wrong thing looks like.
+            //
+            // A cap's ramp is the one opening it is allowed, so what is genuinely wrong is a cap whose ramp
+            // points at ANOTHER TILE -- an interior junction wearing a Cap, exactly as the note says. A ramp
+            // opening onto empty lattice is a road end, whether a spline meets it there or nothing does.
             foreach (var t in tiles)
             {
                 bool isCap = t.Piece is ProcIsland.RoadPiece.LineCap or ProcIsland.RoadPiece.TeeCap or ProcIsland.RoadPiece.QuadCap;
                 if (!isCap) continue;
                 float yaw = Mathf.DegToRad(t.YawDeg);
-                float px = t.X - Mathf.Sin(yaw) * ProcIsland.TileSize * 0.5f, pz = t.Z - Mathf.Cos(yaw) * ProcIsland.TileSize * 0.5f;
-                bool serves = false;
-                foreach (var gate in cons)
-                    if (gate.Poi == t.Poi && Mathf.Abs(px - gate.X) < 0.6f && Mathf.Abs(pz - gate.Z) < 0.6f) { serves = true; break; }
-                if (!serves) capsOnlyAtGates = false;
+                float nx = t.X - Mathf.Sin(yaw) * ProcIsland.TileSize, nz = t.Z - Mathf.Cos(yaw) * ProcIsland.TileSize;
+                foreach (var o in tiles)
+                    if (o.Poi == t.Poi && Mathf.Abs(o.X - nx) < 0.6f && Mathf.Abs(o.Z - nz) < 0.6f) { capsOnlyAtGates = false; break; }
             }
             T.Check("every gate opens onto a Cap prop, at its ramp", everyGateOnACap);
-            T.Check("...and no Cap exists that is not serving a gate", capsOnlyAtGates);
+            T.Check("...and no Cap's ramp points at another road piece", capsOnlyAtGates);
 
             // THE LATTICE ACTUALLY LINES UP. A gate off the lattice means the road meets the monument up to 12 m
             // past the end of the very road piece it is supposed to join -- and every check above still passes,

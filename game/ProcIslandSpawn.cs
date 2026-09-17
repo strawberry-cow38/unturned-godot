@@ -59,6 +59,9 @@ namespace UnturnedGodot
         /// ⚠ ENDS ARE PINNED. The first and last joints meet a monument's cap piece, and moving one leaves the
         /// road ending beside the gate instead of in it -- the same hazard CarveRoutes' own note describes about
         /// snapping connectors after routing.</summary>
+        static readonly float FloorSlack = float.TryParse(System.Environment.GetEnvironmentVariable("UG_FLOORSLACK"),
+            System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float _fs) ? _fs : 0f;
+
         static void SmoothProfile(System.Collections.Generic.List<Vector3> pts, float[] floorIn = null)
         {
             if (pts.Count < 5) return;
@@ -95,7 +98,15 @@ namespace UnturnedGodot
                             if (j < 0 || j >= pts.Count) continue;
                             sum += pts[j].Y; n++;
                         }
-                        y[i] = Mathf.Max(sum / n, floor[i]);   // smooth, then stay above the ground
+                        // ⚠ THE FLOOR IS A RATCHET and it is what builds the embankments. floor[i] is the
+                        // HIGHEST ground the chord spans, so across a dip the road is pinned to the rim and
+                        // the conform then has to fill the whole hollow under it -- measured 9.6 m of fill on
+                        // seed 771177, which reads as a road floating on an earthwork.
+                        // It exists because terrain used to bury the road between joints. That was true when
+                        // the conform could only drag ground DOWNHILL (it took the lowest target within reach);
+                        // now that it takes the nearest segment it cuts as readily as it fills, so the floor
+                        // has much less to do. FloorSlack is how far below the local maximum the road may sit.
+                        y[i] = Mathf.Max(sum / n, floor[i] - FloorSlack);
                     }
                     for (int i = 0; i < pts.Count; i++) pts[i] = new Vector3(pts[i].X, y[i], pts[i].Z);
                 }
@@ -487,6 +498,31 @@ namespace UnturnedGodot
             // from -- rotates each connector through the REAL placement basis (ArmDir, not an open-coded
             // matrix) and asks whether a tile sits one step along it.
             // A CAP's ramp is its mesh +Y and is the one opening it is allowed.
+            // ⚠ THE SUITE'S OWN INVARIANT, REPORTED BY THE GENERATOR (tinyclaw's nightly, 2026-09-17). I do
+            // not run the suite, so a rule it pins has to be visible in the build's own output or I only learn
+            // I broke it when somebody else sweeps my branch. Two counts, because they are different claims:
+            // a cap whose ramp points at ANOTHER PIECE is an interior junction wearing a cap and is always
+            // wrong; a cap serving no gate is usually a cul-de-sac on a one-link monument and is fine (see
+            // ProcIslandTests -- 14 of those per island, one per small monument).
+            int rampIntoPiece = 0, orphanCaps = 0;
+            foreach (var t in terr.IslandTiles)
+            {
+                if (t.Piece is not (ProcIsland.RoadPiece.LineCap or ProcIsland.RoadPiece.TeeCap or ProcIsland.RoadPiece.QuadCap)) continue;
+                float ry = Mathf.DegToRad(t.YawDeg);
+                float nx = t.X - Mathf.Sin(ry) * ProcIsland.TileSize, nz = t.Z - Mathf.Cos(ry) * ProcIsland.TileSize;
+                foreach (var o in terr.IslandTiles)
+                    if (o.Poi == t.Poi && Mathf.Abs(o.X - nx) < 0.6f && Mathf.Abs(o.Z - nz) < 0.6f) { rampIntoPiece++; break; }
+                if (terr.IslandConnectors == null) continue;
+                float px = t.X - Mathf.Sin(ry) * ProcIsland.TileSize * 0.5f;
+                float pz = t.Z - Mathf.Cos(ry) * ProcIsland.TileSize * 0.5f;
+                bool serves = false;
+                foreach (var g in terr.IslandConnectors)
+                    if (g.Poi == t.Poi && Mathf.Abs(px - g.X) < 0.6f && Mathf.Abs(pz - g.Z) < 0.6f) { serves = true; break; }
+                if (!serves) orphanCaps++;
+            }
+            Log.Print($"[island-pieces] {rampIntoPiece} cap(s) whose ramp points at another piece (the suite pins this at 0), "
+                      + $"{orphanCaps} cul-de-sac cap(s) serving no gate (expected: one per one-link monument)");
+
             var arms = LoadRoadConnectors();
             var byPiece = new System.Collections.Generic.Dictionary<ProcIsland.RoadPiece, int>();
             int exposed = 0, checkedArms = 0;
@@ -2338,8 +2374,10 @@ namespace UnturnedGodot
                       + $"({crossRoad} road-on-road, {crossJunc} involving a junction road); "
                       + $"worst float {floatWorst:0.00} m ({floatOver} of {floatN} sample(s) over 0.6 m in open country, "
                       + $"{floatTown} more on a town pad the conform does not own); "
-                      + $"ON THE CENTRELINE worst {centreWorst:0.00} m, {centreOver} of {centreN} over 0.6 m"
-                      + (floatWorst > 0.6f ? $" at ({floatAt.X:0},{floatAt.Y:0})" : ""));
+                      + $"ON THE CENTRELINE worst {centreWorst:0.00} m, {centreOver} of {centreN} over 0.6 m"); 
+            // Its own line: the summary above wraps in the harness and the COORDINATE is the part that gets
+            // cut, which is the only part you can go and look at.
+            Log.Print($"[island-float] worst float {floatWorst:0.0} m at ({floatAt.X:0},{floatAt.Y:0})");
 
             Log.Print($"[island-roads] {built} spline road(s) between towns" + (skipped > 0 ? $" ({skipped} route(s) skipped as too short or degenerate)" : ""));
             Log.Print($"[island-roads] joint spacing: shortest segment {segShortest:0.00} m, worst neighbour ratio "

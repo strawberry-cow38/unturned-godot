@@ -2837,6 +2837,19 @@ namespace UnturnedGodot
                 }
             }
 
+            // ⚠ NO DEAD-END PASS HERE, AND THREE WERE TRIED. tinyclaw's nightly flags "no Cap exists that is
+            // not serving a gate" on this branch, and I assumed it was the exit fitting leaving stub cells.
+            // Extending them inward, pruning them, and joining them to the grid each left the count at exactly
+            // 14/14/15 per island -- and pruning traded it for 14 arms opening onto air. Three attempts, one
+            // number, which is what aiming at the wrong thing looks like.
+            //
+            // Dumping the caps said what they are: ONE PER POI, on poi14..poi27 -- every small monument. A
+            // 2-tile monument is a short run of street with a cap at each end, and since master's connection
+            // cap ("towns should only have 1-3 connections") a monument commonly has ONE link. One cap serves
+            // its gate; the other is a cul-de-sac. That is correct world-building, not a defect, and no amount
+            // of street surgery inside the monument can remove it. See ProcIslandTests for the invariant, which
+            // now asks what it meant to ask.
+
             // ⚠ DROP ANYTHING LEFT COMPLETELY ISOLATED. The nb==0 branch below falls through to Quad -- four
             // carriageway arms on a cell with no neighbours at all, which is four arms into air and the worst
             // single offender left after the exit work. Degree ZERO only, deliberately: the earlier stub prune
