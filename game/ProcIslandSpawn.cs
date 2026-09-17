@@ -2597,6 +2597,56 @@ namespace UnturnedGodot
             }
             builtIdx = keptIdx;
 
+            // ---- HOW TIGHT DOES THE BUILT CURVE ACTUALLY TURN? -------------------------------------------
+            // ⚠⚠ THE BARRIER PASS ALREADY REPORTS "corner radii median N m / sharpest N m" AND IT CANNOT SEE
+            // A FOLD. It walks the JOINTS (24 m apart) with a W=2 window, which averages heading change over
+            // ~96 m of arc -- a moving average deliberately that wide so a barrier is placed along a whole
+            // bend rather than on every wobble. Correct for barriers. Structurally blind to this: it reported
+            // "sharpest 24-47 m" on the same three islands where the ribbon is turning at 1.4-3.3 m.
+            //
+            // A road's two edges are its centreline offset by +/-9.2 m. Offsetting INWARD by more than the
+            // radius INVERTS the curve -- the inner edge crosses itself and the ribbon renders as a node
+            // turned inside out, which is the defect master reported. So the threshold is not a taste
+            // judgement: below RenderedRoadHalf the geometry is degenerate, full stop.
+            //
+            // Measured here, on `curves`, which is the Catmull-Rom sampled every 5 m the way the SURFACE is.
+            // Three consecutive samples is ~10 m of arc -- fine enough to see a fold, coarse enough not to
+            // report float noise on a straight. Flat: a road's drivable radius is its radius in plan.
+            {
+                float tightest = float.MaxValue; int tightRoute = -1; Vector2 tightAt = Vector2.Zero;
+                int folds = 0, tight20 = 0, samples = 0;
+                for (int ci = 0; ci < curves.Count; ci++)
+                {
+                    var c = curves[ci];
+                    for (int i = 1; i < c.Count - 1; i++)
+                    {
+                        var a = new Vector2(c[i].X - c[i - 1].X, c[i].Z - c[i - 1].Z);
+                        var b2 = new Vector2(c[i + 1].X - c[i].X, c[i + 1].Z - c[i].Z);
+                        if (a.Length() < 0.05f || b2.Length() < 0.05f) continue;
+                        samples++;
+                        float turn = Mathf.Acos(Mathf.Clamp(a.Normalized().Dot(b2.Normalized()), -1f, 1f));
+                        if (turn < 1e-3f) continue;
+                        // ⚠ THE ARC AND THE ANGLE MUST SPAN THE SAME STRETCH OF ROAD. radius = arc / turn, and
+                        // the turn here is the heading change ACROSS ONE JOINT -- so the arc that goes with it
+                        // is ONE segment, not the chord from i-1 to i+1. Using that chord (~2 segments) reports
+                        // DOUBLE the real radius: the first run of this probe said "tightest 3.5 / 5.3 / 1.3 m"
+                        // when the honest answers are half of each. Caught before quoting it. The barrier pass
+                        // gets this right a different way -- it takes the tangents at i-W and i+W, which span
+                        // the same arc as its chord does -- and the fence pass uses this same mean-segment form.
+                        float radius = (a.Length() + b2.Length()) * 0.5f / turn;
+                        if (radius < ProcIsland.RenderedRoadHalf) folds++;
+                        if (radius < 20f) tight20++;
+                        if (radius < tightest) { tightest = radius; tightRoute = curveRoute[ci]; tightAt = new Vector2(c[i].X, c[i].Z); }
+                    }
+                }
+                string worst = tightRoute >= 0
+                    ? $", tightest {tightest:0.0} m on route {tightRoute} at ({tightAt.X:0},{tightAt.Y:0})"
+                    : "";
+                Log.Print($"[island-curve] {folds} of {samples} centreline sample(s) turn tighter than the "
+                          + $"{ProcIsland.RenderedRoadHalf:0.0} m half-width (the ribbon inverts there); "
+                          + $"{tight20} tighter than 20 m{worst}");
+            }
+
             // ---- DROP ANY JUNCTION ROAD WHOSE BUILT RIBBON CROSSES ANOTHER ROAD --------------------------
             // Measured across four seeds: ZERO road-on-road crossings, and every crossing on the island
             // involves a junction road. CarveJunctions already refuses a candidate that comes within 26 m of a
