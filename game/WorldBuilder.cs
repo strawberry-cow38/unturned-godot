@@ -1798,14 +1798,31 @@ namespace UnturnedGodot
                 if (!ContainerShelf.TryGetValue(q[0], out var cfg)) return false;
                 if (mode != WorldMode.Playable && mode != WorldMode.Dedicated)
                 {
-                    // A CLIENT does not record containers -- the server publishes them and
-                    // StorageReplicaView materialises a StoreShelf per fixture. But it still falls through
-                    // to PlaceObject below, so this same object also exists as a decoration mesh. Counting
-                    // it turns "the client probably draws these twice" from an inference about code into a
-                    // number: cow tools could confirm the server published 696 and the replica built ~696,
-                    // but had no way to count two meshes at one spot, and read the ABSENCE of a log line as
-                    // the only evidence. Absence is weaker than a count, so here is the count.
-                    if (mode == WorldMode.Client) alsoReplicated++;
+                    // A CLIENT does not RECORD containers -- the server publishes them and StorageReplicaView
+                    // materialises a StoreShelf per fixture -- but it must still SUPPRESS the decoration copy,
+                    // which is what the `true` below does. This used to `return false`, so the object fell
+                    // through to PlaceObject and was drawn as ordinary scenery on top of the replicated shelf.
+                    // The count that lived here was a suspicion ("probably draws these twice"); it is now a
+                    // measurement, and it was not "some": world.client_container_dupes built PEI as a client
+                    // and found a decoration at 696 of 696 container transforms. Two meshes z-fighting, and a
+                    // decoration StaticBody parked in front of the shelf for the F-interact ray to hit
+                    // instead -- which is why containers read as DEAD on the dedicated server while working
+                    // in singleplayer (strawberry 2026-09-17: "'smart' containers ... exists on singleplayer
+                    // loopback but not on the vox server").
+                    //
+                    // ⚠ THIS RIDES ON CONTAINERS NOT BEING INTEREST-CULLED, and StorageReplicaView refused
+                    // this exact fix pending proof of that: "Suppress while the replica is short (interest
+                    // culling, a dropped fixture) and those containers do not merely double, they VANISH:
+                    // the original bug back, and indistinguishable from it." The hazard is real --
+                    // ContainerReplication HAS an InterestPolicy and honours it (filters ids by IsRelevant,
+                    // collects removals). It is safe only because nothing ASSIGNS it: DedicatedServer sets
+                    // Interest on WorldItems and on nothing else, so every client gets the whole set. That is
+                    // a null holding a feature up, so it is pinned by a test rather than by this comment --
+                    // give Containers an Interest policy and world.client_container_dupes goes red and says
+                    // the client is about to start losing fridges. Collision survives the suppression on its
+                    // own terms: StoreShelf.Spawn runs CreateTrimeshCollision, so the replica brings its own
+                    // body and the prop does not become walk-through.
+                    if (mode == WorldMode.Client) { alsoReplicated++; return true; }
                     return false;
                 }
                 // FLAG it (skip the decoration mesh) -> the caller spawns the real container post-build (asset DB ready).
@@ -1929,7 +1946,7 @@ namespace UnturnedGodot
             result.Destructibles = destField;
             if (destN > 0) Log.Print($"[rubble] {destField.BuiltCount} destructible props wired ({destN} reserved, {destField.InstanceCount} slots)");
             if (converted > 0) Log.Print($"[containers] flagged {converted} map props for post-build container spawn");
-            if (alsoReplicated > 0) Log.Print($"[containers] {alsoReplicated} decoration prop(s) here are ALSO server-replicated containers -- each is drawn TWICE unless one side is suppressed");
+            if (alsoReplicated > 0) Log.Print($"[containers] suppressed {alsoReplicated} decoration prop(s) that are server-replicated containers -- StorageReplicaView draws these, so keeping the scenery copy drew each one TWICE");
             var focus = placed > 0 ? cellSum[bestCell] / bestN : Vector3.Zero;
             Log.Print($"[OBJECTS] placed {placed} objects ({cache.Count} meshes); densest cluster {bestN} near {focus}; holiday-gated {holidaySkipped}{(deferredHoliday != null ? $", deferred {deferredHoliday.Count} to the join handshake" : "")} (active={activeHoliday})");
             if (waterSources > 0) Log.Print($"[water] {waterSources} municipal water sources placed (hydrants + towers + sinks); mains {(FluidNet.GlobalWater ? "ON" : "OFF")}");
