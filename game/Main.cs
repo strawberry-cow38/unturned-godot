@@ -260,6 +260,7 @@ namespace UnturnedGodot
             bool rainMatTest = false;
             bool windowBarrTest = false;
             string arenaSpawns = null;   // --arenaspawns[=POIname] : debug-render the 8 arena spawn points in a POI (master 2026-09-02)
+            bool chatshot = false;
             bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, playground = false, objects = false, peidrive = false, craftmenu = false, stationtest = false, editorMode = false, impactTest = false, throwTest = false, doorGallery = false, lampTest = false, cctvTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false, netobserve = false, zombieTier = false, zflow = false, zhunt = false, zkill = false, zsound = false, zface = false, zpath = false;
             bool puppetAnim = false;   // --puppetanim: prove RemotePlayers locomotion animates
             foreach (var arg in OS.GetCmdlineUserArgs())
@@ -363,6 +364,7 @@ namespace UnturnedGodot
                 else if (arg == "--zhunt") zhunt = true;             // zombie AI rewrite phase-3 verify: near zombies promote to visible HOT bodies + shamble in (log; --write-movie for the visual)
                 else if (arg == "--zkill") zkill = true;             // zombie AI rewrite phase-3b verify: player auto-fires at a chasing cluster -> bullet damage + kills climb
                 else if (arg == "--zsound") zsound = true;           // zombie AI rewrite phase-4 verify: a gunshot lures out-of-sight zombies to the NOISE, not the player (sound-lure + stealth)
+                else if (arg == "--chatshot") chatshot = true;   // the chat panel with real rows + avatars, so a UI change can be LOOKED at
                 else if (arg == "--zface") zface = true;             // facing DIAGNOSTIC: one zombie, DesiredVel forced world +X; top-down w/ RED=+X BLUE=+Z markers -> read the exact yaw offset unambiguously
                 else if (arg == "--zpath") zpath = true;             // pathfinding demo: horde behind a WALL, target beyond it -> the flow field routes them around the wall's open end (master: "show how they path around objects")
                 else if (arg.StartsWith("--landmarkshot=")) _lmShotDir = arg["--landmarkshot=".Length..];   // fly a camera past the big landmarks at range -> verify they render across the map
@@ -465,7 +467,8 @@ namespace UnturnedGodot
             if (zhunt) { BuildZombieHunt(); return; }             // zombie AI rewrite phase 3 verify
             if (zkill) { BuildZombieKill(); return; }             // zombie AI rewrite phase 3b verify
             if (zsound) { BuildZombieSound(); return; }           // zombie AI rewrite phase 4 verify
-            if (zface) { BuildZombieFace(); return; }             // facing diagnostic
+            if (chatshot) { BuildChatShot(); if (shot != null) _shotPath = shot; return; }
+            if (zface) { BuildZombieFace(); if (shot != null) _shotPath = shot; return; }   // facing diagnostic (+ --shot: it is also the only single-zombie view, so it is how the BODY gets looked at)
             if (zpath) { BuildZombiePath(); return; }            // pathfinding-around-obstacles demo
 
             if (terrain)   // load a real Unturned map's terrain (PEI Landscape heightmap tile) -> a Godot mesh, replacing the flat test-plane
@@ -3336,10 +3339,47 @@ namespace UnturnedGodot
             GetTree().Quit();
         }
 
+        // --chatshot: the CHAT PANEL, populated. A UI change that is never rendered is shipped blind, and
+        // chat only exists inside a client session normally -- which is a lot of machinery to stand up just to
+        // see whether a panel is in the right corner. ChatUI is a self-contained CanvasLayer that takes its
+        // lines through a public Receive() and its pictures through a hook, so it can simply be built.
+        void BuildChatShot()
+        {
+            GetWindow().Size = new Vector2I(1280, 720);   // shoot at a real resolution, not the 640x480 default
+            var bg = new ColorRect { Color = new Color(0.36f, 0.45f, 0.30f) };   // a world-ish ground, so translucency reads
+            bg.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+            AddChild(bg);
+
+            var chat = new ChatUI();
+            AddChild(chat);
+
+            // Two speakers with pictures and one without, plus a server line: the four row shapes the layout
+            // has to keep aligned. Distinct colours so it is obvious WHICH avatar landed on which row.
+            var pics = new System.Collections.Generic.Dictionary<ushort, byte[]>();
+            pics[5] = SolidAvatar(new Color(0.85f, 0.35f, 0.30f));
+            pics[7] = SolidAvatar(new Color(0.30f, 0.55f, 0.85f));
+            chat.AvatarFor = id => pics.TryGetValue(id, out var b) ? b : null;
+
+            chat.Receive(new Net.ChatMessageEvent { Channel = (byte)SDG.Unturned.ChatChannel.Server, SpeakerId = 0, Name = "", Text = "server restarting in 5 minutes" });
+            chat.Receive(new Net.ChatMessageEvent { Channel = (byte)SDG.Unturned.ChatChannel.Global, SpeakerId = 5, Name = "strawberry", Text = "anyone got a medkit" });
+            chat.Receive(new Net.ChatMessageEvent { Channel = (byte)SDG.Unturned.ChatChannel.Global, SpeakerId = 7, Name = "cowtools", Text = "north of the police station" });
+            chat.Receive(new Net.ChatMessageEvent { Channel = (byte)SDG.Unturned.ChatChannel.Global, SpeakerId = 9, Name = "nopicture", Text = "i have no avatar and my row still lines up" });
+            chat.Send = _ => true;   // Open() refuses without a sender, and the typing state is half the UI
+            chat.Open();
+            Log.Print("[chatshot] chat panel, 4 rows, 2 avatars, input open");
+        }
+
+        static byte[] SolidAvatar(Color c)
+        {
+            var img = Image.CreateEmpty(SDG.Unturned.ProfileRules.AvatarPixels, SDG.Unturned.ProfileRules.AvatarPixels, false, Image.Format.Rgba8);
+            img.Fill(c);
+            return img.SavePngToBuffer();
+        }
+
         // --zface: FACING DIAGNOSTIC. ONE zombie, DesiredVel forced to world +X, viewed TOP-DOWN so the world axes are
         // unambiguous (RED ball = +X = the movement target, BLUE ball = +Z). Whichever ball the model's arms/face point
         // at tells us the exact rig yaw offset -- ends the "which sign" guessing on ZombieBody's facing. Arms at RED = OK.
-        bool _zfMode; ZombieBody _zfz; double _zfT;
+        bool _zfMode; ZombieBody _zfz; double _zfT; int _zfFrame; Camera3D _zfCam; bool _zfFace;
         void BuildZombieFace()
         {
             GetWindow().Size = new Vector2I(1280, 720);
@@ -3358,9 +3398,23 @@ namespace UnturnedGodot
             Ball(new Vector3(-7f, 0.7f, 0f), new Color(0.35f, 0f, 0f));    // -X = dark red
             Ball(new Vector3(0f, 0.7f, -7f), new Color(0f, 0f, 0.35f));    // -Z = dark blue
 
-            _zfz = new ZombieBody(); AddChild(_zfz); _zfz.Position = Vector3.Zero;
+            // UG_ZTABLE=<n> dresses the probe from PEI's zombie table n (0 Police, 2 Military, 9 Chef...), so the
+            // wardrobe that Zombies.dat describes can actually be LOOKED at rather than only parsed. Needs the map
+            // root for the file itself; without it the tables are empty and the zombie falls back to the wardrobe.
+            byte _ztbl = 255;
+            { var e = System.Environment.GetEnvironmentVariable("UG_ZTABLE");
+              if (!string.IsNullOrEmpty(e) && byte.TryParse(e, out var tb)) { _ztbl = tb; ZombieTables.Load(_mapRoot); } }
+            _zfz = new ZombieBody(_ztbl, 12345u); AddChild(_zfz); _zfz.Position = Vector3.Zero;
             var cam = new Camera3D { Current = true, Fov = 46f, Far = 500f };
-            AddChild(cam); cam.Position = new Vector3(6f, 3f, 15f); cam.LookAt(new Vector3(6f, 1f, 0f), Vector3.Up);   // wide SIDE view: zombie travels +X (screen-right) across frame; a planted foot should hold its WORLD spot, not skate back
+            AddChild(cam);
+            // UG_ZCAM=close pulls in for a BODY shot -- clothes, skin tint, face. The wide default is the FACING
+            // diagnostic's own framing (it has to show the axis markers), and at that distance the zombie is ~40 px
+            // tall, which is why nobody ever noticed what it was wearing.
+            var _zcam = System.Environment.GetEnvironmentVariable("UG_ZCAM");
+            if (_zcam == "close" || _zcam == "face")
+            { _zfCam = cam; _zfFace = _zcam == "face"; }   // framed per-frame against the zombie's ACTUAL position -- see _Process
+            else
+            { cam.Position = new Vector3(6f, 3f, 15f); cam.LookAt(new Vector3(6f, 1f, 0f), Vector3.Up); }
             _zfMode = true;
             Log.Print("[zface] one zombie, DesiredVel = world +X (toward RED). top-down: RED=+X(right) BLUE=+Z(down). arms should point at RED if facing is correct.");
         }
@@ -6033,14 +6087,7 @@ namespace UnturnedGodot
                 if (t.HasValue) { _pdPlayer.ShowMenu(t.Value); Log.Print($"[menuopen] {t.Value}"); }
                 else Log.Err($"[menuopen] unknown tab '{menuTab}'");
             }
-            if (_peiPlayable)
-            {
-                string mk = System.IO.Path.GetFileName(_mapRoot).ToLowerInvariant().Replace(" ", "");
-                // Washington's shipped "loop" is the 2016 trailer track, never meant to play in-game (strawberry
-                // 2026-09-04 "kill the music on washington") -> no map music there at all, no PEI fallback either.
-                if (mk != "washington")
-                    MusicPlayer.Get(this)?.PlayLoop(GameAudio.Clip("music", mk + "_loop") != null ? mk + "_loop" : "pei_loop");   // retail per-map loop (pei shipped; others fall back to PEI)
-            }
+            if (_peiPlayable) PlayMapMusic();
             // WEATHER on PEI: BuildFullWorld never attached a WeatherManager, so the `weather` console command did
             // NOTHING in the real game (master 2026-08-29 "no weather manager on pei"). Attach it here on the REAL
             // PEI clock so `weather rain|heavy|clear|lightning` drives the worldspace 3D rain + terrain wetness
@@ -6049,29 +6096,8 @@ namespace UnturnedGodot
             // THE LENS (2026-09-06). Mounted on the real world-build path rather than beside the player, because
             // it is a property of the camera rather than of who is looking through it -- and because it must
             // exist for the settings row to have something to drive. Off by default; GraphicsOptions decides.
-            if (ChromaticAberration.Current == null)
-            {
-                AddChild(new ChromaticAberration());
-                // UG_CHROMATIC=<intensity> forces it on for render verification -- this is a purely visual
-                // change, so it has to be lookable-at without clicking through a settings menu.
-                if (System.Environment.GetEnvironmentVariable("UG_CHROMATIC") is string cs && float.TryParse(cs, out float cAmt))
-                { GraphicsOptions.ChromaticAberration = cAmt > 0f; GraphicsOptions.ChromaticAmount = cAmt; }
-                GraphicsOptions.ApplyChromatic();   // adopt whatever was loaded from the config
-            }
-            // CONTAMINATED-GROUND GRAIN (strawberry 2026-09-11). Mounted here for the same reason the lens is:
-            // it is a property of the view, not of the player, and it has to exist before anyone walks into a
-            // zone. Costs nothing while clear -- the rect stays hidden until exposure is non-zero.
-            if (DeadzoneOverlay.Current == null)
-            {
-                var dzo = new DeadzoneOverlay { Player = res.Player };
-                AddChild(dzo);
-                if (GeigerCounter.Current == null) AddChild(new GeigerCounter { Player = res.Player });
-                // UG_DEADZONE=<seconds> forces the ramp for render verification, same argument as UG_CHROMATIC:
-                // a purely visual effect has to be lookable-at without first finding a deadzone and standing
-                // in it for 40 seconds.
-                if (System.Environment.GetEnvironmentVariable("UG_DEADZONE") is string dzs && float.TryParse(dzs, out float dzDose) && res.Player != null)
-                    res.Player.Radiation = dzDose;
-            }
+            MountChromaticAberration();
+            MountDeadzoneVisuals(res.Player);
             if (res.DayNight != null && WeatherManager.Current == null)
             {
                 var wm = WeatherManager.Attach(this, null, res.DayNight);
@@ -9224,6 +9250,69 @@ namespace UnturnedGodot
         // server-adopted spawn, predicted + reconciled -- its camera IS the view (no overhead cam). Bare
         // --client keeps the C1 demo shape: overhead cam + ClientNode's capsule renderer (used by the
         // --server 2-process demo; no player shell).
+        /// CONTAMINATED-GROUND GRAIN + GEIGER (strawberry 2026-09-11), mounted by singleplayer AND by a joined
+        /// client. Same reason the lens is mounted on the build path: these are properties of the view, not of
+        /// the player, and they have to exist before anyone walks into a zone. Costs nothing while clear -- the
+        /// rect stays hidden until exposure is non-zero.
+        ///
+        /// ⚠ `player` IS NULL ON A CLIENT AND THAT IS CORRECT. A joined client has no local player when the
+        /// world finishes building -- the shell arrives later, over the wire -- which is exactly why this used
+        /// to be skipped there and a joined player got no grain and no clicking at all. Both readers re-check
+        /// Player for null and validity every frame and simply show nothing while it is unset, so mounting
+        /// early and binding late is safe; ClientWorldSession binds them at its one `Shell = shell` site.
+        /// The DATA half already worked on a client: SpawnInteractables builds the DeadzoneField in Client mode
+        /// too, and the field ticks every player in PlayerRegistry, so the shell was accumulating exposure that
+        /// nothing was drawing.
+        void MountDeadzoneVisuals(PlayerController player)
+        {
+            if (DeadzoneOverlay.Current != null) return;
+            AddChild(new DeadzoneOverlay { Player = player });
+            if (GeigerCounter.Current == null) AddChild(new GeigerCounter { Player = player });
+            // UG_DEADZONE=<seconds> forces the ramp for render verification, same argument as UG_CHROMATIC:
+            // a purely visual effect has to be lookable-at without first finding a deadzone and standing
+            // in it for 40 seconds.
+            if (System.Environment.GetEnvironmentVariable("UG_DEADZONE") is string dzs && float.TryParse(dzs, out float dzDose) && player != null)
+                player.Radiation = dzDose;
+        }
+
+        /// The camera lens, mounted by singleplayer AND by a joined client. It lived inline on the playable
+        /// path only, so on a server ChromaticAberration.Current stayed null forever and the graphics-panel
+        /// toggle drove nothing at all -- GraphicsOptions.ApplyChromatic ends in `Current?.Apply()`, and a
+        /// null-conditional on a thing that is always null is a setting that silently does nothing. Same
+        /// two-paths-one-wired shape as the map music and the container decoration.
+        void MountChromaticAberration()
+        {
+            if (ChromaticAberration.Current != null) return;
+            AddChild(new ChromaticAberration());
+            // UG_CHROMATIC=<intensity> forces it on for render verification -- this is a purely visual
+            // change, so it has to be lookable-at without clicking through a settings menu.
+            if (System.Environment.GetEnvironmentVariable("UG_CHROMATIC") is string cs && float.TryParse(cs, out float cAmt))
+            { GraphicsOptions.ChromaticAberration = cAmt > 0f; GraphicsOptions.ChromaticAmount = cAmt; }
+            GraphicsOptions.ApplyChromatic();   // adopt whatever was loaded from the config
+        }
+
+        /// The map's music KEY, or null for a map that should play nothing. Pure and static so the rule can be
+        /// asserted without booting a world: Washington's shipped "loop" is the 2016 trailer track, never meant
+        /// to play in-game (strawberry 2026-09-04 "kill the music on washington"), so it gets no music at all
+        /// and no PEI fallback either.
+        internal static string MapMusicKey(string mapRoot)
+        {
+            if (string.IsNullOrEmpty(mapRoot)) return null;
+            string mk = System.IO.Path.GetFileName(mapRoot.TrimEnd('/', '\\')).ToLowerInvariant().Replace(" ", "");
+            return mk == "washington" ? null : mk;
+        }
+
+        /// ONE map-music routine, called by singleplayer AND by a joined client. It used to live inline in the
+        /// _peiPlayable block and nowhere else, so joining a server got you silence -- the world came up, the
+        /// music did not, and nothing said so. Same shape as the vehicle-puppet glass and the container
+        /// decoration: two paths through the same feature, one of them never wired.
+        void PlayMapMusic()
+        {
+            string mk = MapMusicKey(_mapRoot);
+            if (mk == null) return;
+            MusicPlayer.Get(this)?.PlayLoop(GameAudio.Clip("music", mk + "_loop") != null ? mk + "_loop" : "pei_loop");   // retail per-map loop (pei shipped; others fall back to PEI)
+        }
+
         async void BuildClient()
         {
             // async void swallows exceptions silently (the trap BuildDedicated hit) -- surface anything that breaks.
@@ -9266,6 +9355,9 @@ namespace UnturnedGodot
                                                       Terr = res.Terr,                                       // C6: terrain-snaps the vehicle-exit spot (§7 risk 6)
                                                       Loading = res.Loading, LoadingTimings = res.Timings,   // the build's cover, still up: the session drops it when the shell lands, not when the world does
                                                       ApplyServerHoliday = res.ApplyHoliday });              // P3: the deferred holiday content builds with the SERVER's holiday at Accept
+                    PlayMapMusic();             // a joined player gets the map loop too -- see PlayMapMusic
+                    MountChromaticAberration();   // ...and a lens for the graphics toggle to drive -- see MountChromaticAberration
+                    MountDeadzoneVisuals(null);   // radiation grain + geiger; the shell binds itself when it lands -- see MountDeadzoneVisuals
                     Log.Print($"[CLIENT] real world up ({System.IO.Path.GetFileName(_mapRoot)}); connecting to {_connectHost}:{PortEnv()} -- the local shell spawns at the server-adopted spawn, predicted + reconciled");
                 }
                 else   // bare --client (C1 demo shape): overhead cam over the spawn region + ClientNode capsules
@@ -9341,7 +9433,49 @@ namespace UnturnedGodot
             if (_zhMode) { _zhT += delta; if (_zhT >= 6.0) ZhuntReport(); return; }                               // zombie phase-3 verify owns the frame
             if (_zkMode) { _zkT += delta; _zkFrame++; if (_zkFrame > 60 && _zkFrame % 15 == 0) _zkPlayer?.Fire(); if (_zkT >= 14.0) ZkillReport(); return; }   // phase-3b: pace shots so recoil recovers between them
             if (_zsMode) { _zsT += delta; if (!_zsFired && _zsT >= 3.0) { SoundBus.Emit(GetTree(), _zsSound, SoundBus.Gunshot); _zsFired = true; Log.Print("[zsound] GUNSHOT emitted at the far point"); } if (_zsT >= 13.0) ZsoundReport(); return; }   // phase-4: fire the lure at t=3s
-            if (_zfMode) { _zfT += delta; if (_zfz != null) _zfz.DesiredVel = new Vector2(1.3f, 0f); if (_zfT >= 5.0) { Log.Print("[zface] done"); GetTree().Quit(); } return; }   // facing/gait diagnostic: DesiredVel = world +X at the shamble speed
+            if (_zfMode)
+            {
+                _zfT += delta;
+                // The REAL speed, not a copy of it. This read 1.3f -- the old ZombieSpeed -- so the one view of a
+                // walking zombie was showing a gait nothing in the game actually walks at.
+                if (_zfz != null) _zfz.DesiredVel = new Vector2(ZombieChunkField.ZombieSpeed, 0f);
+                // TRACK the subject. A fixed close camera has to guess where the zombie will be at the capture
+                // frame, which is a function of its speed -- so the first version of this framed empty grass the
+                // moment the speed changed, which is the very thing the shot exists to check.
+                if (_zfCam != null && _zfz != null)
+                {
+                    var zp = _zfz.GlobalPosition;
+                    if (_zfFace)
+                    {
+                        // HEAD ON. The rig's forward is -Z and yaw turns it to the travel direction (+X here), so
+                        // the face looks down +X and the camera has to stand in front of it. This is the only way to
+                        // answer "is the face ON the face" -- from the side a decal 4 mm proud of a flat head and one
+                        // hanging 4 cm off it are the same handful of pixels.
+                        _zfCam.Position = zp + new Vector3(1.55f, 1.74f, 0f);
+                        _zfCam.LookAt(zp + new Vector3(0f, 1.72f, 0f), Vector3.Up);
+                    }
+                    else
+                    {
+                        _zfCam.Position = zp + new Vector3(0.6f, 1.15f, 3.4f);
+                        _zfCam.LookAt(zp + new Vector3(0f, 0.95f, 0f), Vector3.Up);
+                    }
+                }
+                // Capture HERE. This branch owns the frame and returns, so the general --shot handler below is
+                // unreachable in this mode: arming _shotPath was necessary and not sufficient, and the symptom was
+                // a render that exited 0 having written nothing. Settle past ShotSettleFrames AND far enough into
+                // the cycle for the walk to be mid-stride rather than caught on the rest pose.
+                if (_shotPath != null && ++_zfFrame >= ShotSettleFrames + 24)
+                {
+                    var zi = GetViewport().GetTexture()?.GetImage();
+                    if (zi == null) { Log.Err("[SHOT] null image -- needs --rendering-driver vulkan, NOT --headless"); GetTree().Quit(1); return; }
+                    zi.SavePng(_shotPath);
+                    Log.Print($"[SHOT] saved {_shotPath} ({zi.GetWidth()}x{zi.GetHeight()})");
+                    GetTree().Quit();
+                    return;
+                }
+                if (_zfT >= 5.0) { Log.Print("[zface] done"); GetTree().Quit(); }
+                return;
+            }   // facing/gait diagnostic: DesiredVel = world +X at the shamble speed
             if (_zpMode) { _zpT += delta; _zpTarget = new Vector3(11f, 0f, Mathf.Sin((float)_zpT * 0.4f) * 7f); if (_zpMarker != null) _zpMarker.Position = _zpTarget + Vector3.Up * 0.9f; if (_zpf != null) _zpf.DebugAnchor = _zpTarget; if (_zpT >= _zpNextEmit) { _zpNextEmit += 2.0; SoundBus.Emit(GetTree(), _zpTarget, SoundBus.Gunshot); } if (_zpT >= 25.0 && !_zpReported) { _zpReported = true; ZpathReport(); } if (_zpT >= 26.0) { Log.Print("[zpath] done"); GetTree().Quit(); } return; }   // MOVING target (a real player moves) -> the field keeps rebuilding so no stable corner-trap can hold
             // Re-applied until two consecutive passes change nothing, rather than once on the first frame:
             // materials are still being created while the world builds, so a single early pass converts

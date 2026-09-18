@@ -1303,7 +1303,14 @@ namespace UnturnedGodot
                     _ when IsSinkProp(name) => SinkSource.Make(basis, 180f - ey),   // Counter_1 + Counter_3, both on the ordinary path now
                     _ => null,
                 };
-                if (mains != null && mode == WorldMode.Playable)
+                // ⚠ CLIENT TOO, but deliberately NOT Dedicated. A joined player could not drink from a sink
+                // or a well at all before this, because the source node only existed in Playable. The server
+                // is left out on purpose rather than by symmetry: NOTHING replicates fluid -- neither setup
+                // path so much as mentions it -- so a FluidManager ticking on a headless server would be work
+                // nobody reads. The honest consequence is that world water is LOCAL to each player, same as
+                // every other fluid device already is; syncing the fluid net is a separate piece of work and
+                // this does not pretend to be it.
+                if (mains != null && (mode == WorldMode.Playable || mode == WorldMode.Client))
                 {
                     mains.Position = gpos;
                     mains.RotationDegrees = new Vector3(0f, 180f - ey, 0f);
@@ -1452,8 +1459,20 @@ namespace UnturnedGodot
                 else if (placedSignals.Count > 0)
                     placedTap = LightTap.Attach(root, gpos, basis, LightTap.LightKind.Traffic, TapInLocal, TapOutLocal);
 
-                // OPENABLE PROP DOORS (MVP: Fridge_0 + Wardrobe_0, SP-local -- mirrors the Tower_Water_0
-                // Playable-only gating above: no dedicated/MP support yet). doors.txt (tools/extract_doors.py)
+                // OPENABLE PROP DOORS (Fridge_0 + Wardrobe_0). BUILT IN EVERY MODE as of 2026-09-17, for the
+                // reason the seat branch below spells out: InteractableNetSync assigns NetIds by WORLD-BUILD
+                // ORDER, so a mode that skips doors does not merely lack doors -- it renumbers every
+                // interactable built after them and silently points ids at the wrong objects.
+                //
+                // ⚠ It used to read `mode == WorldMode.Playable` and the comment said "SP-local... no
+                // dedicated/MP support yet". The wire had since been built underneath it and nobody came back:
+                // RegisterObjectDoor, EventObjectDoorState and SendToggleDoor all exist and all work. The
+                // server just never had an ObjectDoor node to register, because it walks the tree to find them,
+                // and the client never had one to apply the state to -- its handler is
+                // `if (ObjectDoor.TryGetByNetId(...))`, which found nothing and said nothing. A complete
+                // replication path with no nodes under it, which is exactly how the dedicated-server mains sat
+                // switched off for weeks (strawberry 2026-09-17: "a lot of stuff that exists on singleplayer
+                // loopback but not on the vox server"). doors.txt (tools/extract_doors.py)
                 // catalogs the door leaf mesh plus hinge pivot/axis/angle/duration per LEAF -- a prop can
                 // have MULTIPLE leaves (Wardrobe_0's Left/Right doors), grouped by LoadDoorCatalog into a
                 // list under the same prop name. Spawns one ObjectDoor per leaf and, for a multi-leaf prop,
@@ -1474,14 +1493,17 @@ namespace UnturnedGodot
                 // this thing does not hinge. Its Hinge bone's rotation curve is two identical keys and only
                 // its POSITION moves, so an ObjectDoor would swing a platform that is meant to rise.
                 _SEG(8);
-                if (mode == WorldMode.Playable && name == "Car_Lift_0")
+                // EVERY MODE, because the ramp is a moving COLLIDER, not decoration. The server envelope-checks
+                // player positions against its own world, so a lift the server does not have is a lift the server
+                // thinks you are standing in mid-air on.
+                if (name == "Car_Lift_0")
                 {
                     var rampMesh = ObjMesh.Load(dir + "Car_Lift_0_ramp.obj");
                     if (rampMesh != null) CarLift.Spawn(root, gpos, basis, rampMesh, MatFor(matName));
                 }
 
                 ObjectDoor doorForBody = null;   // issue 3/5: carry the first door out of this branch to link the prop BODY collider to it
-                if (mode == WorldMode.Playable && doorCatalog.TryGetValue(name, out var doorLeaves))
+                if (doorCatalog.TryGetValue(name, out var doorLeaves))
                 {
                     var spawnedDoors = new System.Collections.Generic.List<ObjectDoor>();
                     foreach (var doorCfg in doorLeaves)
@@ -1495,7 +1517,10 @@ namespace UnturnedGodot
                     }
                     if (spawnedDoors.Count > 1)
                         foreach (var d in spawnedDoors) d.SetGroup(spawnedDoors);
-                    if (spawnedDoors.Count > 0 && !name.StartsWith("Container_"))   // issue 3/5: whole-prop body-link + outline -- SHIPPING CONTAINERS excluded (master): door-only interact (look at the doors, not the whole big prop)
+                    // The OUTLINE is the only render-only half, so it is the only half the server skips -- the
+                    // door nodes themselves it needs, for the collider and for the position it reach-checks a
+                    // toggle against.
+                    if (spawnedDoors.Count > 0 && mode != WorldMode.Dedicated && !name.StartsWith("Container_"))   // issue 3/5: whole-prop body-link + outline -- SHIPPING CONTAINERS excluded (master): door-only interact (look at the doors, not the whole big prop)
                     {
                         doorForBody = spawnedDoors[0];
                         var bodyGlow = OutlineOverlay.MakeOutline(mesh, new Transform3D(basis, gpos));
@@ -1751,12 +1776,55 @@ namespace UnturnedGodot
                 if (cc + 1 > bestN) { bestN = cc + 1; bestCell = cell; }
                 _SEG(9);
             }
-            // SP loot distribution: a registered prop spawns as a lootable StoreShelf here (at the placement transform)
-            // instead of the decoration mesh. Only in Playable -- the editor shows decoration; the client is server-driven.
-            int converted = 0;
+            // Loot distribution: a registered prop becomes a lootable container instead of a decoration mesh.
+            //
+            // ⚠ THIS USED TO READ `mode != WorldMode.Playable`, and the comment enumerated why: "the editor shows
+            // decoration; the client is server-driven". Both true -- and between them sits the case nobody named,
+            // WorldMode.Dedicated, which is THE SERVER DOING THE DRIVING. It recorded nothing, so
+            // ContainerNetSync was handed an empty manifest and published zero fixtures, so a client materialised
+            // zero containers (strawberry 2026-09-16: "'smart' storage containers arent there on servers"). The
+            // reasoning was sound for every mode it considered; the bug is the mode it did not.
+            //
+            // ⚠ AND RECORDING IS NOT THE SAME AS SKIPPING, which is why this returns a value rather than just
+            // gating the dictionary lookup. Returning true makes the caller `continue`, skipping PlaceObject --
+            // the decoration mesh AND its collider. In Playable that is correct, because SpawnMapContainers
+            // puts a real StoreShelf node back at the same transform afterwards. On a DEDICATED server nothing
+            // does: ContainerNetSync registers a replication FIXTURE, which is a record, not a node. Skip there
+            // and the server silently loses that prop's collision -- players walk through fridges and bullets
+            // pass through bookcases. So Dedicated records the container AND keeps the prop.
+            int converted = 0, alsoReplicated = 0;
             bool TryContainer(string[] q)
             {
-                if (mode != WorldMode.Playable || !ContainerShelf.TryGetValue(q[0], out var cfg)) return false;
+                if (!ContainerShelf.TryGetValue(q[0], out var cfg)) return false;
+                if (mode != WorldMode.Playable && mode != WorldMode.Dedicated)
+                {
+                    // A CLIENT does not RECORD containers -- the server publishes them and StorageReplicaView
+                    // materialises a StoreShelf per fixture -- but it must still SUPPRESS the decoration copy,
+                    // which is what the `true` below does. This used to `return false`, so the object fell
+                    // through to PlaceObject and was drawn as ordinary scenery on top of the replicated shelf.
+                    // The count that lived here was a suspicion ("probably draws these twice"); it is now a
+                    // measurement, and it was not "some": world.client_container_dupes built PEI as a client
+                    // and found a decoration at 696 of 696 container transforms. Two meshes z-fighting, and a
+                    // decoration StaticBody parked in front of the shelf for the F-interact ray to hit
+                    // instead -- which is why containers read as DEAD on the dedicated server while working
+                    // in singleplayer (strawberry 2026-09-17: "'smart' containers ... exists on singleplayer
+                    // loopback but not on the vox server").
+                    //
+                    // ⚠ THIS RIDES ON CONTAINERS NOT BEING INTEREST-CULLED, and StorageReplicaView refused
+                    // this exact fix pending proof of that: "Suppress while the replica is short (interest
+                    // culling, a dropped fixture) and those containers do not merely double, they VANISH:
+                    // the original bug back, and indistinguishable from it." The hazard is real --
+                    // ContainerReplication HAS an InterestPolicy and honours it (filters ids by IsRelevant,
+                    // collects removals). It is safe only because nothing ASSIGNS it: DedicatedServer sets
+                    // Interest on WorldItems and on nothing else, so every client gets the whole set. That is
+                    // a null holding a feature up, so it is pinned by a test rather than by this comment --
+                    // give Containers an Interest policy and world.client_container_dupes goes red and says
+                    // the client is about to start losing fridges. Collision survives the suppression on its
+                    // own terms: StoreShelf.Spawn runs CreateTrimeshCollision, so the replica brings its own
+                    // body and the prop does not become walk-through.
+                    if (mode == WorldMode.Client) { alsoReplicated++; return true; }
+                    return false;
+                }
                 // FLAG it (skip the decoration mesh) -> the caller spawns the real container post-build (asset DB ready).
                 result.Containers.Add((cfg.mesh, cfg.table, cfg.display, cfg.label, new Vector3(F(q[1]), F(q[2]), -F(q[3])), 180f - F(q[5])));
                 // ⚠ THE SAME UPRIGHT, WRITTEN ON A DIFFERENT AXIS (strawberry 2026-09-15: "some trash cans are
@@ -1775,7 +1843,9 @@ namespace UnturnedGodot
                 { ex = 270f + (ez - 270f); ez = 0f; }
                 result.ContainerRots.Add(new Basis(new Vector3(0,1,0), Mathf.DegToRad(180f - F(q[5]))) * new Basis(new Vector3(1,0,0), Mathf.DegToRad(ex)) * new Basis(new Vector3(0,0,1), Mathf.DegToRad(-ez)));
                 converted++;
-                return true;
+                // Playable replaces the prop with a StoreShelf node, so the decoration goes. Dedicated keeps it:
+                // it is the only collider the server will ever have for this object.
+                return mode == WorldMode.Playable;
             }
             // A readable note placement -> a NoteBody (same transform math as PlaceObject) that renders the note mesh
             // and carries its text for the look-focus + F read. Playable-only (see the call site).
@@ -1813,7 +1883,10 @@ namespace UnturnedGodot
                     if (ph != activeHoliday) { holidaySkipped++; continue; }                          // out-of-season holiday prop (index stays reserved+unbuilt)
                 }
                 if (TryContainer(p)) continue;   // registered map prop -> lootable container (SP), skip the decoration mesh (no destructible overlap)
-                if (mode == WorldMode.Playable && NoteTexts.TryGet(p[0], out var noteName, out var noteLines)) { PlaceNote(p, name, noteName, noteLines); continue; }   // readable lore note -> a NoteBody (mesh + look-focus, F reads it); non-Playable just shows the mesh
+                // Client too: a note is something you walk up to and READ, so a joined player needs it. Not the
+                // server -- it is text on a surface, with nothing to validate.
+                if ((mode == WorldMode.Playable || mode == WorldMode.Client)
+                    && NoteTexts.TryGet(p[0], out var noteName, out var noteLines)) { PlaceNote(p, name, noteName, noteLines); continue; }   // readable lore note -> a NoteBody (mesh + look-focus, F reads it); non-Playable just shows the mesh
                 PlaceObject(p, name, destIdx);
             }
             // Build the batches. AFTER the scan, because a MultiMesh's instance count has to be known before its
@@ -1873,6 +1946,7 @@ namespace UnturnedGodot
             result.Destructibles = destField;
             if (destN > 0) Log.Print($"[rubble] {destField.BuiltCount} destructible props wired ({destN} reserved, {destField.InstanceCount} slots)");
             if (converted > 0) Log.Print($"[containers] flagged {converted} map props for post-build container spawn");
+            if (alsoReplicated > 0) Log.Print($"[containers] suppressed {alsoReplicated} decoration prop(s) that are server-replicated containers -- StorageReplicaView draws these, so keeping the scenery copy drew each one TWICE");
             var focus = placed > 0 ? cellSum[bestCell] / bestN : Vector3.Zero;
             Log.Print($"[OBJECTS] placed {placed} objects ({cache.Count} meshes); densest cluster {bestN} near {focus}; holiday-gated {holidaySkipped}{(deferredHoliday != null ? $", deferred {deferredHoliday.Count} to the join handshake" : "")} (active={activeHoliday})");
             if (waterSources > 0) Log.Print($"[water] {waterSources} municipal water sources placed (hydrants + towers + sinks); mains {(FluidNet.GlobalWater ? "ON" : "OFF")}");

@@ -295,7 +295,7 @@ namespace UnturnedGodot
         float _flyLookYaw, _flyLookPitch;         // ALT free-look while flying: orbit offsets on the airframe-locked cam; ease back to 0 on release (strawberry 2026-09-03)
         float _fpLookYaw, _fpLookPitch;           // ALT-hold LOOK in 1st person on foot (strawberry 2026-09-04): the head turns over either shoulder / up / down while the body, the aim and the viewmodel stay put; eases back on release
         /// <summary>ALT held on foot (either view): the camera is looking around, the body is not -- no shooting, no ADS, no interacting while it lasts (master).</summary>
-        public bool AltLooking => !_dead && _driving == null && _riding == null && Input.MouseMode == Input.MouseModeEnum.Captured && Input.IsKeyPressed(Key.Alt);
+        public bool AltLooking => !_dead && _driving == null && _riding == null && Input.MouseMode == Input.MouseModeEnum.Captured && Keybinds.Pressed(GameAction.FreeLook);
         /// <summary>0..~1.5: how open the 3P crosshair is. Hip = 1, ADS tightens to the gun's Spread_Aim, moving and un-drained recoil bloom it (HUD.Crosshair3PControl).</summary>
         public float CrosshairSpread01 { get; private set; } = 1f;
         float _tpOrbitYaw, _tpOrbitPitch;         // ALT-hold ORBIT in 3rd person on foot (strawberry 2026-09-04 "add alt hold orbit cam for 3p"): the mouse swings the camera around the body -- to see your own face -- without turning the player; eases back on release
@@ -8094,6 +8094,7 @@ namespace UnturnedGodot
         bool _portsShown = true;   // starts true so the first evaluation (tool stowed) fires the hide
         bool _rHolding; ulong _rHeldSince;  // R-hold tracking on a shotgun: a quick tap reloads, holding past AmmoRadialHoldMs opens the ammo radial
         bool _ctrlHolding; ulong _ctrlHeldSince; const ulong LightbarHoldMs = 220; LightbarRadial _lightbarRadial;   // Ctrl-hold -> lightbar pattern radial (emergency vehicles)
+        bool _gearHolding; ulong _gearHeldSince; bool _gearHoldFired; const ulong GearHoldMs = 220;   // G-hold = landing gear, G-tap = inventory, on a retract-gear plane (strawberry 2026-09-17)
         const ulong AmmoRadialHoldMs = 220;
 
         public override void _UnhandledInput(InputEvent @event)
@@ -8126,7 +8127,7 @@ namespace UnturnedGodot
                 // N = ignition, the SAME key as a car. Echo:false for the same reason: holding it must not flap
                 // the engine. A train has one seat, so there is no driver check to make here. Stays LITERAL for
                 // the same reason G/L/Ctrl do -- vehicle-aux, not in the v1 rebind set.
-                if (@event is InputEventKey { Pressed: true, Echo: false, Keycode: Key.N }) { _ridingTrain.ToggleEngine(); GetViewport().SetInputAsHandled(); return; }
+                if (Keybinds.JustPressed(GameAction.VehicleIgnition, @event)) { _ridingTrain.ToggleEngine(); GetViewport().SetInputAsHandled(); return; }
                 if (@event is InputEventMouseButton { ButtonIndex: MouseButton.Left } mb) { if (mb.Pressed) _ridingTrain.Honk(); GetViewport().SetInputAsHandled(); return; }   // LMB = press-to-honk (one-shot, master)
                 if (@event is InputEventMouseButton { ButtonIndex: MouseButton.Right } rmbT) { if (rmbT.Pressed) _ridingTrain.ToggleHeadlights(); GetViewport().SetInputAsHandled(); return; }   // RMB = toggle headlights (master), like vehicles
                 if (@event is InputEventMouseMotion tmm && Input.MouseMode == Input.MouseModeEnum.Captured)
@@ -8152,12 +8153,15 @@ namespace UnturnedGodot
                 // of bringing up the menu"): the siren handler decides tap-vs-hold on the release, and this list only let PRESSES through,
                 // so _ctrlHolding never cleared and every tap became a hold 220 ms later -- the radial, never the wail.
                 bool ctrlRelease = @event is InputEventKey { Pressed: false, Keycode: Key.Ctrl };
+                // and the gear key's RELEASE, or the tap half above never arrives: this list admits presses only,
+                // which is the same trap that made every Ctrl tap read as a hold until 2026-09-06.
+                bool gearRelease = @event is InputEventKey { Pressed: false } && Keybinds.Matches(GameAction.LandingGear, @event);
                 // THE INVENTORY OPENS IN A VEHICLE (strawberry 2026-09-15). It half-did already, and only by
                 // accident: the list admits the literal Key.G for a PLANE'S LANDING GEAR, and the inventory
                 // happens to be bound to G too -- so rebinding it broke the inventory, and Tab, the documented
                 // alternate, never worked in a seat at all. Admitted as the ACTION now, plus that Tab, so it
                 // follows the binding instead of sharing a letter with an unrelated feature.
-                bool allowedKey = ctrlRelease || @event is InputEventKey { Pressed: true } dk && (Keybinds.Matches(GameAction.Inventory, @event) || dk.PhysicalKeycode == Key.Tab || Keybinds.Matches(GameAction.Interact, @event) || Keybinds.Matches(GameAction.ToggleFirstPerson, @event) || dk.Keycode == Key.G || dk.Keycode == Key.L || dk.Keycode == Key.Ctrl || dk.Keycode == Key.N || dk.Keycode == Key.Escape
+                bool allowedKey = ctrlRelease || gearRelease || @event is InputEventKey { Pressed: true } dk && (Keybinds.Matches(GameAction.Inventory, @event) || dk.PhysicalKeycode == Key.Tab || Keybinds.Matches(GameAction.Interact, @event) || Keybinds.Matches(GameAction.ToggleFirstPerson, @event) || Keybinds.Matches(GameAction.LandingGear, @event) || Keybinds.Matches(GameAction.VehicleLights, @event) || dk.Keycode == Key.Ctrl || Keybinds.Matches(GameAction.VehicleIgnition, @event) || dk.Keycode == Key.Escape
                     || (Keybinds.HotbarSlot(@event) is int hk && _driving != null && hk <= _driving.TurretSlotCount(_seatIndex)));   // + the 1..N keys while seated at a MOUNT (they pick the weapon; this list ate them, so nobody could switch to the HMG -- master 2026-09-05). Interact = exit; ToggleFirstPerson = cam; G = landing gear (retract-gear planes); L lights, Ctrl siren, N ignition, Esc pause. G/L/Ctrl/N stay literal -- vehicle-aux, hardcoded in v1. (ROOT CAUSE of "G does nothing while flying": this allow-list gated G out before the gear handler saw it -- master 2026-08-18)
                 bool allowedMouse = @event is InputEventMouseButton { ButtonIndex: MouseButton.Left or MouseButton.Right };
                 bool camOrbit = @event is InputEventMouseMotion;   // mouse MOTION must pass through -> it orbits the 3rd-person chase cam (this guard was silently eating it, so the cam sat fixed) (strawberry 2026-07-15)
@@ -8185,7 +8189,7 @@ namespace UnturnedGodot
                     // is negated. This shipped as nose-up-on-forward, which VoX reported as flying backwards
                     // and strawberry liked -- they were both describing the same behaviour and disagreeing
                     // about it, which is what a toggle is for.
-                    if (Input.IsKeyPressed(Key.Alt))
+                    if (Keybinds.Pressed(GameAction.FreeLook))
                     {
                         // ALT = look around WITHOUT touching the stick (strawberry 2026-09-03). The offsets ease back to
                         // the default view once Alt is released (see the drive tick).
@@ -8393,7 +8397,7 @@ namespace UnturnedGodot
             else if (Keybinds.JustPressed(GameAction.ToggleFirstPerson, @event))
                 _fp = !_fp;   // ToggleFirstPerson (default K): 3rd/1st person camera. Moved off H so Grenade(H) is no longer dead code.
             // (Q weapon-switch removed -- master: we have the inventory + spawn commands to test weapons now)
-            else if (@event is InputEventKey { Pressed: true, Keycode: Key.L } && _driving != null)
+            else if (Keybinds.JustPressed(GameAction.VehicleLights, @event) && _driving != null)
             {
                 if (_driving != null) _driving.ToggleHeadlights();         // L while driving: toggle headlights
             }
@@ -8422,7 +8426,7 @@ namespace UnturnedGodot
             // always fine -- the item appears on your face, and the sim-side toggles pass 19 checks -- and the
             // goggle shader renders standalone. Nothing was broken except that the key never arrived.
             else if (_driving != null && _seatIndex == 0
-                     && @event is InputEventKey { Pressed: true, Echo: false, Keycode: Key.N })
+                     && Keybinds.JustPressed(GameAction.VehicleIgnition, @event))
             {
                 _driving.ToggleEngine();
             }
@@ -8552,14 +8556,41 @@ namespace UnturnedGodot
             // so `Active` can never become true and the tool is UNREACHABLE in game, not merely unbound. Say that
             // plainly rather than leaving a dead C-cycles-structure branch reading like a live feature.
             // Restoring it is one line here, on whichever key it should have.
-            else if (@event is InputEventKey { Pressed: true, Keycode: Key.C } && (_build?.Active ?? false))
+            else if (Keybinds.JustPressed(GameAction.BuildCycleType, @event) && (_build?.Active ?? false))
                 _build?.CycleType();  // cycle the structure type (floor/wall/pillar/rampart/roof)
-            else if (@event is InputEventKey { Pressed: true, Keycode: Key.R } && (_build?.Active ?? false))
+            else if (Keybinds.JustPressed(GameAction.BuildSalvage, @event) && (_build?.Active ?? false))
                 SalvageAimedStructure();   // R while building: take the aimed piece back down (reload is meaningless here)
-            else if (@event is InputEventKey { Pressed: true, Keycode: Key.Y } && (_build?.Active ?? false))
+            else if (Keybinds.JustPressed(GameAction.BuildUpgrade, @event) && (_build?.Active ?? false))
                 UpgradeAimedStructure();   // Y while building: wood -> brick -> metal in place
-            else if (@event is InputEventKey { Pressed: true, Keycode: Key.G } && _driving != null && _driving.HasRetractGear)
-                { Log.Print("[GEAR] G-input -> retract branch"); _driving.ToggleGear(); }   // G while flying a retract-gear plane: toggle the landing gear (debounced in Vehicle) (master 2026-08-18)
+            // G IS TWO CONTROLS ON A RETRACT-GEAR PLANE (strawberry 2026-09-17: "Hold G to retract/extend gear
+            // and tap to inv"). This branch used to just eat the key, and it sits earlier in the chain than the
+            // inventory branch below, so in a plane G could never open the bag -- which quietly contradicted the
+            // 2026-09-15 change that deliberately let the inventory open while seated.
+            //
+            // Shape is lifted from the Ctrl siren/lightbar split: the HOLD fires at the threshold from _Process
+            // so the gear moves the moment you have held long enough, and the RELEASE counts as a tap only if
+            // the hold never fired.
+            //
+            // ⚠ The tap/hold split applies ONLY while the two actions actually share a control. Rebind the gear
+            // off G and the `Matches(Inventory)` test below fails, so its own key goes back to working the gear
+            // on press with no hold delay -- and G, no longer the gear key, never reaches here at all.
+            else if (Keybinds.Matches(GameAction.LandingGear, @event) && @event is InputEventKey { Echo: false } ge
+                     && _driving != null && _driving.HasRetractGear)
+            {
+                if (!Keybinds.Matches(GameAction.Inventory, @event))
+                {
+                    if (ge.Pressed) { Log.Print("[GEAR] gear-key press -> retract branch"); _driving.ToggleGear(); }
+                }
+                else if (ge.Pressed)
+                {
+                    if (!_gearHolding) { _gearHolding = true; _gearHeldSince = Time.GetTicksMsec(); _gearHoldFired = false; }
+                }
+                else if (_gearHolding)
+                {
+                    _gearHolding = false;
+                    if (!_gearHoldFired) ToggleInventoryMenu();   // a TAP -> the bag, the same call the G/Tab branch below makes
+                }
+            }
             else if (Keybinds.JustPressed(GameAction.Melee, @event))
                 MeleeAttack();        // dedicated melee swing (default G) at a zombie in reach
             else if (Keybinds.JustPressed(GameAction.Grenade, @event))
@@ -8610,12 +8641,7 @@ namespace UnturnedGodot
             // UNIFIED MENU (master 2026-09-03): G (bind) or Tab (fixed alternate) = Inventory, Y = Craft, J = Skills, M = Information
             // (the map). Every key routes through ShowMenu so exactly one screen is open; the same key closes its own screen.
             else if (Keybinds.JustPressed(GameAction.Inventory, @event) || (@event is InputEventKey { Pressed: true, Echo: false, PhysicalKeycode: Key.Tab } && !(_build?.Active ?? false)))
-            {
-                if (_viewmodel != null && _viewmodel.InAttachView) return;   // no inventory while the attachment menu is up
-                SaveGunState();   // capture the held gun's live state (ammo/mag/firemode/attachments) so dropping/moving it in the inventory keeps it (master)
-                if (_invUI != null && _invUI.IsOpen) { CloseCrate(); _invUI.Close(); Input.MouseMode = Input.MouseModeEnum.Captured; }   // closing the dashboard saves an open crate
-                else ShowMenu(MenuNavbar.Tab.Inventory);
-            }
+                ToggleInventoryMenu();
             else if (Keybinds.JustPressed(GameAction.Craft, @event) && !(_build?.Active ?? false))   // the build-mode Y handler above still wins when active
             {
                 if (_craftMenu != null && _craftMenu.IsOpen) { _craftMenu.Close(); Input.MouseMode = Input.MouseModeEnum.Captured; }
@@ -8669,6 +8695,16 @@ namespace UnturnedGodot
                     Input.MouseMode = Input.MouseMode == Input.MouseModeEnum.Captured
                         ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
             }
+        }
+
+        /// <summary>Open the inventory, or close whatever it has open. Extracted so the G-TAP on a retract-gear
+        /// plane and the ordinary G/Tab press cannot drift apart -- two copies of this would.</summary>
+        void ToggleInventoryMenu()
+        {
+            if (_viewmodel != null && _viewmodel.InAttachView) return;   // no inventory while the attachment menu is up
+            SaveGunState();   // capture the held gun's live state (ammo/mag/firemode/attachments) so dropping/moving it in the inventory keeps it (master)
+            if (_invUI != null && _invUI.IsOpen) { CloseCrate(); _invUI.Close(); Input.MouseMode = Input.MouseModeEnum.Captured; }   // closing the dashboard saves an open crate
+            else ShowMenu(MenuNavbar.Tab.Inventory);
         }
 
         public void OpenInventory() { _invUI?.Open(); Input.MouseMode = Input.MouseModeEnum.Visible; }
@@ -10274,6 +10310,13 @@ namespace UnturnedGodot
                 _lightbarRadial.Open(_driving);
                 if (_lightbarRadial.IsOpen) Input.MouseMode = Input.MouseModeEnum.Visible; else _ctrlHolding = false;
             }
+            if (_gearHolding && (_driving == null || !_driving.HasRetractGear)) { _gearHolding = false; _gearHoldFired = false; }   // left the seat mid-hold
+            else if (_gearHolding && !_gearHoldFired && Time.GetTicksMsec() - _gearHeldSince >= GearHoldMs)
+            {
+                Log.Print("[GEAR] G-hold -> retract branch");
+                _driving.ToggleGear();
+                _gearHoldFired = true;   // the release is now NOT a tap, so the bag stays shut
+            }
             // Source kills the held light on unequip (UseableMelee -> player.disableItemSpotLight()). There are
             // EIGHT places that drop the held melee and more will appear, so this is DERIVED from what's in hand
             // rather than cleared at each of them -- patching all eight is how the ninth ends up leaving a torch
@@ -10445,7 +10488,7 @@ namespace UnturnedGodot
                 {
                     // FP: the camera SITS at the eyes (PlayerLook.heightLook 1.75/1.2/0.35, lerped 4/s), pitched by the mouse
                     _cam.Position = new Vector3(0f, _eyeHeight - _stepSmooth, 0f);   // sit where the eyes WERE, catching up over ~0.13 s
-                    if (!Input.IsKeyPressed(Key.Alt) && (_fpLookYaw != 0f || _fpLookPitch != 0f))   // Alt released: the head eases back to the aim
+                    if (!Keybinds.Pressed(GameAction.FreeLook) && (_fpLookYaw != 0f || _fpLookPitch != 0f))   // Alt released: the head eases back to the aim
                     {
                         float k = Mathf.Min(1f, 7f * (float)delta);
                         _fpLookYaw = Mathf.Lerp(_fpLookYaw, 0f, k); _fpLookPitch = Mathf.Lerp(_fpLookPitch, 0f, k);
@@ -11309,7 +11352,7 @@ namespace UnturnedGodot
             var eye = SeatedEyeLocal(_driving.SeatBodyLocal(_seatIndex), eyeFallback);   // the seated model's own eyes (per seat), not a per-vehicle hand number
             eye += DriverPeekOffset();
             if (_driving.SeatEyeOverride(_seatIndex, out var opticEye)) eye = opticEye;   // a tank seat sees through its optic (visor window / mantlet sight / open cupola), not from its head
-            if ((_driving.IsHeli || _driving.IsPlane) && !Input.IsKeyPressed(Key.Alt) && (_flyLookYaw != 0f || _flyLookPitch != 0f))
+            if ((_driving.IsHeli || _driving.IsPlane) && !Keybinds.Pressed(GameAction.FreeLook) && (_flyLookYaw != 0f || _flyLookPitch != 0f))
             {
                 // Alt released: ease the free-look back to the default chase angle (strawberry 2026-09-03 "it should lerp back")
                 float k = Mathf.Min(1f, 7f * (float)GetProcessDeltaTime());
@@ -12087,7 +12130,7 @@ namespace UnturnedGodot
 
             // Rotation FIRST: the offset below is expressed in this frame, so the order is load-bearing rather than
             // stylistic -- computing the direction off last frame's basis lags the camera behind every mouse movement.
-            if (!Input.IsKeyPressed(Key.Alt) && (_tpOrbitYaw != 0f || _tpOrbitPitch != 0f))   // Alt released: ease the orbit back behind the shoulder (like the flying free-look)
+            if (!Keybinds.Pressed(GameAction.FreeLook) && (_tpOrbitYaw != 0f || _tpOrbitPitch != 0f))   // Alt released: ease the orbit back behind the shoulder (like the flying free-look)
             {
                 float k = Mathf.Min(1f, 7f * delta);
                 _tpOrbitYaw = Mathf.Lerp(_tpOrbitYaw, 0f, k); _tpOrbitPitch = Mathf.Lerp(_tpOrbitPitch, 0f, k);

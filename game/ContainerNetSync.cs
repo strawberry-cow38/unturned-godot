@@ -69,6 +69,7 @@ namespace UnturnedGodot
             _server = server;
             _host = host;
             if (manifest != null) RegisterAll(manifest);
+            else Log.Print("[containers] no manifest handed to ContainerNetSync -- 0 fixtures published");
         }
 
         /// <summary>A microwave with metal in it just went off. The game layer turns this into a real
@@ -77,9 +78,15 @@ namespace UnturnedGodot
 
         void RegisterAll(List<(string mesh, int table, bool display, string label, Vector3 pos, float yaw)> manifest)
         {
+            // ⚠ COUNT IT OUT LOUD, including zero. This published nothing at all on every dedicated server for
+            // as long as the feature has existed -- the world build only recorded containers in WorldMode.Playable
+            // -- and the silence is what let it hide: an empty manifest registers cleanly, logs nothing, and the
+            // only symptom is an absence somebody has to notice in game. A count that says 0 is a bug report.
             long tick = _server.Session.CurrentTick;
+            int n = 0;
             foreach (var c in manifest)
             {
+                n++;
                 ushort kindId = ContainerSchema.KindFor(c.mesh, c.display, c.label);
                 var (w, h) = StoreShelf.GridDims(c.mesh, c.display);
                 var (min, max) = StoreShelf.LootCount(c.mesh);
@@ -100,6 +107,7 @@ namespace UnturnedGodot
 
                 _tracked.Add(new Tracked { NetId = id.Value, Crate = crate, KindId = kindId, Sig = GridSig(crate.Storage) });
             }
+            Log.Print($"[containers] published {n} map container fixture(s) to the replica");
         }
 
         public void Tick()

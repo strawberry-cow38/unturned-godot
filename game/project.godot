@@ -5,6 +5,12 @@ config_version=5
 config/name="Unturned Godot"
 config/features=PackedStringArray("4.6", "C#", "Forward Plus")
 run/main_scene="res://Main.tscn"
+; The real Unturned app icon, extracted from the retail Unturned.exe's own icon resource at every size it
+; ships (32/48/64/128/256) -- not a screenshot or a re-draw. config/icon is what the RUNNING window wears,
+; which is the one that matters here because the launcher starts godot directly rather than an export;
+; windows_native_icon is carried so a future exported .exe agrees with it instead of wearing Godot's.
+config/icon="res://icon.png"
+config/windows_native_icon="res://icon.ico"
 boot_splash/show_image=false
 boot_splash/bg_color=Color(0, 0, 0, 1)
 

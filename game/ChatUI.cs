@@ -17,70 +17,107 @@ namespace UnturnedGodot
     /// player called "SERVER" indistinguishable from the real server, which is exactly the impersonation
     /// the wire is shaped to prevent -- and it would be defeated here, at the last step.
     ///
-    /// The scrollback FADES when closed and is fully visible while typing, so chat does not permanently
-    /// occupy the corner of the screen in a game you mostly play without it.</summary>
+    /// ⚠ STILL NO BBCODE, and the per-row layout is what finally made that free. Tinting a name used to
+    /// mean either markup -- reopening the hole the sanitiser spends its whole life closing -- or the old
+    /// compromise of tinting the WHOLE block by the last line's colour. Separate Label nodes per field
+    /// give every row two colours with no markup anywhere near untrusted text.
+    ///
+    /// TOP-LEFT, ON THE SHARED THEME (strawberry 2026-09-17: "fix the chat ui and ux to be more in line
+    /// with the inventory, crafting, skills, information ui and align it to the top left").
+    ///
+    /// ⚠ That partly reverses a deliberate earlier call. This file used to argue for a text shadow and NO
+    /// panel, because "chat sits over the world and a solid backing would black out a strip of it
+    /// permanently" -- a real objection, and it is answered rather than ignored: the panel is UITheme.Bg,
+    /// which is translucent, and it FADES OUT WITH THE LINES. So it matches the other screens while it has
+    /// something to say and leaves the corner of the world alone when it does not. A permanent opaque slab
+    /// would still be the wrong answer.</summary>
     public partial class ChatUI : CanvasLayer
     {
         /// <summary>How to send a line. Set by whoever owns the connection; null means chat is unavailable
         /// (singleplayer with no loopback), and then the UI never opens rather than silently eating Enter.</summary>
         public System.Func<string, bool> Send;
 
+        /// <summary>A speaker's profile picture as raw PNG, or null. A HOOK rather than a direct reach into
+        /// the net client, for the same reason Send is one: ChatUI is built and driven by the L1 test with
+        /// no connection behind it, and a hard dependency here would make the UI untestable to add a
+        /// decoration to it. Null hook, null bytes and an undecodable PNG all mean the same thing -- draw
+        /// the row without a picture -- so a missing avatar is never an error path.</summary>
+        public System.Func<ushort, byte[]> AvatarFor;
+
         const int ScrollbackLines = 8;
         const double FadeAfterSeconds = 12.0;   // a line stays readable long enough to answer it
+        const double FadeSeconds = 1.5;         // and then goes out over this, rather than blinking off
+        // BIGGER (strawberry 2026-09-17: "make the whole chat bigger"). One size up from FontBody, with the
+        // avatar and the input grown to match -- a bigger font in an unchanged row just crowds the picture.
+        const int ChatFont = UITheme.FontHeading;
+        const int AvatarPx = 26;
+        const int InputHeight = 34;
+        const int PanelWidth = 820;
 
-        readonly List<(string text, Color colour, double at)> _lines = new();
-        Label _log;
+        readonly List<(ushort speaker, string name, string text, bool server, double at)> _lines = new();
+        // Decoded once per speaker, not once per line: the same person talking twenty times is one texture,
+        // and a chat flood must not turn into twenty PNG decodes.
+        readonly Dictionary<ushort, Texture2D> _avatars = new();
+
+        PanelContainer _panel;
+        VBoxContainer _rows;
         LineEdit _input;
         double _now;
 
         public bool IsTyping => _input != null && _input.Visible;
 
-        static readonly Color PlayerColour = new Color(0.92f, 0.94f, 0.96f);
-        static readonly Color ServerColour = new Color(1.00f, 0.86f, 0.42f);   // distinct hue, not just bold
-
         public override void _Ready()
         {
             Layer = 20;   // above the HUD, below the pause overlay
 
-            _log = new Label
-            {
-                Position = new Vector2(14, 0),
-                Modulate = PlayerColour,
-                VerticalAlignment = VerticalAlignment.Bottom,
-            };
-            _log.AddThemeFontSizeOverride("font_size", 15);
-            // A shadow rather than a panel: chat sits over the world and a solid backing would black out a
-            // strip of it permanently. This keeps light text readable against snow and sand both.
-            _log.AddThemeColorOverride("font_shadow_color", new Color(0, 0, 0, 0.85f));
-            _log.AddThemeConstantOverride("shadow_offset_x", 1);
-            _log.AddThemeConstantOverride("shadow_offset_y", 1);
-            AddChild(_log);
+            _panel = new PanelContainer { Position = new Vector2(14, 14), Visible = false };   // nothing said yet
+            _panel.AddThemeStyleboxOverride("panel", UITheme.Box(UITheme.Bg, UITheme.RadiusPanel));
+            AddChild(_panel);
+
+            var pad = new MarginContainer();
+            foreach (var side in new[] { "margin_left", "margin_right", "margin_top", "margin_bottom" })
+                pad.AddThemeConstantOverride(side, UITheme.PadPanel);
+            _panel.AddChild(pad);
+
+            var col = new VBoxContainer();
+            col.AddThemeConstantOverride("separation", UITheme.Gap);
+            pad.AddChild(col);
+
+            _rows = new VBoxContainer();
+            _rows.AddThemeConstantOverride("separation", 2);
+            col.AddChild(_rows);
 
             _input = new LineEdit
             {
                 PlaceholderText = "say something…   (Enter sends, Esc cancels)",
                 Visible = false,
-                Size = new Vector2(680, 30),
-                Position = new Vector2(14, 0),
+                CustomMinimumSize = new Vector2(PanelWidth, InputHeight),
                 MaxLength = ChatRules.MaxMessageChars,   // the server would truncate anyway; better to feel the limit
             };
-            AddChild(_input);
+            UITheme.Field(_input);   // the one call that stops it rendering in Godot's default light chrome
+            col.AddChild(_input);
             _input.TextSubmitted += OnSubmit;
 
             Reflow();
             GetViewport().SizeChanged += Reflow;
-            SetProcess(true);
+            // ⚠ PHYSICS, not _Process, and this is about being TESTABLE rather than about timing. TestHost
+            // steps _PhysicsProcess; it does not drive _Process at all, so a fade living there could not be
+            // observed by a test at any tick count -- the first version of the fade test failed on its very
+            // first assertion because the panel had never been told to hide. The player sees no difference
+            // (50 Hz is plenty for an alpha ramp, and a paused tree stops both), and the behaviour stops
+            // being something only a human with a stopwatch could check.
+            SetPhysicsProcess(true);
         }
 
-        /// <summary>Anchor to the bottom-left, recomputed on resize -- a fixed Y puts chat in the middle of
-        /// the screen at one resolution and off it at another.</summary>
+        /// <summary>Top-left, and only the WIDTH tracks the viewport -- the position is a fixed inset now, so
+        /// unlike the old bottom-anchored version there is no resolution at which the panel lands somewhere
+        /// unintended. Narrow windows still get a panel that fits.</summary>
         void Reflow()
         {
             var vp = GetViewport()?.GetVisibleRect().Size ?? new Vector2(1280, 720);
-            _input.Position = new Vector2(14, vp.Y - 90);
-            _input.Size = new Vector2(Mathf.Min(680, vp.X - 28), 30);
-            _log.Position = new Vector2(14, vp.Y - 100 - ScrollbackLines * 19);
-            _log.Size = new Vector2(vp.X - 28, ScrollbackLines * 19);
+            float w = Mathf.Min(PanelWidth, vp.X - 28);
+            _input.CustomMinimumSize = new Vector2(w, InputHeight);
+            _panel.CustomMinimumSize = new Vector2(w + UITheme.PadPanel * 2, 0);
         }
 
         /// <summary>A line arrived. Called from the net event; also used by the L1 test, which is why it is
@@ -88,36 +125,88 @@ namespace UnturnedGodot
         public void Receive(ChatMessageEvent e)
         {
             bool server = e.Channel == (byte)ChatChannel.Server;
-            string text = server ? e.Text : $"{e.Name}: {e.Text}";
-            _lines.Add((text, server ? ServerColour : PlayerColour, _now));
+            _lines.Add((e.SpeakerId, e.Name ?? "", e.Text ?? "", server, _now));
             while (_lines.Count > 64) _lines.RemoveAt(0);   // bounded; the visible window is much smaller
             Repaint();
         }
 
-        public override void _Process(double delta)
+        public override void _PhysicsProcess(double delta)
         {
             _now += delta;
-            // Repaint only when something can actually have changed appearance: a line ageing past the fade
-            // threshold, or the input opening. Otherwise this is a Label rebuild every frame for nothing.
-            if (_lines.Count > 0 && !IsTyping)
-            {
-                double oldest = _now - _lines[^1].at;
-                if (oldest > FadeAfterSeconds && _log.Visible) { _log.Visible = false; }
-            }
+            // VISIBLE WHEN IT HAS SOMETHING TO SAY, OR WHEN YOU ARE TALKING (strawberry 2026-09-17). Typing
+            // pins it fully opaque -- you cannot be composing a line into a box that is fading out from under
+            // you. Otherwise it rides the age of the newest line and goes out over FadeSeconds.
+            //
+            // ⚠ Only the ALPHA moves here, never the rows. Repaint() rebuilds nodes and stays event-driven;
+            // this runs every frame and must stay a property write, which is what the old "must not repaint at
+            // 60 fps" note was protecting.
+            if (IsTyping) { _panel.Visible = true; _panel.Modulate = Colors.White; return; }
+            if (_lines.Count == 0) { _panel.Visible = false; return; }
+            double age = _now - _lines[^1].at;
+            if (age <= FadeAfterSeconds) { _panel.Visible = true; _panel.Modulate = Colors.White; return; }
+            float a = 1f - (float)((age - FadeAfterSeconds) / FadeSeconds);
+            if (a <= 0f) { _panel.Visible = false; return; }
+            _panel.Visible = true;
+            _panel.Modulate = new Color(1f, 1f, 1f, a);
+        }
+
+        /// <summary>The speaker's picture, decoded once and cached. Server lines (id 0) never have one.</summary>
+        Texture2D Avatar(ushort speaker)
+        {
+            if (speaker == 0 || AvatarFor == null) return null;
+            if (_avatars.TryGetValue(speaker, out var hit)) return hit;
+            Texture2D tex = null;
+            var png = AvatarFor(speaker);
+            if (png != null) tex = PlayerProfile.DecodeAvatar(png);   // validates 128x128 + rejects anything odd
+            _avatars[speaker] = tex;                                  // cache the NULL too: a speaker with no
+            return tex;                                               // avatar must not be re-decoded per line
         }
 
         void Repaint()
         {
+            // ⚠ REMOVE, then free. QueueFree() is DEFERRED to the end of the frame, so the old rows are
+            // still children while the new ones are being added -- two messages arriving in the same frame
+            // rebuild the scrollback on top of itself and every line appears twice. Caught by the avatar
+            // test counting 6 rows where 3 were expected, which is the whole reason it asserts on the ROW
+            // rather than on the lookup having been called.
+            foreach (var old in _rows.GetChildren()) { _rows.RemoveChild(old); old.QueueFree(); }
+
             int from = Mathf.Max(0, _lines.Count - ScrollbackLines);
-            var sb = new System.Text.StringBuilder();
-            for (int i = from; i < _lines.Count; i++) sb.AppendLine(_lines[i].text);
-            _log.Text = sb.ToString();
-            // One Label cannot hold two colours without BBCode -- and BBCode is exactly what the sanitiser
-            // spends its time disarming, so enabling it here to tint a name would reopen the hole from the
-            // other end. The most recent line's colour tints the block instead, which is enough to tell a
-            // server announcement from chatter without giving markup a way back in.
-            _log.Modulate = _lines.Count > 0 ? _lines[^1].colour : PlayerColour;
-            _log.Visible = true;
+            for (int i = from; i < _lines.Count; i++)
+            {
+                var ln = _lines[i];
+                var row = new HBoxContainer();
+                row.AddThemeConstantOverride("separation", UITheme.PadCell);
+
+                // ⚠ The avatar slot is reserved even when empty, so names line up down the left edge instead
+                // of stepping in and out as people with and without pictures talk.
+                if (!ln.server)
+                {
+                    // ⚠ IgnoreSize, and it is load-bearing. CustomMinimumSize is a FLOOR, not a ceiling, so
+                    // without this the TextureRect reports the texture's own 128x128 as its minimum and a chat
+                    // row becomes 128 px tall -- the avatars came out bigger than the messages first time and
+                    // the only reason I know is that I rendered it.
+                    var pic = new TextureRect
+                    {
+                        CustomMinimumSize = new Vector2(AvatarPx, AvatarPx),
+                        ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+                        StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
+                        SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
+                        Texture = Avatar(ln.speaker),
+                    };
+                    row.AddChild(pic);
+                }
+
+                // A server line carries NO name -- rendered from the CHANNEL, never from the text.
+                if (!ln.server && ln.name.Length > 0)
+                    row.AddChild(UITheme.Label(new Label { Text = ln.name + ":" }, ChatFont, UITheme.Text));
+
+                row.AddChild(UITheme.Label(new Label { Text = ln.text }, ChatFont,
+                                           ln.server ? UITheme.Accent : UITheme.TextBody));
+                _rows.AddChild(row);
+            }
+            _panel.Visible = true;
+            _panel.Modulate = Colors.White;   // a new line brings it back to full, whatever it faded to
         }
 
         public override void _Input(InputEvent e)
@@ -160,7 +249,8 @@ namespace UnturnedGodot
             // through the chat box. DevConsole does exactly this for exactly this reason (its 2026-08-16
             // review note); chat is the second text field in the game and inherited the same requirement.
             Input.MouseMode = Input.MouseModeEnum.Visible;
-            _log.Visible = _lines.Count > 0;   // show the history you are replying to
+            _panel.Visible = true;   // show the history you are replying to, and the box even with no history
+            _panel.Modulate = Colors.White;   // un-fade: a half-gone panel must not stay half-gone once you open it
             Repaint();
         }
 
@@ -169,17 +259,42 @@ namespace UnturnedGodot
             if (!_input.Visible) return;   // idempotent: don't recapture a cursor we never released
             _input.Visible = false;
             _input.ReleaseFocus();
+            _panel.Visible = _lines.Count > 0;
             // Only recapture if nothing else still wants it -- closing chat over an open inventory must
             // not steal the cursor back and re-enable walking through the grid.
             if (!(OtherUiWantsCursor?.Invoke() ?? false)) Input.MouseMode = Input.MouseModeEnum.Captured;
         }
 
-        // ---- test hooks. The scrollback is a rendered Label, so a test that read _log.Text would be
-        // asserting on formatting; these expose the DECISION (what was attributed to whom) instead.
-        /// <summary>The most recent line as it is rendered, or null.</summary>
-        public string DebugLastLine => _lines.Count > 0 ? _lines[^1].text : null;
+        // ---- test hooks. The scrollback is rendered nodes, so a test that read them would be asserting on
+        // layout; these expose the DECISION (what was attributed to whom) instead.
+        /// <summary>The most recent line as it is attributed, or null. Composed the same way the row is:
+        /// a server line has no name, a player line is "name: text".</summary>
+        public string DebugLastLine => _lines.Count > 0
+            ? (_lines[^1].server ? _lines[^1].text : $"{_lines[^1].name}: {_lines[^1].text}")
+            : null;
         /// <summary>Drive the submit path exactly as the LineEdit does.</summary>
         public void DebugSubmit(string text) => OnSubmit(text);
+        /// <summary>How many rows the scrollback is currently rendering, and how many of those drew a
+        /// picture -- so a test can assert the avatar actually reached the row rather than that the lookup
+        /// was merely called.</summary>
+        public int DebugRowCount => _rows?.GetChildCount() ?? 0;
+        /// <summary>Whether the panel is on screen, and how faded -- the two halves of "only appear if there
+        /// is a recent message or you are typing". Separate, because visible-at-alpha-0 and invisible are
+        /// different states and only one of them is a bug.</summary>
+        public bool DebugPanelVisible => _panel != null && _panel.Visible;
+        public float DebugPanelAlpha => _panel?.Modulate.A ?? 0f;
+        public int DebugAvatarsShown
+        {
+            get
+            {
+                int n = 0;
+                if (_rows == null) return 0;
+                foreach (var r in _rows.GetChildren())
+                    foreach (var c in r.GetChildren())
+                        if (c is TextureRect { Texture: not null }) n++;
+                return n;
+            }
+        }
 
         void OnSubmit(string text)
         {

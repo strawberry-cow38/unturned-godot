@@ -13,12 +13,20 @@ namespace UnturnedGodot
     /// Plain TSV rather than JSON, for the same reason the map data uses it: an admin fixing a mistaken ban
     /// at 3am should be able to open the file and delete a line. One entry per line:
     ///
-    ///     ipv4 &lt;TAB&gt; expiresUnix &lt;TAB&gt; kind &lt;TAB&gt; name &lt;TAB&gt; reason
+    ///     ipv4 &lt;TAB&gt; expiresUnix &lt;TAB&gt; kind &lt;TAB&gt; name &lt;TAB&gt; reason &lt;TAB&gt; steamid
     ///
     /// expiresUnix 0 means PERMANENT, matching ServerModeration's sentinel -- and the file is where that
     /// choice pays off, because 0 is obvious to a human editing it in a way that 9223372036854775807 is not.
     /// The name and reason come LAST because they are the only free-text fields; a tab inside a reason can
-    /// then only corrupt the reason, not shift a date into a name.</summary>
+    /// then only corrupt the reason, not shift a date into a name.
+    ///
+    /// ⚠ STEAMID BREAKS THAT ORDERING, DELIBERATELY, AND IT IS A TRADE RATHER THAN AN OVERSIGHT. By the rule
+    /// above it belongs before the free text, since it is digits. But inserting a column shifts every field in
+    /// every ban file already on disk, so an existing list would load as garbage or be dropped row by row --
+    /// and a ban list that quietly empties itself is the worst possible failure for this particular file. So it
+    /// is APPENDED, and the cost is bounded: the parser already accepted `&gt;= 5` fields, so old files load with
+    /// no steamid and old builds ignore the new column. A stray tab in a reason costs that row its strong
+    /// handle and nothing else -- it still bans by address and name, exactly as it did yesterday.</summary>
     public static class BanStore
     {
         /// <summary>Where the ban list lives. Defaults beside the world save rather than in Godot's
@@ -53,13 +61,15 @@ namespace UnturnedGodot
                 if (line.Length == 0 || line[0] == '#') continue;
                 var c = line.Split('\t');
                 if (c.Length < 5)
-                { Log.Err($"[bans] {Path}:{lineNo} has {c.Length} fields, want 5 -- skipped"); continue; }
+                { Log.Err($"[bans] {Path}:{lineNo} has {c.Length} fields, want at least 5 -- skipped"); continue; }
                 if (!uint.TryParse(c[0], System.Globalization.NumberStyles.Integer, ci, out uint ip) ||
                     !long.TryParse(c[1], System.Globalization.NumberStyles.Integer, ci, out long expires))
                 { Log.Err($"[bans] {Path}:{lineNo} has an unparseable address or expiry -- skipped"); continue; }
                 var kind = c[2].Trim().Equals("Ban", System.StringComparison.OrdinalIgnoreCase)
                     ? ModerationKind.Ban : ModerationKind.Kick;
-                rows.Add(new BanEntry { Ipv4 = ip, ExpiresUnix = expires, Kind = kind, Name = c[3], Reason = c[4] });
+                // Column 6 is absent on every pre-identity file, which is the normal case, not a defect.
+                rows.Add(new BanEntry { Ipv4 = ip, ExpiresUnix = expires, Kind = kind, Name = c[3], Reason = c[4],
+                                        SteamId = c.Length >= 6 ? c[5].Trim() : "" });
             }
             mod.Load(rows);
             // Prune on load rather than carrying dead rows: a server that ran a week ago should not start
@@ -80,7 +90,7 @@ namespace UnturnedGodot
             {
                 System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(p));
                 var sb = new System.Text.StringBuilder();
-                sb.AppendLine("# ipv4\texpiresUnix (0 = permanent)\tkind\tname\treason");
+                sb.AppendLine("# ipv4\texpiresUnix (0 = permanent)\tkind\tname\treason\tsteamid");
                 foreach (var e in mod.Entries)
                 {
                     // Strip tabs and newlines from the free text. They cannot arrive from chat (the
@@ -88,7 +98,8 @@ namespace UnturnedGodot
                     // through it, and one tab would shift every later field by one.
                     string name = Flatten(e.Name), reason = Flatten(e.Reason);
                     sb.Append(e.Ipv4).Append('\t').Append(e.ExpiresUnix).Append('\t')
-                      .Append(e.Kind).Append('\t').Append(name).Append('\t').Append(reason).Append('\n');
+                      .Append(e.Kind).Append('\t').Append(name).Append('\t').Append(reason).Append('\t')
+                      .Append(Flatten(e.SteamId)).Append('\n');
                 }
                 System.IO.File.WriteAllText(p, sb.ToString());
             }

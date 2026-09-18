@@ -248,6 +248,31 @@ namespace UnturnedGodot.Testing.Tests
                     Keybinds.ConflictWith(Keybinds.Default(GameAction.Interact), GameAction.QuickTransfer) == GameAction.Interact);
             T.Check("...nor with Inventory, for the same reason",
                     Keybinds.ConflictWith(Keybinds.Default(GameAction.Inventory), GameAction.QuickTransfer) == GameAction.Inventory);
+
+            // HOLD-VS-TAP ON ONE CONTROL, BOTH DIRECTIONS. LandingGear and Inventory share G on purpose
+            // (strawberry 2026-09-17 "Hold G to retract/extend gear and tap to inv"): PlayerController splits
+            // them by hold-vs-tap, so the pairing is legal by a MECHANISM, and a UI that refused it would ship a
+            // default the player could never restore.
+            T.Check("landing gear may share a control with the inventory, split by hold vs tap",
+                    Keybinds.ConflictWith(Keybinds.Default(GameAction.Inventory), GameAction.LandingGear) == null);
+            T.Check("...and the same in the other direction",
+                    Keybinds.ConflictWith(Keybinds.Default(GameAction.LandingGear), GameAction.Inventory) == null);
+            // ...but this is a PAIR, not a hole in G. A third action landing there has no hold-vs-tap story.
+            // ⚠ Measured, not assumed: simplifying TapHoldShared to `return true` is caught by the FIRST check
+            // in this test, not by this one -- a blanket exemption breaks everything at once. What this pins is
+            // narrower and worth its line anyway: that the key the 2026-09-17 split touches is still defended
+            // against a third claimant, which no other check in this file asserts.
+            T.Check("...but a THIRD action on that same control is still refused",
+                    Keybinds.ConflictWith(new Bind(Key.G), GameAction.Melee) != null);
+
+            // BUILD MODE, same shape: C/R/Y are consumed by branches sitting earlier in the chain than the
+            // actions they share a letter with, each behind _build.Active, so one of each pair can fire.
+            T.Check("a build-mode action may share a control with the world action it shadows",
+                    Keybinds.ConflictWith(Keybinds.Default(GameAction.Craft), GameAction.BuildUpgrade) == null);
+            // ...but TWO build actions on one control both fire in build mode, so that IS a conflict. This is
+            // the check that stops BuildExclusive being simplified to `return true`.
+            T.Check("...but two build-mode actions sharing one control still conflict",
+                    Keybinds.ConflictWith(Keybinds.Default(GameAction.BuildSalvage), GameAction.BuildUpgrade) == GameAction.BuildSalvage);
             yield break;
         }
     }

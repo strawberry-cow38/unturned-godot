@@ -28,6 +28,21 @@ namespace UnturnedGodot
         // Bind.IsBound is false, so ConflictWith skips them and five Nones do not read as a five-way clash.
         Surrender, GestureWave, GestureSalute, GesturePoint, GestureFacepalm, GestureRest,
         BugReport,
+
+        // ⚠ APPENDED, NOT INSERTED. The Hotbar block above is addressed as `GameAction.Hotbar1 + h`, so a
+        // member placed before Hotbar10 silently renumbers the slots. New members go here.
+        //
+        // These four were controls the player already had and the menu did not know existed -- hardcoded to a
+        // literal key, so unlistable and unrebindable, and INVISIBLE TO ConflictWith. That last part is the
+        // reason they are worth wiring rather than merely documenting: the rebind UI compares bound actions
+        // only, so it would cheerfully report N as free while vehicle ignition was already using it.
+        // Defaults below are the exact keys they were hardcoded to, so nothing a player does today changes.
+        FreeLook, VehicleLights, VehicleIgnition, LandingGear,
+
+        // Same story, found in the same sweep: the three BUILD-MODE controls were `Keycode: Key.C/R/Y` tests
+        // guarded by `_build.Active`, so the menu could not list them and a player could not discover or move
+        // them. Defaults are the keys they were already hardcoded to.
+        BuildCycleType, BuildSalvage, BuildUpgrade,
     }
 
     /// <summary>When an action's control is live. Two actions in DIFFERENT non-Anywhere contexts never fire in the
@@ -43,7 +58,7 @@ namespace UnturnedGodot
     /// conflict check will admit a bind that really can double-fire.</summary>
     /// <summary>When an action can fire. OnFoot/Driving are mutually exclusive with each other and with
     /// nothing else. BagOpen is MODAL and stronger: see ConflictWith.</summary>
-    public enum BindContext { OnFoot, Driving, Anywhere, BagOpen }
+    public enum BindContext { OnFoot, Driving, Anywhere, BagOpen, Building }
 
     /// <summary>One physical control: a keyboard key OR a mouse button.
     ///
@@ -171,6 +186,13 @@ namespace UnturnedGodot
                                                                 // It had been moved to K precisely because H was double-booked with
                                                                 // Grenade; unbinding Grenade above is what frees H to come back, so
                                                                 // these two changes are one change and neither works alone.
+            [GameAction.FreeLook] = new Bind(Key.Alt),          // hold to look around without turning the body or the stick: on foot in 1P and 3P, and the whole flying free-look (strawberry 2026-09-03/04). Five call sites, all literal Alt until now
+            [GameAction.VehicleLights] = new Bind(Key.L),       // vehicle headlights
+            [GameAction.VehicleIgnition] = new Bind(Key.N),     // engine on/off, road vehicles AND the train. ⚠ Shares N with Flashlight, which is legitimate: Flashlight is OnFoot and this is Driving, so ConflictWith excludes the pair rather than reporting it
+            [GameAction.LandingGear] = new Bind(Key.G),         // retract-gear planes
+            [GameAction.BuildCycleType] = new Bind(Key.C),      // build mode: cycle floor/wall/pillar/rampart/roof
+            [GameAction.BuildSalvage] = new Bind(Key.R),        // build mode: take the aimed piece back down (reload is meaningless here)
+            [GameAction.BuildUpgrade] = new Bind(Key.Y),        // build mode: wood -> brick -> metal in place
             [GameAction.Flashlight] = new Bind(Key.N),          // the HEADLAMP toggle (strawberry 2026-09-04 "n toggles a flashlight emitted from the head"). Was B for the HANDHELD torch, which moved to RMB in the same pass -- so B is free again and the build-mode collision the handheld used to cause is gone. The enum member keeps its name deliberately: this file's own header warns that renaming a GameAction orphans that user's line in keybinds.cfg, and "Flashlight" still describes what the key does.
             [GameAction.Inventory] = new Bind(Key.G),   // master 2026-09-03: G opens the inventory; Tab is kept as a fixed alternate (PlayerController)
             [GameAction.Map] = new Bind(Key.M),
@@ -208,12 +230,32 @@ namespace UnturnedGodot
             [GameAction.Crouch] = BindContext.OnFoot, [GameAction.CrouchToggle] = BindContext.OnFoot,
             [GameAction.Prone] = BindContext.OnFoot, [GameAction.LeanLeft] = BindContext.OnFoot,
             [GameAction.LeanRight] = BindContext.OnFoot,
+            // Flashlight is ON-FOOT, and that is enforced by the input layer, not by this tag: while seated
+            // (_driving != null || _riding != null) PlayerController gates every key through an ALLOW-LIST and
+            // returns early on a miss. The headlamp is not on that list under ANY key, so it is unreachable in a
+            // vehicle no matter what the player rebinds it to. Untagged it read as Anywhere and collided with
+            // VehicleIgnition on the N they share -- a conflict the rebind UI would refuse but the product does
+            // not actually have. Same reasoning as QuickTransfer below: tag what the input layer already does.
+            [GameAction.Flashlight] = BindContext.OnFoot,
             // QuickTransfer only exists with a container open, and while one is open the world gets no input
             // at all -- see BagOpenExclusive. Tagged so the REBIND UI knows what the input layer already
             // enforces; without it the shipped H default is a pairing the UI itself would refuse.
             [GameAction.QuickTransfer] = BindContext.BagOpen,
             [GameAction.VehicleHandbrake] = BindContext.Driving,
+            [GameAction.VehicleLights] = BindContext.Driving, [GameAction.VehicleIgnition] = BindContext.Driving,
+            [GameAction.LandingGear] = BindContext.Driving,
+            // FreeLook is deliberately NOT Driving: it works on foot in both views AND in the air, so it is
+            // Anywhere and clashes with anything sharing its key. That is the honest tag -- claiming Driving
+            // would let a future on-foot action quietly double-book Alt.
+            [GameAction.FreeLook] = BindContext.Anywhere,
             [GameAction.VehicleDoor] = BindContext.Driving,
+            // The build controls are consumed by branches that sit EARLIER in the same else-if chain than the
+            // actions they share a letter with (Craft on Y, Reload on R), each behind `_build.Active`. So while
+            // building C/R/Y build, and otherwise they do the other thing -- the same structural exclusivity
+            // that makes Jump and VehicleHandbrake legal on Space.
+            [GameAction.BuildCycleType] = BindContext.Building,
+            [GameAction.BuildSalvage] = BindContext.Building,
+            [GameAction.BuildUpgrade] = BindContext.Building,
         };
 
         public static BindContext Context(GameAction a) => Contexts.TryGetValue(a, out var c) ? c : BindContext.Anywhere;
@@ -224,6 +266,7 @@ namespace UnturnedGodot
         {
             BindContext.OnFoot => "on foot",
             BindContext.Driving => "in vehicle",
+            BindContext.Building => "while building",
             _ => "",
         };
 
@@ -285,6 +328,8 @@ namespace UnturnedGodot
                 var aCtx = Context(a);
                 if (aCtx != BindContext.Anywhere && ignCtx != BindContext.Anywhere && aCtx != ignCtx) continue;
                 if (BagOpenExclusive(a, ignoring)) continue;
+                if (BuildExclusive(a, ignoring)) continue;
+                if (TapHoldShared(a, ignoring)) continue;
                 var cur = Get(a);
                 if (cur.Key == b.Key && cur.Mouse == b.Mouse) return a;
             }
@@ -305,6 +350,29 @@ namespace UnturnedGodot
         /// distinction is the whole reason the shipped H default is legitimate rather than a double-booking:
         /// QuickTransfer needs a container open, ToggleFirstPerson cannot be reached while one is. If that early
         /// return ever moves, this goes with it. (Found by the nightly: keybind.defaults_complete, 2026-09-14.)</summary>
+        // Build mode needs NO exception list, unlike BagOpenExclusive. The bag is modal and a couple of world
+        // actions (Inventory, Interact) must still reach through it; build mode is not modal at all -- it only
+        // wins the three keys it claims, because those branches are earlier in the chain. Everything else keeps
+        // working while building, so a Building action and a non-Building one can never both fire on one press.
+        // LandingGear and Inventory SHARE one control ON PURPOSE (strawberry 2026-09-17: "Hold G to
+        // retract/extend gear and tap to inv"), disambiguated by hold-vs-tap in PlayerController rather than by
+        // context. So the pairing is legal the way Jump/VehicleHandbrake on Space is -- by a mechanism, not by
+        // luck -- and the rebind UI must not refuse a default it would then be unable to restore.
+        //
+        // ⚠ Named as a PAIR, deliberately, not as a context or a flag on either action. Any OTHER action landing
+        // on the gear key is still a real conflict, and nothing here exempts Inventory from clashing with the
+        // rest of the keyboard. The split itself is likewise conditional on the two sharing a control, so this
+        // stays true if a player moves one of them.
+        static bool TapHoldShared(GameAction x, GameAction y) =>
+            (x == GameAction.LandingGear && y == GameAction.Inventory) ||
+            (x == GameAction.Inventory && y == GameAction.LandingGear);
+
+        static bool BuildExclusive(GameAction x, GameAction y)
+        {
+            bool bx = Context(x) == BindContext.Building, by = Context(y) == BindContext.Building;
+            return bx != by;
+        }
+
         static bool BagOpenExclusive(GameAction x, GameAction y)
         {
             bool bx = Context(x) == BindContext.BagOpen, by = Context(y) == BindContext.BagOpen;

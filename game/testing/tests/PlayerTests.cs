@@ -13,7 +13,11 @@ namespace UnturnedGodot.Testing
             Rigs.Ground(World);
             var p = Rigs.Player(World, new Vector3(0f, 1f, 0f));
             var stances = new[] { SDG.Unturned.EPlayerStance.STAND, SDG.Unturned.EPlayerStance.CROUCH, SDG.Unturned.EPlayerStance.PRONE, SDG.Unturned.EPlayerStance.SPRINT };
-            var expect = new float[] { 12f, 6f, 3f, 20f };
+            // DETECT_SCALE 0.4 (strawberry 2026-09-17 "reduce em by a lot") and prone's own near-silent crawl
+            // value ("prone should be almost zero"). Retail's 12/6/3/20 is still in StealthDetection; these are
+            // what the game ships. Absolutes on purpose -- see the note in CombatMathTests on why the arithmetic
+            // must not be written back into the assertion.
+            var expect = new float[] { 4.8f, 2.4f, 0.25f, 8f };
             yield return Ticks(3);   // land on the plane before reading stances
             for (int i = 0; i < stances.Length; i++)
             {
@@ -101,7 +105,15 @@ namespace UnturnedGodot.Testing
             p.ScriptedStance = SDG.Unturned.EPlayerStance.SPRINT;
             yield return Ticks(4);
             float r = p.GetStealthDetectionRadius();
-            T.Check($"broken legs block sprint (radius {r:0} expect 12)", Mathf.Abs(r - 12f) < 0.01f);
+            // ⚠ Asserted as a RELATIONSHIP, not the literal it used to carry. What this test is about is that
+            // asking to SPRINT on broken legs gets you the STANDING radius instead -- which is a fact about the
+            // stance falling back, not about any particular number. It was pinned to a bare 12 and so broke on a
+            // retune that changed nothing it cares about; written this way it survives the next one and still
+            // fails for the reason it exists (a sprint that was NOT blocked).
+            float stand = SDG.Unturned.StealthDetection.Radius(SDG.Unturned.EPlayerStance.STAND, moving: false);
+            float sprint = SDG.Unturned.StealthDetection.Radius(SDG.Unturned.EPlayerStance.SPRINT, moving: false);
+            T.Check($"broken legs block sprint (radius {r:0.##} == standing {stand:0.##}, not sprinting {sprint:0.##})",
+                    Mathf.Abs(r - stand) < 0.01f && Mathf.Abs(r - sprint) > 0.01f);
 
             p.ScriptedStance = null;
             p.Consume(SDG.Unturned.Assets.find(15));   // Medkit: Bones_Modifier Heal
@@ -111,7 +123,11 @@ namespace UnturnedGodot.Testing
             p.ScriptedStance = SDG.Unturned.EPlayerStance.SPRINT;
             yield return Ticks(4);
             r = p.GetStealthDetectionRadius();
-            T.Check($"sprint restored after heal (radius {r:0} expect 20)", Mathf.Abs(r - 20f) < 0.01f);
+            // The mirror of the check above, and a relationship for the same reason: healing restores SPRINT, so
+            // the radius becomes the sprinting one and is no longer the standing one. Both halves matter -- equal
+            // to sprint alone would pass if every stance collapsed to one number.
+            T.Check($"sprint restored after heal (radius {r:0.##} == sprinting {sprint:0.##}, not standing {stand:0.##})",
+                    Mathf.Abs(r - sprint) < 0.01f && Mathf.Abs(r - stand) > 0.01f);
         }
     }
     // strawberry 2026-09-10: "make sure that we can use rags, dressing, bandages, medkits, suturekits to fix

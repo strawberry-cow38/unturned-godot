@@ -114,7 +114,16 @@ namespace UnturnedGodot
         // ---- semantic ----------------------------------------------------------------------------------
         /// <summary>The one accent. Used for the player's own name, currency, and the single most important
         /// number on a screen. Spending it on more than that is what makes an accent stop working.</summary>
-        public static Color Accent => new(1f, 0.84f, 0.22f);
+        // ⚠ NOT YELLOW ANY MORE (strawberry 2026-09-17: "minus yellow... no idea where it came from lol").
+        // It came from here -- every screen that looked yellow was reading this one property, which is why
+        // chat and the inventory both had it and why removing it is one edit rather than twelve. Now a light
+        // steel blue, which is the palette's own family (Bg/Bar/Slot are all cool blue-greys) instead of a
+        // hue that belonged to nothing else on screen.
+        //
+        // ⚠⚠ Warn below is STILL yellow and deliberately so: that one is semantic -- it means caution, and a
+        // warning that matches the ordinary highlight colour stops being a warning. If yellow turns up
+        // somewhere it should not, it is Warn being used as decoration, not this.
+        public static Color Accent => new(0.62f, 0.78f, 0.94f);
         /// <summary>Affordable, satisfied, succeeded.</summary>
         public static Color Good => new(0.62f, 0.82f, 0.60f);
         /// <summary>A refusal the player should act on: unaffordable, incompatible, full, blocked.
@@ -211,6 +220,15 @@ namespace UnturnedGodot
 
         /// <summary>The dark chip that sits on top of an icon. Carries its own L/R content margin so the
         /// text is not jammed against the rounded corners.</summary>
+        /// <summary>Give a stylebox room to breathe inside its border. A LineEdit draws its text at the
+        /// content edge, so a box with no margins clips the first glyph.</summary>
+        public static StyleBoxFlat Pad(StyleBoxFlat sb, int x = 6, int y = 3)
+        {
+            sb.ContentMarginLeft = x; sb.ContentMarginRight = x;
+            sb.ContentMarginTop = y; sb.ContentMarginBottom = y;
+            return sb;
+        }
+
         public static StyleBoxFlat ChipBox(Color outline)
         {
             var sb = Box(Chip, RadiusChip, outline, 1);
@@ -244,8 +262,13 @@ namespace UnturnedGodot
         /// colour anyone chose.</summary>
         public static void Field(LineEdit e)
         {
-            e.AddThemeStyleboxOverride("normal", Box(new Color(0.09f, 0.09f, 0.10f, 0.98f), RadiusCell));
-            e.AddThemeStyleboxOverride("focus", Box(new Color(0.09f, 0.09f, 0.10f, 0.98f), RadiusCell, Accent, 1));
+            // ⚠ CONTENT MARGINS, because overriding the stylebox THREW AWAY the ones Godot's default had.
+            // Box() sets none, so the caret and the first character sat flush against the border and the
+            // leading glyph was visibly clipped -- "say something" rendering as "ay something". It looked
+            // like a font problem rather than a padding one, which is why it survived: found by rendering
+            // the chat panel (2026-09-17), and the crafting search field had it too, from this same helper.
+            e.AddThemeStyleboxOverride("normal", Pad(Box(new Color(0.09f, 0.09f, 0.10f, 0.98f), RadiusCell)));
+            e.AddThemeStyleboxOverride("focus", Pad(Box(new Color(0.09f, 0.09f, 0.10f, 0.98f), RadiusCell, Accent, 1)));
             e.AddThemeFontSizeOverride("font_size", FontBody);
             e.AddThemeColorOverride("font_color", Text);
             e.AddThemeColorOverride("font_placeholder_color", TextDim);

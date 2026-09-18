@@ -105,6 +105,13 @@ namespace UnturnedGodot.Net
 
             // ---- server-only (never on the snapshot; replicas hold the bytes they were sent instead) ----
             public byte[] AvatarPng;
+
+            /// <summary>Verified SteamID64, or "" when this peer did not present a token. SERVER-ONLY and
+            /// deliberately so: it is an identity the server VERIFIED, and putting it on the snapshot would
+            /// hand every other client a claim they cannot check. Empty today on every path -- the handshake
+            /// does not carry a token yet (that is v54) -- so everything downstream must keep working without
+            /// it rather than treat it as present.</summary>
+            public string SteamId = "";
         }
 
         public byte SystemId => ReplicationIds.SystemProfiles;

@@ -7,6 +7,11 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <InvariantGlobalization>true</InvariantGlobalization>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- The real Unturned icon, lifted from retail Unturned.exe's own icon resource at every size it carries
+         (32/48/64/128/256 packed into one .ico). ApplicationIcon is what Explorer, the taskbar and alt-tab
+         show for the launcher .exe; the WINDOW icon is set separately in MainWindow (Avalonia does not take
+         it from here), so both exist on purpose rather than one being redundant. -->
+    <ApplicationIcon>Assets\unturned.ico</ApplicationIcon>
     <!-- The launcher ships + self-updates as ONE exe (the updater only swaps the exe). A plain PublishSingleFile leaves
          the native libs (libSkiaSharp/libHarfBuzzSharp/av_libglesv2) as loose files BESIDE the exe -> a standalone exe
          has no renderer and dies with a SkiaSharp DllNotFoundException. This bundles them INTO the exe (extracted at
@@ -19,6 +24,15 @@
          single-file publish. The alternative, a second copy of the rules living in the launcher, is how the
          launcher ends up telling a player their name is fine when the server is about to rewrite it. -->
     <Compile Include="..\core\UnturnedSim\ProfileRules.cs" Link="ProfileRules.cs" />
+    <!-- Same reason, and a sharper one: the launcher's window cannot be driven headlessly on the build box,
+         so logic left inside MainWindow is only ever verified by a human clicking it. Both the debug-console
+         toggle and the branch-dropdown race shipped broken that way. LauncherRules lives in core so
+         UnturnedSim.Tests can actually run it. -->
+    <Compile Include="..\core\UnturnedSim\LauncherRules.cs" Link="LauncherRules.cs" />
+    <!-- Embedded, not copied beside the exe: the launcher self-updates by swapping ONE file, so anything it
+         needs at runtime that lives next to it is a file the updater silently leaves stale (or missing on a
+         first run). avares:// reads it straight out of the assembly. -->
+    <AvaloniaResource Include="Assets\unturned.png" />
   </ItemGroup>
 
   <ItemGroup>

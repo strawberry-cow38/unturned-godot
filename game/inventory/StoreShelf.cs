@@ -412,17 +412,35 @@ namespace UnturnedGodot
           : (Color?)null;
 
         Toaster _toaster;   // Toaster_0 only: its lever is this container's "door" (strawberry 2026-09-07)
+
+        /// <summary>Does being alight hold this appliance's leaf open? Only a barbecue: you grill with the lid
+        /// up. Read off the SAME mesh->kind table ContainerNetSync registers cookers from, rather than a second
+        /// list of mesh names here -- two tables mean a prop added to one and not the other, and the symptom
+        /// would be a lid that behaves correctly everywhere except on the newest grill.</summary>
+        bool LidRisesWhenLit =>
+            ContainerNetSync.IsCooker(MeshName, out var k) && k == ECookerKind.Barbecue;
         bool _cookerOn;     // v38: this appliance is LIT -- holds the lid up and runs the smoke
         CpuParticles3D _smoke;
 
-        /// <summary>The leaf is up if ANYONE wants it up: somebody is rummaging inside, OR it is alight
-        /// (strawberry 2026-09-07: "make the red bbq lid stay open when its on"). Two independent reasons for
-        /// one hinge, so it is an OR and both writers go through here -- pushing the leaf directly from either
-        /// caller means the other one closes it. Closing a lit barbecue's lid because you shut its panel is
-        /// exactly the bug that shape produces.</summary>
+        /// <summary>The leaf is up if ANYONE wants it up: somebody is rummaging inside, OR it is alight AND it
+        /// is an appliance whose lid belongs up when lit. Two independent reasons for one hinge, so it is an
+        /// OR and both writers go through here -- pushing the leaf directly from either caller means the other
+        /// one closes it. Closing a lit barbecue's lid because you shut its panel is exactly the bug that
+        /// shape produces.
+        ///
+        /// ⚠ THE SECOND REASON IS BARBECUE-ONLY, and it used to apply to every cooker. The request it came
+        /// from names the appliance -- strawberry 2026-09-07: "make the red bbq lid stay open when its on" --
+        /// and a grill IS cooked with the lid up, so it reads correctly there and only there. An oven cooking
+        /// with its door hanging open reads as broken, and a MICROWAVE cannot do it at all.
+        ///
+        /// ⚠⚠ And it was worst on the toaster, where the "leaf" is the LEVER (see _toaster above). A toaster
+        /// toasts with its lever DOWN -- that is what starting it looks like -- so tying the lever to "is
+        /// lit" drove it to exactly the wrong position at exactly the moment it mattered, and the one prop
+        /// whose door state is legible from across a room spent every toast telling you it was idle.
+        /// (strawberry 2026-09-16: "oven door shouldnt stay open for cooking. that was JUST for the bbqs".)</summary>
         void ApplyLeaves()
         {
-            bool up = _doorsOpen || _cookerOn;
+            bool up = _doorsOpen || (_cookerOn && LidRisesWhenLit);
             foreach (var d in _doors) if (IsInstanceValid(d)) d.SetOpen(up);
             if (_toaster != null && IsInstanceValid(_toaster)) _toaster.SetLeverUp(up);
         }

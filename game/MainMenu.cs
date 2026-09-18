@@ -665,8 +665,15 @@ namespace UnturnedGodot
             // branding, and Playground moved OUT of here into the Singleplayer map list (its own map).
             SubRow(box, "tutorial",     "Tutorial",     "The new-player tutorial. (coming to Cow.0)",          () => ShowStub("Tutorial"));
             SubRow(box, "singleplayer", "Singleplayer", "Pick a map and play on your own.",                    TogglePlayPanel);
-            SubRow(box, "servers",      "Multiplayer",  "Browse and join servers.",                            ToggleServersPanel);
-            SubRow(box, "connect",      "Direct Connect", "Connect to a server by IP, with a password if it needs one.", ShowDirectConnect);
+            var mpRow = SubRow(box, "servers", "Multiplayer",  "Browse and join servers.",                            ToggleServersPanel);
+            var dcRow = SubRow(box, "connect", "Direct Connect", "Connect to a server by IP, with a password if it needs one.", ShowDirectConnect);
+            if (OfflineMode.Enabled)
+            {
+                // DISABLED AND STILL VISIBLE, deliberately. Removing the rows would say "this port has no
+                // multiplayer", which is both wrong and not something the player can act on; a greyed row
+                // carrying the reason says "you turned this off, here is where to turn it back on".
+                foreach (var row in new[] { mpRow, dcRow }) { row.Disabled = true; row.TooltipText = OfflineMode.Reason; }
+            }
             AddBackRow(box);
             _playMenuPanel = panel;
         }

@@ -71,6 +71,23 @@ namespace UnturnedGodot
             return _byId.TryGetValue(id, out var e) ? e : null;
         }
 
+        static readonly Dictionary<string, List<int>> _slotIds = new();
+
+        /// <summary>Every item id the manifest lists for a slot ("shirt", "pants", "hat", ...). SORTED, because
+        /// a Dictionary's order is an implementation detail and anything picking from this by a seed would
+        /// otherwise choose differently on another machine or another run for the same seed.</summary>
+        public static IReadOnlyList<int> IdsForSlot(string slot)
+        {
+            _byId ??= Load();
+            if (_slotIds.TryGetValue(slot, out var cached)) return cached;
+            var list = new List<int>();
+            foreach (var kv in _byId)
+                if (string.Equals(kv.Value.Slot, slot, System.StringComparison.Ordinal)) list.Add(kv.Key);
+            list.Sort();
+            _slotIds[slot] = list;
+            return list;
+        }
+
         // Load a res://content-relative PNG as a runtime ImageTexture (no mipmaps -> the clothes shader samples
         // filter_nearest for blocky Unturned pixels). Blank cell or missing file -> null (reads as transparent on-body).
         // LENS GLOW (strawberry 2026-09-10: "add emissive lenses to both nightvisions the headlamp and the
@@ -178,9 +195,26 @@ namespace UnturnedGodot
             return tex;
         }
 
+        static readonly Dictionary<string, Texture2D> _texByPath = new();
+
+        /// <summary>⚠ CACHED, and it has to be. For the player this runs a handful of times on equip, so the
+        /// uncached version was fine. ZombieBody now dresses every zombie at spawn, and the chunk field streams a
+        /// horde that can hold ~871 live bodies -- an uncached call is a File.Exists, a PNG decode and a texture
+        /// upload EACH, per zombie, per spawn. Garments repeat heavily across a horde, and an ImageTexture is a
+        /// Resource that is safe to share, so one instance per path serves everybody (the same reasoning that makes
+        /// RiggedCharacter share its clip library). Bounded by the manifest: 717 rows, so the cache cannot grow
+        /// without limit. Null results are cached too -- a missing file is just as expensive to re-discover.</summary>
         public static Texture2D LoadTex(string rel)
         {
             if (string.IsNullOrEmpty(rel)) return null;
+            if (_texByPath.TryGetValue(rel, out var hit)) return hit;
+            var made = LoadTexUncached(rel);
+            _texByPath[rel] = made;
+            return made;
+        }
+
+        static Texture2D LoadTexUncached(string rel)
+        {
             // FLAT-COLOUR gear (strawberry 2026-09-04 "hat/balaclava clothing items that are meant to be flat colored on
             // their model are completely white when worn"): the retail material has no _MainTex, only a _Color, which the
             // ripper writes as "#rrggbb" in the albedo cell. A 1x1 texture of that colour is the cheapest way to feed the
@@ -199,8 +233,18 @@ namespace UnturnedGodot
         // Load a gear item's worn MESH (.obj) as a runtime ArrayMesh, reusing ContentProvider.ParseObj -- the exact
         // runtime .obj loader the guns/vehicles/attachments use (Viewmodel gun mesh, Vehicle body). Blank cell or
         // missing file -> null (the slot then attaches nothing). Only gear slots (hat/vest/mask/glasses/backpack) carry a mesh.
+        static readonly Dictionary<string, ArrayMesh> _meshByPath = new();
+
+        /// <summary>⚠ CACHED for the same reason LoadTex is, and more urgently: this re-PARSES an .obj on every
+        /// call. Hats and vests are attached per zombie at spawn now, and a horde repeats a handful of garments.</summary>
         public static ArrayMesh LoadMesh(string rel)
-            => string.IsNullOrEmpty(rel) ? null : ContentProvider.ParseObj("res://content/" + rel);
+        {
+            if (string.IsNullOrEmpty(rel)) return null;
+            if (_meshByPath.TryGetValue(rel, out var hit)) return hit;
+            var made = ContentProvider.ParseObj("res://content/" + rel);
+            _meshByPath[rel] = made;
+            return made;
+        }
 
         public static ArrayMesh LoadMesh(int id) { var e = Get(id); return e == null ? null : LoadMesh(e.Mesh); }
 

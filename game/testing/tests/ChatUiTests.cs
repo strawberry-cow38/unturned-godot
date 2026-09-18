@@ -110,4 +110,113 @@ namespace UnturnedGodot.Testing
             BanStore.Path = prev;
         }
     }
+
+    // Profile pictures beside the speaker (strawberry 2026-09-17). Three cases, because the interesting
+    // ones are the absences: a picture must appear for a speaker who HAS one, must NOT appear on a server
+    // line (which has no speaker at all), and a speaker WITHOUT one must still render a normal row rather
+    // than vanishing or throwing -- a missing avatar is the common case, not an error path.
+    //
+    // ⚠ Asserts on the ROW, via DebugAvatarsShown, not on the lookup being called. A test that counted
+    // AvatarFor invocations would pass with the texture dropped on the floor between decode and display,
+    // which is exactly the bug worth catching here.
+    public sealed class ChatAvatarTests : GameTest
+    {
+        public override string Name => "chat.avatars";
+        public override int Tier => 1;
+
+        static byte[] Avatar128()
+        {
+            var img = Image.CreateEmpty(SDG.Unturned.ProfileRules.AvatarPixels,
+                                        SDG.Unturned.ProfileRules.AvatarPixels, false, Image.Format.Rgba8);
+            img.Fill(new Color(0.2f, 0.7f, 0.9f));
+            return img.SavePngToBuffer();
+        }
+
+        public override IEnumerable<Step> Run()
+        {
+            var ui = new ChatUI();
+            World.AddChild(ui);
+            yield return Ticks(1);
+
+            var png = Avatar128();
+            T.Check($"the fixture really is a decodable {SDG.Unturned.ProfileRules.AvatarPixels}px avatar",
+                    PlayerProfile.DecodeAvatar(png) != null);
+
+            ui.AvatarFor = id => id == 5 ? png : null;   // only Alice has a picture
+
+            ui.Receive(new ChatMessageEvent { Channel = (byte)ChatChannel.Global, SpeakerId = 5, Name = "Alice", Text = "hello" });
+            T.Check($"a speaker with a picture draws it ({ui.DebugAvatarsShown} shown)", ui.DebugAvatarsShown == 1);
+
+            ui.Receive(new ChatMessageEvent { Channel = (byte)ChatChannel.Server, SpeakerId = 0, Name = "", Text = "restarting" });
+            T.Check($"a server line adds no picture (still {ui.DebugAvatarsShown})", ui.DebugAvatarsShown == 1);
+
+            ui.Receive(new ChatMessageEvent { Channel = (byte)ChatChannel.Global, SpeakerId = 7, Name = "Bob", Text = "hi" });
+            T.Check($"a speaker with NO picture still gets a row ({ui.DebugRowCount} rows)", ui.DebugRowCount == 3);
+            T.Check($"...and adds no picture ({ui.DebugAvatarsShown} shown)", ui.DebugAvatarsShown == 1);
+
+            // The hook being absent entirely is singleplayer, and must render plain rows rather than fail.
+            var solo = new ChatUI();
+            World.AddChild(solo);
+            yield return Ticks(1);
+            solo.Receive(new ChatMessageEvent { Channel = (byte)ChatChannel.Global, SpeakerId = 5, Name = "Alice", Text = "hello" });
+            T.Check($"no AvatarFor hook at all: a row still renders ({solo.DebugRowCount})", solo.DebugRowCount == 1);
+            T.Check("...with no picture", solo.DebugAvatarsShown == 0);
+
+            ui.QueueFree();
+            solo.QueueFree();
+            yield break;
+        }
+    }
+
+    // "should only appear if theres a recent message in chat or if we have the chat input box focused,
+    // otherwise fade after no new chat msg" (strawberry 2026-09-17).
+    //
+    // ⚠ The third leg costs ~14 sim seconds and is the only one that matters. "Visible when fresh" and
+    // "visible while typing" both pass on a panel that is ALWAYS visible -- which is exactly the bug being
+    // guarded against -- so a suite without the slow leg would be green on the broken behaviour.
+    public sealed class ChatFadeTests : GameTest
+    {
+        public override string Name => "chat.fades_when_idle";
+        public override int Tier => 1;
+
+        static ChatUI Panel(Node world)
+        {
+            var ui = new ChatUI { Send = _ => true };
+            world.AddChild(ui);
+            return ui;
+        }
+
+        public override IEnumerable<Step> Run()
+        {
+            var ui = Panel(World);
+            yield return Ticks(2);
+            T.Check("nothing said yet: no panel", !ui.DebugPanelVisible);
+
+            ui.Receive(new ChatMessageEvent { Channel = (byte)ChatChannel.Global, SpeakerId = 5, Name = "Alice", Text = "hello" });
+            yield return Ticks(2);
+            T.Check($"a fresh line shows it at full opacity (alpha {ui.DebugPanelAlpha:0.00})",
+                    ui.DebugPanelVisible && ui.DebugPanelAlpha > 0.99f);
+
+            // TYPING PINS IT. Opened well after the line would otherwise have started fading.
+            ui.Open();
+            T.Check("opening the input shows it", ui.DebugPanelVisible && ui.IsTyping);
+            yield return Ticks(14 * Engine.PhysicsTicksPerSecond);   // burn past the fade window while typing
+            T.Check($"still fully visible while typing, {14}s after the last message (alpha {ui.DebugPanelAlpha:0.00})",
+                    ui.DebugPanelVisible && ui.DebugPanelAlpha > 0.99f);
+
+            // ...and once you stop typing, the same old line goes out.
+            ui.Close();
+            yield return Until(() => !ui.DebugPanelVisible, maxSimSeconds: 6);
+            T.Check("closing the box lets the stale line fade away", !ui.DebugPanelVisible);
+
+            // A new line brings it back from faded rather than leaving it half-gone.
+            ui.Receive(new ChatMessageEvent { Channel = (byte)ChatChannel.Global, SpeakerId = 5, Name = "Alice", Text = "still here" });
+            yield return Ticks(2);
+            T.Check($"a new line restores it to full (alpha {ui.DebugPanelAlpha:0.00})",
+                    ui.DebugPanelVisible && ui.DebugPanelAlpha > 0.99f);
+
+            ui.QueueFree();
+            yield break;
+        }
+    }
 }

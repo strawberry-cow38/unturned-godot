@@ -63,6 +63,12 @@ SCENES = {
                {"UG_ANIMALFOOT": "0"}, False, 180,
                "calibrated wildlife stage (ANIMAL=horse,cow,deer UG_ANIMALCAM=side|rear|top|threequarter UG_ANIMALCLIP=Idle UG_ANIMALTIME=0)"),
     "deploy":   (["--deploytest", "--shot={OUT}"], {}, False, 120, "generator + spotlight rig (the golden scene)"),
+    "chat":     (["--chatshot", "--shot={OUT}"], {}, False, 120, "the chat panel: server line, two speakers with avatars, one without, input open"),
+    # The only single-zombie view there is. --zface was built as a FACING diagnostic and could not be
+    # captured at all (its branch returns before the general --shot wiring), so the zombie body -- clothes,
+    # skin, face -- had no way of being looked at. That is why it went unnoticed that they wore a baked
+    # atlas and skated their feet at 5x.
+    "zombie":   (["--zface", "--shot={OUT}"], {"UG_ZCAM": os.environ.get("ZCAM", "close"), "UG_ZTABLE": os.environ.get("ZTABLE", "255")}, False, 180, "one zombie close up -- the BODY: clothes, skin tint, face"),
     "fluid":    (["--fluidtest", "--shot={OUT}"], {"UG_FLUIDART": "gallery"}, False, 180, "11 placed fluid devices at LOD0 + retail barrel/generator/propane references"),
     "fluiddevice": (["--fluidtest", "--shot={OUT}"], {"UG_FLUIDART": os.environ.get("DEVICE", "9110"),
                      "UG_FLUIDANGLE": os.environ.get("ANGLE", "35"), "UG_FLUIDELEV": os.environ.get("ELEV", "28")},
@@ -74,6 +80,11 @@ SCENES = {
     "fluidflow": (["--fluidtest", "--shot={OUT}"], {"UG_FLUIDART": "flow"}, False, 180, "source -> powered pump -> valve -> uphill tank, real generator and hoses"),
     "vehicle":  (["--vehicle={TMP}"], {"UG_QUICK": "1", "UG_VSIDE": "2"}, False, 180, "jeep beauty shot"),
     "menu":     (["--menushot={TMP}"], {}, False, 300, "the 3D barn main menu, 5 camera anchors"),
+    # The PLAY submenu, which nothing could photograph before: every panel in MainMenu opens only on a Button
+    # press, so the harness saw the dashboard and never what was behind it. OFFLINE=1 is the state worth
+    # looking at -- it should grey Multiplayer + Direct Connect and leave Singleplayer alone.
+    "playmenu": (["--menushot={TMP}"], {"UG_MENUOPEN": "playmenu", "UG_OFFLINE": os.environ.get("OFFLINE", "0")},
+                 False, 300, "the PLAY submenu rows (OFFLINE=1 greys Multiplayer + Direct Connect)"),
     "nav":      (["--navshot={OUT}"], {}, True, 300, "close-up: one nav pocket + zombie vision cones"),
     "navfull":  (["--navshot={OUT}"], {"UG_NAVFULL": "1"}, True, 300, "top-down island map of all 19 nav pockets"),
     # 700, not 400. PEI is the heaviest scene here and 400 did not fit it: two attempts on 2026-09-06 died at
@@ -149,7 +160,7 @@ SCENES = {
     "wallclose": (["--walls", "--shot={OUT}"], {"UG_WALLCLOSE": "1"}, False, 200, "close on one opening: reveal + frame"),
     "wallswatch":(["--walls", "--shot={OUT}"], {"UG_WALLSWATCH": "1"}, False, 200, "all 52 retail palettes, one panel each"),
 }
-MULTI = {"menu": "menu_00.png", "vehicle": "rig_00.png"}   # scenes whose capture lands under {TMP}
+MULTI = {"menu": "menu_00.png", "playmenu": "menu_00.png", "vehicle": "rig_00.png"}   # scenes whose capture lands under {TMP}
 
 
 def reap(proc):

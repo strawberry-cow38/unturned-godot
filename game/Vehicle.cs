@@ -4945,6 +4945,16 @@ namespace UnturnedGodot
                 p.AddChild(new MeshInstance3D { Name = "PuppetTaillights", Mesh = pTl, MaterialOverride = m });
                 p.TaillightMat = m;
             }
+            // WINDOWS. Other players' cars had none -- this builder did body, headlights, taillights and
+            // stopped, while AddGlassOverlay was reachable only from the real Vehicle.Build. Same shared
+            // routine both sides now, so a puppet's glass is the real glass rather than a second copy of it.
+            //
+            // ⚠ VISUAL ONLY, deliberately. No pane colliders: the server owns combat and resolves shots
+            // against its own vehicle, so a collider here would be a second thing to hit that decides nothing.
+            // And BREAKAGE does not ride the wire yet -- a window shot out on the server stays intact on every
+            // other screen. That is a real remaining gap and a separate piece of work; it is not silently
+            // fixed by this and should not be read as fixed.
+            BuildGlassPanes(p, s, null);
             if (s.Parts != null)
                 foreach (var (txt, color) in s.Parts)
                 {
@@ -5753,40 +5763,63 @@ namespace UnturnedGodot
             v._baseCollisionMask = v.CollisionMask;      // and the un-ghosted mask (incl. bit8), so a ghosted trailer can add bit6 (to hit the cab's sleeper hull) and restore it
         }
 
-        static void AddGlassOverlay(Vehicle v, Spec s)
+        /// <summary>Build a spec's glass panes onto any parent and return them, labels alongside.
+        ///
+        /// ⚠ SHARED so a PUPPET's windows cannot drift from a real vehicle's. Other players' cars had no glass
+        /// at all (strawberry 2026-09-17: "vehicle glass") -- AddGlassOverlay was reachable only from
+        /// Vehicle.Build, and BuildPuppetByName added a body, headlights and taillights and stopped. That is
+        /// the SECOND time the puppet has been caught missing something the real builder does: v21 found it had
+        /// no lamps, for the same reason -- two builders, one of them forgotten. Writing a second glass routine
+        /// beside this one would set up the third, so there is one routine and both callers use it.</summary>
+        static System.Collections.Generic.List<MeshInstance3D> BuildGlassPanes(
+            Node3D parent, Spec s, System.Collections.Generic.List<string> labelsOut)
         {
-            if (s.GlassMesh == null) return;
+            var made = new System.Collections.Generic.List<MeshInstance3D>();
+            if (s.GlassMesh == null) return made;
             bool dbg = System.Environment.GetEnvironmentVariable("UG_GLASSDEBUG") == "1";
-            // RAIN GLASS (strawberry 2026-09-05): the same tinted, glossy, two-sided glass as before, through the shader that beads +
-            // streaks it while it rains -- shared with the building editor's GlassPane so a windscreen and a window agree.
-            var glassMat = GlassPane.RainGlassMat(s.GlassTint ?? new Color(0.78f, 0.62f, 0.30f, 0.40f),   // default = the jet's golden canopy, ~40% opaque
+            var glassMat = GlassPane.RainGlassMat(s.GlassTint ?? new Color(0.78f, 0.62f, 0.30f, 0.40f),
                                                   metallic: 0.35f, roughness: 0.10f);
-            string base_ = s.GlassMesh.EndsWith(".txt") ? s.GlassMesh[..^4] : s.GlassMesh;
+            string b = s.GlassMesh.EndsWith(".txt") ? s.GlassMesh[..^4] : s.GlassMesh;
             foreach (var label in GlassPaneLabels)
             {
-                var m = LoadOptionalObjQuiet($"{base_}_{label}.txt");
+                var m = LoadOptionalObjQuiet($"{b}_{label}.txt");
                 if (m == null) continue;
                 Material mat = glassMat;
                 if (dbg) mat = new StandardMaterial3D {
-                    AlbedoColor = GlassDebugColors[v._glassNodes.Count % GlassDebugColors.Length],
+                    AlbedoColor = GlassDebugColors[made.Count % GlassDebugColors.Length],
                     ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
                     CullMode = BaseMaterial3D.CullModeEnum.Disabled };
                 var mi = new MeshInstance3D { Name = $"Glass_{label}", Mesh = m, MaterialOverride = mat,
                                               CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
-                v.AddChild(mi);
-                mi.SetInstanceShaderParameter("pane_axis", GlassPane.DominantFaceAxis(m));   // rain-glass: the pane's biggest face, so the thin edges stay dry (master 2026-09-06)
-                v._glassNodes.Add(mi); v._glassLabels.Add(label);
-                AddPaneCollider(v, mi, $"{base_}_{label}.txt", m);
+                parent.AddChild(mi);
+                mi.SetInstanceShaderParameter("pane_axis", GlassPane.DominantFaceAxis(m));
+                made.Add(mi); labelsOut?.Add(label);
             }
-            if (v._glassNodes.Count == 0)   // no per-pane files -- fall back to a single mesh (the jet's canopy)
+            if (made.Count == 0)   // no per-pane files -- one mesh (the jet's canopy)
             {
                 var gm = LoadOptionalObj(s.GlassMesh);
-                if (gm == null) return;
+                if (gm == null) return made;
                 var mi = new MeshInstance3D { Name = "Glass", Mesh = gm, MaterialOverride = glassMat,
                                               CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
-                v.AddChild(mi);
+                parent.AddChild(mi);
                 mi.SetInstanceShaderParameter("pane_axis", GlassPane.DominantFaceAxis(gm));
-                v._glassNodes.Add(mi); v._glassLabels.Add("canopy");
+                made.Add(mi); labelsOut?.Add("canopy");
+            }
+            return made;
+        }
+
+        static void AddGlassOverlay(Vehicle v, Spec s)
+        {
+            // The PANES come from the shared builder; everything below is the half only a real vehicle has.
+            var panes = BuildGlassPanes(v, s, v._glassLabels);
+            if (panes.Count == 0) return;
+            v._glassNodes.AddRange(panes);
+            string b = s.GlassMesh.EndsWith(".txt") ? s.GlassMesh[..^4] : s.GlassMesh;
+            for (int i = 0; i < panes.Count; i++)
+            {
+                string label = v._glassLabels[i];
+                if (label == "canopy") continue;   // the single-mesh fallback has no per-pane file to collide
+                AddPaneCollider(v, panes[i], $"{b}_{label}.txt", panes[i].Mesh);
             }
             v._glassBroken = new bool[v._glassNodes.Count];
         }

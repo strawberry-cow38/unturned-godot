@@ -207,6 +207,11 @@ namespace UnturnedGodot
             Chat = new ChatUI
             {
                 Send = text => Client.SendChat(text),
+                // Profile pictures beside the speaker (strawberry 2026-09-17: "show profile pictures to the
+                // left of the username of the user typing in chat"). Needed NO wire change -- ChatMessageEvent
+                // has carried SpeakerId since v49 and the profile block already replicates avatars for the 3P
+                // nameplates, so this is two existing pieces meeting rather than anything new on the network.
+                AvatarFor = id => Client.Profiles.TryGetAvatar(id, out var png) ? png : null,
                 // Shell arrives later (first authoritative sample), so this is a delegate rather than a
                 // captured reference -- closing chat must ask the CURRENT player whether some other UI
                 // still wants the cursor.
@@ -689,6 +694,12 @@ shell.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, ri
                 shell.AdoptReplicatedInventory(invEntry.Inventory);
             Shell = shell;
             if (shell != null) shell.ChatBox = Chat;   // so AnyBlockingUiOpen can see an open chat box
+            // The radiation readouts were mounted while this client had no player (Main.MountDeadzoneVisuals);
+            // this is the moment one exists. Bound here rather than polled, because this is the ONE place a
+            // shell is assigned -- and the grain/clicking are driven off the player, so unbound they render a
+            // permanent all-clear no matter what the DeadzoneField is doing to it.
+            if (DeadzoneOverlay.Current != null && DeadzoneOverlay.Current.Player == null) DeadzoneOverlay.Current.Player = shell;
+            if (GeigerCounter.Current != null && GeigerCounter.Current.Player == null) GeigerCounter.Current.Player = shell;
             if (System.Environment.GetEnvironmentVariable("UG_MPWALK") == "1")   // scripted-walk hook for headless connect-and-render checks (the UG_AUTOFIRE spirit)
                 shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
             Log.Print($"[CLIENT] shell spawned at server-adopted spawn ({me.Pos.x:0.0},{me.Pos.y:0.0},{me.Pos.z:0.0}) -- first-person, predicted, reconciled");

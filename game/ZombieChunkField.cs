@@ -28,6 +28,15 @@ namespace UnturnedGodot
         public const int Budget = 64;            // max SIMULATED (HOT+WARM) zombies per player (retail pocket maxZombies)
         const float SpawnChance = 0.25f;         // NORMAL survival (retail Provider Zombies.Spawn_Chance)
         const int ChunkMaxLive = 24;             // per-chunk materialized cap (keeps one dense chunk from eating the whole budget)
+        // HARD CEILING ON VISIBLE BODIES (strawberry 2026-09-17: "zombies infinitely spawn. add a zombie cap").
+        // Budget already bounds how many zombies are SIMULATED, but nothing bounded how many got a ZombieBody:
+        // Move() gave one to every zombie inside HotBodyDist, so a dense corner simply built as many rigs as it
+        // had zombies. That is the cost that actually shows up on screen -- a rig, a skeleton and a MoveAndSlide
+        // each -- and it now stops at a number instead of at whatever the map happens to contain.
+        public const int MaxHotBodies = 48;
+        // How long a killed zombie's slot stays empty before the chunk may refill it. Without this, clearing an
+        // area empties it PERMANENTLY, which is its own bug; with it, kills mean something for a while.
+        public const double RespawnSeconds = 300.0;
 
         // Tier thresholds: distance (m, XZ) from a chunk's CENTRE to the nearest player. ENTER a hotter tier at the
         // inner radius, LEAVE it only past the outer -- the gap is the hysteresis band.
@@ -37,7 +46,11 @@ namespace UnturnedGodot
 
         // ---- phase 2: the flow field + drift ----
         const float FieldRadius = 160f;    // the flow field covers ±this around the anchor (comfortably past WARM)
-        const float ZombieSpeed = 1.3f;    // m/s shamble -- tuned DOWN to the Move_N clip's natural stride so the 1x anim doesn't foot-slide (master: don't speed up the anim, slow the zombie). HOT+WARM; COLD takes ONE coarse step every ColdStep seconds
+        // PLAYER WALK SPEED (strawberry 2026-09-17: "change the zombie walk speed to be the same as our
+        // player walk speed"). Was 1.3, which was tuned DOWN to stop the feet skating -- the wrong end of that
+        // trade, and it made a horde something you could stroll away from. The skate is fixed at the ANIMATION
+        // end now (ZombieBody slows the clip to the ground), so the speed no longer has to be what gives way.
+        public const float ZombieSpeed = SDG.Unturned.PlayerMovementDef.SPEED_STAND;   // 4.5 m/s -- public so the --zface diagnostic drives at the REAL speed instead of its own copy of it (master: don't speed up the anim, slow the zombie). HOT+WARM; COLD takes ONE coarse step every ColdStep seconds
         const float ColdStep = 2f;
         const float StopDist = 1.5f;       // pile at the player rather than oscillate through them
         readonly ZombieFlowField _field = new();
@@ -51,8 +64,12 @@ namespace UnturnedGodot
         public ZombieFlowField Field => _field;   // --zflow verify render reads the baked arrows
 
         // ---- phase 3: HOT (visible body) promotion + separation ----
-        const float HotBodyDist = 45f;    // a zombie within this of a player gets a visible ZombieBody...
-        const float HotBodyDrop = 60f;    // ...and loses it past this (hysteresis, so the edge doesn't flicker)
+        // RAISED 45 -> 90 (strawberry 2026-09-17: "their render distance is super short"). This was the only
+        // thing bounding the cost of visible zombies, so it had to be small. MaxHotBodies bounds it directly now,
+        // and 48 rigs cost 48 rigs whatever radius they were chosen from -- so the radius is free to describe how
+        // far you can SEE a zombie rather than how many the machine can afford.
+        const float HotBodyDist = 90f;    // a zombie within this of a player gets a visible ZombieBody...
+        const float HotBodyDrop = 110f;   // ...and loses it past this (hysteresis, so the edge doesn't flicker)
         const float SepR = 2.8f;          // separation radius -- HOT bodies steer apart (boids) so a horde SPREADS instead of stacking into one blob (master: "make them aware of eachother")
         const float SepStrength = 1.7f;
         readonly List<Zombie> _hotList = new();
@@ -69,18 +86,28 @@ namespace UnturnedGodot
         // A zombie. Home = spawn point; Pos = current position. Body != null once it's HOT (within ~45 m of a player):
         // the visible/collidable/killable node, which then owns its transform (Pos syncs from it). A class (not a struct)
         // so it can hold the Body ref and be mutated in place. FROZEN chunks allocate none of these -- they stay a count.
-        public class Zombie { public Vector3 Home; public Vector3 Pos; public Vector2 Vel; public ZombieBody Body; }
+        // Table is the spawn point's own table index (Police/Farm/...); Outfit is a per-zombie seed, held HERE
+        // rather than on the body because the body is destroyed on demote and rebuilt on re-promote -- rolling the
+        // clothes in the constructor would change what a zombie is wearing every time you walked away and back.
+        public class Zombie { public Vector3 Home; public Vector3 Pos; public Vector2 Vel; public ZombieBody Body; public byte Table = 255; public uint Outfit = 1; }
 
         public class Chunk
         {
             public int Cx, Cz;
             public Vector3 Center;                          // world centre (Y = 0; XZ is what tiers test)
             public readonly List<Vector3> SpawnPts = new(); // Animals.dat points that fell in this chunk
+            public readonly List<byte> SpawnTables = new();  // each point's zombie TABLE index, parallel to SpawnPts
             public int Cap;                                 // how many zombies this chunk holds when awake
+            // ⚠ KILLS HAVE TO OUTLIVE Live. A chunk drops its Live list when it FREEZES and rebuilds a full Cap
+            // when you come back, so before this the only record that anything died went away with the list --
+            // clear a town, walk far enough for the chunk to freeze, return, and the whole population is back.
+            // That is the "infinitely spawn": not a spawner running away, but kills that never persisted.
+            public int Killed;                              // slots emptied by death, not yet eligible to refill
+            public double RefillAt;                         // clock at which one killed slot may come back
             public Tier Tier = Tier.Frozen;
             public List<Zombie> Live;                       // null while FROZEN; materialized (Cap zombies) once COLD+
             public uint Seed;                               // deterministic per-chunk spawn-point pick
-            public int Population => Live?.Count ?? Cap;     // FROZEN reports its POTENTIAL, so map totals stay honest
+            public int Population => Live?.Count ?? Mathf.Max(0, Cap - Killed);   // FROZEN reports its POTENTIAL, minus what died there
         }
 
         readonly Dictionary<(int, int), Chunk> _chunks = new();
@@ -96,6 +123,7 @@ namespace UnturnedGodot
 
         public void LoadFromPei(string peiRoot)
         {
+            ZombieTables.Load(peiRoot);   // the wardrobe that goes with these points
             string path = System.IO.Path.Combine(peiRoot, "Spawns", "Animals.dat");
             if (!System.IO.File.Exists(path)) { Log.Print("[zchunk] no Animals.dat -- no zombie spawns"); return; }
             var b = System.IO.File.ReadAllBytes(path); int o = 0;
@@ -108,7 +136,9 @@ namespace UnturnedGodot
                     ushort count = System.BitConverter.ToUInt16(b, o); o += 2;
                     for (int i = 0; i < count; i++)
                     {
-                        o++;                                                 // byte type (PEI = one NORMAL zombie table)
+                        byte table = b[o++];   // the point's ZOMBIE TABLE index -- Police, Farm, Civilian...
+                        // ⚠ This was skipped as "PEI = one NORMAL zombie table". PEI's 1456 points carry 18
+                        // DISTINCT values here, so that comment cost us the entire per-region wardrobe.
                         float px = System.BitConverter.ToSingle(b, o); o += 4;
                         o += 4;                                              // skip point.y -- zombies stand on our terrain
                         float pz = System.BitConverter.ToSingle(b, o); o += 4;
@@ -128,6 +158,7 @@ namespace UnturnedGodot
                         }
                         float gy = Terr != null ? Terr.SampleHeight(gx, gz) : 0f;
                         c.SpawnPts.Add(new Vector3(gx, gy, gz));
+                        c.SpawnTables.Add(table);
                         kept++;
                     }
                 }
@@ -150,6 +181,23 @@ namespace UnturnedGodot
             _acc += delta;
             if (_acc >= Interval) { _acc = 0; Reclassify(); RebuildFieldForAlert(); }
             Move(delta);   // sight-chase / sound-drift every frame; COLD steps coarsely inside
+        }
+
+        /// <summary>Can a zombie at this position HEAR the live alert? ⚠ The loudness has always been a RADIUS IN
+        /// METRES -- Walk 10, Sprint 18, CrouchWalk 5, Gunshot 48 -- and GetStealthDetectionRadius is documented as
+        /// "the radius within which a zombie can sense this player". Nothing used it that way: it only decided which
+        /// noise WON, and then every non-frozen zombie in the ±160 m field walked at the anchor regardless.
+        ///
+        /// So a footstep reached exactly as far as a gunshot, and since a moving player emits every 0.4 s the 8 s
+        /// alert never lapsed -- the whole map aggroed permanently the moment you walked (strawberry 2026-09-17:
+        /// "zombies seem to agro on me no matter what"). Sneaking, crouching and suppressors all had a number that
+        /// went nowhere. This is what makes standing-around-until-they-hear-you the default rather than the
+        /// exception: no alert in earshot, and the WARM/COLD drift and the HOT sound-follow both decline.</summary>
+        bool Hears(Vector3 pos)
+        {
+            if (_clock >= _alertExpiry) return false;
+            float dx = pos.X - _alertPos.X, dz = pos.Z - _alertPos.Z;
+            return dx * dx + dz * dz <= _alertLoud * _alertLoud;
         }
 
         // A sound was emitted (footstep/gunshot/horn/door). Make it the field's target if it's LOUDER than the current
@@ -194,7 +242,11 @@ namespace UnturnedGodot
                 s ^= s << 13; s ^= s >> 17; s ^= s << 5; float ox = ((s % 1000u) / 1000f - 0.5f) * spread;
                 s ^= s << 13; s ^= s >> 17; s ^= s << 5; float oz = ((s % 1000u) / 1000f - 0.5f) * spread;
                 var p = new Vector3(at.X + ox, at.Y, at.Z + oz);
-                c.Live.Add(new Zombie { Home = p, Pos = p });
+                // Record the POINT too, not just the live zombie. Materialize refuses a chunk with no spawn points,
+                // so without this a seeded chunk that froze came back permanently EMPTY -- the debug path quietly
+                // behaving unlike the real one, which is exactly where a harness stops proving anything.
+                c.SpawnPts.Add(p); c.SpawnTables.Add(255);
+                c.Live.Add(new Zombie { Home = p, Pos = p, Table = 255, Outfit = s | 1u });
             }
         }
 
@@ -237,6 +289,10 @@ namespace UnturnedGodot
             // 4) wake (materialize the zombie list) COLD+; sleep (drop it, keep the count) when FROZEN
             foreach (var c in _chunks.Values)
             {
+                // One killed slot becomes eligible again every RespawnSeconds, so a cleared area stays cleared for
+                // a while and then refills -- rather than refilling the instant you look away, or never.
+                if (c.Killed > 0 && c.RefillAt > 0 && _clock >= c.RefillAt)
+                { c.Killed--; c.RefillAt = c.Killed > 0 ? _clock + RespawnSeconds : 0; }
                 if (c.Tier >= Tier.Cold && c.Live == null) Materialize(c);
                 else if (c.Tier == Tier.Frozen && c.Live != null) c.Live = null;   // back to pure data
                 TierChunks[(int)c.Tier]++;
@@ -244,6 +300,8 @@ namespace UnturnedGodot
             }
         }
 
+        int _hotBodies;                    // bodies alive RIGHT NOW, recounted every Move (see the note there)
+        readonly List<(float d, Zombie z)> _promote = new();   // this frame's body candidates, promoted nearest-first
         readonly List<Vector3> _anchors = new();
         readonly List<Chunk> _active = new();
 
@@ -279,14 +337,18 @@ namespace UnturnedGodot
         // stand there (Home == Pos); a later phase gives them the flow field. No node, no mesh, no physics yet.
         void Materialize(Chunk c)
         {
-            c.Live = new List<Zombie>(c.Cap);
+            int want = Mathf.Max(0, c.Cap - c.Killed);   // the dead do not come back with the thaw
+            c.Live = new List<Zombie>(want);
             if (c.SpawnPts.Count == 0) return;
             uint s = c.Seed | 1u;
-            for (int i = 0; i < c.Cap; i++)
+            for (int i = 0; i < want; i++)
             {
                 s ^= s << 13; s ^= s >> 17; s ^= s << 5;             // xorshift32 -- deterministic pick
-                var p = c.SpawnPts[(int)(s % (uint)c.SpawnPts.Count)];
-                c.Live.Add(new Zombie { Home = p, Pos = p });
+                int pi = (int)(s % (uint)c.SpawnPts.Count);
+                var p = c.SpawnPts[pi];
+                byte tbl = pi < c.SpawnTables.Count ? c.SpawnTables[pi] : (byte)255;
+                s ^= s << 13; s ^= s >> 17; s ^= s << 5;
+                c.Live.Add(new Zombie { Home = p, Pos = p, Table = tbl, Outfit = s | 1u });
             }
         }
 
@@ -365,6 +427,17 @@ namespace UnturnedGodot
             if (coldStep) _coldAcc = 0;
 
             _hotList.Clear();
+            _promote.Clear();
+            // ⚠ RECOUNTED, never accumulated. A body is dropped on demote AND on death AND by QueueFree, so an
+            // increment/decrement pair has three places to get out of step -- and a counter that drifts upward
+            // silently stops every future spawn, which looks exactly like the bug this cap was added to fix.
+            // Counting what actually exists is O(live zombies), a few hundred at worst, and cannot drift.
+            _hotBodies = 0;
+            foreach (var cc in _chunks.Values)
+            {
+                if (cc.Live == null) continue;
+                foreach (var zz in cc.Live) if (zz.Body != null) _hotBodies++;
+            }
             // pass 1: body promote/demote + death cleanup; drift the data-only (WARM/COLD) ones TOWARD THE SOUND; gather HOT
             foreach (var c in _chunks.Values)
             {
@@ -373,15 +446,24 @@ namespace UnturnedGodot
                 for (int i = c.Live.Count - 1; i >= 0; i--)
                 {
                     var z = c.Live[i];
-                    if (z.Body != null && (!GodotObject.IsInstanceValid(z.Body) || z.Body.Dead)) { z.Body = null; c.Live.RemoveAt(i); continue; }   // killed -> gone
+                    if (z.Body != null && (!GodotObject.IsInstanceValid(z.Body) || z.Body.Dead))
+                    {   // killed -> gone, and REMEMBERED, so the chunk does not hand the slot back on the next thaw
+                        z.Body = null; c.Live.RemoveAt(i);
+                        if (c.Killed < c.Cap) { c.Killed++; if (c.RefillAt <= 0) c.RefillAt = _clock + RespawnSeconds; }
+                        continue;
+                    }
                     float d = NearestAnchorDist(z.Pos);             // XZ distance to the nearest player
-                    if (z.Body == null && d < HotBodyDist) { z.Body = new ZombieBody(); AddChild(z.Body); z.Body.GlobalPosition = z.Pos; }
+                    // ⚠ CANDIDATE, not a promotion. Taking the cap's slots in dictionary order hands bodies to
+                    // whichever chunk the map happened to enumerate first, so in a crowd the ones you are looking
+                    // AT could stay invisible while something 80 m behind you got a rig. Harmless while the radius
+                    // was 45 m and nothing capped the count; both of those just changed. Sorted by distance below.
+                    if (z.Body == null && d < HotBodyDist) _promote.Add((d, z));
                     else if (z.Body != null && d > HotBodyDrop) { z.Body.QueueFree(); z.Body = null; }
 
                     if (z.Body != null) { z.Pos = z.Body.GlobalPosition; _hotList.Add(z); continue; }   // HOT -> steered in pass 2
 
                     // WARM/COLD drift toward the last SOUND -- only when there's a live alert (else they stay put / wander)
-                    if (!_hasField) continue;
+                    if (!_hasField || !Hears(z.Pos)) continue;   // out of earshot -> stay where you are
                     if (cold && !coldStep) continue;
                     float step = cold ? ZombieSpeed * ColdStep : ZombieSpeed * dt;
                     float ddx = _fieldAnchor.X - z.Pos.X, ddz = _fieldAnchor.Z - z.Pos.Z;
@@ -396,6 +478,21 @@ namespace UnturnedGodot
             // pass 2: HOT bodies -- SIGHT overrides the sound (a zombie that can SEE a player chases it directly; else it
             // paths to the last sound), plus boids separation so a horde surrounds rather than stacks.
             var space = GetWorld3D()?.DirectSpaceState;
+            // NEAREST FIRST, up to the cap. A frame's newly-promoted bodies steer from the next frame, which is
+            // a tick of latency on something that just came into view and cheaper than re-walking every chunk.
+            if (_promote.Count > 0)
+            {
+                _promote.Sort((a, b) => a.d.CompareTo(b.d));
+                foreach (var (_, z) in _promote)
+                {
+                    if (_hotBodies >= MaxHotBodies) break;
+                    z.Body = new ZombieBody(z.Table, z.Outfit);
+                    AddChild(z.Body);
+                    z.Body.GlobalPosition = z.Pos;
+                    _hotBodies++;
+                }
+            }
+
             for (int i = 0; i < _hotList.Count; i++)
             {
                 var z = _hotList[i];
@@ -415,7 +512,7 @@ namespace UnturnedGodot
                     want = (sx * sx + sz * sz <= StopDist * StopDist) ? Vector2.Zero : new Vector2(sx, sz).Normalized();
                     HearNoise(seen, 6f);   // seeing a player also refreshes the alert, so nearby unseen zombies get pulled in
                 }
-                else if (_hasField)                          // can't see -> path to the last SOUND
+                else if (_hasField && Hears(z.Pos))          // can't see, but CAN hear -> path to the last SOUND
                 {
                     float dx = _fieldAnchor.X - z.Pos.X, dz = _fieldAnchor.Z - z.Pos.Z;
                     want = (dx * dx + dz * dz <= StopDist * StopDist) ? Vector2.Zero : _field.Sample(z.Pos);

@@ -435,12 +435,22 @@ namespace UnturnedGodot
         // Locomotion clip names (players use the human set; zombies swap in their Move_N/Idle_N shamble).
         public string IdleClip = "Idle_Stand", WalkClip = "Move_Walk", RunClip = "Move_Run";
 
+        /// <summary>Ground speed in m/s that this character's locomotion clip covers on its OWN stride at 1x
+        /// playback. Left at 0 every clip plays at 1x, which is right for the player -- its clips were authored
+        /// against its own speeds. Set it and SetLocomotion(speed) scales playback to speed/NaturalSpeed, so the
+        /// feet track the ground at ANY speed instead of skating whenever the two disagree.</summary>
+        public float LocomotionNaturalSpeed = 0f;
+
         // Drive locomotion by horizontal speed (m/s): idle / walk / run. Won't interrupt a one-shot.
         public void SetLocomotion(float speed)
         {
             if (_ap == null || _oneShot > 0) return;
             string want = speed < 0.2f ? IdleClip : (speed < 4.5f ? WalkClip : RunClip);
             if (!_ap.HasAnimation(want)) return;
+            // Rate BEFORE the change test: speed varies continuously while the clip does not, so gating this on a
+            // clip switch would leave the scale frozen at whatever the last switch happened to set.
+            if (LocomotionNaturalSpeed > 0f)
+                _ap.SpeedScale = want == IdleClip ? 1f : Mathf.Clamp(speed / LocomotionNaturalSpeed, 0.1f, 3f);
             if (want != _loco || _ap.CurrentAnimation != want) { _loco = want; _ap.Play(want); }
         }
 
