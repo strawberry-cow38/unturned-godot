@@ -171,6 +171,11 @@ namespace UnturnedGodot.Testing
             T.Check($"the network reaches every monument ({seen.Count}/{pois.Count}) -- {netDesc}",
                 seen.Count == pois.Count);
 
+            // ⚠ EVERY LINK ENDPOINT IS ACCOUNTED FOR. Today that means two gates per link, because every route
+            // runs monument-to-monument. A topology that ends a spur on another road's body (a T junction)
+            // gives that end no gate, and this becomes "gates + T-anchors == links * 2". Left as the strict
+            // form deliberately: it is true today, and a topology change SHOULD have to come here and say so
+            // rather than find the check already loosened to accommodate it.
             T.Check($"...and each link has a gate at BOTH ends ({cons.Count} gates for {links.Count} links)",
                 cons.Count == links.Count * 2);
 
@@ -547,7 +552,20 @@ namespace UnturnedGodot.Testing
             // PERPENDICULAR DEPARTURE, measured. "It leaves the gate" is true of a road that exits diagonally;
             // the check is the ANGLE between the first segment and the gate's edge normal, which is 0 only if
             // the road actually goes straight out of the wall.
+            // ⚠⚠ AND COUNT WHAT IT MEASURED, OR IT GOES TOOTHLESS WITHOUT GOING RED. The gate lookup below
+            // `continue`s past any gate that is not at this end -- so a route end with NO gate at all is
+            // silently skipped and contributes nothing, while worstExit keeps whatever value the other ends
+            // gave it. The check then passes on a shrinking population and reports the same green as a full
+            // run. That is the identical failure that hid a real 2 m verge error behind an empty building list
+            // earlier tonight: an assertion with no population is not passing, it is absent.
+            //
+            // It matters now rather than in the abstract: both the hierarchy and ring-road topologies end
+            // routes on ANOTHER ROAD (a T junction) instead of on a gate, so every T-end is an end this loop
+            // cannot match. Without a count, the first thing either arm would do is quietly disarm this check
+            // and still show green. Counted, a T-end shows up as "not at a gate" and the number says whether
+            // that was intended.
             float worstExit = 0f;
+            int exitsMeasured = 0, exitsNoGate = 0;
             foreach (var rt in routes)
             {
                 if (rt.Points.Count < 2) continue;
@@ -555,14 +573,22 @@ namespace UnturnedGodot.Testing
                 {
                     var seg = (end.b - end.a).Normalized();
                     // find the gate at this end
+                    bool found = false;
                     foreach (var gate in cons)
                     {
                         if (Mathf.Abs(gate.X - end.a.X) > 0.5f || Mathf.Abs(gate.Z - end.a.Y) > 0.5f) continue;
                         float dot = seg.X * gate.DirX + seg.Y * gate.DirZ;
                         worstExit = Mathf.Max(worstExit, Mathf.RadToDeg(Mathf.Acos(Mathf.Clamp(dot, -1f, 1f))));
+                        found = true;
                     }
+                    if (found) exitsMeasured++; else exitsNoGate++;
                 }
             }
+            // Every route today runs gate-to-gate, so every end must match one. The day a topology lands that
+            // ends a route on another road, this is the line that has to change deliberately -- and it will
+            // fail loudly rather than measure less and say nothing.
+            T.Check($"every route end was actually measured for its exit angle ({exitsMeasured} measured, {exitsNoGate} had no gate at that end)",
+                exitsNoGate == 0 && exitsMeasured == routes.Count * 2);
             // NO HARD BENDS. Measured as the turn angle between consecutive segments -- "the route is smooth"
             // is not checkable, the sharpest corner on it is. An 8-connected A* turns in 45-degree steps, so
             // anything at or near 90 means the relaxation is not reaching that part of the path.
