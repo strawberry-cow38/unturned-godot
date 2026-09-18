@@ -996,6 +996,11 @@ namespace UnturnedGodot
         /// generates an island.</summary>
         static readonly bool NoFillet = System.Environment.GetEnvironmentVariable("UG_FILLET") != "1";
 
+        /// <summary>Sample arcs at the same spacing as straights rather than at r/12. Tests whether the fold
+        /// regression is density (too coarse on arcs) or UNIFORMITY (two densities feeding an index-stride
+        /// joint picker).</summary>
+        static readonly bool ArcStepUniform = System.Environment.GetEnvironmentVariable("UG_ARCSTEP") != "curve";
+
         static float GradeRawWorst, GradeRelWorst; static int GradeRawOver, GradeRelOver;
 
 
@@ -1626,6 +1631,10 @@ namespace UnturnedGodot
             const float MinArcR = 30f;      // below this the built ribbon starts inverting (see the fold formula)
             const float MaxArcR = 120f;
             const float Step = 4f;          // output spacing, the grid unit
+            // How far ahead the pull may look for a longer straight. Bounded because LC walks the cells, so an
+            // unbounded scan is quadratic in the path length; 256 points is ~1 km of 4 m path, well past any
+            // straight this terrain produces. `UG_PULLAHEAD` for the A/B.
+            int PullLookahead = int.TryParse(System.Environment.GetEnvironmentVariable("UG_PULLAHEAD"), out int pl) && pl > 1 ? pl : 256;
             if (pts.Count < Pin * 2 + 3) return pts;
 
             float slopeCost = SlopeCostFor(kind);
@@ -1640,16 +1649,52 @@ namespace UnturnedGodot
             int at = lo;
             while (at < hi)
             {
+                // ⚠⚠ DO NOT STOP AT THE FIRST FAILURE. This used to `break` the moment one candidate priced
+                // out, which makes the pull brittle in exactly the terrain it exists for: the A* path is an
+                // 8-connected staircase, so a straight line to a NEAR point often clips the corner of a hill
+                // the path was stepping around, while a straight to a FURTHER point runs clean down the valley
+                // beyond it. Breaking at the near failure means the further success is never even tested.
+                //
+                // Measured consequence: 32 of 44, 31 of 50 and 37 of 65 corners came out too close together for
+                // their own straights to hold a 30 m arc -- and an arc below ~23 m folds by construction at
+                // 24 m joints. So the short straights WERE the fold regression, and they came from here.
+                //
+                // Scanning on and keeping the furthest candidate that passes cannot cheat: LC walks the actual
+                // cells and sums the same StepCost the search used, so a long line over a hill prices itself
+                // out just as a short one does. The budget scales with the A* cost over the same span, which is
+                // the comparison that makes sense -- the path paid for that terrain too.
                 int take = at + 1;
-                for (int j = at + 2; j <= hi; j++)
+                int far = Mathf.Min(hi, at + PullLookahead);
+                for (int j = at + 2; j <= far; j++)
                 {
                     float along = cum[j] - cum[at];
                     if (along <= 0.001f) { take = j; continue; }
-                    if (LC(pts[at], pts[j]) <= along * Slack) take = j; else break;
+                    if (LC(pts[at], pts[j]) <= along * Slack) take = j;   // keep looking past a failure
                 }
                 corners.Add(pts[take]);
                 at = take;
             }
+
+            // ---- 1b. THE SEAM IS A CORNER TOO, AND NOTHING WAS FILLETING IT --------------------------------
+            // ⚠⚠ THIS IS THE FOLD REGRESSION. Measured: every fold sat at sample 67/73, 39/45, 140/146 --
+            // all exactly StubPoints from the end, i.e. AT THE JOIN between the pinned stub and the pulled
+            // interior. The fillet loop below runs k = 1 .. count-2, so the first and last corners are never
+            // filleted -- and those two ARE the seams. The old averaging Relax had a Hermite ease for exactly
+            // this join; I deleted it with the rest and never replaced it, so the seam went from smoothed to
+            // raw.
+            //
+            // ⚠ AND MY FIRST HYPOTHESIS WAS WRONG, which is why this is worth the comment. I thought the
+            // folds came from non-uniform point spacing (arcs at r/12, straights at 4 m) feeding an
+            // index-stride joint picker. Tested it -- sampled arcs at the straight spacing instead -- and the
+            // fold counts came back 11/14/14 against 11/14/14. Identical. Density was not the lever; position
+            // was, and the position had been in the log the whole time.
+            //
+            // Extending the corner list two points INTO each stub makes each seam an interior corner. The
+            // fillet can then only eat the stub's OUTER end (index 4-6 of a 0-6 stub), so the gate point and
+            // its perpendicular departure -- indices 0-3 -- stay exactly pinned.
+            int anchorLo = Mathf.Max(0, lo - 2), anchorHi = Mathf.Min(pts.Count - 1, hi + 2);
+            if (anchorLo < lo) corners.Insert(0, pts[anchorLo]);
+            if (anchorHi > hi) corners.Add(pts[anchorHi]);
 
             // ---- 2. fillet every corner that turns ---------------------------------------------------------
             var shaped = new System.Collections.Generic.List<Vector2> { corners[0] };
@@ -1693,7 +1738,12 @@ namespace UnturnedGodot
                 // any radius this code will produce. fable specified this as the companion to the fillet and I
                 // built the fillet without it. Clamped so a huge radius does not go coarser than the straights
                 // and a small one does not emit thousands of points.
-                float arcStep = Mathf.Clamp(r / 12f, 1f, Step);
+                // ⚠ HYPOTHESIS UNDER TEST: point spacing has to be UNIFORM, not merely dense enough. Arcs at
+                // r/12 and straights at Step=4 m give the path two different densities, and SpawnRoutes picks
+                // joints by INDEX STRIDE (every 6th point) -- so a stride lands 24 m apart on a straight and
+                // r/2 apart on an arc, and the Catmull-Rom through unevenly spaced control points cusps at
+                // every transition. `UG_ARCSTEP` switches: 0 = uniform with the straights, else r/12.
+                float arcStep = ArcStepUniform ? Step : Mathf.Clamp(r / 12f, 1f, Step);
                 int arcN = Mathf.Max(2, Mathf.CeilToInt(r * phi / arcStep));
                 // ⚠⚠ SWEEP FROM ANGLE TO ANGLE, NOT BY A SIGNED ROTATION. The first version rotated the start
                 // radius by +/-phi picked off the cross product, which assumes a handedness -- and ProcIsland's
@@ -1722,9 +1772,9 @@ namespace UnturnedGodot
 
             // ---- 3. put the pinned stubs back and resample at the grid unit --------------------------------
             var full = new System.Collections.Generic.List<Vector2>();
-            for (int i = 0; i < lo; i++) full.Add(pts[i]);
+            for (int i = 0; i < anchorLo; i++) full.Add(pts[i]);
             full.AddRange(shaped);
-            for (int i = hi + 1; i < pts.Count; i++) full.Add(pts[i]);
+            for (int i = anchorHi + 1; i < pts.Count; i++) full.Add(pts[i]);
 
             // ⚠ SUBDIVIDE THE LONG SEGMENTS ONLY. A uniform resample here would throw away the arc spacing
             // chosen above and put the folds straight back -- the whole point of emitting an arc at r/12 is
