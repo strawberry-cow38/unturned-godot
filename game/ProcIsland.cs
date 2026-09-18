@@ -986,6 +986,16 @@ namespace UnturnedGodot
         /// the fix can be A/B'd against itself on one seed instead of being believed.</summary>
         static readonly bool NoGateFloor = System.Environment.GetEnvironmentVariable("UG_NOGATEFLOOR") == "1";
 
+        /// <summary>The cost-aware smoother is OPT-IN, and stays that way until it stops regressing folds.
+        ///
+        /// ⚠ IT IS NOT READY AND THE DEFAULT SAYS SO. It wins enormously on what it was built for -- turns over
+        /// 50 degrees go 173/163/194 -> 12/21/33 and the gradient amplification through the smoother nearly
+        /// vanishes (224% -> 93% on one seed) -- but folds go 1/0/0 -> 15/12/26, and a fold is the defect
+        /// master actually reported. Shipping a 10x win on one axis by reintroducing the one they can see is
+        /// not a trade worth making, so `UG_FILLET=1` turns it on and the old averaging Relax remains what
+        /// generates an island.</summary>
+        static readonly bool NoFillet = System.Environment.GetEnvironmentVariable("UG_FILLET") != "1";
+
         static float GradeRawWorst, GradeRelWorst; static int GradeRawOver, GradeRelOver;
 
 
@@ -1164,7 +1174,9 @@ namespace UnturnedGodot
                 // road over ground the search deliberately avoided, and no amount of pricing in the search can
                 // reach it -- the thing that runs last wins, which has been the shape of every defect tonight.
                 var rawPath = Route2D(grid, gw, gh, a, b, links[li].Kind, p, used, padCell);
-                var pts = Relax(rawPath);
+                var pts = NoFillet
+                          ? Relax(rawPath)
+                          : RelaxCostAware(rawPath, grid, gw, gh, links[li].Kind, p, used, padCell, a, b);
                 {
                     float RawWorst(System.Collections.Generic.List<Vector2> path)
                     {
@@ -1240,6 +1252,10 @@ namespace UnturnedGodot
             // the island quietly lost roads. Town-to-town routes dropped 27 -> 23 on seed 424242 after the
             // road-crossing penalty was extended to town approaches, and nothing said so.
             Log.Print($"[island-routes] {links.Count} link(s) planned -> {routes.Count} route(s) carved");
+            if (!NoFillet)
+                Log.Print($"[island-fillet] {FilletsMade} corner(s) filleted, {FilletUnderMin} too tight for their "
+                          + $"own straights to hold a {30:0} m arc (a routing defect, rounded anyway and counted), "
+                          + $"{FilletTooDear} refused because the shortcut crossed ground the search had priced out");
 
             // ---- THE SUITE'S TWO ROUTE-QUALITY NUMBERS, MEASURED AT PRODUCT SCALE ------------------------
             // world.proc_island asserts worst per-step gradient < 35% and sharpest turn < 50 deg, and reads
@@ -1550,6 +1566,185 @@ namespace UnturnedGodot
         /// degree bends"). Windowed average over the interior with the weight tapered to ZERO at both ends, so
         /// the perpendicular departure survives: smoothing the whole polyline would round the stub off and
         /// quietly undo the previous commit.</summary>
+
+        /// <summary>Cost of running a STRAIGHT line between two world points, using the identical expression
+        /// the search used to price its own steps. This is the whole point of StepCost existing: a shortcut
+        /// that crosses a hill, a river, another road's core or a town pad costs what the search would have
+        /// paid to go there, so the smoother cannot take a line the search refused.</summary>
+        static float LineCost(Vector2 a, Vector2 b, float[,] grid, int gw, int gh, float slopeCost,
+                              Params p, float[,] used, bool[,] padCell, Connector from, Connector to)
+        {
+            const float Unit = 4f;
+            float len = a.DistanceTo(b);
+            int steps = Mathf.Max(1, Mathf.CeilToInt(len / Unit));
+            int px = Mathf.Clamp(Mathf.RoundToInt(a.X / Unit), 0, gw - 1);
+            int py = Mathf.Clamp(Mathf.RoundToInt(a.Y / Unit), 0, gh - 1);
+            float total = 0f;
+            for (int i = 1; i <= steps; i++)
+            {
+                var q = a.Lerp(b, i / (float)steps);
+                int cx = Mathf.Clamp(Mathf.RoundToInt(q.X / Unit), 0, gw - 1);
+                int cy = Mathf.Clamp(Mathf.RoundToInt(q.Y / Unit), 0, gh - 1);
+                if (cx == px && cy == py) continue;
+                int ox = Mathf.Clamp(cx - px, -1, 1), oy = Mathf.Clamp(cy - py, -1, 1);
+                total += StepCost(ToWorld(grid[px, py]), ToWorld(grid[cx, cy]), ox, oy, cx, cy,
+                                  slopeCost, p, used, padCell, from, to);
+                px = cx; py = cy;
+            }
+            return total;
+        }
+
+        /// <summary>⭐ THE SMOOTHER, REBUILT SO IT CANNOT UNDO THE SEARCH.
+        ///
+        /// The old one averaged in 2D and never read the heightmap, so it cut exactly the corner the A* had
+        /// paid to go around: measured, it took the worst per-step gradient from 79/91/98% to 187/224/327% on
+        /// the same three paths, and left ~170 turns an island over the suite's 50 degree threshold. Tuning
+        /// the search could not reach that -- pricing climbs harder made the count WORSE at every value --
+        /// because the stage that runs last wins.
+        ///
+        /// Two operations, both cost-aware:
+        ///   STRING-PULL  from each anchor, take the furthest point whose STRAIGHT line costs no more than
+        ///                `Slack` x the path's own cost between them, under StepCost. A shortcut over a hill
+        ///                or across another road prices itself out and is refused, so terrain-following and
+        ///                obstacle-avoidance come from one rule instead of being hoped for.
+        ///   FILLET       replace each surviving corner with a true circular arc of radius >= MinArcR, its
+        ///                cells checked against StepCost as well. Two opposite fillets that eat the straight
+        ///                between them meet as an S -- the counter-curve master asked for twice -- and that
+        ///                falls out of taking the largest radius that fits rather than being a special case.
+        ///
+        /// Curvature AND grade are bounded together, which tinyclaw flagged as the trap: a terrain-blind
+        /// string-pull would re-create the gradient defect while measuring as an improvement on turn angle.
+        ///
+        /// The stubs are PINNED and are the first and last straights, so the gate point and its perpendicular
+        /// departure survive by construction rather than by a blend that has to be tuned not to eat them.</summary>
+        static System.Collections.Generic.List<Vector2> RelaxCostAware(
+            System.Collections.Generic.List<Vector2> pts, float[,] grid, int gw, int gh, LinkKind kind,
+            Params p, float[,] used, bool[,] padCell, Connector from, Connector to)
+        {
+            const int Pin = StubPoints;
+            const float Slack = 1.15f;      // a shortcut may cost 15% more than the path it replaces
+            const float MinArcR = 30f;      // below this the built ribbon starts inverting (see the fold formula)
+            const float MaxArcR = 120f;
+            const float Step = 4f;          // output spacing, the grid unit
+            if (pts.Count < Pin * 2 + 3) return pts;
+
+            float slopeCost = SlopeCostFor(kind);
+            float LC(Vector2 a2, Vector2 b2) => LineCost(a2, b2, grid, gw, gh, slopeCost, p, used, padCell, from, to);
+
+            // ---- 1. string-pull the free interior, anchored ON the stub ends so the join is a continuation --
+            int lo = Pin, hi = pts.Count - 1 - Pin;
+            var cum = new float[pts.Count];
+            for (int i = lo + 1; i <= hi; i++) cum[i] = cum[i - 1] + LC(pts[i - 1], pts[i]);
+
+            var corners = new System.Collections.Generic.List<Vector2> { pts[lo] };
+            int at = lo;
+            while (at < hi)
+            {
+                int take = at + 1;
+                for (int j = at + 2; j <= hi; j++)
+                {
+                    float along = cum[j] - cum[at];
+                    if (along <= 0.001f) { take = j; continue; }
+                    if (LC(pts[at], pts[j]) <= along * Slack) take = j; else break;
+                }
+                corners.Add(pts[take]);
+                at = take;
+            }
+
+            // ---- 2. fillet every corner that turns ---------------------------------------------------------
+            var shaped = new System.Collections.Generic.List<Vector2> { corners[0] };
+            for (int k = 1; k < corners.Count - 1; k++)
+            {
+                Vector2 prev = corners[k - 1], cur = corners[k], next = corners[k + 1];
+                Vector2 d1 = cur - prev, d2 = next - cur;
+                if (d1.Length() < 0.01f || d2.Length() < 0.01f) continue;
+                Vector2 v1 = d1.Normalized(), v2 = d2.Normalized();
+                float phi = Mathf.Acos(Mathf.Clamp(v1.Dot(v2), -1f, 1f));
+                if (phi < 0.02f) { shaped.Add(cur); continue; }        // effectively straight
+                // ⚠ HALF of each neighbouring straight, so two adjacent corners cannot claim the same metres
+                // and produce a self-overlapping path.
+                float tMax = 0.5f * Mathf.Min(d1.Length(), d2.Length());
+                float half = Mathf.Tan(phi * 0.5f);
+                float r = Mathf.Min(MaxArcR, tMax / Mathf.Max(half, 1e-4f));
+                // ⚠ A CORNER THAT CANNOT HOLD MinArcR STILL GETS THE BIGGEST ARC THAT FITS. The first version
+                // left it as a SHARP corner and counted it -- which is worse than the averaging smoother it
+                // replaced, because that at least rounded it a bit. A short arc is reported AND rounded; the
+                // count says the path had a corner too tight for its own straights, which is a routing defect
+                // to fix upstream, not a reason to hand the ribbon a hinge in the meantime.
+                if (r < MinArcR) FilletUnderMin++;
+                float t = r * half;
+                Vector2 pA = cur - v1 * t, pB = cur + v2 * t;
+                // ⚠ AND THE ARC HAS TO BE AFFORDABLE TOO. Cutting the corner moves the road off the path the
+                // search chose; if that ground is dear, keep the corner rather than buy it.
+                if (LC(pA, cur) + LC(cur, pB) > 0.001f && LC(pA, pB) > (LC(pA, cur) + LC(cur, pB)) * Slack)
+                { FilletTooDear++; shaped.Add(cur); continue; }
+                float cross = v1.X * v2.Y - v1.Y * v2.X;
+                Vector2 n1 = cross > 0f ? new Vector2(-v1.Y, v1.X) : new Vector2(v1.Y, -v1.X);
+                Vector2 centre = pA + n1 * r;
+                // ⚠⚠ AN ARC MUST BE SAMPLED FINELY ENOUGH THAT ITS JOINTS DO NOT FOLD IT. SpawnRoutes takes
+                // every 6th point as a road joint, and the built radius at a joint is
+                // s*cos^2(phi/2)/(4 sin(phi/2)) for a turn phi over spacing s -- so on an arc of radius r
+                // sampled at spacing d, joints land at 6d and turn 6d/r each. Leave d at 4 m and a 30 m arc
+                // gives 24 m joints turning 46 degrees, which builds 13 m; anything under ~23 m radius crosses
+                // the 59-degree fold line outright. That is why the first run of this smoother took folds from
+                // 1/0/0 to 7/9/10 while every other number improved.
+                //
+                // So an arc emits at r/12, which puts joints at r/2 and builds 0.77r -- comfortably clear for
+                // any radius this code will produce. fable specified this as the companion to the fillet and I
+                // built the fillet without it. Clamped so a huge radius does not go coarser than the straights
+                // and a small one does not emit thousands of points.
+                float arcStep = Mathf.Clamp(r / 12f, 1f, Step);
+                int arcN = Mathf.Max(2, Mathf.CeilToInt(r * phi / arcStep));
+                // ⚠⚠ SWEEP FROM ANGLE TO ANGLE, NOT BY A SIGNED ROTATION. The first version rotated the start
+                // radius by +/-phi picked off the cross product, which assumes a handedness -- and ProcIsland's
+                // Z is NEGATED relative to world, so "counter-clockwise" here is not what the formula thinks.
+                // When it guessed wrong the arc swept the long way round and the road doubled back: folds went
+                // 1/0/0 -> 7/9/10 on the three seeds while every other number improved, which is precisely
+                // what a wrong-way arc looks like.
+                //
+                // Interpolating between the two endpoints' OWN angles, taking the short way, cannot be wrong in
+                // either convention -- it is derived from the points rather than from an assumption about the
+                // frame. The one trap left is the +/-pi wrap, handled explicitly.
+                Vector2 ra = pA - centre, rb = pB - centre;
+                float a0 = Mathf.Atan2(ra.Y, ra.X), a1 = Mathf.Atan2(rb.Y, rb.X);
+                float sweep = a1 - a0;
+                while (sweep > Mathf.Pi) sweep -= Mathf.Tau;
+                while (sweep < -Mathf.Pi) sweep += Mathf.Tau;
+                shaped.Add(pA);
+                for (int q = 1; q <= arcN; q++)
+                {
+                    float ang = a0 + sweep * q / arcN;
+                    shaped.Add(centre + new Vector2(Mathf.Cos(ang), Mathf.Sin(ang)) * r);
+                }
+                FilletsMade++;
+            }
+            shaped.Add(corners[^1]);
+
+            // ---- 3. put the pinned stubs back and resample at the grid unit --------------------------------
+            var full = new System.Collections.Generic.List<Vector2>();
+            for (int i = 0; i < lo; i++) full.Add(pts[i]);
+            full.AddRange(shaped);
+            for (int i = hi + 1; i < pts.Count; i++) full.Add(pts[i]);
+
+            // ⚠ SUBDIVIDE THE LONG SEGMENTS ONLY. A uniform resample here would throw away the arc spacing
+            // chosen above and put the folds straight back -- the whole point of emitting an arc at r/12 is
+            // that its points survive to become joints. So this only fills IN where a gap is larger than the
+            // grid unit, and never thins anything.
+            var outp = new System.Collections.Generic.List<Vector2> { full[0] };
+            for (int i = 1; i < full.Count; i++)
+            {
+                float segLen = full[i - 1].DistanceTo(full[i]);
+                if (segLen < 1e-4f) continue;
+                int sub = Mathf.CeilToInt(segLen / Step);
+                for (int q = 1; q <= sub; q++) outp.Add(full[i - 1].Lerp(full[i], q / (float)sub));
+            }
+            return outp;
+        }
+
+        /// <summary>How many corners were filleted, refused for being too tight for their straights, and
+        /// refused because the shortcut crossed ground the search had priced out.</summary>
+        public static int FilletsMade, FilletUnderMin, FilletTooDear;
+
         static System.Collections.Generic.List<Vector2> Relax(System.Collections.Generic.List<Vector2> pts)
         {
             const int Pin = StubPoints;   // held exactly at each end -- the stub is StubCells+1 points
