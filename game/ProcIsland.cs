@@ -474,6 +474,43 @@ namespace UnturnedGodot
             }
             LastRejectReport = report.Length == 0 ? "all placed" : report.ToString();
 
+            // ---- HOW CROWDED IS THIS ISLAND, REALLY? ------------------------------------------------------
+            // strawberry: "might help to reduce the number of pois for a small map like this". Nobody has
+            // measured it, and the comparison exists: retail PEI carries 21 named locations over a 1565x1743 m
+            // spread = 2.73 km^2, i.e. 7.7 per km^2, with nearest-neighbour spacing of 232 m minimum and 294 m
+            // median. So the question has an answer rather than a taste.
+            //
+            // ⚠ MEASURE THE LAND, NOT THE GRID. The grid is 3076 m square but the island inside it is a blob;
+            // dividing by the grid area understates density by whatever fraction is sea, and guessing that
+            // fraction is exactly the sort of thing that has been wrong all day.
+            {
+                int dryCells = 0;
+                for (int x = 0; x < gw; x++)
+                    for (int y = 0; y < gh; y++)
+                        if (ToWorld(grid[x, y]) > p.SeaLevel) dryCells++;
+                float landKm2 = dryCells * 4f * 4f / 1e6f;
+                float nnMin = float.MaxValue, nnSum = 0f; var nns = new System.Collections.Generic.List<float>();
+                for (int i = 0; i < placed.Count; i++)
+                {
+                    float best = float.MaxValue;
+                    for (int j = 0; j < placed.Count; j++)
+                    {
+                        if (i == j) continue;
+                        float dx = placed[i].X - placed[j].X, dz = placed[i].Z - placed[j].Z;
+                        float d = Mathf.Sqrt(dx * dx + dz * dz);
+                        if (d < best) best = d;
+                    }
+                    if (best < float.MaxValue) { nns.Add(best); nnSum += best; if (best < nnMin) nnMin = best; }
+                }
+                nns.Sort();
+                string sp = nns.Count > 0
+                    ? $"nearest-neighbour {nnMin:0} m min / {nns[nns.Count / 2]:0} m median / {nns[^1]:0} m max"
+                    : "no spacing";
+                Log.Print($"[island-density] {placed.Count} POI(s) on {landKm2:0.00} km^2 of land "
+                          + $"= {placed.Count / Mathf.Max(0.01f, landKm2):0.0} per km^2; {sp} "
+                          + $"[retail PEI: 21 locations, 2.73 km^2 spread, 7.7 per km^2, 232/294/486 m]");
+            }
+
             foreach (var poi in placed) Flatten(grid, gw, gh, poi);
             if (p.SmoothStrength > 0f) Smooth(grid, gw, gh, p.SmoothStrength);
             return placed;
