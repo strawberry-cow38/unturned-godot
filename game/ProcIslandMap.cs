@@ -1,0 +1,220 @@
+using Godot;
+
+namespace UnturnedGodot
+{
+    /// <summary>The M-map image for a generated island (strawberry 2026-09-17: "the map shows PEI's map", and
+    /// earlier "actually generate the map graphic").
+    ///
+    /// ⭐ DRAWN FROM THE DATA, NOT PHOTOGRAPHED. The retail path bakes its map with --bakemap, which flies an
+    /// orthographic camera over the world and screenshots it -- that needs a render pass, a settled frame and a
+    /// camera the generator does not otherwise have, and it captures whatever the culler happened to admit.
+    /// Everything a map wants to show is already in memory here: the heightmap says where the coast and the
+    /// hills are, the splat says what the ground IS, and the route list says where the roads go. Reading those
+    /// is deterministic, costs a few milliseconds, and cannot disagree with the world the way a photograph of a
+    /// half-streamed scene can.
+    ///
+    /// ⚠ The image is written to content/ beside the shipped maps, because that is where MapUI.LoadMap looks.
+    /// Keyed by seed, and OVERWRITTEN each generation -- the foliage bake taught that lesson today: a cache
+    /// keyed on the seed alone goes stale the moment anything else about the generator changes, and a map of an
+    /// island that no longer exists is worse than no map.</summary>
+    public static class ProcIslandMap
+    {
+        public const int Res = 1024;
+
+        /// <summary>Point the map screen at an island's ALREADY-BAKED art, without redrawing it.
+        ///
+        /// ⚠ RE-BAKING ON RELOAD WOULD DRAW A WORSE MAP, and quietly. Bake() overlays the route polylines and
+        /// the town tiles, and both of those live in memory on the Terrain -- they are generator output, not
+        /// saved grid data -- so a reopened map has empty lists and would bake a picture of the island with
+        /// every road and town missing from it. The PNG and the node file written at creation are the correct
+        /// artefacts; this just re-points MapUI and MapNodes at them.
+        ///
+        /// The FRAME is recomputed rather than stored: it is a pure function of the terrain's bounds, which
+        /// come back with the heightmap, so deriving it here cannot drift from what Bake used.</summary>
+        public static bool Rebind(Terrain terr, int seed)
+        {
+            if (terr == null) return false;
+            string name = $"island_{seed}_map.png";
+            if (!System.IO.File.Exists(ProjectSettings.GlobalizePath("res://content/" + name)))
+            {
+                Log.Print($"[island-map] no baked art for seed {seed} -- the map screen keeps what it had");
+                return false;
+            }
+            var b = terr.WorldBoundsXZ();
+            MapUI.IslandImage = name;
+            MapUI.IslandSize = Mathf.Max(b.MaxX - b.MinX, b.MaxZ - b.MinZ);
+            MapUI.MapCentre = new Vector2((b.MinX + b.MaxX) * 0.5f, (b.MinZ + b.MaxZ) * 0.5f);
+            string nodes = $"nodes_island_{seed}.tsv";
+            if (System.IO.File.Exists(ProjectSettings.GlobalizePath("res://content/" + nodes)))
+            {
+                MapNodes.MapNodeFile = nodes;
+                MapNodes.Reload();   // or the reopened island is labelled with PEI's town names
+            }
+            Log.Print($"[island-map] rebound to content/{name} ({MapUI.IslandSize:0} m across)");
+            return true;
+        }
+
+        public static string Bake(Terrain terr, int seed)
+        {
+            if (terr == null) return null;
+            var b = terr.WorldBoundsXZ();
+            // SQUARE, and framed on the island's own centre. MapUI.WorldToNorm divides by ONE size for both
+            // axes, so a non-square frame would stretch every dot on it.
+            float spanX = b.MaxX - b.MinX, spanZ = b.MaxZ - b.MinZ;
+            float size = Mathf.Max(spanX, spanZ);
+            float cx = (b.MinX + b.MaxX) * 0.5f, cz = (b.MinZ + b.MaxZ) * 0.5f;
+
+            var img = Image.CreateEmpty(Res, Res, false, Image.Format.Rgb8);
+            float sea = Terrain.SeaLevelY;
+            for (int py = 0; py < Res; py++)
+            {
+                // ⚠ THE SAME MAPPING MapUI PROJECTS WITH, inverted. WorldToNorm is
+                // ((x - cx)/size + 0.5, 0.5 + (z - cz)/size), so pixel -> world must be the exact inverse or
+                // every marker lands somewhere the picture does not show. The bake reading the projection
+                // rather than carrying its own copy is the same rule the retail baker follows.
+                float wz = cz + (py / (float)(Res - 1) - 0.5f) * size;
+                for (int px = 0; px < Res; px++)
+                {
+                    float wx = cx + (px / (float)(Res - 1) - 0.5f) * size;
+                    float h = terr.SampleHeight(wx, wz);
+                    Color c;
+                    if (Terrain.HasWater && h < sea)
+                    {
+                        // Deeper water reads darker, which is what makes a coastline legible at a glance.
+                        float d = Mathf.Clamp((sea - h) / 24f, 0f, 1f);
+                        c = new Color(0.16f, 0.30f, 0.46f).Lerp(new Color(0.05f, 0.11f, 0.22f), d);
+                    }
+                    else
+                    {
+                        c = Terrain.LayerColor(terr.SampleDominantLayer(wx, wz));
+                        // Relief shading off the real slope, lit from the north-west like every map ever drawn.
+                        // Without it a flat-coloured splat map has no hills in it at all.
+                        var n = terr.NormalAt(wx, wz);
+                        float lit = Mathf.Clamp(0.55f + 0.45f * n.Dot(new Vector3(-0.55f, 0.72f, -0.42f).Normalized()), 0.35f, 1.25f);
+                        c = new Color(c.R * lit, c.G * lit, c.B * lit);
+                    }
+                    img.SetPixel(px, py, c);
+                }
+            }
+
+            // ---- the roads, drawn on top -----------------------------------------------------------------
+            // Thicker than one pixel: at 1024 px over 3 km a road is a third of a pixel wide, which is a dotted
+            // line at best. A map draws roads at a legible width rather than a true one.
+            var road = new Color(0.93f, 0.88f, 0.72f);
+            int drawn = 0;
+            if (terr.IslandRoutes != null)
+                foreach (var r in terr.IslandRoutes)
+                {
+                    if (r.Points == null) continue;
+                    foreach (var pt in r.Points)
+                    {
+                        var w = ProcIslandSpawn.PosFor(terr, pt.X, pt.Y);
+                        int ix = Mathf.RoundToInt(((w.X - cx) / size + 0.5f) * (Res - 1));
+                        int iy = Mathf.RoundToInt((0.5f + (w.Z - cz) / size) * (Res - 1));
+                        for (int oy = -1; oy <= 1; oy++)
+                            for (int ox = -1; ox <= 1; ox++)
+                            {
+                                int qx = ix + ox, qy = iy + oy;
+                                if (qx < 0 || qy < 0 || qx >= Res || qy >= Res) continue;
+                                img.SetPixel(qx, qy, road);
+                            }
+                        drawn++;
+                    }
+                }
+
+            // ---- and the towns, as filled pads -------------------------------------------------------------
+            var townCol = new Color(0.78f, 0.74f, 0.66f);
+            if (terr.IslandTiles != null)
+                foreach (var t in terr.IslandTiles)
+                {
+                    var w = ProcIslandSpawn.PosFor(terr, t.X, t.Z);
+                    int ix = Mathf.RoundToInt(((w.X - cx) / size + 0.5f) * (Res - 1));
+                    int iy = Mathf.RoundToInt((0.5f + (w.Z - cz) / size) * (Res - 1));
+                    int rad = Mathf.Max(1, Mathf.RoundToInt(ProcIsland.TileSize * 0.5f / size * Res));
+                    for (int oy = -rad; oy <= rad; oy++)
+                        for (int ox = -rad; ox <= rad; ox++)
+                        {
+                            int qx = ix + ox, qy = iy + oy;
+                            if (qx < 0 || qy < 0 || qx >= Res || qy >= Res) continue;
+                            img.SetPixel(qx, qy, townCol);
+                        }
+                }
+
+            BakeNodes(terr, seed, cx, cz);
+
+            string name = $"island_{seed}_map.png";
+            string path = ProjectSettings.GlobalizePath("res://content/" + name);
+            var err = img.SavePng(path);
+            if (err != Error.Ok) { Log.Err($"[island-map] save failed ({err}) -> {path}"); return null; }
+            Log.Print($"[island-map] {Res}x{Res} map baked from data -> content/{name} "
+                      + $"({size:0} m across, centre {cx:0},{cz:0}, {drawn} road point(s))");
+
+            // Hand MapUI the image AND the frame. ⚠ Both, not just the image: a generated island lives in one
+            // quadrant rather than centred on the origin, so without the centre every dot on the map is offset
+            // by half the island.
+            MapUI.IslandImage = name;
+            MapUI.IslandSize = size;
+            MapUI.MapCentre = new Vector2(cx, cz);
+            return name;
+        }
+
+        /// <summary>Fruit. ⚠ A LIST, not a generator: a name has to be pronounceable and recognisable, and the
+        /// two ways to get that are a curated list or a syllable grammar -- and a grammar that produces
+        /// "Brelmond" also produces "Xqualt" on some seed nobody will test.</summary>
+        static readonly string[] Fruits =
+        {
+            "Apple", "Cherry", "Peach", "Plum", "Quince", "Damson", "Medlar", "Mulberry", "Bramble",
+            "Sloe", "Rowan", "Elder", "Juniper", "Hazel", "Chestnut", "Walnut", "Almond", "Fig",
+            "Olive", "Citron", "Bergamot", "Lychee", "Papaya", "Guava", "Tamarind", "Persimmon",
+            "Pomelo", "Nectarine", "Apricot", "Greengage", "Loganberry", "Cloudberry",
+        };
+
+        /// <summary>Name every town and write the node file the map + the `teleport` console command read
+        /// (strawberry 2026-09-17: "the map still has the node positions and names of pei. give each town a
+        /// random name node in its center from a list of fruits and the town suffix for towns and city suffix
+        /// for cities").
+        ///
+        /// ⚠ MapNodes IS A FILE, NOT A LIST IN MEMORY -- it reads content/&lt;MapNodeFile&gt; and caches. So a
+        /// generated island needs its own .tsv and a Reload(), or the map keeps showing PEI's Alberton and
+        /// Fernwood Farm over an island that has neither.
+        ///
+        /// ⚠ NAMES ARE DRAWN WITHOUT REPLACEMENT. Seeded picks collide -- two towns rolling "Cherry" on one
+        /// island is not rare at 32 fruits and a dozen towns, it is the birthday problem -- and two places with
+        /// the same name is worse than an odd one, because directions stop working.</summary>
+        static void BakeNodes(Terrain terr, int seed, float cx, float cz)
+        {
+            if (terr?.IslandTiles == null) return;
+            // Tiles grouped per monument -> its centre and its size class, the same count SizeOf reads.
+            var byPoi = new System.Collections.Generic.Dictionary<int, (float sx, float sz, int n)>();
+            foreach (var t in terr.IslandTiles)
+            {
+                byPoi.TryGetValue(t.Poi, out var a);
+                byPoi[t.Poi] = (a.sx + t.X, a.sz + t.Z, a.n + 1);
+            }
+            var rng = new System.Random(seed ^ 0x4A3B21);
+            var pool = new System.Collections.Generic.List<string>(Fruits);
+            var sb = new System.Text.StringBuilder();
+            int named = 0;
+            foreach (var kv in byPoi)
+            {
+                var size = ProcIsland.SizeOf(kv.Value.n);
+                if (size == ProcIsland.TownSize.Monument) continue;   // two caps and a road does not get a name
+                if (pool.Count == 0) break;
+                int pick = rng.Next(pool.Count);
+                string fruit = pool[pick]; pool.RemoveAt(pick);       // without replacement
+                string label = fruit + (size == ProcIsland.TownSize.City ? " City" : " Town");
+                var w = ProcIslandSpawn.PosFor(terr, kv.Value.sx / kv.Value.n, kv.Value.sz / kv.Value.n);
+                sb.Append(label).Append('\t')
+                  .Append(w.X.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)).Append(',')
+                  .Append(w.Y.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)).Append(',')
+                  .Append(w.Z.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)).Append('\n');
+                named++;
+            }
+            string file = $"nodes_island_{seed}.tsv";
+            System.IO.File.WriteAllText(ProjectSettings.GlobalizePath("res://content/" + file), sb.ToString());
+            MapNodes.MapNodeFile = file;
+            MapNodes.Reload();   // drop PEI's cached nodes, or the map shows Alberton over an island without one
+            Log.Print($"[island-map] {named} town node(s) named -> content/{file}");
+        }
+    }
+}

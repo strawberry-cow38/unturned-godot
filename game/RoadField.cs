@@ -15,6 +15,18 @@ namespace UnturnedGodot
 
         struct RoadMat { public float Width, Height, Depth, Offset; public bool Concrete; }
         const float WidthScale = 1.15f;   // master 2026-08-24: roads slightly thicker (fills the bald patch next to Fernwood Farm); the collider shares this width
+        /// <summary>...and the same idea on the other axis (strawberry 2026-09-16: "still got bald patches on
+        /// road splines. might pay to make them slightly thicker vertically").
+        ///
+        /// A road's SURFACE verts sit halfVerticalSize ABOVE the sampled ground and its outer taper verts the
+        /// same distance BELOW, so this is the depth of the lip that hides the join. A bald patch is ground
+        /// showing through near the edge, and on a slope the edge is exactly where the terrain is furthest from
+        /// the centreline sample -- so the lip is what has to reach it. Scaled rather than added, so a material
+        /// authored thin stays proportionally thin.</summary>
+        /// ⚠ 1.1, down from 1.6 (strawberry: "make the roads less thick vertically"). 1.6 was chosen to hide
+        /// bald patches at the ribbon's edge; the ground under a generated island's roads is now conformed to
+        /// the road itself, so there is nothing left for the lip to hide and it was just a visible slab.
+        const float DepthScale = 1.1f;
         class Joint   // class so the editor can move a vertex/tangent in place
         {
             public Vector3 Vertex, Tan0, Tan1; public float Offset; public bool IgnoreTerrain; public byte Mode;
@@ -293,11 +305,19 @@ namespace UnturnedGodot
         /// smooth without the user placing a single handle. Joints are MIRROR mode (0) so the two tangents
         /// stay opposite and the curve is C1 -- which is what makes a drawn rail look drawn rather than
         /// hand-jointed. Returns the new road index, or -1 if there are too few points to be a road.</summary>
-        public int AddRoadFromPolyline(System.Collections.Generic.IReadOnlyList<Vector3> pts, int material = 0, bool loop = false)
+        /// <summary><paramref name="ignoreTerrain"/> marks every joint as owning its own height.
+        ///
+        /// ⚠ WITHOUT IT THE POLYLINE'S Y IS THROWN AWAY. SampleAt does `p.Y = Terr.SampleHeight(p.X, p.Z)`
+        /// unless the joint says otherwise, so a caller that has computed a smoothed road PROFILE hands it over
+        /// and watches the ribbon trace the raw heightmap instead -- which is the same "follow the track, not
+        /// the bumpy heightmap" the train already passes snapTerrain:false for. The generated island's routes
+        /// spend a whole pass (ProcIslandSpawn.SmoothProfile) deriving a grade that clears the ground, and
+        /// every metre of it was inert until this existed.</summary>
+        public int AddRoadFromPolyline(System.Collections.Generic.IReadOnlyList<Vector3> pts, int material = 0, bool loop = false, bool ignoreTerrain = false)
         {
             if (pts == null || pts.Count < 2) return -1;
             var r = new RoadData { Material = Mathf.Clamp(material, 0, Mathf.Max(0, _mats.Count - 1)), IsLoop = loop, GuidBytes = System.Array.Empty<byte>() };
-            for (int i = 0; i < pts.Count; i++) r.Joints.Add(new Joint { Vertex = pts[i], Mode = 0 });
+            for (int i = 0; i < pts.Count; i++) r.Joints.Add(new Joint { Vertex = pts[i], Mode = 0, IgnoreTerrain = ignoreTerrain });
             RetangentRoad(r);
             _roads.Add(r);
             int idx = _roads.Count - 1;
@@ -861,6 +881,27 @@ namespace UnturnedGodot
         /// <summary>Where along the spline the road is sampled: src updateSamples' arc-length step every 5 world
         /// units, carried continuously across joints, plus a final sample. Shared with the LANE paths -- sampling
         /// them anywhere else would let a lane cut a corner the road surface does not.</summary>
+        /// <summary>The centreline of a BUILT road, sampled the same way its surface is.
+        ///
+        /// ⚠ THIS IS NOT THE POLYLINE THAT WAS HANDED TO AddRoadFromPolyline. The joints are control points of a
+        /// Catmull-Rom, so between them the ribbon BOWS away from the straight chord -- by metres on a bend.
+        /// Anything reasoning about where the road physically is (does it cross another one? is the ground under
+        /// it conformed?) has to ask the curve, not the input. Measuring the input is how a generator reports
+        /// zero crossings while the player is looking at one.</summary>
+        public System.Collections.Generic.List<Vector3> SampleCentreline(int road)
+        {
+            var outp = new System.Collections.Generic.List<Vector3>();
+            if (road < 0 || road >= _roads.Count) return outp;
+            var r = _roads[road];
+            if (r.Joints.Count < 2) return outp;
+            foreach (var (idx, t) in SampleWalk(r))
+            {
+                RoadFrame(r, idx, t, out Vector3 pos, out _, out _, out _, out _);
+                outp.Add(pos);
+            }
+            return outp;
+        }
+
         List<(int idx, float t)> SampleWalk(RoadData r)
         {
             int jc = r.Joints.Count;
@@ -924,7 +965,7 @@ namespace UnturnedGodot
             // halfVerticalSize while the outer TAPER verts go DOWN by halfVerticalSize -> the taper sinks BELOW the
             // ground so there's never a gap to see under. verticalOffset is applied per-vert along the normal, NOT as a lift.
             float halfWidth = mat.Width * WidthScale;   // master: slightly thicker (fills bald patches)
-            float halfVerticalSize = mat.Depth;
+            float halfVerticalSize = mat.Depth * DepthScale;
             float verticalSize = halfVerticalSize * 2f;
             float verticalOffset = mat.Offset;
             bool loop = r.IsLoop;

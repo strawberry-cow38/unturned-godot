@@ -171,6 +171,11 @@ namespace UnturnedGodot.Testing
             T.Check($"the network reaches every monument ({seen.Count}/{pois.Count}) -- {netDesc}",
                 seen.Count == pois.Count);
 
+            // ⚠ EVERY LINK ENDPOINT IS ACCOUNTED FOR. Today that means two gates per link, because every route
+            // runs monument-to-monument. A topology that ends a spur on another road's body (a T junction)
+            // gives that end no gate, and this becomes "gates + T-anchors == links * 2". Left as the strict
+            // form deliberately: it is true today, and a topology change SHOULD have to come here and say so
+            // rather than find the check already loosened to accommodate it.
             T.Check($"...and each link has a gate at BOTH ends ({cons.Count} gates for {links.Count} links)",
                 cons.Count == links.Count * 2);
 
@@ -233,20 +238,32 @@ namespace UnturnedGodot.Testing
                 }
                 if (!found) everyGateOnACap = false;
             }
-            // ...and no Cap anywhere that is not serving a gate.
+            // ...and no Cap FACING INTO THE MONUMENT, which is the failure the note above actually names.
+            //
+            // ⚠ THIS USED TO READ "no Cap exists that is not serving a gate", and that is a stricter claim than
+            // the one it was written to make. It held while every monument had at least two links, so every cap
+            // was somebody's gate. It stopped holding when master capped connections ("towns should only have
+            // 1-3 connections", 2026-09-17): a 2-tile monument is a short run of street with a cap at each end,
+            // and a monument with ONE link has one cap serving its gate and one CUL-DE-SAC. Measured on seed
+            // 771177: exactly 14 such caps, one each on poi14..poi27 -- every small monument, none of them a
+            // defect. I aimed three different fixes at them (extend the stub, prune it, join it to the grid)
+            // before dumping the data, and the count sat at 14/14/15 through all three, which is what chasing
+            // the wrong thing looks like.
+            //
+            // A cap's ramp is the one opening it is allowed, so what is genuinely wrong is a cap whose ramp
+            // points at ANOTHER TILE -- an interior junction wearing a Cap, exactly as the note says. A ramp
+            // opening onto empty lattice is a road end, whether a spline meets it there or nothing does.
             foreach (var t in tiles)
             {
                 bool isCap = t.Piece is ProcIsland.RoadPiece.LineCap or ProcIsland.RoadPiece.TeeCap or ProcIsland.RoadPiece.QuadCap;
                 if (!isCap) continue;
                 float yaw = Mathf.DegToRad(t.YawDeg);
-                float px = t.X - Mathf.Sin(yaw) * ProcIsland.TileSize * 0.5f, pz = t.Z - Mathf.Cos(yaw) * ProcIsland.TileSize * 0.5f;
-                bool serves = false;
-                foreach (var gate in cons)
-                    if (gate.Poi == t.Poi && Mathf.Abs(px - gate.X) < 0.6f && Mathf.Abs(pz - gate.Z) < 0.6f) { serves = true; break; }
-                if (!serves) capsOnlyAtGates = false;
+                float nx = t.X - Mathf.Sin(yaw) * ProcIsland.TileSize, nz = t.Z - Mathf.Cos(yaw) * ProcIsland.TileSize;
+                foreach (var o in tiles)
+                    if (o.Poi == t.Poi && Mathf.Abs(o.X - nx) < 0.6f && Mathf.Abs(o.Z - nz) < 0.6f) { capsOnlyAtGates = false; break; }
             }
             T.Check("every gate opens onto a Cap prop, at its ramp", everyGateOnACap);
-            T.Check("...and no Cap exists that is not serving a gate", capsOnlyAtGates);
+            T.Check("...and no Cap's ramp points at another road piece", capsOnlyAtGates);
 
             // THE LATTICE ACTUALLY LINES UP. A gate off the lattice means the road meets the monument up to 12 m
             // past the end of the very road piece it is supposed to join -- and every check above still passes,
@@ -370,9 +387,44 @@ namespace UnturnedGodot.Testing
             foreach (var t in tiles) GD.Print($"[island]   {t}");
 
             // ---- BUILDINGS, set back from the streets they front.
+            // ⚠⚠ THE ISLAND FIXTURE CANNOT EXERCISE THIS RULE, AND READ AS A PRODUCT BUG WHEN IT SAID SO.
+            // Gen(1,1234) is a 257-cell grid -- a ~1 km island, a NINTH of the area of the 769-cell one a real
+            // generation uses -- so every monument on it comes out a stub: about ten road props across the
+            // whole island, which makes SizeOf(<=3 tiles) class each one as Monument, and PlaceBuildings then
+            // returns empty BY DESIGN ("two caps and a road is not a settlement"). The old check reported "the
+            // town got buildings (0)": true, unactionable, and a statement about the fixture rather than the
+            // product. It went red the day the Monument early-return shipped and sat hidden behind an earlier
+            // failing check until that one was fixed -- so "the first failure moved" was a check being
+            // un-hidden, not a regression.
+            //
+            // So the rule gets a town big enough for the rule to apply, assembled exactly the way the generator
+            // assembles one. ⚠ AND THE FIXTURE ASSERTS ITSELF FIRST: if it ever degenerates the same way it
+            // must report THAT, rather than report a buildings bug that is not there. A check whose failure
+            // message names the wrong subsystem costs more than no check.
+            int townIdx = pois.Count;
+            float townHalf = 5 * ProcIsland.TileSize * 0.5f;                     // a 5-tile town, the old default
+            var townPoi = new ProcIsland.Poi(ProcIsland.PoiKind.Town, 600f, 600f, townHalf, 10f, 5);
+            // Gates on the lattice, where SnapConnectorsToLattice would put them: the outermost cell centre is
+            // at +/-48 and a cap's connector sits 12 past it, which is exactly the face at +/-60.
+            var townCons = new System.Collections.Generic.List<ProcIsland.Connector>
+            {
+                new ProcIsland.Connector(townIdx, 0, 600f + townHalf, 600f,  1f, 0f, ProcIsland.LinkKind.Road),
+                new ProcIsland.Connector(townIdx, 1, 600f - townHalf, 600f, -1f, 0f, ProcIsland.LinkKind.Road),
+            };
+            var townTiles = ProcIsland.BuildMonument(townIdx, townPoi, townCons);
+            var townSize = ProcIsland.SizeOf(townTiles.Count);
+            T.Check($"the buildings fixture is a real town rather than a stub ({townTiles.Count} street tiles -> {townSize})",
+                townSize != ProcIsland.TownSize.Monument);
+            tiles.AddRange(townTiles);
+
             var builds = new System.Collections.Generic.List<ProcIsland.MonumentBuilding>();
             for (int i = 0; i < pois.Count; i++) builds.AddRange(ProcIsland.PlaceBuildings(i, pois[i], tiles, ProcIsland.Params.Default(1234)));
-            T.Check($"the town got buildings ({builds.Count})", builds.Count >= 4);
+            builds.AddRange(ProcIsland.PlaceBuildings(townIdx, townPoi, tiles, ProcIsland.Params.Default(1234)));
+            // ⚠ THE FLOOR, NOT A LITERAL. `>= 4` was a number someone picked; MinBuildingsFor IS the rule the
+            // generator implements, so this cannot drift green the way a copied budget does.
+            int wantBuilds = ProcIsland.MinBuildingsFor(townSize);
+            T.Check($"a {townSize} town reaches its building floor ({builds.Count} placed, floor {wantBuilds})",
+                builds.Count >= wantBuilds);
 
             // WHERE THE FRONT WALL LANDS, not where the origin does. The old check asserted every building sat
             // at the SAME distance from its street, which is only the right property if every prop is the same
@@ -391,7 +443,18 @@ namespace UnturnedGodot.Testing
                 var info = ProcIsland.PropInfo(bld.Prop);
                 if (info == null) { unknownProp++; continue; }
                 float yaw = Mathf.DegToRad(bld.YawDeg);
-                float ax = -Mathf.Sin(yaw), az = -Mathf.Cos(yaw);   // +Y: away from the street it fronts
+                // ⚠⚠ THIS AXIS POINTED AT THE STREET AND THE COMMENT SAID IT POINTED AWAY, so the search only
+                // ever matched a street BEHIND the building. YawFor(dx,dz) = atan2(-dx,-dz) is the rotation
+                // that points a prop's local +Y along (dx,dz), and PlaceBuildings passes -d so +Y faces the
+                // street -- which makes -sin/-cos the TOWARD vector, not the away one. Worked example, street
+                // cell at the origin and the block at +X: yaw is 90 deg, the fronted street scores along =
+                // -20 and is rejected by `along > 0.5f`, while a street on the far side scores +20 and is
+                // accepted. So a through-block was silently measured against the wrong road and an edge block
+                // -- nothing behind it -- counted as "facing nothing". That is the 10.
+                //
+                // Same 180-degree family as the Front/Back error below: the buildings were turned to face
+                // their street and this test was never turned with them.
+                float ax = Mathf.Sin(yaw), az = Mathf.Cos(yaw);   // +Y faces the street, so this is away from it
                 float best = float.MaxValue;
                 foreach (var t in tiles)
                 {
@@ -402,13 +465,30 @@ namespace UnturnedGodot.Testing
                     if (along > 0.5f && perp < 1f && along < best) best = along;
                 }
                 if (best == float.MaxValue) { unfronted++; continue; }
-                float gap = best - info.Value.Front;   // front wall -> street centreline
+                // ⚠⚠ THE STREET-FACING WALL IS `Back`, NOT `Front`, AND HAS BEEN SINCE THE YAW FLIP. Placement
+                // uses SetbackForFlipped = FrontWallFromCentreline + b.Back, which puts the origin so the face
+                // b.Back away from it lands on the kerb line -- PlaceBuildings' own comment says so: "that was
+                // the correct face while the building faced -Y and is the BACK of it once turned". This check
+                // kept subtracting Front, so it measured the wall at the far side and read
+                // FrontWallFromCentreline + (Back - Front) instead of FrontWallFromCentreline.
+                //
+                // That is the whole of the 16.5 m against an expected 14.5: a uniform 2 m, because every prop
+                // the fixture placed shares a 2 m Back-Front. It could never be seen while the fixture produced
+                // no buildings at all -- an assertion with an empty population is not a passing assertion, it
+                // is an absent one.
+                float gap = best - info.Value.Back;   // street-facing wall -> street centreline
                 minGap = Mathf.Min(minGap, gap); maxGap = Mathf.Max(maxGap, gap);
             }
+            // ⚠ AND EVERY ONE OF THESE MUST REFUSE TO PASS ON AN EMPTY POPULATION. All three read clean with
+            // zero buildings -- "0 facing nothing" and "none standing in the carriageway" are TRUE of no
+            // buildings -- which is how a real 2 m error in the verge sat unseen behind a fixture that placed
+            // none. The host was never hiding anything (TestHost prints every failed check, not just the
+            // first); the checks were passing vacuously, which looks identical from the outside and is worse.
+            T.Check($"there are buildings to measure at all ({builds.Count})", builds.Count > 0);
             T.Check($"every building actually fronts a street on its facing axis ({unfronted} facing nothing, {unknownProp} unmeasured)",
-                unfronted == 0 && unknownProp == 0);
-            T.Check($"...with its FRONT WALL a verge clear of the kerb ({minGap:0.##}..{maxGap:0.##} m from the centreline, carriageway edge is 8 m)",
-                minGap > 8.5f && Mathf.Abs(maxGap - minGap) < 0.5f
+                builds.Count > 0 && unfronted == 0 && unknownProp == 0);
+            T.Check($"...with its street-facing wall a verge clear of the kerb ({minGap:0.##}..{maxGap:0.##} m from the centreline, carriageway edge is 8 m)",
+                minGap < float.MaxValue && minGap > 8.5f && Mathf.Abs(maxGap - minGap) < 0.5f
                     && Mathf.Abs(minGap - ProcIsland.FrontWallFromCentreline) < 0.5f);
             GD.Print($"[island] building front walls {minGap:0.##}..{maxGap:0.##} m from their street centreline");
 
@@ -417,7 +497,7 @@ namespace UnturnedGodot.Testing
             foreach (var bld in builds)
                 foreach (var t in tiles)
                     if (t.Poi == bld.Poi && Mathf.Abs(t.X - bld.X) < 8f && Mathf.Abs(t.Z - bld.Z) < 8f) clearOfRoad = false;
-            T.Check("...and none standing in the carriageway", clearOfRoad);
+            T.Check($"...and none standing in the carriageway ({builds.Count} measured)", builds.Count > 0 && clearOfRoad);
             foreach (var bld in builds) GD.Print($"[island]   {bld}");
 
             // ---- ROADS. Routed over the terrain, then carved into it.
@@ -483,7 +563,20 @@ namespace UnturnedGodot.Testing
             // PERPENDICULAR DEPARTURE, measured. "It leaves the gate" is true of a road that exits diagonally;
             // the check is the ANGLE between the first segment and the gate's edge normal, which is 0 only if
             // the road actually goes straight out of the wall.
+            // ⚠⚠ AND COUNT WHAT IT MEASURED, OR IT GOES TOOTHLESS WITHOUT GOING RED. The gate lookup below
+            // `continue`s past any gate that is not at this end -- so a route end with NO gate at all is
+            // silently skipped and contributes nothing, while worstExit keeps whatever value the other ends
+            // gave it. The check then passes on a shrinking population and reports the same green as a full
+            // run. That is the identical failure that hid a real 2 m verge error behind an empty building list
+            // earlier tonight: an assertion with no population is not passing, it is absent.
+            //
+            // It matters now rather than in the abstract: both the hierarchy and ring-road topologies end
+            // routes on ANOTHER ROAD (a T junction) instead of on a gate, so every T-end is an end this loop
+            // cannot match. Without a count, the first thing either arm would do is quietly disarm this check
+            // and still show green. Counted, a T-end shows up as "not at a gate" and the number says whether
+            // that was intended.
             float worstExit = 0f;
+            int exitsMeasured = 0, exitsNoGate = 0;
             foreach (var rt in routes)
             {
                 if (rt.Points.Count < 2) continue;
@@ -491,14 +584,22 @@ namespace UnturnedGodot.Testing
                 {
                     var seg = (end.b - end.a).Normalized();
                     // find the gate at this end
+                    bool found = false;
                     foreach (var gate in cons)
                     {
                         if (Mathf.Abs(gate.X - end.a.X) > 0.5f || Mathf.Abs(gate.Z - end.a.Y) > 0.5f) continue;
                         float dot = seg.X * gate.DirX + seg.Y * gate.DirZ;
                         worstExit = Mathf.Max(worstExit, Mathf.RadToDeg(Mathf.Acos(Mathf.Clamp(dot, -1f, 1f))));
+                        found = true;
                     }
+                    if (found) exitsMeasured++; else exitsNoGate++;
                 }
             }
+            // Every route today runs gate-to-gate, so every end must match one. The day a topology lands that
+            // ends a route on another road, this is the line that has to change deliberately -- and it will
+            // fail loudly rather than measure less and say nothing.
+            T.Check($"every route end was actually measured for its exit angle ({exitsMeasured} measured, {exitsNoGate} had no gate at that end)",
+                exitsNoGate == 0 && exitsMeasured == routes.Count * 2);
             // NO HARD BENDS. Measured as the turn angle between consecutive segments -- "the route is smooth"
             // is not checkable, the sharpest corner on it is. An 8-connected A* turns in 45-degree steps, so
             // anything at or near 90 means the relaxation is not reaching that part of the path.
@@ -745,12 +846,25 @@ namespace UnturnedGodot.Testing
                         if (bb.Poi != 0) continue;
                         float byaw = Mathf.DegToRad(bb.YawDeg);
                         float ux = Mathf.Cos(byaw), uz = -Mathf.Sin(byaw);      // mesh +X
-                        float vx = -Mathf.Sin(byaw), vz = -Mathf.Cos(byaw);     // mesh +Y (back)
+                        // ⚠⚠ +Y IS THE FRONT, NOT THE BACK, AND THIS SAID BACK. YawFor(dx,dz)=atan2(-dx,-dz)
+                        // points a prop's local +Y along (dx,dz), and PlaceBuildings passes -d so +Y faces the
+                        // STREET. So (-sin,-cos) is the toward-the-street vector -- proved numerically when the
+                        // fronting check was found reading the same expression backwards -- and the orange bar,
+                        // drawn at -hd, was landing on the FIELD side of every box.
+                        //
+                        // ⚠ THE THIRD INSTANCE OF ONE 180-DEGREE FLIP, and the worst-placed of the three: this
+                        // block carries NO asserts (its own comment says it exists "so a building facing the
+                        // wrong way is visible rather than merely wrong in a number"), so it cannot go red. It
+                        // is the picture you would open to CONFIRM the fronting fix, and it would have shown
+                        // every building backwards -- which is how correct code gets re-flipped to match a
+                        // broken render. Caught by tinyclaw sweeping the file for more of the same rather than
+                        // stopping at the two that had already bitten.
+                        float vx = -Mathf.Sin(byaw), vz = -Mathf.Cos(byaw);     // mesh +Y == the FRONT, faces the street
                         float hw = 9f, hd = 10f;
                         Vector2 C(float a2, float b2) => new(bb.X + ux * a2 + vx * b2, bb.Z + uz * a2 + vz * b2);
-                        var c1 = C(-hw, -hd); var c2 = C(hw, -hd); var c3 = C(hw, hd); var c4 = C(-hw, hd);
+                        var c1 = C(-hw, hd); var c2 = C(hw, hd); var c3 = C(hw, -hd); var c4 = C(-hw, -hd);
                         var bc = new Color(0.78f, 0.70f, 0.55f);
-                        ZLine(c1.X, c1.Y, c2.X, c2.Y, new Color(0.95f, 0.45f, 0.25f));   // FRONT edge (-Y)
+                        ZLine(c1.X, c1.Y, c2.X, c2.Y, new Color(0.95f, 0.45f, 0.25f));   // FRONT edge (+Y, street side)
                         ZLine(c2.X, c2.Y, c3.X, c3.Y, bc);
                         ZLine(c3.X, c3.Y, c4.X, c4.Y, bc);
                         ZLine(c4.X, c4.Y, c1.X, c1.Y, bc);

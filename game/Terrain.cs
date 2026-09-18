@@ -23,7 +23,7 @@ namespace UnturnedGodot
 
         // The 8 shared terrain material layers, colored as a stand-in until real splatmap texture blending. Inferred from
         // the PEI splatmap layout (layer 5 = ocean/water dominant, 2 = grass/ground, 3 = the road network, 0/7 = forest).
-        static Color LayerColor(byte l) => l switch
+        public static Color LayerColor(byte l) => l switch
         {
             // source-accurate: avg colour of each layer's REAL albedo (extracted from core.masterbundle via UnityPy).
             // Layer->material mapping read from PEI Level.hierarchy (see reference_unturned_world memory).
@@ -294,6 +294,108 @@ void fragment() {
             UpdateSplat(_s0Tex, _s0Img); UpdateSplat(_s1Tex, _s1Img);   // guarded: an EMPTY splat image (a map with one splat) used to hit RenderingServer's "p_image is empty" error
         }
 
+        /// <summary>Paint a layer across every texel whose ground sits at or below `maxY`. One pass, ONE
+        /// texture upload.
+        ///
+        /// ⚠ NOT a loop over PaintSplat. That re-uploads the whole splat image on every call (see its trailing
+        /// UpdateSplat), which is fine for a few hundred stamps and absurd for a map-wide sweep -- this touches
+        /// every texel, so per-point painting would mean one full texture upload per texel.
+        ///
+        /// Used for the shore band: sand from the seabed up to a little above the waterline (strawberry: "add a
+        /// sand band above the water level, and anything below it"). Height is sampled from the real grid, so
+        /// the band follows the coast rather than being a ring drawn at a radius.</summary>
+        public void PaintBelowHeight(float maxY, int layer)
+        {
+            if (_dom == null || _s0Img == null) return;
+            var c0 = new Color(layer == 0 ? 1 : 0, layer == 1 ? 1 : 0, layer == 2 ? 1 : 0, layer == 3 ? 1 : 0);
+            var c1 = new Color(layer == 4 ? 1 : 0, layer == 5 ? 1 : 0, layer == 6 ? 1 : 0, layer == 7 ? 1 : 0);
+            int painted = 0;
+            for (int gx = 0; gx < _dw; gx++)
+                for (int gy = 0; gy < _dh; gy++)
+                {
+                    // Texel -> world, the inverse of SampleDominantLayer's mapping (note the negated Z).
+                    float wx = gx * UNIT + _bx, wz = -(gy * UNIT + _bz);
+                    if (SampleHeight(wx, wz) > maxY) continue;
+                    _dom[gx, gy] = (byte)layer;
+                    _s0Img.SetPixel(gx, gy, c0); _s1Img.SetPixel(gx, gy, c1);
+                    painted++;
+                }
+            UpdateSplat(_s0Tex, _s0Img); UpdateSplat(_s1Tex, _s1Img);
+            Log.Print($"[terrain] painted {painted} texel(s) at or below y={maxY:0.#} as layer {layer} ({(layer < DefaultLayerNames.Length ? DefaultLayerNames[layer] : "?")})");
+        }
+
+        /// <summary>Repaint every texel steeper than `minRise` metres of fall per metre travelled.
+        ///
+        /// strawberry: "turn grass thats above a certain steepness into dirt". Grass standing out of a cliff
+        /// face is the same class of wrong as a tree doing it -- and because the scatter refuses anything that
+        /// is not grass, painting the steep ground also stops foliage and trees generating on it, with no
+        /// second rule. One pass, ONE texture upload, for the same reason PaintBelowHeight is.
+        ///
+        /// ⚠ Slope is measured across 2*UNIT, not between adjacent samples. A one-cell difference on a 4 m grid
+        /// is dominated by the heightmap's own quantisation and reports half the map as cliff.</summary>
+        public int PaintSteeperThan(float minRise, int layer)
+        {
+            if (_dom == null || _s0Img == null) return 0;
+            var c0 = new Color(layer == 0 ? 1 : 0, layer == 1 ? 1 : 0, layer == 2 ? 1 : 0, layer == 3 ? 1 : 0);
+            var c1 = new Color(layer == 4 ? 1 : 0, layer == 5 ? 1 : 0, layer == 6 ? 1 : 0, layer == 7 ? 1 : 0);
+            int painted = 0;
+            for (int gx = 0; gx < _dw; gx++)
+                for (int gy = 0; gy < _dh; gy++)
+                {
+                    float wx = gx * UNIT + _bx, wz = -(gy * UNIT + _bz);
+                    float hx = (SampleHeight(wx + UNIT, wz) - SampleHeight(wx - UNIT, wz)) / (2f * UNIT);
+                    float hz = (SampleHeight(wx, wz + UNIT) - SampleHeight(wx, wz - UNIT)) / (2f * UNIT);
+                    if (Mathf.Sqrt(hx * hx + hz * hz) < minRise) continue;
+                    _dom[gx, gy] = (byte)layer;
+                    _s0Img.SetPixel(gx, gy, c0); _s1Img.SetPixel(gx, gy, c1);
+                    painted++;
+                }
+            UpdateSplat(_s0Tex, _s0Img); UpdateSplat(_s1Tex, _s1Img);
+            Log.Print($"[terrain] painted {painted} steep texel(s) (>{Mathf.RadToDeg(Mathf.Atan(minRise)):0.#} deg) as layer {layer}");
+            return painted;
+        }
+
+        /// <summary>Steepness at a world point, as metres of rise per metre travelled. Same 2*UNIT span the
+        /// paint uses, so "is this steep" answers identically for the splat and for anything placed on it.</summary>
+        public float SlopeAt(float wx, float wz)
+        {
+            float hx = (SampleHeight(wx + UNIT, wz) - SampleHeight(wx - UNIT, wz)) / (2f * UNIT);
+            float hz = (SampleHeight(wx, wz + UNIT) - SampleHeight(wx, wz - UNIT)) / (2f * UNIT);
+            return Mathf.Sqrt(hx * hx + hz * hz);
+        }
+
+        /// <summary>Surface normal at a world point, from the same 2*UNIT gradient SlopeAt uses -- so a prop
+        /// tilted onto it is tilted onto exactly the steepness that decided it belonged there.</summary>
+        public Vector3 NormalAt(float wx, float wz)
+        {
+            float hx = (SampleHeight(wx + UNIT, wz) - SampleHeight(wx - UNIT, wz)) / (2f * UNIT);
+            float hz = (SampleHeight(wx, wz + UNIT) - SampleHeight(wx, wz - UNIT)) / (2f * UNIT);
+            return new Vector3(-hx, 1f, -hz).Normalized();
+        }
+
+        /// <summary>Build the ocean surface for a map that did not come from the retail loader.
+        ///
+        /// ⚠ A generated island had a SEA LEVEL and no SEA. BuildEditorNew sets HasWater and SeaLevelY -- so
+        /// swimming, buoyancy and the underwater pass all believed in water -- while the plane itself is built
+        /// only inside the retail terrain load. The coast was shaped for a sea that was never drawn.
+        /// Reuses BuildOceanMesh, which masks the plane to WET cells, so an island gets ocean around it rather
+        /// than a sheet under the whole map.</summary>
+        public void BuildOceanPlane()
+        {
+            if (!HasWater || _grid == null) return;
+            var b = WorldBoundsXZ();
+            float wsx = (b.MaxX - b.MinX) + 400f, wsz = (b.MaxZ - b.MinZ) + 400f;   // overhang past the coast, as the retail path does
+            int subX = Mathf.Clamp((int)(wsx / 4f), 64, 600), subZ = Mathf.Clamp((int)(wsz / 4f), 64, 600);
+            float wcx = (b.MinX + b.MaxX) * 0.5f, wcz = (b.MinZ + b.MaxZ) * 0.5f;
+            var mesh = BuildOceanMesh(this, wsx, wsz, subX, subZ, wcx, wcz, SeaLevelY);
+            if (mesh == null) { Log.Print("[terrain] no wet cells -- no ocean plane built"); return; }
+            var water = new MeshInstance3D { Mesh = mesh, Position = new Vector3(wcx, SeaLevelY, wcz) };
+            water.MaterialOverride = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/water.gdshader") };
+            water.Layers = WaterReflection.WaterLayer;   // keep the ocean out of its own mirror pass
+            AddChild(water);
+            Log.Print($"[terrain] ocean plane built at y={SeaLevelY:0.#} ({wsx:0}x{wsz:0} m)");
+        }
+
         // --- live heightmap sculpt (map editor Terrain tab) ---
         // Raise/lower _grid samples inside a world-radius brush (radial falloff), then rebuild the mesh + collider.
         public void EditHeight(float worldX, float worldZ, float radiusWorld, float deltaWorldY)
@@ -326,6 +428,68 @@ void fragment() {
         /// (Landscape/Holes/ per tile).</summary>
         static string HolesPathFor(string heightmapPath) => heightmapPath + ".holes";
         static string RiversPathFor(string heightmapPath) => heightmapPath + ".rivers";
+        static string SplatPathFor(string heightmapPath) => heightmapPath + ".splat";
+
+        /// <summary>Persist the PAINT. ⚠ Nothing saved this until 2026-09-17, and the omission is invisible on
+        /// a hand-built map (you painted it, you can paint it again) and catastrophic on a generated one, where
+        /// EVERY square metre of dirt, sand and rock is painted by the generator and by nothing else.
+        /// strawberry: "when going to the editor from a proc map. its not the same map" -- the heightmap came
+        /// back exactly, so the island had the right SHAPE with the roads, beaches, cliff faces and town pads
+        /// all reverted to grass.
+        ///
+        /// Stores the DOMINANT layer per texel, which is the whole of what the editor's painting can express:
+        /// PaintSplat and its bulk siblings are winner-take-all (one channel at 1.0, the rest 0), so _dom is
+        /// not a lossy summary of an editor map -- it IS the map. A RETAIL tile's blended weights would not
+        /// survive this, and do not have to: retail maps load their splat from their own tiles and never take
+        /// this path.
+        ///
+        /// RLE because a splat is overwhelmingly long runs of one layer -- a 768x768 island is 590 KB raw and
+        /// about 12 KB run-encoded, and the editor writes this on every save.</summary>
+        public void SaveSplat(string path)
+        {
+            if (_dom == null) return;
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path));
+            using var w = new System.IO.BinaryWriter(System.IO.File.Create(path));
+            w.Write(_dw); w.Write(_dh);
+            byte run = _dom[0, 0]; int len = 0;
+            for (int x = 0; x < _dw; x++)
+                for (int y = 0; y < _dh; y++)
+                {
+                    byte v = _dom[x, y];
+                    if (v == run && len < ushort.MaxValue) { len++; continue; }
+                    w.Write(run); w.Write((ushort)len);
+                    run = v; len = 1;
+                }
+            w.Write(run); w.Write((ushort)len);
+        }
+
+        /// <summary>Read a saved splat back and re-derive both live weight textures from it. Returns false if
+        /// there is no sidecar or its dimensions disagree, leaving whatever paint is already there.</summary>
+        public bool LoadSplat(string path)
+        {
+            if (_dom == null || _s0Img == null || _s1Img == null || !System.IO.File.Exists(path)) return false;
+            using var r = new System.IO.BinaryReader(System.IO.File.OpenRead(path));
+            if (r.ReadInt32() != _dw || r.ReadInt32() != _dh) return false;
+            var s = r.BaseStream;
+            int x = 0, y = 0;
+            while (s.Position < s.Length && x < _dw)
+            {
+                byte v = r.ReadByte(); int len = r.ReadUInt16();
+                for (int i = 0; i < len && x < _dw; i++)
+                {
+                    _dom[x, y] = v;
+                    // ⚠ Both images every texel, not just the one that owns this layer: a texel changing from
+                    // layer 5 (splat1) to layer 2 (splat0) has to have its OLD channel cleared, and writing
+                    // only the new image leaves it lit in both -- two materials at full weight, which the
+                    // winner-take-all shader resolves to whichever it reaches first.
+                    _s0Img.SetPixel(x, y, new Color(v == 0 ? 1 : 0, v == 1 ? 1 : 0, v == 2 ? 1 : 0, v == 3 ? 1 : 0));
+                    _s1Img.SetPixel(x, y, new Color(v == 4 ? 1 : 0, v == 5 ? 1 : 0, v == 6 ? 1 : 0, v == 7 ? 1 : 0));
+                    if (++y >= _dh) { y = 0; x++; }
+                }
+            }
+            UpdateSplat(_s0Tex, _s0Img); UpdateSplat(_s1Tex, _s1Img);
+            return true;
+        }
 
         /// <summary>Persist the carved river segments.
         ///
@@ -475,20 +639,58 @@ void fragment() {
         /// thread them through -- they are read-only outputs of the same generate.</summary>
         public System.Collections.Generic.List<ProcIsland.Link> IslandLinks => _islandLinks;
         public System.Collections.Generic.List<ProcIsland.Connector> IslandConnectors => _islandConnectors;
+        /// <summary>The seed this island was generated from. ⚠ Stored rather than passed around: the prop
+        /// crossover runs long after GenerateIsland returned, and "deterministic" means every one of those
+        /// later choices keys off the SAME number rather than off whatever the caller still happens to hold.</summary>
+        public int IslandSeed => _islandSeed;
+        /// <summary>Re-declare which island this terrain IS, for a map loaded from disk rather than
+        /// generated. Everything downstream that keys off the seed (building materials, town names)
+        /// otherwise reads 0 on a reopened island and answers for a different world than the one saved.</summary>
+        public void SetIslandSeed(int seed) => _islandSeed = seed;
+
+        /// <summary>A cheap hash of the ground a scatter would read: every height and every splat texel.
+        /// Exists so "the generate and reload paths built the same island" is a MEASUREMENT rather than two
+        /// instance counts that happen to look close -- 609701 against 609757 is a 0.009% difference and could
+        /// equally be a rounding tolerance or a corner of the map with no paint on it.</summary>
+        public (ulong H, ulong S) GroundFingerprint()
+        {
+            ulong h = 1469598103934665603UL, sp = 1469598103934665603UL;
+            if (_grid != null)
+                for (int x = 0; x < _gw; x++)
+                    for (int y = 0; y < _gh; y++)
+                    { h ^= (ulong)(uint)System.BitConverter.SingleToInt32Bits(_grid[x, y]); h *= 1099511628211UL; }
+            if (_dom != null)
+                for (int x = 0; x < _dw; x++)
+                    for (int y = 0; y < _dh; y++)
+                    { sp ^= _dom[x, y]; sp *= 1099511628211UL; }
+            return (h, sp);
+        }
+        int _islandSeed;
         System.Collections.Generic.List<ProcIsland.Link> _islandLinks = new();
         System.Collections.Generic.List<ProcIsland.Connector> _islandConnectors = new();
         public System.Collections.Generic.List<ProcIsland.Route> IslandRoutes => _islandRoutes;
         System.Collections.Generic.List<ProcIsland.Route> _islandRoutes = new();
+        /// <summary>Trail spurs and their camps. Kept SEPARATE from IslandRoutes -- see ProcIsland.CarveTrails
+        /// for why a trail cannot go through the road builder.</summary>
+        public System.Collections.Generic.List<ProcIsland.Route> IslandTrails => _islandTrails;
+        System.Collections.Generic.List<ProcIsland.Route> _islandTrails = new();
+        public System.Collections.Generic.List<ProcIsland.Camp> IslandCamps => _islandCamps;
+        System.Collections.Generic.List<ProcIsland.Camp> _islandCamps = new();
+        /// <summary>Radar towers on peaks and benches at viewpoints.</summary>
+        public System.Collections.Generic.List<ProcIsland.Landmark> IslandLandmarks => _islandLandmarks;
+        System.Collections.Generic.List<ProcIsland.Landmark> _islandLandmarks = new();
         public System.Collections.Generic.List<ProcIsland.MonumentTile> IslandTiles => _islandTiles;
         readonly System.Collections.Generic.List<ProcIsland.MonumentTile> _islandTiles = new();
         public System.Collections.Generic.List<ProcIsland.MonumentBuilding> IslandBuildings => _islandBuildings;
         readonly System.Collections.Generic.List<ProcIsland.MonumentBuilding> _islandBuildings = new();
 
-        public System.Collections.Generic.List<ProcIsland.Poi> GenerateIsland(int seed)
+        public System.Collections.Generic.List<ProcIsland.Poi> GenerateIsland(int seed, bool lakes = false)
         {
             var none = new System.Collections.Generic.List<ProcIsland.Poi>();
             if (_grid == null) return none;
             var pars = ProcIsland.Params.Default(seed);
+            pars.Lakes = lakes;   // off unless the generator UI asked for them
+            _islandSeed = seed;   // crossover passes key deterministic choices off this (materials, town names)
             ProcIsland.Fill(_grid, _gw, _gh, pars);
             // POIs are placed AFTER the terrain exists and BEFORE the mesh is built: they read the heights to
             // choose somewhere buildable, then rewrite them to flatten their pads. Returned rather than stored
@@ -497,13 +699,36 @@ void fragment() {
             _islandLinks = ProcIsland.BuildLinks(pois);
             // Snap BEFORE routing: the routes start at the gates, so moving a gate afterwards would leave the
             // road pointing at where the gate used to be.
-            _islandConnectors = ProcIsland.SnapConnectorsToLattice(pois, ProcIsland.BuildConnectors(pois, _islandLinks));
+            // ⚠ SPREAD THE FACES BEFORE SNAPPING THE LINES. Which face a gate is on is decided by Gate()
+            // from the bearing to its partner, and the snapper can only choose a LINE on the face it is
+            // given -- so a face that cannot seat all its gates is unfixable by the time snapping runs.
+            _islandConnectors = ProcIsland.SnapConnectorsToLattice(
+                pois, ProcIsland.SpreadGateFaces(pois, ProcIsland.BuildConnectors(pois, _islandLinks), _islandLinks, pars.Seed), pars.Seed);
             _islandTiles.Clear();
-            for (int i = 0; i < pois.Count; i++) _islandTiles.AddRange(ProcIsland.BuildMonument(i, pois[i], _islandConnectors));
+            for (int i = 0; i < pois.Count; i++) _islandTiles.AddRange(ProcIsland.BuildMonument(i, pois[i], _islandConnectors, pars.Seed));
             _islandBuildings.Clear();
             for (int i = 0; i < pois.Count; i++) _islandBuildings.AddRange(ProcIsland.PlaceBuildings(i, pois[i], _islandTiles, pars));
+            // TOWNS FIRST, THEN ROUTES, each owning its own ground instead of layering and fighting.
+            // Flatten() levels the pads early and Smooth() then blurs the whole grid, so a pad is no longer
+            // flat by the time anything is placed on it -- this re-levels each footprint EXACTLY, and
+            // CarveRoutes below skips every cell inside one.
+            // ⚠ THE OTHER ORDER WAS TRIED AND MEASURED. Carving first and flattening after erased the corridor
+            // where a route enters a town, and the splines' worst rise went 0.31 m -> 2.73 m. Layering these
+            // two in either order has one undoing the other; giving each its own territory is what stops it.
+            ProcIsland.FlattenTownsExactly(_grid, _gw, _gh, pois, _islandTiles, pars.Seed);
             // Routed and carved BEFORE RebuildAll, because carving edits the same grid the meshes are built from.
             _islandRoutes = ProcIsland.CarveRoutes(_grid, _gw, _gh, pois, _islandLinks, _islandConnectors, pars);
+            // AFTER the roads, because a trail branches off one: it needs the finished spline to pick an
+            // anchor on, and the ground it cuts is ground the roads have already had their say about.
+            // ROADS THAT JOIN ROADS. Added to IslandRoutes itself, so the conform, the splines, the paint and
+            // the roadside props all treat them as the roads they are -- only the two things that assume a
+            // route ends at a cap tell them apart, by Kind.
+            // ⚠ BEFORE the trails, so a trail's "keep clear of the roads" test sees these too.
+            _islandRoutes.AddRange(ProcIsland.CarveJunctions(_grid, _gw, _gh, pois, _islandRoutes, pars));
+            (_islandTrails, _islandCamps) = ProcIsland.CarveTrails(_grid, _gw, _gh, pois, _islandRoutes, pars);
+            // LAST of the ground-shaping passes: a landmark refuses to sit near a road, a trail or a camp, so
+            // all three have to exist before it can tell.
+            _islandLandmarks = ProcIsland.PlaceLandmarks(_grid, _gw, _gh, pois, _islandRoutes, _islandTrails, _islandCamps, pars);
             RebuildAll();
             return pois;
         }
@@ -517,6 +742,7 @@ void fragment() {
             for (int x = 0; x < _gw; x++) for (int y = 0; y < _gh; y++) w.Write(_grid[x, y]);
             SaveHoles(HolesPathFor(path));
             SaveRivers(RiversPathFor(path));
+            SaveSplat(SplatPathFor(path));
         }
 
         public bool LoadHeightmap(string path)   // apply a saved sculpt over the freshly-built retail terrain (dims must match)
@@ -532,6 +758,7 @@ void fragment() {
             LoadHoles(HolesPathFor(path));
             RebuildAll();
             LoadRivers(RiversPathFor(path));   // AFTER RebuildAll: the beds read SampleHeight for their banks
+            LoadSplat(SplatPathFor(path));   // the paint, which the mesh does not carry -- see SaveSplat
             return true;
         }
 
@@ -563,6 +790,242 @@ void fragment() {
             if (!changed) return;
             _dirty = true;
             RebuildChunksIn(gx0, gx1, gy0, gy1, withCollider: true);
+        }
+
+        /// <summary>Conform the ground to a POLYLINE's own heights: inside `radius` of the line the terrain is
+        /// assigned the line's height at that point, feathering out to untouched over `feather` beyond it.
+        ///
+        /// ⚠ THIS IS THE ANSWER TO A SEE-SAW, not a new feature. A road spline that owns its Y is a smooth curve
+        /// over ground that is not, and any smooth curve which never dips below that ground must, on average,
+        /// sit above it -- by roughly the amplitude of the undulation. So "stop the road clipping" and "stop the
+        /// road floating" could not both be satisfied by moving the ROAD: seating on the maximum floated it a
+        /// mean 1.12 m, seating on the average clipped 2416 samples, and clamping the average up to a maximum
+        /// floor floated it 2.45 m. The ground is the other half of the pair and the only one that was never
+        /// being moved.
+        ///
+        /// EditFlatten cannot do it: its target is the brush centre's EXISTING height, which is the thing being
+        /// corrected. One rebuild for the whole line, not one per brush -- a route is hundreds of points.</summary>
+        /// <summary>Conform to MANY polylines at once, resolving a cell claimed by more than one by taking the
+        /// LOWEST target.
+        ///
+        /// ⚠⚠ ROADS CROSS, AND ASSIGNING PER-ROUTE MEANS THE LAST ONE THROUGH A CELL WINS. Doing them one at a
+        /// time left the earlier road with ground raised into its tarmac wherever a later one passed at a
+        /// different height -- measured as a tight cluster of 1-6 m rises all at the same spot and all at the
+        /// ribbon's outer edge. Lowest-wins is the choice that cannot produce that: the worst it can do is leave
+        /// the higher road a little clear of the ground at the crossing, which is invisible, instead of putting
+        /// a hillside through a carriageway, which is not. Resolve every claim first, write once.</summary>
+        public void ConformToPolylines(System.Collections.Generic.IReadOnlyList<System.Collections.Generic.List<Vector3>> lines,
+                                       float radius, float feather)
+        {
+            if (_grid == null || lines == null) return;
+            var claim = new System.Collections.Generic.Dictionary<(int, int), (float target, float w, float d, int line)>();
+            // ⚠ THE CEILING IS PER-LINE. Within ONE road the nearest segment is always the right answer, and
+            // capping a cell by its own road's lowest nearby segment just re-creates the downhill drag the
+            // nearest rule exists to remove (measured: float 163 -> 414 when the cap ignored which road it came
+            // from). Only a DIFFERENT road's tarmac is a reason to hold ground down.
+            var cap = new System.Collections.Generic.Dictionary<(int, int), (float y, int line)>();
+            for (int li = 0; li < lines.Count; li++)
+                GatherConform(lines[li], radius, feather, claim, cap, ProcIsland.RenderedRoadHalf, li);
+            if (claim.Count == 0) return;
+            // ⚠ SMOOTH THE CLAIMS BEFORE WRITING THEM (strawberry 2026-09-17: "the ground below road splines
+            // isnt smooth at all. its really jagged. needs a real smoothing pass before placing the actual
+            // roads on top").
+            //
+            // Each cell takes the height of the closest point on ONE segment, and neighbouring cells can be
+            // closest to DIFFERENT segments -- so wherever two segments meet at an angle the two sides of the
+            // join disagree by whatever the profile does across that joint, and the result is a ridge one cell
+            // wide running across the road. Averaging each claimed cell with its claimed neighbours removes it
+            // without touching anything outside the band; three passes because one leaves the sharpest joints
+            // visible and the corridor is only a few cells wide, so this converges fast.
+            for (int pass = 0; pass < 3; pass++)
+            {
+                var snap = new System.Collections.Generic.Dictionary<(int, int), float>(claim.Count);
+                foreach (var kv in claim) snap[kv.Key] = kv.Value.target;
+                foreach (var key in new System.Collections.Generic.List<(int, int)>(claim.Keys))
+                {
+                    // ⚠⚠ THE FEATHER ONLY. Master: "the terrain conforms to what the road SHOULD look like, but
+                    // the road spline itself has a mind of its own, and ignores the terrain." It does -- the
+                    // ribbon rides its own profile (IgnoreTerrain), and smoothing the FULL-WEIGHT cells moved
+                    // the ground off that profile after the fact, so the two stopped agreeing and the road
+                    // floated. The jaggedness this pass was added for is in the SHOULDER, where neighbouring
+                    // cells are claimed by different segments; under the ribbon itself the target is already
+                    // the smoothed profile and must be left exactly alone.
+                    if (claim[key].w >= 0.999f) continue;
+                    float sum = snap[key]; int cnt = 1;
+                    for (int ox = -1; ox <= 1; ox++)
+                        for (int oy = -1; oy <= 1; oy++)
+                        {
+                            if (ox == 0 && oy == 0) continue;
+                            if (snap.TryGetValue((key.Item1 + ox, key.Item2 + oy), out float nv)) { sum += nv; cnt++; }
+                        }
+                    var cur = claim[key];
+                    claim[key] = (sum / cnt, cur.w, cur.d, cur.line);
+                }
+            }
+            int minX = int.MaxValue, maxX = int.MinValue, minY = int.MaxValue, maxY = int.MinValue;
+            foreach (var kv in claim)
+            {
+                int gx = kv.Key.Item1, gy = kv.Key.Item2;
+                float tgt = kv.Value.target;
+                if (cap.TryGetValue(kv.Key, out var ceil) && ceil.line != kv.Value.line && tgt > ceil.y) tgt = ceil.y;
+                float nv = kv.Value.w >= 0.999f ? tgt : Mathf.Lerp(_grid[gx, gy], tgt, kv.Value.w);
+                JournalH(gx, gy);
+                _grid[gx, gy] = Mathf.Clamp(nv, 0f, 1f);
+                if (gx < minX) minX = gx; if (gx > maxX) maxX = gx;
+                if (gy < minY) minY = gy; if (gy > maxY) maxY = gy;
+            }
+            _dirty = true;
+            // ⚠⚠ withCollider: TRUE, and the default is FALSE (strawberry 2026-09-17: "i dont think the terrain
+            // collision matches the visual mesh"). RebuildChunksIn normally rebuilds the MESH and queues the
+            // chunk in _dirtyChunks for a later collider pass -- which is right for an interactive brush, where
+            // a collider rebuild per mouse-move would stutter, and wrong for a one-shot generation edit that
+            // nobody is going to flush afterwards. This pass moves the ground under every road on the island, so
+            // leaving the collider behind meant you walked on the terrain as it was BEFORE the roads were
+            // conformed: the visual is the road, the collision is the hillside it replaced.
+            RebuildChunksIn(minX, maxX, minY, maxY, withCollider: true);
+        }
+
+        /// <summary>A/B: at equal weight, does a contested cell take the LOWER road (default) or the HIGHER?
+        /// Lower keeps ground out of the low road's tarmac and leaves the high one floating; higher does the
+        /// reverse. Which is worse is a measurement, not an opinion, and both signs are now counted.</summary>
+        static readonly bool ConformPreferHigh = System.Environment.GetEnvironmentVariable("UG_CONFORMHIGH") == "1";
+
+        void GatherConform(System.Collections.Generic.IReadOnlyList<Vector3> pts, float radius, float feather,
+                           System.Collections.Generic.Dictionary<(int, int), (float target, float w, float d, int line)> claim,
+                           System.Collections.Generic.Dictionary<(int, int), (float y, int line)> cap, float cover, int line)
+        {
+            if (pts == null || pts.Count < 2) return;
+            float outer = radius + feather;
+            int rg = Mathf.CeilToInt(outer / UNIT) + 1;
+            for (int i = 1; i < pts.Count; i++)
+            {
+                Vector3 a = pts[i - 1], b = pts[i];
+                var ab = new Vector2(b.X - a.X, b.Z - a.Z);
+                float abLen2 = ab.LengthSquared();
+                if (abLen2 < 1e-6f) continue;
+                float cxa = (a.X - _bx) / UNIT, cya = (-a.Z - _bz) / UNIT;
+                float cxb = (b.X - _bx) / UNIT, cyb = (-b.Z - _bz) / UNIT;
+                int gx0 = Mathf.Clamp(Mathf.FloorToInt(Mathf.Min(cxa, cxb)) - rg, 0, _gw - 1);
+                int gx1 = Mathf.Clamp(Mathf.CeilToInt(Mathf.Max(cxa, cxb)) + rg, 0, _gw - 1);
+                int gy0 = Mathf.Clamp(Mathf.FloorToInt(Mathf.Min(cya, cyb)) - rg, 0, _gh - 1);
+                int gy1 = Mathf.Clamp(Mathf.CeilToInt(Mathf.Max(cya, cyb)) + rg, 0, _gh - 1);
+                for (int gx = gx0; gx <= gx1; gx++)
+                    for (int gy = gy0; gy <= gy1; gy++)
+                    {
+                        float wx = gx * UNIT + _bx, wz = -(gy * UNIT + _bz);
+                        float t = Mathf.Clamp(((wx - a.X) * ab.X + (wz - a.Z) * ab.Y) / abLen2, 0f, 1f);
+                        float px = a.X + ab.X * t, pz = a.Z + ab.Y * t;
+                        float d = Mathf.Sqrt((wx - px) * (wx - px) + (wz - pz) * (wz - pz));
+                        if (d > outer) continue;
+                        // ⚠⚠ THE TOWN PAD IS OFF LIMITS, and leaving it out of this test is why roads "hump
+                        // down into the towns" and why a road prop sits at a different height from the spline
+                        // meeting it. LevelCorridors, which this replaced, skipped InsideTown for exactly this
+                        // reason: the pad is levelled EXACTLY and every road prop on it is seated from that one
+                        // number, so a conform cutting a channel back through it re-introduces the height
+                        // disagreement that flattening the town was for. The spline's ends are already pinned
+                        // to pad height, so there is nothing in there for the conform to fix.
+                        // ⚠⚠ -wz, NOT wz. TownPads are in ProcIsland's frame and this loop is in WORLD space,
+                        // where Z is the negative of it -- so passing wz straight in excluded the MIRROR IMAGE
+                        // of every town and protected open sea while the conform kept cutting through the pads
+                        // exactly as before. Fourth time this frame has caught me today (the boulder corridor
+                        // filter, the boulder scan, the zombie sweep). PosFor is the one-way map; this is its
+                        // inverse, and the two only ever differ by this sign.
+                        if (ProcIsland.InsideAnyTownPad(wx, -wz)) continue;   // the pad proper: it is levelled exactly and its props read that one number
+                        // ⚠ AND GRADE INTO IT rather than stopping at its edge. Excluding the pad alone leaves
+                        // the conformed ground at the road's profile on one side of the boundary and the pad's
+                        // exact level on the other, which is a step one cell wide at every town entrance -- the
+                        // same defect TownRamped was written for when Carve had this job, and the same one that
+                        // reads as the road "humping down into the town".
+                        float wantWorld = ProcIsland.TownRampedAt(wx, -wz, Mathf.Lerp(a.Y, b.Y, t));
+                        float target = (wantWorld + TILE_HEIGHT / 2f) / TILE_HEIGHT;
+                        float w = d <= radius ? 1f : 1f - Mathf.SmoothStep(radius, outer, d);
+                        var key = (gx, gy);
+                        // ⚠ WEIGHT FIRST, THEN HEIGHT, and getting that order backwards costs real altitude.
+                        // The first cut preferred the LOWER target outright and then raised its weight to
+                        // whatever the competing claim had -- so a cell sitting under road B's tarmac, merely
+                        // clipped by road A's FEATHER fifteen metres away, was assigned A's height at full
+                        // strength. B's ground got dragged down to a road it does not touch, and the mean float
+                        // came out 0.87 m when the sink alone should have made it 0.25.
+                        // A full-weight claim is a road that is genuinely ON this cell; a partial one is a
+                        // shoulder. The road always outranks the shoulder, and two roads resolve to the lower.
+                        // ⭐⭐ NEAREST SEGMENT WINS, NOT LOWEST TARGET -- and that swap is the float.
+                        //
+                        // Every segment within `radius` claims a cell at FULL weight, so w cannot separate
+                        // them and the tie-break decided everything. It preferred the lower target, which on a
+                        // gradient means the ground under a road is set to the height of that road FIFTEEN
+                        // METRES DOWNHILL. On a 10% grade that is 1.5 m of float; on a steep one, several
+                        // metres -- systemic, proportional to slope, and present on every road rather than
+                        // only where two of them meet.
+                        //
+                        // ⚠ THE A/B PROVED IT IS A TIE-BREAK PROBLEM AND NOT A TUNING ONE. Flipping the same
+                        // comparison to prefer the HIGHER target took float from 836 samples to 135 and sent
+                        // ground-through-the-tarmac from 1 sample to 16660: a pure see-saw, which is what you
+                        // get when the rule is picking between two wrong answers. Distance is the right
+                        // question -- the ground under a road should match the bit of road ABOVE it.
+                        //
+                        // Lower-target survives only as the last tie-break, for two DIFFERENT roads genuinely
+                        // equidistant from one cell, where keeping the lower avoids burying one of them.
+                        // ⚠ AND A SEPARATE CEILING. Nearest-segment fixes the float and, on its own, buys a
+                        // little burial back: where two ribbons genuinely overlap, a cell under road B can be
+                        // NEAREST to road A and take A's height, which on a crossing is metres above B's
+                        // tarmac. So alongside the height claim, track the LOWEST ribbon that actually COVERS
+                        // this cell -- within the carriageway, not within the whole feathered radius -- and
+                        // never let the final target exceed it. Height comes from the road above; the ceiling
+                        // comes from every road above.
+                        if (d <= cover && (!cap.TryGetValue(key, out var cv) || target < cv.y)) cap[key] = (target, line);
+                        if (!claim.TryGetValue(key, out var cur)) claim[key] = (target, w, d, line);
+                        else if (w > cur.w
+                                 || (w >= cur.w && d < cur.d - 0.01f)
+                                 || (w >= cur.w && d <= cur.d + 0.01f && target < cur.target))
+                            claim[key] = (target, w, d, line);
+                    }
+            }
+        }
+
+        public void ConformToPolyline(System.Collections.Generic.IReadOnlyList<Vector3> pts, float radius, float feather)
+        {
+            if (_grid == null || pts == null || pts.Count < 2) return;
+            int minX = int.MaxValue, maxX = int.MinValue, minY = int.MaxValue, maxY = int.MinValue;
+            float outer = radius + feather;
+            int rg = Mathf.CeilToInt(outer / UNIT) + 1;
+            for (int i = 1; i < pts.Count; i++)
+            {
+                Vector3 a = pts[i - 1], b = pts[i];
+                var ab = new Vector2(b.X - a.X, b.Z - a.Z);
+                float abLen2 = ab.LengthSquared();
+                if (abLen2 < 1e-6f) continue;
+                float cxa = (a.X - _bx) / UNIT, cya = (-a.Z - _bz) / UNIT;
+                float cxb = (b.X - _bx) / UNIT, cyb = (-b.Z - _bz) / UNIT;
+                int gx0 = Mathf.Clamp(Mathf.FloorToInt(Mathf.Min(cxa, cxb)) - rg, 0, _gw - 1);
+                int gx1 = Mathf.Clamp(Mathf.CeilToInt(Mathf.Max(cxa, cxb)) + rg, 0, _gw - 1);
+                int gy0 = Mathf.Clamp(Mathf.FloorToInt(Mathf.Min(cya, cyb)) - rg, 0, _gh - 1);
+                int gy1 = Mathf.Clamp(Mathf.CeilToInt(Mathf.Max(cya, cyb)) + rg, 0, _gh - 1);
+                for (int gx = gx0; gx <= gx1; gx++)
+                    for (int gy = gy0; gy <= gy1; gy++)
+                    {
+                        float wx = gx * UNIT + _bx, wz = -(gy * UNIT + _bz);
+                        // Closest point on THIS segment, so the band follows the line rather than ballooning at
+                        // the joints the way a per-point disc does.
+                        float t = Mathf.Clamp(((wx - a.X) * ab.X + (wz - a.Z) * ab.Y) / abLen2, 0f, 1f);
+                        float px = a.X + ab.X * t, pz = a.Z + ab.Y * t;
+                        float d = Mathf.Sqrt((wx - px) * (wx - px) + (wz - pz) * (wz - pz));
+                        if (d > outer) continue;
+                        float wantWorld = Mathf.Lerp(a.Y, b.Y, t);
+                        float target = (wantWorld + TILE_HEIGHT / 2f) / TILE_HEIGHT;
+                        float w = d <= radius ? 1f : 1f - Mathf.SmoothStep(radius, outer, d);
+                        // MAX of the pulls, not a sequence of lerps: consecutive segments overlap, and lerping
+                        // twice toward the same target lands somewhere between it and the old ground.
+                        float nv = Mathf.Lerp(_grid[gx, gy], target, w);
+                        if (w >= 0.999f) nv = target;
+                        JournalH(gx, gy);
+                        _grid[gx, gy] = Mathf.Clamp(nv, 0f, 1f);
+                        if (gx < minX) minX = gx; if (gx > maxX) maxX = gx;
+                        if (gy < minY) minY = gy; if (gy > maxY) maxY = gy;
+                    }
+            }
+            if (minX > maxX) return;
+            _dirty = true;
+            RebuildChunksIn(minX, maxX, minY, maxY, withCollider: true);   // generation edit, not a brush -- see the note above
         }
 
         public void EditFlatten(float worldX, float worldZ, float radiusWorld, float strength)   // pull heights toward the brush centre's height (Devkit FLATTEN)

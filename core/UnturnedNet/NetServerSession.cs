@@ -43,6 +43,12 @@ namespace UnturnedGodot.Net
         // static-collision decision the content hash cannot cover (it hashes content identity, not the
         // local-clock gate).
         readonly string _activeHoliday;
+        // wire v53: what this server calls itself, and how many it seats. The client cannot derive either --
+        // the name existed only in a hardcoded browser list on the client side, and the cap only in the UGSR
+        // status block, which an in-session client never queries.
+        readonly string _serverName;
+        readonly int _maxPlayers;
+        readonly string _gamemode;   // "Survival"/"Arena" -- the status block has it, an in-session client never queried it
         readonly byte[] _rx = new byte[NetProtocol.MaxDatagramBytes];
         readonly NetPakReader _peekReader = new NetPakReader();
         readonly NetPakWriter _rawWriter = new NetPakWriter { buffer = new byte[NetProtocol.MaxDatagramBytes] };
@@ -89,7 +95,10 @@ namespace UnturnedGodot.Net
                                 ulong contentHash = 0,
                                 int maxHalfOpen = 8,
                                 int maxPeersPerSource = 8,
-                                string activeHoliday = "")
+                                string activeHoliday = "",
+                                string serverName = "",
+                                int maxPlayers = 0,
+                                string gamemode = "")
         {
             _transport = transport;
             _connectionFailure = connectionFailureCallback;
@@ -99,6 +108,9 @@ namespace UnturnedGodot.Net
             _maxHalfOpen = maxHalfOpen;
             _maxPeersPerSource = maxPeersPerSource;
             _activeHoliday = activeHoliday ?? "";
+            _serverName = serverName ?? "";
+            _maxPlayers = maxPlayers < 0 ? 0 : (maxPlayers > 65535 ? 65535 : maxPlayers);
+            _gamemode = gamemode ?? "";
             _transport.Initialize(connectionFailureCallback);
         }
 
@@ -271,6 +283,10 @@ namespace UnturnedGodot.Net
                 w.WriteUInt16(peer.PlayerId);
                 w.WriteUInt32(serverTick);
                 w.WriteString(_activeHoliday);   // wire v6: the server world's holiday -- the client builds THIS holiday's props/colliders
+                // wire v53, APPENDED after the holiday so an older server's shorter Accept still reads clean.
+                w.WriteString(_serverName);
+                w.WriteUInt16((ushort)_maxPlayers);
+                w.WriteString(_gamemode);
             });
         }
 

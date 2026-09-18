@@ -25,12 +25,27 @@ namespace UnturnedGodot
         // level is MEDIUM, confirmed by aligning the town nodes to Map.png (a LARGE 3968 scaled them 2x too small).
         // The town dots come from MapNodes, which is already map-aware.
         public static string MapFolder = "PEI";
-        static (string img, float size, string label) Info() => MapFolder switch
+
+        /// <summary>A GENERATED island's own map: the image file, the metres it spans, and where its CENTRE is.
+        ///
+        /// ⚠ THE CENTRE IS THE PART A RETAIL MAP NEVER NEEDED. WorldToNorm is `p.X / size + 0.5`, which assumes
+        /// the level is centred on the world origin -- true of every shipped map and false of a generated
+        /// island, whose origin is a CORNER and which lives entirely in one quadrant. Without the offset half
+        /// the island projects off the image and the player dot sits in a margin. Null image -> the switch
+        /// below, unchanged.</summary>
+        public static string IslandImage; public static float IslandSize = 3072f;
+        public static Vector2 MapCentre = Vector2.Zero;
+
+        static (string img, float size, string label) Info()
         {
+            if (!string.IsNullOrEmpty(IslandImage)) return (IslandImage, IslandSize, "Generated Island");
+            return MapFolder switch
+            {
             "Washington" => ("washington_map.png", 1920f, "Washington"),   // MEDIUM level (2048-2*64) despite a 4096 landscape -- verified by aligning the town nodes to the Map.png
             "Yukon"      => ("yukon_map.png",      1920f, "Yukon"),         // MEDIUM level -- town nodes span ~+-830 (Mount Logan..Off Limits), fits 1920; verify M-map alignment in-render
-            _            => ("pei_map.png",        1920f, "PEI"),
-        };
+                _            => ("pei_map.png",        1920f, "PEI"),
+            };
+        }
 
         /// <summary>The level extent the map image is assumed to cover, metres. WorldToNorm divides by it, so the
         /// BAKE has to frame exactly this or every dot on the map is wrong by the ratio -- which is why the baker
@@ -774,7 +789,12 @@ namespace UnturnedGodot
 
         public override void _ExitTree() { if (Current == this) Current = null; }
 
-        static Vector2 WorldToNorm(Vector3 p) { float ls = Info().size; return new Vector2(p.X / ls + 0.5f, 0.5f + p.Z / ls); }
+        static Vector2 WorldToNorm(Vector3 p)
+        {
+            float ls = Info().size;
+            // MapCentre is zero for every retail map, so this is the same expression it always was there.
+            return new Vector2((p.X - MapCentre.X) / ls + 0.5f, 0.5f + (p.Z - MapCentre.Y) / ls);
+        }
 
         static Texture2D LoadMap()
         {

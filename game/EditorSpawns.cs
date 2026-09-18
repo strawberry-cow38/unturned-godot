@@ -44,6 +44,18 @@ namespace UnturnedGodot
         public readonly List<Vector3> Positions = new();
         public int Count => _spawns.Count;
         public int PlayerCount { get { int n = 0; foreach (var s in _spawns) if (!s.IsAlt) n++; return n; } }
+
+        /// <summary>The REGULAR player spawns as plain (position, yaw) pairs, for callers that need somewhere to
+        /// put a player rather than something to draw.
+        /// ⚠ Alternates are excluded, matching LevelSpawns.PlayerSpawns on the retail path -- an alt is the
+        /// arena/secondary set, and mixing them into a respawn pool is how you get dropped somewhere the mode
+        /// never meant you to be. Returns a copy: the caller keeps it across frames while _spawns is edited.</summary>
+        public System.Collections.Generic.List<(Vector3 Pos, float Yaw)> PlayerSpawnPoints()
+        {
+            var outp = new System.Collections.Generic.List<(Vector3, float)>();
+            foreach (var s in _spawns) if (!s.IsAlt) outp.Add((s.Pos, s.Yaw));
+            return outp;
+        }
         bool IsPointCloud => _category == ECategory.Item || _category == ECategory.Zombie || _category == ECategory.Animal;   // dense -> MultiMesh, no facing
         int TypeCount() => (_category == ECategory.Item || _category == ECategory.Animal) ? Mathf.Max(1, _tableColors?.Length ?? 1) : VehicleTypes.Length;
         public string ModeText

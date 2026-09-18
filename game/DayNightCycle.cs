@@ -25,6 +25,9 @@ namespace UnturnedGodot
         /// A CONSTANT rather than a bare default, because the default was NOT what the game ran on: WorldBuilder set
         /// its own 300f at both call sites, so editing the field here changed nothing in play while every test still
         /// passed. One number, referenced from both.</summary>
+        /// <summary>UG_NOFOG=1 -- see the FogEnabled write below. Cached: that line runs every frame.</summary>
+        public static readonly bool NoFog = System.Environment.GetEnvironmentVariable("UG_NOFOG") == "1";
+
         public const float DefaultDayLength = 24f * 60f;
         public float DayLength = DefaultDayLength;   // seconds per full cycle
         public float Time = 0.35f;       // 0..1 time of day: 0 midnight, 0.25 dawn, 0.5 noon, 0.75 dusk
@@ -534,7 +537,11 @@ void sky() {
                 Env.AmbientLightColor = Grad(Amb);
                 // depth fog tinted to the horizon -- thin at noon, thick at dawn/dusk/night (extra when Overcast)
                 float noon = 1f - Mathf.Abs(Time - 0.5f) * 2f;             // 1 at noon, 0 at midnight
-                Env.FogEnabled = true;
+                // UG_NOFOG=1: no depth fog. A RENDER-HARNESS knob, not a gameplay one -- an aerial shot of a
+                // generated island is nothing but fog at any altitude that fits the island in frame, so the one
+                // view that could show a coastline, a beach or the sea could not be photographed at all. Read
+                // once into a static rather than per-tick, because this writes every frame.
+                Env.FogEnabled = !NoFog;
                 // master: derive the fog straight from the (corrected) sky horizon so it tracks the sky day/night.
                 // ⚠ RAW sRGB, NOT SrgbToLinear -- Env properties take sRGB and linearise internally, the OPPOSITE of the
                 // sky SHADER uniforms one screen up (tinyclaw). The old `.Lerp` toward a fixed light-grey (0.55/0.57/0.6)

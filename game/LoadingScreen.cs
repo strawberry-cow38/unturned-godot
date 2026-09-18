@@ -271,7 +271,11 @@ namespace UnturnedGodot
             var sb = new System.Text.StringBuilder();
             sb.AppendLine($"LOAD {total:0} ms");
             foreach (var kv in timings) sb.AppendLine($"  {kv.Key,-10} {kv.Value,6:0} ms  ({(total > 0 ? kv.Value / total * 100 : 0):0}%)");
-            Log.Print("[load] " + sb.ToString().Replace("\n", " | "));
+            // ⚠ STRIP THE \r TOO. AppendLine writes "\r\n" on Windows, so replacing only "\n" leaves a bare
+            // carriage return in the middle of the line -- and a terminal (or Select-String) treats that as the
+            // line ending, so every per-phase timing after the total was invisible. The data was always there;
+            // the log just could not be read past the first segment.
+            Log.Print("[load] " + sb.ToString().Replace("\r", "").Replace("\n", " | "));
             // ⚠ DO NOT DROP THE COVER YET IF THE SHADER WARM IS STILL DRAWING. Its quads live 0.6 m in front of the
             // camera and must actually rasterise to compile their pipelines, so they cannot be hidden -- only
             // covered. Uncovering here is what put a flash of coloured quads on the world you had just loaded into.

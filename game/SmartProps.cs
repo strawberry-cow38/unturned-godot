@@ -37,6 +37,7 @@ namespace UnturnedGodot
         Doors       = 1 << 8,   // ObjectDoor: one openable leaf per doors.txt row
         Water       = 1 << 9,   // FluidContainer: tower / hydrant / well / kitchen sink
         Radio       = 1 << 10,  // RadioDevice: the two radio sets -- F toggles, static while fed
+        Container   = 1 << 11,  // StoreShelf: the props WorldBuilder.ContainerShelf registers as lootable storage
     }
 
     public static class SmartProps
@@ -58,6 +59,13 @@ namespace UnturnedGodot
             if (HeartMonitor.IsMonitorProp(name)) k |= SmartKind.Monitor;
             if (RadioDevice.IsRadioProp(name)) k |= SmartKind.Radio;
             if (WaterSourceFor(name) != WaterSource.None) k |= SmartKind.Water;
+            // ⚠ CONTAINERS WERE THE ONE MISSING CATEGORY (strawberry 2026-09-16, asking for "garbage can (smart
+            // container variants)" on a generated island). Fridges, bins, filing cabinets and the rest have been
+            // lootable on the WORLD-load path all along -- WorldBuilder diverts them into result.Containers
+            // before the mesh path -- but a prop PLACED in the editor got a dead mesh, because this table, which
+            // exists so the two paths cannot drift, had no container case. Read from ContainerShelf rather than
+            // restated, so the two still cannot.
+            if (WorldBuilder.ContainerForMesh(name, out _, out _, out _)) k |= SmartKind.Container;
             if (hasDoors != null && hasDoors(name)) k |= SmartKind.Doors;
             return k;
         }
@@ -65,7 +73,14 @@ namespace UnturnedGodot
         /// <summary>Does a placement of this prop need its OWN mesh node? Every smart prop does: the device carves
         /// its lens/screen/hands/leaf off that instance's mesh, which a shared MultiMesh has nowhere to put.</summary>
         public static bool NeedsOwnNode(string name, System.Func<string, bool> hasDoors = null)
-            => KindsFor(name, hasDoors) != SmartKind.None;
+            // ⚠ CONTAINER IS EXCLUDED, on this function's OWN stated rule: a device needs its own node because it
+            // carves a lens / screen / hands / leaf off that instance's mesh, and a shared MultiMesh has nowhere
+            // to put the pieces. A container carves nothing -- the shelf attached in the editor runs with
+            // renderMesh:false and rides the prop's existing mesh. Leaving it in would have quietly taken every
+            // bin, fridge and filing cabinet out of batching on the non-Playable world path (where TryContainer
+            // declines and the prop DOES reach the mesh loader), which is a rendering change nobody asked for
+            // in a commit about street furniture.
+            => (KindsFor(name, hasDoors) & ~SmartKind.Container) != SmartKind.None;
 
         enum WaterSource { None, Tower, Hydrant, Well, Sink }
         static WaterSource WaterSourceFor(string name) => name switch
@@ -110,6 +125,7 @@ namespace UnturnedGodot
             public TVDevice Screen;
             public RadioDevice Radio;
             public FluidContainer Water;
+            public StoreShelf Container;
             public LightTap Tap;      // rides Street/Signal; not its own SmartKind, so it is not in Kinds below
             public MeshInstance3D Lens;
             public readonly List<TrafficLight> Signals = new();
@@ -133,6 +149,7 @@ namespace UnturnedGodot
                     if (Signals.Count > 0) k |= SmartKind.Signal;
                     if (Doors.Count > 0) k |= SmartKind.Doors;
                     if (Water != null) k |= SmartKind.Water;
+                    if (Container != null) k |= SmartKind.Container;
                     return k;
                 }
             }
@@ -179,6 +196,20 @@ namespace UnturnedGodot
                 var lampLocal = a.Lens?.Mesh != null ? a.Lens.Mesh.GetAabb().GetCenter() : new Vector3(0f, 2.35f, 6.48f);
                 a.Street = StreetLight.Make(lampLocal, Mathf.Max(4f, (basis * lampLocal).Y), a.Lens);
                 a.Street.TopLevel = false;   // local to the prop root: follows the gizmo
+                // ⚠⚠ CANCEL THE PROP'S STAND-UP OR THE CONE POINTS SIDEWAYS (strawberry: "the light cone for
+                // street lights is pointing sideways instead of straight down").
+                //
+                // An editor root carries the FULL placement basis, stand-up included: Basis(Y,180-yaw) *
+                // Basis(X,270). A spot that shines down its own -Y therefore shines down the root's rotated -Y,
+                // and a 270 about X maps (0,-1,0) to (0,0,1) -- dead sideways, every time, by exactly 90
+                // degrees. The world loader never hits this because it puts a prop's nodes in WORLD space under
+                // a root at the origin, so there is no stand-up to inherit; this is an editor-path-only fault
+                // and it was invisible until the island generator lit 129 of them at once.
+                //
+                // Inverting the stand-up on the child leaves root.Basis * child.Basis = pure yaw, so down is
+                // down and the lamp still turns with the pole. Same correction the container attach makes, for
+                // the same reason.
+                a.Street.Basis = new Basis(Vector3.Right, Mathf.DegToRad(270f)).Inverse();
                 root.AddChild(a.Street);
             }
 
@@ -296,6 +327,38 @@ namespace UnturnedGodot
                     a.Water.SetMeta(YawOnlyMeta, true);
                     root.AddChild(a.Water);
                     Resync(root, worldPos, yawDeg);
+                }
+            }
+
+            // CONTAINER. ⚠ renderMesh:false, and that is not an optimisation -- the editor root ALREADY carries
+            // this prop's mesh and its collider, which is the whole difference from the world path where the
+            // decoration mesh is skipped and StoreShelf draws the prop itself. Letting it draw again would put
+            // two dumpsters in the same hole.
+            //
+            // ⚠⚠ THE COLLIDER HAS TO END UP UNDER THIS NODE. PlayerController.ShelfOf walks UP AT MOST FOUR
+            // parents from whatever the look ray hit to find the StoreShelf -- interaction is by ancestry, not
+            // by a meta tag like every other device here -- so a shelf hung beside the prop's body is a
+            // container nothing can open. The caller re-parents the body onto Attached.Container for exactly
+            // this reason; see EditorObjects.Place.
+            if (WorldBuilder.ContainerForMesh(name, out int ctable, out bool cdisplay, out string clabel))
+            {
+                a.Container = StoreShelf.Spawn(root, worldPos, name, ctable, yawDeg, cdisplay,
+                                               clabel ?? "Container", renderMesh: false, serverOwned: false, rot: basis);
+                if (a.Container != null)
+                {
+                    // ⚠ AN ORDINARY LOCAL CHILD -- NOT TopLevel, which is what the water sources use and what
+                    // this tried first. TopLevel touches the SceneTree, and AttachEditor runs BEFORE the caller
+                    // puts the root in the tree, so it printed `Parameter "data.tree" is null` once per device:
+                    // 191 of them on one island. Nothing about the placement needed it.
+                    //
+                    // StoreShelf puts its node at `rot * _upright.Inverse()`, and under a root that already
+                    // carries `rot` the local transform that reproduces exactly that is `_upright.Inverse()` --
+                    // no tree access, no resync, and it follows the gizmo for free when the prop is dragged,
+                    // which the TopLevel version would only have done via Resync.
+                    // ⚠ Same Basis(Right, 270) stand-up as StoreShelf._upright and as EditorObjects.FromEuler's
+                    // ex=270; if that convention ever moves, it moves in all three.
+                    a.Container.TopLevel = false;
+                    a.Container.Transform = new Transform3D(new Basis(Vector3.Right, Mathf.DegToRad(270f)).Inverse(), Vector3.Zero);
                 }
             }
             return a;

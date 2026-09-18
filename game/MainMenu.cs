@@ -158,6 +158,7 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
+            DiscordPresence.SetMenu();   // "In the main menu" -- the one state with nothing to describe but itself
             // BEFORE BuildWorld: it now branches on this for the environment and the sun. It used to be set
             // further down, after BuildWorld had already run, so anything in BuildWorld reading the field
             // rather than the env var directly would silently take the placeholder path.

@@ -234,10 +234,30 @@ namespace UnturnedGodot.Testing
         // The PROP's own collider, which is a plain StaticBody3D. Type-exact on purpose: ObjectDoor and
         // FluidContainer both derive from StaticBody3D and are added to the same root first, so "the first
         // StaticBody3D child" hands back a door leaf on every prop that has one.
+        /// <summary>The prop's plain collider, wherever it hangs.
+        ///
+        /// ⚠ NOT JUST THE DIRECT CHILDREN, which is what this checked and why it started failing on a WARDROBE
+        /// (tinyclaw's nightly, 2026-09-17). A container prop's body is deliberately re-parented onto its
+        /// StoreShelf node -- PlayerController.ShelfOf finds a container by walking UP from whatever the ray
+        /// hit, not by a meta tag, so the body has to be a descendant of the shelf or the thing cannot be
+        /// opened (see EditorObjects.Place). Wardrobe_0 is table 19, "Wardrobe", so it is both a door prop and
+        /// a container and it is the one prop where those two arrangements meet.
+        ///
+        /// ⚠ AND THE PRODUCT IS FINE -- checked before touching this. TagBody runs BEFORE the re-parent, so
+        /// "objectdoor" is on that same body either way; only this search was looking one level too shallow.
+        /// Recursive, because "the prop's collider" is what the test means and the depth is an implementation
+        /// detail that has now changed once.</summary>
         static StaticBody3D FindBody(Node3D root)
         {
             foreach (var c in root.GetChildren())
+            {
                 if (c is StaticBody3D b && b.GetType() == typeof(StaticBody3D)) return b;
+                if (c is Node3D n)
+                {
+                    var deeper = FindBody(n);
+                    if (deeper != null) return deeper;
+                }
+            }
             return null;
         }
     }

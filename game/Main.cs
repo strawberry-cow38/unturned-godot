@@ -515,6 +515,7 @@ namespace UnturnedGodot
             {
                 GetWindow().Size = new Vector2I(1280, 720);
                 _shotPath = shot;
+                DiscordPresence.SetEditor(MapUI.MapFolder);   // static: the editor's map never changes under it mid-session
                 // UG_GENSEED=<n>: the menu's Generate Map, reachable from a flag so the generated world can be
                 // LOOKED at (tools/shot.py island). The suite can only ever check the generator's numbers; a
                 // road prop rotated 180 or a building sunk into a hillside is invisible to every one of them.
@@ -531,6 +532,12 @@ namespace UnturnedGodot
                     // spotted a road turn "cloned inside the other", one at the correct yaw and one at the old.
                     BuildEditorNew(EditorMaps.Unique($"Island {genSeedArg}"), genSeed: genSeedArg,
                                    autoPlay: System.Environment.GetEnvironmentVariable("UG_GENPLAY") == "1");
+                // UG_OPENMAP=<name> REOPENS a saved map instead of making one -- the only way to photograph
+                // the load path, which is a different world build from the generate path and was silently
+                // missing four of its stages (strawberry: "when going to the editor from a proc map. its not
+                // the same map"). Generate with UG_GENSEED, then shoot the same name back with this.
+                else if (!string.IsNullOrEmpty(System.Environment.GetEnvironmentVariable("UG_OPENMAP")))
+                    BuildEditorNew(System.Environment.GetEnvironmentVariable("UG_OPENMAP"));
                 else if (System.Environment.GetEnvironmentVariable("UG_NEWMAP") == "1") BuildEditorNew();
                 else BuildEditor();
                 return;
@@ -1089,7 +1096,11 @@ namespace UnturnedGodot
                     menu.OnPlayMap = name => { menu.QueueFree(); BuildEditorNew(name, autoPlay: true); };
                     // Generate Map -> a brand new map whose terrain is a generated island, played immediately.
                     // The name carries the seed so two generated maps do not overwrite each other's save.
-                    menu.OnGenerateMap = seed => { menu.QueueFree(); BuildEditorNew(EditorMaps.Unique($"Island {seed}"), genSeed: seed, autoPlay: true); };
+                    menu.OnGenerateMap = (seed, lakes) => { menu.QueueFree(); BuildEditorNew(EditorMaps.Unique($"Island {seed}"), genSeed: seed, autoPlay: true, genLakes: lakes); };
+                    // A SAVED generated island: open the map that is on disk, do NOT regenerate. Re-rolling the
+                    // seed would rebuild the terrain and then load the saved props on top of it, which is two of
+                    // everything the moment the generator changes -- the same trap the "NewMap" name once sprang.
+                    menu.OnOpenProcMap = name => { menu.QueueFree(); BuildEditorNew(name, autoPlay: true); };
                     AddChild(menu);
                 });
                 return;
@@ -2862,6 +2873,9 @@ namespace UnturnedGodot
             AddChild(sun);
             var dn = new DayNightCycle { Sun = sun, Env = env, DayLength = 300f };   // a 5-minute day/night cycle
             AddChild(dn);
+            // Discord: map + days survived. Ticked rather than set once because the day counter MOVES -- the
+            // push is dropped unless a field actually changed, so a repeat costs one struct compare.
+            AddChild(new DiscordPresenceTicker { Push = () => DiscordPresence.SetSingleplayer(MapUI.MapFolder, dn.Day) });
             // Weather is now SCHEDULED off PEI's real Weather_Types table instead of a one-shot coin flip at
             // world build -- forecast, fade in, hold, fade out, repeat (src LightingManager). The overlay is the
             // same shader; WeatherManager just owns whether and how hard it rains.
@@ -6281,9 +6295,26 @@ namespace UnturnedGodot
         // Map). Same 3x3 CreateFlat either way, deliberately: the saved heightmap only reloads when its dims
         // match the terrain the open path builds, so a generated map that chose its own size would come back
         // flat the next time you opened it, with nothing about the save looking wrong.
-        void BuildEditorNew(string mapName = null, int? genSeed = null, bool autoPlay = false)
+        /// <summary>⚠ ASYNC NOW, and only because a loading screen that never yields is a loading screen nobody
+        /// sees (strawberry: "give the real loading screen for the proc map, same as the other maps but giving
+        /// detail about generation steps too"). WorldBuilder's retail path has done this all along -- its
+        /// Phase() records the previous phase's time, advances the bar, sets the label and then yields
+        /// ProcessFrame AND FramePostDraw so the overlay actually PAINTS before the next blocking chunk. A
+        /// straight-line build inside _Ready hands the renderer one frame at the end and the player stares at a
+        /// frozen menu instead, which is exactly what generating an island did.
+        /// ⚠ Callers do not await it (it is fire-and-forget from _Ready and from the menu buttons), so the
+        /// --shot harness is gated on _worldReady instead -- the same flag the objects/peidrive path uses.</summary>
+        async void BuildEditorNew(string mapName = null, int? genSeed = null, bool autoPlay = false, bool genLakes = false)
         {
             mapName = EditorMaps.Sanitise(mapName) ?? "NewMap";
+            // ⚠ A GENERATED ISLAND REOPENED IS NOT A BLANK CUSTOM MAP, and treating it as one is what
+            // made strawberry report "when going to the editor from a proc map. its not the same map".
+            // Everything on this path that BELONGS to an island -- the sea, the foliage, the tree and ore
+            // fields, the map screen -- was gated on `genPois != null`, i.e. on generating RIGHT NOW, so
+            // reopening the saved map skipped all four and left a treeless, sealess island under PEI's
+            // map. The seed marker written at creation is what tells the two apart.
+            int? procSeed = genSeed ?? EditorMaps.ProcSeed(mapName);
+            bool procReload = !genSeed.HasValue && procSeed.HasValue;
             _worldBuild = true;
             var terr = Terrain.CreateFlat(3, 3);
             // A NEW MAP GETS A SEA. Nothing used to set this outside the retail-map load path, so a fresh editor
@@ -6294,7 +6325,47 @@ namespace UnturnedGodot
             AddChild(terr);
             // BEFORE the camera is placed and before any prop is spawned: generation rewrites every height, and
             // both of those read the ground it produces.
-            var genPois = genSeed.HasValue ? terr.GenerateIsland(genSeed.Value) : null;
+            // ---- the real loading screen, with the GENERATION steps named -------------------------------
+            // Only for a generated island: opening a blank or existing custom map is near-instant and a cover
+            // that flashes up for one frame is worse than none.
+            LoadingScreen loading = null;
+            var genTimings = new System.Collections.Generic.Dictionary<string, double>();
+            var genWatch = System.Diagnostics.Stopwatch.StartNew();
+            string genPhase = null;
+            // ⚠ A REOPEN GETS THE COVER TOO. The comment below used to say a blank map opens near-instantly,
+            // which is true -- and a generated island reopened is not a blank map: it reloads a 769x769
+            // heightmap, rebuilds the sea and re-scatters 600k pieces of foliage, and it does all of it
+            // SYNCHRONOUSLY on this path because the awaits are inside Phase(), which returns immediately when
+            // there is no loading screen. So the window simply froze for ~25 s with the menu still on it.
+            if (genSeed.HasValue || procReload)
+            {
+                _worldBuild = true; _worldReady = false;
+                LoadingScreen.NextMode = "map";
+                loading = new LoadingScreen();
+                AddChild(loading);
+                loading.SetTotal(genSeed.HasValue ? 11 : 4);
+            }
+            // `gen` says which of the two world builds a step belongs to. Both paths run through the same
+            // method body, so without it a REOPEN advanced the generate path's eleven step names past its own
+            // four -- naming steps it was not doing and overrunning the bar. One test, in the one place that
+            // already knows, rather than an `if (genSeed.HasValue)` in front of every call.
+            async System.Threading.Tasks.Task Phase(string name, bool gen = true)
+            {
+                if (loading == null || gen != genSeed.HasValue) return;
+                if (genPhase != null) genTimings[genPhase] = genWatch.Elapsed.TotalMilliseconds;
+                genWatch.Restart(); genPhase = name;
+                loading.SetStatus(name);
+                loading.Advance();
+                // BOTH signals, like WorldBuilder: a lone ProcessFrame resumes BEFORE the draw, so the label
+                // for the phase about to run would not be on screen while it ran.
+                await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+                await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+            }
+
+            await Phase("Shaping the island");
+            var genPois = genSeed.HasValue
+                ? terr.GenerateIsland(genSeed.Value, genLakes || System.Environment.GetEnvironmentVariable("UG_GENLAKES") == "1")
+                : null;
             var sun = new DirectionalLight3D { RotationDegrees = new Vector3(-55f, -35f, 0f), LightEnergy = 1.2f, ShadowEnabled = true };
             AddChild(sun);
             var env = new Godot.Environment
@@ -6313,6 +6384,16 @@ namespace UnturnedGodot
             var camPos = new Vector3(0f, 130f, 190f);
             bool camTop = false;
             float camPitch = -30f;
+            // ⚠ HOISTED OUT OF THE UG_GENTOP BLOCK BELOW. The reopen path re-aims the camera itself (it has
+            // no POI list to focus on), and needs the same overhead-shot settings the generate path reads --
+            // which used to be locals inside a branch only a generate could enter.
+            float camAlt = 230f;
+            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_GENTOPALT"),
+                               System.Globalization.NumberStyles.Float,
+                               System.Globalization.CultureInfo.InvariantCulture, out float altEnv) && altEnv > 0f)
+                camAlt = altEnv;
+            bool camTopEnv = System.Environment.GetEnvironmentVariable("UG_GENTOP") == "1";
+            camTop = camTopEnv && !genSeed.HasValue && procSeed.HasValue;   // generate sets its own below
             if (genPois != null && genPois.Count > 0)
             {
                 var focus = genPois[0];
@@ -6328,8 +6409,38 @@ namespace UnturnedGodot
                 // the suite are least able to settle, since they recompute the layout with the placing formula.
                 if (System.Environment.GetEnvironmentVariable("UG_GENTOP") == "1")
                 {
-                    camPos = ProcIslandSpawn.PosFor(terr, focus.X, focus.Z) + new Vector3(0f, 230f, 0f);
+                    // UG_GENTOPALT=<m>: how high the straight-down camera sits. 230 frames ONE town, which is
+                    // the right default for judging streets -- and useless for anything about the ISLAND, like
+                    // whether the coast has a beach on it or the sea got drawn at all. A harness that can only
+                    // photograph one scale answers only questions at that scale.
+                    float topAlt = camAlt;
+                    if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_GENTOPALT"),
+                                       System.Globalization.NumberStyles.Float,
+                                       System.Globalization.CultureInfo.InvariantCulture, out float ta) && ta > 0f)
+                        topAlt = ta;
+                    camPos = ProcIslandSpawn.PosFor(terr, focus.X, focus.Z) + new Vector3(0f, topAlt, 0f);
                     camTop = true;
+                    camAlt = topAlt;
+                }
+            }
+            // UG_GENCAM=<x>,<z>: put the editor camera over an arbitrary world point. A generated island is
+            // 3 km across and the interesting thing is usually a 20 m clearing somewhere in it, which the
+            // town-focus default cannot frame -- so a render of anything but a town needed a code edit.
+            var camEnv = System.Environment.GetEnvironmentVariable("UG_GENCAM");
+            if (!string.IsNullOrEmpty(camEnv))
+            {
+                var cb = camEnv.Split(',');
+                if (cb.Length == 2
+                    && float.TryParse(cb[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float cxw)
+                    && float.TryParse(cb[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float czw))
+                {
+                    // ⚠ UG_GENTOP still decides the ANGLE. Forcing straight down here made the flag useless
+                    // exactly where it matters -- a 28 m radar tower photographed from directly overhead is a
+                    // dot, and nothing about whether it stands up straight is visible in that picture.
+                    camTop = camTopEnv;
+                    camPos = camTop
+                        ? new Vector3(cxw, terr.SampleHeight(cxw, czw) + camAlt, czw)
+                        : new Vector3(cxw, terr.SampleHeight(cxw, czw) + camAlt * 0.55f, czw + camAlt * 0.9f);
                 }
             }
             var cam = new EditorCamera { Position = camPos, RotationDegrees = new Vector3(camTop ? -90f : camPitch, 0f, 0f) };
@@ -6338,14 +6449,154 @@ namespace UnturnedGodot
             LootTables.Load(_mapRoot + "/Spawns/Items.dat");   // new maps use PEI's loot tables as the pool (for loot crates)
             var objs = new EditorObjects(editor, this, cam, objectsPreloaded: false); editor.AddChild(objs); editor.Objects = objs;
             // The monuments the generator laid out are only lists until something instantiates them.
+            await Phase("Laying out towns and roads");
             if (genPois != null) ProcIslandSpawn.Spawn(terr, objs);
+            // Paint dirt under everything just built, BEFORE the foliage bake below reads the ground: the splat
+            // is the single source of truth for "is this built on", and the scatter refuses anything but grass.
+            // SAND FIRST, then the built-on dirt over it: the shore is what the ground IS, the dirt is what has
+            // been done to it. Painted before the foliage bake, like the dirt, so the scatter's "grass only"
+            // rule keeps grass and trees off the beach for free rather than needing a second rule about water.
+            // ⚠ The band reaches ABOVE the waterline (master: "a sand band above the water level, and anything
+            // below it") -- a beach that stops exactly at sea level is a colour change at the waterline, not a
+            // shore.
+            await Phase("Painting shoreline and cliffs");
+            if (genPois != null) terr.PaintBelowHeight(Terrain.SeaLevelY + 4f, 5);   // layer 5 = Sand
+            // STEEP GROUND IS NOT GRASS. After the sand (a steep shore face should read as rock, not beach) and
+            // before the built-on dirt, which wins over both. Also stops foliage and trees generating on cliffs
+            // for free, since the scatter only accepts grass.
+            if (genPois != null) terr.PaintSteeperThan(ProcIslandSpawn.SteepRise, 0);   // layer 0 = Dirt
+            await Phase("Marking worked ground");
+            if (genPois != null) ProcIslandSpawn.PaintGroundwork(terr);
+            if (genPois != null) ProcIslandSpawn.ReportClipping(terr);   // UG_CLIPDBG=1: measure the clipping rather than guess at it
+            // ...and an actual sea. BuildEditorNew has always set HasWater + SeaLevelY, so everything that
+            // CONSUMES water (swimming, buoyancy, the underwater pass) believed in one; the surface itself is
+            // built only by the retail loader, so a generated island had a coastline around nothing.
+            await Phase("Filling the sea");
+            if (genPois != null) terr.BuildOceanPlane();
             var spawns = new EditorSpawns(editor, cam, MapDir(mapName)); editor.AddChild(spawns); editor.Spawns = spawns;   // dir doesn't exist -> starts empty
+            // A generated island had no player spawns at all (the save line read "0 spawns" every time), so give
+            // it its own. Seeded off the island's seed: same seed, same island, same start points.
+            await Phase("Choosing spawn points");
+            if (genPois != null && genSeed.HasValue) ProcIslandSpawn.PlacePlayerSpawns(terr, spawns, genSeed.Value);
+            // FOLIAGE. ⚠ BuildEditorNew is its own world build -- it does not go through WorldBuilder, which is
+            // the only place that ever constructed a FoliageField -- so a generated island had no foliage field
+            // at all, never mind no foliage data. Both halves are needed: bake the scatter, then build the field
+            // that reads it. Keyed by SEED, not by map name, so re-rolling the same island reuses its bake
+            // instead of leaving a directory behind per attempt.
+            // ⚠ THE FOLIAGE AND RESOURCE BAKES USED TO RUN HERE, and here is too early: SpawnRoutes (below)
+            // CONFORMS the heightmap to each road's profile, so a scatter taken at this point reads ground that
+            // the roads have not finished moving yet. It showed up as the generate and reload paths disagreeing
+            // about the same island by ~2500 instances on seed 771177 -- the reload, which bakes against the
+            // saved final heights, was the one that was right. Moved to after the roads are down.
             var npcs = new EditorNpcs(editor, cam); editor.AddChild(npcs); editor.Npcs = npcs;
+            // ⚠ AFTER EditorNpcs, AND THAT IS THE POINT. The town's bins are real containers and a container
+            // rolls its loot the moment it enters the tree; EditorNpcs is what registers the item catalogue on
+            // this path ("[npceditor] item catalog was empty -- registered 1995 items"), so furniture placed
+            // during ProcIslandSpawn.Spawn opened as an empty bin every time. Same constraint WorldBuilder
+            // already documents for its own containers: spawn them post-build, when the asset DB is ready.
+            await Phase("Dressing the streets");
+            if (genPois != null) ProcIslandSpawn.SpawnTownFurniture(terr, objs);
             var envEd = new EditorEnvironment(editor, dayNight); editor.AddChild(envEd); editor.Environment = envEd;
             var terrainEd = new EditorTerrain(editor, cam, terr); editor.AddChild(terrainEd); editor.TerrainEd = terrainEd;
+            // ⚠ HERE AND NOT EARLIER. EditorTerrain's constructor is what loads the saved heightmap and
+            // splat, and all three of these READ that ground: BuildOceanPlane returns without a mesh if it
+            // finds no cell below sea level, and both bakes refuse anything the splat does not call grass. Run
+            // before the load they would each quietly produce nothing on the flat 3x3 base.
+            if (procReload)
+            {
+                terr.SetIslandSeed(procSeed.Value);
+                await Phase("Filling the sea", gen: false);
+                terr.BuildOceanPlane();
+                // RE-BAKED rather than reused. The bake encodes where the roads, towns and paint are, and the
+                // directory is keyed by seed alone -- the exact key that shipped trees onto carriageway once
+                // already (see ProcIslandFoliage.Bake). Re-running it against the ground just loaded costs
+                // about a second and cannot be stale.
+                await Phase("Seeding grass and flowers", gen: false);
+                string folDir = ProcIslandFoliage.Bake(terr, procSeed.Value, $"island_{procSeed.Value}");
+                if (folDir != null)
+                {
+                    FoliageField.MapDir = folDir;
+                    var ff = new FoliageField();
+                    AddChild(ff);
+                    ff.LoadGrass();
+                }
+                await Phase("Growing trees and ore", gen: false);
+                string resDir = ProcIslandFoliage.BakeResources(terr, procSeed.Value, $"island_{procSeed.Value}");
+                if (resDir != null)
+                {
+                    ResourceField.MapDir = resDir;
+                    var rsf = new ResourceField();
+                    AddChild(rsf);
+                    rsf.LoadResources("NONE");
+                }
+                await Phase("Drawing the map", gen: false);
+                ProcIslandMap.Rebind(terr, procSeed.Value);
+                // ...and OPEN OVER A TOWN, the same as generating does. The focus block above is gated on the
+                // POI list, which only a generate has, so reopening kept the default (0,130,190) -- and on a
+                // map whose origin is a CORNER of open sea that is a camera pointed at empty water with the
+                // island a smear in one corner. It is the same world; you just cannot see any of it.
+                // ⚠ The town centres come from the node file Rebind just loaded, so this has to follow it.
+                // They are also what the playtest spawn rays down from, so where this looks is where you land.
+                var towns = MapNodes.Locations;
+                if (towns.Count > 0)
+                {
+                    var f = towns[0].Pos;
+                    cam.Position = new Vector3(f.X, terr.SampleHeight(f.X, f.Z) + (camTop ? camAlt : 90f), f.Z);
+                    cam.RotationDegrees = new Vector3(camTop ? -90f : -35f, 0f, 0f);
+                }
+                Log.Print($"[editor] reopened GENERATED island '{mapName}' (seed {procSeed.Value}), {towns.Count} town(s)");
+            }
             var rf = new RoadField { Terr = terr };
             rf.LoadMaterialsOnly(_mapRoot + "/Environment");   // shared road materials so roads can be added on the blank map
             AddChild(rf);
+            // The generator already CARVED a corridor through the heightmap between every pair of linked towns
+            // (GenerateIsland -> CarveRoutes) and then nothing ever surfaced them, so the island had graded
+            // strips of bare grass where its roads should be. Lay real splines along them. ⚠ AFTER AddChild:
+            // AddRoadFromPolyline builds a mesh node as it goes, and a RoadField outside the tree has nowhere
+            // to put it.
+            await Phase("Surfacing the roads");
+            if (genPois != null) ProcIslandSpawn.SpawnRoutes(terr, rf);
+            // ⚠ AFTER the roads, not with the other props. SpawnRoutes conforms the terrain to each road's
+            // profile, so anything standing beside a spline has to be seated once that ground has stopped
+            // moving -- placed earlier, poles and barriers end up floating or buried in a band along every road.
+            if (genPois != null) ProcIslandSpawn.SpawnRoadside(terr, objs);
+            // TRAIL SPURS AND THEIR CAMPS (strawberry 2026-09-17: "branching off road splines with trail
+            // splines. they just end somewhere, in a couple tents on a tiny flat patch"). After the roads for
+            // the same reason the roadside props are: the ground under a trail's junction is ground the road's
+            // conform has just finished moving.
+            if (genPois != null) { ProcIslandSpawn.SpawnTrails(terr, rf); ProcIslandSpawn.SpawnCamps(terr, objs); }
+            if (genPois != null) ProcIslandSpawn.SpawnLandmarks(terr, objs);
+            // AFTER the roadside props, because the overlay draws the FENCES as well as the road edges and
+            // SpawnRoadside is what places them.
+            if (genPois != null) { ProcIslandSpawn.ReportFenceOverlap(terr); ProcIslandSpawn.DrawDebug(terr); }
+            if (genPois != null && genSeed.HasValue)
+            {
+                await Phase("Seeding grass and flowers");
+                string folDir = ProcIslandFoliage.Bake(terr, genSeed.Value, $"island_{genSeed.Value}");
+                if (folDir != null)
+                {
+                    FoliageField.MapDir = folDir;
+                    var ff = new FoliageField();
+                    AddChild(ff);
+                    ff.LoadGrass();
+                }
+                // TREES, BUSHES, MUSHROOMS, ORE. A separate system from the foliage above -- these are
+                // HARVESTABLE (trunk colliders, hit points, log drops, regrow), and ResourceField was never
+                // constructed on this path either. Holiday "NONE" so the island is not Christmas; the bake
+                // already skips seasonal rows, and this keeps the manifest-ordered index space consistent
+                // with what was written.
+                await Phase("Growing trees and ore");
+                string resDir = ProcIslandFoliage.BakeResources(terr, genSeed.Value, $"island_{genSeed.Value}");
+                if (resDir != null)
+                {
+                    ResourceField.MapDir = resDir;
+                    var rsf = new ResourceField();
+                    AddChild(rsf);
+                    rsf.LoadResources("NONE");
+                }
+            }
+            // The island's own M-map, drawn from the heightmap/splat/routes now that all three are final.
+            if (genPois != null && genSeed.HasValue) ProcIslandMap.Bake(terr, genSeed.Value);
             var roadsEd = new EditorRoads(editor, cam, rf); editor.AddChild(roadsEd); editor.RoadsEd = roadsEd;
             var roadDrawEd = new EditorRoadDraw(editor, cam, rf); editor.AddChild(roadDrawEd); editor.RoadDrawEd = roadDrawEd;   // R = draw, Shift+R = legacy nodes
             var riverEd = new EditorRiver(editor, cam, terr); editor.AddChild(riverEd); editor.RiverEd = riverEd;   // V = carve river (spline tool, sits with the road tools)
@@ -6353,8 +6604,51 @@ namespace UnturnedGodot
             var play = new EditorPlayMode();   // playtest button -- custom maps get it too, not just PEI
             editor.AddChild(play);
             play.Setup(editor, null, cam);
+            // Hand play mode the world's lighting so it can light the viewmodel and switch the day/night
+            // visuals on -- the editor builds the cycle with VisualsEnabled off, which is right for editing and
+            // wrong for playing.
+            play.SetWorldLighting(sun, env, dayNight);
+            play.SetIsland(procSeed, _mapRoot);   // seed -> a reproducible horde; _mapRoot -> PEI's loot TABLES
             // Workshop's per-map Play opens the editor and goes straight in, so the map you play is the
             // map the editor built -- one world-building path, not two that can disagree.
+            if (loading != null)
+            {
+                if (genPhase != null) genTimings[genPhase] = genWatch.Elapsed.TotalMilliseconds;
+                loading.SetStatus("Ready");
+                loading.Advance();
+                loading.Finish(genTimings);   // drops the cover and logs the per-step timing, same as a retail load
+            }
+            // ⚠ SAVED AT CREATION (strawberry 2026-09-17: "should save the map to a file on creation"). The
+            // editor only wrote a map out when you pressed playtest or exited, so generating one and closing the
+            // window lost it -- and a generator whose output you can only keep by remembering to press
+            // something is a generator you cannot browse the results of. The proc marker goes down with it, so
+            // the map list can tell a generated island from a hand-built map of the same name.
+            if (genSeed.HasValue)
+            {
+                editor.Save();
+                EditorMaps.MarkProc(mapName, genSeed.Value);
+            }
+            // ⚠ THE PRESENCE ONLY EVER FOLLOWED THE --editor CLI FLAG (strawberry 2026-09-17: "discord RPC says
+            // im in menu when im in a map"). SetEditor was called on that one branch and nowhere else, so every
+            // map opened FROM THE MENU -- generated or custom -- left the presence on whatever the menu last
+            // pushed, which is "In the main menu". The state has to follow the world, not the command line.
+            // ⚠ A WORLD FINGERPRINT THAT COVERS WHAT THE GROUND ONE DOES NOT (strawberry: "when opening the
+            // proc map in the editor its NOT the map that i was on?"). GroundFingerprint hashes heights and
+            // splat, and on that measure generate and reopen have agreed byte for byte all day -- which says
+            // nothing at all about the ROADS or the PROPS, and those are most of what a map looks like. This
+            // hashes the road joints and the placed objects too, so "the same map" is a claim about the map.
+            {
+                ulong h = 1469598103934665603UL;
+                void Mix(float v) { h ^= (ulong)(uint)System.BitConverter.SingleToInt32Bits(v); h *= 1099511628211UL; }
+                var rfNow = rf;
+                int roadN = rfNow?.RoadCount ?? 0;
+                for (int r = 0; r < roadN; r++)
+                    foreach (var q in rfNow.SampleCentreline(r)) { Mix(q.X); Mix(q.Y); Mix(q.Z); }
+                int propN = editor.Objects?.PlacedCount ?? 0;
+                var g = terr.GroundFingerprint();
+                Log.Print($"[world-fingerprint] roads {roadN} props {propN} roadhash {h:x16} heights {g.H:x16} splat {g.S:x16}");
+            }
+            DiscordPresence.SetEditor(mapName);
             if (autoPlay) play.CallDeferred(nameof(EditorPlayMode.EnterPlay));
             _worldReady = true;
             Log.Print(genSeed.HasValue
@@ -7230,6 +7524,10 @@ namespace UnturnedGodot
         // ReturnToMenu is ReloadCurrentScene -- the node that knows why the join failed is destroyed by the very
         // act of going back, so the message cannot ride on an instance. Cleared on read so it shows once.
         public static string PendingJoinError;
+        /// <summary>The browser row the player clicked Join on -- name, map, cap and gamemode, none of which
+        /// the client can learn from the server once connected. Null for a --connect= join. Read by
+        /// BuildClient for the Discord presence line.</summary>
+        public static MainMenu.ServerEntry PendingJoinServer;
 
         void ReturnToMenu()
         {
@@ -9349,15 +9647,41 @@ namespace UnturnedGodot
                 _worldReady = res.Ready;
                 if (_playableClient)   // --connect= (C3): the predicted first-person shell -- its camera is the view once the join snapshot seeds the spawn
                 {
-                    AddChild(new ClientWorldSession { Host = _connectHost, Port = _connectPort != 0 ? _connectPort : PortEnv(), Driver = res.Sim, Sun = res.Sun, Env = res.Env,
+                    var mpSession = new ClientWorldSession { Host = _connectHost, Port = _connectPort != 0 ? _connectPort : PortEnv(), Driver = res.Sim, Sun = res.Sun, Env = res.Env,
                                                       PlayerName = PlayerProfile.Name,   // the HANDSHAKE name (what others see until SetProfile lands, and if it never does) -- was the field default "player" for every real joiner
                                                       DayNight = res.DayNight, Resources = res.Resources, Destructibles = res.Destructibles,   // C5: the world-state views drive these + rubble
                                                       Terr = res.Terr,                                       // C6: terrain-snaps the vehicle-exit spot (§7 risk 6)
                                                       Loading = res.Loading, LoadingTimings = res.Timings,   // the build's cover, still up: the session drops it when the shell lands, not when the world does
-                                                      ApplyServerHoliday = res.ApplyHoliday });              // P3: the deferred holiday content builds with the SERVER's holiday at Accept
+                                                      ApplyServerHoliday = res.ApplyHoliday };              // P3: the deferred holiday content builds with the SERVER's holiday at Accept
+                    AddChild(mpSession);
                     PlayMapMusic();             // a joined player gets the map loop too -- see PlayMapMusic
                     MountChromaticAberration();   // ...and a lens for the graphics toggle to drive -- see MountChromaticAberration
                     MountDeadzoneVisuals(null);   // radiation grain + geiger; the shell binds itself when it lands -- see MountDeadzoneVisuals
+                    // Discord: whose server, which map, how full, what mode -- off the WIRE (v53), not off the
+                    // browser row that started the join.
+                    // ⚠ The name and cap now ride the Accept, so a --connect= join has them too and neither
+                    // depends on a UI object still being in memory. The browser row is only a FALLBACK, for a
+                    // pre-v53 server that sends neither; with no row and no wire value the ADDRESS is shown,
+                    // because inventing a name is worse than admitting there isn't one.
+                    // ⚠ Population is Players.Count, the replicated registry -- NOT RemotePlayers.PuppetCount,
+                    // which counts Godot puppet NODES. That is a rendering artifact: it tracks the registry
+                    // today only because player replication happens not to be interest-culled, and would go
+                    // quietly wrong the day anyone adds distance culling. Count includes self (RemotePlayers
+                    // skips it explicitly: "self is the shell, never a puppet"), so there is no +1 here.
+                    var row = PendingJoinServer;
+                    string fallbackName = row?.Name ?? MainMenu.AddressText(_connectHost, _connectPort != 0 ? _connectPort : PortEnv());
+                    string svMap = row?.Map ?? MapUI.MapFolder;
+                    string svMode = row?.Gamemode ?? "";
+                    int rowMax = row?.Max ?? 0;
+                    AddChild(new DiscordPresenceTicker { Push = () =>
+                    {
+                        var c = mpSession.Client;
+                        if (c == null) return;
+                        string name = !string.IsNullOrEmpty(c.ServerName) ? c.ServerName : fallbackName;
+                        int max = c.ServerMaxPlayers > 0 ? c.ServerMaxPlayers : rowMax;
+                        string mode = !string.IsNullOrEmpty(c.ServerGamemode) ? c.ServerGamemode : svMode;
+                        DiscordPresence.SetMultiplayer(name, svMap, c.Players.Count, max, mode);
+                    } });
                     Log.Print($"[CLIENT] real world up ({System.IO.Path.GetFileName(_mapRoot)}); connecting to {_connectHost}:{PortEnv()} -- the local shell spawns at the server-adopted spawn, predicted + reconciled");
                 }
                 else   // bare --client (C1 demo shape): overhead cam over the spawn region + ClientNode capsules
