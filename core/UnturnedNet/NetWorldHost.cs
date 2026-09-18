@@ -110,6 +110,12 @@ namespace UnturnedGodot.Net
         /// out-reward the direct path. Bump both together when kill XP lands in SP.</summary>
         public uint KillExperience = 0;
 
+        /// <summary>Death lines in chat. `AnnounceDeaths` off silences them entirely; with it on and every
+        /// option off you get exactly "playername died", which is the default strawberry asked for. The four
+        /// detail flags are INDEPENDENT opt-ins, not a ladder -- see DeathMessageRules.</summary>
+        public bool AnnounceDeaths = true;
+        public DeathMessageOptions DeathMessages;
+
         public NetWorldServer(IServerTransport transport,
                               ServerTransportConnectionFailureCallback connectionFailureCallback = null,
                               int maxPeers = 32,
@@ -379,6 +385,30 @@ namespace UnturnedGodot.Net
             // touched the inventory, so a corpse kept its bag and stood back up with it. Wired in core so
             // every host (dedicated, loopback SP, the L0 harness) gets it -- there is no game-side death.
             Combat.PlayerDied = (victim, tick) => Transactions.DropInventoryOnDeath(victim);
+            Combat.DeathResolved = (victim, killer, weapon) =>
+            {
+                if (!AnnounceDeaths) return;
+                bool hasKiller = killer != 0;
+                string victimName = Transactions.NameOf?.Invoke(victim);
+                string killerName = hasKiller ? Transactions.NameOf?.Invoke(killer) : null;
+
+                // ⚠ Distance is measured from the ATTACKER, never from ServerCombat's `sourcePos`. sourcePos is
+                // the source of the HIT -- for a bullet, its position at impact, i.e. on top of the victim --
+                // so a range taken from it reads ~0 m on every kill and looks entirely plausible. -1 means "we
+                // could not resolve it", which the formatter drops rather than printing as a measurement.
+                bool haveVictimPos = Players.TryGetByOwner(victim, out var vpe);
+                float distance = -1f;
+                if (hasKiller && haveVictimPos && Players.TryGetByOwner(killer, out var kpe))
+                {
+                    distance = (kpe.Pos - vpe.Pos).magnitude;
+                }
+
+                string line = DeathMessageRules.Format(
+                    victimName, killerName, weapon, hasKiller, distance,
+                    haveVictimPos, haveVictimPos ? vpe.Pos.x : 0f, haveVictimPos ? vpe.Pos.y : 0f,
+                    haveVictimPos ? vpe.Pos.z : 0f, DeathMessages);
+                Transactions.SayAsServer(line);
+            };
             // B5 (SP/MP-unify): server-authoritative fine vitals. HP is NEVER owned by the vitals sim -- each
             // tick ServerStep re-seeds Sim.Health from the single HP authority (CombatState.HealthExact) and
             // routes the delta OUT: starvation loss through the queued DamagePlayerExternal env sink (death-

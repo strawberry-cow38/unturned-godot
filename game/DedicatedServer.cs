@@ -152,6 +152,17 @@ namespace UnturnedGodot
                 serverName: ServerName,          // wire v53: so a joined client knows where it is (UG_NAME)
                 maxPlayers: MaxPlayers,          // ...how many seats, without querying the status block
                 gamemode: Arena ? "Arena" : "Survival");   // the SAME expression the status block advertises, not a second opinion
+            // Death messages (strawberry 2026-09-18). Announcing is ON by default and, with no detail flags
+            // set, says exactly "playername died" -- the four details are separate opt-ins so an operator
+            // shows only what they want. UG_DEATHMSG=0 silences the line entirely.
+            if (System.Environment.GetEnvironmentVariable("UG_DEATHMSG") == "0") Server.AnnounceDeaths = false;
+            Server.DeathMessages = new DeathMessageOptions
+            {
+                ShowKiller   = System.Environment.GetEnvironmentVariable("UG_DEATH_KILLER")   == "1",
+                ShowWeapon   = System.Environment.GetEnvironmentVariable("UG_DEATH_WEAPON")   == "1",
+                ShowDistance = System.Environment.GetEnvironmentVariable("UG_DEATH_DISTANCE") == "1",
+                ShowLocation = System.Environment.GetEnvironmentVariable("UG_DEATH_LOCATION") == "1",
+            };
             Server.EnableSyncCheck();   // hardening Part C: 1 Hz rolling StateHash block -> clients self-check for desync
             // Hand the server the sea so it can own oxygen (it validates positions already; it just could not
             // see water). Read once here rather than per tick -- SeaLevelY does not move during a session.

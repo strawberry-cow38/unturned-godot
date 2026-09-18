@@ -474,7 +474,7 @@ namespace UnturnedGodot.Net
                             float dmg = b.Gun.PlayerDamage * mult;
                             // b.Pos, not the impact point: the indicator has to say which way to turn and face
                             // the shooter, not mark where the bullet happened to end its flight.
-                            ApplyPlayerDamage(hitPlayer, dmg, b.Shooter, tick, out bool killed, sourcePos: b.Pos);
+                            ApplyPlayerDamage(hitPlayer, dmg, b.Shooter, tick, out bool killed, sourcePos: b.Pos, weaponName: b.Gun.AssetName);
                             SendHitConfirm(b.Shooter, b.Seq, HitTargetKind.Player, hitPlayer, dmg, killed, hitRelY >= hitHeadMin);
                             BroadcastImpact(point, ImpactSurface.Flesh);
                             Diag.BulletHitsPlayer++;
@@ -699,7 +699,7 @@ namespace UnturnedGodot.Net
         /// DamagePlayerExternal). <paramref name="sourcePos"/> is optional and purely cosmetic -- it feeds only
         /// the victim's directional hurt indicator (PlayerHurtEvent) and touches no HP math, so a caller with
         /// nothing to point at (fall, OOB, starvation, a deadzone) can safely omit it rather than guess one.</summary>
-        void ApplyPlayerDamage(ushort victim, float damage, ushort attacker, long tick, out bool killed, Vector3? sourcePos)
+        void ApplyPlayerDamage(ushort victim, float damage, ushort attacker, long tick, out bool killed, Vector3? sourcePos, string weaponName = null)
         {
             killed = false;
             if (!_state.TryGet(victim, out var cs) || !cs.Alive) return;
@@ -722,6 +722,10 @@ namespace UnturnedGodot.Net
             PlayerDied?.Invoke(victim, tick);    // the death drop lands here -- its spawn facts go out before the death fact
             var evt = new PlayerDiedEvent { Victim = victim, Killer = attacker == victim ? (ushort)0 : attacker };
             _broadcast(NetMessagePak.Pack(ReplicationIds.EventPlayerDied, evt.Write));
+            // The death LINE is not the death FACT: the fact is the event above, which every client needs, and
+            // the line is chat the operator opted into. Kept as a host hook rather than composed here because
+            // naming a player and locating one are the host's lookups, not combat's -- same seam as PlayerDied.
+            DeathResolved?.Invoke(victim, evt.Killer, weaponName);
         }
 
         /// <summary>Phase 6 (§3.2) XP-award seam: fires on every credited kill -- zombie AND player, since
@@ -738,6 +742,14 @@ namespace UnturnedGodot.Net
         /// (strawberry: "your items are kept after death instead of dropping on the ground"). Unset = the old
         /// keep-inventory behaviour, which is what every pre-existing L0 combat harness asserts against.</summary>
         public Action<ushort, long> PlayerDied;
+
+        /// <summary>(victim, killer, weaponName) once a death has resolved -- killer 0 means environmental
+        /// (fall, starvation, radiation, out-of-bounds) and weaponName is null when the damage path has no
+        /// asset identity to give. ⚠ TODAY ONLY GUNS DO: ServerGunProfile carries AssetName, ServerMeleeProfile
+        /// does not (there is one shared DefaultMelee, so the server never knows WHICH melee weapon), and
+        /// throwables carry a numeric ItemId with no server-side name lookup. So a melee or grenade kill
+        /// correctly omits the weapon clause rather than inventing one.</summary>
+        public Action<ushort, ushort, string> DeathResolved;
 
         /// <summary>Respawn seam (player, tick): fires inside Respawn after the entity is revived and
         /// repositioned, BEFORE the PlayerRespawned broadcast and before this tick's inventory commit -- so
