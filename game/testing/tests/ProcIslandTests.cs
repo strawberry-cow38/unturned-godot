@@ -443,7 +443,18 @@ namespace UnturnedGodot.Testing
                 var info = ProcIsland.PropInfo(bld.Prop);
                 if (info == null) { unknownProp++; continue; }
                 float yaw = Mathf.DegToRad(bld.YawDeg);
-                float ax = -Mathf.Sin(yaw), az = -Mathf.Cos(yaw);   // +Y: away from the street it fronts
+                // ⚠⚠ THIS AXIS POINTED AT THE STREET AND THE COMMENT SAID IT POINTED AWAY, so the search only
+                // ever matched a street BEHIND the building. YawFor(dx,dz) = atan2(-dx,-dz) is the rotation
+                // that points a prop's local +Y along (dx,dz), and PlaceBuildings passes -d so +Y faces the
+                // street -- which makes -sin/-cos the TOWARD vector, not the away one. Worked example, street
+                // cell at the origin and the block at +X: yaw is 90 deg, the fronted street scores along =
+                // -20 and is rejected by `along > 0.5f`, while a street on the far side scores +20 and is
+                // accepted. So a through-block was silently measured against the wrong road and an edge block
+                // -- nothing behind it -- counted as "facing nothing". That is the 10.
+                //
+                // Same 180-degree family as the Front/Back error below: the buildings were turned to face
+                // their street and this test was never turned with them.
+                float ax = Mathf.Sin(yaw), az = Mathf.Cos(yaw);   // +Y faces the street, so this is away from it
                 float best = float.MaxValue;
                 foreach (var t in tiles)
                 {

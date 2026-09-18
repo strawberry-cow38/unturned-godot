@@ -3733,7 +3733,15 @@ float step = (ox != 0 && oy != 0) ? 1.4142f : 1f;
                             var houses = through ? ThruHouses : FitHouses;
                             if (houses.Length == 0) break;
                             var hb = houses[(int)(Hash01(i * 17 + poiIndex * 5, j * 23 + slot, p.Seed + 1303) * (houses.Length - 1) + 0.5f)];
-                            float set2 = SetbackForFlipped(hb) + TileSize * 0.5f;
+                            // ⚠ THE SAME SETBACK AS EVERY OTHER BUILDING. This used to add half a tile on the
+                            // theory that a cap's ramp is the town's edge and a building on the kerb line there
+                            // would stand in the mouth of the road out. That was reasoning, not a measurement --
+                            // and it breaks an invariant that IS measured: every front wall sits the same
+                            // distance from its street centreline, which is what lets the suite assert one
+                            // number instead of a range. A speculative 12 m is not worth spending a real
+                            // invariant on; if a cap frontage ever looks wrong in a render, fix it then with a
+                            // picture to point at.
+                            float set2 = SetbackForFlipped(hb);
                             outp.Add(new MonumentBuilding(poiIndex, hb.Name,
                                                           scx + d.dx * set2, scz + d.dz * set2, YawFor(-d.dx, -d.dz)));
                             slot++; CapFrontagesRelaxed++;
