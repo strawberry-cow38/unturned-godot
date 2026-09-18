@@ -846,12 +846,25 @@ namespace UnturnedGodot.Testing
                         if (bb.Poi != 0) continue;
                         float byaw = Mathf.DegToRad(bb.YawDeg);
                         float ux = Mathf.Cos(byaw), uz = -Mathf.Sin(byaw);      // mesh +X
-                        float vx = -Mathf.Sin(byaw), vz = -Mathf.Cos(byaw);     // mesh +Y (back)
+                        // ⚠⚠ +Y IS THE FRONT, NOT THE BACK, AND THIS SAID BACK. YawFor(dx,dz)=atan2(-dx,-dz)
+                        // points a prop's local +Y along (dx,dz), and PlaceBuildings passes -d so +Y faces the
+                        // STREET. So (-sin,-cos) is the toward-the-street vector -- proved numerically when the
+                        // fronting check was found reading the same expression backwards -- and the orange bar,
+                        // drawn at -hd, was landing on the FIELD side of every box.
+                        //
+                        // ⚠ THE THIRD INSTANCE OF ONE 180-DEGREE FLIP, and the worst-placed of the three: this
+                        // block carries NO asserts (its own comment says it exists "so a building facing the
+                        // wrong way is visible rather than merely wrong in a number"), so it cannot go red. It
+                        // is the picture you would open to CONFIRM the fronting fix, and it would have shown
+                        // every building backwards -- which is how correct code gets re-flipped to match a
+                        // broken render. Caught by tinyclaw sweeping the file for more of the same rather than
+                        // stopping at the two that had already bitten.
+                        float vx = -Mathf.Sin(byaw), vz = -Mathf.Cos(byaw);     // mesh +Y == the FRONT, faces the street
                         float hw = 9f, hd = 10f;
                         Vector2 C(float a2, float b2) => new(bb.X + ux * a2 + vx * b2, bb.Z + uz * a2 + vz * b2);
-                        var c1 = C(-hw, -hd); var c2 = C(hw, -hd); var c3 = C(hw, hd); var c4 = C(-hw, hd);
+                        var c1 = C(-hw, hd); var c2 = C(hw, hd); var c3 = C(hw, -hd); var c4 = C(-hw, -hd);
                         var bc = new Color(0.78f, 0.70f, 0.55f);
-                        ZLine(c1.X, c1.Y, c2.X, c2.Y, new Color(0.95f, 0.45f, 0.25f));   // FRONT edge (-Y)
+                        ZLine(c1.X, c1.Y, c2.X, c2.Y, new Color(0.95f, 0.45f, 0.25f));   // FRONT edge (+Y, street side)
                         ZLine(c2.X, c2.Y, c3.X, c3.Y, bc);
                         ZLine(c3.X, c3.Y, c4.X, c4.Y, bc);
                         ZLine(c4.X, c4.Y, c1.X, c1.Y, bc);
