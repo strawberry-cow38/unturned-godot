@@ -28,28 +28,41 @@ pipe graph — and not networking. Anyone skimming filenames will read it as "th
 fluid net code exists" and be wrong. Same trap as `LinkKind.Trail` meaning two
 different things in ProcIsland.
 
-## 3. Weather advances on FRAME DELTA, not the replicated day clock
+## 3. The weather STATE MACHINE integrates its own time; the day clock is fine
 
-`WeatherManager.HubProcess` (~L215):
+⚠ **This entry was wrong in its first version and the correction matters, because
+the wrong version sends you to wire up something that is already wired.**
+
+The day clock **is** replicated and **is** read: `WorldNetSync.cs:61` does
+`_dnc.Time = _server.Clock.TimeOfDayAt(tick)` — *"the authoritative clock IS the
+tick"* — and L65 re-derives it to measure drift. So `Cycle.Time` is
+server-authoritative today.
+
+What `WeatherManager` does (~L215) is integrate its **own** state on
 
     float dt = (float)delta * (Cycle != null ? Mathf.Max(0f, Cycle.Speed) : 1f);
 
-so the weather state machine steps on local frame time scaled by the cycle speed.
-The comment at L31 says why — *"so it fires even when the day clock is frozen
-(renders)"* — which is a real requirement and the reason this is deliberate
-rather than an oversight.
+It reads Cycle's **Speed** and never its **Time**. So the clock is replicated and
+the weather state riding on it is not: every client integrates its own storm, and
+`Cycle.Overcast`, `Cycle.StormAmount` and the `rain_daylight` global diverge.
 
-**But a replicated clock does exist**: `core/UnturnedNet/WorldReplication.cs`
-`TimeOfDayAt(long tick)`, and `WorldSave.TimeOfDay01` persists it. Weather does
-not read either, so in multiplayer **every client rolls its own weather** — one
-player is in a storm while another has clear sky, and `Cycle.Overcast` /
-`Cycle.StormAmount` / the `rain_daylight` shader global diverge with it.
+**The fix is to derive weather from `Cycle.Time`, which is already server-driven**
+— not to replicate a clock.
 
-**The fix has to keep the render path working.** Driving weather from
-`TimeOfDayAt(tick)` when a server clock is present and falling back to frame
-delta when there is not is the shape that satisfies both; a straight swap would
-freeze weather in every offline render, which is what the L31 comment is
-protecting.
+⚠ **And the render concern in the first version was misattributed.** The comment
+about running on frame delta *"so it fires even when the day clock is frozen
+(renders)"* is at L31 and belongs to `_pendingThunder` — the boom queue — with
+L326-330 stating it outright: *"the per-strike consequences that must ignore the
+WEATHER clock: the flash FADE and the delayed thunder."* Those already run on
+their own frame-delta path, deliberately, precisely so they survive a frozen
+clock. A weather-state swap therefore does **not** endanger renders the way this
+doc first claimed; the render-critical part is already separated.
+
+**Genuinely open, not settled** (tinyclaw, and not checked by either of us):
+whether weather state is cheaply *derivable* from `Cycle.Time` — a pure function
+of time, seeded — or whether it genuinely needs integrating and therefore needs
+its accumulator replicated instead. That decides whether this is a small change
+or a real one, and nobody has looked.
 
 ---
 
