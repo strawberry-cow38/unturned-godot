@@ -1,15 +1,35 @@
-using UnityEngine;   // Mathf shim (SDG.Compat) -- this file moved engine-free from game/ for MP_PLAN §3.2 (same math)
+using UnityEngine;   // Mathf shim (SDG.Compat) -- engine-free for MP_PLAN §3.2 (same math)
 
 namespace SDG.Unturned
 {
-    // Source SDG.Unturned skill enums. 3 specialities, each with its skills (AGRICULTURE = farming, CRAFTING gates blueprints).
-    public enum EPlayerSpeciality : byte { OFFENSE, DEFENSE, SUPPORT }
-    public enum EPlayerOffense : byte { OVERKILL, SHARPSHOOTER, DEXTERITY, CARDIO, EXERCISE, DIVING, PARKOUR }
-    public enum EPlayerDefense : byte { SNEAKYBEAKY, VITALITY, IMMUNITY, TOUGHNESS, STRENGTH, WARMBLOODED, SURVIVAL }
-    public enum EPlayerSupport : byte { HEALING, CRAFTING, OUTDOORS, COOKING, FISHING, AGRICULTURE, MECHANIC, ENGINEER }
+    /// ⭐⭐ OUR SKILL SET, NOT RETAIL'S. Master 2026-10-04: "kill all previous skill stuff. this is our own."
+    ///
+    /// Retail's 22 skills across 3 specialities are GONE. They were ported faithfully and they worked, but the
+    /// design was the problem, not the implementation -- master: "i dont like all the weird things the vanilla has
+    /// that weirdly buff you wayyy too much just by spending skill points. (i can sprint for 10x as long after
+    /// killing a few zombies)". That is not an exaggeration: vanilla CARDIO doubled stamina regen while EXERCISE
+    /// halved the drain, and the two compound.
+    ///
+    /// ⭐ SO THE RULE FOR THIS SET IS: **SKILLS BUY ACCESS AND EFFICIENCY, NOT A BIGGER BODY.** What you can make,
+    /// repair and build; how much you get back from what you gather; how little you waste. Where a skill does move
+    /// a player stat at all it moves it a little and it is capped. Nothing here should ever multiply a survival
+    /// number by 4x, and if a future effect wants to, that is the signal it belongs in a different system.
+    ///
+    /// FLAT, no specialities. Retail's 3x(7/7/8) grouping existed to shape its own skill tree; ours is a list of
+    /// trades and the UI can group them for display without the data model carrying it.
+    public enum ESkill : byte
+    {
+        // make & maintain
+        Metalworking, Carpentry, Gunsmithing, Electrical, Mechanics, Science, Cooking,
+        // gather
+        Plants, Animals, Fishing, Mining,
+        // body
+        Medical, Shooting, Melee,
+    }
 
-    // Source SDG.Unturned.Skill: one skill's level + its XP upgrade cost. Nelson-2025-09-11 LINEAR cost:
-    //   cost = round((baseCost + level * perLevelCostIncrease) * costMultiplier),  perLevelCostIncrease = round(baseCost * difficulty)
+    /// One skill's level + its XP upgrade cost. ⭐ KEPT FROM THE RETAIL PORT DELIBERATELY: master's objection was to
+    /// what the skills DID, not to the XP economy, and this cost curve (linear, cost = base + level*increase) is
+    /// sound and already tested. Replacing a working thing nobody complained about is how a rework overruns.
     public class Skill
     {
         public byte level, max;
@@ -23,130 +43,124 @@ namespace SDG.Unturned
             perLevelCostIncrease = Mathf.RoundToInt(baseCost * newDifficulty);
         }
 
-        // XP to raise this skill from its current level to the next.
+        /// XP to raise this skill from its current level to the next.
         public uint Cost => (uint)Mathf.Max(0, Mathf.RoundToInt((baseCost + level * perLevelCostIncrease) * costMultiplier));
-        // 0..1 fraction of max level (source Skill.mastery / NormalizeLevel).
+        /// 0..1 fraction of max level.
         public float Mastery => max == 0 ? 0f : Mathf.Clamp((float)level / max, 0f, 1f);
     }
 
-    // Source SDG.Unturned.PlayerSkills: OFFENSE[7]/DEFENSE[7]/SUPPORT[8] skill grid + a shared XP pool (experience)
-    // spent to level skills. Maxes/costs/difficulties are the source values (PlayerSkills ctor). Increment 1 = the
-    // data model + XP award/upgrade; effects (agriculture 2nd-yield, craft/skill gating) wire in as follow-ups.
     public class PlayerSkills
     {
-        public const int SPECIALITIES = 3;
-        readonly Skill[][] _skills;
-        public Skill[][] skills => _skills;
+        public const int COUNT = 14;
+        public static readonly int Count = COUNT;
+
+        readonly Skill[] _skills = new Skill[COUNT];
+        public Skill[] skills => _skills;
         uint _experience;
         public uint experience => _experience;
 
+        /// ⚠ UNIFORM max 5 and cost 10/difficulty 1.0 for every skill -- 10+20+30+40+50 = 150 XP to master one.
+        /// Deliberately flat for now: the per-skill effect table goes to master before any of these numbers get
+        /// tuned, and a set of invented-looking curves would only make that conversation about the curves.
         public PlayerSkills()
         {
-            _skills = new Skill[SPECIALITIES][];
-            _skills[(int)EPlayerSpeciality.OFFENSE] = new[] {
-                new Skill(0, 7, 10, 1f),   // OVERKILL
-                new Skill(0, 7, 10, 1f),   // SHARPSHOOTER
-                new Skill(0, 5, 10, 0.5f), // DEXTERITY
-                new Skill(0, 5, 10, 0.5f), // CARDIO
-                new Skill(0, 5, 10, 0.5f), // EXERCISE
-                new Skill(0, 5, 10, 0.5f), // DIVING
-                new Skill(0, 5, 20, 0.5f), // PARKOUR
-            };
-            _skills[(int)EPlayerSpeciality.DEFENSE] = new[] {
-                new Skill(0, 7, 10, 1f),   // SNEAKYBEAKY
-                new Skill(0, 5, 10, 0.5f), // VITALITY
-                new Skill(0, 5, 10, 0.5f), // IMMUNITY
-                new Skill(0, 5, 10, 0.5f), // TOUGHNESS
-                new Skill(0, 5, 10, 0.5f), // STRENGTH
-                new Skill(0, 5, 10, 0.5f), // WARMBLOODED
-                new Skill(0, 5, 10, 0.5f), // SURVIVAL
-            };
-            _skills[(int)EPlayerSpeciality.SUPPORT] = new[] {
-                new Skill(0, 7, 10, 1f),    // HEALING
-                new Skill(0, 3, 20, 1.5f),  // CRAFTING
-                new Skill(0, 5, 10, 0.5f),  // OUTDOORS
-                new Skill(0, 3, 20, 1.5f),  // COOKING
-                new Skill(0, 5, 10, 0.5f),  // FISHING
-                new Skill(0, 7, 10, 1f),    // AGRICULTURE
-                new Skill(0, 5, 10, 0.5f),  // MECHANIC
-                new Skill(0, 3, 20, 1.5f),  // ENGINEER
-            };
+            for (int i = 0; i < COUNT; i++) _skills[i] = new Skill(0, 5, 10, 1f);
         }
 
-        public Skill GetSkill(int speciality, int index) => _skills[speciality][index];
-        public byte Level(EPlayerOffense s) => _skills[(int)EPlayerSpeciality.OFFENSE][(int)s].level;
-        public byte Level(EPlayerDefense s) => _skills[(int)EPlayerSpeciality.DEFENSE][(int)s].level;
-        public byte Level(EPlayerSupport s) => _skills[(int)EPlayerSpeciality.SUPPORT][(int)s].level;
+        public Skill GetSkill(ESkill s) => _skills[(int)s];
+        public Skill GetSkill(int index) => _skills[index];
+        public byte Level(ESkill s) => _skills[(int)s].level;
+        public float Mastery(ESkill s) => _skills[(int)s].Mastery;
 
-        // Earn XP (source ServerModifyExperience/askAward). Kills/harvests/crafts feed this in the follow-up.
-        public void AwardExperience(uint xp) { _experience += xp; }
-
-        // MP replica apply (SkillsReplication.ReadSnapshot): the AUTHORITATIVE experience arrives over the
-        // wire -- a client-side replica writes it through here, never through AwardExperience/TryUpgrade.
-        public void NetSetExperience(uint xp) { _experience = xp; }
-
-        /// <summary>Spend from the pool without levelling one of the grid skills. The skill TREE buys nodes out of
-        /// the same experience, and TryUpgrade cannot serve it: that one is bound to a (speciality, index) and to
-        /// the per-level cost curve, neither of which a tree node has. Returns false and spends nothing if the
-        /// pool will not cover it, so the caller can never end up half-charged.</summary>
-        public bool TrySpend(uint xp)
+        public void AwardExperience(uint amount) => _experience += amount;
+        public void NetSetExperience(uint total) => _experience = total;
+        public bool TrySpend(uint amount)
         {
-            if (_experience < xp) return false;
-            _experience -= xp;
-            return true;
+            if (_experience < amount) return false;
+            _experience -= amount; return true;
         }
 
-        // Source GetSharpshooterRecoilMultiplier: recoil + spread scale by 1 - mastery*0.4 (up to 40% less at max SHARPSHOOTER lvl 7).
-        public float SharpshooterRecoilMultiplier() => 1f - GetSkill((int)EPlayerSpeciality.OFFENSE, (int)EPlayerOffense.SHARPSHOOTER).Mastery * 0.4f;
-
-        // Source PlayerLife:2428: STRENGTH cuts fall damage by up to 75% at max level.
-        public float StrengthFallMultiplier() => 1f - GetSkill((int)EPlayerSpeciality.DEFENSE, (int)EPlayerDefense.STRENGTH).Mastery * 0.75f;
-
-        // Source skills.mastery(spec, index) = level/max fraction.
-        public float Mastery(int speciality, int index) => _skills[speciality][index].Mastery;
-
-        // Source PlayerEquipment:2274: OVERKILL boosts melee damage by up to 50% at max level.
-        public float OverkillMeleeMultiplier() => 1f + Mastery((int)EPlayerSpeciality.OFFENSE, (int)EPlayerOffense.OVERKILL) * 0.5f;
-
-        // Source UseableGun:2979/3046: DEXTERITY speeds the reload animation (speed += mastery*0.5), up to 1.5x at max. Reload TIME = duration / this.
-        public float DexterityReloadSpeed() => 1f + Mastery((int)EPlayerSpeciality.OFFENSE, (int)EPlayerOffense.DEXTERITY) * 0.5f;
-
-        // Source UseableConsumeable:325: IMMUNITY cuts infection GAINED by up to 50% at max (askInfect(amount * (1-mastery*0.5))).
-        public float ImmunityInfectionMultiplier() => 1f - Mastery((int)EPlayerSpeciality.DEFENSE, (int)EPlayerDefense.IMMUNITY) * 0.5f;
-
-        // Source PlayerMovement:791: SNEAKYBEAKY quiets the player's movement noise by up to 75% (volume = 1 - mastery*0.75).
-        public float SneakyBeakyNoiseMultiplier() => 1f - Mastery((int)EPlayerSpeciality.DEFENSE, (int)EPlayerDefense.SNEAKYBEAKY) * 0.75f;
-
-        // Survival-sim skill multipliers. VITALITY/SURVIVAL are the source-exact interval->rate inversions (magnitudes
-        // 0.5/0.25 from PlayerLife:2030/1953/1975); CARDIO/EXERCISE are source-INFORMED for the port's simplified
-        // continuous stamina (the source is tick-based -- PlayerLife:1797/1806-1810). Applied to the port's stand-in rates.
-        public float VitalityRegenMultiplier() => 1f / (1f - Mastery((int)EPlayerSpeciality.DEFENSE, (int)EPlayerDefense.VITALITY) * 0.5f);          // faster health regen (up to 2x)
-        public float SurvivalDrainMultiplier() => 1f / (1f + Mastery((int)EPlayerSpeciality.DEFENSE, (int)EPlayerDefense.SURVIVAL) * 0.25f);          // slower food/water drain (down to 0.8x)
-        public float CardioStaminaRegenMultiplier() => 1f + Mastery((int)EPlayerSpeciality.OFFENSE, (int)EPlayerOffense.CARDIO);                       // faster stamina regen (up to 2x)
-        public float ExerciseStaminaDrainMultiplier() => 1f - Mastery((int)EPlayerSpeciality.OFFENSE, (int)EPlayerOffense.EXERCISE) * 0.5f;            // slower stamina drain (down to 0.5x)
-
-        // Spend XP to raise a skill one level (source askUpgrade). Returns true if it leveled up.
-        public bool TryUpgrade(int speciality, int index)
+        /// Spend XP to raise a skill one level. Returns true if it leveled up.
+        public bool TryUpgrade(ESkill s)
         {
-            var sk = _skills[speciality][index];
+            var sk = _skills[(int)s];
             uint c = sk.Cost;
             if (sk.level >= sk.max || _experience < c) return false;
             _experience -= c;
             sk.level++;
             return true;
         }
-        public bool TryUpgrade(EPlayerSupport s) => TryUpgrade((int)EPlayerSpeciality.SUPPORT, (int)s);
+        public bool TryUpgrade(int index) => index >= 0 && index < COUNT && TryUpgrade((ESkill)index);
 
-        // Find a skill by its enum name ("crafting", "agriculture", "sharpshooter"...) across all specialities. For the dev console.
+        /// Find a skill by name ("carpentry", "mining"...) -- for the dev console.
         public bool TryFind(string name, out Skill skill, out string label)
         {
-            if (System.Enum.TryParse<EPlayerOffense>(name, true, out var o) && System.Enum.IsDefined(typeof(EPlayerOffense), o))
-            { skill = _skills[(int)EPlayerSpeciality.OFFENSE][(int)o]; label = o.ToString(); return true; }
-            if (System.Enum.TryParse<EPlayerDefense>(name, true, out var d) && System.Enum.IsDefined(typeof(EPlayerDefense), d))
-            { skill = _skills[(int)EPlayerSpeciality.DEFENSE][(int)d]; label = d.ToString(); return true; }
-            if (System.Enum.TryParse<EPlayerSupport>(name, true, out var s) && System.Enum.IsDefined(typeof(EPlayerSupport), s))
-            { skill = _skills[(int)EPlayerSpeciality.SUPPORT][(int)s]; label = s.ToString(); return true; }
+            if (System.Enum.TryParse<ESkill>(name, true, out var s) && System.Enum.IsDefined(typeof(ESkill), s))
+            { skill = _skills[(int)s]; label = s.ToString(); return true; }
             skill = null; label = null; return false;
+        }
+
+        // ------------------------------------------------------------------------------------------------
+        // EFFECTS
+        //
+        // ⚠⚠ A HELPER IS ONLY DEFINED HERE ONCE SOMETHING CALLS IT. That rule is the whole point of this
+        // section, and it comes from what the retail port turned into: TEN of its twenty-two skills levelled
+        // up, charged XP and changed no number anywhere, because the helpers existed and the wires never got
+        // written. The suite stayed green the entire time -- every skill test asserted that the helper returned
+        // the right number, and not one asserted that anything CALLED it.
+        //
+        // ⭐ So: no speculative helpers, and `WiredSkills` below is published at boot so a dead skill cannot
+        // hide again. If a skill is not in that list, it does nothing, and the game says so out loud.
+        // ------------------------------------------------------------------------------------------------
+
+        /// MEDICAL: medical items restore more. ⚠ Capped at +50% at max, and it scales the AMOUNT only -- stopping
+        /// a bleed or setting a bone is a yes/no, not something a skill makes you better at.
+        public float MedicalMultiplier() => 1f + Mastery(ESkill.Medical) * 0.5f;
+
+        /// PLANTS: chance of a second yield when harvesting a crop (0 -> 1.0 at max). Access/efficiency, not a stat.
+        public float PlantsSecondYieldChance() => Mastery(ESkill.Plants);
+
+        /// SHOOTING: recoil/spread. ⚠ DELIBERATELY SMALL -- 15% at max, where retail SHARPSHOOTER gave 40%.
+        /// This is the knob master's complaint was aimed at, so it stays something you notice and not something
+        /// that turns a different gun into your gun.
+        public float ShootingRecoilMultiplier() => 1f - Mastery(ESkill.Shooting) * 0.15f;
+
+        /// MELEE: melee damage. ⚠ Same restraint -- 20% at max against retail OVERKILL's 50%.
+        public float MeleeDamageMultiplier() => 1f + Mastery(ESkill.Melee) * 0.2f;
+
+        /// ⭐ WHICH SKILLS ACTUALLY DO SOMETHING. Published at boot (see the [skills] line) so "this skill is
+        /// wired to nothing" is a fact anyone can read instead of something only a call-site census finds.
+        /// ⚠ Keep this honest: adding a name here without a call site is worse than leaving it out.
+        public static readonly ESkill[] WiredSkills =
+        {
+            ESkill.Medical, ESkill.Plants, ESkill.Fishing, ESkill.Cooking,
+            ESkill.Metalworking, ESkill.Carpentry, ESkill.Gunsmithing, ESkill.Mechanics,
+            ESkill.Shooting, ESkill.Melee,
+        };
+
+        /// ⭐⭐ One line naming which skills DO something and which are decorative, printed at boot. The retail set
+        /// hid ten dead skills for weeks because nothing ever said so out loud and the suite only checked the
+        /// arithmetic. A running game that states its own wiring cannot do that again -- same trick as the
+        /// [water] line, and for the same reason: "is this actually on?" should be answerable by the person
+        /// asking, not by me running a call-site census.
+        public static string CensusLine()
+        {
+            var wired = string.Join(" ", WiredSkills);
+            var dead = new System.Collections.Generic.List<string>();
+            foreach (var s in UnwiredSkills()) dead.Add(s.ToString());
+            return $"[skills] {COUNT} skills, flat; {WiredSkills.Length} wired: {wired}"
+                 + (dead.Count > 0 ? $"   \u26a0 NO EFFECT YET ({dead.Count}): {string.Join(" ", dead)}" : "");
+        }
+
+        /// The ones with no effect yet -- Animals, Science, Mining, Electrical. Derived, never hand-listed, so it
+        /// cannot drift from the line above.
+        public static System.Collections.Generic.IEnumerable<ESkill> UnwiredSkills()
+        {
+            for (int i = 0; i < COUNT; i++)
+            {
+                var s = (ESkill)i;
+                if (System.Array.IndexOf(WiredSkills, s) < 0) yield return s;
+            }
         }
     }
 }

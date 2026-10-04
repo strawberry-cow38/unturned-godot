@@ -72,10 +72,13 @@ namespace UnturnedGodot.Testing
         public override IEnumerable<Step> Run()
         {
             var skills = new PlayerSkills();
-            var bp = new BlueprintDef { Skill = "Craft", SkillLevel = 2 };   // requires CRAFTING >= 2
-            var craft = skills.GetSkill((int)EPlayerSpeciality.SUPPORT, (int)EPlayerSupport.CRAFTING);
+            // ⚠ A legacy "Craft" row is satisfied by the BEST of the three trades (Crafting.BestTrade) -- the
+            // single retail CRAFTING skill is what we split into Metalworking/Carpentry/Gunsmithing, and the
+            // blueprint does not say which one it needs. Carpentry stands in for "a trade" here.
+            var bp = new BlueprintDef { Skill = "Craft", SkillLevel = 2 };
+            var craft = skills.GetSkill(ESkill.Carpentry);
 
-            T.Check("blocked at CRAFTING 0", !Crafting.MeetsSkill(bp, skills));
+            T.Check("blocked with no trade at all", !Crafting.MeetsSkill(bp, skills));
             craft.level = 1;
             T.Check("blocked at CRAFTING 1", !Crafting.MeetsSkill(bp, skills));
             craft.level = 2;

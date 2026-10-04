@@ -253,7 +253,13 @@ namespace UnturnedGodot.Net
             // skills: total xp plus a level per (speciality, index), stored as a jagged array so a schema that
             // grows a skill does not silently shift every level along by one.
             public uint Experience { get; set; }
-            public List<List<byte>> SkillLevels { get; set; } = new List<List<byte>>();
+            /// ⚠⚠ RENAMED from `SkillLevels`, which was List<List<byte>> nested by retail speciality. The rename is
+            /// deliberate and the retype is NOT an option: a world saved before the skill rework still carries the
+            /// old nested array, and changing the TYPE of an existing property makes the entire save fail to
+            /// deserialize -- losing the base, the vehicles and the inventories along with the skill levels.
+            /// ⭐ Under a NEW name the old array is just an unknown property. The world loads, skills come back at
+            /// zero. We do not do save migrations, so resetting them is the policy -- but it has to cost only them.
+            public List<byte> SkillLevelsFlat { get; set; } = new List<byte>();
 
             // The seven GARMENTS THEMSELVES, as Items -- distinct from the WornHat/WornShirt/... ids above,
             // which are the replicated APPEARANCE and only say how you look to other people. PlayerInventory's
@@ -533,13 +539,7 @@ namespace UnturnedGodot.Net
             {
                 p.Experience = se.Skills.experience;
                 var all = se.Skills.skills;
-                if (all != null)
-                    foreach (var spec in all)
-                    {
-                        var row = new List<byte>();
-                        if (spec != null) foreach (var sk in spec) row.Add(sk?.level ?? 0);
-                        p.SkillLevels.Add(row);
-                    }
+                if (all != null) foreach (var sk in all) p.SkillLevelsFlat.Add(sk?.level ?? 0);
             }
 
             if (host.Inventories.TryGet(pe.OwnerPlayerId, out var ie) && ie.Inventory != null)
@@ -643,14 +643,8 @@ namespace UnturnedGodot.Net
                 if (p.Experience > 0) host.Skills.ServerAward(playerId, p.Experience, tick);
                 var all = se.Skills.skills;
                 if (all != null)
-                    for (int s = 0; s < all.Length && s < p.SkillLevels.Count; s++)
-                    {
-                        var row = p.SkillLevels[s];
-                        var spec = all[s];
-                        if (spec == null || row == null) continue;
-                        for (int i = 0; i < spec.Length && i < row.Count; i++)
-                            if (spec[i] != null) spec[i].level = Math.Min(row[i], spec[i].max);
-                    }
+                    for (int i = 0; i < all.Length && i < p.SkillLevelsFlat.Count; i++)
+                        if (all[i] != null) all[i].level = Math.Min(p.SkillLevelsFlat[i], all[i].max);
                 se.LastChangedTick = tick;
             }
 

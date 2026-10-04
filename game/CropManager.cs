@@ -67,8 +67,8 @@ namespace UnturnedGodot
                 if (yield != 0)
                 {
                     by.DropWorldItem(new Item(yield), at);
-                    var ag = by.Skills?.GetSkill((int)EPlayerSpeciality.SUPPORT, (int)EPlayerSupport.AGRICULTURE);
-                    if (ag != null && GD.Randf() < ag.Mastery) by.DropWorldItem(new Item(yield), at + Vector3.Right * 0.25f);   // agriculture 2nd yield
+                    float plants = by.Skills?.PlantsSecondYieldChance() ?? 0f;
+                    if (plants > 0f && GD.Randf() < plants) by.DropWorldItem(new Item(yield), at + Vector3.Right * 0.25f);   // agriculture 2nd yield
                 }
                 by.Skills?.AwardExperience(HarvestRewardExperience);   // source InteractableFarm: harvest awards Harvest_Reward_Experience (all crops = default 1)
             }

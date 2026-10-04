@@ -450,7 +450,7 @@ namespace UnturnedGodot
         // just dead code. F1 console `survival on|off` still toggles it.
         public static bool SurvivalDrain = true;
         public float Infection { get => _vitals.Infection; set => _vitals.Infection = value; }   // 0..1 virus; zombie bites raise it (Zombie.askDamage's player.life.askInfect(b/3))
-        public void Infect(float amount) => Infection = Mathf.Clamp(Infection + amount * Skills.ImmunityInfectionMultiplier(), 0f, 1f);   // IMMUNITY skill cuts infection gained (source UseableConsumeable:325)
+        public void Infect(float amount) => Infection = Mathf.Clamp(Infection + amount, 0f, 1f);   // ⚠ IMMUNITY is gone; infection is unmodified. Candidate effect for Medical or Science -- master's call, not invented here
 
         /// <summary>Absorbed dose, and the infection it scars you with. IMMUNITY applies to the scarring for
         /// the same reason it applies to a bite -- it is the same virus getting in -- but NOT to the dose
@@ -469,7 +469,7 @@ namespace UnturnedGodot
             _vitals.AbsorbDose(dose, dt);
             float gained = _vitals.Infection - before;
             if (gained > 0f)
-                _vitals.Infection = Mathf.Clamp(before + gained * Skills.ImmunityInfectionMultiplier(), 0f, 1f);
+                _vitals.Infection = Mathf.Clamp(before + gained, 0f, 1f);
         }
 
         /// <summary>0..1 absorbed dose. Hidden from the HUD on purpose -- the geiger counter and the grain are
@@ -492,12 +492,15 @@ namespace UnturnedGodot
             // been in a bag for a week should be worth less than a fresh one. Raw is 1.0, so nothing that
             // exists today gets quietly nerfed the day this lands -- cooking is a reward, not a new tax.
             float cf = Cooking.Nutrition(cooked, cookStyle);
-            if (a.useHealth > 0) Health = Mathf.Min(MaxHealth, Health + a.useHealth);
+            // MEDICAL: medical items restore more, capped at +50% at max. ⭐ The one effect carried over from the
+            // retail port deliberately -- it is access/efficiency (your supplies go further), not a bigger body.
+            float healMul = Skills?.MedicalMultiplier() ?? 1f;
+            if (a.useHealth > 0) Health = Mathf.Min(MaxHealth, Health + a.useHealth * healMul);
             if (a.useFood  > 0) Food  = Mathf.Min(1f, Food  + a.useFood  / 100f * qf * cf);
             if (a.useWater > 0) Water = Mathf.Min(1f, Water + a.useWater / 100f * qf * cf);
             if (a.useEnergy > 0) Stamina = Mathf.Min(1f, Stamina + a.useEnergy / 100f);   // askRest: energy drinks/bars restore stamina
             if (a.useVirus > 0) Infect(a.useVirus / 100f);   // askInfect: raises infection (IMMUNITY skill cuts it, via Infect)
-            if (a.useDisinfectant > 0) Infection = Mathf.Max(0f, Infection - a.useDisinfectant / 100f);   // askDisinfect: antibiotics/vaccine lower infection
+            if (a.useDisinfectant > 0) Infection = Mathf.Max(0f, Infection - a.useDisinfectant * healMul / 100f);   // askDisinfect: antibiotics/vaccine lower infection (source scales this by HEALING too, :457)
             // Moldy penalty (source UseableConsumeable.performUseOnSelf): eating a FOOD/WATER item under 50% condition
             // infects you, scaled by how spoiled it is. This is the "food below 50% subtracts from your bar" mechanic --
             // raising infection = the bar drains (inverted). IMMUNITY cuts it (inside Infect).
@@ -3372,7 +3375,7 @@ namespace UnturnedGodot
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
             _heldFisherItem = backing;
             _fishing = new FishingSim((int)(Time.GetTicksMsec() & 0x7fffffff));
-            FishingContent.ConfigureForPei(_fishing, Skills.Level(EPlayerSupport.FISHING));
+            FishingContent.ConfigureForPei(_fishing, Skills.Level(ESkill.Fishing));
             _fishTockAccum = 0f;
             _viewmodel?.QueueFree();
             _viewmodel = new Viewmodel { EmptyHands = true };   // no rod mesh yet -> bare arms in the ready hold
@@ -3854,7 +3857,7 @@ namespace UnturnedGodot
         internal void EquipFisherForTest(ushort rodId, int seed)
         {
             _fishing = new FishingSim(seed);
-            FishingContent.ConfigureForPei(_fishing, Skills != null ? Skills.Level(EPlayerSupport.FISHING) : (byte)0);
+            FishingContent.ConfigureForPei(_fishing, Skills != null ? Skills.Level(ESkill.Fishing) : (byte)0);
             _heldFisherItem = new SDG.Unturned.Item(rodId);
             _fishTockAccum = 0f;
         }
@@ -5156,7 +5159,7 @@ namespace UnturnedGodot
             // worth climbing.
             if (MeleeStructure((_melee?.VehicleDamage ?? 10f) * mult, range)) return;
 
-            float dmg = (_melee?.ZombieDamage ?? 45f) * mult * Skills.OverkillMeleeMultiplier();   // weapon .dat Zombie_Damage x OVERKILL skill
+            float dmg = (_melee?.ZombieDamage ?? 45f) * mult * Skills.MeleeDamageMultiplier();   // weapon .dat Zombie_Damage x OVERKILL skill
             Vector3 origin = GlobalPosition + Vector3.Up * 1.2f, fwd = -_cam.GlobalTransform.Basis.Z;
             if (MeleeTree(dmg, range)) return;   // an axe swing at a tree fells it, before the swing reaches a zombie/animal behind it
             if (MeleeDestructible(range, mult)) return;   // a destructible world prop (crate, TV, fence...) -- melee had no branch for these, only bullets did (master 2026-09-03)
@@ -5217,7 +5220,7 @@ namespace UnturnedGodot
             if (_move.GravityMultiplier <= Umbrellas.FallDamageGravityFloor) return;
             if (!FallMath.Hurts(verticalVel)) return;          // a normal jump lands at ~7 m/s -> no damage
             Broken = FallMath.BreaksLegs(verticalVel, Inventory?.PreventsFallingBoneBreak ?? false);   // legs break on a hard fall UNLESS worn clothing has Prevents_Falling_Broken_Bones (source PlayerLife:2436)
-            int dmg = FallMath.Damage(verticalVel, (Inventory?.FallingDamageMultiplier ?? 1f) * Skills.StrengthFallMultiplier());   // worn clothing (whole-body product) + STRENGTH skill both cut fall damage (source PlayerLife 2428-2430)
+            int dmg = FallMath.Damage(verticalVel, (Inventory?.FallingDamageMultiplier ?? 1f));   // worn clothing (whole-body product) still cuts fall damage; ⚠ the STRENGTH skill that also did is gone
             // NO `Broken = true` here. The line above already set it, gated on the worn clothing's
             // Prevents_Falling_Broken_Bones -- I added an unconditional one on 81b8f808 believing Broken had no
             // source at all, which silently voided that clothing feature for one commit. The claim came from a
@@ -5606,11 +5609,8 @@ namespace UnturnedGodot
         {
             if (replica == null || ReferenceEquals(replica, Skills)) return;
             Skills.NetSetExperience(replica.experience);
-            for (int s = 0; s < SDG.Unturned.PlayerSkills.SPECIALITIES; s++)
-            {
-                var from = replica.skills[s]; var to = Skills.skills[s];
-                for (int i = 0; i < to.Length && i < from.Length; i++) to[i].level = from[i].level;
-            }
+            for (int i = 0; i < SDG.Unturned.PlayerSkills.COUNT && i < replica.skills.Length; i++)
+                Skills.skills[i].level = replica.skills[i].level;
         }
 
         // ---- P3a (SP/MP-unify): server-authoritative HP adoption. When the owner's health is server-owned,
@@ -6035,7 +6035,7 @@ namespace UnturnedGodot
         public System.Action<uint> NetOpenStorage;                   // crate netId -> Client.SendOpenStorage (StorageOpened + the owner echo carry the grid back)
         public System.Action NetCloseStorage;                        // -> Client.SendCloseStorage (server saves the STORAGE page back into the crate)
         public System.Action<uint, byte, byte> NetTakeFromStorage;   // (crate netId, cell x, cell y) -> Client.SendTakeFromStorage: F on an item sitting ON a shelf, without opening the container
-        public System.Action<byte, byte> NetUpgradeSkill;            // (speciality,index) -> Client.SendUpgradeSkill
+        public System.Action<byte> NetUpgradeSkill;                   // (ESkill index) -> Client.SendUpgradeSkill
         // A4 (SP/MP-unify) crop seams -- the NetPickupItem pattern: wired ONLY by ClientWorldSession, null in
         // SP/loopback so the direct CropManager path below stays byte-identical. Plant routes seed+point;
         // harvest routes the grown replica's server NetId (the yield drops as a replicated world item).
@@ -6360,10 +6360,10 @@ namespace UnturnedGodot
 
         /// <summary>MP skill upgrade (SkillsUI): the server's PlayerSkills.TryUpgrade is the validator;
         /// the owner skills block echoes the new level/XP into AdoptReplicatedSkills.</summary>
-        public bool RequestUpgradeSkill(byte speciality, byte index)
+        public bool RequestUpgradeSkill(byte index)
         {
             if (NetUpgradeSkill == null) return false;
-            NetUpgradeSkill(speciality, index);
+            NetUpgradeSkill(index);
             return true;
         }
 
@@ -6939,7 +6939,7 @@ namespace UnturnedGodot
             // already chambered) KEEPS that round + its type; only a reload from EMPTY chambers a fresh round from the
             // new mag, so the chamber takes the new mag's type then.
             if (!chambered) _chamberedAmmoType = _chambered ? SDG.Unturned.Assets.find(mag.id)?.ammoType : null;
-            float sp = Skills.DexterityReloadSpeed();
+            float sp = 1f;
             _viewmodel?.SetReloading(true, sp);   // play the swap anim (the instant swap already happened)...
             _magSwapAnimTimer = (_viewmodel?.ReloadLength ?? ReloadTime) / System.Math.Max(0.01f, sp);   // ...clear it when the anim ends so ADS/fire un-block (master's ADS bug)
             _magSwapAutoRack = !chambered && HasChamber && Ammo > 0 && !(_viewmodel?.ReloadIncludesChambering ?? false);   // SKS Reload already chambers; other empty chambers rack afterward
@@ -6956,7 +6956,7 @@ namespace UnturnedGodot
             Ammo = chambered ? 1 : 0;   // only the chambered round remains
             _chambered = chambered;
             _loadedMagId = 0;
-            float sp = Skills.DexterityReloadSpeed();
+            float sp = 1f;
             _viewmodel?.SetReloading(true, sp);
             _magSwapAnimTimer = (_viewmodel?.ReloadLength ?? ReloadTime) / System.Math.Max(0.01f, sp);   // clear the mag-out anim state when it ends so ADS/fire un-block (master)
             SaveGunState();
@@ -6971,7 +6971,7 @@ namespace UnturnedGodot
             Ammo--;   // eject the chambered round; the next mag round auto-chambers
             _chambered = HasChamber && Ammo > 0;
             _chamberedAmmoType = _chambered ? MagAmmoType : null;   // the re-chambered round comes from the mag -> takes the mag's type (master)
-            float sp = Skills.DexterityReloadSpeed();
+            float sp = 1f;
             _viewmodel?.PlayHammer(sp);   // the rack animation
             _magSwapAnimTimer = (_viewmodel?.HammerLength ?? 0.4) / System.Math.Max(0.01f, sp);   // cooldown: block other mag actions until the rack anim finishes (master)
             SaveGunState();
@@ -7038,7 +7038,7 @@ namespace UnturnedGodot
             if (_reloading || _unloading || _dead || _needsRechamber || _rechambering || _magSwapAnimTimer > 0) return;   // cooldown (master)
             if (!UsesShells || Ammo <= 0) return;
             _unloading = true;
-            float rspeed = Skills.DexterityReloadSpeed();
+            float rspeed = 1f;
             _viewmodel?.SetReloading(true, rspeed);   // reuse the reload animation
             double full = (_viewmodel?.ReloadLength ?? ReloadTime) / rspeed;
             _unloadTimer = Gun?.ShellReload == true ? full / System.Math.Max(1, Ammo) : full;   // pump: per-shell; break: whole duration then eject all
@@ -7762,10 +7762,12 @@ namespace UnturnedGodot
             TemperatureTick(sprinting, dt);
             bool died = _vitals.Step(sprinting, HeadUnderwater, SurvivalDrain, Bleeding, Broken, Temperature.CurrentBand, dt, new PlayerVitalsSim.Multipliers
             {
-                ExerciseStaminaDrain = Skills.ExerciseStaminaDrainMultiplier(),   // EXERCISE slows the drain
-                CardioStaminaRegen = Skills.CardioStaminaRegenMultiplier(),       // CARDIO speeds the regen
-                SurvivalDrain = Skills.SurvivalDrainMultiplier(),                 // SURVIVAL slows hunger/thirst
-                VitalityRegen = Skills.VitalityRegenMultiplier(),                 // VITALITY speeds regen while fed + hydrated
+                // ⭐⭐ NO SKILL MULTIPLIERS HERE ANY MORE. Retail CARDIO doubled stamina regen and EXERCISE halved
+                // the drain; because one scales the fill and the other the empty they COMPOUND, which is master's
+                // "i can sprint for 10x as long after killing a few zombies". SURVIVAL and VITALITY stacked hunger
+                // and health regen on top. Our skills buy access and efficiency, not a better body.
+                // ⚠ The SERVER path (NetWorldHost.MultipliersOf) was cut in the same commit -- these two have to
+                // agree or SP and MP drain differently, which is the kind of split nobody notices for weeks.
                 // Without this the 0.25/s surface refill outruns the 0.133/s steady drain and the bar goes
                 // UP while you hold your breath. The server has always set this; the local step never did,
                 // which is half of why steadying cost nothing here.
@@ -8855,7 +8857,7 @@ namespace UnturnedGodot
             // Empty-mag reload -> after the mag swap, RECHAMBER: play the Hammer clip (the reload's source 2nd half). Not for
             // shell-fed shotguns (their pump is the reload). Source ERechamberGunAfterReloadMode.IfAmmoWasEmpty (the common case).
             _hammerPending = Ammo <= 0 && HasChamber && (_viewmodel?.HasHammer ?? false) && !_viewmodel.ReloadIncludesChambering;   // SKS closes its bolt within Reload; other chambered guns rack afterward
-            float rspeed = Skills.DexterityReloadSpeed();   // DEXTERITY: faster reload -- speeds the anim + shortens the timer to match
+            float rspeed = 1f;   // DEXTERITY: faster reload -- speeds the anim + shortens the timer to match
             _reloadSpeed = rspeed;
             _viewmodel?.SetReloading(true, rspeed);
             double full = (_viewmodel?.ReloadLength ?? ReloadTime) / rspeed;   // per-gun reload duration (masterkey 2.467s vs rifles 1.633s), sped up by DEXTERITY
@@ -8971,7 +8973,7 @@ namespace UnturnedGodot
             _sinceShot = 0f;   // infAmmo waits out a lull, so every shot restarts the clock
             // fire feedback + the gun's real per-shot viewmodel shake (Shake_Min/Max_*); zero if no gun loaded
             float stanceMul = StanceRecoilMul();   // crouch/prone recoil steadier once settled -- scales the kick + the aim-climb below (master)
-            float sharp = Skills.SharpshooterRecoilMultiplier();   // SHARPSHOOTER: up to -40% recoil + spread at max level (source UseableGun)
+            float sharp = Skills.ShootingRecoilMultiplier();   // SHARPSHOOTER: up to -40% recoil + spread at max level (source UseableGun)
             // RECOIL MOVES THE CAMERA, NOT THE GUN (strawberry: "making recoil move the whole camera instead of
             // just the gun. same thing as the scope sway fix u just did, but for recoil impulse").
             //
@@ -10310,7 +10312,7 @@ namespace UnturnedGodot
                     if (_magSwapAutoRack)   // seated into an empty chamber -> rack the first round automatically (master); PlayHammer self-times + blocks ADS through the rack
                     {
                         _magSwapAutoRack = false;
-                        _viewmodel?.PlayHammer(Skills.DexterityReloadSpeed());
+                        _viewmodel?.PlayHammer(1f);   // ⚠ was Skills.DexterityReloadSpeed(); Dexterity is gone -- reload speed is a body buff, which our set does not sell
                     }
                     else if (Input.MouseMode == Input.MouseModeEnum.Captured && Keybinds.Pressed(GameAction.Aim) && HasGunOut && _melee == null && !_climbing && !IsSwimming
                              && _viewmodel?.HasSpinBarrel != true)   // ...but a minigun has no sights to resume INTO -- RMB is its spin-up
@@ -11876,7 +11878,10 @@ namespace UnturnedGodot
             if (moving && _footNoiseT <= 0f)
             {
                 _footNoiseT = 0.4f;
-                float loud = GetStealthDetectionRadius() * Skills.SneakyBeakyNoiseMultiplier();   // SNEAKYBEAKY quiets footsteps -> zombies hear you from less far (source PlayerMovement:791)
+                // ⚠ No stealth skill in our set, so footstep loudness is now flat. Retail SNEAKYBEAKY cut it by
+                // 75% at max, which is the shape of buff master ruled out. If stealth ever comes back it should be
+                // equipment (soft shoes) or stance, not a number you buy.
+                float loud = GetStealthDetectionRadius();
                 if (loud > 2f) SoundBus.Emit(GetTree(), GlobalPosition, loud);
             }
 

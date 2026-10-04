@@ -46,8 +46,8 @@ namespace UnturnedNet.Tests
             h.Step(10);
 
             // OFFENSE/OVERKILL costs 10 at level 0 -> level 1, 20 XP left
-            a.SendUpgradeSkill((byte)EPlayerSpeciality.OFFENSE, (byte)EPlayerOffense.OVERKILL);
-            Assert.That(h.StepUntil(() => a.Skills.TryGet(a.PlayerId, out var mine) && mine.Skills.Level(EPlayerOffense.OVERKILL) == 1),
+            a.SendUpgradeSkill((byte)ESkill.Melee);
+            Assert.That(h.StepUntil(() => a.Skills.TryGet(a.PlayerId, out var mine) && mine.Skills.Level(ESkill.Melee) == 1),
                         Is.True, $"upgrade applied + replicated (seed={h.Net.Seed})");
             a.Skills.TryGet(a.PlayerId, out var replica);
             Assert.That(replica.Skills.experience, Is.EqualTo(20), "cost deducted server-side");
@@ -62,12 +62,12 @@ namespace UnturnedNet.Tests
             h.Step(5);
             ulong before = h.Server.Skills.StateHashFor(a.PlayerId);
 
-            a.SendUpgradeSkill((byte)EPlayerSpeciality.OFFENSE, (byte)EPlayerOffense.OVERKILL);
+            a.SendUpgradeSkill((byte)ESkill.Melee);
             h.Step(20);
 
             Assert.That(h.Server.Skills.StateHashFor(a.PlayerId), Is.EqualTo(before), "TryUpgrade refused: no XP");
             h.Server.Skills.TryGet(a.PlayerId, out var server);
-            Assert.That(server.Skills.Level(EPlayerOffense.OVERKILL), Is.EqualTo((byte)0));
+            Assert.That(server.Skills.Level(ESkill.Melee), Is.EqualTo((byte)0));
         }
 
         [Test]
@@ -78,7 +78,7 @@ namespace UnturnedNet.Tests
             h.Step(5);
             long rejectedBefore = h.Server.Commands.Diag.ValidationRejected;
 
-            a.SendUpgradeSkill(7, 0);   // speciality 7 does not exist
+            a.SendUpgradeSkill(200);   // ESkill 200 does not exist (COUNT is 14)
             h.Step(20);
 
             Assert.That(h.Server.Commands.Diag.ValidationRejected, Is.GreaterThan(rejectedBefore),

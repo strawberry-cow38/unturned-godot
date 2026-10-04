@@ -23,21 +23,40 @@ namespace UnturnedGodot
         /// a second copy of this line is a second place for the two to disagree.</summary>
         public static ushort Resolve(string guid) => Assets.findByGuid(guid)?.id ?? (ushort)0;
 
-        // Does the player meet a blueprint's SKILL requirement? Source EBlueprintSkill (Craft/Cook/Repair) maps to the
-        // Support skills CRAFTING/COOKING/ENGINEER; the player's level must be >= Skill_Level. No requirement / no skills = true.
+        /// Does the player meet a blueprint's SKILL requirement? `BlueprintDef.Skill` is a free string straight out
+        /// of the item .dat, so this resolves it in two passes.
+        ///
+        /// ⭐ FIRST, the name is matched against our OWN skill set, so a recipe can simply say "Carpentry" or
+        /// "Gunsmithing" and gate on exactly that. That is the target state and new/retuned data should use it.
+        ///
+        /// ⚠ SECOND, retail's three tags (Craft/Cook/Repair) still cover all 1,875 extracted rows. Cook and Repair
+        /// map cleanly onto Cooking and Mechanics. **"Craft" does not map onto anything**, because the single
+        /// retail CRAFTING skill is what we split three ways -- and the blueprint does not say whether it is
+        /// making a plank, a pipe or a receiver.
+        ///
+        /// ⭐ So a generic "Craft" row is satisfied by the BEST of the three trades rather than by one arbitrarily
+        /// chosen one. Picking (say) Carpentry would have silently made Metalworking and Gunsmithing ungated
+        /// placeholders -- the dead-skill failure this whole rework exists to end -- and picking "all three" would
+        /// gate a campfire behind gunsmithing. Best-of keeps every trade meaningful and gates nothing absurdly,
+        /// until the data is split per recipe.
         public static bool MeetsSkill(BlueprintDef bp, PlayerSkills skills)
         {
             if (!bp.RequiresSkill || skills == null) return true;
-            int idx = (bp.Skill ?? "").ToLowerInvariant() switch
+            if (System.Enum.TryParse<ESkill>(bp.Skill, true, out var exact) && System.Enum.IsDefined(typeof(ESkill), exact))
+                return skills.Level(exact) >= bp.SkillLevel;
+            switch ((bp.Skill ?? "").ToLowerInvariant())
             {
-                "craft" => (int)EPlayerSupport.CRAFTING,
-                "cook" => (int)EPlayerSupport.COOKING,
-                "repair" => (int)EPlayerSupport.ENGINEER,
-                _ => -1,
-            };
-            if (idx < 0) return true;   // unknown skill tag -> don't gate
-            return skills.GetSkill((int)EPlayerSpeciality.SUPPORT, idx).level >= bp.SkillLevel;
+                case "cook": return skills.Level(ESkill.Cooking) >= bp.SkillLevel;
+                case "repair": return skills.Level(ESkill.Mechanics) >= bp.SkillLevel;
+                case "craft": return BestTrade(skills) >= bp.SkillLevel;
+                default: return true;   // unknown tag -> don't gate
+            }
         }
+
+        /// The highest of the three making trades -- see the "Craft" note above.
+        public static int BestTrade(PlayerSkills skills)
+            => System.Math.Max((int)skills.Level(ESkill.Metalworking),
+                 System.Math.Max((int)skills.Level(ESkill.Carpentry), (int)skills.Level(ESkill.Gunsmithing)));
 
         // Skill-aware craftability: the item math AND the skill gate (source: a blueprint needs its Craft/Cook/Repair level).
         public static bool CanCraft(BlueprintDef bp, IInv inv, PlayerSkills skills, out string reason)

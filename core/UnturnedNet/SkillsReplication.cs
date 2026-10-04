@@ -8,17 +8,19 @@ namespace UnturnedGodot.Net
     /// PlayerSkills.TryUpgrade is the validator -- cost/cap math never runs client-authoritatively.</summary>
     public struct UpgradeSkillCommand
     {
-        public byte Speciality;   // EPlayerSpeciality (0..2)
-        public byte Index;        // skill index within the speciality
+        // ⚠ ONE byte now, not two. Our skill set is FLAT (ESkill, 14) where retail's was 3 specialities x N, so
+        // the Speciality byte has nothing left to say. This is a WIRE SHAPE change, which is why the rework needs
+        // a protocol version bump -- a peer still sending speciality+index would have its index read as a
+        // speciality and silently upgrade the wrong skill.
+        public byte Index;        // ESkill
 
-        public void Write(NetPakWriter w) { w.WriteUInt8(Speciality); w.WriteUInt8(Index); }
+        public void Write(NetPakWriter w) { w.WriteUInt8(Index); }
 
         public static bool TryRead(NetPakReader r, out UpgradeSkillCommand cmd)
         {
             cmd = default;
-            if (!r.ReadUInt8(out byte spec)) return false;
             if (!r.ReadUInt8(out byte idx)) return false;
-            cmd = new UpgradeSkillCommand { Speciality = spec, Index = idx };
+            cmd = new UpgradeSkillCommand { Index = idx };
             return true;
         }
     }
@@ -96,12 +98,11 @@ namespace UnturnedGodot.Net
 
         /// <summary>The UpgradeSkill choke point: PlayerSkills.TryUpgrade IS the validation (level cap +
         /// XP cost); a false return mutates nothing.</summary>
-        public bool ServerTryUpgrade(ushort ownerPlayerId, byte speciality, byte index, long tick)
+        public bool ServerTryUpgrade(ushort ownerPlayerId, byte index, long tick)
         {
             if (!_byOwner.TryGetValue(ownerPlayerId, out var e)) return false;
-            if (speciality >= PlayerSkills.SPECIALITIES) return false;
-            if (index >= e.Skills.skills[speciality].Length) return false;
-            if (!e.Skills.TryUpgrade(speciality, index)) return false;
+            if (index >= PlayerSkills.COUNT) return false;
+            if (!e.Skills.TryUpgrade((int)index)) return false;
             e.LastChangedTick = Stamp(tick);
             return true;
         }
@@ -134,11 +135,7 @@ namespace UnturnedGodot.Net
             w.WriteUInt8(1);
             w.WriteUInt16(e.OwnerPlayerId);
             w.WriteUInt32(e.Skills.experience);
-            for (int s = 0; s < PlayerSkills.SPECIALITIES; s++)
-            {
-                var row = e.Skills.skills[s];
-                for (int i = 0; i < row.Length; i++) w.WriteUInt8(row[i].level);
-            }
+            for (int i = 0; i < PlayerSkills.COUNT; i++) w.WriteUInt8(e.Skills.skills[i].level);
         }
 
         public void ReadSnapshot(NetPakReader r, bool full)
@@ -153,14 +150,10 @@ namespace UnturnedGodot.Net
                 _byOwner[owner] = e;
             }
             e.Skills.NetSetExperience(experience);
-            for (int s = 0; s < PlayerSkills.SPECIALITIES; s++)
+            for (int i = 0; i < PlayerSkills.COUNT; i++)
             {
-                var row = e.Skills.skills[s];
-                for (int i = 0; i < row.Length; i++)
-                {
-                    if (!r.ReadUInt8(out byte level)) return;
-                    row[i].level = level;
-                }
+                if (!r.ReadUInt8(out byte level)) return;
+                e.Skills.skills[i].level = level;
             }
         }
 
@@ -186,11 +179,7 @@ namespace UnturnedGodot.Net
         {
             h = NetHash.MixUInt32(h, e.OwnerPlayerId);
             h = NetHash.MixUInt32(h, e.Skills.experience);
-            for (int s = 0; s < PlayerSkills.SPECIALITIES; s++)
-            {
-                var row = e.Skills.skills[s];
-                for (int i = 0; i < row.Length; i++) h = NetHash.MixByte(h, row[i].level);
-            }
+            for (int i = 0; i < PlayerSkills.COUNT; i++) h = NetHash.MixByte(h, e.Skills.skills[i].level);
             return h;
         }
     }

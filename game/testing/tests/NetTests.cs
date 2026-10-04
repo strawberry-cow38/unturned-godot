@@ -2258,12 +2258,12 @@ namespace UnturnedGodot.Testing
             bool sHave = ded.Server.Skills.TryGet(sess.Client.PlayerId, out var sSk);
             T.Check("server skills entry exists", sHave);
             T.Check("the upgrade request fired through the NetUpgradeSkill seam",
-                    sess.Shell.RequestUpgradeSkill(0, 0));   // OFFENSE / Overkill (cost 10 at level 0)
-            yield return Until(() => sHave && sSk.Skills.skills[0][0].level == 1, 5);
-            T.Check("(a) the SERVER leveled Overkill", sSk.Skills.skills[0][0].level == 1);
+                    sess.Shell.RequestUpgradeSkill((byte)ESkill.Melee));   // flat ESkill index (cost 10 at level 0)
+            yield return Until(() => sHave && sSk.Skills.GetSkill(ESkill.Melee).level == 1, 5);
+            T.Check("(a) the SERVER leveled Melee", sSk.Skills.GetSkill(ESkill.Melee).level == 1);
             T.Check("(b) the SERVER spent the XP", sSk.Skills.experience == 90);
-            yield return Until(() => sess.Shell.Skills.skills[0][0].level == 1, 5);
-            T.Check("(c) the shell echoed the level", sess.Shell.Skills.skills[0][0].level == 1);
+            yield return Until(() => sess.Shell.Skills.GetSkill(ESkill.Melee).level == 1, 5);
+            T.Check("(c) the shell echoed the level", sess.Shell.Skills.GetSkill(ESkill.Melee).level == 1);
             T.Check("(d) the shell echoed the spend", sess.Shell.Skills.experience == 90);
 
             world.Sim.Sim.Remove(pump);
