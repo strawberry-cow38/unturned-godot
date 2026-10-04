@@ -45,8 +45,8 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
-            // ⚠⚠ GLOBALS BEFORE THE MATERIAL. This shader now links water_extinct / water_scatter_col /
-            // water_optics (shared with the surface, see water_optics.gdshaderinc), and a material that compiles
+            // ⚠⚠ GLOBALS BEFORE THE MATERIAL. This shader now links water_extinct and water_optics (shared with
+            // the surface, see water_optics.gdshaderinc), and a material that compiles
             // before its global exists links it INVALID -- the shader keeps rendering, with that term silently
             // dead. The grass displacement shipped broken exactly this way; every other shader that reads a
             // global in this project now calls EnsureGlobals right here, and so does this one.

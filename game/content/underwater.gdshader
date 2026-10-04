@@ -28,7 +28,8 @@ uniform sampler2D depth_tex : hint_depth_texture, repeat_disable, filter_nearest
 
 // ⚠ water_tint / murk / red_loss ARE GONE. They were this shader's private copy of a model the surface also
 // had, with different numbers, and keeping them as a fallback would be keeping the bug. The tint is now
-// `water_scatter_col` and the absorption `water_extinct` (per CHANNEL -- a scalar murk can only make water
+// water_deep/water_shallow (master's own, via water_veil) and the absorption `water_extinct` (per CHANNEL --
+// a scalar murk could only ever make water
 // darker, never bluer), both globals written by RainSystem3D, both read by the surface shader as well.
 uniform vec3 legacy_tint : source_color = vec3(0.17, 0.42, 0.51);   // the colour the OLD model faded toward (water_optics = 0 path)
 uniform float legacy_murk = 0.032;    // the OLD per-metre absorption, kept ONLY so the A/B control is exact
@@ -92,12 +93,16 @@ void fragment() {
     vec3 col = textureLod(screen_tex, wuv, blur_lod).rgb;
     vec3 legacy = mix(col * vec3(1.0 - legacy_red_loss * legacy_fade, 1.0 - 0.22 * legacy_fade, 1.0),
                       legacy_tint, legacy_fade);
-    col = mix(legacy, water_through(col, dist), water_optics);
+    // ⭐ The veil is the SURFACE's own colour at this eye depth, brightened for an unshaded pass -- not a tint of
+    // this shader's own. That is what master's "doesnt match the surface at all" was about, and a number tuned
+    // here to look right could only ever have matched by coincidence.
+    vec3 veil = water_veil(depth_below);
+    col = mix(legacy, water_through(col, dist, veil), water_optics);
 
     // DEPTH of the eye itself: deeper means less light left and more of it already eaten before it reached you.
     // Saturates by ~18 m so a deep dive goes dim, not pure black.
     float deep = clamp(depth_below / 18.0, 0.0, 1.0);
-    col = mix(col, mix(legacy_tint, water_scatter_col, water_optics) * 0.45, deep * 0.55);
+    col = mix(col, mix(legacy_tint, veil, water_optics) * 0.45, deep * 0.55);
 
     // looking down a tube of water
     float v = distance(uv, vec2(0.5));

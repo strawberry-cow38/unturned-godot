@@ -18,8 +18,10 @@ render_mode cull_disabled, diffuse_burley, specular_schlick_ggx;
 // reason the shallow alpha is low) but the water reads as water rather than as tinted glass. The hue shift is in
 // the RATIO rather than the brightness -- red down, blue up, green roughly held -- because that is what makes a
 // body of water look blue instead of merely darker.
-uniform vec4 water_deep : source_color = vec4(0.025, 0.105, 0.26, 0.94);   // 2026-09-15 "turn down how blue": blue is 67% of the tint, back off the 09-12 step (78%) -- the near-opaque ALPHA that step also asked for stays
-uniform vec4 water_shallow : source_color = vec4(0.060, 0.245, 0.44, 0.58); // ...and the shallows with it, 66% blue -> 59%. Alpha untouched: "less see-through" was a separate ask
+// ⚠ water_deep / water_shallow NOW LIVE IN water_optics.gdshaderinc, with their comments and their exact values.
+// They moved because the SUBMERGED view has to veil with the same colour the surface draws -- master, looking at
+// the first version: "the color of the underwater fog doesnt match the surface at all" -- and two shaders holding
+// a colour each is precisely how that happens. Same reasoning that put the swell constants in an include.
 uniform vec4 foam_color : source_color = vec4(0.92, 0.97, 1.0, 1.0);
 uniform float crest_foam = 0.36;      // swell-height fraction above which crest foam kicks in; raised -> fewer peak whitecaps (master)
 uniform float shore_depth = 2.2;      // vertical water depth (m) under which shore foam shows (wider = fuller shore band)
@@ -224,7 +226,7 @@ void fragment() {
         // the shallows at your feet stay clear.
         float path = distance(vp.xyz, VERTEX);
         vec3 bed = textureLod(screen_tex, SCREEN_UV, cloud_blur * water_scatter(path) * water_optics).rgb;
-        bed = mix(bed, water_through(bed, path), water_optics);
+        bed = mix(bed, water_through(bed, path, water_deep.rgb), water_optics);
         // The old alpha curve keeps its exact meaning -- how much of the bed survives -- it is simply applied to
         // light that has crossed the water now instead of to a sharp, untouched bed. So the tuning behind those
         // numbers is preserved rather than thrown away and re-guessed.

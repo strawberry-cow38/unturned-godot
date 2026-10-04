@@ -57,7 +57,6 @@ namespace UnturnedGodot
             // shader each used to carry their own privately-tuned absorption, so swimming down crossed a seam
             // between two different seas. One set of numbers, two readers, no way for them to disagree.
             RenderingServer.GlobalShaderParameterAdd("water_extinct", RenderingServer.GlobalShaderParameterType.Vec3, ClearExtinct);
-            RenderingServer.GlobalShaderParameterAdd("water_scatter_col", RenderingServer.GlobalShaderParameterType.Vec3, ScatterColor);
             // ⚠⚠ OFF BY DEFAULT (UG_WATEROPTICS=1). At 0 both shaders take their old path EXACTLY -- the
             // underwater one still carries its legacy_* uniforms for precisely that reason -- so this is a true
             // A/B and not a remembered one. It goes on when master has looked at it.
@@ -142,7 +141,10 @@ namespace UnturnedGodot
         /// scatters fairly evenly across the spectrum, so the storm vector is flatter, which is what turns the
         /// water green-grey instead of a deeper blue.</summary>
         public static readonly Vector3 StormExtinct = new Vector3(0.34f, 0.17f, 0.13f);
-        public static readonly Vector3 ScatterColor = new Vector3(0.09f, 0.26f, 0.32f);
+        // ⚠ ScatterColor is GONE. It was this file's own idea of what colour the sea veils things with, and the
+        // surface shader had a different one -- master: "the color of the underwater fog doesnt match the surface
+        // at all". The veil is now derived from water_deep/water_shallow in water_optics.gdshaderinc, which is
+        // where master's tuned colours live, so there is nothing left here that could disagree with them.
 
         /// <summary>Master gate on the shared optics, 0 = exactly the look that existed before them.</summary>
         public static float WaterOptics =
