@@ -481,11 +481,17 @@ namespace UnturnedGodot
                 _shotPath = shot;   // wire the general frame-6 capture (else --shot renders the movie forever + hangs)
                 // preview the terrain rain-wetness/splashes: UG_RAINWET / UG_RAININT (0..1) drive the shader's rain globals
                 RainSystem3D.EnsureGlobals();
-                var _trw = System.Environment.GetEnvironmentVariable("UG_RAINWET");
-                var _tri = System.Environment.GetEnvironmentVariable("UG_RAININT");
-                RenderingServer.GlobalShaderParameterSet("rain_wetness", string.IsNullOrEmpty(_trw) ? 0f : float.Parse(_trw));
-                RenderingServer.GlobalShaderParameterSet("rain_intensity", string.IsNullOrEmpty(_tri) ? 0f : float.Parse(_tri));
-                RainSystem3D.SetWeatherSwell(string.IsNullOrEmpty(_tri) ? 0f : float.Parse(_tri));   // wave HEIGHT follows the same weather signal (GPU global + WaveField together)
+                // ⚠ TryParse, not Parse. A blank-but-not-empty value (a shell's `set VAR= ` leaves a SPACE) threw
+                // FormatException out of _Ready here, so the scene was never built at all -- and the harness still
+                // wrote a PNG, of an empty grey viewport. A render that fails this way looks like a broken shader.
+                static float Env01(string name)
+                    => float.TryParse(System.Environment.GetEnvironmentVariable(name),
+                                      System.Globalization.NumberStyles.Float,
+                                      System.Globalization.CultureInfo.InvariantCulture, out float v) ? v : 0f;
+                float _tri01 = Env01("UG_RAININT");
+                RenderingServer.GlobalShaderParameterSet("rain_wetness", Env01("UG_RAINWET"));
+                RenderingServer.GlobalShaderParameterSet("rain_intensity", _tri01);
+                RainSystem3D.SetWeatherSwell(_tri01);   // wave HEIGHT follows the same weather signal (GPU global + WaveField together)
                 BuildTerrainTest();
                 return;
             }

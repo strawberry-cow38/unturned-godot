@@ -52,6 +52,16 @@ namespace UnturnedGodot
             // the new one on a real coast, because a feature that is on and wrong is worse than one that is off.
             RenderingServer.GlobalShaderParameterAdd("shore_bend", RenderingServer.GlobalShaderParameterType.Float,
                                                      WaveField.ShoreBend);
+            // WATER OPTICS (water_optics.gdshaderinc): what the sea does to light crossing it. ⭐⭐ Registered as
+            // GLOBALS, and that is the entire point of the change -- the surface shader and the SUBMERGED-camera
+            // shader each used to carry their own privately-tuned absorption, so swimming down crossed a seam
+            // between two different seas. One set of numbers, two readers, no way for them to disagree.
+            RenderingServer.GlobalShaderParameterAdd("water_extinct", RenderingServer.GlobalShaderParameterType.Vec3, ClearExtinct);
+            RenderingServer.GlobalShaderParameterAdd("water_scatter_col", RenderingServer.GlobalShaderParameterType.Vec3, ScatterColor);
+            // ⚠⚠ OFF BY DEFAULT (UG_WATEROPTICS=1). At 0 both shaders take their old path EXACTLY -- the
+            // underwater one still carries its legacy_* uniforms for precisely that reason -- so this is a true
+            // A/B and not a remembered one. It goes on when master has looked at it.
+            RenderingServer.GlobalShaderParameterAdd("water_optics", RenderingServer.GlobalShaderParameterType.Float, WaterOptics);
             // PUDDLE LEVEL: how much standing water is lying about, 0..1. Deliberately NOT rain_wetness -- puddles take
             // minutes to fill and longer to dry, so they lag the rain instead of tracking it (master 2026-09-06: "puddles
             // should hang around for a while after the rain, and take a little bit of raining before they gradually fade
@@ -108,9 +118,47 @@ namespace UnturnedGodot
         /// actually sample. Hence one setter rather than an assignment beside each rain_intensity write.</summary>
         public static void SetWeatherSwell(float rainIntensity)
         {
-            float s = Mathf.Lerp(1f, StormSwell, Mathf.Clamp(rainIntensity, 0f, 1f));
+            float w = Mathf.Clamp(rainIntensity, 0f, 1f);
+            float s = Mathf.Lerp(1f, StormSwell, w);
             if (_globalsRegistered) RenderingServer.GlobalShaderParameterSet("swell_scale", s);
             WaveField.AmpScale = s;
+            SetWaterOptics(w);
+        }
+
+        /// <summary>Per-metre extinction of the sea, 1/m, PER CHANNEL. ⭐ Red dies roughly six times faster than
+        /// blue, which is the whole reason deep water is BLUE rather than merely dim -- a single scalar "murk"
+        /// (what the submerged shader used to carry) can only ever make it darker. The ratio is the real ocean's;
+        /// the magnitude is picked for a sea you can still see the bottom of in the shallows, because that is the
+        /// look, not a measurement.</summary>
+        /// ⚠⚠ CALIBRATED ON THE SUBMERGED VIEW, which is the harsher constraint, and the first numbers were not.
+        /// I picked them thinking about looking DOWN through water -- a few metres of path at any sane angle --
+        /// and 0.45/m red read beautifully there. Swimming, you look SIDEWAYS through 20-30 m, and the same
+        /// coefficients erased a line of nine crafting stations into a flat teal wash. ⭐ That the one number has
+        /// to satisfy both views is not an inconvenience, it is the entire premise of sharing it; calibrating on
+        /// the easy view and checking the hard one later is backwards. Set so green survives ~30% at 25 m, i.e.
+        /// coastal-water visibility, then verified the surface still shows sand in the shallows.
+        public static readonly Vector3 ClearExtinct = new Vector3(0.19f, 0.048f, 0.028f);
+        /// <summary>...and in a storm, with the bottom stirred up. ⚠ It is not just MORE of the same: sediment
+        /// scatters fairly evenly across the spectrum, so the storm vector is flatter, which is what turns the
+        /// water green-grey instead of a deeper blue.</summary>
+        public static readonly Vector3 StormExtinct = new Vector3(0.34f, 0.17f, 0.13f);
+        public static readonly Vector3 ScatterColor = new Vector3(0.09f, 0.26f, 0.32f);
+
+        /// <summary>Master gate on the shared optics, 0 = exactly the look that existed before them.</summary>
+        public static float WaterOptics =
+            float.TryParse(System.Environment.GetEnvironmentVariable("UG_WATEROPTICS"),
+                           System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture,
+                           out float _wo) && _wo >= 0f ? _wo : 0f;
+
+        /// <summary>Weather muddies the water: push the extinction toward the storm vector. ⭐ Driven by the SAME
+        /// rain_intensity that already drives chop, foam, mirror, tint and wave height -- a sixth weather signal
+        /// could drift out of step with the other five, and a sea that is rough but crystal clear reads wrong in
+        /// a way no single term explains.</summary>
+        static void SetWaterOptics(float w)
+        {
+            if (!_globalsRegistered) return;
+            RenderingServer.GlobalShaderParameterSet("water_extinct", ClearExtinct.Lerp(StormExtinct, w));
+            RenderingServer.GlobalShaderParameterSet("water_optics", WaterOptics);
         }
 
         public const float NoSea = -100000f;   // "this map has no water": below every drop, so the sea test never fires
