@@ -33,9 +33,14 @@ namespace UnturnedGodot
                            out float _an) && _an >= 0.25f ? _an : 3.0f;
         public static float SwellFw => SwellFu / System.Math.Max(SwellAniso, 0.25f);   // freq along crest
 
-        /// <summary>How much the shore may bend the swell, 0..1. ⚠ DEFAULT 0: the first implementation sheared
-        /// the wave field badly (rotating the sample basis per position multiplies a tiny direction change by a
-        /// world-scale lever arm). UG_SHOREBEND=1 to test. Mirrors the GPU global `shore_bend`, one owner.</summary>
+        /// <summary>How much the shore may bend the swell, 0..1 -- scales ShoreField's baked phase correction, so
+        /// 0 reduces the phase to exactly <c>dot(wp, open)</c> and gives the sea as it was before the feature
+        /// existed. Mirrors the GPU global `shore_bend`, one owner, UG_SHOREBEND to tune.
+        ///
+        /// ⚠ Still defaulted OFF while master signs off on the look: the FIRST implementation of this sheared the
+        /// field badly (it rotated the sample basis per position, multiplying a tiny direction change by a
+        /// world-scale lever arm -- "whys it all scrunchy"). The mechanism that caused that is gone, not tuned
+        /// down, but the default stays 0 until the new one has been looked at on a real coast.</summary>
         public static float ShoreBend =
             float.TryParse(System.Environment.GetEnvironmentVariable("UG_SHOREBEND"),
                            System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture,
@@ -78,24 +83,22 @@ namespace UnturnedGodot
         /// ⚠⚠ THE SHORE BEND IS MIRRORED HERE DELIBERATELY, line for line with the shader. Boats float on THIS.
         /// Bend the drawn waves toward the coast and leave this straight and the sea visibly turns while the
         /// runabout keeps bobbing to a swell running the old way -- the precise failure the include warns about
-        /// twice, which is why the field is BAKED DATA both sides read rather than a constant copied by hand.</summary>
+        /// twice, which is why the field is BAKED DATA both sides read rather than a constant copied by hand.
+        ///
+        /// ⭐⭐ WHAT IS READ IS A SCALAR PHASE, NOT A DIRECTION. The previous version mixed the open heading with
+        /// a baked one and built the sample basis from the result; that multiplies the direction change by a
+        /// world-coordinate lever arm and collapses the wavelength (see ShoreField's header). A phase correction
+        /// added to the phase cannot do that -- there is no basis to rotate.</summary>
         public static float SwellAt(float wx, float wz, float tphase)
         {
             float a = Mathf.DegToRad(SwellDirDeg);
             float ox = MathF.Cos(a), oz = MathF.Sin(a);     // the open-ocean heading
-            float dx = ox, dz = oz;
+            float u = wx * ox + wz * oz;                   // along travel -- the linear part, exact
             if (ShoreField.Active != null)
-            {
-                ShoreField.Active.Sample(wx, wz, out var sdir, out float shoreness);
-                shoreness = Mathf.Clamp(shoreness, 0f, 1f) * Mathf.Clamp(ShoreBend, 0f, 1f);
-                dx = ox + (sdir.X - ox) * shoreness;        // mix(open, shore, shoreness) -- same as the shader
-                dz = oz + (sdir.Y - oz) * shoreness;
-                float dl = MathF.Sqrt(dx * dx + dz * dz);
-                // ⚠ Two near-opposite headings can cancel; fall back to the open one rather than divide by ~0.
-                if (dl > 1e-3f) { dx /= dl; dz /= dl; } else { dx = ox; dz = oz; }
-            }
-            float u = wx * dx + wz * dz;    // along travel
-            float w = -wx * dz + wz * dx;   // along the crest line
+                u += Mathf.Clamp(ShoreBend, 0f, 1f) * ShoreField.Active.PhaseAt(wx, wz);
+            // ⚠ The along-crest coordinate stays in the OPEN frame, matching the shader: bending it would need a
+            // second (conjugate) field, and it only exists to break crests into finite ridges anyway.
+            float w = -wx * oz + wz * ox;
             return Fbm3(u * SwellFu + tphase, w * SwellFw);
         }
 

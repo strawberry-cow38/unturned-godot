@@ -3514,8 +3514,38 @@ namespace UnturnedGodot
 
             var cam = new Camera3D { Current = true, Fov = 55f, Far = 16000f };
             AddChild(cam);
-            cam.Position = new Vector3(0f, 5200f, 1f);
-            cam.LookAt(Vector3.Zero, new Vector3(0f, 0f, -1f));   // STRAIGHT TOP-DOWN; screen-up = world -Z (= Unity +Z = north) to match the map chart's orientation
+            // UG_CAMPOS=x,y,z [+ UG_CAMLOOK=x,y,z]: an explicit camera, same convention as the prop shots.
+            // ⚠ Needed to look at the SEA at all: the default below is 5.2 km straight up, where a 12 m swell
+            // wavelength is well under a pixel -- a render from there says nothing whatever about the waves.
+            // ShoreField's bake log names real coastal world coordinates to aim these at.
+            // ⚠ TRIES, rather than parsing and throwing. A malformed camera string used to throw out of here and
+            // leave the default top-down camera in place -- while STILL writing a PNG, so the render looked like a
+            // successful shot of the wrong thing. A refused camera has to say so in the log.
+            static bool P3(string v, out Vector3 r)
+            {
+                r = Vector3.Zero;
+                var q = (v ?? "").Trim('"').Split(',');
+                if (q.Length != 3) return false;
+                var ci = System.Globalization.CultureInfo.InvariantCulture;
+                if (!float.TryParse(q[0], System.Globalization.NumberStyles.Float, ci, out float px)) return false;
+                if (!float.TryParse(q[1], System.Globalization.NumberStyles.Float, ci, out float py)) return false;
+                if (!float.TryParse(q[2], System.Globalization.NumberStyles.Float, ci, out float pz)) return false;
+                r = new Vector3(px, py, pz); return true;
+            }
+            var _tcp = System.Environment.GetEnvironmentVariable("UG_CAMPOS");
+            if (!string.IsNullOrEmpty(_tcp) && P3(_tcp, out var _cpv))
+            {
+                cam.Position = _cpv;
+                var _look = P3(System.Environment.GetEnvironmentVariable("UG_CAMLOOK"), out var _clv) ? _clv : Vector3.Zero;
+                cam.LookAt(_look, Vector3.Up);
+                Log.Print($"[TERRAIN] camera at {_cpv} looking at {_look} (UG_CAMPOS)");
+            }
+            else
+            {
+                if (!string.IsNullOrEmpty(_tcp)) Log.Err($"[TERRAIN] UG_CAMPOS={_tcp} is not x,y,z -- using the default top-down camera");
+                cam.Position = new Vector3(0f, 5200f, 1f);
+                cam.LookAt(Vector3.Zero, new Vector3(0f, 0f, -1f));   // STRAIGHT TOP-DOWN; screen-up = world -Z (= Unity +Z = north) to match the map chart's orientation
+            }
             Log.Print($"[TERRAIN] loaded {System.IO.Path.GetFileName(_mapRoot)} (merged, seamless)");
         }
 

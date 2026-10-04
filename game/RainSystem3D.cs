@@ -31,19 +31,25 @@ namespace UnturnedGodot
             // it has the same problem -- the GPU draws the sea and WaveField floats boats on it, so the number has
             // to reach both from one place. WaveField.SwellAniso is that place; this just publishes it.
             RenderingServer.GlobalShaderParameterAdd("swell_aniso", RenderingServer.GlobalShaderParameterType.Float, WaveField.SwellAniso);
-            // SHORE DIRECTION FIELD (ShoreField.cs): where the coast is, per patch of sea, so swell bends toward it.
+            // SHORE PHASE FIELD (ShoreField.cs): metres of swell-phase correction per patch of sea, so the crests
+            // bend parallel to the coast and the waves run into it.
             // ⚠⚠ Registered HERE with a NEUTRAL default, for the GrassDisplacers reason this method exists: a
-            // material that compiles before its global is registered DIES. The default is a 1x1 pixel reading
-            // (dir = +X, shoreness = 0), which the shader blends at weight ZERO -- so a map with no coastline, or
-            // one whose bake has not run yet, draws exactly the sea it drew before this feature existed.
-            RenderingServer.GlobalShaderParameterAdd("shore_dir_tex", RenderingServer.GlobalShaderParameterType.Sampler2D,
+            // material that compiles before its global is registered DIES. The default is a 1x1 pixel reading ZERO
+            // -- and zero is meaningful rather than merely safe, because the baked value is a DIFFERENCE from the
+            // open-ocean ramp: a map with no coastline, or one whose bake has not run, draws exactly the sea it
+            // drew before this feature existed.
+            // ⚠ Renamed from `shore_dir_tex` when the field stopped being directions. The rename is deliberate:
+            // the two hold incompatible data in the same channels, and a stale reader should fail to find its
+            // global rather than quietly read a phase as a heading.
+            RenderingServer.GlobalShaderParameterAdd("shore_phase_tex", RenderingServer.GlobalShaderParameterType.Sampler2D,
                                                      ShoreField.NeutralTexture());
             RenderingServer.GlobalShaderParameterAdd("shore_rect", RenderingServer.GlobalShaderParameterType.Vec4,
                                                      new Vector4(0f, 0f, 1f, 1f));
-            // ⚠⚠ OFF BY DEFAULT. The first shore-bend shipped visibly wrecked the sea (see swell.gdshaderinc):
-            // rotating the sample basis per position multiplies a tiny direction change by a ~2000 m lever arm
-            // and collapses the wavelength. UG_SHOREBEND turns it on for testing; it stays 0 until it looks RIGHT,
-            // because a feature that is on and wrong is worse than a feature that is off.
+            // ⚠⚠ STILL OFF BY DEFAULT. The FIRST shore-bend shipped visibly wrecked the sea (see
+            // swell.gdshaderinc): it rotated the sample basis per position, which multiplies a tiny direction
+            // change by a ~2000 m lever arm and collapses the wavelength. That mechanism is gone -- the field is a
+            // scalar phase now and has no basis to rotate -- but the default stays 0 until master has looked at
+            // the new one on a real coast, because a feature that is on and wrong is worse than one that is off.
             RenderingServer.GlobalShaderParameterAdd("shore_bend", RenderingServer.GlobalShaderParameterType.Float,
                                                      WaveField.ShoreBend);
             // PUDDLE LEVEL: how much standing water is lying about, 0..1. Deliberately NOT rain_wetness -- puddles take
