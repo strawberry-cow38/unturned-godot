@@ -2156,6 +2156,10 @@ namespace UnturnedGodot
         /// from the rule instead of restating it, which is the same failure the drivetrain probe spent seven
         /// nights on: a fixed absolute in the test, invisible because the constant could not be read.</summary>
         public static float RepeatedHitIntervalForTest => RepeatedHitInterval;
+        /// <summary>The 3P "legs" rig and the 1P arms rig, so a test can assert the ONE invariant that binds
+        /// them: each arm is drawn by exactly one of the two.</summary>
+        internal RiggedCharacter BodyRigForTest => _body;
+        internal RiggedCharacter ArmsRigForTest => _viewmodel?.ArmsRig;
         static readonly Vector3 SawIdleShake = new(0.0016f, 0.0016f, 0.0009f);   // held: a running engine, felt not seen
         static readonly Vector3 SawCutShake  = new(0.0075f, 0.0075f, 0.0042f);   // cutting: the bar biting, ~4.5x
         float _sawHitCd;

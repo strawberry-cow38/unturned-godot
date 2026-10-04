@@ -60,6 +60,17 @@ namespace UnturnedGodot
         /// texture gets a StandardMaterial3D instead, and every SetShirt call on it is a silent no-op.</summary>
         public bool HasClothesMaterialForTest => _clothesMat != null;
 
+        /// <summary>The shoulder's actual pose scale, READ BACK from the skeleton. ⭐ A test must assert on what
+        /// the skeleton holds, not on the flag we asked for: the whole class of bug here is a write that is made
+        /// and then stomped by the next clip, which a flag check cannot see. Returns -1 if the bone is missing,
+        /// so "no bone" cannot masquerade as "collapsed".</summary>
+        public float ShoulderScaleForTest(bool left)
+        {
+            if (Skeleton == null) return -1f;
+            int b = Skeleton.FindBone(left ? "Left_Shoulder" : "Right_Shoulder");
+            return b < 0 ? -1f : Skeleton.GetBonePoseScale(b).X;
+        }
+
         public void SetShirt(Texture2D albedo, Texture2D emission = null, Texture2D metallic = null)
         {
             if (_clothesMat == null) return;
@@ -701,10 +712,33 @@ namespace UnturnedGodot
             // which is the derivation the assertion is supposed to be independent of.
             public Basis SpineBasis = Basis.Identity, SkullBasis = Basis.Identity;
 
+            /// <summary>Collapse an arm to nothing, from INSIDE the modification pass.
+            ///
+            /// ⚠⚠ THE SAME TRAP THE LEAN ABOVE WAS MOVED HERE TO ESCAPE, and the arm trim was left behind in it.
+            /// RiggedCharacter re-applied the trim after advancing the clips -- but only inside
+            /// `if (CallbackModeProcess == Manual)`. A rig the ENGINE drives (Physics mode, which is what a rig
+            /// without the gun layer gets) is posed outside that code entirely, so the write landed and the very
+            /// next mixer pass overwrote the shoulder scale with One. Every frame.
+            ///
+            /// ⭐ That predicts precisely the cases master reported -- driving, crouched, prone, holding a melee --
+            /// because those are the poses where the base player is NOT in Manual. "A modifier runs after the mixer
+            /// whatever the callback mode is" is as true for a bone's SCALE as it was for the lean's rotation.</summary>
+            public bool CollapseLeftArm, CollapseRightArm;
+            public int LeftShoulderBone = -1, RightShoulderBone = -1;
+            bool _wroteL, _wroteR;
+
             public override void _ProcessModification()
             {
                 var sk = GetSkeleton();
-                if (sk == null || SpineBone < 0) return;
+                if (sk == null) return;
+                // ⚠ Written here, not merely re-asserted here: this pass is the LAST thing to touch the pose.
+                // ⚠ And One is written only on the way OUT of a collapse -- writing it every frame would stomp any
+                // clip that legitimately animates shoulder scale.
+                if (LeftShoulderBone >= 0 && (CollapseLeftArm || _wroteL))
+                { sk.SetBonePoseScale(LeftShoulderBone, CollapseLeftArm ? Vector3.Zero : Vector3.One); _wroteL = CollapseLeftArm; }
+                if (RightShoulderBone >= 0 && (CollapseRightArm || _wroteR))
+                { sk.SetBonePoseScale(RightShoulderBone, CollapseRightArm ? Vector3.Zero : Vector3.One); _wroteR = CollapseRightArm; }
+                if (SpineBone < 0) return;
                 // A lean is a roll about the character's fore-aft axis, which rig.json puts along Z: Spine's rest is
                 // -90 about Z off the Skeleton root, so Spine-local -X runs up the body, and the Left_Shoulder /
                 // Left_Arm chain extends toward parent -X -- left = -X, up = +Y, hence forward = -Z. Retail's
@@ -837,6 +871,7 @@ namespace UnturnedGodot
                 _trimShoulders = new[] { Skeleton.FindBone("Left_Shoulder"), Skeleton.FindBone("Right_Shoulder") };
             if (_trimShoulders[0] >= 0) Skeleton.SetBonePoseScale(_trimShoulders[0], wantL ? Vector3.Zero : Vector3.One);
             if (_trimShoulders[1] >= 0) Skeleton.SetBonePoseScale(_trimShoulders[1], wantR ? Vector3.Zero : Vector3.One);
+            PushArmCollapse(wantL, wantR);   // ...and again where the mixer cannot overwrite it
             // The weapon does NOT hang in the air off a collapsed arm (strawberry: "chainsaw gets stuck to my 3p
             // and 'legs' playermodel hand"). Both attachments ride Right_Hook, so they go with the RIGHT arm --
             // a BoneAttachment3D follows the bone's position whether or not the arm around it still has any size.
@@ -897,7 +932,23 @@ namespace UnturnedGodot
             }
             if (_trimShoulders[0] >= 0) Skeleton.SetBonePoseScale(_trimShoulders[0], _vmHideL ? Vector3.Zero : Vector3.One);
             if (_trimShoulders[1] >= 0) Skeleton.SetBonePoseScale(_trimShoulders[1], _vmHideR ? Vector3.Zero : Vector3.One);
+            PushArmCollapse(_vmHideL, _vmHideR);
             _vmHideApplied = _vmHideL || _vmHideR;
+        }
+
+        /// <summary>Hand the collapse decision to the modifier, which is the only place that runs AFTER the
+        /// mixer whatever the animation callback mode is. The direct SetBonePoseScale above is kept because it
+        /// takes effect immediately on a toggle; the modifier is what makes it STAY.</summary>
+        void PushArmCollapse(bool left, bool right)
+        {
+            if (_leanMod == null) return;
+            if (_leanMod.LeftShoulderBone < 0 && Skeleton != null)
+            {
+                _leanMod.LeftShoulderBone = Skeleton.FindBone("Left_Shoulder");
+                _leanMod.RightShoulderBone = Skeleton.FindBone("Right_Shoulder");
+            }
+            _leanMod.CollapseLeftArm = left;
+            _leanMod.CollapseRightArm = right;
         }
 
         int[] _trimShoulders;

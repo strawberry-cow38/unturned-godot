@@ -202,6 +202,22 @@ namespace UnturnedGodot.Testing
             // looks identical to the feature working and is not it: Fire() refused on `_driving != null`
             // regardless of seat, so a passenger held a gun they could never shoot. Asserted on Fire()'s return
             // rather than on the viewmodel being visible, because visible was already true when it was broken.
+            // ---- 4b. ONE ARM, ONE RIG (strawberry 2026-10-04: "still doubled when driving"). At the wheel the
+            // viewmodel draws both hands, so the legs model must draw NEITHER -- and the bug this catches is not
+            // the decision, it is the decision being STOMPED. The clips write bone scale every advance, so a trim
+            // applied once and then overwritten looks exactly like a trim that was never asked for.
+            // ⚠ Asserted on the SKELETON's own pose scale, read back, rather than on the flag we set: a flag check
+            // passes while the bone says One, which is precisely the failure being chased.
+            p.DriveFP = true;
+            yield return Ticks(4);   // let the seated clips run and overwrite whatever they are going to
+            var bodyRig = p.BodyRigForTest;
+            T.Check("driving 1P: the legs model's LEFT shoulder is collapsed " +
+                    $"(scale {bodyRig?.ShoulderScaleForTest(true) ?? -1f:0.###})",
+                bodyRig != null && bodyRig.ShoulderScaleForTest(true) == 0f);
+            T.Check("driving 1P: the legs model's RIGHT shoulder is collapsed " +
+                    $"(scale {bodyRig?.ShoulderScaleForTest(false) ?? -1f:0.###})",
+                bodyRig != null && bodyRig.ShoulderScaleForTest(false) == 0f);
+
             p.DriveFP = true;
             T.Check("the DRIVER cannot fire -- hands on the wheel", p.IsDriver && !p.Fire());
             T.Check("move to a passenger seat", p.TrySwitchSeat(1) && p.IsPassenger);
