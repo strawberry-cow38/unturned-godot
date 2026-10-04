@@ -230,6 +230,10 @@ namespace UnturnedGodot
             GetWindow().SizeChanged += () => GraphicsOptions.Apply3DScale(this);   // saved graphics + controls rows, applied before anything renders (strawberry 2026-09-04 "make all persist")
             TickHub.AddProcess(this, HubProcess); SetProcess(false);   // PERF: hub-ticked (see TickHub.AddProcess)
             GameAudio.AuditBanks();   // UG_AUDIODBG=1: every emitted bank name vs the files on disk (prints EMPTY BANK lines)
+            // UG_GCWATCH=1: attribute frame hitches to the GC, or rule it out. Attached HERE rather than in
+            // WorldBuilder so it also covers load and menu -- a stutter while streaming props happens during the
+            // part of a session that the in-world reporters are not alive for. Off by default; see GcWatch.
+            if (GcWatch.Enabled) AddChild(new GcWatch());
             if (System.Environment.GetEnvironmentVariable("UG_COLLVIS") == "1") GetTree().DebugCollisionsHint = true;   // diagnostic: overlay physics collision shapes (must be set before bodies enter the tree)
             // VSYNC OFF GLOBALLY (strawberry 2026-08-10). With a pacer on, frame time is pinned to the display's
             // refresh interval, so the number you profile against is one the monitor chose and headroom reads as

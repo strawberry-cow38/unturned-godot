@@ -136,10 +136,25 @@ namespace UnturnedGodot
             Rebalance();
         }
 
+        // ---- what a rebalance actually COST, for hitch attribution (GcWatch reads these) ---------------
+        // ⚠⚠ REBALANCE IS UNBOUNDED PER CALL. Every chunk that crosses the boundary toggles EVERY shape it
+        // holds, in one frame, with no cap. The reasoning above is explicit that this is "a handful per second
+        // on a walking player" -- and walking is the case it was designed against. A jeep or a plane crosses
+        // many 64 m cells per 0.25 s tick, so the same code can flip dozens of chunks and write `Disabled` on
+        // hundreds of shapes in a SINGLE frame, each one entering or leaving the physics broadphase.
+        //
+        // That predicts a stutter that scales with SPEED, which is exactly what master reports ("when
+        // streaming props -- driving or flying"). These counters exist to confirm or kill that, because the
+        // other candidate (a fat GC) produces the same symptom and the two want opposite fixes.
+        public static int LastFlipChunks, LastFlipShapes, WorstFlipShapes;
+        public static double LastRebalanceMs, WorstRebalanceMs;
+
         /// <summary>Public so a test can drive it without waiting real seconds.</summary>
         public void Rebalance()
         {
             if (Disabled) return;
+            var sw = GcWatch.Enabled ? System.Diagnostics.Stopwatch.StartNew() : null;
+            int flipChunks = 0, flipShapes = 0;
             var focus = FocusPoint();
             if (focus == null) return;
             var f = focus.Value;
@@ -153,8 +168,17 @@ namespace UnturnedGodot
                 bool want = ch.On ? d <= ch.Radius + Margin : d <= ch.Radius;   // hysteresis: leaving needs the extra margin
                 if (want == ch.On) continue;
                 ch.On = want;
+                flipChunks++;
                 foreach (var cs in ch.Shapes)
-                    if (GodotObject.IsInstanceValid(cs) && cs.Disabled == want) cs.Disabled = !want;
+                    if (GodotObject.IsInstanceValid(cs) && cs.Disabled == want) { cs.Disabled = !want; flipShapes++; }
+            }
+            if (sw != null)
+            {
+                sw.Stop();
+                LastFlipChunks = flipChunks; LastFlipShapes = flipShapes;
+                LastRebalanceMs = sw.Elapsed.TotalMilliseconds;
+                if (flipShapes > WorstFlipShapes) WorstFlipShapes = flipShapes;
+                if (LastRebalanceMs > WorstRebalanceMs) WorstRebalanceMs = LastRebalanceMs;
             }
             // Report what the first pass actually left resident. The build line says how much collision EXISTS;
             // this says how much is still in the broadphase, which is the number the change is claiming to move.
