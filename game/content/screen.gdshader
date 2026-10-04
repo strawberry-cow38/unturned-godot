@@ -63,9 +63,10 @@ vec3 prog_testcard(vec2 uv) {
 // is exactly what it is. That is the trade being reversed here, knowingly: close up it is now real snow, and far
 // away it will average toward grey, which is also what a real set across a room does.
 //
-// So the grain is the SCREEN PIXEL itself, hashed off FRAGCOORD -- one pixel wherever the set happens to sit on
-// screen, rather than one pixel only at whatever distance made 64x48 line up. The UVs are not consulted at all,
-// which is why the row shear went with the grid: shearing per-pixel noise sideways produces per-pixel noise.
+// So the grain is about ONE SCREEN PIXEL wherever the set sits, rather than one pixel only at whatever distance made
+// 64x48 line up. (2026-10-04: it is no longer hashed off FRAGCOORD itself -- that pinned the snow to the monitor and
+// made every set a portal. The cell grid is laid on the UVs at a size fwidth says is one screen pixel; see
+// fragment().) The row shear went with the old grid: shearing per-pixel noise sideways produces per-pixel noise.
 //
 // THE LEVELS ARE UNCHANGED, deliberately. Lit-or-dark with a little variation inside each, rather than a smooth
 // ramp through the greys -- that is what keeps contrast in it, and a ramp is what the version before the grid had.
@@ -86,13 +87,13 @@ float hash13(vec3 p3) {
 // which reads as sparkle rather than as a signal. Wrapped at 65536 frames (~55 min) purely to bound the hash input.
 float snow_frame() { return mod(floor(time_s * 20.0), 65536.0); }
 
-// One channel of snow at this screen pixel. `chan` separates the colour channels; `seed` separates two sets that
+// One channel of snow in this grain cell. `chan` separates the colour channels; `seed` separates two sets that
 // happen to be showing snow at once (largely redundant now that different sets occupy different pixels, but it
 // costs nothing and the shader should not depend on that being true).
 //
-// FRAGCOORD is PASSED IN rather than read here: Godot forbids a built-in inside a user-defined function, and the
-// failure is a shader compile error, i.e. every screen in the world goes blank. So fragment() reads it and threads
-// it down through prog_static/prog_static_mono.
+// The cell id is PASSED IN rather than computed here: it needs fwidth, Godot forbids built-ins inside a user-defined
+// function, and the failure is a shader compile error, i.e. every screen in the world goes blank. So fragment()
+// computes it and threads it down through prog_static/prog_static_mono.
 float snow_px(vec2 fc, float chan) {
     vec2 px = floor(fc);
     float t = snow_frame();
@@ -252,7 +253,16 @@ vec3 prog_bars(vec2 uv) {
 void fragment() {
     vec2 uv = UV;
     vec3 c;
-    vec2 fc = FRAGCOORD.xy;   // read HERE: a built-in is illegal inside a user function (see snow_px)
+    // THE SNOW IS ON THE GLASS (strawberry 2026-10-04: "the tv's are like.. a portal to another dimension with the
+    // static channel. its not like a flat image on the screen"). The grain used to be hashed off FRAGCOORD, the
+    // MONITOR's pixel, so it stayed pinned to your display while the set moved under it: a window, not a picture.
+    // It is now a grid laid on the screen's own UVs, sized so one grain is still about ONE screen pixel (fwidth(uv) is
+    // exactly one screen pixel in UV), and snapped to whole octaves so the grid does not swim as you walk toward it.
+    // A jump between octaves is invisible: the field re-rolls 20x a second anyway. fwidth is read HERE for the same
+    // reason FRAGCOORD was (built-ins stay out of user functions).
+    vec2 grain = exp2(round(log2(1.0 / max(fwidth(uv), vec2(1e-6)))));
+    grain = clamp(grain, vec2(16.0), vec2(4096.0));
+    vec2 fc = floor(uv * grain) + grain;   // + grain: a cell id from one octave never collides with another octave's
     if (program == 0) c = prog_testcard(uv);
     else if (program == 1) c = prog_static(fc);
     else if (program == 2) c = prog_dvd(uv);
