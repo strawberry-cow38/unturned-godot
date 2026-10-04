@@ -306,6 +306,15 @@ namespace UnturnedGodot
 
         /// <summary>Metres from the eye at which the body starts being drawn. The chest sits ~0.25-0.75 m from the
         /// eye and the hips ~0.75-1.0, so this lands just below the waist.</summary>
+        /// <summary>Cross-fade between animation states, seconds. ⚠ MEASURED BY FEEL, not derived -- this is a
+        /// look, and the only instrument for it is master. 0.12 s is short enough that a crouch still feels
+        /// immediate and long enough to kill the snap. UG_BLEND overrides without a rebuild, and UG_BLEND=0 is
+        /// the A/B control that restores the old hard cut exactly.</summary>
+        public static float BlendSeconds =
+            float.TryParse(System.Environment.GetEnvironmentVariable("UG_BLEND"),
+                           System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture,
+                           out float _bl) && _bl >= 0f ? _bl : 0.12f;
+
         public static float FirstPersonClip =
             float.TryParse(System.Environment.GetEnvironmentVariable("UG_FPCLIP"),
                            System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture,
@@ -391,7 +400,10 @@ namespace UnturnedGodot
             string f = finished.ToString();
             if (f.EndsWith("__hold")) return;
             string h = HoldOf(ap, f);
-            if (h != null) ap.Play(h);
+            // ⚠ ZERO BLEND: the hold IS the pose the clip just finished on, so this is a continuation and not a
+            // transition. A cross-fade here would fade a pose into itself -- invisible, but it keeps two clips
+            // alive for the blend, which is exactly the per-frame cost HoldOf exists to remove.
+            if (h != null) ap.Play(h, 0f);
         }
         void OnApFinished(StringName anim) => ParkOnHold(_ap, anim);
         void OnGunApFinished(StringName anim) => ParkOnHold(_gunAp, anim);
@@ -409,8 +421,12 @@ namespace UnturnedGodot
             if (_ap != null && !string.IsNullOrEmpty(name) && _ap.HasAnimation(name))
             {
                 string h = HoldOf(_ap, name);   // PERF: a looping 1-key end pose instead of parking on the finished clip (see HoldOf)
-                if (h != null) { _ap.Play(h); return; }
-                _ap.Play(name);
+                // ⚠⚠ EXPLICIT ZERO BLEND. With a default cross-fade configured on the player, a bare Play() here
+                // would fade INTO the hold -- and this method's entire job is to arrive instantly ("snap straight
+                // to the guard pose -- don't play a jab-on-equip"). A blend would make a method called SnapToEnd
+                // stop snapping, which is the quiet kind of regression a feel change smuggles in.
+                if (h != null) { _ap.Play(h, 0f); return; }
+                _ap.Play(name, 0f);
                 _ap.Seek(_ap.GetAnimation(name).Length, true);
             }
         }
@@ -1069,7 +1085,7 @@ namespace UnturnedGodot
         public void EnableGunLayer(string aimClip = "Gun_Aim")
         {
             if (_gunLayer || _ap == null || Skeleton == null || _lib == null) return;
-            _gunAp = new AnimationPlayer { Name = "GunAnim" };
+            _gunAp = new AnimationPlayer { Name = "GunAnim", PlaybackDefaultBlendTime = BlendSeconds };   // same cross-fade as the base layer: a melee swing should not snap in either
             AddChild(_gunAp);
             _gunAp.AddAnimationLibrary("", _lib);
             _gunAp.AnimationFinished += OnGunApFinished;   // PERF: see HoldOf
@@ -1118,8 +1134,8 @@ namespace UnturnedGodot
             _gunAp.GetAnimation(clip).LoopMode = Animation.LoopModeEnum.None;
             _loopSetGun = clip; _loopSetGunValue = false;   // keep the cache honest about what was just written
             string h = HoldOf(_gunAp, clip);   // PERF: see HoldOf -- a Seek-to-end player re-clears its caches every advance
-            if (h != null) { _gunAp.Play(h); return; }
-            _gunAp.Play(clip); _gunAp.Seek(_gunAp.GetAnimation(clip).Length, true);
+            if (h != null) { _gunAp.Play(h, 0f); return; }   // ⚠ snap means snap -- see SnapToEnd
+            _gunAp.Play(clip, 0f); _gunAp.Seek(_gunAp.GetAnimation(clip).Length, true);
         }
 
         // ---- MELEE on the same upper-body overlay the gun uses (strawberry 2026-09-03: "third person cam doesnt show melee
@@ -1735,6 +1751,18 @@ namespace UnturnedGodot
                 if (LoadProf) Log.Print($"[rigprof] anim library (armsOnly={armsOnly}) {names.Count} clips in {(System.Diagnostics.Stopwatch.GetTimestamp() - ta) * 1000.0 / System.Diagnostics.Stopwatch.Frequency:0} ms");
             }
             ap.AddAnimationLibrary("", built.lib);
+            // ⭐⭐ CROSS-FADE INSTEAD OF CUT (master 2026-10-04: "its very rigid and sharp switching between
+            // animations"). Every state change in this file is a bare `_ap.Play(want)` -- stand->crouch->prone,
+            // idle->walk->run, the lot -- and Play's blend argument defaults to -1, meaning "use the player's
+            // default blend time". NOTHING in this codebase ever set one, and Godot's default is ZERO, so every
+            // transition was a hard cut. The clips and the transitions were always right; they just had no
+            // overlap, which is why it reads as rigid rather than as missing animation.
+            //
+            // ⚠ One number for every transition, deliberately, as a FIRST cut: a per-pair table
+            // (SetBlendTime(from, to)) is the right long-term shape but it is a lot of hand-tuned values to
+            // invent at once, and the single default is what shows whether blending is the answer at all.
+            // UG_BLEND tunes it live without a rebuild; 0 restores the old hard cut as an A/B control.
+            ap.PlaybackDefaultBlendTime = BlendSeconds;
             root._ap = ap;
             ap.AnimationFinished += root.OnApFinished;   // PERF: park on a looping hold instead of the finished clip (see HoldOf)
             root._lib = built.lib;   // kept so a lazily-created gun-overlay AnimationPlayer (3P) can share the same clips
