@@ -275,6 +275,14 @@ namespace UnturnedGodot
                 PlayerRegistry.FlinchAllFromExplosion(ep, Mathf.Max(e.Radius * 2f, 12f), 30f);
                 if (IsInsideTree()) GameAudio.Explosion(this, ep, e.Radius);   // a remote blast is heard too (retail Bomb effect audio)
             };
+            Client.VehicleExitRefused += e =>
+            {
+                // the server kept us in the seat: our door is blocked (v54). Nothing to roll back -- the client never
+                // unseats itself, it waits for VehicleExited -- so the whole job is saying so, the same line the
+                // local direct exit puts up (PlayerController.TryExitVehicle).
+                Log.Print($"[CLIENT] exit refused (vehicle {e.NetId}, seat {e.Seat}) -- door blocked");
+                HUD.Alert(Vehicle.ExitRefusedText, 2f);
+            };
             Client.ItemPickupDenied += e =>
             {
                 // a LEGAL pickup the server grid had no room for -- the item stays in the world; tell the
@@ -509,6 +517,7 @@ namespace UnturnedGodot
             var v = Vehicle.BuildByName(key, e.Variant);
             v.NetClientPredicted = true;    // server owns health/explosion (replica Exploded flag); local damage is a no-op
             v.RemoveFromGroup("vehicles");  // never a group-scan target (VehicleNetSync minting in a shared-tree L1 host, tow/roadkill/grenade scans)
+            v.AddToGroup(Vehicle.ClientTwinGroup);   // ...and the server's door probe looks through it in that same shared tree (Vehicle.ClientTwinGroup)
             v.CollisionLayer = 0;           // nothing collides INTO the local car; it collides OUT via its mask (bit0: the static world -- plan A4's collision posture)
             AddChild(v);
             var basis = Basis.FromEuler(new Vector3(Mathf.DegToRad(e.PitchDegrees),

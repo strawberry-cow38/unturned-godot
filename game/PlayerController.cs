@@ -7633,7 +7633,7 @@ namespace UnturnedGodot
             // brakes"). Leaving a moving car now leaves it MOVING -- it coasts, rolls downhill, and keeps
             // whatever the driver gave it. The engine is likewise untouched. Bailing out of a rolling truck is a
             // thing you can do to yourself on purpose now.
-            if (v != null) { v.OccupiedSeats.Remove(_seatIndex); GlobalPosition = SafeSpot(ClearExitSpot(v.GlobalPosition + v.GlobalTransform.Basis.X * 2.4f + Vector3.Up * 1.0f, v.GlobalPosition, "death eject"), "death eject"); }
+            if (v != null) { v.OccupiedSeats.Remove(_seatIndex); GlobalPosition = SafeSpot(ForcedExitSpot(v, _seatIndex, "death eject"), "death eject"); }
             _seatIndex = 0;
             if (Hud != null) Hud.Vehicle = null;
             foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
@@ -8457,7 +8457,7 @@ namespace UnturnedGodot
             {
                 if (_noteReader != null && _noteReader.IsOpen) _noteReader.Close();   // F while a note is open -> close it first (same as Esc)
                 else if (_invUI != null && _invUI.IsOpen) { SaveGunState(); CloseCrate(); _invUI.Close(); Input.MouseMode = Input.MouseModeEnum.Captured; }   // F while a container inventory is open -> CLOSE it (CloseCrate swings the door shut too), same as Escape (master)
-                else if (_driving != null && !DrivingPredicted) ExitVehicle();  // hop out (SP direct exit; a Part A predicted drive falls through to the server REQUEST below)
+                else if (_driving != null && !DrivingPredicted) TryExitVehicle();  // hop out through YOUR door, or be told it is blocked (SP direct exit; a Part A predicted drive falls through to the server REQUEST below)
                 else if (_ridingTrain != null) ExitTrain();                     // hop out of a boarded train (parallel ride path)
                 else if (_ridingCrane != null) ExitCrane();                     // hop out of a boarded crane
                 else if (IsSeatedOnProp) StandUp();                             // get off the chair/couch/bench (F sat you down, F stands you up)
@@ -11144,10 +11144,47 @@ namespace UnturnedGodot
             return true;
         }
 
-        void ExitVehicle()
+        /// <summary>F in a seat: out through YOUR door, or not at all (strawberry 2026-10-04: "kick you out in the spot
+        /// where the respective door is... if your 'door' is blocked and you try to exit, refuse and give feedback").
+        /// Returns whether you got out. A refusal changes NOTHING -- same seat, same vehicle, same everything -- and puts
+        /// the reason on screen, because a key that silently does nothing reads as a broken key. See Vehicle.ResolveDoorExit
+        /// for what "your door" and "blocked" mean.</summary>
+        public bool TryExitVehicle()
+        {
+            var v = _driving;
+            if (v == null) return false;
+            if (!IsInstanceValid(v)) { ExitVehicle(); return true; }   // the car is gone: nothing to have a door, step out in place
+            LastExitVerdict = v.ResolveDoorExit(_seatIndex, new Godot.Collections.Array<Rid> { GetRid() }, out var door,
+                                                CollisionMask, _capsule?.Radius ?? Vehicle.ExitPlayerRadius, _capsule?.Height ?? Vehicle.ExitPlayerHeight);
+            if (LastExitVerdict != Vehicle.ExitVerdict.Clear)
+            {
+                Log.Print($"[vehicle] exit refused: {v.LastExitProbe}");
+                HUD.Alert(Vehicle.ExitRefusedText, 2f);
+                return false;
+            }
+            ExitVehicle(door);
+            return true;
+        }
+        /// <summary>What the last TryExitVehicle decided. Test seam -- and the only way to tell "refused" from "never asked".</summary>
+        public Vehicle.ExitVerdict? LastExitVerdict;
+
+        /// <summary>A FORCED exit's spot (death, a blast): the seat's door when it is clear, else the nearest free spot to
+        /// it. These cannot be refused -- the player is leaving whether the door opens or not -- so this keeps the old
+        /// search as the fallback; it just starts it at the right door instead of the right-hand side of everyone.</summary>
+        Vector3 ForcedExitSpot(Vehicle v, int seat, string why)
+        {
+            var exclude = new Godot.Collections.Array<Rid> { GetRid() };
+            if (v.ResolveDoorExit(seat, exclude, out var door, CollisionMask) == Vehicle.ExitVerdict.Clear) return door;
+            return ClearExitSpot(door, v.GlobalPosition, why);
+        }
+
+        /// <summary>Leave the seat. `at` is a door spot TryExitVehicle already cleared; without one this is a FORCED exit
+        /// (the vehicle exploded under you) and ForcedExitSpot picks where you land.</summary>
+        void ExitVehicle(Vector3? at = null)
         {
             var v = _driving; _driving = null;
             if (v != null && !IsInstanceValid(v)) v = null;   // a freed vehicle has a live C# wrapper and a zero transform: touching it puts the player at the origin
+            int seat = _seatIndex;   // read before the reset below: the door is the seat's
             if (v != null) v.OccupiedSeats.Remove(_seatIndex);
             v?.CycleDoor();
             if (v != null && _seatIndex == 0) v.ReleaseControls();   // the DRIVER left: no held throttle/steer, rpm back to idle (master)
@@ -11156,7 +11193,7 @@ namespace UnturnedGodot
             // no Park here either: momentum is the driver's to leave behind (see ExitVehicle)
             _seatIndex = 0;
             if (Hud != null) Hud.Vehicle = null;               // hide the vehicle status box
-            if (v != null) GlobalPosition = SafeSpot(ClearExitSpot(v.GlobalPosition + v.GlobalTransform.Basis.X * 2.4f + Vector3.Up * 1.0f, v.GlobalPosition, "vehicle exit"), "vehicle exit");
+            if (v != null) GlobalPosition = SafeSpot(at ?? ForcedExitSpot(v, seat, "vehicle exit"), "vehicle exit");
             foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
                 if (c is CollisionShape3D cs) cs.Disabled = false;
             Visible = true;

@@ -890,6 +890,7 @@ namespace UnturnedGodot.Net
         public event System.Action<PlayerMeleeEvent> PlayerMeleed;   // somebody swung: the puppet plays the weak/strong clip   // somebody pulled a trigger: report + tracer
         public event System.Action<VehicleEnteredEvent> VehicleEntered;
         public event System.Action<VehicleExitedEvent> VehicleExited;
+        public event System.Action<VehicleExitRefusedEvent> VehicleExitRefused;   // v54: your door is blocked -- still seated
         // Part A: the server rolled this driver's vehicle back (out-of-envelope state) -- teleport the
         // local vehicle to the payload, freeze, echo RecovCounter in the outgoing state stream
         public event System.Action<VehicleRecovEvent> VehicleRecov;
@@ -995,6 +996,8 @@ namespace UnturnedGodot.Net
                 e => { Vehicles.ApplyEntered(e, Applier.LastAppliedServerTick); VehicleEntered?.Invoke(e); });
             Events.Register<VehicleExitedEvent>(ReplicationIds.EventVehicleExited, VehicleExitedEvent.TryRead,
                 e => { Vehicles.ApplyExited(e, Applier.LastAppliedServerTick); VehicleExited?.Invoke(e); });
+            Events.Register<VehicleExitRefusedEvent>(ReplicationIds.EventVehicleExitRefused, VehicleExitRefusedEvent.TryRead,
+                e => VehicleExitRefused?.Invoke(e));   // touches no replica -- nothing changed, that is the point
             Events.Register<VehicleRecovEvent>(ReplicationIds.EventVehicleRecov, VehicleRecovEvent.TryRead,
                 e => VehicleRecov?.Invoke(e));   // touches no replica -- the rollback targets the driver's LOCAL vehicle only
             Events.Register<PlayerRecovEvent>(ReplicationIds.EventPlayerRecov, PlayerRecovEvent.TryRead,

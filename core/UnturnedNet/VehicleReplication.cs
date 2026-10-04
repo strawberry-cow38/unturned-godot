@@ -952,6 +952,26 @@ namespace UnturnedGodot.Net
         }
     }
 
+    /// <summary>v54: to the REQUESTER only -- you asked to get out and your door is blocked, so you are still in
+    /// your seat (strawberry 2026-10-04: "if your 'door' is blocked and you try to exit, refuse and give feedback to
+    /// the user"). Needed as a fact of its own because a refusal changes NO state: there is no seat flip, no
+    /// teleport and no snapshot delta for the client to notice, so without this a blocked door on a joined client
+    /// is a key that silently does nothing. The ItemPickupDenied shape. Seat rides along so the line can name it.</summary>
+    public struct VehicleExitRefusedEvent
+    {
+        public uint NetId;
+        public byte Seat;
+        public void Write(NetPakWriter w) { w.WriteUInt32(NetId); w.WriteUInt8(Seat); }
+        public static bool TryRead(NetPakReader r, out VehicleExitRefusedEvent evt)
+        {
+            evt = default;
+            if (!r.ReadUInt32(out uint id)) return false;
+            if (!r.ReadUInt8(out byte seat)) return false;
+            evt = new VehicleExitRefusedEvent { NetId = id, Seat = seat };
+            return true;
+        }
+    }
+
     /// <summary>
     /// Server-side enter/drive/exit arbitration (MP_PLAN §3.6 / §4 Phase 7), engine-free. Registers the
     /// vehicle commands on the §2.3 choke point: sender identity from the connection, one driver per
@@ -996,6 +1016,14 @@ namespace UnturnedGodot.Net
         /// terrain surface and drop the avatar through the world. The dedicated server wires a
         /// Terr.SampleHeight clamp here; null (every test/demo default) keeps the raw spot.</summary>
         public Func<Vector3, Vector3> AdjustExitSpot;
+
+        /// <summary>The game layer's DOOR (Vehicle.ResolveDoorExit on the real node -- VehicleNetSync wires it, on the
+        /// dedicated server and the listen host alike): may this seat of this vehicle get out, and where. `clear`
+        /// false = the door is blocked. Null RESULT = no node to ask (it is being torn down) and null DELEGATE =
+        /// no physics world at all (every L0 harness); both keep the old beside-the-door spot and never refuse.</summary>
+        public Func<uint, int, (bool clear, Vector3 spot)?> ResolveExit;
+        /// <summary>Exit requests answered "your door is blocked".</summary>
+        public long ExitsRefused;
 
         readonly VehicleReplication _vehicles;
         readonly PlayerReplication _players;
@@ -1117,7 +1145,7 @@ namespace UnturnedGodot.Net
                 validate: (sender, cmd) => CanEnter(sender, cmd.NetId));
 
             commands.Register<ExitVehicleCommand>(ReplicationIds.CommandExitVehicle, ExitVehicleCommand.TryRead,
-                (sender, cmd) => ServerExit(sender),
+                (sender, cmd) => ServerRequestExit(sender),   // a REQUEST: the one exit that may be refused (a blocked door)
                 validate: (sender, cmd) => IsDriver(sender));
 
             commands.Register<DriveInputCommand>(ReplicationIds.CommandDriveInput, DriveInputCommand.TryRead,
@@ -1301,10 +1329,20 @@ namespace UnturnedGodot.Net
         }
 
 
-        /// <summary>Free the seat: clears occupancy + input, teleports the (remote) player's entity beside
-        /// the driver door (the SP exit spot: vehicle pos + right * 2.4 + up), broadcasts the fact.
-        /// Idempotent -- false if the player wasn't driving.</summary>
-        public bool ServerExit(ushort playerId)
+        /// <summary>A FORCED exit -- death, the vehicle blowing up or despawning, a disconnect. Never refused: the
+        /// player is leaving whether the door opens or not, so a blocked door only costs the door spot (the old
+        /// beside-the-vehicle point is used instead). Idempotent -- false if the player wasn't seated.</summary>
+        public bool ServerExit(ushort playerId) => ExitSeat(playerId, request: false);
+
+        /// <summary>The player ASKED to get out (CommandExitVehicle). Out through the seat's own door, or -- when that
+        /// door is blocked -- not at all: the seat is kept, nothing moves, and the requester alone is told why
+        /// (VehicleExitRefused). Same rule the local player's direct exit applies (PlayerController.TryExitVehicle);
+        /// both ask Vehicle.ResolveDoorExit, so the host and a joiner cannot disagree about whether a door opens.</summary>
+        public bool ServerRequestExit(ushort playerId) => ExitSeat(playerId, request: true);
+
+        /// <summary>Free the seat: clears occupancy + input, teleports the (remote) player's entity to the seat's DOOR
+        /// (ResolveExit; with no game layer, the old SP spot: vehicle pos + right * 2.4 + up), broadcasts the fact.</summary>
+        bool ExitSeat(ushort playerId, bool request)
         {
             // A PASSENGER LEAVES TOO. _drivenByPlayer is driver-only (it gates the authority window), so
             // keying the exit off it would have left anyone in seat 1+ unable to get out -- their seat would
@@ -1312,6 +1350,17 @@ namespace UnturnedGodot.Net
             if (!_seatByPlayer.TryGetValue(playerId, out var held)) return false;
             uint netId = held.NetId;
             int seat = held.Seat;
+            // THE DOOR IS ASKED BEFORE ANYTHING IS FREED. A refusal has to leave every table exactly as it found
+            // it -- seat, driver window, held input -- or "refused" would really mean "half out".
+            (bool clear, Vector3 spot)? door = null;
+            if (ResolveExit != null && _vehicles.TryGet(new NetId(netId), out _)) door = ResolveExit(netId, seat);
+            if (request && door.HasValue && !door.Value.clear)
+            {
+                ExitsRefused++;
+                var no = new VehicleExitRefusedEvent { NetId = netId, Seat = (byte)seat };
+                _sendTo(playerId, NetMessagePak.Pack(ReplicationIds.EventVehicleExitRefused, no.Write));
+                return false;
+            }
             _seatByPlayer.Remove(playerId);
             bool wasDriver = _drivenByPlayer.Remove(playerId);
             if (wasDriver) _driven.Remove(netId);   // Part A: authority returns to the server (VehicleNetSync releases the hold when Predicted drops)
@@ -1324,8 +1373,8 @@ namespace UnturnedGodot.Net
                 float yawRad = v.YawDegrees * (Mathf.PI / 180f);
                 // Godot yaw basis: right (basis.X) = (cos yaw, 0, -sin yaw)
                 var right = new Vector3(Mathf.Cos(yawRad), 0f, -Mathf.Sin(yawRad));
-                spot = v.Pos + right * 2.4f + new Vector3(0f, 1.0f, 0f);
-                if (AdjustExitSpot != null) spot = AdjustExitSpot(spot);   // §7 risk 6: terrain-snap a below-ground slope exit
+                spot = door.HasValue && door.Value.clear ? door.Value.spot : v.Pos + right * 2.4f + new Vector3(0f, 1.0f, 0f);
+                if (AdjustExitSpot != null) spot = AdjustExitSpot(spot);   // §7 risk 6: terrain-snap a below-ground slope exit (a door spot is already on the ground; this only ever LIFTS, so it is a no-op there)
                 _players.ServerTeleport(playerId, spot, tick);
             }
             // the event carries the final (post-clamp) spot: the exiting client's replica may be frozen

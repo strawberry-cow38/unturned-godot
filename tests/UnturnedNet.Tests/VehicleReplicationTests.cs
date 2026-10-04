@@ -257,6 +257,107 @@ namespace UnturnedNet.Tests
             Assert.That(h.StepUntil(() => Driver(h, veh) == b.PlayerId), Is.True, "the seat is takeable again");
         }
 
+        // ---- EXIT AT YOUR OWN DOOR (strawberry 2026-10-04: "if your 'door' is blocked and you try to exit, refuse and
+        // give feedback to the user"). A REQUEST to get out is refused when the seat's door is blocked; a FORCED exit
+        // never is. L0 has no physics world, so the game layer's door (ServerVehicles.ResolveExit) is stubbed with a
+        // fixed answer: these pin what CORE does with each answer, and the L1 vehicle.door_exit pins that the game
+        // layer gives the right one.
+
+        [Test]
+        public void ExitRequest_BlockedDoor_IsRefused_SeatKept_OnlyTheRequesterIsTold()
+        {
+            var h = new Harness(7011).Connected("a", "b");
+            var a = h.Clients[0];
+            var b = h.Clients[1];
+            uint veh = h.SpawnVehicle(new Vector3(1f, 0f, 0f));
+            a.SendEnterVehicle(veh);
+            Assert.That(h.StepUntil(() => Driver(h, veh) == a.PlayerId), Is.True, "seated");
+            h.Step(5);
+            h.Server.Players.TryGetByOwner(a.PlayerId, out var seatedE);
+            var seatedPos = seatedE.Pos;
+
+            (uint netId, int seat)? asked = null;
+            h.Server.VehicleHost.ResolveExit = (id, seat) => { asked = (id, seat); return (false, Vector3.zero); };
+            int refusedA = 0, refusedB = 0, exitFacts = 0;
+            a.VehicleExitRefused += e => { if (e.NetId == veh && e.Seat == 0) refusedA++; };
+            b.VehicleExitRefused += e => refusedB++;
+            a.VehicleExited += e => exitFacts++;
+            b.VehicleExited += e => exitFacts++;
+
+            a.SendExitVehicle();
+            Assert.That(h.StepUntil(() => refusedA > 0), Is.True, "the requester was told its door is blocked");
+            h.Step(30);   // every chance for a wrongly-sent exit fact to land
+            Assert.That(asked.HasValue && asked.Value.netId == veh && asked.Value.seat == 0, Is.True,
+                        $"the door asked about is this vehicle's driver seat ({asked})");
+            Assert.That(Driver(h, veh), Is.EqualTo(a.PlayerId), "STILL SEATED: a refused exit keeps the seat");
+            Assert.That(h.Server.VehicleHost.IsDriver(a.PlayerId), Is.True, "...and the seat table still has him");
+            Assert.That(exitFacts, Is.EqualTo(0), "no VehicleExited fact went to anyone");
+            Assert.That(refusedB, Is.EqualTo(0), "the refusal is the requester's alone");
+            Assert.That(h.Server.VehicleHost.ExitsRefused, Is.EqualTo(1), "counted once");
+            h.Server.Players.TryGetByOwner(a.PlayerId, out var still);
+            Assert.That((still.Pos - seatedPos).magnitude, Is.LessThan(0.05f), "nobody was moved");
+
+            // The door clears -> the SAME request succeeds, and lands AT the door the game layer named rather than
+            // the old one-size right-hand spot (vehicle pos + right*2.4 + up = (3.4, 1, 0) here).
+            var door = new Vector3(-0.85f, 0.2f, 0.4f);
+            h.Server.VehicleHost.ResolveExit = (id, seat) => (true, door);
+            VehicleExitedEvent? got = null;
+            a.VehicleExited += e => { if (e.PlayerId == a.PlayerId) got = e; };
+            a.SendExitVehicle();
+            Assert.That(h.StepUntil(() => got.HasValue), Is.True, "out, once the door is clear");
+            Assert.That(Driver(h, veh), Is.EqualTo(0), "seat freed");
+            Assert.That((got.Value.Pos - door).magnitude, Is.LessThan(0.001f), $"...through the named door ({got.Value.Pos})");
+            Assert.That(h.Server.Players.TryGetByOwner(a.PlayerId, out var outside), Is.True);
+            Assert.That((outside.Pos - PlayerReplication.Quantize(door)).magnitude, Is.LessThan(0.05f), "...which is where the entity went");
+        }
+
+        [Test]
+        public void ForcedExit_GoesThroughABlockedDoor()
+        {
+            // Dying, a blast, a despawn, a disconnect: the player is leaving whether the door opens or not. A refusal
+            // here would strand a seat on a dead or departed player.
+            var h = new Harness(7012).Connected("a", "b");
+            var a = h.Clients[0];
+            var b = h.Clients[1];
+            var at = new Vector3(1f, 0f, 0f);
+            uint veh = h.SpawnVehicle(at);
+            a.SendEnterVehicle(veh);
+            Assert.That(h.StepUntil(() => Driver(h, veh) == a.PlayerId), Is.True, "seated");
+            h.Server.VehicleHost.ResolveExit = (id, seat) => (false, Vector3.zero);
+
+            Assert.That(h.Server.VehicleHost.ServerExit(a.PlayerId), Is.True, "the forced path exits regardless");
+            Assert.That(Driver(h, veh), Is.EqualTo(0), "seat freed");
+            h.Server.Players.TryGetByOwner(a.PlayerId, out var outside);
+            var fallback = PlayerReplication.Quantize(at + new Vector3(2.4f, 1.0f, 0f));   // yaw 0: right = +X
+            Assert.That((outside.Pos - fallback).magnitude, Is.LessThan(0.05f), "...to the old beside-the-vehicle spot, the door being shut");
+
+            b.SendEnterVehicle(veh);
+            Assert.That(h.StepUntil(() => Driver(h, veh) == b.PlayerId), Is.True, "b seated");
+            b.Disconnect();
+            Assert.That(h.StepUntil(() => Driver(h, veh) == 0, 600), Is.True, "a disconnect frees the seat through a blocked door");
+            Assert.That(h.Server.VehicleHost.ExitsRefused, Is.EqualTo(0), "...and neither one was ever a refusal");
+        }
+
+        [Test]
+        public void ExitRefusedEvent_WireRoundTrip_AndTruncatedFailsClosed()
+        {
+            var evt = new VehicleExitRefusedEvent { NetId = 0xBEEF02u, Seat = 3 };
+            byte[] packed = NetMessagePak.Pack(ReplicationIds.EventVehicleExitRefused, evt.Write);
+            var r = new SDG.NetPak.NetPakReader();
+            r.SetBufferSegment(packed, packed.Length);
+            r.ReadUInt8(out byte id);
+            Assert.That(id, Is.EqualTo(ReplicationIds.EventVehicleExitRefused));
+            Assert.That(VehicleExitRefusedEvent.TryRead(r, out var read), Is.True);
+            Assert.That(read.NetId, Is.EqualTo(evt.NetId));
+            Assert.That(read.Seat, Is.EqualTo(evt.Seat));
+
+            var cut = NetMessagePak.Pack(ReplicationIds.EventVehicleExitRefused, w => w.WriteUInt32(evt.NetId));
+            var cr = new SDG.NetPak.NetPakReader();
+            cr.SetBufferSegment(cut, cut.Length);
+            cr.ReadUInt8(out _);
+            Assert.That(VehicleExitRefusedEvent.TryRead(cr, out _), Is.False, "a payload missing the seat is refused, not misread");
+        }
+
         [Test]
         public void VehicleState_ReplicatesToClients_StateHashParity()
         {

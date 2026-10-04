@@ -71,6 +71,21 @@ namespace UnturnedGodot
                             return;
                         }
                 };
+            // THE DOOR, answered on the real node (strawberry 2026-10-04: out through your own door, refused when it
+            // is blocked). Core has no physics world, so it asks here -- the same Vehicle.ResolveDoorExit the local
+            // player's direct exit uses, so the host and a joiner cannot disagree about whether a door opens. No node
+            // (torn down this tick) answers null and core falls back to its old spot rather than refusing.
+            if (_server?.VehicleHost != null)
+                _server.VehicleHost.ResolveExit = (netId, seat) =>
+                {
+                    if (!TryGetNode(netId, out var v)) return null;
+                    Godot.Collections.Array<Rid> twins = null;   // see Vehicle.ClientTwinGroup: empty on any real server
+                    foreach (var n in _host.GetTree()?.GetNodesInGroup(Vehicle.ClientTwinGroup) ?? new Godot.Collections.Array<Node>())
+                        if (n is Vehicle tw && GodotObject.IsInstanceValid(tw)) tw.AddOwnBodyRids(twins ??= new Godot.Collections.Array<Rid>());
+                    var verdict = v.ResolveDoorExit(seat, twins, out var spot);
+                    if (verdict != Vehicle.ExitVerdict.Clear) Log.Print($"[NET] exit refused: vehicle {netId} {v.LastExitProbe}");
+                    return (verdict == Vehicle.ExitVerdict.Clear, ToU(spot));
+                };
             // WHO IS NEAR A CAR, answered from the replicated player positions rather than a camera. The
             // alarm's own check falls back to GetViewport().GetCamera3D(), which is null on a dedicated
             // server -- so the machine that owns every car could never set one off, and a listen-server host
