@@ -89,7 +89,10 @@ namespace UnturnedGodot
             if (_quad == null || _mat == null || _forceDepth > 0f) return;   // the harness owns the view when forced
             if (cam == null || !IsInstanceValid(cam) || !Terrain.HasWater) { Off(); return; }
 
-            float below = Terrain.SeaLevelY - cam.GlobalPosition.Y;
+            // ⭐ Depth under the ACTUAL surface, not under the mean plane. Treading water in a storm, the mean
+            // plane says you are a metre down while your head is in the air on a crest -- and this number drives
+            // both how dark the pass goes and how far it has faded in.
+            float below = Terrain.WaterSurfaceY(cam.GlobalPosition) - cam.GlobalPosition.Y;
             if (below <= 0f) { Off(); return; }
 
             float sub = Mathf.Clamp(below / FadeDepth, 0f, 1f);   // wash in over the first half metre

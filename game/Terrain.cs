@@ -2403,12 +2403,39 @@ void fragment() {
         }
         public static float SeaLevelY = 25.6f;   // = 0.1(PEI seaLevel) * 256; overwritten per-build
         public static bool HasWater;
-        /// <summary>Is this world point below the ocean surface? (the port's WaterUtility.isPointUnderwater).</summary>
+        /// <summary>Is this part of the map SEA? ⭐ The MEAN plane, and deliberately: this answers "would there be
+        /// water here", which is what spawn placement, foliage, deployables and the wind bonus all actually ask.
+        /// A question about a spot on the map must not get a different answer as a wave rolls past.
+        /// ⚠ It is NOT the test for "is this point wet right now" -- that is IsPointUnderwaterNow below.</summary>
         public static bool IsPointUnderwater(float worldY) => HasWater && worldY < SeaLevelY;
-        /// <summary>Visual water-surface world-Y at a world point = flat sea level + the WaveField swell (the CPU twin of
-        /// water.gdshader). Buoyancy / bobbing samples THIS so floaters ride the same waves the shader draws. Gameplay
-        /// submersion still keys off the flat SeaLevelY above (a wave slopping over your head shouldn't drown you).</summary>
+
+        /// <summary>The water surface world-Y at a world point RIGHT NOW: the flat sea level plus the WaveField
+        /// swell -- the CPU twin of what water.gdshader draws, shore bend and weather included.
+        ///
+        /// ⚠⚠ THIS EXISTED AND NOTHING CALLED IT. Its own comment said buoyancy samples it so floaters "ride the
+        /// same waves the shader draws"; a call-site search returned zero. Meanwhile WaveField.cs's header said it
+        /// was written so "buoyancy / swim can sample a matching wave height on the CPU". So the whole CPU twin was
+        /// built, kept byte-for-byte in sync with the shader for weeks, and WIRED TO NOTHING -- while boats floated
+        /// on a private sin() inside Vehicle.cs and swimmers floated on the flat plane. THREE water surfaces.
+        /// ⭐ A comment claiming a wiring is not the wiring. The only proof is a call site.</summary>
         public static float WaterSurfaceY(Vector3 p) => SeaLevelY + (HasWater ? WaveField.Height(p.X, p.Z) : 0f);
+
+        /// <summary>How far the swell can reach above or below the mean plane, in metres. ⭐ An exact bound, not a
+        /// guess: the swell is fbm3 normalised to +/-1 times the amplitude, so outside this band a wave cannot
+        /// change any answer. 1.05 is the margin on that normalisation.</summary>
+        public static float SwellReach => HasWater ? WaveField.SwellAmp * WaveField.AmpScale * 1.05f : 0f;
+
+        /// <summary>Is this world point under the water surface RIGHT NOW -- under the actual wave, not under the
+        /// mean plane. ⭐ Short-circuits outside the swell band, so a car on a hillside never evaluates the noise:
+        /// more than SwellReach either side of the mean level, the wave cannot change the answer.</summary>
+        public static bool IsPointUnderwaterNow(Vector3 p)
+        {
+            if (!HasWater) return false;
+            float d = p.Y - SeaLevelY;
+            if (d > SwellReach) return false;
+            if (d < -SwellReach) return true;
+            return p.Y < WaterSurfaceY(p);
+        }
 
         // Ocean surface as a subdivided grid that OMITS cells buried under land (master 2026-08-24: "kill the water plane
         // effects under the terrain"). A cell is kept only if a corner sits below sea level, so the swell VERTEX shader
