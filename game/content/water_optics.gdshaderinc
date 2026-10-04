@@ -47,8 +47,11 @@ vec3 water_veil(float eye_depth_m) {
 // dim, and why a per-channel vector is not a flourish: a scalar murk can only make water darker, never bluer.
 // Written by RainSystem3D (weather stirs sediment and raises it), so one C# owner feeds both shaders.
 global uniform vec3 water_extinct;
-// Master gate, 0..1: 0 is EXACTLY the look before any of this, as the A/B control. ⚠ Defaults to 0 -- a wrong
-// sea that is ON costs master the sea that already worked.
+// Master gate, 0..1: 0 is EXACTLY the look before any of this, as the A/B control (the submerged shader keeps
+// its legacy_* uniforms so that 0 is exact rather than approximate).
+// ⚠ DEFAULTS TO 1 since 2026-10-04. It shipped at 0 while master judged the look -- a wrong sea that is ON costs
+// more than one that is off -- but master runs this branch, and work they have to type a flag to see is work that
+// has not been delivered. UG_WATEROPTICS=0 restores the old look.
 global uniform float water_optics;
 
 /// Fraction of light surviving `path` metres of water, per channel.
