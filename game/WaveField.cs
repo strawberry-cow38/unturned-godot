@@ -32,6 +32,14 @@ namespace UnturnedGodot
                            System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture,
                            out float _an) && _an >= 0.25f ? _an : 3.0f;
         public static float SwellFw => SwellFu / System.Math.Max(SwellAniso, 0.25f);   // freq along crest
+
+        /// <summary>How much the shore may bend the swell, 0..1. ⚠ DEFAULT 0: the first implementation sheared
+        /// the wave field badly (rotating the sample basis per position multiplies a tiny direction change by a
+        /// world-scale lever arm). UG_SHOREBEND=1 to test. Mirrors the GPU global `shore_bend`, one owner.</summary>
+        public static float ShoreBend =
+            float.TryParse(System.Environment.GetEnvironmentVariable("UG_SHOREBEND"),
+                           System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture,
+                           out float _sb) && _sb >= 0f ? _sb : 0f;
         public const float SwellSpeed  = 3.0f;
 
         // GRADIENT (Perlin) noise -- identical formula to the shader's hashv/grad2/gnoise (no axis-aligned cell
@@ -79,7 +87,7 @@ namespace UnturnedGodot
             if (ShoreField.Active != null)
             {
                 ShoreField.Active.Sample(wx, wz, out var sdir, out float shoreness);
-                shoreness = Mathf.Clamp(shoreness, 0f, 1f);
+                shoreness = Mathf.Clamp(shoreness, 0f, 1f) * Mathf.Clamp(ShoreBend, 0f, 1f);
                 dx = ox + (sdir.X - ox) * shoreness;        // mix(open, shore, shoreness) -- same as the shader
                 dz = oz + (sdir.Y - oz) * shoreness;
                 float dl = MathF.Sqrt(dx * dx + dz * dz);

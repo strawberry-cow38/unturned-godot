@@ -72,6 +72,23 @@ float fbm3(vec2 p) { float s = 0.0, a = 0.5; for (int i = 0; i < 3; i++) { s += 
 global uniform sampler2D shore_dir_tex : filter_linear, repeat_disable;
 global uniform vec4 shore_rect;   // xy = world origin, zw = 1/world size -> world XZ to UV
 
+// ⚠⚠⚠ HOW MUCH THE SHORE MAY BEND THE SWELL. DEFAULT 0 -- OFF -- because the first version of this VISIBLY
+// WRECKED THE SEA (master, looking at it: "whys it all scrunchy").
+//
+// THE CAUSE, which is worth stating exactly because the idea is sound and the implementation was not:
+// the swell samples noise along `u = dot(wp, d)`. With one global `d` that is a clean linear ramp, and the
+// wave's spatial frequency is exactly SWELL_FU. Let `d` vary with position and u stops being linear -- its
+// gradient gains a `(grad d) . wp` term.
+//
+// ⚠ And `wp` is WORLD coordinates: thousands of metres. So an utterly negligible change in direction gets
+// multiplied by a ~2000 m lever arm and swamps SWELL_FU entirely. The effective wavelength collapses wherever
+// the field turns, which is the swirling and pinching in master's screenshot. Smoothing the direction field
+// bounds `grad d` and does nothing whatever about the number it is multiplied by.
+//
+// ⭐ I wrote that risk down BEFORE building this -- "if the direction varies per position the field becomes
+// incoherent" -- and then argued myself out of it because the field is smooth. Smooth was never the question.
+global uniform float shore_bend;
+
 vec3 shore_sample(vec2 wp) {
     vec2 uv = (wp - shore_rect.xy) * shore_rect.zw;
     // ⚠ Outside the baked rect there IS no seabed data, so claim none rather than clamping to the edge cell --
@@ -88,7 +105,7 @@ float swell_at(vec2 wp, float tphase) {
     // ⭐ BLEND, never switch. Refraction is a shallow-water effect: deep water keeps the swell it arrived with and
     // only bends as the bottom comes up, which is both what the sea does and what keeps the field continuous --
     // a hard switch would put a seam along the contour where it flipped.
-    vec2 d = mix(open, sh.rg, clamp(sh.b, 0.0, 1.0));
+    vec2 d = mix(open, sh.rg, clamp(sh.b, 0.0, 1.0) * clamp(shore_bend, 0.0, 1.0));
     float dl = length(d);
     // ⚠ A mix of two near-opposite headings can cancel to nothing. Falling back to the open heading keeps a
     // defined direction instead of normalising a zero vector into NaN and punching a hole in the sea.

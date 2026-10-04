@@ -103,6 +103,18 @@ namespace UnturnedGodot
             f.Publish();
             Log.Print($"[shore] baked {w}x{h} cells ({CellSize:0} m) over {worldSizeX:0}x{worldSizeZ:0} m; " +
                       $"{Coverage(f._shore):P0} of cells are shore-steered");
+            // ⭐ Name a few real coastal spots. Judging wave direction needs a camera AT a shore, and hunting one
+            // by guessing world coordinates is a render per guess -- the field already knows where they are.
+            int shown = 0;
+            for (int z = 0; z < h && shown < 4; z += Mathf.Max(1, h / 7))
+                for (int x = 0; x < w && shown < 4; x += Mathf.Max(1, w / 7))
+                {
+                    int i = z * w + x;
+                    if (f._shore[i] < 0.55f) continue;
+                    Log.Print($"[shore]   coast at world ({worldMinX + x * CellSize:0}, {worldMinZ + z * CellSize:0}) " +
+                              $"-> waves run ({f._dir[i].X:0.00}, {f._dir[i].Y:0.00}), weight {f._shore[i]:0.00}");
+                    shown++;
+                }
             return f;
         }
 

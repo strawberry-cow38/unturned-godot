@@ -40,6 +40,12 @@ namespace UnturnedGodot
                                                      ShoreField.NeutralTexture());
             RenderingServer.GlobalShaderParameterAdd("shore_rect", RenderingServer.GlobalShaderParameterType.Vec4,
                                                      new Vector4(0f, 0f, 1f, 1f));
+            // ⚠⚠ OFF BY DEFAULT. The first shore-bend shipped visibly wrecked the sea (see swell.gdshaderinc):
+            // rotating the sample basis per position multiplies a tiny direction change by a ~2000 m lever arm
+            // and collapses the wavelength. UG_SHOREBEND turns it on for testing; it stays 0 until it looks RIGHT,
+            // because a feature that is on and wrong is worse than a feature that is off.
+            RenderingServer.GlobalShaderParameterAdd("shore_bend", RenderingServer.GlobalShaderParameterType.Float,
+                                                     WaveField.ShoreBend);
             // PUDDLE LEVEL: how much standing water is lying about, 0..1. Deliberately NOT rain_wetness -- puddles take
             // minutes to fill and longer to dry, so they lag the rain instead of tracking it (master 2026-09-06: "puddles
             // should hang around for a while after the rain, and take a little bit of raining before they gradually fade
