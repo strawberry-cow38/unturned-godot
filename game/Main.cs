@@ -2628,10 +2628,6 @@ namespace UnturnedGodot
             if (_night)
             {
                 _veh.ToggleHeadlights();                // headlights on for the night demo
-                // In game DayNightCycle.DriveMoteFade feeds this from the world clock; this harness has no
-                // cycle node, so without driving it here the beam dust can never appear in a --night shot --
-                // the third harness in two days that could not express the state being judged.
-                _veh.SetHeadlightMoteFade(1f);
             }
         }
 
@@ -8931,10 +8927,10 @@ namespace UnturnedGodot
             }
             else
             {
-                cam.Position = new Vector3(7.5f, 3.2f, 5.2f);      // side-on: cone shaft + ground pool together
+                cam.Position = new Vector3(7.5f, 3.2f, 5.2f);      // side-on: the lamp head + its ground pool together
                 cam.LookAt(new Vector3(0f, 3.4f, -1.2f), Vector3.Up);
             }
-            Log.Print($"[LIGHTTEST] one streetlight, motes={StreetLight.MoteCount}, cam={camMode}");
+            Log.Print($"[LIGHTTEST] one streetlight, cam={camMode}");
         }
 
         void BuildDayNightDemo()

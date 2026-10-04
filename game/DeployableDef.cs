@@ -246,7 +246,7 @@ namespace UnturnedGodot
             // just in front of the lenses, which is what made the count three; with a real spot now throwing out of
             // each head the glow is doing nothing the throw does not already do, and master asked for two.
             //
-            // Each shaft is drawn per head rather than merged into one volume the way HeadlightBeam does. That merge
+            // Each shaft is drawn per head rather than merged into one volume the way the car's (removed) headlight shaft did. That merge
             // exists because a car's lamps sit ~1.5 m apart with dark grille between them, so two crossing cones make
             // a distinct lens-shaped wedge in the middle of the bonnet ("weird overlap"). These heads are 0.96 m
             // apart throwing 6.5 m wide cones -- near enough concentric that the overlap has no separate silhouette

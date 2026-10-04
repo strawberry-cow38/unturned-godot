@@ -32,7 +32,6 @@ namespace UnturnedGodot.Testing
             PowerNet.SetGlobalPower(false);
             yield return Until(() => !lamp.LitSpotForTest && !lamp.TransitioningForTest, 3);
             T.Check("toggling global power OFF darkens the lamp", !lamp.LitSpotForTest);
-            T.Check("...and its cone", !lamp.LitConeForTest);
 
             PowerNet.SetGlobalPower(true);
             yield return Until(() => lamp.LitSpotForTest && !lamp.TransitioningForTest, 3);

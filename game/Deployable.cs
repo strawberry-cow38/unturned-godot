@@ -73,7 +73,7 @@ namespace UnturnedGodot
         public float Energy;   // battery: stored energy (watt-SECONDS); the OUT produces while > 0, the IN charges it up to Def.EnergyMax
 
         // THE VISIBLE SHAFT in front of a spotlight (master 2026-09-07: "with a similar light cone as car headlights
-        // alr have"). Same recipe as Vehicle.BuildHeadlightBeam -- a lofted volume, additive and unshaded so it reads
+        // alr have"). Same recipe as the car's old headlight shaft (removed 2026-10-04) -- a lofted volume, additive and unshaded so it reads
         // as light in the air rather than a surface, brightest at the lens and gone by the far end.
         //
         // Built as a CHILD OF THE LAMP, which is what keeps the drawn shaft and the lit cone honest: the lamp already
@@ -93,11 +93,11 @@ namespace UnturnedGodot
             // cross-section to a circle over the first 38% of the throw -- so any aperture, however wide and flat,
             // leaves as a round cone. That is what stopped the shaft matching the heads. endScale grows the aperture
             // instead, which preserves its aspect, and keepRect stops the circularisation: a wide flat lamp throws a
-            // wide flat wedge. It is also what the car does -- HeadlightBeam extrudes the lens HULL and never
+            // wide flat wedge. It is also what the car's shaft did -- it extruded the lens HULL and never
             // circularises anything. Scale is solved on the WIDE axis so the silhouette still ends on the spot's
             // 25 deg; the short axis lands narrower, which under-claims lit air rather than over-claiming it.
             float endScale = baseR / Mathf.Max(halfW, 0.001f);
-            // ...and it opens WIDE before it opens TALL, at the same 0.40 ratio HeadlightBeam uses ("a headlight
+            // ...and it opens WIDE before it opens TALL, at the same 0.40 ratio the car's shaft used ("a headlight
             // throws WIDE and comparatively flat, not a round cone"). Growing both axes by the one endScale kept the
             // head's aspect but scaled it up 10x, which from the side is a 3.5 m tall wall of grey, not a beam.
             float endScaleV = 1f + (endScale - 1f) * BeamVertical;
@@ -833,7 +833,7 @@ namespace UnturnedGodot
                         _lamps[i].LightEnergy = _lampBase[i] * disp;
                         // the shaft is a child, so it is already shown/hidden with the lamp -- but a mesh has no
                         // LightEnergy, so its density has to be driven by hand or it would blaze at full while the
-                        // lamp is still stuttering up (the same reason ApplyHeadlightMotes exists on the car).
+                        // lamp is still stuttering up (the same reason the car's beam dust used to).
                         if (i < _lampBeamMat.Count && _lampBeamMat[i] is StandardMaterial3D bm)
                         {
                             var bc = bm.AlbedoColor;

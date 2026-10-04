@@ -29,8 +29,7 @@ namespace UnturnedGodot.Testing
             yield return Ticks(1);
 
             T.Check("a powered lamp at night lights its spot", lamp.LitSpotForTest);
-            T.Check("...its lens", lamp.LitPanelForTest);
-            T.Check("...and its cone", lamp.LitConeForTest);
+            T.Check("...and its lens", lamp.LitPanelForTest);
 
             // Wire it exactly the way WorldBuilder.PlaceObject does for a Street_Light_0.
             var field = new DestructibleField();
@@ -43,24 +42,23 @@ namespace UnturnedGodot.Testing
             field.SetAlive(0, false);
             yield return Ticks(1);
             T.Check("breaking the pole kills the spot", !lamp.LitSpotForTest);
-            T.Check("...the lens", !lamp.LitPanelForTest);
-            T.Check("...and the cone", !lamp.LitConeForTest);
+            T.Check("...and the lens", !lamp.LitPanelForTest);
             T.Check("the pole mesh is hidden", !mesh.Visible);
             T.Check("and its collider is dropped", body.CollisionLayer == 0u);
 
             // THE REGRESSION: the world keeps running. Refresh() recomputes lit on each of these.
             lamp.SetNight(false); yield return Ticks(1);
             lamp.SetNight(true); yield return Ticks(1);
-            T.Check("nightfall cannot relight a smashed lamp", !lamp.LitSpotForTest && !lamp.LitPanelForTest && !lamp.LitConeForTest);
+            T.Check("nightfall cannot relight a smashed lamp", !lamp.LitSpotForTest && !lamp.LitPanelForTest);
 
             lamp.SetPowered(false); yield return Ticks(1);
             lamp.SetPowered(true); yield return Ticks(1);
-            T.Check("a grid toggle cannot relight a smashed lamp", !lamp.LitSpotForTest && !lamp.LitPanelForTest && !lamp.LitConeForTest);
+            T.Check("a grid toggle cannot relight a smashed lamp", !lamp.LitSpotForTest && !lamp.LitPanelForTest);
 
             // Rubble reset: the prop comes back, so the lamp has to come back with it.
             field.SetAlive(0, true);
             yield return Ticks(1);
-            T.Check("a respawned pole lights again", lamp.LitSpotForTest && lamp.LitPanelForTest && lamp.LitConeForTest);
+            T.Check("a respawned pole lights again", lamp.LitSpotForTest && lamp.LitPanelForTest);
             T.Check("and its mesh is visible again", mesh.Visible);
         }
     }
