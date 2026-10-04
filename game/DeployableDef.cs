@@ -122,6 +122,9 @@ namespace UnturnedGodot
         /// <summary>Does this def relay a data stream over the air rather than down a wire? The transmitter takes
         /// a signal in and broadcasts it on its code; the receiver picks up whatever is broadcast on the same
         /// code and puts it out. Both need POWER -- an unpowered radio is a box (strawberry 2026-09-14).</summary>
+        /// <summary>A fuel-burning generator: has a tank and is not a battery. The ONLY deployable that smokes when hurt,
+        /// catches fire at 0 HP and explodes (strawberry 2026-10-04) -- see Deployable.Burns.</summary>
+        public bool IsGenerator => Fuel > 0f && !IsBattery;
         public bool IsDataTransmitter => Id == 9213;
         public bool IsDataReceiver => Id == 9214;
         public bool IsDataRadio => IsDataTransmitter || IsDataReceiver;
@@ -133,8 +136,8 @@ namespace UnturnedGodot
         //     toggled on when isWired && isPowered). Pos/Dir are in the flat authored frame (stand up with the model);
         //     Godot SpotAngle is the HALF-angle so it's src m_SpotAngle/2. ---
         // AngleAtten = Godot SpotAngleAttenuation (0 leaves the engine default, a hard rim; the car headlights run
-        // 1.3 for a soft edge). Beam/BeamLength/BeamHalf draw the VISIBLE shaft -- see Deployable.BeamShaft.
-        public struct DeployLight { public bool Spot; public Vector3 Pos; public Vector3 Dir; public float Range; public float AngleDeg; public float Energy; public Color Color; public float AngleAtten; public bool Beam; public float BeamLength; public float BeamHalf; public float BeamHalfV; }
+        // 1.3 for a soft edge). (Beam/BeamLength/BeamHalf drew a visible shaft; removed with it, 2026-10-04.)
+        public struct DeployLight { public bool Spot; public Vector3 Pos; public Vector3 Dir; public float Range; public float AngleDeg; public float Energy; public Color Color; public float AngleAtten; }
         public DeployLight[] Lights = System.Array.Empty<DeployLight>();
         // A REAL FIXTURE instead of a bare Light3D. Non-Generic hands the lamp to LampLight, which already knows how
         // to carve the emitting sub-mesh off each of these housings (the shade's 181-grey texel, the desk head's
@@ -229,29 +232,15 @@ namespace UnturnedGodot
             // glow at the lenses instead of an omnidirectional halo.
             //
             // The THROW is matched to a car headlight, which is the reference master pointed at: SpotRange 45,
-            // SpotAngle 25, SpotAngleAttenuation 1.3, LightEnergy 9 (Vehicle.cs, the "hs" spot). The light reaches
-            // further than the shaft is drawn on purpose, or the air itself looks like it ends.
+            // SpotAngle 25, SpotAngleAttenuation 1.3, LightEnergy 9 (Vehicle.cs, the "hs" spot).
             //
-            // The SHAFTS are 7 m, not the car's 14, and that is the one number that cannot be copied across. A headlight
-            // sits low and throws FLAT down a road, so 14 m of cone hangs in the air the whole way. This fixture is
-            // 1.5 m up and aimed ~15 deg DOWN, so its axis reaches the floor at about 5.6 m -- drawn at 14 m, two
-            // thirds of the cone is UNDERGROUND and what is left above the surface is a huge flat sheet, not a beam.
-            // 7 m ends the shaft just past where the light lands, and the gradient has it transparent by then anyway.
-            // BeamHalf 0.62 spans BOTH lamp heads (they sit at +-0.48), so one shaft leaves the whole housing rather
-            // than a thin core floating between the lenses.
-            // TWO LIGHTS, ONE PER HEAD, and one shaft each (master 2026-09-07: "is it two spotlights? one for each
-            // head? two faux beams too?" -> "it should be 2 lights not 3").
+            // TWO LIGHTS, ONE PER HEAD (master 2026-09-07: "is it two spotlights? one for each head? two faux beams
+            // too?" -> "it should be 2 lights not 3"). The faux beams themselves were removed 2026-10-04.
             //
             // The src prefab's two POINT bulbs are GONE, not converted. They were a separate near-field glow sitting
             // just in front of the lenses, which is what made the count three; with a real spot now throwing out of
             // each head the glow is doing nothing the throw does not already do, and master asked for two.
             //
-            // Each shaft is drawn per head rather than merged into one volume the way the car's (removed) headlight shaft did. That merge
-            // exists because a car's lamps sit ~1.5 m apart with dark grille between them, so two crossing cones make
-            // a distinct lens-shaped wedge in the middle of the bonnet ("weird overlap"). These heads are 0.96 m
-            // apart throwing 6.5 m wide cones -- near enough concentric that the overlap has no separate silhouette
-            // to read as an artefact, and the brighter core where they cross is what two lamps pointed the same way
-            // actually do.
             // MEASURED off Spotlight_deploy.obj rather than guessed (master 2026-09-07: "the faux cone isnt matching
             // the lamps very well"). The mesh welds into 13 components; two of them are the heads --
             //     x[-0.812,-0.168] y[-0.380,-0.140] z[-1.568,-1.138]   mid (-0.490,-0.260,-1.353)
@@ -259,14 +248,9 @@ namespace UnturnedGodot
             // -- each a 0.644 x 0.240 x 0.429 box (the remaining ten are the 0.046 bulb tubes inside them, six per
             // head). The beam runs along flat -Y, so the face light leaves is y=-0.380 and the aperture it leaves
             // through is the head's X by Z: half-extents 0.322 WIDE by 0.215 TALL.
-            //
-            // I had the lamp 0.17 below the head and the shaft a 0.34 SQUARE that BeamMesh then rounded to a circle
-            // by 38% of the throw -- a round cone out of a wide flat rectangle, sitting under the thing emitting it.
             Lights = new[] {
-                new DeployLight { Spot = true, Pos = new Vector3(-0.490f, -0.400f, -1.353f), Dir = SpotBeamDir, Range = 45f, AngleDeg = 25f, AngleAtten = 1.3f, Energy = 9f, Color = LampWarm,
-                                  Beam = true, BeamLength = 7f, BeamHalf = 0.322f, BeamHalfV = 0.215f },
-                new DeployLight { Spot = true, Pos = new Vector3( 0.490f, -0.400f, -1.353f), Dir = SpotBeamDir, Range = 45f, AngleDeg = 25f, AngleAtten = 1.3f, Energy = 9f, Color = LampWarm,
-                                  Beam = true, BeamLength = 7f, BeamHalf = 0.322f, BeamHalfV = 0.215f },
+                new DeployLight { Spot = true, Pos = new Vector3(-0.490f, -0.400f, -1.353f), Dir = SpotBeamDir, Range = 45f, AngleDeg = 25f, AngleAtten = 1.3f, Energy = 9f, Color = LampWarm },
+                new DeployLight { Spot = true, Pos = new Vector3( 0.490f, -0.400f, -1.353f), Dir = SpotBeamDir, Range = 45f, AngleDeg = 25f, AngleAtten = 1.3f, Energy = 9f, Color = LampWarm },
             },
         };
 
