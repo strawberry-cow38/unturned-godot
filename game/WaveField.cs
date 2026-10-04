@@ -43,14 +43,15 @@ namespace UnturnedGodot
         /// 0 reduces the phase to exactly <c>dot(wp, open)</c> and gives the sea as it was before the feature
         /// existed. Mirrors the GPU global `shore_bend`, one owner, UG_SHOREBEND to tune.
         ///
-        /// ⚠ Still defaulted OFF while master signs off on the look: the FIRST implementation of this sheared the
-        /// field badly (it rotated the sample basis per position, multiplying a tiny direction change by a
-        /// world-scale lever arm -- "whys it all scrunchy"). The mechanism that caused that is gone, not tuned
-        /// down, but the default stays 0 until the new one has been looked at on a real coast.</summary>
+        /// ⚠ DEFAULT 1 since 2026-10-04. It shipped at 0 while master signed off on the look -- the FIRST
+        /// implementation sheared the field badly ("whys it all scrunchy") and a feature that is ON and wrong
+        /// costs more than one that is off. But master runs THIS branch, so an env-gated default meant they had
+        /// to type a flag to see work that was reported as done: "why would u make it a separate launch command?
+        /// just push to ur branch with new changes, simple." UG_SHOREBEND=0 still turns it off.</summary>
         public static float ShoreBend =
             float.TryParse(System.Environment.GetEnvironmentVariable("UG_SHOREBEND"),
                            System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture,
-                           out float _sb) && _sb >= 0f ? _sb : 0f;
+                           out float _sb) && _sb >= 0f ? _sb : 1f;
         public const float SwellSpeed  = 3.0f;
 
         // GRADIENT (Perlin) noise -- identical formula to the shader's hashv/grad2/gnoise (no axis-aligned cell

@@ -45,11 +45,10 @@ namespace UnturnedGodot
                                                      ShoreField.NeutralTexture());
             RenderingServer.GlobalShaderParameterAdd("shore_rect", RenderingServer.GlobalShaderParameterType.Vec4,
                                                      new Vector4(0f, 0f, 1f, 1f));
-            // ⚠⚠ STILL OFF BY DEFAULT. The FIRST shore-bend shipped visibly wrecked the sea (see
-            // swell.gdshaderinc): it rotated the sample basis per position, which multiplies a tiny direction
-            // change by a ~2000 m lever arm and collapses the wavelength. That mechanism is gone -- the field is a
-            // scalar phase now and has no basis to rotate -- but the default stays 0 until master has looked at
-            // the new one on a real coast, because a feature that is on and wrong is worse than one that is off.
+            // ⚠ ON by default now (UG_SHOREBEND=0 disables). The FIRST shore-bend shipped visibly wrecked the sea
+            // (see swell.gdshaderinc): it rotated the sample basis per position, multiplying a tiny direction
+            // change by a ~2000 m lever arm. That mechanism is GONE -- the field is a scalar phase and has no
+            // basis to rotate -- and master has now seen the A/B, so the caution that justified 0 has expired.
             RenderingServer.GlobalShaderParameterAdd("shore_bend", RenderingServer.GlobalShaderParameterType.Float,
                                                      WaveField.ShoreBend);
             // WATER OPTICS (water_optics.gdshaderinc): what the sea does to light crossing it. ⭐⭐ Registered as
@@ -57,9 +56,9 @@ namespace UnturnedGodot
             // shader each used to carry their own privately-tuned absorption, so swimming down crossed a seam
             // between two different seas. One set of numbers, two readers, no way for them to disagree.
             RenderingServer.GlobalShaderParameterAdd("water_extinct", RenderingServer.GlobalShaderParameterType.Vec3, ClearExtinct);
-            // ⚠⚠ OFF BY DEFAULT (UG_WATEROPTICS=1). At 0 both shaders take their old path EXACTLY -- the
-            // underwater one still carries its legacy_* uniforms for precisely that reason -- so this is a true
-            // A/B and not a remembered one. It goes on when master has looked at it.
+            // ⚠ ON by default now; UG_WATEROPTICS=0 takes both shaders down their old path EXACTLY (the
+            // underwater one still carries its legacy_* uniforms for precisely that reason), so the A/B stays
+            // true rather than remembered.
             RenderingServer.GlobalShaderParameterAdd("water_optics", RenderingServer.GlobalShaderParameterType.Float, WaterOptics);
             // PUDDLE LEVEL: how much standing water is lying about, 0..1. Deliberately NOT rain_wetness -- puddles take
             // minutes to fill and longer to dry, so they lag the rain instead of tracking it (master 2026-09-06: "puddles
@@ -159,11 +158,14 @@ namespace UnturnedGodot
         // at all". The veil is now derived from water_deep/water_shallow in water_optics.gdshaderinc, which is
         // where master's tuned colours live, so there is nothing left here that could disagree with them.
 
-        /// <summary>Master gate on the shared optics, 0 = exactly the look that existed before them.</summary>
+        /// <summary>Master gate on the shared optics; 0 = exactly the look that existed before them, and the
+        /// underwater shader still carries its legacy_* uniforms so that 0 is EXACT rather than approximate.
+        /// ⚠ DEFAULT 1 since 2026-10-04 -- master runs this branch, and gating finished work behind a flag they
+        /// have to type is the same as not shipping it. UG_WATEROPTICS=0 restores the old look.</summary>
         public static float WaterOptics =
             float.TryParse(System.Environment.GetEnvironmentVariable("UG_WATEROPTICS"),
                            System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture,
-                           out float _wo) && _wo >= 0f ? _wo : 0f;
+                           out float _wo) && _wo >= 0f ? _wo : 1f;
 
         /// <summary>Weather muddies the water: push the extinction toward the storm vector. ⭐ Driven by the SAME
         /// rain_intensity that already drives chop, foam, mirror, tint and wave height -- a sixth weather signal
