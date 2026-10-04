@@ -27,6 +27,10 @@ namespace UnturnedGodot
             RenderingServer.GlobalShaderParameterAdd("rain_wetness", RenderingServer.GlobalShaderParameterType.Float, 0f);
             RenderingServer.GlobalShaderParameterAdd("rain_intensity", RenderingServer.GlobalShaderParameterType.Float, 0f);
             RenderingServer.GlobalShaderParameterAdd("swell_scale", RenderingServer.GlobalShaderParameterType.Float, 1f);   // weather wave-height scale; 1 = calm (see swell.gdshaderinc)
+            // SWELL ANISOTROPY (fu/fw): how stretched the crests are. Registered HERE beside swell_scale because
+            // it has the same problem -- the GPU draws the sea and WaveField floats boats on it, so the number has
+            // to reach both from one place. WaveField.SwellAniso is that place; this just publishes it.
+            RenderingServer.GlobalShaderParameterAdd("swell_aniso", RenderingServer.GlobalShaderParameterType.Float, WaveField.SwellAniso);
             // PUDDLE LEVEL: how much standing water is lying about, 0..1. Deliberately NOT rain_wetness -- puddles take
             // minutes to fill and longer to dry, so they lag the rain instead of tracking it (master 2026-09-06: "puddles
             // should hang around for a while after the rain, and take a little bit of raining before they gradually fade

@@ -29,8 +29,21 @@ global uniform float swell_scale;
 float swell_amp() { return SWELL_AMP * max(swell_scale, 0.0001); }
 const float SWELL_DIR_DEG = 30.0;   // swell travel direction
 const float SWELL_FU = 0.081;       // noise freq ALONG travel (lowered 10% -> waves ~10% bigger, master "zoom in")
-const float SWELL_FW = 0.027;       // noise freq ALONG the crest (lower = longer crests); fu/fw = 3:1 anisotropy (master's pick)
 const float SWELL_SPEED = 3.0;
+
+// HOW STRETCHED THE SWELL IS: fu/fw, so 3 = crests three times longer than they are wide. master 2026-10-04,
+// "making the whole thing look a lot less stretched on one axis" -- this ratio IS that stretch, and it was a
+// deliberate pick in an earlier pass rather than an accident.
+//
+// ⚠⚠ A GLOBAL, NOT A CONST, EXACTLY AS THE NOTE ABOVE PRESCRIBES -- and for the reason that note gives: the CPU
+// twin floats boats on this same field. A const changed here and forgotten in WaveField.cs gives a sea whose
+// crests run one way on screen and another under the hull. One C# owner (WaveField.SwellAniso) pushes this, the
+// way RainSystem3D already owns swell_scale.
+//
+// ⚠ Guarded, because an UNREGISTERED global reads 0 and fw = fu/0 is infinity -- a flat, dead sea that looks like
+// the water failed to load rather than like a bad number.
+global uniform float swell_aniso;
+float swell_fw() { return SWELL_FU / max(swell_aniso, 0.25); }
 
 // GRADIENT (Perlin) noise -- unlike value noise it has NO axis-aligned cell artifacts (value is 0 at every lattice
 // point, random gradients interpolated), so the surface doesn't read as blocks/squares or SNAP as it scrolls.
@@ -55,7 +68,7 @@ float swell_at(vec2 wp, float tphase) {
     float a = radians(SWELL_DIR_DEG); float c = cos(a), s = sin(a);
     float u = wp.x * c + wp.y * s;    // along travel
     float w = -wp.x * s + wp.y * c;   // along the crest line
-    return fbm3(vec2(u * SWELL_FU + tphase, w * SWELL_FW));
+    return fbm3(vec2(u * SWELL_FU + tphase, w * swell_fw()));
 }
 float swell_phase(float t) { return t * SWELL_SPEED * SWELL_FU; }   // scroll the field along the travel axis
 /// ...and in METRES above the mean water plane, which is what anything outside the water shader wants.
