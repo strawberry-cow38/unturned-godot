@@ -87,6 +87,19 @@ namespace UnturnedGodot
             // underwater"). Same idea as the roof map, one plane instead of a heightfield. NoSea is far below any
             // real terrain, so a map with no water (Yukon's seaLevel = 1.0) kills nothing.
             RenderingServer.GlobalShaderParameterAdd("rain_sea_level", RenderingServer.GlobalShaderParameterType.Float, NoSea);
+
+            // ⭐⭐ SAY WHAT THE SEA IS ACTUALLY SET TO, once, at boot. Master, after a day of water work:
+            // "are u sure the water changes actually applied?" -- a question I could only answer with my own word,
+            // which is the wrong kind of answer. Two of these default to OFF on purpose, so "I pushed it" and
+            // "it is in your game" are different sentences and nothing in the running game said which.
+            // ⭐ One line anybody can read in their own console settles it without asking me.
+            Log.Print($"[water] aniso={WaveField.SwellAniso:0.00} shore_bend={WaveField.ShoreBend:0.00} " +
+                      $"optics={WaterOptics:0.00} extinct=({ClearExtinct.X:0.00},{ClearExtinct.Y:0.00},{ClearExtinct.Z:0.00}) " +
+                      $"swell_amp={WaveField.SwellAmp:0.00}x{WaveField.AmpScale:0.00} physics=wave-sampled" +
+                      (WaveField.ShoreBend <= 0f || WaterOptics <= 0f
+                           ? $"   \u26a0 OFF: {(WaveField.ShoreBend <= 0f ? "shore_bend (UG_SHOREBEND=1) " : "")}" +
+                             $"{(WaterOptics <= 0f ? "optics (UG_WATEROPTICS=1)" : "")}"
+                           : ""));
         }
 
         /// <summary>Zero the rain globals. They're process-wide and OUTLIVE a scene change (the Add is Nil-guarded
