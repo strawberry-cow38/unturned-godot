@@ -29,6 +29,21 @@ uniform float detail_strength = 0.30; // fbm fine-ripple perturbation of the nor
 uniform vec4 sky_tint : source_color = vec4(0.52, 0.67, 0.86, 1.0);  // colour reflected at grazing angles (the sky)
 uniform float reflectivity = 0.20;    // how strongly the sky shows at grazing angles (Fresnel). 0.45 -> 0.20 (strawberry 2026-09-15 "reduce the reflectivity by quite a bit"). This scales the planar mirror too (see the reflection blend), so the sea stops acting like a mirror, not just stops blowing out at the horizon
 uniform sampler2D depth_tex : hint_depth_texture, repeat_disable, filter_linear;
+// CLOUDINESS THROUGH THE WATER COLUMN (master 2026-10-04: "the water should look visibly cloudy at depth,
+// instead of perfectly translucent").
+//
+// ⚠⚠ THE SURFACE HAD NO SCREEN TEXTURE AT ALL. It set ALBEDO + ALPHA and let the hardware blend, which is
+// TINTED GLASS: the seabed stays perfectly sharp through any depth of water, only coloured. Tinting alone can
+// never read as water, because what actually happens in a water column is SCATTERING -- detail is lost with
+// distance, not merely recoloured. That is precisely "perfectly translucent", and it is a missing term rather
+// than a wrong number, which is why no amount of alpha tuning fixed it.
+//
+// ⭐ Same idea underwater.gdshader already uses for looking AROUND (mip level by absorption), applied to looking
+// DOWN. One notion of scattering, both sides of the surface.
+uniform sampler2D screen_tex : hint_screen_texture, repeat_disable, filter_linear_mipmap;
+uniform float water_cloud : hint_range(0.0, 1.0) = 0.0;   // 0 = EXACTLY the old look (the A/B control)
+uniform float cloud_depth = 6.0;    // metres of water over which the bed fully clouds out
+uniform float cloud_blur = 3.5;     // mip level at full cloud -- how far detail is scattered away
 uniform sampler2D reflection_tex : filter_linear;   // planar reflection buffer (mirror camera) -- WaterReflection.cs feeds it
 uniform bool reflection_on = false;                 // off until the reflection node wires the buffer in
 uniform bool reflection_debug = false;              // UG_REFLDEBUG: paint the raw reflection buffer onto the water (check mirror + UV)
@@ -189,8 +204,24 @@ void fragment() {
         float rrange = 1.0 - smoothstep(rain_ring_distance * 0.7, rain_ring_distance, length(VERTEX));
         if (rrange > 0.01) ring = wr_rings(v_wpos.xz, TIME, rint_w) * rint_w * rrange * rain_ring_strength;
     }
-    ALBEDO = mix(water_col, foam_color.rgb, foam) + vec3(ring * 0.30);
-    ALPHA = mix(a, 1.0, foam);
+    vec3 surf_col = mix(water_col, foam_color.rgb, foam) + vec3(ring * 0.30);
+    if (water_cloud > 0.001) {
+        // ⭐ COMPOSITE BY HAND. The hardware blend mixes the SHARP scene behind the surface, and nothing written
+        // to ALBEDO can soften it -- so the only way to scatter the bed is to read it ourselves, blur it by how
+        // much water it is under, and hand back an opaque result. ALPHA = 1 is therefore not "solid water", it
+        // means "this fragment has already done its own blending".
+        float cloud = clamp(depth_v / max(cloud_depth, 0.01), 0.0, 1.0) * water_cloud;
+        vec3 bed = textureLod(screen_tex, SCREEN_UV, cloud * cloud_blur).rgb;
+        // The old alpha curve keeps its exact meaning -- how much of the bed survives -- it is simply applied to
+        // a BLURRED bed now instead of a sharp one. So the tuning behind those numbers is preserved, not thrown
+        // away and re-guessed.
+        float see = (1.0 - mix(a, 1.0, foam));
+        ALBEDO = mix(surf_col, bed, see);
+        ALPHA = 1.0;
+    } else {
+        ALBEDO = surf_col;
+        ALPHA = mix(a, 1.0, foam);
+    }
     float rough_base = mix(0.35, 0.08, lod);   // rougher (softer, less mirror-bright reflection) far -> calmer grazing; glassy near
     ROUGHNESS = mix(mix(rough_base, 0.9, foam), 0.55, clamp(ring, 0.0, 1.0));   // a struck patch scatters instead of mirroring
     // ...and TILT the surface where a ring passes. A brightness ring alone is a decal painted on flat water -- it
