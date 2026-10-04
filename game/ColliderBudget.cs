@@ -196,8 +196,34 @@ namespace UnturnedGodot
         /// "players" group holds every player on a multiplayer client and picking the wrong one would stream
         /// collision in around somebody else. Falls back to the player body when there is no camera yet
         /// (the frame or two before the view is built).</summary>
+        /// <summary>UG_COLLSWEEP=&lt;metres per second&gt;: a SYNTHETIC focus point that walks +X forever.
+        ///
+        /// ⭐⭐ WHY THIS EXISTS. Headless has no camera and nothing in the "players" group, so FocusPoint returns
+        /// null, Rebalance returns immediately, and the budget never crosses a single boundary -- measured, after
+        /// an unattended run reported `NO PLAYER FOUND` and `collbudget worst 0 shapes`. The streaming hypothesis
+        /// for master's driving stutter could therefore be neither confirmed nor killed without a human at the
+        /// wheel, which is a bad place for a diagnosis to live.
+        ///
+        /// ⭐ A moving point through the REAL chunk layout measures exactly the quantity that matters: how many
+        /// shapes one boundary crossing toggles and how long that takes. That cost does not depend on how the
+        /// focus got there, so a synthetic sweep and a jeep pay the same price per flip -- speed only decides how
+        /// OFTEN it is paid.</summary>
+        static readonly float SweepSpeed = ParseSweep();
+        static float ParseSweep()
+        {
+            var s = System.Environment.GetEnvironmentVariable("UG_COLLSWEEP");
+            return float.TryParse(s, System.Globalization.NumberStyles.Float,
+                                  System.Globalization.CultureInfo.InvariantCulture, out float v) && v > 0f ? v : 0f;
+        }
+        float _sweepT;
+
         Vector3? FocusPoint()
         {
+            if (SweepSpeed > 0f)
+            {
+                _sweepT += Interval;   // advanced once per rebalance, which is the only caller
+                return new Vector3(_sweepT * SweepSpeed, 0f, 0f);
+            }
             var cam = GetViewport()?.GetCamera3D();
             if (cam != null && GodotObject.IsInstanceValid(cam)) return cam.GlobalPosition;
             foreach (var p in GetTree().GetNodesInGroup("players"))

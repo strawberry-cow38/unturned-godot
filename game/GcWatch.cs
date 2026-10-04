@@ -25,6 +25,9 @@ namespace UnturnedGodot
         // ⚠ Fully qualified: `using Godot;` puts Godot.Environment (the 3D world environment) in scope, so an
         // unqualified `Environment` is CS0104 ambiguous in every file in this project. BugReporter carries the
         // same note about HttpClient -- it is a standing trap here, not a one-off.
+        static readonly bool _run =
+            System.Environment.GetEnvironmentVariable("UG_GCWATCH_RUN") == "1";
+
         public static readonly bool Enabled =
             System.Environment.GetEnvironmentVariable("UG_GCWATCH") == "1";
 
@@ -62,9 +65,37 @@ namespace UnturnedGodot
                      $"Latency={System.Runtime.GCSettings.LatencyMode}");
         }
 
+        /// <summary>UG_GCWATCH_RUN=1: hold "forward" down so the world streams past unattended.
+        ///
+        /// ⭐⭐ THE POINT IS NOT TO REACH VEHICLE SPEED, IT IS TO MAKE CELLS FLIP AT ALL. Headless and stationary
+        /// the collider budget never crosses a boundary (measured: `collbudget worst 0 shapes`), so the streaming
+        /// hypothesis could be neither confirmed nor killed. A sprint is enough, because the quantity that matters
+        /// is the cost of ONE flip -- how many shapes it toggles and how long that takes -- and that does not
+        /// depend on how fast you arrived at the boundary. Speed only sets how OFTEN you pay it, so a jeep's
+        /// stutter rate is (flips per second at that speed) x (this cost). Measuring the cheap half at 5 m/s is
+        /// exactly as good as measuring it at 25.</summary>
+        Vector3 _runFrom; bool _runAnchored;
+        void DriveForward()
+        {
+            if (!_run) return;
+            foreach (var n in GetTree().GetNodesInGroup("players"))
+                if (n is PlayerController pc)
+                {
+                    pc.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
+                    // ⚠ REPORT THE DISTANCE, or "nothing flipped" is unreadable: a budget that never engaged and
+                    // a player that never moved produce the same silence, and they want opposite investigations.
+                    if (!_runAnchored) { _runFrom = pc.GlobalPosition; _runAnchored = true; }
+                    _runDist = pc.GlobalPosition.DistanceTo(_runFrom);
+                    return;
+                }
+            _runNoPlayer = true;
+        }
+        float _runDist; bool _runNoPlayer;
+
         void HubProcess(double delta)
         {
             _frames++;
+            DriveForward();
             double frameMs = delta * 1000.0;
             if (frameMs > _worstMs) _worstMs = frameMs;
 
@@ -140,6 +171,7 @@ namespace UnturnedGodot
                      $"{_hitchesNearButInnocent} had a GC nearby that did NOT explain them) | " +
                      $"GCs {_gcs} (gen0 {_byGen[0]} gen1 {_byGen[1]} gen2 {_byGen[2]}) " +
                      $"worst pause {_worstGcPauseMs:F1}ms, total {_totalPauseMs:F0}ms | " +
+                     (_run ? $"| run {( _runNoPlayer ? "NO PLAYER FOUND" : $"{_runDist:F0} m")} " : "") +
                      $"allocated {mb:F0} MB | collbudget worst {ColliderBudget.WorstFlipShapes} shapes " +
                      $"in {ColliderBudget.WorstRebalanceMs:F1}ms");
         }
