@@ -1477,8 +1477,21 @@ namespace UnturnedGodot
                     float sum = w0 + w1; if (sum < 1e-6f) { w0 = 1f; w1 = 0f; sum = 1f; }
                     weights[v * 4 + 0] = w0 / sum; weights[v * 4 + 1] = w1 / sum;
                 }
+                // REVERSE THE WINDING. Every rig.json (human body + arms, cow, deer, horse, pig) is wound so that NOT ONE
+                // triangle's Godot front face (clockwise from the camera) is on the side its authored normal points to:
+                // measured 0% across all of them. The body used to be drawn with cull_front to show the "back" faces, and
+                // that looked right in silhouette -- but cull_front (like cull_disabled) makes Godot negate the normal of
+                // every back-facing fragment (DO_SIDE_CHECK in scene_forward_clustered), so every outward normal was turned
+                // INWARD and the body was lit from inside: belly bright, back dark (strawberry 2026-10-04: "animals are
+                // appearing dark"). Swapping two corners makes the outer surface front-facing; the materials below cull
+                // BACK, which draws exactly the same fragments as before, now with normals that point out.
                 var idx = new int[m.faces.Length];
-                Array.Copy(m.faces, idx, m.faces.Length);
+                for (int t = 0; t + 2 < m.faces.Length; t += 3)
+                {
+                    idx[t] = m.faces[t];
+                    idx[t + 1] = m.faces[t + 2];
+                    idx[t + 2] = m.faces[t + 1];
+                }
 
                 var arr = new Godot.Collections.Array();
                 arr.Resize((int)Mesh.ArrayType.Max);
@@ -1526,7 +1539,7 @@ namespace UnturnedGodot
                 var bodyMat = new StandardMaterial3D
                 {
                     AlbedoColor = tint,
-                    CullMode = BaseMaterial3D.CullModeEnum.Front, // Z-flip reverses winding -> cull the (reversed) BACK faces = single-sided = HALF the fragment cost (was Disabled/double-sided, the horde's per-pixel killer)
+                    CullMode = BaseMaterial3D.CullModeEnum.Back, // single-sided = HALF the fragment cost (was Disabled/double-sided, the horde's per-pixel killer). BACK, not Front: the winding is corrected where the mesh is built, and cull_front would turn the side check on and light the body from inside
                 };
                 var tex = LoadTexCached(albedoTexPath);   // shared across every zombie using this atlas
                 if (tex != null)

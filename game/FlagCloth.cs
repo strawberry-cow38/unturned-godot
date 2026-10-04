@@ -24,6 +24,7 @@ namespace UnturnedGodot
             fc.AddChild(fc._pivot);
             var aabb = clothMesh.GetAabb();
             float len = Mathf.Max(0.5f, aabb.Position.Y + aabb.Size.Y);            // free-edge Y = flying length (amplitude ramp)
+            GrassDisplacers.EnsureGlobals();   // flag.gdshader reads the `wind_vec` phase global -- it must exist BEFORE the material links it (see EnsureGlobals)
             _shader ??= GD.Load<Shader>("res://content/flag.gdshader");
             fc._mat = new ShaderMaterial { Shader = _shader };
             fc._mat.SetShaderParameter(Sn.flag_tex, tex);

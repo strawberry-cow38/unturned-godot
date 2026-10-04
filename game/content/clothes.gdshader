@@ -23,10 +23,12 @@
 // it: it keeps the body transparent. As an opaque surface the body draws in the opaque pass, writes real depth, and
 // the water (transparent) depth-tests against it -- submerged parts are correctly occluded/tinted. The FLANKER_STALK
 // ghost shimmer is the ATLAS body path (StandardMaterial3D, RiggedCharacter._bodyMat) -- the clothes-shader body
-// (player/corpse/1P arms) never ghosts, so no ALPHA is needed here. cull_front replicates the old CullMode.Front
-// (the rig's Z-flip reverses winding).
+// (player/corpse/1P arms) never ghosts, so no ALPHA is needed here.
+// cull_BACK (was cull_front, 2026-10-04): RiggedCharacter now reverses the rig's winding where it builds the mesh, so
+// the outer surface is front-facing. cull_front drew the same fragments but also switched on Godot's back-face side
+// check, which negated every (outward) normal and lit the body from inside.
 shader_type spatial;
-render_mode cull_front;
+render_mode cull_back;
 
 uniform vec4 skin_color : source_color = vec4(0.82, 0.66, 0.52, 1.0);
 // FIRST-PERSON BODY CLIP (strawberry 2026-09-09: "show legs in 1p when looking down"). 0 = off. Above 0, any

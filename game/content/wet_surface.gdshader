@@ -63,11 +63,11 @@ varying vec3 world_pos;
 void vertex(){ world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz; vcol = COLOR; }
 
 void fragment(){
-	// Godot does NOT flip NORMAL for a back face in a CUSTOM spatial shader the way it does for a built-in
-	// material, and this one draws cull_disabled -- so without this every back-facing fragment is lit with a
-	// normal pointing the wrong way. Found on the vehicles (7b1ceae5), where it made every car look
-	// permanently in shadow; master: "fix em".
-	NORMAL = FRONT_FACING ? NORMAL : -NORMAL;
+	// NO manual back-face flip here (removed 2026-10-04). cull_disabled ALREADY makes Godot negate the normal of a
+	// back-facing fragment before this function runs (DO_SIDE_CHECK, scene_forward_clustered.glsl; true of custom
+	// shaders and built-in materials alike). The `NORMAL = FRONT_FACING ? NORMAL : -NORMAL` that used to sit here
+	// undid that, so every back face was lit from the wrong side -- the always-dark back of a flag, a guard rail
+	// seen from behind. Measured on a bare quad: back face lit WITHOUT the line, black WITH it.
     // world normal -> upness is camera-independent (view-space NORMAL.y dried the surface on a steep look-down shot;
     // the terrain shader already transforms to world space -- match it here so harness/demo surfaces don't dry on tilt).
     float upness = smoothstep(0.45, 0.80, normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz).y);
