@@ -33,6 +33,13 @@ uniform sampler2D bg_tex : source_color, filter_linear, repeat_disable;     // a
 // than borrowing bg_tex, because the two are live at the same time on a flatscreen and sharing one would make
 // the map preview and the camera fight over a slot.
 uniform sampler2D feed_tex : source_color, filter_linear, repeat_disable;
+// The screen face's width / height IN THE WORLD (TVDevice.ScreenAspect: a CRT 1.07, the flatscreen TV 1.97). UV runs
+// 0..1 on both axes whatever the glass is, so anything that must keep its SHAPE -- square snow grains, the input OSD --
+// has to be laid out against this, not against raw UV.
+uniform float screen_aspect = 1.0;
+// Snow grain rows down the screen (strawberry 2026-10-04: "should be a fixed size, not 1px exactly"). A fixed count,
+// like a real set's line count: the grain is part of the picture, so it grows as you walk up to the glass.
+uniform float grain_rows = 120.0;
 uniform vec2 blob_half = vec2(0.12, 0.18);   // half-size in UV, aspect-corrected in C# so the logo stays SQUARE on a
                                              // 2:1 flatscreen instead of being stretched into a smear
 uniform vec2 blob_pos = vec2(0.5);   // the DVD blob's centre, in UV. Driven from C# so the SPILL LIGHT can be placed
@@ -63,10 +70,10 @@ vec3 prog_testcard(vec2 uv) {
 // is exactly what it is. That is the trade being reversed here, knowingly: close up it is now real snow, and far
 // away it will average toward grey, which is also what a real set across a room does.
 //
-// So the grain is about ONE SCREEN PIXEL wherever the set sits, rather than one pixel only at whatever distance made
-// 64x48 line up. (2026-10-04: it is no longer hashed off FRAGCOORD itself -- that pinned the snow to the monitor and
-// made every set a portal. The cell grid is laid on the UVs at a size fwidth says is one screen pixel; see
-// fragment().) The row shear went with the old grid: shearing per-pixel noise sideways produces per-pixel noise.
+// 2026-10-04, superseded twice in a day: one grain per SCREEN pixel off FRAGCOORD pinned the snow to the monitor (every
+// set a portal), and one screen pixel's worth of UV still shrank as you walked up. It is a FIXED grid on the glass now,
+// grain_rows high with square cells -- see fragment(). The 64x48 block look is avoided by the row count, not by
+// sizing grains to the display.
 //
 // THE LEVELS ARE UNCHANGED, deliberately. Lit-or-dark with a little variation inside each, rather than a smooth
 // ramp through the greys -- that is what keeps contrast in it, and a ramp is what the version before the grid had.
@@ -91,9 +98,8 @@ float snow_frame() { return mod(floor(time_s * 20.0), 65536.0); }
 // happen to be showing snow at once (largely redundant now that different sets occupy different pixels, but it
 // costs nothing and the shader should not depend on that being true).
 //
-// The cell id is PASSED IN rather than computed here: it needs fwidth, Godot forbids built-ins inside a user-defined
-// function, and the failure is a shader compile error, i.e. every screen in the world goes blank. So fragment()
-// computes it and threads it down through prog_static/prog_static_mono.
+// The cell id is computed in fragment() and PASSED IN, so every program reads the same grid (and Godot forbids
+// built-ins inside user functions -- a compile error there blanks every screen in the world).
 float snow_px(vec2 fc, float chan) {
     vec2 px = floor(fc);
     float t = snow_frame();
@@ -197,8 +203,15 @@ vec3 prog_scroll(vec2 uv) {
 const vec3 banner_blue = vec3(0.06, 0.16, 0.62);
 const vec3 banner_white = vec3(0.95, 0.96, 1.0);
 
+// FIXED ASPECT (strawberry 2026-10-04: "should be a fixed aspect ratio (the one on the crt monitor is perfect) so dont
+// stretch it on the flatscreens"). The box used to be 0.24 x 0.115 of the screen's UV on EVERY screen, so its real
+// shape followed the glass: 2.23:1 on the CRT monitor (aspect 1.0703) and 4.1:1 on the flatscreen TV (1.9722). The
+// height stays a fraction of the screen; the width is now whatever keeps the CRT monitor's 2.23:1 in the world.
+const float OSD_HALF_H = 0.115;
+const float OSD_BOX_ASPECT = 2.2337;   // = (0.24 / 0.115) * 1.0703, the CRT monitor's box, measured off TVDevice
+
 vec4 prog_banner(vec2 uv) {
-    const vec2 halfBox = vec2(0.24, 0.115);
+    vec2 halfBox = vec2(min(OSD_HALF_H * OSD_BOX_ASPECT / max(screen_aspect, 0.1), 0.48), OSD_HALF_H);
     vec2 d = abs(uv - 0.5);
     if (d.x > halfBox.x || d.y > halfBox.y) return vec4(0.0);   // outside: the channel shows through untouched
 
@@ -256,13 +269,11 @@ void fragment() {
     // THE SNOW IS ON THE GLASS (strawberry 2026-10-04: "the tv's are like.. a portal to another dimension with the
     // static channel. its not like a flat image on the screen"). The grain used to be hashed off FRAGCOORD, the
     // MONITOR's pixel, so it stayed pinned to your display while the set moved under it: a window, not a picture.
-    // It is now a grid laid on the screen's own UVs, sized so one grain is still about ONE screen pixel (fwidth(uv) is
-    // exactly one screen pixel in UV), and snapped to whole octaves so the grid does not swim as you walk toward it.
-    // A jump between octaves is invisible: the field re-rolls 20x a second anyway. fwidth is read HERE for the same
-    // reason FRAGCOORD was (built-ins stay out of user functions).
-    vec2 grain = exp2(round(log2(1.0 / max(fwidth(uv), vec2(1e-6)))));
-    grain = clamp(grain, vec2(16.0), vec2(4096.0));
-    vec2 fc = floor(uv * grain) + grain;   // + grain: a cell id from one octave never collides with another octave's
+    // Then one grain per screen pixel laid on the UVs, which fixed the portal but still shrank the grain as you walked
+    // up ("should be a fixed size, not 1px exactly"). Now a FIXED grid on the glass: grain_rows down, and as many across
+    // as keep the cells square on this screen's real aspect.
+    vec2 grain = vec2(max(1.0, floor(grain_rows * screen_aspect + 0.5)), grain_rows);
+    vec2 fc = floor(uv * grain);
     if (program == 0) c = prog_testcard(uv);
     else if (program == 1) c = prog_static(fc);
     else if (program == 2) c = prog_dvd(uv);

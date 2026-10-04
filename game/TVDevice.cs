@@ -232,6 +232,10 @@ namespace UnturnedGodot
 
         const float BeamMinScale = 0.18f;   // a cursor's beam is a pencil, but not a zero-width one
         float _screenHalfW = 0.5f, _screenHalfH = 0.5f;   // the screen's own in-plane half-extents, set by Reproject
+        /// <summary>Width / height of the screen face in the world -- what the shader needs to keep a shape true.</summary>
+        internal float ScreenAspect => _screenHalfH > 1e-5f ? _screenHalfW / _screenHalfH : 1f;
+        /// <summary>L1: what the screen shader was actually TOLD the aspect is (a default 1.0 means the wiring is missing).</summary>
+        internal float ScreenAspectUniformForTest => _screenMat != null ? _screenMat.GetShaderParameter("screen_aspect").AsSingle() : -1f;
         Vector2 _blob = new(0.5f, 0.5f);
         Vector2 _blobHalf = new(0.12f, 0.18f);
         Vector3 _coneBaseScale = Vector3.One;
@@ -703,6 +707,7 @@ namespace UnturnedGodot
             _screenMat.SetShaderParameter("blob_tex", LoadPngOr(BlobAsset, new Color(0f, 0f, 0f, 0f)));
             _screenMat.SetShaderParameter("bg_tex", LoadPngOr(PanelAsset, Colors.Black));
             _screenMat.SetShaderParameter("blob_half", _blobHalf);
+            _screenMat.SetShaderParameter("screen_aspect", aspect);   // square snow grains + the OSD keeps its CRT shape (screen.gdshader)
             _blob = BlobPos(0f, _seed, _blobHalf);
             _screenMat.SetShaderParameter("blob_pos", _blob);
             if (_program == ScreenProgram.Colour)
