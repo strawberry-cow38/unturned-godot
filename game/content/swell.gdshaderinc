@@ -63,11 +63,39 @@ float gnoise(vec2 p) {
 float fbm5(vec2 p) { float s = 0.0, a = 0.5; for (int i = 0; i < 5; i++) { s += a * (gnoise(p) - 0.5); p *= 2.03; a *= 0.5; } return s; }
 float fbm3(vec2 p) { float s = 0.0, a = 0.5; for (int i = 0; i < 3; i++) { s += a * (gnoise(p) - 0.5); p *= 2.03; a *= 0.5; } return s / 0.4375; }
 
+// SHORE REFRACTION (master 2026-10-04: "bringing the waves to move towards the shore"). ShoreField.cs bakes the
+// seabed gradient once at world build; rg = unit direction toward shallower water, b = how much to trust it.
+//
+// ⚠⚠ NOT FROM THE SHORE FOAM. That foam reads `depth_tex`, the SCREEN depth buffer, so a direction taken from it
+// would swing as the camera turned -- the sea reacting to the viewer, which is worse than a fixed heading.
+// ⭐ The seabed is view-independent and identical for every player, which is the property actually needed.
+global uniform sampler2D shore_dir_tex : filter_linear, repeat_disable;
+global uniform vec4 shore_rect;   // xy = world origin, zw = 1/world size -> world XZ to UV
+
+vec3 shore_sample(vec2 wp) {
+    vec2 uv = (wp - shore_rect.xy) * shore_rect.zw;
+    // ⚠ Outside the baked rect there IS no seabed data, so claim none rather than clamping to the edge cell --
+    // an edge cell smeared across the open ocean would steer the whole horizon toward one arbitrary beach.
+    if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return vec3(1.0, 0.0, 0.0);
+    return texture(shore_dir_tex, uv).rgb;
+}
+
 /// ANISOTROPIC swell height at world XZ + phase-time, in units of SWELL_AMP (coarse 3-octave swell).
 float swell_at(vec2 wp, float tphase) {
-    float a = radians(SWELL_DIR_DEG); float c = cos(a), s = sin(a);
-    float u = wp.x * c + wp.y * s;    // along travel
-    float w = -wp.x * s + wp.y * c;   // along the crest line
+    float a = radians(SWELL_DIR_DEG);
+    vec2 open = vec2(cos(a), sin(a));          // the open-ocean heading, unchanged offshore
+    vec3 sh = shore_sample(wp);
+    // ⭐ BLEND, never switch. Refraction is a shallow-water effect: deep water keeps the swell it arrived with and
+    // only bends as the bottom comes up, which is both what the sea does and what keeps the field continuous --
+    // a hard switch would put a seam along the contour where it flipped.
+    vec2 d = mix(open, sh.rg, clamp(sh.b, 0.0, 1.0));
+    float dl = length(d);
+    // ⚠ A mix of two near-opposite headings can cancel to nothing. Falling back to the open heading keeps a
+    // defined direction instead of normalising a zero vector into NaN and punching a hole in the sea.
+    d = dl > 1e-3 ? d / dl : open;
+    float c = d.x, s2 = d.y;
+    float u = wp.x * c + wp.y * s2;    // along travel
+    float w = -wp.x * s2 + wp.y * c;   // along the crest line
     return fbm3(vec2(u * SWELL_FU + tphase, w * swell_fw()));
 }
 float swell_phase(float t) { return t * SWELL_SPEED * SWELL_FU; }   // scroll the field along the travel axis

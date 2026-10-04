@@ -65,12 +65,29 @@ namespace UnturnedGodot
             return s / 0.4375f;   // -> ~[-1, 1]
         }
 
-        /// <summary>Normalised swell height ~[-1,1] at world XZ + phase-time (mirrors swell_at()).</summary>
+        /// <summary>Normalised swell height ~[-1,1] at world XZ + phase-time (mirrors swell_at()).
+        ///
+        /// ⚠⚠ THE SHORE BEND IS MIRRORED HERE DELIBERATELY, line for line with the shader. Boats float on THIS.
+        /// Bend the drawn waves toward the coast and leave this straight and the sea visibly turns while the
+        /// runabout keeps bobbing to a swell running the old way -- the precise failure the include warns about
+        /// twice, which is why the field is BAKED DATA both sides read rather than a constant copied by hand.</summary>
         public static float SwellAt(float wx, float wz, float tphase)
         {
-            float a = Mathf.DegToRad(SwellDirDeg); float c = MathF.Cos(a), s = MathF.Sin(a);
-            float u = wx * c + wz * s;    // along travel
-            float w = -wx * s + wz * c;   // along the crest line
+            float a = Mathf.DegToRad(SwellDirDeg);
+            float ox = MathF.Cos(a), oz = MathF.Sin(a);     // the open-ocean heading
+            float dx = ox, dz = oz;
+            if (ShoreField.Active != null)
+            {
+                ShoreField.Active.Sample(wx, wz, out var sdir, out float shoreness);
+                shoreness = Mathf.Clamp(shoreness, 0f, 1f);
+                dx = ox + (sdir.X - ox) * shoreness;        // mix(open, shore, shoreness) -- same as the shader
+                dz = oz + (sdir.Y - oz) * shoreness;
+                float dl = MathF.Sqrt(dx * dx + dz * dz);
+                // ⚠ Two near-opposite headings can cancel; fall back to the open one rather than divide by ~0.
+                if (dl > 1e-3f) { dx /= dl; dz /= dl; } else { dx = ox; dz = oz; }
+            }
+            float u = wx * dx + wz * dz;    // along travel
+            float w = -wx * dz + wz * dx;   // along the crest line
             return Fbm3(u * SwellFu + tphase, w * SwellFw);
         }
 

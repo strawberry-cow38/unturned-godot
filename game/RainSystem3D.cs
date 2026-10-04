@@ -31,6 +31,15 @@ namespace UnturnedGodot
             // it has the same problem -- the GPU draws the sea and WaveField floats boats on it, so the number has
             // to reach both from one place. WaveField.SwellAniso is that place; this just publishes it.
             RenderingServer.GlobalShaderParameterAdd("swell_aniso", RenderingServer.GlobalShaderParameterType.Float, WaveField.SwellAniso);
+            // SHORE DIRECTION FIELD (ShoreField.cs): where the coast is, per patch of sea, so swell bends toward it.
+            // ⚠⚠ Registered HERE with a NEUTRAL default, for the GrassDisplacers reason this method exists: a
+            // material that compiles before its global is registered DIES. The default is a 1x1 pixel reading
+            // (dir = +X, shoreness = 0), which the shader blends at weight ZERO -- so a map with no coastline, or
+            // one whose bake has not run yet, draws exactly the sea it drew before this feature existed.
+            RenderingServer.GlobalShaderParameterAdd("shore_dir_tex", RenderingServer.GlobalShaderParameterType.Sampler2D,
+                                                     ShoreField.NeutralTexture());
+            RenderingServer.GlobalShaderParameterAdd("shore_rect", RenderingServer.GlobalShaderParameterType.Vec4,
+                                                     new Vector4(0f, 0f, 1f, 1f));
             // PUDDLE LEVEL: how much standing water is lying about, 0..1. Deliberately NOT rain_wetness -- puddles take
             // minutes to fill and longer to dry, so they lag the rain instead of tracking it (master 2026-09-06: "puddles
             // should hang around for a while after the rain, and take a little bit of raining before they gradually fade

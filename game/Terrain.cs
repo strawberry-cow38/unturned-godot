@@ -394,6 +394,9 @@ void fragment() {
             water.Layers = WaterReflection.WaterLayer;   // keep the ocean out of its own mirror pass
             AddChild(water);
             Log.Print($"[terrain] ocean plane built at y={SeaLevelY:0.#} ({wsx:0}x{wsz:0} m)");
+            // SHORE DIRECTION: baked from THIS terrain, right after the sea it describes exists. Both the shader
+            // and WaveField read it, so swell bends toward the coast and boats bob to the same bend.
+            ShoreField.Bake(this, SeaLevelY, wcx - wsx * 0.5f, wcz - wsz * 0.5f, wsx, wsz);
         }
 
         // --- live heightmap sculpt (map editor Terrain tab) ---
@@ -2769,6 +2772,10 @@ void fragment() {
                 water.MaterialOverride = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/water.gdshader") };
                 water.Layers = WaterReflection.WaterLayer;   // keep the ocean OUT of its own mirror pass (self-occlusion)
                 terr.AddChild(water);
+                // SHORE DIRECTION, same as BuildOceanPlane. ⚠ TWO ocean build paths exist (this one is the real
+                // map load, that one the generated/editor island) and they have drifted before -- baking in both
+                // beside the AddChild keeps them together rather than in a third place either could forget.
+                ShoreField.Bake(terr, waterY, wcx - wsx * 0.5f, wcz - wsdz * 0.5f, wsx, wsdz);
                 // PLANAR REFLECTION (WaterReflection.cs): a mirror-camera SubViewport feeds the shader's reflection_tex.
                 // Opt-in via UG_REFLECT=1 for now so on/off frametime is a clean A/B; flip to default-on once proven.
                 if (System.Environment.GetEnvironmentVariable("UG_REFLECT") == "1")
