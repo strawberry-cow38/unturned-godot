@@ -1128,7 +1128,17 @@ namespace UnturnedGodot
         // Melee_* fallbacks and Punch_Left/Right for fists. The END of _Equip is the ready hold, exactly as Gun_Equip is for guns.
         public (string equip, string weak, string strong) MeleeClipsFor(string meleeName)
         {
-            if (string.IsNullOrEmpty(meleeName) || meleeName == "fists") return ("", "Punch_Left", "Punch_Right");
+            // ⚠⚠ UNKNOWN IS NOT FISTS. These two were one branch, so anything the handler could not identify --
+            // an item with no melee name, a lookup that came back empty -- was handed the bare-fist JABS and
+            // stood there punching. Master: "whenever the animation handler doesnt know what to play it plays a
+            // punch animation. remove that."
+            //
+            // ⭐ "I am holding nothing" and "I do not know what this is" are different states that happened to
+            // share a return value, which is why it read as deliberate. The second one now plays NOTHING -- "" is
+            // already this function's established no-clip value (see Pick below), and both callers handle it:
+            // ShowMeleeHold returns early, PlayMeleeSwing returns 0.
+            if (meleeName == "fists") return ("", "Punch_Left", "Punch_Right");   // real bare fists: the real jabs
+            if (string.IsNullOrEmpty(meleeName)) return ("", "", "");             // unknown: blank, never a punch
             string cap = char.ToUpper(meleeName[0]) + meleeName.Substring(1);
             string Pick(string a, string b) => ClipLength(a) > 0f ? a : (ClipLength(b) > 0f ? b : "");
             return (Pick(cap + "_Equip", "Melee_Equip"), Pick(cap + "_Weak", "Melee_Weak"), Pick(cap + "_Strong", "Melee_Strong"));
