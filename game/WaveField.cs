@@ -23,14 +23,20 @@ namespace UnturnedGodot
         public static float AmpScale = 1f;
         public const float SwellDirDeg = 30.0f;
         public const float SwellFu     = 0.081f;  // freq along travel (matches the shader; waves ~10% bigger)
-        /// <summary>fu/fw -- how stretched the swell is (3 = crests three times longer than wide). THE ONE OWNER
+        /// <summary>fu/fw -- how stretched the swell is (2 = crests twice as long as they are wide). THE ONE OWNER
         /// of this number: pushed to the GPU global `swell_aniso` by RainSystem3D, so the sea the shader draws and
         /// the sea boats float on cannot disagree. UG_SWELLANISO tunes it without a rebuild, because "less
-        /// stretched" is a look and the only instrument for a look is master's eye.</summary>
+        /// stretched" is a look and the only instrument for a look is master's eye.
+        ///
+        /// ⚠ 3.0 -> 2.0, 2026-10-04. Master asked for the sea to be "a lot less stretched on one axis", and
+        /// the first pass only made the number TUNABLE -- it left the default at the value being complained
+        /// about, so nothing changed for master at all unless they went and set an env var. A knob is not a change.
+        /// ⭐ 2.0 rather than lower because 1.4 was rendered too: at 1.4 the crest foam breaks into scattered
+        /// blobs and the swell stops reading as swell. 2 is visibly shorter-crested and still directional.</summary>
         public static float SwellAniso =
             float.TryParse(System.Environment.GetEnvironmentVariable("UG_SWELLANISO"),
                            System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture,
-                           out float _an) && _an >= 0.25f ? _an : 3.0f;
+                           out float _an) && _an >= 0.25f ? _an : 2.0f;
         public static float SwellFw => SwellFu / System.Math.Max(SwellAniso, 0.25f);   // freq along crest
 
         /// <summary>How much the shore may bend the swell, 0..1 -- scales ShoreField's baked phase correction, so
