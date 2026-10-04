@@ -621,6 +621,7 @@ namespace UnturnedGodot
             // is playing, so the only call was the one on toggle: applied once, then quietly restored by the next
             // thing that touched the pose, and the arms came back. Cheap enough to just do unconditionally.
             ApplyArmTrim();
+            ApplyViewmodelArmHide();   // same reason as above: the clips write bone scale, so this must be re-asserted
             if (_ap != null && _ap.CallbackModeProcess == AnimationMixer.AnimationCallbackModeProcess.Manual)
             {
                 // PERF: a player that has never played anything (or was explicitly stopped) has no pose to refresh and no
@@ -654,6 +655,7 @@ namespace UnturnedGodot
                 }
                 ApplyAimAdditive();
                 ApplyArmTrim();   // after the clips, which write bone scale of their own
+                ApplyViewmodelArmHide();
             }
         }
 
@@ -849,6 +851,55 @@ namespace UnturnedGodot
                     Log.Print($"[armtrim] frame {_armDbgT}: clip={CurrentClip} trimL={wantL} trimR={wantR}, left reads back {Skeleton.GetBonePoseScale(_trimShoulders[0])}  globalPose.basis.scale={Skeleton.GetBoneGlobalPose(_trimShoulders[0]).Basis.Scale}");
             }
         }
+        /// <summary>Collapse an arm on the VIEWMODEL rig, independent of the first-person body trim.
+        ///
+        /// ⚠⚠ THE PAIR HAD NO INVARIANT, WHICH IS WHY ARMS DOUBLED. The body hides the arms the viewmodel's clip
+        /// ANIMATES (SetTrimmedArms <- HandsInClip). The viewmodel rig hid nothing at all: it is built once with
+        /// both arms and draws both forever, because an arm with no animation TRACK is not an absent arm -- it is
+        /// an arm sitting in its bind pose, rendered exactly like any other. So every arm the clip did not animate
+        /// was drawn TWICE, once by each rig, and a one-handed melee hold is precisely that case.
+        ///
+        /// ⭐ With this the two are complementary: the body hides what the viewmodel uses, the viewmodel hides what
+        /// the body keeps. Each arm is then drawn exactly once BY CONSTRUCTION -- so if HandsInClip is ever wrong
+        /// about a clip, it can only put an arm on the wrong rig, never give you two of it.
+        ///
+        /// ⚠ Gated on its own flag, NOT on _fpTrim: that one is set only on the first-person body
+        /// (PlayerController sets `_body.FirstPersonTrim`), and it is load-bearing there -- the 3P path relies on
+        /// it to neutralise a SetTrimmedArms(true, true). Reusing it here would either do nothing or break that.</summary>
+        public void SetViewmodelArmsHidden(bool left, bool right)
+        {
+            if (_vmHideL == left && _vmHideR == right) return;
+            _vmHideL = left; _vmHideR = right;
+            ApplyViewmodelArmHide();
+        }
+        bool _vmHideL, _vmHideR, _vmHideApplied, _vmHideLogged;
+
+        void ApplyViewmodelArmHide()
+        {
+            if (Skeleton == null) return;
+            if (!_vmHideL && !_vmHideR && !_vmHideApplied) return;
+            if (_trimShoulders == null)
+                _trimShoulders = new[] { Skeleton.FindBone("Left_Shoulder"), Skeleton.FindBone("Right_Shoulder") };
+            // ⚠ The HELD ITEM rides Right_Hook on this rig, and a BoneAttachment3D follows a bone whether or not
+            // the arm around it has any size -- so collapsing the right shoulder leaves the gun hanging in the air
+            // rather than taking it away. The body's own trim hides MeleeAttach/GunAttach for exactly that reason;
+            // here we WANT the item, so the right arm is only ever hidden when the caller asks and the item is
+            // elsewhere. In practice the rig holds every item in the right hand, so this is the left arm's job.
+            // ⚠ A MISSING BONE IS A SILENT NO-OP, and this rig is built armsOnly -- a different build from the
+            // body's, so "the body's trim works" is not evidence that these bones exist here. Say so once.
+            if (!_vmHideLogged)
+            {
+                _vmHideLogged = true;
+                if (_trimShoulders[0] < 0 || _trimShoulders[1] < 0)
+                    Log.Print($"\u26a0 [vmarmhide] shoulder bones NOT FOUND on this rig (L={_trimShoulders[0]} R={_trimShoulders[1]}) -- hiding cannot work");
+                else if (System.Environment.GetEnvironmentVariable("UG_LEGDBG") == "1")
+                    Log.Print($"[vmarmhide] shoulders L={_trimShoulders[0]} R={_trimShoulders[1]}; hiding L={_vmHideL} R={_vmHideR}");
+            }
+            if (_trimShoulders[0] >= 0) Skeleton.SetBonePoseScale(_trimShoulders[0], _vmHideL ? Vector3.Zero : Vector3.One);
+            if (_trimShoulders[1] >= 0) Skeleton.SetBonePoseScale(_trimShoulders[1], _vmHideR ? Vector3.Zero : Vector3.One);
+            _vmHideApplied = _vmHideL || _vmHideR;
+        }
+
         int[] _trimShoulders;
         bool _armTrimApplied;
         int _armDbgT;

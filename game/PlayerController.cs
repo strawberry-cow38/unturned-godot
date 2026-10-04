@@ -10604,13 +10604,35 @@ namespace UnturnedGodot
             // arms are placed by SetDrivingWheel rather than by a clip, so asking the clip would answer about the
             // rifle you are still carrying. This is the case master actually reported ("seeing the legs model's
             // arms on the steering wheel when driving"), so it is stated rather than inferred.
-            if (_fp && (_driving != null || _riding != null)) _body.SetTrimmedArms(true, true);
-            else if (_fp && _viewmodel?.ArmsRig is RiggedCharacter armsRig)
+            // ⚠⚠ AND THE VIEWMODEL HIDES WHAT THE BODY KEEPS. The two rigs had no invariant between them: the body
+            // hid the arms the viewmodel's clip ANIMATES, and the viewmodel hid nothing, because it is built with
+            // both arms and draws both forever. An arm with no animation TRACK is not an absent arm -- it is an arm
+            // in its bind pose, rendered like any other. So every arm the clip did not animate was drawn TWICE,
+            // once by each rig, which is master's "dupe viewmodel when crouched or prone / holding melees": a
+            // one-handed melee hold is exactly the case where a clip animates one arm and not the other.
+            // ⭐ Made complementary here, so each arm is drawn exactly ONCE by construction. If HandsInClip is ever
+            // wrong about a clip it can now only put an arm on the wrong rig -- it can no longer produce two.
+            var vmRig = _viewmodel?.ArmsRig as RiggedCharacter;
+            if (_fp && (_driving != null || _riding != null))
             {
-                var (usesL, usesR) = armsRig.HandsInClip(armsRig.CurrentClip);
-                _body.SetTrimmedArms(usesL, usesR);
+                _body.SetTrimmedArms(true, true);
+                vmRig?.SetViewmodelArmsHidden(false, false);   // at the wheel the viewmodel owns both hands
             }
-            else _body.SetTrimmedArms(true, true);
+            else if (_fp && vmRig != null)
+            {
+                var (usesL, usesR) = vmRig.HandsInClip(vmRig.CurrentClip);
+                _body.SetTrimmedArms(usesL, usesR);
+                // ⚠ ONLY THE LEFT. The held item rides Right_Hook on the viewmodel rig and a BoneAttachment3D
+                // follows its bone whatever the arm's scale, so collapsing the right shoulder would leave the gun
+                // hanging in mid-air rather than removing it. Every item is held right-handed here (a left-handed
+                // player mirrors the whole rig, PlayerAnimator:1613), so the arm that ever needs hiding is the left.
+                vmRig.SetViewmodelArmsHidden(!usesL, false);
+            }
+            else
+            {
+                _body.SetTrimmedArms(true, true);
+                vmRig?.SetViewmodelArmsHidden(false, false);   // 3P: the body draws itself, the viewmodel is hidden anyway
+            }
             // The arms rig is rebuilt whenever the held item changes, so this is pushed every frame rather than
             // once at construction; the setter early-outs on the same reference and re-paints on a new one.
             if (_clothing != null && _viewmodel != null) _clothing.Arms = _viewmodel.ArmsRig;
