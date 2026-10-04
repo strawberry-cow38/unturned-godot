@@ -10692,7 +10692,16 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             foreach (var localPoint in _buoys)
             {
                 var worldPoint = xf * localPoint;                                         // source: transform.TransformPoint(localPoint)
-                if (worldPoint.Y >= seaY + Terrain.SwellReach) continue;                   // above anything a wave could reach -> not underwater (cheap reject BEFORE the noise)
+                // ⚠⚠ TWO GATES, AND THE ORDER MATTERS. The cheap one rejects anything no wave could ever reach,
+                // so the noise is never evaluated for a hull sitting high; the REAL rule is the second one,
+                // against the actual surface.
+                //
+                // ⚠ Getting this wrong is what the L1 suite caught: I had replaced the original `Y >= seaY` with
+                // `Y >= seaY + SwellReach` and left the voxel-tolerance test below as the only other gate. That
+                // let buoys up to half a metre ABOVE the waterline count as submerged, and the ship floated 0.53 m
+                // too high (vehicle.boat_hull: keel 4.27 m under against a retail target of 4.80).
+                // ⭐ The `Y >= seaY` line was not a pre-filter. It was the rule.
+                if (worldPoint.Y >= seaY + Terrain.SwellReach) continue;                   // no wave reaches here -> skip the noise entirely
                 // ⭐⭐ THE SEA THE GAME ACTUALLY DRAWS, sampled per buoy -- so a hull PITCHES AND ROLLS with the
                 // swell for free, because each float point reads its own crest or trough.
                 //
@@ -10706,7 +10715,9 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 // it to 0, so the big ship was rippling anyway. Reading the flag directly makes the comment true.
                 float surface = _steadyHull ? seaY : Terrain.WaterSurfaceY(worldPoint);
                 if (BuoyLog) { if (surface < _blSurfLo) _blSurfLo = surface; if (surface > _blSurfHi) _blSurfHi = surface; }
-                if (worldPoint.Y - _voxelHalfHeight >= surface) continue;                 // voxel not yet within voxelHalfHeight of the surface -> no force
+                if (worldPoint.Y >= surface) continue;                                    // WaterUtility: above the sea surface -> not underwater. THE rule; now the real wave, not the mean plane
+                // (the old `Y - _voxelHalfHeight >= surface` test is gone: with the line above it could never fire,
+                // since _voxelHalfHeight is positive. It was already unreachable before this change.)
                 submerged++;
                 var pv = LinearVelocity + AngularVelocity.Cross(worldPoint - comGlobal);  // source: rootRigidbody.GetPointVelocity(worldPoint)
                 float _bdMul = float.TryParse(System.Environment.GetEnvironmentVariable("UG_BUOYDAMP"), out var _bd) ? _bd : _buoyDamp;   // damping mult: env override else the per-vehicle spec value
