@@ -14,8 +14,13 @@ namespace SDG.Unturned
             Assets.clear();
             LoadCatalogFile();
             //  id   name            sx sy  type                 rarity               storage   description (real, from English.dat)
-            Add(4,   "Eaglefire",     4, 2, EItemType.GUN,      EItemRarity.RARE,      0, 0, "American assault rifle chambered in Military ammunition.", gun: "eaglefire");
-            Add(363, "Maplestrike",   4, 2, EItemType.GUN,      EItemRarity.EPIC,      0, 0, "Canadian assault rifle chambered in Military ammunition.", gun: "maplestrike");
+            // ⚠⚠ THESE Add() ROWS RE-SPECIFY THE NAME AND RUN AFTER LoadCatalogFile(), SO THEY WIN. Renaming a gun
+            // in items_catalog.tsv alone does NOTHING for any item that also has a hand-tuned row here -- the TSV
+            // name is loaded and then overwritten, silently, with no error anywhere. Found by diffing the TSV
+            // against every Add() literal rather than by noticing in game. ⭐ If you rename an item, grep this file.
+            // (385/1241 below diverge from the TSV ON PURPOSE and pre-date the gun rename -- leave them.)
+            Add(4,   "Colt AR-15",    4, 2, EItemType.GUN,      EItemRarity.RARE,      0, 0, "American assault rifle chambered in Military ammunition.", gun: "eaglefire");
+            Add(363, "Colt Canada C7A2", 4, 2, EItemType.GUN,      EItemRarity.EPIC,      0, 0, "Canadian assault rifle chambered in Military ammunition.", gun: "maplestrike");
             Add(6,   "Military Magazine", 2, 1, EItemType.MAGAZINE, EItemRarity.UNCOMMON, 0, 0, "Standard STANAG magazine for Military rifles.", magCap: 30, magCal: 1, magRound: "5.56x45mm NATO");   // the eaglefire/maplestrike mag (caliber 1); 2x1 per master (was hardcoded 1x3, overriding the catalog)
             // .300 BLK in a STANAG body: same group 1, so it physically seats in every group-1 rifle, but a different
             // round. This pair is the whole reason magRound exists -- with only one STANAG mag the flag has a single
