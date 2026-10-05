@@ -650,6 +650,7 @@ namespace SDG.Unturned
             if (!System.IO.Directory.Exists(dir)) return;
             int n = 0;
             var noVisual = new System.Collections.Generic.List<string>();
+            var slowed = new System.Collections.Generic.List<string>();   // heavy-weapon speed census -- published below
             foreach (var datPath in System.IO.Directory.GetFiles(dir, "*.dat"))
             {
                 string name = System.IO.Path.GetFileNameWithoutExtension(datPath);
@@ -663,17 +664,56 @@ namespace SDG.Unturned
                     a.gunName = name; n++;
                     a.gunAmmoMax = d.ParseInt32("Ammo_Max", 30);   // the server's only handle on a gun's real capacity -- see ItemAsset.gunAmmoMax
                     a.gunCaliber = d.ParseInt32("Caliber", 0);     // ...and on which rounds it accepts -- see ItemAsset.gunCaliber
+                    // How much this gun slows you while you carry it -- RETAIL'S OWN NUMBER WHERE RETAIL HAS ONE.
+                    // Three extracted .dats declare the key (nykorev/dragonfang 0.95, fury 0.90); the .dat always
+                    // wins, so a future re-rip that finds the key on more guns is picked up with no code change,
+                    // and HeavyWeaponSpeed only fills the silence. See ItemAsset.equipableMovementSpeedMultiplier.
+                    float ems = d.ParseFloat("Equipable_Movement_Speed_Multiplier", 0f);
+                    if (ems <= 0f) ems = HeavyWeaponSpeed(name);
+                    a.equipableMovementSpeedMultiplier = ems;
+                    if (ems < 0.999f) slowed.Add($"{name} {ems:0.00}x");
                     a.slot = SlotTypeExtension.Parse(d.GetString("Slot"));   // Primary/Secondary from the gun's own .dat
                     if (!UnturnedGodot.Viewmodel.IsKnownGun(name)) noVisual.Add(name);   // this file lives in SDG.Unturned
                 }
                 catch { /* skip a malformed .dat */ }
             }
             UnturnedGodot.Log.Print($"[items] wired {n} guns for in-game equip (from content/*.dat + _gun.txt)");
+            // ⭐ PUBLISHED, NOT ASSUMED. A speed penalty is invisible until you happen to carry the gun and happen
+            // to notice, which is exactly how the retail skill port ended up with ten skills wired to nothing --
+            // so the set that is actually live gets named at boot. A weapon missing from this line is NOT slowed.
+            UnturnedGodot.Log.Print(slowed.Count > 0
+                ? $"[items] {slowed.Count} heavy weapon(s) slow the carrier: {string.Join(", ", slowed)}"
+                : "[items] no heavy-weapon movement penalties are live (expected 9 -- check content/*.dat + _gun.txt)");
             // Named loudly rather than left to be discovered in play: these equip to a REFUSAL (see
             // PlayerController.EquipHeldGun), which is the honest outcome but still a missing row someone must add.
             if (noVisual.Count > 0)
                 GD.PushWarning($"[items] {noVisual.Count} ported gun(s) have no guns_visual.tsv row and will refuse to equip: {string.Join(", ", noVisual)}");
         }
+
+        /// <summary>The walk-speed scale for a heavy weapon whose .dat does NOT declare one, by content name.
+        /// Master, 2026-10-05: "implement slower movement speed with heavy snipers, minigun and LMGs (make sure
+        /// works in multiplayer)", then approved this exact set of nine.
+        ///
+        /// ⭐⭐ THE THREE RETAIL GUNS ARE DELIBERATELY ABSENT FROM THIS TABLE. nykorev, dragonfang and fury carry
+        /// `Equipable_Movement_Speed_Multiplier` in their own .dats, so they are read from the data and never
+        /// reach here. That matters twice over: their numbers stay Nelson's rather than becoming a copy of his
+        /// that can drift, and the boot census shows them at 0.95/0.95/0.90 only if the .dat parse really worked,
+        /// so a broken rip reads as a missing penalty instead of hiding behind a hardcoded duplicate.
+        ///
+        /// ⚠ AND IT IS WHY THESE SIX ARE GENTLER THAN FIRST PROPOSED (0.70 for the minigun, 0.80 for a belt-fed).
+        /// Retail prices its heaviest gun in the game at 10%, so a 30% penalty invented beside it is not a tuning
+        /// choice, it is a different game. The six below are placed on retail's scale, ordered by what the thing
+        /// actually weighs: nothing here is heavier to carry than the minigun, and nothing is lighter than a PKM.</summary>
+        static float HeavyWeaponSpeed(string name) => name switch
+        {
+            "shadowstalkermk2" => 0.90f,   // Shadowstalker Mk. II -- the railgun, minigun tier
+            "shadowstalker"    => 0.93f,   // Shadowstalker
+            "grizzly"          => 0.93f,   // M82 -- .50 BMG anti-materiel, ~14 kg
+            "ekho"             => 0.95f,   // M200 Intervention -- .338 Lapua
+            "timberwolf"       => 0.95f,   // C14 Timberwolf -- .338 Lapua
+            "launcher_rocket"  => 0.95f,   // RPG-7 -- light but bulky on the shoulder
+            _                  => 1f,      // everything else is unaffected, which is most of the 59 ported guns
+        };
 
         // Wire meleeName on the extracted PEI melee items (content/<folder>.dat's ID -> ItemAsset.meleeName) so equipping
         // a knife/axe/bat loads its viewmodel + weapon-specific swings via EquipHeldMelee. Folders from content/melee_list.tsv.

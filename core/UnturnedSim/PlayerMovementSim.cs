@@ -22,7 +22,34 @@ namespace SDG.Unturned
         /// retail gates it on `fall &lt;= 0` where `fall` is literally velocity.y, so an umbrella is a
         /// parachute and never a jump boost.</summary>
         public float GravityMultiplier = 1f;
+
+        /// <summary>Source ItemAsset.equipableMovementSpeedMultiplier: a scale on the stance speed from whatever is
+        /// IN THE HANDS. 1 = normal. A belt-fed LMG sets 0.95 and the minigun 0.90 (their own retail .dat values --
+        /// see ItemCatalog.WireExtractedGuns), so hauling one costs you mobility.
+        ///
+        /// ⭐ IT LIVES HERE, ON THE ONE SIM, BECAUSE THAT IS WHAT MAKES IT WORK IN MULTIPLAYER. This class is
+        /// engine-free and is the single speed choke point on every machine -- the shell's own body, the client's
+        /// prediction (Prediction.Sim) and the server's integration (PlayerReplication.ServerStep) all step THIS.
+        /// Scaling the number they all already read means the three agree by construction; a penalty bolted onto
+        /// the shell alone would have the predicted and authoritative trajectories disagree every tick you walked
+        /// holding one, which is the mispredict-rubberband the whole sim-core split exists to prevent.
+        ///
+        /// Applied to `speed` below, ONCE, before the direction clamp -- so it reaches the airborne branch too
+        /// (wantSpeed derives from wantX/wantZ). Carrying momentum off a ledge is not a way to dodge it.</summary>
+        public float SpeedMultiplier = 1f;
         public EPlayerStance Stance = EPlayerStance.STAND;
+
+        /// <summary>SpeedMultiplier for whatever item id is in the hands (0 = fists). THE one resolver, so the
+        /// three simulators cannot disagree about what a gun costs -- the shell calls it per tick beside its
+        /// GravityMultiplier line, and PlayerReplication.IntegrateFlat calls it for the server and the client's
+        /// prediction. An unknown id reads 1, so a client holding an item the server has no asset for is slowed
+        /// by nothing rather than frozen.</summary>
+        public static float SpeedMultiplierForHeld(ushort heldItemId)
+        {
+            if (heldItemId == 0) return 1f;
+            var a = Assets.find(heldItemId);
+            return a != null ? a.equipableMovementSpeedMultiplier : 1f;
+        }
 
         // inputDir: local-space (x = strafe, y = forward), each component in [-1,1].
         // grounded: whether the body was on the floor after the previous move.
@@ -30,7 +57,7 @@ namespace SDG.Unturned
         public Vector3 Step(Vector2 inputDir, bool wantJump, bool grounded, float dt)
         {
             // Horizontal: direction clamped to the unit disc so diagonals don't exceed stance speed.
-            float speed = PlayerMovementDef.SpeedForStance(Stance);
+            float speed = PlayerMovementDef.SpeedForStance(Stance) * Mathf.Max(SpeedMultiplier, 0f);   // held-item penalty (heavy weapons) -- see SpeedMultiplier
             Vector2 dir = inputDir;
             float m2 = dir.x * dir.x + dir.y * dir.y;
             if (m2 > 1f)

@@ -11887,6 +11887,17 @@ namespace UnturnedGodot
             _move.GravityMultiplier = _heldUmbrellaItem != null && (_viewmodel?.IsEquipComplete ?? false)
                 ? Umbrellas.For(_heldUmbrellaItem.id) ?? 1f
                 : 1f;
+            // ...and how much the thing in your hands slows you down (a belt-fed LMG, the minigun, the heavy
+            // snipers). Same shape as the line above and for the same reason: derived every tick from what is
+            // held, so there is no reset to forget -- _heldItem is assigned in sixteen places and a penalty
+            // applied at each of them would be missing from the seventeenth.
+            //
+            // ⭐ READ OFF HeldItemIdForNet, THE FIELD THE WIRE CARRIES, and deliberately NOT gated on the
+            // viewmodel's equip animation the way the umbrella above is. The server only ever learns what you
+            // hold through MoveInput.HeldItemId; gating the shell on a client-only animation state would mean
+            // the two ran different multipliers for the length of every weapon swap, and a prediction that
+            // disagrees with the server is the rubberband this whole split exists to avoid.
+            _move.SpeedMultiplier = SDG.Unturned.PlayerMovementSim.SpeedMultiplierForHeld(HeldItemIdForNet);
             StepMoveOnce(strafe, forward, jump, (float)delta, out bool wasAirborne, out float vy, out bool groundedEntering);
             LastGroundedInput = groundedEntering;   // the grounded the sim consumed -- state-stream dressing
             _interpPrev = _interpReady ? _interpCurr : GlobalPosition; _interpCurr = GlobalPosition; _interpReady = true;   // snapshot this tick's start/end for render interpolation (master)

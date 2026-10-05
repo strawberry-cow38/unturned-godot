@@ -57,7 +57,25 @@ namespace SDG.Unturned
 
         // ItemClothingAsset behavioral fields (P1 clothing port). Defaulted so non-clothing items are unaffected.
         // movementSpeedMultiplier: source aggregates worn clothing as a product (1.0 = no change).
+        // ⚠ THIS IS THE **WORN** ONE AND IT IS STILL DEAD -- ClothingDef parses `Movement_Speed_Multiplier` into
+        // its own copy and nothing ever writes it through to here. Do not read it as "the item's speed effect":
+        // the HELD effect is the separate field below, and conflating them is how one walk speed ends up with two
+        // owners. Retail keeps them apart too -- different .dat keys, different assets.
         public float movementSpeedMultiplier = 1f;
+
+        /// <summary>Source ItemAsset.equipableMovementSpeedMultiplier (.dat `Equipable_Movement_Speed_Multiplier`):
+        /// the scale this item puts on your walk speed WHILE HELD. 1 = no effect, and that is the default, so an
+        /// item that does not declare it costs nothing.
+        ///
+        /// ⭐ RETAIL ALREADY SHIPS THIS, which is the only reason the magnitudes here are not invented: three of
+        /// the extracted gun .dats carry the key -- nykorev 0.95, dragonfang 0.95, fury 0.90 -- so the belt-fed
+        /// and minigun numbers are Nelson's, read off the data rather than guessed. The other heavy weapons are
+        /// an extension on that SCALE (ItemCatalog.HeavyWeaponSpeed), not a second opinion about it.
+        ///
+        /// Lives in core for the same reason gunAmmoMax does: the thing that reads it is the sim-core movement
+        /// step, which runs on the dedicated server, and the .dat that declares it is parsed by the game layer.
+        /// ItemCatalog copies it across at startup.</summary>
+        public float equipableMovementSpeedMultiplier = 1f;
         // Proof_* are whole-body immunities in source (any worn piece with the flag grants it). Stored for when the
         // port models water/fire/radiation damage; default false.
         public bool proofWater, proofFire, proofRadiation;
