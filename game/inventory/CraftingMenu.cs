@@ -27,7 +27,7 @@ namespace UnturnedGodot
         // from, and it was drawing on it in UITheme's body sizes -- 13 px, which a 1600x900 window shows at 8. Named
         // here, not in UITheme, because they are this screen's answer to its own empty space; the inventory has its own.
         const int FontCat = 26, FontText = 23, FontSmallText = 18, FontInfo = 20, FontName = 34, FontQty = 30, FontButton = 26;
-        const int CATROWH = 56, CATCOUNTW = 72, SEARCHH = 52, TILE = 136, DETICON = 128, BTNH = 60;
+        const int CATROWH = 56, CATCOUNTW = 72, SEARCHH = 52, TILE = 116, DETICON = 128, BTNH = 60;
 
         Control _root;
         Panel _panel;
@@ -288,6 +288,16 @@ void fragment() {
             _detail.Position = new Vector2(detX, top);
             _detail.Size = new Vector2(detW, ph - top - 16f);
             _detailBox.CustomMinimumSize = new Vector2(detW - 32f, ph - top - 44f);
+        }
+
+        /// <summary>Test seam: the grid tile showing this recipe, in canvas coordinates (where a click would land), or
+        /// null when it is not in the grid. Read off the live tile, so it is wherever the swoop has it right now.</summary>
+        public Rect2? DebugTileRect(BlueprintDef bp)
+        {
+            var view = View();
+            int i = view.IndexOf(bp);
+            if (i < 0 || i >= _grid.GetChildCount()) return null;
+            return _grid.GetChild<Control>(i).GetGlobalRect();
         }
 
         /// <summary>Test seam: where each block of this screen is, in SCREEN coordinates, with the swoop's slide
@@ -702,6 +712,22 @@ void fragment() {
             var btn = new Button { Flat = true, TooltipText = locked ? $"{Title(bp)}  (locked)" : Title(bp) };   // hover -> the item name
             btn.SetAnchorsPreset(Control.LayoutPreset.FullRect);
             btn.Pressed += () => { _sel = bp; _qty = 1; Rebuild(); };
+            // DOUBLE-CLICK CRAFTS ONE (strawberry 2026-10-05: "add double click grid tile to craft (if we can craft it)").
+            // The engine's own double-click flag, so it keeps the player's OS timing rather than a number of ours. The
+            // first click has already rebuilt the grid, so the second lands on a NEW button that never saw the first --
+            // which is fine, because the flag rides on the event, not on the control. Accepting it stops the Button
+            // seeing the press at all, so a double-click is one craft and not also a re-select.
+            //
+            // "if we can craft it" is QueueCraft's own gate -- the same one the bag's quick-craft goes through (known,
+            // skill, station, ingredients) -- so one that cannot be made is only selected, and its reason line says why.
+            btn.GuiInput += e =>
+            {
+                if (e is not InputEventMouseButton { ButtonIndex: MouseButton.Left, Pressed: true, DoubleClick: true }) return;
+                btn.AcceptEvent();
+                _sel = bp; _qty = 1;
+                if (CraftBlocker(bp, new Crafting.PlayerInvAdapter(Inv), 1) == null) QueueCraft(bp, 1);   // rebuilds itself
+                else Rebuild();
+            };
             tile.AddChild(btn);
             return tile;
         }
@@ -1096,6 +1122,7 @@ void fragment() {
         /// <summary>Test seam: how many tiles in the grid carry the padlock right now.</summary>
         public string DebugBlocker(BlueprintDef bp) => CraftBlocker(bp, new Crafting.PlayerInvAdapter(Inv), 1);
         public int DebugPadlocks() { int n = 0; foreach (Node t in _grid.GetChildren()) foreach (Node c in t.GetChildren()) if (c is PadlockGlyph) n++; return n; }
+        public BlueprintDef DebugSelected => _sel;
         public string DebugHeader => _header?.Text ?? "";   // the SAME predicate the list filters on
 
         /// <summary>The crafted item's name. A Craft blueprint's OUTPUT IS ITS OWNER ITEM -- the outputs column is
