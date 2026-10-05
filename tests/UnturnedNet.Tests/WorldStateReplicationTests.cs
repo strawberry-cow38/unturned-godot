@@ -139,9 +139,9 @@ namespace UnturnedNet.Tests
         {
             var h = Harness(80803).Connected("farmer");
             var a = h.Clients[0];
-            h.Server.Skills.ServerSetSkillLevel(a.PlayerId, "plants", int.MaxValue,
+            h.Server.Skills.ServerSetSkillLevel(a.PlayerId, "agriculture", int.MaxValue,
                                                 h.Server.Session.CurrentTick, out _, out byte applied);
-            Assert.That(applied, Is.GreaterThan(0), "plants maxed (mastery 1.0)");
+            Assert.That(applied, Is.GreaterThan(0), "agriculture maxed (mastery 1.0)");
             h.Server.Transactions.Rand = () => 0f;   // roll always under mastery -> guaranteed double yield
 
             h.Grant(a.PlayerId, new Item(SeedId));

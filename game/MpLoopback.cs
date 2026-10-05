@@ -238,7 +238,7 @@ namespace UnturnedGodot
                 //     the shell via AdoptReplicatedSkills in TickLocal. Verbatim from ClientWorldSession.SpawnShell:468.
                 //     Null in default SP/loopback, so SkillsUI's local TryUpgrade stays the SP path byte-identical;
                 //     SETTING it makes RequestUpgradeSkill take the wire branch (PlayerController.cs:1909) instead.
-                Player.NetUpgradeSkill = index => Client.SendUpgradeSkill(index);
+                Player.NetUpgradeSkill = (spec, index) => Client.SendUpgradeSkill(spec, index);
 
                 // (c) P1b -- server-authoritative inventory for the LOCAL player. The placement seam above
                 //     (P1) routes over the wire, where OnPlaceDeployable SPENDS the deployable item before

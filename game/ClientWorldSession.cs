@@ -666,7 +666,7 @@ shell.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, ri
             shell.NetOpenStorage = netId => Client.SendOpenStorage(netId);
             shell.NetCloseStorage = () => Client.SendCloseStorage();
             shell.NetTakeFromStorage = (netId, x, y) => Client.SendTakeFromStorage(netId, x, y);   // F on an item ON a shelf: take that one, no open/close
-            shell.NetUpgradeSkill = index => Client.SendUpgradeSkill(index);
+            shell.NetUpgradeSkill = (spec, index) => Client.SendUpgradeSkill(spec, index);
             // A4: crops route as intents -- plant sends seed+point, harvest sends the grown replica's NetId;
             // the CropReplicaView renders the result (materialize / grow / despawn) + the yield rides Items.
             shell.NetPlantCrop = (seedId, pos) => Client.SendPlantCrop(seedId, ToU(pos));

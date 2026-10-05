@@ -4,99 +4,63 @@ using System.Collections.Generic;
 
 namespace UnturnedGodot.Testing
 {
-    /// The skill DATA MODEL: 14 flat skills, the XP cost curve, upgrade and mastery.
+    // Port of --skilltest: the PlayerSkills grid sizes, the source XP cost formula, upgrade/mastery, and every
+    // skill-effect multiplier at its extremes (data-model self-test).
     public class SkillsGridXpMastery : GameTest
     {
         public override string Name => "skills.grid_xp_mastery";
         public override IEnumerable<Step> Run()
         {
             var sk = new PlayerSkills();
-            T.Check($"14 skills, flat ({sk.skills.Length})", sk.skills.Length == PlayerSkills.COUNT && sk.skills.Length == 14);
-            T.Check("every ESkill value has a Skill", System.Enum.GetValues(typeof(ESkill)).Length == PlayerSkills.COUNT);
+            T.Check("OFFENSE has 7", sk.skills[(int)EPlayerSpeciality.OFFENSE].Length == 7);
+            T.Check("DEFENSE has 7", sk.skills[(int)EPlayerSpeciality.DEFENSE].Length == 7);
+            T.Check("SUPPORT has 8", sk.skills[(int)EPlayerSpeciality.SUPPORT].Length == 8);
 
-            // uniform max 5, base 10, difficulty 1.0 -> L0 costs 10, L1 costs 20
-            var carp = sk.GetSkill(ESkill.Carpentry);
-            T.Check("Carpentry max 5", carp.max == 5);
-            T.Check("Carpentry L0 cost 10", carp.Cost == 10);
+            // cost: AGRICULTURE (max7,base10,diff1.0) L0=10,L1=20 ; CRAFTING (max3,base20,diff1.5) L0=20,L1=50
+            var ag = sk.GetSkill((int)EPlayerSpeciality.SUPPORT, (int)EPlayerSupport.AGRICULTURE);
+            T.Check("AGRICULTURE max 7", ag.max == 7);
+            T.Check("AGRICULTURE L0 cost 10", ag.Cost == 10);
+            var cr = sk.GetSkill((int)EPlayerSpeciality.SUPPORT, (int)EPlayerSupport.CRAFTING);
+            T.Check("CRAFTING max 3", cr.max == 3);
+            T.Check("CRAFTING L0 cost 20", cr.Cost == 20);
 
+            // award 30 XP -> upgrade AGRICULTURE twice (10+20) -> level 2, 0 XP left, 3rd blocked
             sk.AwardExperience(30);
-            T.Check("upgrade 1 (10)", sk.TryUpgrade(ESkill.Carpentry));
-            T.Check("upgrade 2 (20)", sk.TryUpgrade(ESkill.Carpentry));
-            T.Check("3rd blocked -- 0 XP left", !sk.TryUpgrade(ESkill.Carpentry));
-            T.Check("Carpentry level 2", sk.Level(ESkill.Carpentry) == 2);
-            T.Check("XP spent exactly", sk.experience == 0);
+            bool u1 = sk.TryUpgrade(EPlayerSupport.AGRICULTURE);
+            bool u2 = sk.TryUpgrade(EPlayerSupport.AGRICULTURE);
+            bool u3 = sk.TryUpgrade(EPlayerSupport.AGRICULTURE);
+            T.Check("upgrade x2 ok + 3rd blocked", u1 && u2 && !u3);
+            T.Check("AGRICULTURE level 2", sk.Level(EPlayerSupport.AGRICULTURE) == 2);
+            T.Check("XP spent to 0", sk.experience == 0);
+            T.Check("mastery 2/7", Mathf.Abs(ag.Mastery - 2f / 7f) < 0.001f);
 
-            T.Check("mastery 0.4 at 2/5", Mathf.Abs(sk.Mastery(ESkill.Carpentry) - 0.4f) < 0.001f);
-            T.Check("TryFind by name", sk.TryFind("mining", out _, out var label) && label == "Mining");
-            T.Check("TryFind rejects a retail name", !sk.TryFind("sharpshooter", out _, out _));
-            yield break;
-        }
-    }
+            // SHARPSHOOTER recoil/spread multiplier = 1 - mastery*0.4 (lvl0 = 1.0, max7 = 0.6)
+            var ss = sk.GetSkill((int)EPlayerSpeciality.OFFENSE, (int)EPlayerOffense.SHARPSHOOTER);
+            ss.level = 0; T.Check("sharpshooter mult 1.0 at lvl0", Mathf.Abs(sk.SharpshooterRecoilMultiplier() - 1.0f) < 0.001f);
+            ss.level = 7; T.Check("sharpshooter mult 0.6 at max", Mathf.Abs(sk.SharpshooterRecoilMultiplier() - 0.6f) < 0.001f);
 
-    /// ⭐⭐ THE EFFECT CENSUS. This is the test the retail port needed and never had: it asserts that the set of
-    /// skills CLAIMING an effect matches the set that HAS one, so a skill cannot quietly become decorative.
-    ///
-    /// The old suite could not catch that. Every one of its skill tests asserted a helper returned the right
-    /// number; not one asserted anything CALLED it, so ten of twenty-two skills charged XP and changed nothing
-    /// while the suite stayed green.
-    public class SkillEffectCensus : GameTest
-    {
-        public override string Name => "skills.effect_census";
-        public override IEnumerable<Step> Run()
-        {
-            var wired = new List<ESkill>(PlayerSkills.WiredSkills);
-            var unwired = new List<ESkill>(PlayerSkills.UnwiredSkills());
+            // STRENGTH fall-damage multiplier = 1 - mastery*0.75 (max STRENGTH lvl 5 -> 0.25)
+            var st = sk.GetSkill((int)EPlayerSpeciality.DEFENSE, (int)EPlayerDefense.STRENGTH);
+            st.level = 0; T.Check("strength fall mult 1.0 at lvl0", Mathf.Abs(sk.StrengthFallMultiplier() - 1.0f) < 0.001f);
+            st.level = 5; T.Check("strength fall mult 0.25 at max", Mathf.Abs(sk.StrengthFallMultiplier() - 0.25f) < 0.001f);
 
-            T.Check($"wired + unwired accounts for all {PlayerSkills.COUNT} ({wired.Count} + {unwired.Count})",
-                    wired.Count + unwired.Count == PlayerSkills.COUNT);
-            foreach (var s in wired)
-                T.Check($"{s} is not ALSO listed unwired", !unwired.Contains(s));
-
-            // Every skill that claims an effect must have a helper that actually moves off its neutral value.
-            var sk = new PlayerSkills();
-            foreach (var s in new[] { ESkill.Medical, ESkill.Plants, ESkill.Shooting, ESkill.Melee })
-                sk.GetSkill(s).level = sk.GetSkill(s).max;
-            T.Check($"Medical moves off 1.0 ({sk.MedicalMultiplier():0.00})", sk.MedicalMultiplier() > 1.01f);
-            T.Check($"Plants moves off 0 ({sk.PlantsSecondYieldChance():0.00})", sk.PlantsSecondYieldChance() > 0.01f);
-            T.Check($"Shooting moves off 1.0 ({sk.ShootingRecoilMultiplier():0.00})", sk.ShootingRecoilMultiplier() < 0.99f);
-            T.Check($"Melee moves off 1.0 ({sk.MeleeDamageMultiplier():0.00})", sk.MeleeDamageMultiplier() > 1.01f);
-
-            // ⭐ ...and the restraint master asked for is itself asserted, so a future tuning pass cannot quietly
-            // reintroduce a retail-sized buff without this failing and making someone say so on purpose.
-            T.Check($"Shooting recoil cut stays modest ({1f - sk.ShootingRecoilMultiplier():P0} <= 20%)",
-                    sk.ShootingRecoilMultiplier() >= 0.80f);
-            T.Check($"Melee damage gain stays modest ({sk.MeleeDamageMultiplier() - 1f:P0} <= 25%)",
-                    sk.MeleeDamageMultiplier() <= 1.25f);
-            T.Check($"Medical gain stays modest ({sk.MedicalMultiplier() - 1f:P0} <= 50%)",
-                    sk.MedicalMultiplier() <= 1.50f);
-            yield break;
-        }
-    }
-
-    /// Drives the REAL consume path, so it fails if Medical is wired to nothing (see the census note above).
-    public class MedicalSkillWired : GameTest
-    {
-        public override string Name => "skills.medical_wired";
-        public override IEnumerable<Step> Run()
-        {
-            var p = Rigs.Player(World, new Vector3(0f, 2f, 0f));
-            yield return Ticks(2);
-
-            // ⚠ Built here rather than looked up by id: a Medkit's .dat can be retuned by anyone, and this test is
-            // about the SKILL, not about what a Medkit happens to restore today.
-            var kit = new ItemAsset { useHealth = 40 };
-            var med = p.Skills.GetSkill(ESkill.Medical);
-
-            p.MaxHealth = 200f;   // headroom, so the clamp cannot hide the difference being measured
-            med.level = 0; p.Health = 10f; p.Consume(kit);
-            float unskilled = p.Health - 10f;
-            med.level = med.max; p.Health = 10f; p.Consume(kit);
-            float skilled = p.Health - 10f;
-
-            T.Check($"unskilled heals the item's own 40 ({unskilled:0.00})", Mathf.Abs(unskilled - 40f) < 0.01f);
-            T.Check($"⭐ Medical CHANGES the outcome: {unskilled:0.0} -> {skilled:0.0} " +
-                    "(this is the check that fails if the skill is wired to nothing)", skilled > unskilled + 0.01f);
-            T.Check($"...and by the capped 1.5x ({skilled:0.0})", Mathf.Abs(skilled - 60f) < 0.01f);
+            // survival-sim multipliers at max level
+            sk.GetSkill((int)EPlayerSpeciality.DEFENSE, (int)EPlayerDefense.VITALITY).level = 5;
+            T.Check("vitality regen 2.0x at max", Mathf.Abs(sk.VitalityRegenMultiplier() - 2.0f) < 0.001f);
+            sk.GetSkill((int)EPlayerSpeciality.DEFENSE, (int)EPlayerDefense.SURVIVAL).level = 5;
+            T.Check("survival drain 0.8x at max", Mathf.Abs(sk.SurvivalDrainMultiplier() - 0.8f) < 0.001f);
+            sk.GetSkill((int)EPlayerSpeciality.OFFENSE, (int)EPlayerOffense.CARDIO).level = 5;
+            T.Check("cardio regen 2.0x at max", Mathf.Abs(sk.CardioStaminaRegenMultiplier() - 2.0f) < 0.001f);
+            sk.GetSkill((int)EPlayerSpeciality.OFFENSE, (int)EPlayerOffense.EXERCISE).level = 5;
+            T.Check("exercise drain 0.5x at max", Mathf.Abs(sk.ExerciseStaminaDrainMultiplier() - 0.5f) < 0.001f);
+            sk.GetSkill((int)EPlayerSpeciality.OFFENSE, (int)EPlayerOffense.OVERKILL).level = 7;
+            T.Check("overkill melee 1.5x at max", Mathf.Abs(sk.OverkillMeleeMultiplier() - 1.5f) < 0.001f);
+            sk.GetSkill((int)EPlayerSpeciality.OFFENSE, (int)EPlayerOffense.DEXTERITY).level = 5;
+            T.Check("dexterity reload 1.5x at max", Mathf.Abs(sk.DexterityReloadSpeed() - 1.5f) < 0.001f);
+            sk.GetSkill((int)EPlayerSpeciality.DEFENSE, (int)EPlayerDefense.IMMUNITY).level = 5;
+            T.Check("immunity infection 0.5x at max", Mathf.Abs(sk.ImmunityInfectionMultiplier() - 0.5f) < 0.001f);
+            sk.GetSkill((int)EPlayerSpeciality.DEFENSE, (int)EPlayerDefense.SNEAKYBEAKY).level = 7;
+            T.Check("sneakybeaky noise 0.25x at max", Mathf.Abs(sk.SneakyBeakyNoiseMultiplier() - 0.25f) < 0.001f);
             yield break;
         }
     }

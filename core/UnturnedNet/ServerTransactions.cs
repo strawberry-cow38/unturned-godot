@@ -285,8 +285,8 @@ namespace UnturnedGodot.Net
         public void Register(CommandRegistry commands)
         {
             commands.Register<UpgradeSkillCommand>(ReplicationIds.CommandUpgradeSkill, UpgradeSkillCommand.TryRead,
-                (sender, cmd) => _skills.ServerTryUpgrade(sender, cmd.Index, _tick()),
-                validate: (sender, cmd) => _skills.TryGet(sender, out _) && cmd.Index < PlayerSkills.COUNT);
+                (sender, cmd) => _skills.ServerTryUpgrade(sender, cmd.Speciality, cmd.Index, _tick()),
+                validate: (sender, cmd) => _skills.TryGet(sender, out _) && cmd.Speciality < PlayerSkills.SPECIALITIES);
 
             commands.Register<PlaceDeployableCommand>(ReplicationIds.CommandPlaceDeployable, PlaceDeployableCommand.TryRead,
                 OnPlaceDeployable,
@@ -1667,9 +1667,10 @@ namespace UnturnedGodot.Net
             if (def.YieldItemId != 0)
             {
                 SpawnWorldItem(new Item(def.YieldItemId), at, Vector3.zero);
-                // PLANTS second-yield roll (was retail AGRICULTURE): chance = mastery, rolled HERE --
+                // AGRICULTURE second-yield roll (source InteractableFarm): chance = mastery, rolled HERE --
                 // the server owns the roll (§3.7); SP's GD.Randf stays on the direct path only.
-                float mastery = _skills.TryGet(sender, out var se) ? se.Skills.PlantsSecondYieldChance() : 0f;
+                float mastery = _skills.TryGet(sender, out var se)
+                    ? se.Skills.GetSkill((int)EPlayerSpeciality.SUPPORT, (int)EPlayerSupport.AGRICULTURE).Mastery : 0f;
                 if (mastery > 0f && Rand() < mastery)
                     SpawnWorldItem(new Item(def.YieldItemId), at + new Vector3(0.25f, 0f, 0f), Vector3.zero);
             }
@@ -1704,8 +1705,9 @@ namespace UnturnedGodot.Net
             var at = Forage.Position(cmd.Index) + new Vector3(0f, 0.3f, 0f);
             GiveOrDrop(inv, reward, at);
 
-            // The PLANTS second-yield roll, same skill and same server-side roll as OnHarvestCrop.
-            float mastery = _skills.TryGet(sender, out var se) ? se.Skills.PlantsSecondYieldChance() : 0f;
+            // The AGRICULTURE second-yield roll, same skill and same server-side roll as OnHarvestCrop.
+            float mastery = _skills.TryGet(sender, out var se)
+                ? se.Skills.GetSkill((int)EPlayerSpeciality.SUPPORT, (int)EPlayerSupport.AGRICULTURE).Mastery : 0f;
             if (mastery > 0f && Rand() < mastery) GiveOrDrop(inv, reward, at + new Vector3(0.25f, 0f, 0f));
 
             AwardXp(sender, ServerForage.RewardExperience);   // source: Forage_Reward_Experience, default 1

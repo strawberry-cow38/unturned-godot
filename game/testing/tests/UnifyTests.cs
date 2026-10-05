@@ -1601,11 +1601,12 @@ namespace UnturnedGodot.Testing
                     loop.Client.State == NetSessionState.Connected
                     && loop.Server.Skills.TryGet(loop.Client.PlayerId, out _));
 
-            const byte IDX = (byte)SDG.Unturned.ESkill.Melee;   // baseCost 10 @ level 0 -> 50 XP is plenty for one level
+            const byte SPEC = (byte)SDG.Unturned.EPlayerSpeciality.OFFENSE;
+            const byte IDX  = (byte)SDG.Unturned.EPlayerOffense.OVERKILL;   // baseCost 10 @ level 0 -> 50 XP is plenty for one level
 
-            // baseline: Melee is level 0 on the shell and the shell holds no XP (SP demo grants none), so a bare
+            // baseline: OVERKILL is level 0 on the shell and the shell holds no XP (SP demo grants none), so a bare
             // LOCAL SkillsUI TryUpgrade could never level it -- only the server's XP + the wire can.
-            T.Check("(baseline) local shell Melee is level 0", player.Skills.GetSkill((int)IDX).level == 0);
+            T.Check("(baseline) local shell OVERKILL is level 0", player.Skills.skills[SPEC][IDX].level == 0);
             T.Check("(baseline) local shell has 0 XP (SP demo grants no skills)", player.Skills.experience == 0);
 
             // award XP SERVER-SIDE (the §3.2 XP hook kills/harvests/console feed) -- authoritative server state the
@@ -1617,19 +1618,19 @@ namespace UnturnedGodot.Testing
             // spend it via the SkillsUI upgrade path VERBATIM (SkillsUI.cs:109-110): request over the wire, else fall
             // back to the LOCAL TryUpgrade. With the fix the seam is set -> request wins; pre-fix it is null -> the
             // fallback runs against 0 local XP and does nothing.
-            if (!player.RequestUpgradeSkill(IDX))
-                player.Skills.TryUpgrade((int)IDX);
+            if (!player.RequestUpgradeSkill(SPEC, IDX))
+                player.Skills.TryUpgrade(SPEC, IDX);
 
             // the wire spend: server validates cost/cap, levels its entity, and replicates the owner block
             yield return Until(() => loop.Server.Skills.TryGet(loop.Client.PlayerId, out var se)
-                                     && se.Skills.GetSkill((int)IDX).level == 1, 15);
+                                     && se.Skills.skills[SPEC][IDX].level == 1, 15);
             T.Check("(server) the server skills entity leveled OVERKILL to 1 (wire-validated spend)",
-                    loop.Server.Skills.TryGet(loop.Client.PlayerId, out var sSk) && sSk.Skills.GetSkill((int)IDX).level == 1);
+                    loop.Server.Skills.TryGet(loop.Client.PlayerId, out var sSk) && sSk.Skills.skills[SPEC][IDX].level == 1);
 
             // THE GATE: MpLoopback.TickLocal's AdoptReplicatedSkills mirrors the server level rise onto the shell.
-            yield return Until(() => player.Skills.GetSkill((int)IDX).level == 1, 10);
-            T.Check($"(gate) the local shell adopted the server level rise (Melee lvl {player.Skills.GetSkill((int)IDX).level}, expected 1)",
-                    player.Skills.GetSkill((int)IDX).level == 1);
+            yield return Until(() => player.Skills.skills[SPEC][IDX].level == 1, 10);
+            T.Check($"(gate) the local shell adopted the server level rise (OVERKILL lvl {player.Skills.skills[SPEC][IDX].level}, expected 1)",
+                    player.Skills.skills[SPEC][IDX].level == 1);
         }
     }
 

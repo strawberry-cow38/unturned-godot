@@ -230,7 +230,6 @@ namespace UnturnedGodot
             GetWindow().SizeChanged += () => GraphicsOptions.Apply3DScale(this);   // saved graphics + controls rows, applied before anything renders (strawberry 2026-09-04 "make all persist")
             TickHub.AddProcess(this, HubProcess); SetProcess(false);   // PERF: hub-ticked (see TickHub.AddProcess)
             GameAudio.AuditBanks();   // UG_AUDIODBG=1: every emitted bank name vs the files on disk (prints EMPTY BANK lines)
-            Log.Print(SDG.Unturned.PlayerSkills.CensusLine());   // which skills actually DO something -- see PlayerSkills.CensusLine
             // UG_GCWATCH=1: attribute frame hitches to the GC, or rule it out. Attached HERE rather than in
             // WorldBuilder so it also covers load and menu -- a stutter while streaming props happens during the
             // part of a session that the in-world reporters are not alive for. Off by default; see GcWatch.
@@ -5618,10 +5617,10 @@ namespace UnturnedGodot
         {
             var skills = new SDG.Unturned.PlayerSkills();
             skills.AwardExperience(500);
-            skills.TryUpgrade(SDG.Unturned.ESkill.Carpentry);
-            skills.TryUpgrade(SDG.Unturned.ESkill.Plants);
-            skills.TryUpgrade(SDG.Unturned.ESkill.Plants);
-            skills.TryUpgrade(SDG.Unturned.ESkill.Shooting);
+            skills.TryUpgrade((int)SDG.Unturned.EPlayerSpeciality.SUPPORT, (int)SDG.Unturned.EPlayerSupport.CRAFTING);
+            skills.TryUpgrade((int)SDG.Unturned.EPlayerSpeciality.SUPPORT, (int)SDG.Unturned.EPlayerSupport.AGRICULTURE);
+            skills.TryUpgrade((int)SDG.Unturned.EPlayerSpeciality.SUPPORT, (int)SDG.Unturned.EPlayerSupport.AGRICULTURE);
+            skills.TryUpgrade((int)SDG.Unturned.EPlayerSpeciality.OFFENSE, (int)SDG.Unturned.EPlayerOffense.SHARPSHOOTER);
             var ui = new SkillsUI { SkillsSource = skills };
             AddChild(ui);
             ui.Open();

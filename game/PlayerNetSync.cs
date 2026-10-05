@@ -96,9 +96,8 @@ namespace UnturnedGodot
                 if (moved && t.FootNoiseTicks <= 0 && !_server.VehicleHost.IsDriver(e.OwnerPlayerId))
                 {
                     t.FootNoiseTicks = 20;
-                    // ⚠ No stealth skill in our set (see PlayerController's footstep note); loudness is flat, and
-                    // the SP path lost the same multiplier so the two still agree.
-                    float loud = StealthDetection.Radius(stance, true);
+                    float sneaky = _server.Skills.TryGet(e.OwnerPlayerId, out var se) ? se.Skills.SneakyBeakyNoiseMultiplier() : 1f;
+                    float loud = StealthDetection.Radius(stance, true) * sneaky;
                     if (loud > 2f) SoundBus.Emit(t.Body.GetTree(), t.Body.GlobalPosition, loud);
                 }
             }

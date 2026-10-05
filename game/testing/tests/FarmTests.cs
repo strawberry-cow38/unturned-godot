@@ -58,25 +58,17 @@ namespace UnturnedGodot.Testing
         public override IEnumerable<Step> Run()
         {
             var skills = new PlayerSkills();
-            var ag = skills.GetSkill(ESkill.Plants);
+            var ag = skills.GetSkill((int)EPlayerSpeciality.SUPPORT, (int)EPlayerSupport.AGRICULTURE);
 
-            // ⚠ EXPECTATIONS DERIVED FROM ag.max, NOT HARDCODED. This test used to assert "~57%" because retail
-            // AGRICULTURE had max 7 and 4/7 = 0.571. Our Plants has max 5, so the same level 4 is 0.80 -- the CODE
-            // was right and the test's copied constant was the thing that was stale. A rate test that hardcodes
-            // the rate re-fails every time the design moves and tells you nothing about whether the roll works.
-            byte mid = (byte)(ag.max - 1);
-            float expected = (float)mid / ag.max;
-
-            ag.level = 0; T.Check("mastery 0 at Plants 0", ag.Mastery == 0f);
-            ag.level = ag.max; T.Check("mastery 1.0 at Plants max", Mathf.Abs(ag.Mastery - 1f) < 0.001f);
+            ag.level = 0; T.Check("mastery 0 at agri 0", ag.Mastery == 0f);
+            ag.level = 7; T.Check("mastery 1.0 at agri max", Mathf.Abs(ag.Mastery - 1f) < 0.001f);
             ag.level = 0; int f0 = 0; for (int i = 0; i < 2000; i++) if (T.Rng.Randf() < ag.Mastery) f0++;
-            T.Check("no 2nd-yield at Plants 0", f0 == 0);
-            ag.level = ag.max; int f1 = 0; for (int i = 0; i < 2000; i++) if (T.Rng.Randf() < ag.Mastery) f1++;
-            T.Check("always 2nd-yield at Plants max", f1 == 2000);
-            ag.level = mid; int f4 = 0; for (int i = 0; i < 4000; i++) if (T.Rng.Randf() < ag.Mastery) f4++;
-            float rate = f4 / 4000f;
-            T.Check($"~{expected:P0} 2nd-yield at Plants {mid}/{ag.max} (got {rate:0.00})",
-                    Mathf.Abs(rate - expected) < 0.05f);
+            T.Check("no 2nd-yield at agri 0", f0 == 0);
+            ag.level = 7; int f1 = 0; for (int i = 0; i < 2000; i++) if (T.Rng.Randf() < ag.Mastery) f1++;
+            T.Check("always 2nd-yield at agri max", f1 == 2000);
+            ag.level = 4; int f4 = 0; for (int i = 0; i < 4000; i++) if (T.Rng.Randf() < ag.Mastery) f4++;
+            float rate = f4 / 4000f;   // mastery 4/7 ~= 0.571
+            T.Check($"~57% 2nd-yield at agri 4 (got {rate:0.00})", Mathf.Abs(rate - 4f / 7f) < 0.05f);
             yield break;
         }
     }

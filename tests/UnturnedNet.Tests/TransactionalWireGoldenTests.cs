@@ -25,12 +25,8 @@ namespace UnturnedNet.Tests
         [Test]
         public void UpgradeSkillCommand_GoldenBytes()
         {
-            // ⚠ GOLDEN UPDATED WITH THE WIRE, deliberately and visibly: the command lost its Speciality byte when
-            // the skill set went flat (v55), so the frame is one byte shorter. A golden that is edited silently is
-            // worthless -- the point of it is that a wire change cannot happen without someone changing this line
-            // on purpose. id 06 + index 05.
-            var cmd = new UpgradeSkillCommand { Index = 5 };
-            Assert.That(Pack(ReplicationIds.CommandUpgradeSkill, cmd.Write), Is.EqualTo("0605"));
+            var cmd = new UpgradeSkillCommand { Speciality = 2, Index = 5 };
+            Assert.That(Pack(ReplicationIds.CommandUpgradeSkill, cmd.Write), Is.EqualTo("060205"));
         }
 
         [Test]
@@ -118,21 +114,15 @@ namespace UnturnedNet.Tests
             var skills = new SkillsReplication();
             skills.ServerAdd(9, tick: 1);
             skills.ServerAward(9, 30, tick: 1);
-            skills.ServerTryUpgrade(9, 0, tick: 1);   // ESkill 0 (Metalworking) -> level 1, 20 XP left
+            skills.ServerTryUpgrade(9, 0, 0, tick: 1);   // OVERKILL -> level 1, 20 XP left
             var composer = new SnapshotComposer(new System.Collections.Generic.List<IReplicatedSystem> { skills });
 
             var bytes = composer.Compose(serverTick: 100, clientPlayerId: 9, Vector3.zero);
 
             // serverTick:32 + baseline:32(0=full) + systemId:8(5) + byteLen:16 + count:8(1) + owner:16(9)
-            // + experience:32(20) + 14 level bytes (ESkill 0 = Metalworking = 1, rest 0)
-            //
-            // ⭐ DERIVED, NOT PASTED, exactly as the keepalive golden in PacketHeaderGoldenTests demands. The skill
-            // set went from retail's 22 (7+7+8 nested by speciality) to our flat 14, so EXACTLY TWO things move:
-            // the level run loses 8 bytes, and byteLen -- which covers count+owner+experience+levels -- goes
-            // 1+2+4+22 = 29 (0x1D) to 1+2+4+14 = 21 (0x15). Every other field is byte-identical. If anything else
-            // had moved, the FRAMING changed too, and that is not what v55 claims.
+            // + experience:32(20) + 22 level bytes (OVERKILL=1, rest 0)
             Assert.That(ToHex(bytes), Is.EqualTo(
-                "6400000000000000051500010900140000000100000000000000000000000000"));
+                "6400000000000000051D000109001400000001000000000000000000000000000000000000000000"));
         }
     }
 }

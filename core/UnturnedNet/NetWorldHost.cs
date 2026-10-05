@@ -431,16 +431,15 @@ namespace UnturnedGodot.Net
                 PlayerHost.TryGetDrivenState(pid, out var sds)
                     ? (sds.Buttons & MoveInput.ButtonSteady) != 0
                     : Players.TryGetHeldInput(pid, out var si) && (si.Buttons & MoveInput.ButtonSteady) != 0;
-            // ⭐⭐ NO SKILL MULTIPLIERS ON STAMINA OR VITALS ANY MORE, and this is THE change master asked for rather
-            // than a casualty of the rework: "i dont like all the weird things the vanilla has that weirdly buff
-            // you wayyy too much just by spending skill points. (i can sprint for 10x as long after killing a few
-            // zombies)". These four WERE that. Retail CARDIO doubled stamina regen while EXERCISE halved the drain,
-            // and because one scales the fill and the other the empty they COMPOUND -- about 4x the sprint out of
-            // two cheap skills, plus SURVIVAL slowing hunger and VITALITY doubling health regen on top.
-            // ⚠ Left as None rather than deleted: PlayerVitalsSim still takes a Multipliers struct, and a sim that
-            // can express "a skill changed this" is worth keeping for a future effect that deserves it. What is
-            // gone is any skill FEEDING it. Our set buys access and efficiency, not a better body.
-            Vitals.MultipliersOf = pid => PlayerVitalsSim.Multipliers.None;
+            Vitals.MultipliersOf = pid => Skills.TryGet(pid, out var se)
+                ? new PlayerVitalsSim.Multipliers
+                {
+                    ExerciseStaminaDrain = se.Skills.ExerciseStaminaDrainMultiplier(),
+                    CardioStaminaRegen = se.Skills.CardioStaminaRegenMultiplier(),
+                    SurvivalDrain = se.Skills.SurvivalDrainMultiplier(),
+                    VitalityRegen = se.Skills.VitalityRegenMultiplier(),
+                }
+                : PlayerVitalsSim.Multipliers.None;
             Vitals.HealthOf = pid => CombatState.TryGet(pid, out var ce) ? ce.HealthExact : 100f;
             Vitals.DamageSink = (pid, dmg) => Combat.DamagePlayerExternal(pid, dmg);   // env attacker 0 -> Killer 0, death-capable
             Vitals.RegenSink = (pid, amt) =>
@@ -1222,8 +1221,8 @@ namespace UnturnedGodot.Net
             return true;
         }
 
-        public bool SendUpgradeSkill(byte index)
-            => SendCommand(ReplicationIds.CommandUpgradeSkill, new UpgradeSkillCommand { Index = index }.Write);
+        public bool SendUpgradeSkill(byte speciality, byte index)
+            => SendCommand(ReplicationIds.CommandUpgradeSkill, new UpgradeSkillCommand { Speciality = speciality, Index = index }.Write);
 
         public bool SendPlaceDeployable(ushort defId, Vector3 pos, float yawDegrees, byte page = 255, byte x = 0, byte y = 0)
             => SendCommand(ReplicationIds.CommandPlaceDeployable, new PlaceDeployableCommand { DefId = defId, Pos = pos, YawDegrees = yawDegrees, Page = page, X = x, Y = y }.Write);

@@ -254,7 +254,7 @@ namespace UnturnedNet.Tests
             h.Step(20);
             Assert.That(h.Server.Transactions.Diag.CraftsRejected, Is.EqualTo(1), "skill gate held");
 
-            a.SendConsole("skill carpentry 1");   // legacy "Craft" blueprint -> any trade satisfies it (Crafting.BestTrade)
+            a.SendConsole("skill crafting 1");
             h.Step(20);
             a.SendCraft(1);
             Assert.That(h.StepUntil(() => a.Inventories.TryGet(a.PlayerId, out var mine)
