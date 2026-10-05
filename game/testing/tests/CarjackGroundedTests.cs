@@ -39,6 +39,29 @@ namespace UnturnedGodot.Testing
 
         public override IEnumerable<Step> Run()
         {
+            // ⭐⭐ THE CLIP HAS TO ACTUALLY LOAD, AND THIS IS THE ONLY THING THAT CAN TELL. If Jack_Use failed to
+            // resolve, TryCarjack falls back to a constant of almost exactly the same length (1.967 s, against the
+            // sound's 2.02 s), so a missing animation would look IDENTICAL in play -- same delay, same sound, the
+            // arms just would not move. A fallback that good is a fallback that hides its own failure.
+            var vm = new Viewmodel { ConsumableEquipClip = "Jack_Equip", ConsumableUseClip = "Jack_Use" };
+            World.AddChild(vm);
+            yield return Ticks(2);
+            float jackUse = vm.ConsumeUseLength();
+            GD.Print($"[carjack] Jack_Use resolves to {jackUse:0.000}s");
+            T.Check($"Jack_Use loads out of consumable_anims.json ({jackUse:0.000}s, ripped length 1.967)",
+                    jackUse > 1.9f && jackUse < 2.05f);
+
+            // CONTROL: an unknown clip name must NOT land on that same number, or the check above would pass on
+            // whatever the generic fallback happens to be rather than on the carjack's own animation.
+            var bogus = new Viewmodel { ConsumableUseClip = "Jack_NotARealClip" };
+            World.AddChild(bogus);
+            yield return Ticks(2);
+            float fb = bogus.ConsumeUseLength();
+            GD.Print($"[carjack] control: unknown clip resolves to {fb:0.000}s");
+            T.Check($"control: an unknown clip name resolves to something ELSE ({fb:0.000}s), so 1.967 came from Jack_Use",
+                    Mathf.Abs(fb - jackUse) > 0.05f);
+            vm.QueueFree(); bogus.QueueFree();
+
             Rigs.Ground(World);
             var v = Spawn(World, new Vector3(0f, 1.5f, 0f));
             if (v == null) { T.Check("jeep built", false); yield break; }

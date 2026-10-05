@@ -3179,7 +3179,22 @@ namespace UnturnedGodot
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
             _heldCarjackItem = backing;
             _viewmodel?.QueueFree();
-            _viewmodel = new Viewmodel { EmptyHands = true };
+            // ITS OWN RIPPED ANIMATIONS (master 2026-10-05: "we have the gamefiles and source code. figure out
+            // the anim"). This used to be `new Viewmodel { EmptyHands = true }` under a comment asserting the
+            // carjack had no 1P animation in the rip -- and there were extractors for the spraypaint and the gas
+            // can sitting in tools/ the whole time. The clips were never missing: like every tool's, they live in
+            // the item's OWN animations.prefab (items/tools/carjack/) rather than in rig.json, which is the exact
+            // trap extract_throwable_anims.py was written for. Jack_Equip (0.467 s, LOOPS -- source plays it with
+            // loop:true, it is the carry hold) and Jack_Use (1.967 s, the crank), 17 bone tracks each, via
+            // tools/extract_carjack_anims.py.
+            //
+            // ⚠ STILL NO HELD MESH: nothing ripped a carjack model, so the arms do the real retail crank motion
+            // around empty hands. That is a separate rip, not a different animation.
+            _viewmodel = new Viewmodel
+            {
+                ConsumableEquipClip = "Jack_Equip",
+                ConsumableUseClip = "Jack_Use",
+            };
             AddChild(_viewmodel);
             RelinkViewmodelLighting();
             Log.Print($"[carjack] holding {asset.itemName} -- LMB an EMPTY vehicle to jack it");
@@ -3192,11 +3207,19 @@ namespace UnturnedGodot
         /// and this impulse would be overwritten by the next authoritative transform. It needs a command like
         /// the respray got, which belongs in one batched wire wave with the tire work rather than its own
         /// bump -- the plan's never-bump-per-gap rule.</summary>
-        /// <summary>The jack's full use length, seconds -- the MEASURED length of its own
-        /// content/audio/items/tools_carjack_use.wav (2.02 s), used when no 1P clip resolves. The carjack has no
-        /// carry model in the rip (EquipHeldCarjack builds an EmptyHands viewmodel), same as the spraypaint and
-        /// the gas can, so the sound IS the animation and its length is the honest duration to wait.</summary>
-        const float CarjackFallbackUseSeconds = 2.02f;
+        /// <summary>Where in the crank the car actually goes up. ⭐ RETAIL'S OWN NUMBER, read out of
+        /// UseableCarjack.cs rather than chosen: `isJackable => elapsed > useTime * 0.75f`, with
+        /// `isUseable => elapsed > useTime` releasing the hand at the end.
+        ///
+        /// ⚠ So it is 75%, NOT the 100% I first shipped. master asked for "its full animation before launching a
+        /// car" and I read that as the whole clip; the source says three quarters, with the last quarter being the
+        /// jack settling back down. Retail's number wins on a port whose rule is 1:1 bugs-and-all, and 75% of
+        /// 1.967 s is 1.48 s -- still the entire wind-up, just not the recovery. Same shape as the spraypaint's
+        /// 85% and the throwable's 60% release.</summary>
+        public const float CarjackApplyFraction = 0.75f;
+        /// <summary>Fallback use length if Jack_Use fails to load -- the clip's own measured 1.967 s (its sound,
+        /// tools_carjack_use.wav, is 2.02 s, which is why the pre-extraction guess was close).</summary>
+        const float CarjackFallbackUseSeconds = 1.967f;
         float _jackPendingT, _jackBusyT;
 
         void TryCarjack()
@@ -3221,16 +3244,20 @@ namespace UnturnedGodot
 
             float useLen = _viewmodel?.ConsumeUseLength() ?? 0f;
             if (useLen <= 0.05f) useLen = CarjackFallbackUseSeconds;
-            _viewmodel?.PlayConsumeUse();
-            // The ratchet starts when the arm does, like the spraypaint plays its can at the START of the sweep.
+            _viewmodel?.PlayConsumeUse();   // Jack_Use, via the consumable clip path the spraypaint already uses
+            // The ratchet starts when the arm does, like the spraypaint plays its can at the START of the sweep
+            // (source pull(): play("Use") and playSound(asset.use) in the same breath).
             Vector3 at = puppet != null ? puppet.GlobalPosition
                        : IsInstanceValid(_focusVehicle) ? _focusVehicle.GlobalPosition : GlobalPosition;
             GameAudio.PlayAt(this, GameAudio.Clip("items", "tools_carjack_use"), at, -3f, 6f, 40f);
-            // FULL length, not a fraction: the paint lands at 85% because that is where retail's sweep connects,
-            // and master asked for this one to finish first ("play its full animation before launching a car").
-            _jackPendingT = useLen;
-            _jackBusyT = useLen;
-            Log.Print($"[carjack] cranking -- launch in {useLen:0.00}s");
+            // ...AND THE ZOMBIES HEAR IT. Source pull() ends with AlertTool.alert(transform.position, 8), which
+            // nothing in the port did -- cranking a car into the air was completely silent to the horde. 8 maps
+            // straight onto the SoundBus scale (Walk 10, CrouchWalk 5), and going through Emit means the rain
+            // masking applies to it like everything else rather than being a rule this one call site forgot.
+            SoundBus.Emit(GetTree(), GlobalPosition, 8f);
+            _jackPendingT = useLen * CarjackApplyFraction;   // source isJackable: 75% of the clip
+            _jackBusyT = useLen;                             // source isUseable: the hand is busy for all of it
+            Log.Print($"[carjack] cranking -- launch in {_jackPendingT:0.00}s, hand busy {useLen:0.00}s");
         }
 
         /// <summary>The jack finishes its stroke: the car actually goes up. Re-validates, because 2 s is long
