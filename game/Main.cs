@@ -6160,6 +6160,19 @@ namespace UnturnedGodot
                 _pdPlayer.DebugCraftMenu.DebugSetSearch(csearch);
                 Log.Print($"[craftsearch] '{csearch}' -> {_pdPlayer.DebugCraftMenu.DebugView().Count} shown, {_pdPlayer.DebugCraftMenu.DebugPadlocks()} padlocked");
             }
+            // UG_CRAFTQUEUE=1 on this path too: stock the ingredients of the first three recipes and queue them, so a
+            // render of the real menu (vitals and all) shows queue tiles. Display only -- the bag is the client's.
+            if (System.Environment.GetEnvironmentVariable("UG_CRAFTQUEUE") == "1" && _pdPlayer?.DebugCraftMenu != null && _pdPlayer.Inventory != null)
+            {
+                var idx = BlueprintRegistry.Index();
+                for (int i = 0; i < idx.Count && i < 3; i++)
+                    foreach (var ing in idx[i].Inputs)
+                        if (SDG.Unturned.Assets.findByGuid(ing.Guid) is SDG.Unturned.ItemAsset ia)
+                            _pdPlayer.Inventory.tryAddItem(new SDG.Unturned.Item(ia.id, (byte)Mathf.Clamp(ing.Amount * 9, 1, 255)));
+                _pdPlayer.ShowMenu(MenuNavbar.Tab.Craft);
+                _pdPlayer.DebugCraftMenu.DebugQueueCraftable(3, 3);
+                Log.Print($"[craftqueue] {_pdPlayer.DebugCraftMenu.DebugQueueCount} jobs queued for the shot");
+            }
             if (_peiPlayable) PlayMapMusic();
             // WEATHER on PEI: BuildFullWorld never attached a WeatherManager, so the `weather` console command did
             // NOTHING in the real game (master 2026-08-29 "no weather manager on pei"). Attach it here on the REAL
