@@ -4590,6 +4590,17 @@ namespace UnturnedGodot
             Input.MouseMode = Input.MouseModeEnum.Visible;
         }
 
+        /// <summary>The bag's U / R over an item (strawberry 2026-10-04): switch to the crafting menu showing only the
+        /// recipes that use (Uses) or make (Recipes) item `itemId`. ShowMenu first, so the inventory closes and the
+        /// menu opens the ordinary way; the lookup is applied to the OPEN menu after that, because Open() clears it.</summary>
+        public void ShowCraftingLookup(CraftingMenu.ItemLookup mode, ushort itemId)
+        {
+            ShowMenu(MenuNavbar.Tab.Craft);
+            _craftMenu?.SetLookup(mode, itemId);
+        }
+        public CraftingMenu DebugCraftMenu => _craftMenu;
+        public InventoryUI DebugInvUI => _invUI;
+
         // the inventory's quick-craft bar queues a craft into the SAME crafting queue (LMB = 1, RMB = 5).
         public void QuickCraft(BlueprintDef bp, int n) => _craftMenu?.QueueCraft(bp, n);
 

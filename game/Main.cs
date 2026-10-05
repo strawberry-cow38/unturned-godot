@@ -6097,6 +6097,20 @@ namespace UnturnedGodot
                 if (t.HasValue) { _pdPlayer.ShowMenu(t.Value); Log.Print($"[menuopen] {t.Value}"); }
                 else Log.Err($"[menuopen] unknown tab '{menuTab}'");
             }
+            // UG_CRAFTLOOKUP=uses:<itemId> | recipes:<itemId> -- the bag's U / R lookup, opened at load so a render can
+            // show the filtered crafting menu without a cursor to hover with.
+            var look = System.Environment.GetEnvironmentVariable("UG_CRAFTLOOKUP");
+            if (!string.IsNullOrEmpty(look) && _pdPlayer != null)
+            {
+                var parts = look.Split(':');
+                if (parts.Length == 2 && ushort.TryParse(parts[1], out var lookId))
+                {
+                    var mode = parts[0].Trim().ToLowerInvariant() == "uses" ? CraftingMenu.ItemLookup.Uses : CraftingMenu.ItemLookup.Recipes;
+                    _pdPlayer.ShowCraftingLookup(mode, lookId);
+                    Log.Print($"[craftlookup] {mode} {lookId}");
+                }
+                else Log.Err($"[craftlookup] expected uses:<id> or recipes:<id>, got '{look}'");
+            }
             if (_peiPlayable) PlayMapMusic();
             // WEATHER on PEI: BuildFullWorld never attached a WeatherManager, so the `weather` console command did
             // NOTHING in the real game (master 2026-08-29 "no weather manager on pei"). Attach it here on the REAL

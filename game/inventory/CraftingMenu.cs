@@ -37,6 +37,16 @@ namespace UnturnedGodot
         Vector2 _lastVp;                          // relayout only when the viewport size changes
         BlueprintDef _sel;
         string _cat = "All";
+
+        // ITEM LOOKUP (strawberry 2026-10-04): the bag's U / R over an item lands here showing only the recipes that
+        // USE that item, or only the ones that MAKE it. It behaves as a temporary category: it sits selected at the
+        // top of the category list, and picking a real category, typing a search or reopening the menu (Y, the
+        // navbar tab) drops it -- so a lookup never outlives the question that opened it.
+        public enum ItemLookup { None, Uses, Recipes }
+        ItemLookup _look;
+        ushort _lookId;
+        public ItemLookup Lookup => _look;
+        public ushort LookupItemId => _lookId;
         int _qty = 1;
         System.Collections.Generic.HashSet<string> _stationTags = new();   // crafting-station tags the player currently has (recomputed each Rebuild)
         bool _open;
@@ -178,7 +188,7 @@ void fragment() {
             _search = new LineEdit { PlaceholderText = "search recipes..." };
             UITheme.Field(_search);
             _search.AddThemeFontSizeOverride("font_size", UITheme.FontBody);
-            _search.TextChanged += _ => { _sel = null; Rebuild(); };
+            _search.TextChanged += _ => { _sel = null; _look = ItemLookup.None; Rebuild(); };   // typing is a new question: the lookup goes
             _panel.AddChild(_search);
 
             // BOTTOM: crafting queue -- jobs fill RIGHTWARD (rightmost = active/counting; new jobs prepend on the left)
@@ -345,6 +355,7 @@ void fragment() {
 
         public void Open()
         {
+            _look = ItemLookup.None;   // Y / the navbar tab open the ordinary view; SetLookup runs AFTER this when it is a lookup
             _open = true; Visible = true;
             if (_root != null) _root.Visible = true;
             _qScroll = 0f;   // start showing the active (rightmost) side
@@ -352,6 +363,48 @@ void fragment() {
             if (System.Array.IndexOf(CatOrder, _cat) < 0 || CountFor(_cat) == 0) _cat = "All";
             Rebuild();
             _swoop?.In();
+        }
+
+        /// <summary>Show only the recipes that use (Uses) or make (Recipes) item `id`. Called on an OPEN menu, after
+        /// Open() -- PlayerController.ShowCraftingLookup. An item nothing uses still lands here, on an empty grid that
+        /// says so: the key always visibly does something, and "nothing uses this" is an answer worth having.</summary>
+        public void SetLookup(ItemLookup mode, ushort id)
+        {
+            _look = mode; _lookId = id;
+            _sel = null; _qty = 1;
+            if (_search != null) _search.Text = "";   // a leftover query must not read as part of the lookup (setting Text does not fire TextChanged)
+            if (_open) Rebuild();
+        }
+
+        /// <summary>Does this recipe take item `id` -- as an ingredient OR as a tool (a tool is an input that is not
+        /// consumed, and "what can I do with this blowtorch" is exactly the question U asks).</summary>
+        public static bool UsesItem(BlueprintDef bp, ushort id)
+        {
+            foreach (var ing in bp.Inputs)
+                if (Assets.findByGuid(ing.Guid)?.id == id) return true;
+            return false;
+        }
+
+        /// <summary>Does this recipe produce item `id`. Every output counts, not just the first; a recipe with no
+        /// output list makes its owner item (the Title/OutAsset rule).</summary>
+        public static bool MakesItem(BlueprintDef bp, ushort id)
+        {
+            if (bp.Outputs.Count > 0)
+            {
+                foreach (var o in bp.Outputs)
+                    if (Assets.findByGuid(o.Guid)?.id == id) return true;
+                return false;
+            }
+            return ushort.TryParse(bp.OwnerItemId, out var oid) && oid == id;
+        }
+
+        static bool LookupMatches(BlueprintDef bp, ItemLookup mode, ushort id)
+            => mode == ItemLookup.Uses ? UsesItem(bp, id) : mode == ItemLookup.Recipes && MakesItem(bp, id);
+
+        string LookupLabel()
+        {
+            string name = Assets.find(_lookId)?.itemName ?? $"item {_lookId}";
+            return _look == ItemLookup.Uses ? $"Uses of {name}" : $"Recipes for {name}";
         }
 
         void ComputeData()
@@ -393,7 +446,8 @@ void fragment() {
             var res = new List<BlueprintDef>();
             foreach (var bp in _all)
             {
-                if (q.Length > 0) { if (!Matches(bp, q)) continue; }
+                if (_look != ItemLookup.None) { if (!LookupMatches(bp, _look, _lookId)) continue; }
+                else if (q.Length > 0) { if (!Matches(bp, q)) continue; }
                 else if (_cat == "All") { if (_catOf[bp] == "Dyes") continue; }
                 else if (_catOf[bp] != _cat) continue;
                 res.Add(bp);
@@ -410,16 +464,32 @@ void fragment() {
 
             // categories (only non-empty ones)
             foreach (Node c in _catList.GetChildren()) c.QueueFree();
+            if (_look != ItemLookup.None)
+            {
+                // the lookup, shown where a category would be and selected like one. Clicking it clears it.
+                var lrow = new Panel { CustomMinimumSize = new Vector2(CATW, 30) };
+                Box(lrow, SelC);
+                var lb = new Button { Text = $"  \u00d7  {LookupLabel()}", Flat = true, Alignment = HorizontalAlignment.Left, ClipText = true, TooltipText = "clear", Size = new Vector2(CATW - 44, 30), CustomMinimumSize = new Vector2(CATW - 44, 30) };
+                lb.AddThemeFontSizeOverride("font_size", UITheme.FontBody);
+                lb.Pressed += () => { _look = ItemLookup.None; _cat = "All"; _sel = null; Rebuild(); };
+                lrow.AddChild(lb);
+                var lc = new Label { Text = View().Count.ToString(), Position = new Vector2(CATW - 40, 5), Size = new Vector2(32, 20), HorizontalAlignment = HorizontalAlignment.Right };
+                lc.AddThemeFontSizeOverride("font_size", UITheme.FontBody);
+                lc.AddThemeColorOverride("font_color", Dim);
+                lc.MouseFilter = Control.MouseFilterEnum.Ignore;
+                lrow.AddChild(lc);
+                _catList.AddChild(lrow);
+            }
             foreach (var cat in CatOrder)
             {
                 int n = CountFor(cat);
                 if (n == 0) continue;
                 var row = new Panel { CustomMinimumSize = new Vector2(CATW, 30) };
-                if (cat == _cat) Box(row, SelC);
+                if (_look == ItemLookup.None && cat == _cat) Box(row, SelC);
                 var b = new Button { Text = $"  {cat}", Flat = true, Alignment = HorizontalAlignment.Left, Size = new Vector2(CATW, 30), CustomMinimumSize = new Vector2(CATW, 30) };
                 b.AddThemeFontSizeOverride("font_size", UITheme.FontBody);
                 string capture = cat;
-                b.Pressed += () => { _cat = capture; _search.Text = ""; _sel = null; Rebuild(); };
+                b.Pressed += () => { _cat = capture; _look = ItemLookup.None; _search.Text = ""; _sel = null; Rebuild(); };
                 row.AddChild(b);
                 var cnt = new Label { Text = n.ToString(), Position = new Vector2(CATW - 40, 5), Size = new Vector2(32, 20), HorizontalAlignment = HorizontalAlignment.Right };
                 cnt.AddThemeFontSizeOverride("font_size", UITheme.FontBody);
@@ -434,9 +504,19 @@ void fragment() {
             var view = View();
             int canNow = 0;
             foreach (var bp in _all) if (Crafting.CanCraft(bp, inv, out _) && Crafting.MeetsSkill(bp, Player?.Skills) && Crafting.HasStations(bp, _stationTags)) canNow++;
-            _header.Text = $"CRAFTING   ·   {view.Count} shown   ·   {canNow} craftable now";
+            _header.Text = _look != ItemLookup.None
+                ? $"CRAFTING   ·   {LookupLabel()}   ·   {view.Count} recipe{(view.Count == 1 ? "" : "s")}   ·   {canNow} craftable now"
+                : $"CRAFTING   ·   {view.Count} shown   ·   {canNow} craftable now";
             if (view.Count == 0)
-                _grid.AddChild(new Label { Text = "  nothing here" });
+            {
+                string none = "  nothing here";
+                if (_look != ItemLookup.None)
+                {
+                    string name = Assets.find(_lookId)?.itemName ?? "this";
+                    none = _look == ItemLookup.Uses ? $"  nothing uses {name}" : $"  {name} can't be crafted";
+                }
+                _grid.AddChild(new Label { Text = none });
+            }
             else
                 foreach (var bp in view) _grid.AddChild(Tile(bp, inv));
 
@@ -854,7 +934,10 @@ void fragment() {
             return false;
         }
 
-        public static bool MatchesForTest(BlueprintDef bp, string q) => Matches(bp, q);   // the SAME predicate the list filters on
+        public static bool MatchesForTest(BlueprintDef bp, string q) => Matches(bp, q);
+        /// <summary>Test seam: the recipes the grid is showing right now -- the SAME View() Rebuild draws from.</summary>
+        public List<BlueprintDef> DebugView() => View();
+        public string DebugHeader => _header?.Text ?? "";   // the SAME predicate the list filters on
 
         /// <summary>The crafted item's name. A Craft blueprint's OUTPUT IS ITS OWNER ITEM -- the outputs column is
         /// empty on every catalog row, so read Outputs first then fall back to the owner item.</summary>

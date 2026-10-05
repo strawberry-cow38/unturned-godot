@@ -462,6 +462,7 @@ void fragment() {
         public bool DebugQuickAction(byte page, byte x, byte y) => QuickAction(page, x, y);
         // demo/verify: advance the held-item rotation one step and report it (proves 4 states, not a toggle)
         public int DebugCycleRot() { _dragRot = (byte)((_dragRot + 1) % 4); return _dragRot; }
+        public byte DebugDragRot => _dragRot;
         // #9 seam: headless can't hold Ctrl and click, so drive the Ctrl+LMB branch (drop from own pages / take from AREA)
         // directly. Ctrl+RMB is already covered by DebugQuickAction, which is the same QuickAction the RMB branch calls.
         public bool DebugCtrlGrab(byte page, byte x, byte y) => CtrlGrab(page, x, y);
@@ -877,6 +878,15 @@ void fragment() {
                 PlayInventoryAudio();   // #4: source plays inventory audio on rotate
                 GetViewport().SetInputAsHandled();
             }
+            // U / R OVER AN ITEM (strawberry 2026-10-04): jump to the crafting menu showing what that item is USED in, or
+            // what MAKES it. After the drag-rotate branch on purpose -- carrying something, R still turns it; empty-handed
+            // over an item it looks the item up. Nothing under the cursor -> not handled, and the key goes where it went.
+            else if (!_dragging && (Keybinds.JustPressed(GameAction.ItemUses, e) || Keybinds.JustPressed(GameAction.ItemRecipes, e))
+                     && LookupHovered(Keybinds.JustPressed(GameAction.ItemUses, e) ? CraftingMenu.ItemLookup.Uses : CraftingMenu.ItemLookup.Recipes,
+                                      GetViewport().GetMousePosition()))
+            {
+                GetViewport().SetInputAsHandled();
+            }
             else if (Keybinds.IsDown(e) && _selPanel != null && Keybinds.HotbarSlot(e) is int hbNum && hbNum >= 3)
             {
                 // RMB'd an item (its selection panel is open) + a hotbar 3-10 control -> BIND it to equip this item (master).
@@ -886,6 +896,26 @@ void fragment() {
                 GetViewport().SetInputAsHandled();
             }
         }
+
+        /// <summary>The item under `global` -- a grid cell, a hand slot, or a worn clothing slot -- handed to the crafting
+        /// menu as a lookup. False when the point is over no item, so the caller leaves the key alone.</summary>
+        bool LookupHovered(CraftingMenu.ItemLookup mode, Vector2 global)
+        {
+            if (Player == null) return false;
+            ushort id = 0;
+            if (PointToCell(global, out byte page, out byte cx, out byte cy, out _, out _))
+            {
+                byte idx = Inv.items[page].getIndex(cx, cy);
+                if (idx != byte.MaxValue) id = Inv.items[page].getItem(idx).item?.id ?? 0;
+            }
+            else if (PointToClothSlot(global, out int ci)) id = _clothing[ci].worn()?.id ?? 0;
+            if (id == 0) return false;
+            CloseSelection();
+            Player.ShowCraftingLookup(mode, id);
+            return true;
+        }
+        /// <summary>Test seam: U / R as if the cursor were at `global` -- the same resolve-and-switch the key runs.</summary>
+        public bool DebugLookupAt(CraftingMenu.ItemLookup mode, Vector2 global) => LookupHovered(mode, global);
 
         bool PointToHeaderIcon(Vector2 global, out EItemType type, out Control icon)
         {
