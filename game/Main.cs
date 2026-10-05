@@ -6151,6 +6151,15 @@ namespace UnturnedGodot
                 }
                 else Log.Err($"[craftlookup] expected uses:<id> or recipes:<id>, got '{look}'");
             }
+            // UG_CRAFTSEARCH=<text> -- type a search into the crafting menu at load (a locked blueprint only shows up
+            // for a typed search, so a render of the padlock needs one).
+            var csearch = System.Environment.GetEnvironmentVariable("UG_CRAFTSEARCH");
+            if (!string.IsNullOrEmpty(csearch) && _pdPlayer?.DebugCraftMenu != null)
+            {
+                _pdPlayer.ShowMenu(MenuNavbar.Tab.Craft);
+                _pdPlayer.DebugCraftMenu.DebugSetSearch(csearch);
+                Log.Print($"[craftsearch] '{csearch}' -> {_pdPlayer.DebugCraftMenu.DebugView().Count} shown, {_pdPlayer.DebugCraftMenu.DebugPadlocks()} padlocked");
+            }
             if (_peiPlayable) PlayMapMusic();
             // WEATHER on PEI: BuildFullWorld never attached a WeatherManager, so the `weather` console command did
             // NOTHING in the real game (master 2026-08-29 "no weather manager on pei"). Attach it here on the REAL
