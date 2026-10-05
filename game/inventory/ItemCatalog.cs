@@ -19,9 +19,9 @@ namespace SDG.Unturned
             // name is loaded and then overwritten, silently, with no error anywhere. Found by diffing the TSV
             // against every Add() literal rather than by noticing in game. ⭐ If you rename an item, grep this file.
             // (385/1241 below diverge from the TSV ON PURPOSE and pre-date the gun rename -- leave them.)
-            Add(4,   "Colt AR-15",    4, 2, EItemType.GUN,      EItemRarity.RARE,      0, 0, "American assault rifle chambered in Military ammunition.", gun: "eaglefire");
-            Add(363, "Colt Canada C7A2", 4, 2, EItemType.GUN,      EItemRarity.EPIC,      0, 0, "Canadian assault rifle chambered in Military ammunition.", gun: "maplestrike");
-            Add(6,   "Military Magazine", 2, 1, EItemType.MAGAZINE, EItemRarity.UNCOMMON, 0, 0, "Standard STANAG magazine for Military rifles.", magCap: 30, magCal: 1, magRound: "5.56x45mm NATO");   // the eaglefire/maplestrike mag (caliber 1); 2x1 per master (was hardcoded 1x3, overriding the catalog)
+            Add(4,   "AR-15",         4, 2, EItemType.GUN,      EItemRarity.RARE,      0, 0, "American assault rifle chambered in 5.56x45mm NATO.", gun: "eaglefire");
+            Add(363, "C7A2",          4, 2, EItemType.GUN,      EItemRarity.EPIC,      0, 0, "Canadian assault rifle chambered in 5.56x45mm NATO.", gun: "maplestrike");
+            Add(6,   "Military Magazine", 2, 1, EItemType.MAGAZINE, EItemRarity.UNCOMMON, 0, 0, "Standard STANAG magazine, 5.56x45mm NATO.", magCap: 30, magCal: 1, magRound: "5.56x45mm NATO");   // the eaglefire/maplestrike mag (caliber 1); 2x1 per master (was hardcoded 1x3, overriding the catalog)
             // .300 BLK in a STANAG body: same group 1, so it physically seats in every group-1 rifle, but a different
             // round. This pair is the whole reason magRound exists -- with only one STANAG mag the flag has a single
             // value and can never be wrong, which is not a test of anything.
