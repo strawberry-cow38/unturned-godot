@@ -355,7 +355,18 @@ namespace UnturnedGodot
                 else if (arg == "--terrain") terrain = true;     // load a real map's Landscape heightmap terrain (PEI Tile_0_0)
                 else if (arg == "--craftmenu") craftmenu = true; // open the CraftingMenu (browsable recipe index) over a stocked bag
                 else if (arg == "--stationtest") { stationtest = true; _shotRequested = shot; }   // line up all 9 crafting-station deployables to eyeball the extracted models
-                else if (arg == "--objects") objects = true;     // place PEI's real Level/Objects.dat objects (fences/props/rocks) on the terrain
+                else if (arg == "--objects")
+                {
+                    objects = true;
+                    // ⚠ AERIAL BUILDS NO FOLIAGE BY DEFAULT -- roads/foliage/trees are skipped unless
+                    // AerialRoadsFoliageTrees is set, and the only thing that sets it (--bakemap) then skips
+                    // foliage anyway. So "--objects" renders a world with NO GRASS IN IT, which is a fine map
+                    // picture and a trap for anyone verifying a FOLIAGE change: the scene has nothing to show and
+                    // the render looks like the change did nothing. UG_AERIALFOLIAGE=1 builds it, so the aerial
+                    // camera (which takes UG_CAMPOS) can actually be pointed at grass.
+                    if (System.Environment.GetEnvironmentVariable("UG_AERIALFOLIAGE") == "1")
+                    { WorldBuilder.AerialRoadsFoliageTrees = true; WorldBuilder.AerialSkipFoliage = false; }
+                }     // place PEI's real Level/Objects.dat objects (fences/props/rocks) on the terrain
                 // TREE IMPOSTORS OFF FOR THE BAKE. The billboards are added ASYNCHRONOUSLY, after the world is
                 // ready -- which is after BakeMapTick has already stripped the distance culls -- so they keep
                 // their VisibilityRangeBegin and switch ON for a camera 400 m up, drawing a camera-facing quad

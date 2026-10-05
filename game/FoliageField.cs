@@ -165,6 +165,26 @@ namespace UnturnedGodot
             {
                 if (fcOv <= 0f) skipFoliage = true; else CullRange = fcOv;
             }
+            // ⭐ The shader erodes blades over the last stretch BEFORE this same distance, so the hard cull below
+            // removes an instance that is already invisible. Pushed from the one number, every load, so the
+            // UG_FOLIAGECULL override cannot leave the fade pointing somewhere else.
+            // ⚠ UG_FOLIAGEFADE=0 leaves the globals at 0 = NO fade, i.e. the old hard per-cell pop. That is the
+            // CONTROL: without it the only way to see what this changed is to remember what it looked like, and a
+            // visual fix with no before is a claim rather than a measurement.
+            // UG_FOLIAGEFADE: "0" disables the fade (the A/B control); a positive NUMBER forces the fade END to
+            // that distance, which is how the wiring gets calibrated -- set it to 30 m and every blade must
+            // vanish. A knob that can only be on or off cannot tell "the fade is subtle" from "the global never
+            // reached the shader", and those look identical in a screenshot.
+            var _ff = System.Environment.GetEnvironmentVariable("UG_FOLIAGEFADE");
+            if (_ff != "0")
+            {
+                float fadeEnd = float.TryParse(_ff, System.Globalization.NumberStyles.Float,
+                                               System.Globalization.CultureInfo.InvariantCulture, out float fv) && fv > 0f
+                              ? fv : CullRange;
+                GrassDisplacers.SetFadeRange(fadeEnd);
+                Log.Print($"[foliage] fade {fadeEnd * 0.75f:0}..{fadeEnd:0} m (cull {CullRange:0} m)");
+            }
+            else Log.Print($"[foliage] fade OFF (cull {CullRange:0} m) -- UG_FOLIAGEFADE=0");
             var byCell = new System.Collections.Generic.Dictionary<(int, int), System.Collections.Generic.List<Transform3D>>();
             var manualByCell = new System.Collections.Generic.Dictionary<(int, int), System.Collections.Generic.List<bool>>();
             for (int i = 0; i < count; i++)
