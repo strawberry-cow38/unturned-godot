@@ -3,59 +3,86 @@ using SDG.Unturned;
 
 namespace UnturnedSim.Tests
 {
-    /// <summary>A gun can feed from more than one magazine caliber GROUP.
+    /// <summary>Whether a gun feeds from a magazine is TWO independent questions, and both have to be asked.
     ///
-    /// master 2026-10-05: "make the m249 take stanag magazines as well as its own box mags".
+    /// master 2026-10-05: "or just verify mag TYPE + caliber separately" -> "a flag on the mag and a flag on the
+    /// gun too". So the rule is:
+    ///   1. the MAGWELL  -- the caliber GROUP, exact: your own magazine, always;
+    ///   2. the PATTERN + CARTRIDGE -- a standard-pattern body, in a gun that takes standard bodies, loaded with
+    ///      the cartridge this gun chambers.
     ///
-    /// ⭐ THIS IS A PORT, NOT AN INVENTION. Retail's ItemGunAsset has carried `magazineCalibers` as an ARRAY all
-    /// along -- parsed from `Magazine_Calibers` / `Magazine_Caliber_N`, falling back to a one-element array
-    /// holding plain `Caliber` -- and UseableGun.cs:2865 accepts on an INTERSECTION of the gun's groups with the
-    /// magazine's. The port only had the scalar half, so one gun could feed from exactly one group and there was
-    /// no way to say what master asked for.
-    ///
-    /// The fallback is the load-bearing half of the design: a gun whose set was never populated must behave
-    /// EXACTLY as it did before, or this change quietly re-decides what every other gun in the game accepts.</summary>
+    /// ⭐ WHY A FLAG BEATS THE CALIBER-GROUP LIST IT REPLACED. The group number was doing two jobs: the Augewehr
+    /// sits in group 201 *while firing 5.56* purely so its magwell can differ from its cartridge -- the group was
+    /// secretly encoding "proprietary". Saying that out loud leaves the group meaning only "which magwell", and
+    /// the M249 needs no special entry: it is simply a gun that takes standard bodies and also has its own box.</summary>
     [TestFixture]
     public class MagazineCaliberSetTests
     {
-        const int Stanag = 1, Saw = 12, Other = 2;
+        const string Nato556 = "5.56x45mm NATO", Blk300 = ".300 AAC Blackout", Nato762 = "7.62x51mm NATO";
+        const int StanagGroup = 1, SawGroup = 12, AugGroup = 201;
 
-        static ItemAsset Gun(int caliber, int[] set = null)
-            => new ItemAsset { id = 9990, itemName = "Test Gun", type = EItemType.GUN, gunCaliber = caliber, gunMagazineCalibers = set };
+        static ItemAsset Gun(int group, string cartridge, bool takesStandard) => new ItemAsset
+        { id = 9990, itemName = "Test Gun", type = EItemType.GUN, gunCaliber = group, gunCaliberName = cartridge, gunTakesStandardMags = takesStandard };
+
+        static ItemAsset Mag(int group, string cartridge, bool standard) => new ItemAsset
+        { id = 9991, itemName = "Test Mag", type = EItemType.MAGAZINE, magCapacity = 30, magCaliber = group, magRound = cartridge, magStandardPattern = standard };
 
         [Test]
-        public void a_gun_with_no_set_keeps_the_old_single_caliber_rule()
+        public void your_own_magwell_always_fits_even_when_proprietary()
         {
-            // ⚠ THE REGRESSION GUARD. Most guns will never declare a set, and if an unpopulated array stopped
-            // meaning "just my own caliber" every one of them would change what it accepts at once.
-            var g = Gun(Stanag);
-            Assert.That(g.AcceptsMagazineCaliber(Stanag), Is.True, "its own group still fits");
-            Assert.That(g.AcceptsMagazineCaliber(Saw), Is.False, "and nothing else does");
-
-            var empty = Gun(Stanag, new int[0]);
-            Assert.That(empty.AcceptsMagazineCaliber(Stanag), Is.True, "an EMPTY set is treated as unpopulated, not as 'accepts nothing'");
-            Assert.That(empty.AcceptsMagazineCaliber(Saw), Is.False);
+            var aug = Gun(AugGroup, Nato556, takesStandard: false);
+            Assert.That(aug.AcceptsMagazine(Mag(AugGroup, Nato556, standard: false)), Is.True,
+                        "a gun must always take its own magazine, flags or not");
         }
 
         [Test]
-        public void a_gun_with_two_groups_accepts_both_and_only_those()
+        public void the_m249_shape_takes_a_standard_body_in_its_own_cartridge()
         {
-            var saw = Gun(Saw, new[] { Saw, Stanag });
-            Assert.That(saw.AcceptsMagazineCaliber(Saw), Is.True, "its own box magazine");
-            Assert.That(saw.AcceptsMagazineCaliber(Stanag), Is.True, "...and STANAG");
-            // The control that stops this being "accepts anything": a third group must still be refused.
-            Assert.That(saw.AcceptsMagazineCaliber(Other), Is.False, "a group it was never given must still be refused");
+            var saw = Gun(SawGroup, Nato556, takesStandard: true);
+            Assert.That(saw.AcceptsMagazine(Mag(SawGroup, Nato556, standard: false)), Is.True, "its own 200-round box");
+            Assert.That(saw.AcceptsMagazine(Mag(StanagGroup, Nato556, standard: true)), Is.True, "...and a STANAG body");
         }
 
         [Test]
-        public void the_extra_group_does_not_leak_to_other_guns()
+        public void a_standard_body_in_the_wrong_cartridge_is_still_refused()
         {
-            // The divergence is per GUN ASSET, not a global "group 12 and group 1 are now interchangeable".
-            // A STANAG-fed rifle must NOT gain the M249's box magazine as a side effect.
-            var rifle = Gun(Stanag, new[] { Stanag });
-            Assert.That(rifle.AcceptsMagazineCaliber(Stanag), Is.True);
-            Assert.That(rifle.AcceptsMagazineCaliber(Saw), Is.False,
-                        "letting the M249 take STANAG must not let every STANAG rifle take a 200-round box");
+            // ⭐ THE CONTROL THAT STOPS CLAUSE 2 BEING "ANY STANDARD MAG FITS". STANAG-pattern bodies genuinely
+            // exist in more than one cartridge -- the .300 Blackout magazine is one -- so dropping the cartridge
+            // test would feed subsonic .300 into a 5.56 belt-fed and look perfectly fine doing it.
+            var saw = Gun(SawGroup, Nato556, takesStandard: true);
+            Assert.That(saw.AcceptsMagazine(Mag(StanagGroup, Blk300, standard: true)), Is.False,
+                        "a STANAG-pattern .300 BLK magazine is the right body and the WRONG round");
+            Assert.That(saw.AcceptsMagazine(Mag(StanagGroup, Nato762, standard: true)), Is.False);
+        }
+
+        [Test]
+        public void a_proprietary_body_does_not_leak_to_guns_that_take_standard()
+        {
+            // The M249's box must not become loadable by every 5.56 rifle just because they take standard mags.
+            var rifle = Gun(StanagGroup, Nato556, takesStandard: true);
+            Assert.That(rifle.AcceptsMagazine(Mag(StanagGroup, Nato556, standard: true)), Is.True, "control: STANAG still fits it");
+            Assert.That(rifle.AcceptsMagazine(Mag(SawGroup, Nato556, standard: false)), Is.False,
+                        "the 200-round box is proprietary -- same cartridge is not enough");
+        }
+
+        [Test]
+        public void a_proprietary_gun_still_refuses_standard_magazines()
+        {
+            // The AUG/G36/FAMAS case, which a cartridge-only rule would have broken: same round, must not fit.
+            var aug = Gun(AugGroup, Nato556, takesStandard: false);
+            Assert.That(aug.AcceptsMagazine(Mag(StanagGroup, Nato556, standard: true)), Is.False,
+                        "\"Does not interchange with STANAG\" is a property of the GUN, and it has to survive this");
+        }
+
+        [Test]
+        public void a_gun_with_no_flags_behaves_exactly_as_before()
+        {
+            // ⚠ THE REGRESSION GUARD. Most guns will never set either flag; if an unset flag stopped meaning the
+            // old single-group rule, every gun in the catalog would re-decide what it accepts at once.
+            var plain = new ItemAsset { id = 9992, type = EItemType.GUN, gunCaliber = StanagGroup };
+            Assert.That(plain.AcceptsMagazine(Mag(StanagGroup, Nato556, standard: true)), Is.True);
+            Assert.That(plain.AcceptsMagazine(Mag(SawGroup, Nato556, standard: true)), Is.False);
+            Assert.That(plain.AcceptsMagazine(null), Is.False, "and nothing is not a magazine");
         }
     }
 }

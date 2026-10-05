@@ -61,6 +61,44 @@ namespace SDG.Unturned
             foreach (var c in gunMagazineCalibers) if (c == cal) return true;
             return false;
         }
+
+        /// <summary>The gun's own cartridge (.dat `Caliber_Name`, e.g. "5.56x45mm NATO"), kept in core so the
+        /// server can compare it with a magazine's magRound. The caliber GROUP answers which magwell; this
+        /// answers what it chambers, and they are genuinely different axes -- the Augewehr fires 5.56 out of a
+        /// magazine that does not interchange with the 5.56 STANAG.</summary>
+        public string gunCaliberName;
+
+        /// <summary>MAGAZINE: is this the STANDARD pattern for its cartridge, rather than one gun's proprietary
+        /// box? Default FALSE, deliberately: a proprietary magazine is the common case in this catalog and the
+        /// standard ones are the short list, so the safe default is "mine alone". Getting this backwards would
+        /// quietly let every rifle load the M249's 200-round box.</summary>
+        public bool magStandardPattern;
+
+        /// <summary>GUN: does this gun's magwell take the standard pattern for its cartridge? Derived from its
+        /// OWN magazine (a gun whose own magazine is standard obviously takes standard), with one deliberate
+        /// override -- see ItemCatalog.</summary>
+        public bool gunTakesStandardMags;
+
+        /// <summary>⭐ THE ONE RULE: will this gun feed from this magazine? Two independent axes, which is how
+        /// retail splits it and what master asked for (2026-10-05, "a flag on the mag and a flag on the gun too"):
+        ///
+        ///   1. the MAGWELL -- the caliber GROUP, exact (your own magazine, always);
+        ///   2. the PATTERN + CARTRIDGE -- a standard-pattern magazine, in a gun that takes standard patterns,
+        ///      loaded with the cartridge this gun actually chambers.
+        ///
+        /// ⚠ THE CARTRIDGE TEST IS NOT OPTIONAL in clause 2. Without it "standard pattern" alone would feed a
+        /// 7.62 magazine into a 5.56 rifle, since STANAG-pattern bodies exist in both.
+        ///
+        /// Encoding proprietariness as a FLAG rather than as a group number is what lets the M249 take STANAG
+        /// without a per-gun list of caliber groups: it is simply a gun that takes standard patterns and happens
+        /// to also have its own box.</summary>
+        public bool AcceptsMagazine(ItemAsset mag)
+        {
+            if (mag == null || !mag.IsMagazine) return false;
+            if (AcceptsMagazineCaliber(mag.magCaliber)) return true;                      // its own magwell
+            if (!mag.magStandardPattern || !gunTakesStandardMags) return false;           // proprietary either side -> no
+            return !string.IsNullOrEmpty(gunCaliberName) && mag.magRound == gunCaliberName;   // ...and it must be the right cartridge
+        }
         public string meleeName;       // for a MELEE weapon: the content folder name (knife_military|sledgehammer|...) to hold on Equip
         // ItemBagAsset: the storage grid a worn bag/shirt/pants/vest provides (0,0 = none)
         public byte width;

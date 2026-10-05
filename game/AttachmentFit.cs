@@ -56,16 +56,6 @@ namespace UnturnedGodot
             { 7, new[] { "5.56x45mm NATO" } },
         };
 
-        /// <summary>Will a gun feed from a magazine of group `magCaliber`? The SET when the caller knows it
-        /// (a gun may feed from more than one group -- the M249 takes STANAG as well as its own box mag), else
-        /// the plain equality this has always used.</summary>
-        static bool AcceptsMag(int magCaliber, int gunCaliber, int[] gunMagCalibers)
-        {
-            if (gunMagCalibers == null || gunMagCalibers.Length == 0) return magCaliber == gunCaliber;
-            foreach (var c in gunMagCalibers) if (c == magCaliber) return true;
-            return false;
-        }
-
         /// <summary>Does `a` fit `slot` on a gun of `gunCaliber`? Pure, engine-free, and the single place the rule
         /// lives -- the menu asks this rather than re-deriving it per button.</summary>
         /// <summary>⚠ NO CARTRIDGE MEANS "UNKNOWN", AND UNKNOWN IS A REFUSAL, not a waiver. A restricted
@@ -85,10 +75,11 @@ namespace UnturnedGodot
         public static bool Fits(ItemAsset a, string slot, int gunCaliber, string gunCaliberName)
             => Fits(a, slot, gunCaliber, gunCaliberName, null);
 
-        /// <summary>As above, plus the gun's full set of accepted magazine caliber GROUPS (ItemAsset
-        /// gunMagazineCalibers -- retail's ItemGunAsset.magazineCalibers). null keeps the old single-caliber
-        /// equality, so every caller that has not been given the set behaves exactly as before.</summary>
-        public static bool Fits(ItemAsset a, string slot, int gunCaliber, string gunCaliberName, int[] gunMagCalibers)
+        /// <summary>As above, plus the GUN'S OWN ASSET, which is what actually knows whether a magazine fits:
+        /// its magwell groups, whether it takes standard-pattern bodies, and what cartridge it chambers
+        /// (ItemAsset.AcceptsMagazine). null keeps the old single-caliber equality, so every caller that has not
+        /// been given the gun behaves exactly as before.</summary>
+        public static bool Fits(ItemAsset a, string slot, int gunCaliber, string gunCaliberName, ItemAsset gunAsset)
         {
             if (a == null) return false;
             if (a.type != TypeFor(slot)) return false;
@@ -102,7 +93,8 @@ namespace UnturnedGodot
             // A MAGAZINE carries its caliber directly (magCaliber, already extracted) and must match exactly --
             // this is the same test FindBestMag uses, kept identical on purpose so the menu and the reload agree
             // about what fits. A mismatch here would let you attach a magazine the gun then refuses to reload from.
-            if (a.type == EItemType.MAGAZINE) return a.IsMagazine && AcceptsMag(a.magCaliber, gunCaliber, gunMagCalibers);
+            if (a.type == EItemType.MAGAZINE)
+                return gunAsset != null ? gunAsset.AcceptsMagazine(a) : (a.IsMagazine && a.magCaliber == gunCaliber);
             if (!Calibers.TryGetValue(a.id, out var cals) || cals == null || cals.Length == 0) return true;   // universal
             foreach (var c in cals) if (c == gunCaliber) return true;
             return false;
@@ -117,7 +109,7 @@ namespace UnturnedGodot
         /// a choice they cannot make, and consuming "any one of that id" would let them click the full one and get
         /// the empty one.</summary>
         public static System.Collections.Generic.List<(ItemAsset Asset, Item Item, byte Page, byte Index)> InBagInstances(
-            PlayerInventory inv, string slot, int gunCaliber, string gunCaliberName = null, int[] gunMagCalibers = null)
+            PlayerInventory inv, string slot, int gunCaliber, string gunCaliberName = null, ItemAsset gunAsset = null)
         {
             var outp = new System.Collections.Generic.List<(ItemAsset, Item, byte, byte)>();
             if (inv == null) return outp;
@@ -130,7 +122,7 @@ namespace UnturnedGodot
                     var jar = pg.getItem(i);
                     if (jar?.item == null) continue;
                     var a = Assets.find(jar.item.id);
-                    if (!Fits(a, slot, gunCaliber, gunCaliberName, gunMagCalibers)) continue;
+                    if (!Fits(a, slot, gunCaliber, gunCaliberName, gunAsset)) continue;
                     outp.Add((a, jar.item, b, i));
                 }
             }
@@ -143,7 +135,7 @@ namespace UnturnedGodot
         /// Scans the same page range FindBestMag does -- OWNPAGES excludes the external container pages, so a sight
         /// sewn into a shirt is not offered.</summary>
         public static System.Collections.Generic.List<(ItemAsset Asset, int Count)> InBag(
-            PlayerInventory inv, string slot, int gunCaliber, string gunCaliberName = null, int[] gunMagCalibers = null)
+            PlayerInventory inv, string slot, int gunCaliber, string gunCaliberName = null, ItemAsset gunAsset = null)
         {
             var outp = new System.Collections.Generic.List<(ItemAsset, int)>();
             if (inv == null) return outp;
@@ -158,7 +150,7 @@ namespace UnturnedGodot
                     var jar = pg.getItem(i);
                     if (jar?.item == null) continue;
                     var a = Assets.find(jar.item.id);
-                    if (!Fits(a, slot, gunCaliber, gunCaliberName, gunMagCalibers)) continue;
+                    if (!Fits(a, slot, gunCaliber, gunCaliberName, gunAsset)) continue;
                     if (seen.TryGetValue(a.id, out var n)) seen[a.id] = n + 1;
                     else { seen[a.id] = 1; order.Add(a.id); }
                 }

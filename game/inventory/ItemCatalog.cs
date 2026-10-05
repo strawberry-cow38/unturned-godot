@@ -668,6 +668,7 @@ namespace SDG.Unturned
                     // Magazine_Caliber_N, else a one-element array holding plain Caliber). Parsed even though no
                     // shipped .dat declares the multi form yet, so a re-rip that gains one is picked up with no
                     // code change -- the same reason the movement multiplier reads from the .dat rather than a table.
+                    a.gunCaliberName = d.GetString("Caliber_Name");   // the CARTRIDGE, the other half of the fit rule -- see ItemAsset.AcceptsMagazine
                     int mcn = d.ParseInt32("Magazine_Calibers", 0);
                     if (mcn > 0)
                     {
@@ -689,7 +690,7 @@ namespace SDG.Unturned
                 }
                 catch { /* skip a malformed .dat */ }
             }
-            WireExtraMagazineCalibers();
+            WireMagazinePatterns();
             UnturnedGodot.Log.Print($"[items] wired {n} guns for in-game equip (from content/*.dat + _gun.txt)");
             // ⭐ PUBLISHED, NOT ASSUMED. A speed penalty is invisible until you happen to carry the gun and happen
             // to notice, which is exactly how the retail skill port ended up with ten skills wired to nothing --
@@ -703,45 +704,76 @@ namespace SDG.Unturned
                 GD.PushWarning($"[items] {noVisual.Count} ported gun(s) have no guns_visual.tsv row and will refuse to equip: {string.Join(", ", noVisual)}");
         }
 
-        /// <summary>Guns that feed from MORE caliber groups than their own .dat declares. master 2026-10-05:
-        /// "make the m249 take stanag magazines as well as its own box mags".
+        /// <summary>Which magazines are the STANDARD pattern for their cartridge, and which guns have a magwell
+        /// that takes one. master 2026-10-05: "a flag on the mag and a flag on the gun too".
         ///
-        /// ⭐ A DELIBERATE DIVERGENCE, SO IT LIVES IN CODE, NOT IN THE RIPPED .dat. Retail's dragonfang.dat says
-        /// only `Caliber 12`; editing that file would express master's call in a place a re-rip silently reverts.
-        /// The hand-written magazine splits above (the AUG 201, G36 202, SCAR-H 203 proprietary groups) are kept
-        /// in code for the same reason, and DeriveMagazinesFromGuns' own comment notes that deriving PRESERVES
-        /// those rather than flattening them.
+        /// ⭐ THIS REPLACED A PER-GUN LIST OF CALIBER GROUPS, and it is a better model for master's own reason:
+        /// the group number was doing two jobs at once. The Augewehr sits in group 201 *while firing 5.56* purely
+        /// so its magwell can differ from its cartridge -- i.e. the group was secretly encoding "proprietary".
+        /// Saying that out loud as a flag leaves the group meaning only "which magwell", and the M249 then needs
+        /// no special caliber entry at all: it is just a gun that takes standard patterns and also has its own box.
         ///
-        /// ⭐ AND IT IS NOT A STRETCH: the M249's own .dat already reads `Caliber_Name "5.56x45mm NATO"` -- the
-        /// same cartridge the STANAG magazine (item 6) is loaded with. The gun was never chambered differently;
-        /// it simply sat in its own caliber GROUP because its box mag is proprietary. Real M249s take STANAG.
-        ///
-        /// ⚠ KEYED BY CONTENT NAME, NOT BY CALIBER. Caliber 12 happens to be unique to the dragonfang today
-        /// (measured: of the ported guns, 1 is shared by seven and 15 by five, but 12 by one), so a rule written
-        /// as "group 12 also accepts group 1" would work right now and silently enrol the next gun that takes
-        /// caliber 12. Retail models this per GUN ASSET and so does this.</summary>
-        static readonly System.Collections.Generic.Dictionary<string, int[]> ExtraMagazineCalibers = new()
+        /// ⚠ STANDARD IS THE SHORT LIST, NOT THE DEFAULT. Nearly every magazine in this catalog is one gun's own,
+        /// so magStandardPattern defaults false and only the genuinely shared bodies are named here. Defaulting
+        /// the other way would hand every rifle the M249's 200-round box the moment it matched on cartridge.</summary>
+        static readonly ushort[] StandardPatternMags =
         {
-            ["dragonfang"] = new[] { 1 },   // M249 SAW -- STANAG (the Military Magazine, caliber 1) on top of its own 200-round box
+            6,     // Military Magazine -- the STANAG body, 5.56x45mm NATO
+            9142,  // .300 Blackout Magazine -- STANAG-pattern body, different cartridge (which clause 2's cartridge test is what keeps apart)
         };
 
-        static void WireExtraMagazineCalibers()
+        /// <summary>Guns whose magwell takes the standard pattern even though their OWN magazine does not.
+        ///
+        /// ⭐ ONE ENTRY, AND IT IS THE WHOLE FEATURE master asked for. Every other gun's answer is DERIVED below
+        /// from its own magazine -- a gun whose own magazine is standard obviously takes standard -- so this list
+        /// holds only the genuine exceptions: a proprietary-fed gun that accepts standard magazines anyway.
+        ///
+        /// The M249's own .dat already reads Caliber_Name "5.56x45mm NATO", the same cartridge the STANAG magazine
+        /// carries; it sat apart only because its 200-round box is proprietary. Real M249s take STANAG.</summary>
+        static readonly string[] GunsTakingStandardMags = { "dragonfang" };   // M249 SAW
+
+        static void WireMagazinePatterns()
         {
-            foreach (var kv in ExtraMagazineCalibers)
+            foreach (var id in StandardPatternMags)
             {
-                string datPath = Godot.ProjectSettings.GlobalizePath($"res://content/{kv.Key}.dat");
-                if (!System.IO.File.Exists(datPath)) { GD.PushWarning($"[items] {kv.Key} has no .dat -- its extra magazine calibers were NOT applied"); continue; }
-                ushort id;
-                try { if (!ushort.TryParse(new DatParser().Parse(System.IO.File.ReadAllText(datPath)).GetString("ID"), out id)) continue; }
-                catch { continue; }
-                var a = Assets.find(id);
-                if (a == null) { GD.PushWarning($"[items] {kv.Key} ({id}) is not in the catalog -- extra magazine calibers NOT applied"); continue; }
-                var set = new System.Collections.Generic.List<int>(a.gunMagazineCalibers ?? new[] { a.gunCaliber });
-                foreach (var c in kv.Value) if (!set.Contains(c)) set.Add(c);
-                a.gunMagazineCalibers = set.ToArray();
-                // ⭐ PUBLISHED: a gun that silently stops accepting a magazine looks exactly like a gun that never did.
-                UnturnedGodot.Log.Print($"[items] {a.itemName} feeds from caliber groups [{string.Join(",", a.gunMagazineCalibers)}]");
+                var m = Assets.find(id);
+                if (m == null) { GD.PushWarning($"[items] standard-pattern magazine {id} is not in the catalog"); continue; }
+                m.magStandardPattern = true;
             }
+
+            // DERIVED, not listed: a gun whose own magazine is a standard body takes standard bodies. Reading it
+            // off the gun's own .dat Magazine means a gun added later gets the right answer without being added here.
+            string dir = Godot.ProjectSettings.GlobalizePath("res://content/");
+            if (!System.IO.Directory.Exists(dir)) return;
+            int derived = 0;
+            var overrides = new System.Collections.Generic.HashSet<string>(GunsTakingStandardMags);
+            var exceptions = new System.Collections.Generic.List<string>();
+            var seenExceptions = new System.Collections.Generic.HashSet<string>();
+            foreach (var dat in System.IO.Directory.GetFiles(dir, "*.dat"))
+            {
+                string name = System.IO.Path.GetFileNameWithoutExtension(dat);
+                if (!System.IO.File.Exists(dir + name + "_gun.txt")) continue;
+                UnturnedGodot.GunDef g;
+                try { g = UnturnedGodot.GunDef.FromDatText(System.IO.File.ReadAllText(dat)); } catch { continue; }
+                if (g == null || !ushort.TryParse(g.Id, out var gid)) continue;   // GunDef.Id is the .dat's raw ID string
+                var gun = Assets.find(gid);
+                if (gun == null) continue;
+                var own = g.MagazineId > 0 ? Assets.find((ushort)g.MagazineId) : null;
+                bool byOwnMag = own != null && own.magStandardPattern;
+                bool byException = overrides.Contains(name);
+                gun.gunTakesStandardMags = byOwnMag || byException;
+                if (gun.gunTakesStandardMags) derived++;
+                if (byException) exceptions.Add($"{gun.itemName} ({gun.gunCaliberName})" + (byOwnMag ? " [already standard-fed -- exception is redundant]" : ""));
+                if (byException) seenExceptions.Add(name);
+            }
+            // ⭐ PUBLISHED, AND AN UNAPPLIED EXCEPTION IS SHOUTED ABOUT. A gun that silently stops taking a
+            // magazine looks exactly like one that never did, and a typo'd name in GunsTakingStandardMags would
+            // otherwise be a feature that simply does not happen with nothing in the log to say so.
+            foreach (var n in GunsTakingStandardMags)
+                if (!seenExceptions.Contains(n))
+                    GD.PushWarning($"[items] '{n}' is listed in GunsTakingStandardMags but no such ported gun was found -- it does NOT take standard magazines");
+            UnturnedGodot.Log.Print($"[items] {derived} guns take standard-pattern magazines"
+                                    + (exceptions.Count > 0 ? $"; by exception: {string.Join(", ", exceptions)}" : ""));
         }
 
         /// <summary>The walk-speed scale for a heavy weapon whose .dat does NOT declare one, by content name.
