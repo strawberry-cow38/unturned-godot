@@ -15,7 +15,7 @@
 17	Military Drum	Magazine	Epic	2	2	Low caliber military grade drum. Designed to fit 100 rounds.	87247d4bb3c548a1b34424bafa11e74a
 18	C14 Timberwolf	Gun	Legendary	5	2	Canadian sniper rifle chambered in .338 Lapua Magnum.	8550c31ea94c4bc5a7d30078c40012c0
 19	C14 Timberwolf Iron Sights	Sight	Common	1	1	Rail mounted iron sights.	99a5b54099cb4b2dbd1c24246526f85e
-20	C14 Timberwolf Magazine	Magazine	Legendary	1	1	High caliber military grade <color=legendary>Timberwolf</color> magazine. Designed to fit 6 rounds.	c8f1dd17cb5243278cc5d724192756b1
+20	C14 Timberwolf Magazine	Magazine	Legendary	1	1	High caliber military grade <color=legendary>C14 Timberwolf</color> magazine. Designed to fit 6 rounds.	c8f1dd17cb5243278cc5d724192756b1
 21	8x Scope	Sight	Rare	2	1	Rail mounted 8x zoom scope.	98f79d346731401ca9bb33746479d728
 22	Cross Scope	Sight	Uncommon	2	1	Rail mounted optic with electronic aiming cross.	afd4eedf8d09478db63733cd1d9d83a7
 23	Gold Tuxedo Bottom	Pants	Common	2	2	Premium tuxedo woven from the finest fabrics.  When equipped this applies the cosmetic <color=#d2bf22>Gold Tuxedo Bottom</color> to your character in-game.	f60c57dc2ca24d119dbc033fb653a9ff
@@ -93,22 +93,22 @@
 95	Bandage	Medical	Uncommon	1	1	Medium quality cloth for stopping bleeding, and recovering.	e0503457d87b4230bfa78350c79d16ec
 96	Splint	Medical	Uncommon	1	2	Brace designed to set a bone after fracturing.	b2ad25fcad7a4f109e6dcc76a4d285de
 97	M1911	Gun	Uncommon	2	2	American pistol chambered in .45 ACP.	7d6c442450c3419aa73405930919d067
-98	M1911 Magazine	Magazine	Uncommon	1	1	Low caliber civilian grade <color=uncommon>1911</color> magazine. Designed to fit 7 rounds.	d65116922b5f4a21b009e076d98ab94b
+98	M1911 Magazine	Magazine	Uncommon	1	1	Low caliber civilian grade <color=uncommon>M1911</color> magazine. Designed to fit 7 rounds.	d65116922b5f4a21b009e076d98ab94b
 99	Glock 17	Gun	Rare	2	2	Austrian pistol chambered in 9x19mm Parabellum.	2fa5551b5148491eb30b686f40d75f9a
-100	Glock 17 Magazine	Magazine	Rare	1	1	Low caliber civilian grade <color=rare>Cobra</color> magazine. Designed to fit 20 rounds.	d7c2993ceb5b49fd9f8ef8d4195854b4
+100	Glock 17 Magazine	Magazine	Rare	1	1	Low caliber civilian grade <color=rare>Glock 17</color> magazine. Designed to fit 20 rounds.	d7c2993ceb5b49fd9f8ef8d4195854b4
 101	Mosin-Nagant	Gun	Uncommon	5	2	Russian battle rifle chambered in 7.62x54mmR.	c9e5a852b9c14206b483e629ee33ade0
 102	Mosin-Nagant Iron Sights	Sight	Common	1	1	Rail mounted iron sights.	da2bfe50b3654a7799dda42e19edd029
-103	7.62x54mmR Rounds	Magazine	Uncommon	1	1	Loose 7.62x54mmR rounds. Chambered in the <color=uncommon>Schofield</color>.	9323b74a83da45c6a213ba8f8f16d13b
+103	7.62x54mmR Rounds	Magazine	Uncommon	1	1	Loose 7.62x54mmR rounds. Chambered in the <color=uncommon>Mosin-Nagant</color>.	9323b74a83da45c6a213ba8f8f16d13b
 104	Fire Axe	Melee	Common	2	3	High power axe used by firefighters.	f779c1dfcc9e44eba9987916cc713799
 105	Baseball Bat	Melee	Common	2	3	Tool for playing America's favorite sport.	bdb0a99f009c42bf92ef8764095f4bae
 106	Hockey Stick	Melee	Common	2	3	Tool for playing Canada's favorite sport.	3920b257c1664bf3b53943867d531bfd
 107	Python	Gun	Uncommon	2	2	American revolver chambered in .44 Magnum.	92b49222958d4c6fbeca1bd00987b0fd
-108	.44 Magnum Rounds	Magazine	Uncommon	1	1	Loose .44 Magnum rounds. Chambered in the <color=uncommon>Ace</color>.	2326f2dcced64ff0b61f452b16c9754f
+108	.44 Magnum Rounds	Magazine	Uncommon	1	1	Loose .44 Magnum rounds. Chambered in the <color=uncommon>Python</color>.	2326f2dcced64ff0b61f452b16c9754f
 109	Gunsite Scout	Gun	Uncommon	5	2	Canadian hunting rifle chambered in 7.62x51mm NATO.	851bdc8130ea44bd80605d896937a5ec
 110	Gunsite Scout Iron Sights	Sight	Common	1	1	Rail mounted iron sights.	b64aadf1128c4dad919b72e15e152b25
-111	Gunsite Scout Magazine	Magazine	Uncommon	1	1	Low caliber civilian grade <color=uncommon>Hawkhound</color> magazine. Designed to fit 8 rounds.	4201dc61ec7c4a7dad1695d278c4ba77
+111	Gunsite Scout Magazine	Magazine	Uncommon	1	1	Low caliber civilian grade <color=uncommon>Gunsite Scout</color> magazine. Designed to fit 8 rounds.	4201dc61ec7c4a7dad1695d278c4ba77
 112	Mossberg 500	Gun	Rare	5	2	American shotgun chambered in 12 Gauge Shells.	2047f537c56442b5aabe535caf819bda
-113	12 Gauge Buckshot	Magazine	Rare	1	1	Civilian grade <color=rare>Bluntforce</color> shells.	8031e39dd5664b74ba0b104728413cef
+113	12 Gauge Buckshot	Magazine	Rare	1	1	Civilian grade <color=rare>Mossberg 500</color> shells.	8031e39dd5664b74ba0b104728413cef
 114	Mossberg 500 Iron Sights	Sight	Common	1	1	Rail mounted iron sights.	93dcaa530e4543e58154ce888adc1a69
 115	Raw Ameberries	Water	Common	1	1	Very suspicious looking.	77c2168e6fb5405aadb5f41b074a96e0
 116	Honey Badger	Gun	Legendary	3	2	American carbine chambered in .300 AAC Blackout. Internally suppressed.	953f584b63bb487eabafa2770be0a798
@@ -122,13 +122,13 @@
 124	AK-47 Iron Sights	Sight	Common	1	1	Rail mounted iron sights.	d95dd1456c7c45dd8f756faa2c1187ab
 125	Ranger Drum	Magazine	Epic	2	2	Low caliber ranger grade drum. Designed to fit 75 rounds.	05cd21ecaa214ee0a05ca3274c1564b1
 126	PKM	Gun	Epic	5	2	Russian machine gun chambered in 7.62x54mmR.	cde96a85b86b4ea99389a83eaa603a32
-127	PKM Box	Magazine	Epic	2	2	Low caliber ranger grade <color=epic>Nykorev</color> box. Designed to fit 200 rounds.	c327bb2356c24000adde864820167527
+127	PKM Box	Magazine	Epic	2	2	Low caliber ranger grade <color=epic>PKM</color> box. Designed to fit 200 rounds.	c327bb2356c24000adde864820167527
 128	PKM Iron Sights	Sight	Common	1	1	Rail mounted iron sights.	89399d1b92eb4669b7613368cdb18ec1
 129	Dragunov	Gun	Rare	5	2	Russian sharpshooter rifle chambered in 7.62x54mmR.	5942d0d5f7024df094eba61b4372c7ab
-130	Dragunov Magazine	Magazine	Rare	1	1	Low caliber ranger grade <color=rare>Snayperskya</color> magazine. Designed to fit 7 rounds.	dab7ab5fe1354207b8a1ab2f870bde4f
+130	Dragunov Magazine	Magazine	Rare	1	1	Low caliber ranger grade <color=rare>Dragunov</color> magazine. Designed to fit 7 rounds.	dab7ab5fe1354207b8a1ab2f870bde4f
 131	Dragunov Iron Sights	Sight	Common	1	1	Rail mounted iron sights.	9df8fe4e93354d198c2a488c5286226c
 132	M249 SAW	Gun	Epic	5	2	American machine gun chambered in 5.56x45mm NATO.	ef50b4155ded471284377c2b199d0409
-133	M249 SAW Box	Magazine	Epic	2	2	High caliber military grade <color=epic>Dragonfang</color> box. Designed to fit 150 rounds.	d745be1fee724e18bad95d69b851d191
+133	M249 SAW Box	Magazine	Epic	2	2	High caliber military grade <color=epic>M249 SAW</color> box. Designed to fit 150 rounds.	d745be1fee724e18bad95d69b851d191
 134	M249 SAW Iron Sights	Sight	Common	1	1	Rail mounted iron sights.	2000511cbadb44ab9dcf203f7e4505b0
 135	Golf Club	Melee	Common	2	3	Versatile iron used for striking golf balls.	e6d9c1f5bddf4b32b0b928e5dc5fd527
 136	Sledgehammer	Melee	Uncommon	2	3	Construction tool for heavy duty work.	11fd7b0c61e842acafb4807444855801
@@ -292,7 +292,7 @@
 295	Yellow Bedroll	Barricade	Common	2	1	Warm bed perfect for a campsite.	11cb9fadebdc4303a3646c49bde5af2b
 296	16x Scope	Sight	Epic	2	1	Rail mounted 16x zoom scope.	bfd6aab8b55f4c17bf16aa3e78a99151
 297	M82	Gun	Legendary	5	2	American sniper rifle chambered in .50 BMG.	beeeb5342e934d0ead5a3b37dbab3363
-298	M82 Magazine	Magazine	Legendary	1	1	High caliber military grade <color=legendary>Grizzly</color> magazine. Designed to fit 5 rounds.	ca724c5d0f1a472dab55c91b4fc4522e
+298	M82 Magazine	Magazine	Legendary	1	1	High caliber military grade <color=legendary>M82</color> magazine. Designed to fit 5 rounds.	ca724c5d0f1a472dab55c91b4fc4522e
 299	M82 Iron Sights	Sight	Common	1	1	Rail mounted iron sights.	4a93fdb715624bc38f099bdf6cd51fb8
 300	Shadowstalker	Gun	Legendary	5	2	Prototype railgun chambered in Rail ammunition.	5c9b2fb5a600438daa34453a95576803
 301	Rail	Magazine	Legendary	1	1	Prototype grade <color=legendary>Shadowstalker</color> rail.	c40426849b294778aeca0d74d4c0d5da
@@ -375,7 +375,7 @@
 378	Metal Door	Barricade	Epic	1	2	Metal door ideal for keeping out unwanted visitors.	8d0b21995b084db3a91bb7a75d777f75
 379	Metal Ladder	Barricade	Epic	1	2	Metal ladder ideal for keeping out unwanted visitors.	8593a19ecb7d40c1a6718fabafb83d0e
 380	MP220	Gun	Uncommon	4	2	American shotgun chambered in 20 Gauge Shells.	c5bfefd37b72416baf1941bf8253b4c6
-381	20 Gauge Buckshot	Magazine	Uncommon	1	1	Civilian grade <color=uncommon>Masterkey</color> shells.	9ca5b01e1e2d404fbed35f2645da707c
+381	20 Gauge Buckshot	Magazine	Uncommon	1	1	Civilian grade <color=uncommon>MP220</color> shells.	9ca5b01e1e2d404fbed35f2645da707c
 382	Caltrop	Trap	Uncommon	1	1	Spiky trap.	cd5e4300f6994424848392cecf72936d
 383	Maple Spikes	Trap	Uncommon	1	2	Spiky trap.	0340c4125623493698286a94bd6c8f29
 384	Birch Spikes	Trap	Common	1	2	Spiky trap.	6e5bf0b6b23e4dca866f513f7b0e12ff
@@ -478,12 +478,12 @@
 481	Maple Bottle	Refill	Common	2	2	Sizeable container of liquid.	6526d3e0324945618b2eea4ad433cafd
 482	Birch Bottle	Refill	Common	2	2	Sizeable container of liquid.	619c2420ac19420caf2a260eb3f9e9aa
 483	Pine Bottle	Refill	Common	2	2	Sizeable container of liquid.	ce5ee551b908435a9dc632617b9b8e4c
-484	10/22 Carbine	Gun	Uncommon	5	2	American target shooting rifle chambered in .22 LR.	31788694007e49cbabb3319cce5424de
-485	10/22 Carbine Magazine	Magazine	Uncommon	1	1	Low caliber civilian grade <color=uncommon>Sportshot</color> magazine. Designed to fit 10 rounds.	8f9f6fd5a66e4520a98a3f51bfd00347
-486	10/22 Carbine Iron Sights	Sight	Common	1	1	Rail mounted iron sights.	c0b94d52898c4db083b191238ece8d9b
+484	Ruger 10/22	Gun	Uncommon	5	2	American target shooting rifle chambered in .22 LR.	31788694007e49cbabb3319cce5424de
+485	Ruger 10/22 Magazine	Magazine	Uncommon	1	1	Low caliber civilian grade <color=uncommon>Ruger 10/22</color> magazine. Designed to fit 10 rounds.	8f9f6fd5a66e4520a98a3f51bfd00347
+486	Ruger 10/22 Iron Sights	Sight	Common	1	1	Rail mounted iron sights.	c0b94d52898c4db083b191238ece8d9b
 487	Makeshift Bat	Melee	Common	2	3	A wicked melee weapon.	e79bf4b498344051b59732ccc0fcf2b9
 488	Desert Eagle	Gun	Epic	2	2	American cannon chambered in .44 Magnum.	c2065f079e734db4b278f15b17998af4
-489	Desert Eagle Magazine	Magazine	Epic	1	1	High caliber military grade <color=epic>Desert Falcon</color> magazine. Designed to fit 7 rounds.	6ac91e4a73374ff4847ab5da1bf8e00c
+489	Desert Eagle Magazine	Magazine	Epic	1	1	High caliber military grade <color=epic>Desert Eagle</color> magazine. Designed to fit 7 rounds.	6ac91e4a73374ff4847ab5da1bf8e00c
 490	Chainsaw	Melee	Uncommon	3	2	Tree chewing machine of death.	0280a6fce3d6474ebdf2495d466d5e9e
 491	Gold Aviators	Glasses	Common	2	1	Premium aviators used by only the most renowned pilots.  When equipped this applies the cosmetic <color=#d2bf22>Gold Aviators</color> to your character in-game.	8de22582a81345e8b01eaa6000a50a85
 492	3D	Glasses	Common	2	1	Everything has so much more depth!  When equipped this applies the cosmetic <color=#c832fa>3D Glasses</color> to your character in-game.	cb08b9467b8c45b499c4d0dcec9188f6
@@ -986,10 +986,10 @@
 1000	Vintorez	Gun	Legendary	5	2	Russian assault rifle chambered in 9x39mm.	df1e28e1ca994095a529e640e42a2da9
 1001	Vintorez Iron Sights	Sight	Common	1	1	Rail mounted iron sights.	1192fd32a4f948689a6fb779186f81ef
 1002	Matamorez_Barrel	Barrel	Common	2	1		42573038060043e0b59caaa00d74dc0e
-1003	Vintorez Magazine	Magazine	Epic	1	1	High caliber ranger grade <color=legendary>Matamorez</color> magazine. Designed to fit 17 rounds.	0037da99dfa344559498348744d2c4d3
+1003	Vintorez Magazine	Magazine	Epic	1	1	High caliber ranger grade <color=legendary>Vintorez</color> magazine. Designed to fit 17 rounds.	0037da99dfa344559498348744d2c4d3
 1004	Kobra Sight	Sight	Uncommon	2	1	Rail mounted sight with electronic aiming crosshair.	4265422a6ec84667b3bee3e3ebdd2cb6
-1005	Vintorez Box	Magazine	Legendary	1	2	High caliber ranger grade <color=legendary>Matamorez</color> box. Designed to fit 36 rounds.	0c6ca1d63e30422b8d22482ad42ec5bb
-1006	Glock 17 Box	Magazine	Epic	1	2	Low caliber civilian grade <color=rare>Cobra</color> box. Designed to fit 40 rounds.	96faae0331094d17916d9625f72f7daf
+1005	Vintorez Box	Magazine	Legendary	1	2	High caliber ranger grade <color=legendary>Vintorez</color> box. Designed to fit 36 rounds.	0c6ca1d63e30422b8d22482ad42ec5bb
+1006	Glock 17 Box	Magazine	Epic	1	2	Low caliber civilian grade <color=rare>Glock 17</color> box. Designed to fit 40 rounds.	96faae0331094d17916d9625f72f7daf
 1007	Adaptive Chambering	Tactical	Epic	1	1	Firing chamber upgrade. Increases firerate.	9e8d092e13474ff49ab8a41c5b2fcbf5
 1008	Rangefinder	Tactical	Epic	1	1	Side mounted distance laser.	669bab19df634f859a2e61c39e428e59
 1009	Desert Beret	Hat	Uncommon	2	2	Bill's.	430dc9e872f04b49ade2602ed5b8d2f9
@@ -1003,16 +1003,16 @@
 1017	Biohazard Hood	Mask	Rare	2	2	Yeah science!	ad170d0654b149528d56316728037b90
 1018	M39 EMR	Gun	Rare	5	2	American sharpshooter rifle chambered in 7.62x51mm NATO.	c4b6a5dcf4d4498e85bb7b50135770e2
 1019	M39 EMR Iron Sights	Sight	Common	1	1	Rail mounted iron sights.	6945f3141c914688af44760752c72a12
-1020	M39 EMR Magazine	Magazine	Rare	1	1	Low caliber military grade <color=rare>Sabertooth</color> magazine. Designed to fit 10 rounds.	a878f4708069417e806fa85f2d37e8bc
+1020	M39 EMR Magazine	Magazine	Rare	1	1	Low caliber military grade <color=rare>M39 EMR</color> magazine. Designed to fit 10 rounds.	a878f4708069417e806fa85f2d37e8bc
 1021	USP .45	Gun	Rare	2	2	Italian pistol chambered in .45 ACP.	6f97c1d2b4fd4aba8f0282f369dd9758
-1022	USP .45 Magazine	Magazine	Rare	1	1	Low caliber military grade <color=rare>Avenger</color> magazine. Designed to fit 13 rounds.	b5814c8f02c5419a8f4a7434efee72df
+1022	USP .45 Magazine	Magazine	Rare	1	1	Low caliber military grade <color=rare>USP .45</color> magazine. Designed to fit 13 rounds.	b5814c8f02c5419a8f4a7434efee72df
 1023	Baton	Melee	Common	3	2	Law enforcement tool used for self defense.	0a9b3cf673bf48aaadafcaa61fa2eb98
 1024	P90	Gun	Rare	3	2	Belgian carbine chambered in 5.7x28mm.	4fe22b46f01d4e39a4649e3b187f35e6
 1025	P90 Iron Sights	Sight	Common	1	1	Rail mounted iron sights.	c9d0afd6aed94ab7a5071dbe1e86bc94
-1026	P90 Magazine	Magazine	Rare	2	1	Low caliber military grade <color=rare>Peacemaker</color> magazine. Designed to fit 50 rounds.	f7727626fb2b48db8e092091f25bd303
+1026	P90 Magazine	Magazine	Rare	2	1	Low caliber military grade <color=rare>P90</color> magazine. Designed to fit 50 rounds.	f7727626fb2b48db8e092091f25bd303
 1027	MP5	Gun	Rare	3	2	German carbine chambered in 9x19mm Parabellum.	2b063985fa464e5a996dfb28d395a7d0
 1028	MP5 Iron Sights	Sight	Common	1	1	Rail mounted iron sights.	744b63b11f674faa8f5f9bab47bb2a6f
-1029	MP5 Magazine	Magazine	Rare	1	2	Low caliber civilian grade <color=rare>Viper</color> magazine. Designed to fit 25 rounds.	75602221e0de41fea05ab0d096b08d4d
+1029	MP5 Magazine	Magazine	Rare	1	2	Low caliber civilian grade <color=rare>MP5</color> magazine. Designed to fit 25 rounds.	75602221e0de41fea05ab0d096b08d4d
 1030	Frying Pan	Melee	Common	2	3	Cooking implement, also used as a weapon by cavalry.	1a16077af9724848ade891f84bf81df8
 1031	Shovel	Melee	Common	2	3	Perfect for whacking zombies.	45bfcc70d3154232aa1020310238f799
 1032	Crowbar	Melee	Common	1	2	Construction tool for prying apart objects and fighting crabs.	f1347ad77d1a429aacf6afbcd43d33f2
@@ -1023,9 +1023,9 @@
 1037	SCAR-H	Gun	Epic	4	2	Belgian assault rifle chambered in 7.62x51mm NATO.	d98faa18572542e8943dbb80536f157e
 1038	SCAR-H Iron Sights	Sight	Common	1	1	Rail mounted iron sights.	ba841edf70bc41038e6c025c503f1c06
 1039	Makarov PMM	Gun	Uncommon	2	2	Russian pistol chambered in 9x18mm Makarov.	87d19ec2e6594117b8b0b79eb1e5bd44
-1040	Makarov PMM Magazine	Magazine	Uncommon	1	1	Civilian grade <color=uncommon>Kryzkarek</color> magazine. Designed to fit 12 rounds.	efdd36d38605415d8df8888a8c4bebef
+1040	Makarov PMM Magazine	Magazine	Uncommon	1	1	Civilian grade <color=uncommon>Makarov PMM</color> magazine. Designed to fit 12 rounds.	efdd36d38605415d8df8888a8c4bebef
 1041	Bizon-2	Gun	Rare	3	2	Russian carbine chambered in 9x18mm Makarov.	5f49e7e1f8584797a9a859d66722d19c
-1042	Bizon-2 Magazine	Magazine	Rare	2	1	Low caliber ranger grade <color=rare>Yuri</color> magazine. Designed to fit 64 rounds.	34ae9214fc364b8e98fdeafbf5ba5461
+1042	Bizon-2 Magazine	Magazine	Rare	2	1	Low caliber ranger grade <color=rare>Bizon-2</color> magazine. Designed to fit 64 rounds.	34ae9214fc364b8e98fdeafbf5ba5461
 1043	Bizon-2 Iron Sights	Sight	Common	1	1	Rail mounted iron sights.	bc56fe1e99e443f589a52789ca71d061
 1044	Civilian Nightvision	Glasses	Rare	2	1	Brightness enhancing civilian grade goggles.	8c81fbb134aa42e38b7eda8ebede5463
 1045	Pumpkin Seed	Farm	Common	1	1	Ready for planting and eating.	544aedb190e8444994910d5ee348eaf2
@@ -1344,17 +1344,17 @@
 1358	Pilot Top	Shirt	Uncommon	3	2	Airliner pilot uniform shirt.	dce4cb8f520041289111467f11e1204e
 1359	Pilot Cap	Hat	Uncommon	2	2	Airliner pilot uniform cap.	914f3fdf8a004536960970ae6ece0d65
 1360	TEC-9	Gun	Rare	2	2	Swedish pistol chambered in 9x19mm Parabellum.	853940d81e814f08999740dd41bf6003
-1361	TEC-9 Magazine	Magazine	Rare	1	1	Low caliber ranger grade <color=rare>Teklowvka</color> magazine. Designed to fit 15 rounds.	51fe7c7b30f94b42a58a3bcb429b07dd
+1361	TEC-9 Magazine	Magazine	Rare	1	1	Low caliber ranger grade <color=rare>TEC-9</color> magazine. Designed to fit 15 rounds.	51fe7c7b30f94b42a58a3bcb429b07dd
 1362	AUG	Gun	Epic	4	2	Austrian assault rifle chambered in 5.56x45mm NATO.	5e3a0ee1f2364ca9a97fa41a5d5b3dd8
 1363	AUG Scope	Sight	Epic	2	1	Rail mounted 4x zoom scope.	30155577a2994b54be220c7c187a702d
 1364	Hell's Fury	Gun	Legendary	5	3	Russian minigun chambered in 7.62x51mm NATO.	e62c7cf4a9f44fed941eb065b7f19f5c
 1365	Hell's Fury Drum	Magazine	Legendary	2	2	Low caliber ranger and military grade <color=legendary>Hell's Fury</color> drum. Designed to fit 250 rounds.	ce21da9e0870488abb18d9d6ab8d06c8
 1366	Saiga-12	Gun	Rare	4	2	Russian shotgun chambered in 12 Gauge.	40be5267368d4236ada00643b9916a14
 1367	Saiga-12 Iron Sights	Sight	Common	1	1	Rail mounted iron sights.	1120bc209f06400b98850771a4958a47
-1368	Saiga-12 Magazine	Magazine	Rare	1	1	Ranger grade <color=rare>Vonya</color> magazine. Designed to fit 7 shells.	1820a01602cf44b186f06a2e8e29aa6c
+1368	Saiga-12 Magazine	Magazine	Rare	1	1	Ranger grade <color=rare>Saiga-12</color> magazine. Designed to fit 7 shells.	1820a01602cf44b186f06a2e8e29aa6c
 1369	Uzi	Gun	Rare	3	2	Israeli carbine chambered in 9x19mm Parabellum.	b9d78d60a3aa43448174ab76e30778e8
 1370	Uzi Iron Sights	Sight	Common	1	1	Rail mounted iron sights.	e434200d0c1849ce8eafe2b42c5f0c46
-1371	Uzi Magazine	Magazine	Rare	1	2	Low caliber ranger grade <color=rare>Bulldog</color> magazine. Designed to fit 45 rounds.	23968791c0b74df298495c6f2f39725d
+1371	Uzi Magazine	Magazine	Rare	1	2	Low caliber ranger grade <color=rare>Uzi</color> magazine. Designed to fit 45 rounds.	23968791c0b74df298495c6f2f39725d
 1372	Friendly Sentry	Sentry	Epic	2	2	Covers an area by automatically peppering obviously dangerous threats with gunfire.	5a7281e9af4c435b8cb7f9f5acf05aa9
 1373	Hostile Sentry	Sentry	Epic	2	2	Covers an area by automatically peppering even slightly dangerous threats with gunfire.	8f7670d2dabc449d8f38c8cb656c6acf
 1374	Carepackage	Storage	Epic	1	1		fe71781c60314468b22c6b0642a51cd9
@@ -1364,10 +1364,10 @@
 1378	G36C Iron Sights	Sight	Common	1	1	Rail mounted iron sights.	23ef93d72a38452a8450da223efc5ddc
 1379	PPSh-41	Gun	Rare	3	2	Russian carbine chambered in 7.62x25mm Tokarev.	72fb197fed3144798a89978f15726e4c
 1380	PPSh-41 Iron Sights	Sight	Common	1	1	Rail mounted iron sights.	c5b1f3d27ce642bca6672dcbaee265e4
-1381	PPSh-41 Magazine	Magazine	Rare	2	2	Low caliber ranger grade <color=rare>Calling Card</color> magazine. Designed to fit 71 rounds.	c06e8f82af4f42f9bfa6e7d33c96fb97
+1381	PPSh-41 Magazine	Magazine	Rare	2	2	Low caliber ranger grade <color=rare>PPSh-41</color> magazine. Designed to fit 71 rounds.	c06e8f82af4f42f9bfa6e7d33c96fb97
 1382	M200 Intervention	Gun	Legendary	5	2	Russian sniper rifle chambered in .50 BMG.	01c16ecf832f436b91b60bba0e2ee943
 1383	M200 Intervention Iron Sights	Sight	Common	1	1	Rail mounted iron sights.	95a11447da97458c9d39393d755d1ce2
-1384	M200 Intervention Magazine	Magazine	Legendary	1	1	High caliber ranger grade <color=legendary>Ekho</color> magazine. Designed to fit 7 rounds.	042a65fd920d48d1839d54d8ec038bd1
+1384	M200 Intervention Magazine	Magazine	Legendary	1	1	High caliber ranger grade <color=legendary>M200 Intervention</color> magazine. Designed to fit 7 rounds.	042a65fd920d48d1839d54d8ec038bd1
 1385	Mafia Fedora	Hat	Uncommon	2	2	Mobster head embellishment.	0e8aae882cd144b598cc8800edd19e09
 1386	Mafia Tuxedo Top	Shirt	Uncommon	3	2	Mobster tuxedo, very few bloodstains.	868f9f2ca18f4b8b897ed4458f366290
 1387	Mafia Tuxedo Bottom	Pants	Uncommon	2	2	Mobster tuxedo, very few bloodstains.	6ee78588bdc04ff9a24819d93cf6bfa8
@@ -1420,7 +1420,7 @@
 1434	Raw Giant Squid	Food	Legendary	4	2	Quite slippery!	aca1f2285fd54ba99bfdeb2d4e75155b
 1435	Cooked Giant Squid	Food	Legendary	2	2	Quite slippery!	cedb2b864cc74f13a95134a30ea08359
 1436	Quadbarrel	Gun	Epic	3	2	American shotgun chambered in 12 Gauge Shells.	28bfc446b42645a9a452abe34182edbf
-1437	Quadbarrel Blueprint	Supply	Common	2	1	Guide to converting a <color=uncommon>Masterkey</color> to 12 Gauge with 4 barrels.	e91ff5483a0f43028046baef6de84a93
+1437	Quadbarrel Blueprint	Supply	Common	2	1	Guide to converting a <color=uncommon>MP220</color> to 12 Gauge with 4 barrels.	e91ff5483a0f43028046baef6de84a93
 1438	Bayonet	Tactical	Rare	3	1	Side mounted sword.	60ca549dc68e4c3e91470df6545c7ce7
 1439	Bayonet Blueprint	Supply	Common	2	1	Guide to creating a tactical <color=rare>Bayonet</color> attachable to guns.	4d6b717fd0ce44fc874d7d2e58044a03
 1440	Industrial Gas Can	Fuel	Rare	3	3	Extra large can of gasoline.	6c0962c45f874fec9373765cf8c29976
@@ -1432,7 +1432,7 @@
 1446	Earpiece	Mask	Rare	1	1	Listen to radio communications without a Walkie Talkie.	2ecf1b15a59f4125a2d55c88479529c2
 1447	Vector	Gun	Rare	3	2	American carbine chambered in .45 ACP.	12eef9a2f8124dc6abb81ffb82e9f1fe
 1448	Vector Iron Sights	Sight	Common	1	1	Rail mounted iron sights.	53e51e5c158a453a9fd1e0de47929b05
-1449	Vector Magazine	Magazine	Rare	1	2	Low caliber military grade <color=rare>Scalar</color> magazine. Designed to fit 30 rounds.	ac116a0130b94b07938dd8cc7b01485a
+1449	Vector Magazine	Magazine	Rare	1	2	Low caliber military grade <color=rare>Vector</color> magazine. Designed to fit 30 rounds.	ac116a0130b94b07938dd8cc7b01485a
 1450	Vehicle Battery	Vehicle_Repair_Tool	Uncommon	2	2	Vehicle electrical power source.	098b13be34a7411db7736b7f866ada69
 1451	Tire	Tire	Uncommon	2	2	Replacement for destroyed wheels.	5a59fbb525e6414e8b05be253e461ed5
 1452	Whole Coconut	Supply	Common	1	1	Brown drupe.	4eb2a43ed6144aedb491c2d9bdae69e1
@@ -1461,15 +1461,15 @@
 1476	Luger P08	Gun	Uncommon	2	2	German pistol chambered in 9x19mm Parabellum.	90b25d37520b4330a452e36e82a41023
 1477	MP 40	Gun	Epic	3	2	German submachine gun chambered in 9x19mm Parabellum.	b007c73f4a23448bbe2d828240eae17d
 1478	MP 40 Iron Sights	Sight	Common	1	1	Rail mounted iron sights.	4895752ce455430c84dbf574f4906773
-1479	MP 40 Magazine	Magazine	Epic	1	2	Low caliber ranger grade <color=epic>Maschinengewehr</color> magazine. Designed to fit 32 rounds.	78cb493018b8451e8ea7664434483e53
+1479	MP 40 Magazine	Magazine	Epic	1	2	Low caliber ranger grade <color=epic>MP 40</color> magazine. Designed to fit 32 rounds.	78cb493018b8451e8ea7664434483e53
 1480	Determinator	Gun	Uncommon	2	2	American revolving shotgun chambered in 12 Gauge Shells.	ac73fb1922374ef18a8e7c04d1403ba3
 1481	UMP45	Gun	Rare	3	2	German submachine gun chambered in .45 ACP.	154bce6b02f14a9c9ec26b314297a9b3
 1482	UMP45 Iron Sights	Sight	Common	1	1	Rail mounted iron sights.	ad3bb7dd36764c899eeb52644b76b5e1
-1483	UMP45 Magazine	Magazine	Rare	1	2	Low caliber military grade <color=rare>Empire</color> magazine. Designed to fit 27 rounds.	038b63ce0a5942219c4bf6a94aa4ddca
+1483	UMP45 Magazine	Magazine	Rare	1	2	Low caliber military grade <color=rare>UMP45</color> magazine. Designed to fit 27 rounds.	038b63ce0a5942219c4bf6a94aa4ddca
 1484	AA-12	Gun	Epic	4	2	American shotgun chambered in 12 Gauge.	ed305a3c33de4586a6cf29cf06a11e26
 1485	AA-12 Magazine	Magazine	Epic	2	2	Military grade <color=epic>Bane</color> magazine. Designed to fit 21 shells.	f1f45dcc34704413b451be175a4c1f1c
 1486	AA-12 Iron Sights	Sight	Common	1	1	Rail mounted iron sights.	2a5b5751c56b4b7e87601d06df8f5e46
-1487	Luger P08 Magazine	Magazine	Uncommon	1	1	Low caliber civilian grade <color=uncommon>Luger</color> magazine. Designed to fit 9 rounds.	29e816ce506b4763a5ff6f29a514ceb7
+1487	Luger P08 Magazine	Magazine	Uncommon	1	1	Low caliber civilian grade <color=uncommon>Luger P08</color> magazine. Designed to fit 9 rounds.	29e816ce506b4763a5ff6f29a514ceb7
 1488	SG 550	Gun	Rare	4	2	Swiss assault rifle chambered in 5.56x45mm NATO.	47d0992a2bf04de8a1343d4c138cb78e
 1489	SG 550 Iron Sights	Sight	Common	1	1	Rail mounted iron sights.	8a39a633dff04711ae63cddc3ad5dc99
 1490	SG 550 Magazine	Magazine	Rare	1	2	Low caliber military grade magazine. Designed to fit 20 rounds.	41bd2b68446e497caed8954aba3b8f9c
