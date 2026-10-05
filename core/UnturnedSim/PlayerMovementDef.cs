@@ -57,6 +57,16 @@ namespace SDG.Unturned
         // target. The sim runs at 50 Hz (ColliderBudget reasons about that rate too), so 8.122 is solved for 50
         // and the 60 Hz figure is recorded here rather than quietly averaged away.
         public const float JUMP = 8.122f;                // was 7.583 (itself was PlayerMovement.cs:59's 7.0)
+
+        /// <summary>How long after TOUCHING DOWN the legs refuse another jump, seconds. Master 2026-10-05: "add a
+        /// slight delay between landing and being able to jump again."
+        ///
+        /// ⚠ NOT a retail value -- retail has no landing recovery at all, so this is a deliberate divergence
+        /// rather than a port of anything, and it is named here so it is tunable in one place instead of being a
+        /// magic number inside Step. 0.2 s is a bit over the jump's own airtime floor: enough that holding the key
+        /// no longer chains hops the instant the capsule grounds, short enough that a deliberate second jump still
+        /// feels immediate. It does NOT gate anything but jumping -- walking off a landing is untouched.</summary>
+        public const float LANDING_JUMP_LOCK = 0.2f;
         // The x3 is the port-visible gravity; the RAW 9.81 is kept because the terminal-velocity clamp
         // scales THAT and not the tripled one (PlayerMovement.cs:1280 multiplies Physics.gravity.y by 2,
         // with no *3 in sight). Deriving one from the other keeps that relationship from drifting apart.

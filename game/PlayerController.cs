@@ -3192,7 +3192,50 @@ namespace UnturnedGodot
         /// and this impulse would be overwritten by the next authoritative transform. It needs a command like
         /// the respray got, which belongs in one batched wire wave with the tire work rather than its own
         /// bump -- the plan's never-bump-per-gap rule.</summary>
+        /// <summary>The jack's full use length, seconds -- the MEASURED length of its own
+        /// content/audio/items/tools_carjack_use.wav (2.02 s), used when no 1P clip resolves. The carjack has no
+        /// carry model in the rip (EquipHeldCarjack builds an EmptyHands viewmodel), same as the spraypaint and
+        /// the gas can, so the sound IS the animation and its length is the honest duration to wait.</summary>
+        const float CarjackFallbackUseSeconds = 2.02f;
+        float _jackPendingT, _jackBusyT;
+
         void TryCarjack()
+        {
+            // Already swinging: a second click is dropped, not queued. master 2026-10-05 asked for the full
+            // animation before the launch AND for no spamming, and those are the same guard.
+            if (_heldCarjackItem == null || _jackPendingT > 0f || _jackBusyT > 0f || _dead) return;
+
+            // VALIDATE BEFORE THE SWING, not only after it. Starting a 2 s wind-up at thin air and then saying
+            // "aim at a vehicle" when it finishes is worse than refusing immediately; ApplyCarjack re-tests
+            // everything anyway, because two seconds is long enough to walk away.
+            var puppet = NetCarjack != null ? NearestPuppet() as VehiclePuppet : null;
+            bool haveTarget = (puppet != null && puppet.NetId != 0) || IsInstanceValid(_focusVehicle);
+            if (!haveTarget) { Log.Print("[carjack] aim at a vehicle"); return; }
+            // The local-vehicle refusals are knowable NOW, so report them properly instead of letting the swing
+            // run and fail silently. A PUPPET cannot be tested here -- only the server knows its state.
+            if (puppet == null && IsInstanceValid(_focusVehicle))
+            {
+                if (_focusVehicle.IsWreck) { Log.Print("[carjack] that is a wreck"); return; }
+                if (!_focusVehicle.JackableNow()) { Log.Print("[carjack] it is still in the air -- let it come down"); return; }
+            }
+
+            float useLen = _viewmodel?.ConsumeUseLength() ?? 0f;
+            if (useLen <= 0.05f) useLen = CarjackFallbackUseSeconds;
+            _viewmodel?.PlayConsumeUse();
+            // The ratchet starts when the arm does, like the spraypaint plays its can at the START of the sweep.
+            Vector3 at = puppet != null ? puppet.GlobalPosition
+                       : IsInstanceValid(_focusVehicle) ? _focusVehicle.GlobalPosition : GlobalPosition;
+            GameAudio.PlayAt(this, GameAudio.Clip("items", "tools_carjack_use"), at, -3f, 6f, 40f);
+            // FULL length, not a fraction: the paint lands at 85% because that is where retail's sweep connects,
+            // and master asked for this one to finish first ("play its full animation before launching a car").
+            _jackPendingT = useLen;
+            _jackBusyT = useLen;
+            Log.Print($"[carjack] cranking -- launch in {useLen:0.00}s");
+        }
+
+        /// <summary>The jack finishes its stroke: the car actually goes up. Re-validates, because 2 s is long
+        /// enough to walk away, for somebody to get in, or for the car to be launched by someone else.</summary>
+        void ApplyCarjack()
         {
             if (_heldCarjackItem == null) return;
             // MP (v45): ASK, and ask FIRST -- the same shape the respray takes, and for a sharper reason. The
@@ -3210,10 +3253,12 @@ namespace UnturnedGodot
             bool flight = false;   // source: the FLIGHT skill boost quadruples the lift. No boost system here yet.
             if (!_focusVehicle.Carjack(flight))
             {
-                Log.Print(_focusVehicle.IsWreck ? "[carjack] that is a wreck" : "[carjack] somebody is in it");
+                // Three ways Vehicle.Carjack refuses now, so name the right one rather than guessing between two.
+                Log.Print(_focusVehicle.IsWreck ? "[carjack] that is a wreck"
+                        : !_focusVehicle.JackableNow() ? "[carjack] it is still in the air -- let it come down"
+                        : "[carjack] somebody is in it");
                 return;
             }
-            GameAudio.PlayAt(this, GameAudio.Clip("items", "tools_carjack_use"), _focusVehicle.GlobalPosition, -3f, 6f, 40f);
             Log.Print($"[carjack] jacked {_focusVehicle.DisplayName}");
         }
 
@@ -11819,6 +11864,13 @@ namespace UnturnedGodot
             if (_throwHeldDown) _throwSwingT += (float)delta;   // how far into the wind-up the button has been held
             if (_throwPendingT > 0f) { _throwPendingT -= (float)delta; if (_throwPendingT <= 0f) { _throwPendingT = 0f; ReleaseThrow(); } }   // 60 % into the swing: it leaves the hand
             if (_paintPendingT > 0f) { _paintPendingT -= (float)delta; if (_paintPendingT <= 0f) { _paintPendingT = 0f; ApplySpray(); } }     // 85 % into the sweep: the car changes colour
+            // THE JACK'S STROKE. Same shape as the spray above, with one addition: if the jack has left the hand
+            // the pending launch is DROPPED here rather than at each of the dozen places that clear the item.
+            // That is the umbrella's lesson applied -- "a reset owned by all of them is a reset one of them will
+            // eventually forget" -- and it means switching away mid-crank cannot fire a launch a second later.
+            if (_heldCarjackItem == null) { _jackPendingT = 0f; _jackBusyT = 0f; }
+            else if (_jackPendingT > 0f) { _jackPendingT -= (float)delta; if (_jackPendingT <= 0f) { _jackPendingT = 0f; ApplyCarjack(); } }
+            if (_jackBusyT > 0f) _jackBusyT = Mathf.Max(0f, _jackBusyT - (float)delta);
             TickGesture((float)delta);   // a one-shot gesture hands the body back when its clip ends
             TickArrest((float)delta);    // ...and the cuffs go on when the swing does (source: isUseable)
             TickTire((float)delta);      // ...and the wheel goes on at 75% of its own (source: isAttachable)
