@@ -29,6 +29,70 @@ namespace UnturnedGodot
         public bool RequiresStation => StationTags.Count > 0;
         public bool RequiresSkill => !string.IsNullOrEmpty(Skill) && SkillLevel > 0;
 
+        // ---- BLUEPRINT KNOWLEDGE (strawberry 2026-10-04: "certain recipes arent known by default. unlocked by either
+        // directly learning or via skill unlocks ... learned blueprints should be tracked per player") ----
+
+        /// <summary>How this recipe becomes KNOWN, from an optional 10th TSV column, pipe-separated. EMPTY = known by
+        /// everyone from the start, which is every row that existed before this column did. Otherwise the recipe is
+        /// LOCKED until one of these fires:
+        ///   skill:&lt;skill&gt;:&lt;level&gt;   learned automatically when that skill reaches the level (PlayerSkills.TryFind names)
+        ///   item:&lt;itemId&gt;           using that item (a schematic, a manual) teaches it, and the item is spent
+        ///   learn                    nothing in-world: only the admin console's `learn` grants it
+        /// The skill names are TRIGGERS, read at the moment they fire, and never what gets saved -- the saved fact is
+        /// the recipe's Key. So replacing the skill set changes which strings in here fire, and loses nobody's
+        /// knowledge.</summary>
+        public readonly List<string> Unlocks = new();
+        public bool Locked => Unlocks.Count > 0;
+
+        string _key;
+        /// <summary>The recipe's STABLE identity: what a player's knowledge is saved and replicated under. An explicit
+        /// 11th TSV column wins; otherwise it is derived from what the recipe IS (owner, operation, inputs, outputs),
+        /// never from its ROW -- a row index renumbers the moment anyone inserts a recipe above it, and every save
+        /// would then name the wrong recipe without a single error.</summary>
+        public string Key { get => _key ??= DerivedKey(); set => _key = value; }
+
+        string DerivedKey()
+        {
+            // FNV-1a over the content. Order-preserving on purpose: the same ingredients in another order is a
+            // different row in the TSV and will not be produced by accident.
+            uint h = 2166136261;
+            void Mix(string s) { foreach (char ch in s ?? "") { h ^= ch; h *= 16777619; } h ^= '|'; h *= 16777619; }
+            Mix(OwnerItemId); Mix(Operation);
+            foreach (var i in Inputs) Mix($"{i.Guid}:{i.Amount}:{(i.Consume ? 1 : 0)}");
+            Mix(">");
+            foreach (var o in Outputs) Mix($"{o.Guid}:{o.Amount}");
+            return $"bp-{OwnerItemId}-{h:x8}";
+        }
+
+        /// <summary>What a key may look like. It arrives over the wire and out of a save file, so it is checked
+        /// rather than trusted: 1-64 of [A-Za-z0-9_.:-].</summary>
+        public static bool IsValidKey(string k)
+        {
+            if (string.IsNullOrEmpty(k) || k.Length > 64) return false;
+            foreach (char c in k)
+                if (!(c is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9' or '_' or '.' or ':' or '-')) return false;
+            return true;
+        }
+
+        /// <summary>The item ids whose use teaches this recipe (its `item:` unlocks).</summary>
+        public IEnumerable<ushort> TaughtByItems()
+        {
+            foreach (var u in Unlocks)
+                if (u.StartsWith("item:", System.StringComparison.OrdinalIgnoreCase) && ushort.TryParse(u.Substring(5), out var id) && id != 0)
+                    yield return id;
+        }
+
+        /// <summary>The (skill, level) pairs that unlock this recipe (its `skill:` unlocks).</summary>
+        public IEnumerable<(string skill, int level)> SkillUnlocks()
+        {
+            foreach (var u in Unlocks)
+            {
+                if (!u.StartsWith("skill:", System.StringComparison.OrdinalIgnoreCase)) continue;
+                var p = u.Split(':');
+                if (p.Length == 3 && p[1].Length > 0 && int.TryParse(p[2], out int lv)) yield return (p[1], lv);
+            }
+        }
+
         // Parse every blueprint out of an already-parsed item .dat. ownerId = the item's numeric "ID".
         public static List<BlueprintDef> ParseAll(IDatDictionary d, string ownerId)
         {
@@ -92,6 +156,7 @@ namespace UnturnedGodot
 
         // TSV (de)serialization for the pre-extracted blueprint catalog (content/blueprints.tsv), since the port
         // bundles only a few item .dats. Layout: ownerId | operation | name | skill | skillLevel | inputs | outputs | stations
+        //   | seconds (optional) | unlocks (optional, see Unlocks) | key (optional, see Key)
         //   inputs = guid:amount:consume(1|0) pipe-sep ; outputs = guid:amount pipe-sep ; stations = guid pipe-sep
         public string ToTsv()
         {
@@ -100,8 +165,14 @@ namespace UnturnedGodot
             var outs = new List<string>();
             foreach (var o in Outputs) outs.Add($"{o.Guid}:{o.Amount}");
             string name = (Name ?? "").Replace('\t', ' ');
-            return string.Join("\t", OwnerItemId, Operation, name, Skill ?? "", SkillLevel.ToString(),
-                                string.Join("|", ins), string.Join("|", outs), string.Join("|", StationTags));
+            var cols = new List<string> { OwnerItemId, Operation, name, Skill ?? "", SkillLevel.ToString(),
+                                          string.Join("|", ins), string.Join("|", outs), string.Join("|", StationTags) };
+            // The optional tail only when it carries something, so an 8-column retail row round-trips as 8 columns.
+            if (Seconds > 0f || Locked || _key != null)
+                cols.Add(Seconds > 0f ? Seconds.ToString(System.Globalization.CultureInfo.InvariantCulture) : "");
+            if (Locked || _key != null) cols.Add(string.Join("|", Unlocks));
+            if (_key != null) cols.Add(_key);
+            return string.Join("\t", cols);
         }
 
         public static BlueprintDef FromTsv(string line)
@@ -116,6 +187,9 @@ namespace UnturnedGodot
             if (c.Length > 8 && float.TryParse(c[8], System.Globalization.NumberStyles.Float,
                                                System.Globalization.CultureInfo.InvariantCulture, out float secs) && secs > 0f)
                 bp.Seconds = secs;
+            if (c.Length > 9)
+                foreach (var u in c[9].Split('|')) { var t = u.Trim(); if (t.Length > 0) bp.Unlocks.Add(t); }
+            if (c.Length > 10 && IsValidKey(c[10].Trim())) bp._key = c[10].Trim();
             return bp;
         }
     }

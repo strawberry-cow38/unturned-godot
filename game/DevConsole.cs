@@ -60,7 +60,7 @@ namespace UnturnedGodot
         // documents that the local process-global flip only happens on the pure-direct SP path (RemoteClient == null).
         // `save` and `wipe` live entirely on the HOST (WorldSaveDriver owns the file), so they always route to
         // the server -- on a joined client and on the consuming loopback alike, which is what singleplayer is.
-        static readonly string[] ServerGatedVerbs = { "give", "throw", "xp", "skill", "teleport", "tp", "toggleglobalpower", "globalpower", "grid", "save", "wipe" };
+        static readonly string[] ServerGatedVerbs = { "give", "throw", "xp", "skill", "teleport", "tp", "toggleglobalpower", "globalpower", "grid", "save", "wipe", "learn", "learnall", "forget", "blueprints" };
         // Verbs below the arg guard that are legal with NO argument. Keep this in step when adding one, or the
         // guard silently swallows it and the verb becomes unreachable from the console.
         // save/wipe take no argument. Missing from here they are swallowed by the arg guard and read as "the
@@ -69,7 +69,7 @@ namespace UnturnedGodot
         // ⚠ A COMMAND THAT LISTS ITS OPTIONS WHEN CALLED BARE BELONGS HERE. `npc`, `trade` and `quest` all do
         // -- and `quest` came back "unknown command 'quest'" the first time it ran, which is the exact confusion
         // this list was added to stop: "it wants an argument" and "it does not exist" looking identical.
-        static readonly string[] NoArgVerbs = { "heal", "datacode", "sam", "unarmed", "fridge", "fluid", "survival", "spawnmagnetablecontainer", "magcontainer", "spawnelevator", "heliphys", "procisland", "credits", "save", "wipe", "hurttest", "npc", "trade", "quest", "gesture", "flag", "menu", "track", "say" };
+        static readonly string[] NoArgVerbs = { "heal", "datacode", "sam", "unarmed", "fridge", "fluid", "survival", "spawnmagnetablecontainer", "magcontainer", "spawnelevator", "heliphys", "procisland", "credits", "save", "wipe", "hurttest", "npc", "trade", "quest", "gesture", "flag", "menu", "track", "say", "learnall", "blueprints" };
         bool _resultHooked;
 
         LineEdit _input;
@@ -79,7 +79,7 @@ namespace UnturnedGodot
         const float GoldenAngle = 2.39996323f;
         int _animalSpawnSeq;
 
-        static readonly string[] Verbs = { "wellshaft", "give", "throw", "vehicle", "spawnMagnetableContainer", "spawnheli", "sam", "spawntrain", "spawncrane", "spawncraneontrack", "spawncontainerflatbed", "spawnelevator", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "save", "wipe", "hurttest", "heal", "datacode", "sethp", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "kill", "profiler", "renderscale", "vertexlight", "weather", "credits", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys", "procisland", "temp", "tempset", "tempHold", "wetness", "thermal", "worldTemp", "startDate", "spawnAnimal", "npc", "trade", "tradestock", "tradepick", "quest", "gesture", "flag", "menu", "track", "say" };
+        static readonly string[] Verbs = { "wellshaft", "give", "throw", "vehicle", "spawnMagnetableContainer", "spawnheli", "sam", "spawntrain", "spawncrane", "spawncraneontrack", "spawncontainerflatbed", "spawnelevator", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "save", "wipe", "hurttest", "heal", "datacode", "sethp", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "kill", "profiler", "renderscale", "vertexlight", "weather", "credits", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys", "procisland", "temp", "tempset", "tempHold", "wetness", "thermal", "worldTemp", "startDate", "spawnAnimal", "npc", "trade", "tradestock", "tradepick", "quest", "gesture", "flag", "menu", "track", "say", "learn", "learnall", "forget", "blueprints" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;

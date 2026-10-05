@@ -226,6 +226,9 @@ namespace UnturnedGodot
                 };
                 Client.CookerState += e => { if (Player != null && IsInstanceValid(Player)) Player.NoteCookerState(e.NetId, e.On, e.Fuel); };
                 Client.CraftQueue_ += e => { if (Player != null && IsInstanceValid(Player)) Player.NoteServerCraftQueue(e.Jobs); };
+                // v55: what the local player knows. The ONLY writer of the shell's KnownBlueprints on this path.
+                Client.KnownBlueprintsChanged += e => { if (Player != null && IsInstanceValid(Player)) Player.AdoptKnownBlueprints(e.Keys); };
+                if (Client.KnownBlueprints != null && Player != null) Player.AdoptKnownBlueprints(Client.KnownBlueprints);   // it can land before this hook exists
                 // v47: the owner's NPC state, whole. This is the ONLY thing that writes the client's flags,
                 // quests and open dialogue in MP -- the local paths all send and wait for this.
                 Client.NpcState += e =>

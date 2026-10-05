@@ -315,6 +315,10 @@ namespace UnturnedGodot
             // v29: the fuel bar, while you stand there watching it burn.
             Client.CookerState += e => { if (Shell != null && IsInstanceValid(Shell)) Shell.NoteCookerState(e.NetId, e.On, e.Fuel); };
                 Client.CraftQueue_ += e => { if (Shell != null && IsInstanceValid(Shell)) Shell.NoteServerCraftQueue(e.Jobs); };
+                // v55: what this player knows. Sent from PeerConnected, so it routinely arrives BEFORE the shell
+                // exists; NetWorldClient keeps the last set, and the shell takes it here as soon as it is wired.
+                Client.KnownBlueprintsChanged += e => { if (Shell != null && IsInstanceValid(Shell)) Shell.AdoptKnownBlueprints(e.Keys); };
+                if (Client.KnownBlueprints != null && Shell != null) Shell.AdoptKnownBlueprints(Client.KnownBlueprints);
                 // v47: the owner's NPC state, whole. This is the ONLY thing that writes the client's flags,
                 // quests and open dialogue in MP -- the local paths all send and wait for this.
                 Client.NpcState += e =>
@@ -657,6 +661,7 @@ shell.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, ri
             shell.NetNpcClose = () => Client.SendNpcClose();
             shell.NetNpcTrade = (v, i, offer) => Client.SendNpcTrade(v, i, offer);
             shell.NetCraft = index => Client.SendCraft(index);
+            if (Client.KnownBlueprints != null) shell.AdoptKnownBlueprints(Client.KnownBlueprints);   // v55: the set routinely arrives before the shell does
             shell.NetCraftCancel = slot => Client.SendCraftCancel(slot);
             shell.NetMagLoad = (mp, mx, my, mid, rp, rx, ry, rid, un) =>
                 Client.SendMagLoad(mp, mx, my, mid, rp, rx, ry, rid, un);

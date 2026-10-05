@@ -308,6 +308,7 @@ void fragment() {
                 if (BlueprintRegistry.IsRecolour(bp)) continue;         // skip the 126 dye repaints
                 if (!Crafting.HasStations(bp, stations)) continue;      // only if the recipe's workbench/station is satisfied (in range + LOS)
                 if (!Crafting.MeetsSkill(bp, Player?.Skills)) continue;
+                if (Player != null && !Player.KnowsBlueprint(bp)) continue;   // an unknown blueprint is never a quick craft (v55)
                 show.Add(bp);
                 if (show.Count >= QUICK_MAX) break;
             }
@@ -2113,6 +2114,9 @@ void fragment() {
                     AddActionButton(panel, "Equip", new Vector2(228, by), HandDispatchSelected);
                 by += 44;
             }
+            // A SCHEMATIC: using it teaches the locked recipes that name it (a blueprint's `item:` unlock), and spends one.
+            if (PlayerController.TeachesBlueprint(asset.id))
+            { AddActionButton(panel, "Learn", new Vector2(228, by), LearnSelected); by += 44; }
             if (asset.IsFuelContainer)   // a gas can gets an extra "Empty" action -> dump its fuel (master)
             { AddActionButton(panel, "Empty", new Vector2(228, by), EmptyFuelSelected); by += 44; }
             // OWN pages only: a bottle in the open crate or on the ground is not yours to sip from, so it does not
@@ -2545,6 +2549,27 @@ void fragment() {
         }
 
         // Use a consumable: apply its effects to the player's vitals, then consume the item
+        /// <summary>The Learn button. The server teaches and spends one (it rides ConsumeCommand, which recognises a
+        /// teaching item before it asks whether the thing is edible); with no server at all it is learned locally. An
+        /// item that teaches nothing NEW is refused and kept -- reading a manual twice should not eat it.</summary>
+        void LearnSelected()
+        {
+            var pg = Inv.items[_selPage];
+            byte idx = pg.getIndex(_selX, _selY);
+            if (idx == byte.MaxValue) return;
+            var jar = pg.getItem(idx);
+            if (Player != null && Player.RequestConsume(_selPage, _selX, _selY)) { }   // the server teaches; the echo spends it
+            else if (Player != null && jar.item != null)
+            {
+                int n = Player.LearnFromItemLocal(jar.item.id);
+                if (n > 0) { if (jar.item.amount > 1) jar.item.amount--; else pg.removeItem(idx); }
+                else if (n == 0) HUD.Notice("You already know everything this teaches");
+            }
+            CloseSelection();
+            Refresh();
+        }
+        public void DebugLearn(byte page, byte x, byte y) { _selPage = page; _selX = x; _selY = y; LearnSelected(); }
+
         void UseSelected()
         {
             var pg = Inv.items[_selPage];

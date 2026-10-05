@@ -398,6 +398,24 @@ void fragment() {
             return ushort.TryParse(bp.OwnerItemId, out var oid) && oid == id;
         }
 
+        // ---- BLUEPRINT KNOWLEDGE (v55, strawberry 2026-10-04: "these recipes dont show unless a result of a search the
+        // user did in the craft menu, these appear grayed out with padlock over them") ----
+        /// <summary>Does the player know this recipe. No player (a bare test menu) = knows everything, which is what the
+        /// menu meant before recipes could be locked.</summary>
+        bool Known(BlueprintDef bp) => Player == null || Player.KnowsBlueprint(bp);
+        public void RefreshIfOpen() { if (_open) Rebuild(); }
+
+        /// <summary>How an unknown recipe could be learned, as a line for the detail panel -- so a padlock is a
+        /// direction, not a wall. Names the item that teaches it, the skill level that unlocks it, or says plainly that
+        /// nothing in the world does.</summary>
+        static string HowToLearn(BlueprintDef bp)
+        {
+            var ways = new List<string>();
+            foreach (var id in bp.TaughtByItems()) ways.Add($"read {Assets.find(id)?.itemName ?? $"item {id}"}");
+            foreach (var (skill, level) in bp.SkillUnlocks()) ways.Add($"reach {skill} {level}");
+            return ways.Count > 0 ? "learn it: " + string.Join(" or ", ways) : "not learnable in the world";
+        }
+
         static bool LookupMatches(BlueprintDef bp, ItemLookup mode, ushort id)
             => mode == ItemLookup.Uses ? UsesItem(bp, id) : mode == ItemLookup.Recipes && MakesItem(bp, id);
 
@@ -432,6 +450,7 @@ void fragment() {
             int n = 0;
             foreach (var bp in _all)
             {
+                if (!Known(bp)) continue;   // the category counts are what browsing would show, and browsing hides the unknown
                 if (cat == "All") { if (_catOf[bp] != "Dyes") n++; }
                 else if (_catOf[bp] == cat) n++;
             }
@@ -446,6 +465,10 @@ void fragment() {
             var res = new List<BlueprintDef>();
             foreach (var bp in _all)
             {
+                // An UNKNOWN recipe surfaces only for a search the player TYPED. Browsing a category, or the bag's U/R
+                // lookup, never reveals one -- the lookup answers "what can I do with this", and a recipe you do not
+                // know is not something you can do.
+                if (q.Length == 0 || _look != ItemLookup.None) { if (!Known(bp)) continue; }
                 if (_look != ItemLookup.None) { if (!LookupMatches(bp, _look, _lookId)) continue; }
                 else if (q.Length > 0) { if (!Matches(bp, q)) continue; }
                 else if (_cat == "All") { if (_catOf[bp] == "Dyes") continue; }
@@ -503,7 +526,7 @@ void fragment() {
             foreach (Node c in _grid.GetChildren()) c.QueueFree();
             var view = View();
             int canNow = 0;
-            foreach (var bp in _all) if (Crafting.CanCraft(bp, inv, out _) && Crafting.MeetsSkill(bp, Player?.Skills) && Crafting.HasStations(bp, _stationTags)) canNow++;
+            foreach (var bp in _all) if (Known(bp) && Crafting.CanCraft(bp, inv, out _) && Crafting.MeetsSkill(bp, Player?.Skills) && Crafting.HasStations(bp, _stationTags)) canNow++;
             _header.Text = _look != ItemLookup.None
                 ? $"CRAFTING   ·   {LookupLabel()}   ·   {view.Count} recipe{(view.Count == 1 ? "" : "s")}   ·   {canNow} craftable now"
                 : $"CRAFTING   ·   {view.Count} shown   ·   {canNow} craftable now";
@@ -528,7 +551,8 @@ void fragment() {
         Control Tile(BlueprintDef bp, Crafting.IInv inv)
         {
             var a = _out.TryGetValue(bp, out var av) ? av : null;
-            bool can = Crafting.CanCraft(bp, inv, out _) && Crafting.MeetsSkill(bp, Player?.Skills) && Crafting.HasStations(bp, _stationTags);
+            bool locked = !Known(bp);
+            bool can = !locked && Crafting.CanCraft(bp, inv, out _) && Crafting.MeetsSkill(bp, Player?.Skills) && Crafting.HasStations(bp, _stationTags);
             // GREY OUT WHAT YOU CANNOT MAKE, AND MARK WHAT YOU CAN.
             //
             // Only the icon used to dim, to 40% alpha, while the tile behind it stayed identical to a
@@ -571,7 +595,15 @@ void fragment() {
                 tile.AddChild(lbl);
             }
 
-            var btn = new Button { Flat = true, TooltipText = Title(bp) };   // hover -> the item name
+            if (locked)
+            {
+                // the PADLOCK, over the greyed icon: drawn, not a glyph -- the UI font has no lock character, and a
+                // tofu box over every locked recipe would read as a rendering bug rather than as "locked".
+                var lk = new PadlockGlyph { Size = new Vector2(30f, 36f), Position = new Vector2((TILE - 30f) * 0.5f, (TILE - 36f) * 0.5f) };
+                lk.MouseFilter = Control.MouseFilterEnum.Ignore;
+                tile.AddChild(lk);
+            }
+            var btn = new Button { Flat = true, TooltipText = locked ? $"{Title(bp)}  (locked)" : Title(bp) };   // hover -> the item name
             btn.SetAnchorsPreset(Control.LayoutPreset.FullRect);
             btn.Pressed += () => { _sel = bp; _qty = 1; Rebuild(); };
             tile.AddChild(btn);
@@ -604,6 +636,14 @@ void fragment() {
             _detailBox.AddChild(head);
 
             // gates
+            bool selLocked = !Known(_sel);
+            if (selLocked)
+            {
+                var lk = new Label { Text = $"LOCKED  ·  {HowToLearn(_sel)}", AutowrapMode = TextServer.AutowrapMode.WordSmart };
+                lk.AddThemeFontSizeOverride("font_size", UITheme.FontBody);
+                lk.AddThemeColorOverride("font_color", Bad);
+                _detailBox.AddChild(lk);
+            }
             if (_sel.RequiresSkill)
             {
                 bool meets = Crafting.MeetsSkill(_sel, Player?.Skills);
@@ -653,7 +693,8 @@ void fragment() {
             _detailBox.AddChild(tbl);
 
             // amount stepper + CRAFT
-            bool canMake = Crafting.CanCraft(_sel, inv, out string why) && Crafting.MeetsSkill(_sel, Player?.Skills) && Crafting.HasStations(_sel, _stationTags);
+            bool itemsOk = Crafting.CanCraft(_sel, inv, out string why);   // evaluated first and always, so `why` is set for the tooltip
+            bool canMake = !selLocked && itemsOk && Crafting.MeetsSkill(_sel, Player?.Skills) && Crafting.HasStations(_sel, _stationTags);
             var row = new HBoxContainer(); row.AddThemeConstantOverride("separation", 6);
             var minus = new Button { Text = "−", CustomMinimumSize = new Vector2(40, 40) };
             minus.Pressed += () => { _qty = Mathf.Max(1, _qty - 1); ShowDetail(new Crafting.PlayerInvAdapter(Inv)); };
@@ -664,7 +705,8 @@ void fragment() {
             row.AddChild(minus); row.AddChild(qty); row.AddChild(plus);
             var craft = new Button { Text = "CRAFT", CustomMinimumSize = new Vector2(180, 40), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
             craft.Disabled = !canMake;
-            if (!canMake) craft.TooltipText = Crafting.MeetsSkill(_sel, Player?.Skills) ? why : $"needs {_sel.Skill} skill {_sel.SkillLevel}";
+            if (!canMake) craft.TooltipText = selLocked ? "you have not learned this blueprint"
+                                            : Crafting.MeetsSkill(_sel, Player?.Skills) ? why : $"needs {_sel.Skill} skill {_sel.SkillLevel}";
             craft.Pressed += OnCraft;
             row.AddChild(craft);
             _detailBox.AddChild(row);
@@ -706,7 +748,7 @@ void fragment() {
         // the server-authoritative immediate craft (there's no client-side limbo to reconcile there yet).
         void OnCraft()
         {
-            if (_sel == null || !Crafting.MeetsSkill(_sel, Player?.Skills)) return;
+            if (_sel == null || !Known(_sel) || !Crafting.MeetsSkill(_sel, Player?.Skills)) return;
             var inv = new Crafting.PlayerInvAdapter(Inv);
             int n = Mathf.Clamp(_qty, 1, Mathf.Max(1, MaxCraftable(inv)));
             if (Player?.NetCraft != null)
@@ -725,7 +767,7 @@ void fragment() {
         // queue like the CRAFT button; MP sends the immediate NetCraft. Clamps to what the bag can actually make.
         public void QueueCraft(BlueprintDef bp, int qty)
         {
-            if (Inv == null || bp == null || !Crafting.MeetsSkill(bp, Player?.Skills)) return;
+            if (Inv == null || bp == null || !Known(bp) || !Crafting.MeetsSkill(bp, Player?.Skills)) return;
             if (!Crafting.HasStations(bp, Player?.CraftingStationTags())) return;   // require the recipe's workbench/station
             var inv = new Crafting.PlayerInvAdapter(Inv);
             if (!Crafting.CanCraft(bp, inv, out _)) return;
@@ -937,6 +979,11 @@ void fragment() {
         public static bool MatchesForTest(BlueprintDef bp, string q) => Matches(bp, q);
         /// <summary>Test seam: the recipes the grid is showing right now -- the SAME View() Rebuild draws from.</summary>
         public List<BlueprintDef> DebugView() => View();
+        /// <summary>Test seam: type a search. Setting LineEdit.Text from code does not emit TextChanged, so this does
+        /// what that handler does.</summary>
+        public void DebugSetSearch(string q) { if (_search != null) _search.Text = q; _sel = null; _look = ItemLookup.None; Rebuild(); }
+        /// <summary>Test seam: how many tiles in the grid carry the padlock right now.</summary>
+        public int DebugPadlocks() { int n = 0; foreach (Node t in _grid.GetChildren()) foreach (Node c in t.GetChildren()) if (c is PadlockGlyph) n++; return n; }
         public string DebugHeader => _header?.Text ?? "";   // the SAME predicate the list filters on
 
         /// <summary>The crafted item's name. A Craft blueprint's OUTPUT IS ITS OWNER ITEM -- the outputs column is
@@ -954,6 +1001,31 @@ void fragment() {
                 if (owner != null) return owner.itemName;
             }
             return string.IsNullOrEmpty(bp.Name) ? bp.Operation : bp.Name;
+        }
+    }
+
+    /// <summary>A padlock, drawn: a rounded body with a keyhole and a shackle arc over it. Fills its own Size.</summary>
+    public partial class PadlockGlyph : Control
+    {
+        public override void _Draw()
+        {
+            var s = Size;
+            var ink = new Color(0.92f, 0.86f, 0.62f, 0.95f);       // brass, readable on both the grey tile and a dark icon
+            var shade = new Color(0f, 0f, 0f, 0.55f);
+            float bw = s.X, bh = s.Y * 0.58f, by = s.Y - bh;
+            float r = bw * 0.30f, cx = s.X * 0.5f, cy = by + 1f;
+            // shackle: an upper half-ring, drawn twice so it keeps a dark edge against a light icon
+            DrawArc(new Vector2(cx, cy), r, Mathf.Pi, Mathf.Tau, 20, shade, s.X * 0.22f, true);
+            DrawArc(new Vector2(cx, cy), r, Mathf.Pi, Mathf.Tau, 20, ink, s.X * 0.14f, true);
+            DrawLine(new Vector2(cx - r, cy), new Vector2(cx - r, by + 2f), ink, s.X * 0.14f);
+            DrawLine(new Vector2(cx + r, cy), new Vector2(cx + r, by + 2f), ink, s.X * 0.14f);
+            // body
+            DrawRect(new Rect2(-1f, by - 1f, bw + 2f, bh + 2f), shade);
+            DrawRect(new Rect2(0f, by, bw, bh), ink);
+            // keyhole
+            var hole = new Color(0.18f, 0.16f, 0.12f, 1f);
+            DrawCircle(new Vector2(cx, by + bh * 0.40f), bw * 0.10f, hole);
+            DrawRect(new Rect2(cx - bw * 0.04f, by + bh * 0.40f, bw * 0.08f, bh * 0.32f), hole);
         }
     }
 }

@@ -121,6 +121,19 @@ namespace UnturnedGodot
             Current._alert.Text = text;
             Current._alertLeft = seconds;
         }
+        Label _notice; float _noticeLeft;   // good news (a blueprint learned), drawn on the vitals layer so it shows OVER an open menu
+
+        /// <summary>Flash a POSITIVE line, like Alert but readable with a menu open: it sits on the layer-12 vitals
+        /// canvas, which is above the inventory and crafting screens (layer 11), where Alert's layer-10 line would be
+        /// hidden behind their backdrop. Learning a blueprint happens with the bag open, so that is where it has to show.</summary>
+        public static void Notice(string text, float seconds = 3.5f)
+        {
+            Log.Print($"[notice] {text}");
+            if (Current == null || !GodotObject.IsInstanceValid(Current) || Current._notice == null) return;
+            Current._notice.Text = text;
+            Current._noticeLeft = seconds;
+        }
+        public static string DebugNoticeText => Current != null && GodotObject.IsInstanceValid(Current) && Current._noticeLeft > 0f ? Current._notice?.Text ?? "" : "";
         Label _placeHint;   // why a deployable ghost is red, under the crosshair while placing
 
         /// <summary>Say why the placement ghost is red, or pass null/"" to clear it. Separate from Alert because
@@ -219,6 +232,16 @@ namespace UnturnedGodot
             lifeBox.OffsetTop = -VitalsTopGap; lifeBox.OffsetBottom = -VitalsBottomGap;   // 7 rows since temperature joined (was 6, was 5 before oxygen), sat closer to the bottom edge. Named, because VitalsRect() above hands these same numbers to every menu.
             lifeBox.MouseFilter = Control.MouseFilterEnum.Ignore;
             vitalsRoot.AddChild(lifeBox);   // layer-12 root -> the vitals render OVER the inventory
+            _notice = new Label { Text = "", HorizontalAlignment = HorizontalAlignment.Center };
+            _notice.AddThemeFontSizeOverride("font_size", 26);
+            _notice.AddThemeColorOverride("font_color", new Color(0.62f, 0.92f, 0.55f));   // good-news green, the opposite of Alert's red
+            _notice.AddThemeColorOverride("font_outline_color", Colors.Black);
+            _notice.AddThemeConstantOverride("outline_size", 6);
+            _notice.AnchorLeft = 0f; _notice.AnchorRight = 1f; _notice.AnchorTop = 0f; _notice.AnchorBottom = 0f;
+            _notice.OffsetTop = 96f; _notice.OffsetBottom = 132f;   // under the shared navbar, clear of every menu's header line
+            _notice.MouseFilter = Control.MouseFilterEnum.Ignore;
+            _notice.Modulate = new Color(1f, 1f, 1f, 0f);
+            vitalsRoot.AddChild(_notice);
             _playerOnly.Add(lifeBox);
 
             // top-down: health, food, water, stamina, infection, oxygen. OXYGEN IS LAST, and row 4 was already
@@ -631,6 +654,12 @@ namespace UnturnedGodot
                 if (_crosshair3p.Visible && Mathf.Abs(_crosshair3p.Spread - Player.CrosshairSpread01) > 0.005f) { _crosshair3p.Spread = Player.CrosshairSpread01; _crosshair3p.QueueRedraw(); }   // DYNAMIC: tightens on ADS, blooms on move/recoil (master 2026-09-04)
             }
 
+            if (_notice != null && _noticeLeft > 0f)
+            {
+                _noticeLeft -= (float)delta;
+                _notice.Modulate = new Color(1f, 1f, 1f, Mathf.Clamp(_noticeLeft, 0f, 1f));
+                if (_noticeLeft <= 0f) _notice.Text = "";
+            }
             // centre-screen alert: hold at full opacity, then fade over the last second so it clears itself
             if (_alert != null && _alertLeft > 0f)
             {

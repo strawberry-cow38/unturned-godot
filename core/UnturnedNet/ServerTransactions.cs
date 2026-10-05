@@ -16,7 +16,8 @@ namespace UnturnedGodot.Net
         public long SplitsApplied;          // stacks actually divided
         public long SplitsRejected;         // asked for, refused -- a stale amount, no room, or an illegal target
         public long CraftsApplied;
-        public long CraftsRejected;         // missing supplies / skill gate / station gate / non-Craft op
+        public long CraftsRejected;         // missing supplies / skill gate / station gate / non-Craft op / unknown blueprint
+        public long CraftsUnknownBlueprint; // ...of which: a locked recipe the sender has not learned (v55)
         public long CraftCancelsApplied;
         public long CraftCancelsRejected;   // no queue wired, or the slot finished before the packet landed
         public long ConsumesApplied;
@@ -121,6 +122,9 @@ namespace UnturnedGodot.Net
         /// falls back to crafting instantly -- named with a trailing underscore only because `Crafting` is the
         /// static rules class this file already leans on, and shadowing it would be worse.</summary>
         public ServerCrafting Crafting_;
+        /// <summary>v55: who knows which locked recipes. Null (bare L0 harnesses) = everyone knows everything, which is
+        /// what every craft meant before blueprints could be locked.</summary>
+        public ServerBlueprints Knowledge;
 
         /// <summary>The blueprint catalog the Craft command indexes into. The HOST supplies it (game:
         /// BlueprintRegistry.All; tests: fixtures); both sides must load the same list -- guaranteed by the
@@ -1219,6 +1223,9 @@ namespace UnturnedGodot.Net
             if (bp.RequiresStation || bp.Operation != "Craft") { Diag.CraftsRejected++; return; }
             _skills.TryGet(sender, out var skillsEntry);
             if (!Crafting.MeetsSkill(bp, skillsEntry?.Skills)) { Diag.CraftsRejected++; return; }
+            // AN UNKNOWN BLUEPRINT IS NOT CRAFTABLE, whatever the client drew. Checked here, before ServerCrafting
+            // takes a single ingredient, so a refused craft costs nothing.
+            if (Knowledge != null && !Knowledge.Knows(sender, bp)) { Diag.CraftsRejected++; Diag.CraftsUnknownBlueprint++; return; }
             // TIMED NOW (master 2026-09-06: "add crafting timed jobs to the server"). This used to be a
             // straight DoCraft in the same tick, which meant the per-recipe times were enforced by the SP
             // client and ignored by the authoritative side. ServerCrafting takes the ingredients up front and
@@ -1605,6 +1612,22 @@ namespace UnturnedGodot.Net
             byte index = page.getIndex(cmd.X, cmd.Y);
             var jar = index == byte.MaxValue ? null : page.getItem(index);
             var asset = jar?.item != null ? Assets.find(jar.item.id) : null;
+            // A TEACHING ITEM (a blueprint's `item:` unlock -- a schematic, a manual) is read, not eaten: it teaches
+            // and one is spent. Checked BEFORE IsConsumable because such an item usually is not food, and the
+            // ordinary branch below would reject it. Teaching nothing new spends nothing.
+            if (asset != null && Knowledge != null)
+            {
+                int learned = Knowledge.LearnFromItem(sender, asset.id);
+                if (learned == 0) { Diag.ConsumesRejected++; return; }
+                if (learned > 0)
+                {
+                    if (jar.item.amount > 1) { jar.item.amount--; _inventories.ServerMarkDirty(sender); }
+                    else page.removeItem(index);
+                    Knowledge.ItemsSpent++;
+                    Diag.ConsumesApplied++;
+                    return;
+                }
+            }
             if (asset == null || !asset.IsConsumable) { Diag.ConsumesRejected++; return; }
             // "frozen food cannot be eaten until thawed" (strawberry 2026-09-06). Rejected HERE, before anything
             // is spent or applied, because this is the side that owns the outcome -- the client's own gate below
@@ -2032,6 +2055,35 @@ namespace UnturnedGodot.Net
                 Diag.ConsoleApplied++;
                 return $"{label} skill -> level {applied}";
             }
+            // BLUEPRINT KNOWLEDGE (v55). `learn` takes a recipe KEY or the name of what it makes; `learnall` grants
+            // every locked recipe; `forget` takes it back; `blueprints` lists what you know.
+            if (verb == "learn" || verb == "forget" || verb == "learnall" || verb == "blueprints")
+            {
+                if (Knowledge == null || !Knowledge.Has(sender)) { Diag.ConsoleRejected++; return "no blueprint knowledge on this server"; }
+                if (verb == "learnall") { Diag.ConsoleApplied++; return $"learned {Knowledge.LearnAll(sender)} blueprint(s)"; }
+                if (verb == "blueprints")
+                {
+                    Diag.ConsoleApplied++;
+                    var known = Knowledge.KnownBy(sender);
+                    int locked = 0; foreach (var b in Blueprints) if (b.Locked) locked++;
+                    return known.Count == 0 ? $"you know none of the {locked} locked blueprint(s)"
+                                            : $"you know {known.Count} of {locked} locked: " + string.Join(", ", known);
+                }
+                if (arg.Length == 0) { Diag.ConsoleRejected++; return $"usage: {verb} <recipe key | item it makes>"; }
+                var hits = new List<BlueprintDef>();
+                foreach (var b in Blueprints)
+                {
+                    if (!b.Locked) continue;
+                    if (b.Key == arg) { hits.Clear(); hits.Add(b); break; }
+                    foreach (var o in b.Outputs)
+                        if (Assets.findByGuid(o.Guid)?.itemName is string nm && nm.Equals(arg, StringComparison.OrdinalIgnoreCase)) { hits.Add(b); break; }
+                }
+                if (hits.Count == 0) { Diag.ConsoleRejected++; return $"no locked blueprint matching '{arg}'"; }
+                int changed = 0;
+                foreach (var b in hits) if (verb == "learn" ? Knowledge.Learn(sender, b.Key) : Knowledge.Forget(sender, b.Key)) changed++;
+                Diag.ConsoleApplied++;
+                return $"{(verb == "learn" ? "learned" : "forgot")} {changed} of {hits.Count} blueprint(s) for '{arg}'";
+            }
             if (verb == "teleport" || verb == "tp")
             {
                 // #27 (mp-teleport): the wire form is NUMERIC -- this engine-free core has no map/location
@@ -2054,7 +2106,7 @@ namespace UnturnedGodot.Net
                 return FormattableString.Invariant($"teleported to ({x:0.#}, {y:0.#}, {z:0.#})");
             }
             Diag.ConsoleRejected++;
-            return $"unknown command '{verb}' -- give / xp / skill / teleport";
+            return $"unknown command '{verb}' -- give / xp / skill / teleport / learn / learnall / forget / blueprints";
         }
 
         /// <summary>Server-computed XP award (the §3.2 hook: kills/harvests/crafts/console feed this).

@@ -255,6 +255,11 @@ namespace UnturnedGodot.Net
             public uint Experience { get; set; }
             public List<List<byte>> SkillLevels { get; set; } = new List<List<byte>>();
 
+            /// <summary>v55: the LOCKED recipes this player has learned, by recipe Key (never by skill -- see
+            /// ServerBlueprints). An old save has no such property and loads as empty: nobody knew anything locked,
+            /// because nothing was.</summary>
+            public List<string> KnownBlueprints { get; set; } = new List<string>();
+
             // The seven GARMENTS THEMSELVES, as Items -- distinct from the WornHat/WornShirt/... ids above,
             // which are the replicated APPEARANCE and only say how you look to other people. PlayerInventory's
             // own wornX fields are what carries the garment's quality, what its armour reads, what "take it
@@ -542,6 +547,9 @@ namespace UnturnedGodot.Net
                     }
             }
 
+            if (host.BlueprintKnowledge.Has(pe.OwnerPlayerId))
+                p.KnownBlueprints.AddRange(host.BlueprintKnowledge.KnownBy(pe.OwnerPlayerId));
+
             if (host.Inventories.TryGet(pe.OwnerPlayerId, out var ie) && ie.Inventory != null)
             {
                 var wi = ie.Inventory;
@@ -653,6 +661,8 @@ namespace UnturnedGodot.Net
                     }
                 se.LastChangedTick = tick;
             }
+
+            host.BlueprintKnowledge.Restore(playerId, p.KnownBlueprints);   // PeerConnected sends the set once this returns
 
             if (host.Inventories.TryGet(playerId, out var ie) && ie.Inventory != null && p.Pages.Count > 0)
             {

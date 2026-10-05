@@ -4601,6 +4601,68 @@ namespace UnturnedGodot
         public CraftingMenu DebugCraftMenu => _craftMenu;
         public InventoryUI DebugInvUI => _invUI;
 
+        // ---- BLUEPRINT KNOWLEDGE (v55, strawberry 2026-10-04) ----
+        // This player's MIRROR of the server's answer to "which locked recipes do I know". The server owns it
+        // (ServerBlueprints) and refuses to craft anything outside it; this copy only decides what the crafting menu
+        // draws. Only the pure-direct harness path, with no server at all, ever writes it locally (LearnFromItemLocal).
+        public readonly System.Collections.Generic.HashSet<string> KnownBlueprints = new();
+        public bool KnowsBlueprint(BlueprintDef bp) => Crafting.Knows(bp, KnownBlueprints);
+
+        /// <summary>The server's set, whole. Anything NEW in it is announced -- which is the only feedback learning
+        /// gets, since the request that caused it (using a schematic, levelling a skill) changes nothing else you can see.</summary>
+        public void AdoptKnownBlueprints(System.Collections.Generic.IEnumerable<string> keys)
+        {
+            var fresh = new System.Collections.Generic.List<string>();
+            var next = new System.Collections.Generic.HashSet<string>(keys ?? System.Array.Empty<string>());
+            foreach (var k in next) if (!KnownBlueprints.Contains(k)) fresh.Add(k);
+            bool firstSync = !_blueprintsSynced;
+            _blueprintsSynced = true;
+            KnownBlueprints.Clear();
+            foreach (var k in next) KnownBlueprints.Add(k);
+            if (fresh.Count > 0 && !firstSync) AnnounceLearned(fresh);   // the join sync is a restore, not news
+            _craftMenu?.RefreshIfOpen();
+            _invUI?.Refresh();
+        }
+        bool _blueprintsSynced;
+
+        void AnnounceLearned(System.Collections.Generic.List<string> keys)
+        {
+            var names = new System.Collections.Generic.List<string>();
+            foreach (var k in keys)
+                foreach (var bp in BlueprintRegistry.All)
+                    if (bp.Key == k) { names.Add(CraftingMenu.Title(bp)); break; }
+            if (names.Count == 0) return;
+            HUD.Notice(names.Count == 1 ? $"Blueprint learned: {names[0]}" : $"{names.Count} blueprints learned: {string.Join(", ", names)}");
+        }
+
+        /// <summary>Does using this item teach any recipe (a blueprint's `item:` unlock). Asked by the inventory to
+        /// decide whether the item gets a Learn button.</summary>
+        public static bool TeachesBlueprint(ushort itemId)
+        {
+            if (itemId == 0) return false;
+            foreach (var bp in BlueprintRegistry.All)
+                if (bp.Locked) foreach (var id in bp.TaughtByItems()) if (id == itemId) return true;
+            return false;
+        }
+
+        /// <summary>The PURE-DIRECT path only (no server: the --direct harnesses). Same answer shape as
+        /// ServerBlueprints.LearnFromItem: -1 teaches nothing, 0 nothing new, &gt;0 newly learned.</summary>
+        public int LearnFromItemLocal(ushort itemId)
+        {
+            if (!TeachesBlueprint(itemId)) return -1;
+            var fresh = new System.Collections.Generic.List<string>();
+            foreach (var bp in BlueprintRegistry.All)
+            {
+                if (!bp.Locked || KnownBlueprints.Contains(bp.Key)) continue;
+                foreach (var id in bp.TaughtByItems()) if (id == itemId) { fresh.Add(bp.Key); break; }
+            }
+            if (fresh.Count == 0) return 0;
+            var all = new System.Collections.Generic.List<string>(KnownBlueprints); all.AddRange(fresh);
+            _blueprintsSynced = true;
+            AdoptKnownBlueprints(all);
+            return fresh.Count;
+        }
+
         // the inventory's quick-craft bar queues a craft into the SAME crafting queue (LMB = 1, RMB = 5).
         public void QuickCraft(BlueprintDef bp, int n) => _craftMenu?.QueueCraft(bp, n);
 

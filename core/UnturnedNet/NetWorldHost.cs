@@ -83,6 +83,8 @@ namespace UnturnedGodot.Net
         public readonly ServerCooking Cooking;
         public readonly ServerFreezing Freezing;
         public readonly ServerCrafting CraftQueue;
+        /// <summary>v55: which locked recipes each player knows. See ServerBlueprints.</summary>
+        public readonly ServerBlueprints BlueprintKnowledge = new ServerBlueprints();
         public readonly ServerNpcs Npcs = new ServerNpcs();   // v47: conversations, quests and trades, server-side
 
         /// <summary>The mains, as the SERVER sees them: any GridSource fixture switched on. Deliberately not
@@ -223,6 +225,18 @@ namespace UnturnedGodot.Net
             // The queue indexes the same catalog the command validates against -- one list, so an index cannot
             // mean two different recipes on the two sides of the same tick.
             CraftQueue.BlueprintsSource = () => Transactions.Blueprints;
+            // BLUEPRINT KNOWLEDGE (v55): the same catalog again, the skills it reads its triggers from, and the
+            // owner-only event that tells a client what it knows. OnCraft refuses a recipe the sender does not know;
+            // OnConsume teaches from an item; the console grants and revokes.
+            BlueprintKnowledge.Catalog = () => Transactions.Blueprints;
+            BlueprintKnowledge.Skills = Skills;
+            BlueprintKnowledge.Changed = owner =>
+            {
+                var keys = new List<string>(BlueprintKnowledge.KnownBy(owner));
+                var evt = new KnownBlueprintsEvent { Keys = keys.ToArray() };
+                SendEventTo(owner, NetMessagePak.Pack(ReplicationIds.EventKnownBlueprints, evt.Write));
+            };
+            Transactions.Knowledge = BlueprintKnowledge;
             // A craft in flight is invisible to the MP client otherwise: it skips its own queue when NetCraft is
             // wired, so without this an 8 s recipe looks like a command that did nothing.
             CraftQueue.QueueChanged = owner =>
@@ -549,8 +563,14 @@ namespace UnturnedGodot.Net
                 // The key is the name as PROFILES holds it, not peer.Name: ServerAdd sanitises on the way in and
                 // Capture reads it back out, so keying on the raw handshake string would miss every name the
                 // sanitiser touched.
+                BlueprintKnowledge.ServerAdd(peer.PlayerId);   // before the restore below, which fills it
                 if (PendingSave != null && Profiles.TryGet(peer.PlayerId, out var prof))
                     PendingSave.TryApplyPlayer(this, peer.PlayerId, prof.Name, Session.CurrentTick, prof.SteamId);
+                // TELL THEM WHAT THEY KNOW, once, after the restore -- even when it is nothing, so a client never has
+                // to guess whether "no known blueprints" means "none" or "not told yet". Skill triggers are checked
+                // first so a save from before a recipe gained a skill unlock catches up the moment they join.
+                BlueprintKnowledge.CheckSkillUnlocks(peer.PlayerId);
+                BlueprintKnowledge.Changed?.Invoke(peer.PlayerId);
                 _pendingJoinSnapshots.Add(peer);
             };
             Session.PeerDisconnected += (peer, reason) =>
@@ -561,6 +581,7 @@ namespace UnturnedGodot.Net
                 Players.ServerRemove(peer.PlayerId, Session.CurrentTick);
                 CombatState.ServerRemove(peer.PlayerId, Session.CurrentTick);
                 Skills.ServerRemove(peer.PlayerId);
+                BlueprintKnowledge.ServerRemove(peer.PlayerId);   // a recycled playerId must not inherit what they knew
                 Profiles.ServerRemove(peer.PlayerId);
                 Profiles.ServerForgetPeer(peer.PlayerId);   // player ids are RECYCLED: a new peer must not inherit "already has these pictures"
                 Vitals.ServerRemove(peer.PlayerId);   // B5: the leaving peer's vitals sim dies with it
@@ -671,6 +692,7 @@ namespace UnturnedGodot.Net
             // TIMED CRAFTING, before the dirty stamp below -- a job that finishes this tick writes into the
             // inventory, and stamping first would leave that write waiting a whole tick for its baseline.
             CraftQueue.Step((float)SimClock.FixedDelta);
+            BlueprintKnowledge.Step();   // a skill that levelled this tick teaches its recipes this tick
             // stamp this tick onto every inventory the dispatch round dirtied (owner-block delta baseline)
             Inventories.ServerCommitDirty(Session.CurrentTick);
             if (NetLog.Enabled) LogRollupIfDue();
@@ -891,6 +913,10 @@ namespace UnturnedGodot.Net
         public event System.Action<VehicleEnteredEvent> VehicleEntered;
         public event System.Action<VehicleExitedEvent> VehicleExited;
         public event System.Action<VehicleExitRefusedEvent> VehicleExitRefused;   // v54: your door is blocked -- still seated
+        public event System.Action<KnownBlueprintsEvent> KnownBlueprintsChanged;   // v55: the locked recipes I know, whole
+        /// <summary>The last set the server sent, kept HERE because it can arrive before the shell exists (it is sent
+        /// from PeerConnected, ahead of the join snapshot). Null until the server has said anything.</summary>
+        public HashSet<string> KnownBlueprints;
         // Part A: the server rolled this driver's vehicle back (out-of-envelope state) -- teleport the
         // local vehicle to the payload, freeze, echo RecovCounter in the outgoing state stream
         public event System.Action<VehicleRecovEvent> VehicleRecov;
@@ -996,6 +1022,8 @@ namespace UnturnedGodot.Net
                 e => { Vehicles.ApplyEntered(e, Applier.LastAppliedServerTick); VehicleEntered?.Invoke(e); });
             Events.Register<VehicleExitedEvent>(ReplicationIds.EventVehicleExited, VehicleExitedEvent.TryRead,
                 e => { Vehicles.ApplyExited(e, Applier.LastAppliedServerTick); VehicleExited?.Invoke(e); });
+            Events.Register<KnownBlueprintsEvent>(ReplicationIds.EventKnownBlueprints, KnownBlueprintsEvent.TryRead,
+                e => { KnownBlueprints = new HashSet<string>(e.Keys ?? System.Array.Empty<string>()); KnownBlueprintsChanged?.Invoke(e); });
             Events.Register<VehicleExitRefusedEvent>(ReplicationIds.EventVehicleExitRefused, VehicleExitRefusedEvent.TryRead,
                 e => VehicleExitRefused?.Invoke(e));   // touches no replica -- nothing changed, that is the point
             Events.Register<VehicleRecovEvent>(ReplicationIds.EventVehicleRecov, VehicleRecovEvent.TryRead,

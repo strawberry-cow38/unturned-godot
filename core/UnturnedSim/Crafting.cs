@@ -63,6 +63,22 @@ namespace UnturnedGodot
             return true;
         }
 
+        /// <summary>Does this player KNOW the recipe. An unlocked recipe is known by everyone; a locked one only by
+        /// those whose set holds its Key. A null set means "nobody has told us" and knows only the unlocked ones --
+        /// the safe reading, since the alternative hands every locked recipe to a client that has not synced yet.</summary>
+        public static bool Knows(BlueprintDef bp, ICollection<string> known)
+            => bp != null && (!bp.Locked || (known != null && known.Contains(bp.Key)));
+
+        /// <summary>Has this player met one of the recipe's `skill:` unlocks. Names resolve through PlayerSkills.TryFind,
+        /// the same lookup the console's `skill` verb uses, so a typo in the TSV is simply a trigger that never fires.</summary>
+        public static bool SkillUnlockMet(BlueprintDef bp, PlayerSkills skills)
+        {
+            if (skills == null) return false;
+            foreach (var (name, level) in bp.SkillUnlocks())
+                if (skills.TryFind(name, out var sk, out _) && sk != null && sk.level >= level) return true;
+            return false;
+        }
+
         // Does the player have the crafting STATIONS this blueprint needs? `available` = the crafting tags granted by
         // nearby placed stations (workbench/campfire/...) within Range + line-of-sight, computed by the caller.
         // A recipe with no station tags is craftable anywhere.
