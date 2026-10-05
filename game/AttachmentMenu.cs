@@ -70,6 +70,10 @@ namespace UnturnedGodot
             // ...and the CARTRIDGE, which is a different axis from the magazine group and the only one that can
             // answer "5.56 only" (AttachmentFit.CaliberNames explains why the group cannot).
             string caliberName = Player?.Gun?.CaliberName;
+            // ...and the full set of magazine groups the gun feeds from, so the ring offers every magazine the
+            // reload would actually accept. Without this the menu and FindBestMag disagree the moment a gun takes
+            // more than one group (the M249 and STANAG), and the symptom is a magazine you can load but not see.
+            int[] magCalibers = Player?.HeldGunMagCalibers;
             foreach (var slot in Slots)
             {
                 if (slot == "Sight" && VM.IntegralSight) continue;   // aug: integral scope, no detachable/replaceable Sight slot (master)
@@ -100,7 +104,7 @@ namespace UnturnedGodot
                 // many times in the orbit"). InBag collapses duplicates to (asset, count) because the old fan was a
                 // text list where "x6" was the readable answer; a ring of icons has nowhere to put a multiplier, and
                 // six magazines drawn six times is the point -- the ring IS the count.
-                foreach (var (asset, item, _, _) in AttachmentFit.InBagInstances(Player?.Inventory, slot, caliber, caliberName))
+                foreach (var (asset, item, _, _) in AttachmentFit.InBagInstances(Player?.Inventory, slot, caliber, caliberName, magCalibers))
                 {
                     var a = asset; var inst = item;
                     int rounds = isMag ? item.amount : -1;   // Item.amount IS the rounds left in THAT magazine

@@ -664,6 +664,18 @@ namespace SDG.Unturned
                     a.gunName = name; n++;
                     a.gunAmmoMax = d.ParseInt32("Ammo_Max", 30);   // the server's only handle on a gun's real capacity -- see ItemAsset.gunAmmoMax
                     a.gunCaliber = d.ParseInt32("Caliber", 0);     // ...and on which rounds it accepts -- see ItemAsset.gunCaliber
+                    // ...and the caliber SET, retail's own shape (ItemGunAsset: Magazine_Calibers +
+                    // Magazine_Caliber_N, else a one-element array holding plain Caliber). Parsed even though no
+                    // shipped .dat declares the multi form yet, so a re-rip that gains one is picked up with no
+                    // code change -- the same reason the movement multiplier reads from the .dat rather than a table.
+                    int mcn = d.ParseInt32("Magazine_Calibers", 0);
+                    if (mcn > 0)
+                    {
+                        var set = new System.Collections.Generic.List<int>(mcn);
+                        for (int i = 0; i < mcn; i++) set.Add(d.ParseInt32($"Magazine_Caliber_{i}", 0));
+                        a.gunMagazineCalibers = set.ToArray();
+                    }
+                    else a.gunMagazineCalibers = new[] { a.gunCaliber };
                     // How much this gun slows you while you carry it -- RETAIL'S OWN NUMBER WHERE RETAIL HAS ONE.
                     // Three extracted .dats declare the key (nykorev/dragonfang 0.95, fury 0.90); the .dat always
                     // wins, so a future re-rip that finds the key on more guns is picked up with no code change,
@@ -677,6 +689,7 @@ namespace SDG.Unturned
                 }
                 catch { /* skip a malformed .dat */ }
             }
+            WireExtraMagazineCalibers();
             UnturnedGodot.Log.Print($"[items] wired {n} guns for in-game equip (from content/*.dat + _gun.txt)");
             // ⭐ PUBLISHED, NOT ASSUMED. A speed penalty is invisible until you happen to carry the gun and happen
             // to notice, which is exactly how the retail skill port ended up with ten skills wired to nothing --
@@ -688,6 +701,47 @@ namespace SDG.Unturned
             // PlayerController.EquipHeldGun), which is the honest outcome but still a missing row someone must add.
             if (noVisual.Count > 0)
                 GD.PushWarning($"[items] {noVisual.Count} ported gun(s) have no guns_visual.tsv row and will refuse to equip: {string.Join(", ", noVisual)}");
+        }
+
+        /// <summary>Guns that feed from MORE caliber groups than their own .dat declares. master 2026-10-05:
+        /// "make the m249 take stanag magazines as well as its own box mags".
+        ///
+        /// ⭐ A DELIBERATE DIVERGENCE, SO IT LIVES IN CODE, NOT IN THE RIPPED .dat. Retail's dragonfang.dat says
+        /// only `Caliber 12`; editing that file would express master's call in a place a re-rip silently reverts.
+        /// The hand-written magazine splits above (the AUG 201, G36 202, SCAR-H 203 proprietary groups) are kept
+        /// in code for the same reason, and DeriveMagazinesFromGuns' own comment notes that deriving PRESERVES
+        /// those rather than flattening them.
+        ///
+        /// ⭐ AND IT IS NOT A STRETCH: the M249's own .dat already reads `Caliber_Name "5.56x45mm NATO"` -- the
+        /// same cartridge the STANAG magazine (item 6) is loaded with. The gun was never chambered differently;
+        /// it simply sat in its own caliber GROUP because its box mag is proprietary. Real M249s take STANAG.
+        ///
+        /// ⚠ KEYED BY CONTENT NAME, NOT BY CALIBER. Caliber 12 happens to be unique to the dragonfang today
+        /// (measured: of the ported guns, 1 is shared by seven and 15 by five, but 12 by one), so a rule written
+        /// as "group 12 also accepts group 1" would work right now and silently enrol the next gun that takes
+        /// caliber 12. Retail models this per GUN ASSET and so does this.</summary>
+        static readonly System.Collections.Generic.Dictionary<string, int[]> ExtraMagazineCalibers = new()
+        {
+            ["dragonfang"] = new[] { 1 },   // M249 SAW -- STANAG (the Military Magazine, caliber 1) on top of its own 200-round box
+        };
+
+        static void WireExtraMagazineCalibers()
+        {
+            foreach (var kv in ExtraMagazineCalibers)
+            {
+                string datPath = Godot.ProjectSettings.GlobalizePath($"res://content/{kv.Key}.dat");
+                if (!System.IO.File.Exists(datPath)) { GD.PushWarning($"[items] {kv.Key} has no .dat -- its extra magazine calibers were NOT applied"); continue; }
+                ushort id;
+                try { if (!ushort.TryParse(new DatParser().Parse(System.IO.File.ReadAllText(datPath)).GetString("ID"), out id)) continue; }
+                catch { continue; }
+                var a = Assets.find(id);
+                if (a == null) { GD.PushWarning($"[items] {kv.Key} ({id}) is not in the catalog -- extra magazine calibers NOT applied"); continue; }
+                var set = new System.Collections.Generic.List<int>(a.gunMagazineCalibers ?? new[] { a.gunCaliber });
+                foreach (var c in kv.Value) if (!set.Contains(c)) set.Add(c);
+                a.gunMagazineCalibers = set.ToArray();
+                // ⭐ PUBLISHED: a gun that silently stops accepting a magazine looks exactly like a gun that never did.
+                UnturnedGodot.Log.Print($"[items] {a.itemName} feeds from caliber groups [{string.Join(",", a.gunMagazineCalibers)}]");
+            }
         }
 
         /// <summary>The walk-speed scale for a heavy weapon whose .dat does NOT declare one, by content name.

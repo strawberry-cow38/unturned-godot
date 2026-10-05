@@ -6793,6 +6793,20 @@ namespace UnturnedGodot
 
         public bool DebugInfAmmoWouldFill => InfiniteAmmo && Gun != null && HasGunOut && !_reloading && Ammo < ChamberedCap;   // test seam
         public float DebugSinceShot => _sinceShot;
+        /// <summary>The caliber GROUPS the gun in your hands will feed from -- retail's
+        /// ItemGunAsset.magazineCalibers, carried on the held gun's ItemAsset. Null when nothing is held or the
+        /// asset is unknown, which AcceptsMagazineCaliber turns back into the plain single-caliber rule.</summary>
+        public int[] HeldGunMagCalibers => (_heldItem != null ? SDG.Unturned.Assets.find(_heldItem.id) : null)?.gunMagazineCalibers;
+
+        /// <summary>Will the held gun feed from a magazine of group `magCal`? Asked through the ASSET so the
+        /// reload search and the attachment menu use the one rule -- a magazine the menu lets you attach and the
+        /// reload then refuses is exactly the disagreement this avoids.</summary>
+        bool GunAcceptsMagCaliber(int magCal)
+        {
+            var ga = _heldItem != null ? SDG.Unturned.Assets.find(_heldItem.id) : null;
+            return ga != null ? ga.AcceptsMagazineCaliber(magCal) : magCal == (Gun?.Caliber ?? 0);
+        }
+
         (byte page, byte idx, Item item)? FindBestMag()   // the spare mag in inventory that fits the gun, with the MOST ammo
         {
             if (Inventory == null || Gun == null) return null;
@@ -6804,7 +6818,7 @@ namespace UnturnedGodot
                 {
                     var jar = pg.getItem(i); if (jar?.item == null) continue;
                     var a = SDG.Unturned.Assets.find(jar.item.id);
-                    if (a != null && a.IsMagazine && a.magCaliber == Gun.Caliber && jar.item.amount > bestAmmo) { bestAmmo = jar.item.amount; best = (b, i, jar.item); }
+                    if (a != null && a.IsMagazine && GunAcceptsMagCaliber(a.magCaliber) && jar.item.amount > bestAmmo) { bestAmmo = jar.item.amount; best = (b, i, jar.item); }
                 }
             }
             return best;

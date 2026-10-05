@@ -1458,7 +1458,7 @@ namespace UnturnedGodot.Net
             // Loose ammo of THIS gun's caliber, and nothing else.
             // gunCaliber, not magCaliber: magCaliber is a MAGAZINE's field and reads 0 on a gun, so comparing the
             // two would have refused every honest unload while looking like a real check.
-            if (round == null || !round.isAmmo || gun.gunCaliber <= 0 || round.magCaliber != gun.gunCaliber) { Diag.ReloadsRejected++; return; }
+            if (round == null || !round.isAmmo || gun.gunCaliber <= 0 || !gun.AcceptsMagazineCaliber(round.magCaliber)) { Diag.ReloadsRejected++; return; }   // the SET, not one group: a gun may feed from several (ItemGunAsset.magazineCalibers)
             if (jar.item.gunAmmo < cmd.Count) { Diag.ReloadsRejected++; return; }   // it cannot give up what it is not holding
 
             jar.item.gunAmmo -= cmd.Count;

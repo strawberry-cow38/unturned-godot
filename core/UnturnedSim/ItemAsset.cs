@@ -40,6 +40,27 @@ namespace SDG.Unturned
         // answer "is this round the sort this gun fires", and the only caliber it could otherwise reach lives on
         // MAGAZINE assets (magCaliber). 0 = not a gun, or a .dat that did not parse.
         public int gunCaliber;
+        /// <summary>Source ItemGunAsset.magazineCalibers: the caliber GROUPS this gun will feed from, as a SET.
+        /// Retail has always modelled this as an array -- `Magazine_Calibers` / `Magazine_Caliber_N` in the .dat,
+        /// falling back to a one-element array holding plain `Caliber` for the legacy guns that declare only
+        /// that -- and the acceptance test is an intersection (UseableGun.cs:2865 loops the gun's calibers
+        /// against the magazine's). The port had the scalar half only, so a gun could feed from exactly one
+        /// group and there was no way to express a weapon that takes two.
+        ///
+        /// null = not populated yet; AcceptsMagazineCaliber then falls back to plain gunCaliber equality, which
+        /// is exactly the old behaviour, so nothing that has not been wired changes.</summary>
+        public int[] gunMagazineCalibers;
+
+        /// <summary>Will this gun feed from a magazine of caliber group `cal`? THE one rule -- the attachment
+        /// menu, the reload's magazine search and the server's ammo check all ask this, so they cannot drift
+        /// into disagreeing about what fits (a magazine the menu lets you attach and the reload then refuses is
+        /// the failure this centralisation prevents).</summary>
+        public bool AcceptsMagazineCaliber(int cal)
+        {
+            if (gunMagazineCalibers == null || gunMagazineCalibers.Length == 0) return cal == gunCaliber;
+            foreach (var c in gunMagazineCalibers) if (c == cal) return true;
+            return false;
+        }
         public string meleeName;       // for a MELEE weapon: the content folder name (knife_military|sledgehammer|...) to hold on Equip
         // ItemBagAsset: the storage grid a worn bag/shirt/pants/vest provides (0,0 = none)
         public byte width;
