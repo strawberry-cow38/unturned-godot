@@ -3188,10 +3188,24 @@ namespace UnturnedGodot
             // loop:true, it is the carry hold) and Jack_Use (1.967 s, the crank), 17 bone tracks each, via
             // tools/extract_carjack_anims.py.
             //
-            // ⚠ STILL NO HELD MESH: nothing ripped a carjack model, so the arms do the real retail crank motion
-            // around empty hands. That is a separate rip, not a different animation.
+            // ...AND THE JACK ITSELF (tools/extract_consumable.py Carjack): 64 verts / 32 tris.
+            //
+            // ⚠ ITS prefab HAS NO Model_0, so the extractor fell back to the item ROOT mesh and said so. That is
+            // worth knowing rather than trusting: the viewmodel convention is Model_0 with X+Z negated, and a
+            // root mesh can carry a different pivot, so this was RENDERED and looked at before shipping instead
+            // of being assumed to hold correctly.
+            //
+            // ⭐⭐ AND ITS 2x2 TEXTURE IS NOT A PLACEHOLDER -- IT IS A PALETTE. I nearly dropped it by analogy
+            // with the spraypaint, whose 82-byte texture genuinely is a placeholder (identical across all 32
+            // cans, hence ConsumableColor tinting instead). Read properly, the carjack's four texels are
+            // (191,31,31) red and two greys (140 / 94): the real red-body-and-grey-metal scheme, with the UVs
+            // mapping faces onto it. A flat tint here would have thrown away actual colour data. It renders
+            // crisp because the held-mesh material is already TextureFilter.Nearest -- a 2x2 under linear
+            // filtering would have been a smear.
             _viewmodel = new Viewmodel
             {
+                ConsumableMesh = "carjack.txt",
+                ConsumableAlbedo = "carjack_albedo.png",
                 ConsumableEquipClip = "Jack_Equip",
                 ConsumableUseClip = "Jack_Use",
             };

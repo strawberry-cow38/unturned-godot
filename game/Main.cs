@@ -998,7 +998,7 @@ namespace UnturnedGodot
             if (vm != null)
             {
                 _rigDir = vm;                                   // reuse the frame-strip capture
-                bool deployVm = gun == "generator" || gun == "spot" || gun == "spotlight" || gun == "wire" || gun == "gascan";   // settled-hold frame capture (no ADS/fire)
+                bool deployVm = gun == "generator" || gun == "spot" || gun == "spotlight" || gun == "wire" || gun == "gascan" || gun == "carjack";   // settled-hold frame capture (no ADS/fire) -- a jack has no ADS and never fires, so the gun frame list would capture nothing but the carry pose twice
                 _rigCaptureFrames = System.Environment.GetEnvironmentVariable("UG_HAMMER") == "1"
                     ? new[] { 52, 56, 60, 64, 68, 72 }          // UG_HAMMER: the rack window (PlayHammer at f50) -> verify the gun ROTATES through the charge
                     : deployVm
@@ -1874,6 +1874,17 @@ namespace UnturnedGodot
             bool isConsumable = ResolveConsumable(gunName);   // food/drink/med, resolved from the shipped clip table
             bool isDeploy = gunName == "generator" || gunName == "spot" || gunName == "spotlight";
             bool isWire = gunName == "wire";
+            // THE CARJACK, BUILT EXACTLY AS EquipHeldCarjack BUILDS IT. An explicit name like isFuel/isDeploy
+            // rather than a table lookup, because consumable_anims.tsv is food/drink/medical and teaching it that
+            // a hydraulic jack is food to get a screenshot is how a harness starts disagreeing with the game it
+            // exists to check.
+            //
+            // ⚠ IT HAS TO BEAT isMelee, and that is the whole reason this branch exists: carjack.txt is present
+            // and carjack_gun.txt is not, so isMelee swallowed it and the harness rendered the MELEE hold -- a
+            // different anchor and different clips from the ones the game actually uses. A render of the wrong
+            // path is worse than no render, because it looks like verification. Same trap the isConsumable
+            // comment above already names for food.
+            bool isJack = gunName == "carjack";
             bool isFuel = gunName == "gascan";   // gas can: held in-hand via the DeployableMesh+NaturalHold path -- must beat isMelee (gascan.txt exists)
             _vm = isFists
                 ? new Viewmodel { Fists = true }                                                  // bare-fists unarmed state (arms + melee ready hold, no mesh)
@@ -1883,6 +1894,9 @@ namespace UnturnedGodot
                 ? new Viewmodel { DeployableMesh = "generator_hold.obj", DeployableAlbedo = "generator_hold_tex.png" }   // deployable carry model in-hand + Deploy_Equip/Use
                 : isFuel
                 ? new Viewmodel { DeployableMesh = "gascan.txt", DeployableAlbedo = "gascan_albedo.png", NaturalHold = true }   // gas can: BIG two-handed carry via its own Fuel_Equip anim (both hands, in-your-face)
+                : isJack
+                ? new Viewmodel { ConsumableMesh = "carjack.txt", ConsumableAlbedo = "carjack_albedo.png",
+                                  ConsumableEquipClip = "Jack_Equip", ConsumableUseClip = "Jack_Use" }   // identical to EquipHeldCarjack
                 : isConsumable   // ⚠ BEFORE isMelee: a consumable ships <name>.txt too, so isMelee would swallow every food
                 ? new Viewmodel { ConsumableMesh = $"{gunName}.txt", ConsumableAlbedo = $"{gunName}_albedo.png",   // .txt, EXACTLY as EquipHeldConsumable builds it -- a harness that passes a different shape can pass while the game fails
                                   ConsumableEquipClip = _cEquipClip, ConsumableUseClip = _cUseClip, LeftHook = _cLeftHook }   // food/drink/med: its OWN CE_n/CU_n, its hook side, and its equipable's real parts
