@@ -416,6 +416,44 @@ void fragment() {
             return ways.Count > 0 ? "learn it: " + string.Join(" or ", ways) : "not learnable in the world";
         }
 
+        /// <summary>WHY this recipe cannot be crafted right now, as one line for the player, or null when it can
+        /// (strawberry 2026-10-04: "do we give a reason for why we cant craft it? a line that says insufficient
+        /// resources or not unlocked or needs workbench or whatever the error is"). The FIRST blocker, in the order a
+        /// player has to clear them -- learn it, level up, stand at the station, gather the stuff -- so the line
+        /// is always the next thing to do rather than a list of everything wrong.</summary>
+        public string CraftBlocker(BlueprintDef bp, Crafting.IInv inv, int qty = 1)
+        {
+            if (bp == null) return "Select a recipe";
+            if (!Known(bp)) return $"Not unlocked  ·  {HowToLearn(bp)}";
+            if (!Crafting.MeetsSkill(bp, Player?.Skills)) return $"Needs {bp.Skill} skill {bp.SkillLevel}";
+            if (!Crafting.HasStations(bp, _stationTags)) return $"Needs {StationNames(bp, _stationTags)} nearby";
+            foreach (var ing in bp.Inputs)
+            {
+                var ia = Assets.findByGuid(ing.Guid);
+                if (ia == null) return "Needs an item this build does not ship";
+                int need = ing.Consume ? ing.Amount * Mathf.Max(1, qty) : ing.Amount;   // a tool is needed once, however many you make
+                int have = inv.Count(ia.id);
+                if (have < need) return ing.Consume ? $"Not enough {ia.itemName}  ({have}/{need})" : $"Needs a {ia.itemName} (tool)";
+            }
+            return null;
+        }
+
+        /// <summary>The stations that would satisfy the tags this recipe still lacks, by name -- "Workbench", or for the
+        /// Heat tag every placeable that gives it ("Campfire or Kiln or Brick Oven").</summary>
+        static string StationNames(BlueprintDef bp, ICollection<string> have)
+        {
+            var names = new List<string>();
+            foreach (var tag in bp.StationTags)
+            {
+                if (have != null && have.Contains(tag)) continue;
+                foreach (var d in DeployableDef.All)
+                    if (d.CraftingTags != null && System.Array.IndexOf(d.CraftingTags, tag) >= 0 && !names.Contains(d.Name)) names.Add(d.Name);
+            }
+            if (names.Count == 0) return "a crafting station";
+            if (names.Count > 3) names = names.GetRange(0, 3);
+            return string.Join(" or ", names);
+        }
+
         static bool LookupMatches(BlueprintDef bp, ItemLookup mode, ushort id)
             => mode == ItemLookup.Uses ? UsesItem(bp, id) : mode == ItemLookup.Recipes && MakesItem(bp, id);
 
@@ -639,7 +677,7 @@ void fragment() {
             bool selLocked = !Known(_sel);
             if (selLocked)
             {
-                var lk = new Label { Text = $"LOCKED  ·  {HowToLearn(_sel)}", AutowrapMode = TextServer.AutowrapMode.WordSmart };
+                var lk = new Label { Text = "LOCKED" };   // the HOW is the reason line above CRAFT, not repeated here
                 lk.AddThemeFontSizeOverride("font_size", UITheme.FontBody);
                 lk.AddThemeColorOverride("font_color", Bad);
                 _detailBox.AddChild(lk);
@@ -692,9 +730,19 @@ void fragment() {
             }
             _detailBox.AddChild(tbl);
 
+            // WHY NOT, in words, right above the button it disables. It used to live only in that button's hover
+            // tooltip -- and the tooltip said "ok" when the station was the problem, because it only ever reported
+            // the item check.
+            string blocker = CraftBlocker(_sel, inv, _qty);
+            bool canMake = blocker == null;
+            if (!canMake)
+            {
+                var why = new Label { Text = blocker, AutowrapMode = TextServer.AutowrapMode.WordSmart };
+                why.AddThemeFontSizeOverride("font_size", UITheme.FontBody);
+                why.AddThemeColorOverride("font_color", Bad);
+                _detailBox.AddChild(why);
+            }
             // amount stepper + CRAFT
-            bool itemsOk = Crafting.CanCraft(_sel, inv, out string why);   // evaluated first and always, so `why` is set for the tooltip
-            bool canMake = !selLocked && itemsOk && Crafting.MeetsSkill(_sel, Player?.Skills) && Crafting.HasStations(_sel, _stationTags);
             var row = new HBoxContainer(); row.AddThemeConstantOverride("separation", 6);
             var minus = new Button { Text = "−", CustomMinimumSize = new Vector2(40, 40) };
             minus.Pressed += () => { _qty = Mathf.Max(1, _qty - 1); ShowDetail(new Crafting.PlayerInvAdapter(Inv)); };
@@ -705,8 +753,7 @@ void fragment() {
             row.AddChild(minus); row.AddChild(qty); row.AddChild(plus);
             var craft = new Button { Text = "CRAFT", CustomMinimumSize = new Vector2(180, 40), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
             craft.Disabled = !canMake;
-            if (!canMake) craft.TooltipText = selLocked ? "you have not learned this blueprint"
-                                            : Crafting.MeetsSkill(_sel, Player?.Skills) ? why : $"needs {_sel.Skill} skill {_sel.SkillLevel}";
+            if (!canMake) craft.TooltipText = blocker;
             craft.Pressed += OnCraft;
             row.AddChild(craft);
             _detailBox.AddChild(row);
@@ -983,6 +1030,7 @@ void fragment() {
         /// what that handler does.</summary>
         public void DebugSetSearch(string q) { if (_search != null) _search.Text = q; _sel = null; _look = ItemLookup.None; Rebuild(); }
         /// <summary>Test seam: how many tiles in the grid carry the padlock right now.</summary>
+        public string DebugBlocker(BlueprintDef bp) => CraftBlocker(bp, new Crafting.PlayerInvAdapter(Inv), 1);
         public int DebugPadlocks() { int n = 0; foreach (Node t in _grid.GetChildren()) foreach (Node c in t.GetChildren()) if (c is PadlockGlyph) n++; return n; }
         public string DebugHeader => _header?.Text ?? "";   // the SAME predicate the list filters on
 

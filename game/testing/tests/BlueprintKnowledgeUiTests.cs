@@ -71,6 +71,21 @@ namespace UnturnedGodot.Testing
             T.Check($"U on the plank lists only what you can do with it ({craft.DebugView().Count}, locked shown: {craft.DebugView().Contains(locked)})",
                     !craft.DebugView().Contains(locked) && craft.DebugView().Count >= 1);
 
+            // ---- 3b. THE REASON LINE names the FIRST blocker, in the order you would clear them.
+            string lockedWhy = craft.DebugBlocker(locked);
+            T.Check($"locked -> says so, and how (\"{lockedWhy}\")", lockedWhy != null && lockedWhy.StartsWith("Not unlocked") && lockedWhy.Contains(Assets.find(Scrap).itemName));
+            BlueprintDef openStick = null; foreach (var bp in BlueprintRegistry.Index()) if (!bp.Locked && bp.Inputs[0].Guid == locked.Inputs[0].Guid) openStick = bp;
+            string emptyWhy = openStick != null ? craft.DebugBlocker(openStick) : null;
+            T.Check($"known but the bag is empty -> names the missing item (\"{emptyWhy}\")",
+                    emptyWhy != null && emptyWhy.Contains(Assets.findByGuid(openStick.Inputs[0].Guid).itemName));
+            var benched = BlueprintDef.FromTsv(string.Join("\t", openStick.OwnerItemId, "Craft", "", "", "0",
+                $"{openStick.Inputs[0].Guid}:1:1", $"{openStick.Outputs[0].Guid}:1", DeployableDef.Workbench.CraftingTags[0]));
+            T.Check($"a station recipe away from one names the station (\"{craft.DebugBlocker(benched)}\")",
+                    craft.DebugBlocker(benched) == "Needs Workbench nearby");
+            var skilled = BlueprintDef.FromTsv(string.Join("\t", openStick.OwnerItemId, "Craft", "", "Craft", "3",
+                $"{openStick.Inputs[0].Guid}:1:1", $"{openStick.Outputs[0].Guid}:1", ""));
+            T.Check($"a skill-gated one names the skill (\"{craft.DebugBlocker(skilled)}\")", craft.DebugBlocker(skilled) == "Needs Craft skill 3");
+
             // ---- 4. YOU CANNOT CRAFT WHAT YOU DO NOT KNOW, even holding everything it needs.
             foreach (var ing in locked.Inputs) p.Inventory.tryAddItem(new Item(Assets.findByGuid(ing.Guid).id));
             int planks0 = p.Inventory.getItemCount(plank);
@@ -78,6 +93,10 @@ namespace UnturnedGodot.Testing
             yield return Ticks(2);
             T.Check($"queueing the locked recipe takes nothing ({planks0} -> {p.Inventory.getItemCount(plank)} planks)",
                     p.Inventory.getItemCount(plank) == planks0);
+            T.Check($"...and with the ingredients in hand the open recipe has no blocker at all ({craft.DebugBlocker(openStick) ?? "none"})",
+                    craft.DebugBlocker(openStick) == null);
+            T.Check($"...while the locked one still says it is locked, not that you lack anything ({craft.DebugBlocker(locked)})",
+                    craft.DebugBlocker(locked).StartsWith("Not unlocked"));
 
             // ---- 5. THE LEARN BUTTON: the scrap teaches it, is spent once, and the recipe joins the browsable list.
             T.Check("the scrap is a teaching item", PlayerController.TeachesBlueprint(Scrap));
