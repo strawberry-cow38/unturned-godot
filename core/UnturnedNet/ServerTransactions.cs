@@ -1194,6 +1194,29 @@ namespace UnturnedGodot.Net
             // holsters it -- the owner echo carries worn + slots, and the client forces a slotted weapon into the hands
             if (inv.tryAddItemAuto(e.ServerItem, out _) != PlayerInventory.AutoPlace.None)
             {
+                // ⚠⚠ AutoPlace.Worn IS A BARE FIELD WRITE AND DIRTIES NOTHING. Of the three ways a pickup can
+                // land, two touch a page -- Grid goes through tryAddItem and Slot through equipToSlot, and both
+                // raise Items.onStateUpdated, which is what sets the owner entry dirty. Worn does not: it is
+                // `wornHat = item` and no more, so the garment went onto the server's player and NO ECHO WAS
+                // EVER SENT. The client learned about it the next time some unrelated grid edit happened to
+                // dirty the entry, which is why the player had to nudge their bag to get dressed.
+                //
+                // master, 2026-10-05: "see if we can finally fix the hat equip bug... it doesnt show or apply on
+                // my character until i update my inv. (by moving an item in my inv)" -- and on how: "picking up
+                // from ground which auto equips it". THAT is the whole bug; the wear itself always worked.
+                //
+                // ⭐⭐ IT HAD BEEN "FIXED" TWICE, BOTH TIMES ON THE CLIENT. 2026-09-07 added
+                // PlayerClothingController.ReconcileTick (repaint the body when a worn slot moves) and 2026-09-13
+                // put the worn slots into InventoryUI's poll hash. Both are correct and both still work -- I
+                // re-verified them before touching this -- and neither could ever have fixed it, because they
+                // watch the client's worn slots for a change that was not being delivered. Two polls looking
+                // harder at data that never arrived. The missing byte was always on the server.
+                //
+                // Unconditional on success rather than gated on == Worn: Grid and Slot dirty themselves anyway so
+                // this is idempotent, and a rule written as "the one outcome that needs it" is a rule that breaks
+                // the next time the placement outcomes change. ServerTakeFromStorage, the only other caller of
+                // tryAddItemAuto, has always set its own dirty flag for exactly this reason.
+                _inventories.ServerMarkDirty(sender);
                 RemoveWorldItem(cmd.NetId);
             }
             else
