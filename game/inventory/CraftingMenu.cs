@@ -41,6 +41,7 @@ namespace UnturnedGodot
         ScrollContainer _catScroll, _gridScroll;
         Label _qLabel;
         Vector2 _lastVp;                          // relayout only when the viewport size changes
+        Vector2 _laidOutFor;                      // the size the last Layout() actually used (test seam: wait for a relayout)
         BlueprintDef _sel;
         string _cat = "All";
 
@@ -169,8 +170,10 @@ void fragment() {
             _swoop = MenuSwoop.Attach(this, _root, _slide, dim);
 
             _navbar = MenuNavbar.Build(_root, MenuNavbar.Tab.Craft, t => Player?.ShowMenu(t), () => { Close(); Input.MouseMode = Input.MouseModeEnum.Captured; });   // the SHARED strip -- on the full-screen ROOT, not the inset panel, so it sits exactly where the inventory's does (the 16 px panel inset was the "bar moves slightly")
-            // "N shown / M craftable" info line, small, below the navbar (text set in Rebuild)
-            _header = new Label();
+            // "N shown / M craftable" info line, sitting on top of the vitals (placed in Layout, text set in Rebuild)
+            // bottom-aligned and wrapping: it sits on top of the vitals (Layout), so a long lookup line grows UP into its
+            // own box rather than down across the bars
+            _header = new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart, VerticalAlignment = VerticalAlignment.Bottom };
             _header.AddThemeFontSizeOverride("font_size", FontInfo);
             _header.AddThemeColorOverride("font_color", UITheme.TextDim);
             _panel.AddChild(_header);
@@ -241,12 +244,13 @@ void fragment() {
             if (_panel == null || _root == null) return;
             Vector2 vp = _root.Size;
             if (vp.X < 1f) vp = GetViewport().GetVisibleRect().Size;
+            _laidOutFor = vp;
             const float M = 16f;
             float pw = vp.X - 2f * M, ph = vp.Y - 2f * M;
             _panel.Position = new Vector2(M, M);
             _panel.Size = new Vector2(pw, ph);
 
-            const float barH = MenuNavbar.Height, top = barH + 48f, bottomPad = 150f;   // content clears the shared navbar + the info line
+            const float barH = MenuNavbar.Height, top = barH + 16f, bottomPad = 150f;   // content clears the shared navbar
 
             // THE LEFT COLUMN IS THE VITALS' COLUMN (strawberry 2026-10-05: "match the vertical list of categories'
             // width to the width of the vitals (same w search bar, move that just above the craft queue"). The
@@ -262,9 +266,18 @@ void fragment() {
             float detW = DETW;
             float detX = pw - detW - M;
             float gridW = Mathf.Max(TILE + 16f, detX - gridX - 16f);
-            _header.Position = new Vector2(catX, barH + 10f); _header.Size = new Vector2(pw - catX - 16f, 30f);
 
-            float catBottom = HUD.ContentBottom(vp, M + catX, M + catX + catW, M + ph - bottomPad) - M;
+            // THE "CRAFTING · N shown · M craftable" LINE SITS ON THE VITALS (strawberry 2026-10-05: "move the crafting x
+            // available text to be above the vitals instead of the top, making an awkward gap w the elements there").
+            // It used to own a 48 px band under the navbar that every column started below; now that band is gone, all
+            // three columns start one gutter under the navbar, and the line closes the left column off instead: the
+            // categories stop above it, it stops above the bars. Two lines tall, text bottom-aligned, so a lookup's
+            // longer line wraps upward into its own box and never down across the vitals.
+            const float headerH = 60f;
+            float headerY = HUD.ContentBottom(vp, M + catX, M + catX + catW, M + ph - bottomPad) - M - headerH;
+            _header.Position = new Vector2(catX, headerY); _header.Size = new Vector2(catW, headerH);
+
+            float catBottom = headerY - 10f;
             _catScroll.Position = new Vector2(catX, top);
             _catScroll.Size = new Vector2(catW, Mathf.Max(120f, catBottom - top));
 
@@ -308,7 +321,7 @@ void fragment() {
             var d = new Dictionary<string, Rect2>
             {
                 ["categories"] = R(_catScroll), ["grid"] = R(_gridScroll), ["search"] = R(_search),
-                ["queue"] = R(_queuePanel), ["detail"] = R(_detail),
+                ["queue"] = R(_queuePanel), ["detail"] = R(_detail), ["header"] = R(_header),
             };
             return d;
         }
@@ -1123,6 +1136,7 @@ void fragment() {
         public string DebugBlocker(BlueprintDef bp) => CraftBlocker(bp, new Crafting.PlayerInvAdapter(Inv), 1);
         public int DebugPadlocks() { int n = 0; foreach (Node t in _grid.GetChildren()) foreach (Node c in t.GetChildren()) if (c is PadlockGlyph) n++; return n; }
         public BlueprintDef DebugSelected => _sel;
+        public Vector2 DebugLaidOutFor => _laidOutFor;
         public string DebugHeader => _header?.Text ?? "";   // the SAME predicate the list filters on
 
         /// <summary>The crafted item's name. A Craft blueprint's OUTPUT IS ITS OWNER ITEM -- the outputs column is

@@ -22,6 +22,12 @@ namespace UnturnedGodot.Testing
         public override double TimeoutSimSeconds => 30;
 
         static bool Near(float a, float b) => Mathf.Abs(a - b) <= 1.5f;
+
+        // The menu re-lays itself from _Process when the window changes size, and a test TICK is a physics step: several
+        // can pass inside one rendered frame, so "N ticks later" does not mean "after a relayout". The lookup check below
+        // measured a 3440-wide layout against 2560 vitals that way. Wait for the size the last layout USED to be the
+        // size the screen IS -- a fact about the menu's input, not about whether its output is right.
+        static bool LaidOutForNow(CraftingMenu m) => (m.DebugLaidOutFor - m.GetViewport().GetVisibleRect().Size).LengthSquared() < 1f;
         static string E(Rect2 r) => $"[{r.Position.X:0}..{r.End.X:0} x {r.Position.Y:0}..{r.End.Y:0}]";
 
         public override IEnumerable<Step> Run()
@@ -39,7 +45,7 @@ namespace UnturnedGodot.Testing
             {
                 if (win != null) win.ContentScaleSize = new Vector2I(w, 1440);
                 p.ShowMenu(MenuNavbar.Tab.Craft);
-                yield return Ticks(3);
+                yield return Until(() => LaidOutForNow(craft), 3);
                 var r = craft.DebugRects();
                 Vector2 vp = craft.GetViewport().GetVisibleRect().Size;
                 var vit = HUD.VitalsRect(vp);
@@ -52,6 +58,14 @@ namespace UnturnedGodot.Testing
                 T.Check($"{at} categories {E(cat)} span the vitals' width {E(vit)}",
                         Near(cat.Position.X, vit.Position.X) && Near(cat.End.X, vit.End.X));
                 T.Check($"{at} ...and stop above them ({cat.End.Y:0} <= {vit.Position.Y:0})", cat.End.Y <= vit.Position.Y);
+
+                // ---- 1b. THE "CRAFTING · N shown" LINE SITS ON THE VITALS, and the columns start right under the navbar
+                // (strawberry 2026-10-05: "move the crafting x available text to be above the vitals instead of the top")
+                var h = r["header"];
+                T.Check($"{at} the count line {E(h)} is in the vitals' column, just above them ({vit.Position.Y - h.End.Y:0} px gap), under the categories",
+                        Near(h.Position.X, vit.Position.X) && h.End.X <= vit.End.X + 1f && h.End.Y <= vit.Position.Y && vit.Position.Y - h.End.Y <= 24f && cat.End.Y <= h.Position.Y);
+                T.Check($"{at} no band left for it at the top: categories, grid and detail all start {cat.Position.Y:0} px down, within 40 of the navbar ({MenuNavbar.Height})",
+                        cat.Position.Y - MenuNavbar.Height <= 40f && Near(r["grid"].Position.Y, cat.Position.Y) && Near(r["detail"].Position.Y, cat.Position.Y));
 
                 // ---- 2. THE SEARCH: vitals-wide, sitting on the craft queue
                 var s = r["search"]; var q = r["queue"];
@@ -75,7 +89,22 @@ namespace UnturnedGodot.Testing
                         measured >= 10 && bad.Count == 0);
             }
 
+            // ---- 5. A LOOKUP'S LONGER LINE wraps upward in its own box -- it never runs down across the bars. The longest
+            // item name any recipe uses, so the header is as long as this catalog can make it.
             if (win != null) win.ContentScaleSize = new Vector2I(2560, 1440);
+            yield return Until(() => LaidOutForNow(craft), 3);
+            ushort longest = 0; int longLen = 0;
+            foreach (var bp in BlueprintRegistry.Index())
+                foreach (var ing in bp.Inputs)
+                    if (Assets.findByGuid(ing.Guid) is ItemAsset ia && (ia.itemName?.Length ?? 0) > longLen) { longLen = ia.itemName.Length; longest = ia.id; }
+            p.ShowCraftingLookup(CraftingMenu.ItemLookup.Uses, longest);
+            yield return Ticks(3);
+            var rl = craft.DebugRects(); var vitL = HUD.VitalsRect(craft.GetViewport().GetVisibleRect().Size);
+            var hdr = craft.DebugHeader; var hl = rl["header"];
+            GD.Print($"[craft.layout] lookup header {E(hl)} vitals {E(vitL)} categories {E(rl["categories"])}");
+            T.Check($"lookup line \"{hdr}\" {E(hl)} still ends above the vitals ({vitL.Position.Y:0}) and below the categories ({rl["categories"].End.Y:0})",
+                    hdr.Contains(Assets.find(longest)?.itemName ?? "?") && hl.End.Y <= vitL.Position.Y && hl.Position.Y >= rl["categories"].End.Y);
+
             p.ShowMenu(MenuNavbar.Tab.Inventory);
             yield return Ticks(1);
         }
