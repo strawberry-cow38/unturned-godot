@@ -231,7 +231,11 @@ namespace UnturnedGodot.Net
 
         /// <summary>Host override of a player's gun profile (until Phase 6 replicates the held item).</summary>
         public void SetGunProfile(ushort playerId, ServerGunProfile profile) => _gunByPlayer[playerId] = profile;
-        public ServerGunProfile GunFor(ushort playerId) => _gunByPlayer.TryGetValue(playerId, out var p) ? p : DefaultGun;
+        /// <summary>Optional game-content resolver for an owned held weapon. Existing explicit host/test
+        /// overrides win; unregistered content keeps the former default behavior.</summary>
+        public Func<ushort, ServerGunProfile> ResolveHeldGunProfile;
+        public ServerGunProfile GunFor(ushort playerId)
+            => _gunByPlayer.TryGetValue(playerId, out var p) ? p : ResolveHeldGunProfile?.Invoke(playerId) ?? DefaultGun;
 
         public int AmmoOf(ushort playerId) => _state.TryGet(playerId, out var e) ? e.Ammo : -1;
 

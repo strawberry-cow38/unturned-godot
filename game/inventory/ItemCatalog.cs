@@ -13,6 +13,26 @@ namespace SDG.Unturned
         {
             Assets.clear();
             LoadCatalogFile();
+            // New MAC-10 identity; mutate TSV assets to retain their unique GUIDs and names.
+            // Gameplay is provisionally the Bulldog/Uzi baseline, not real-performance tuning.
+            {
+                var gun = Assets.find(9145);
+                if (gun != null)
+                {
+                    gun.gunName = "mac10";
+                    gun.gunAmmoMax = 30;
+                    gun.gunCaliber = 205;
+                    gun.slot = ESlotType.SECONDARY;
+                }
+                var mag = Assets.find(9146);
+                if (mag != null)
+                {
+                    mag.magCapacity = 30;
+                    mag.magCaliber = 205;
+                    mag.magRound = ".45 ACP";
+                    mag.ammoType = "FMJ";
+                }
+            }
             //  id   name            sx sy  type                 rarity               storage   description (real, from English.dat)
             // ⚠⚠ THESE Add() ROWS RE-SPECIFY THE NAME AND RUN AFTER LoadCatalogFile(), SO THEY WIN. Renaming a gun
             // in items_catalog.tsv alone does NOTHING for any item that also has a hand-tuned row here -- the TSV

@@ -1164,11 +1164,21 @@ namespace UnturnedGodot
         /// ShowMeleeHold on purpose: the live body and the inventory paperdoll are both RiggedCharacters holding
         /// the same weapon, and two callers each assembling "Capitalised_Equip" by hand is how they drift apart.
         /// Falls back to the generic Gun_Equip for a weapon with no clips of its own.</summary>
+        /// <summary>Authored clips first, explicitly named donor second, existing fallback last.</summary>
+        public string GunClipFor(string gunName, string suffix, string fallback = null)
+        {
+            if (string.IsNullOrEmpty(gunName)) return fallback;
+            string own = char.ToUpper(gunName[0]) + gunName[1..] + suffix;
+            if (ClipLength(own) > 0f) return own;
+            string donor = Viewmodel.AnimationDonorFor(gunName);
+            return donor != null && ClipLength(donor + suffix) > 0f ? donor + suffix : fallback;
+        }
+
         public void ShowGunHold(string gunName)
         {
             if (string.IsNullOrEmpty(gunName)) return;
             string cap = char.ToUpper(gunName[0]) + gunName[1..];
-            string equip = ClipLength(cap + "_Equip") > 0f ? cap + "_Equip" : "Gun_Equip";
+            string equip = GunClipFor(gunName, "_Equip", "Gun_Equip");
             if (ClipLength(equip) <= 0f) return;
             if (!_gunLayer) EnableGunLayer("Gun_Aim");   // additive aim bake is inert at AimBlend 0; the LAYER is what we want
             SnapGunOverlay(equip);
