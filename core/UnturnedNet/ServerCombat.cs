@@ -38,6 +38,7 @@ namespace UnturnedGodot.Net
         public float HeadMult = 2.0f;           // the NetServer.Hitscan zone table (head/torso/leg). 2.0 per strawberry 2026-08-15 (was 3.0); MIRRORS Humanoid.HeadMult -- gun.zone_table_mirror asserts they agree
         public float TorsoMult = 1.0f;
         public float LegMult = 0.6f;
+        public int CyclicRateRPM;   // optional authored rate; phase is per player, never on the shared profile
         public int FirerateTicks = 4;           // .dat Firerate; min shot gap = Firerate+1 ticks (the SP off-by-one rule)
         public float MuzzleVelocity = 500f;
         public int BallisticSteps = 20;
@@ -271,7 +272,9 @@ namespace UnturnedGodot.Net
             { Diag.ShotsRejectedDeadOrMissing++; return; }
             var gun = GunFor(sender);
             if (cs.ReloadDoneTick > tick) { Diag.ShotsRejectedReloading++; return; }
-            if (tick - cs.LastFireTick <= gun.FirerateTicks) { Diag.ShotsRejectedRate++; return; }   // min gap = Firerate+1 ticks (SP rule)
+            if (gun.CyclicRateRPM > 0 ? tick < cs.LegacyFireReadyTick || !cs.ShotCadence.CanFire(tick, gun.CyclicRateRPM)
+                : tick - cs.LastFireTick <= gun.FirerateTicks || cs.ShotCadence.IsCoolingDown(tick))
+            { Diag.ShotsRejectedRate++; return; }   // min gap = Firerate+1 ticks (SP rule)
             if (cs.Ammo <= 0) { Diag.ShotsRejectedAmmo++; return; }
             if ((cmd.Origin - pe.Pos).magnitude > gun.MaxAimOriginOffset) { Diag.ShotsRejectedRange++; return; }
             var dir = cmd.Dir;
@@ -279,6 +282,12 @@ namespace UnturnedGodot.Net
             if (m < 0.5f || float.IsNaN(m)) { Diag.ShotsRejectedMalformed++; return; }
             dir /= m;
 
+            if (gun.CyclicRateRPM > 0) cs.ShotCadence.AcceptShot(tick, gun.CyclicRateRPM);
+            else
+            {
+                cs.ShotCadence.AcceptLegacyShot(tick, gun.FirerateTicks + 1);
+                cs.LegacyFireReadyTick = tick + gun.FirerateTicks + 1;
+            }
             cs.LastFireTick = tick;
             cs.Ammo--;
             for (int i = 0; i < Math.Max(1, gun.Pellets); i++)

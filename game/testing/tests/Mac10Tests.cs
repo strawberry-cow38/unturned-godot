@@ -75,7 +75,7 @@ namespace UnturnedGodot.Testing
             ItemCatalog.RegisterAll();
             var profile = AuthoredGunProfiles.Profile;
             var def = GunDef.FromDatText(System.IO.File.ReadAllText(ProjectSettings.GlobalizePath("res://content/mac10.dat")));
-            T.Check("server uses same MAC data", profile.AssetName == "mac10" && profile.PlayerDamage == def.Damage && profile.FirerateTicks == def.Firerate && profile.MagCapacity == 30);
+            T.Check("server uses same MAC data", profile.AssetName == "mac10" && profile.PlayerDamage == def.Damage && profile.FirerateTicks == def.Firerate && profile.CyclicRateRPM == 950 && profile.CyclicRateRPM == def.CyclicRateRPM && profile.MagCapacity == 30);
             T.Check("server reload follows the selected clip", profile.ReloadTicks == 90);
             var net = new NetWorldServer(new MemServerTransport(new MemNetwork(seed:7)), contentHash:NetContent.Hash);
             AuthoredGunProfiles.Install(net);
@@ -125,6 +125,35 @@ namespace UnturnedGodot.Testing
             inv.Inventory.tryAddItemAuto(new Item(9145), out _);
             ded.Server.Players.ServerQueueInput(99,new MoveInput {Seq=1,HeldItemId=9145});
             T.Check("actual dedicated host uses owned MAC profile", ded.Server.Combat.GunFor(99).AssetName == "mac10");
+        }
+    }
+
+    public sealed class Mac10CadenceTests : GameTest
+    {
+        public override string Name => "gun.mac10_cadence";
+        public override IEnumerable<Step> Run()
+        {
+            ItemCatalog.RegisterAll();
+            var player = new PlayerController { CaptureMouse=false };World.AddChild(player);
+            yield return Ticks(2);
+            player.Inventory.items[1].tryAddItem(new Item(9145));
+            player.EquipHotbar(2);
+            yield return Ticks(70);
+            T.Check("accepted MAC equipped",player.HasGunOut && player.Gun?.CyclicRateRPM==950);
+            player.Ammo=30;
+            var fired=new List<int>();
+            for(int tick=0;tick<=60;tick++)
+            {
+                if(player.Fire()) fired.Add(tick);
+                if(tick<60) yield return Ticks(1);
+            }
+            T.Check($"real shell fires 20 shots ({fired.Count})",fired.Count==20);
+            T.Check("19 real shell intervals total 60 ticks",fired.Count==20 && fired[^1]-fired[0]==60);
+            T.Check("real shell alternates only 3/4-tick gaps",fired.Zip(fired.Skip(1),(a,b)=>b-a).All(g=>g==3||g==4));
+            T.Check("shots genuinely spend ammo",player.Ammo==10);
+            yield return Ticks(30);
+            bool resume=player.Fire();
+            T.Check("pause resumes without stored burst",resume && !player.Fire());
         }
     }
 

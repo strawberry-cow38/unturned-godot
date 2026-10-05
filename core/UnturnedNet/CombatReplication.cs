@@ -496,6 +496,8 @@ namespace UnturnedGodot.Net
             public float HealthExact = 100f;
             public int Ammo;
             public long LastFireTick = -100000;
+            public UnturnedSim.ShotCadence ShotCadence;   // server-only fractional firing phase
+            public long LegacyFireReadyTick = -100000;   // protects the first RPM shot after a legacy shot
             public long ReloadDoneTick = -1;     // > current tick = mid-reload
             public long RespawnAtTick = -1;      // dead until this tick
             public long MeleeReadyTick = -100000;

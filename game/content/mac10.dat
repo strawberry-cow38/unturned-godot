@@ -27,6 +27,8 @@ Real_Weapon "MAC-10"
 
 Range 90
 Firerate 5
+// .45 ACP reference cyclic rate; opt-in exact fractional 50 Hz schedule.
+Cyclic_Rate_RPM 950
 Action Trigger
 
 Damage 12

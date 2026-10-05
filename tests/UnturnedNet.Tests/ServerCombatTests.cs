@@ -140,6 +140,61 @@ namespace UnturnedNet.Tests
         }
 
         [Test]
+        public void Fire_950Rpm_FractionalCadence_AcceptsACompleteCycle()
+        {
+            var h = new Harness(50950).Connected("mac");
+            var c = h.Clients[0];
+            h.Server.Combat.SetGunProfile(c.PlayerId, new ServerGunProfile { AssetName="mac10", CyclicRateRPM=950, FirerateTicks=5 });
+            h.Server.Players.TryGetByOwner(c.PlayerId,out var pe);
+            var phase = new UnturnedSim.ShotCadence();
+            var fired = new List<int>();
+            for (int tick=0;tick<=60;tick++)
+            {
+                int t=tick;
+                h.Step(() =>
+                {
+                    if (!phase.CanFire(t,950)) return;
+                    phase.AcceptShot(t,950);fired.Add(t);
+                    c.SendFire(Eye(pe.Pos),new Vector3(0,0,1));
+                });
+            }
+            h.Step(8);
+            Assert.That(fired.Count,Is.EqualTo(20));
+            Assert.That(fired[^1]-fired[0],Is.EqualTo(60),"19 intervals in 1.2 sec = 950 RPM");
+            Assert.That(h.Server.Combat.Diag.ShotsAccepted,Is.EqualTo(20));
+            Assert.That(h.Server.Combat.Diag.ShotsRejectedRate,Is.Zero);
+        }
+
+        [Test]
+        public void Fire_RpmEntryCannotEraseThePreviousLegacyCooldown()
+        {
+            var h=new Harness(52950).Connected("switch");var c=h.Clients[0];
+            h.Server.Players.TryGetByOwner(c.PlayerId,out var pe);
+            var cmd=new FireCommand {Seq=1,Origin=Eye(pe.Pos),Dir=new Vector3(0,0,1)};
+            h.Server.Combat.OnFire(c.PlayerId,in cmd,100);
+            Assert.That(h.Server.Combat.Diag.ShotsAccepted,Is.EqualTo(1));
+            h.Server.Combat.SetGunProfile(c.PlayerId,new ServerGunProfile {CyclicRateRPM=950});
+            cmd.Seq=2;h.Server.Combat.OnFire(c.PlayerId,in cmd,101);
+            Assert.That(h.Server.Combat.Diag.ShotsAccepted,Is.EqualTo(1),"switch cannot wipe the pending legacy gap");
+            cmd.Seq=3;h.Server.Combat.OnFire(c.PlayerId,in cmd,105);
+            Assert.That(h.Server.Combat.Diag.ShotsAccepted,Is.EqualTo(2));
+            cmd.Seq=4;h.Server.Combat.OnFire(c.PlayerId,in cmd,105);
+            Assert.That(h.Server.Combat.Diag.ShotsAccepted,Is.EqualTo(2),"no same-tick double shot after switching");
+        }
+
+        [Test]
+        public void Fire_950Rpm_SpamCannotTurnItInto1000Or3000Rpm()
+        {
+            var h=new Harness(51950).Connected("spam");var c=h.Clients[0];
+            h.Server.Combat.SetGunProfile(c.PlayerId,new ServerGunProfile {CyclicRateRPM=950});
+            h.Server.Players.TryGetByOwner(c.PlayerId,out var pe);
+            h.Step(61,()=>c.SendFire(Eye(pe.Pos),new Vector3(0,0,1)));
+            h.Step(8);
+            Assert.That(h.Server.Combat.Diag.ShotsAccepted,Is.EqualTo(20));
+            Assert.That(h.Server.Combat.Diag.ShotsRejectedRate,Is.EqualTo(41));
+        }
+
+        [Test]
         public void Fire_EmptyMagazine_IsRejected_UntilAServerTimedReload()
         {
             var h = new Harness(50103);

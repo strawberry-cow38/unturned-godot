@@ -37,7 +37,7 @@ def row(file,key,value):
  if preserved and not preserved.endswith(b'\n'):preserved+=b'\n'
  p.write_bytes(preserved+(key+'\t'+value+'\n').encode())
 def main():
- source=json.loads((ROOT/'tools/models/mac10_v13.json').read_text());body=source['body']+source['collapsed_stock'];sights=source['front']+source['rear'];mag=source['magazine']
+ source=json.loads((ROOT/'tools/models/mac10_v13.json').read_text());body=source['body']+source['extended_stock'];sights=source['front']+source['rear'];mag=source['magazine']
  stats={}
  for stem,parts,pal,pivot in [('mac10_gun',body,PALETTE,(0,0,0)),('mac10_sight',sights,PALETTE,SIGHT_HOOK),('mag_mac10',mag,MAG_PALETTE,MAG_HOOK),('mac10_stock_extended',source['extended_stock'],PALETTE,(0,0,0))]:
   stats[stem]=write(OUT/(stem+'.txt'),parts,pal,pivot)
@@ -52,6 +52,6 @@ def main():
  row('guns_maghook.tsv','mac10',','.join(format(v,'.12g') for v in MAG_HOOK)+'\tmac10')
  row('sights.tsv','mac10',f'mac10_sight.txt\t0,-0.197,-0.188\t1,1,1\tmac10_sight_albedo.png')
  # Factory irons only at present: no invented aftermarket optic rail.
- report=dict(source='approved V13',stock='collapsed, fixed; extended visual supplied for future animation',gun_frame='(-L,U,-H), already port-converted; no second sign flip',magazine_hook=MAG_HOOK,sight_mount=SIGHT_HOOK,aim_hook=(0,-.392,-.188),muzzle_hook=(0,.295,-.0881588447653),meshes=stats)
+ report=dict(source='approved V13',stock='extended, fixed default; no stock toggle or animation',gun_frame='(-L,U,-H), already port-converted; no second sign flip',magazine_hook=MAG_HOOK,sight_mount=SIGHT_HOOK,aim_hook=(0,-.392,-.188),muzzle_hook=(0,.295,-.0881588447653),meshes=stats)
  (ROOT/'docs/MAC10_ASSET_LAYOUT.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))
 if __name__=='__main__':main()

@@ -151,8 +151,8 @@ namespace UnturnedGodot
                 activeHoliday: ActiveHoliday,    // P3: joiners build THIS world's holiday props/colliders, not their own clock's
                 serverName: ServerName,          // wire v53: so a joined client knows where it is (UG_NAME)
                 maxPlayers: MaxPlayers,          // ...how many seats, without querying the status block
-                gamemode: Arena ? "Arena" : "Survival");
-            AuthoredGunProfiles.Install(Server);   // new authored content, same SP/MP profile   // the SAME expression the status block advertises, not a second opinion
+                gamemode: Arena ? "Arena" : "Survival");   // the SAME expression the status block advertises, not a second opinion
+            AuthoredGunProfiles.Install(Server);   // new authored content, same SP/MP profile
             // Death messages (strawberry 2026-09-18). Announcing is ON by default and, with no detail flags
             // set, says exactly "playername died" -- the four details are separate opt-ins so an operator
             // shows only what they want. UG_DEATHMSG=0 silences the line entirely.

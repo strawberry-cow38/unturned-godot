@@ -33,7 +33,7 @@ namespace UnturnedGodot
                 {
                     AssetName = Name, PlayerDamage = gun.Damage, ZombieDamage = gun.Damage,
                     ObjectDamage = gun.ObjectDamage, VehicleDamage = gun.VehicleDamage,
-                    FirerateTicks = gun.Firerate, MuzzleVelocity = gun.MuzzleVelocity,
+                    FirerateTicks = gun.Firerate, CyclicRateRPM = gun.CyclicRateRPM, MuzzleVelocity = gun.MuzzleVelocity,
                     BallisticSteps = gun.BallisticSteps, GravityMultiplier = gun.GravityMultiplier,
                     MagCapacity = gun.AmmoMax, Pellets = 1,
                     ReloadTicks = Math.Max(1, (int)Math.Round(reload.GetProperty("length").GetDouble() * 50)),

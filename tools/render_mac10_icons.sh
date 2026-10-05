@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-GODOT=${GODOT:-$HOME/godot46/Godot_v4.6-stable_mono_linux_arm64/Godot_v4.6-stable_mono_linux.arm64}
+USER_HOME=$(getent passwd "$(id -u)" | cut -d: -f6)
+GODOT=${GODOT:-$USER_HOME/godot46/Godot_v4.6-stable_mono_linux_arm64/Godot_v4.6-stable_mono_linux.arm64}
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 cp "$ROOT/tools/mac10_icons/"* "$TMP/"
 ln -s "$ROOT/game/content" "$TMP/content"

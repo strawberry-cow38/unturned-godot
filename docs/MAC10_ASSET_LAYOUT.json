@@ -1,6 +1,6 @@
 {
   "source": "approved V13",
-  "stock": "collapsed, fixed; extended visual supplied for future animation",
+  "stock": "extended, fixed default; no stock toggle or animation",
   "gun_frame": "(-L,U,-H), already port-converted; no second sign flip",
   "magazine_hook": [
     0,
@@ -26,12 +26,12 @@
     "mac10_gun": {
       "box": [
         0.164,
-        0.5361961524227066,
+        0.8761961524227067,
         0.3510830324909747
       ],
       "center": [
         0.0,
-        0.026901923788646684,
+        -0.14309807621135337,
         0.005541516245487363
       ],
       "parts": 4,
