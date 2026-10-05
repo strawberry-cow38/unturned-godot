@@ -149,6 +149,23 @@ namespace UnturnedGodot
     // _Draw has a Control to run on. Highlight is set by AmmoRadial; QueueRedraw re-runs _Draw.
     public partial class AmmoPie : Control
     {
+        // the action icons, loaded once from content/ui (tools/gen_radial_icons.py draws them). No fallback glyph on a
+        // miss: a missing file says so in the log instead of quietly drawing the old chevron and looking shipped.
+        static readonly System.Collections.Generic.Dictionary<string, Texture2D> _actionIcons = new();
+        internal static Texture2D ActionIcon(string name)
+        {
+            if (_actionIcons.TryGetValue(name, out var t)) return t;
+            string path = ProjectSettings.GlobalizePath($"res://content/ui/{name}.png");
+            var img = System.IO.File.Exists(path) ? ContentProvider.LoadImage(path) : null;
+            // 20x20 pixel art like the retail HUD icons: blown up NEAREST here, so the pie's linear filter at ~110 px
+            // keeps hard pixel edges instead of smearing 20 texels into a blur
+            if (img != null && !img.IsEmpty() && img.GetWidth() <= 32) img.Resize(img.GetWidth() * 6, img.GetHeight() * 6, Image.Interpolation.Nearest);
+            t = img != null && !img.IsEmpty() ? ImageTexture.CreateFromImage(img) : null;
+            if (t == null) Log.Err($"[radial] action icon missing: {path}");
+            _actionIcons[name] = t;
+            return t;
+        }
+
         public struct Sector { public ushort Id; public string Name; public string CountText; public bool Selectable; public bool Selected; public bool IsUnload; public bool IsRemoveMag; public bool IsRack; public Item MagItem; public float MidAngle; public Texture2D Icon; }
         public System.Collections.Generic.List<Sector> Sectors;
         public string HubText = "load ammo";
@@ -183,21 +200,19 @@ namespace UnturnedGodot
 
                 Vector2 p = c + new Vector2(Mathf.Cos(s.MidAngle), Mathf.Sin(s.MidAngle)) * ((RIn + rOut) * 0.5f);
                 Color tint = s.Selectable ? Colors.White : new Color(1, 1, 1, 0.45f);
-                if (s.IsUnload || s.IsRemoveMag)   // eject glyph (down chevron): unload shells / drop the magazine
+                if (s.IsUnload || s.IsRemoveMag || s.IsRack)
                 {
-                    Vector2 g = p - new Vector2(0, 14) * S;
-                    Color gc = s.Selectable ? new Color(1f, 0.6f, 0.55f) : new Color(0.6f, 0.55f, 0.55f, 0.6f);
-                    DrawLine(g + new Vector2(-16, -8) * S, g + new Vector2(0, 9) * S, gc, 3.5f * S);
-                    DrawLine(g + new Vector2(16, -8) * S, g + new Vector2(0, 9) * S, gc, 3.5f * S);
-                }
-                else if (s.IsRack)   // rack glyph: a double chevron pulling the bolt LEFT/back
-                {
-                    Vector2 g = p - new Vector2(2, 6) * S;
-                    Color gc = s.Selectable ? new Color(0.72f, 0.86f, 1f) : new Color(0.6f, 0.6f, 0.62f, 0.6f);
-                    DrawLine(g + new Vector2(8, -11) * S, g + new Vector2(-6, 0) * S, gc, 3.5f * S);
-                    DrawLine(g + new Vector2(8, 11) * S, g + new Vector2(-6, 0) * S, gc, 3.5f * S);
-                    DrawLine(g + new Vector2(20, -11) * S, g + new Vector2(6, 0) * S, gc, 3.5f * S);
-                    DrawLine(g + new Vector2(20, 11) * S, g + new Vector2(6, 0) * S, gc, 3.5f * S);
+                    // ACTION ICONS (strawberry 2026-10-05: "gen some icons for the radial reload menu? ie unload, eject,
+                    // etc"). They were three line chevrons -- unload and remove-mag drew the SAME one -- so the wedge's
+                    // label was doing all the work. Now one each in the retail HUD's own format -- 20x20, one flat colour,
+                    // hard pixels (shells out / a mag dropping / a slide racked with its round flying) -- white in the
+                    // file and tinted here in the colours the chevrons had.
+                    var tex = ActionIcon(s.IsUnload ? "radial_unload" : s.IsRemoveMag ? "radial_remove_mag" : "radial_rack");
+                    Color gc = !s.Selectable ? new Color(0.6f, 0.58f, 0.6f, 0.55f)
+                             : s.IsRack      ? new Color(0.72f, 0.86f, 1f)
+                             :                 new Color(1f, 0.6f, 0.55f);
+                    float sz = 60f * S;
+                    if (tex != null) DrawTextureRect(tex, new Rect2(p - new Vector2(sz * 0.5f, sz * 0.5f + 14f * S), new Vector2(sz, sz)), false, gc);
                 }
                 else if (s.Icon != null)
                 {
