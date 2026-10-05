@@ -29,8 +29,21 @@ global uniform float swell_scale;
 float swell_amp() { return SWELL_AMP * max(swell_scale, 0.0001); }
 const float SWELL_DIR_DEG = 30.0;   // swell travel direction
 const float SWELL_FU = 0.081;       // noise freq ALONG travel (lowered 10% -> waves ~10% bigger, master "zoom in")
-const float SWELL_FW = 0.027;       // noise freq ALONG the crest (lower = longer crests); fu/fw = 3:1 anisotropy (master's pick)
 const float SWELL_SPEED = 3.0;
+
+// HOW STRETCHED THE SWELL IS: fu/fw, so 3 = crests three times longer than they are wide. master 2026-10-04,
+// "making the whole thing look a lot less stretched on one axis" -- this ratio IS that stretch, and it was a
+// deliberate pick in an earlier pass rather than an accident.
+//
+// ⚠⚠ A GLOBAL, NOT A CONST, EXACTLY AS THE NOTE ABOVE PRESCRIBES -- and for the reason that note gives: the CPU
+// twin floats boats on this same field. A const changed here and forgotten in WaveField.cs gives a sea whose
+// crests run one way on screen and another under the hull. One C# owner (WaveField.SwellAniso) pushes this, the
+// way RainSystem3D already owns swell_scale.
+//
+// ⚠ Guarded, because an UNREGISTERED global reads 0 and fw = fu/0 is infinity -- a flat, dead sea that looks like
+// the water failed to load rather than like a bad number.
+global uniform float swell_aniso;
+float swell_fw() { return SWELL_FU / max(swell_aniso, 0.25); }
 
 // GRADIENT (Perlin) noise -- unlike value noise it has NO axis-aligned cell artifacts (value is 0 at every lattice
 // point, random gradients interpolated), so the surface doesn't read as blocks/squares or SNAP as it scrolls.
@@ -50,12 +63,63 @@ float gnoise(vec2 p) {
 float fbm5(vec2 p) { float s = 0.0, a = 0.5; for (int i = 0; i < 5; i++) { s += a * (gnoise(p) - 0.5); p *= 2.03; a *= 0.5; } return s; }
 float fbm3(vec2 p) { float s = 0.0, a = 0.5; for (int i = 0; i < 3; i++) { s += a * (gnoise(p) - 0.5); p *= 2.03; a *= 0.5; } return s / 0.4375; }
 
+// SHORE REFRACTION (master 2026-10-04: "bringing the waves to move towards the shore"). ShoreField.cs bakes a
+// PHASE field once at world build; r = metres of phase correction, g = how shore-like the patch is.
+//
+// ⚠⚠ NOT FROM THE SHORE FOAM. That foam reads `depth_tex`, the SCREEN depth buffer, so a direction taken from it
+// would swing as the camera turned -- the sea reacting to the viewer, which is worse than a fixed heading.
+// ⭐ The seabed is view-independent and identical for every player, which is the property actually needed.
+//
+// ⚠⚠⚠ A SCALAR PHASE, NOT A DIRECTION, AND THAT IS THE WHOLE FIX. The first version baked unit directions and
+// built the sample basis from them here. It VISIBLY WRECKED THE SEA -- master, looking at it: "whys it all
+// scrunchy" -- and the reason is worth stating exactly, because the idea was sound and the implementation was not:
+//
+//   the swell samples noise along `u = dot(wp, d)`. With one global `d` that is a clean linear ramp and the
+//   wave's spatial frequency is exactly SWELL_FU. Let `d` vary with position and u stops being linear -- its
+//   gradient gains a `(grad d) . wp` term.
+//
+// ⚠ And `wp` is WORLD coordinates: thousands of metres. So an utterly negligible change in direction gets
+// multiplied by a ~2000 m lever arm and swamps SWELL_FU entirely. The effective wavelength collapses wherever the
+// field turns, which is the swirling and pinching in master's screenshot. Smoothing the direction field bounds
+// `grad d` and does nothing whatever about the number it is multiplied by.
+//
+// ⭐ I wrote that risk down BEFORE building it -- "if the direction varies per position the field becomes
+// incoherent" -- and then argued myself out of it because the field is smooth. Smooth was never the question. The
+// lever arm was, and one line of arithmetic (one degree of turn times 2000 m) would have shown it.
+//
+// ⭐⭐ A SCALAR PHASE FIELD CANNOT DO THAT: there is no basis left to rotate. Crests are the iso-contours of the
+// phase, so they come out parallel to the coast by construction, and ShoreField solves the field so that
+// |grad phase| stays ~1 -- it MEASURES that and prints it at bake time, with the old formula as a control.
+global uniform sampler2D shore_phase_tex : filter_linear, repeat_disable;
+global uniform vec4 shore_rect;   // xy = world origin of texel 0 (half a cell back), zw = 1/world size -> UV
+
+// HOW MUCH THE SHORE MAY BEND THE SWELL, 0..1. Scales the baked correction, so 0 is not merely "near enough to
+// off" -- `u` reduces to exactly `dot(wp, open)` and the sea is bit-identical to the sea before this existed.
+global uniform float shore_bend;
+
+/// Metres of phase correction at a world point; 0 where there is no coastline.
+float shore_phase(vec2 wp) {
+    vec2 uv = (wp - shore_rect.xy) * shore_rect.zw;
+    // ⚠ Outside the baked rect there IS no seabed data, so claim none rather than clamping to the edge cell --
+    // an edge cell smeared across the open ocean would steer the whole horizon toward one arbitrary beach.
+    if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return 0.0;
+    return texture(shore_phase_tex, uv).r;
+}
+
 /// ANISOTROPIC swell height at world XZ + phase-time, in units of SWELL_AMP (coarse 3-octave swell).
 float swell_at(vec2 wp, float tphase) {
-    float a = radians(SWELL_DIR_DEG); float c = cos(a), s = sin(a);
-    float u = wp.x * c + wp.y * s;    // along travel
-    float w = -wp.x * s + wp.y * c;   // along the crest line
-    return fbm3(vec2(u * SWELL_FU + tphase, w * SWELL_FW));
+    float a = radians(SWELL_DIR_DEG);
+    vec2 open = vec2(cos(a), sin(a));          // the open-ocean heading
+    // ⭐ The big linear part is computed here at full precision and never interpolated; only the CORRECTION comes
+    // out of the texture. That is why the open ocean is untouched to the bit and why a 32 m field is enough.
+    float u = dot(wp, open) + clamp(shore_bend, 0.0, 1.0) * shore_phase(wp);
+    // ⚠⚠ THE ALONG-CREST COORDINATE STAYS IN THE OPEN-OCEAN FRAME, DELIBERATELY. Bending it too would need a
+    // SECOND scalar field -- the conjugate of the first -- which only exists if the bend is conformal, and
+    // building it out of the same rotating basis is precisely the mistake above. Its only job is to break the
+    // crests into finite-length ridges instead of infinite lines, and a fixed frame does that perfectly while
+    // being incapable of shearing anything.
+    float w = dot(wp, vec2(-open.y, open.x));
+    return fbm3(vec2(u * SWELL_FU + tphase, w * swell_fw()));
 }
 float swell_phase(float t) { return t * SWELL_SPEED * SWELL_FU; }   // scroll the field along the travel axis
 /// ...and in METRES above the mean water plane, which is what anything outside the water shader wants.

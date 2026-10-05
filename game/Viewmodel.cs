@@ -837,7 +837,22 @@ namespace UnturnedGodot
                     // It shares the body's material by design: same albedo, same UVs, same filter, and a second
                     // material would be a second thing to keep in step.
                     _spinBarrel = null; _spinAngle = 0f;
-                    string barrelTxt = gv.Gun?.Replace("_gun.txt", "_barrel.txt");
+                    // ⚠⚠⚠ ENDS-WITH, NOT REPLACE. `Replace` returns the string UNCHANGED when the pattern is
+                    // absent -- and `gv.Gun` is NOT only guns: a tool's mesh goes in it (ToolMesh), so does a
+                    // deployable's and a consumable's. For every one of those the "barrel" path came out equal to
+                    // the item's OWN mesh, which exists by definition, so the exists-check passed and the item was
+                    // added to the scene A SECOND TIME as a spinning assembly.
+                    //
+                    // Master, finding it: "some held items are being treated as FRICKEN MINIGUN BARRELS! they spin
+                    // up with right click". The spin was the visible half; the duplicate held model was the other.
+                    //
+                    // ⭐ The exists-check could never catch this. It was asking "is there a file here?" when the
+                    // question was "is this a DIFFERENT file from the one I started with?" -- and the answer it
+                    // gave was true for the wrong reason, which is why it read as working.
+                    const string GunSuffix = "_gun.txt";
+                    string barrelTxt = gv.Gun != null && gv.Gun.EndsWith(GunSuffix)
+                        ? gv.Gun[..^GunSuffix.Length] + "_barrel.txt"
+                        : null;
                     // EXISTS-CHECK FIRST. ParseObj logs "[ContentProvider] obj not found" for a missing file, and
                     // every gun but one has no barrel part -- so probing blind would print an error on every equip
                     // in the game for a file that is correctly absent. An optional asset has to be asked about

@@ -23,7 +23,35 @@ namespace UnturnedGodot
         public static float AmpScale = 1f;
         public const float SwellDirDeg = 30.0f;
         public const float SwellFu     = 0.081f;  // freq along travel (matches the shader; waves ~10% bigger)
-        public const float SwellFw     = 0.027f;  // freq along crest (fu/fw = 3:1)
+        /// <summary>fu/fw -- how stretched the swell is (2 = crests twice as long as they are wide). THE ONE OWNER
+        /// of this number: pushed to the GPU global `swell_aniso` by RainSystem3D, so the sea the shader draws and
+        /// the sea boats float on cannot disagree. UG_SWELLANISO tunes it without a rebuild, because "less
+        /// stretched" is a look and the only instrument for a look is master's eye.
+        ///
+        /// ⚠ 3.0 -> 2.0, 2026-10-04. Master asked for the sea to be "a lot less stretched on one axis", and
+        /// the first pass only made the number TUNABLE -- it left the default at the value being complained
+        /// about, so nothing changed for master at all unless they went and set an env var. A knob is not a change.
+        /// ⭐ 2.0 rather than lower because 1.4 was rendered too: at 1.4 the crest foam breaks into scattered
+        /// blobs and the swell stops reading as swell. 2 is visibly shorter-crested and still directional.</summary>
+        public static float SwellAniso =
+            float.TryParse(System.Environment.GetEnvironmentVariable("UG_SWELLANISO"),
+                           System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture,
+                           out float _an) && _an >= 0.25f ? _an : 2.0f;
+        public static float SwellFw => SwellFu / System.Math.Max(SwellAniso, 0.25f);   // freq along crest
+
+        /// <summary>How much the shore may bend the swell, 0..1 -- scales ShoreField's baked phase correction, so
+        /// 0 reduces the phase to exactly <c>dot(wp, open)</c> and gives the sea as it was before the feature
+        /// existed. Mirrors the GPU global `shore_bend`, one owner, UG_SHOREBEND to tune.
+        ///
+        /// ⚠ DEFAULT 1 since 2026-10-04. It shipped at 0 while master signed off on the look -- the FIRST
+        /// implementation sheared the field badly ("whys it all scrunchy") and a feature that is ON and wrong
+        /// costs more than one that is off. But master runs THIS branch, so an env-gated default meant they had
+        /// to type a flag to see work that was reported as done: "why would u make it a separate launch command?
+        /// just push to ur branch with new changes, simple." UG_SHOREBEND=0 still turns it off.</summary>
+        public static float ShoreBend =
+            float.TryParse(System.Environment.GetEnvironmentVariable("UG_SHOREBEND"),
+                           System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture,
+                           out float _sb) && _sb >= 0f ? _sb : 1f;
         public const float SwellSpeed  = 3.0f;
 
         // GRADIENT (Perlin) noise -- identical formula to the shader's hashv/grad2/gnoise (no axis-aligned cell
@@ -57,12 +85,27 @@ namespace UnturnedGodot
             return s / 0.4375f;   // -> ~[-1, 1]
         }
 
-        /// <summary>Normalised swell height ~[-1,1] at world XZ + phase-time (mirrors swell_at()).</summary>
+        /// <summary>Normalised swell height ~[-1,1] at world XZ + phase-time (mirrors swell_at()).
+        ///
+        /// ⚠⚠ THE SHORE BEND IS MIRRORED HERE DELIBERATELY, line for line with the shader. Boats float on THIS.
+        /// Bend the drawn waves toward the coast and leave this straight and the sea visibly turns while the
+        /// runabout keeps bobbing to a swell running the old way -- the precise failure the include warns about
+        /// twice, which is why the field is BAKED DATA both sides read rather than a constant copied by hand.
+        ///
+        /// ⭐⭐ WHAT IS READ IS A SCALAR PHASE, NOT A DIRECTION. The previous version mixed the open heading with
+        /// a baked one and built the sample basis from the result; that multiplies the direction change by a
+        /// world-coordinate lever arm and collapses the wavelength (see ShoreField's header). A phase correction
+        /// added to the phase cannot do that -- there is no basis to rotate.</summary>
         public static float SwellAt(float wx, float wz, float tphase)
         {
-            float a = Mathf.DegToRad(SwellDirDeg); float c = MathF.Cos(a), s = MathF.Sin(a);
-            float u = wx * c + wz * s;    // along travel
-            float w = -wx * s + wz * c;   // along the crest line
+            float a = Mathf.DegToRad(SwellDirDeg);
+            float ox = MathF.Cos(a), oz = MathF.Sin(a);     // the open-ocean heading
+            float u = wx * ox + wz * oz;                   // along travel -- the linear part, exact
+            if (ShoreField.Active != null)
+                u += Mathf.Clamp(ShoreBend, 0f, 1f) * ShoreField.Active.PhaseAt(wx, wz);
+            // ⚠ The along-crest coordinate stays in the OPEN frame, matching the shader: bending it would need a
+            // second (conjugate) field, and it only exists to break crests into finite ridges anyway.
+            float w = -wx * oz + wz * ox;
             return Fbm3(u * SwellFu + tphase, w * SwellFw);
         }
 

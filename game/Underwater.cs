@@ -45,6 +45,12 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
+            // ⚠⚠ GLOBALS BEFORE THE MATERIAL. This shader now links water_extinct and water_optics (shared with
+            // the surface, see water_optics.gdshaderinc), and a material that compiles
+            // before its global exists links it INVALID -- the shader keeps rendering, with that term silently
+            // dead. The grass displacement shipped broken exactly this way; every other shader that reads a
+            // global in this project now calls EnsureGlobals right here, and so does this one.
+            RainSystem3D.EnsureGlobals();
             var sh = GD.Load<Shader>("res://content/underwater.gdshader");
             if (sh == null) { Log.Err("[underwater] underwater.gdshader missing -- no submerged view"); return; }
             _mat = new ShaderMaterial { Shader = sh };
@@ -83,7 +89,10 @@ namespace UnturnedGodot
             if (_quad == null || _mat == null || _forceDepth > 0f) return;   // the harness owns the view when forced
             if (cam == null || !IsInstanceValid(cam) || !Terrain.HasWater) { Off(); return; }
 
-            float below = Terrain.SeaLevelY - cam.GlobalPosition.Y;
+            // ⭐ Depth under the ACTUAL surface, not under the mean plane. Treading water in a storm, the mean
+            // plane says you are a metre down while your head is in the air on a crest -- and this number drives
+            // both how dark the pass goes and how far it has faded in.
+            float below = Terrain.WaterSurfaceY(cam.GlobalPosition) - cam.GlobalPosition.Y;
             if (below <= 0f) { Off(); return; }
 
             float sub = Mathf.Clamp(below / FadeDepth, 0f, 1f);   // wash in over the first half metre

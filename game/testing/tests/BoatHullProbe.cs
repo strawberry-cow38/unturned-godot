@@ -58,8 +58,23 @@ namespace UnturnedGodot.Testing
             if (System.Environment.GetEnvironmentVariable("UG_BOATSWEEP") != "1")
             { T.Check("SKIPPED (set UG_BOATSWEEP=1 to sweep)", true); yield break; }
 
-            bool hadWater = Terrain.HasWater; float oldSea = Terrain.SeaLevelY;
+            bool hadWater = Terrain.HasWater; float oldSea = Terrain.SeaLevelY; float oldAmp = WaveField.AmpScale;
             Terrain.HasWater = true; Terrain.SeaLevelY = 0f;   // flat test sea at Y0, same as Main's boat scene
+            // ⭐⭐ STILL WATER, PINNED. Every number these hull tests assert -- draft, heel, righting moment, the
+            // heave dead band, the turning circle -- is a HYDROSTATIC property, and hydrostatics are measured in
+            // still water by definition. All the pinned figures were taken on a flat sea, so the sea has to be
+            // held flat to read them back.
+            //
+            // ⚠ It was NOT held, and that is how this test caught a real buoyancy regression (ship 0.53 m too
+            // high) and then fired a SECOND time for a reason that was not one: once buoyancy began sampling the
+            // real swell, the runabout rudder CONTROL read 40.63 deg/s against its pinned 57.96. A boat bobbing
+            // through a seaway turns slower; that is true of boats and says nothing about the rudder the control
+            // exists to watch.
+            // ⭐ A control that lets a second variable move is not a control. Pinning the sea does not loosen this
+            // test -- it removes a variable the test never meant to include. Whether a seaway SHOULD cost a boat
+            // 30% of its turn rate is a real question, but it is master's, and it does not get settled by leaving
+            // it loose inside a hydrostatics gate.
+            WaveField.AmpScale = 0f;
             try
             {
                 var ship = Float(World, "ship", new Vector3(0f, 2f, 0f));
@@ -118,7 +133,7 @@ namespace UnturnedGodot.Testing
 
                 T.Check("probe ran (see [BOAT-*] lines)", true);
             }
-            finally { Terrain.HasWater = hadWater; Terrain.SeaLevelY = oldSea; }
+            finally { Terrain.HasWater = hadWater; Terrain.SeaLevelY = oldSea; WaveField.AmpScale = oldAmp; }
         }
 
         // Heel angle: how far the hull's own up-axis has fallen away from world up.
@@ -159,8 +174,9 @@ namespace UnturnedGodot.Testing
             // mistaken for a run: a check called "SKIPPED" that passes is telling the truth.
             if (System.Environment.GetEnvironmentVariable("UG_BOATSWEEP") != "1")
             { T.Check("SKIPPED (set UG_BOATSWEEP=1 to sweep)", true); yield break; }
-            bool hadWater = Terrain.HasWater; float oldSea = Terrain.SeaLevelY;
+            bool hadWater = Terrain.HasWater; float oldSea = Terrain.SeaLevelY; float oldAmp = WaveField.AmpScale;
             Terrain.HasWater = true; Terrain.SeaLevelY = 0f;
+            WaveField.AmpScale = 0f;   // still water: hydrostatic readings (see BoatHullTests' note)
             try
             {
                 int col = 0;
@@ -215,7 +231,7 @@ namespace UnturnedGodot.Testing
                 System.Environment.SetEnvironmentVariable("UG_BUOYSLICES", null); System.Environment.SetEnvironmentVariable("UG_BUOYDY", null); System.Environment.SetEnvironmentVariable("UG_BUOYRESERVE", null);
                 T.Check("slice sweep ran (see [BOAT-SLICE] lines)", true);
             }
-            finally { System.Environment.SetEnvironmentVariable("UG_BUOYSLICES", null); System.Environment.SetEnvironmentVariable("UG_BUOYDY", null); System.Environment.SetEnvironmentVariable("UG_BUOYRESERVE", null); Terrain.HasWater = hadWater; Terrain.SeaLevelY = oldSea; }
+            finally { System.Environment.SetEnvironmentVariable("UG_BUOYSLICES", null); System.Environment.SetEnvironmentVariable("UG_BUOYDY", null); System.Environment.SetEnvironmentVariable("UG_BUOYRESERVE", null); Terrain.HasWater = hadWater; Terrain.SeaLevelY = oldSea; WaveField.AmpScale = oldAmp; }
         }
     }
 
@@ -256,8 +272,9 @@ namespace UnturnedGodot.Testing
             // mistaken for a run: a check called "SKIPPED" that passes is telling the truth.
             if (System.Environment.GetEnvironmentVariable("UG_BOATSWEEP") != "1")
             { T.Check("SKIPPED (set UG_BOATSWEEP=1 to sweep)", true); yield break; }
-            bool hadWater = Terrain.HasWater; float oldSea = Terrain.SeaLevelY;
+            bool hadWater = Terrain.HasWater; float oldSea = Terrain.SeaLevelY; float oldAmp = WaveField.AmpScale;
             Terrain.HasWater = true; Terrain.SeaLevelY = 0f;
+            WaveField.AmpScale = 0f;   // still water: hydrostatic readings (see BoatHullTests' note)
             try
             {
                 int col = 0;
@@ -286,7 +303,7 @@ namespace UnturnedGodot.Testing
 
                 T.Check("turn sweep ran (see [BOAT-TURN] lines)", true);
             }
-            finally { System.Environment.SetEnvironmentVariable("UG_BOATTURN", null); Terrain.HasWater = hadWater; Terrain.SeaLevelY = oldSea; }
+            finally { System.Environment.SetEnvironmentVariable("UG_BOATTURN", null); Terrain.HasWater = hadWater; Terrain.SeaLevelY = oldSea; WaveField.AmpScale = oldAmp; }
         }
     }
 
@@ -330,8 +347,9 @@ namespace UnturnedGodot.Testing
 
         public override IEnumerable<Step> Run()
         {
-            bool hadWater = Terrain.HasWater; float oldSea = Terrain.SeaLevelY;
+            bool hadWater = Terrain.HasWater; float oldSea = Terrain.SeaLevelY; float oldAmp = WaveField.AmpScale;
             Terrain.HasWater = true; Terrain.SeaLevelY = 0f;
+            WaveField.AmpScale = 0f;   // still water: hydrostatic readings (see BoatHullTests' note)
             try
             {
                 var ship = Vehicle.BuildByName("ship"); World.AddChild(ship);
@@ -404,7 +422,7 @@ namespace UnturnedGodot.Testing
                 T.Check($"CONTROL -- runabout still floats where it did: y {runa.GlobalPosition.Y:0.00}, expected around -0.27",
                     Mathf.Abs(runa.GlobalPosition.Y + 0.27f) < 0.6f);
             }
-            finally { Terrain.HasWater = hadWater; Terrain.SeaLevelY = oldSea; }
+            finally { Terrain.HasWater = hadWater; Terrain.SeaLevelY = oldSea; WaveField.AmpScale = oldAmp; }
         }
     }
 }

@@ -136,10 +136,25 @@ namespace UnturnedGodot
             Rebalance();
         }
 
+        // ---- what a rebalance actually COST, for hitch attribution (GcWatch reads these) ---------------
+        // ⚠⚠ REBALANCE IS UNBOUNDED PER CALL. Every chunk that crosses the boundary toggles EVERY shape it
+        // holds, in one frame, with no cap. The reasoning above is explicit that this is "a handful per second
+        // on a walking player" -- and walking is the case it was designed against. A jeep or a plane crosses
+        // many 64 m cells per 0.25 s tick, so the same code can flip dozens of chunks and write `Disabled` on
+        // hundreds of shapes in a SINGLE frame, each one entering or leaving the physics broadphase.
+        //
+        // That predicts a stutter that scales with SPEED, which is exactly what master reports ("when
+        // streaming props -- driving or flying"). These counters exist to confirm or kill that, because the
+        // other candidate (a fat GC) produces the same symptom and the two want opposite fixes.
+        public static int LastFlipChunks, LastFlipShapes, WorstFlipShapes;
+        public static double LastRebalanceMs, WorstRebalanceMs;
+
         /// <summary>Public so a test can drive it without waiting real seconds.</summary>
         public void Rebalance()
         {
             if (Disabled) return;
+            var sw = GcWatch.Enabled ? System.Diagnostics.Stopwatch.StartNew() : null;
+            int flipChunks = 0, flipShapes = 0;
             var focus = FocusPoint();
             if (focus == null) return;
             var f = focus.Value;
@@ -153,8 +168,17 @@ namespace UnturnedGodot
                 bool want = ch.On ? d <= ch.Radius + Margin : d <= ch.Radius;   // hysteresis: leaving needs the extra margin
                 if (want == ch.On) continue;
                 ch.On = want;
+                flipChunks++;
                 foreach (var cs in ch.Shapes)
-                    if (GodotObject.IsInstanceValid(cs) && cs.Disabled == want) cs.Disabled = !want;
+                    if (GodotObject.IsInstanceValid(cs) && cs.Disabled == want) { cs.Disabled = !want; flipShapes++; }
+            }
+            if (sw != null)
+            {
+                sw.Stop();
+                LastFlipChunks = flipChunks; LastFlipShapes = flipShapes;
+                LastRebalanceMs = sw.Elapsed.TotalMilliseconds;
+                if (flipShapes > WorstFlipShapes) WorstFlipShapes = flipShapes;
+                if (LastRebalanceMs > WorstRebalanceMs) WorstRebalanceMs = LastRebalanceMs;
             }
             // Report what the first pass actually left resident. The build line says how much collision EXISTS;
             // this says how much is still in the broadphase, which is the number the change is claiming to move.
@@ -172,8 +196,34 @@ namespace UnturnedGodot
         /// "players" group holds every player on a multiplayer client and picking the wrong one would stream
         /// collision in around somebody else. Falls back to the player body when there is no camera yet
         /// (the frame or two before the view is built).</summary>
+        /// <summary>UG_COLLSWEEP=&lt;metres per second&gt;: a SYNTHETIC focus point that walks +X forever.
+        ///
+        /// ⭐⭐ WHY THIS EXISTS. Headless has no camera and nothing in the "players" group, so FocusPoint returns
+        /// null, Rebalance returns immediately, and the budget never crosses a single boundary -- measured, after
+        /// an unattended run reported `NO PLAYER FOUND` and `collbudget worst 0 shapes`. The streaming hypothesis
+        /// for master's driving stutter could therefore be neither confirmed nor killed without a human at the
+        /// wheel, which is a bad place for a diagnosis to live.
+        ///
+        /// ⭐ A moving point through the REAL chunk layout measures exactly the quantity that matters: how many
+        /// shapes one boundary crossing toggles and how long that takes. That cost does not depend on how the
+        /// focus got there, so a synthetic sweep and a jeep pay the same price per flip -- speed only decides how
+        /// OFTEN it is paid.</summary>
+        static readonly float SweepSpeed = ParseSweep();
+        static float ParseSweep()
+        {
+            var s = System.Environment.GetEnvironmentVariable("UG_COLLSWEEP");
+            return float.TryParse(s, System.Globalization.NumberStyles.Float,
+                                  System.Globalization.CultureInfo.InvariantCulture, out float v) && v > 0f ? v : 0f;
+        }
+        float _sweepT;
+
         Vector3? FocusPoint()
         {
+            if (SweepSpeed > 0f)
+            {
+                _sweepT += Interval;   // advanced once per rebalance, which is the only caller
+                return new Vector3(_sweepT * SweepSpeed, 0f, 0f);
+            }
             var cam = GetViewport()?.GetCamera3D();
             if (cam != null && GodotObject.IsInstanceValid(cam)) return cam.GlobalPosition;
             foreach (var p in GetTree().GetNodesInGroup("players"))

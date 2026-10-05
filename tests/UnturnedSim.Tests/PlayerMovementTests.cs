@@ -60,6 +60,12 @@ namespace UnturnedSim.Tests
             Assert.That(vy, Is.EqualTo(PlayerMovementDef.TERMINAL_VELOCITY).Within(1e-4)); // -100
         }
 
+        /// <summary>The discrete apex the sim actually produces at the current JUMP, in metres. ⚠ SHARED by the
+        /// plain-jump and umbrella assertions on purpose: they pinned the same literal in two places, so raising
+        /// the jump failed both and could have been "fixed" in one. The umbrella test's whole claim is that its
+        /// apex EQUALS the normal one -- that is only expressible if both read the same number.</summary>
+        const float ExpectedApexM = 1.203f;
+
         [Test]
         public void JumpArc_ApexHeight_IsInUnturnedBand()
         {
@@ -77,12 +83,12 @@ namespace UnturnedSim.Tests
                 if (pos.y > peak) peak = pos.y;
                 if (i > 0 && grounded) break; // landed
             }
-            // +15 cm (master 2026-09-06). The number to assert is the DISCRETE apex, not the analytic
-            // JUMP^2/(2*GRAVITY): the takeoff tick moves a full JUMP*dt before any gravity comes off, so this
-            // loop peaks ~7 cm above the closed form. It used to clear 0.903 m at JUMP=7.0; the band below is
-            // centred on 1.053 and is tight enough that going back to 7.0 fails it, which is the whole point
-            // of pinning a height rather than a range.
-            Assert.That(peak, Is.EqualTo(1.053f).Within(0.01f), "jump apex should be the old 0.903 m + 15 cm");
+            // +15 cm again (master 2026-10-04 "increase the jump height a bit"), on top of the +15 cm of
+            // 2026-09-06. The number to assert is the DISCRETE apex, not the analytic JUMP^2/(2*GRAVITY): the
+            // takeoff tick moves a full JUMP*dt before any gravity comes off, so this loop peaks ~7 cm above the
+            // closed form. 0.903 m at JUMP=7.0 -> 1.053 at 7.583 -> 1.203 at 8.122. The band stays tight enough
+            // that any previous value fails it, which is the whole point of pinning a height rather than a range.
+            Assert.That(peak, Is.EqualTo(ExpectedApexM).Within(0.01f), "jump apex should be the old 1.053 m + 15 cm");
         }
 
         [Test]
@@ -138,7 +144,7 @@ namespace UnturnedSim.Tests
                 if (pos.y > peak) peak = pos.y;
                 if (i > 0 && grounded) break;
             }
-            Assert.That(peak, Is.EqualTo(1.053f).Within(0.01f), "an umbrella must not raise the jump apex");
+            Assert.That(peak, Is.EqualTo(ExpectedApexM).Within(0.01f), "an umbrella must not raise the jump apex");
         }
 
         [Test]

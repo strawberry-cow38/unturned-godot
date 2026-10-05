@@ -194,7 +194,7 @@ namespace UnturnedGodot.Testing
 
             // A gun with no separate irons item must still count as seeded, or the lookup re-runs every equip.
             var noIrons = new Item(120);   // a pistol-class item: no "<name> Iron Sights" exists
-            AttachmentFit.SeedDefaults(noIrons, "Cobra");
+            AttachmentFit.SeedDefaults(noIrons, Assets.find(120)?.itemName);   // name by ID -- display names are allowed to change
             T.Check("a gun with no irons item is still marked seeded", noIrons.gunAttachSeeded);
         }
     }

@@ -230,6 +230,10 @@ namespace UnturnedGodot
             GetWindow().SizeChanged += () => GraphicsOptions.Apply3DScale(this);   // saved graphics + controls rows, applied before anything renders (strawberry 2026-09-04 "make all persist")
             TickHub.AddProcess(this, HubProcess); SetProcess(false);   // PERF: hub-ticked (see TickHub.AddProcess)
             GameAudio.AuditBanks();   // UG_AUDIODBG=1: every emitted bank name vs the files on disk (prints EMPTY BANK lines)
+            // UG_GCWATCH=1: attribute frame hitches to the GC, or rule it out. Attached HERE rather than in
+            // WorldBuilder so it also covers load and menu -- a stutter while streaming props happens during the
+            // part of a session that the in-world reporters are not alive for. Off by default; see GcWatch.
+            if (GcWatch.Enabled) AddChild(new GcWatch());
             if (System.Environment.GetEnvironmentVariable("UG_COLLVIS") == "1") GetTree().DebugCollisionsHint = true;   // diagnostic: overlay physics collision shapes (must be set before bodies enter the tree)
             // VSYNC OFF GLOBALLY (strawberry 2026-08-10). With a pacer on, frame time is pinned to the display's
             // refresh interval, so the number you profile against is one the monitor chose and headroom reads as
@@ -477,11 +481,17 @@ namespace UnturnedGodot
                 _shotPath = shot;   // wire the general frame-6 capture (else --shot renders the movie forever + hangs)
                 // preview the terrain rain-wetness/splashes: UG_RAINWET / UG_RAININT (0..1) drive the shader's rain globals
                 RainSystem3D.EnsureGlobals();
-                var _trw = System.Environment.GetEnvironmentVariable("UG_RAINWET");
-                var _tri = System.Environment.GetEnvironmentVariable("UG_RAININT");
-                RenderingServer.GlobalShaderParameterSet("rain_wetness", string.IsNullOrEmpty(_trw) ? 0f : float.Parse(_trw));
-                RenderingServer.GlobalShaderParameterSet("rain_intensity", string.IsNullOrEmpty(_tri) ? 0f : float.Parse(_tri));
-                RainSystem3D.SetWeatherSwell(string.IsNullOrEmpty(_tri) ? 0f : float.Parse(_tri));   // wave HEIGHT follows the same weather signal (GPU global + WaveField together)
+                // ⚠ TryParse, not Parse. A blank-but-not-empty value (a shell's `set VAR= ` leaves a SPACE) threw
+                // FormatException out of _Ready here, so the scene was never built at all -- and the harness still
+                // wrote a PNG, of an empty grey viewport. A render that fails this way looks like a broken shader.
+                static float Env01(string name)
+                    => float.TryParse(System.Environment.GetEnvironmentVariable(name),
+                                      System.Globalization.NumberStyles.Float,
+                                      System.Globalization.CultureInfo.InvariantCulture, out float v) ? v : 0f;
+                float _tri01 = Env01("UG_RAININT");
+                RenderingServer.GlobalShaderParameterSet("rain_wetness", Env01("UG_RAINWET"));
+                RenderingServer.GlobalShaderParameterSet("rain_intensity", _tri01);
+                RainSystem3D.SetWeatherSwell(_tri01);   // wave HEIGHT follows the same weather signal (GPU global + WaveField together)
                 BuildTerrainTest();
                 return;
             }
@@ -3506,8 +3516,38 @@ namespace UnturnedGodot
 
             var cam = new Camera3D { Current = true, Fov = 55f, Far = 16000f };
             AddChild(cam);
-            cam.Position = new Vector3(0f, 5200f, 1f);
-            cam.LookAt(Vector3.Zero, new Vector3(0f, 0f, -1f));   // STRAIGHT TOP-DOWN; screen-up = world -Z (= Unity +Z = north) to match the map chart's orientation
+            // UG_CAMPOS=x,y,z [+ UG_CAMLOOK=x,y,z]: an explicit camera, same convention as the prop shots.
+            // ⚠ Needed to look at the SEA at all: the default below is 5.2 km straight up, where a 12 m swell
+            // wavelength is well under a pixel -- a render from there says nothing whatever about the waves.
+            // ShoreField's bake log names real coastal world coordinates to aim these at.
+            // ⚠ TRIES, rather than parsing and throwing. A malformed camera string used to throw out of here and
+            // leave the default top-down camera in place -- while STILL writing a PNG, so the render looked like a
+            // successful shot of the wrong thing. A refused camera has to say so in the log.
+            static bool P3(string v, out Vector3 r)
+            {
+                r = Vector3.Zero;
+                var q = (v ?? "").Trim('"').Split(',');
+                if (q.Length != 3) return false;
+                var ci = System.Globalization.CultureInfo.InvariantCulture;
+                if (!float.TryParse(q[0], System.Globalization.NumberStyles.Float, ci, out float px)) return false;
+                if (!float.TryParse(q[1], System.Globalization.NumberStyles.Float, ci, out float py)) return false;
+                if (!float.TryParse(q[2], System.Globalization.NumberStyles.Float, ci, out float pz)) return false;
+                r = new Vector3(px, py, pz); return true;
+            }
+            var _tcp = System.Environment.GetEnvironmentVariable("UG_CAMPOS");
+            if (!string.IsNullOrEmpty(_tcp) && P3(_tcp, out var _cpv))
+            {
+                cam.Position = _cpv;
+                var _look = P3(System.Environment.GetEnvironmentVariable("UG_CAMLOOK"), out var _clv) ? _clv : Vector3.Zero;
+                cam.LookAt(_look, Vector3.Up);
+                Log.Print($"[TERRAIN] camera at {_cpv} looking at {_look} (UG_CAMPOS)");
+            }
+            else
+            {
+                if (!string.IsNullOrEmpty(_tcp)) Log.Err($"[TERRAIN] UG_CAMPOS={_tcp} is not x,y,z -- using the default top-down camera");
+                cam.Position = new Vector3(0f, 5200f, 1f);
+                cam.LookAt(Vector3.Zero, new Vector3(0f, 0f, -1f));   // STRAIGHT TOP-DOWN; screen-up = world -Z (= Unity +Z = north) to match the map chart's orientation
+            }
             Log.Print($"[TERRAIN] loaded {System.IO.Path.GetFileName(_mapRoot)} (merged, seamless)");
         }
 

@@ -3,6 +3,9 @@ render_mode cull_disabled, diffuse_burley, specular_schlick_ggx;
 // The swell field itself lives in its own include: the RAIN shader needs the same surface height, to the metre,
 // to know where a drop stops. See swell.gdshaderinc (and WaveField.cs, the CPU twin).
 #include "res://content/swell.gdshaderinc"
+// ...and what the water does to the light crossing it, shared with the SUBMERGED view so the sea does not change
+// character as you swim down through it. See water_optics.gdshaderinc.
+#include "res://content/water_optics.gdshaderinc"
 
 // NOISE-BASED ocean (master 2026-08-16, "drawing board"): the wave HEIGHT is ANISOTROPIC fbm noise -- organic
 // directional swell with NO periodic term, so it physically cannot lattice the way summed sines always do.
@@ -15,8 +18,10 @@ render_mode cull_disabled, diffuse_burley, specular_schlick_ggx;
 // reason the shallow alpha is low) but the water reads as water rather than as tinted glass. The hue shift is in
 // the RATIO rather than the brightness -- red down, blue up, green roughly held -- because that is what makes a
 // body of water look blue instead of merely darker.
-uniform vec4 water_deep : source_color = vec4(0.025, 0.105, 0.26, 0.94);   // 2026-09-15 "turn down how blue": blue is 67% of the tint, back off the 09-12 step (78%) -- the near-opaque ALPHA that step also asked for stays
-uniform vec4 water_shallow : source_color = vec4(0.060, 0.245, 0.44, 0.58); // ...and the shallows with it, 66% blue -> 59%. Alpha untouched: "less see-through" was a separate ask
+// ⚠ water_deep / water_shallow NOW LIVE IN water_optics.gdshaderinc, with their comments and their exact values.
+// They moved because the SUBMERGED view has to veil with the same colour the surface draws -- master, looking at
+// the first version: "the color of the underwater fog doesnt match the surface at all" -- and two shaders holding
+// a colour each is precisely how that happens. Same reasoning that put the swell constants in an include.
 uniform vec4 foam_color : source_color = vec4(0.92, 0.97, 1.0, 1.0);
 uniform float crest_foam = 0.36;      // swell-height fraction above which crest foam kicks in; raised -> fewer peak whitecaps (master)
 uniform float shore_depth = 2.2;      // vertical water depth (m) under which shore foam shows (wider = fuller shore band)
@@ -29,6 +34,19 @@ uniform float detail_strength = 0.30; // fbm fine-ripple perturbation of the nor
 uniform vec4 sky_tint : source_color = vec4(0.52, 0.67, 0.86, 1.0);  // colour reflected at grazing angles (the sky)
 uniform float reflectivity = 0.20;    // how strongly the sky shows at grazing angles (Fresnel). 0.45 -> 0.20 (strawberry 2026-09-15 "reduce the reflectivity by quite a bit"). This scales the planar mirror too (see the reflection blend), so the sea stops acting like a mirror, not just stops blowing out at the horizon
 uniform sampler2D depth_tex : hint_depth_texture, repeat_disable, filter_linear;
+// CLOUDINESS THROUGH THE WATER COLUMN (master 2026-10-04: "the water should look visibly cloudy at depth,
+// instead of perfectly translucent").
+//
+// ⚠⚠ THE SURFACE HAD NO SCREEN TEXTURE AT ALL. It set ALBEDO + ALPHA and let the hardware blend, which is
+// TINTED GLASS: the seabed stays perfectly sharp through any depth of water, only coloured. Tinting alone can
+// never read as water, because what actually happens in a water column is SCATTERING -- detail is lost with
+// distance, not merely recoloured. That is precisely "perfectly translucent", and it is a missing term rather
+// than a wrong number, which is why no amount of alpha tuning fixed it.
+//
+// ⭐ Same idea underwater.gdshader already uses for looking AROUND (mip level by absorption), applied to looking
+// DOWN. One notion of scattering, both sides of the surface.
+uniform sampler2D screen_tex : hint_screen_texture, repeat_disable, filter_linear_mipmap;
+uniform float cloud_blur = 4.0;     // mip level at FULL scattering -- how far detail is smeared by the water column
 uniform sampler2D reflection_tex : filter_linear;   // planar reflection buffer (mirror camera) -- WaterReflection.cs feeds it
 uniform bool reflection_on = false;                 // off until the reflection node wires the buffer in
 uniform bool reflection_debug = false;              // UG_REFLDEBUG: paint the raw reflection buffer onto the water (check mirror + UV)
@@ -189,8 +207,36 @@ void fragment() {
         float rrange = 1.0 - smoothstep(rain_ring_distance * 0.7, rain_ring_distance, length(VERTEX));
         if (rrange > 0.01) ring = wr_rings(v_wpos.xz, TIME, rint_w) * rint_w * rrange * rain_ring_strength;
     }
-    ALBEDO = mix(water_col, foam_color.rgb, foam) + vec3(ring * 0.30);
-    ALPHA = mix(a, 1.0, foam);
+    vec3 surf_col = mix(water_col, foam_color.rgb, foam) + vec3(ring * 0.30);
+    // ⚠ ONLY FROM ABOVE. Looking UP at the surface from underwater, what is "behind" it is the sky at the far
+    // plane -- feeding that to the water column would put 16 km of sea between you and the sun and paint the sky
+    // the colour of the seabed. There is no water between a submerged eye and the surface; the submerged view's
+    // own pass is what tints that. One comparison, and it also keeps Snell's window working.
+    bool from_above = (INV_VIEW_MATRIX * vec4(0.0, 0.0, 0.0, 1.0)).y > v_wpos.y;
+    if (water_optics > 0.001 && from_above) {
+        // ⭐ COMPOSITE BY HAND. The hardware blend mixes the SHARP scene behind the surface, and nothing written
+        // to ALBEDO can soften it -- so the only way to scatter the bed is to read it ourselves, put it through
+        // the water column, and hand back an opaque result. ALPHA = 1 is therefore not "solid water", it means
+        // "this fragment has already done its own blending".
+        //
+        // ⭐⭐ THE PATH IS THE SLANT DISTANCE THROUGH THE WATER, surface fragment to seabed along the view ray --
+        // not the vertical depth. Both points are already in view space here (VERTEX is this fragment, vp.xyz is
+        // the reconstructed bed), so it is one distance() and it is exact. At the grazing angle a player on a
+        // beach looks at the sea, this is many times the depth, which is why the far water now closes up while
+        // the shallows at your feet stay clear.
+        float path = distance(vp.xyz, VERTEX);
+        vec3 bed = textureLod(screen_tex, SCREEN_UV, cloud_blur * water_scatter(path) * water_optics).rgb;
+        bed = mix(bed, water_through(bed, path, water_deep.rgb), water_optics);
+        // The old alpha curve keeps its exact meaning -- how much of the bed survives -- it is simply applied to
+        // light that has crossed the water now instead of to a sharp, untouched bed. So the tuning behind those
+        // numbers is preserved rather than thrown away and re-guessed.
+        float see = (1.0 - mix(a, 1.0, foam));
+        ALBEDO = mix(surf_col, bed, see);
+        ALPHA = 1.0;
+    } else {
+        ALBEDO = surf_col;
+        ALPHA = mix(a, 1.0, foam);
+    }
     float rough_base = mix(0.35, 0.08, lod);   // rougher (softer, less mirror-bright reflection) far -> calmer grazing; glassy near
     ROUGHNESS = mix(mix(rough_base, 0.9, foam), 0.55, clamp(ring, 0.0, 1.0));   // a struck patch scatters instead of mirroring
     // ...and TILT the surface where a ring passes. A brightness ring alone is a decal painted on flat water -- it

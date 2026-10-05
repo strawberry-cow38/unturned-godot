@@ -17,11 +17,22 @@
 shader_type spatial;
 render_mode unshaded, fog_disabled, depth_draw_never, depth_test_disabled, cull_disabled;
 
+// ⭐⭐ THE ABSORPTION MODEL IS SHARED WITH THE SURFACE, and that is the point of the include rather than a tidy-up.
+// This shader and water.gdshader used to hold two separately-tuned ideas of the same sea, so swimming down
+// crossed a seam between them. Now both ask one function how much water the light crossed. See
+// water_optics.gdshaderinc.
+#include "res://content/water_optics.gdshaderinc"
+
 uniform sampler2D screen_tex : hint_screen_texture, repeat_disable, filter_linear_mipmap;
 uniform sampler2D depth_tex : hint_depth_texture, repeat_disable, filter_nearest;
 
-uniform vec3 water_tint : source_color = vec3(0.17, 0.42, 0.51);   // the colour distance fades TOWARD
-uniform float murk = 0.032;           // per-metre absorption; the murkier the water the less you see
+// ⚠ water_tint / murk / red_loss ARE GONE. They were this shader's private copy of a model the surface also
+// had, with different numbers, and keeping them as a fallback would be keeping the bug. The tint is now
+// water_deep/water_shallow (master's own, via water_veil) and the absorption `water_extinct` (per CHANNEL --
+// a scalar murk could only ever make water
+// darker, never bluer), both globals written by RainSystem3D, both read by the surface shader as well.
+uniform vec3 legacy_tint : source_color = vec3(0.17, 0.42, 0.51);   // the colour the OLD model faded toward (water_optics = 0 path)
+uniform float legacy_murk = 0.032;    // the OLD per-metre absorption, kept ONLY so the A/B control is exact
 // YOU ARE INSIDE THE MEDIUM, and that is the difference between "underwater" and "blue fog". Distance
 // absorption alone leaves anything a couple of metres away almost untouched -- the first render came out as a
 // crisp road under a blue sky, because a 2 m path through water absorbs almost nothing. Real submerged vision
@@ -36,7 +47,7 @@ uniform float wobble_speed = 1.4;
 uniform float vignette = 0.30;
 uniform float blur = 4.2;            // SCATTERING: mip level at full absorption -- what makes it read as WATER
 uniform float blur_near = 0.35;      // metres before any blur, so a surface at your mask stays sharp
-uniform float red_loss = 0.28;       // how much of the red channel the water has eaten by full murk
+uniform float legacy_red_loss = 0.28; // the OLD red-channel loss (water_optics = 0 path)
 
 void vertex() {
     POSITION = vec4(VERTEX, 1.0);   // 2x2 quad -> clip space directly: exact fullscreen at any FOV/aspect
@@ -69,20 +80,29 @@ void fragment() {
     // base_tint" as though it were a feature. It is the single reason this read as FOG rather than water
     // (strawberry, 2026-09-12: "tone down the BLUE... should blur not fog"). Water is nearly clear at arm's
     // length; what hides the far wall is SCATTERING, which is blur, not a stronger tint.
-    float fade = 1.0 - (1.0 - base_tint) * exp(-murk * max(dist, 0.0));
+    //
+    // ⭐⭐ THE NEW PATH USES THE SHARED MODEL and `dist` as the path length, which is the SAME QUANTITY the
+    // surface shader feeds water_through() -- metres of water the light crossed. The old path is kept beside it,
+    // selected by water_optics, purely so the A/B is exact rather than remembered.
+    float legacy_fade = 1.0 - (1.0 - base_tint) * exp(-legacy_murk * max(dist, 0.0));
+    float scat = mix(legacy_fade, water_scatter(dist), water_optics);
 
     // SCATTERING = BLUR. Light from far objects arrives having bounced off particles, so it lands smeared rather
-    // than merely tinted. Sampling a higher mip the further the light travelled is that, cheaply. This is the half
-    // the shader never had -- grep blur on the old file returned zero.
-    float blur_lod = blur * fade * smoothstep(blur_near, blur_near + 1.5, dist) * submersion;
+    // than merely tinted. Sampling a higher mip the further the light travelled is that, cheaply.
+    float blur_lod = blur * scat * smoothstep(blur_near, blur_near + 1.5, dist) * submersion;
     vec3 col = textureLod(screen_tex, wuv, blur_lod).rgb;
-    vec3 absorbed = col * vec3(1.0 - red_loss * fade, 1.0 - 0.22 * fade, 1.0);
-    col = mix(absorbed, water_tint, fade);
+    vec3 legacy = mix(col * vec3(1.0 - legacy_red_loss * legacy_fade, 1.0 - 0.22 * legacy_fade, 1.0),
+                      legacy_tint, legacy_fade);
+    // ⭐ The veil is the SURFACE's own colour at this eye depth, brightened for an unshaded pass -- not a tint of
+    // this shader's own. That is what master's "doesnt match the surface at all" was about, and a number tuned
+    // here to look right could only ever have matched by coincidence.
+    vec3 veil = water_veil(depth_below);
+    col = mix(legacy, water_through(col, dist, veil), water_optics);
 
     // DEPTH of the eye itself: deeper means less light left and more of it already eaten before it reached you.
     // Saturates by ~18 m so a deep dive goes dim, not pure black.
     float deep = clamp(depth_below / 18.0, 0.0, 1.0);
-    col = mix(col, water_tint * 0.45, deep * 0.55);
+    col = mix(col, mix(legacy_tint, veil, water_optics) * 0.45, deep * 0.55);
 
     // looking down a tube of water
     float v = distance(uv, vec2(0.5));

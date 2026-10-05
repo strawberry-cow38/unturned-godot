@@ -45,7 +45,18 @@ namespace SDG.Unturned
         // JUMP*dt before any gravity is taken off. Solving that same loop for 1.053 m gives 7.582 at 50 Hz and
         // 7.585 at 60 Hz -- so this one number is right at either tick rate, to under half a centimetre.
         // The MP climb envelope is unaffected: PlayerAuthority.UpRate is 16 m/s, which this is nowhere near.
-        public const float JUMP = 7.583f;                // was PlayerMovement.cs:59's 7.0
+        //
+        // +15 cm AGAIN (master 2026-10-04 "increase the jump height a bit"), derived the same way rather than
+        // nudged. Stepping the real loop at the 50 Hz sim rate:
+        //     retail  7.000 -> 0.903 m      previous 7.583 -> 1.053 m      now 8.122 -> 1.203 m
+        // ⭐ The model was checked against this comment's own numbers before being used to produce a new one: it
+        // reproduces 0.903, 1.053 and the 0.833 closed form exactly. A solver that cannot re-derive the value
+        // already in the file has no business choosing the next one.
+        // ⚠ The rate-independence claim above does NOT reproduce for me: at a fixed JUMP my stepping gives a
+        // ~1.2 cm spread between 50 and 60 Hz, not "under half a centimetre", and 8.122@50 vs 8.170@60 for this
+        // target. The sim runs at 50 Hz (ColliderBudget reasons about that rate too), so 8.122 is solved for 50
+        // and the 60 Hz figure is recorded here rather than quietly averaged away.
+        public const float JUMP = 8.122f;                // was 7.583 (itself was PlayerMovement.cs:59's 7.0)
         // The x3 is the port-visible gravity; the RAW 9.81 is kept because the terminal-velocity clamp
         // scales THAT and not the tripled one (PlayerMovement.cs:1280 multiplies Physics.gravity.y by 2,
         // with no *3 in sight). Deriving one from the other keeps that relationship from drifting apart.

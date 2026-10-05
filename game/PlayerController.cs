@@ -2130,7 +2130,7 @@ namespace UnturnedGodot
             // Parented to the CAMERA, not to the player: it is a fullscreen 3D pass drawn by that camera, so it
             // has to be in that camera's view to be submitted at all.
             if (_underwater == null && Terrain.HasWater && _cam != null && IsInstanceValid(_cam)
-                && _cam.GlobalPosition.Y < Terrain.SeaLevelY) { _underwater = new Underwater(); _cam.AddChild(_underwater); }
+                && Terrain.IsPointUnderwaterNow(_cam.GlobalPosition)) { _underwater = new Underwater(); _cam.AddChild(_underwater); }
             _underwater?.Drive(_cam);
             _clothing?.ReconcileTick();   // repaint the body if a worn slot moved without anything calling Refresh (master 2026-09-07: clothing needing an inventory poke to apply)
         }
@@ -2156,6 +2156,10 @@ namespace UnturnedGodot
         /// from the rule instead of restating it, which is the same failure the drivetrain probe spent seven
         /// nights on: a fixed absolute in the test, invisible because the constant could not be read.</summary>
         public static float RepeatedHitIntervalForTest => RepeatedHitInterval;
+        /// <summary>The 3P "legs" rig and the 1P arms rig, so a test can assert the ONE invariant that binds
+        /// them: each arm is drawn by exactly one of the two.</summary>
+        internal RiggedCharacter BodyRigForTest => _body;
+        internal RiggedCharacter ArmsRigForTest => _viewmodel?.ArmsRig;
         static readonly Vector3 SawIdleShake = new(0.0016f, 0.0016f, 0.0009f);   // held: a running engine, felt not seen
         static readonly Vector3 SawCutShake  = new(0.0075f, 0.0075f, 0.0042f);   // cutting: the bar biting, ~4.5x
         float _sawHitCd;
@@ -3760,11 +3764,11 @@ namespace UnturnedGodot
                 {
                     _bobberVel.Y -= 20f * dt;                                   // gravity until it splashes down
                     _bobber.GlobalPosition += _bobberVel * dt;
-                    if (Terrain.HasWater && _bobber.GlobalPosition.Y <= Terrain.SeaLevelY)
+                    if (Terrain.IsPointUnderwaterNow(_bobber.GlobalPosition))
                     {
                         if (BobberOverFishableWater(_bobber.GlobalPosition))
                         {
-                            var p = _bobber.GlobalPosition; p.Y = Terrain.SeaLevelY; _bobber.GlobalPosition = p;   // snap to the surface
+                            var p = _bobber.GlobalPosition; p.Y = Terrain.WaterSurfaceY(p); _bobber.GlobalPosition = p;   // snap to the surface it actually hit
                             _bobberVel = Vector3.Zero;
                             _fishing.ConfirmBobberInWater();
                         }
@@ -3775,15 +3779,18 @@ namespace UnturnedGodot
                 }
                 else if (_fishing.State == EFishingState.LineDeployed)
                 {
-                    // gentle bob on the surface; tug down while the fish is on the line (UpdateBobber)
+                    // ⭐ Rides the real swell, plus its own little bob on top; tug down while a fish is on the
+                    // line (UpdateBobber). A float is the one object a player WATCHES for minutes at a time, so a
+                    // bobber holding a dead-flat height while the sea heaves around it is as conspicuous as this
+                    // gets -- and the fix is the same surface everything else now reads.
                     var p = _bobber.GlobalPosition;
-                    p.Y = Terrain.SeaLevelY + (_fishing.IsBiteWindowOpen ? -0.35f : Mathf.Sin(Time.GetTicksMsec() / 250f) * 0.06f);
+                    p.Y = Terrain.WaterSurfaceY(p) + (_fishing.IsBiteWindowOpen ? -0.35f : Mathf.Sin(Time.GetTicksMsec() / 250f) * 0.06f);
                     _bobber.GlobalPosition = p;
                 }
                 else if (_fishing.State == EFishingState.CatchChallenge)
                 {
                     // fish is fighting on the line -> the bobber stays yanked under the surface
-                    var p = _bobber.GlobalPosition; p.Y = Terrain.SeaLevelY - 0.5f; _bobber.GlobalPosition = p;
+                    var p = _bobber.GlobalPosition; p.Y = Terrain.WaterSurfaceY(p) - 0.5f; _bobber.GlobalPosition = p;
                 }
                 UpdateFishLine();
             }
@@ -5887,7 +5894,7 @@ namespace UnturnedGodot
         public static bool TryFootSurfaceAt(Node3D ctx, Vector3 pos, Rid exclude, out Surf surf, float up = 0.3f, float down = 0.6f)
         {
             surf = Surf.Concrete;
-            if (Terrain.HasWater && pos.Y < Terrain.SeaLevelY + 0.1f) { surf = Surf.Water; return true; }   // wading IS ground: you make noise on it
+            if (Terrain.HasWater && pos.Y < Terrain.WaterSurfaceY(pos) + 0.1f) { surf = Surf.Water; return true; }   // wading IS ground: you make noise on it (the real wave -- the surf line moves)
             var space = ctx?.GetWorld3D()?.DirectSpaceState; if (space == null) return false;
             var q = PhysicsRayQueryParameters3D.Create(pos + Vector3.Up * up, pos + Vector3.Down * down, 1u << 0, new Godot.Collections.Array<Rid> { exclude });
             var hit = space.IntersectRay(q);
@@ -10677,13 +10684,35 @@ namespace UnturnedGodot
             // arms are placed by SetDrivingWheel rather than by a clip, so asking the clip would answer about the
             // rifle you are still carrying. This is the case master actually reported ("seeing the legs model's
             // arms on the steering wheel when driving"), so it is stated rather than inferred.
-            if (_fp && (_driving != null || _riding != null)) _body.SetTrimmedArms(true, true);
-            else if (_fp && _viewmodel?.ArmsRig is RiggedCharacter armsRig)
+            // ⚠⚠ AND THE VIEWMODEL HIDES WHAT THE BODY KEEPS. The two rigs had no invariant between them: the body
+            // hid the arms the viewmodel's clip ANIMATES, and the viewmodel hid nothing, because it is built with
+            // both arms and draws both forever. An arm with no animation TRACK is not an absent arm -- it is an arm
+            // in its bind pose, rendered like any other. So every arm the clip did not animate was drawn TWICE,
+            // once by each rig, which is master's "dupe viewmodel when crouched or prone / holding melees": a
+            // one-handed melee hold is exactly the case where a clip animates one arm and not the other.
+            // ⭐ Made complementary here, so each arm is drawn exactly ONCE by construction. If HandsInClip is ever
+            // wrong about a clip it can now only put an arm on the wrong rig -- it can no longer produce two.
+            var vmRig = _viewmodel?.ArmsRig as RiggedCharacter;
+            if (_fp && (_driving != null || _riding != null))
             {
-                var (usesL, usesR) = armsRig.HandsInClip(armsRig.CurrentClip);
-                _body.SetTrimmedArms(usesL, usesR);
+                _body.SetTrimmedArms(true, true);
+                vmRig?.SetViewmodelArmsHidden(false, false);   // at the wheel the viewmodel owns both hands
             }
-            else _body.SetTrimmedArms(true, true);
+            else if (_fp && vmRig != null)
+            {
+                var (usesL, usesR) = vmRig.HandsInClip(vmRig.CurrentClip);
+                _body.SetTrimmedArms(usesL, usesR);
+                // ⚠ ONLY THE LEFT. The held item rides Right_Hook on the viewmodel rig and a BoneAttachment3D
+                // follows its bone whatever the arm's scale, so collapsing the right shoulder would leave the gun
+                // hanging in mid-air rather than removing it. Every item is held right-handed here (a left-handed
+                // player mirrors the whole rig, PlayerAnimator:1613), so the arm that ever needs hiding is the left.
+                vmRig.SetViewmodelArmsHidden(!usesL, false);
+            }
+            else
+            {
+                _body.SetTrimmedArms(true, true);
+                vmRig?.SetViewmodelArmsHidden(false, false);   // 3P: the body draws itself, the viewmodel is hidden anyway
+            }
             // The arms rig is rebuilt whenever the held item changes, so this is pushed every frame rather than
             // once at construction; the setter early-outs on the same reference and re-paints on a new one.
             if (_clothing != null && _viewmodel != null) _clothing.Arms = _viewmodel.ArmsRig;
@@ -11996,18 +12025,33 @@ namespace UnturnedGodot
         float StanceRecoilMul() => _recoilStanceTime < StanceSettle ? 1f
             : _move.Stance switch { EPlayerStance.CROUCH => 0.85f, EPlayerStance.PRONE => 0.7f, _ => 1f };   // subtler than 0.6/0.35 -- a flat mult scales hardest on the punchiest guns, keep it gentle (master/tinyclaw)
 
-        // ---- water / swim state (retail PlayerStance probes; the port's ocean is a single global plane at
-        // Terrain.SeaLevelY, so submersion is a Y test). Player origin = feet; eye = feet+1.75 in SWIM. ----
+        // ---- water / swim state (retail PlayerStance probes). Player origin = feet; eye = feet+1.75 in SWIM.
+        //
+        // ⚠⚠ THESE PROBE THE ACTUAL WAVE NOW, not the flat mean plane, AND THEY HAVE TO. Once SwimStep floats you
+        // to the real surface (it does, below), you ride up on a crest and down into a trough -- so in a trough
+        // your feet sit BELOW the mean plane with your head clearly in the open air, and a test against that mean
+        // plane calls you submerged. The flat test was only ever consistent while the float height was flat too;
+        // making one wavy and not the other is worse than either.
+        //
+        // ⭐ The old note here said "a wave slopping over your head shouldn't drown you". In a storm it genuinely
+        // does, for about two seconds -- and DROWNING is not decided here anyway: oxygen is server-authoritative
+        // off Server.SeaLevelY, which stays the mean plane, so breath is unaffected by this change. What these
+        // decide is stance, the submerged view and the weapon gating, all of which should follow the real water.
+        Vector3 Probe(float h) => new Vector3(GlobalPosition.X, GlobalPosition.Y + h, GlobalPosition.Z);
         /// <summary>The feet+1.25m body probe is under the surface -> SWIM (PlayerStance.cs:636 isBodyUnderwater).</summary>
-        bool BodyUnderwater => Terrain.HasWater && GlobalPosition.Y + 1.25f < Terrain.SeaLevelY;
-        /// <summary>The eye probe (feet+1.75) is under -> submerged: free-swim in look dir + oxygen drains (areEyesUnderwater).</summary>
-        public bool EyesUnderwater => Terrain.HasWater && GlobalPosition.Y + 1.75f < Terrain.SeaLevelY;
+        bool BodyUnderwater => Terrain.IsPointUnderwaterNow(Probe(1.25f));
+        /// <summary>The eye probe (feet+1.75) is under -> submerged: free-swim in look dir (areEyesUnderwater).</summary>
+        public bool EyesUnderwater => Terrain.IsPointUnderwaterNow(Probe(1.75f));
         /// <summary>The feet probe is under -> in the shallows: wading blocks crouch/prone (PlayerStance _inShallows).</summary>
-        bool FeetUnderwater => Terrain.IsPointUnderwater(GlobalPosition.Y);
+        bool FeetUnderwater => Terrain.IsPointUnderwaterNow(GlobalPosition);
         /// <summary>Is the player's HEAD under water -- the question breath actually asks. Deliberately NOT
         /// BodyUnderwater (the +1.25 m chest probe that starts the swim stance) and deliberately not "is
         /// swimming": treading water at the surface has your face in the air, and must not drain a breath.
         /// The eye sits above the chest probe, so you always enter SWIM before you ever start losing air.</summary>
+        /// ⭐ And THIS one stays on the MEAN plane, alone among the probes. It is the breath question, and it is
+        /// the one place the old "a wave slopping over your head shouldn't drown you" note was really about. It
+        /// also keeps the client's idea of drowning matching the server's, which computes oxygen from the flat
+        /// Server.SeaLevelY -- core has no WaveField and giving it one would mean a wire version bump.
         public bool HeadUnderwater => Terrain.HasWater && GlobalPosition.Y + EyeHeight < Terrain.SeaLevelY;
         /// <summary>Currently in the SWIM stance (deep enough that the body probe is submerged).</summary>
         public bool IsSwimming => _move.Stance == EPlayerStance.SWIM;
@@ -12628,7 +12672,10 @@ namespace UnturnedGodot
             else
             {
                 Vector3 horiz = GlobalTransform.Basis * local;   // surface: horizontal follows body yaw
-                float buoy = (Terrain.SeaLevelY - 1.275f - GlobalPosition.Y) / 8f;   // float feet toward surface-1.275 (eyes above water)
+                // ⭐ THE REAL SURFACE, so you rise and fall with the swell instead of holding a fixed height while
+                // the sea moves around you -- which in a storm meant crests washing over a motionless head and
+                // troughs leaving you stood on air. Terrain.WaterSurfaceY is the CPU twin of the drawn wave.
+                float buoy = (Terrain.WaterSurfaceY(GlobalPosition) - 1.275f - GlobalPosition.Y) / 8f;   // float feet toward surface-1.275 (eyes above water)
                 vel = new Vector3(horiz.X * SwimSpeed, buoy, horiz.Z * SwimSpeed);
             }
             Velocity = vel;

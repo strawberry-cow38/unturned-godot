@@ -22,7 +22,9 @@ namespace UnturnedGodot
         public float SwampTime => _swampTime;
         WakeTrail _wake;   // foam wake ribbon (lazy: created when the hull is first afloat)
         float _bowLocalZ;   // MEASURED hull bow-tip Z in local space -> the wake triangle's apex
-        float _waveAmp = 0.1f;                                  // sea-surface ripple amplitude for THIS hull
+        // ⚠ _waveAmp (a private per-hull ripple amplitude) and _waterTime (its clock) are GONE. They drove a
+        // sin() that was this file's own idea of the sea, parallel to the one WaveField computes and the shader
+        // draws. Buoyancy reads Terrain.WaterSurfaceY now; a leftover default would only invite a second sea back.
         bool _steadyHull;                                       // hold her still: extra heave damping (Spec.SteadyHull)
         Vector3 _deckVolume, _deckCenter;                       // MOVING DECK: the carry box (local space); Zero = not a carrier
         Transform3D _deckPrevXf; bool _deckHasPrev;
@@ -35,7 +37,7 @@ namespace UnturnedGodot
         public static bool DeckLoadCancelEnabled = true;        // test seam: turn the load cancellation off, so a test
                                                                 // can ask whether the cancellation is itself what is
                                                                 // exciting the hull rather than assuming it is not
-        float _voxelHalfHeight, _waterTime, _gravityMag = 9.8f, _buoyDamp = 1f, _turnScale = 1f, _buoyReserve = 1f;   // source Buoyancy.cs port: voxel half-height (submersion test), wave-ripple clock, gravity magnitude (Archimedes balance); _buoyDamp = per-vehicle damping multiplier
+        float _voxelHalfHeight, _gravityMag = 9.8f, _buoyDamp = 1f, _turnScale = 1f, _buoyReserve = 1f;   // source Buoyancy.cs port: voxel half-height (submersion test), gravity magnitude (Archimedes balance); _buoyDamp = per-vehicle damping multiplier
         bool _afloat;   // currently floating (any buoy submerged) -- HUD/anim can read it
         public bool Afloat => _afloat;
         // ---- ROTARY WING (VoX 2026-08-15: "a rust style minicopeter"). A helicopter is a Vehicle rather than a
@@ -10440,7 +10442,9 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             // crossing a shallow ford or clipping a puddle keeps running and keeps its wheels on the bottom --
             // which is exactly the behaviour that was here before this method existed.
             int submerged = 0;
-            foreach (var lp in _swampBuoys) if ((xf * lp).Y < seaY) submerged++;
+            // ⭐ The REAL surface, wave and all. A hull sitting with its deck an inch over the mean plane in a
+            // storm is being green-watered every few seconds; the flat test said it was dry.
+            foreach (var lp in _swampBuoys) if (Terrain.IsPointUnderwaterNow(xf * lp)) submerged++;
             if (submerged < Mathf.CeilToInt(_swampBuoys.Length * SwampSubmergeFrac))
             {
                 _swamped = false; _swampTime = 0f;   // drove back out -> the timer resets, but the engine stays off until restarted
@@ -10516,11 +10520,19 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             }
         }
 
+        // ⭐⭐ UG_BUOYLOG=1: PROVE THE HULL IS READING THE SWELL. The defect this file just had was code whose
+        // COMMENT said it floated on WaveField while it floated on a private sin() -- so "I rewired it" is worth
+        // exactly nothing without a number that MOVES WHEN THE SEA DOES. Logs, once a second, the span of the
+        // surface the buoys actually sampled and the span of the hull's own Y.
+        // ⚠ Read it with its control: UG_SWELL=0 must give a surface span of ~0.00 and UG_SWELL=1 must not. One
+        // run alone cannot tell a wired sampler from a hardcoded constant that happens to look plausible.
+        static readonly bool BuoyLog = System.Environment.GetEnvironmentVariable("UG_BUOYLOG") == "1";
+        float _blT; float _blSurfLo = float.MaxValue, _blSurfHi = float.MinValue, _blHullLo = float.MaxValue, _blHullHi = float.MinValue;
+
         void ApplyWaterPhysics(float delta)
         {
             _afloat = false;
             if (!Terrain.HasWater || _buoys == null) return;
-            _waterTime += delta;
             float seaY = Terrain.SeaLevelY;
             var xf = GlobalTransform;
             var comGlobal = ToGlobal(CenterOfMass);
@@ -10537,9 +10549,32 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             foreach (var localPoint in _buoys)
             {
                 var worldPoint = xf * localPoint;                                         // source: transform.TransformPoint(localPoint)
-                if (worldPoint.Y >= seaY) continue;                                       // WaterUtility: above the flat sea surface -> not underwater
-                float surface = seaY + Mathf.Sin((worldPoint.X + worldPoint.Z) * 8f + _waterTime) * _waveAmp;   // source client-side wave ripple (_waveAmp 0 on a SteadyHull -- see Spec.SteadyHull)
-                if (worldPoint.Y - _voxelHalfHeight >= surface) continue;                 // voxel not yet within voxelHalfHeight of the surface -> no force
+                // ⚠⚠ TWO GATES, AND THE ORDER MATTERS. The cheap one rejects anything no wave could ever reach,
+                // so the noise is never evaluated for a hull sitting high; the REAL rule is the second one,
+                // against the actual surface.
+                //
+                // ⚠ Getting this wrong is what the L1 suite caught: I had replaced the original `Y >= seaY` with
+                // `Y >= seaY + SwellReach` and left the voxel-tolerance test below as the only other gate. That
+                // let buoys up to half a metre ABOVE the waterline count as submerged, and the ship floated 0.53 m
+                // too high (vehicle.boat_hull: keel 4.27 m under against a retail target of 4.80).
+                // ⭐ The `Y >= seaY` line was not a pre-filter. It was the rule.
+                if (worldPoint.Y >= seaY + Terrain.SwellReach) continue;                   // no wave reaches here -> skip the noise entirely
+                // ⭐⭐ THE SEA THE GAME ACTUALLY DRAWS, sampled per buoy -- so a hull PITCHES AND ROLLS with the
+                // swell for free, because each float point reads its own crest or trough.
+                //
+                // ⚠⚠ THIS USED TO BE `seaY + sin((x + z) * 8) * _waveAmp`: a private ripple, unrelated to the
+                // swell in the shader, with its own amplitude and its own direction. Vehicle.cs's own comment two
+                // thousand lines up already claimed this was the "WaveField sea like the runabout". It was not,
+                // and WaveField existed the whole time with Terrain.WaterSurfaceY sitting unused on top of it.
+                //
+                // ⚠ _steadyHull still gets the flat plane, which is the point of that flag: a vessel meant to be
+                // BUILT ON must not heave. The old code claimed `_waveAmp 0 on a SteadyHull` -- nothing ever set
+                // it to 0, so the big ship was rippling anyway. Reading the flag directly makes the comment true.
+                float surface = _steadyHull ? seaY : Terrain.WaterSurfaceY(worldPoint);
+                if (BuoyLog) { if (surface < _blSurfLo) _blSurfLo = surface; if (surface > _blSurfHi) _blSurfHi = surface; }
+                if (worldPoint.Y >= surface) continue;                                    // WaterUtility: above the sea surface -> not underwater. THE rule; now the real wave, not the mean plane
+                // (the old `Y - _voxelHalfHeight >= surface` test is gone: with the line above it could never fire,
+                // since _voxelHalfHeight is positive. It was already unreachable before this change.)
                 submerged++;
                 var pv = LinearVelocity + AngularVelocity.Cross(worldPoint - comGlobal);  // source: rootRigidbody.GetPointVelocity(worldPoint)
                 float _bdMul = float.TryParse(System.Environment.GetEnvironmentVariable("UG_BUOYDAMP"), out var _bd) ? _bd : _buoyDamp;   // damping mult: env override else the per-vehicle spec value
@@ -10626,6 +10661,27 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 ApplyTorque(Vector3.Up * -_inSteer * BoatTurn * Mass * rudder * _turnScale);  // rudder yaw (x _turnScale: see Spec.TurnScale -- mass-scaled torque vs length-scaled inertia)
                 ApplyCentralForce(new Vector3(-LinearVelocity.X, 0f, -LinearVelocity.Z) * BoatDrag * Mass);   // extra horizontal water drag -> controllable top speed
                 if (_water == WaterMode.Boat) { EngineForce = 0f; Brake = 0f; }               // a pure boat has no useful wheels
+            }
+            if (BuoyLog)
+            {
+                float hy = GlobalPosition.Y;
+                if (hy < _blHullLo) _blHullLo = hy;
+                if (hy > _blHullHi) _blHullHi = hy;
+                _blT += delta;
+                if (_blT >= 1f)
+                {
+                    // ⭐⭐ SPAN / AmpScale IS THE INVARIANT, and the plain span is not. "The surface moved 0.3 m"
+                    // proves nothing: the sin() this replaced moved about that far too. What separates a sampler
+                    // wired to the real sea from any private wave is that its span SCALES WITH THE WEATHER, so
+                    // this ratio must come out the SAME at calm and at storm while the span itself doubles.
+                    // ⚠ Note that UG_SWELL=0 is NOT an off switch -- SetWeatherSwell lerps from 1.0, so "calm" is
+                    // AmpScale 1.0. There is no zero to compare against; the scaling IS the test.
+                    float span = _blSurfHi - _blSurfLo;
+                    Log.Print($"[buoy] surface span {span:F3} m (|{_blSurfLo:F2}..{_blSurfHi:F2}|) -> " +
+                              $"span/AmpScale {span / Mathf.Max(WaveField.AmpScale, 0.01f):F3} (the invariant), " +
+                              $"hull Y span {_blHullHi - _blHullLo:F3} m, AmpScale={WaveField.AmpScale:F2}, steady={_steadyHull}");
+                    _blT = 0f; _blSurfLo = float.MaxValue; _blSurfHi = float.MinValue; _blHullLo = float.MaxValue; _blHullHi = float.MinValue;
+                }
             }
             if (++_waterFrame % 30 == 0 && System.Environment.GetEnvironmentVariable("UG_BOATDBG") == "1") Log.Print($"[boat] afloat={_afloat} sub={submerged}/{_buoys.Length} y={GlobalPosition.Y:F2} spd={LinearVelocity.Length():F1} thr={_inThrottle:F1} str={_inSteer:F1}");   // gated behind UG_BOATDBG -- was spamming the console every 30 frames afloat (master); counter still ticks
         }

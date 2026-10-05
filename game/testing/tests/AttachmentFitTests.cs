@@ -209,22 +209,29 @@ namespace UnturnedGodot.Testing
                 AttachmentFit.InstalledId(g1, "Sight") == -1);
 
             // Factory irons are DERIVED from the catalog by name, so a newly ported gun needs no extra wiring.
-            T.Check($"Eaglefire's factory irons resolve to item 5 ({AttachmentFit.DefaultIronsId("Eaglefire")})",
-                AttachmentFit.DefaultIronsId("Eaglefire") == 5);
-            T.Check($"Timberwolf's resolve to 19 ({AttachmentFit.DefaultIronsId("Timberwolf")})",
-                AttachmentFit.DefaultIronsId("Timberwolf") == 19);
+            //
+            // ⭐ THE GUN NAMES ARE LOOKED UP BY ID, NOT TYPED. They used to be the literals "Eaglefire" and
+            // "Timberwolf", which went stale the moment the guns were renamed to their real-world names
+            // (Colt AR-15 / PGW C14 Timberwolf) -- and a stale literal here reads as "the derivation broke", which
+            // is the one thing this test exists to tell you about. The ID is the stable identity; the name is
+            // presentation and is allowed to change. Same reason the farm test derives its rate from skill.max.
+            string rifle = Assets.find(4)?.itemName, bolt = Assets.find(18)?.itemName, pistol = Assets.find(99)?.itemName;
+            T.Check($"item 4 ({rifle}) factory irons resolve to item 5 ({AttachmentFit.DefaultIronsId(rifle)})",
+                AttachmentFit.DefaultIronsId(rifle) == 5);
+            T.Check($"item 18 ({bolt}) resolves to 19 ({AttachmentFit.DefaultIronsId(bolt)})",
+                AttachmentFit.DefaultIronsId(bolt) == 19);
             // Pistols carry their sights in the body mesh and have no separate irons item -- -1 is the right answer,
             // not a lookup failure.
-            T.Check($"a pistol with no separate irons resolves to -1 ({AttachmentFit.DefaultIronsId("Cobra")})",
-                AttachmentFit.DefaultIronsId("Cobra") == -1);
+            T.Check($"a pistol ({pistol}) with no separate irons resolves to -1 ({AttachmentFit.DefaultIronsId(pistol)})",
+                AttachmentFit.DefaultIronsId(pistol) == -1);
             T.Check("...and an unknown name doesn't throw", AttachmentFit.DefaultIronsId("Not A Gun") == -1);
 
-            AttachmentFit.SeedDefaults(g1, "Eaglefire");
+            AttachmentFit.SeedDefaults(g1, rifle);
             T.Check($"seeding installs the factory irons ({AttachmentFit.InstalledId(g1, "Sight")})",
                 AttachmentFit.InstalledId(g1, "Sight") == 5);
             // Seeding runs on every equip, so it must never stomp what the player fitted.
             AttachmentFit.SetInstalledId(g1, "Sight", 21);
-            AttachmentFit.SeedDefaults(g1, "Eaglefire");
+            AttachmentFit.SeedDefaults(g1, rifle);
             T.Check($"...and re-seeding leaves a player-fitted scope alone ({AttachmentFit.InstalledId(g1, "Sight")})",
                 AttachmentFit.InstalledId(g1, "Sight") == 21);
 

@@ -60,6 +60,17 @@ namespace UnturnedGodot
         /// texture gets a StandardMaterial3D instead, and every SetShirt call on it is a silent no-op.</summary>
         public bool HasClothesMaterialForTest => _clothesMat != null;
 
+        /// <summary>The shoulder's actual pose scale, READ BACK from the skeleton. ⭐ A test must assert on what
+        /// the skeleton holds, not on the flag we asked for: the whole class of bug here is a write that is made
+        /// and then stomped by the next clip, which a flag check cannot see. Returns -1 if the bone is missing,
+        /// so "no bone" cannot masquerade as "collapsed".</summary>
+        public float ShoulderScaleForTest(bool left)
+        {
+            if (Skeleton == null) return -1f;
+            int b = Skeleton.FindBone(left ? "Left_Shoulder" : "Right_Shoulder");
+            return b < 0 ? -1f : Skeleton.GetBonePoseScale(b).X;
+        }
+
         public void SetShirt(Texture2D albedo, Texture2D emission = null, Texture2D metallic = null)
         {
             if (_clothesMat == null) return;
@@ -295,6 +306,15 @@ namespace UnturnedGodot
 
         /// <summary>Metres from the eye at which the body starts being drawn. The chest sits ~0.25-0.75 m from the
         /// eye and the hips ~0.75-1.0, so this lands just below the waist.</summary>
+        /// <summary>Cross-fade between animation states, seconds. ⚠ MEASURED BY FEEL, not derived -- this is a
+        /// look, and the only instrument for it is master. 0.12 s is short enough that a crouch still feels
+        /// immediate and long enough to kill the snap. UG_BLEND overrides without a rebuild, and UG_BLEND=0 is
+        /// the A/B control that restores the old hard cut exactly.</summary>
+        public static float BlendSeconds =
+            float.TryParse(System.Environment.GetEnvironmentVariable("UG_BLEND"),
+                           System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture,
+                           out float _bl) && _bl >= 0f ? _bl : 0.12f;
+
         public static float FirstPersonClip =
             float.TryParse(System.Environment.GetEnvironmentVariable("UG_FPCLIP"),
                            System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture,
@@ -380,7 +400,10 @@ namespace UnturnedGodot
             string f = finished.ToString();
             if (f.EndsWith("__hold")) return;
             string h = HoldOf(ap, f);
-            if (h != null) ap.Play(h);
+            // ⚠ ZERO BLEND: the hold IS the pose the clip just finished on, so this is a continuation and not a
+            // transition. A cross-fade here would fade a pose into itself -- invisible, but it keeps two clips
+            // alive for the blend, which is exactly the per-frame cost HoldOf exists to remove.
+            if (h != null) ap.Play(h, 0f);
         }
         void OnApFinished(StringName anim) => ParkOnHold(_ap, anim);
         void OnGunApFinished(StringName anim) => ParkOnHold(_gunAp, anim);
@@ -398,8 +421,12 @@ namespace UnturnedGodot
             if (_ap != null && !string.IsNullOrEmpty(name) && _ap.HasAnimation(name))
             {
                 string h = HoldOf(_ap, name);   // PERF: a looping 1-key end pose instead of parking on the finished clip (see HoldOf)
-                if (h != null) { _ap.Play(h); return; }
-                _ap.Play(name);
+                // ⚠⚠ EXPLICIT ZERO BLEND. With a default cross-fade configured on the player, a bare Play() here
+                // would fade INTO the hold -- and this method's entire job is to arrive instantly ("snap straight
+                // to the guard pose -- don't play a jab-on-equip"). A blend would make a method called SnapToEnd
+                // stop snapping, which is the quiet kind of regression a feel change smuggles in.
+                if (h != null) { _ap.Play(h, 0f); return; }
+                _ap.Play(name, 0f);
                 _ap.Seek(_ap.GetAnimation(name).Length, true);
             }
         }
@@ -621,6 +648,7 @@ namespace UnturnedGodot
             // is playing, so the only call was the one on toggle: applied once, then quietly restored by the next
             // thing that touched the pose, and the arms came back. Cheap enough to just do unconditionally.
             ApplyArmTrim();
+            ApplyViewmodelArmHide();   // same reason as above: the clips write bone scale, so this must be re-asserted
             if (_ap != null && _ap.CallbackModeProcess == AnimationMixer.AnimationCallbackModeProcess.Manual)
             {
                 // PERF: a player that has never played anything (or was explicitly stopped) has no pose to refresh and no
@@ -654,6 +682,7 @@ namespace UnturnedGodot
                 }
                 ApplyAimAdditive();
                 ApplyArmTrim();   // after the clips, which write bone scale of their own
+                ApplyViewmodelArmHide();
             }
         }
 
@@ -699,10 +728,33 @@ namespace UnturnedGodot
             // which is the derivation the assertion is supposed to be independent of.
             public Basis SpineBasis = Basis.Identity, SkullBasis = Basis.Identity;
 
+            /// <summary>Collapse an arm to nothing, from INSIDE the modification pass.
+            ///
+            /// ⚠⚠ THE SAME TRAP THE LEAN ABOVE WAS MOVED HERE TO ESCAPE, and the arm trim was left behind in it.
+            /// RiggedCharacter re-applied the trim after advancing the clips -- but only inside
+            /// `if (CallbackModeProcess == Manual)`. A rig the ENGINE drives (Physics mode, which is what a rig
+            /// without the gun layer gets) is posed outside that code entirely, so the write landed and the very
+            /// next mixer pass overwrote the shoulder scale with One. Every frame.
+            ///
+            /// ⭐ That predicts precisely the cases master reported -- driving, crouched, prone, holding a melee --
+            /// because those are the poses where the base player is NOT in Manual. "A modifier runs after the mixer
+            /// whatever the callback mode is" is as true for a bone's SCALE as it was for the lean's rotation.</summary>
+            public bool CollapseLeftArm, CollapseRightArm;
+            public int LeftShoulderBone = -1, RightShoulderBone = -1;
+            bool _wroteL, _wroteR;
+
             public override void _ProcessModification()
             {
                 var sk = GetSkeleton();
-                if (sk == null || SpineBone < 0) return;
+                if (sk == null) return;
+                // ⚠ Written here, not merely re-asserted here: this pass is the LAST thing to touch the pose.
+                // ⚠ And One is written only on the way OUT of a collapse -- writing it every frame would stomp any
+                // clip that legitimately animates shoulder scale.
+                if (LeftShoulderBone >= 0 && (CollapseLeftArm || _wroteL))
+                { sk.SetBonePoseScale(LeftShoulderBone, CollapseLeftArm ? Vector3.Zero : Vector3.One); _wroteL = CollapseLeftArm; }
+                if (RightShoulderBone >= 0 && (CollapseRightArm || _wroteR))
+                { sk.SetBonePoseScale(RightShoulderBone, CollapseRightArm ? Vector3.Zero : Vector3.One); _wroteR = CollapseRightArm; }
+                if (SpineBone < 0) return;
                 // A lean is a roll about the character's fore-aft axis, which rig.json puts along Z: Spine's rest is
                 // -90 about Z off the Skeleton root, so Spine-local -X runs up the body, and the Left_Shoulder /
                 // Left_Arm chain extends toward parent -X -- left = -X, up = +Y, hence forward = -Z. Retail's
@@ -835,6 +887,7 @@ namespace UnturnedGodot
                 _trimShoulders = new[] { Skeleton.FindBone("Left_Shoulder"), Skeleton.FindBone("Right_Shoulder") };
             if (_trimShoulders[0] >= 0) Skeleton.SetBonePoseScale(_trimShoulders[0], wantL ? Vector3.Zero : Vector3.One);
             if (_trimShoulders[1] >= 0) Skeleton.SetBonePoseScale(_trimShoulders[1], wantR ? Vector3.Zero : Vector3.One);
+            PushArmCollapse(wantL, wantR);   // ...and again where the mixer cannot overwrite it
             // The weapon does NOT hang in the air off a collapsed arm (strawberry: "chainsaw gets stuck to my 3p
             // and 'legs' playermodel hand"). Both attachments ride Right_Hook, so they go with the RIGHT arm --
             // a BoneAttachment3D follows the bone's position whether or not the arm around it still has any size.
@@ -849,6 +902,71 @@ namespace UnturnedGodot
                     Log.Print($"[armtrim] frame {_armDbgT}: clip={CurrentClip} trimL={wantL} trimR={wantR}, left reads back {Skeleton.GetBonePoseScale(_trimShoulders[0])}  globalPose.basis.scale={Skeleton.GetBoneGlobalPose(_trimShoulders[0]).Basis.Scale}");
             }
         }
+        /// <summary>Collapse an arm on the VIEWMODEL rig, independent of the first-person body trim.
+        ///
+        /// ⚠⚠ THE PAIR HAD NO INVARIANT, WHICH IS WHY ARMS DOUBLED. The body hides the arms the viewmodel's clip
+        /// ANIMATES (SetTrimmedArms <- HandsInClip). The viewmodel rig hid nothing at all: it is built once with
+        /// both arms and draws both forever, because an arm with no animation TRACK is not an absent arm -- it is
+        /// an arm sitting in its bind pose, rendered exactly like any other. So every arm the clip did not animate
+        /// was drawn TWICE, once by each rig, and a one-handed melee hold is precisely that case.
+        ///
+        /// ⭐ With this the two are complementary: the body hides what the viewmodel uses, the viewmodel hides what
+        /// the body keeps. Each arm is then drawn exactly once BY CONSTRUCTION -- so if HandsInClip is ever wrong
+        /// about a clip, it can only put an arm on the wrong rig, never give you two of it.
+        ///
+        /// ⚠ Gated on its own flag, NOT on _fpTrim: that one is set only on the first-person body
+        /// (PlayerController sets `_body.FirstPersonTrim`), and it is load-bearing there -- the 3P path relies on
+        /// it to neutralise a SetTrimmedArms(true, true). Reusing it here would either do nothing or break that.</summary>
+        public void SetViewmodelArmsHidden(bool left, bool right)
+        {
+            if (_vmHideL == left && _vmHideR == right) return;
+            _vmHideL = left; _vmHideR = right;
+            ApplyViewmodelArmHide();
+        }
+        bool _vmHideL, _vmHideR, _vmHideApplied, _vmHideLogged;
+
+        void ApplyViewmodelArmHide()
+        {
+            if (Skeleton == null) return;
+            if (!_vmHideL && !_vmHideR && !_vmHideApplied) return;
+            if (_trimShoulders == null)
+                _trimShoulders = new[] { Skeleton.FindBone("Left_Shoulder"), Skeleton.FindBone("Right_Shoulder") };
+            // ⚠ The HELD ITEM rides Right_Hook on this rig, and a BoneAttachment3D follows a bone whether or not
+            // the arm around it has any size -- so collapsing the right shoulder leaves the gun hanging in the air
+            // rather than taking it away. The body's own trim hides MeleeAttach/GunAttach for exactly that reason;
+            // here we WANT the item, so the right arm is only ever hidden when the caller asks and the item is
+            // elsewhere. In practice the rig holds every item in the right hand, so this is the left arm's job.
+            // ⚠ A MISSING BONE IS A SILENT NO-OP, and this rig is built armsOnly -- a different build from the
+            // body's, so "the body's trim works" is not evidence that these bones exist here. Say so once.
+            if (!_vmHideLogged)
+            {
+                _vmHideLogged = true;
+                if (_trimShoulders[0] < 0 || _trimShoulders[1] < 0)
+                    Log.Print($"\u26a0 [vmarmhide] shoulder bones NOT FOUND on this rig (L={_trimShoulders[0]} R={_trimShoulders[1]}) -- hiding cannot work");
+                else if (System.Environment.GetEnvironmentVariable("UG_LEGDBG") == "1")
+                    Log.Print($"[vmarmhide] shoulders L={_trimShoulders[0]} R={_trimShoulders[1]}; hiding L={_vmHideL} R={_vmHideR}");
+            }
+            if (_trimShoulders[0] >= 0) Skeleton.SetBonePoseScale(_trimShoulders[0], _vmHideL ? Vector3.Zero : Vector3.One);
+            if (_trimShoulders[1] >= 0) Skeleton.SetBonePoseScale(_trimShoulders[1], _vmHideR ? Vector3.Zero : Vector3.One);
+            PushArmCollapse(_vmHideL, _vmHideR);
+            _vmHideApplied = _vmHideL || _vmHideR;
+        }
+
+        /// <summary>Hand the collapse decision to the modifier, which is the only place that runs AFTER the
+        /// mixer whatever the animation callback mode is. The direct SetBonePoseScale above is kept because it
+        /// takes effect immediately on a toggle; the modifier is what makes it STAY.</summary>
+        void PushArmCollapse(bool left, bool right)
+        {
+            if (_leanMod == null) return;
+            if (_leanMod.LeftShoulderBone < 0 && Skeleton != null)
+            {
+                _leanMod.LeftShoulderBone = Skeleton.FindBone("Left_Shoulder");
+                _leanMod.RightShoulderBone = Skeleton.FindBone("Right_Shoulder");
+            }
+            _leanMod.CollapseLeftArm = left;
+            _leanMod.CollapseRightArm = right;
+        }
+
         int[] _trimShoulders;
         bool _armTrimApplied;
         int _armDbgT;
@@ -967,7 +1085,7 @@ namespace UnturnedGodot
         public void EnableGunLayer(string aimClip = "Gun_Aim")
         {
             if (_gunLayer || _ap == null || Skeleton == null || _lib == null) return;
-            _gunAp = new AnimationPlayer { Name = "GunAnim" };
+            _gunAp = new AnimationPlayer { Name = "GunAnim", PlaybackDefaultBlendTime = BlendSeconds };   // same cross-fade as the base layer: a melee swing should not snap in either
             AddChild(_gunAp);
             _gunAp.AddAnimationLibrary("", _lib);
             _gunAp.AnimationFinished += OnGunApFinished;   // PERF: see HoldOf
@@ -1016,8 +1134,8 @@ namespace UnturnedGodot
             _gunAp.GetAnimation(clip).LoopMode = Animation.LoopModeEnum.None;
             _loopSetGun = clip; _loopSetGunValue = false;   // keep the cache honest about what was just written
             string h = HoldOf(_gunAp, clip);   // PERF: see HoldOf -- a Seek-to-end player re-clears its caches every advance
-            if (h != null) { _gunAp.Play(h); return; }
-            _gunAp.Play(clip); _gunAp.Seek(_gunAp.GetAnimation(clip).Length, true);
+            if (h != null) { _gunAp.Play(h, 0f); return; }   // ⚠ snap means snap -- see SnapToEnd
+            _gunAp.Play(clip, 0f); _gunAp.Seek(_gunAp.GetAnimation(clip).Length, true);
         }
 
         // ---- MELEE on the same upper-body overlay the gun uses (strawberry 2026-09-03: "third person cam doesnt show melee
@@ -1026,7 +1144,17 @@ namespace UnturnedGodot
         // Melee_* fallbacks and Punch_Left/Right for fists. The END of _Equip is the ready hold, exactly as Gun_Equip is for guns.
         public (string equip, string weak, string strong) MeleeClipsFor(string meleeName)
         {
-            if (string.IsNullOrEmpty(meleeName) || meleeName == "fists") return ("", "Punch_Left", "Punch_Right");
+            // ⚠⚠ UNKNOWN IS NOT FISTS. These two were one branch, so anything the handler could not identify --
+            // an item with no melee name, a lookup that came back empty -- was handed the bare-fist JABS and
+            // stood there punching. Master: "whenever the animation handler doesnt know what to play it plays a
+            // punch animation. remove that."
+            //
+            // ⭐ "I am holding nothing" and "I do not know what this is" are different states that happened to
+            // share a return value, which is why it read as deliberate. The second one now plays NOTHING -- "" is
+            // already this function's established no-clip value (see Pick below), and both callers handle it:
+            // ShowMeleeHold returns early, PlayMeleeSwing returns 0.
+            if (meleeName == "fists") return ("", "Punch_Left", "Punch_Right");   // real bare fists: the real jabs
+            if (string.IsNullOrEmpty(meleeName)) return ("", "", "");             // unknown: blank, never a punch
             string cap = char.ToUpper(meleeName[0]) + meleeName.Substring(1);
             string Pick(string a, string b) => ClipLength(a) > 0f ? a : (ClipLength(b) > 0f ? b : "");
             return (Pick(cap + "_Equip", "Melee_Equip"), Pick(cap + "_Weak", "Melee_Weak"), Pick(cap + "_Strong", "Melee_Strong"));
@@ -1636,6 +1764,18 @@ namespace UnturnedGodot
                 if (LoadProf) Log.Print($"[rigprof] anim library (armsOnly={armsOnly}) {names.Count} clips in {(System.Diagnostics.Stopwatch.GetTimestamp() - ta) * 1000.0 / System.Diagnostics.Stopwatch.Frequency:0} ms");
             }
             ap.AddAnimationLibrary("", built.lib);
+            // ⭐⭐ CROSS-FADE INSTEAD OF CUT (master 2026-10-04: "its very rigid and sharp switching between
+            // animations"). Every state change in this file is a bare `_ap.Play(want)` -- stand->crouch->prone,
+            // idle->walk->run, the lot -- and Play's blend argument defaults to -1, meaning "use the player's
+            // default blend time". NOTHING in this codebase ever set one, and Godot's default is ZERO, so every
+            // transition was a hard cut. The clips and the transitions were always right; they just had no
+            // overlap, which is why it reads as rigid rather than as missing animation.
+            //
+            // ⚠ One number for every transition, deliberately, as a FIRST cut: a per-pair table
+            // (SetBlendTime(from, to)) is the right long-term shape but it is a lot of hand-tuned values to
+            // invent at once, and the single default is what shows whether blending is the answer at all.
+            // UG_BLEND tunes it live without a rebuild; 0 restores the old hard cut as an A/B control.
+            ap.PlaybackDefaultBlendTime = BlendSeconds;
             root._ap = ap;
             ap.AnimationFinished += root.OnApFinished;   // PERF: park on a looping hold instead of the finished clip (see HoldOf)
             root._lib = built.lib;   // kept so a lazily-created gun-overlay AnimationPlayer (3P) can share the same clips
