@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install the approved V13 cosmetic MAC-10 art; runtime gun frame is (-L,U,-H).
+"""Install V13 MAC-10 art with approved sloped-front cleanup and uniform barrel; runtime gun frame is (-L,U,-H).
 The magazine/irons remain separate assets. No retail mesh data is copied.
 """
 from pathlib import Path
@@ -52,6 +52,6 @@ def main():
  row('guns_maghook.tsv','mac10',','.join(format(v,'.12g') for v in MAG_HOOK)+'\tmac10')
  row('sights.tsv','mac10',f'mac10_sight.txt\t0,-0.197,-0.188\t1,1,1\tmac10_sight_albedo.png')
  # Factory irons only at present: no invented aftermarket optic rail.
- report=dict(source='approved V13',stock='extended, fixed default; no stock toggle or animation',gun_frame='(-L,U,-H), already port-converted; no second sign flip',magazine_hook=MAG_HOOK,sight_mount=SIGHT_HOOK,aim_hook=(0,-.392,-.188),muzzle_hook=(0,.295,-.0881588447653),meshes=stats)
+ report=dict(source='approved V13 + October 6 sloped-front cleanup and uniform barrel',stock='extended, fixed default; no stock toggle or animation',gun_frame='(-L,U,-H), already port-converted; no second sign flip',magazine_hook=MAG_HOOK,sight_mount=SIGHT_HOOK,aim_hook=(0,-.392,-.188),muzzle_hook=(0,.295,-.0881588447653),meshes=stats)
  (ROOT/'docs/MAC10_ASSET_LAYOUT.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))
 if __name__=='__main__':main()

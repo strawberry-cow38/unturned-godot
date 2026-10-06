@@ -11,14 +11,14 @@ The existing console name resolver can obtain the items by these names or IDs. N
 
 ## Components
 - `mac10_gun.txt`: approved body plus fixed extended stock (default), 264 triangles. No magazine or irons baked into it.
-- `mac10_sight.txt`: separate combined front/rear factory-irons asset, 128 triangles, palette texture.
+- `mac10_sight.txt`: separate combined front/rear factory-irons asset, 132 triangles, palette texture.
 - `mag_mac10.txt`: separate magazine, 12 triangles, own gunmetal palette.
 - `mac10_stock_extended.txt`: separate export of the approved extended stock, also included in the default gun/world body; not an implemented toggle.
 - World pickup meshes/manifest entries and inventory icons for all three items.
 
-The mounted gun totals 404 triangles. Original V13 positions/face-position indices are preserved in the shared frame. Magazine and irons are exported relative to their authored mounts. `MAC10_ASSET_LAYOUT.json` records the measured frames and hooks. The runtime gun frame is already `(-L,U,-H)`; applying another source-to-port sign flip would invert it.
+The mounted gun totals 408 triangles. The body positions/face-position indices remain V13; the front sight uses the approved October 6 cleanup with its original sloped guards. Magazine and irons are exported relative to their authored mounts. `MAC10_ASSET_LAYOUT.json` records the measured frames and hooks. The runtime gun frame is already `(-L,U,-H)`; applying another source-to-port sign flip would invert it.
 
-`tools/models/mac10_v13.json` freezes the approved art. `python3 tools/install_mac10.py` regenerates the runtime/world meshes, palettes and visual table rows; `tools/render_mac10_icons.sh` regenerates inventory icons using Godot/Xvfb.
+`tools/models/mac10_v13.json` freezes V13 plus the approved October 6 art cleanup. `python3 tools/install_mac10.py` regenerates the runtime/world meshes, palettes and visual table rows; `tools/render_mac10_icons.sh` regenerates inventory icons using Godot/Xvfb.
 
 ## Animation, audio and tuning scope
 Damage/recoil/ballistics retain the provisional Bulldog/Uzi game baseline. The current .45 MAC-10 cyclic-rate target is **950 RPM**, with an opt-in fractional 50 Hz schedule shared by the shell and server. Cartridge/feed identity remains .45 ACP / 30. See `MAC10_RATE_REFERENCE.md` for the source and variation caveat.
@@ -65,3 +65,10 @@ were run for this asset-only update.
 - Existing combat packets have no shot timestamp: receive-tick batching/jitter can still cause rejection of legitimately separated shots. This change does not promise cadence preservation across arbitrary packet batching and does not silently change the wire format.
 
 Extended-stock follow-up rendering: regenerated inventory icons and a complete actual game hip/equip capture (48 frames), Vulkan/mobile/X11, exit 0. A longer ADS capture attempt timed out and is not counted as successful verification. The previous collapsed-stock ADS captures are not presented as new extended-stock captures.
+
+## October 6, 2026 approved visual cleanup
+- Front sight: original sloped guard profile retained, subtly tapered central post and beveled base. Same position, aiming tip, rear aperture and mounts. Combined factory-irons asset is now 132 triangles (front 68 + rear 64).
+- Barrel: all 22 exterior faces now use one grey, RGB (65,64,65). Six previously darker face assignments changed; no body vertices or face-position indices changed. Natural lighting remains faceted.
+- Body + extended stock remains 264 triangles; separate magazine remains 12. Mounted total is 408.
+- Regenerated runtime/world meshes and tight ejection-port-side icons from the same approved source. Magazine and irons remain separate. No tuning, fire cadence, item IDs, animation, hooks, protocol or deployment change.
+- Verification for this art-only update: build succeeded (0 errors); only `gun.mac10_viewmodel` (9 checks) and `gun.mac10_pickup` (3 checks) run, both passed. Installer repeat produced identical assets, runtime/world duplicates are byte-identical, separate magazine/rear/stock source is unchanged, and icons were rendered from the installed meshes. No full suite.

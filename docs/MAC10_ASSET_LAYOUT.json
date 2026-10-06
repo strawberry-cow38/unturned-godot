@@ -1,5 +1,5 @@
 {
-  "source": "approved V13",
+  "source": "approved V13 + October 6 sloped-front cleanup and uniform barrel",
   "stock": "extended, fixed default; no stock toggle or animation",
   "gun_frame": "(-L,U,-H), already port-converted; no second sign flip",
   "magazine_hook": [
@@ -49,7 +49,7 @@
         0.009000000000000008
       ],
       "parts": 2,
-      "triangles": 128
+      "triangles": 132
     },
     "mag_mac10": {
       "box": [

@@ -52,7 +52,7 @@ namespace UnturnedGodot.Testing
             var all = vm.FindChildren("*", "MeshInstance3D", true, false).OfType<MeshInstance3D>().ToList();
             var iron = all.FirstOrDefault(m => m.Name == "IronSights"); var mag = all.FirstOrDefault(m => m.Name == "Magazine");
             T.Check("irons and magazine are separate nodes", iron != null && mag != null && iron != mag);
-            T.Check("iron geometry is separate 128 triangles", iron?.Mesh?.GetFaces().Length == 128*3);
+            T.Check("iron geometry is separate 132 triangles", iron?.Mesh?.GetFaces().Length == 132*3);
             T.Check("magazine geometry is separate 12 triangles", mag?.Mesh?.GetFaces().Length == 12*3);
             T.Check("irons carry their palette", iron?.MaterialOverride is StandardMaterial3D im && im.AlbedoTexture != null && im.AlbedoColor == Colors.White);
             vm.SetSlotAttached("Magazine", false);
@@ -103,7 +103,7 @@ namespace UnturnedGodot.Testing
             yield return Ticks(2);
             var meshes = pickup.FindChildren("*", "MeshInstance3D", true, false).OfType<MeshInstance3D>().ToList();
             T.Check("pickup is real gun body, not rarity marker", meshes.Any(m => m.Mesh?.GetFaces().Length == 264*3));
-            T.Check("pickup mounts separate irons", meshes.Any(m => m.Name == "Attach_Sight" && m.Mesh?.GetFaces().Length == 128*3));
+            T.Check("pickup mounts separate irons", meshes.Any(m => m.Name == "Attach_Sight" && m.Mesh?.GetFaces().Length == 132*3));
             T.Check("pickup mounts separate magazine", meshes.Any(m => m.Name == "Attach_Magazine" && m.Mesh?.GetFaces().Length == 12*3));
         }
     }
