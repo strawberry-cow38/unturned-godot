@@ -48,7 +48,12 @@ func _ready()->void:
 		cam.look_at(Vector3.ZERO,Vector3.UP)
 		for i in range(5): await get_tree().process_frame
 		await RenderingServer.frame_post_draw
-		var img=vp.get_texture().get_image();assert(img.save_png(ProjectSettings.globalize_path("res://content/items/icons/"+str(id)+".png"))==OK)
+		var img=vp.get_texture().get_image()
+		# KeepAspectCentered fits the PNG rectangle, including transparent margins.
+		# Tight alpha bounds therefore fill the existing slot without changing any UI dimensions.
+		var bounds=img.get_used_rect().grow(3).intersection(Rect2i(Vector2i.ZERO,img.get_size()))
+		img=img.get_region(bounds)
+		assert(img.save_png(ProjectSettings.globalize_path("res://content/items/icons/"+str(id)+".png"))==OK)
 		print("ICON_SAVED ",id)
 		for obj in objs: rig.remove_child(obj);obj.queue_free()
 		rig.position=Vector3.ZERO
