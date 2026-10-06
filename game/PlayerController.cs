@@ -312,6 +312,15 @@ namespace UnturnedGodot
         float _rideLookYaw, _rideLookPitch = FpRideGazePitchDeg;
         const float FpRideGazePitchDeg = -8.75f;
         readonly bool _ugFp = System.Environment.GetEnvironmentVariable("UG_FP") == "1";   // render harness: force 1st-person to screenshot the FP viewmodel
+        /// <summary>VISUAL layer 16 (bit 15): where the LOCAL player's own body goes while in first person, so that
+        /// their own camera can skip it and every OTHER camera -- a security feed, the sun casting its shadow --
+        /// still sees a whole person.
+        ///
+        /// ⚠ The bit is shared with `Vehicle.HitMeshBit`, which is a COLLISION bit. Godot keeps render layers and
+        /// physics layers in separate namespaces, so they do not collide; the visual bits actually taken are 16
+        /// (LampLight.SelfShadowLayer), 17 (WaterLayer), 18 (ReflLayer) and 19 (OutlineLayer).</summary>
+        public const uint OwnBodyLayer = 1u << 15;
+
         RiggedCharacter _body;        // live 3rd-person player model (RiggedCharacter), visible when !_fp
         /// <summary>Test seam: where the 3rd-person body actually ended up, in the driven vehicle's LOCAL frame.
         /// Null when there is no body or we are not driving. Asserting on the seat table instead would pass on a
@@ -8107,6 +8116,7 @@ namespace UnturnedGodot
             AddChild(_leanPivot);
             _cam = new Camera3D { Position = new Vector3(0, 1.6f, 0), Current = !NetAvatar, PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Off };
             _cam.CullMask &= ~OutlineOverlay.OutlineLayer;   // don't render the items' silhouette meshes in the main view (only the offscreen mask cam does)
+            _cam.CullMask &= ~OwnBodyLayer;                  // ...nor your OWN body while in first person -- see OwnBodyLayer
             _leanPivot.AddChild(_cam);
             if (NetAvatar)
             {
@@ -10723,43 +10733,54 @@ namespace UnturnedGodot
             // for why those two and nothing else. No pitch gate: the body is simply THERE, so looking down finds
             // it exactly the way looking down finds your legs.
             _body.Visible = !_dead;   // dead -> the corpse ragdoll handles the body
-            _body.FirstPersonTrim = _fp;
-            // ONLY THE ARM THE ANIMATION USES (strawberry 2026-09-09: "only delete the arm on the 'legs' model
-            // thats relevant to each animation. ie something that uses one hand only deletes that hand"). Read off
-            // the viewmodel's CURRENT clip, not the held item's category: a table of which item is one-handed is a
-            // table someone has to remember to update, and the clip already knows. Driving poses both hands on the
-            // wheel and so trims both; a one-handed hold leaves your other arm on the body to look down at.
-            // AT THE WHEEL both hands are on it, whatever the held item's hold clip happens to pose -- the driving
-            // arms are placed by SetDrivingWheel rather than by a clip, so asking the clip would answer about the
-            // rifle you are still carrying. This is the case master actually reported ("seeing the legs model's
-            // arms on the steering wheel when driving"), so it is stated rather than inferred.
-            // ⚠⚠ AND THE VIEWMODEL HIDES WHAT THE BODY KEEPS. The two rigs had no invariant between them: the body
-            // hid the arms the viewmodel's clip ANIMATES, and the viewmodel hid nothing, because it is built with
-            // both arms and draws both forever. An arm with no animation TRACK is not an absent arm -- it is an arm
-            // in its bind pose, rendered like any other. So every arm the clip did not animate was drawn TWICE,
-            // once by each rig, which is master's "dupe viewmodel when crouched or prone / holding melees": a
-            // one-handed melee hold is exactly the case where a clip animates one arm and not the other.
-            // ⭐ Made complementary here, so each arm is drawn exactly ONCE by construction. If HandsInClip is ever
-            // wrong about a clip it can now only put an arm on the wrong rig -- it can no longer produce two.
+            // ⭐⭐ HIDDEN FROM YOUR OWN CAMERA BY LAYER, NOT RESHAPED (master 2026-10-06, choosing between the
+            // options: "i would go B and we come back to the 'legs' idea later, its broken in multiple ways rn").
+            //
+            // What this replaces: the body used to stay visible in 1P and be CARVED UP instead -- a distance
+            // discard for the chest, the face quad switched off, the arms scaled to nothing. Only the first of
+            // those is per-camera (it is measured in view space). The other two live on the node and the skeleton,
+            // so EVERY camera saw them: a security feed filmed an armless, faceless player, and the sun cast an
+            // armless, headless shadow. One skeleton cannot hold two poses, so there was no per-camera fix for the
+            // arms -- the body has to be absent from one camera rather than deformed for all of them.
+            //
+            // ⚠ The cost, accepted by master above: no legs when you look down in 1P. That feature is what the
+            // carving existed to serve, and it comes back with a body built for the purpose, not by making one
+            // skeleton mean two things.
+            _body.SetRenderLayers(_fp ? OwnBodyLayer : 1u);
+            _body.FirstPersonTrim = false;   // never carve it now: nothing that renders it wants the 1P shape
+            // ⚠⚠ THE ARM-SPLIT BETWEEN THE TWO RIGS IS GONE, 2026-10-06. It is worth saying what it WAS, because
+            // the bug it solved is still real and will come back the moment the body is drawn to your own camera
+            // again (the "legs in 1P" feature master has parked): the viewmodel rig is built with both arms and
+            // draws both forever -- an arm with no animation TRACK is not an absent arm, it is an arm in its bind
+            // pose -- so with the body ALSO drawing arms, every arm the clip did not animate was drawn TWICE. That
+            // is master's "dupe viewmodel when crouched or prone / holding melees". The fix was to make the two
+            // complementary via HandsInClip: whatever the viewmodel animated, the body trimmed.
+            //
+            // None of that applies while the body is off your camera's layer entirely. There is one rig drawing
+            // arms, so it draws both and the body is never trimmed. ⚠ For a one-handed hold the viewmodel's other
+            // arm now shows in its bind pose, where the body used to supply a posed one -- wrong-ish, but less
+            // wrong than an arm that is missing. Flagged to master.
             var vmRig = _viewmodel?.ArmsRig as RiggedCharacter;
+            // ⭐ THE COMPLEMENTARY HALF OF THE LAYER CHANGE ABOVE. This whole block existed to split the arms
+            // between two rigs so each was drawn exactly ONCE: the viewmodel drew the arms its clip animated and
+            // the body drew the rest. With the body no longer rendered to your own camera at all, the viewmodel is
+            // the ONLY thing drawing arms in first person -- so it has to draw BOTH, and the body is never trimmed.
+            // ⚠ Consequence worth knowing: for a one-handed hold the viewmodel's other arm has no animation track,
+            // so it renders in its BIND POSE rather than being supplied by the body. A bind-pose arm is wrong-ish;
+            // no arm at all is worse. Flagged to master.
             if (_fp && (_driving != null || _riding != null))
             {
-                _body.SetTrimmedArms(true, true);
+                _body.SetTrimmedArms(false, false);
                 vmRig?.SetViewmodelArmsHidden(false, false);   // at the wheel the viewmodel owns both hands
             }
             else if (_fp && vmRig != null)
             {
-                var (usesL, usesR) = vmRig.HandsInClip(vmRig.CurrentClip);
-                _body.SetTrimmedArms(usesL, usesR);
-                // ⚠ ONLY THE LEFT. The held item rides Right_Hook on the viewmodel rig and a BoneAttachment3D
-                // follows its bone whatever the arm's scale, so collapsing the right shoulder would leave the gun
-                // hanging in mid-air rather than removing it. Every item is held right-handed here (a left-handed
-                // player mirrors the whole rig, PlayerAnimator:1613), so the arm that ever needs hiding is the left.
-                vmRig.SetViewmodelArmsHidden(!usesL, false);
+                _body.SetTrimmedArms(false, false);
+                vmRig.SetViewmodelArmsHidden(false, false);   // both arms: the viewmodel is the only rig drawing them now
             }
             else
             {
-                _body.SetTrimmedArms(true, true);
+                _body.SetTrimmedArms(false, false);
                 vmRig?.SetViewmodelArmsHidden(false, false);   // 3P: the body draws itself, the viewmodel is hidden anyway
             }
             // The arms rig is rebuilt whenever the held item changes, so this is pushed every frame rather than
