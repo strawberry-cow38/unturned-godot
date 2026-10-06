@@ -9674,7 +9674,20 @@ namespace UnturnedGodot
                 // old inline pos + vel*0.02 / vel.y += g*0.02
                 var un = BallisticsMath.NextPos(new UnityEngine.Vector3(b.Pos.X, b.Pos.Y, b.Pos.Z), new UnityEngine.Vector3(b.Vel.X, b.Vel.Y, b.Vel.Z));
                 Vector3 next = new Vector3(un.x, un.y, un.z);
-                var query = PhysicsRayQueryParameters3D.Create(b.Pos, next, (1u << 0) | (1u << 1) | (1u << 4) | (1u << 5) | (1u << 6) | (1u << 9)); // world + enemy + ragdoll + vehicle + props + water surface
+                // ⭐⭐ AN NPC'S ROUND CAN HIT YOU; YOUR OWN CANNOT. The player sits on bit 3 and that bit is
+                // absent from this mask -- deliberately, because every bullet in this loop starts at the local
+                // player's muzzle and would otherwise hit the person who fired it on frame one.
+                //
+                // That exclusion also made the NPC gunship HARMLESS, which is master's report (2026-10-06: "give
+                // it the ability to actually hurt and kill the player"). The damage numbers were all correct and
+                // plumbed -- NpcShot passes the gun's PlayerDamage into SpawnBullet -- and the round simply
+                // could not collide with a player, so nothing downstream ever ran. A whole damage path that is
+                // right in every respect except that its ray is blind to the target.
+                //
+                // So the bit is added for NPC rounds ONLY. b.Npc is false for everything the player fires.
+                uint mask = (1u << 0) | (1u << 1) | (1u << 4) | (1u << 5) | (1u << 6) | (1u << 9); // world + enemy + ragdoll + vehicle + props + water surface
+                if (b.Npc) mask |= 1u << 3;   // ...+ the player, for somebody else's bullet
+                var query = PhysicsRayQueryParameters3D.Create(b.Pos, next, mask);
                 var hit = space.IntersectRay(query);
                 // (sim-zombie analytic bullet path removed 2026-08-25 -- master: rip out everything zombie)
                 if (hit.Count > 0)
@@ -9702,6 +9715,15 @@ namespace UnturnedGodot
                         float dealt = dummy.TakeHit(b.PlayerDamage * b.FalloffAt(point), point);
                         SpawnFleshImpact(point, hdir);
                         Hitmark(b, dummy.LastZone == TargetDummy.HitZone.Head);
+                    }
+                    else if (b.Npc && collider == this)
+                    {   // SOMEBODY ELSE'S ROUND, IN YOU. Only reachable for an NPC bullet -- the mask above keeps
+                        // the player's own fire blind to the player, so this cannot become self-damage.
+                        // TakeDamage owns the flash, the flinch and the death; the source position is the muzzle
+                        // the round came from, so the hit indicator points back at the aircraft rather than at
+                        // the floor.
+                        SpawnFleshImpact(point, hdir);
+                        TakeDamage(b.PlayerDamage * b.FalloffAt(point), b.Origin);
                     }
                     else if (collider is PhysicalBone3D pb) { SpawnFleshImpact(point, hdir); pb.ApplyImpulse(hdir * 7f, point - pb.GlobalPosition); }
                     // RESOLVED, not cast. With the mesh hitbox on, the collider a bullet ray returns is the

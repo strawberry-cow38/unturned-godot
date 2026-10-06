@@ -25,7 +25,12 @@ namespace UnturnedGodot
         // Canopy clearance. ResourceField's trunk collider is 8 m and the real canopies stand well above it, so this
         // is the margin between the terrain underneath and the aircraft -- deliberately generous, because the cost of
         // being too high is cosmetic and the cost of being too low is flying through a forest.
-        public const float CanopyClearance = 34f;
+        // ⭐ 50 m, up from 34 (master 2026-10-06: "fly a little higher"). The canopy records in ResourceField put
+        // the top of a tree at ~16 m above its base, so 34 was already clear of the trees -- what it was not clear
+        // of is the player, who could watch a gunship pass at roughly the height of a tall building. The cost of
+        // more height is cosmetic (and a slightly longer slant range for the gun); the cost of less is flying
+        // through a forest, so this errs upward exactly as the original note says.
+        public const float CanopyClearance = 50f;
         public const float OrbitRadius = 90f;      // how wide it circles the monument
         const float ArriveDist = 140f;             // switch from transit to orbit inside this
         // Climb-rate authority the AI will ask for, and the deadband it stops correcting inside. The deadband
@@ -80,15 +85,20 @@ namespace UnturnedGodot
         // BURSTS VARY IN BOTH DIMENSIONS (strawberry: "the bursts should vary in length, and time between them").
         // A fixed 7-and-1.5 reads as a metronome once you have been shot at twice; the point of a burst is that
         // you cannot time it. Re-rolled per burst, so length and gap are independent.
-        const int BurstMinRounds = 4, BurstMaxRounds = 11;
+        // ⭐ LONGER BURSTS (master 2026-10-06: "allow it to fire more sustained bursts"). These were tuned when the
+        // mount ran at the engine ceiling of 3,000 rpm, where 4-11 rounds is a tenth of a second and the gun was
+        // terrifying on rate alone. At the Hind's new 450 rpm (Vehicle.cs: Cycle 0.1333) that same burst is under
+        // a second and reads as a polite tap, so the round counts go up and the gaps come down -- the gun now
+        // sustains fire for a few seconds at a time, which is what makes taking cover matter.
+        const int BurstMinRounds = 12, BurstMaxRounds = 30;
         // "both infinite ammo, longer bursts than the hind." A crewed door gun is a man leaning on a trigger, not
         // a stabilised remote mount, so it hoses for longer. Keyed off whether the mount HAS a crew rather than
         // off the airframe's name, so it stays true of anything else that grows a door gunner.
-        const int CrewBurstMinRounds = 10, CrewBurstMaxRounds = 22;
+        const int CrewBurstMinRounds = 22, CrewBurstMaxRounds = 55;   // a door gunner has a belt and a shoulder, not a trigger discipline
         bool CrewServed => Heli.Turrets.Length > 0 && Heli.Turrets[0].GunnerAt != Vector3.Zero;
         int BurstMin() => CrewServed ? CrewBurstMinRounds : BurstMinRounds;
         int BurstMax() => CrewServed ? CrewBurstMaxRounds : BurstMaxRounds;
-        const float BurstGapMin = 0.8f, BurstGapMax = 2.6f;
+        const float BurstGapMin = 0.5f, BurstGapMax = 1.6f;   // was 0.8-2.6: long gaps on top of short bursts meant it was mostly silent
         const float GunRange = 250f;                // retail HMG.dat Range
 
         double _seenDamageAtMsec = -1e9;            // the newest damage event already consumed
@@ -222,9 +232,28 @@ namespace UnturnedGodot
             var q = PhysicsRayQueryParameters3D.Create(from, to);
             q.Exclude = new Godot.Collections.Array<Rid> { Heli.GetRid() };
             var hit = space.IntersectRay(q);
-            if (hit.Count == 0) return true;
-            return target != null && hit["collider"].As<GodotObject>() == target;
+            if (hit.Count != 0 && !(target != null && hit["collider"].As<GodotObject>() == target)) return false;
+
+            // ⭐⭐ AND THE TREES, WHICH PHYSICS CANNOT ANSWER (master 2026-10-06: "add occlusions for its line of
+            // sight through trees"). A tree carries only a FIXED 0.5 m x 8 m trunk collider -- ResourceField
+            // rejected the full-tree AABB on purpose because it floated above the ground -- so a ray from a
+            // gunship down onto someone standing under a canopy passes through the leaves and usually misses the
+            // narrow trunk as well. The player was in open sight from above, in a forest.
+            //
+            // Asked through a delegate for the reason NpcShot is: this file should not have to know how the world
+            // stores its trees. The volume tested is the same ~5 m canopy cylinder the rejected AABB produced,
+            // which is why it is a measured number rather than a guess.
+            //
+            // ⚠ UNSET = NO OCCLUSION, which is the old behaviour and a SILENT one -- so WorldBuilder logs the
+            // wiring at boot. An un-wired hook here looks exactly like trees that do not block, and that is the
+            // failure shape this repo keeps paying for.
+            if (CanopyBlocks != null && CanopyBlocks(from, to)) return false;
+            return true;
         }
+
+        /// <summary>"Does this segment pass through tree canopy?" -- supplied by the world layer
+        /// (ResourceField.CanopyBlocksSegment). Null means no tree occlusion at all.</summary>
+        public static System.Func<Vector3, Vector3, bool> CanopyBlocks;
 
         void StepCombat(float dt)
         {

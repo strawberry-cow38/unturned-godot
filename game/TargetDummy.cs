@@ -36,10 +36,33 @@ namespace UnturnedGodot
         Node3D _visual;
         float _respawnT;
 
+        /// <summary>Build this dummy as a REAL character model (RiggedCharacter) instead of the generic Humanoid
+        /// block figure, optionally holding `CharacterGun`. master 2026-10-06: "replace the door gunners' generic
+        /// model with actual playermodel/npc models that hold the weapons".
+        ///
+        /// ⭐ AN OPTION RATHER THAN A REPLACEMENT, because the Humanoid is RIGHT for the thing this class was
+        /// built for -- a shooting-range target, where a plain block figure with unambiguous height bands is the
+        /// point. The hit zones, health and collision box are untouched either way, so a door gunner stays
+        /// exactly as killable as before and TurretCrewAlive keeps working; only the mesh changes.</summary>
+        public bool CharacterModel;
+        public string CharacterGun;   // content gun name (e.g. "dragonfang") -- held in the right hand
+        public Color CharacterTint = new Color(0.82f, 0.66f, 0.52f);
+
         public override void _Ready()
         {
             Health = MaxHealth;
-            _visual = Humanoid.Build(new Color(0.86f, 0.70f, 0.55f), new Color(0.25f, 0.45f, 0.75f), new Color(0.20f, 0.22f, 0.28f));
+            if (CharacterModel)
+            {
+                var ch = RiggedCharacter.Build("res://content/rig.json", CharacterTint, false, null, "res://content/face_19.png");
+                if (ch != null)
+                {
+                    if (!string.IsNullOrEmpty(CharacterGun)) ch.AttachGun(CharacterGun);
+                    _visual = ch;
+                }
+            }
+            // Falls back to the block figure if the rig failed to load -- a gunner with no body at all would be an
+            // invisible thing shooting at you, which is worse than a plain one.
+            _visual ??= Humanoid.Build(new Color(0.86f, 0.70f, 0.55f), new Color(0.25f, 0.45f, 0.75f), new Color(0.20f, 0.22f, 0.28f));
             AddChild(_visual);
             // Box, not a capsule: the zone bands are pure height cuts, and a capsule's rounded cap would make the
             // top of the head a curved surface where a grazing shot reads as a torso hit at head height.

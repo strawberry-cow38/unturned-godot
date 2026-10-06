@@ -35,7 +35,8 @@ namespace UnturnedGodot
         public PlayerController Player;    // Playable/PeiPlay only
         public DeadzoneField Deadzones;    // contaminated volumes ticking the player's vitals
         public DayNightCycle DayNight;     // the world clock -- MP Phase 8 syncs read/drive it (§3.7)
-        public ResourceField Resources;    // trees/rocks -- MP Phase 8's alive-bitmap indexes into it (§3.7)
+        public ResourceField Resources;
+    // trees/rocks -- MP Phase 8's alive-bitmap indexes into it (§3.7)
         public FoliageField Foliage;       // grass/flowers/pebbles -- the editor's paint tool authors into it
         public DestructibleField Destructibles;   // destructible props (rubble) -- the DestructibleReplication(16) alive-bitmap indexes into it
         public DirectionalLight3D Sun;     // world sun + env (C3: the client session LinkWorldLightings its late-spawned shell)
@@ -75,6 +76,19 @@ namespace UnturnedGodot
     // the capture/demo scripting; this owns the nodes.
     public static class WorldBuilder
     {
+        /// <summary>Give the NPC gunship its tree occlusion (master 2026-10-06: "add occlusions for its line of
+        /// sight through trees"). NpcHeli asks through a delegate so it need not know how the world stores trees;
+        /// this is the one place that answer is supplied.
+        ///
+        /// ⚠ LOGGED, because an unset hook is a SILENT no-op that looks exactly like trees not blocking -- the
+        /// same shape as the ten retail skills wired to nothing. If the count reads 0, the trees built without
+        /// canopy records and the gunship can see through the forest again.</summary>
+        static void WireCanopyOcclusion(ResourceField rsf)
+        {
+            if (rsf == null) return;
+            NpcHeli.CanopyBlocks = rsf.CanopyBlocksSegment;
+            Log.Print($"[heli] tree canopy occlusion wired: {rsf.CanopyCount} canopies");
+        }
         /// <summary>wind_sway.gdshader, loaded once. Shared with the swaying props (hedges); tree leaves load
         /// their own copy in ResourceField, which builds its materials on a different path.</summary>
         static Shader _windSway;
@@ -2033,6 +2047,7 @@ namespace UnturnedGodot
                         await rsf.BuildTreeImpostorsAsync();
                     }
                     result.Resources = rsf;
+                    WireCanopyOcclusion(rsf);
                 }
             }
 
@@ -2343,6 +2358,7 @@ namespace UnturnedGodot
                     root.AddChild(rsf);
                     rsf.LoadResources(activeHoliday);
                     result.Resources = rsf;
+                    WireCanopyOcclusion(rsf);
                 }
                 // LOOT (Phase 6, §3.3): the rolls run server-side now that LootField keys spawn/despawn on
                 // ANY player's proximity via PlayerRegistry (no local player exists here). The catalog must
