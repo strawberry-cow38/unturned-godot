@@ -22,6 +22,19 @@ namespace UnturnedGodot
             var e = RotationDegrees; _yaw = e.Y; _pitch = e.X;
         }
 
+        /// <summary>Place the fly camera and point it, keeping the look state in step.
+        ///
+        /// ⚠ Setting RotationDegrees alone is NOT enough: this camera keeps its own _yaw/_pitch, adopted ONCE in
+        /// _Ready, and rebuilds the basis from them on every mouse move. Writing the transform from outside after
+        /// that works until the first mouse movement, which then snaps the view back to the stale angles -- a bug
+        /// that looks like the camera fighting you rather than like a missing assignment.</summary>
+        public void SetPose(Vector3 pos, float yawDeg, float pitchDeg)
+        {
+            GlobalPosition = pos;
+            _yaw = yawDeg; _pitch = Mathf.Clamp(pitchDeg, -90f, 90f);
+            RotationDegrees = new Vector3(_pitch, _yaw, 0f);
+        }
+
         public override void _UnhandledInput(InputEvent ev)
         {
             if (ev is InputEventMouseButton mb)

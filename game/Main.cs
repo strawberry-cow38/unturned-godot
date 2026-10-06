@@ -6772,6 +6772,18 @@ namespace UnturnedGodot
             // wrong for playing.
             play.SetWorldLighting(sun, env, dayNight);
             play.SetIsland(procSeed, _mapRoot);   // seed -> a reproducible horde; _mapRoot -> PEI's loot TABLES
+
+            // ⭐ THE MAP-TOOL SHOWCASE (master 2026-10-06: "a map thats a map tool showcase ... when we add new
+            // mapmaker tools we show them off/experiment there"). Authored ONCE, on the first open, and only when
+            // the map is genuinely empty -- after that it is an ordinary custom map and whatever you did to it is
+            // what loads. Re-authoring over your experiments would make the one place you are meant to experiment
+            // the one place you cannot keep anything.
+            if (editor.MapName == MapShowcase.MapName && (editor.Objects?.PlacedCount ?? 0) == 0)
+            {
+                int built = MapShowcase.Author(terr, rf, editor.Objects, plField, editor);
+                editor.MarkDirty();   // so the autosave keeps it without the user having to think about it
+                MapShowcase.OpenView(cam as EditorCamera, built);
+            }
             // Workshop's per-map Play opens the editor and goes straight in, so the map you play is the
             // map the editor built -- one world-building path, not two that can disagree.
             if (loading != null)
