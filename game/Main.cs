@@ -5032,7 +5032,8 @@ namespace UnturnedGodot
                           || System.Environment.GetEnvironmentVariable("UG_DEVIO") == "1"
                           || System.Environment.GetEnvironmentVariable("UG_WINDTURBINE") == "1"
                           || System.Environment.GetEnvironmentVariable("UG_TRAPS") == "1"
-                          || System.Environment.GetEnvironmentVariable("UG_WATERTANK") == "1";   // showcases skip the gen/spot/ghost clutter
+                          || System.Environment.GetEnvironmentVariable("UG_WATERTANK") == "1"
+                          || !string.IsNullOrEmpty(System.Environment.GetEnvironmentVariable("UG_ITEMPIPES"));   // showcases skip the gen/spot/ghost clutter
             Deployable placedGen = null, placedSpot = null;
             if (!showSplit)
             {
@@ -5325,6 +5326,68 @@ namespace UnturnedGodot
                 look = new Vector3(0f, 0.9f, 0f);
                 cam.Position = new Vector3(0.4f, 1.7f, 4.6f);
                 cam.Fov = 52f; cam.LookAt(look, Vector3.Up);
+            }
+            // UG_ITEMPIPES=1 (v56, `tools/shot.py pipes`): the item-pipe chain as a player would build it -- a crate,
+            // its adapter, a generator-fed mover, a splitter fanning to two more adapted crates, and a combiner with
+            // its sockets lit (UG_ITEMPIPES=close: the splitter end, near). Built through the SAME seat (Barricade.PlaceOnSurface) and the SAME tube (ItemPipe) the
+            // replica view uses, so a picture that looks right is about those, not about a showcase-only path.
+            string pipeShow = System.Environment.GetEnvironmentVariable("UG_ITEMPIPES");
+            if (!string.IsNullOrEmpty(pipeShow))
+            {
+                ItemPortNode Sock(Deployable d, UnturnedGodot.Net.ItemPortDir dir, int nth = 0)
+                {
+                    foreach (var ip in d.ItemPorts) if (ip.Dir == dir && nth-- == 0) return ip;
+                    return null;
+                }
+                Deployable Adapt(StorageCrate c, Vector3 n)
+                {
+                    var face = c.GlobalPosition + new Vector3(0f, 0.42f, 0f) + n * 0.375f;   // the plain crate is a 0.75 cube on its base
+                    return Barricade.PlaceOnSurface(this, DeployableDef.StorageAdapter, face, n, BarricadePlacer.YawFacing(n));
+                }
+                void Pipe(ItemPortNode a, ItemPortNode b, params Vector3[] bends)
+                {
+                    var pts = new System.Collections.Generic.List<Vector3> { a.GlobalPosition };
+                    pts.AddRange(bends);
+                    pts.Add(b.GlobalPosition);
+                    var p = new ItemPipe { Src = a, Dst = b };
+                    AddChild(p);
+                    p.SetPoints(pts, valid: true);
+                }
+                var crateA = StorageCrate.Spawn(this, new Vector3(-3.4f, 0f, 0f));
+                var crateB = StorageCrate.Spawn(this, new Vector3(2.8f, 0f, -1.3f));
+                var crateC = StorageCrate.Spawn(this, new Vector3(2.8f, 0f, 1.3f));
+                var adA = Adapt(crateA, Vector3.Right);
+                var adB = Adapt(crateB, Vector3.Left);
+                var adC = Adapt(crateC, Vector3.Left);
+                var mover = Deployable.Spawn(this, DeployableDef.ItemMover, new Vector3(-1.4f, 0f, 0f), 0f);
+                var split = Deployable.Spawn(this, DeployableDef.ItemSplitter, new Vector3(0.7f, 0f, 0f), 90f);
+                var comb = Deployable.Spawn(this, DeployableDef.ItemCombiner, new Vector3(0.4f, 0f, 2.4f), 0f);
+                var pgen = Deployable.Spawn(this, DeployableDef.Generator, new Vector3(-1.4f, 0f, -2.6f), 0f);
+                foreach (var d in new[] { adA, adB, adC, mover, split, comb })
+                    foreach (var ip in d.ItemPorts) { ip.Visible = true; ip.SetArrowState(true, true); }
+                Pipe(Sock(adA, UnturnedGodot.Net.ItemPortDir.Out), Sock(mover, UnturnedGodot.Net.ItemPortDir.In));
+                Pipe(Sock(mover, UnturnedGodot.Net.ItemPortDir.Out), Sock(split, UnturnedGodot.Net.ItemPortDir.In));
+                var sOut0 = Sock(split, UnturnedGodot.Net.ItemPortDir.Out, 0); var sOut2 = Sock(split, UnturnedGodot.Net.ItemPortDir.Out, 2);
+                Pipe(sOut0, Sock(adC, UnturnedGodot.Net.ItemPortDir.In), new Vector3(sOut0.GlobalPosition.X + 0.4f, sOut0.GlobalPosition.Y, sOut0.GlobalPosition.Z));
+                Pipe(sOut2, Sock(adB, UnturnedGodot.Net.ItemPortDir.In), new Vector3(sOut2.GlobalPosition.X + 0.4f, sOut2.GlobalPosition.Y, sOut2.GlobalPosition.Z));
+                var gOut = pgen.Ports.Find(pp => pp.Kind == DeployableDef.PortKind.Output);
+                var mIn = mover.Ports.Find(pp => pp.Kind == DeployableDef.PortKind.Consumer);
+                if (gOut != null && mIn != null)
+                {
+                    var w = new Wire(); AddChild(w); w.Source = gOut; w.Consumer = mIn; w.AddToGroup("wires");
+                    w.SetPoints(new System.Collections.Generic.List<Vector3> { gOut.GlobalPosition, mIn.GlobalPosition }, valid: true);
+                }
+                foreach (var (nm, d) in new[] { ("adA", adA), ("adB", adB), ("mover", mover), ("split", split), ("comb", comb) })
+                    foreach (var ip in d.ItemPorts) Log.Print($"[pipeshot] {nm} {ip.Dir}#{ip.Index} at {ip.GlobalPosition}");
+                look = new Vector3(-0.2f, 0.35f, 0.2f);
+                cam.Position = new Vector3(-0.2f, 3.4f, 6.4f);
+                cam.Fov = 55f; cam.LookAt(look, Vector3.Up);
+                if (pipeShow == "close")
+                {
+                    look = new Vector3(1.5f, 0.35f, 0f);
+                    cam.Position = new Vector3(1.0f, 1.5f, 2.4f);
+                    cam.Fov = 50f; cam.LookAt(look, Vector3.Up);
+                }
             }
             if (System.Environment.GetEnvironmentVariable("UG_WIRETEST") == "1")
             {   // drop to near-night + aim at the powered spotlight so the lit lamps + beam actually read

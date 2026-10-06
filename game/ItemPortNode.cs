@@ -52,12 +52,29 @@ namespace UnturnedGodot
             // the in/out arrow, reusing the power port's glyph: OUT points away from the box, IN points into it
             ip._arrowMat = ConnectionPort.ArrowMaterial(ConnectionPort.ArrowBlue);
             var pk = p.Dir == ItemPortDir.In ? DeployableDef.PortKind.Consumer : DeployableDef.PortKind.Output;
-            ip._arrow = ConnectionPort.MakeArrow(new DeployableDef.Port { Kind = pk, Pos = p.Pos }, ip._arrowMat, Vector3.Zero);
+            ip._arrow = ConnectionPort.MakeArrow(new DeployableDef.Port { Kind = pk, Pos = p.Pos }, ip._arrowMat, Vector3.Zero,
+                                                 FaceNormal(p.Pos, owner?.Def?.Size ?? Vector3.Zero));
             ip._arrow.Visible = false;
             ip.AddChild(ip._arrow);
             ip.SetHighlight(PortHi.None);
             ip.AddToGroup("item_ports");
             return ip;
+        }
+
+        /// <summary>The outward normal of the box face a socket sits on, in the flat authored frame.
+        ///
+        /// MakeArrow's own rule takes whichever of X/Y is BIGGER in the raw position, which assumes the box is as
+        /// wide as it is deep. The splitter and combiner are 0.80 wide and 0.36 deep, so their OUTER sockets
+        /// (x = +-0.26 on the +-0.18 face) won on X and drew their arrows SIDEWAYS along the face -- seen in the
+        /// first render of the chain, where the splitter's outer outputs pointed at each other. Measured against the
+        /// box's own half-extents instead, a socket on a face is at 100% of that axis and nowhere near it on the
+        /// other. Zero (no size) falls back to MakeArrow's rule.</summary>
+        public static Vector3 FaceNormal(Vector3 pos, Vector3 size)
+        {
+            if (size.X <= 0f || size.Y <= 0f) return Vector3.Zero;
+            float rx = Mathf.Abs(pos.X) / (size.X * 0.5f), ry = Mathf.Abs(pos.Y) / (size.Y * 0.5f);
+            if (rx < 1e-3f && ry < 1e-3f) return Vector3.Zero;
+            return rx >= ry ? new Vector3(Mathf.Sign(pos.X), 0f, 0f) : new Vector3(0f, Mathf.Sign(pos.Y), 0f);
         }
 
         public enum PortHi { None, Focus, PipeOk, PipeBad }
@@ -100,6 +117,8 @@ namespace UnturnedGodot
             : $"{ProviderName} -- item IN{(piped ? " (piped)" : "")}";
 
         public bool DebugArrowVisible => _arrow != null && _arrow.Visible;
+        /// <summary>L1 probe: the arrow's flow direction in the owner's frame (the glyph's +Y; the port cube is unrotated).</summary>
+        public Vector3 DebugArrowFlow => _arrow != null ? _arrow.Basis.Y.Normalized() : Vector3.Zero;
 
         /// <summary>The owner died: retire the cube and drop it off the pipe ray's layer.</summary>
         public void Deactivate() { Visible = false; CollisionLayer = 0; }

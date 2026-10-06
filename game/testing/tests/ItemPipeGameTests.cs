@@ -423,4 +423,39 @@ namespace UnturnedGodot.Testing
             PlayerController.DebugForceLookScan = false;
         }
     }
+    /// <summary>Every socket's arrow points straight out of (OUT) or into (IN) the face the socket sits on. The
+    /// splitter and combiner are wider than they are deep, and MakeArrow's raw-coordinate rule sent their outer
+    /// sockets' arrows SIDEWAYS -- the first render of the chain showed the splitter's outputs pointing at each
+    /// other. "The face it sits on" is judged here by CONTACT (the coordinate equals that half-extent), not by
+    /// the ratio rule the fix uses, so the test is not the fix restated.</summary>
+    public class PipeSocketArrows : GameTest
+    {
+        public override string Name => "pipes.socket_arrows_point_out_of_their_face";
+
+        public override IEnumerable<Step> Run()
+        {
+            Rigs.Ground(World);
+            yield return Ticks(1);
+            var defs = new[] { DeployableDef.StorageAdapter, DeployableDef.ItemSplitter, DeployableDef.ItemCombiner, DeployableDef.ItemMover };
+            int checkedPorts = 0;
+            for (int k = 0; k < defs.Length; k++)
+            {
+                var def = defs[k];
+                var d = Deployable.Spawn(World, def, new Vector3(k * 2f, 0f, 0f), 0f);
+                Vector3 half = def.Size * 0.5f;
+                foreach (var ip in d.ItemPorts)
+                {
+                    var pos = def.ItemPorts[ip.Index].Pos;
+                    bool onX = Mathf.Abs(Mathf.Abs(pos.X) - half.X) < 1e-3f, onY = Mathf.Abs(Mathf.Abs(pos.Y) - half.Y) < 1e-3f;
+                    if (onX == onY) { T.Fail($"{def.Name} socket {ip.Index} at {pos} is on exactly one side face"); continue; }
+                    var face = onX ? new Vector3(Mathf.Sign(pos.X), 0f, 0f) : new Vector3(0f, Mathf.Sign(pos.Y), 0f);
+                    var want = ip.Dir == ItemPortDir.Out ? face : -face;
+                    var flow = ip.DebugArrowFlow;
+                    T.Check($"{def.Name} {ip.Dir} socket {ip.Index} at {pos}: arrow {flow} along {want}", flow.Dot(want) > 0.99f);
+                    checkedPorts++;
+                }
+            }
+            T.Check($"every socket of the four devices was looked at ({checkedPorts}/12)", checkedPorts == 12);
+        }
+    }
 }
