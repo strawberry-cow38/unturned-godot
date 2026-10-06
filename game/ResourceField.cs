@@ -563,6 +563,11 @@ namespace UnturnedGodot
                                              : GeometryInstance3D.ShadowCastingSetting.On,
                                 VisibilityRangeEnd = cullRange, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled };
                             mmi.AddToGroup(NearestFilter.KeepFilterGroup);   // keep the bilinear MakeMat set; the scene-wide sweep would stamp it back to Nearest
+                            // INTO THE WATER MIRROR. Trees are the reflection master actually asked for ("reflections
+                            // on water with trees + props"), and this is the real-tree chunk -- the IMPOSTOR chunk
+                            // below is deliberately left out, because a card oriented for the main camera turns
+                            // edge-on in a mirrored one, which reflects as a flicker of nothing rather than a treeline.
+                            WaterReflection.MarkReflective(mmi);
                             AddChild(mmi);
                         }
                     }
@@ -1403,6 +1408,10 @@ namespace UnturnedGodot
                 }
                 parent.AddChild(new MeshInstance3D { Mesh = m, MaterialOverride = mat });
             }
+            // A FELLED TREE STILL REFLECTS. Marked here in one sweep rather than at each of the three AddChild
+            // branches above (leaf / trunk / generic part), so a fourth branch added later cannot miss it.
+            foreach (var c in parent.GetChildren())
+                if (c is VisualInstance3D vi) WaterReflection.MarkReflective(vi);
         }
 
         /// <summary>Test seam: regrow NOW rather than after the reset timer, so a test can prove the stump's

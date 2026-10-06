@@ -1700,7 +1700,9 @@ namespace UnturnedGodot
                 var mat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, Roughness = 0.9f };
                 var img = new Image();
                 if (ContentProvider.LoadOk(img, dir + name + "_" + i + "_tex.png")) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); mat.TextureFilter = BaseMaterial3D.TextureFilterEnum.LinearWithMipmaps; }
-                root.AddChild(new MeshInstance3D { Mesh = m, MaterialOverride = mat });
+                var tmi = new MeshInstance3D { Mesh = m, MaterialOverride = mat };
+                WaterReflection.MarkReflective(tmi);   // --treetest's reflection test is the only place I can SEE the mirror; an unflagged tree makes it render empty and look like a shader bug
+                root.AddChild(tmi);
             }
             return root;
         }
