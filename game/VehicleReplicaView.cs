@@ -66,12 +66,27 @@ namespace UnturnedGodot
             return node != null && IsInstanceValid(node);
         }
 
+        readonly Dictionary<uint, (int seat, ulong until)> _pendingSeatPulses = new();
+        public void QueueSeatPulse(uint netId, int seat)
+        {
+            if (TryGetPuppet(netId, out var node) && !Suppressed.Contains(netId))
+                node.AuthoredPanelRig?.PulseSeat(seat);
+            else _pendingSeatPulses[netId] = (seat, Time.GetTicksMsec() + 5000);
+        }
+
         public override void _Process(double delta)
         {
             if (Client == null) return;
             var parent = GetParent();
             if (parent == null) return;
             float dt = (float)delta;
+            // Rare ownership handoff queue, not a growing per-frame history.
+            if (_pendingSeatPulses.Count > 0)
+            {
+                var expired = new List<uint>();
+                foreach (var kv in _pendingSeatPulses) if (kv.Value.until < Time.GetTicksMsec()) expired.Add(kv.Key);
+                foreach (uint id in expired) _pendingSeatPulses.Remove(id);
+            }
             float a = 1f - Mathf.Exp(-GlideRate * dt);
 
             var seen = new HashSet<uint>();
@@ -102,6 +117,10 @@ namespace UnturnedGodot
                 t.Node.ApplyReplicatedPaint(e.PaintRgb);   // v41: somebody sprayed it
                 t.Node.ApplyReplicatedTires(e.PoppedTireMask);   // v45: somebody shot its tires out, or put a spare on
                 t.Node.TickAlarm(dt);
+                t.Node.AuthoredPanelRig?.ApplyOccupancy(e.DriverPlayerId, e.Passengers);
+                if (_pendingSeatPulses.Remove(e.NetIdValue, out var pulse) && pulse.until >= Time.GetTicksMsec() && !e.Exploded)
+                    t.Node.AuthoredPanelRig?.PulseSeat(pulse.seat);
+                t.Node.AuthoredPanelRig?.Tick(dt);
 
                 var vel = new Vector3(e.LinVel.x, e.LinVel.y, e.LinVel.z);
                 var target = new Vector3(e.Pos.x, e.Pos.y, e.Pos.z) + vel * Mathf.Min(t.SinceSnap, MaxExtrapolationSeconds);   // dead-reckoned between snapshots, bounded horizon

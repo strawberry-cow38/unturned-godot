@@ -493,6 +493,7 @@ namespace UnturnedGodot
                 // A4 mid-drive despawn/explode: the snapshot's Exploded flag (or a vanished entity)
                 // force-exits locally -- the reliable VehicleExited fact may lag or never come (despawn)
                 if (!haveRep || rep.Exploded) { ForceExitLocal(); return; }
+                _localVehicle.AuthoredPanelRig?.ApplyOccupancy(rep.DriverPlayerId, rep.Passengers);
                 if (_vehRecovHold)
                 {
                     // the recov echo: one state send carrying the new RecovAck, then release the freeze
@@ -519,6 +520,8 @@ namespace UnturnedGodot
             VehicleView.Suppress(_ridingNetId);   // ...and its puppet retires THIS tick, not at the next process-frame sweep
             string key = e.TypeId < Vehicle.SpecNames.Length ? Vehicle.SpecNames[e.TypeId] : "jeep";
             var v = Vehicle.BuildByName(key, e.Variant);
+            v.AuthoredPanelRig?.ApplyOccupancy(e.DriverPlayerId, e.Passengers);
+            v.AuthoredPanelRig?.PulseSeat(0); // constructing this predicted twin is the local boarding event
             v.NetClientPredicted = true;    // server owns health/explosion (replica Exploded flag); local damage is a no-op
             v.RemoveFromGroup("vehicles");  // never a group-scan target (VehicleNetSync minting in a shared-tree L1 host, tow/roadkill/grenade scans)
             v.AddToGroup(Vehicle.ClientTwinGroup);   // ...and the server's door probe looks through it in that same shared tree (Vehicle.ClientTwinGroup)
@@ -574,7 +577,12 @@ namespace UnturnedGodot
 
         void CleanupLocalVehicle(uint netId)
         {
-            if (_localVehicle != null && IsInstanceValid(_localVehicle)) _localVehicle.QueueFree();
+            if (_localVehicle != null && IsInstanceValid(_localVehicle))
+            {
+                if (_localVehicle.AuthoredPanelRig != null && Client.Vehicles.TryGet(netId, out var replica) && !replica.Exploded)
+                    VehicleView.QueueSeatPulse(netId, 0); // preserve the driver's exit through twin-to-puppet handoff
+                _localVehicle.QueueFree();
+            }
             _localVehicle = null;
             _vehRecovAck = 0; _vehRecovHold = false;
             VehicleView.Suppressed.Remove(netId);   // the puppet view resumes rendering the server's truth

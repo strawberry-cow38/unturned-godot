@@ -227,6 +227,7 @@ namespace UnturnedGodot
                     _byId[t.NetId] = t;
                 }
                 if (!_server.Vehicles.TryGet(t.NetId, out var e)) continue;
+                v.AuthoredPanelRig?.ApplyOccupancy(e.DriverPlayerId, e.Passengers);
 
                 // B8 (SP/MP-unify): the LISTEN-SERVER local player's direct SP enter/exit -> occupancy truth
                 // (§3.6) is now reconciled by ReconcileLocalOccupancy(), which MpLoopback registers as a PRE-SIM

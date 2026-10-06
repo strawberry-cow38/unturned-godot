@@ -421,6 +421,13 @@ namespace UnturnedGodot
                 else if (arg == "--walls") wallDemo = true;   // building tool: generated walls + openings, no editor needed
                 else if (arg == "--clocktest") clockTest = true;   // Clock_0 facing the camera, hands split off + spun to UG_TIME (verify the reach split + hand angles)
                 else if (arg == "--extractblueprints") { RunExtractBlueprints(); GetTree().Quit(); return; }   // walk retail item .dats -> content/blueprints.tsv catalog
+                else if (arg.StartsWith("--sedan-mk2-showcase="))
+                {
+                    StructureManager.PersistenceEnabled = false;
+                    Keybinds.ResetForTests(); BugReporter.EnterTestMode();
+                    AddChild(new SedanMk2Showcase { OutputDir = arg["--sedan-mk2-showcase=".Length..] });
+                    return;
+                }
                 else if (arg == "--tests" || arg.StartsWith("--tests="))   // L1 in-engine test host (phase 2): boot once, run all GameTests, self-quit 0/1. `--tests=power.*` globs.
                 {
                     AddChild(new Testing.TestHost { Filter = arg.StartsWith("--tests=") ? arg["--tests=".Length..] : "*" });

@@ -2122,6 +2122,7 @@ namespace UnturnedGodot
         // collision the port was missing (master). Jeep/Quad/Tractor are open-top -> null.
         static (Vector3 size, Vector3 center)? RoofBox(string name) => name switch
         {
+            "Sedan Mk II" => SedanMk2RoofBox,
             "Sedan" or "Police" => (new Vector3(2.5f, 0.254f, 2.320f), new Vector3(0f, 2.0f, 0.195f)),
             "SUV"               => (new Vector3(2.52f, 0.25f, 3.36f), new Vector3(0f, 2.045f, 0.88f)),   // full-width roof bounds; front face follows A-post rake; notes/WAGON_REPORT.md
             "Hatchback"         => (new Vector3(2.5f, 0.254f, 2.675f), new Vector3(0f, 2.0f, 0.723f)),
@@ -2277,6 +2278,8 @@ namespace UnturnedGodot
             public string SeatModelFile, SteerModel;   // REAL ripped interior models re-centred into the cab (props whose body mesh has no interior sub-objects, e.g. semi). SteerModel turns via SteerPivot/SteerAxis
             public Vector3 SeatModel;   // world-target for the seat model's AABB centre (the mesh is baked at its source vehicle -> translated here)
             public (float x, float y, float z, bool steer)[] Wheels;
+            public AuthoredPanelDef[] AuthoredPanels; // opt-in separate door/hood/trunk meshes; old fleet remains null
+            public string[] PaintedParts; // fixed palette-mapped interiors for the authored model
             public (string txt, Color color)[] Parts;   // detail meshes (root-relative) with their real solid colours
             public Vector3 FifthWheel;   // tow vehicle: local fifth-wheel coupling point (behind the cab); Zero = can't tow
             public float HitchYawLimit; // maximum relative yaw for this trailer; zero retains the existing 90-degree limit
@@ -2843,6 +2846,7 @@ namespace UnturnedGodot
             _burnTime = 0f;   // start the fire lifecycle (dies down at 40s, out at 60s, despawns 5 min later)
             _explosionAudio?.Play();
             if (_bodyMesh != null) _bodyMesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.05f, 0.05f, 0.05f), Metallic = 0f, Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };   // charred wreck
+            if (_bodyMesh != null) AuthoredPanelRig?.Char(_bodyMesh.MaterialOverride);
             SpawnWheelDebris();
             ExplodeDamage();
         }
@@ -3019,6 +3023,7 @@ namespace UnturnedGodot
         static Vector3 SeatOf(string name) => name switch
         {
             "Sedan" => new Vector3(-0.50f, -0.04f, -0.566f),
+            "Sedan Mk II" => Mk2BodyPoint(new Vector3(-0.50f, -0.04f, -0.566f)) + new Vector3(0f, 0f, .18f),
             "SUV" => new Vector3(-0.50f, -0.04f, -0.361f),   // front row +0.205 Z; retain sedan's body-to-seat offset
             "Hatchback" => new Vector3(-0.50f, -0.04f, -0.239f),
             "Humvee" => new Vector3(-0.50f, 0.07f, -0.480f),
@@ -3039,7 +3044,7 @@ namespace UnturnedGodot
         /// (strawberry 2026-09-03: "theres still a lot of vehicle seating positions that arent accurate. fix them
         /// all"). Mirrors the identical BuildByName/SpecFor gap fixed 2026-08-16 one level up (whole SPEC, not
         /// just the seat) -- same shape of bug, in the sibling table nobody re-checked when that one was found.</summary>
-        static bool HandTunedSeatOf(string name) => name is "Sedan" or "SUV" or "Hatchback" or "Humvee" or "Roadster"
+        static bool HandTunedSeatOf(string name) => name is "Sedan" or "Sedan Mk II" or "SUV" or "Hatchback" or "Humvee" or "Roadster"
             or "Bus" or "Quad" or "Ambulance" or "Firetruck" or "Tractor" or "Ural" or "Police" or "Jeep";
         /// <summary>Average of the 11 hand-tuned deltas above against their own real Seat_0 (Y +0.04 to +0.10,
         /// Z from -0.005 to +0.09 with no consistent sign -- not touching Z avoids guessing the wrong direction).
@@ -4897,9 +4902,9 @@ namespace UnturnedGodot
             return seen.ToArray();
         }
 
-        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), "police" => BuildPolice(variant), "semi" => BuildSemi(variant), "trailer" => BuildTrailer(variant), "offroader" => BuildOffRoader(variant), "off_roader" => BuildOffRoader(variant), "truck" => BuildTruck(variant), "van" => BuildVan(variant), "golf" => BuildGolf(variant), "wagon" => BuildWagon(variant), "dinky_trailer" => BuildDinkyTrailer(variant), "small_trailer" => BuildSmallTrailer(variant), "medium_trailer" => BuildMediumTrailer(variant), "large_trailer" => BuildLargeTrailer(variant), "horsebox_trailer" => BuildHorseboxTrailer(variant), "horsebox" => BuildHorseboxTrailer(variant), "animal_trailer" => BuildAnimalTrailer(variant), "animal" => BuildAnimalTrailer(variant), "car_trailer" => BuildDinkyTrailer(variant), "suv" => BuildWagon(variant), "vw_golf" => BuildGolf(variant), "runabout" => BuildRunabout(variant), "apc" => BuildAPC(variant), "minicopter" => BuildMinicopter(variant), "mini" => BuildMinicopter(variant), "heli" => BuildMinicopter(variant), "huey" => BuildHuey(variant), "scoutcopter" => BuildScoutcopter(variant), "scout" => BuildScoutcopter(variant), "hind" => BuildHind(variant), "orca" => BuildOrca(variant), "skycrane" => BuildSkycrane(variant), "hummingbird" => BuildHummingbird(variant), "bird" => BuildHummingbird(variant), "tank" => BuildTank(variant), "ship" => BuildContainerShip(variant), "containership" => BuildContainerShip(variant), "otter" => BuildOtter(variant), "plane" => BuildOtter(variant), "fighterjet" => BuildFighterJet(variant), "jet" => BuildFighterJet(variant), _ => BuildJeep(variant) };
+        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "sedan_mk2" => BuildSedanMk2(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), "police" => BuildPolice(variant), "semi" => BuildSemi(variant), "trailer" => BuildTrailer(variant), "offroader" => BuildOffRoader(variant), "off_roader" => BuildOffRoader(variant), "truck" => BuildTruck(variant), "van" => BuildVan(variant), "golf" => BuildGolf(variant), "wagon" => BuildWagon(variant), "dinky_trailer" => BuildDinkyTrailer(variant), "small_trailer" => BuildSmallTrailer(variant), "medium_trailer" => BuildMediumTrailer(variant), "large_trailer" => BuildLargeTrailer(variant), "horsebox_trailer" => BuildHorseboxTrailer(variant), "horsebox" => BuildHorseboxTrailer(variant), "animal_trailer" => BuildAnimalTrailer(variant), "animal" => BuildAnimalTrailer(variant), "car_trailer" => BuildDinkyTrailer(variant), "suv" => BuildWagon(variant), "vw_golf" => BuildGolf(variant), "runabout" => BuildRunabout(variant), "apc" => BuildAPC(variant), "minicopter" => BuildMinicopter(variant), "mini" => BuildMinicopter(variant), "heli" => BuildMinicopter(variant), "huey" => BuildHuey(variant), "scoutcopter" => BuildScoutcopter(variant), "scout" => BuildScoutcopter(variant), "hind" => BuildHind(variant), "orca" => BuildOrca(variant), "skycrane" => BuildSkycrane(variant), "hummingbird" => BuildHummingbird(variant), "bird" => BuildHummingbird(variant), "tank" => BuildTank(variant), "ship" => BuildContainerShip(variant), "containership" => BuildContainerShip(variant), "otter" => BuildOtter(variant), "plane" => BuildOtter(variant), "fighterjet" => BuildFighterJet(variant), "jet" => BuildFighterJet(variant), _ => BuildJeep(variant) };
         // Append new keys: indices are replicated TypeIds, so inserting would renumber existing vehicles.
-        public static readonly string[] SpecNames = { "jeep", "quad", "bus", "sedan", "hatchback", "humvee", "roadster", "ambulance", "firetruck", "tractor", "ural", "police", "semi", "trailer", "offroader", "truck", "van", "golf", "runabout", "apc", "minicopter", "huey", "scoutcopter", "hind", "orca", "skycrane", "hummingbird", "tank", "ship", "otter", "fighterjet", "jet", "wagon", "dinky_trailer", "small_trailer", "medium_trailer", "large_trailer", "horsebox_trailer", "animal_trailer" };   // F1 dev-console autocomplete + validation ("golf" = VW_Golf and "wagon" = SUV and the three trailers are command-only, no natural spawn; "car_trailer" still spawns the dinky one as an alias; runabout = boat + apc = amphibious, both command-spawnable -- drop over water to float)
+        public static readonly string[] SpecNames = { "jeep", "quad", "bus", "sedan", "hatchback", "humvee", "roadster", "ambulance", "firetruck", "tractor", "ural", "police", "semi", "trailer", "offroader", "truck", "van", "golf", "runabout", "apc", "minicopter", "huey", "scoutcopter", "hind", "orca", "skycrane", "hummingbird", "tank", "ship", "otter", "fighterjet", "jet", "wagon", "dinky_trailer", "small_trailer", "medium_trailer", "large_trailer", "horsebox_trailer", "animal_trailer", "sedan_mk2" };   // F1 dev-console autocomplete + validation ("golf" = VW_Golf and "wagon" = SUV and the three trailers are command-only, no natural spawn; "car_trailer" still spawns the dinky one as an alias; runabout = boat + apc = amphibious, both command-spawnable -- drop over water to float)
 
         /// <summary>The spec's main body BoxCollider (the hull Build() adds as the primary CollisionShape3D)
         /// for a spec key -- the hitbox debug overlay reconstructs the server's vehicle collider from a
@@ -4914,7 +4919,7 @@ namespace UnturnedGodot
         // TypeIds through this so client replicas rebuild the exact meshes/palette the server spawned
         static Spec SpecFor(string name) => name switch
         {
-            "quad" => _quad, "bus" => _bus, "sedan" => _sedan, "hatchback" => _hatchback, "humvee" => _humvee,
+            "quad" => _quad, "bus" => _bus, "sedan" => _sedan, "sedan_mk2" => SedanMk2Spec, "hatchback" => _hatchback, "humvee" => _humvee,
             "roadster" => _roadster, "ambulance" => _ambulance, "firetruck" => _firetruck, "tractor" => _tractor,
             "ural" => _ural, "police" => _police, "semi" => _semi, "trailer" => _trailer,
             "offroader" => _offroader, "off_roader" => _offroader, "truck" => _truck, "van" => _van,
@@ -5000,6 +5005,8 @@ namespace UnturnedGodot
             // other screen. That is a real remaining gap and a separate piece of work; it is not silently
             // fixed by this and should not be read as fixed.
             BuildGlassPanes(p, s, null);
+            p.AuthoredPanelRig = CreateAuthoredPanelRig(p, s.AuthoredPanels, bodyMat, queryColliders: false);
+            p.AuthoredPanelRig?.AddPaintedParts(s.PaintedParts);
             if (s.Parts != null)
                 foreach (var (txt, color) in s.Parts)
                 {
@@ -6804,6 +6811,8 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 v.AddChild(v._bodyMesh);
                 if (!s.Plane) AddGlassOverlay(v, s);   // road-car windows (the plane builder adds its own canopy)
                 if (doorMesh != null) BuildBiFoldDoor(v, s, doorMesh, bodyMat);
+                v.BuildAuthoredPanels(s.AuthoredPanels, bodyMat);
+                v.AuthoredPanelRig?.AddPaintedParts(s.PaintedParts);
             }
             if (s.Tracked) { v.MuzzleLocal = s.Muzzle; BuildTankExtras(v, s, bodyMat); }   // tank: treads + turret/gun aim pivots on top of the shared hull/wheel/collision path
             if (legMesh != null)   // the landing legs as a sibling MeshInstance sharing the body material -> toggled with the coupling (visible when parked, hidden when towed)
@@ -9338,6 +9347,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
         bool _interpOff, _interpNear = true; float _interpNearT, _creepT;   // PERF: physics interpolation opted out while parked / far-and-bobbing (see PhysicsTick); creep-sleep timer
         public void PhysicsTick(double delta)   // was _PhysicsProcess; body unchanged below the interpolation gate
         {
+            AuthoredPanelRig?.Tick((float)delta); // opt-in cosmetics must finish even while NetHeld/parked/distance-culled
             // FIRST, above every early-out below: a parked aircraft still has to cool its flares down, and a
             // blinded one still has to stop being blind.
             if (FlareCooldown > 0f) FlareCooldown = Mathf.Max(0f, FlareCooldown - (float)delta);

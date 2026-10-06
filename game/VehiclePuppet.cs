@@ -17,6 +17,7 @@ namespace UnturnedGodot
             public float Spin;   // accumulated roll angle (radians)
         }
 
+        public VehiclePanelRig AuthoredPanelRig; // only the separately authored opt-in vehicle
         public string SpecKey = "jeep";
         public WheelDress[] Wheels = System.Array.Empty<WheelDress>();
 

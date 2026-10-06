@@ -89,7 +89,9 @@ namespace UnturnedGodot
 
         public void Show(Vehicle v)
         {
+            if (_v != null && IsInstanceValid(_v)) _v.AuthoredPanelRig?.SetCompartment(Vehicle.AccessKind.Hood, false);
             _v = v;
+            _v?.AuthoredPanelRig?.SetCompartment(Vehicle.AccessKind.Hood, true);
             Visible = true;
             BuildGlassRows();
             BuildLampRows();
@@ -183,7 +185,12 @@ namespace UnturnedGodot
             _tireBox.Visible = _v.TireCount > 0;
         }
 
-        public new void Hide() { Visible = false; _v = null; }
+        public new void Hide()
+        {
+            if (_v != null && IsInstanceValid(_v)) _v.AuthoredPanelRig?.SetCompartment(Vehicle.AccessKind.Hood, false);
+            Visible = false; _v = null;
+        }
+        public override void _ExitTree() => Hide();
         public bool IsOpen => Visible;
 
         void Refresh()

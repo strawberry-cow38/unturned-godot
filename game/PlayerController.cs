@@ -5493,6 +5493,13 @@ namespace UnturnedGodot
         }
 
         StorageCrate _openCrate;
+        Vehicle _openAuthoredTrunk; // UI ownership, not storage/occupancy authority
+        void CloseAuthoredTrunk()
+        {
+            if (_openAuthoredTrunk != null && IsInstanceValid(_openAuthoredTrunk))
+                _openAuthoredTrunk.AuthoredPanelRig?.SetCompartment(Vehicle.AccessKind.Trunk, false);
+            _openAuthoredTrunk = null;
+        }
         StoreShelf _openDoorShelf;   // the doored container (fridge/wardrobe/counter) whose leaf is swung open by the current open inventory -- tracked apart from _openCrate/_openCrateNetId so the door shuts on BOTH the SP and MP close paths
 
         // F: open the nearest storage crate within ~2.5 m -- loads its grid into the STORAGE page (7) so the existing
@@ -5547,6 +5554,7 @@ namespace UnturnedGodot
         /// container's door behind it. Idempotent: a second call finds nothing open and returns.</summary>
         public void CloseCrate()
         {
+            CloseAuthoredTrunk();
             _openDoorShelf?.SetDoorsOpen(false); _openDoorShelf = null;   // swing a doored container's leaf shut on close -- at the top so it covers BOTH the SP copy-back and the MP _openCrateNetId early-return below
             if (NetCloseStorage != null && _openCrateNetId != 0)
             {
@@ -8133,7 +8141,7 @@ namespace UnturnedGodot
         // Every player is queryable through PlayerRegistry (nearest-player / iterate-players -- the
         // replacement for the old Local static). _ExitTree fires on QueueFree, so teardown self-cleans.
         public override void _EnterTree() => PlayerRegistry.Register(this);
-        public override void _ExitTree() => PlayerRegistry.Unregister(this);
+        public override void _ExitTree() { CloseAuthoredTrunk(); PlayerRegistry.Unregister(this); }
 
         // UG_PERF=1: where the Player load phase goes ([playerprof]) -- strawberry 2026-09-03 loading optimizations
         static readonly bool _loadProf = System.Environment.GetEnvironmentVariable("UG_PERF") == "1";
@@ -11254,6 +11262,11 @@ namespace UnturnedGodot
             var trunk = v.EnsureTrunk();
             if (trunk == null) return;   // no boot on this hull -- the zone would not exist, but belt and braces
             OpenCrate(trunk);
+            if (_openCrate == trunk)
+            {
+                _openAuthoredTrunk = v;
+                v.AuthoredPanelRig?.SetCompartment(Vehicle.AccessKind.Trunk, true);
+            }
         }
 
         /// <summary>Open the bonnet. A DUMMY mechanics panel for now (strawberry: "hood opens a dummy
@@ -11312,6 +11325,7 @@ namespace UnturnedGodot
             v.OccupiedSeats.Add(_seatIndex);
             if (v.SeatEyeOverride(_seatIndex, out _)) _rideLookPitch = 0f;   // a seat behind an OPTIC starts looking LEVEL: the classic over-the-hood gaze put an 8x gunsight on the hull deck and a periscope on the glacis
             v.CycleDoor();   // the bus door swings for whoever boards, then folds shut (cosmetic)
+            v.AuthoredPanelRig?.PulseSeat(_seatIndex);
             _burstLeft = 0;                                    // entering a vehicle cancels an in-progress burst (no resume on exit)
             // ENTERING NO LONGER STARTS IT (strawberry_cow 2026-08-24): the engine is its own state now, so a
             // car you climb into is however you left it. N / throttle / the speedo click are the ignition.
@@ -11401,6 +11415,7 @@ namespace UnturnedGodot
             var v = _driving; _driving = null;
             if (v != null && !IsInstanceValid(v)) v = null;   // a freed vehicle has a live C# wrapper and a zero transform: touching it puts the player at the origin
             int seat = _seatIndex;   // read before the reset below: the door is the seat's
+            v?.AuthoredPanelRig?.PulseSeat(seat);
             if (v != null) v.OccupiedSeats.Remove(_seatIndex);
             v?.CycleDoor();
             if (v != null && _seatIndex == 0) v.ReleaseControls();   // the DRIVER left: no held throttle/steer, rpm back to idle (master)
@@ -11426,6 +11441,7 @@ namespace UnturnedGodot
         {
             var v = _driving; _driving = null;
             if (v != null && !IsInstanceValid(v)) v = null;   // see ExitVehicle: a freed vehicle reads back as a zero transform
+            v?.AuthoredPanelRig?.PulseSeat(_seatIndex);
             if (v != null) v.OccupiedSeats.Remove(_seatIndex);   // free the seat -- see EjectFromVehicleOnDeath. Dying does not reach over and turn the key either
             v?.CycleDoor();
             _seatIndex = 0;
