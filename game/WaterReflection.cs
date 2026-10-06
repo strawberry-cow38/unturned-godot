@@ -80,11 +80,31 @@ namespace UnturnedGodot
             // diagnostic "all" mask still drops the water plane (self-occlusion) AND the outline-silhouette layer (else focus glows reflect as solid tints).
             _cam = new Camera3D { PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Off, Current = true, CullMask = all ? (0xFFFFFu & ~WaterLayer & ~OutlineOverlay.OutlineLayer) : ReflLayer };
             _vp.AddChild(_cam);
+            SizeToWindow();   // ⭐ BEFORE the first frame, not one frame into it -- see SizeToWindow
             _mat.SetShaderParameter("reflection_tex", _vp.GetTexture());
             _mat.SetShaderParameter("reflection_on", true);
             _mat.SetShaderParameter("reflection_debug", System.Environment.GetEnvironmentVariable("UG_REFLDEBUG") == "1");
             float str = 1f; if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_REFLSTR"), out var s)) str = s;
             _mat.SetShaderParameter("reflection_strength", str);
+        }
+
+        /// <summary>Match the mirror buffer to the WINDOW'S ASPECT, at MirrorScale.
+        ///
+        /// ⚠⚠ Called from Setup AND from the per-frame tick, and the Setup call is not belt-and-braces. The buffer
+        /// has to be right on the FIRST frame it is sampled: `_Process` is an IDLE callback, so anything that
+        /// advances the world without rendering idle frames -- the in-engine test host does exactly this, stepping
+        /// physics -- leaves the square default in place, and in the live game it would still cost one visibly
+        /// misaligned frame at startup and after every window resize. Establish it here, maintain it there.
+        ///
+        /// ⭐ This is the second time today this feature has been bitten by "the value is set, just not yet":
+        /// the aspect bug itself was a projection that was copied in all but one term. Setting a thing late is
+        /// its own kind of not setting it.</summary>
+        void SizeToWindow()
+        {
+            if (_vp == null || !IsInsideTree()) return;
+            var vs = GetViewport().GetVisibleRect().Size;
+            var want = new Vector2I(Mathf.Max(64, (int)(vs.X * MirrorScale)), Mathf.Max(64, (int)(vs.Y * MirrorScale)));
+            if (_vp.Size != want) _vp.Size = want;   // only on change; reallocating a render target every frame is not free
         }
 
         public override void _Process(double delta)
@@ -143,9 +163,7 @@ namespace UnturnedGodot
             // move with the camera". The error is zero at the screen centre and grows toward the edges, so it slides
             // as you turn. ⭐ MY STILL COULD NOT HAVE CAUGHT IT: the treetest trees sit near the centre of frame and
             // nothing moves -- [[feedback_renders_movie_mode_vs_live]], a reflection has to be judged in MOTION.
-            var vs = GetViewport().GetVisibleRect().Size;
-            var want = new Vector2I(Mathf.Max(64, (int)(vs.X * MirrorScale)), Mathf.Max(64, (int)(vs.Y * MirrorScale)));
-            if (_vp.Size != want) _vp.Size = want;   // only on resize; reallocating a render target every frame is not free
+            SizeToWindow();
         }
     }
 }

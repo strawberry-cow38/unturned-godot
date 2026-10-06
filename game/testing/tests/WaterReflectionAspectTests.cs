@@ -55,6 +55,9 @@ namespace UnturnedGodot.Testing
 
             yield return Ticks(4);   // let _Process run: it follows the camera and sizes the buffer
 
+            GD.Print($"[water-refl-test] diag: Enabled={WaterReflection.Enabled} EveryFrames={WaterReflection.EveryFrames} "
+                   + $"processing={refl.IsProcessing()} inTree={refl.IsInsideTree()} mainCam={(refl.GetViewport()?.GetCamera3D() != null)} "
+                   + $"marked={WaterReflection.MarkedCount}");
             var vp = refl.GetChildCount() > 0 ? refl.GetChild(0) as SubViewport : null;
             T.Check("the mirror has a SubViewport", vp != null);
             if (vp == null) yield break;
