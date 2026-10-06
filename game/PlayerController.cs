@@ -6728,7 +6728,12 @@ namespace UnturnedGodot
         public bool CaptureMouse = true;
 
         public GunDef Gun;          // real ItemGunAsset stats (damage/range/firerate/mag) when loaded
-        float _fireCd;              // seconds until the gun can fire again
+        float _fireCd;              // seconds until the legacy gun can fire again
+        long _fireCadenceTick;
+        UnturnedSim.ShotCadence _shotCadence;
+        bool FireCooldownReady => _fireCd <= 0f && (Gun?.CyclicRateRPM > 0
+            ? _shotCadence.CanFire(_fireCadenceTick, Gun.CyclicRateRPM)
+            : !_shotCadence.IsCoolingDown(_fireCadenceTick));
         float _sinceShot;           // seconds since the last shot; drives the infAmmo refill (reset on every Fire)
         const float GunshotRadius = 48f;   // earshot of an unsuppressed shot (AlertTool noise); suppressors would cut it
         bool _reloading;            // reloading -> can't fire; magazine refills when the timer elapses
@@ -9050,7 +9055,7 @@ namespace UnturnedGodot
             if (_viewmodel != null && _viewmodel.IsInspecting) { _viewmodel.CancelInspect(); return; }   // firing mid-inspect cancels it + snaps the gun to the shoot pose; no shot this click
             if (_firemode == FireMode.Safety) return;
             // dry-fire: trigger pulled on an empty chamber -> hammer click, no shot
-            if (Ammo <= 0 && !_reloading && _fireCd <= 0f) { _viewmodel?.PlayDryFire(); return; }
+            if (Ammo <= 0 && !_reloading && FireCooldownReady) { _viewmodel?.PlayDryFire(); return; }
             switch (_firemode)
             {
                 case FireMode.Semi: Fire(); break;
@@ -9127,7 +9132,7 @@ namespace UnturnedGodot
             // tenth of a second" is what a jump or a fall actually is.
             if (_driving == null && _airTime > AirborneFireBlock && !IsSwimming) return false;
 
-            if (_fireCd > 0f || Ammo <= 0 || _reloading || _unloading || _magSwapAnimTimer > 0 || _needsRechamber || _rechambering || _cam == null || _dead || _ridingTrain != null || _ridingCrane != null || (_driving != null && (_seatIndex == 0 || !_fp))
+            if (!FireCooldownReady || Ammo <= 0 || _reloading || _unloading || _magSwapAnimTimer > 0 || _needsRechamber || _rechambering || _cam == null || _dead || _ridingTrain != null || _ridingCrane != null || (_driving != null && (_seatIndex == 0 || !_fp))
                 || !HasGunOut || IsSwimming || _climbing || (_invUI?.IsOpen ?? false)) return false;   // IsSwimming: guns are canUseUnderwater=false -> no shot while swimming, incl. the polled AUTO/burst tick (source PlayerEquipment). !HasGunOut: no gun in hand (melee/held item disarm it) -> no shot, even from the polled auto/burst tick after switching away mid-fire (master)
             // -- also while the bolt/pump still needs cycling -- kills a queued burst the frame we die (the tick calls Fire()) + ignores death-screen clicks (master). _driving guard fixes the "stray tracer flies straight south" bug: the auto/burst tick (_PhysicsProcess) calls Fire() on held-LMB WITHOUT a driving check, and while driving _cam is TopLevel (detached chase cam) -> aim = the chase cam's fixed heading, not the player's look. LMB honks while driving anyway.
             if (AmmoRadial?.IsOpen ?? false) return false;   // no firing while the ammo radial is up -- you're picking ammo, not shooting
@@ -9137,7 +9142,16 @@ namespace UnturnedGodot
             float damage = ShotDamage();   // range/travel are encoded in the bullet's steps + velocity
             float vehDamage = Gun?.VehicleDamage ?? 40f;   // bullets hurt vehicles less than zombies (source Vehicle_Damage)
             float objDamage = Gun?.ObjectDamage ?? 25f;    // bullets vs destructible props (source Object_Damage)
-            _fireCd = Gun != null ? (Gun.Firerate + 1) / 50f : 0.1f;   // interval = firerate+1 ticks: source fires when clock-lastFire > firerate (STRICT >, UseableGun.tockShoot), so the real gap is firerate+1. Off-by-one made fast guns (zube firerate 4: 750rpm vs correct 600) fire ~25% too hot -- master's "very high ROF"
+            if (Gun?.CyclicRateRPM > 0)
+            {
+                _shotCadence.AcceptShot(_fireCadenceTick, Gun.CyclicRateRPM);
+                _fireCd = 0f;   // fractional deadline, not a rounded-up floating cooldown
+            }
+            else
+            {
+                _shotCadence.AcceptLegacyShot(_fireCadenceTick, Gun != null ? Gun.Firerate + 1 : 5);
+                _fireCd = Gun != null ? (Gun.Firerate + 1) / 50f : 0.1f;
+            }   // interval = firerate+1 ticks: source fires when clock-lastFire > firerate (STRICT >, UseableGun.tockShoot), so the real gap is firerate+1. Off-by-one made fast guns (zube firerate 4: 750rpm vs correct 600) fire ~25% too hot -- master's "very high ROF"
             Ammo--;
             _chambered = HasChamber && Ammo > 0;   // the action auto-cycles the next round into the chamber; the last shot leaves it empty
             _chamberedAmmoType = _chambered ? MagAmmoType : null;   // the freshly-cycled round takes the MAG's type (master: the chamber follows the mag as rounds feed)
@@ -11808,6 +11822,7 @@ namespace UnturnedGodot
 
         public void PhysicsTick(double delta)   // PERF: engine callback taken by a TickProxy child (see TickProxy); body unchanged
         {
+            _fireCadenceTick++;   // 50 Hz physics clock; also advances across early returns
             // BEFORE every early return below (driving, riding, NetHold): you can hold a gun in a car, and a
             // pending gun state that only flushes while on foot is a pending gun state that is sometimes lost.
             if (!NetAvatar) TickGunStateFlush(delta);
@@ -11938,7 +11953,7 @@ namespace UnturnedGodot
             // below -- those describe the rifle in the gunner's hands, which has nothing to do with the gun bolted
             // to the airframe, and _firemode (Semi by default, and unreachable while seated) must not gate it
             // either. Without this, a gunner got one shot per click at best. Review 2026-08-16.
-            if (_fireCd <= 0f && !_reloading)
+            if (FireCooldownReady && !_reloading)
             {
                 if (_burstLeft > 0) { if (Fire()) { _burstLeft--; if (_burstLeft == 0) _burstCd = 0.2f; } else _burstLeft = 0; }
                 else if (_firemode == FireMode.Auto && !NetAvatar && !UiInputBlocked && Keybinds.Pressed(GameAction.Fire)) Fire();   // NetAvatar: never poll global input (a windowed L1 host's held mouse must not fire server avatars)

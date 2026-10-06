@@ -96,6 +96,7 @@ namespace UnturnedGodot
         {
             Net = new MemNetwork(seed: 1);   // in-process wire; seed irrelevant without fault injection
             Server = new NetWorldServer(new MemServerTransport(Net), contentHash: NetContent.Hash);
+            AuthoredGunProfiles.Install(Server);   // new authored content, same SP/MP profile
             Client = new NetWorldClient(new MemClientTransport(Net), "local", contentHash: NetContent.Hash);
             Client.Connect();
             Server.Combat.WorldRay = GodotWorldRay;   // Phase 5: remote joiners' server bullets stop at real world geometry

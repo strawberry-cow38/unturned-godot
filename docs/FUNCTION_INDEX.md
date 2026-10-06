@@ -272,3 +272,9 @@ Companion documents:
   function you want.
 - `docs/DUPLICATE_AUDIT.md` — known duplicate implementations and their status.
 - `docs/SP_MP_PARITY_GAPS.md` — where the SP and MP paths knowingly differ.
+
+### Authored weapon content (MAC-10 integration, 2026-10-05)
+- `RiggedCharacter.GunClipFor(name, suffix, fallback)` — own clip, explicit named donor, existing fallback; shared by 1P and 3P hold selection.
+- `Viewmodel.MagazineVisualFor(name)` — shared resolved magazine mesh and gun-local mount; prevents 3P/world viewers substituting Eaglefire's mount.
+- `AuthoredGunProfiles.Install(server)` — scoped new-gun server profile binding, owned held weapon only; other gun behavior unchanged. See `MAC10_INTEGRATION.md`.
+- `UnturnedSim.ShotCadence` — opt-in 50 Hz rational RPM phase; `CanFire` is read-only, consume with `AcceptShot` only after all other checks. Late shots reanchor; legacy-only instances stay inactive. `IsCoolingDown` protects switching; no state is serialized.

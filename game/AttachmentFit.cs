@@ -39,7 +39,10 @@ namespace UnturnedGodot
 
         /// <summary>Per-item caliber lists, once someone extracts the attachment .dats. Empty = universal, which is
         /// what every non-magazine attachment resolves to today. Keyed by item id.</summary>
-        public static readonly System.Collections.Generic.Dictionary<ushort, ushort[]> Calibers = new();
+        public static readonly System.Collections.Generic.Dictionary<ushort, ushort[]> Calibers = new()
+        {
+            { 9147, new ushort[] { 205 } },
+        };
 
         /// <summary>Per-item CARTRIDGE restrictions, keyed by item id. Empty = universal, same rule as Calibers.
         ///
@@ -266,11 +269,21 @@ namespace UnturnedGodot
             var gv = Viewmodel.VisualForTest(gunName);
             string sightTxt = sightId > 0 ? MeshFor((ushort)sightId) : gv.Sight;
             if (!string.IsNullOrEmpty(sightTxt) && ContentProvider.ParseObj($"res://content/{sightTxt}") is Godot.Mesh sm)
+            {
+                var tex = sightId > 0 ? TexFor((ushort)sightId) : null;
+                if (tex == null && sightTxt == gv.Sight && gv.SightAlbedo != null)
+                    tex = ContentProvider.TextureCached(Godot.ProjectSettings.GlobalizePath($"res://content/{gv.SightAlbedo}"));
                 parts.Add(("Sight", sm, gv.SightPos != Godot.Vector3.Zero ? gv.SightPos : new Godot.Vector3(0f, 0.1312f, -0.118f),
-                           gv.SightColor.A > 0f ? gv.SightColor : new Godot.Color(0.3f, 0.3f, 0.3f), null));
-            string magTxt = magId > 0 ? MeshFor((ushort)magId) : gv.Mag;
+                           tex != null ? Godot.Colors.White : gv.SightColor.A > 0f ? gv.SightColor : new Godot.Color(0.3f, 0.3f, 0.3f), tex));
+            }
+            var magMount = Viewmodel.MagazineVisualFor(gunName);
+            // An explicitly empty slot (0) has no magazine; -1 is a legacy viewer without installed-state data.
+            string magTxt = magId > 0 ? MeshFor((ushort)magId) : magId < 0 ? magMount.Mesh : null;
             if (!string.IsNullOrEmpty(magTxt) && ContentProvider.ParseObj($"res://content/{magTxt}") is Godot.Mesh mm)
-                parts.Add(("Magazine", mm, new Godot.Vector3(0f, 0.0166f, 0.0238f), new Godot.Color(0.07f, 0.07f, 0.08f), null));
+            {
+                var tex = magId > 0 ? TexFor((ushort)magId) : null;
+                parts.Add(("Magazine", mm, magMount.Hook, tex != null ? Godot.Colors.White : new Godot.Color(0.07f, 0.07f, 0.08f), tex));
+            }
             if (barrelId > 0 && MeshFor((ushort)barrelId) is string bt && ContentProvider.ParseObj($"res://content/{bt}") is Godot.Mesh bm)
                 parts.Add(("Barrel", bm, new Godot.Vector3(0f, 0.7307f, -0.0818f), new Godot.Color(0.05f, 0.05f, 0.055f), null));
             // TACTICAL (strawberry 2026-09-13: "wire the tactical laser, flashlight attachments"). The hook is the
@@ -352,6 +365,8 @@ namespace UnturnedGodot
         /// that is really "present but indistinguishable".</summary>
         static readonly System.Collections.Generic.Dictionary<ushort, string> Textures = new()
         {
+            { 9146, "mag_mac10_albedo.png" },
+            { 9147, "mac10_sight_albedo.png" },
             { 151, "tactical_laser_tex.png" },
             { 152, "tactical_light_tex.png" },
         };
@@ -466,6 +481,8 @@ namespace UnturnedGodot
         // mesh filenames ("red_kobra_sight.txt") by any rule.
         static readonly System.Collections.Generic.Dictionary<ushort, string> Meshes = new()
         {
+            { 9146, "mag_mac10.txt" },
+            { 9147, "mac10_sight.txt" },
             { 5,   "eaglefire_iron_sights.txt" },   // Eaglefire Iron Sights
             { 6,   "military_30_mag.txt" },         // Military Magazine
             { 7,   "suppressor.txt" },              // Military Suppressor

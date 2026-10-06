@@ -1,0 +1,83 @@
+{
+  "source": "approved V13 + October 6 sloped-front cleanup and uniform barrel",
+  "stock": "extended, fixed default; no stock toggle or animation",
+  "gun_frame": "(-L,U,-H), already port-converted; no second sign flip",
+  "magazine_hook": [
+    0,
+    -0.02779783393501805,
+    0.17472924187725633
+  ],
+  "sight_mount": [
+    0,
+    -0.197,
+    -0.188
+  ],
+  "aim_hook": [
+    0,
+    -0.392,
+    -0.188
+  ],
+  "muzzle_hook": [
+    0,
+    0.295,
+    -0.0881588447653
+  ],
+  "meshes": {
+    "mac10_gun": {
+      "box": [
+        0.164,
+        0.8761961524227067,
+        0.3510830324909747
+      ],
+      "center": [
+        0.0,
+        -0.14309807621135337,
+        0.005541516245487363
+      ],
+      "parts": 4,
+      "triangles": 264
+    },
+    "mac10_sight": {
+      "box": [
+        0.12399999999999985,
+        0.403,
+        0.055999999999999994
+      ],
+      "center": [
+        -1.3877787807814457e-17,
+        0.1955,
+        0.009000000000000008
+      ],
+      "parts": 2,
+      "triangles": 132
+    },
+    "mag_mac10": {
+      "box": [
+        0.062,
+        0.09530685920577617,
+        0.29862815884476535
+      ],
+      "center": [
+        0.0,
+        -0.003176895306859207,
+        0.13978339350180508
+      ],
+      "parts": 1,
+      "triangles": 12
+    },
+    "mac10_stock_extended": {
+      "box": [
+        0.164,
+        0.4361961524227067,
+        0.14600000000000002
+      ],
+      "center": [
+        0.0,
+        -0.36309807621135337,
+        -0.097
+      ],
+      "parts": 3,
+      "triangles": 140
+    }
+  }
+}

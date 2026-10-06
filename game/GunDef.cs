@@ -209,7 +209,8 @@ namespace UnturnedGodot
         public float Range;
         public float SpreadAngleDegrees;
         public float SpreadAim = 1f;   // spread multiplier while aiming (Eaglefire 0.05 = 5% of hip spread)
-        public int Firerate;   // sim ticks between shots (lower = faster); cooldown = Firerate / 50 s
+        public int Firerate;   // legacy strict-gap timing: interval = (Firerate + 1) / 50 seconds
+        public int CyclicRateRPM;   // optional authored rate; zero keeps the legacy integer-tick path
         public int AmmoMax;
         public int MagazineId;   // .dat Magazine: the default magazine item id
         public int Caliber;      // .dat Caliber: mags with a matching caliber can be loaded
@@ -343,6 +344,7 @@ namespace UnturnedGodot
                 BlastVehicleDamage = d.ParseFloat("Explosion_Vehicle_Damage", 0f),
                 Range = d.ParseFloat("Range", 100f),
                 Firerate = d.ParseInt32("Firerate", 8),
+                CyclicRateRPM = System.Math.Clamp(d.ParseInt32("Cyclic_Rate_RPM", 0), 0, 3000),
                 AmmoMax = d.ParseInt32("Ammo_Max", 30),
                 MagazineId = d.ParseInt32("Magazine", 0),   // default magazine item id (eaglefire/maplestrike = 6, the Military STANAG)
                 Damage = d.ParseFloat("Damage", d.ParseFloat("Player_Damage", 0f)),   // canonical; legacy dats fall back
