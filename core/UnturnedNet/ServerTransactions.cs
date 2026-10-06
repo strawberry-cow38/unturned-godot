@@ -776,6 +776,7 @@ namespace UnturnedGodot.Net
             if (_deployables.Schema.TryGet(cmd.DefId, out var adef) && adef.ItemDevice == ItemDeviceKind.Adapter)
             {
                 e.ItemCrateId = ServerItemMovers.FindCrateFor(_inventories, e.Pos, cmd.TargetId);
+                e.MountUp = cmd.MountUp;      // on the container's top face; stamped with the place, so it rides the same delta
                 _deployables.ServerTouch();   // the binding is a direct write; a mover asleep on this network must re-look
             }
             // A STORAGE DEVICE BRINGS ITS OWN GRID, registered under the deployable's OWN NetId -- which is
@@ -793,7 +794,7 @@ namespace UnturnedGodot.Net
                 if (pdef.CookerKind != 255 && Cooking != null)
                     Cooking.Register(e.NetIdValue, (ECookerKind)pdef.CookerKind);
             }
-            var evt = new DeployablePlacedEvent { NetId = e.NetIdValue, DefId = e.DefId, OwnerPlayerId = sender, Pos = e.Pos, YawDegrees = e.YawDegrees };
+            var evt = new DeployablePlacedEvent { NetId = e.NetIdValue, DefId = e.DefId, OwnerPlayerId = sender, Pos = e.Pos, YawDegrees = e.YawDegrees, MountUp = e.MountUp };
             _broadcast(NetMessagePak.Pack(ReplicationIds.EventDeployablePlaced, evt.Write));
         }
 

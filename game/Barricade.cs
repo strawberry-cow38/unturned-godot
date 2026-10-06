@@ -55,9 +55,11 @@ namespace UnturnedGodot
         /// STICKY IS THE GAP AND IT IS NOT FIXED HERE. Its yaw is the player's manual spin, not the surface, so the
         /// normal is genuinely absent from the wire -- a charge stuck to a slope replicates flat. Recovering that
         /// needs the normal sent, which is a protocol change; left alone rather than papered over with a guess.</summary>
-        public static Vector3 NormalFromWire(BarricadeMount mount, float yawDeg) => mount switch
+        public static Vector3 NormalFromWire(BarricadeMount mount, float yawDeg, bool mountUp = false) => mount switch
         {
             BarricadeMount.Ceiling => Vector3.Down,
+            // v56: an adapter on a container's TOP. The yaw cannot carry "up", so the entity's MountUp bit does
+            BarricadeMount.Container when mountUp => Vector3.Up,
             // a CONTAINER mount (the storage adapter) takes its yaw from the container face the same way, so it inverts the same way
             BarricadeMount.Wall or BarricadeMount.Container => new Vector3(Mathf.Sin(Mathf.DegToRad(yawDeg)), 0f, Mathf.Cos(Mathf.DegToRad(yawDeg))),
             _ => Vector3.Up,

@@ -665,7 +665,7 @@ shell.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, ri
             shell.NetCraftCancel = slot => Client.SendCraftCancel(slot);
             shell.NetMagLoad = (mp, mx, my, mid, rp, rx, ry, rid, un) =>
                 Client.SendMagLoad(mp, mx, my, mid, rp, rx, ry, rid, un);
-            shell.NetPlaceDeployable = (defId, pos, yaw, pg, px, py, target) => Client.SendPlaceDeployable(defId, ToU(pos), yaw, pg, px, py, target);
+            shell.NetPlaceDeployable = (defId, pos, yaw, pg, px, py, target, up) => Client.SendPlaceDeployable(defId, ToU(pos), yaw, pg, px, py, target, up);
             shell.NetSalvageDeployable = netId => Client.SendSalvageDeployable(netId);
             shell.NetPickupDeployable = netId => Client.SendPickupDeployable(netId);   // B2: hold-F returns the live deployable to the bag over the wire
             shell.NetExtractFuel = pumpId => Client.SendExtractFuel(pumpId);   // A2: RMB a replica gas pump -> server drains the shared station tank into the held can

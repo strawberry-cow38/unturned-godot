@@ -108,12 +108,15 @@ namespace UnturnedGodot.Net
         /// and for a caller with no ghost (the console). The server binds THIS box if it is real and in reach --
         /// nearest-by-origin binds the wrong one beside a 5 m shelf -- and falls back to nearest only when unnamed.</summary>
         public uint TargetId;
+        /// <summary>v56: the adapter's ghost snapped to the container's TOP face. Honoured for an adapter only.</summary>
+        public bool MountUp;
 
         public void Write(NetPakWriter w)
         {
             w.WriteUInt16(DefId); NetWire.WritePos(w, Pos); w.WriteDegrees(YawDegrees, NetQuantization.YawBits);
             w.WriteUInt8(Page); w.WriteUInt8(X); w.WriteUInt8(Y);
             w.WriteUInt32(TargetId);
+            w.WriteBit(MountUp);
         }
 
         public static bool TryRead(NetPakReader r, out PlaceDeployableCommand cmd)
@@ -124,7 +127,8 @@ namespace UnturnedGodot.Net
             if (!r.ReadDegrees(out float yaw, NetQuantization.YawBits)) return false;
             if (!r.ReadUInt8(out byte pg) || !r.ReadUInt8(out byte px) || !r.ReadUInt8(out byte py)) return false;
             if (!r.ReadUInt32(out uint target)) return false;
-            cmd = new PlaceDeployableCommand { DefId = defId, Pos = pos, YawDegrees = yaw, Page = pg, X = px, Y = py, TargetId = target };
+            if (!r.ReadBit(out bool up)) return false;
+            cmd = new PlaceDeployableCommand { DefId = defId, Pos = pos, YawDegrees = yaw, Page = pg, X = px, Y = py, TargetId = target, MountUp = up };
             return true;
         }
     }
@@ -232,11 +236,15 @@ namespace UnturnedGodot.Net
         public ushort OwnerPlayerId;
         public Vector3 Pos;
         public float YawDegrees;
+        /// <summary>v56: an adapter on its container's TOP. The replica is BUILT from this event, before any snapshot
+        /// of the entity arrives -- leave it off here and the client seats a top mount as a side mount.</summary>
+        public bool MountUp;
 
         public void Write(NetPakWriter w)
         {
             w.WriteUInt32(NetId); w.WriteUInt16(DefId); w.WriteUInt16(OwnerPlayerId);
             NetWire.WritePos(w, Pos); w.WriteDegrees(YawDegrees, NetQuantization.YawBits);
+            w.WriteBit(MountUp);
         }
 
         public static bool TryRead(NetPakReader r, out DeployablePlacedEvent evt)
@@ -247,7 +255,8 @@ namespace UnturnedGodot.Net
             if (!r.ReadUInt16(out ushort owner)) return false;
             if (!NetWire.ReadPos(r, out Vector3 pos)) return false;
             if (!r.ReadDegrees(out float yaw, NetQuantization.YawBits)) return false;
-            evt = new DeployablePlacedEvent { NetId = id, DefId = defId, OwnerPlayerId = owner, Pos = pos, YawDegrees = yaw };
+            if (!r.ReadBit(out bool up)) return false;
+            evt = new DeployablePlacedEvent { NetId = id, DefId = defId, OwnerPlayerId = owner, Pos = pos, YawDegrees = yaw, MountUp = up };
             return true;
         }
     }
@@ -354,6 +363,10 @@ namespace UnturnedGodot.Net
             /// not in the state hash -- a client has no use for it and does not have it. Crate NetIds are minted
             /// per boot, so it is not saved either: WorldSave keeps the crate's POSITION and ApplyWorld re-binds.</summary>
             public uint ItemCrateId;
+            /// <summary>v56: a Storage Adapter bolted to its container's TOP face rather than a side (strawberry
+            /// 2026-10-06: "allow placing them on top of storages too"). The side mount's normal is recovered from
+            /// the yaw alone (Barricade.NormalFromWire), and a yaw cannot say "up" -- so this one bit rides the wire.</summary>
+            public bool MountUp;
         }
 
         public struct PowerPortResult
@@ -623,7 +636,8 @@ namespace UnturnedGodot.Net
         public void ApplyPlaced(in DeployablePlacedEvent evt, long tick)
         {
             if (TryGet(evt.NetId, out _)) return;
-            ServerPlace(new NetId(evt.NetId), evt.DefId, evt.OwnerPlayerId, evt.Pos, evt.YawDegrees, tick);
+            var e = ServerPlace(new NetId(evt.NetId), evt.DefId, evt.OwnerPlayerId, evt.Pos, evt.YawDegrees, tick);
+            if (e != null) e.MountUp = evt.MountUp;
         }
 
         public void ApplyRemoved(in DeployableRemovedEvent evt, long tick) => ServerRemove(evt.NetId, tick);
@@ -756,7 +770,7 @@ namespace UnturnedGodot.Net
                 h = NetHash.MixFloat(h, e.YawDegrees);
                 h = NetHash.MixFloat(h, e.Health);
                 h = NetHash.MixFloat(h, e.Fuel);
-                h = NetHash.MixByte(h, (byte)((e.ToggledOn ? 1 : 0) | (e.OnFire ? 2 : 0)));
+                h = NetHash.MixByte(h, (byte)((e.ToggledOn ? 1 : 0) | (e.OnFire ? 2 : 0) | (e.MountUp ? 4 : 0)));
                 if (e.ItemConfig != null) h = e.ItemConfig.Mix(h);   // ItemCrateId is server-only and deliberately NOT here
             }
             foreach (var w in AllWires)
@@ -783,6 +797,7 @@ namespace UnturnedGodot.Net
             w.WriteClampedFloat(e.Fuel, 12, 2);
             w.WriteBit(e.ToggledOn);
             w.WriteBit(e.OnFire);
+            w.WriteBit(e.MountUp);   // v56: an adapter on its container's top face
             // v56: a presence bit and then the config, rather than a schema lookup deciding whether to read it --
             // the parse must not depend on the two sides agreeing about a def, or a def drift becomes a desync of
             // every entity after it instead of one wrong splitter.
@@ -802,13 +817,14 @@ namespace UnturnedGodot.Net
             if (!r.ReadClampedFloat(12, 2, out float fuel)) return false;
             if (!r.ReadBit(out bool on)) return false;
             if (!r.ReadBit(out bool fire)) return false;
+            if (!r.ReadBit(out bool up)) return false;
             if (!r.ReadBit(out bool hasConfig)) return false;
             ItemDeviceConfig cfg = null;
             if (hasConfig && !ItemDeviceConfig.TryRead(r, out cfg)) return false;
             e = new DeployableEntity
             {
                 NetIdValue = id, DefId = defId, OwnerPlayerId = owner, Pos = pos, YawDegrees = yaw,
-                Health = health, Fuel = fuel, ToggledOn = on, OnFire = fire, ItemConfig = cfg,
+                Health = health, Fuel = fuel, ToggledOn = on, OnFire = fire, ItemConfig = cfg, MountUp = up,
             };
             return true;
         }

@@ -65,6 +65,7 @@ SCENES = {
     "deploy":   (["--deploytest", "--shot={OUT}"], {}, False, 120, "generator + spotlight rig (the golden scene)"),
     "pipes":    (["--deploytest", "--shot={OUT}"], {"UG_ITEMPIPES": "1"}, False, 120, "item pipes: crate -> adapter -> powered mover -> splitter -> two adapted crates, + a combiner, sockets lit"),
     "pipesclose": (["--deploytest", "--shot={OUT}"], {"UG_ITEMPIPES": "close"}, False, 120, "the same pipe chain, close on the splitter and the two adapted crates"),
+    "pipestop": (["--deploytest", "--shot={OUT}"], {"UG_ITEMPIPES": "top"}, False, 120, "storage adapters: one on a crate's LID, one on its side, one on a placed fridge's side (never its door)"),
     "chat":     (["--chatshot", "--shot={OUT}"], {}, False, 120, "the chat panel: server line, two speakers with avatars, one without, input open"),
     # The only single-zombie view there is. --zface was built as a FACING diagnostic and could not be
     # captured at all (its branch returns before the general --shot wiring), so the zombie body -- clothes,

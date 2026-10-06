@@ -140,6 +140,166 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    /// <summary>strawberry 2026-10-06: "doors on smart storage containers dont count as solid for the placement tools.
+    /// prevent placing adapters on the doors of storages. and allow placing them on top of storages too". A map
+    /// Crate_0 for the top; a real Fridge_0 prop -- its container AND its catalogue door leaf, built the way the world
+    /// build builds them -- for the door, open and shut; and a placed fridge, whose door is its own front.</summary>
+    public class AdapterTopAndDoors : GameTest
+    {
+        public override string Name => "pipes.adapter_top_and_doors";
+        public override double TimeoutSimSeconds => 60;
+
+        public override IEnumerable<Step> Run()
+        {
+            ItemCatalog.RegisterAll();
+            Rigs.Ground(World);
+            var driver = new SimDriver();
+            World.AddChild(driver);
+            var player = Rigs.Player(World, new Vector3(0f, 1f, 0f));
+            yield return Ticks(2);
+            var cratePos = new Vector3(0f, 0f, -2.2f);
+            var fridgePos = new Vector3(3f, 0f, -2.6f);
+            var manifest = new List<(string mesh, int table, bool display, string label, Vector3 pos, float yaw)>
+            {
+                ("Crate_0", 8, false, "Crate", cratePos, 0f),
+                ("Fridge_0", 6, false, "Fridge", fridgePos, 180f),
+            };
+            var loop = new MpLoopback { Player = player, Driver = driver, Containers = manifest, ConsumeDeployables = true };
+            World.AddChild(loop);
+            // the door leaf, exactly as WorldBuilder spawns it for this prop: the full prop basis (yaw 180 - q5 with
+            // the map's 270 stand-up) at the prop's position, a sibling of the container -- not its child
+            string dir = ProjectSettings.GlobalizePath("res://content/objects/");
+            var leaves = WorldBuilder.LoadDoorCatalog(dir)["Fridge_0"];
+            var propBasis = new Basis(Vector3.Up, Mathf.DegToRad(180f)) * new Basis(Vector3.Right, Mathf.DegToRad(270f));
+            var door = ObjectDoor.Spawn(World, new Transform3D(propBasis, fridgePos), leaves[0].Pivot, leaves[0].Axis, leaves[0].AngleDeg,
+                                        leaves[0].DurationSec, ObjMesh.Load(dir + leaves[0].MeshFile), new StandardMaterial3D(), startOpen: true);
+            yield return Until(() => loop.Client.State == NetSessionState.Connected
+                                     && loop.Server.Inventories.TryGet(loop.Client.PlayerId, out _), 15);
+            var crate = PipeL1.CrateAt(loop, cratePos);
+            var fridgeCrate = PipeL1.CrateAt(loop, fridgePos);
+            StoreShelf shelf = null, fridge = null;
+            yield return Until(() => crate != null && fridgeCrate != null && loop.Storage.TryGetNode(crate.NetIdValue, out shelf)
+                                     && loop.Storage.TryGetNode(fridgeCrate.NetIdValue, out fridge), 10);
+            T.Check("both containers materialized", shelf != null && fridge != null);
+            if (shelf == null || fridge == null) yield break;
+            loop.Server.Inventories.TryGet(loop.Client.PlayerId, out var sinv);
+            // TWO: placing the last one puts the hands away, and the door half of this test still needs a ghost
+            sinv.Inventory.tryAddItem(new Item(PipeL1.Adapter));
+            sinv.Inventory.tryAddItem(new Item(PipeL1.Adapter));
+            yield return Until(() => player.Inventory.getItemCount(PipeL1.Adapter) == 2, 5);
+            T.Check("holding the Storage Adapter", player.EquipItemAsset(Assets.find(PipeL1.Adapter), new Item(PipeL1.Adapter)));
+            yield return Ticks(2);
+
+            // ---- TOP ----
+            T.Check("the crate has collision bounds", BarricadePlacer.ContainerBounds(shelf, out var cbox));
+            var topCentre = shelf.GlobalTransform * new Vector3(cbox.GetCenter().X, cbox.End.Y, cbox.GetCenter().Z);
+            GD.Print($"[adapter-top] crate box {cbox} top centre {topCentre} eye {player.DebugEye.Origin}");
+            player.DebugLookAt(topCentre);
+            yield return Ticks(1);
+            bool topOk = player.DebugPlacerAim();
+            var placer = player.DebugPlacer;
+            T.Check($"aimed at the crate's TOP the ghost is VALID (reason '{placer?.Reason}')", topOk);
+            T.Check("...and says it is on top", placer != null && placer.SnappedTop);
+            T.Check($"...normal UP ({placer?.Normal})", placer != null && placer.Normal.Dot(Vector3.Up) > 0.999f);
+            T.Check($"...ON the lid (point y {placer?.Point.Y:0.0000} vs top {topCentre.Y:0.0000})", placer != null && Mathf.Abs(placer.Point.Y - topCentre.Y) < 0.005f);
+            player.DebugTryPlace();
+            player.DebugDeployTick(5f);
+            uint adapter = 0;
+            yield return Until(() => (adapter = PipeL1.FindEntity(loop, PipeL1.Adapter)) != 0, 5);
+            T.Check("the server placed it", adapter != 0);
+            if (adapter == 0) yield break;
+            loop.Server.Deployables.TryGet(adapter, out var ae);
+            T.Check("...as a TOP mount (MountUp on the server entity)", ae.MountUp);
+            T.Check($"...bound to the crate ({ae.ItemCrateId} vs {crate.NetIdValue})", ae.ItemCrateId == crate.NetIdValue);
+            Deployable node = null;
+            yield return Until(() => loop.Deploys.TryGetNode(adapter, out node), 5);
+            T.Check("the replica materialized", node != null);
+            if (node == null) yield break;
+            loop.Client.Deployables.TryGet(adapter, out var ce);
+            T.Check("the CLIENT's entity says top too -- it rode the wire", ce != null && ce.MountUp);
+            var front = (node.GlobalTransform.Basis * new Vector3(0f, 1f, 0f)).Normalized();   // flat +Y = the front after the stand-up
+            float backY = node.GlobalPosition.Y - front.Y * DeployableDef.StorageAdapter.Size.Y * 0.5f;
+            T.Check($"the replica's front -- and its sockets -- face UP ({front})", front.Dot(Vector3.Up) > 0.99f);
+            T.Check($"...its BACK lies on the lid (back y {backY:0.0000}, top {topCentre.Y:0.0000}, gap {backY - topCentre.Y:0.0000})",
+                    Mathf.Abs(backY - topCentre.Y - 0.01f) < 0.005f);
+
+            T.Check("still holding an adapter for the door half", player.DebugPlacer != null);
+            // ---- DOORS: the prop fridge, door OPEN (its catalogue default) then SHUT ----
+            T.Check("the fridge has collision bounds", BarricadePlacer.ContainerBounds(fridge, out var fbox));
+            int doorFaces = BarricadePlacer.DoorFaces(fridge, fridge, fbox);
+            GD.Print($"[adapter-doors] fridge box {fbox} door faces 0b{System.Convert.ToString(doorFaces, 2)} closed leaf {door.ClosedLeafCentreWorld}");
+            T.Check("the fridge has exactly ONE door face", doorFaces != 0 && (doorFaces & (doorFaces - 1)) == 0);
+            // the face the door is on, in world space, and a side face
+            Vector3 doorAim = Vector3.Zero, sideAim = Vector3.Zero;
+            for (int axis = 0; axis < 3; axis += 2)
+                foreach (float sign in new[] { -1f, 1f })
+                {
+                    var c = fbox.GetCenter();
+                    c[axis] = sign > 0f ? fbox.End[axis] : fbox.Position[axis];
+                    var w = fridge.GlobalTransform * c;
+                    bool isDoor = (doorFaces & (1 << (axis * 2 + (sign > 0f ? 1 : 0)))) != 0;
+                    if (isDoor) doorAim = w;
+                    else if (sideAim == Vector3.Zero || w.DistanceTo(player.DebugEye.Origin) < sideAim.DistanceTo(player.DebugEye.Origin)) sideAim = w;
+                }
+            T.Check($"the door face is the one the leaf hangs on (door aim {doorAim}, closed leaf {door.ClosedLeafCentreWorld})",
+                    doorAim != Vector3.Zero && doorAim.DistanceTo(door.ClosedLeafCentreWorld) < 0.6f);
+            // the leaf itself, swung OPEN and standing out beside the fridge: it is solid to the aim now (it used to
+            // be on a layer the placement ray never looked at, so the ghost went straight through it)
+            door.SetInitialState(true);
+            yield return Ticks(3);
+            var lc = door.DebugLeafCollider;
+            T.Check("the open leaf has a live hitbox", lc != null && !lc.Disabled && lc.Shape is BoxShape3D);
+            if (lc != null && lc.Shape is BoxShape3D lb)
+            {
+                // look at the leaf square-on: along its THINNEST axis, from the side away from the fridge
+                int thin = lb.Size.X <= lb.Size.Y && lb.Size.X <= lb.Size.Z ? 0 : lb.Size.Y <= lb.Size.Z ? 1 : 2;
+                var nrm = lc.GlobalBasis[thin].Normalized();
+                var leafAt = lc.GlobalPosition;
+                if (nrm.Dot(leafAt - fridge.GlobalTransform * fbox.GetCenter()) < 0f) nrm = -nrm;
+                player.GlobalPosition = leafAt + nrm * 1.6f + Vector3.Down * 1.0f;
+                player.DebugLookAt(leafAt);
+                yield return Ticks(1);
+                bool leafOk = player.DebugPlacerAim();
+                string leafWhy = player.DebugPlacer?.Reason;
+                T.Check($"aimed at the swung-open LEAF the ghost is red because it is a door (reason '{leafWhy}', leaf {leafAt}, eye {player.DebugEye.Origin})",
+                        !leafOk && leafWhy == "Not on a door");
+            }
+            foreach (bool open in new[] { true, false })
+            {
+                door.SetInitialState(open);
+                yield return Ticks(3);
+                player.GlobalPosition = doorAim + (doorAim - fridge.GlobalTransform * fbox.GetCenter()).Normalized() * 1.6f + Vector3.Down * 0.6f;
+                player.DebugLookAt(doorAim);
+                yield return Ticks(1);
+                bool ok = player.DebugPlacerAim();
+                string why = player.DebugPlacer?.Reason;
+                T.Check($"door {(open ? "OPEN" : "SHUT")}: aimed at the door face the ghost is RED (reason '{why}')", !ok);
+                T.Check($"...because it is a door (reason '{why}', eye {player.DebugEye.Origin}, aim {doorAim}, mask {doorFaces}, box {fbox})", why == "Not on a door");
+            }
+            player.GlobalPosition = sideAim + (sideAim - fridge.GlobalTransform * fbox.GetCenter()).Normalized() * 1.6f + Vector3.Down * 0.6f;
+            player.DebugLookAt(sideAim);
+            yield return Ticks(1);
+            bool sideOk = player.DebugPlacerAim();
+            T.Check($"CONTROL: the fridge's SIDE takes it (reason '{player.DebugPlacer?.Reason}', top {player.DebugPlacer?.SnappedTop}, eye {player.DebugEye.Origin}, aim {sideAim})", sideOk && !player.DebugPlacer.SnappedTop);
+
+            // ---- the PLACED fridge: no separate leaf, its door is its own front (+Z) ----
+            var placed = Refrigerator.Spawn(World, new Vector3(-3f, 0f, -2.6f));
+            yield return Ticks(3);
+            var pfront = placed.GlobalTransform * new Vector3(0f, 0.85f, 0.35f);
+            player.GlobalPosition = pfront + Vector3.Back * 1.6f + Vector3.Down * 0.6f;
+            player.DebugLookAt(pfront);
+            yield return Ticks(1);
+            bool frontOk = player.DebugPlacerAim();
+            T.Check($"the placed fridge's FRONT is red (reason '{player.DebugPlacer?.Reason}', eye {player.DebugEye.Origin}, aim {pfront})", !frontOk && player.DebugPlacer?.Reason == "Not on a door");
+            var pside = placed.GlobalTransform * new Vector3(0.35f, 0.85f, 0f);
+            player.GlobalPosition = pside + Vector3.Right * 1.6f + Vector3.Down * 0.6f;
+            player.DebugLookAt(pside);
+            yield return Ticks(1);
+            bool psideOk = player.DebugPlacerAim();
+            T.Check($"CONTROL: its side is fine (reason '{player.DebugPlacer?.Reason}', eye {player.DebugEye.Origin}, aim {pside})", psideOk);
+        }
+    }
+
     /// <summary>The whole chain in the singleplayer loopback: crate -> adapter -> pipe -> powered mover -> pipe ->
     /// splitter -> two adapters -> two crates. Items arrive at the configured rate and split per mode.</summary>
     public class PipeChainEndToEnd : GameTest

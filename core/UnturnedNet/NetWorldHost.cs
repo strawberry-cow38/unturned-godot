@@ -1299,8 +1299,8 @@ namespace UnturnedGodot.Net
         public bool SendUpgradeSkill(byte speciality, byte index)
             => SendCommand(ReplicationIds.CommandUpgradeSkill, new UpgradeSkillCommand { Speciality = speciality, Index = index }.Write);
 
-        public bool SendPlaceDeployable(ushort defId, Vector3 pos, float yawDegrees, byte page = 255, byte x = 0, byte y = 0, uint targetId = 0)
-            => SendCommand(ReplicationIds.CommandPlaceDeployable, new PlaceDeployableCommand { DefId = defId, Pos = pos, YawDegrees = yawDegrees, Page = page, X = x, Y = y, TargetId = targetId }.Write);
+        public bool SendPlaceDeployable(ushort defId, Vector3 pos, float yawDegrees, byte page = 255, byte x = 0, byte y = 0, uint targetId = 0, bool mountUp = false)
+            => SendCommand(ReplicationIds.CommandPlaceDeployable, new PlaceDeployableCommand { DefId = defId, Pos = pos, YawDegrees = yawDegrees, Page = page, X = x, Y = y, TargetId = targetId, MountUp = mountUp }.Write);
 
         public bool SendSalvageDeployable(uint netId)
             => SendCommand(ReplicationIds.CommandSalvageDeployable, new SalvageDeployableCommand { NetId = netId }.Write);

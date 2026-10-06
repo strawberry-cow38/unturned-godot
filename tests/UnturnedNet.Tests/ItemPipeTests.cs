@@ -974,7 +974,7 @@ namespace UnturnedNet.Tests
             r.Place(PipeFixtures.GEN, new Vector3(1f, 0f, 1f));
             var json = WorldSave.Capture(r.S, "", 0, 0.5f, 1200f).ToJson();
             // strip every v56 property the way an older build's file simply never had them
-            var legacy = System.Text.RegularExpressions.Regex.Replace(json, ",\"(Pipes|ItemConfig|ItemCrate)\":(\\[\\]|null)", "");
+            var legacy = System.Text.RegularExpressions.Regex.Replace(json, ",\"(Pipes|ItemConfig|ItemCrate|MountUp)\":(\\[\\]|null|false)", "");
             Assert.That(legacy, Does.Not.Contain("\"Pipes\""), "fixture: the legacy text really lacks the field");
             Assert.That(WorldSave.TryParse(legacy, "", out var save, out var err), Is.True, err);
             var r2 = new PipeRig(2);
@@ -996,6 +996,47 @@ namespace UnturnedNet.Tests
             foreach (var n in names) { var c = h.AddClient(n); PipeFixtures.Register(c.Deployables.Schema); }
             h.StepUntil(() => h.Clients.All(c => c.State == NetSessionState.Connected), 600);
             return h;
+        }
+
+        [Test]
+        public void a_top_mounted_adapter_says_so_everywhere_and_survives_a_save()
+        {
+            // strawberry 2026-10-06: "allow placing them on top of storages too". A side mount's normal comes back out
+            // of its yaw; "up" cannot, so MountUp rides the command, the placed EVENT (the replica is built from it),
+            // the snapshot (a late joiner), the state hash, and the save.
+            var h = Harness(5607, "a", "b");
+            var a = h.Clients[0];
+            var crate = h.Server.Inventories.ServerRegisterCrate(h.Server.Ids.Mint(), 5, 4, new Vector3(-2f, 0f, 3f));
+            h.Grant(a.PlayerId, new Item(PipeFixtures.ADAPTER));
+            h.Grant(a.PlayerId, new Item(PipeFixtures.SPLITTER));
+            a.SendPlaceDeployable(PipeFixtures.ADAPTER, new Vector3(-2f, 1.2f, 3f), 90f, 255, 0, 0, crate.NetIdValue, mountUp: true);
+            a.SendPlaceDeployable(PipeFixtures.SPLITTER, new Vector3(2f, 0f, 3f), 0f, mountUp: true);   // not an adapter: ignored
+            Assert.That(h.StepUntil(() => h.Clients.All(c => c.Deployables.Count == 2)), Is.True, "both placed and replicated");
+            uint ad = h.FindDeployable(a, PipeFixtures.ADAPTER), sp = h.FindDeployable(a, PipeFixtures.SPLITTER);
+            h.Server.Deployables.TryGet(ad, out var sAd); h.Server.Deployables.TryGet(sp, out var sSp);
+            Assert.That(sAd.MountUp, Is.True, "the server's adapter is a top mount");
+            Assert.That(sSp.MountUp, Is.False, "a splitter cannot be one -- the flag means nothing off an adapter");
+            foreach (var c in h.Clients)
+            {
+                c.Deployables.TryGet(ad, out var cAd);
+                Assert.That(cAd.MountUp, Is.True, "every client's copy says top -- built from the placed EVENT");
+            }
+            h.Step(10);
+            Assert.That(h.Clients[1].Deployables.StateHash(), Is.EqualTo(h.Server.Deployables.StateHash()), "parity, with MountUp hashed");
+
+            var late = h.AddClient("c");
+            PipeFixtures.Register(late.Deployables.Schema);
+            Assert.That(h.StepUntil(() => late.State == NetSessionState.Connected && late.Deployables.Count == 2), Is.True);
+            late.Deployables.TryGet(ad, out var lAd);
+            Assert.That(lAd.MountUp, Is.True, "a late joiner gets it from the SNAPSHOT");
+
+            var json = WorldSave.Capture(h.Server, "", 0, 0.5f, 1200f).ToJson();
+            Assert.That(WorldSave.TryParse(json, "", out var save, out var err), Is.True, err);
+            var r2 = new PipeRig(2);
+            r2.Crate(crate.Pos);
+            save.ApplyWorld(r2.S, 0);
+            var back = r2.S.Deployables.All.First(e => e.DefId == PipeFixtures.ADAPTER);
+            Assert.That(back.MountUp, Is.True, "and a reload puts it back on TOP, not on a side");
         }
 
         [Test]

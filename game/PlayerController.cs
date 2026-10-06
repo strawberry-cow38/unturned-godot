@@ -4243,6 +4243,7 @@ namespace UnturnedGodot
         float _placeTimer;              // >0 while the brief place gesture runs; the object drops at 0
         Vector3 _placePoint; float _placeYaw;   // target FROZEN at click -> the object drops there even if you look away
         Vector3 _placeNormal = Vector3.Up;      // the surface normal frozen with them: a wall barricade's whole orientation
+        bool _placeTop;                         // v56: ...and whether it snapped to that container's TOP face (sent as MountUp)
         uint _placeCrate;                       // v56: the container a Storage Adapter's ghost snapped to, frozen with them (sent as TargetId)
         WallSurface _placeWall; int _placeOpening = -1; int _placeFace;   // Window mount: the opening + face frozen at click (a window barricade spawns INTO the opening, not at a raw point)
         WindowOpeningMarker _placeMarker; Vector3 _placeWindowScale = Vector3.One;   // Window mount, baked-prop case: the marker + fitted panel scale frozen at click
@@ -4510,7 +4511,7 @@ namespace UnturnedGodot
         {
             if (_placer == null || _deployable == null || _placeTimer > 0f || _dead) return;
             if (!_placer.Aim(_cam)) return;   // only from a VALID (blue) spot
-            _placePoint = _placer.Point; _placeYaw = _placer.Yaw; _placeNormal = _placer.Normal; _placeCrate = _placer.SnappedCrateId;   // FROZEN at click (strawberry: don't drift with the mouse)
+            _placePoint = _placer.Point; _placeYaw = _placer.Yaw; _placeNormal = _placer.Normal; _placeCrate = _placer.SnappedCrateId; _placeTop = _placer.SnappedTop;   // FROZEN at click (strawberry: don't drift with the mouse)
             _placeWall = _placer.SnappedWall; _placeOpening = _placer.SnappedOpening; _placeFace = _placer.SnappedFace;   // Window mount: freeze which opening + face we snapped to
             _placeMarker = _placer.SnappedMarker; _placeWindowScale = _placer.WindowScale;   // baked-prop case: freeze the marker + the fitted panel scale
             _viewmodel?.PlayDeployUse();   // arms play the src "Use" place motion; the object drops when it finishes
@@ -4548,7 +4549,7 @@ namespace UnturnedGodot
                                 // schema as of the fridge-replication change; it used to be filtered out and no-op).
                                 // SKIP the local mutation (P1 invariant): else the owner-inventory re-adopt would restore the
                                 // item (the dupe-on-any-inv-move bug fluid hit -- strawberry). Predict the echo.
-                                { var (dp, dx, dy) = HeldDeployableAddress(); NetPlaceDeployable(_deployable.Id, _placePoint, _placeYaw, dp, dx, dy, 0); }
+                                { var (dp, dx, dy) = HeldDeployableAddress(); NetPlaceDeployable(_deployable.Id, _placePoint, _placeYaw, dp, dx, dy, 0, false); }
                                 if (Inventory.getItemCount(id) <= 1) { (_revertEquip ?? EquipUnarmed)(); return; }   // last one just went over the wire -> revert
                             }
                             else
@@ -4586,7 +4587,7 @@ namespace UnturnedGodot
                                 // and now ALSO places the fluid device for real, since fluid defs are no longer LocalOnly.
                                 // SKIP the local mutation (P1 invariant): else the owner-inventory re-adopt would restore the
                                 // item (the "fluid dupes: gone on place, back on any inv move" bug -- strawberry). Predict the echo.
-                                { var (dp, dx, dy) = HeldDeployableAddress(); NetPlaceDeployable(_deployable.Id, _placePoint, _placeYaw, dp, dx, dy, 0); }
+                                { var (dp, dx, dy) = HeldDeployableAddress(); NetPlaceDeployable(_deployable.Id, _placePoint, _placeYaw, dp, dx, dy, 0, false); }
                                 if (Inventory.getItemCount(id) <= 1) { (_revertEquip ?? EquipUnarmed)(); return; }   // last one just went over the wire -> revert
                             }
                             else
@@ -4603,7 +4604,7 @@ namespace UnturnedGodot
                         // MP: the placement is a REQUEST -- the server validates spot + supplies, spends
                         // the item, and broadcasts; DeployableReplicaView spawns the real node. Ghost/fx
                         // stay local; the revert decision predicts the echo's spend (count - 1).
-                        RequestPlaceDeployable(_deployable.Id, _placePoint, _placeYaw, _placeCrate);
+                        RequestPlaceDeployable(_deployable.Id, _placePoint, _placeYaw, _placeCrate, _placeTop);
                         PlayPlaceSound(_deployable.PlaceSound, _placePoint);
                         Log.Print($"[deploy] place requested: {_deployable.Name} at {_placePoint} (wire)");
                         if (_deployItem != null && Inventory != null && Inventory.getItemCount(_deployItem.id) <= 1)
@@ -6169,7 +6170,7 @@ namespace UnturnedGodot
         /// <summary>v31: the server's craft queue landed -- hand it to the menu to display. The menu owns the
         /// distinction between its own queue and a mirrored one; this is only the route.</summary>
         public void NoteServerCraftQueue((ushort bp, float left, float of)[] jobs) => _craftMenu?.AdoptServerQueue(jobs);
-        public System.Action<ushort, Vector3, float, byte, byte, byte, uint> NetPlaceDeployable;   // (defId,pos,yaw,page,x,y,target) -> Client.SendPlaceDeployable; the address names WHICH jar to spend (255 = unaddressed); target = the container a Storage Adapter snapped to (v56, 0 = none)
+        public System.Action<ushort, Vector3, float, byte, byte, byte, uint, bool> NetPlaceDeployable;   // (defId,pos,yaw,page,x,y,target) -> Client.SendPlaceDeployable; the address names WHICH jar to spend (255 = unaddressed); target = the container a Storage Adapter snapped to (v56, 0 = none)
 
         /// <summary>Where the held deployable's backing item actually sits right now, for the server to spend.
         ///
@@ -6470,10 +6471,10 @@ namespace UnturnedGodot
 
         /// <summary>MP deployable placement (TickDeploy's place-confirm): the server validates the spot +
         /// spends the item; DeployablePlaced broadcasts and the replica view spawns the real node.</summary>
-        public bool RequestPlaceDeployable(ushort defId, Vector3 pos, float yawDeg, uint targetCrate = 0)
+        public bool RequestPlaceDeployable(ushort defId, Vector3 pos, float yawDeg, uint targetCrate = 0, bool mountUp = false)
         {
             if (NetPlaceDeployable == null) return false;
-            NetPlaceDeployable(defId, pos, yawDeg, 255, 0, 0, targetCrate);   // debug/console seam: no jar to name -> id fallback
+            NetPlaceDeployable(defId, pos, yawDeg, 255, 0, 0, targetCrate, mountUp);   // debug/console seam: no jar to name -> id fallback
             return true;
         }
 

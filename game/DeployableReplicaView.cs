@@ -120,7 +120,7 @@ namespace UnturnedGodot
                     // slab -- see Barricade.NormalFromWire for why the normal is recoverable here at all.
                     var wPos = new Vector3(e.Pos.x, e.Pos.y, e.Pos.z);
                     node = Barricade.SeatsOnSurface(def.Mount)
-                        ? Barricade.PlaceOnSurface(parent, def, wPos, Barricade.NormalFromWire(def.Mount, e.YawDegrees), e.YawDegrees)
+                        ? Barricade.PlaceOnSurface(parent, def, wPos, Barricade.NormalFromWire(def.Mount, e.YawDegrees, e.MountUp), e.YawDegrees)
                         : Deployable.Spawn(parent, def, wPos, e.YawDegrees);
                     node.NetId = e.NetIdValue;   // the shell's salvage/toggle/wire requests address the entity by this
                     // A container that is NOT the fridge (the campfire) keeps its Deployable body and gets the

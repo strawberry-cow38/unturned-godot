@@ -191,7 +191,7 @@ namespace UnturnedGodot
                 //     Deployable.Spawn else-branch (PlayerController.cs:1177) NEVER fires -- the
                 //     DeployableReplicaView is the SOLE spawner of local deployable nodes. That is the whole
                 //     point of the pattern: one owner of the node graph, and it's the replica view.
-                Player.NetPlaceDeployable = (defId, pos, yaw, pg, px, py, target) => Client.SendPlaceDeployable(defId, ToU(pos), yaw, pg, px, py, target);
+                Player.NetPlaceDeployable = (defId, pos, yaw, pg, px, py, target, up) => Client.SendPlaceDeployable(defId, ToU(pos), yaw, pg, px, py, target, up);
                 Player.NetSalvageDeployable = netId => Client.SendSalvageDeployable(netId);
                 Player.NetPickupDeployable = netId => Client.SendPickupDeployable(netId);   // B2: hold-F returns the live deployable to the bag over the wire
                 Player.NetExtractFuel = pumpId => Client.SendExtractFuel(pumpId);   // A2: RMB a replica pump -> server drains the shared station tank into the held can

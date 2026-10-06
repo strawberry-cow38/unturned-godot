@@ -5388,6 +5388,22 @@ namespace UnturnedGodot
                     cam.Position = new Vector3(1.0f, 1.5f, 2.4f);
                     cam.Fov = 50f; cam.LookAt(look, Vector3.Up);
                 }
+                if (pipeShow == "top")
+                {
+                    // v56 top mount (strawberry 2026-10-06: "allow placing them on top of storages too"): a crate with an
+                    // adapter on its LID beside one on its side, and a placed fridge with one on its side (never its door)
+                    var crateT = StorageCrate.Spawn(this, new Vector3(-3.4f, 0f, 2.6f));
+                    var adTop = Barricade.PlaceOnSurface(this, DeployableDef.StorageAdapter, crateT.GlobalPosition + new Vector3(0f, 0.75f, 0f), Vector3.Up, 0f);
+                    var adSide = Adapt(crateT, Vector3.Right);
+                    var fridgeT = Refrigerator.Spawn(this, new Vector3(-1.0f, 0f, 2.6f));
+                    var adFr = Barricade.PlaceOnSurface(this, DeployableDef.StorageAdapter, fridgeT.GlobalPosition + new Vector3(-0.35f, 0.9f, 0f), Vector3.Left, BarricadePlacer.YawFacing(Vector3.Left));
+                    foreach (var d in new[] { adTop, adSide, adFr })
+                        foreach (var ip in d.ItemPorts) { ip.Visible = true; ip.SetArrowState(true, true); }
+                    foreach (var ip in adTop.ItemPorts) Log.Print($"[pipeshot] top {ip.Dir}#{ip.Index} at {ip.GlobalPosition}");
+                    look = new Vector3(-2.2f, 0.7f, 2.6f);
+                    cam.Position = new Vector3(-3.3f, 2.5f, 5.9f);
+                    cam.Fov = 50f; cam.LookAt(look, Vector3.Up);
+                }
             }
             if (System.Environment.GetEnvironmentVariable("UG_WIRETEST") == "1")
             {   // drop to near-night + aim at the powered spotlight so the lit lamps + beam actually read

@@ -62,6 +62,8 @@ namespace UnturnedGodot
         /// <summary>Container mount: the crate NetId the ghost is snapped to (0 = none, or a container with no server
         /// id -- the direct path). Sent with the place so the server binds THAT box (PlaceDeployableCommand.TargetId).</summary>
         public uint SnappedCrateId { get; private set; }
+        /// <summary>v56: the adapter snapped to the container's TOP face (sent as PlaceDeployableCommand.MountUp).</summary>
+        public bool SnappedTop { get; private set; }
         public StorageCrate SnappedCrate { get; private set; }
 
         // Attachment predicate (world point, surface normal, hit collider) -> can a barricade mount here? At merge:
@@ -115,6 +117,15 @@ namespace UnturnedGodot
         public static Basis MountBasis(BarricadeMount mount, Vector3 n, float yaw, bool upright = false)
         {
             var ground = upright ? new Basis(Vector3.Up, Mathf.DegToRad(yaw)) : DeployableDef.StandBasis(yaw);
+            if (mount == BarricadeMount.Container && n.Y > 0.5f)
+            {
+                // ON TOP of a container: the side-mount pose (front face out along the yaw) tipped back 90 degrees
+                // about the horizontal axis, so the front face -- and its pipe sockets -- point straight up and the
+                // back lies flat on the lid. Rotating f about (f x up) by +90 takes f to up.
+                float r = Mathf.DegToRad(yaw);
+                var f = new Vector3(Mathf.Sin(r), 0f, Mathf.Cos(r));
+                return new Basis(f.Cross(Vector3.Up).Normalized(), Mathf.Pi * 0.5f) * ground;
+            }
             return mount == BarricadeMount.Sticky ? AlignUpTo(n) * ground : ground;
         }
 
@@ -293,22 +304,85 @@ namespace UnturnedGodot
             return new Aabb(mn, mx - mn);
         }
 
-        /// <summary>Snap onto the container SIDE face nearest the aim point, back face against the box (strawberry:
-        /// "the adapter should snap to the storage container. has to snap or it wont place -red."). The point is
-        /// the aim projected onto that face and kept far enough inside it that the adapter does not overhang the
-        /// edge; the yaw faces straight out of the face, so the replica recovers the normal from (pos, yaw) exactly
-        /// as it does for a wall mount. Top and bottom faces are not offered: the adapter is a wall-style mount, and
-        /// a yaw cannot say "up".</summary>
+        // ---- which faces carry a DOOR (strawberry 2026-10-06: "doors on smart storage containers dont count as solid
+        // for the placement tools. prevent placing adapters on the doors of storages") ----
+
+        static int FaceBit(int axis, float sign) => 1 << (axis * 2 + (sign > 0f ? 1 : 0));
+        static readonly System.Collections.Generic.Dictionary<ulong, int> _doorFaces = new();
+
+        /// <summary>The faces of this container's box that carry a door, as FaceBit flags. A face carries one when a
+        /// door's SHUT middle lies within DoorSlack of that face's plane AND inside the face's rectangle -- so a door
+        /// beside the box (a doorway next to a shelf) is not mistaken for its own. Doors come from two places: prop
+        /// leaves (ObjectDoor, found through its group -- they are siblings of the container, not children) and a
+        /// container that declares its own (the placed fridge has a front, but no separate leaf). Cached per body:
+        /// neither containers nor hinges move, and the ghost asks every frame.</summary>
+        public static int DoorFaces(StorageCrate crate, Node3D body, Aabb box)
+        {
+            ulong key = body.GetInstanceId();
+            if (_doorFaces.TryGetValue(key, out int mask)) return mask;
+            mask = 0;
+            var inv = body.GlobalTransform.AffineInverse();
+            var points = new System.Collections.Generic.List<Vector3>();
+            if (body.IsInsideTree())
+                foreach (var n in body.GetTree().GetNodesInGroup(ObjectDoor.Group))
+                    if (n is ObjectDoor d && IsInstanceValid(d)) points.Add(d.ClosedLeafCentreWorld);
+            points.AddRange(crate.DoorPointsWorld);
+            foreach (var w in points)
+            {
+                Vector3 c = inv * w;
+                float best = float.MaxValue; int bit = 0;
+                for (int axis = 0; axis < 3; axis++)
+                    foreach (float sign in new[] { -1f, 1f })
+                    {
+                        float dist = Mathf.Abs(c[axis] - (sign > 0f ? box.End[axis] : box.Position[axis]));
+                        if (dist > DoorSlack || dist >= best) continue;
+                        int a1 = (axis + 1) % 3, a2 = (axis + 2) % 3;
+                        if (c[a1] < box.Position[a1] || c[a1] > box.End[a1] || c[a2] < box.Position[a2] || c[a2] > box.End[a2]) continue;
+                        best = dist; bit = FaceBit(axis, sign);
+                    }
+                mask |= bit;
+            }
+            _doorFaces[key] = mask;
+            return mask;
+        }
+
+        /// <summary>How far a door's shut middle may sit from its face plane: half a leaf's thickness plus however
+        /// proud of the carcass it hangs. Measured off the props, not chosen: the deepest is a wardrobe leaf ~0.1 m
+        /// out; 0.2 m keeps a margin without reaching a doorway beside the box.</summary>
+        const float DoorSlack = 0.2f;
+
+        static bool IsDoor(Node n)
+        {
+            for (var c = n; c != null; c = c.GetParent()) if (c is ObjectDoor) return true;
+            return false;
+        }
+
+        /// <summary>Snap onto the container face nearest the aim point, back face against the box (strawberry:
+        /// "the adapter should snap to the storage container. has to snap or it wont place -red."). The four SIDES
+        /// and, since 2026-10-06, the TOP ("allow placing them on top of storages too"); never the bottom, and
+        /// never a face with a DOOR on it -- a door leaf now stops the aim ray (it is on the small-prop layer the
+        /// world-only mask used to look straight through), and aiming at it, or at a face that carries one, is red.
+        ///
+        /// SIDE: the yaw faces straight out of the face, so the replica recovers the normal from (pos, yaw) alone,
+        /// exactly as for a wall mount. TOP: a yaw cannot say "up", so SnappedTop rides the place command and the
+        /// entity (MountUp); the yaw is snapped to the container's own axes, turned so the adapter's top edge points
+        /// AWAY from the player -- it reads like a label lying on a table.</summary>
         bool AimContainer(Camera3D cam)
         {
-            SnappedCrate = null; SnappedCrateId = 0;
+            SnappedCrate = null; SnappedCrateId = 0; SnappedTop = false;
             float aimYaw = Mathf.RadToDeg(cam.GlobalRotation.Y) + YawOffset;
             var space = GetWorld3D().DirectSpaceState;
             Vector3 from = cam.GlobalPosition, dir = -cam.GlobalTransform.Basis.Z;
             var rq = PhysicsRayQueryParameters3D.Create(from, from + dir * Def.Range);
-            rq.CollisionMask = 1u << 0;
+            rq.CollisionMask = (1u << 0) | (1u << 6);   // world + small props: a door leaf lives on 6, and must STOP the ray
             var hit = space.IntersectRay(rq);
-            StorageCrate crate = hit.Count > 0 ? ContainerOf(hit["collider"].As<Node>()) : null;
+            Node hitNode = hit.Count > 0 ? hit["collider"].As<Node>() : null;
+            if (hitNode != null && IsDoor(hitNode))
+            {
+                Valid = false; Reason = "Not on a door"; Normal = Vector3.Up; Yaw = aimYaw; Point = (Vector3)hit["position"];
+                Apply(); return false;
+            }
+            StorageCrate crate = hitNode != null ? ContainerOf(hitNode) : null;
             Node3D body = crate != null ? ContainerBody(crate) : null;
             if (crate == null || body == null || !ContainerBounds(body, out var box))
             {
@@ -316,33 +390,93 @@ namespace UnturnedGodot
                 Point = hit.Count > 0 ? (Vector3)hit["position"] : from + dir * Def.Range;
                 Apply(); return false;
             }
-            Vector3 local = body.GlobalTransform.AffineInverse() * (Vector3)hit["position"];
-            float best = float.MaxValue; int bestAxis = -1; float bestSign = 1f;
-            foreach (int axis in new[] { 0, 2 })
-                foreach (float sign in new[] { -1f, 1f })
-                {
-                    var nw = (body.GlobalBasis * (axis == 0 ? Vector3.Right : Vector3.Back) * sign);
-                    if (nw.LengthSquared() < 1e-8f || Mathf.Abs(nw.Normalized().Y) > 0.5f) continue;   // a tipped prop: that "side" faces up/down
-                    float plane = sign > 0f ? box.End[axis] : box.Position[axis];
-                    float d = Mathf.Abs(local[axis] - plane);
-                    if (d < best) { best = d; bestAxis = axis; bestSign = sign; }
-                }
-            if (bestAxis < 0) { Valid = false; Reason = "Needs a storage container"; Normal = Vector3.Up; Yaw = aimYaw; Point = (Vector3)hit["position"]; Apply(); return false; }
+            int doors = DoorFaces(crate, body, box);
+            // THE FACE THE RAY ENTERS THE BOX THROUGH -- not the face nearest wherever it stopped. A fridge stood
+            // open, or a shelf's open front, lets the ray in to hit the back wall or a board inside, and "nearest
+            // face to that" is the BACK: the adapter would jump to the far side of the box. The entry face is the
+            // one the player is looking at, whatever the ray met after it.
+            var inv = body.GlobalTransform.AffineInverse();
+            Vector3 o = inv * from, d = inv.Basis * dir;
+            int bestAxis = -1; float bestSign = 1f, tEnter = float.MinValue;
+            for (int axis = 0; axis < 3; axis++)
+            {
+                if (Mathf.Abs(d[axis]) < 1e-9f) continue;   // parallel to this slab: it cannot be the entry face
+                float t1 = (box.Position[axis] - o[axis]) / d[axis], t2 = (box.End[axis] - o[axis]) / d[axis];
+                float tn = Mathf.Min(t1, t2);
+                if (tn > tEnter) { tEnter = tn; bestAxis = axis; bestSign = d[axis] > 0f ? -1f : 1f; }
+            }
+            Vector3 local = inv * (Vector3)hit["position"];
+            if (bestAxis < 0 || tEnter <= 0f)
+            {
+                // the camera is INSIDE the box (or degenerate): fall back to the face nearest the hit
+                float nb = float.MaxValue;
+                for (int axis = 0; axis < 3; axis++)
+                    foreach (float sign in new[] { -1f, 1f })
+                    {
+                        float dist = Mathf.Abs(local[axis] - (sign > 0f ? box.End[axis] : box.Position[axis]));
+                        if (dist < nb) { nb = dist; bestAxis = axis; bestSign = sign; }
+                    }
+            }
+            else local = o + d * tEnter;   // where the ray crosses that face
+            var nFace = (body.GlobalBasis * (AxisDir(bestAxis) * bestSign)).Normalized();
+            bool bestTop = nFace.Y > 0.94f;   // within ~20 degrees of up
+            if ((doors & FaceBit(bestAxis, bestSign)) != 0)
+            {
+                Valid = false; Reason = "Not on a door"; Normal = Vector3.Up; Yaw = aimYaw; Point = (Vector3)hit["position"];
+                Apply(); return false;
+            }
+            if (!bestTop && Mathf.Abs(nFace.Y) >= 0.5f)
+            {
+                // the bottom, or a "side" of a tipped prop that faces up/down
+                Valid = false; Reason = "Needs a side or the top"; Normal = Vector3.Up; Yaw = aimYaw; Point = (Vector3)hit["position"];
+                Apply(); return false;
+            }
+
             Vector3 p = local;
             p[bestAxis] = bestSign > 0f ? box.End[bestAxis] : box.Position[bestAxis];
-            int other = bestAxis == 0 ? 2 : 0;
-            p[other] = ClampInside(p[other], box.Position[other], box.End[other], Def.Size.X * 0.5f);   // adapter width along the face
-            p.Y = ClampInside(p.Y, box.Position.Y, box.End.Y, Def.Size.Z * 0.5f);                      // ...and its height
-            Vector3 nWorld = body.GlobalBasis * ((bestAxis == 0 ? Vector3.Right : Vector3.Back) * bestSign);
-            nWorld = new Vector3(nWorld.X, 0f, nWorld.Z).Normalized();
+            int a1 = (bestAxis + 1) % 3, a2 = (bestAxis + 2) % 3;
+            if (!bestTop)
+            {
+                // the in-face axis nearer world-vertical carries the adapter's HEIGHT, the other its width
+                bool a1Up = Mathf.Abs((body.GlobalBasis * AxisDir(a1)).Normalized().Y) >= Mathf.Abs((body.GlobalBasis * AxisDir(a2)).Normalized().Y);
+                int up = a1Up ? a1 : a2, across = a1Up ? a2 : a1;
+                p[across] = ClampInside(p[across], box.Position[across], box.End[across], Def.Size.X * 0.5f);
+                p[up] = ClampInside(p[up], box.Position[up], box.End[up], Def.Size.Z * 0.5f);
+                Vector3 nWorld = body.GlobalBasis * (AxisDir(bestAxis) * bestSign);
+                nWorld = new Vector3(nWorld.X, 0f, nWorld.Z).Normalized();
+                Normal = nWorld;
+                Yaw = YawFacing(nWorld);
+            }
+            else
+            {
+                // f = the container axis nearest the direction TOWARD the player; the tipped plate's top edge ends up
+                // along -f, i.e. pointing away. Snapped to the box so it sits square on the lid.
+                Vector3 toward = new Vector3(-dir.X, 0f, -dir.Z);
+                if (toward.LengthSquared() < 1e-6f) toward = -cam.GlobalTransform.Basis.Y with { Y = 0f };   // looking straight down
+                int fAxis = a1; float fSign = 1f, fBest = float.MinValue;
+                foreach (int ax in new[] { a1, a2 })
+                    foreach (float sg in new[] { -1f, 1f })
+                    {
+                        var w = body.GlobalBasis * (AxisDir(ax) * sg);
+                        float dot = new Vector3(w.X, 0f, w.Z).Normalized().Dot(toward.Normalized());
+                        if (dot > fBest) { fBest = dot; fAxis = ax; fSign = sg; }
+                    }
+                int across = fAxis == a1 ? a2 : a1;
+                p[fAxis] = ClampInside(p[fAxis], box.Position[fAxis], box.End[fAxis], Def.Size.Z * 0.5f);     // height runs along f once tipped
+                p[across] = ClampInside(p[across], box.Position[across], box.End[across], Def.Size.X * 0.5f);
+                Vector3 f = body.GlobalBasis * (AxisDir(fAxis) * fSign);
+                Normal = Vector3.Up;
+                Yaw = YawFacing(new Vector3(f.X, 0f, f.Z).Normalized());
+                SnappedTop = true;
+            }
             Point = body.GlobalTransform * p;
-            Normal = nWorld;
-            Yaw = YawFacing(nWorld);
             SnappedCrate = crate; SnappedCrateId = crate.NetId;
             Valid = true; Reason = null;
             Apply();
             return true;
         }
+
+        static Vector3 AxisDir(int axis) => axis == 0 ? Vector3.Right : axis == 1 ? Vector3.Up : Vector3.Back;
 
         static float ClampInside(float v, float lo, float hi, float margin)
             => hi - lo <= margin * 2f ? (lo + hi) * 0.5f : Mathf.Clamp(v, lo + margin, hi - margin);

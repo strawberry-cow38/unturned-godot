@@ -130,6 +130,8 @@ namespace UnturnedGodot.Net
             /// <summary>v56: a splitter's or mover's settings. Null on everything else (and on every save made
             /// before pipes), which loads as a fresh device -- round-robin, 32/s.</summary>
             public ItemConfigSave ItemConfig { get; set; }
+            /// <summary>v56: a Storage Adapter mounted on its container's TOP face. Absent in older saves = false = a side mount.</summary>
+            public bool MountUp { get; set; }
             /// <summary>v56: for a Storage Adapter, WHERE the container it was bolted to stood. Not its NetId: crate
             /// ids are minted per boot, so the id in the file would name nothing (or something else) after a
             /// restart. The position names the same box on every boot -- map containers come back at their
@@ -411,6 +413,7 @@ namespace UnturnedGodot.Net
                     Health = d.Health, Fuel = d.Fuel,
                     ToggledOn = d.ToggledOn, OnFire = d.OnFire,
                     IsMapFixture = isFixture,
+                    MountUp = d.MountUp,
                 };
                 // A storage deployable's grid is registered under the deployable's OWN NetId, so this finds a
                 // placed fridge's contents with no separate bookkeeping.
@@ -938,6 +941,7 @@ namespace UnturnedGodot.Net
                 if (c != null && ItemDeviceConfig.IsValid(c.Mode, c.W0, c.W1, c.W2, c.Rate))
                     host.Deployables.ServerConfigure(id, ItemDeviceConfig.From(c.Mode, c.W0, c.W1, c.W2, c.Rate), tick);
                 if (!host.Deployables.Schema.TryGet(e.DefId, out var def) || def.ItemDevice != ItemDeviceKind.Adapter) continue;
+                e.MountUp = ds.MountUp;
                 // The saved container's position first -- it names the box the player chose, even beside a bigger
                 // neighbour whose origin is closer. Only if nothing stands there any more is the binding re-derived.
                 uint bound = 0;
