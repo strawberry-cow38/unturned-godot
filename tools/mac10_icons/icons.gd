@@ -44,7 +44,8 @@ func _ready()->void:
 		else: objs=[mesh_file("mac10_sight","mac10_sight_albedo.png")]
 		var bb:AABB=objs[0].get_aabb()
 		for obj in objs: rig.add_child(obj);bb=bb.merge(AABB(obj.get_aabb().position+obj.position,obj.get_aabb().size))
-		rig.position=-bb.get_center();cam.size=max(bb.size.length(),.1)*1.18;cam.position=Vector3(3,1.5,2.2);cam.look_at(Vector3.ZERO,Vector3.UP)
+		rig.position=-bb.get_center();cam.size=max(bb.size.length(),.1)*1.18;cam.position=Vector3(3,0,0) # straight author-right / ejection-port-side profile
+		cam.look_at(Vector3.ZERO,Vector3.UP)
 		for i in range(5): await get_tree().process_frame
 		await RenderingServer.frame_post_draw
 		var img=vp.get_texture().get_image();assert(img.save_png(ProjectSettings.globalize_path("res://content/items/icons/"+str(id)+".png"))==OK)
