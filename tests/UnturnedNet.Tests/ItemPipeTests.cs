@@ -808,6 +808,42 @@ namespace UnturnedNet.Tests
         }
 
         [Test]
+        public void a_player_looking_into_the_destination_watches_items_arrive()
+        {
+            // "Writes: repaint the viewers of both crates afterwards." A player with a container open holds a COPY of
+            // its grid in their own STORAGE page; the mover writes the crate, so without a repaint they watch nothing
+            // happen -- and their next drag is validated against items that are not there.
+            var h = Harness(5605, "a");
+            var a = h.Clients[0];
+            var s = h.Server;
+            var src = s.Inventories.ServerRegisterCrate(s.Ids.Mint(), 8, 6, new Vector3(-2f, 0f, 2f));
+            var dst = s.Inventories.ServerRegisterCrate(s.Ids.Mint(), 8, 6, new Vector3(2f, 0f, 1f));
+            for (int i = 0; i < 6; i++) src.Storage.tryAddItem(new Item(PipeFixtures.SINGLE));
+            uint aS = s.Deployables.ServerPlace(s.Ids.Mint(), PipeFixtures.ADAPTER, 0, new Vector3(-2f, 0f, 2.6f), 0f, 0).NetIdValue;
+            uint aD = s.Deployables.ServerPlace(s.Ids.Mint(), PipeFixtures.ADAPTER, 0, new Vector3(2f, 0f, 1.6f), 0f, 0).NetIdValue;
+            s.Deployables.TryGet(aS, out var es); es.ItemCrateId = src.NetIdValue;
+            s.Deployables.TryGet(aD, out var ed); ed.ItemCrateId = dst.NetIdValue;
+            uint mover = s.Deployables.ServerPlace(s.Ids.Mint(), PipeFixtures.MOVER, 0, new Vector3(0f, 0f, 3f), 0f, 0).NetIdValue;
+            uint gen = s.Deployables.ServerPlace(s.Ids.Mint(), PipeFixtures.GEN, 0, new Vector3(0f, 0f, 5f), 0f, 0).NetIdValue;
+            s.Deployables.ServerToggle(gen, true, 0);
+            s.Deployables.ServerConnectWire(s.Ids.Mint(), gen, 0, mover, 0, 0);
+            s.Deployables.ServerConnectPipe(s.Ids.Mint(), aS, 1, mover, 0, null, 0);
+            s.Deployables.ServerConnectPipe(s.Ids.Mint(), mover, 1, aD, 0, null, 0);
+
+            a.SendOpenStorage(dst.NetIdValue);   // the player opens the DESTINATION and watches
+            Assert.That(h.StepUntil(() => a.Inventories.TryGet(a.PlayerId, out var ce) && ce.Inventory.items[PlayerInventory.STORAGE].width == 8), Is.True,
+                        "the container opened on the client");
+            h.Step(30, () => s.ItemMovers.Step(0.02f));   // ~0.6 s at 32/s: everything moves
+            Assert.That(PipeRig.Units(dst.Storage), Is.EqualTo(6), "fixture: the mover delivered all six");
+            s.Inventories.TryGet(a.PlayerId, out var se);
+            Assert.That(PipeRig.Units(se.Inventory.items[PlayerInventory.STORAGE]), Is.EqualTo(6),
+                        "the SERVER's copy in the viewer's page was repainted");
+            Assert.That(h.StepUntil(() => a.Inventories.TryGet(a.PlayerId, out var ce)
+                                       && PipeRig.Units(ce.Inventory.items[PlayerInventory.STORAGE]) == 6), Is.True,
+                        "...and the owner echo carried it to the client: the player SEES them arrive");
+        }
+
+        [Test]
         public void an_adapter_with_no_container_is_refused_and_not_spent()
         {
             var h = Harness(5604, "a");

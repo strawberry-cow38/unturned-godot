@@ -1637,6 +1637,7 @@ namespace UnturnedGodot
         public bool IsRopeViewmodel => ToolMesh != null && HeldToolKind == ToolKind.Rope;
         public bool IsHoseViewmodel => ToolMesh != null && HeldToolKind == ToolKind.Hose;
         public bool IsDetonatorViewmodel => ToolMesh != null && HeldToolKind == ToolKind.Detonator;
+        public bool IsPipeViewmodel => ToolMesh != null && HeldToolKind == ToolKind.Pipe;   // v56 industrial item pipes
         /// <summary>The walkie-talkie (1445): a carry-only holdable with its own LMB toggle.</summary>
         public bool IsWalkieViewmodel => ToolMesh != null && HeldToolKind == ToolKind.Handheld;
         public int GetAttachMask() { int m = 0; for (int i = 0; i < AttachSlots.Length; i++) if (SlotHasModel(AttachSlots[i]) && SlotAttached(AttachSlots[i])) m |= 1 << i; return m; }

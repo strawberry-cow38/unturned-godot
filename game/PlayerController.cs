@@ -2455,7 +2455,7 @@ namespace UnturnedGodot
         public bool HasSomethingHeld => _heldItem != null || Gun != null || _heldConsumable != null || _heldOptic != null
                                      || _heldFuelItem != null || _heldFluidItem != null || _deployable != null
                                      || _heldThrowable != null
-                                     || HoldingWireTool || HoldingRopeTool || HoldingHoseTool || HoldingDetonatorTool
+                                     || HoldingWireTool || HoldingRopeTool || HoldingHoseTool || HoldingDetonatorTool || HoldingPipeTool
                                      || HoldingFisher
                                      || (_heldMeleeName != null && _heldMeleeName != "fists");
 
@@ -4133,7 +4133,7 @@ namespace UnturnedGodot
         }
 
         // UNARMED = bare fists (or genuinely nothing): the "empty hand" state. A picked-up item auto-equips here.
-        public bool Unarmed => Gun == null && _heldConsumable == null && _deployable == null && _heldOptic == null && !HoldingWireTool && !HoldingHoseTool && !HoldingDetonatorTool && _heldFuelItem == null && _heldFluidItem == null && (_melee == null || _melee.Name == "fists");
+        public bool Unarmed => Gun == null && _heldConsumable == null && _deployable == null && _heldOptic == null && !HoldingWireTool && !HoldingHoseTool && !HoldingDetonatorTool && !HoldingPipeTool && _heldFuelItem == null && _heldFluidItem == null && (_melee == null || _melee.Name == "fists");
 
         // Is this inventory item the one currently IN HAND? (drives the inventory's Equip<->Dequip toggle.)
         public bool IsHeld(ItemAsset asset, SDG.Unturned.Item item)
@@ -4150,6 +4150,7 @@ namespace UnturnedGodot
             if (HoldingWireTool) return asset.id == 65;
             if (HoldingRopeTool) return asset.id == 64;
             if (HoldingHoseTool) return asset.id == 9118;
+            if (HoldingPipeTool) return asset.id == ToolDef.Pipe.Id;
             if (HoldingDetonatorTool) return asset.id == 1240;
             return false;
         }
@@ -4165,6 +4166,7 @@ namespace UnturnedGodot
         // --- Deployables held in hand (generator / spotlight): equip -> aim shows a placement ghost -> LMB plants it. ---
         public bool HoldingWireTool => _viewmodel != null && _viewmodel.IsWireViewmodel;   // Wire tool (item 65) in hand -> wiring mode (LMB/RMB build/cancel wires); derived from the viewmodel so no state to clear
         public bool HoldingRopeTool => _viewmodel != null && _viewmodel.IsRopeViewmodel;   // Rope tool (item 64) in hand -> tow mode (LMB tie rear->front, RMB cancel/untie); derived from the viewmodel
+        public bool HoldingPipeTool => _viewmodel != null && _viewmodel.IsPipeViewmodel;   // v56 Industrial Pipe Tool (9215) in hand -> item-pipe mode (LMB out->nodes->in, RMB undo / hold-cut / tap-reroute)
         public bool HoldingHoseTool => _viewmodel != null && _viewmodel.IsHoseViewmodel;   // Hose tool (item 66) in hand -> fluid-hose mode (LMB source->consumer, RMB cancel); derived from the viewmodel
         public bool HoldingWalkie => _viewmodel != null && _viewmodel.IsWalkieViewmodel;   // Walkie-talkie (1445) in hand -> LMB toggles it on/off, R opens the frequency panel
 
@@ -4241,6 +4243,7 @@ namespace UnturnedGodot
         float _placeTimer;              // >0 while the brief place gesture runs; the object drops at 0
         Vector3 _placePoint; float _placeYaw;   // target FROZEN at click -> the object drops there even if you look away
         Vector3 _placeNormal = Vector3.Up;      // the surface normal frozen with them: a wall barricade's whole orientation
+        uint _placeCrate;                       // v56: the container a Storage Adapter's ghost snapped to, frozen with them (sent as TargetId)
         WallSurface _placeWall; int _placeOpening = -1; int _placeFace;   // Window mount: the opening + face frozen at click (a window barricade spawns INTO the opening, not at a raw point)
         WindowOpeningMarker _placeMarker; Vector3 _placeWindowScale = Vector3.One;   // Window mount, baked-prop case: the marker + fitted panel scale frozen at click
                                                 // hangs off it, and re-deriving it at drop time would read the surface the
@@ -4385,6 +4388,13 @@ namespace UnturnedGodot
         public void DebugArmPlace(Vector3 point, float yaw = 0f)
         { _placePoint = point; _placeYaw = yaw; _placeNormal = Vector3.Up; _placeTimer = 0.001f; }
         public void DebugDeployTick(float dt) => TickDeploy(dt);
+        // v56: the placement AIM through the real BarricadePlacer (the ghost's own raycast + snap), and the real LMB
+        // place (TryPlaceDeployable freezes whatever the aim says, exactly as a click does). TickDeploy only aims
+        // with a captured mouse, which headless never grants.
+        public bool DebugPlacerAim() => _placer != null && _placer.Aim(_cam);
+        public BarricadePlacer DebugPlacer => _placer;
+        public void DebugTryPlace() => TryPlaceDeployable();
+        public Deployable DebugFocusDeployable => _focusDeployable;
         public DeployableDef DebugHeldDeployable => _deployable;
         public bool DebugPlacerActive => _placer != null;
         public bool DebugNetPlaceWired => NetPlaceDeployable != null;
@@ -4448,7 +4458,7 @@ namespace UnturnedGodot
         public void EquipTool(ToolDef def, SDG.Unturned.Item backing = null)
         {
             SaveGunState();
-            bool alreadyThisKind = def.IsRope ? HoldingRopeTool : def.IsHose ? HoldingHoseTool : def.IsDetonator ? HoldingDetonatorTool : HoldingWireTool;
+            bool alreadyThisKind = def.IsRope ? HoldingRopeTool : def.IsHose ? HoldingHoseTool : def.IsDetonator ? HoldingDetonatorTool : def.IsPipe ? HoldingPipeTool : HoldingWireTool;
             if (!alreadyThisKind) _revertEquip = CaptureHeldForRevert();   // remember what to fall back to
             _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldFuelItem = null; _heldUmbrellaItem = null; _heldRestraintItem = null; _heldTireItem = null; _heldPaintItem = null; _heldCarjackItem = null; _heldFluidItem = null; _heldConsumableMesh = null; ClearHeldOptic(); ClearHeldThrowable();
             _reloading = false; _torchAnimOn = false; ClearDeployable();
@@ -4500,7 +4510,7 @@ namespace UnturnedGodot
         {
             if (_placer == null || _deployable == null || _placeTimer > 0f || _dead) return;
             if (!_placer.Aim(_cam)) return;   // only from a VALID (blue) spot
-            _placePoint = _placer.Point; _placeYaw = _placer.Yaw; _placeNormal = _placer.Normal;   // FROZEN at click (strawberry: don't drift with the mouse)
+            _placePoint = _placer.Point; _placeYaw = _placer.Yaw; _placeNormal = _placer.Normal; _placeCrate = _placer.SnappedCrateId;   // FROZEN at click (strawberry: don't drift with the mouse)
             _placeWall = _placer.SnappedWall; _placeOpening = _placer.SnappedOpening; _placeFace = _placer.SnappedFace;   // Window mount: freeze which opening + face we snapped to
             _placeMarker = _placer.SnappedMarker; _placeWindowScale = _placer.WindowScale;   // baked-prop case: freeze the marker + the fitted panel scale
             _viewmodel?.PlayDeployUse();   // arms play the src "Use" place motion; the object drops when it finishes
@@ -4538,7 +4548,7 @@ namespace UnturnedGodot
                                 // schema as of the fridge-replication change; it used to be filtered out and no-op).
                                 // SKIP the local mutation (P1 invariant): else the owner-inventory re-adopt would restore the
                                 // item (the dupe-on-any-inv-move bug fluid hit -- strawberry). Predict the echo.
-                                { var (dp, dx, dy) = HeldDeployableAddress(); NetPlaceDeployable(_deployable.Id, _placePoint, _placeYaw, dp, dx, dy); }
+                                { var (dp, dx, dy) = HeldDeployableAddress(); NetPlaceDeployable(_deployable.Id, _placePoint, _placeYaw, dp, dx, dy, 0); }
                                 if (Inventory.getItemCount(id) <= 1) { (_revertEquip ?? EquipUnarmed)(); return; }   // last one just went over the wire -> revert
                             }
                             else
@@ -4576,7 +4586,7 @@ namespace UnturnedGodot
                                 // and now ALSO places the fluid device for real, since fluid defs are no longer LocalOnly.
                                 // SKIP the local mutation (P1 invariant): else the owner-inventory re-adopt would restore the
                                 // item (the "fluid dupes: gone on place, back on any inv move" bug -- strawberry). Predict the echo.
-                                { var (dp, dx, dy) = HeldDeployableAddress(); NetPlaceDeployable(_deployable.Id, _placePoint, _placeYaw, dp, dx, dy); }
+                                { var (dp, dx, dy) = HeldDeployableAddress(); NetPlaceDeployable(_deployable.Id, _placePoint, _placeYaw, dp, dx, dy, 0); }
                                 if (Inventory.getItemCount(id) <= 1) { (_revertEquip ?? EquipUnarmed)(); return; }   // last one just went over the wire -> revert
                             }
                             else
@@ -4593,7 +4603,7 @@ namespace UnturnedGodot
                         // MP: the placement is a REQUEST -- the server validates spot + supplies, spends
                         // the item, and broadcasts; DeployableReplicaView spawns the real node. Ghost/fx
                         // stay local; the revert decision predicts the echo's spend (count - 1).
-                        RequestPlaceDeployable(_deployable.Id, _placePoint, _placeYaw);
+                        RequestPlaceDeployable(_deployable.Id, _placePoint, _placeYaw, _placeCrate);
                         PlayPlaceSound(_deployable.PlaceSound, _placePoint);
                         Log.Print($"[deploy] place requested: {_deployable.Name} at {_placePoint} (wire)");
                         if (_deployItem != null && Inventory != null && Inventory.getItemCount(_deployItem.id) <= 1)
@@ -6159,7 +6169,7 @@ namespace UnturnedGodot
         /// <summary>v31: the server's craft queue landed -- hand it to the menu to display. The menu owns the
         /// distinction between its own queue and a mirrored one; this is only the route.</summary>
         public void NoteServerCraftQueue((ushort bp, float left, float of)[] jobs) => _craftMenu?.AdoptServerQueue(jobs);
-        public System.Action<ushort, Vector3, float, byte, byte, byte> NetPlaceDeployable;   // (defId,pos,yaw,page,x,y) -> Client.SendPlaceDeployable; the address names WHICH jar to spend (255 = unaddressed)
+        public System.Action<ushort, Vector3, float, byte, byte, byte, uint> NetPlaceDeployable;   // (defId,pos,yaw,page,x,y,target) -> Client.SendPlaceDeployable; the address names WHICH jar to spend (255 = unaddressed); target = the container a Storage Adapter snapped to (v56, 0 = none)
 
         /// <summary>Where the held deployable's backing item actually sits right now, for the server to spend.
         ///
@@ -6190,6 +6200,13 @@ namespace UnturnedGodot
         public System.Action<uint> NetDetachTow;                     // B11: netId (either end) -> Client.SendDetachTow; the cleared relationship echoes back via A6's TowedNetId->0
         public System.Action<uint, byte, uint, byte> NetConnectWire; // (srcId,srcPort, dstId,dstPort) -> Client.SendConnectWire
         public System.Action<uint> NetRemoveWire;                    // wireId -> Client.SendRemoveWire
+        // v56 INDUSTRIAL ITEM PIPES. There is NO direct path behind these: a pipe exists only on the server, and
+        // singleplayer is the loopback server, so a null seam (a --direct harness) simply cannot lay pipe.
+        public System.Action<uint, byte, uint, byte, UnityEngine.Vector3[]> NetConnectPipe;   // (srcId,srcPort, dstId,dstPort, route) -> Client.SendConnectPipe
+        public System.Action<uint> NetRemovePipe;                                            // pipeId -> Client.SendRemovePipe
+        public System.Action<uint, UnturnedGodot.Net.ItemDeviceConfig> NetConfigureItemDevice;                 // (netId, config) -> Client.SendConfigureItemDevice
+        /// <summary>v56: read a device's REPLICATED config (the F panel opens on the server's values, not a guess).</summary>
+        public System.Func<uint, UnturnedGodot.Net.ItemDeviceConfig> NetItemConfigOf;
         public System.Action<uint, bool> NetToggleDeployable;        // (netId,on) -> Client.SendToggleDeployable (NetSetPowered lands the echo)
         public System.Action<uint> NetOpenStorage;                   // crate netId -> Client.SendOpenStorage (StorageOpened + the owner echo carry the grid back)
         public System.Action NetCloseStorage;                        // -> Client.SendCloseStorage (server saves the STORAGE page back into the crate)
@@ -6453,10 +6470,10 @@ namespace UnturnedGodot
 
         /// <summary>MP deployable placement (TickDeploy's place-confirm): the server validates the spot +
         /// spends the item; DeployablePlaced broadcasts and the replica view spawns the real node.</summary>
-        public bool RequestPlaceDeployable(ushort defId, Vector3 pos, float yawDeg)
+        public bool RequestPlaceDeployable(ushort defId, Vector3 pos, float yawDeg, uint targetCrate = 0)
         {
             if (NetPlaceDeployable == null) return false;
-            NetPlaceDeployable(defId, pos, yawDeg, 255, 0, 0);   // debug/console seam: no jar to name -> id fallback
+            NetPlaceDeployable(defId, pos, yawDeg, 255, 0, 0, targetCrate);   // debug/console seam: no jar to name -> id fallback
             return true;
         }
 
@@ -8307,6 +8324,7 @@ namespace UnturnedGodot
         public override void _UnhandledInput(InputEvent @event)
         {
             if (NetAvatar) return;   // a server avatar is driven ONLY through the Scripted* seams, never local input
+            if (ItemPanelInput(@event)) return;   // v56: the splitter/mover panel owns F/Esc and the mouse buttons while it is up
             if (_lightbarRadial != null && _lightbarRadial.IsOpen)   // LIGHTBAR RADIAL owns input while open: ctrl-release / LMB = pick, RMB / Esc = cancel. Handled here,
             {                                                         // BEFORE the "clicks belong to an open UI" guard and the UI key gate that would swallow them (strawberry 2026-09-04 "won't close").
                 bool pick = (@event is InputEventKey { Keycode: Key.Ctrl, Pressed: false }) || (@event is InputEventMouseButton { ButtonIndex: MouseButton.Left, Pressed: true });
@@ -8501,6 +8519,7 @@ namespace UnturnedGodot
                 else if (_heldOptic != null) CycleOpticZoom();          // binoculars up: LMB steps the zoom 4x -> 8x -> 12x -> 4x (master)
                 else if (HoldingWireTool) WireLmb();                    // wire tool: pick output / place node / complete on a consumer
                 else if (HoldingHoseTool) HoseLmb();                    // hose tool: pick a fluid port / complete on the opposite-role port
+                else if (HoldingPipeTool) PipeLmb();                    // pipe tool: pick an item OUT socket / lay a bend / complete on an IN socket
                 else if (HoldingRopeTool) RopeLmb();                    // rope tool: pick a rear tow node / complete on a front tow node
                 else if (HoldingDetonatorTool) TryDetonateCharges();    // detonator: LMB plunge -> fire all placed remote charges
                 else if (HoldingWalkie) ToggleWalkie();                 // walkie-talkie: LMB is the power switch (strawberry 2026-09-11)
@@ -8543,6 +8562,7 @@ namespace UnturnedGodot
                 else if (_riding != null) { }                                             // riding: no net light toggle in v1
                 else if (HoldingWireTool) { if (Keybinds.IsDown(@event)) { if (_wiring) WireRmb(); else WireManageArm(); } }   // routing: undo/cancel; else: arm a completed-wire clear/unplug (phase 5)
                 else if (HoldingHoseTool) { if (Keybinds.IsDown(@event)) { if (_hosing) HoseRmb(); else if (IsInstanceValid(_hosePort) && _hosePort.Owner != null && _hosePort.Owner.Role == FluidRole.Valve) _hosePort.Owner.ToggleValve(); else HoseManageArm(); } }   // routing: undo/cancel node; else: RMB a valve port toggles it, else arm a hosed-port clear/unplug (mirror the wire tool)
+                else if (HoldingPipeTool) { if (Keybinds.IsDown(@event)) { if (_piping) PipeRmb(); else PipeManageArm(); } }   // routing: undo/cancel; else arm a hold-cut / tap-reroute on a piped socket (the hose gesture)
                 else if (HoldingRopeTool) { if (Keybinds.IsDown(@event)) { if (_roping) CancelRope(); else RopeManageArm(); } }   // rope tool: cancel a pending tie; else arm a clear/disconnect (hold RMB clears the rope, tap disconnects that side) -- mirrors the wire tool
                 else if (HoldingDetonatorTool) { }   // detonator has no RMB action (LMB plunges) -- swallow so it doesn't fall through to ADS
                 else if (HoldingDeployable) { if (Keybinds.IsDown(@event)) Dequip(); }   // RMB cancels placement entirely -> empty hands (strawberry)
@@ -8721,6 +8741,9 @@ namespace UnturnedGodot
                 {
                     if (!RequestToggleDeployable(_fHeldDeploy)) _fHeldDeploy.TogglePower();
                 }
+                else if (IsInstanceValid(_fHeldDeploy) && _deployPickupTimer < DeployPickupTime && _fHeldDeploy.Def != null
+                         && _fHeldDeploy.Def.IsItemConfigurable && !_fHeldDeploy.OnFire)
+                    OpenItemDeviceConfig(_fHeldDeploy);   // v56: a TAP on a splitter/mover opens its panel; a HOLD still picks it up
                 if (IsInstanceValid(_fHeldDeploy)) _fHeldDeploy.PickupProgress = 0f;
                 _fHeldDeploy = null; _deployPickupTimer = 0f;
             }
@@ -10587,8 +10610,10 @@ namespace UnturnedGodot
             UpdateRopeManage((float)delta);                                                   // rope tool: poke a roped node -> hold RMB clear / tap RMB disconnect (mirrors the wire tool)
             UpdateWireManage((float)delta);                                                   // wire tool: poke a wired port -> hold RMB clear / tap RMB unplug
             UpdateHoseManage((float)delta);                                                   // hose tool: poke a hosed port -> hold RMB clear / tap RMB unplug (mirror)
+            UpdatePipeManage((float)delta);                                                   // pipe tool: poke a piped socket -> hold RMB cut / tap RMB re-route
             UpdateWireArrows();                                                               // wire tool: show in/out arrows on every connection point (blue avail / red occupied)
             UpdateHoseArrows();                                                               // hose tool: show in/out arrows on every fluid port (mirror)
+            UpdatePipeArrows();                                                               // pipe tool: show the item sockets + their in/out arrows
             if (_showLookHulls) UpdateLookHullViz();                                          // I-toggle: rebuild the look-hull wireframes
             UpdateSalvage((float)delta);   // wreck salvage prompt + blowtorch teardown
             // HEADLAMP RECONCILE. Deliberately a per-frame comparison rather than a hook on the wear/unwear call:
@@ -10725,6 +10750,7 @@ namespace UnturnedGodot
             if ((_lookFocusT += delta) >= 1.0 / 30.0) { _lookFocusT = 0; UpdateLookFocus(); }   // PERF: 30 Hz is plenty for a highlight/prompt (was every frame: a ray + a sphere query + a marshalled vehicles group at 450 fps)   // eye-ray -> focus the item you're aiming at
             UpdateWireLook();                                                                 // wire tool: look at a connection cube -> highlight + info readout
             UpdateHoseLook();                                                                 // hose tool: look at a fluid port -> highlight + info + drive the route preview
+            UpdatePipeLook();                                                                 // pipe tool: look at an item socket -> highlight + info + drive the route preview
             if (_lookViz != null && _lookViz.Visible && _lookEndDist > 0f) { var (lf, ld) = LookTrace(); _lookViz.GlobalPosition = lf + ld * _lookEndDist; }   // the debug sphere rides the CURRENT trace every frame, not the 30 Hz sample
             UpdateBody(delta);
         }

@@ -17,6 +17,10 @@ namespace UnturnedGodot
         Window,  // window barricade: snaps INTO a building-editor window opening (UV-projected onto the wall plane, NOT
                  // raycast -- the hole has no collider), one per inside/outside face, sized to the opening; ONLY placeable
                  // when the reticle is on a window opening. No retail analogue -- master 2026-08-31.
+        Container, // v56 Storage Adapter: snaps flush onto a STORAGE CONTAINER's side face, back to the box, and is red
+                   // anywhere else (strawberry 2026-10-06: "the adapter should snap to the storage container. has to snap
+                   // or it wont place -red."). Seated like Wall -- a horizontal normal recoverable from the yaw -- so the
+                   // replica re-seats it from (pos, yaw) alone. APPENDED: nothing persists this enum, but order is cheap.
     }
 
     // The placement ghost for a held BARRICADE — a deployable that mounts on a STRUCTURE surface (wall / floor /
@@ -55,6 +59,10 @@ namespace UnturnedGodot
         public int SnappedFace { get; private set; }
         Vector3 _windowScale = Vector3.One;
         public Vector3 WindowScale => _windowScale;   // the per-opening panel scale, frozen with the placement (PlayerController)
+        /// <summary>Container mount: the crate NetId the ghost is snapped to (0 = none, or a container with no server
+        /// id -- the direct path). Sent with the place so the server binds THAT box (PlaceDeployableCommand.TargetId).</summary>
+        public uint SnappedCrateId { get; private set; }
+        public StorageCrate SnappedCrate { get; private set; }
 
         // Attachment predicate (world point, surface normal, hit collider) -> can a barricade mount here? At merge:
         //   placer.CanAttach = StructureManager.BarricadeAttachHook;   // NOT Instance.CanAttach -- see that method
@@ -150,7 +158,12 @@ namespace UnturnedGodot
         /// number. Offset keeps its OTHER job unchanged -- it also centres the placement clearance sphere (Aim), and
         /// shrinking that for a 0.30-radius dome would put the probe inside the slab it is mounting to.</summary>
         public static float Standoff(BarricadeMount mount, DeployableDef def) =>
-            def == null ? 0f : mount == BarricadeMount.Ceiling ? 0.005f : Mathf.Min(def.Offset, 0.1f);
+            def == null ? 0f : mount == BarricadeMount.Ceiling ? 0.005f
+            // A CONTAINER mount is centred on its own body, so the back face is half the depth behind the origin:
+            // half-depth + a 1 cm hair puts the back flush on the box. The Wall clamp (0.1) would sink a 0.24-deep
+            // adapter 2 cm into the container.
+            : mount == BarricadeMount.Container ? def.Size.Y * 0.5f + 0.01f
+            : Mathf.Min(def.Offset, 0.1f);
 
         // Lift so the mesh seats on the surface: Floor stands its base on the point (GroundLift along up); Wall/Sticky
         // hug the surface by WallStandoff along the normal.
@@ -166,6 +179,7 @@ namespace UnturnedGodot
         {
             if (Def == null || cam == null) return false;
             if (Mount == BarricadeMount.Window) return AimWindow(cam);   // window barricade UV-projects onto openings (the hole has no collider to raycast)
+            if (Mount == BarricadeMount.Container) return AimContainer(cam);   // storage adapter: snaps onto a container face or stays red
             float aimYaw = Mathf.RadToDeg(cam.GlobalRotation.Y) + YawOffset;
             var space = GetWorld3D().DirectSpaceState;
             Vector3 from = cam.GlobalPosition, dir = -cam.GlobalTransform.Basis.Z;
@@ -212,8 +226,126 @@ namespace UnturnedGodot
             BarricadeMount.Wall => "Needs a wall",
             BarricadeMount.Window => "Needs a window opening",
             BarricadeMount.Sticky => "Needs a surface",
+            BarricadeMount.Container => "Needs a storage container",
             _ => "Needs flat ground",
         };
+
+        // ---- CONTAINER mount (v56 Storage Adapter) ----------------------------------------------------------------
+
+        /// <summary>The storage container a collider belongs to: a StorageCrate up the parent chain (a map shelf's
+        /// trimesh body sits two levels under it, a fridge's one), or the crate grid a placed device carries as a
+        /// child (the campfire's DeployableCrate). Null for anything else -- which is what turns the ghost red.</summary>
+        public static StorageCrate ContainerOf(Node n)
+        {
+            for (var c = n; c != null; c = c.GetParent())
+            {
+                if (c is StorageCrate sc) return sc;
+                if (c is Deployable d)
+                {
+                    foreach (var ch in d.GetChildren()) if (ch is StorageCrate dc) return dc;
+                    return null;   // a deployable with no grid is not a container, and nothing above it is either
+                }
+            }
+            return null;
+        }
+
+        /// <summary>The node whose frame the container's box lives in: the StorageCrate itself, or for a device-borne
+        /// grid (DeployableCrate) the device body that actually has the collider.</summary>
+        public static Node3D ContainerBody(StorageCrate c) => c is DeployableCrate && c.GetParent() is Node3D p ? p : c;
+
+        static readonly System.Collections.Generic.Dictionary<ulong, Aabb> _containerBounds = new();
+
+        /// <summary>The container's box in its OWN frame: the union of its world-layer collision shapes. Cached per
+        /// node -- a store shelf's trimesh is thousands of faces and the ghost asks every frame -- and only the
+        /// world layer (bit 0) counts, so the shelf's display-item hitboxes (layer 11) do not swell it.</summary>
+        public static bool ContainerBounds(Node3D body, out Aabb box)
+        {
+            ulong key = body.GetInstanceId();
+            if (_containerBounds.TryGetValue(key, out box)) return box.Size != Vector3.Zero;
+            bool any = false;
+            var inv = body.GlobalTransform.AffineInverse();
+            var stack = new System.Collections.Generic.Stack<Node>();
+            stack.Push(body);
+            var acc = new Aabb();
+            while (stack.Count > 0)
+            {
+                var n = stack.Pop();
+                foreach (var ch in n.GetChildren()) stack.Push(ch);
+                if (n is not CollisionShape3D cs || cs.Shape == null || cs.GetParent() is not CollisionObject3D co || (co.CollisionLayer & 1u) == 0) continue;
+                Aabb a;
+                if (cs.Shape is BoxShape3D b) a = new Aabb(-b.Size * 0.5f, b.Size);
+                else if (cs.Shape is ConcavePolygonShape3D cp) a = PointsAabb(cp.GetFaces());
+                else if (cs.Shape is ConvexPolygonShape3D cv) a = PointsAabb(cv.Points);
+                else continue;
+                a = (inv * cs.GlobalTransform) * a;
+                acc = any ? acc.Merge(a) : a; any = true;
+            }
+            box = any ? acc : new Aabb();
+            _containerBounds[key] = box;
+            return any;
+        }
+
+        static Aabb PointsAabb(Vector3[] pts)
+        {
+            if (pts == null || pts.Length == 0) return new Aabb();
+            Vector3 mn = pts[0], mx = pts[0];
+            foreach (var p in pts) { mn = mn.Min(p); mx = mx.Max(p); }
+            return new Aabb(mn, mx - mn);
+        }
+
+        /// <summary>Snap onto the container SIDE face nearest the aim point, back face against the box (strawberry:
+        /// "the adapter should snap to the storage container. has to snap or it wont place -red."). The point is
+        /// the aim projected onto that face and kept far enough inside it that the adapter does not overhang the
+        /// edge; the yaw faces straight out of the face, so the replica recovers the normal from (pos, yaw) exactly
+        /// as it does for a wall mount. Top and bottom faces are not offered: the adapter is a wall-style mount, and
+        /// a yaw cannot say "up".</summary>
+        bool AimContainer(Camera3D cam)
+        {
+            SnappedCrate = null; SnappedCrateId = 0;
+            float aimYaw = Mathf.RadToDeg(cam.GlobalRotation.Y) + YawOffset;
+            var space = GetWorld3D().DirectSpaceState;
+            Vector3 from = cam.GlobalPosition, dir = -cam.GlobalTransform.Basis.Z;
+            var rq = PhysicsRayQueryParameters3D.Create(from, from + dir * Def.Range);
+            rq.CollisionMask = 1u << 0;
+            var hit = space.IntersectRay(rq);
+            StorageCrate crate = hit.Count > 0 ? ContainerOf(hit["collider"].As<Node>()) : null;
+            Node3D body = crate != null ? ContainerBody(crate) : null;
+            if (crate == null || body == null || !ContainerBounds(body, out var box))
+            {
+                Valid = false; Reason = "Needs a storage container"; Normal = Vector3.Up; Yaw = aimYaw;
+                Point = hit.Count > 0 ? (Vector3)hit["position"] : from + dir * Def.Range;
+                Apply(); return false;
+            }
+            Vector3 local = body.GlobalTransform.AffineInverse() * (Vector3)hit["position"];
+            float best = float.MaxValue; int bestAxis = -1; float bestSign = 1f;
+            foreach (int axis in new[] { 0, 2 })
+                foreach (float sign in new[] { -1f, 1f })
+                {
+                    var nw = (body.GlobalBasis * (axis == 0 ? Vector3.Right : Vector3.Back) * sign);
+                    if (nw.LengthSquared() < 1e-8f || Mathf.Abs(nw.Normalized().Y) > 0.5f) continue;   // a tipped prop: that "side" faces up/down
+                    float plane = sign > 0f ? box.End[axis] : box.Position[axis];
+                    float d = Mathf.Abs(local[axis] - plane);
+                    if (d < best) { best = d; bestAxis = axis; bestSign = sign; }
+                }
+            if (bestAxis < 0) { Valid = false; Reason = "Needs a storage container"; Normal = Vector3.Up; Yaw = aimYaw; Point = (Vector3)hit["position"]; Apply(); return false; }
+            Vector3 p = local;
+            p[bestAxis] = bestSign > 0f ? box.End[bestAxis] : box.Position[bestAxis];
+            int other = bestAxis == 0 ? 2 : 0;
+            p[other] = ClampInside(p[other], box.Position[other], box.End[other], Def.Size.X * 0.5f);   // adapter width along the face
+            p.Y = ClampInside(p.Y, box.Position.Y, box.End.Y, Def.Size.Z * 0.5f);                      // ...and its height
+            Vector3 nWorld = body.GlobalBasis * ((bestAxis == 0 ? Vector3.Right : Vector3.Back) * bestSign);
+            nWorld = new Vector3(nWorld.X, 0f, nWorld.Z).Normalized();
+            Point = body.GlobalTransform * p;
+            Normal = nWorld;
+            Yaw = YawFacing(nWorld);
+            SnappedCrate = crate; SnappedCrateId = crate.NetId;
+            Valid = true; Reason = null;
+            Apply();
+            return true;
+        }
+
+        static float ClampInside(float v, float lo, float hi, float margin)
+            => hi - lo <= margin * 2f ? (lo + hi) * 0.5f : Mathf.Clamp(v, lo + margin, hi - margin);
 
         // The ghost/placed transform for the current mount. Window = stood-up + faced like a Wall mount, but scaled to
         // fit the opening and seated at the opening centre + face standoff (Point), not a raycast hit + MountOrigin lift.

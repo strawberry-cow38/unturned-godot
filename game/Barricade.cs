@@ -58,14 +58,15 @@ namespace UnturnedGodot
         public static Vector3 NormalFromWire(BarricadeMount mount, float yawDeg) => mount switch
         {
             BarricadeMount.Ceiling => Vector3.Down,
-            BarricadeMount.Wall => new Vector3(Mathf.Sin(Mathf.DegToRad(yawDeg)), 0f, Mathf.Cos(Mathf.DegToRad(yawDeg))),
+            // a CONTAINER mount (the storage adapter) takes its yaw from the container face the same way, so it inverts the same way
+            BarricadeMount.Wall or BarricadeMount.Container => new Vector3(Mathf.Sin(Mathf.DegToRad(yawDeg)), 0f, Mathf.Cos(Mathf.DegToRad(yawDeg))),
             _ => Vector3.Up,
         };
 
         /// <summary>True if a replicated placement of this def has to be re-seated against a surface rather than
         /// stood on the ground. Window is excluded because it needs a wall + opening index the wire has no room for,
         /// and Sticky because its normal is not recoverable (see NormalFromWire).</summary>
-        public static bool SeatsOnSurface(BarricadeMount m) => m == BarricadeMount.Ceiling || m == BarricadeMount.Wall;
+        public static bool SeatsOnSurface(BarricadeMount m) => m == BarricadeMount.Ceiling || m == BarricadeMount.Wall || m == BarricadeMount.Container;
 
         // Place a window barricade INTO a building-editor window opening, on one face (inside/outside). Spawned as a
         // CHILD of the WallSurface + stamped with the opening index + face, so BarricadePlacer.SlotFilled sees that

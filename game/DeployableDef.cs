@@ -132,6 +132,17 @@ namespace UnturnedGodot
         public struct Port { public PortKind Kind; public Vector3 Pos; public float Watts; public SwitchRole Role; }   // Output.Watts = produced (when source on); Consumer.Watts = drawn; Passthrough.Watts unused (= input - consumers)
         public Port[] Ports = System.Array.Empty<Port>();
 
+        // --- ITEM ports (v56 industrial pipes, strawberry 2026-10-06). A SEPARATE array from Ports on purpose:
+        //     Ports go to the power solver, these never do, and a pipe's port byte indexes THIS array. Pos is the
+        //     same flat authored frame as Ports, so the cubes stand up with the model. In = items arrive, Out =
+        //     items leave; a pipe always runs Out -> In (ItemPipeRules). ---
+        public struct ItemPort { public ItemPortDir Dir; public Vector3 Pos; }
+        public ItemPort[] ItemPorts = System.Array.Empty<ItemPort>();
+        /// <summary>What the item router treats this as -- carried onto the net def (DeployableNetSchema).</summary>
+        public ItemDeviceKind ItemDevice = ItemDeviceKind.None;
+        /// <summary>A splitter or a mover: F opens the config panel instead of doing nothing.</summary>
+        public bool IsItemConfigurable => ItemDevice == ItemDeviceKind.Splitter || ItemDevice == ItemDeviceKind.Mover;
+
         // --- lamps a CONSUMER lights up when powered (src InteractableSpot: the "Spots" node of Light children,
         //     toggled on when isWired && isPowered). Pos/Dir are in the flat authored frame (stand up with the model);
         //     Godot SpotAngle is the HALF-angle so it's src m_SpotAngle/2. ---
@@ -295,6 +306,63 @@ namespace UnturnedGodot
             };
         }
         public static readonly DeployableDef Combiner2 = MakeCombiner(9104, "2-Way Combiner", 0.55f, new[] { -0.14f, 0.14f });
+
+        // ---- INDUSTRIAL ITEM PIPES (strawberry 2026-10-06: "storage adapter: connects to any storage container,
+        //      has a pipe i/o input and output. 1-3 splitter and 3-1 industrial pipe combiners. item mover
+        //      (industrial pipe i/o input, output, power i/o input, passthrough.)") ----
+        //
+        // Grey ProcBoxes, the same placeholder the power splitters use ("a basic gray box will do"), until real
+        // models exist. 9215-9219: the next free run in our 9xxx block (9213/9214 are the data radios; 9148 is
+        // spoken for elsewhere and deliberately skipped). 9215 itself is the Industrial Pipe Tool -- a ToolDef,
+        // not a deployable -- so the defs start at 9216.
+        //
+        // PORT ORDER IS THE WIRE: a pipe end is (NetId, index into ItemPorts), so these arrays are append-only once
+        // a world has pipes in it -- reordering them reconnects every saved pipe to a different socket.
+        static ItemPort ItemIn(float x, float y, float z) => new ItemPort { Dir = ItemPortDir.In, Pos = new Vector3(x, y, z) };
+        static ItemPort ItemOut(float x, float y, float z) => new ItemPort { Dir = ItemPortDir.Out, Pos = new Vector3(x, y, z) };
+
+        // The adapter is the ONLY device that touches a container ("the adapter should snap to the storage
+        // container. has to snap or it wont place -red."). Its BACK face goes against the box; both sockets sit on
+        // the front face, the one you can reach. Thin (0.24 deep) so it reads as bolted on, not stood beside.
+        public static readonly DeployableDef StorageAdapter = new()
+        {
+            Id = 9216, Name = "Storage Adapter", ProcBox = true, PlaceSound = "metalplacement",
+            Mount = BarricadeMount.Container, ItemDevice = ItemDeviceKind.Adapter,
+            Size = new Vector3(0.5f, 0.24f, 0.5f), Offset = 0.12f, Radius = 0.2f, Range = 4f, Health = 150f,
+            // In = items go INTO the container; Out = items come OUT of it. Y = +0.12 is the front face, and Y
+            // dominating X is what makes the in/out arrows point out of that face rather than sideways.
+            ItemPorts = new[] { ItemIn(-0.1f, 0.12f, 0f), ItemOut(0.1f, 0.12f, 0f) },
+        };
+
+        // Port layout copies the 3-way power splitter's: the input on the back, the three outputs fanned across
+        // the front, so a player who has wired one reads the other without being told.
+        public static readonly DeployableDef ItemSplitter = new()
+        {
+            Id = 9217, Name = "Item Splitter", ProcBox = true, PlaceSound = "metalplacement", ItemDevice = ItemDeviceKind.Splitter,
+            Size = new Vector3(0.80f, 0.36f, 0.5f), Offset = 0.7f, Radius = 0.35f, Range = 4f, Health = 200f,
+            ItemPorts = new[] { ItemIn(0f, -0.18f, 0f), ItemOut(-0.26f, 0.18f, 0f), ItemOut(0f, 0.18f, 0f), ItemOut(0.26f, 0.18f, 0f) },
+        };
+
+        public static readonly DeployableDef ItemCombiner = new()
+        {
+            Id = 9218, Name = "Item Combiner", ProcBox = true, PlaceSound = "metalplacement", ItemDevice = ItemDeviceKind.Combiner,
+            Size = new Vector3(0.80f, 0.36f, 0.5f), Offset = 0.7f, Radius = 0.35f, Range = 4f, Health = 200f,
+            ItemPorts = new[] { ItemIn(-0.26f, -0.18f, 0f), ItemIn(0f, -0.18f, 0f), ItemIn(0.26f, -0.18f, 0f), ItemOut(0f, 0.18f, 0f) },
+        };
+
+        // "only a mover can move". Items in one END and out the other (so the flow reads left-to-right along the
+        // box), power on the back like every other consumer: a 100 W input ("100w fine") and a passthrough, so a
+        // row of movers daisy-chains off one feed the way a row of lamps does.
+        public static readonly DeployableDef ItemMover = new()
+        {
+            Id = 9219, Name = "Item Mover", ProcBox = true, PlaceSound = "metalplacement", ItemDevice = ItemDeviceKind.Mover,
+            Size = new Vector3(0.9f, 0.4f, 0.45f), Offset = 0.7f, Radius = 0.4f, Range = 4f, Health = 250f,
+            Ports = new[] {
+                new Port { Kind = PortKind.Consumer,    Pos = new Vector3(-0.15f, -0.2f, 0f), Watts = 100f },
+                new Port { Kind = PortKind.Passthrough, Pos = new Vector3( 0.15f, -0.2f, 0f), Watts = 0f },
+            },
+            ItemPorts = new[] { ItemIn(-0.45f, 0f, 0f), ItemOut(0.45f, 0f, 0f) },
+        };
 
         // A procedural stand-in for a WALL barricade -- a thin metal plate that mounts flush + upright on a structure
         // wall, facing out (BarricadeMount.Wall). Real Unturned ships this as an ItemBarricadeAsset with a ripped mesh;
@@ -756,7 +824,7 @@ namespace UnturnedGodot
             FluidTank, WaterSource, FluidSplitter, FluidCombiner, FluidPumpDef, FluidValve, Refinery, Sluice, WaterInlet, WaterOutlet, Purifier, Refrigerator, Landmine, Spike, Charge, Barbedwire,
             DoorBirch, DoorMaple, DoorPine, GateBirch, GateMaple, GatePine, HatchBirch, HatchMaple, HatchPine,
             DoorMetal, GateMetal, HatchMetal, Workbench, Campfire, ChemistryLab, Kiln, Loom, OvenBrick, OvenElectric, SewingTable, SpinningWheel, WindowBarricade, WindowBars, WindowPlate,
-            CeilingBulbLamp, CeilingConeLamp, CeilingDomeLamp };
+            CeilingBulbLamp, CeilingConeLamp, CeilingDomeLamp, StorageAdapter, ItemSplitter, ItemCombiner, ItemMover };
         /// <summary>The deployable a WORLD PROP of this name IS, or null for an ordinary prop (master 2026-09-07:
         /// "change the world props to be the deployable"). Derived from the defs themselves -- Model plus a real
         /// LampKind -- rather than a second name list beside LampLight.KindFor, which is the table that would drift.
@@ -809,6 +877,10 @@ namespace UnturnedGodot
             9102 => Splitter3,
             9103 => Splitter4,
             9104 => Combiner2,
+            9216 => StorageAdapter,
+            9217 => ItemSplitter,
+            9218 => ItemCombiner,
+            9219 => ItemMover,
             9105 => Switch,
             1450 => Battery,
             9106 => WindTurbine,

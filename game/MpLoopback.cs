@@ -191,13 +191,18 @@ namespace UnturnedGodot
                 //     Deployable.Spawn else-branch (PlayerController.cs:1177) NEVER fires -- the
                 //     DeployableReplicaView is the SOLE spawner of local deployable nodes. That is the whole
                 //     point of the pattern: one owner of the node graph, and it's the replica view.
-                Player.NetPlaceDeployable = (defId, pos, yaw, pg, px, py) => Client.SendPlaceDeployable(defId, ToU(pos), yaw, pg, px, py);
+                Player.NetPlaceDeployable = (defId, pos, yaw, pg, px, py, target) => Client.SendPlaceDeployable(defId, ToU(pos), yaw, pg, px, py, target);
                 Player.NetSalvageDeployable = netId => Client.SendSalvageDeployable(netId);
                 Player.NetPickupDeployable = netId => Client.SendPickupDeployable(netId);   // B2: hold-F returns the live deployable to the bag over the wire
                 Player.NetExtractFuel = pumpId => Client.SendExtractFuel(pumpId);   // A2: RMB a replica pump -> server drains the shared station tank into the held can
                 Player.NetConnectWire = (srcId, srcPort, dstId, dstPort) => Client.SendConnectWire(srcId, srcPort, dstId, dstPort);
                 Player.NetRemoveWire = wireId => Client.SendRemoveWire(wireId);
                 Player.NetToggleDeployable = (netId, on) => Client.SendToggleDeployable(netId, on);
+                // v56 item pipes: the ONLY way a pipe or a device config comes to exist, here as on a joined client
+                Player.NetConnectPipe = (srcId, srcPort, dstId, dstPort, route) => Client.SendConnectPipe(srcId, srcPort, dstId, dstPort, route);
+                Player.NetRemovePipe = pipeId => Client.SendRemovePipe(pipeId);
+                Player.NetConfigureItemDevice = (netId, cfg) => Client.SendConfigureItemDevice(netId, cfg);
+                Player.NetItemConfigOf = netId => Client.Deployables.TryGet(netId, out var ie) ? ie.ItemConfig : null;
                 Player.NetOpenStorage = netId => Client.SendOpenStorage(netId);
                 Player.NetCloseStorage = () => Client.SendCloseStorage();
                 Player.NetTakeFromStorage = (netId, x, y) => Client.SendTakeFromStorage(netId, x, y);
@@ -497,6 +502,10 @@ Player.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, r
             // soaks the container wire (the store shelves / crates the world build placed). Constructed here so the
             // manifest is registered before the first replication send (net.server.replicate is LAST).
             ContainerSync = new ContainerNetSync(Server, this, Containers);
+            // v56 ITEM MOVERS, before the container publish so a crate a mover just changed re-projects its shelf display
+            // on the same beat, and before replication (LAST) like every mutation. Unconditional: the server owns the
+            // movers whether or not this loopback consumes the deployable replicas.
+            Driver.Sim.Add(new DelegateSimStep((t, dt) => Server.ItemMovers.Step((float)dt), "net.itemmovers.step"));
             Driver.Sim.Add(new DelegateSimStep((t, dt) => ContainerSync.Tick(), "net.containers.publish"));
             ResourceSync = new ResourceNetSync(Server, Resources);
             Driver.Sim.Add(new DelegateSimStep((t, dt) => ResourceSync.Tick(), "net.resources.sync"));
