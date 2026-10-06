@@ -559,7 +559,10 @@ namespace UnturnedGodot
                 // missing four of its stages (strawberry: "when going to the editor from a proc map. its not
                 // the same map"). Generate with UG_GENSEED, then shoot the same name back with this.
                 else if (!string.IsNullOrEmpty(System.Environment.GetEnvironmentVariable("UG_OPENMAP")))
-                    BuildEditorNew(System.Environment.GetEnvironmentVariable("UG_OPENMAP"));
+                    // UG_OPENPLAY=1 takes the Workshop "Play" path instead of the edit path, which is the only way
+                    // to render-verify that a custom map is actually PLAYABLE rather than merely openable.
+                    BuildEditorNew(System.Environment.GetEnvironmentVariable("UG_OPENMAP"),
+                                   autoPlay: System.Environment.GetEnvironmentVariable("UG_OPENPLAY") == "1");
                 else if (System.Environment.GetEnvironmentVariable("UG_NEWMAP") == "1") BuildEditorNew();
                 else BuildEditor();
                 return;
@@ -6780,7 +6783,7 @@ namespace UnturnedGodot
             // the one place you cannot keep anything.
             if (editor.MapName == MapShowcase.MapName && (editor.Objects?.PlacedCount ?? 0) == 0)
             {
-                int built = MapShowcase.Author(terr, rf, editor.Objects, plField, editor);
+                int built = MapShowcase.Author(terr, rf, editor.Objects, plField, editor, editor.Spawns);
                 editor.MarkDirty();   // so the autosave keeps it without the user having to think about it
                 MapShowcase.OpenView(cam as EditorCamera, built);
             }

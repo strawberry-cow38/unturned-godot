@@ -121,7 +121,7 @@ namespace UnturnedGodot
         ///
         /// ⚠ Terrain colliders are flushed ONCE at the end rather than per station: every sculpt marks chunks dirty
         /// and rebuilding a collider per brush stroke is the slow path the editor itself avoids.</summary>
-        public static int Author(Terrain terr, RoadField roads, EditorObjects objects, PowerLineField powerLines, Node3D root)
+        public static int Author(Terrain terr, RoadField roads, EditorObjects objects, PowerLineField powerLines, Node3D root, EditorSpawns spawns = null)
         {
             var stations = Stations();
             for (int i = 0; i < stations.Count; i++)
@@ -137,6 +137,19 @@ namespace UnturnedGodot
                 AddSign(root, origin, stations[i]);
             }
             terr?.FlushColliders();
+
+            // ⭐ A PLAYER SPAWN, because the showcase is meant to be PLAYED as well as edited and a map with no
+            // spawn drops you at whatever the fallback is -- which, the first time this was tested through the
+            // Workshop's Play button, was a view of nothing but sky. Put it in front of the first station, facing
+            // it, so playing the showcase starts where opening it does.
+            if (spawns != null)
+            {
+                var at = new Vector3(0f, 0f, 60f);
+                if (terr != null) at.Y = terr.SampleHeight(at.X, at.Z);
+                spawns.SetCategoryTo(0);   // ECategory.Player
+                spawns.AddSpawn(at, 180f); // facing -Z, toward station 1
+            }
+
             Log.Print($"[showcase] authored {stations.Count} station(s)");
             return stations.Count;
         }

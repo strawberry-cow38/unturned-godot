@@ -862,6 +862,14 @@ namespace UnturnedGodot
             SubRow(box, "browse",        "Browse Workshop", "Steam Workshop maps + items. (coming to Cow.0)",    () => ShowStub("Browse"));
             SubRow(box, "submit",        "Submit Content",  "Upload your creations. (coming to Cow.0)",          () => ShowStub("Submit"));
             SubRow(box, "editor",        "Editor",          "The PEI map editor."               ,              () => OnEditor?.Invoke());
+            // ⭐ A FIXED ENTRY, not a map you have to know the name of. The showcase is meant to be the standing
+            // place where each new mapmaker tool gets demonstrated, and a thing you reach by typing its name
+            // exactly is a thing nobody opens. ⚠ Calls OnOpenMap DIRECTLY rather than through the Create field,
+            // which runs EditorMaps.Unique() and would hand back "Showcase 2" the moment one already existed --
+            // i.e. a fresh empty map instead of THE showcase. Once it has been opened once it also appears in
+            // SAVED MAPS below, with its own Play button, like any other custom map.
+            SubRow(box, "editor",        "Map Tool Showcase", "One station per mapmaker tool — open to edit, or play it.",
+                                                                                                                () => OnOpenMap?.Invoke(MapShowcase.MapName));
             SubRow(box, "localization",  "Localization",    "Translate the game. (coming to Cow.0)",             () => ShowStub("Localization"));
             SubRow(box, "spawns",        "Spawns Editor",   "Edit spawn tables. (coming to Cow.0)",              () => ShowStub("Spawns"));
             SubRow(box, "subscriptions", "Subscriptions",   "Your subscribed Workshop items. (coming to Cow.0)", () => ShowStub("Subscriptions"));
