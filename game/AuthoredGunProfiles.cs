@@ -2,17 +2,19 @@ using Godot;
 using System;
 using System.IO;
 using System.Text.Json;
+using System.Collections.Generic;
 using UnturnedGodot.Net;
 
 namespace UnturnedGodot
 {
-    /// <summary>Scoped content bridge for the new authored gun. Existing retail guns keep their old
-    /// profile behavior; this does not silently rebalance the rest of multiplayer.</summary>
+    /// <summary>Scoped content bridge for the authored MAC-10 and Mossberg single-shell reload.
+    /// Other guns keep their profile behavior; Mossberg clones preserve host damage/cadence tuning.</summary>
     internal static class AuthoredGunProfiles
     {
         const string Name = "mac10";
         static ServerGunProfile _profile;
         static ushort _itemId;
+
 
         internal static ServerGunProfile Profile
         {
@@ -45,6 +47,9 @@ namespace UnturnedGodot
         internal static void Install(NetWorldServer server)
         {
             var profile = Profile;
+            var mossbergProfiles = new Dictionary<ushort, ServerGunProfile>();
+            using var mossbergClips = JsonDocument.Parse(File.ReadAllText(ProjectSettings.GlobalizePath("res://content/mossberg_anims.json")));
+            double insertSeconds = mossbergClips.RootElement.GetProperty("Bluntforce_Reload_OneShell").GetProperty("length").GetDouble();
             var previous = server.Combat.ResolveHeldGunProfile;
             server.Combat.ResolveHeldGunProfile = owner =>
             {
@@ -52,6 +57,16 @@ namespace UnturnedGodot
                 if (server.Players.TryGetHeldInput(owner, out var input) && input.HeldItemId == _itemId
                     && server.Inventories.TryGet(owner, out var entry) && entry.Inventory.getItemCount(_itemId) > 0)
                     return profile;
+                if (server.Players.TryGetHeldInput(owner, out var held) && held.HeldItemId == 112
+                    && server.Inventories.TryGet(owner, out var inventory) && inventory.Inventory.getItemCount(112) > 0)
+                {
+                    if (!mossbergProfiles.TryGetValue(owner, out var mossbergProfile))
+                        mossbergProfiles[owner] = mossbergProfile = (previous?.Invoke(owner) ?? server.Combat.DefaultGun).SingleShellReload("bluntforce", 8, 1);
+                    float speed = server.Skills.TryGet(owner, out var skills) ? skills.Skills.DexterityReloadSpeed() : 1f;
+                    // Avoid an extra tick from binary floating-point 1.1 * 50 = 55.00000000000001.
+                    mossbergProfile.ReloadTicks = Math.Max(1, (int)Math.Ceiling(insertSeconds * 50 / speed - 1e-6));
+                    return mossbergProfile;
+                }
                 return previous?.Invoke(owner);
             };
         }

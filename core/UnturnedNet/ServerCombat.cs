@@ -45,6 +45,13 @@ namespace UnturnedGodot.Net
         public float GravityMultiplier = 4f;    // bullet gravity = -9.81 * this
         public int Pellets = 1;
         public int MagCapacity = 30;
+        public bool ReloadOneShell;
+        public ServerGunProfile SingleShellReload(string assetName, int capacity, int insertionTicks)
+        {
+            var copy = (ServerGunProfile)MemberwiseClone();
+            copy.AssetName = assetName; copy.MagCapacity = capacity; copy.ReloadTicks = insertionTicks; copy.ReloadOneShell = true;
+            return copy; // preserve the existing host's damage/cadence/ballistic tuning
+        }
         public int ReloadTicks = 82;            // 1.633 s Gun_Reload
         public float MaxAimOriginOffset = 3f;   // Fire.Origin must sit within this of the avatar (eye 1.75 + muzzle 0.4 + grain)
         /// <summary>The asset this profile IS, e.g. "eaglefire" -- rides PlayerFiredEvent so other clients can
@@ -271,7 +278,9 @@ namespace UnturnedGodot.Net
             if (!_state.TryGet(sender, out var cs) || !cs.Alive || !_players.TryGetByOwner(sender, out var pe))
             { Diag.ShotsRejectedDeadOrMissing++; return; }
             var gun = GunFor(sender);
-            if (cs.ReloadDoneTick > tick) { Diag.ShotsRejectedReloading++; return; }
+            if (gun.ReloadOneShell) cs.Ammo = Math.Min(cs.Ammo, gun.MagCapacity);
+            CompleteReloadIfDue(cs, tick);
+            if (cs.ReloadDoneTick > tick && (!gun.ReloadOneShell || cs.Ammo <= 0)) { Diag.ShotsRejectedReloading++; return; }
             if (gun.CyclicRateRPM > 0 ? tick < cs.LegacyFireReadyTick || !cs.ShotCadence.CanFire(tick, gun.CyclicRateRPM)
                 : tick - cs.LastFireTick <= gun.FirerateTicks || cs.ShotCadence.IsCoolingDown(tick))
             { Diag.ShotsRejectedRate++; return; }   // min gap = Firerate+1 ticks (SP rule)
@@ -288,6 +297,7 @@ namespace UnturnedGodot.Net
                 cs.ShotCadence.AcceptLegacyShot(tick, gun.FirerateTicks + 1);
                 cs.LegacyFireReadyTick = tick + gun.FirerateTicks + 1;
             }
+            if (gun.ReloadOneShell) cs.ReloadDoneTick = -1; // accepted fire interrupts an unfinished shell insertion
             cs.LastFireTick = tick;
             cs.Ammo--;
             for (int i = 0; i < Math.Max(1, gun.Pellets); i++)
@@ -309,10 +319,20 @@ namespace UnturnedGodot.Net
             Diag.ShotsAccepted++;
         }
 
+        void CompleteReloadIfDue(PlayerCombatReplication.CombatEntity cs, long tick)
+        {
+            if (cs.ReloadDoneTick < 0 || cs.ReloadDoneTick > tick) return;
+            var gun = GunFor(cs.OwnerPlayerId);
+            cs.Ammo = gun.ReloadOneShell ? Math.Min(cs.Ammo + 1, gun.MagCapacity) : gun.MagCapacity;
+            cs.ReloadDoneTick = -1;
+        }
+
         public void OnReload(ushort sender, in ReloadCommand cmd, long tick)
         {
             if (!_state.TryGet(sender, out var cs) || !cs.Alive) return;
             var gun = GunFor(sender);
+            if (gun.ReloadOneShell) cs.Ammo = Math.Min(cs.Ammo, gun.MagCapacity);
+            CompleteReloadIfDue(cs, tick); // a new request can arrive on the completion tick, before Step
             if (cs.Ammo >= gun.MagCapacity || cs.ReloadDoneTick > tick) return;
             cs.ReloadDoneTick = tick + gun.ReloadTicks;
         }
@@ -391,7 +411,7 @@ namespace UnturnedGodot.Net
             }
             foreach (var cs in _state.All)
             {
-                if (cs.ReloadDoneTick == tick) cs.Ammo = GunFor(cs.OwnerPlayerId).MagCapacity;
+                CompleteReloadIfDue(cs, tick);
                 if (!cs.Alive && cs.RespawnAtTick == tick) Respawn(cs, tick);
             }
             StepBullets(tick);

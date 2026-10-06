@@ -267,6 +267,9 @@ namespace UnturnedGodot
             var parts = new System.Collections.Generic.List<(string, Godot.Mesh, Godot.Vector3, Godot.Color, Godot.Texture2D)>();
             if (string.IsNullOrEmpty(gunName)) return parts;
             var gv = Viewmodel.VisualForTest(gunName);
+            if (gunName == "bluntforce" && ContentProvider.ParseObj("res://content/bluntforce_pump.txt") is Godot.Mesh pump)
+                parts.Add(("Pump", pump, Godot.Vector3.Zero, Godot.Colors.White,
+                    ContentProvider.TextureCached(Godot.ProjectSettings.GlobalizePath("res://content/bluntforce_albedo.png"))));
             string sightTxt = sightId > 0 ? MeshFor((ushort)sightId) : gv.Sight;
             if (!string.IsNullOrEmpty(sightTxt) && ContentProvider.ParseObj($"res://content/{sightTxt}") is Godot.Mesh sm)
             {
@@ -278,7 +281,7 @@ namespace UnturnedGodot
             }
             var magMount = Viewmodel.MagazineVisualFor(gunName);
             // An explicitly empty slot (0) has no magazine; -1 is a legacy viewer without installed-state data.
-            string magTxt = magId > 0 ? MeshFor((ushort)magId) : magId < 0 ? magMount.Mesh : null;
+            string magTxt = gunName == "bluntforce" ? null : magId > 0 ? MeshFor((ushort)magId) : magId < 0 ? magMount.Mesh : null;
             if (!string.IsNullOrEmpty(magTxt) && ContentProvider.ParseObj($"res://content/{magTxt}") is Godot.Mesh mm)
             {
                 var tex = magId > 0 ? TexFor((ushort)magId) : null;

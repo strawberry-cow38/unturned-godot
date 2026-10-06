@@ -557,7 +557,7 @@ namespace UnturnedGodot
         public static (string Mesh, Vector3 Hook) MagazineVisualFor(string gunName)
         {
             // This construction block also runs for held tools/food. They must not borrow a rifle's mag.
-            if (!IsKnownGun(gunName)) return (null, Vector3.Zero);
+            if (!IsKnownGun(gunName) || gunName == "bluntforce") return (null, Vector3.Zero);
             var visual = Visual(gunName);
             _magHooks ??= LoadMagHooks();
             if (_magHooks.TryGetValue(gunName, out var mount) && mount.Mesh != null) return (mount.Mesh, mount.Hook);
@@ -907,6 +907,7 @@ namespace UnturnedGodot
                         _arms?.RefreshAnimCaches();   // the clips were bound before these nodes existed; re-resolve or they stay inert
                     }
                     BuildSksAction(mi, mat);
+                    BuildMossbergPump(mi, mat);
                     // glowing sight dots: each peeled marker surface rendered emissive in its OWN source colour (ace red,
                     // avenger/desert_falcon green, cobra white). Children of the body so they ride its transform. Energy is
                     // tunable -- it pushes the dot into HDR so the viewport glow blooms it.
@@ -1098,7 +1099,7 @@ namespace UnturnedGodot
                     mi.AddChild(_shootSnd);
                     _shootSnd.Play();
                     _shootPoly = _shootSnd.GetStreamPlayback() as AudioStreamPlaybackPolyphonic;
-                    _reloadSnd = new AudioStreamPlayer { Stream = LoadOgg($"res://content/{gv.Reload}"), VolumeDb = -3f };
+                    _reloadSnd = new AudioStreamPlayer { Stream = LoadOgg(ReloadIsSingleShell ? "res://content/bluntforce_reload_single.ogg" : $"res://content/{gv.Reload}"), VolumeDb = -3f };
                     mi.AddChild(_reloadSnd);
                     _hammerSnd = new AudioStreamPlayer { Stream = LoadOgg($"res://content/{gv.Hammer}"), VolumeDb = -3f };   // the rack / bolt-cycle sound (source ItemGunAsset.hammer) -> plays with the Hammer animation
                     mi.AddChild(_hammerSnd);
@@ -1495,7 +1496,8 @@ namespace UnturnedGodot
         public void SetReloading(bool on, float speed = 1f)
         {
             _reloading = on;
-            if (on) StartSksAction("reload", speed); else CancelSksAction();
+            BeginMossbergInsert(on, speed);
+            if (on) StartSksAction("reload", speed); else { CancelSksAction(); if (ReloadIsSingleShell) _reloadSnd?.Stop(); }
             if (on) { _aiming = false; _arms?.Play(_reloadClip, speed); if (_reloadSnd != null) { _reloadSnd.PitchScale = speed; _reloadSnd.Play(); } }   // per-gun reload arm anim + sound, sped up by DEXTERITY
         }
         // The rechamber RACK (source Hammer clip) -- the 2nd half of an empty reload. Stays in the reloading state so ADS/fire stay blocked.
@@ -1505,6 +1507,7 @@ namespace UnturnedGodot
         {
             if (_hammerClip == null) return;
             StartSksAction("hammer", speed);
+            StartMossbergPump(speed);
             _arms?.Play(_hammerClip, speed);
             if (_hammerSnd != null) { _hammerSnd.PitchScale = speed; _hammerSnd.Play(); }   // the real rack / bolt-cycle sound (was missing) -- master
             _aiming = false;                                                // master: working the bolt/pump DROPS you out of ADS (SetAiming already blocks re-aim while _hammering; source canStartAim = !isHammering)
@@ -2386,6 +2389,7 @@ namespace UnturnedGodot
             }
 
             TickSksAction(delta);
+            TickMossbergPump(delta);
 
             // integrate ejected casings: gravity + tumble in the viewport world, despawn after ~1.3s
             for (int i = _casings.Count - 1; i >= 0; i--)

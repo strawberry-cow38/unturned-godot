@@ -1,0 +1,90 @@
+{
+  "Bluntforce_Hammer": {
+    "fps": 30.0,
+    "length": 0.46666669845581055,
+    "loop": false,
+    "pumpCenterLocalY": 0.6937,
+    "units": "meters",
+    "axis": "localGunY",
+    "negativeIsRear": true,
+    "interpolation": "linear",
+    "keys": [
+      {
+        "time": 0.0,
+        "localGunYDelta": 0.0
+      },
+      {
+        "time": 0.03333333507180214,
+        "localGunYDelta": -0.02525627915640838
+      },
+      {
+        "time": 0.06666667014360428,
+        "localGunYDelta": -0.09207941695218669
+      },
+      {
+        "time": 0.10000000149011612,
+        "localGunYDelta": -0.15991307178400732
+      },
+      {
+        "time": 0.10000000894069672,
+        "localGunYDelta": -0.1599130814317763
+      },
+      {
+        "time": 0.13333334028720856,
+        "localGunYDelta": -0.18608817290577712
+      },
+      {
+        "time": 0.1666666716337204,
+        "localGunYDelta": -0.18608817290577712
+      },
+      {
+        "time": 0.20000001788139343,
+        "localGunYDelta": -0.18608817290577712
+      },
+      {
+        "time": 0.23333334922790527,
+        "localGunYDelta": -0.18608817290577712
+      },
+      {
+        "time": 0.2666666805744171,
+        "localGunYDelta": -0.18608817290577712
+      },
+      {
+        "time": 0.30000001192092896,
+        "localGunYDelta": -0.18608817290577712
+      },
+      {
+        "time": 0.3333333432674408,
+        "localGunYDelta": -0.1692484153073927
+      },
+      {
+        "time": 0.36666667461395264,
+        "localGunYDelta": -0.12210536385841886
+      },
+      {
+        "time": 0.4000000059604645,
+        "localGunYDelta": -0.06225328612186476
+      },
+      {
+        "time": 0.40000003576278687,
+        "localGunYDelta": -0.06225324015588851
+      },
+      {
+        "time": 0.4333333373069763,
+        "localGunYDelta": -0.016215465851473376
+      },
+      {
+        "time": 0.4333333671092987,
+        "localGunYDelta": -0.016215441271135833
+      },
+      {
+        "time": 0.46666666865348816,
+        "localGunYDelta": -5.392906232692951e-09
+      },
+      {
+        "time": 0.46666669845581055,
+        "localGunYDelta": 0.0
+      }
+    ]
+  }
+}

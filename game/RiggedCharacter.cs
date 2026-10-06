@@ -1168,6 +1168,8 @@ namespace UnturnedGodot
         public string GunClipFor(string gunName, string suffix, string fallback = null)
         {
             if (string.IsNullOrEmpty(gunName)) return fallback;
+            if (gunName == "bluntforce" && suffix == "_Reload" && ClipLength("Bluntforce_Reload_OneShell") > 0f)
+                return "Bluntforce_Reload_OneShell";
             string own = char.ToUpper(gunName[0]) + gunName[1..] + suffix;
             if (ClipLength(own) > 0f) return own;
             string donor = Viewmodel.AnimationDonorFor(gunName);
@@ -1506,6 +1508,13 @@ namespace UnturnedGodot
 
         // The 36+36 distinct consumable Equip/Use clips (CE_n/CU_n) live in their OWN file so rig.json stays lean.
         // Only the 1P arms viewmodel needs them, so they're merged in for armsOnly builds (not the 3P body/zombies).
+        static Dictionary<string, ClipData> _mossbergAnims;
+        static Dictionary<string, ClipData> MossbergAnims()
+        {
+            if (_mossbergAnims != null) return _mossbergAnims;
+            using var f = FileAccess.Open("res://content/mossberg_anims.json", FileAccess.ModeFlags.Read);
+            return _mossbergAnims = f == null ? new() : JsonSerializer.Deserialize<Dictionary<string, ClipData>>(f.GetAsText(), JsonOpts) ?? new();
+        }
         static System.Collections.Generic.Dictionary<string, ClipData> _consumableAnims;
         static System.Collections.Generic.Dictionary<string, ClipData> ConsumableAnims()
         {
@@ -1762,6 +1771,8 @@ namespace UnturnedGodot
                         lib.AddAnimation(kv.Key, BuildAnim(kv.Value));
                         names.Add(kv.Key);
                     }
+                foreach (var kv in MossbergAnims())
+                    if (!names.Contains(kv.Key)) { lib.AddAnimation(kv.Key, BuildAnim(kv.Value)); names.Add(kv.Key); }
                 if (armsOnly)   // viewmodel: also load the per-item consumable eat/drink clips (CE_n/CU_n) and the throwables' draw/throw (TE_0/TU_0)
                 {
                     foreach (var kv in ConsumableAnims())

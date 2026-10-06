@@ -9038,7 +9038,7 @@ namespace UnturnedGodot
             _viewmodel?.SetReloading(true, rspeed);
             double full = (_viewmodel?.ReloadLength ?? ReloadTime) / rspeed;   // per-gun reload duration (masterkey 2.467s vs rifles 1.633s), sped up by DEXTERITY
             _hammerDur = _hammerPending ? (_viewmodel.HammerLength / rspeed) : 0.0;
-            _reloadTimer = Gun?.ShellReload == true ? full / System.Math.Max(1, max) : full;   // shell-fed shotguns (Pump/Break) load ONE shell per interval (see the reload tick + StartFire cancel)
+            _reloadTimer = Gun?.ShellReload == true && _viewmodel?.ReloadIsSingleShell != true ? full / System.Math.Max(1, max) : full;   // shell-fed shotguns (Pump/Break) load ONE shell per interval (see the reload tick + StartFire cancel)
             NetReload?.Invoke();   // D1: the server's ammo/reload clock (ReloadTicks) tracks the local reload
         }
 
@@ -11907,6 +11907,12 @@ namespace UnturnedGodot
                     {
                         if (!UsesShells || ConsumeShells(1) > 0) Ammo = System.Math.Min(Ammo + 1, max);
                         if (Ammo >= max || (UsesShells && CountShells() <= 0)) { _reloading = false; _viewmodel?.SetReloading(false); }
+                        else if (_viewmodel?.ReloadIsSingleShell == true)
+                        {
+                            _reloadTimer = _viewmodel.ReloadLength / _reloadSpeed;
+                            _viewmodel.SetReloading(true, _reloadSpeed);
+                            NetReload?.Invoke(); // one authoritative request for the next single insertion
+                        }
                         else _reloadTimer = (_viewmodel?.ReloadLength ?? ReloadTime) / System.Math.Max(1, max);   // next shell -- do NOT re-fire SetReloading (the reload anim + sound play ONCE at the start; replaying per shell was the "completely wrong" sound) (master)
                     }
                     else   // whole reload: break-action shotgun loads its barrels from the shell stack; else a mag-swap / whole refill

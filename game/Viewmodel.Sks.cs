@@ -35,6 +35,7 @@ namespace UnturnedGodot
             }
             _arms.Tick(time);
             TickSksAction(time);
+            TickMossbergPump(time);
             _capturePoseFrozen = true;
         }
 
