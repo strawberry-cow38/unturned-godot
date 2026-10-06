@@ -34,6 +34,8 @@ namespace UnturnedGodot
         /// <summary>Test seam: drive Busy without a GPU. The thing under test is the loading screen's REACTION to
         /// it -- that it waits, and that it stops waiting -- which needs no real shader compile to exercise.</summary>
         public static void SetBusyForTest(bool v) => Busy = v;
+        /// <summary>Test seam: forget that this process has warmed, so a test can drive the real Begin once more.</summary>
+        public static void ResetForTest() { _done = false; Busy = false; }
 
         public static void Begin(Node root)
         {

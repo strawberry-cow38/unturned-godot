@@ -191,6 +191,25 @@ namespace UnturnedGodot.Testing
             T.Check("...but the cover gives up waiting and drops anyway", !RootVisible(c));
             ShaderWarm.SetBusyForTest(false);
             c.QueueFree();
+            yield return Ticks(2);
+
+            // ---- 4. ⭐ THE REAL ORDER (strawberry 2026-10-05: "see if u can finally hide this screen within the loading
+            // screen"). Cases 2 and 3 set Busy BEFORE Finish -- the order no world build ever used: BuildFullWorld
+            // finished the cover and started the warm afterwards, so the cover dropped and THEN the quads appeared,
+            // through every one of these passing. This drives WorldBuilder.EndLoad, the method the build itself
+            // calls, with the REAL warm (not the test flag): the cover must still be up after it returns, because
+            // the warm it started is drawing, and must come down once the warm frees itself.
+            ShaderWarm.ResetForTest();
+            var d = new LoadingScreen();
+            World.AddChild(d);
+            yield return Ticks(2);
+            WorldBuilder.EndLoad(World, WorldMode.Playable, d, new Dictionary<string, double> { ["world"] = 12.0 }, null);
+            T.Check($"EndLoad started the real warm ({ShaderWarm.LastCount} shaders) and it is drawing", ShaderWarm.Busy && ShaderWarm.LastCount > 0);
+            T.Check("...so the cover is STILL UP when the build returns", RootVisible(d));
+            yield return Until(() => !ShaderWarm.Busy, 2.0);
+            yield return Until(() => !RootVisible(d), 2.0);
+            T.Check("...and drops once the warm has freed its quads", !RootVisible(d) && !ShaderWarm.Busy);
+            d.QueueFree();
             yield break;
         }
     }
