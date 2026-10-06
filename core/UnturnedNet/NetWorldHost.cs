@@ -83,6 +83,9 @@ namespace UnturnedGodot.Net
         public readonly ServerCooking Cooking;
         public readonly ServerFreezing Freezing;
         public readonly ServerCrafting CraftQueue;
+        /// <summary>v56: the item movers. Stepped by the HOST (a DelegateSimStep beside the container publish), not
+        /// from TickSimulation, so a bare harness that never asked for it is not moving items behind its back.</summary>
+        public readonly ServerItemMovers ItemMovers;
         /// <summary>v55: which locked recipes each player knows. See ServerBlueprints.</summary>
         public readonly ServerBlueprints BlueprintKnowledge = new ServerBlueprints();
         public readonly ServerNpcs Npcs = new ServerNpcs();   // v47: conversations, quests and trades, server-side
@@ -140,6 +143,7 @@ namespace UnturnedGodot.Net
             Cooking = new ServerCooking(Inventories, () => Session.CurrentTick);
             Freezing = new ServerFreezing(Inventories);
             CraftQueue = new ServerCrafting(Inventories);
+            ItemMovers = new ServerItemMovers(Deployables, Inventories);
             // destructible props (rubble): health/respawn authority; combat routes an object hit into it
             DestructibleHost = new ServerDestructibles(Destructibles, BroadcastEvent);
             Combat.DamageObject = (index, amount, tick) => DestructibleHost.DamageObject(index, amount, tick);
@@ -895,6 +899,9 @@ namespace UnturnedGodot.Net
         public event System.Action<WireConnectedEvent> WireConnected;
         public event System.Action<WireRemovedEvent> WireRemoved;
         public event System.Action<DeployableToggledEvent> DeployableToggled;
+        public event System.Action<PipeConnectedEvent> PipeConnected;                   // v56
+        public event System.Action<PipeRemovedEvent> PipeRemoved;                       // v56
+        public event System.Action<ItemDeviceConfiguredEvent> ItemDeviceConfigured;    // v56
         public event System.Action<WorldItemSpawnedEvent> WorldItemSpawned;
         public event System.Action<WorldItemSettledEvent> WorldItemSettled;
         public event System.Action<WorldItemRemovedEvent> WorldItemRemoved;
@@ -1000,6 +1007,13 @@ namespace UnturnedGodot.Net
                 e => { Deployables.ApplyWireRemoved(e, Applier.LastAppliedServerTick); WireRemoved?.Invoke(e); });
             Events.Register<DeployableToggledEvent>(ReplicationIds.EventDeployableToggled, DeployableToggledEvent.TryRead,
                 e => { Deployables.ApplyToggled(e, Applier.LastAppliedServerTick); DeployableToggled?.Invoke(e); });
+            // v56 item pipes: topology + config facts, applied straight onto the replica like the wire events
+            Events.Register<PipeConnectedEvent>(ReplicationIds.EventPipeConnected, PipeConnectedEvent.TryRead,
+                e => { Deployables.ApplyPipeConnected(e, Applier.LastAppliedServerTick); PipeConnected?.Invoke(e); });
+            Events.Register<PipeRemovedEvent>(ReplicationIds.EventPipeRemoved, PipeRemovedEvent.TryRead,
+                e => { Deployables.ApplyPipeRemoved(e, Applier.LastAppliedServerTick); PipeRemoved?.Invoke(e); });
+            Events.Register<ItemDeviceConfiguredEvent>(ReplicationIds.EventItemDeviceConfigured, ItemDeviceConfiguredEvent.TryRead,
+                e => { Deployables.ApplyItemConfigured(e, Applier.LastAppliedServerTick); ItemDeviceConfigured?.Invoke(e); });
             Events.Register<WorldItemSpawnedEvent>(ReplicationIds.EventWorldItemSpawned, WorldItemSpawnedEvent.TryRead,
                 e => { WorldItems.ApplySpawned(e, Applier.LastAppliedServerTick); WorldItemSpawned?.Invoke(e); });
             Events.Register<WorldItemSettledEvent>(ReplicationIds.EventWorldItemSettled, WorldItemSettledEvent.TryRead,
@@ -1285,8 +1299,8 @@ namespace UnturnedGodot.Net
         public bool SendUpgradeSkill(byte speciality, byte index)
             => SendCommand(ReplicationIds.CommandUpgradeSkill, new UpgradeSkillCommand { Speciality = speciality, Index = index }.Write);
 
-        public bool SendPlaceDeployable(ushort defId, Vector3 pos, float yawDegrees, byte page = 255, byte x = 0, byte y = 0)
-            => SendCommand(ReplicationIds.CommandPlaceDeployable, new PlaceDeployableCommand { DefId = defId, Pos = pos, YawDegrees = yawDegrees, Page = page, X = x, Y = y }.Write);
+        public bool SendPlaceDeployable(ushort defId, Vector3 pos, float yawDegrees, byte page = 255, byte x = 0, byte y = 0, uint targetId = 0)
+            => SendCommand(ReplicationIds.CommandPlaceDeployable, new PlaceDeployableCommand { DefId = defId, Pos = pos, YawDegrees = yawDegrees, Page = page, X = x, Y = y, TargetId = targetId }.Write);
 
         public bool SendSalvageDeployable(uint netId)
             => SendCommand(ReplicationIds.CommandSalvageDeployable, new SalvageDeployableCommand { NetId = netId }.Write);
@@ -1311,6 +1325,22 @@ namespace UnturnedGodot.Net
 
         public bool SendToggleDeployable(uint netId, bool on)
             => SendCommand(ReplicationIds.CommandToggleDeployable, new ToggleDeployableCommand { NetId = netId, On = on }.Write);
+
+        /// <summary>v56: run an item pipe. <paramref name="path"/> is the route nodes BETWEEN the two ports (world
+        /// points), at most ItemPipeRules.MaxNodes; the committed pipe renders when PipeConnected echoes back.</summary>
+        public bool SendConnectPipe(uint srcId, byte srcPort, uint dstId, byte dstPort, Vector3[] path)
+            => SendCommand(ReplicationIds.CommandConnectPipe,
+                           new ConnectPipeCommand { SrcId = srcId, SrcPort = srcPort, DstId = dstId, DstPort = dstPort, Path = path ?? System.Array.Empty<Vector3>() }.Write,
+                           bufferSize: 64 + 16 * ((path?.Length ?? 0) + 1));
+
+        public bool SendRemovePipe(uint pipeId)
+            => SendCommand(ReplicationIds.CommandRemovePipe, new RemovePipeCommand { PipeId = pipeId }.Write);
+
+        public bool SendConfigureItemDevice(uint netId, ItemDeviceConfig cfg)
+            => SendCommand(ReplicationIds.CommandConfigureItemDevice, new ConfigureItemDeviceCommand
+               {
+                   NetId = netId, Mode = (byte)cfg.Mode, W0 = cfg.Weights[0], W1 = cfg.Weights[1], W2 = cfg.Weights[2], Rate = cfg.Rate,
+               }.Write);
 
         public bool SendMoveItem(byte page0, byte x0, byte y0, byte page1, byte x1, byte y1, byte rot1)
             => SendCommand(ReplicationIds.CommandMoveItem, new MoveItemCommand { Page0 = page0, X0 = x0, Y0 = y0, Page1 = page1, X1 = x1, Y1 = y1, Rot1 = rot1 }.Write);

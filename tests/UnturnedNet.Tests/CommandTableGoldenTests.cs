@@ -111,6 +111,11 @@ namespace UnturnedNet.Tests
             // cell -- the client used to resolve an empty cell and send a plain move, which is the one
             // destination that cannot merge, so the fill-the-stacks rule only ever ran in singleplayer.
             [63] = "CommandQuickTransfer",
+            // v56: industrial item pipes. Each names two item ports and a route, a pipe, or a device -- never the
+            // items. Which items move and how many is the server's mover tick, so there is nothing to forge.
+            [64] = "CommandConnectPipe",
+            [65] = "CommandRemovePipe",
+            [66] = "CommandConfigureItemDevice",
         };
 
         static Dictionary<byte, string> Actual() =>

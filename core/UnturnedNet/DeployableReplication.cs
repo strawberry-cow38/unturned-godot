@@ -69,6 +69,14 @@ namespace UnturnedGodot.Net
         ///
         /// Def-table only, never on the wire, like FixtureKind.</summary>
         public bool LocalOnly;
+        /// <summary>v56: this def's ITEM ports, one ItemPortDir byte each, in the def's authored order -- the
+        /// sub-address a pipe end carries. Separate from Ports on purpose: those go to PowerSolver, these never
+        /// do. Def-table only, like everything else here, so only the index crosses the wire.</summary>
+        public byte[] ItemPorts = System.Array.Empty<byte>();
+        /// <summary>What the item router treats this device as (adapter / splitter / combiner / mover).</summary>
+        public ItemDeviceKind ItemDevice;
+        /// <summary>Splitters and movers carry a config (mode + weights / rate); nothing else does.</summary>
+        public bool HasItemConfig => ItemDevice == ItemDeviceKind.Splitter || ItemDevice == ItemDeviceKind.Mover;
     }
 
     /// <summary>Instance-scoped def registry (no static state -- test isolation for free).</summary>
@@ -96,11 +104,16 @@ namespace UnturnedGodot.Net
         // Page 255 = UNADDRESSED, and the handler falls back to the old id search. That is not a hedge -- the
         // console's `plant` command has no jar to name, so the fallback is the correct answer for it.
         public byte Page, X, Y;
+        /// <summary>v56: the CONTAINER a Storage Adapter's ghost snapped to (its crate NetId), 0 for everything else
+        /// and for a caller with no ghost (the console). The server binds THIS box if it is real and in reach --
+        /// nearest-by-origin binds the wrong one beside a 5 m shelf -- and falls back to nearest only when unnamed.</summary>
+        public uint TargetId;
 
         public void Write(NetPakWriter w)
         {
             w.WriteUInt16(DefId); NetWire.WritePos(w, Pos); w.WriteDegrees(YawDegrees, NetQuantization.YawBits);
             w.WriteUInt8(Page); w.WriteUInt8(X); w.WriteUInt8(Y);
+            w.WriteUInt32(TargetId);
         }
 
         public static bool TryRead(NetPakReader r, out PlaceDeployableCommand cmd)
@@ -110,7 +123,8 @@ namespace UnturnedGodot.Net
             if (!NetWire.ReadPos(r, out Vector3 pos)) return false;
             if (!r.ReadDegrees(out float yaw, NetQuantization.YawBits)) return false;
             if (!r.ReadUInt8(out byte pg) || !r.ReadUInt8(out byte px) || !r.ReadUInt8(out byte py)) return false;
-            cmd = new PlaceDeployableCommand { DefId = defId, Pos = pos, YawDegrees = yaw, Page = pg, X = px, Y = py };
+            if (!r.ReadUInt32(out uint target)) return false;
+            cmd = new PlaceDeployableCommand { DefId = defId, Pos = pos, YawDegrees = yaw, Page = pg, X = px, Y = py, TargetId = target };
             return true;
         }
     }
@@ -332,6 +346,14 @@ namespace UnturnedGodot.Net
 
             // solver outputs, refreshed by Solve() -- NEVER on the wire (§3.1: inputs only)
             public PowerPortResult[] Solved = System.Array.Empty<PowerPortResult>();
+
+            /// <summary>v56: a splitter's or mover's settings; null on every other def. Replicated with the entity
+            /// (behind a presence bit) and saved, so a late joiner opens the F panel on the real values.</summary>
+            public ItemDeviceConfig ItemConfig;
+            /// <summary>SERVER ONLY: the crate a Storage Adapter is bolted to (0 = unbound). Never on the wire and
+            /// not in the state hash -- a client has no use for it and does not have it. Crate NetIds are minted
+            /// per boot, so it is not saved either: WorldSave keeps the crate's POSITION and ApplyWorld re-binds.</summary>
+            public uint ItemCrateId;
         }
 
         public struct PowerPortResult
@@ -368,6 +390,9 @@ namespace UnturnedGodot.Net
 
         public int Count => _deployables.Count;
         public int WireCount => _wires.Count;
+
+        /// <summary>v56: the item-pipe graph. Rides this system's snapshot block after the wires -- see ItemPipeGraph.</summary>
+        public readonly ItemPipeGraph Pipes = new ItemPipeGraph();
 
         public bool TryGet(uint netId, out DeployableEntity e) => _deployables.TryGet(new NetId(netId), out e);
         public bool TryGetWire(uint wireId, out WireEntity w) => _wires.TryGet(new NetId(wireId), out w);
@@ -427,6 +452,32 @@ namespace UnturnedGodot.Net
             return false;
         }
 
+        /// <summary>v56: the pipe rules (strawberry 2026-10-06; the hose tool's limits, which she accepted as the
+        /// feel). Out -> In only, two different devices, both alive, one pipe per port, at most MaxNodes route
+        /// nodes, at most MaxLength of polyline, and the sender in reach of the end they are connecting.</summary>
+        public bool CanConnectPipe(uint srcId, byte srcPort, uint dstId, byte dstPort, Vector3[] path, Vector3 senderPos)
+        {
+            if (srcId == dstId) return false;   // a device piped into itself is a loop the router would have to break
+            if (!TryGet(srcId, out var src) || !TryGet(dstId, out var dst)) return false;
+            if (src.OnFire || dst.OnFire) return false;   // a burning device's sockets are as dead as its power ports
+            if (!Schema.TryGet(src.DefId, out var srcDef) || !Schema.TryGet(dst.DefId, out var dstDef)) return false;
+            if (srcPort >= srcDef.ItemPorts.Length || dstPort >= dstDef.ItemPorts.Length) return false;
+            if (srcDef.ItemPorts[srcPort] != (byte)ItemPortDir.Out || dstDef.ItemPorts[dstPort] != (byte)ItemPortDir.In) return false;
+            if (Pipes.IsPortPiped(srcId, srcPort) || Pipes.IsPortPiped(dstId, dstPort)) return false;   // one pipe per port
+            if (path == null || path.Length > ItemPipeRules.MaxNodes) return false;
+            foreach (var v in path) if (!ItemPipeRules.Finite(v)) return false;
+            if (ItemPipeRules.PolylineLength(src.Pos, path, dst.Pos) > ItemPipeRules.MaxLength + ItemPipeRules.LengthSlack) return false;
+            float near = Mathf.Min((src.Pos - senderPos).magnitude, (dst.Pos - senderPos).magnitude);
+            return near <= ItemPipeRules.Reach;
+        }
+
+        /// <summary>Is this a device whose config the F panel may set?</summary>
+        public bool IsConfigurable(uint netId, out DeployableEntity e)
+        {
+            if (!TryGet(netId, out e)) return false;
+            return Schema.TryGet(e.DefId, out var def) && def.HasItemConfig;
+        }
+
         public bool CanToggle(uint netId, out DeployableEntity e)
         {
             // The SP gate minus the cosmetic warmup-ramp buffer (client-side feel, not authority):
@@ -472,6 +523,7 @@ namespace UnturnedGodot.Net
                 Health = QuantizeScalar(Mathf.Clamp(health ?? def.Health, 1f, def.Health)),
                 Fuel = QuantizeScalar(Mathf.Min(fuel ?? def.FuelCapacity, def.FuelCapacity)),
                 LastChangedTick = Stamp(tick),
+                ItemConfig = def.HasItemConfig ? new ItemDeviceConfig() : null,   // a fresh mover runs at 32/s, a fresh splitter round-robins
             };
             _deployables.Add(id, e);
             _removedAtTick.Remove(id.Value);
@@ -489,8 +541,28 @@ namespace UnturnedGodot.Net
             foreach (var w in AllWires)
                 if (w.SrcId == netId || w.DstId == netId) cascaded.Add(w.NetIdValue);
             foreach (uint wid in cascaded) RemoveWireInternal(wid, tick);
+            // ...and its pipes. ServerTransactions takes them off FIRST so it can broadcast each removal; this is the
+            // floor under that, so no removal path (and no client applying a DeployableRemoved) leaves a pipe
+            // pointing at a NetId that no longer exists.
+            Pipes.ServerRemoveAllOn(netId, tick);
             return cascaded;
         }
+
+        /// <summary>v56: set a splitter's or mover's config. The caller has range-checked it (ItemDeviceConfig.IsValid);
+        /// this refuses anything that is not a configurable device and stamps the entity so the change deltas out.</summary>
+        public bool ServerConfigure(uint netId, ItemDeviceConfig cfg, long tick)
+        {
+            if (cfg == null || !IsConfigurable(netId, out var e)) return false;
+            if (e.ItemConfig != null && e.ItemConfig.SameAs(cfg)) return false;
+            e.ItemConfig = cfg.Clone();
+            e.LastChangedTick = Stamp(tick);
+            return true;
+        }
+
+        public ItemPipeEntity ServerConnectPipe(NetId pipeId, uint srcId, byte srcPort, uint dstId, byte dstPort, Vector3[] path, long tick)
+            => Pipes.ServerConnect(pipeId, srcId, srcPort, dstId, dstPort, path, tick);
+
+        public bool ServerRemovePipe(uint pipeId, long tick) => Pipes.ServerRemove(pipeId, tick);
 
         public WireEntity ServerConnectWire(NetId wireId, uint srcId, byte srcPort, uint dstId, byte dstPort, long tick)
         {
@@ -550,6 +622,12 @@ namespace UnturnedGodot.Net
 
         public void ApplyToggled(in DeployableToggledEvent evt, long tick) => ServerToggle(evt.NetId, evt.On, tick);
 
+        public void ApplyPipeConnected(in PipeConnectedEvent evt, long tick) => Pipes.ApplyConnected(evt, tick);
+
+        public void ApplyPipeRemoved(in PipeRemovedEvent evt, long tick) => Pipes.ApplyRemoved(evt, tick);
+
+        public void ApplyItemConfigured(in ItemDeviceConfiguredEvent evt, long tick) => ServerConfigure(evt.NetId, evt.Config, tick);
+
         // ---- the §3.1 payoff: the same pure solve, on whichever side owns this instance ----
 
         /// <summary>Feed the replicated graph to PowerSolver and store per-port Live/Powered/Draw on each
@@ -597,6 +675,7 @@ namespace UnturnedGodot.Net
             var wireIds = SortedIds(_wires);
             w.WriteUInt16((ushort)wireIds.Count);
             foreach (uint id in wireIds) { _wires.TryGet(new NetId(id), out var e); WriteWire(w, e); }
+            Pipes.WriteFull(w);   // v56: the pipe block rides LAST, after the wires
         }
 
         public void WriteDelta(NetPakWriter w, in ReplicationContext ctx, long baselineTick)
@@ -621,6 +700,8 @@ namespace UnturnedGodot.Net
             foreach (uint id in changedWires) { _wires.TryGet(new NetId(id), out var e); WriteWire(w, e); }
             WriteRemoved(w, _removedWiresAtTick, baselineTick);
 
+            Pipes.WriteDelta(w, baselineTick, ctx.ServerTick);   // v56: changed pipes + removals, same shape as the wires
+
             PruneTombstones(_removedAtTick, ctx.ServerTick);
             PruneTombstones(_removedWiresAtTick, ctx.ServerTick);
         }
@@ -642,7 +723,8 @@ namespace UnturnedGodot.Net
                 if (!ReadWire(r, out var e)) return;
                 _wires.Add(new NetId(e.NetIdValue), e);
             }
-            if (!full) ReadRemovals(r, _wires);
+            if (!full && !ReadRemovals(r, _wires)) return;
+            Pipes.Read(r, full);
         }
 
         public ulong StateHash()
@@ -658,6 +740,7 @@ namespace UnturnedGodot.Net
                 h = NetHash.MixFloat(h, e.Health);
                 h = NetHash.MixFloat(h, e.Fuel);
                 h = NetHash.MixByte(h, (byte)((e.ToggledOn ? 1 : 0) | (e.OnFire ? 2 : 0)));
+                if (e.ItemConfig != null) h = e.ItemConfig.Mix(h);   // ItemCrateId is server-only and deliberately NOT here
             }
             foreach (var w in AllWires)
             {
@@ -665,7 +748,7 @@ namespace UnturnedGodot.Net
                 h = NetHash.MixUInt32(h, w.SrcId); h = NetHash.MixByte(h, w.SrcPort);
                 h = NetHash.MixUInt32(h, w.DstId); h = NetHash.MixByte(h, w.DstPort);
             }
-            return h;
+            return Pipes.Mix(h);
         }
 
         // scalar wire grid: 12 int + 2 frac bits covers health/fuel (max 4095.75, 1/4 grain); quantized at
@@ -683,6 +766,11 @@ namespace UnturnedGodot.Net
             w.WriteClampedFloat(e.Fuel, 12, 2);
             w.WriteBit(e.ToggledOn);
             w.WriteBit(e.OnFire);
+            // v56: a presence bit and then the config, rather than a schema lookup deciding whether to read it --
+            // the parse must not depend on the two sides agreeing about a def, or a def drift becomes a desync of
+            // every entity after it instead of one wrong splitter.
+            w.WriteBit(e.ItemConfig != null);
+            if (e.ItemConfig != null) e.ItemConfig.Write(w);
         }
 
         static bool ReadEntity(NetPakReader r, out DeployableEntity e)
@@ -697,10 +785,13 @@ namespace UnturnedGodot.Net
             if (!r.ReadClampedFloat(12, 2, out float fuel)) return false;
             if (!r.ReadBit(out bool on)) return false;
             if (!r.ReadBit(out bool fire)) return false;
+            if (!r.ReadBit(out bool hasConfig)) return false;
+            ItemDeviceConfig cfg = null;
+            if (hasConfig && !ItemDeviceConfig.TryRead(r, out cfg)) return false;
             e = new DeployableEntity
             {
                 NetIdValue = id, DefId = defId, OwnerPlayerId = owner, Pos = pos, YawDegrees = yaw,
-                Health = health, Fuel = fuel, ToggledOn = on, OnFire = fire,
+                Health = health, Fuel = fuel, ToggledOn = on, OnFire = fire, ItemConfig = cfg,
             };
             return true;
         }

@@ -935,6 +935,15 @@ namespace UnturnedGodot.Net
             finally { _viewSyncing = false; }
         }
 
+        /// <summary>Public face of ServerRepaintViewers, by crate id: for a system OUTSIDE this class that edits a
+        /// crate's grid directly -- the item mover (v56) is the first. Without it a player standing in a container
+        /// watches the mover take nothing until they close and reopen it, and the next drag they make is
+        /// validated against a page the server no longer agrees with.</summary>
+        public void ServerRepaintCrateViewers(uint crateId)
+        {
+            if (_crates.TryGetValue(crateId, out var crate)) ServerRepaintViewers(crate);
+        }
+
         public void ServerCommitDirty(long tick)
         {
             foreach (var e in _byOwner.Values)

@@ -219,6 +219,13 @@ namespace UnturnedGodot.Net
                                                        // op, so the fill-partial-stacks-then-overflow rule lives in
                                                        // one place instead of only on the singleplayer branch.   // v49: a player says something in global chat. Text only -- who said it is the SENDING peer, never a field, or anyone can speak as anyone.
 
+        // v56 INDUSTRIAL ITEM PIPES (strawberry 2026-10-06). All three name things the player is looking at --
+        // two item ports and a route, a pipe, a device -- and nothing about the ITEMS: which items move, and how
+        // many, is decided by the server's mover tick and never asserted by a client.
+        public const byte CommandConnectPipe = 64;          // Out item port -> In item port, plus the route nodes (ItemPipeReplication.cs)
+        public const byte CommandRemovePipe = 65;           // the hose-style hold/tap gesture on a piped port
+        public const byte CommandConfigureItemDevice = 66;  // the F panel: a splitter's mode + weights, a mover's rate
+
         public const byte CommandToggleObjectDoor = 47;   // v37: swing a PROP's door -- a shipping container, a crossing gate arm. Distinct from CommandToggleDoor(32), which is a player-built Door with an owner, a lock and DoorLogic; a prop door has none of those and is a plain toggle with a reach check.
         public const byte CommandSitSeat = 46;       // v35: sit on a piece of furniture, or stand up (NetId 0 = stand). The client asks; the server owns who is in which seat, because two clients each deciding they took the same chair is exactly the "multiple people can't get in a car" failure that CommandEnterVehicle's occupancy check was added to stop. NOTE: 45 was taken by CommandTakeFromStorage in the same wave; ids are append-only and this one moved to 46 rather than either of us reusing a byte.
 
@@ -273,6 +280,9 @@ namespace UnturnedGodot.Net
         public const byte EventChatMessage = 46;   // v49: one chat line to every peer. Carries the speaker's id and the SERVER's sanitised text; ChatChannel.Server marks a line the server itself sent.
         public const byte EventVehicleExitRefused = 47;   // v54: to the REQUESTER only -- your door is blocked, you are still seated (strawberry 2026-10-04). A refusal changes no state, so without this fact a joined client's blocked exit is a key that silently does nothing.
         public const byte EventKnownBlueprints = 48;      // v55: to the OWNER only -- every locked recipe key they know, whole (ServerBlueprints). Sent on join and on every change.
+        public const byte EventPipeConnected = 49;        // v56: a pipe exists now (also rides the deployables snapshot; the event is the immediacy)
+        public const byte EventPipeRemoved = 50;          // v56: ...and one is gone (cut, or cascaded off a removed device)
+        public const byte EventItemDeviceConfigured = 51; // v56: a splitter's mode/weights or a mover's rate changed (also on the entity in the snapshot)
         public const byte EventObjectDoorState = 43;   // v37: a prop door's open bit. Its own event rather than reusing EventDoorState(34): that one carries a LOCK and is keyed into Door's id space, and two id spaces sharing one message is how a container's door ends up swinging a player's front door.
         public const byte EventSeatOccupied = 42;      // v35: a furniture seat's occupant changed (0 = freed) -- the EventBedClaimed(35) shape for seats, broadcast so everyone can pose the puppet before the next snapshot lands
         public const byte EventCraftQueue = 41;        // v31: to the OWNER only -- their pending craft jobs, so a timed server-side craft is visible at all. Before this the MP client showed NOTHING while a craft was in flight (NetCraft fires and the local queue is skipped), so an 8 s recipe read as "nothing happened".       // v29: to the OPENER only -- an appliance's on-bit and how much of its current fuel item is left, so the fuel progress bar counts down live rather than only at open (strawberry 2026-09-06: "as each fuel item burns, show a progress bar before its consumed"). Unicast because it is UI for the person standing at the oven; a burning campfire is not worth a broadcast.       // v25: a melee swing was accepted -- attacker + weak/strong, broadcast so puppets animate it (strawberry 2026-09-03)
