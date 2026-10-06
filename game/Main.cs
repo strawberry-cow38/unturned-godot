@@ -4898,6 +4898,17 @@ namespace UnturnedGodot
             AddChild(cam);
             cam.Position = new Vector3(1f, 4.2f, 15f);   // closer: at 26 m the effects were small in frame and read worse than they are
             cam.LookAt(new Vector3(-4f, 2.2f, -5f), Vector3.Up);
+            // UG_SMOKECAM=1: stand IN the cloud, which is the case master reported ("staring up close at the
+            // smoke particles"). ⭐ The showcase camera at 15 m cannot reproduce it and never could: the cost here
+            // is FILL RATE, so it scales with how much of the screen the puffs cover, and from 15 m away a 9 m
+            // cloud is a patch. The bug only exists at the distance the harness was not looking from.
+            if (System.Environment.GetEnvironmentVariable("UG_SMOKECAM") == "1")
+            {
+                cam.Position = new Vector3(-4f, 2.2f, -1.5f);
+                cam.LookAt(new Vector3(-4f, 2.2f, -6f), Vector3.Up);
+            }
+            if (System.Environment.GetEnvironmentVariable("UG_PERFPROBE") == "1")
+                AddChild(new FramePerfProbe { Tag = "smokeperf" });   // the A/B number; see FramePerfProbe
             Log.Print("[throwtest] 3 smokes + 2 flares thrown; UG_SHOTTIME picks the moment (fuse is " + SDG.Unturned.Throwables.FuseSeconds + "s)");
         }
 

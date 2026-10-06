@@ -45,9 +45,23 @@ namespace UnturnedGodot
                 InitialVelocityMin = 0.35f, InitialVelocityMax = 1.4f,
                 Gravity = new Vector3(0f, 0.35f, 0f),   // smoke RISES, slowly -- positive gravity, not the world's -9.81
                 DampingMin = 0.3f, DampingMax = 0.8f,
+                // ⚠ PUFF SIZE LEFT ALONE, AND THE NUMBERS ARE WORTH KNOWING. These read Radius*0.5 .. Radius*0.95
+                // while the comment above still says the puffs "were already 3-5 m across" -- true when written,
+                // when SmokeRadius was 6. It is now 9.36, so the same expressions grew them to 4.7-8.9 m and, since
+                // screen coverage goes as the SQUARE of size, each puff came to cover ~2.4x the pixels the count of
+                // 220 was chosen for. Shrinking them back to 3-5 m is worth ~2 ms of the ~3 ms left.
+                // ⭐ NOT TAKEN, because it is a LOOK change and the look is master's: the A/B render shows the
+                // clouds come out visibly smaller and blobbier, and master has tuned this mass twice. Offered to
+                // them with the pictures rather than decided here.
                 ScaleAmountMin = Radius * 0.5f, ScaleAmountMax = Radius * 0.95f,
                 AngleMin = -180f, AngleMax = 180f, AngularVelocityMin = -12f, AngularVelocityMax = 12f,
                 Mesh = new QuadMesh { Size = Vector2.One },
+                // ⚠ NOT CASTING. 220 quads 4.7-8.9 m across were each being rendered into the directional shadow
+                // map as well as into the frame -- and a billboard's shadow is a hard-edged rectangle that swings
+                // with the camera, which is wrong for smoke whichever way the frame rate goes. Turning it off is a
+                // saving AND a fix: the cloud still RECEIVES light and shadow, so master's "respect lighting"
+                // (2026-09-13) is untouched; it just stops stamping quad silhouettes on the ground.
+                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
                 MaterialOverride = new StandardMaterial3D
                 {
                     // ⚠ SHADED, AND IT USED TO BE UNSHADED (strawberry 2026-09-13: "make the smoke of smoke
@@ -60,14 +74,20 @@ namespace UnturnedGodot
                     //
                     // PerPixel is the shaded default, so the cloud now takes the sun, the moon and any nearby
                     // lamp -- which is also what makes a flare thrown into smoke look right.
-                    ShadingMode = BaseMaterial3D.ShadingModeEnum.PerPixel,
+                    ShadingMode = BaseMaterial3D.ShadingModeEnum.PerVertex,
                     // ...and smoke is not a shiny surface: without this the puffs pick up a specular highlight
                     // from the sun and read as wet plastic rather than as particulate.
                     SpecularMode = BaseMaterial3D.SpecularModeEnum.Disabled,
                     Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
                     BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles, BillboardKeepScale = true,
                     VertexColorUseAsAlbedo = true,
-                    AlbedoTexture = PlayerController.BlastSoftTex(), CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                    AlbedoTexture = PlayerController.BlastSoftTex(),
+                    // ⚠⚠ BACK, NOT DISABLED (master 2026-10-06: "smoke grenades killing fps when staring up close
+                    // at the smoke particles"). A BILLBOARD ALWAYS FACES THE CAMERA, so its back face is never the
+                    // visible one -- `Disabled` was shading every puff TWICE for a side that cannot be seen. At 220
+                    // puffs 4.7-8.9 m across, each covering most of the screen when you are inside the cloud, that
+                    // is half the fill rate of the whole effect spent on nothing.
+                    CullMode = BaseMaterial3D.CullModeEnum.Back,
                 },
             };
             // Fade IN as well as out. A puff that is born at full opacity pops; the smokescreen wants to look
