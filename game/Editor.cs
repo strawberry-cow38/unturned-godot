@@ -77,6 +77,14 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)
         {
+            // ⭐ THE EDITOR HAS NO PLAYER, AND THE WIND USED TO BE DRIVEN FROM ONE. Everything that sways -- grass,
+            // flowers, flags, and the power-line wires -- reads the `wind_vec` global, and the only thing writing it
+            // was PlayerController. So the whole editor was dead still, which nobody noticed because the GAME looked
+            // right. Driven from the editor camera so the wind is sampled where you are actually looking.
+            // ⚠ Before the IsDirty early-out below, or wind would only blow while there were unsaved changes.
+            var ecam = GetViewport()?.GetCamera3D();
+            WindField.PushGlobalsIfIdle(ecam != null ? ecam.GlobalPosition : GlobalPosition, delta);
+
             SecondsSinceSave += delta;
             if (!IsDirty) { _autosaveTimer = 0.0; return; }
             _autosaveTimer += delta;

@@ -63,6 +63,51 @@ namespace UnturnedGodot
         }
 
         // Unit XZ vector the wind blows TOWARD (a flag streams this way from its pole).
+        // ---- the `wind_vec` global -------------------------------------------------------------------------
+        //
+        // ⚠⚠ THIS USED TO LIVE ONLY IN PlayerController.UpdateGrassDisplacement, which means it only ran in a world
+        // that HAS a player -- and the MAP EDITOR does not have one. Every sway shader in the editor was therefore
+        // reading a global that nothing ever wrote, i.e. zero: grass, flowers, flags and now the power lines all
+        // stood perfectly still while you authored them. That is the "a global uniform reads 0 until someone
+        // registers AND drives it" trap from [[reference_godot_traps_index]], and it hid because the game looked
+        // right -- only the editor was wrong, and nobody sways-tests an editor.
+        //
+        // The wind is WindField's business, so the integration lives here and the callers just say "drive it".
+        static float _phase;
+        static long _lastPushFrame = long.MinValue / 2;   // so the first idle caller always wins
+
+        /// <summary>Drive `wind_vec` from an authoritative position -- the local player. Always pushes.</summary>
+        public static void PushGlobals(Vector3 at, double delta)
+        {
+            _lastPushFrame = Engine.GetFramesDrawn();
+            Integrate(at, delta);
+        }
+
+        /// <summary>Drive `wind_vec` only if nothing authoritative has for a few frames. This is what lets the
+        /// EDITOR and the render harnesses have wind without fighting the player for it in a live game -- the
+        /// player wins whenever there is one, and there is exactly one integrator either way.</summary>
+        public static void PushGlobalsIfIdle(Vector3 at, double delta)
+        {
+            if (Engine.GetFramesDrawn() - _lastPushFrame <= 2L) return;
+            Integrate(at, delta);
+        }
+
+        static void Integrate(Vector3 at, double delta)
+        {
+            float windZ = SampleWind(at);
+            // 0.55x dead calm .. 1.45x full gale, exactly 1.0x at the fair-weather 0.5, so sway already signed off
+            // keeps its rhythm. ⚠ ACCUMULATED, never `TIME * f(wind)`: strength changes every frame, and scaling a
+            // running clock by a changing factor re-maps the phase and makes every blade JUMP.
+            _phase += (float)delta * (0.55f + 0.9f * windZ);
+            // ⚠ Wrapped at 20*PI, which has to stay a WHOLE number of cycles for every consumer: a consumer reading
+            // `sin(k * w)` is only continuous across the wrap when k*10 is an integer. The existing ones use 1.3,
+            // 1.5 and 1.6; powerline_wire.gdshader uses 1.1 and 1.7. Pick multiples of 0.1 or the whole world
+            // stutters together once a cycle.
+            _phase = Mathf.PosMod(_phase, Mathf.Tau * 10f);
+            var wd = WindXZ(at);
+            RenderingServer.GlobalShaderParameterSet(GrassDisplacers.WindParam, new Vector4(wd.X, wd.Y, windZ, _phase));
+        }
+
         public static Vector2 WindXZ(Vector3 worldPos) { float a = WindAngle(worldPos); return new Vector2(Mathf.Cos(a), Mathf.Sin(a)); }
     }
 }

@@ -265,7 +265,7 @@ namespace UnturnedGodot
             bool windowBarrTest = false;
             string arenaSpawns = null;   // --arenaspawns[=POIname] : debug-render the 8 arena spawn points in a POI (master 2026-09-02)
             bool chatshot = false;
-            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, playground = false, objects = false, peidrive = false, craftmenu = false, stationtest = false, editorMode = false, impactTest = false, throwTest = false, doorGallery = false, lampTest = false, cctvTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false, netobserve = false, zombieTier = false, zflow = false, zhunt = false, zkill = false, zsound = false, zface = false, zpath = false;
+            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, playground = false, objects = false, peidrive = false, craftmenu = false, stationtest = false, editorMode = false, impactTest = false, throwTest = false, doorGallery = false, lampTest = false, cctvTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false, netobserve = false, zombieTier = false, zflow = false, zhunt = false, zkill = false, zsound = false, zface = false, zpath = false, powerLineTest = false;
             bool puppetAnim = false;   // --puppetanim: prove RemotePlayers locomotion animates
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
@@ -296,6 +296,7 @@ namespace UnturnedGodot
                 else if (arg == "--deploytest") deployTest = true;   // both deployables placed on a ground plane + a valid(blue)+invalid(red) ghost -> verify models/palette/stand-up/ghost materials
                 else if (arg == "--impacttest") impactTest = true;   // one bullet-impact FX per surface (concrete/metal/wood/dirt/grass/sand/water/blood) across a wall -> verify the reimplemented ImpactFx
                 else if (arg == "--throwtest") throwTest = true;     // thrown smoke + flares landing on a plain stage -> verify the throwable FX (--peiplay cannot show them: its script is in a jeep by 1.7 s)
+                else if (arg == "--powerlinetest") powerLineTest = true;   // --shot=OUT : three Power_Line_0 poles wired together -- proves the 4 grey anchors, the sag and the wind sway
                 else if (arg == "--doorgallery") doorGallery = true;   // --shot=OUT : lineup of the 12 ripped WOODEN door barricade models (Door/Doubledoor/Gate/Hatch x Birch/Maple/Pine) for master to eyeball
                 else if (arg == "--barricadetest") barricadeTest = true;   // barricades mounted on a STRUCTURE wall (upright, facing out) + a valid ghost + a floor barricade -> verify surface placement
                 else if (arg == "--barricadeplay") barricadePlay = true;   // INTERACTIVE: fly (hold RMB) + LMB-place barricades on a structure room -- test placement feel ([1-3]=def, Tab=mount, R=rotate)
@@ -582,6 +583,13 @@ namespace UnturnedGodot
                 return;
             }
 
+            if (powerLineTest)   // --powerlinetest --shot=OUT : the wire rig on real poles
+            {
+                GetWindow().Size = new Vector2I(1920, 1080);
+                _shotPath = shot; _shotRequested = shot;
+                BuildPowerLineTest();
+                return;
+            }
             if (doorGallery)   // --doorgallery --shot=OUT : a front-on lineup of the 12 ripped WOODEN door barricade models for master to eyeball
             {
                 GetWindow().Size = new Vector2I(2560, 1440);
@@ -4353,6 +4361,91 @@ namespace UnturnedGodot
         // tints adjacent, a name label under each + the form name above -- so master can eyeball every wooden door
         // model at once. The meshes are barricade SkinnedMeshRenderer leaves (tools/extract_wooden_doors.py);
         // barricades are authored lying flat, so a +90 X stands them up (override UG_DOORROT="x,y,z", no rebuild).
+        /// <summary>Three real Power_Line_0 poles, wired. The gate for the wire rig: it proves the four grey
+        /// anchors land on the grey pads, that the sag reads as a hanging wire, and that a span between poles at
+        /// DIFFERENT yaws still pairs outer-to-outer instead of crossing over.
+        ///
+        /// ⭐ The poles are placed with the REAL map basis -- Basis(Y,180-ey)*Basis(X,270) straight out of
+        /// WorldBuilder.PlaceObject, with the yaws PEI actually uses on this prop -- so the harness exercises the
+        /// shipping transform rather than a convenient upright one. UG_PLANCHORS=1 puts a marker on each anchor.</summary>
+        void BuildPowerLineTest()
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.47f, 0.60f, 0.76f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.60f, 0.63f, 0.68f),
+                AmbientLightEnergy = 0.9f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-44f, -34f, 0f), LightEnergy = 1.1f, ShadowEnabled = true });
+            var ground = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(400f, 400f) } };
+            ground.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.33f, 0.38f, 0.30f), Roughness = 1f };
+            AddChild(ground);
+
+            string odir = ProjectSettings.GlobalizePath("res://content/objects/");
+            var mesh = ObjMesh.Load(odir + PowerLineField.PoleMesh + ".obj");
+            if (mesh == null) { Log.Err("[powerline] Power_Line_0.obj missing"); return; }
+            var mat = new StandardMaterial3D { Roughness = 0.95f };
+            var img = new Image();
+            if (ContentProvider.LoadOk(img, odir + PowerLineField.PoleMesh + "_tex.png"))
+            {
+                mat.AlbedoTexture = ImageTexture.CreateFromImage(img);
+                mat.TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest;   // a 2x2 palette: linear would blend the four colours into mush
+            }
+
+            var field = new PowerLineField();
+            AddChild(field);
+
+            // PEI's own yaws on this prop, so neighbouring poles are NOT parallel -- which is the case that would
+            // expose anchor pairing being done by world position instead of by index.
+            float[] yaw = { 332f, 317f, 304f };
+            var at = new Vector3[] { new Vector3(-32f, 0f, 0f), Vector3.Zero, new Vector3(32f, 0f, 6f) };
+            for (int i = 0; i < 3; i++)
+            {
+                var rot = new Basis(new Vector3(0, 1, 0), Mathf.DegToRad(180f - yaw[i]))
+                        * new Basis(new Vector3(1, 0, 0), Mathf.DegToRad(270f))
+                        * new Basis(new Vector3(0, 0, 1), 0f);
+                var xf = new Transform3D(rot, at[i]);
+                AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = mat, Transform = xf });
+                field.AddPole(xf);
+            }
+            for (int i = 0; i + 1 < field.PoleCount; i++)
+                if (!field.Connect(i, i + 1, out string why)) Log.Err($"[powerline] connect {i}-{i + 1} refused: {why}");
+            field.Rebuild();
+            Log.Print($"[powerline] test: {field.PoleCount} poles, {field.SpanCount} spans");
+
+            if (System.Environment.GetEnvironmentVariable("UG_PLANCHORS") == "1")
+            {
+                var am = new StandardMaterial3D { AlbedoColor = new Color(1f, 0.1f, 0.1f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded };
+                var pts = new Vector3[4];
+                for (int i = 0; i < field.PoleCount; i++)
+                {
+                    field.AnchorsWorld(i, pts);
+                    foreach (var w in pts)
+                        AddChild(new MeshInstance3D { Mesh = new SphereMesh { Radius = 0.16f, Height = 0.32f }, MaterialOverride = am, Position = w });
+                }
+            }
+
+            var cam = new Camera3D { Fov = 50f, Far = 900f };
+            AddChild(cam);
+            // Default frames all three poles; UG_PLCAM="ex,ey,ez,tx,ty,tz" moves it without a rebuild, which is how
+            // the anchor close-up is taken. Same pattern as UG_REFLCAM.
+            Vector3 ce = new Vector3(0f, 13f, 86f), ct = new Vector3(0f, 7f, 0f);
+            var pc = System.Environment.GetEnvironmentVariable("UG_PLCAM");
+            if (!string.IsNullOrEmpty(pc))
+            {
+                var a = pc.Split(',');
+                if (a.Length == 6)
+                {
+                    ce = new Vector3(float.Parse(a[0], System.Globalization.CultureInfo.InvariantCulture), float.Parse(a[1], System.Globalization.CultureInfo.InvariantCulture), float.Parse(a[2], System.Globalization.CultureInfo.InvariantCulture));
+                    ct = new Vector3(float.Parse(a[3], System.Globalization.CultureInfo.InvariantCulture), float.Parse(a[4], System.Globalization.CultureInfo.InvariantCulture), float.Parse(a[5], System.Globalization.CultureInfo.InvariantCulture));
+                }
+            }
+            cam.LookAtFromPosition(ce, ct, Vector3.Up);
+        }
+
         void BuildDoorGallery()
         {
             var env = new Godot.Environment
