@@ -18,6 +18,8 @@
     83,
     84,
     85,
+    86,
+    87,
     88,
     89,
     90,
@@ -62,6 +64,6 @@
     1.036,
     -0.173
   ],
-  "wood_variant": "alternate mesh/texture only, no new item or loot entry",
+  "wood_variant": "Mossberg 500 Wooden / item 9148; grey pump; stock rear face wood; no loot entry",
   "assembly_triangle_count": 240
 }

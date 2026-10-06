@@ -38,3 +38,4 @@ rifle_birch	rifle_birch_sight.txt	0.0,0.2409,-0.1332
 rifle_pine	rifle_pine_sight.txt	0.0,0.2409,-0.1332
 rifle_maple	rifle_maple_sight.txt	0.0,0.2409,-0.1332
 mac10	mac10_sight.txt	0,-0.197,-0.188	1,1,1	mac10_sight_albedo.png
+bluntforce_wood	bluntforce_sight.txt	-0.0,0.0555,-0.102	0.118,0.118,0.118

@@ -1168,7 +1168,7 @@ namespace UnturnedGodot
         public string GunClipFor(string gunName, string suffix, string fallback = null)
         {
             if (string.IsNullOrEmpty(gunName)) return fallback;
-            if (gunName == "bluntforce" && suffix == "_Reload" && ClipLength("Bluntforce_Reload_OneShell") > 0f)
+            if (Viewmodel.IsMossbergGun(gunName) && suffix == "_Reload" && ClipLength("Bluntforce_Reload_OneShell") > 0f)
                 return "Bluntforce_Reload_OneShell";
             string own = char.ToUpper(gunName[0]) + gunName[1..] + suffix;
             if (ClipLength(own) > 0f) return own;

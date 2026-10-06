@@ -57,11 +57,12 @@ namespace UnturnedGodot
                 if (server.Players.TryGetHeldInput(owner, out var input) && input.HeldItemId == _itemId
                     && server.Inventories.TryGet(owner, out var entry) && entry.Inventory.getItemCount(_itemId) > 0)
                     return profile;
-                if (server.Players.TryGetHeldInput(owner, out var held) && held.HeldItemId == 112
-                    && server.Inventories.TryGet(owner, out var inventory) && inventory.Inventory.getItemCount(112) > 0)
+                if (server.Players.TryGetHeldInput(owner, out var held) && (held.HeldItemId == 112 || held.HeldItemId == 9148)
+                    && server.Inventories.TryGet(owner, out var inventory) && inventory.Inventory.getItemCount(held.HeldItemId) > 0)
                 {
                     if (!mossbergProfiles.TryGetValue(owner, out var mossbergProfile))
                         mossbergProfiles[owner] = mossbergProfile = (previous?.Invoke(owner) ?? server.Combat.DefaultGun).SingleShellReload("bluntforce", 8, 1);
+                    mossbergProfile.AssetName = held.HeldItemId == 9148 ? "bluntforce_wood" : "bluntforce";
                     float speed = server.Skills.TryGet(owner, out var skills) ? skills.Skills.DexterityReloadSpeed() : 1f;
                     // Avoid an extra tick from binary floating-point 1.1 * 50 = 55.00000000000001.
                     mossbergProfile.ReloadTicks = Math.Max(1, (int)Math.Ceiling(insertSeconds * 50 / speed - 1e-6));

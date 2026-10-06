@@ -17,8 +17,12 @@ One reload press still starts filling the tube, not a new one-R-per-shell contro
 
 The old dedicated-server reload command refilled to capacity. For **owned, held** Mossbergs only, the server now completes one shell per request, uses the same clip duration and authoritative dexterity, allows accepted fire to cancel the pending insertion, and handles a new request on the prior completion tick without losing its shell. Per-owner profile clones preserve the host's existing damage, cadence and ballistic tuning. Generic whole-magazine reload behavior and explicit host profile overrides remain intact. No wire-format/protocol change.
 
-## Wood-stock alternative
-`bluntforce_wood_gun.txt` / `bluntforce_wood_albedo.png` are an **alternate exported mesh/material, not a new spawnable item or loot entry**. Original stock shape is retained and recolored brown; pump stays dark and butt-end faces stay black. Stock UVs use an isolated atlas half; every original metal texel is unchanged. The standard black-stock gun remains the game default. User choice is still needed for replacing it versus registering a separate weapon/skin.
+## Mossberg 500 Wooden — item 9148
+The approved wood version is now a separate spawnable gun named **Mossberg 500 Wooden**, internal key `bluntforce_wood`. Use `give Mossberg 500 Wooden` or `give 9148`.
+
+It retains the original grey pump. All 30 stock faces, including the rear face, are wood. `bluntforce_wood_gun.txt` / `bluntforce_wood_albedo.png` use the same original shape; metal texels are unchanged. Its pump has its own original atlas binding instead of inheriting the widened wood atlas. World/paperdoll assembly also binds that original pump texture.
+
+The `.dat` is identical to the standard Mossberg except for ID/GUID. It shares shells, factory irons 114, mounts, animations, sounds and gameplay tuning. It has the same authoritative one-shell reload behavior. No new loot/recipe entry, sight item or wooden-pump option added. The standard black-stock gun is unchanged.
 
 ## Regeneration
 - `python3 tools/install_mossberg_parts.py` regenerates meshes, wood atlas and item bounds.
@@ -35,3 +39,9 @@ The old dedicated-server reload command refilled to capacity. For **owned, held*
 - Whole-body/pump geometry conservation and unchanged rear-ring corners verified independently; wood atlas metal half compared pixel-identical.
 
 Staging integration only; no main merge or live-server deployment.
+
+## Wooden-variant follow-up verification
+- Build passed, 0 errors. Three Mossberg tests passed, 34 checks total.
+- Added `gun.mossberg_wooden`: separate name/identity, same stats/feed/slot/mounts, shared sights, original-grey pump texture binding, moving pump, single-shell clip and authoritative reload clock.
+- Installed black/wood model comparison and rear-face detail rendered; actual wood viewmodel ADS captured through the game. Icons 112/114/9148 regenerated.
+- Raw `.dat` parity verified excluding ID/GUID; stock is all 30 faces in the brown atlas half, metal atlas half remains pixel-identical.

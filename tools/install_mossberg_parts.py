@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Split the existing Mossberg mesh without changing its shape; add a ramp front post.
-Original face indices/winding/normals/UVs retained. Wood is an alternate asset, not a new item.
+Original face indices/winding/normals/UVs retained. Wood is item 9148, with the original grey pump and matching gameplay.
 """
 from pathlib import Path
 import json,subprocess,hashlib,math
@@ -46,21 +46,24 @@ def main():
  gun=parse(SRC/'source_gun.txt');sight=parse(SRC/'source_sight.txt');assert len(gun['f'])==124 and len(sight['f'])==104
  pump=set(range(20));stock={i for i,f in enumerate(gun['f']) if i>=68 and all(gun['v'][v][1]<=-.14018 for v,t,n in f)};assert len(stock)==30
  body=sorted(set(range(124))-pump);assert len(body)==104
- # Leave the two rear-most cap triangles black as the original butt end.
- woodstock={i for i in stock if not all(gun['v'][v][1]<-.80 for v,t,n in gun['f'][i])}
+ # Stock, including both rear-end triangles, is all wood. Pump remains the original grey.
+ woodstock=stock
  write(OUT/'bluntforce_gun.txt',gun,body);write(OUT/'bluntforce_pump.txt',gun,sorted(pump))
  write(OUT/'bluntforce_wood_gun.txt',gun,body,wood=True,stock=woodstock)
+ write(OUT/'items/9148.txt',gun,body,wood=True,stock=woodstock)
  # The metal half is bit-for-bit the original atlas; only isolated stock faces point to the brown half.
  subprocess.run(['convert',str(OUT/'bluntforce_albedo.png'),'-size','256x256','xc:rgb(118,81,52)','+append',str(OUT/'bluntforce_wood_albedo.png')],check=True)
  append_front(sight);assert len(sight['f'])==116
  write(OUT/'bluntforce_sight.txt',sight,range(len(sight['f'])))
  write(OUT/'items/112.txt',gun,body);write(OUT/'items/114.txt',sight,range(len(sight['f'])))
+ (OUT/'items/9148.png').write_bytes((OUT/'bluntforce_wood_albedo.png').read_bytes())
  manifest_path=OUT/'items/items_manifest.json';manifest=json.loads(manifest_path.read_text())
- for ident,d,faceids,parts in [('112',gun,body,5),('114',sight,range(len(sight['f'])),2)]:
+ manifest['9148']=dict(manifest['112'],name='Mossberg 500 Wooden',obj='9148.txt',tex='9148.png')
+ for ident,d,faceids,parts in [('112',gun,body,5),('114',sight,range(len(sight['f'])),2),('9148',gun,body,5)]:
   verts=[d['v'][v] for fi in faceids for v,t,n in d['f'][fi]]
   lo=[min(v[k] for v in verts) for k in range(3)];hi=[max(v[k] for v in verts) for k in range(3)]
   manifest[ident]['box']=[hi[k]-lo[k] for k in range(3)];manifest[ident]['center']=[(hi[k]+lo[k])/2 for k in range(3)];manifest[ident]['parts']=parts
  manifest_path.write_text(json.dumps(manifest,separators=(',',':'))+'\n')
- report={'source_sha256' :hashlib.sha256((SRC/'source_gun.txt').read_bytes()).hexdigest(),'gun_triangles':104,'pump_triangles':20,'sights_triangles':116,'original_rear_sight_triangles':104,'new_front_triangles':12,'wood_stock_faces':sorted(woodstock),'pump_faces':list(range(20)),'front_tip_native':[0,1.036,-.173],'wood_variant':'alternate mesh/texture only, no new item or loot entry','assembly_triangle_count':240}
+ report={'source_sha256' :hashlib.sha256((SRC/'source_gun.txt').read_bytes()).hexdigest(),'gun_triangles':104,'pump_triangles':20,'sights_triangles':116,'original_rear_sight_triangles':104,'new_front_triangles':12,'wood_stock_faces':sorted(woodstock),'pump_faces':list(range(20)),'front_tip_native':[0,1.036,-.173],'wood_variant':'Mossberg 500 Wooden / item 9148; grey pump; stock rear face wood; no loot entry','assembly_triangle_count':240}
  (ROOT/'docs/MOSSBERG_PARTS.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))
 if __name__=='__main__':main()

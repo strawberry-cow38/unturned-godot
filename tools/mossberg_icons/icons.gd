@@ -37,10 +37,10 @@ func _ready()->void:
 	var light=DirectionalLight3D.new();light.light_energy=.65;light.rotation_degrees=Vector3(-40,-25,0);stage.add_child(light)
 	rig=Node3D.new();stage.add_child(rig)
 	cam=Camera3D.new();cam.projection=Camera3D.PROJECTION_ORTHOGONAL;cam.current=true;cam.near=.001;stage.add_child(cam)
-	for id in [112,114]:
+	for id in [112,114,9148]:
 		var objs:Array[MeshInstance3D]=[]
-		if id==112:
-			objs=[mesh_file("bluntforce_gun","bluntforce_albedo.png"),mesh_file("bluntforce_pump","bluntforce_albedo.png"),mesh_file("bluntforce_sight","mossberg_icon_irons.png",Vector3(0,.0555,-.102))]
+		if id==112 || id==9148:
+			objs=[mesh_file("bluntforce_wood_gun" if id==9148 else "bluntforce_gun","bluntforce_wood_albedo.png" if id==9148 else "bluntforce_albedo.png"),mesh_file("bluntforce_pump","bluntforce_albedo.png"),mesh_file("bluntforce_sight","mossberg_icon_irons.png",Vector3(0,.0555,-.102))]
 		else: objs=[mesh_file("bluntforce_sight","mossberg_icon_irons.png")]
 		var bb:AABB=objs[0].get_aabb()
 		for obj in objs: rig.add_child(obj);bb=bb.merge(AABB(obj.get_aabb().position+obj.position,obj.get_aabb().size))

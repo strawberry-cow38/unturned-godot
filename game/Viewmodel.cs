@@ -550,14 +550,14 @@ namespace UnturnedGodot
         /// <summary>Named animation reuse for a new authored gun. Own clips always win in GunClipFor;
         /// this donor is provisional, not a claim that MAC-10 clips were ripped.</summary>
         public static string AnimationDonorFor(string gunName)
-            => gunName == "mac10" ? "Bulldog" : null;
+            => gunName == "mac10" ? "Bulldog" : gunName == "bluntforce_wood" ? "Bluntforce" : null;
 
         /// <summary>The same magazine mount for 1P, paperdoll, remote players and dropped guns.
         /// A nonzero authored mount must not become Eaglefire's offset in one of those viewers.</summary>
         public static (string Mesh, Vector3 Hook) MagazineVisualFor(string gunName)
         {
             // This construction block also runs for held tools/food. They must not borrow a rifle's mag.
-            if (!IsKnownGun(gunName) || gunName == "bluntforce") return (null, Vector3.Zero);
+            if (!IsKnownGun(gunName) || IsMossbergGun(gunName)) return (null, Vector3.Zero);
             var visual = Visual(gunName);
             _magHooks ??= LoadMagHooks();
             if (_magHooks.TryGetValue(gunName, out var mount) && mount.Mesh != null) return (mount.Mesh, mount.Hook);

@@ -6,18 +6,27 @@ namespace UnturnedGodot
 {
     public partial class Viewmodel
     {
+        internal static bool IsMossbergGun(string name) => name == "bluntforce" || name == "bluntforce_wood";
         MeshInstance3D _mossbergPump;
         float[][] _mossbergPumpKeys;
         float _mossbergPumpTime = -1f, _mossbergPumpSpeed = 1f;
         Node3D _mossbergShell;
         float _mossbergInsertTime = -1f, _mossbergInsertSpeed = 1f;
-        public bool ReloadIsSingleShell => GunName == "bluntforce" && _reloadClip == "Bluntforce_Reload_OneShell";
+        public bool ReloadIsSingleShell => IsMossbergGun(GunName) && _reloadClip == "Bluntforce_Reload_OneShell";
         void BuildMossbergPump(MeshInstance3D body, StandardMaterial3D material)
         {
-            if (!IsGunViewmodel || GunName != "bluntforce") return;
+            if (!IsGunViewmodel || !IsMossbergGun(GunName)) return;
             var mesh = ContentProvider.ParseObj("res://content/bluntforce_pump.txt");
             if (mesh == null) return;
-            _mossbergPump = new MeshInstance3D { Name = "MossbergPump", Mesh = mesh, MaterialOverride = material };
+            // Wood body uses a widened atlas; the grey pump must retain its original atlas/UV pairing.
+            var pumpMaterial = material;
+            if (GunName == "bluntforce_wood")
+            {
+                pumpMaterial = (StandardMaterial3D)material.Duplicate();
+                pumpMaterial.AlbedoTexture = LoadTex("res://content/bluntforce_albedo.png");
+                pumpMaterial.AlbedoColor = Colors.White;
+            }
+            _mossbergPump = new MeshInstance3D { Name = "MossbergPump", Mesh = mesh, MaterialOverride = pumpMaterial };
             body.AddChild(_mossbergPump);
             var hand = new BoneAttachment3D { Name = "MossbergReloadHand", BoneName = "Left_Hand" };
             _arms.Skeleton.AddChild(hand);

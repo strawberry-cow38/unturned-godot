@@ -199,6 +199,7 @@ namespace UnturnedGodot
         public static int DefaultIronsId(string gunItemName)
         {
             if (string.IsNullOrEmpty(gunItemName)) return -1;
+            if (string.Equals(gunItemName, "Mossberg 500 Wooden", System.StringComparison.OrdinalIgnoreCase)) return 114;
             string want = gunItemName + " Iron Sights";
             foreach (var a in Assets.all())
                 if (a.type == EItemType.SIGHT && string.Equals(a.itemName, want, System.StringComparison.OrdinalIgnoreCase))
@@ -267,7 +268,7 @@ namespace UnturnedGodot
             var parts = new System.Collections.Generic.List<(string, Godot.Mesh, Godot.Vector3, Godot.Color, Godot.Texture2D)>();
             if (string.IsNullOrEmpty(gunName)) return parts;
             var gv = Viewmodel.VisualForTest(gunName);
-            if (gunName == "bluntforce" && ContentProvider.ParseObj("res://content/bluntforce_pump.txt") is Godot.Mesh pump)
+            if (Viewmodel.IsMossbergGun(gunName) && ContentProvider.ParseObj("res://content/bluntforce_pump.txt") is Godot.Mesh pump)
                 parts.Add(("Pump", pump, Godot.Vector3.Zero, Godot.Colors.White,
                     ContentProvider.TextureCached(Godot.ProjectSettings.GlobalizePath("res://content/bluntforce_albedo.png"))));
             string sightTxt = sightId > 0 ? MeshFor((ushort)sightId) : gv.Sight;
@@ -281,7 +282,7 @@ namespace UnturnedGodot
             }
             var magMount = Viewmodel.MagazineVisualFor(gunName);
             // An explicitly empty slot (0) has no magazine; -1 is a legacy viewer without installed-state data.
-            string magTxt = gunName == "bluntforce" ? null : magId > 0 ? MeshFor((ushort)magId) : magId < 0 ? magMount.Mesh : null;
+            string magTxt = Viewmodel.IsMossbergGun(gunName) ? null : magId > 0 ? MeshFor((ushort)magId) : magId < 0 ? magMount.Mesh : null;
             if (!string.IsNullOrEmpty(magTxt) && ContentProvider.ParseObj($"res://content/{magTxt}") is Godot.Mesh mm)
             {
                 var tex = magId > 0 ? TexFor((ushort)magId) : null;

@@ -85,3 +85,38 @@ namespace UnturnedGodot.Testing
         }
     }
 }
+
+namespace UnturnedGodot.Testing
+{
+    public sealed class MossbergWoodenTests : GameTest
+    {
+        public override string Name => "gun.mossberg_wooden";
+        public override IEnumerable<Step> Run()
+        {
+            ItemCatalog.RegisterAll();
+            var wood=Assets.find(9148);var standard=Assets.find(112);
+            T.Check("wood version is separately spawnable by its requested name",wood?.itemName=="Mossberg 500 Wooden" && wood.gunName=="bluntforce_wood" && standard.itemName=="Mossberg 500");
+            T.Check("same feed, capacity and slot",wood.gunCaliber==standard.gunCaliber && wood.gunAmmoMax==standard.gunAmmoMax && wood.slot==standard.slot);
+            var a=GunDef.FromDatText(System.IO.File.ReadAllText(ProjectSettings.GlobalizePath("res://content/bluntforce.dat")));
+            var b=GunDef.FromDatText(System.IO.File.ReadAllText(ProjectSettings.GlobalizePath("res://content/bluntforce_wood.dat")));
+            T.Check("same gameplay tuning",a.Damage==b.Damage && a.AmmoMax==b.AmmoMax && a.Firerate==b.Firerate && a.Range==b.Range && a.Action==b.Action && a.Caliber==b.Caliber);
+            T.Check("shares factory sights rather than inventing another sight item",AttachmentFit.DefaultIronsId(wood.itemName)==114);
+            var visual=Viewmodel.VisualForTest("bluntforce_wood");var baseVisual=Viewmodel.VisualForTest("bluntforce");
+            T.Check("mounts are identical",visual.AimHook==baseVisual.AimHook && visual.MuzzleHook==baseVisual.MuzzleHook && visual.SightPos==baseVisual.SightPos);
+            var vm=new Viewmodel{GunName="bluntforce_wood"};World.AddChild(vm);yield return Ticks(4);
+            T.Check("same single-shell reload",vm.ReloadIsSingleShell && Math.Abs(vm.ReloadLength-1.1f)<.001f && Math.Abs(vm.HammerLength-.4666667f)<.001f);
+            var nodes=vm.FindChildren("*","MeshInstance3D",true,false).OfType<MeshInstance3D>().ToList();
+            var pump=nodes.FirstOrDefault(n=>n.Name=="MossbergPump");
+            T.Check("pump keeps original grey atlas, not brown wood atlas",pump?.MaterialOverride is StandardMaterial3D mat && mat.AlbedoTexture?.GetImage().GetWidth()==256);
+            T.Check("wood body uses its own atlas",nodes.Any(n=>n.Mesh?.GetFaces().Length==104*3 && n.MaterialOverride is StandardMaterial3D mat && mat.AlbedoTexture?.GetImage().GetWidth()==512));
+            vm.CaptureAnimationPose("hammer",.2f);T.Check("wood gun's grey pump still moves",vm.MossbergPumpOffsetForTest<-.16f);
+            var parts=AttachmentFit.PartsFor("bluntforce_wood",114,113,0);
+            T.Check("parked world parts are pump and irons, never an external shell mag",parts.Any(p=>p.Slot=="Pump") && parts.Any(p=>p.Slot=="Sight") && !parts.Any(p=>p.Slot=="Magazine"));
+            var server=new NetWorldServer(new MemServerTransport(new MemNetwork(seed:10)),contentHash:NetContent.Hash);AuthoredGunProfiles.Install(server);
+            server.Players.ServerSpawn(new NetId(1),1,UnityEngine.Vector3.zero,0);server.Players.ServerQueueInput(1,new MoveInput{Seq=1,HeldItemId=9148});
+            var inv=server.Inventories.ServerAdd(1,0);inv.Inventory.tryAddItemAuto(new Item(9148),out _);
+            var profile=server.Combat.GunFor(1);T.Check("wood gun uses same authoritative single-shell clock",profile.AssetName=="bluntforce_wood" && profile.ReloadOneShell && profile.ReloadTicks==55 && profile.MagCapacity==8);
+            yield return Ticks(1);
+        }
+    }
+}
