@@ -9833,6 +9833,59 @@ namespace UnturnedGodot
         int _vertexLightQuiet = -1;   // -1 = not started; counts consecutive passes that changed nothing
 
         public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubProcess
+        // UG_LADDERCLIMB=<seconds> (render seam, 2026-10-05: "the 1p arm animation should attach to the ladder face").
+        // Once the PEI world is up: find the real ladder nearest the player, stand them at its foot on the open side,
+        // facing it, and hold forward for that many seconds -- so a --shot with UG_SHOTTIME catches the 1P hands on
+        // real rungs. UG_LADDERPITCH=<deg> tilts the view (positive = up). Off unless set.
+        bool _ladderSeamPlaced; double _ladderSeamLeft = -1;
+        void LadderClimbSeam(double delta)
+        {
+            var env = System.Environment.GetEnvironmentVariable("UG_LADDERCLIMB");
+            if (string.IsNullOrEmpty(env) || !_peiPlayable || _pdPlayer == null || !_worldReady) return;
+            if (!_ladderSeamPlaced)
+            {
+                _ladderSeamPlaced = true;
+                StaticBody3D best = null; float bestD = float.MaxValue; var from = _pdPlayer.GlobalPosition;
+                var stack = new System.Collections.Generic.Stack<Node>(); stack.Push(this);
+                while (stack.Count > 0)
+                {
+                    var n = stack.Pop();
+                    if (n is StaticBody3D sb && sb.HasMeta(Ladder.Meta))
+                    { float d = sb.GlobalPosition.DistanceSquaredTo(from); if (d < bestD) { bestD = d; best = sb; } }
+                    foreach (var c in n.GetChildren()) stack.Push(c);
+                }
+                if (best == null) { Log.Err("[ladderclimb] no ladder in the world"); return; }
+                var nrm = Ladder.FaceAxis(best); nrm = new Vector3(nrm.X, 0f, nrm.Z).Normalized();
+                // the open side: the one a ray from the ladder's middle does not hit within a metre
+                var space = _pdPlayer.GetWorld3D().DirectSpaceState;
+                Vector3 mid = best.GlobalPosition;
+                bool Blocked(Vector3 dir)
+                {
+                    var q = PhysicsRayQueryParameters3D.Create(mid + dir * 0.2f, mid + dir * 1.2f);
+                    q.Exclude = new Godot.Collections.Array<Rid> { best.GetRid() };
+                    return space.IntersectRay(q).Count > 0;
+                }
+                if (Blocked(nrm) && !Blocked(-nrm)) nrm = -nrm;
+                var stand = mid + nrm * 0.65f + Vector3.Up * 2f;
+                var dq = PhysicsRayQueryParameters3D.Create(stand, stand + Vector3.Down * 12f);
+                var dh = space.IntersectRay(dq);
+                if (dh.Count > 0) stand = (Vector3)dh["position"];
+                _pdPlayer.TeleportTo(stand + Vector3.Up * 0.05f);
+                _pdPlayer.Rotation = new Vector3(0f, Mathf.Atan2(nrm.X, nrm.Z), 0f);   // basis -Z = -nrm: facing the ladder
+                if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_LADDERPITCH"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float pitch))
+                    _pdPlayer.DebugSetPitch(pitch);
+                _ladderSeamLeft = double.TryParse(env, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var secs) ? secs : 1.5;
+                _pdPlayer.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
+                Log.Print($"[ladderclimb] ladder at {best.GlobalPosition} ({Mathf.Sqrt(bestD):0} m away), standing at {stand} facing it, climbing {_ladderSeamLeft:0.0}s");
+                return;
+            }
+            if (_ladderSeamLeft > 0 && (_ladderSeamLeft -= delta) <= 0)
+            {
+                _pdPlayer.ScriptedInput = null;
+                Log.Print($"[ladderclimb] stopped: y={_pdPlayer.GlobalPosition.Y:0.00} stance={_pdPlayer.Stance}");
+            }
+        }
+
         public void HubProcess(double delta)
         {
             // UG_PERFPROBE=1: frame cost, once a second. The A/B instrument -- master 2026-09-11 asked for
@@ -10270,6 +10323,7 @@ namespace UnturnedGodot
             // viewmodel camera, which looks straight down the barrel.
             if (_peiPlayable && _pdPlayer != null && _worldReady && !_pdTpDone && System.Environment.GetEnvironmentVariable("UG_TP") == "1")
             { _pdTpDone = true; _pdPlayer.DebugSetFirstPerson(false); }
+            LadderClimbSeam(delta);   // UG_LADDERCLIMB=<seconds>: put the player on the nearest real ladder and climb it, for a 1P shot of the hands
             if (_peiPlayable && _pdPlayer != null && System.Environment.GetEnvironmentVariable("UG_AUTOFIRE") == "1" && _worldReady && _pdFireT++ % 8 == 0) _pdPlayer.Fire();   // peidrive: fire at the real terrain -> verify the SurfAt material impacts render
             if (_rigDir != null)
             {

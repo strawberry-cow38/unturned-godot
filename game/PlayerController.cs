@@ -12532,10 +12532,10 @@ namespace UnturnedGodot
                 // pressing down -- lets go and swims, so the rungs are never something you hang from below the
                 // surface and never something you can descend into the water on. Ladder.ClimbVelocity is fed
                 // the same axis, so a gate of "> 0" is exactly "the climb this tick would be upward".
-                if (climbInput > LadderExitInput && StepLadder()) _move.Stance = EPlayerStance.CLIMB;
+                if (climbInput > LadderExitInput && StepLadder(climbInput)) _move.Stance = EPlayerStance.CLIMB;
                 else { LadderDetach(); _move.Stance = EPlayerStance.SWIM; }   // feet+1.25 body probe submerged -> swim (PlayerStance.cs:636-673)
             }
-            else if (!NetAvatar && StepLadder()) _move.Stance = EPlayerStance.CLIMB;
+            else if (!NetAvatar && StepLadder(climbInput)) _move.Stance = EPlayerStance.CLIMB;
             else if (!NetAvatar && FeetUnderwater && (_move.Stance == EPlayerStance.CROUCH || _move.Stance == EPlayerStance.PRONE))
                 _move.Stance = EPlayerStance.STAND;  // wading (feet wet, not deep enough to swim) blocks crouch/crawl (PlayerStance.cs:340-346, 865-869)
             UpdateHitbox(_move.Stance);   // resize the collision capsule to match the stance (source HeightForStance)
@@ -12575,9 +12575,10 @@ namespace UnturnedGodot
         /// ladder, must be its front/back FACE rather than an edge, and the ladder must be upright. First
         /// attach snaps you to the ladder's centre line. Losing the probe drops you off, which is what makes
         /// stepping sideways off a ladder work without any explicit dismount.</summary>
-        bool StepLadder()
+        bool StepLadder(float climbInput = 0f)
         {
             if (_ladderCd > 0f) _ladderCd -= (float)GetPhysicsProcessDeltaTime();
+            if (_mantling) return true;     // stepping off the top: the CLIMB move branch owns us until we land
             var space = GetWorld3D()?.DirectSpaceState;
             if (space == null) return LadderDetach();
 
@@ -12597,6 +12598,23 @@ namespace UnturnedGodot
             var q = PhysicsRayQueryParameters3D.Create(from, from + fwd * Ladder.ProbeDist);
             q.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
             var hit = space.IntersectRay(q);
+            // THE TOP OF THE LADDER IS NOT A DISMOUNT (strawberry 2026-10-05: "make ladders a lot safer lol. you tend
+            // to fucking plummet when reaching the top sometimes"). The hold probe clearing the ladder's top used to
+            // be treated like stepping sideways off it: detach, STAND, and whatever was or wasn't under you decided
+            // the rest. With the feet still 0.1 m below the top and nothing carrying you over the edge, "the rest"
+            // was usually the ground. Now the top is its own case, told apart by a second probe lower down that
+            // still finds the SAME ladder: climbing on steps you off onto whatever is there (ladder.top_*), and
+            // with nothing there you simply stay at the top, because a ladder that ends in air is not a reason to
+            // fall off it.
+            if (_climbing && (hit == null || hit.Count == 0 || !hit.ContainsKey("collider") || !IsLadderHit(hit))
+                && LadderTopBelow(space, from, fwd, out var topBody, out float ladderTop))
+            {
+                _ladderBody = topBody;
+                if (climbInput > LadderExitInput && TryBeginTopOut(space, fwd, ladderTop)) return true;
+                _ladderAtTop = true;    // hold here: the CLIMB branch stops the upward velocity
+                return true;
+            }
+            _ladderAtTop = false;
             // Any of these failing means "not on a ladder", and the caller turns that into STAND -- which is
             // the whole dismount mechanism: step sideways, the probe misses, you are walking again.
             if (hit == null || hit.Count == 0 || !hit.ContainsKey("collider")) return LadderDetach();
@@ -12641,7 +12659,129 @@ namespace UnturnedGodot
             if (_climbing) _ladderCd = LadderReattachCooldown;
             _climbing = false;
             _ladderBody = null;
+            _ladderAtTop = false;
+            _mantling = false;
             return false;
+        }
+
+        // ---- THE TOP OF A LADDER ---------------------------------------------------------------------------------
+        bool _ladderAtTop;          // attached, and the ladder ends between the two probes: no further up
+        bool _mantling;             // stepping off the top onto a surface, along _mantlePath
+        Vector3[] _mantlePath;      // rise -> across -> down; segments are walked at MantleSpeed
+        float _mantleDist, _mantleLen;
+        const float MantleSpeed = 2.6f;          // m/s along the path -- a quick step, about the climb's own pace
+        const float TopProbeDrop = 0.45f;        // the second probe, this far below the hold probe
+        const float MantleReachUp = 1.2f;        // a surface up to this far above the feet can be stepped onto
+        const float MantleReachDown = 0.8f;      // ...or this far below them (anything lower is a drop, not a step)
+        /// <summary>Test seams: holding at the top / stepping off it.</summary>
+        public bool DebugLadderAtTop => _ladderAtTop;
+        public bool DebugMantling => _mantling;
+
+        static bool IsLadderHit(Godot.Collections.Dictionary hit)
+            => hit["collider"].As<GodotObject>() is Node3D b && b.HasMeta(Ladder.Meta) && Ladder.IsClimbable((Vector3)hit["normal"], Ladder.FaceAxis(b));
+
+        /// <summary>Is the ladder we are on still in front of us a little LOWER down? Then the hold probe missed
+        /// because we reached its top, not because we left it. Returns the ladder and the world height of its top.</summary>
+        bool LadderTopBelow(PhysicsDirectSpaceState3D space, Vector3 holdFrom, Vector3 fwd, out Node3D body, out float top)
+        {
+            body = null; top = 0f;
+            var from = holdFrom - Vector3.Up * TopProbeDrop;
+            var q = PhysicsRayQueryParameters3D.Create(from, from + fwd * Ladder.ProbeDist);
+            q.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
+            var hit = space.IntersectRay(q);
+            if (hit == null || hit.Count == 0 || !hit.ContainsKey("collider") || !IsLadderHit(hit)) return false;
+            body = hit["collider"].As<GodotObject>() as Node3D;
+            top = LadderTopY(body, holdFrom.Y);
+            return true;
+        }
+
+        /// <summary>World height of a ladder's top: the highest corner of its box collider (WorldBuilder gives every
+        /// ladder a solid box). A ladder without one falls back to the hold probe's height, the best we know.</summary>
+        static float LadderTopY(Node3D body, float fallback)
+        {
+            foreach (var c in body.GetChildren())
+                if (c is CollisionShape3D cs && cs.Shape is BoxShape3D box)
+                {
+                    var e = box.Size * 0.5f; float best = float.MinValue;
+                    for (int i = 0; i < 8; i++)
+                    {
+                        var corner = new Vector3((i & 1) != 0 ? e.X : -e.X, (i & 2) != 0 ? e.Y : -e.Y, (i & 4) != 0 ? e.Z : -e.Z);
+                        best = Mathf.Max(best, (cs.GlobalTransform * corner).Y);
+                    }
+                    return best;
+                }
+            return fallback;
+        }
+
+        PhysicsShapeQueryParameters3D _mantleFitQ;
+        bool StandingFits(PhysicsDirectSpaceState3D space, Vector3 feet)
+        {
+            const float h = PlayerMovementDef.HEIGHT_STAND - 0.1f, r = 0.28f;
+            _mantleFitQ ??= new PhysicsShapeQueryParameters3D { Shape = new CapsuleShape3D { Height = h, Radius = r }, CollisionMask = 1u << 0 };
+            _mantleFitQ.Transform = new Transform3D(Basis.Identity, feet + Vector3.Up * (0.06f + h * 0.5f));
+            _mantleFitQ.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
+            return space.IntersectShape(_mantleFitQ, 1).Count == 0;
+        }
+
+        /// <summary>Find somewhere to step off onto, and start stepping. Looks BEYOND the ladder first (the ladder is
+        /// on a wall and the roof is past it -- the normal case, and the one a body could never reach before: the
+        /// ladder's own box was in the way), then where you are, then behind you (a platform on the climbing side).
+        /// The path rises to clear both the ladder top and the surface, crosses, and sets down; every corner of it
+        /// must have room for a standing body, or there is no step and you simply hold at the top.</summary>
+        bool TryBeginTopOut(PhysicsDirectSpaceState3D space, Vector3 fwd, float ladderTop)
+        {
+            var flat = new Vector3(fwd.X, 0f, fwd.Z);
+            if (flat.LengthSquared() < 1e-6f) return false;
+            flat = flat.Normalized();
+            var feet = GlobalPosition;
+            foreach (float d in new[] { 0.95f, 1.2f, 1.45f, 0f, -0.4f, -0.75f })
+            {
+                var col = feet + flat * d;
+                var rq = PhysicsRayQueryParameters3D.Create(new Vector3(col.X, ladderTop + MantleReachUp + 0.4f, col.Z),
+                                                            new Vector3(col.X, feet.Y - MantleReachDown, col.Z));
+                rq.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
+                var h = space.IntersectRay(rq);
+                if (h == null || h.Count == 0 || !h.ContainsKey("collider")) continue;
+                if (h["collider"].As<GodotObject>() is Node3D hb && hb.HasMeta(Ladder.Meta)) continue;   // the ladder's own top is not a floor
+                if (((Vector3)h["normal"]).Y < 0.7f) continue;
+                var land = (Vector3)h["position"];
+                if (land.Y > feet.Y + MantleReachUp || land.Y < feet.Y - MantleReachDown) continue;
+                // over the ladder (d > 0) the path has to clear the ladder's top; beside or behind it, only the feet
+                float clearY = Mathf.Max(land.Y, d > 0.5f ? ladderTop : feet.Y) + 0.08f;
+                var rise = new Vector3(feet.X, Mathf.Max(clearY, feet.Y), feet.Z);
+                var across = new Vector3(land.X, rise.Y, land.Z);
+                if (!StandingFits(space, rise) || !StandingFits(space, (rise + across) * 0.5f) || !StandingFits(space, across)
+                    || !StandingFits(space, land + Vector3.Up * 0.02f)) continue;
+                _mantlePath = new[] { feet, rise, across, land + Vector3.Up * 0.02f };
+                _mantleLen = 0f; for (int i = 1; i < _mantlePath.Length; i++) _mantleLen += _mantlePath[i].DistanceTo(_mantlePath[i - 1]);
+                _mantleDist = 0f;
+                _mantling = true;
+                _ladderAtTop = false;
+                Log.Print($"[ladder] stepping off the top onto y={land.Y:0.00} ({(d > 0.5f ? "over the ladder" : d < 0f ? "behind" : "here")}, {_mantleLen:0.00} m)");
+                return true;
+            }
+            return false;
+        }
+
+        /// <summary>One tick of stepping off the top. Kinematic on purpose: the path was checked for room at every
+        /// corner, and the step has to pass over the ladder's own box, which a slide would stop on.</summary>
+        void StepMantle(float delta)
+        {
+            _mantleDist = Mathf.Min(_mantleLen, _mantleDist + MantleSpeed * delta);
+            float left = _mantleDist; var at = _mantlePath[^1];
+            for (int i = 1; i < _mantlePath.Length; i++)
+            {
+                float seg = _mantlePath[i].DistanceTo(_mantlePath[i - 1]);
+                if (left <= seg) { at = seg > 1e-5f ? _mantlePath[i - 1].Lerp(_mantlePath[i], left / seg) : _mantlePath[i]; break; }
+                left -= seg;
+            }
+            GlobalPosition = at;
+            Velocity = Vector3.Zero;
+            if (_mantleDist >= _mantleLen - 1e-4f)
+            {
+                _mantling = false;
+                LadderDetach();     // arms the re-grab cooldown, so landing beside the ladder does not grab it again
+            }
         }
 
         /// <summary>Movement half: grounded resolve -> sim Step -> StepUp -> MoveAndSlide.
@@ -12687,7 +12827,15 @@ namespace UnturnedGodot
                     climbCarry = lv.DeckPointVelocity(GlobalPosition);
                     if (Mathf.Abs(lv.DeckYawRate) > 1e-5f) RotateY(lv.DeckYawRate * delta);
                 }
-                Velocity = new Vector3(climbCarry.X, Ladder.ClimbVelocity(forward), climbCarry.Z);
+                if (_mantling)
+                {
+                    StepMantle(delta);
+                    wasAirborne = false; verticalVel = 0f; groundedEntering = true;
+                    return;
+                }
+                float climbVy = Ladder.ClimbVelocity(forward);
+                if (_ladderAtTop && climbVy > 0f) climbVy = 0f;   // the ladder ends here: hold, don't ride off into the air
+                Velocity = new Vector3(climbCarry.X, climbVy, climbCarry.Z);
                 MoveAndSlide();
                 wasAirborne = false;    // retail forces isGrounded while climbing -> stepping off a ladder is never a fall
                 verticalVel = 0f;       // ...and so must never book fall damage
