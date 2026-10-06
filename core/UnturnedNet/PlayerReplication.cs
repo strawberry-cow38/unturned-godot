@@ -612,6 +612,11 @@ namespace UnturnedGodot.Net
         /// predicted trajectory is bit-identical to the authoritative one under identical inputs.</summary>
         public static Vector3 IntegrateFlat(PlayerMovementSim sim, in MoveInput input, Vector3 pos, float dt)
         {
+            // The held-item speed penalty, applied HERE so it lands on the server's integration and the client's
+            // prediction from one line. input.HeldItemId has been on the wire since v22, so this needs no new
+            // field and no version bump -- the server already knew what you were carrying, it just never charged
+            // you for it. Both sides read the same asset table, so both reach the same multiplier.
+            sim.SpeedMultiplier = PlayerMovementSim.SpeedMultiplierForHeld(input.HeldItemId);
             var vel = sim.Step(new Vector2(input.MoveX, input.MoveY), wantJump: false, grounded: true, dt);
             float yawRad = input.YawDegrees * (Mathf.PI / 180f);
             float sin = Mathf.Sin(yawRad), cos = Mathf.Cos(yawRad);

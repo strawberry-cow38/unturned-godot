@@ -113,4 +113,27 @@ void fragment(){
     ROUGHNESS = rough2;
     METALLIC = 0.0;                                        // no metallic: asphalt is not chrome
     SPECULAR = mix(0.5 + wet * 0.12, 0.78, pud);           // a hint of sheen on damp ground; a real one on water, but standing water is not polished metal
+
+    // ⭐⭐ DITHER THE LOD CROSSFADE INSTEAD OF BLENDING IT (master 2026-10-06, picking between the options:
+    // "dither"). Writing ALPHA_HASH_SCALE puts this shader in alpha-HASH transparency: the fade value becomes a
+    // per-pixel stochastic keep/discard rather than a blend weight, so every pixel is fully one LOD or the other.
+    //
+    // WHY BLENDING CANNOT WORK HERE, measured rather than assumed: Godot centres the fade margin on the threshold
+    // (renderer_scene_cull.cpp: `begin_min = begin - margin; begin_max = begin + margin`), so our contiguous LOD
+    // bands DO crossfade over the same interval -- that part was never wrong. But two independently alpha-blended
+    // layers cannot sum to opaque. At the midpoint the result is
+    //     0.5*LOD1 + 0.5*(0.5*LOD0 + 0.5*background) = 0.75*prop + 0.25*background
+    // so a quarter of the world behind shows through. Master reported that as "brighter" once and "actually
+    // transparent" once; it is one artifact, and against bright sky it reads both ways.
+    //
+    // ⭐ Hashing also keeps this in the OPAQUE pass -- it discards pixels, it does not blend them -- so props do
+    // not move into transparent sorting, and depth stays correct through the handover. That is the point of
+    // dithered LOD transitions generally, and it is why this beats the depth prepass I tried first (reverted in
+    // 4456a8a8): that one left both LODs blending AND gave two overlapping meshes a depth fight.
+    //
+    // ⚠ SCOPED TO THIS SHADER ON PURPOSE. wind_sway.gdshader is the other material a prop can take, and it writes
+    // ALPHA itself for cutout foliage (`ALPHA = c.a; ALPHA_SCISSOR_THRESHOLD = alpha_scissor`). Hashing there
+    // would dither the LEAF CUTOUT, not just the fade, so it is deliberately left alone -- the two shaders differ
+    // for a reason, which is the lesson from the prepass attempt.
+    ALPHA_HASH_SCALE = 1.0;
 }

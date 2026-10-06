@@ -57,6 +57,29 @@ namespace UnturnedGodot
             DispImg = Image.CreateEmpty(Max, 1, false, Image.Format.Rgbaf);   // one texel per displacer; RGBAF holds raw world coords + radius UNCLAMPED
             DispTex = ImageTexture.CreateFromImage(DispImg);
             RenderingServer.GlobalShaderParameterAdd(TexParam, RenderingServer.GlobalShaderParameterType.Sampler2D, Variant.From(DispTex));
+            // ⚠ DISTANCE EROSION RANGE, registered here with the rest and defaulted to 0 = NO FADE. 0 is the safe
+            // default and not an arbitrary one: an unregistered global reads 0, and the shader treats 0 as "do not
+            // fade" rather than "fade to nothing immediately" -- which would have erased every blade at any
+            // distance and read as the foliage failing to load. FoliageField pushes the real values (SetFadeRange)
+            // from the SAME number it gives VisibilityRangeEnd.
+            RenderingServer.GlobalShaderParameterAdd(FadeStartParam, RenderingServer.GlobalShaderParameterType.Float, Variant.From(0f));
+            RenderingServer.GlobalShaderParameterAdd(FadeEndParam, RenderingServer.GlobalShaderParameterType.Float, Variant.From(0f));
+        }
+
+        public const string FadeStartParam = "foliage_fade_start", FadeEndParam = "foliage_fade_end";
+
+        /// <summary>Erode foliage over the last stretch before its hard cull. ⭐ ONE OWNER: FoliageField calls this
+        /// with the cull distance it is about to hand VisibilityRangeEnd, so the two cannot drift -- and they must
+        /// not, because UG_FOLIAGECULL moves that cull at runtime and a fade that outlived it would put the 96 m
+        /// chunk pop straight back.</summary>
+        public static void SetFadeRange(float cullRange)
+        {
+            EnsureGlobals();
+            // Fade across the last quarter. Short enough that the eroding band is far away and small on screen,
+            // long enough that a blade takes more than a stride to vanish.
+            float end = Mathf.Max(cullRange, 1f);
+            RenderingServer.GlobalShaderParameterSet(FadeStartParam, end * 0.75f);
+            RenderingServer.GlobalShaderParameterSet(FadeEndParam, end);
         }
 
         /// <summary>Enlist a node as a grass displacer with the given flattened-footprint radius (metres). Idempotent.</summary>

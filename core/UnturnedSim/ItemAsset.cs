@@ -40,6 +40,65 @@ namespace SDG.Unturned
         // answer "is this round the sort this gun fires", and the only caliber it could otherwise reach lives on
         // MAGAZINE assets (magCaliber). 0 = not a gun, or a .dat that did not parse.
         public int gunCaliber;
+        /// <summary>Source ItemGunAsset.magazineCalibers: the caliber GROUPS this gun will feed from, as a SET.
+        /// Retail has always modelled this as an array -- `Magazine_Calibers` / `Magazine_Caliber_N` in the .dat,
+        /// falling back to a one-element array holding plain `Caliber` for the legacy guns that declare only
+        /// that -- and the acceptance test is an intersection (UseableGun.cs:2865 loops the gun's calibers
+        /// against the magazine's). The port had the scalar half only, so a gun could feed from exactly one
+        /// group and there was no way to express a weapon that takes two.
+        ///
+        /// null = not populated yet; AcceptsMagazineCaliber then falls back to plain gunCaliber equality, which
+        /// is exactly the old behaviour, so nothing that has not been wired changes.</summary>
+        public int[] gunMagazineCalibers;
+
+        /// <summary>Will this gun feed from a magazine of caliber group `cal`? THE one rule -- the attachment
+        /// menu, the reload's magazine search and the server's ammo check all ask this, so they cannot drift
+        /// into disagreeing about what fits (a magazine the menu lets you attach and the reload then refuses is
+        /// the failure this centralisation prevents).</summary>
+        public bool AcceptsMagazineCaliber(int cal)
+        {
+            if (gunMagazineCalibers == null || gunMagazineCalibers.Length == 0) return cal == gunCaliber;
+            foreach (var c in gunMagazineCalibers) if (c == cal) return true;
+            return false;
+        }
+
+        /// <summary>The gun's own cartridge (.dat `Caliber_Name`, e.g. "5.56x45mm NATO"), kept in core so the
+        /// server can compare it with a magazine's magRound. The caliber GROUP answers which magwell; this
+        /// answers what it chambers, and they are genuinely different axes -- the Augewehr fires 5.56 out of a
+        /// magazine that does not interchange with the 5.56 STANAG.</summary>
+        public string gunCaliberName;
+
+        /// <summary>MAGAZINE: is this the STANDARD pattern for its cartridge, rather than one gun's proprietary
+        /// box? Default FALSE, deliberately: a proprietary magazine is the common case in this catalog and the
+        /// standard ones are the short list, so the safe default is "mine alone". Getting this backwards would
+        /// quietly let every rifle load the M249's 200-round box.</summary>
+        public bool magStandardPattern;
+
+        /// <summary>GUN: does this gun's magwell take the standard pattern for its cartridge? Derived from its
+        /// OWN magazine (a gun whose own magazine is standard obviously takes standard), with one deliberate
+        /// override -- see ItemCatalog.</summary>
+        public bool gunTakesStandardMags;
+
+        /// <summary>⭐ THE ONE RULE: will this gun feed from this magazine? Two independent axes, which is how
+        /// retail splits it and what master asked for (2026-10-05, "a flag on the mag and a flag on the gun too"):
+        ///
+        ///   1. the MAGWELL -- the caliber GROUP, exact (your own magazine, always);
+        ///   2. the PATTERN + CARTRIDGE -- a standard-pattern magazine, in a gun that takes standard patterns,
+        ///      loaded with the cartridge this gun actually chambers.
+        ///
+        /// ⚠ THE CARTRIDGE TEST IS NOT OPTIONAL in clause 2. Without it "standard pattern" alone would feed a
+        /// 7.62 magazine into a 5.56 rifle, since STANAG-pattern bodies exist in both.
+        ///
+        /// Encoding proprietariness as a FLAG rather than as a group number is what lets the M249 take STANAG
+        /// without a per-gun list of caliber groups: it is simply a gun that takes standard patterns and happens
+        /// to also have its own box.</summary>
+        public bool AcceptsMagazine(ItemAsset mag)
+        {
+            if (mag == null || !mag.IsMagazine) return false;
+            if (AcceptsMagazineCaliber(mag.magCaliber)) return true;                      // its own magwell
+            if (!mag.magStandardPattern || !gunTakesStandardMags) return false;           // proprietary either side -> no
+            return !string.IsNullOrEmpty(gunCaliberName) && mag.magRound == gunCaliberName;   // ...and it must be the right cartridge
+        }
         public string meleeName;       // for a MELEE weapon: the content folder name (knife_military|sledgehammer|...) to hold on Equip
         // ItemBagAsset: the storage grid a worn bag/shirt/pants/vest provides (0,0 = none)
         public byte width;
@@ -57,7 +116,25 @@ namespace SDG.Unturned
 
         // ItemClothingAsset behavioral fields (P1 clothing port). Defaulted so non-clothing items are unaffected.
         // movementSpeedMultiplier: source aggregates worn clothing as a product (1.0 = no change).
+        // ⚠ THIS IS THE **WORN** ONE AND IT IS STILL DEAD -- ClothingDef parses `Movement_Speed_Multiplier` into
+        // its own copy and nothing ever writes it through to here. Do not read it as "the item's speed effect":
+        // the HELD effect is the separate field below, and conflating them is how one walk speed ends up with two
+        // owners. Retail keeps them apart too -- different .dat keys, different assets.
         public float movementSpeedMultiplier = 1f;
+
+        /// <summary>Source ItemAsset.equipableMovementSpeedMultiplier (.dat `Equipable_Movement_Speed_Multiplier`):
+        /// the scale this item puts on your walk speed WHILE HELD. 1 = no effect, and that is the default, so an
+        /// item that does not declare it costs nothing.
+        ///
+        /// ⭐ RETAIL ALREADY SHIPS THIS, which is the only reason the magnitudes here are not invented: three of
+        /// the extracted gun .dats carry the key -- nykorev 0.95, dragonfang 0.95, fury 0.90 -- so the belt-fed
+        /// and minigun numbers are Nelson's, read off the data rather than guessed. The other heavy weapons are
+        /// an extension on that SCALE (ItemCatalog.HeavyWeaponSpeed), not a second opinion about it.
+        ///
+        /// Lives in core for the same reason gunAmmoMax does: the thing that reads it is the sim-core movement
+        /// step, which runs on the dedicated server, and the .dat that declares it is parsed by the game layer.
+        /// ItemCatalog copies it across at startup.</summary>
+        public float equipableMovementSpeedMultiplier = 1f;
         // Proof_* are whole-body immunities in source (any worn piece with the flag grants it). Stored for when the
         // port models water/fire/radiation damage; default false.
         public bool proofWater, proofFire, proofRadiation;

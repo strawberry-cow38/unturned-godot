@@ -650,6 +650,7 @@ namespace SDG.Unturned
             if (!System.IO.Directory.Exists(dir)) return;
             int n = 0;
             var noVisual = new System.Collections.Generic.List<string>();
+            var slowed = new System.Collections.Generic.List<string>();   // heavy-weapon speed census -- published below
             foreach (var datPath in System.IO.Directory.GetFiles(dir, "*.dat"))
             {
                 string name = System.IO.Path.GetFileNameWithoutExtension(datPath);
@@ -663,17 +664,142 @@ namespace SDG.Unturned
                     a.gunName = name; n++;
                     a.gunAmmoMax = d.ParseInt32("Ammo_Max", 30);   // the server's only handle on a gun's real capacity -- see ItemAsset.gunAmmoMax
                     a.gunCaliber = d.ParseInt32("Caliber", 0);     // ...and on which rounds it accepts -- see ItemAsset.gunCaliber
+                    // ...and the caliber SET, retail's own shape (ItemGunAsset: Magazine_Calibers +
+                    // Magazine_Caliber_N, else a one-element array holding plain Caliber). Parsed even though no
+                    // shipped .dat declares the multi form yet, so a re-rip that gains one is picked up with no
+                    // code change -- the same reason the movement multiplier reads from the .dat rather than a table.
+                    a.gunCaliberName = d.GetString("Caliber_Name");   // the CARTRIDGE, the other half of the fit rule -- see ItemAsset.AcceptsMagazine
+                    int mcn = d.ParseInt32("Magazine_Calibers", 0);
+                    if (mcn > 0)
+                    {
+                        var set = new System.Collections.Generic.List<int>(mcn);
+                        for (int i = 0; i < mcn; i++) set.Add(d.ParseInt32($"Magazine_Caliber_{i}", 0));
+                        a.gunMagazineCalibers = set.ToArray();
+                    }
+                    else a.gunMagazineCalibers = new[] { a.gunCaliber };
+                    // How much this gun slows you while you carry it -- RETAIL'S OWN NUMBER WHERE RETAIL HAS ONE.
+                    // Three extracted .dats declare the key (nykorev/dragonfang 0.95, fury 0.90); the .dat always
+                    // wins, so a future re-rip that finds the key on more guns is picked up with no code change,
+                    // and HeavyWeaponSpeed only fills the silence. See ItemAsset.equipableMovementSpeedMultiplier.
+                    float ems = d.ParseFloat("Equipable_Movement_Speed_Multiplier", 0f);
+                    if (ems <= 0f) ems = HeavyWeaponSpeed(name);
+                    a.equipableMovementSpeedMultiplier = ems;
+                    if (ems < 0.999f) slowed.Add($"{name} {ems:0.00}x");
                     a.slot = SlotTypeExtension.Parse(d.GetString("Slot"));   // Primary/Secondary from the gun's own .dat
                     if (!UnturnedGodot.Viewmodel.IsKnownGun(name)) noVisual.Add(name);   // this file lives in SDG.Unturned
                 }
                 catch { /* skip a malformed .dat */ }
             }
+            WireMagazinePatterns();
             UnturnedGodot.Log.Print($"[items] wired {n} guns for in-game equip (from content/*.dat + _gun.txt)");
+            // ⭐ PUBLISHED, NOT ASSUMED. A speed penalty is invisible until you happen to carry the gun and happen
+            // to notice, which is exactly how the retail skill port ended up with ten skills wired to nothing --
+            // so the set that is actually live gets named at boot. A weapon missing from this line is NOT slowed.
+            UnturnedGodot.Log.Print(slowed.Count > 0
+                ? $"[items] {slowed.Count} heavy weapon(s) slow the carrier: {string.Join(", ", slowed)}"
+                : "[items] no heavy-weapon movement penalties are live (expected 9 -- check content/*.dat + _gun.txt)");
             // Named loudly rather than left to be discovered in play: these equip to a REFUSAL (see
             // PlayerController.EquipHeldGun), which is the honest outcome but still a missing row someone must add.
             if (noVisual.Count > 0)
                 GD.PushWarning($"[items] {noVisual.Count} ported gun(s) have no guns_visual.tsv row and will refuse to equip: {string.Join(", ", noVisual)}");
         }
+
+        /// <summary>Which magazines are the STANDARD pattern for their cartridge, and which guns have a magwell
+        /// that takes one. master 2026-10-05: "a flag on the mag and a flag on the gun too".
+        ///
+        /// ⭐ THIS REPLACED A PER-GUN LIST OF CALIBER GROUPS, and it is a better model for master's own reason:
+        /// the group number was doing two jobs at once. The Augewehr sits in group 201 *while firing 5.56* purely
+        /// so its magwell can differ from its cartridge -- i.e. the group was secretly encoding "proprietary".
+        /// Saying that out loud as a flag leaves the group meaning only "which magwell", and the M249 then needs
+        /// no special caliber entry at all: it is just a gun that takes standard patterns and also has its own box.
+        ///
+        /// ⚠ STANDARD IS THE SHORT LIST, NOT THE DEFAULT. Nearly every magazine in this catalog is one gun's own,
+        /// so magStandardPattern defaults false and only the genuinely shared bodies are named here. Defaulting
+        /// the other way would hand every rifle the M249's 200-round box the moment it matched on cartridge.</summary>
+        static readonly ushort[] StandardPatternMags =
+        {
+            6,     // Military Magazine -- the STANAG body, 5.56x45mm NATO
+            9142,  // .300 Blackout Magazine -- STANAG-pattern body, different cartridge (which clause 2's cartridge test is what keeps apart)
+        };
+
+        /// <summary>Guns whose magwell takes the standard pattern even though their OWN magazine does not.
+        ///
+        /// ⭐ ONE ENTRY, AND IT IS THE WHOLE FEATURE master asked for. Every other gun's answer is DERIVED below
+        /// from its own magazine -- a gun whose own magazine is standard obviously takes standard -- so this list
+        /// holds only the genuine exceptions: a proprietary-fed gun that accepts standard magazines anyway.
+        ///
+        /// The M249's own .dat already reads Caliber_Name "5.56x45mm NATO", the same cartridge the STANAG magazine
+        /// carries; it sat apart only because its 200-round box is proprietary. Real M249s take STANAG.</summary>
+        static readonly string[] GunsTakingStandardMags = { "dragonfang" };   // M249 SAW
+
+        static void WireMagazinePatterns()
+        {
+            foreach (var id in StandardPatternMags)
+            {
+                var m = Assets.find(id);
+                if (m == null) { GD.PushWarning($"[items] standard-pattern magazine {id} is not in the catalog"); continue; }
+                m.magStandardPattern = true;
+            }
+
+            // DERIVED, not listed: a gun whose own magazine is a standard body takes standard bodies. Reading it
+            // off the gun's own .dat Magazine means a gun added later gets the right answer without being added here.
+            string dir = Godot.ProjectSettings.GlobalizePath("res://content/");
+            if (!System.IO.Directory.Exists(dir)) return;
+            int derived = 0;
+            var overrides = new System.Collections.Generic.HashSet<string>(GunsTakingStandardMags);
+            var exceptions = new System.Collections.Generic.List<string>();
+            var seenExceptions = new System.Collections.Generic.HashSet<string>();
+            foreach (var dat in System.IO.Directory.GetFiles(dir, "*.dat"))
+            {
+                string name = System.IO.Path.GetFileNameWithoutExtension(dat);
+                if (!System.IO.File.Exists(dir + name + "_gun.txt")) continue;
+                UnturnedGodot.GunDef g;
+                try { g = UnturnedGodot.GunDef.FromDatText(System.IO.File.ReadAllText(dat)); } catch { continue; }
+                if (g == null || !ushort.TryParse(g.Id, out var gid)) continue;   // GunDef.Id is the .dat's raw ID string
+                var gun = Assets.find(gid);
+                if (gun == null) continue;
+                var own = g.MagazineId > 0 ? Assets.find((ushort)g.MagazineId) : null;
+                bool byOwnMag = own != null && own.magStandardPattern;
+                bool byException = overrides.Contains(name);
+                gun.gunTakesStandardMags = byOwnMag || byException;
+                if (gun.gunTakesStandardMags) derived++;
+                if (byException) exceptions.Add($"{gun.itemName} ({gun.gunCaliberName})" + (byOwnMag ? " [already standard-fed -- exception is redundant]" : ""));
+                if (byException) seenExceptions.Add(name);
+            }
+            // ⭐ PUBLISHED, AND AN UNAPPLIED EXCEPTION IS SHOUTED ABOUT. A gun that silently stops taking a
+            // magazine looks exactly like one that never did, and a typo'd name in GunsTakingStandardMags would
+            // otherwise be a feature that simply does not happen with nothing in the log to say so.
+            foreach (var n in GunsTakingStandardMags)
+                if (!seenExceptions.Contains(n))
+                    GD.PushWarning($"[items] '{n}' is listed in GunsTakingStandardMags but no such ported gun was found -- it does NOT take standard magazines");
+            UnturnedGodot.Log.Print($"[items] {derived} guns take standard-pattern magazines"
+                                    + (exceptions.Count > 0 ? $"; by exception: {string.Join(", ", exceptions)}" : ""));
+        }
+
+        /// <summary>The walk-speed scale for a heavy weapon whose .dat does NOT declare one, by content name.
+        /// Master, 2026-10-05: "implement slower movement speed with heavy snipers, minigun and LMGs (make sure
+        /// works in multiplayer)", then approved this exact set of nine.
+        ///
+        /// ⭐⭐ THE THREE RETAIL GUNS ARE DELIBERATELY ABSENT FROM THIS TABLE. nykorev, dragonfang and fury carry
+        /// `Equipable_Movement_Speed_Multiplier` in their own .dats, so they are read from the data and never
+        /// reach here. That matters twice over: their numbers stay Nelson's rather than becoming a copy of his
+        /// that can drift, and the boot census shows them at 0.95/0.95/0.90 only if the .dat parse really worked,
+        /// so a broken rip reads as a missing penalty instead of hiding behind a hardcoded duplicate.
+        ///
+        /// ⚠ AND IT IS WHY THESE SIX ARE GENTLER THAN FIRST PROPOSED (0.70 for the minigun, 0.80 for a belt-fed).
+        /// Retail prices its heaviest gun in the game at 10%, so a 30% penalty invented beside it is not a tuning
+        /// choice, it is a different game. The six below are placed on retail's scale, ordered by what the thing
+        /// actually weighs: nothing here is heavier to carry than the minigun, and nothing is lighter than a PKM.</summary>
+        static float HeavyWeaponSpeed(string name) => name switch
+        {
+            "shadowstalkermk2" => 0.90f,   // Shadowstalker Mk. II -- the railgun, minigun tier
+            "shadowstalker"    => 0.93f,   // Shadowstalker
+            "grizzly"          => 0.93f,   // M82 -- .50 BMG anti-materiel, ~14 kg
+            "ekho"             => 0.95f,   // M200 Intervention -- .338 Lapua
+            "timberwolf"       => 0.95f,   // C14 Timberwolf -- .338 Lapua
+            "launcher_rocket"  => 0.95f,   // RPG-7 -- light but bulky on the shoulder
+            _                  => 1f,      // everything else is unaffected, which is most of the 59 ported guns
+        };
 
         // Wire meleeName on the extracted PEI melee items (content/<folder>.dat's ID -> ItemAsset.meleeName) so equipping
         // a knife/axe/bat loads its viewmodel + weapon-specific swings via EquipHeldMelee. Folders from content/melee_list.tsv.

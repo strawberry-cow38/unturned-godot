@@ -209,7 +209,23 @@ namespace UnturnedGodot
             if (hasN) foreach (int i in order) w.WriteLine($"vn {norms[i].X.ToString(ci)} {norms[i].Y.ToString(ci)} {norms[i].Z.ToString(ci)}");
             for (int t = 0; t + 2 < idx.Length; t += 3)
             {
+                // ⚠⚠ WRITTEN BACK IN THE ORIGINAL (UNITY) WINDING -- note the c,b,a order below.
+                //
+                // This file is read with ObjMesh.Load, which ALWAYS reverses winding ("Unity(LH) verts in Godot(RH)
+                // face inward with the orig order"). So `src` here is ALREADY reversed, and writing its index order
+                // out verbatim stored a Godot-wound OBJ -- which WorldBuilder then loads with ObjMesh.Load and
+                // reverses a SECOND time. Every generated LOD came out inside-out.
+                //
+                // ⭐ MEASURED, not reasoned: across 396 base/lod1 pairs, 226 had their lod1 wound OPPOSITE their own
+                // base mesh (base 0% of triangles opposed to the authored normal, lod1 86-100%). A clean bimodal
+                // split -- the 170 that agreed are the ones Nelson authored and we rip verbatim, which never make
+                // this round trip. That is master's "i think some lods may be wound backwards or something".
+                //
+                // ⚠ The symptom is NOT darkness: under cull_back a backwards triangle is CULLED, so the prop goes
+                // hollow/see-through at the distance its LOD1 takes over, which reads as a culling bug rather than
+                // a data bug. Hence "or the backface culling is wrong i dunno" -- the shader was never at fault.
                 int a = remap[idx[t]], b = remap[idx[t + 1]], c = remap[idx[t + 2]];
+                (a, c) = (c, a);   // undo ObjMesh.Load's reversal so the stored file matches the ripped convention
                 if (hasUv && hasN) w.WriteLine($"f {a}/{a}/{a} {b}/{b}/{b} {c}/{c}/{c}");
                 else if (hasN) w.WriteLine($"f {a}//{a} {b}//{b} {c}//{c}");
                 else if (hasUv) w.WriteLine($"f {a}/{a} {b}/{b} {c}/{c}");

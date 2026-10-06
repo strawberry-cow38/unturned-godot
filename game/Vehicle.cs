@@ -966,10 +966,53 @@ namespace UnturnedGodot
         public const float CarjackRetailMass = 2f;      // source Rigidbody.mass for every vehicle
         public const float CarjackStepSeconds = 0.02f;  // Unity's fixed step -- AddForce is one step of it
 
+        // CARJACK GROUNDING. master 2026-10-05: "prevent spamming jacks on cars in middair (require grounded,
+        // but not super strict as its meant to free stuck cars, who may be bugged lol)".
+        const float JackSettledSpeed = 1.5f;   // m/s -- at or below this the car is not going anywhere
+        const float JackSettledDwell = 0.5f;   // ...and it must have been that slow for THIS long to count as settled
+        const float JackRisingSpeed = 1f;      // m/s UPWARD -- above this it is on its way up, i.e. freshly launched
+        const float JackGroundReach = 3f;      // m of AGL that still counts as near the ground
+        float _jackSlowFor;                    // seconds this body has been essentially motionless (PhysicsTick)
+
+        /// <summary>Is this car near enough to the ground that a jack can get under it?
+        ///
+        /// ⭐ DELIBERATELY LENIENT, AND THE LENIENCY IS THE WHOLE POINT. The jack exists to free a car that has
+        /// got itself stuck, and a car wedged into geometry is precisely the one whose ground raycast is least
+        /// trustworthy -- it can be half inside a rock with open space underneath. So this does not ask "is it
+        /// grounded", it asks "is it FLYING": anything barely moving passes however impossible its position, and
+        /// only a car with real speed has to prove there is ground nearby.
+        ///
+        /// That refuses exactly what master asked to refuse -- re-jacking a car you already launched, to keep it
+        /// airborne indefinitely -- and refuses nothing else. A strict wheel-contact test would have failed the
+        /// stuck car this tool is FOR, which is why it is not one.</summary>
+        /// ⚠⚠ THE SETTLE TEST IS A DWELL, NOT AN INSTANT, AND THE FIRST VERSION OF THIS WAS WRONG BECAUSE IT WAS
+        /// NOT. A launched car at the TOP OF ITS ARC has almost no velocity -- instantaneously it is
+        /// indistinguishable from a wedged one -- so "slow right now means settled" handed back a re-jack window
+        /// at every apex, which is the spam master asked to stop. What actually separates the two is TIME: a stuck
+        /// car has been still for a while, an apex lasts a fraction of a second.
+        ///
+        /// ⚠ And the ground reach alone does not cover it either: the in-engine test measured a freshly jacked car
+        /// at y=1.09 m, still well inside a 3 m reach while rising at 3.92 m/s, so reach-only also allowed the
+        /// re-jack. Hence the explicit RISING test -- a car on the ground is never travelling upward.
+        /// <summary>Seconds this body has been essentially motionless, for the carjack tests. Same shape as
+        /// WheelsOnGroundForTest: the rule is private, the measurement it rests on is observable.</summary>
+        public float JackSettledForTest => _jackSlowFor;
+
+        public bool JackableNow()
+        {
+            if (_jackSlowFor >= JackSettledDwell) return true;      // parked, or wedged: the case the jack exists FOR
+            if (LinearVelocity.Y > JackRisingSpeed) return false;   // on its way up -- you just launched it
+            return ProbeAgl() <= JackGroundReach;                   // moving but low: on the ground, so fine
+        }
+
         public bool Carjack(bool flightBoost, System.Random rng = null)
         {
             if (IsWreck) return false;
             if (OccupiedSeats.Count > 0) return false;   // source: !vehicle.isEmpty -> refused. You cannot jack an occupied car.
+            // ⭐ GATED HERE, NOT IN THE CALLER, so the SERVER gets it too: VehicleNetSync.ApplyCarjackForce calls
+            // straight into this, and a rule enforced only in PlayerController would be a rule that holds in
+            // singleplayer and is missing on every server. One choke point, both paths.
+            if (!JackableNow()) return false;
             rng ??= new System.Random();
             float R(float a, float b) => a + (float)rng.NextDouble() * (b - a);
 
@@ -9299,6 +9342,10 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             // blinded one still has to stop being blind.
             if (FlareCooldown > 0f) FlareCooldown = Mathf.Max(0f, FlareCooldown - (float)delta);
             if (FlareBlind > 0f) FlareBlind = Mathf.Max(0f, FlareBlind - (float)delta);
+            // ...and the carjack's settle dwell, up here for exactly the same reason: it has to keep counting for a
+            // PARKED car, which is precisely the car that takes the early-outs below. See JackableNow.
+            _jackSlowFor = LinearVelocity.LengthSquared() <= JackSettledSpeed * JackSettledSpeed
+                         ? _jackSlowFor + (float)delta : 0f;
 
             // PERF (ETW 2026-09-02, measured with a notification histogram): with physics_interpolation on,
             // VehicleBody3D::_update_process_mode enables INTERNAL_PROCESS on ITSELF just to interpolate the wheel

@@ -22,15 +22,65 @@ namespace SDG.Unturned
         /// retail gates it on `fall &lt;= 0` where `fall` is literally velocity.y, so an umbrella is a
         /// parachute and never a jump boost.</summary>
         public float GravityMultiplier = 1f;
+
+        /// <summary>Source ItemAsset.equipableMovementSpeedMultiplier: a scale on the stance speed from whatever is
+        /// IN THE HANDS. 1 = normal. A belt-fed LMG sets 0.95 and the minigun 0.90 (their own retail .dat values --
+        /// see ItemCatalog.WireExtractedGuns), so hauling one costs you mobility.
+        ///
+        /// ⭐ IT LIVES HERE, ON THE ONE SIM, BECAUSE THAT IS WHAT MAKES IT WORK IN MULTIPLAYER. This class is
+        /// engine-free and is the single speed choke point on every machine -- the shell's own body, the client's
+        /// prediction (Prediction.Sim) and the server's integration (PlayerReplication.ServerStep) all step THIS.
+        /// Scaling the number they all already read means the three agree by construction; a penalty bolted onto
+        /// the shell alone would have the predicted and authoritative trajectories disagree every tick you walked
+        /// holding one, which is the mispredict-rubberband the whole sim-core split exists to prevent.
+        ///
+        /// Applied to `speed` below, ONCE, before the direction clamp -- so it reaches the airborne branch too
+        /// (wantSpeed derives from wantX/wantZ). Carrying momentum off a ledge is not a way to dodge it.</summary>
+        public float SpeedMultiplier = 1f;
         public EPlayerStance Stance = EPlayerStance.STAND;
+
+        /// <summary>Landing recovery: seconds left before a jump is allowed again. Armed by the airborne ->
+        /// grounded transition Step already sees, so nothing has to call in and tell the sim it landed -- the
+        /// shell's own landing detection (wasAirborne + IsOnFloor) stays a FALL-DAMAGE concern and this cannot
+        /// drift out of agreement with it.
+        ///
+        /// ⭐ IT LIVES HERE FOR THE REASON THE SPEED MULTIPLIER DOES: this class is the one movement sim on every
+        /// machine, so a rule written here is a rule the shell, the client's prediction and the server's
+        /// integration all obey without being told twice. It is also why this is engine-free and L0-testable
+        /// rather than a timer in PlayerController that only singleplayer would ever exercise.</summary>
+        float _landingLock;
+        bool _wasGrounded = true;   // ⚠ true, not default false: a sim that starts on the floor must not read its FIRST tick as a landing and lock a freshly spawned player out of jumping
+
+        /// <summary>Is a jump currently refused because the player just landed? For the HUD/tests; Step enforces it.</summary>
+        public bool JumpLocked => _landingLock > 0f;
+
+        /// <summary>SpeedMultiplier for whatever item id is in the hands (0 = fists). THE one resolver, so the
+        /// three simulators cannot disagree about what a gun costs -- the shell calls it per tick beside its
+        /// GravityMultiplier line, and PlayerReplication.IntegrateFlat calls it for the server and the client's
+        /// prediction. An unknown id reads 1, so a client holding an item the server has no asset for is slowed
+        /// by nothing rather than frozen.</summary>
+        public static float SpeedMultiplierForHeld(ushort heldItemId)
+        {
+            if (heldItemId == 0) return 1f;
+            var a = Assets.find(heldItemId);
+            return a != null ? a.equipableMovementSpeedMultiplier : 1f;
+        }
 
         // inputDir: local-space (x = strafe, y = forward), each component in [-1,1].
         // grounded: whether the body was on the floor after the previous move.
         // Returns the velocity to hand to the character body this tick.
         public Vector3 Step(Vector2 inputDir, bool wantJump, bool grounded, float dt)
         {
+            // LANDING RECOVERY. Arm on the tick the capsule touches down, then bleed off; a jump asked for
+            // while it is running is DROPPED rather than queued, because a queued hop would fire itself the
+            // instant the lock expired and turn a held key back into the chain this exists to stop.
+            if (grounded && !_wasGrounded) _landingLock = PlayerMovementDef.LANDING_JUMP_LOCK;
+            else if (_landingLock > 0f) _landingLock = Mathf.Max(0f, _landingLock - dt);
+            _wasGrounded = grounded;
+            if (_landingLock > 0f) wantJump = false;
+
             // Horizontal: direction clamped to the unit disc so diagonals don't exceed stance speed.
-            float speed = PlayerMovementDef.SpeedForStance(Stance);
+            float speed = PlayerMovementDef.SpeedForStance(Stance) * Mathf.Max(SpeedMultiplier, 0f);   // held-item penalty (heavy weapons) -- see SpeedMultiplier
             Vector2 dir = inputDir;
             float m2 = dir.x * dir.x + dir.y * dir.y;
             if (m2 > 1f)

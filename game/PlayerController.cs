@@ -3179,7 +3179,36 @@ namespace UnturnedGodot
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
             _heldCarjackItem = backing;
             _viewmodel?.QueueFree();
-            _viewmodel = new Viewmodel { EmptyHands = true };
+            // ITS OWN RIPPED ANIMATIONS (master 2026-10-05: "we have the gamefiles and source code. figure out
+            // the anim"). This used to be `new Viewmodel { EmptyHands = true }` under a comment asserting the
+            // carjack had no 1P animation in the rip -- and there were extractors for the spraypaint and the gas
+            // can sitting in tools/ the whole time. The clips were never missing: like every tool's, they live in
+            // the item's OWN animations.prefab (items/tools/carjack/) rather than in rig.json, which is the exact
+            // trap extract_throwable_anims.py was written for. Jack_Equip (0.467 s, LOOPS -- source plays it with
+            // loop:true, it is the carry hold) and Jack_Use (1.967 s, the crank), 17 bone tracks each, via
+            // tools/extract_carjack_anims.py.
+            //
+            // ...AND THE JACK ITSELF (tools/extract_consumable.py Carjack): 64 verts / 32 tris.
+            //
+            // ⚠ ITS prefab HAS NO Model_0, so the extractor fell back to the item ROOT mesh and said so. That is
+            // worth knowing rather than trusting: the viewmodel convention is Model_0 with X+Z negated, and a
+            // root mesh can carry a different pivot, so this was RENDERED and looked at before shipping instead
+            // of being assumed to hold correctly.
+            //
+            // ⭐⭐ AND ITS 2x2 TEXTURE IS NOT A PLACEHOLDER -- IT IS A PALETTE. I nearly dropped it by analogy
+            // with the spraypaint, whose 82-byte texture genuinely is a placeholder (identical across all 32
+            // cans, hence ConsumableColor tinting instead). Read properly, the carjack's four texels are
+            // (191,31,31) red and two greys (140 / 94): the real red-body-and-grey-metal scheme, with the UVs
+            // mapping faces onto it. A flat tint here would have thrown away actual colour data. It renders
+            // crisp because the held-mesh material is already TextureFilter.Nearest -- a 2x2 under linear
+            // filtering would have been a smear.
+            _viewmodel = new Viewmodel
+            {
+                ConsumableMesh = "carjack.txt",
+                ConsumableAlbedo = "carjack_albedo.png",
+                ConsumableEquipClip = "Jack_Equip",
+                ConsumableUseClip = "Jack_Use",
+            };
             AddChild(_viewmodel);
             RelinkViewmodelLighting();
             Log.Print($"[carjack] holding {asset.itemName} -- LMB an EMPTY vehicle to jack it");
@@ -3192,7 +3221,62 @@ namespace UnturnedGodot
         /// and this impulse would be overwritten by the next authoritative transform. It needs a command like
         /// the respray got, which belongs in one batched wire wave with the tire work rather than its own
         /// bump -- the plan's never-bump-per-gap rule.</summary>
+        /// <summary>Where in the crank the car actually goes up. ⭐ RETAIL'S OWN NUMBER, read out of
+        /// UseableCarjack.cs rather than chosen: `isJackable => elapsed > useTime * 0.75f`, with
+        /// `isUseable => elapsed > useTime` releasing the hand at the end.
+        ///
+        /// ⚠ So it is 75%, NOT the 100% I first shipped. master asked for "its full animation before launching a
+        /// car" and I read that as the whole clip; the source says three quarters, with the last quarter being the
+        /// jack settling back down. Retail's number wins on a port whose rule is 1:1 bugs-and-all, and 75% of
+        /// 1.967 s is 1.48 s -- still the entire wind-up, just not the recovery. Same shape as the spraypaint's
+        /// 85% and the throwable's 60% release.</summary>
+        public const float CarjackApplyFraction = 0.75f;
+        /// <summary>Fallback use length if Jack_Use fails to load -- the clip's own measured 1.967 s (its sound,
+        /// tools_carjack_use.wav, is 2.02 s, which is why the pre-extraction guess was close).</summary>
+        const float CarjackFallbackUseSeconds = 1.967f;
+        float _jackPendingT, _jackBusyT;
+
         void TryCarjack()
+        {
+            // Already swinging: a second click is dropped, not queued. master 2026-10-05 asked for the full
+            // animation before the launch AND for no spamming, and those are the same guard.
+            if (_heldCarjackItem == null || _jackPendingT > 0f || _jackBusyT > 0f || _dead) return;
+
+            // VALIDATE BEFORE THE SWING, not only after it. Starting a 2 s wind-up at thin air and then saying
+            // "aim at a vehicle" when it finishes is worse than refusing immediately; ApplyCarjack re-tests
+            // everything anyway, because two seconds is long enough to walk away.
+            var puppet = NetCarjack != null ? NearestPuppet() as VehiclePuppet : null;
+            bool haveTarget = (puppet != null && puppet.NetId != 0) || IsInstanceValid(_focusVehicle);
+            if (!haveTarget) { Log.Print("[carjack] aim at a vehicle"); return; }
+            // The local-vehicle refusals are knowable NOW, so report them properly instead of letting the swing
+            // run and fail silently. A PUPPET cannot be tested here -- only the server knows its state.
+            if (puppet == null && IsInstanceValid(_focusVehicle))
+            {
+                if (_focusVehicle.IsWreck) { Log.Print("[carjack] that is a wreck"); return; }
+                if (!_focusVehicle.JackableNow()) { Log.Print("[carjack] it is still in the air -- let it come down"); return; }
+            }
+
+            float useLen = _viewmodel?.ConsumeUseLength() ?? 0f;
+            if (useLen <= 0.05f) useLen = CarjackFallbackUseSeconds;
+            _viewmodel?.PlayConsumeUse();   // Jack_Use, via the consumable clip path the spraypaint already uses
+            // The ratchet starts when the arm does, like the spraypaint plays its can at the START of the sweep
+            // (source pull(): play("Use") and playSound(asset.use) in the same breath).
+            Vector3 at = puppet != null ? puppet.GlobalPosition
+                       : IsInstanceValid(_focusVehicle) ? _focusVehicle.GlobalPosition : GlobalPosition;
+            GameAudio.PlayAt(this, GameAudio.Clip("items", "tools_carjack_use"), at, -3f, 6f, 40f);
+            // ...AND THE ZOMBIES HEAR IT. Source pull() ends with AlertTool.alert(transform.position, 8), which
+            // nothing in the port did -- cranking a car into the air was completely silent to the horde. 8 maps
+            // straight onto the SoundBus scale (Walk 10, CrouchWalk 5), and going through Emit means the rain
+            // masking applies to it like everything else rather than being a rule this one call site forgot.
+            SoundBus.Emit(GetTree(), GlobalPosition, 8f);
+            _jackPendingT = useLen * CarjackApplyFraction;   // source isJackable: 75% of the clip
+            _jackBusyT = useLen;                             // source isUseable: the hand is busy for all of it
+            Log.Print($"[carjack] cranking -- launch in {_jackPendingT:0.00}s, hand busy {useLen:0.00}s");
+        }
+
+        /// <summary>The jack finishes its stroke: the car actually goes up. Re-validates, because 2 s is long
+        /// enough to walk away, for somebody to get in, or for the car to be launched by someone else.</summary>
+        void ApplyCarjack()
         {
             if (_heldCarjackItem == null) return;
             // MP (v45): ASK, and ask FIRST -- the same shape the respray takes, and for a sharper reason. The
@@ -3210,10 +3294,12 @@ namespace UnturnedGodot
             bool flight = false;   // source: the FLIGHT skill boost quadruples the lift. No boost system here yet.
             if (!_focusVehicle.Carjack(flight))
             {
-                Log.Print(_focusVehicle.IsWreck ? "[carjack] that is a wreck" : "[carjack] somebody is in it");
+                // Three ways Vehicle.Carjack refuses now, so name the right one rather than guessing between two.
+                Log.Print(_focusVehicle.IsWreck ? "[carjack] that is a wreck"
+                        : !_focusVehicle.JackableNow() ? "[carjack] it is still in the air -- let it come down"
+                        : "[carjack] somebody is in it");
                 return;
             }
-            GameAudio.PlayAt(this, GameAudio.Clip("items", "tools_carjack_use"), _focusVehicle.GlobalPosition, -3f, 6f, 40f);
             Log.Print($"[carjack] jacked {_focusVehicle.DisplayName}");
         }
 
@@ -6780,6 +6866,20 @@ namespace UnturnedGodot
 
         public bool DebugInfAmmoWouldFill => InfiniteAmmo && Gun != null && HasGunOut && !_reloading && Ammo < ChamberedCap;   // test seam
         public float DebugSinceShot => _sinceShot;
+        /// <summary>The caliber GROUPS the gun in your hands will feed from -- retail's
+        /// ItemGunAsset.magazineCalibers, carried on the held gun's ItemAsset. Null when nothing is held or the
+        /// asset is unknown, which AcceptsMagazineCaliber turns back into the plain single-caliber rule.</summary>
+        public SDG.Unturned.ItemAsset HeldGunAsset => _heldItem != null ? SDG.Unturned.Assets.find(_heldItem.id) : null;
+
+        /// <summary>Will the held gun feed from a magazine of group `magCal`? Asked through the ASSET so the
+        /// reload search and the attachment menu use the one rule -- a magazine the menu lets you attach and the
+        /// reload then refuses is exactly the disagreement this avoids.</summary>
+        bool GunAcceptsMag(SDG.Unturned.ItemAsset mag)
+        {
+            var ga = HeldGunAsset;
+            return ga != null ? ga.AcceptsMagazine(mag) : (mag != null && mag.magCaliber == (Gun?.Caliber ?? 0));
+        }
+
         (byte page, byte idx, Item item)? FindBestMag()   // the spare mag in inventory that fits the gun, with the MOST ammo
         {
             if (Inventory == null || Gun == null) return null;
@@ -6791,7 +6891,7 @@ namespace UnturnedGodot
                 {
                     var jar = pg.getItem(i); if (jar?.item == null) continue;
                     var a = SDG.Unturned.Assets.find(jar.item.id);
-                    if (a != null && a.IsMagazine && a.magCaliber == Gun.Caliber && jar.item.amount > bestAmmo) { bestAmmo = jar.item.amount; best = (b, i, jar.item); }
+                    if (a != null && a.IsMagazine && GunAcceptsMag(a) && jar.item.amount > bestAmmo) { bestAmmo = jar.item.amount; best = (b, i, jar.item); }
                 }
             }
             return best;
@@ -11929,6 +12029,13 @@ namespace UnturnedGodot
             if (_throwHeldDown) _throwSwingT += (float)delta;   // how far into the wind-up the button has been held
             if (_throwPendingT > 0f) { _throwPendingT -= (float)delta; if (_throwPendingT <= 0f) { _throwPendingT = 0f; ReleaseThrow(); } }   // 60 % into the swing: it leaves the hand
             if (_paintPendingT > 0f) { _paintPendingT -= (float)delta; if (_paintPendingT <= 0f) { _paintPendingT = 0f; ApplySpray(); } }     // 85 % into the sweep: the car changes colour
+            // THE JACK'S STROKE. Same shape as the spray above, with one addition: if the jack has left the hand
+            // the pending launch is DROPPED here rather than at each of the dozen places that clear the item.
+            // That is the umbrella's lesson applied -- "a reset owned by all of them is a reset one of them will
+            // eventually forget" -- and it means switching away mid-crank cannot fire a launch a second later.
+            if (_heldCarjackItem == null) { _jackPendingT = 0f; _jackBusyT = 0f; }
+            else if (_jackPendingT > 0f) { _jackPendingT -= (float)delta; if (_jackPendingT <= 0f) { _jackPendingT = 0f; ApplyCarjack(); } }
+            if (_jackBusyT > 0f) _jackBusyT = Mathf.Max(0f, _jackBusyT - (float)delta);
             TickGesture((float)delta);   // a one-shot gesture hands the body back when its clip ends
             TickArrest((float)delta);    // ...and the cuffs go on when the swing does (source: isUseable)
             TickTire((float)delta);      // ...and the wheel goes on at 75% of its own (source: isAttachable)
@@ -11997,6 +12104,17 @@ namespace UnturnedGodot
             _move.GravityMultiplier = _heldUmbrellaItem != null && (_viewmodel?.IsEquipComplete ?? false)
                 ? Umbrellas.For(_heldUmbrellaItem.id) ?? 1f
                 : 1f;
+            // ...and how much the thing in your hands slows you down (a belt-fed LMG, the minigun, the heavy
+            // snipers). Same shape as the line above and for the same reason: derived every tick from what is
+            // held, so there is no reset to forget -- _heldItem is assigned in sixteen places and a penalty
+            // applied at each of them would be missing from the seventeenth.
+            //
+            // ⭐ READ OFF HeldItemIdForNet, THE FIELD THE WIRE CARRIES, and deliberately NOT gated on the
+            // viewmodel's equip animation the way the umbrella above is. The server only ever learns what you
+            // hold through MoveInput.HeldItemId; gating the shell on a client-only animation state would mean
+            // the two ran different multipliers for the length of every weapon swap, and a prediction that
+            // disagrees with the server is the rubberband this whole split exists to avoid.
+            _move.SpeedMultiplier = SDG.Unturned.PlayerMovementSim.SpeedMultiplierForHeld(HeldItemIdForNet);
             StepMoveOnce(strafe, forward, jump, (float)delta, out bool wasAirborne, out float vy, out bool groundedEntering);
             LastGroundedInput = groundedEntering;   // the grounded the sim consumed -- state-stream dressing
             _interpPrev = _interpReady ? _interpCurr : GlobalPosition; _interpCurr = GlobalPosition; _interpReady = true;   // snapshot this tick's start/end for render interpolation (master)

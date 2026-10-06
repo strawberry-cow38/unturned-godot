@@ -270,7 +270,7 @@ namespace UnturnedGodot
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
-                else if (arg.StartsWith("--shot=")) { shot = arg["--shot=".Length..]; _shotRequested = shot; }
+                else if (arg.StartsWith("--shot=")) { shot = ValidateShotPath(arg["--shot=".Length..]); _shotRequested = shot; }
                 else if (arg.StartsWith("--menushot=")) { menuShot = arg["--menushot=".Length..]; _shotRequested = menuShot; }   // render the 3D barn main menu + capture each of the 5 camera anchors (menu_00..04.png)
                 else if (arg == "--editor") editorMode = true;   // boot straight into the map editor (the Workshop entry); --editor --shot=OUT captures a loaded frame
                 else if (arg == "--fluidtest") fluidTest = true;   // F2 verify: source -> hose -> storage flows + fills (headless log check)
@@ -355,7 +355,18 @@ namespace UnturnedGodot
                 else if (arg == "--terrain") terrain = true;     // load a real map's Landscape heightmap terrain (PEI Tile_0_0)
                 else if (arg == "--craftmenu") craftmenu = true; // open the CraftingMenu (browsable recipe index) over a stocked bag
                 else if (arg == "--stationtest") { stationtest = true; _shotRequested = shot; }   // line up all 9 crafting-station deployables to eyeball the extracted models
-                else if (arg == "--objects") objects = true;     // place PEI's real Level/Objects.dat objects (fences/props/rocks) on the terrain
+                else if (arg == "--objects")
+                {
+                    objects = true;
+                    // ⚠ AERIAL BUILDS NO FOLIAGE BY DEFAULT -- roads/foliage/trees are skipped unless
+                    // AerialRoadsFoliageTrees is set, and the only thing that sets it (--bakemap) then skips
+                    // foliage anyway. So "--objects" renders a world with NO GRASS IN IT, which is a fine map
+                    // picture and a trap for anyone verifying a FOLIAGE change: the scene has nothing to show and
+                    // the render looks like the change did nothing. UG_AERIALFOLIAGE=1 builds it, so the aerial
+                    // camera (which takes UG_CAMPOS) can actually be pointed at grass.
+                    if (System.Environment.GetEnvironmentVariable("UG_AERIALFOLIAGE") == "1")
+                    { WorldBuilder.AerialRoadsFoliageTrees = true; WorldBuilder.AerialSkipFoliage = false; }
+                }     // place PEI's real Level/Objects.dat objects (fences/props/rocks) on the terrain
                 // TREE IMPOSTORS OFF FOR THE BAKE. The billboards are added ASYNCHRONOUSLY, after the world is
                 // ready -- which is after BakeMapTick has already stripped the distance culls -- so they keep
                 // their VisibilityRangeBegin and switch ON for a camera 400 m up, drawing a camera-facing quad
@@ -987,7 +998,7 @@ namespace UnturnedGodot
             if (vm != null)
             {
                 _rigDir = vm;                                   // reuse the frame-strip capture
-                bool deployVm = gun == "generator" || gun == "spot" || gun == "spotlight" || gun == "wire" || gun == "gascan";   // settled-hold frame capture (no ADS/fire)
+                bool deployVm = gun == "generator" || gun == "spot" || gun == "spotlight" || gun == "wire" || gun == "gascan" || gun == "carjack";   // settled-hold frame capture (no ADS/fire) -- a jack has no ADS and never fires, so the gun frame list would capture nothing but the carry pose twice
                 _rigCaptureFrames = System.Environment.GetEnvironmentVariable("UG_HAMMER") == "1"
                     ? new[] { 52, 56, 60, 64, 68, 72 }          // UG_HAMMER: the rack window (PlayHammer at f50) -> verify the gun ROTATES through the charge
                     : deployVm
@@ -1863,6 +1874,17 @@ namespace UnturnedGodot
             bool isConsumable = ResolveConsumable(gunName);   // food/drink/med, resolved from the shipped clip table
             bool isDeploy = gunName == "generator" || gunName == "spot" || gunName == "spotlight";
             bool isWire = gunName == "wire";
+            // THE CARJACK, BUILT EXACTLY AS EquipHeldCarjack BUILDS IT. An explicit name like isFuel/isDeploy
+            // rather than a table lookup, because consumable_anims.tsv is food/drink/medical and teaching it that
+            // a hydraulic jack is food to get a screenshot is how a harness starts disagreeing with the game it
+            // exists to check.
+            //
+            // ⚠ IT HAS TO BEAT isMelee, and that is the whole reason this branch exists: carjack.txt is present
+            // and carjack_gun.txt is not, so isMelee swallowed it and the harness rendered the MELEE hold -- a
+            // different anchor and different clips from the ones the game actually uses. A render of the wrong
+            // path is worse than no render, because it looks like verification. Same trap the isConsumable
+            // comment above already names for food.
+            bool isJack = gunName == "carjack";
             bool isFuel = gunName == "gascan";   // gas can: held in-hand via the DeployableMesh+NaturalHold path -- must beat isMelee (gascan.txt exists)
             _vm = isFists
                 ? new Viewmodel { Fists = true }                                                  // bare-fists unarmed state (arms + melee ready hold, no mesh)
@@ -1872,6 +1894,9 @@ namespace UnturnedGodot
                 ? new Viewmodel { DeployableMesh = "generator_hold.obj", DeployableAlbedo = "generator_hold_tex.png" }   // deployable carry model in-hand + Deploy_Equip/Use
                 : isFuel
                 ? new Viewmodel { DeployableMesh = "gascan.txt", DeployableAlbedo = "gascan_albedo.png", NaturalHold = true }   // gas can: BIG two-handed carry via its own Fuel_Equip anim (both hands, in-your-face)
+                : isJack
+                ? new Viewmodel { ConsumableMesh = "carjack.txt", ConsumableAlbedo = "carjack_albedo.png",
+                                  ConsumableEquipClip = "Jack_Equip", ConsumableUseClip = "Jack_Use" }   // identical to EquipHeldCarjack
                 : isConsumable   // ⚠ BEFORE isMelee: a consumable ships <name>.txt too, so isMelee would swallow every food
                 ? new Viewmodel { ConsumableMesh = $"{gunName}.txt", ConsumableAlbedo = $"{gunName}_albedo.png",   // .txt, EXACTLY as EquipHeldConsumable builds it -- a harness that passes a different shape can pass while the game fails
                                   ConsumableEquipClip = _cEquipClip, ConsumableUseClip = _cUseClip, LeftHook = _cLeftHook }   // food/drink/med: its OWN CE_n/CU_n, its hook side, and its equipable's real parts
@@ -9864,8 +9889,7 @@ namespace UnturnedGodot
                 {
                     var zi = GetViewport().GetTexture()?.GetImage();
                     if (zi == null) { Log.Err("[SHOT] null image -- needs --rendering-driver vulkan, NOT --headless"); GetTree().Quit(1); return; }
-                    zi.SavePng(_shotPath);
-                    Log.Print($"[SHOT] saved {_shotPath} ({zi.GetWidth()}x{zi.GetHeight()})");
+                    SaveShot(zi, _shotPath);
                     GetTree().Quit();
                     return;
                 }
@@ -11003,8 +11027,7 @@ namespace UnturnedGodot
                      $" | objects {RenderingServer.GetRenderingInfo(RenderingServer.RenderingInfo.TotalObjectsInFrame)}");
             var img = GetViewport().GetTexture().GetImage();
             if (img == null) { Log.Err("[SHOT] null image -- run with a rendering driver (e.g. --rendering-driver vulkan), NOT --headless"); GetTree().Quit(1); return; }
-            img.SavePng(_shotPath);
-            Log.Print($"[SHOT] saved {_shotPath} ({img.GetWidth()}x{img.GetHeight()})");
+            SaveShot(img, _shotPath);
             GetTree().Quit();
         }
 
@@ -11062,6 +11085,36 @@ namespace UnturnedGodot
         // finishes instead of timing out. _worldReady is checked separately -- this is settle, not load.
         static int ShotSettleFrames =>
             int.TryParse(System.Environment.GetEnvironmentVariable("UG_SHOTFRAMES"), out int n) && n > 0 ? n : 45;
+
+        /// <summary>⚠⚠ `--shot=` TAKES AN OUTPUT FILE, NOT A DIRECTORY, and this exists because that cost a
+        /// whole evening. `--vm=` DOES take a directory (it writes a numbered frame strip), so the two flags read
+        /// alike and behave differently. Pointing --shot at a folder made Image.SavePng fail silently: the run
+        /// built the world, logged "[SHOT] saved <path>", exited 0 and wrote nothing. I concluded my own harness
+        /// was broken and told master so -- three times across one night -- when every one of those runs was me
+        /// creating a directory where the PNG was meant to go.
+        ///
+        /// So the failure is moved to the FIRST SECOND of the run and made loud, rather than discovered after a
+        /// 60-second world build by noticing an empty folder. A silent no-op that still prints "saved" is the
+        /// worst possible shape for this: it reads as success.</summary>
+        static string ValidateShotPath(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path)) { Log.Err("[SHOT] --shot= needs a path, e.g. --shot=out/grass.png"); return path; }
+            if (Godot.DirAccess.DirExistsAbsolute(path))
+                Log.Err($"[SHOT] --shot={path} is a DIRECTORY -- this flag takes an output FILE (e.g. {path.TrimEnd('/', '\\')}/shot.png). "
+                      + "Nothing will be written. (--vm= is the one that takes a directory.)");
+            else if (!path.ToLowerInvariant().EndsWith(".png"))
+                GD.PushWarning($"[SHOT] --shot={path} does not end in .png -- SavePng will still write there, but check you did not mean a directory.");
+            return path;
+        }
+
+        /// <summary>SavePng, with its Error actually read. Both capture sites ignored the return value, so a
+        /// failed write printed the same "[SHOT] saved" line as a successful one.</summary>
+        static void SaveShot(Godot.Image img, string path)
+        {
+            var err = img.SavePng(path);
+            if (err != Godot.Error.Ok) Log.Err($"[SHOT] FAILED to write {path}: {err}");
+            else Log.Print($"[SHOT] saved {path} ({img.GetWidth()}x{img.GetHeight()})");
+        }
 
         string _shotRequested;       // the capture the COMMAND LINE asked for, set at parse time
         ulong _shotWaitStartMs;      // wall clock at the first frame with a capture pending
