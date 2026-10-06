@@ -6787,6 +6787,23 @@ namespace UnturnedGodot
                 editor.MarkDirty();   // so the autosave keeps it without the user having to think about it
                 MapShowcase.OpenView(cam as EditorCamera, built);
             }
+
+            // ⚠⚠ AND LOAD THE SAVED WIRES. This was missing, and it is why master reported the wires "GONE": a
+            // custom map authors its poles ONCE and then loads from disk forever after, so every visit after the
+            // first had poles, had a saved span file, and never put the two together. The PEI path has done this
+            // since the tool landed; this one was simply never written -- the same TWO PATHS, ONE FEATURE drift
+            // that bit the ocean builders.
+            //
+            // ⭐ Order matters: a custom map's poles ARE its placed objects, so the field has to be seeded from
+            // EditorObjects AFTER those have loaded, and only then can the saved spans re-match by position.
+            plField.RefreshPoles(editor.Objects != null
+                                     ? editor.Objects.PlacedOf(PowerLineField.PoleMesh)
+                                     : System.Array.Empty<Transform3D>(),
+                                 out _);
+            int loadedSpans = plField.Load(editor.MapName, out int orphanSpans);
+            plField.Rebuild();
+            if (loadedSpans > 0 || orphanSpans > 0)
+                Log.Print($"[powerline] custom map '{editor.MapName}': {plField.PoleCount} poles, {loadedSpans} spans loaded, {orphanSpans} orphaned");
             // Workshop's per-map Play opens the editor and goes straight in, so the map you play is the
             // map the editor built -- one world-building path, not two that can disagree.
             if (loading != null)

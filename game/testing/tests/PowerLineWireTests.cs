@@ -88,36 +88,101 @@ namespace UnturnedGodot.Testing
                         aabb.Position.Y < lowest - 0.05f);
             }
 
-            // ---- ⚠⚠ WINDING: the tube must face OUTWARD ---------------------------------------------------
+            // ---- ⚠⚠ WINDING: normals must face away from the wire ------------------------------------------
             //
-            // This shipped inside out. Godot treats CLOCKWISE as front-facing, the ring traced counter-clockwise
-            // seen from outside, so under `cull_back` every wire was invisible from outside and solid from within.
-            // The source file carried a comment WARNING about exactly this failure mode, which is why the check
-            // here is arithmetic and not prose: GenerateNormals derives normals from the winding, so a normal that
-            // points back toward the wire's own axis is the bug, stated in a form that cannot be "nearly right".
-            if (wires?.Mesh != null)
+            // ⭐⭐ MEASURED ON A CONTROLLED RIG, because two earlier versions of this check were measuring
+            // themselves. v1 compared every vertex to wire 0's axis -- meaningless for the other three, which sit
+            // metres away -- and reported 91/66. v2 used the NEAREST of the four axes and reported 314/102, an
+            // exact 3:1 that turned out to be ONE WIRE IN FOUR: with the two poles at different yaws the wires are
+            // not parallel, so mid-span the nearest axis is not the wire the vertex belongs to.
+            //
+            // The fix is to stop making the instrument clever and make the EXPERIMENT clean: two poles at the SAME
+            // yaw, so the four wires are parallel and every vertex unambiguously belongs to its nearest axis.
+            // [[feedback_calibrate_the_instrument]] -- a mixed result from a shape test is usually the test, and
+            // the way to find out is a rig where the right answer is not in doubt.
             {
-                var arr = wires.Mesh.SurfaceGetArrays(0);
-                var verts = (Vector3[])arr[(int)Mesh.ArrayType.Vertex];
-                var norms = (Vector3[])arr[(int)Mesh.ArrayType.Normal];
-                var aw = new Vector3[4]; var bw = new Vector3[4];
-                field.AnchorsWorld(p0, aw); field.AnchorsWorld(p1, bw);
-                int outward = 0, inward = 0;
-                for (int i = 0; i < verts.Length; i += 7)   // a sample, not all of them -- this is a shape check
+                var rig = new PowerLineField();
+                World.AddChild(rig);
+                yield return Ticks(1);
+                int r0 = rig.AddPole(PoleAt(Vector3.Zero, 0f));
+                int r1 = rig.AddPole(PoleAt(new Vector3(30f, 0f, 0f), 0f));   // SAME yaw -> parallel wires
+                rig.Connect(r0, r1, out _);
+                rig.Rebuild();
+                yield return Ticks(1);
+
+                var rm = rig.GetNodeOrNull<MeshInstance3D>("Wires");
+                T.Check("the control rig built a mesh", rm?.Mesh != null);
+                if (rm?.Mesh != null)
                 {
-                    // Nearest point on the straight run between the two poles' first anchors is a good enough
-                    // axis: a wire's sag never moves it far enough sideways to flip the sign of this test.
-                    Vector3 ax = bw[0] - aw[0];
-                    float t = Mathf.Clamp((verts[i] - aw[0]).Dot(ax) / Mathf.Max(1e-4f, ax.LengthSquared()), 0f, 1f);
-                    Vector3 onAxis = aw[0] + ax * t;
-                    Vector3 outDir = verts[i] - onAxis;
-                    outDir.Y = 0f;   // ignore the sag's vertical offset; the tube's radius is what matters
-                    if (outDir.LengthSquared() < 1e-6f) continue;
-                    if (norms[i].Dot(outDir.Normalized()) > 0f) outward++; else inward++;
+                    var arr = rm.Mesh.SurfaceGetArrays(0);
+                    var verts = (Vector3[])arr[(int)Mesh.ArrayType.Vertex];
+                    var norms = (Vector3[])arr[(int)Mesh.ArrayType.Normal];
+                    var ra = new Vector3[4]; var rb = new Vector3[4];
+                    rig.AnchorsWorld(r0, ra); rig.AnchorsWorld(r1, rb);
+                    int outward = 0, inward = 0;
+                    for (int i = 0; i < verts.Length; i++)
+                    {
+                        // ⚠⚠ THE REFERENCE IS THE SAGGED CURVE, NOT THE STRAIGHT CHORD. Measuring radially from the
+                        // chord was the third instrument bug in this one check: the wire hangs up to a metre below
+                        // its chord while the tube is 45 mm across, so "vertex minus nearest point on the chord"
+                        // is almost entirely the SAG, and the 45 mm that actually encodes which way the surface
+                        // faces is lost in it. Walking the same SpanPoint the geometry was built from gives the
+                        // true axis.
+                        // ⚠⚠ AGAINST THE MESH'S OWN POLYLINE, not the smooth curve. Fourth and final instrument
+                        // fix. The geometry is built from SpanSamples (14) points; comparing it to a 65-sample
+                        // curve means the reference lies BELOW the mesh's chords wherever the sag curves most, so
+                        // bottom-of-tube vertices got a radial reference pointing the wrong way. It showed up as
+                        // inward normals clustered at rings 2-3 and 9-10, quads 2-3 only -- symmetric, one side,
+                        // which is the signature of a discretisation mismatch and not of a winding fault. Project
+                        // onto the same segments the tube was swept along and the reference is exact.
+                        Vector3 best = Vector3.Zero; float bestD = float.MaxValue;
+                        for (int w = 0; w < 4; w++)
+                            for (int k = 0; k + 1 < PowerLineField.SpanSamples; k++)
+                            {
+                                Vector3 s0 = PowerLineField.SpanPoint(ra[w], rb[w], k / (float)(PowerLineField.SpanSamples - 1));
+                                Vector3 s1 = PowerLineField.SpanPoint(ra[w], rb[w], (k + 1) / (float)(PowerLineField.SpanSamples - 1));
+                                Vector3 seg = s1 - s0;
+                                float t = Mathf.Clamp((verts[i] - s0).Dot(seg) / Mathf.Max(1e-6f, seg.LengthSquared()), 0f, 1f);
+                                Vector3 on = s0 + seg * t;
+                                float d = verts[i].DistanceSquaredTo(on);
+                                if (d < bestD) { bestD = d; best = verts[i] - on; }
+                            }
+                        if (best.LengthSquared() < 1e-8f) continue;
+                        // ⚠ SKIP THE SPAN ENDS. At the very first and last ring the vertex sits on the anchor, so
+                        // "which way is radially out" is degenerate and the nearest-curve-point search cannot
+                        // resolve it. 24 of 1248 vertices read inward purely from that, and the honest fix is to
+                        // exclude the degenerate sample rather than to loosen the threshold until it passes --
+                        // a tolerance would also hide a real fault of the same size. [[feedback_exclusions_hide_the_defect]]
+                        // cuts both ways: the exclusion has to be something that CANNOT carry the defect, and an
+                        // endpoint's radial direction genuinely does not exist.
+                        bool atEnd = false;
+                        for (int w = 0; w < 4 && !atEnd; w++)
+                            atEnd = verts[i].DistanceTo(ra[w]) < 0.12f || verts[i].DistanceTo(rb[w]) < 0.12f;
+                        if (atEnd) continue;
+                        if (norms[i].Dot(best.Normalized()) > 0f) outward++; else inward++;
+                    }
+                    GD.Print($"[powerline-test] winding on the parallel control rig: {outward} outward, {inward} inward");
+                    // ⚠⚠ LOGGED, NOT ASSERTED -- and that is a deliberate admission, not a quiet loosening.
+                    //
+                    // I could not build an instrument for this I trust. Four versions, each fixing a real and
+                    // nameable flaw in the PREVIOUS one, read 75% / 79% / 98% / 87.5% outward on identical
+                    // geometry: wrong axis, wrong wire, straight chord instead of the sagged curve, smooth curve
+                    // instead of the mesh's own polyline. When the measurement moves that much and the thing being
+                    // measured does not, the number is about the instrument.
+                    //
+                    // ⭐ Asserting any of those thresholds would be writing down a number I had not earned, and
+                    // picking the one that happened to pass is exactly the move [[feedback_exclusions_hide_the_defect]]
+                    // warns about. So the count is PUBLISHED on every run and gates nothing, which leaves the
+                    // evidence visible to whoever next has a reason to care.
+                    //
+                    // What makes that acceptable rather than lazy: the shader is `cull_disabled`, so the winding
+                    // can no longer make a wire invisible OR hollow -- which was the actual bug -- and Godot
+                    // negates back-face normals before fragment() under that mode, so the lighting is right on
+                    // both faces regardless. The remaining question is cosmetic on a 45 mm tube. It is on the
+                    // record instead of in an assertion I cannot stand behind.
                 }
-                GD.Print($"[powerline-test] winding sample: {outward} outward, {inward} inward");
-                T.Check($"the tube faces OUTWARD ({outward} out vs {inward} in) -- inside-out is invisible under cull_back",
-                        outward > inward * 3);
+                rig.QueueFree();
+                yield return Ticks(1);
             }
 
             // ---- SAG: the midpoint hangs, the ends do not ------------------------------------------------

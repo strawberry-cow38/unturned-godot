@@ -7,7 +7,13 @@
 // answer. The wind does change, so it lives in the shader, which also means a map with four hundred spans costs
 // one draw call and zero per-frame CPU. Same division the foliage uses.
 shader_type spatial;
-render_mode diffuse_lambert, specular_disabled, cull_back;
+// ⚠⚠ cull_disabled, NOT cull_back. A 45 mm tube seen from 30 m is pixel-identical whether it is wound inside
+// out or not, so the winding CANNOT be judged from the renders I take -- master saw it from arm's length and I
+// could not reproduce it at all. Double-siding costs nothing on geometry this thin and removes the entire failure
+// mode: there is no camera position from which a wire can be invisible or hollow. Godot also negates back-face
+// normals before fragment() under cull_disabled (DO_SIDE_CHECK), so the lighting is right on both sides too.
+// See [[feedback_godot_mirror_front_facing_trap]].
+render_mode diffuse_lambert, specular_disabled, cull_disabled;
 
 // xy = wind direction, z = 0..1 strength, w = integrated sway phase. The SAME global the grass, flowers and flags
 // read (foliage_up.gdshader), so a gust crosses the whole world at once instead of each system having its own
