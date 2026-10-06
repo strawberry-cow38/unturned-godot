@@ -48,9 +48,36 @@ namespace UnturnedGodot
             public Node3D Root;
         }
 
-        /// <summary>⭐ THE TABLE. One entry per mapmaker tool. Add the next tool here.</summary>
+        /// <summary>⭐ THE TABLE. One entry per mapmaker tool.
+        ///
+        /// ⭐ NEWEST TOOL FIRST. Station 1 is where both the opening camera and the player spawn land, so whatever
+        /// just shipped is the thing you are looking at without flying anywhere -- which is the entire point of the
+        /// map. Master, after asking for it: "i just wanted to see the wired up power lines in game". Put the new
+        /// one at the top of this list and that is handled.</summary>
         public static List<Station> Stations() => new()
         {
+            new Station("POWER LINES", "Pick a pole, pick the next — four wires string themselves · Shift+P", c =>
+            {
+                // A RUN of poles, not a pair: the tool's whole point is chaining, and a single span would not show
+                // that the wires stay pinned across several of them. The slight Z stagger keeps it from reading as
+                // a technical drawing.
+                if (c.PowerLines == null) return;
+                var made = new List<int>();
+                for (int i = 0; i < 5; i++)
+                {
+                    var pos = c.Origin + new Vector3(-56f + i * 28f, 0f, (i % 2 == 0) ? -3f : 3f);
+                    if (c.Terr != null) pos.Y = c.Terr.SampleHeight(pos.X, pos.Z);
+                    float ey = 90f + i * 4f;   // not parallel, so crossed wires would be obvious
+                    var rot = new Basis(new Vector3(0, 1, 0), Mathf.DegToRad(180f - ey))
+                            * new Basis(new Vector3(1, 0, 0), Mathf.DegToRad(270f));
+                    var xf = new Transform3D(rot, pos);
+                    c.Objects?.Place(PowerLineField.PoleMesh, pos, rot);
+                    made.Add(c.PowerLines.AddPole(xf));
+                }
+                for (int i = 0; i + 1 < made.Count; i++) c.PowerLines.Connect(made[i], made[i + 1], out _);
+                c.PowerLines.Rebuild();
+            }),
+
             new Station("TERRAIN — SCULPT", "Raise / Lower / Smooth brushes · Terrain tab, M cycles the brush", c =>
             {
                 // A hill and a crater side by side, because the interesting thing about the brush is that it does
@@ -78,28 +105,6 @@ namespace UnturnedGodot
                     c.Origin + new Vector3( 50f, 0f,  18f),
                 };
                 c.Roads?.AddRoadFromPolyline(pts);
-            }),
-
-            new Station("POWER LINES", "Pick a pole, pick the next — four wires string themselves · Shift+P", c =>
-            {
-                // A RUN of poles, not a pair: the tool's whole point is chaining, and a single span would not show
-                // that the wires stay pinned across several of them. The slight Z stagger keeps it from reading as
-                // a technical drawing.
-                if (c.PowerLines == null) return;
-                var made = new List<int>();
-                for (int i = 0; i < 5; i++)
-                {
-                    var pos = c.Origin + new Vector3(-56f + i * 28f, 0f, (i % 2 == 0) ? -3f : 3f);
-                    if (c.Terr != null) pos.Y = c.Terr.SampleHeight(pos.X, pos.Z);
-                    float ey = 90f + i * 4f;   // not parallel, so crossed wires would be obvious
-                    var rot = new Basis(new Vector3(0, 1, 0), Mathf.DegToRad(180f - ey))
-                            * new Basis(new Vector3(1, 0, 0), Mathf.DegToRad(270f));
-                    var xf = new Transform3D(rot, pos);
-                    c.Objects?.Place(PowerLineField.PoleMesh, pos, rot);
-                    made.Add(c.PowerLines.AddPole(xf));
-                }
-                for (int i = 0; i + 1 < made.Count; i++) c.PowerLines.Connect(made[i], made[i + 1], out _);
-                c.PowerLines.Rebuild();
             }),
 
             new Station("OBJECTS", "Place, gizmo-move, copy and delete props · Level tab", c =>

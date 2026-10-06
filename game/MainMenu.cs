@@ -890,9 +890,19 @@ namespace UnturnedGodot
 
             box.AddChild(new HSeparator());
             box.AddChild(Dim("SAVED MAPS  —  open to edit, or play it"));
-            _mapList = new VBoxContainer();
+            // ⚠ SCROLLED AND CAPPED (master 2026-10-06: "the workshop maps list is a million procgen maps, with no
+            // scrollbar"). The list was a bare VBox added straight to the panel, so it grew without limit: every
+            // generated island pushed the rows below it -- including Back -- further off the bottom of the screen,
+            // and there was no way to reach any of them. A list whose length is user-controlled needs a viewport.
+            var mapScroll = new ScrollContainer
+            {
+                CustomMinimumSize = new Vector2(330f, 232f),
+                HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
+            };
+            _mapList = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
             _mapList.AddThemeConstantOverride("separation", 4);
-            box.AddChild(_mapList);
+            mapScroll.AddChild(_mapList);
+            box.AddChild(mapScroll);
 
             box.AddChild(new HSeparator());
             AddBackRow(box);
