@@ -541,6 +541,51 @@ namespace UnturnedNet.Tests
             Assert.That(Counts(outs), Is.EqualTo(new[] { 18, 6, 0 }), "24 at 3:1:0 is 18:6:0");
         }
 
+        // mover -> splitter A; A.1 -> splitter B -> three crates, A.2 -> X, A.3 -> Y. Splits are PER BRANCH, not per
+        // container: B's whole subtree is one of A's three outputs, so each of B's crates gets a ninth.
+        static (PipeRig r, InventoryReplication.CrateEntry src, InventoryReplication.CrateEntry[] outs) NestedRig()
+        {
+            var r = new PipeRig();
+            var src = r.Crate(new Vector3(0f, 0f, 0f), 8, 6);
+            uint as_ = r.Adapter(src);
+            uint mover = r.PoweredMover(new Vector3(3f, 0f, 0f));
+            uint a = r.Place(PipeFixtures.SPLITTER, new Vector3(6f, 0f, 0f));
+            uint b = r.Place(PipeFixtures.SPLITTER, new Vector3(9f, 0f, 0f));
+            r.Pipe(as_, 1, mover, 0);
+            r.Pipe(mover, 1, a, 0);
+            r.Pipe(a, 1, b, 0);
+            var outs = new InventoryReplication.CrateEntry[5];
+            for (int i = 0; i < 5; i++)
+            {
+                outs[i] = r.Crate(new Vector3(14f, 0f, i * 6f), 8, 6);
+                uint ad = r.Adapter(outs[i]);
+                if (i < 3) r.Pipe(b, (byte)(1 + i), ad, 0); else r.Pipe(a, (byte)(2 + (i - 3)), ad, 0);
+            }
+            return (r, src, outs);
+        }
+
+        [Test]
+        public void a_splitter_feeding_a_splitter_splits_per_branch()
+        {
+            var (r, src, outs) = NestedRig();
+            r.Fill(src, PipeFixtures.SINGLE, 45);
+            r.Run(200);
+            Assert.That(Counts(outs), Is.EqualTo(new[] { 5, 5, 5, 15, 15 }),
+                        "A gives its three branches 15 each; B splits its 15 three ways");
+        }
+
+        [Test]
+        public void a_splitter_skips_a_branch_whose_downstream_splitter_is_all_full()
+        {
+            var (r, src, outs) = NestedRig();
+            for (int i = 0; i < 3; i++) { outs[i].Storage.loadSize(1, 1); outs[i].Storage.tryAddItem(new Item(PipeFixtures.NAILS, 1)); }
+            r.Fill(src, PipeFixtures.SINGLE, 40);
+            r.Run(200);
+            Assert.That(Counts(outs), Is.EqualTo(new[] { 1, 1, 1, 20, 20 }),
+                        "every container behind B is full, so A sees B's branch as dead and X/Y share it all");
+            Assert.That(PipeRig.Units(src.Storage), Is.EqualTo(0), "nothing stalls at A");
+        }
+
         [Test]
         public void combiner_round_robins_the_connected_inputs_and_skips_empty_ones()
         {
