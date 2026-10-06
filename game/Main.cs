@@ -5404,11 +5404,11 @@ namespace UnturnedGodot
             g.MaterialOverride = valid ? DeployablePlacer.ValidMat : DeployablePlacer.InvalidMat;
             AddChild(g);
             g.GlobalTransform = new Transform3D(DeployableDef.StandBasis(yaw) * def.MeshBasis(), surface + Vector3.Up * DeployableDef.GroundLift(ab));   // × MeshBasis: this ghost is the MeshInstance too (see BarricadePlacer.GhostTransform)
-            if (System.Environment.GetEnvironmentVariable("UG_WIREARROWS") == "1")   // mirror DeployablePlacer: in/out port arrows on the ghost (blueprint blue/red)
-            {
-                var mat = ConnectionPort.ArrowMaterial(valid ? ConnectionPort.ArrowBlue : ConnectionPort.ArrowRed);
-                foreach (var p in def.Ports) g.AddChild(ConnectionPort.MakeArrow(p, mat, p.Pos));
-            }
+            if (System.Environment.GetEnvironmentVariable("UG_WIREARROWS") == "1")
+                // CALLS DeployablePlacer, does not mirror it. This used to re-implement the port arrows, so the
+                // harness ghost and the real one could drift -- and anything added to the real one (the lamp
+                // direction arrow) would never show up here, which is a render of the wrong thing.
+                DeployablePlacer.AddGhostArrows(g, def, ConnectionPort.ArrowMaterial(valid ? ConnectionPort.ArrowBlue : ConnectionPort.ArrowRed));
         }
 
         // --croptest=NAME: a farm crop showcase -- the YOUNG (Foliage_0) crop left, the GROWN (Foliage_1) crop right,

@@ -17,6 +17,8 @@ namespace UnturnedGodot
         MeshInstance3D _ghost;
         Aabb _localAabb;
         StandardMaterial3D _arrowMat;   // shared by the ghost's in/out port arrows; recoloured blue/red with validity
+        static readonly Color BeamArrowColor = new Color(1f, 0.85f, 0.35f);   // warm, like the light it describes
+        const float BeamArrowStandoff = 0.45f;   // clear of the housing so the arrow is not buried in the head
 
         // Alpha 0.25, not 0.45 (master 2026-09-07: "make deployable placement ghosts more transparent"). The
         // ghost is DOUBLE-SIDED and unshaded, so you look through the near face AND the far one: apparent
@@ -42,8 +44,44 @@ namespace UnturnedGodot
             _ghost.MaterialOverride = InvalidMat;
             AddChild(_ghost);
             _arrowMat = ConnectionPort.ArrowMaterial(ConnectionPort.ArrowRed);   // in/out arrows on the ghost's ports (stand up with it)
+            AddGhostArrows(_ghost, def, _arrowMat);
+        }
+
+        /// <summary>Everything drawn ON a placement ghost: the in/out port arrows and, for a lamp, the direction
+        /// its light will face.
+        ///
+        /// ⭐⭐ PUBLIC AND SHARED BECAUSE THE TEST HARNESS DRAWS A GHOST TOO. Main.Ghost used to re-implement the
+        /// port arrows with the comment "mirror DeployablePlacer", which means a render of the harness ghost is a
+        /// render of a DIFFERENT THING -- and anything added here (like the beam arrow) silently never appears in
+        /// it. That is the carjack trap exactly: a harness that imitates the game can pass while the game is
+        /// wrong, or show nothing while the game is right. One implementation, called by both.</summary>
+        public static void AddGhostArrows(Node3D ghost, DeployableDef def, StandardMaterial3D portMat)
+        {
+            if (ghost == null || def == null) return;
             foreach (var p in def.Ports)
-                _ghost.AddChild(ConnectionPort.MakeArrow(p, _arrowMat, p.Pos));
+                ghost.AddChild(ConnectionPort.MakeArrow(p, portMat, p.Pos));
+
+            // WHICH WAY WILL IT SHINE (master 2026-10-06: "add an arrow to the spotlight to show the direction
+            // the light faces"). A spotlight's two heads read almost the same from either side, so until it was
+            // powered there was nothing to say which way you had aimed it -- you placed it, wired it, and found
+            // out. Shown while you are still turning it, which is when the question is live.
+            //
+            // A DISTINCT COLOUR from the port arrows: one says "wire here", the other says "light goes there",
+            // and two identical arrows pointing different ways on one ghost would be worse than none.
+            //
+            // Output (not Consumer) so MakeArrow's flow runs ALONG the beam rather than into it, and the
+            // direction is handed over explicitly because the light's Dir lives in the flat frame -- the X/Y
+            // face rule would otherwise aim it at the sky.
+            if (def.Lights == null || def.Lights.Length == 0) return;
+            var beamMat = ConnectionPort.ArrowMaterial(BeamArrowColor);
+            foreach (var ld in def.Lights)
+            {
+                if (ld.Dir.LengthSquared() < 1e-6f) continue;
+                var dir = ld.Dir.Normalized();
+                ghost.AddChild(ConnectionPort.MakeArrow(
+                    new DeployableDef.Port { Kind = DeployableDef.PortKind.Output, Pos = ld.Pos },
+                    beamMat, ld.Pos + dir * BeamArrowStandoff, dir));
+            }
         }
 
         public void SetGhostVisible(bool v) { if (_ghost != null) _ghost.Visible = v; }
