@@ -243,7 +243,13 @@ namespace UnturnedGodot
                 if (p.Kind == SDG.Unturned.PowerPortKind.Output && dev.Producing) return true;
                 if (p.Kind != SDG.Unturned.PowerPortKind.Consumer) continue;
                 sawConsumer = true;
-                if (p.Powered) return true;
+                // ⭐ THE MAINS COUNT AS A FEED (master 2026-10-06: "cctv camera should also get power from
+                // globalpower being on"). Every device that answers this question for ITSELF already says so --
+                // TVDevice, RadioDevice, VendingMachine and HeartMonitor all read `PowerNet.MainsLive || PlugPowered`
+                // -- but this function, which is what the DATA solve asks, only ever looked at the wire. So a camera
+                // on a powered map filmed nothing until you ran a cable to it, while the television it fed ran off
+                // the mains quite happily. One model of "has power", not two.
+                if (p.Powered || MainsLive) return true;
             }
             return !sawConsumer;
         }

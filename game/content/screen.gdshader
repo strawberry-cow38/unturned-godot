@@ -263,7 +263,12 @@ void fragment() {
     // 8 = CAMERA FEED. The picture is whatever the wired camera sees, put through the same tint/mono/roll path
     // as every other program below -- so a feed on a mono tube is still monochrome, still rolls when the
     // vertical hold slips, and still fades in with the warmup rather than snapping on.
-    else if (program == 8) c = texture(feed_tex, vec2(uv.x, 1.0 - uv.y)).rgb;
+    // ⚠⚠ SAMPLED STRAIGHT, NOT FLIPPED (master 2026-10-06: "the cctv camera-tv viewport/data thingy is upside
+    // down"). This read `1.0 - uv.y`, which is one V-flip too many: the screen MESH's UVs are already built
+    // V-flipped in TVDevice.ProjectScreenUv ("V flipped: image top (v=0) at the screen top"), so the picture
+    // arrives the right way up and this inverted it again. Two independent flips, each correct on its own, each
+    // written without the other in view -- the same shape as every other double-transform in this port.
+    else if (program == 8) c = texture(feed_tex, uv).rgb;
     else c = vec3(1.0);                      // 3 Colour: the flat colour rides `tint`
 
     // THE BLACK IS THE GLASS (strawberry: "change the black color for all screen types on all channels to not be
