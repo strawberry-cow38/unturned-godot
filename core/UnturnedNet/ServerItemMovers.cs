@@ -13,6 +13,8 @@ namespace UnturnedGodot.Net
         public long Transfers;       // individual pick-and-place operations
         public long Stalls;          // a powered mover with budget that found nowhere to put the item it picked
         public long UnpoweredSteps;  // mover-steps skipped for lack of power
+        public long PowerSolves;     // full power solves the movers asked for (only when the power inputs changed)
+        public long RouteVisits;     // junction/adapter evaluations by the routing walks -- the walk's real cost
     }
 
     /// <summary>
@@ -46,10 +48,16 @@ namespace UnturnedGodot.Net
         /// chain. Sixteen junctions between a mover and a container is far beyond anything built on purpose.</summary>
         public const int MaxRouteDepth = 16;
 
-        /// <summary>How often the power solve is refreshed, in steps. A solve per tick at 50 Hz on a big base
-        /// is real allocation for nothing: power changes at human speed, and at most a tenth of a second of
-        /// over-run after a generator dies is ~3 items. The state ITSELF is exact -- this is only how stale the
-        /// mover's view of it may be.</summary>
+        /// <summary>How often the power INPUTS are checked, in steps; the solve itself runs only when they changed.
+        /// Power changes at human speed, and at most a tenth of a second of over-run after a generator dies is ~3
+        /// items. The state ITSELF is exact -- this is only how stale the mover's view of it may be.
+        ///
+        /// ⚠ NOT "solve every 5 steps", which is what this was. PowerSolver runs wires+1 passes over every device,
+        /// so a solve is quadratic in the base: measured 2026-10-06 at ~15 ms for 100 movers among 1,000 other
+        /// deployables -- three quarters of a 20 ms tick, ten times a second, on a base where nothing had changed.
+        /// The inputs it reads are few (which devices exist, their def, on/fire/fuelled, which ports are wired),
+        /// so a scan of those is a few microseconds and the expensive part runs when a player actually did
+        /// something.</summary>
         public const int PowerRefreshSteps = 5;
 
         // Budgets are kept in MILLIONTHS of a unit, as integers. A float accumulator of 0.64 x 50 lands on
@@ -62,7 +70,30 @@ namespace UnturnedGodot.Net
         readonly Dictionary<uint, long> _budget = new Dictionary<uint, long>();
         readonly Dictionary<uint, int> _cursor = new Dictionary<uint, int>();     // round-robin: next ordinal to try (splitter outs / combiner ins)
         readonly Dictionary<uint, int[]> _swrr = new Dictionary<uint, int[]>();   // weighted splitter: smooth-WRR current weights per output
+
+        // ONE routing walk's answers, per device. A splitter feeding a combiner is a diamond: three pipes leave and
+        // rejoin, so everything behind the combiner is reachable by three PATHS -- and k diamonds in series by 3^k.
+        // The walk was per path: measured 2026-10-06 at 2.2 ms for ONE mover behind seven diamonds, every transfer.
+        // Within one walk a device's answer does not depend on how it was reached (same item, same source, nothing
+        // mutates until Commit), so it is computed once and reused -- the walk becomes linear in DEVICES.
+        // EXCEPT an answer cut short by a loop (a device already on the current path) or by MaxRouteDepth: that one
+        // IS path-dependent, so it is never stored. Cleared before every walk.
+        readonly Dictionary<uint, Memo> _srcMemo = new Dictionary<uint, Memo>();
+        readonly Dictionary<uint, Memo> _dstMemo = new Dictionary<uint, Memo>();
+        bool _cut;   // the walk in progress hit a loop or the depth cap somewhere below the current device
+        readonly HashSet<uint> _visited = new HashSet<uint>();
+        readonly List<Choice> _srcChoices = new List<Choice>(), _dstChoices = new List<Choice>();
+
+        /// <summary>After a mover finds nothing to do (source empty, destination full, filtered), how many steps it
+        /// sleeps before looking again -- its budget still fills meanwhile. Idle and stalled are a pipe network's
+        /// USUAL states, and a full route walk at 50 Hz to re-learn "still full" was most of the cost of a big
+        /// base (measured 2026-10-06). 5 steps = 0.1 s: a freed slot waits at most that long.</summary>
+        public const int StallRetrySteps = 5;
+        readonly Dictionary<uint, int> _rest = new Dictionary<uint, int>();
+        struct Memo { public InventoryReplication.CrateEntry Crate; public Choice[] Choices; }
         int _sinceSolve = PowerRefreshSteps;
+        ulong _solvedFor;          // PowerInputs() at the last solve
+        bool _everSolved;
 
         public ServerItemMoversDiagnostics Diag { get; } = new ServerItemMoversDiagnostics();
 
@@ -124,15 +155,49 @@ namespace UnturnedGodot.Net
                 if (_deployables.Schema.TryGet(e.DefId, out var def) && def.ItemDevice == ItemDeviceKind.Mover)
                     (movers ??= new()).Add((e, def));
             if (movers == null) { _budget.Clear(); return; }
-            if (++_sinceSolve >= PowerRefreshSteps) { _deployables.Solve(); _sinceSolve = 0; }
+            if (++_sinceSolve >= PowerRefreshSteps)
+            {
+                _sinceSolve = 0;
+                ulong now = PowerInputs();
+                if (!_everSolved || now != _solvedFor) { _deployables.Solve(); _solvedFor = now; _everSolved = true; Diag.PowerSolves++; }
+            }
             foreach (var (e, def) in movers) StepMover(e, def, dtMicro);
             // A picked-up mover leaves its budget behind otherwise; harmless, but a registry that only grows
             // is how the next "is this NetId a mover" question gets answered yes for a dead one.
             if (_budget.Count > movers.Count)
             {
                 var live = new HashSet<uint>(); foreach (var (e, _) in movers) live.Add(e.NetIdValue);
-                foreach (uint id in new List<uint>(_budget.Keys)) if (!live.Contains(id)) _budget.Remove(id);
+                foreach (uint id in new List<uint>(_budget.Keys)) if (!live.Contains(id)) { _budget.Remove(id); _rest.Remove(id); }
             }
+        }
+
+        /// <summary>A fingerprint of everything DeployableReplication.Solve reads: the devices, their def (ports),
+        /// Producing (on, not burning, fuelled) and OnFire, and every wire's two ends. A SUM of per-element hashes,
+        /// so the dictionaries' enumeration order cannot fake a change -- and anything Solve reads that is missing
+        /// here is a power change the mover would not see, so add it HERE when Solve grows an input.</summary>
+        ulong PowerInputs()
+        {
+            ulong h = 0;
+            int n = 0, w = 0;
+            foreach (var e in _deployables.All)
+            {
+                bool producing = _deployables.Schema.TryGet(e.DefId, out var def) && e.Producing(def);
+                h += Mix(((ulong)e.NetIdValue << 32) | ((ulong)e.DefId << 8) | (producing ? 1u : 0u) | (e.OnFire ? 2u : 0u));
+                n++;
+            }
+            foreach (var x in _deployables.AllWires)
+            {
+                h += Mix(Mix(((ulong)x.SrcId << 8) | x.SrcPort) ^ (((ulong)x.DstId << 8) | x.DstPort) ^ 0x5bd1e995UL);
+                w++;
+            }
+            return h ^ Mix(((ulong)n << 32) | (uint)w);
+        }
+
+        static ulong Mix(ulong z)   // splitmix64's finaliser
+        {
+            z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9UL;
+            z = (z ^ (z >> 27)) * 0x94d049bb133111ebUL;
+            return z ^ (z >> 31);
         }
 
         /// <summary>Is this mover's power INPUT fed? Its first Consumer port after the last solve -- the same
@@ -160,27 +225,37 @@ namespace UnturnedGodot.Net
             // Capped at one second's worth: a mover stalled behind a full chest must not bank an hour of throughput
             // and empty the source in a single tick the moment someone frees a slot.
             long b = Math.Min(rate * Unit, (_budget.TryGetValue(id, out long had) ? had : 0) + rate * dtMicro);
+            if (_rest.TryGetValue(id, out int rest) && rest > 0)
+            {
+                // asleep after finding nothing to do: the budget fills, the walk waits (StallRetrySteps)
+                _rest[id] = rest - 1;
+                _budget[id] = b;
+                return;
+            }
             byte inPort = PortAt(def, ItemPortDir.In, 0), outPort = PortAt(def, ItemPortDir.Out, 0);
+            bool idle = false;
             for (int guard = 0; b >= Unit && guard < ItemDeviceConfig.MaxRate * 2; guard++)
             {
-                var srcChoices = new List<Choice>();
-                var src = SourceThrough(id, inPort, 0, new HashSet<uint> { id }, srcChoices);
-                if (src == null) break;                                   // nothing upstream, or everything upstream is empty
+                var srcChoices = _srcChoices; srcChoices.Clear();
+                _srcMemo.Clear(); _cut = false; _visited.Clear(); _visited.Add(id);
+                var src = SourceThrough(id, inPort, 0, _visited, srcChoices);
+                if (src == null) { idle = true; break; }                  // nothing upstream, or everything upstream is empty
                 // "should suck from the last full slot in the source container" -- and ONLY that slot. If it will
                 // not go anywhere the mover stalls; it does not go hunting for a different item that would.
                 var jar = ItemTransfer.LastOccupied(src.Storage);
-                if (jar?.item == null) break;
-                if (Filter != null && !Filter(e, jar.item)) { Diag.Stalls++; break; }
-                var dstChoices = new List<Choice>();
-                var dst = DestThrough(id, outPort, jar.item, src, 0, new HashSet<uint> { id }, dstChoices);
+                if (jar?.item == null) { idle = true; break; }
+                if (Filter != null && !Filter(e, jar.item)) { Diag.Stalls++; idle = true; break; }
+                var dstChoices = _dstChoices; dstChoices.Clear();
+                _dstMemo.Clear(); _cut = false; _visited.Clear(); _visited.Add(id);
+                var dst = DestThrough(id, outPort, jar.item, src, 0, _visited, dstChoices);
                 // "mover wont try move anything if destination full, unless it can merge stacks" -- DestAt only
                 // returns a crate that can take at least one unit of THIS item, by merge or by free footprint.
-                if (dst == null) { Diag.Stalls++; break; }
+                if (dst == null) { Diag.Stalls++; idle = true; break; }
                 int want = (int)Math.Min(ItemTransfer.UnitsOf(jar.item), b / Unit);
                 int n = Math.Min(want, ItemTransfer.Acceptable(dst.Storage, jar.item));
-                if (n <= 0) { Diag.Stalls++; break; }
+                if (n <= 0) { Diag.Stalls++; idle = true; break; }
                 int moved = ItemTransfer.Transfer(src.Storage, jar, dst.Storage, n);
-                if (moved <= 0) { Diag.Stalls++; break; }
+                if (moved <= 0) { Diag.Stalls++; idle = true; break; }
                 b -= moved * Unit;
                 Diag.UnitsMoved += moved; Diag.Transfers++;
                 Commit(srcChoices); Commit(dstChoices);
@@ -190,6 +265,7 @@ namespace UnturnedGodot.Net
                 _inventories.ServerRepaintCrateViewers(dst.NetIdValue);
             }
             _budget[id] = b;
+            if (idle) _rest[id] = StallRetrySteps - 1;
         }
 
         // ---------------------------------------------------------------- routing
@@ -229,45 +305,70 @@ namespace UnturnedGodot.Net
         }
 
         InventoryReplication.CrateEntry SourceAt(uint devId, byte outPort, int depth, HashSet<uint> visited, List<Choice> choices)
+            => Memoised(_srcMemo, devId, null, null, depth, visited, choices);
+
+        /// <summary>Evaluate this device once per routing walk (downstream when <paramref name="memo"/> is the
+        /// destination memo, else upstream): a stored answer is replayed (its junction choices too), a loop or the
+        /// depth cap answers null and marks the walk CUT, and an answer that a cut fed into is returned but not
+        /// stored. No delegate: a closure per device per walk was most of a stalled mover's garbage.</summary>
+        InventoryReplication.CrateEntry Memoised(Dictionary<uint, Memo> memo, uint devId, Item item, InventoryReplication.CrateEntry src,
+                                                 int depth, HashSet<uint> visited, List<Choice> choices)
         {
-            if (depth > MaxRouteDepth || !visited.Add(devId)) return null;
+            if (memo.TryGetValue(devId, out var m)) { choices.AddRange(m.Choices); return m.Crate; }
+            if (depth > MaxRouteDepth || !visited.Add(devId)) { _cut = true; return null; }
+            bool outer = _cut;
+            _cut = false;
+            int from = choices.Count;
             try
             {
-                if (!Resolve(devId, out var e, out var def)) return null;
-                switch (def.ItemDevice)
+                Diag.RouteVisits++;
+                var crate = memo == _dstMemo ? DestAtOnce(devId, item, src, depth, visited, choices)
+                                             : SourceAtOnce(devId, depth, visited, choices);
+                if (!_cut)
                 {
-                    case ItemDeviceKind.Adapter:
-                    {
-                        var crate = CrateFor(e);
-                        return crate != null && crate.Storage != null && crate.Storage.getItemCount() > 0 ? crate : null;
-                    }
-                    case ItemDeviceKind.Combiner:
-                    {
-                        // ROUND-ROBIN over the CONNECTED inputs, skipping empty ones (strawberry: "completely ignore
-                        // disconnected i/o"). An unpiped input is not a turn that yields nothing -- it is not there.
-                        int n = CountPorts(def, ItemPortDir.In);
-                        if (n == 0) return null;
-                        int start = (_cursor.TryGetValue(devId, out int cur) ? cur : 0) % n;
-                        for (int k = 0; k < n; k++)
-                        {
-                            int ord = (start + k) % n;
-                            var sub = new List<Choice>();
-                            var c = SourceThrough(devId, PortAt(def, ItemPortDir.In, ord), depth, visited, sub);
-                            if (c == null) continue;
-                            choices.Add(new Choice { Device = devId, Ordinal = ord });
-                            choices.AddRange(sub);
-                            return c;
-                        }
-                        return null;
-                    }
-                    case ItemDeviceKind.Splitter:
-                        // a splitter UPSTREAM of a mover is a pass-through: pull through it from whatever feeds it
-                        return SourceThrough(devId, PortAt(def, ItemPortDir.In, 0), depth, visited, choices);
-                    default:
-                        return null;   // another mover is not a source: "only a mover can move", and it moves its own way
+                    int k = choices.Count - from;
+                    memo[devId] = new Memo { Crate = crate, Choices = k == 0 ? Array.Empty<Choice>() : choices.GetRange(from, k).ToArray() };
                 }
+                return crate;
             }
-            finally { visited.Remove(devId); }
+            finally { visited.Remove(devId); _cut |= outer; }
+        }
+
+        InventoryReplication.CrateEntry SourceAtOnce(uint devId, int depth, HashSet<uint> visited, List<Choice> choices)
+        {
+            if (!Resolve(devId, out var e, out var def)) return null;
+            switch (def.ItemDevice)
+            {
+                case ItemDeviceKind.Adapter:
+                {
+                    var crate = CrateFor(e);
+                    return crate != null && crate.Storage != null && crate.Storage.getItemCount() > 0 ? crate : null;
+                }
+                case ItemDeviceKind.Combiner:
+                {
+                    // ROUND-ROBIN over the CONNECTED inputs, skipping empty ones (strawberry: "completely ignore
+                    // disconnected i/o"). An unpiped input is not a turn that yields nothing -- it is not there.
+                    int n = CountPorts(def, ItemPortDir.In);
+                    if (n == 0) return null;
+                    int start = (_cursor.TryGetValue(devId, out int cur) ? cur : 0) % n;
+                    for (int k = 0; k < n; k++)
+                    {
+                        int ord = (start + k) % n;
+                        var sub = new List<Choice>();
+                        var c = SourceThrough(devId, PortAt(def, ItemPortDir.In, ord), depth, visited, sub);
+                        if (c == null) continue;
+                        choices.Add(new Choice { Device = devId, Ordinal = ord });
+                        choices.AddRange(sub);
+                        return c;
+                    }
+                    return null;
+                }
+                case ItemDeviceKind.Splitter:
+                    // a splitter UPSTREAM of a mover is a pass-through: pull through it from whatever feeds it
+                    return SourceThrough(devId, PortAt(def, ItemPortDir.In, 0), depth, visited, choices);
+                default:
+                    return null;   // another mover is not a source: "only a mover can move", and it moves its own way
+            }
         }
 
         // ---- downstream: where does the item go TO ----
@@ -282,32 +383,31 @@ namespace UnturnedGodot.Net
 
         InventoryReplication.CrateEntry DestAt(uint devId, Item item, InventoryReplication.CrateEntry src,
                                                int depth, HashSet<uint> visited, List<Choice> choices)
+            => Memoised(_dstMemo, devId, item, src, depth, visited, choices);
+
+        InventoryReplication.CrateEntry DestAtOnce(uint devId, Item item, InventoryReplication.CrateEntry src,
+                                                   int depth, HashSet<uint> visited, List<Choice> choices)
         {
-            if (depth > MaxRouteDepth || !visited.Add(devId)) return null;
-            try
+            if (!Resolve(devId, out var e, out var def)) return null;
+            switch (def.ItemDevice)
             {
-                if (!Resolve(devId, out var e, out var def)) return null;
-                switch (def.ItemDevice)
+                case ItemDeviceKind.Adapter:
                 {
-                    case ItemDeviceKind.Adapter:
-                    {
-                        var crate = CrateFor(e);
-                        // the source container is never a destination: moving a chest's last item back into the
-                        // same chest is a loop that spends budget to change nothing
-                        if (crate == null || crate == src || crate.Storage == null) return null;
-                        if (Filter != null && !Filter(e, item)) return null;
-                        return ItemTransfer.Acceptable(crate.Storage, item) > 0 ? crate : null;
-                    }
-                    case ItemDeviceKind.Combiner:
-                        // a combiner DOWNSTREAM of a mover is a pass-through to its single output
-                        return DestThrough(devId, PortAt(def, ItemPortDir.Out, 0), item, src, depth, visited, choices);
-                    case ItemDeviceKind.Splitter:
-                        return SplitterPick(devId, e, def, item, src, depth, visited, choices);
-                    default:
-                        return null;   // a mover is not a destination
+                    var crate = CrateFor(e);
+                    // the source container is never a destination: moving a chest's last item back into the
+                    // same chest is a loop that spends budget to change nothing
+                    if (crate == null || crate == src || crate.Storage == null) return null;
+                    if (Filter != null && !Filter(e, item)) return null;
+                    return ItemTransfer.Acceptable(crate.Storage, item) > 0 ? crate : null;
                 }
+                case ItemDeviceKind.Combiner:
+                    // a combiner DOWNSTREAM of a mover is a pass-through to its single output
+                    return DestThrough(devId, PortAt(def, ItemPortDir.Out, 0), item, src, depth, visited, choices);
+                case ItemDeviceKind.Splitter:
+                    return SplitterPick(devId, e, def, item, src, depth, visited, choices);
+                default:
+                    return null;   // a mover is not a destination
             }
-            finally { visited.Remove(devId); }
         }
 
         /// <summary>Pick an output by the splitter's mode, among CONNECTED outputs whose branch can accept the item

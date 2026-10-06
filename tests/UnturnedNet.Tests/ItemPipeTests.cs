@@ -309,9 +309,12 @@ namespace UnturnedNet.Tests
             r.Run(150);                                              // three seconds stalled
             Assert.That(PipeRig.Units(b.Storage, PipeFixtures.SINGLE), Is.EqualTo(0), "stalled: nothing moved");
             b.Storage.loadSize(8, 6);                                // room appears
-            r.Run(1);
+            // a stalled mover sleeps between looks (StallRetrySteps), so the room is noticed within that many steps
+            int steps = 0;
+            while (PipeRig.Units(b.Storage, PipeFixtures.SINGLE) == 0 && steps < ServerItemMovers.StallRetrySteps) { r.Run(1); steps++; }
             Assert.That(PipeRig.Units(b.Storage, PipeFixtures.SINGLE), Is.EqualTo(32),
-                        "the tick after unstalling moves the banked second -- 32, not 96 (three seconds) and not 0 or 1 (no bank)");
+                        "the first step that sees the room moves the banked second -- 32, not 96 (three seconds) and not 0 or 1 (no bank)");
+            Assert.That(steps, Is.LessThanOrEqualTo(ServerItemMovers.StallRetrySteps), "and it noticed within one retry interval");
         }
 
         // ---- which item, and what "fits" means ----
@@ -446,6 +449,42 @@ namespace UnturnedNet.Tests
             r.S.Deployables.ServerToggle(gen, false, 0);
             r.Run(100);
             Assert.That(PipeRig.Units(b.Storage), Is.EqualTo(0), "a wired but STOPPED generator powers nothing");
+        }
+
+        [Test]
+        public void a_stalled_mover_sleeps_between_looks()
+        {
+            // Idle and stalled are a network's usual states; a full route walk every step to re-learn "still full"
+            // was most of a big stalled base's cost (100 movers: 966 -> 328 us/step, measured).
+            var r = new PipeRig();
+            var (a, b, _) = r.Line(bw: 1, bh: 1);
+            r.Fill(a, PipeFixtures.SINGLE, 10);
+            b.Storage.tryAddItem(new Item(PipeFixtures.NAILS, 1));   // full, and SINGLE will not merge into nails
+            r.Run(100);   // two seconds: the budget is past one unit from step 2 on, so every step COULD look
+            long stalls = r.S.ItemMovers.Diag.Stalls;
+            Assert.That(stalls, Is.GreaterThan(0), "it did look");
+            Assert.That(stalls, Is.LessThanOrEqualTo(100 / ServerItemMovers.StallRetrySteps + 1),
+                        $"{stalls} looks in 100 steps: once per {ServerItemMovers.StallRetrySteps}, not every step");
+        }
+
+        [Test]
+        public void power_is_solved_only_when_its_inputs_change()
+        {
+            // A solve is quadratic in the base (~15 ms for 100 movers among 1,000 deployables, measured); it used to
+            // run every 5 steps whether or not anything had changed.
+            var r = new PipeRig();
+            var (a, b, mover) = r.Line();
+            r.Fill(a, PipeFixtures.SINGLE, 40);
+            r.Run(500);
+            var diag = r.S.ItemMovers.Diag;
+            Assert.That(diag.PowerSolves, Is.EqualTo(1), "ten seconds of an unchanged base: one solve, at the start");
+            Assert.That(PipeRig.Units(b.Storage), Is.EqualTo(40), "and the mover ran on it");
+            uint gen = r.S.Deployables.All.First(e => e.DefId == PipeFixtures.GEN).NetIdValue;
+            r.S.Deployables.ServerToggle(gen, false, 0);
+            r.Run(ServerItemMovers.PowerRefreshSteps);
+            Assert.That(diag.PowerSolves, Is.EqualTo(2), "switching the generator off is an input change: solved again");
+            Assert.That(ServerItemMovers.IsPowered(r.E(mover), r.S.Deployables.Schema.TryGet(PipeFixtures.MOVER, out var md) ? md : null),
+                        Is.False, "and the mover sees it");
         }
     }
 
@@ -584,6 +623,70 @@ namespace UnturnedNet.Tests
             Assert.That(Counts(outs), Is.EqualTo(new[] { 1, 1, 1, 20, 20 }),
                         "every container behind B is full, so A sees B's branch as dead and X/Y share it all");
             Assert.That(PipeRig.Units(src.Storage), Is.EqualTo(0), "nothing stalls at A");
+        }
+
+        [Test]
+        public void routing_through_diamonds_costs_devices_not_paths()
+        {
+            // k splitter->combiner diamonds in series: 3^k PATHS to the one crate at the end, but only 2k+2 devices.
+            // The walk evaluates each device once per walk (ServerItemMovers memo) -- without that, seven diamonds
+            // were measured at 2.2 ms per transfer for a single mover.
+            var r = new PipeRig();
+            var src = r.Crate(new Vector3(0f, 0f, 0f), 8, 6);
+            r.Fill(src, PipeFixtures.SINGLE, 20);
+            uint mover = r.PoweredMover(new Vector3(3f, 0f, 0f));
+            r.Pipe(r.Adapter(src), 1, mover, 0);
+            uint prev = mover; byte prevOut = 1;
+            const int k = 7;
+            for (int d = 0; d < k; d++)
+            {
+                uint sp = r.Place(PipeFixtures.SPLITTER, new Vector3(6f + d * 4f, 0f, 0f));
+                uint cb = r.Place(PipeFixtures.COMBINER, new Vector3(8f + d * 4f, 0f, 0f));
+                r.Pipe(prev, prevOut, sp, 0);
+                for (byte i = 0; i < 3; i++) r.Pipe(sp, (byte)(1 + i), cb, i);
+                prev = cb; prevOut = 3;
+            }
+            var dst = r.Crate(new Vector3(6f + k * 4f + 4f, 0f, 0f), 8, 6);
+            r.Pipe(prev, prevOut, r.Adapter(dst), 0);
+            r.Run(60);
+            var diag = r.S.ItemMovers.Diag;
+            Assert.That(PipeRig.Units(dst.Storage), Is.EqualTo(20), "everything arrives through the diamonds");
+            double perTransfer = (double)diag.RouteVisits / diag.Transfers;
+            Assert.That(perTransfer, Is.LessThan(4 * k + 8),
+                        $"route visits per transfer: {perTransfer:F1} over {diag.Transfers} transfers (3^{k} = 2187 paths, {2 * k + 2} devices)");
+        }
+
+        [Test]
+        public void an_answer_cut_short_by_a_loop_is_not_reused_from_another_path()
+        {
+            // mover -> S (splitter, WEIGHTED 0:1 so only its second output may be chosen).
+            // S.1 -> A (combiner) -> B (splitter): B.1 -> K, B.2 -> W (an empty crate, the only place anything fits).
+            // S.2 -> K (combiner) -> T (splitter): T.1 -> A, closing the loop A -> B -> K -> T -> A.
+            // S probes S.1 first: A, B, then K -> T -> A, which is ON the current path -- so K's answer there is
+            // "nothing", cut by the loop. Reached from S.2, A is not on the path, and K -> T -> A -> B -> W is
+            // perfectly good. Reusing K's cut answer would stall the mover with W sitting empty.
+            var r = new PipeRig();
+            var src = r.Crate(new Vector3(0f, 0f, 0f), 8, 6);
+            r.Fill(src, PipeFixtures.SINGLE, 10);
+            uint mover = r.PoweredMover(new Vector3(3f, 0f, 0f));
+            r.Pipe(r.Adapter(src), 1, mover, 0);
+            uint S = r.Place(PipeFixtures.SPLITTER, new Vector3(6f, 0f, 0f));
+            uint A = r.Place(PipeFixtures.COMBINER, new Vector3(9f, 0f, -3f));
+            uint B = r.Place(PipeFixtures.SPLITTER, new Vector3(12f, 0f, -3f));
+            uint K = r.Place(PipeFixtures.COMBINER, new Vector3(9f, 0f, 3f));
+            uint T = r.Place(PipeFixtures.SPLITTER, new Vector3(12f, 0f, 3f));
+            var w = r.Crate(new Vector3(18f, 0f, -3f), 8, 6);
+            r.Pipe(mover, 1, S, 0);
+            r.Pipe(S, 1, A, 0);
+            r.Pipe(S, 2, K, 0);
+            r.Pipe(A, 3, B, 0);
+            r.Pipe(B, 1, K, 1);
+            r.Pipe(B, 2, r.Adapter(w), 0);
+            r.Pipe(K, 3, T, 0);
+            r.Pipe(T, 1, A, 1);
+            r.S.Deployables.ServerConfigure(S, ItemDeviceConfig.From((byte)SplitterMode.Weighted, 0, 1, 0, 32), 0);
+            r.Run(60);
+            Assert.That(PipeRig.Units(w.Storage), Is.EqualTo(10), "all ten reach W by S.2 -> K -> T -> A -> B -> W");
         }
 
         [Test]
