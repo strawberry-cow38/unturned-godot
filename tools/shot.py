@@ -65,6 +65,7 @@ SCENES = {
     "deploy":   (["--deploytest", "--shot={OUT}"], {}, False, 120, "generator + spotlight rig (the golden scene)"),
     "pipes":    (["--deploytest", "--shot={OUT}"], {"UG_ITEMPIPES": "1"}, False, 120, "item pipes: crate -> adapter -> powered mover -> splitter -> two adapted crates, + a combiner, sockets lit"),
     "pipesclose": (["--deploytest", "--shot={OUT}"], {"UG_ITEMPIPES": "close"}, False, 120, "the same pipe chain, close on the splitter and the two adapted crates"),
+    "wearline": (["--clothtest=3,2", "--shot={OUT}"], {"UG_WEARLINE": "1"}, False, 120, "v56 durability: one outfit on four bodies at 100 / 65 / 35 / 0 % condition -- the worn, holey look"),
     "pipestop": (["--deploytest", "--shot={OUT}"], {"UG_ITEMPIPES": "top"}, False, 120, "storage adapters: one on a crate's LID, one on its side, one on a placed fridge's side (never its door)"),
     "chat":     (["--chatshot", "--shot={OUT}"], {}, False, 120, "the chat panel: server line, two speakers with avatars, one without, input open"),
     # The only single-zombie view there is. --zface was built as a FACING diagnostic and could not be

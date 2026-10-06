@@ -2725,7 +2725,7 @@ namespace UnturnedGodot
             {
                 float speed = Mathf.Clamp(fwd * BumperMult, -10f, 10f);
                 if (speed < BumperThreshold) return;
-                p.TakeDamage(Mathf.Floor(BumperPlayerDmg * speed * massScale), GlobalPosition);
+                p.TakeDamage(Mathf.Floor(BumperPlayerDmg * speed * massScale), GlobalPosition, SDG.Unturned.Durability.Zone.Whole);
                 TakeDamage(2f * BumperSelfMult);
                 return;
             }
@@ -2871,7 +2871,7 @@ namespace UnturnedGodot
                 if (n is PlayerController pl)
                 {
                     float d = pl.GlobalPosition.DistanceTo(p);
-                    if (d <= R) pl.TakeDamage(SDG.Unturned.ExplosionMath.Linear(200f, d, R));
+                    if (d <= R) pl.TakeDamage(SDG.Unturned.ExplosionMath.Linear(200f, d, R), null, SDG.Unturned.Durability.Zone.Whole);
                 }
         }
 

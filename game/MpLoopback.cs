@@ -298,6 +298,7 @@ namespace UnturnedGodot
                 // disagrees, when i update my inv, they come back").
                 Player.NetSpendThrowable = itemId => Server.Transactions.SpendThrowable(Client.PlayerId, itemId);
                 Player.NetSetAutoDrink = (page, x, y, id, on) => Client.SendSetAutoDrink(page, x, y, id, on);
+                Player.NetWeaponUse = (page, x, y, id, uses) => Client.SendWeaponUse(page, x, y, id, uses);   // v56 durability
                 Player.NetGunState = (page, x, y, it) => Client.SendGunState(page, x, y, it.id, (short)it.gunAmmo, it.gunChambered,
                     (sbyte)it.gunFiremode, it.gunMagId, it.gunAttach, it.gunSightId, it.gunBarrelId, it.gunGripId,
                     it.gunTacticalId, it.gunAttachSeeded);
@@ -345,7 +346,7 @@ Player.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, r
                 // double count. ExpectServerVitals latches the spawn-window guard so no local death fires before
                 // the first AdoptReplicatedVitals. Client.PlayerId is read at hit time (connected by then).
                 Player.ExpectServerVitals();
-                Player.NetDamageSink = amount => Server.Combat.DamagePlayerExternal(Client.PlayerId, amount);
+                Player.NetDamageSink = (amount, zone) => Server.Combat.DamagePlayerExternal(Client.PlayerId, amount, 0, zone);
                 // ...and the console's `heal`, the same way round: the fine vitals through the reset a respawn
                 // uses, and HP through the RegenSink the passive regen already raises it with (clamped to 100
                 // inside). Both on the authority, so the next owner echo confirms the heal instead of undoing it.

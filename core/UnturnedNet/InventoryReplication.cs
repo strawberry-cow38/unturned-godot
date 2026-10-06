@@ -291,6 +291,34 @@ namespace UnturnedGodot.Net
     ///
     /// gunChamberedType is NOT here: it is a string, this stack has no string primitive, and ReadJar already
     /// re-derives it from the loaded magazine id.</summary>
+    /// <summary>v56: uses of the weapon at (Page,X,Y) since the last report. See ReplicationIds.CommandWeaponUse.</summary>
+    public struct WeaponUseCommand
+    {
+        public byte Page, X, Y;
+        public ushort Id;     // identity: a stale address must not wear the wrong item
+        public byte Uses;
+
+        /// <summary>The most uses one report may claim. A minigun at 1,200 rpm fires 20 a second and the client reports
+        /// at least that often; anything bigger is a confused or hostile client, and is clamped rather than trusted.</summary>
+        public const byte MaxUses = 64;
+
+        public void Write(NetPakWriter w)
+        {
+            w.WriteUInt8(Page); w.WriteUInt8(X); w.WriteUInt8(Y);
+            w.WriteUInt16(Id);
+            w.WriteUInt8(Uses);
+        }
+
+        public static bool TryRead(NetPakReader r, out WeaponUseCommand cmd)
+        {
+            cmd = default;
+            if (!r.ReadUInt8(out byte p) || !r.ReadUInt8(out byte x) || !r.ReadUInt8(out byte y)) return false;
+            if (!r.ReadUInt16(out ushort id) || !r.ReadUInt8(out byte uses)) return false;
+            cmd = new WeaponUseCommand { Page = p, X = x, Y = y, Id = id, Uses = uses };
+            return true;
+        }
+    }
+
     public struct GunStateCommand
     {
         public byte Page, X, Y;

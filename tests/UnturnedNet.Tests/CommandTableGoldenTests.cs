@@ -116,6 +116,7 @@ namespace UnturnedNet.Tests
             [64] = "CommandConnectPipe",
             [65] = "CommandRemovePipe",
             [66] = "CommandConfigureItemDevice",
+            [67] = "CommandWeaponUse",              // v56 durability: uses of the held weapon; the server rolls the wear (v56 is not released, so no bump)
         };
 
         static Dictionary<byte, string> Actual() =>

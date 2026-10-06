@@ -1711,6 +1711,7 @@ namespace UnturnedGodot
         // 3/4-front. This is the visual proof the shirt paints the torso/arms + pants the legs on the right texels.
         void BuildClothTest(int shirtId, int pantsId)
         {
+            if (!string.IsNullOrEmpty(System.Environment.GetEnvironmentVariable("UG_WEARLINE"))) { BuildWearLine(shirtId, pantsId); return; }
             var env = new Godot.Environment
             {
                 BackgroundMode = Godot.Environment.BGMode.Color,
@@ -1765,6 +1766,48 @@ namespace UnturnedGodot
             var cam = new Camera3D { Fov = 42f };
             AddChild(cam);
             cam.LookAtFromPosition(new Vector3(-2.5f, 1.2f, -3.4f), new Vector3(0f, 0.92f, 0f), Vector3.Up);
+        }
+
+        // UG_WEARLINE=1 with --clothtest (`tools/shot.py wearline`): v56 DURABILITY's worn look. The same outfit on four
+        // bodies at 100 / 65 / 35 / 0 % condition, dressed through the REAL PlayerClothingController off a PlayerInventory
+        // -- the path the local body, the 1P arms and every other player's puppet all take -- so the picture is of the
+        // shipping path, not a showcase that sets shader parameters by hand.
+        void BuildWearLine(int shirtId, int pantsId)
+        {
+            SDG.Unturned.ItemCatalog.RegisterAll();
+            GetWindow().Size = new Vector2I(1600, 900);   // four bodies side by side, not the single-body portrait
+            AddChild(new WorldEnvironment { Environment = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.42f, 0.55f, 0.72f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.55f, 0.57f, 0.6f), AmbientLightEnergy = 0.8f,
+            } });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-42f, -28f, 0f), LightEnergy = 1.25f, ShadowEnabled = true, DirectionalShadowMaxDistance = 14f });
+            var ground = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(20f, 20f) } };
+            ground.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.28f, 0.30f, 0.28f) };
+            AddChild(ground);
+            static int EnvI(string k, int d) => int.TryParse(System.Environment.GetEnvironmentVariable(k), out var v) ? v : d;
+            int hat = EnvI("UG_WEARHAT", 192), vest = EnvI("UG_WEARVEST", 10), pack = EnvI("UG_WEARPACK", 9);
+            byte[] conds = { 100, 65, 35, 0 };
+            for (int i = 0; i < conds.Length; i++)
+            {
+                var rc = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f), false, null, RiggedCharacter.FacePath(PlayerProfile.Face));
+                if (rc == null) { Log.Err("[wearline] build failed"); GetTree().Quit(); return; }
+                AddChild(rc);
+                rc.Position = new Vector3((i - 1.5f) * 1.15f, 0f, 0f);
+                rc.RotationDegrees = new Vector3(0f, i % 2 == 0 ? 25f : -25f, 0f);   // face the camera, turned a little to show a side
+                var inv = new SDG.Unturned.PlayerInventory();
+                var cc = new PlayerClothingController(rc, inv);
+                byte q = conds[i];
+                foreach (int id in new[] { shirtId, pantsId, hat, vest, pack })
+                    if (id > 0) cc.Wear(new SDG.Unturned.Item((ushort)id) { quality = q });
+                cc.Refresh();
+                rc.Play("Idle_Stand");
+                Log.Print($"[wearline] body {i}: condition {q}% -> shirt wear {rc.DebugShirtWear:0.00}, hat wear {rc.DebugGearWear(SDG.Unturned.EItemType.HAT):0.00}, vest wear {rc.DebugGearWear(SDG.Unturned.EItemType.VEST):0.00}");
+            }
+            var cam = new Camera3D { Fov = 40f };
+            AddChild(cam);
+            float back = float.TryParse(System.Environment.GetEnvironmentVariable("UG_WEARBACK"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var bk) ? bk : 5.6f;
+            cam.LookAtFromPosition(new Vector3(0f, 1.25f, -back), new Vector3(0f, 0.95f, 0f), Vector3.Up);
         }
 
         // --wearcloth : the P4 render gate. Same scene as --clothtest, but the outfit is equipped through the REAL

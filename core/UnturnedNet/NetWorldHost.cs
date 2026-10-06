@@ -66,6 +66,8 @@ namespace UnturnedGodot.Net
         // peer already has, and the only thing that crosses the wire is the damage/infection it causes,
         // which the existing vitals + combat paths already replicate.
         public readonly ServerDeadzones Deadzones = new ServerDeadzones();
+        /// <summary>v56 DURABILITY: worn clothing wearing out over in-game time (ServerClothingWear).</summary>
+        public ServerClothingWear ClothingWear { get; private set; }
         /// <summary>The save this world was loaded from, or null for a fresh one. Held for the whole session
         /// rather than consumed at load: a player's block is applied when THEY connect (PeerConnected below),
         /// which for a dedicated server is minutes or days after the world came up. The game side sets this
@@ -359,7 +361,9 @@ namespace UnturnedGodot.Net
             // P3b (SP/MP-unify): route the server-DERIVED fall + out-of-bounds damage (computed off the owner's
             // adopted Vel/Grounded/Pos, never a client-reported number) into the same ServerCombat sink the weapon
             // paths funnel through. Keeps HP fully server-authored for the client-auth walker.
-            PlayerHost.DamageOwner = (victim, dmg) => Combat.DamagePlayerExternal(victim, dmg);
+            // v57: a joiner's FALL lands on the legs -- the trousers take the wear, as the SP fall's does (the out-of-bounds
+            // kill rides the same hook; a 9999 hit wearing a pair of jeans by one point is not worth a second hook)
+            PlayerHost.DamageOwner = (victim, dmg) => Combat.DamagePlayerExternal(victim, dmg, 0, Durability.Zone.Legs);
             // mp-event-coalesce (v10): route each deduped carried combat event to the ServerCombat handler
             // by Kind. The authority holds only a PlayerCombatReplication (for IsAlive); the OnFire/etc
             // handlers live on ServerCombat, so the carry is dispatched through this delegate. The standalone
@@ -436,6 +440,48 @@ namespace UnturnedGodot.Net
             // for the MP shell, or the held MoveInput for a loopback/demo walker) -- no second body. HP-delta
             // routing runs only while SurvivalDrain is on (default OFF = SP byte-identical coarse-HP path).
             Vitals.IsAlive = pid => CombatState.IsAlive(pid);
+            // v56 DURABILITY. Every loss lands on the SERVER's copy and rides the owner echo out; see Durability.
+            ClothingWear = new ServerClothingWear(Inventories)
+            {
+                IsAlive = pid => CombatState.IsAlive(pid),
+                DayLengthSeconds = () => Clock.HasClock ? Clock.DayLengthSeconds : 0f,
+            };
+            // a hit wears whatever covers where it landed, and that clothing (as worn as it now is) stops its share
+            Combat.ClothingHit = (victim, zone, dmg, armor) =>
+            {
+                if (!Inventories.TryGet(victim, out var e)) return dmg;
+                var inv = e.Inventory;
+                bool worn = false;
+                foreach (var t in Durability.Covering(zone))
+                {
+                    var it = inv.WornIn(t);
+                    if (it == null || it.quality == 0 || PlayerInventory.IsFilterMask(Assets.find(it.id))) continue;
+                    it.quality = (byte)System.Math.Max(0, it.quality - Durability.ClothingHitPoints);
+                    worn = true;
+                }
+                if (worn) Inventories.ServerMarkDirty(victim);
+                // retail wears the piece FIRST and then reads its armor at the new condition (DamageTool.getPlayerArmor)
+                float through = armor == ServerCombat.ArmorKind.Weapon ? inv.PassThrough(zone)
+                              : armor == ServerCombat.ArmorKind.Explosion ? inv.ExplosionArmor : 1f;
+                return dmg * through;
+            };
+            // the condition of what the player is HOLDING, found by the held id the move input carries. Two identical
+            // guns in the holsters are indistinguishable this way; the first is taken -- the cost of a server that is
+            // told an id, not an address, every tick.
+            Combat.HeldCondition = pid =>
+            {
+                if (!Players.TryGetHeldInput(pid, out var mi) || mi.HeldItemId == 0 || !Inventories.TryGet(pid, out var e)) return null;
+                var a = Assets.find(mi.HeldItemId);
+                if (!Durability.HasCondition(a)) return null;
+                for (byte pg = 0; pg < PlayerInventory.OWNPAGES; pg++)
+                {
+                    var page = e.Inventory.items[pg];
+                    if (page == null) continue;
+                    for (byte i = 0; i < page.getItemCount(); i++)
+                        if (page.getItem(i)?.item?.id == mi.HeldItemId) return page.getItem(i).item.quality;
+                }
+                return null;
+            };
             // BREATH. The server owns oxygen like every other vital, so it has to answer "is this head under
             // water" itself -- off the same adopted position it already validates, and the same per-stance eye
             // table the shell uses. Core has no terrain, so the game layer hands down the two numbers that
@@ -692,6 +738,7 @@ namespace UnturnedGodot.Net
             // external-damage queue, which Combat.Step drains at its top, so queueing here kills in THIS
             // tick rather than the next one.
             Deadzones.Step((float)SimClock.FixedDelta, Players.All, CombatState.IsAlive);
+            ClothingWear.Step((float)SimClock.FixedDelta);   // before ServerCommitDirty below, which stamps what it dirtied
             Combat.Step(Session.CurrentTick);
             // TIMED CRAFTING, before the dirty stamp below -- a job that finishes this tick writes into the
             // inventory, and stamping first would leave that write waiting a whole tick for its baseline.
@@ -1385,6 +1432,10 @@ namespace UnturnedGodot.Net
         public bool SendFitAttachment(byte page, byte x, byte y, ushort id)
             => SendCommand(ReplicationIds.CommandFitAttachment, new FitAttachmentCommand { Page = page, X = x, Y = y, Id = id }.Write);
 
+        /// <summary>v56 durability: report uses of the weapon at (page,x,y). See ReplicationIds.CommandWeaponUse.</summary>
+        public bool SendWeaponUse(byte page, byte x, byte y, ushort id, byte uses)
+            => SendCommand(ReplicationIds.CommandWeaponUse, new WeaponUseCommand { Page = page, X = x, Y = y, Id = id, Uses = uses }.Write);
+
         /// <summary>Tell the server the gun state the client owns for the item at (page,x,y). Coalesced by the
         /// caller -- SaveGunState runs on every shot, and one reliable-ordered datagram per shot is the
         /// head-of-line stutter v10 went to some trouble to remove.</summary>
@@ -1572,7 +1623,7 @@ namespace UnturnedGodot.Net
         /// recovAck echoes the last PlayerRecovEvent counter received (0 = none yet). Returns the seq
         /// (0 = not connected, nothing sent).</summary>
         public ushort SendPlayerState(Vector3 pos, float yawDegrees, float pitchDegrees, Vector3 velocity,
-                                      byte buttons, bool grounded, byte recovAck)
+                                      byte buttons, bool grounded, byte recovAck, ushort heldItemId = 0)
         {
             if (Session.State != NetSessionState.Connected) return 0;
             if (++_playerStateSeq == 0) _playerStateSeq = 1;
@@ -1580,7 +1631,7 @@ namespace UnturnedGodot.Net
             {
                 Seq = _playerStateSeq, RecovAck = recovAck,
                 Pos = pos, YawDegrees = yawDegrees, PitchDegrees = pitchDegrees,
-                LinVel = velocity, Buttons = buttons, Grounded = grounded,
+                LinVel = velocity, Buttons = buttons, Grounded = grounded, HeldItemId = heldItemId,
             };
             // v10 (mp-event-coalesce): fold the whole pending combat ring in, oldest-first. The ring array
             // is shared by reference (Write consumes only the first EventCount entries synchronously here) so

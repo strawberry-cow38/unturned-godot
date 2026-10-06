@@ -2348,7 +2348,7 @@ namespace UnturnedGodot
         int _heldSlotPage = -1;
 
         /// <summary>The item id in the hands for the wire (v22 MoveInput.HeldItemId): the backing item of the held gun/melee/tool, 0 for fists or nothing.</summary>
-        public ushort HeldItemIdForNet => _heldItem?.id ?? 0;
+        public ushort HeldItemIdForNet => _heldItem?.id ?? HeldDurableItem()?.id ?? 0;   // v56: a melee weapon is named too (it had no backing item, so the server never knew it -- nor drew it on the puppet)
         /// <summary>Is ANYTHING in your hands? Read by the hotbar's put-it-away gesture, so a hold this misses is
         /// a key that does nothing (strawberry 2026-09-09: "pressing 1/2 with nothing in those slots should still
         /// dequip whatever you have and become unarmed").
@@ -5256,6 +5256,8 @@ namespace UnturnedGodot
             if (_meleeCd > 0f || _cam == null || _dead || _driving != null || _heldConsumable != null || (_invUI?.IsOpen ?? false)) return;
             if (IsSwimming || _swimMeleeGrace > 0f || _climbing) return;   // no melee/punching while swimming, none on a ladder either (source PlayerEquipment: "No punching while swimming"; canUseUnderwater=false). The grace also blocks a swing for a beat AFTER surfacing: a Fire click the engine buffers during the water->land transition arrives the frame after IsSwimming clears, which used to sneak a "queued" punch through on exit (master, intermittent).
             if (IsRepeatedMelee) return;   // Repeated tools (blowtorch/chainsaw) have NO weak/strong swing -- you don't punch with them; their use is the continuous LMB-hold (source UseableMelee.startPrimary/startSecondary)
+            var heldMelee = HeldDurableItem();   // DURABILITY: a broken melee weapon does not swing
+            if (heldMelee != null && Durability.IsBroken(heldMelee)) { BrokenHint(SDG.Unturned.Assets.find(heldMelee.id)?.itemName ?? "Weapon"); return; }
             float staminaCost = strong ? (_melee?.Stamina ?? 0f) / 100f : 0f;   // only the STRONG (RMB) swing costs stamina; the WEAK (LMB) attack is free (master)
             if (staminaCost > 0f && Stamina < staminaCost) return;   // too winded for a strong swing
             if (staminaCost > 0f) { Stamina = Mathf.Max(0f, Stamina - staminaCost); _vitals.StaminaRegenDelay = 1f; }
@@ -5264,6 +5266,7 @@ namespace UnturnedGodot
             _meleeCd = _viewmodel?.MeleeSwingLength(strong) ?? 0f;
             if (_meleeCd <= 0.05f) _meleeCd = strong ? 0.75f : 0.45f;
             _viewmodel?.SwingMelee(strong);   // source Weak / Strong swing anim
+            ReportWeaponUse(heldMelee);       // DURABILITY: one swing ("a chance to lower durability when shot (incl melee)")
             if (_body != null && !_fpOnlyBody3pSkip) { float sl = _body.PlayMeleeSwing(_heldMeleeName ?? "fists", strong); if (sl > 0f) _bodySwinging3p = true; }   // the SAME swing on the 3P body (strawberry 2026-09-03)
             float alert = _melee?.Alert ?? 0f;
             if (alert > 0f) SoundBus.Emit(GetTree(), GlobalPosition, alert);   // swing NOISE fires with the swing (source AlertTool.alert); 0 = stealthy
@@ -5288,6 +5291,7 @@ namespace UnturnedGodot
             if (_cam == null || _dead) return;
             float range = _melee?.Range ?? 2.2f;
             float mult = strong ? (_melee?.Strength ?? 1.5f) : 1f;   // STRONG swing hits harder (source dmg *= strength)
+            mult *= Durability.DamageMultiplier(HeldCondition);      // ...and a worn weapon softer (retail UseableMelee: under 50%, 0.5 + quality)
             if (_focusVehicle != null && IsInstanceValid(_focusVehicle) && !_focusVehicle.IsWreck
                 && (_focusVehicle.GlobalPosition - GlobalPosition).Length() < range + 3f)   // vehicles are big -> generous reach
             {
@@ -5392,7 +5396,7 @@ namespace UnturnedGodot
             // Prevents_Falling_Broken_Bones -- I added an unconditional one on 81b8f808 believing Broken had no
             // source at all, which silently voided that clothing feature for one commit. The claim came from a
             // grep whose output I had truncated with `head`; the assignment was on the line above the one I read.
-            if (dmg > 0) { Log.Print($"[fall] landed at {verticalVel:F1} m/s -> {dmg} damage, broken={Broken}"); TakeDamage(dmg); }
+            if (dmg > 0) { Log.Print($"[fall] landed at {verticalVel:F1} m/s -> {dmg} damage, broken={Broken}"); TakeDamage(dmg, null, Durability.Zone.Legs); }
         }
 
         // The last speed at which the capsule was REALLY descending, carried to the landing tick -- see
@@ -5442,7 +5446,7 @@ namespace UnturnedGodot
                     sam.TakeDamage(ExplosionMath.Linear(vehicleDamage, range, radius));
                 }
             float pr = GlobalPosition.DistanceTo(point);
-            if (pr <= radius && !ExplosionBlocked(point, GlobalPosition)) { float t = ExplosionMath.Squared(playerDamage, pr, radius); if (t > 0f) TakeDamage(t * (Inventory?.ExplosionArmor ?? 1f)); }   // wall blocks it (LoS) + worn clothing cuts it (source getPlayerExplosionArmor)
+            if (pr <= radius && !ExplosionBlocked(point, GlobalPosition)) { float t = ExplosionMath.Squared(playerDamage, pr, radius); if (t > 0f) TakeDamage(t * (Inventory?.ExplosionArmor ?? 1f), null, Durability.Zone.Whole); }   // wall blocks it (LoS) + worn clothing cuts it (source getPlayerExplosionArmor)
             PlayerRegistry.FlinchAllFromExplosion(point, Mathf.Max(radius * 2f, 12f), 30f);   // camera shake toward the blast (real Bomb effects ~16r/30mag)
             if (Terrain.HasWater && point.Y <= Terrain.SeaLevelY + 2f)   // blast at/below the ocean -> a big water column (retail Explosions/water_0)
             {
@@ -5799,7 +5803,7 @@ namespace UnturnedGodot
         /// (MpLoopback --spconsume) wire this. Null in default SP AND on a true MP client shell (whose local
         /// TakeDamage no-ops via NetVitalsAdopted and whose fall/OOB are SERVER-derived from its state claims),
         /// so those paths stay byte-identical.</summary>
-        public System.Action<float> NetDamageSink;
+        public System.Action<float, Durability.Zone> NetDamageSink;
 
         /// <summary>Heal this player fully ON THE AUTHORITY. Null offline, where the local write IS the truth.
         ///
@@ -6160,6 +6164,81 @@ namespace UnturnedGodot
         /// the client repaints from the echo -- which is why "fire it, holster it, take it out again" was fine
         /// and "fire it, then drag it anywhere" handed back a full magazine.</summary>
         public System.Action<byte, byte, byte, SDG.Unturned.Item> NetGunState;
+
+        // ---- v56 DURABILITY (client half). The SERVER owns condition: this side reports USES of the weapon in hand
+        // (a shot, a swing) and reads the condition back off the owner echo for the penalties. See Durability. ----
+
+        /// <summary>(page, x, y, id, uses) -> Client.SendWeaponUse. Unset = no server owns the inventory, and the
+        /// wear is rolled locally instead.</summary>
+        public System.Action<byte, byte, byte, ushort, byte> NetWeaponUse;
+        int _wearPage = -1; byte _wearX, _wearY; ushort _wearItemId; int _wearUses; double _wearFlushCd;
+        const double WearFlushEvery = 0.25;   // the same floor the gun state uses: a firefight is 4 reports a second, not 15
+
+        /// <summary>The weapon in the hands AS IT IS IN THE GRID NOW. A gun has a backing item (_heldItem, rebound after
+        /// every echo); a melee weapon is equipped by name and never had one, so it is read at the held ADDRESS -- and
+        /// only if what sits there is still that weapon. Null = fists, nothing, or a debug equip with no item.</summary>
+        public SDG.Unturned.Item HeldDurableItem()
+        {
+            if (_heldItem != null) return _heldItem;
+            if (_melee == null || string.IsNullOrEmpty(_heldMeleeName) || _heldPage < 0 || Inventory == null || _heldPage >= Inventory.items.Length) return null;
+            var pg = Inventory.items[_heldPage];
+            byte idx = pg?.getIndex(_heldX, _heldY) ?? byte.MaxValue;
+            var it = idx == byte.MaxValue ? null : pg.getItem(idx)?.item;
+            return it != null && SDG.Unturned.Assets.find(it.id)?.meleeName == _heldMeleeName ? it : null;
+        }
+
+        /// <summary>The held weapon's condition for the penalties (100 when nothing conditioned is held).</summary>
+        public byte HeldCondition
+        {
+            get
+            {
+                var it = HeldDurableItem();
+                return it != null && Durability.HasCondition(SDG.Unturned.Assets.find(it.id)) ? it.quality : (byte)100;
+            }
+        }
+
+        public bool HeldBroken => Durability.IsBroken(HeldDurableItem());
+        public int DebugPendingWeaponUses => _wearUses;   // test seam
+
+        double _brokenHintCd;
+        public int DebugBrokenHints;   // test seam: how many times the "X is broken" refusal actually showed
+        void BrokenHint(string what)
+        {
+            if (_brokenHintCd > 0) return;
+            _brokenHintCd = 1.5;
+            DebugBrokenHints++;
+            HUD.Notice($"{what} is broken", 2f);
+            _viewmodel?.PlayDryFire();
+        }
+
+        /// <summary>One use of the weapon in hand. Coalesced like the gun state (WearFlushEvery), and pushed out early
+        /// whenever a different weapon is used or the grid is about to change (FlushGunState calls FlushWeaponUse).</summary>
+        void ReportWeaponUse(SDG.Unturned.Item it)
+        {
+            var a = it != null ? SDG.Unturned.Assets.find(it.id) : null;
+            var kind = Durability.KindOf(a);
+            if (kind != Durability.Kind.Gun && kind != Durability.Kind.Melee) return;
+            if (NetWeaponUse == null || !InventoryIsServerOwned)
+            {
+                Durability.UseWeapon(it, a, () => _rng.Randf());   // nobody else owns this item: roll it here
+                return;
+            }
+            if (!TryFindItemAddress(it, out int page, out byte x, out byte y)) return;
+            if (_wearUses > 0 && (_wearPage != page || _wearX != x || _wearY != y || _wearItemId != it.id)) FlushWeaponUse(force: true);
+            _wearPage = page; _wearX = x; _wearY = y; _wearItemId = it.id;
+            _wearUses++;
+            if (_wearUses >= UnturnedGodot.Net.WeaponUseCommand.MaxUses) FlushWeaponUse(force: true);
+        }
+
+        public void FlushWeaponUse(bool force = false)
+        {
+            if (_wearUses <= 0 || NetWeaponUse == null) return;
+            if (!force && _wearFlushCd > 0) return;
+            if (_wearPage >= 0 && _wearPage < PlayerInventory.PAGES)
+                NetWeaponUse((byte)_wearPage, _wearX, _wearY, _wearItemId, (byte)System.Math.Min(_wearUses, UnturnedGodot.Net.WeaponUseCommand.MaxUses));
+            _wearUses = 0;
+            _wearFlushCd = WearFlushEvery;
+        }
         public System.Action<byte, byte, byte, ushort, bool> NetSetAutoDrink;   // (page,x,y,id,on) -> Client.SendSetAutoDrink
         public System.Action<byte, byte, byte, ushort, ushort> NetReloadSwap;   // (page,x,y, spentId,spentAmount) -> Client.SendReload (server spends the fresh mag + returns the spent one)
         public System.Action<byte, byte, byte, ushort, byte> NetGunUnload;    // (page,x,y of the GUN, roundId,count) -> the server checks its own gunAmmo, then pays out
@@ -6829,6 +6908,7 @@ namespace UnturnedGodot
         /// grid mutation is about to be requested, so the server applies the state BEFORE it moves the item.</summary>
         public void FlushGunState(bool force = false)
         {
+            FlushWeaponUse(force);   // every grid-mutation site already calls this first; the wear report rides along
             if (!_gunStateDirty || NetGunState == null || !InventoryIsServerOwned) return;
             if (!force && _gunStateFlushCd > 0) return;
             if (_gunStateItem == null || _gunStatePage < 0 || _gunStatePage >= PlayerInventory.PAGES) { _gunStateDirty = false; return; }
@@ -6840,6 +6920,8 @@ namespace UnturnedGodot
         void TickGunStateFlush(double delta)
         {
             if (_gunStateFlushCd > 0) _gunStateFlushCd -= delta;
+            if (_wearFlushCd > 0) _wearFlushCd -= delta;
+            if (_brokenHintCd > 0) _brokenHintCd -= delta;
             FlushGunState();
         }
 
@@ -7345,7 +7427,9 @@ namespace UnturnedGodot
         // Zombie melee lands here; on death, drop a ragdoll corpse + third-person death-cam, then respawn.
         // fromPos = the attacker's world position, used only to aim the camera flinch; null for sourceless damage
         // (starvation/infection) which flashes but doesn't kick the camera.
-        public void TakeDamage(float amount, Vector3? fromPos = null)
+        /// <param name="zone">v56 DURABILITY: where the hit landed, so the server wears whatever covers it (a fall the
+        /// trousers, a blast everything). None = a hit no clothing takes (starvation, the OOB kill, a debug kill).</param>
+        public void TakeDamage(float amount, Vector3? fromPos = null, Durability.Zone zone = Durability.Zone.None)
         {
             // P3b: a server-owned body ROUTES damage to the server sink (zombie melee/acid + vehicle/deployable
             // blast on a NetAvatar follower body; also fall/OOB on the loopback host shell) instead of moving
@@ -7356,7 +7440,7 @@ namespace UnturnedGodot
             // server-owned-body early-returns below -- else a hit on the loopback host / MP shell never shows the
             // bleeding icon. NOT on NetAvatar (a remote puppet must not sprout our bleeding state).
             if (amount > 1f && (NetDamageSink != null || NetVitalsAdopted || _pendServerVitals) && !NetAvatar) Bleeding = true;
-            if (NetDamageSink != null) { NetDamageSink(amount); return; }
+            if (NetDamageSink != null) { NetDamageSink(amount, zone); return; }
             if (NetAvatar) return;   // C2 v1: server avatars are invulnerable to LOCAL damage -- zombies chase + swing but an unreplicated death would desync every client (server-authoritative vitals are deferred, PEI_CLIENT_PLAN §6)
             if (NetVitalsAdopted || _pendServerVitals) return;   // P3a: HP is server-owned; P3b: also suppress in the pre-adoption spawn window (review finding 5). A local death here would fight the server clock and rubber-band. Server-owned bodies route via NetDamageSink above; a true MP client's fall/OOB are server-derived from its claims.
             if (_dead || Health <= 0f) return;
@@ -9161,11 +9245,16 @@ namespace UnturnedGodot
             // -- also while the bolt/pump still needs cycling -- kills a queued burst the frame we die (the tick calls Fire()) + ignores death-screen clicks (master). _driving guard fixes the "stray tracer flies straight south" bug: the auto/burst tick (_PhysicsProcess) calls Fire() on held-LMB WITHOUT a driving check, and while driving _cam is TopLevel (detached chase cam) -> aim = the chase cam's fixed heading, not the player's look. LMB honks while driving anyway.
             if (AmmoRadial?.IsOpen ?? false) return false;   // no firing while the ammo radial is up -- you're picking ammo, not shooting
             if (_viewmodel != null && (!_viewmodel.IsEquipComplete || _viewmodel.IsInspecting || _viewmodel.InAttachView)) return false;   // no firing until equip finishes, or during inspect / attachment menu (source canFire gates)
+            // DURABILITY: a broken gun does not fire; a worn one (under 50%) kicks, spreads and hits like retail's
+            var heldGun = HeldDurableItem();
+            if (heldGun != null && Durability.IsBroken(heldGun)) { BrokenHint(SDG.Unturned.Assets.find(heldGun.id)?.itemName ?? "Gun"); return false; }
+            byte cond = HeldCondition;
+            float wornHandling = Durability.HandlingPenalty(cond), wornDamage = Durability.DamageMultiplier(cond);
             // ONE damage field now; the target applies its own zone/limb multiplier. A loaded shell may override it
             // (slug 40 / beanbag 20 vs the gun's per-pellet buckshot 12) -- same gun, different cartridge in the tube.
-            float damage = ShotDamage();   // range/travel are encoded in the bullet's steps + velocity
-            float vehDamage = Gun?.VehicleDamage ?? 40f;   // bullets hurt vehicles less than zombies (source Vehicle_Damage)
-            float objDamage = Gun?.ObjectDamage ?? 25f;    // bullets vs destructible props (source Object_Damage)
+            float damage = ShotDamage() * wornDamage;   // range/travel are encoded in the bullet's steps + velocity
+            float vehDamage = (Gun?.VehicleDamage ?? 40f) * wornDamage;   // bullets hurt vehicles less than zombies (source Vehicle_Damage)
+            float objDamage = (Gun?.ObjectDamage ?? 25f) * wornDamage;    // bullets vs destructible props (source Object_Damage)
             if (Gun?.CyclicRateRPM > 0)
             {
                 _shotCadence.AcceptShot(_fireCadenceTick, Gun.CyclicRateRPM);
@@ -9182,7 +9271,7 @@ namespace UnturnedGodot
             _sinceShot = 0f;   // infAmmo waits out a lull, so every shot restarts the clock
             // fire feedback + the gun's real per-shot viewmodel shake (Shake_Min/Max_*); zero if no gun loaded
             float stanceMul = StanceRecoilMul();   // crouch/prone recoil steadier once settled -- scales the kick + the aim-climb below (master)
-            float sharp = Skills.SharpshooterRecoilMultiplier();   // SHARPSHOOTER: up to -40% recoil + spread at max level (source UseableGun)
+            float sharp = Skills.SharpshooterRecoilMultiplier() * wornHandling;   // SHARPSHOOTER: up to -40% recoil + spread at max level (source UseableGun); a worn gun undoes it (Durability.HandlingPenalty, up to 2x at 0)
             // RECOIL MOVES THE CAMERA, NOT THE GUN (strawberry: "making recoil move the whole camera instead of
             // just the gun. same thing as the scope sway fix u just did, but for recoil impulse").
             //
@@ -9342,6 +9431,7 @@ namespace UnturnedGodot
             if (Gun != null && Gun.RechamberAfterShotCount > 0 && ++_shotCountForRechamber >= Gun.RechamberAfterShotCount)
             { _needsRechamber = true; _rechamberDelayTimer = Gun.RechamberAfterShotDelay; }
             SaveGunState();   // keep the backing item's ammo current so a drop/holster mid-fight preserves it (master)
+            ReportWeaponUse(heldGun);   // DURABILITY: one shot fired -- the server rolls the wear
             NetFire?.Invoke(bulletOrigin, aim);   // D1: the UNDEVIATED aim ray over the wire -- the server spawns the authoritative bullet (spread is client fx; the bullets above went cosmetic in SpawnBullet)
             return true;   // shot fired; the actual hits/kills land later in StepBullets
         }
@@ -11514,7 +11604,7 @@ namespace UnturnedGodot
             // the next tick into either a zero transform (the player driven to the origin) or a throw that took the whole
             // physics tick with it, every tick, for as long as the stale reference was held. Step out where we stand.
             if (!IsInstanceValid(_driving)) { Log.Print("[vehicle] the vehicle we were in is gone -- stepping out in place"); _driving = null; ExitVehicleAt(GlobalPosition); return; }
-            if (_driving.Exploded) { ExitVehicle(); TakeDamage(150f); return; }   // caught in the blast -> ejected + killed (source explode kills passengers)
+            if (_driving.Exploded) { ExitVehicle(); TakeDamage(150f, null, Durability.Zone.Whole); return; }   // caught in the blast -> ejected + killed (source explode kills passengers)
             // PASSENGERS RIDE, THEY DO NOT STEER (strawberry 2026-08-16: "only F1 is the drivers seat"). Bail
             // before any input is read, so a passenger holding W is not merely ignored by the vehicle but never
             // reaches it -- LastDriveInput is the MP fallback axes, and a back-seat passenger filling those in

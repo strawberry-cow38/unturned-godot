@@ -473,7 +473,8 @@ namespace UnturnedGodot
                                   // scope that is visibly still swaying.
                                   | (Shell.SteadyingNow ? MoveInput.ButtonSteady : 0));
             Client.SendPlayerState(new UnityEngine.Vector3(p.X, p.Y, p.Z), Shell.RotationDegrees.Y, Shell.LookPitchDegrees,
-                                   Shell.MoveSimVelocity, buttons, Shell.LastGroundedInput, _recovAck);
+                                   Shell.MoveSimVelocity, buttons, Shell.LastGroundedInput, _recovAck,
+                                   Shell.HeldItemIdForNet);   // v57: what is in the hands -- see PlayerStateCommand.HeldItemId
 
             if (NetLog.Enabled) LogClientAuthRollupIfDue();
         }
@@ -649,6 +650,7 @@ namespace UnturnedGodot
             shell.NetFitAttachment = (page, x, y, id) => Client.SendFitAttachment(page, x, y, id);
             shell.NetConsume = (page, x, y) => Client.SendConsume(page, x, y);
             shell.NetSetAutoDrink = (page, x, y, id, on) => Client.SendSetAutoDrink(page, x, y, id, on);
+            shell.NetWeaponUse = (page, x, y, id, uses) => Client.SendWeaponUse(page, x, y, id, uses);   // v56 durability
             shell.NetGunState = (page, x, y, it) => Client.SendGunState(page, x, y, it.id, (short)it.gunAmmo, it.gunChambered,
                 (sbyte)it.gunFiremode, it.gunMagId, it.gunAttach, it.gunSightId, it.gunBarrelId, it.gunGripId,
                 it.gunTacticalId, it.gunAttachSeeded);

@@ -458,6 +458,9 @@ namespace UnturnedGodot
             bool syncLoad, string activeHoliday)
         {
             var result = new WorldBuildResult();
+            // v56: PEI's per-loot-table condition bias, set in the editor (EditorSpawns.LootBias). Before ANY loot rolls:
+            // the ground field AND the server's shelves both read it, and this runs on every host that builds the map.
+            SDG.Unturned.LootCondition.Load(EditorSpawns.LootConditionPath("PEI"));
             // The sim spine (SimRoot/SimDriver) now exists in every world: gameplay systems migrate onto it
             // per-phase as their authority split lands (MP_PLAN §2.5); replication registers LAST.
             var sim = new SimDriver();

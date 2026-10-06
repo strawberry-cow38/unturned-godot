@@ -88,6 +88,7 @@ namespace UnturnedGodot.Net
         public long ShotsRejectedRange;         // claimed muzzle origin too far from the avatar
         public long ShotsRejectedDeadOrMissing;
         public long ShotsRejectedMalformed;     // degenerate aim direction
+        public long ShotsRejectedBroken;        // the held gun is at 0 condition (Durability: a broken gun does not fire)
         public long MeleeAccepted, MeleeRejected;
         public long GrenadesAccepted, GrenadesRejected;
         public long BulletHitsPlayer, BulletHitsZombie, BulletHitsWorld, BulletsExpired;
@@ -190,8 +191,14 @@ namespace UnturnedGodot.Net
             public ushort Shooter;
             public ushort Seq;
             public ServerGunProfile Gun;
+            public float Condition = 1f;   // Durability.DamageMultiplier of the gun that fired it
         }
         readonly List<Bullet> _bullets = new List<Bullet>();
+
+        /// <summary>DURABILITY: the condition (0-100) of the weapon this player is holding, or null when the server
+        /// cannot say (no inventory layer, nothing held, a melee weapon the client equips without naming). Wired by the
+        /// host to the server's inventory. 0 refuses the shot; anything under 50 softens the bullet.</summary>
+        public Func<ushort, byte?> HeldCondition;
 
         sealed class PendingMelee
         {
@@ -240,7 +247,19 @@ namespace UnturnedGodot.Net
 
         public int AmmoOf(ushort playerId) => _state.TryGet(playerId, out var e) ? e.Ammo : -1;
 
-        readonly List<(ushort victim, float damage, ushort attacker)> _externalDamageQueue = new List<(ushort, float, ushort)>();
+        readonly List<(ushort victim, float damage, ushort attacker, Durability.Zone zone)> _externalDamageQueue =
+            new List<(ushort, float, ushort, Durability.Zone)>();
+
+        /// <summary>Which clothing protection a hit is subject to. Weapon = the per-zone armor of what covers it
+        /// (bullets, melee); Explosion = the whole-body blast multiplier; None = already applied by whoever queued it,
+        /// or not a thing clothing stops (a fall, a deadzone) -- the hit still WEARS what covers the zone.</summary>
+        public enum ArmorKind : byte { None, Weapon, Explosion }
+
+        /// <summary>DURABILITY seam (victim, zone, damage, armor) -> the damage that gets through. Wears the worn pieces
+        /// covering the zone ("clothes get damaged ... when taking incoming damage") and applies their protection, both
+        /// against the SERVER's inventory -- the host owns inventories, combat does not. Unset = no clothing effect,
+        /// which is what every pre-existing combat harness asserts against.</summary>
+        public Func<ushort, Durability.Zone, float, ArmorKind, float> ClothingHit;
 
         /// <summary>P3b (SP/MP-unify): the PUBLIC non-weapon player-damage entry -- the wrapper over the private
         /// ApplyPlayerDamage sink for the damage sources P3a left stranded on the invulnerable NetAvatar/adopted
@@ -253,8 +272,8 @@ namespace UnturnedGodot.Net
         /// the server tick. attacker 0 = environment (no kill credit, Killer 0). NOT PvP-gated: this is PvE/
         /// environmental damage, which lands even on a PvP-off server -- the PvP toggle only governs player-vs-
         /// player target SELECTION (bullets/melee/blast), never the HP sink itself.</summary>
-        public void DamagePlayerExternal(ushort victimPlayerId, float damage, ushort attackerPlayerId = 0)
-            => _externalDamageQueue.Add((victimPlayerId, damage, attackerPlayerId));
+        public void DamagePlayerExternal(ushort victimPlayerId, float damage, ushort attackerPlayerId = 0, Durability.Zone zone = Durability.Zone.None)
+            => _externalDamageQueue.Add((victimPlayerId, damage, attackerPlayerId, zone));
 
         /// <summary>Test seam (P3a): queue a unit of server-authoritative player damage to land at the NEXT
         /// combat Step, so it runs INSIDE the server tick with the LIVE tick -- exactly like the real bullet/
@@ -276,6 +295,8 @@ namespace UnturnedGodot.Net
                 : tick - cs.LastFireTick <= gun.FirerateTicks || cs.ShotCadence.IsCoolingDown(tick))
             { Diag.ShotsRejectedRate++; return; }   // min gap = Firerate+1 ticks (SP rule)
             if (cs.Ammo <= 0) { Diag.ShotsRejectedAmmo++; return; }
+            byte? held = HeldCondition?.Invoke(sender);
+            if (held == 0) { Diag.ShotsRejectedBroken++; return; }
             if ((cmd.Origin - pe.Pos).magnitude > gun.MaxAimOriginOffset) { Diag.ShotsRejectedRange++; return; }
             var dir = cmd.Dir;
             float m = dir.magnitude;
@@ -300,6 +321,7 @@ namespace UnturnedGodot.Net
                     Shooter = sender,
                     Seq = cmd.Seq,
                     Gun = gun,
+                    Condition = held.HasValue ? Durability.DamageMultiplier(held.Value) : 1f,
                 });
             // EVERY OTHER CLIENT HEARS AND SEES THIS. Broadcast after the shot is ACCEPTED, so a rejected
             // trigger pull (reloading, dry, rate-limited, out of range) cannot make a phantom crack across the
@@ -385,7 +407,7 @@ namespace UnturnedGodot.Net
                 for (int i = 0; i < _externalDamageQueue.Count; i++)   // index loop tolerates an enqueue during ApplyPlayerDamage's death broadcast
                 {
                     var d = _externalDamageQueue[i];
-                    ApplyPlayerDamage(d.victim, d.damage, d.attacker, tick, out _);
+                    ApplyPlayerDamage(d.victim, d.damage, d.attacker, tick, out _, sourcePos: null, zone: d.zone);
                 }
                 _externalDamageQueue.Clear();
             }
@@ -484,10 +506,12 @@ namespace UnturnedGodot.Net
                         case 1:
                         {
                             float mult = hitRelY >= hitHeadMin ? b.Gun.HeadMult : (hitRelY >= hitTorsoMin ? b.Gun.TorsoMult : b.Gun.LegMult);
-                            float dmg = b.Gun.PlayerDamage * mult;
+                            var zone = hitRelY >= hitHeadMin ? Durability.Zone.Head : (hitRelY >= hitTorsoMin ? Durability.Zone.Torso : Durability.Zone.Legs);
+                            float dmg = b.Gun.PlayerDamage * mult * b.Condition;   // a worn gun hits softer (Durability.DamageMultiplier)
                             // b.Pos, not the impact point: the indicator has to say which way to turn and face
                             // the shooter, not mark where the bullet happened to end its flight.
-                            ApplyPlayerDamage(hitPlayer, dmg, b.Shooter, tick, out bool killed, sourcePos: b.Pos, weaponName: b.Gun.AssetName);
+                            ApplyPlayerDamage(hitPlayer, dmg, b.Shooter, tick, out bool killed, sourcePos: b.Pos, weaponName: b.Gun.AssetName,
+                                              zone: zone, armor: ArmorKind.Weapon);
                             SendHitConfirm(b.Shooter, b.Seq, HitTargetKind.Player, hitPlayer, dmg, killed, hitRelY >= hitHeadMin);
                             BroadcastImpact(point, ImpactSurface.Flesh);
                             Diag.BulletHitsPlayer++;
@@ -594,7 +618,8 @@ namespace UnturnedGodot.Net
                 else if (bestPlayer != 0)
                 {
                     float dmg = DefaultMelee.PlayerDamage * mult;
-                    ApplyPlayerDamage(bestPlayer, dmg, pm.Attacker, tick, out bool killed, sourcePos: ape.Pos);
+                    ApplyPlayerDamage(bestPlayer, dmg, pm.Attacker, tick, out bool killed, sourcePos: ape.Pos,
+                                      zone: Durability.Zone.Torso, armor: ArmorKind.Weapon);
                     SendHitConfirm(pm.Attacker, pm.Seq, HitTargetKind.Player, bestPlayer, dmg, killed, false);
                 }
                 else if (WorldRay != null)
@@ -692,7 +717,8 @@ namespace UnturnedGodot.Net
                     float pr = (pe.Pos - g.Pos).magnitude;
                     if (pr > radius || Blocked(g.Pos, pe.Pos)) continue;
                     float dmg = ExplosionMath.Squared(playerDamage, pr, radius);   // players: SQUARED falloff (Player.cs:1975); thrower included
-                    if (dmg > 0f) ApplyPlayerDamage(pe.OwnerPlayerId, dmg, g.Owner, tick, out _, sourcePos: g.Pos);   // the BLAST is the source, not the thrower -- right even after they have moved away or the frag was theirs
+                    if (dmg > 0f) ApplyPlayerDamage(pe.OwnerPlayerId, dmg, g.Owner, tick, out _, sourcePos: g.Pos,
+                                                    zone: Durability.Zone.Whole, armor: ArmorKind.Explosion);   // the BLAST is the source, not the thrower -- right even after they have moved away or the frag was theirs
                 }
             var evt = new GrenadeExplodedEvent { Pos = g.Pos, Radius = radius, ItemId = g.ItemId };
             _broadcast(NetMessagePak.Pack(ReplicationIds.EventGrenadeExploded, evt.Write));
@@ -712,10 +738,12 @@ namespace UnturnedGodot.Net
         /// DamagePlayerExternal). <paramref name="sourcePos"/> is optional and purely cosmetic -- it feeds only
         /// the victim's directional hurt indicator (PlayerHurtEvent) and touches no HP math, so a caller with
         /// nothing to point at (fall, OOB, starvation, a deadzone) can safely omit it rather than guess one.</summary>
-        void ApplyPlayerDamage(ushort victim, float damage, ushort attacker, long tick, out bool killed, Vector3? sourcePos, string weaponName = null)
+        void ApplyPlayerDamage(ushort victim, float damage, ushort attacker, long tick, out bool killed, Vector3? sourcePos, string weaponName = null,
+                               Durability.Zone zone = Durability.Zone.None, ArmorKind armor = ArmorKind.None)
         {
             killed = false;
             if (!_state.TryGet(victim, out var cs) || !cs.Alive) return;
+            if (zone != Durability.Zone.None && ClothingHit != null) damage = ClothingHit(victim, zone, damage, armor);
             cs.HealthExact -= damage;
             cs.Health = (byte)Math.Clamp((int)Math.Ceiling(cs.HealthExact), 0, 100);
             _state.MarkDirty(cs, tick);

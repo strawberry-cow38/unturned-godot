@@ -342,7 +342,7 @@ namespace UnturnedNet.Tests
                 Grounded = true,
             };
             byte[] packed = NetMessagePak.Pack(ReplicationIds.CommandPlayerState, cmd.Write);
-            Assert.That(ToHex(packed), Is.EqualTo(GoldenStateHex), "PlayerStateCommand golden bytes (v10)");
+            Assert.That(ToHex(packed), Is.EqualTo(GoldenStateHex), "PlayerStateCommand golden bytes (v57)");
 
             var r = new SDG.NetPak.NetPakReader();
             r.SetBufferSegment(packed, packed.Length);
@@ -358,6 +358,17 @@ namespace UnturnedNet.Tests
             Assert.That(read.Jump, Is.True);
             Assert.That(read.Stance, Is.EqualTo(EPlayerStance.SPRINT));
             Assert.That(read.Grounded, Is.True);
+            Assert.That(read.HeldItemId, Is.EqualTo(0));
+
+            // v57: the held id rides, in its own bits, and nothing after it is shifted (the event count still reads)
+            cmd.HeldItemId = 0xA5C3;
+            byte[] held = NetMessagePak.Pack(ReplicationIds.CommandPlayerState, cmd.Write);
+            var r2 = new SDG.NetPak.NetPakReader();
+            r2.SetBufferSegment(held, held.Length);
+            r2.ReadUInt8(out _);
+            Assert.That(PlayerStateCommand.TryRead(r2, out var read2), Is.True);
+            Assert.That(read2.HeldItemId, Is.EqualTo((ushort)0xA5C3), "the held item survives the wire");
+            Assert.That((read2.Grounded, read2.EventCount), Is.EqualTo((true, (byte)0)), "...between Grounded and the event carry");
         }
 
         [Test]
@@ -412,7 +423,10 @@ namespace UnturnedNet.Tests
         }
 
         // goldened on first landing (v9); v10 (mp-event-coalesce) appends the EventCount=0 byte
-        const string GoldenStateHex = "1B0201030C040C08103E6000A91E043AF004060200";
+        // v57: + HeldItemId (u16) after Grounded. DERIVED, not pasted: the golden command holds nothing (0), so 16 ZERO
+        // bits land between Grounded and a zero EventCount -- every earlier byte is unchanged and the tail grows by two
+        // zero bytes. The round trip below pins a NON-zero id, which this all-zero insertion cannot.
+        const string GoldenStateHex = "1B0201030C040C08103E6000A91E043AF0040602000000";
         const string GoldenRecovHex = "1F6404640844328011F840163800";
 
         static string ToHex(byte[] buffer)

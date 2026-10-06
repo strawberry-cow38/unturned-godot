@@ -418,7 +418,7 @@ namespace UnturnedGodot
             if (p != null && p.GlobalPosition.DistanceSquaredTo(me) <= r2)
             {
                 ulong id = p.GetInstanceId(); nowInside.Add(id);
-                if (Def.TrapPlayerDamage > 0f && !_trapInside.Contains(id)) TrapShred(() => p.TakeDamage(Def.TrapPlayerDamage, me));
+                if (Def.TrapPlayerDamage > 0f && !_trapInside.Contains(id)) TrapShred(() => p.TakeDamage(Def.TrapPlayerDamage, me, SDG.Unturned.Durability.Zone.Legs));
             }
             _trapInside = nowInside;
         }
@@ -545,7 +545,7 @@ namespace UnturnedGodot
                 if (n is PlayerController pl)
                 {
                     float d = pl.GlobalPosition.DistanceTo(p);
-                    if (d <= R) pl.TakeDamage(SDG.Unturned.ExplosionMath.Linear(120f, d, R));
+                    if (d <= R) pl.TakeDamage(SDG.Unturned.ExplosionMath.Linear(120f, d, R), null, SDG.Unturned.Durability.Zone.Whole);
                 }
             foreach (var n in GetTree().GetNodesInGroup("vehicles"))
                 if (n is Vehicle v && !v.Exploded)

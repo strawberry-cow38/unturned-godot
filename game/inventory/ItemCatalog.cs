@@ -690,6 +690,7 @@ namespace SDG.Unturned
                     if (a == null) continue;
                     a.gunName = name; n++;
                     a.gunAmmoMax = d.ParseInt32("Ammo_Max", 30);   // the server's only handle on a gun's real capacity -- see ItemAsset.gunAmmoMax
+                    WireWear(a, d);
                     a.gunCaliber = d.ParseInt32("Caliber", 0);     // ...and on which rounds it accepts -- see ItemAsset.gunCaliber
                     // ...and the caliber SET, retail's own shape (ItemGunAsset: Magazine_Calibers +
                     // Magazine_Caliber_N, else a one-element array holding plain Caliber). Parsed even though no
@@ -830,6 +831,15 @@ namespace SDG.Unturned
 
         // Wire meleeName on the extracted PEI melee items (content/<folder>.dat's ID -> ItemAsset.meleeName) so equipping
         // a knife/axe/bat loads its viewmodel + weapon-specific swings via EquipHeldMelee. Folders from content/melee_list.tsv.
+        /// <summary>v56 DURABILITY: retail ItemWeaponAsset `Durability` (chance per use) and `Wear` (points per loss, at
+        /// least 1) onto the core asset, where the server rolls them (Durability.UseWeapon).</summary>
+        static void WireWear(ItemAsset a, IDatDictionary d)
+        {
+            a.durability = d.ParseFloat("Durability", 0f);
+            byte w = d.ParseUInt8("Wear", 1);
+            a.wear = w < 1 ? (byte)1 : w;
+        }
+
         static void WireExtractedMelee()
         {
             const string ml = "res://content/melee_list.tsv";
@@ -846,7 +856,7 @@ namespace SDG.Unturned
                 try
                 {
                     var d = new DatParser().Parse(System.IO.File.ReadAllText(datPath));
-                    if (ushort.TryParse(d.GetString("ID"), out var id)) { var a = Assets.find(id); if (a != null) { a.meleeName = name; n++; } }
+                    if (ushort.TryParse(d.GetString("ID"), out var id)) { var a = Assets.find(id); if (a != null) { a.meleeName = name; WireWear(a, d); n++; } }
                 }
                 catch { /* skip a malformed .dat */ }
             }

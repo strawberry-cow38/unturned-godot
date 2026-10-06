@@ -225,6 +225,11 @@ namespace UnturnedGodot.Net
         public const byte CommandConnectPipe = 64;          // Out item port -> In item port, plus the route nodes (ItemPipeReplication.cs)
         public const byte CommandRemovePipe = 65;           // the hose-style hold/tap gesture on a piped port
         public const byte CommandConfigureItemDevice = 66;  // the F panel: a splitter's mode + weights, a mover's rate
+        /// <summary>v56 DURABILITY: "I used the weapon at (Page,X,Y) this many times" -- shots fired, swings. The CLIENT
+        /// decides a shot happened (singleplayer bullets are local and authoritative; ServerCombat never sees them), but
+        /// it may not write condition: the next owner echo would put the old number straight back. So it reports uses,
+        /// and the server rolls the wear (Durability.UseWeapon) on its own copy.</summary>
+        public const byte CommandWeaponUse = 67;
 
         public const byte CommandToggleObjectDoor = 47;   // v37: swing a PROP's door -- a shipping container, a crossing gate arm. Distinct from CommandToggleDoor(32), which is a player-built Door with an owner, a lock and DoorLogic; a prop door has none of those and is a plain toggle with a reach check.
         public const byte CommandSitSeat = 46;       // v35: sit on a piece of furniture, or stand up (NetId 0 = stand). The client asks; the server owns who is in which seat, because two clients each deciding they took the same chair is exactly the "multiple people can't get in a car" failure that CommandEnterVehicle's occupancy check was added to stop. NOTE: 45 was taken by CommandTakeFromStorage in the same wave; ids are append-only and this one moved to 46 rather than either of us reusing a byte.
@@ -480,6 +485,12 @@ namespace UnturnedGodot.Net
             internal PlayerMovementSim Sim;
             internal MoveInput CurrentInput;
             internal bool HasInput;
+            // v57: a client-auth joiner sends no MoveInput, only PlayerState -- whose buttons and held id land here, so
+            // TryGetHeldInput can answer for it. Kept apart from CurrentInput on purpose: ServerStep integrates
+            // anything with HasInput, and ServerDrive/ServerRefreshStance read the stance off it; neither should
+            // start behaving differently for a joiner because the appearance needed to know what it holds.
+            internal MoveInput StateInput;
+            internal bool HasStateInput;
             // true once ServerDrive has taken over this entity: either an in-process shell (the
             // listen-server / SP-loopback local player) writing its own result, or -- since v9 -- the
             // owner's envelope-validated claim stream (ServerPlayerAuthority); the internal flat-ground
@@ -549,9 +560,25 @@ namespace UnturnedGodot.Net
         public bool TryGetHeldInput(ushort ownerPlayerId, out MoveInput input)
         {
             input = default;
-            if (!TryGetByOwner(ownerPlayerId, out var e) || !e.HasInput) return false;
-            input = e.CurrentInput;
-            return true;
+            if (!TryGetByOwner(ownerPlayerId, out var e)) return false;
+            if (e.HasInput) { input = e.CurrentInput; return true; }
+            if (e.HasStateInput) { input = e.StateInput; return true; }   // v57: a client-auth joiner's PlayerState
+            return false;
+        }
+
+        /// <summary>The wire stance off whichever held input this entity has (MoveInput, else a joiner's PlayerState).</summary>
+        static byte? InputStance(PlayerEntity e) =>
+            e.HasInput ? (byte)((e.CurrentInput.Buttons >> 1) & 0x3)
+            : e.HasStateInput ? (byte)((e.StateInput.Buttons >> 1) & 0x3)
+            : (byte?)null;
+
+        /// <summary>v57: the held-input view of a client-auth joiner, from its PlayerState stream (buttons + held id).
+        /// See StateInput. Cleared with the rest of the input by ServerClearInput.</summary>
+        public void ServerSetStateInput(ushort ownerPlayerId, byte buttons, ushort heldItemId)
+        {
+            if (!TryGetByOwner(ownerPlayerId, out var e)) return;
+            e.StateInput = new MoveInput { Buttons = buttons, HeldItemId = heldItemId };
+            e.HasStateInput = true;
         }
 
         /// <summary>Latest-wins held input: MoveInput rides UnreliableSequenced, so a reordered stale
@@ -586,7 +613,7 @@ namespace UnturnedGodot.Net
         public void ServerRefreshStance(ushort ownerPlayerId, long tick)
         {
             if (!TryGetByOwner(ownerPlayerId, out var e)) return;
-            byte want = e.HasInput ? (byte)((e.CurrentInput.Buttons >> 1) & 0x3) : e.Stance;
+            byte want = InputStance(e) ?? e.Stance;
             if (SeatedOf != null && SeatedOf(ownerPlayerId)) want = MoveInput.WireStanceSitting;
             else if (want == MoveInput.WireStanceSitting) want = 0;   // stood up with no input stream to fall back on -> STAND, not stuck sitting
             if (want == e.Stance) return;
@@ -648,9 +675,10 @@ namespace UnturnedGodot.Net
             e.ExternallyDriven = true;
             var newPos = Quantize(pos);
             float newYaw = NetQuantization.QuantizeDegrees(yawDegrees, NetQuantization.YawBits);
-            // v18: the owner-authority transform stream carries no stance, but the owner's MoveInput stream still flows
-            // (ServerQueueInput -> CurrentInput), so read the stance from there.
-            byte newStance = e.HasInput ? (byte)((e.CurrentInput.Buttons >> 1) & 0x3) : e.Stance;
+            // v18: the stance comes off the held input. ⚠ v57: for a client-auth JOINER that is its PlayerState's
+            // buttons (StateInput) -- the v18 note said "the owner's MoveInput stream still flows", which stopped being
+            // true for joiners on 2026-07-18, and from then on everyone else saw them standing whatever they did.
+            byte newStance = InputStance(e) ?? e.Stance;
             if (SeatedOf != null && SeatedOf(ownerPlayerId)) newStance = MoveInput.WireStanceSitting;   // v35: see ServerStep -- the seat table wins over whatever the input stream last said
             bool changed = newPos != e.Pos || newYaw != e.YawDegrees || lastProcessedInputSeq != e.LastProcessedInputSeq || newStance != e.Stance;
             e.Pos = newPos;
@@ -692,6 +720,7 @@ namespace UnturnedGodot.Net
         {
             if (!TryGetByOwner(ownerPlayerId, out var e)) return;
             e.HasInput = false;
+            e.HasStateInput = false;
         }
 
         /// <summary>Round a position through the exact wire encoding -- authoritative state and client

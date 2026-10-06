@@ -34,7 +34,7 @@ namespace UnturnedGodot
                 _arms = value;
                 if (System.Environment.GetEnvironmentVariable("UG_LEGDBG") == "1")
                     Log.Print($"[clothes] viewmodel arms {(value == null ? "detached" : "attached")} -> shirt/pants re-applied to both rigs");
-                ApplyShirt(); ApplyPants();
+                ApplyShirt(); ApplyPants(); ApplyWear();   // a rebuilt viewmodel's arms come up new -- re-wear the sleeves
             }
         }
         RiggedCharacter _arms;
@@ -87,6 +87,42 @@ namespace UnturnedGodot
         {
             ApplyShirt(); ApplyPants(); ApplyHat(); ApplyVest(); ApplyMask(); ApplyGlasses(); ApplyBackpack();
             _painted = WornSignature();   // whoever called this, the visual now matches the state
+            ApplyWear();                  // freshly attached gear comes up on a plain material -- put the wear back on it
+        }
+
+        // ---- v56 DURABILITY: the tattered look follows each garment's condition (content/tatter.gdshaderinc) ----
+        // Separate from the outfit signature on purpose: wear changes a uniform, the outfit reloads textures and
+        // meshes, and a shirt wearing from 63% to 62% must not cost a texture reload.
+        ulong _wornLook = ulong.MaxValue;
+
+        static float WearOf(Item it)
+        {
+            if (it == null) return 0f;
+            var a = Assets.find(it.id);
+            if (a == null || PlayerInventory.IsFilterMask(a) || !Durability.HasCondition(a)) return 0f;   // a respirator's quality is its filter
+            return 1f - it.quality / 100f;
+        }
+
+        ulong WearSignature()
+        {
+            ulong h = 1469598103934665603UL;
+            void Mix(Item it) { h = (h ^ (ulong)Mathf.RoundToInt(WearOf(it) * 50f)) * 1099511628211UL; }   // 2% steps: finer than the eye
+            Mix(_inv.wornShirt); Mix(_inv.wornPants); Mix(_inv.wornHat); Mix(_inv.wornVest);
+            Mix(_inv.wornMask); Mix(_inv.wornGlasses); Mix(_inv.wornBackpack);
+            return h;
+        }
+
+        void ApplyWear()
+        {
+            float s = WearOf(_inv.wornShirt), p = WearOf(_inv.wornPants);
+            _body?.SetClothingWear(s, p);
+            _arms?.SetClothingWear(s, p);   // the 1P sleeves wear with the shirt
+            _body?.SetGearWear(EItemType.HAT, WearOf(_inv.wornHat));
+            _body?.SetGearWear(EItemType.VEST, WearOf(_inv.wornVest));
+            _body?.SetGearWear(EItemType.MASK, WearOf(_inv.wornMask));
+            _body?.SetGearWear(EItemType.GLASSES, WearOf(_inv.wornGlasses));
+            _body?.SetGearWear(EItemType.BACKPACK, WearOf(_inv.wornBackpack));
+            _wornLook = WearSignature();
         }
 
         // ---- SELF-CORRECTING VISUAL -------------------------------------------------------------------------
@@ -116,6 +152,7 @@ namespace UnturnedGodot
         {
             if (_inv == null) return;
             if (WornSignature() != _painted) Refresh();
+            else if (WearSignature() != _wornLook) ApplyWear();
         }
 
         // ---- per-slot visual apply (reads the worn item -> paints textures / attaches or detaches the gear mesh) ----

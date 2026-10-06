@@ -72,6 +72,7 @@ namespace UnturnedGodot
         public EditorSpawns(Editor editor, Camera3D cam, string mapRoot)
         {
             _editor = editor; _cam = cam; _flyCam = cam as EditorCamera; _mapRoot = mapRoot;
+            SDG.Unturned.LootCondition.Load(LootConditionPath(_editor.MapName));
             LoadCategory();
             RebuildMarkers();
             MakeCursors();
@@ -82,6 +83,20 @@ namespace UnturnedGodot
         void RefreshVisibility() { Visible = _editor.Mode == EEditorMode.Spawns; }
 
         string TranslatorPath(ECategory c) => ProjectSettings.GlobalizePath("res://content/spawns/") + $"editor_{_editor.MapName}_{c.ToString().ToLower()}.txt";
+
+        /// <summary>v56: this map's per-loot-table CONDITION bias (SDG.Unturned.LootCondition), beside its spawn files.
+        /// Read by WorldBuilder (PEI) and EditorPlayMode (a custom map) when the map loads to be played.</summary>
+        public static string LootConditionPath(string map) => ProjectSettings.GlobalizePath("res://content/spawns/") + $"editor_{map}_lootcond.txt";
+
+        public bool IsItemCategory => _category == ECategory.Item;
+
+        /// <summary>The selected item table's condition bias, -1 (worse) .. +1 (better).</summary>
+        public float LootBias
+        {
+            get => SDG.Unturned.LootCondition.Bias(_vehType);
+            set { SDG.Unturned.LootCondition.Set(_vehType, value); _lootCondDirty = true; _editor.MarkDirty(); }
+        }
+        bool _lootCondDirty;
 
         void LoadCategory()   // the editor translator (edited state) if present, else the retail .dat
         {
@@ -244,6 +259,12 @@ namespace UnturnedGodot
 
         public int Save()   // Editor.Save() fan-out: persist the live category (source Editor.save -> EditorSpawns.save)
         {
+            if (_lootCondDirty)   // not a category: saved whenever it changed, whichever category is showing
+            {
+                SDG.Unturned.LootCondition.Save(LootConditionPath(_editor.MapName));
+                _lootCondDirty = false;
+                Log.Print($"[editor-spawns] saved {SDG.Unturned.LootCondition.Count} loot condition biases");
+            }
             string sp = TranslatorPath(_category);
             System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(sp));
             using var w = new System.IO.StreamWriter(sp, false);

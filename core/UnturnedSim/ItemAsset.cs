@@ -100,6 +100,12 @@ namespace SDG.Unturned
             return !string.IsNullOrEmpty(gunCaliberName) && mag.magRound == gunCaliberName;   // ...and it must be the right cartridge
         }
         public string meleeName;       // for a MELEE weapon: the content folder name (knife_military|sledgehammer|...) to hold on Equip
+        /// <summary>Retail ItemWeaponAsset `Durability` / `Wear` (guns AND melee): each use -- a shot, a swing -- costs
+        /// `wear` condition points with probability `durability` (Durability.UseWeapon). 0 = never wears (no .dat value).
+        /// Copied off the .dat by ItemCatalog, the same route gunAmmoMax takes, because the SERVER applies the loss and
+        /// cannot see the game layer's GunDef.</summary>
+        public float durability;
+        public byte wear = 1;
         // ItemBagAsset: the storage grid a worn bag/shirt/pants/vest provides (0,0 = none)
         public byte width;
         public byte height;
@@ -321,12 +327,16 @@ namespace SDG.Unturned
         // rebuilds once, on first use, after the last add.
         public static void add(ItemAsset a) { if (a != null) { _byId[a.id] = a; if (!string.IsNullOrEmpty(a.guid)) _byGuid[a.guid] = a; _magRounds = null; } }
         // World loot factory: a magazine spawns FULL (Military Magazine = 30 rounds) rather than empty (master). Other items = 1.
-        public static Item makeLoot(ushort id)
+        // `table` = the loot table it was rolled from (-1 = none): the map's per-table condition bias (LootCondition).
+        public static Item makeLoot(ushort id, int table = -1)
         {
             var a = find(id);
             var it = new Item(id, a != null && a.IsMagazine ? (byte)System.Math.Max(1, a.magCapacity) : (byte)1);
-            if (a != null && a.type == EItemType.FOOD)   // FOOD spawns at a random CONDITION (source Item ctor: Random(Quality_Min, Quality_Max)); <50 = moldy = infects you to eat, and it decays a bit more each in-game day (FoodSpoil)
-                it.quality = (byte)_lootRng.Next(System.Math.Min(a.qualityMin, a.qualityMax), System.Math.Max(a.qualityMin, a.qualityMax) + 1);
+            // FOOD spawns at a random CONDITION (source Item ctor: Random(Quality_Min, Quality_Max)); <50 = moldy = infects
+            // you to eat, and it decays a bit more each in-game day (FoodSpoil). v56: so does everything with DURABILITY --
+            // guns, melee, clothing, tools -- in the same retail band (10-90 unless the item says otherwise).
+            if (a != null && (a.type == EItemType.FOOD || Durability.HasCondition(a)))
+                it.quality = Durability.RollCondition(a.qualityMin, a.qualityMax, LootCondition.Bias(table), _lootRng);
             if (a != null && a.IsFuelContainer) it.fuelLevel = 0f;   // a fresh gas can starts EMPTY -> fill it at a pump
             if (a != null && a.IsFluidContainer)                     // a fluid container spawns holding its default fluid (a bottle = full; a canteen = empty)
             {

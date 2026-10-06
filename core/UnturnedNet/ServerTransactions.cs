@@ -37,6 +37,10 @@ namespace UnturnedGodot.Net
         public long AutoDrinkRejected;      // empty cell / a different item at that address
         public long GunStatesApplied;       // the client's gun state landed on the server's copy of that item
         public long GunStatesRejected;      // empty cell / a different item at that address (a stale client grid)
+        public long WeaponUsesApplied;      // durability: uses rolled against a weapon (each report, not each roll)
+        public long WeaponUsesRejected;     // durability: the address held no weapon of that id
+        public long WeaponWearPoints;       // durability: condition points actually lost by weapons
+        public long ToolWearPoints;         // durability: condition points lost by crafting tools
         public long ConsoleApplied;
         public long ConsoleRejected;        // unknown verb / cheats disabled / bad args
         public long ChatSent;               // v49: chat lines broadcast (player + server)
@@ -603,6 +607,10 @@ namespace UnturnedGodot.Net
             commands.Register<GunStateCommand>(ReplicationIds.CommandGunState, GunStateCommand.TryRead,
                 OnGunState,
                 validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.Page < PlayerInventory.PAGES);
+
+            commands.Register<WeaponUseCommand>(ReplicationIds.CommandWeaponUse, WeaponUseCommand.TryRead,
+                OnWeaponUse,
+                validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.Page < PlayerInventory.PAGES && cmd.Uses > 0);
 
             commands.Register<FitAttachmentCommand>(ReplicationIds.CommandFitAttachment, FitAttachmentCommand.TryRead,
                 OnFitAttachment,
@@ -1477,6 +1485,27 @@ namespace UnturnedGodot.Net
             page.raiseStateUpdated();   // the echo only re-sends a page it knows changed
         }
 
+        /// <summary>DURABILITY: roll the wear for a client's reported uses of a weapon, on the SERVER's copy of it. The
+        /// client reports and never writes (see ReplicationIds.CommandWeaponUse). Clamped at WeaponUseCommand.MaxUses.
+        /// ⚠ An honest client is assumed for the COUNT: a modified one could under-report and keep its gun new. The
+        /// fix is for ServerCombat to count accepted shots itself, which it can only do for real-MP shots; recorded
+        /// rather than half-done.</summary>
+        void OnWeaponUse(ushort sender, WeaponUseCommand cmd)
+        {
+            var page = SenderInventory(sender)?.items[cmd.Page];
+            byte index = page?.getIndex(cmd.X, cmd.Y) ?? byte.MaxValue;
+            var jar = index == byte.MaxValue ? null : page.getItem(index);
+            var a = jar?.item != null && jar.item.id == cmd.Id ? Assets.find(cmd.Id) : null;
+            var kind = Durability.KindOf(a);
+            if (kind != Durability.Kind.Gun && kind != Durability.Kind.Melee) { Diag.WeaponUsesRejected++; return; }
+            int lost = 0;
+            for (int i = 0; i < Math.Min(cmd.Uses, WeaponUseCommand.MaxUses); i++) lost += Durability.UseWeapon(jar.item, a, () => Rand());
+            Diag.WeaponUsesApplied++;
+            if (lost == 0) return;
+            Diag.WeaponWearPoints += lost;
+            page.raiseStateUpdated();   // the echo only re-sends a page it knows changed
+        }
+
         void OnFitAttachment(ushort sender, FitAttachmentCommand cmd)
         {
             var inv = SenderInventory(sender);
@@ -2143,6 +2172,7 @@ namespace UnturnedGodot.Net
                 var asset = ResolveItem(arg);
                 if (asset == null) { Diag.ConsoleRejected++; return $"no item matching '{arg}'"; }
                 var item = Assets.makeLoot(asset.id);
+                if (Durability.HasCondition(asset)) item.quality = 100;   // a console give is a fresh one, not a looted one
                 var inv = SenderInventory(sender);
                 if (inv == null) { Diag.ConsoleRejected++; return "no inventory"; }
                 Diag.ConsoleApplied++;
