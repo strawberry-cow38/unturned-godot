@@ -44,8 +44,15 @@ namespace UnturnedGodot
         {
             new Vector3( 1.658f, -0.331f, 7.335f),   // upper crossarm, outer
             new Vector3( 0.880f, -0.331f, 7.335f),   // upper crossarm, inner
-            new Vector3(-0.880f, -0.331f, 6.941f),   // lower crossarm, inner
-            new Vector3(-1.658f, -0.331f, 6.941f),   // lower crossarm, outer
+            // ⭐ 6.612, THE MEASURED BOTTOM of the lower insulator, not its centre (master 2026-10-06: "the lower
+            // wire set should connect a lil lower"). Those insulators span z 6.612..7.271; attaching at the
+            // centroid hung the wire halfway up the porcelain and left only 0.39 m between the two crossarms, so
+            // the upper and lower runs read as one thick line. The bottom is where a wire actually sits in its
+            // groove, and it is a number the mesh already contains rather than an offset invented to taste.
+            // ⚠ The UPPER pair stays at its centroid: master said the lower set, and it is the SEPARATION between
+            // the two that was wrong, which moving one of them fixes.
+            new Vector3(-0.880f, -0.331f, 6.612f),   // lower crossarm, inner
+            new Vector3(-1.658f, -0.331f, 6.612f),   // lower crossarm, outer
         };
 
         /// <summary>A pole that can carry wires: its placement transform, and where it is for picking.</summary>
@@ -287,14 +294,22 @@ namespace UnturnedGodot
             Quad(st, p0 - b0, p0 + a0, p1 + a1, p1 - b1, t0, t1);
         }
 
+        /// <summary>⚠⚠ WOUND THE OTHER WAY SINCE 2026-10-06. Master: "the wires are rendering inside out" -- and
+        /// the comment directly above Ring() already said a wrongly wound tube is invisible from outside and solid
+        /// from within, which is exactly what shipped. Writing the warning is not the same as checking it.
+        ///
+        /// The ring runs a -> b -> -a -> -b where `a = tan x up` and `b = tan x a`, which traces COUNTER-clockwise
+        /// seen from outside the tube; Godot treats CLOCKWISE as front-facing, so every face pointed inward. The
+        /// two triangles are emitted (v0,v2,v1) and (v0,v3,v2) rather than reordering the ring, because the ring
+        /// order is also what the UV t0/t1 pairing is built on.</summary>
         static void Quad(SurfaceTool st, Vector3 v0, Vector3 v1, Vector3 v2, Vector3 v3, float t0, float t1)
         {
             st.SetUV(new Vector2(t0, 0f)); st.AddVertex(v0);
+            st.SetUV(new Vector2(t1, 1f)); st.AddVertex(v2);
             st.SetUV(new Vector2(t0, 1f)); st.AddVertex(v1);
-            st.SetUV(new Vector2(t1, 1f)); st.AddVertex(v2);
             st.SetUV(new Vector2(t0, 0f)); st.AddVertex(v0);
-            st.SetUV(new Vector2(t1, 1f)); st.AddVertex(v2);
             st.SetUV(new Vector2(t1, 0f)); st.AddVertex(v3);
+            st.SetUV(new Vector2(t1, 1f)); st.AddVertex(v2);
         }
 
         // ---- save / load -------------------------------------------------------------------------------------
