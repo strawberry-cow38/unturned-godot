@@ -36,6 +36,11 @@ namespace UnturnedGodot
         public DeadzoneField Deadzones;    // contaminated volumes ticking the player's vitals
         public DayNightCycle DayNight;     // the world clock -- MP Phase 8 syncs read/drive it (§3.7)
         public ResourceField Resources;
+        /// <summary>Every Power_Line_0 placement's transform, in placement order. ⭐ Recorded here rather than
+        /// discovered later by walking the scene for meshes that look like poles: the transform is exactly what
+        /// PowerLineField needs to put the four wire anchors in the world, and it is known for free at the moment
+        /// the prop is placed. A scene walk would have to re-derive it and would miss the editor's own copies.</summary>
+        public System.Collections.Generic.List<Transform3D> PowerLinePoles = new();
     // trees/rocks -- MP Phase 8's alive-bitmap indexes into it (§3.7)
         public FoliageField Foliage;       // grass/flowers/pebbles -- the editor's paint tool authors into it
         public DestructibleField Destructibles;   // destructible props (rubble) -- the DestructibleReplication(16) alive-bitmap indexes into it
@@ -1057,6 +1062,11 @@ namespace UnturnedGodot
                 // purely because that is where the lens split needed to be). Verified rather than assumed: the two
                 // props have IDENTICAL plinths -- local Z -1.00 at radius 0.35, 0.00 at 0.18, 1.00 at 0.35 on both --
                 // so the same cut height applies unchanged and no second constant is needed.
+                // POWER LINE POLES: remember where they are so wires can be strung between them (PowerLineField).
+                // Visual-only, so the dedicated server -- which has no visual layer at all -- does not collect them.
+                if (name == PowerLineField.PoleMesh && mode != WorldMode.Dedicated)
+                    result.PowerLinePoles.Add(new Transform3D(basis, gpos));
+
                 if ((name == "Street_Light_0" || name == "Traffic_Light_0") && mode != WorldMode.Dedicated)
                 {
                     var (baseMesh, upperMesh) = ObjMesh.SplitBelow(visMesh, StreetLightBaseCut);

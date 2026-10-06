@@ -125,6 +125,31 @@ namespace UnturnedGodot
 
         public void ClearPoles() { _poles.Clear(); _spans.Clear(); }
 
+        /// <summary>Replace the pole set, keeping whatever spans still have two poles to join.
+        ///
+        /// ⚠ SPANS ARE RE-MATCHED BY POSITION, not carried across by index, for the same reason they are SAVED by
+        /// position: an index only means something against the exact list that produced it. The editor rebuilds
+        /// this list every time the tool opens -- from the map's poles plus the ones you placed this session -- so
+        /// indices shift constantly. Re-matching keeps a line you strung earlier attached to the poles you strung
+        /// it between. A span whose pole has since been deleted is dropped and counted, never silently kept
+        /// pointing at whatever now occupies that index.</summary>
+        public int RefreshPoles(IEnumerable<Transform3D> poles, out int dropped)
+        {
+            var keep = new List<(Vector3 A, Vector3 B)>(_spans.Count);
+            foreach (var s in _spans) keep.Add((_poles[s.A].Origin, _poles[s.B].Origin));
+
+            _poles.Clear(); _spans.Clear();
+            foreach (var x in poles) _poles.Add(new Pole { Xform = x });
+
+            dropped = 0;
+            foreach (var (a, b) in keep)
+            {
+                int ia = PickPole(a, 2f), ib = PickPole(b, 2f);
+                if (ia < 0 || ib < 0 || !Connect(ia, ib, out _)) dropped++;
+            }
+            return _poles.Count;
+        }
+
         /// <summary>The four wire points of pole `i`, in WORLD space.</summary>
         public void AnchorsWorld(int i, Vector3[] into)
         {
@@ -145,6 +170,14 @@ namespace UnturnedGodot
             if (d > MaxSpan) { why = $"too far apart ({d:0} m, max {MaxSpan:0})"; return false; }
             _spans.Add(s);
             return true;
+        }
+
+        /// <summary>Replace the whole span list -- the undo path. Takes a COPY: the caller's snapshot must stay
+        /// usable if the same undo is pushed again, and handing the live list back would alias it.</summary>
+        public void RestoreSpans(IReadOnlyList<Span> snap)
+        {
+            _spans.Clear();
+            _spans.AddRange(snap);
         }
 
         public bool Disconnect(int a, int b)

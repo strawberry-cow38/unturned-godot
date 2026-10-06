@@ -6757,6 +6757,9 @@ namespace UnturnedGodot
             }
             // The island's own M-map, drawn from the heightmap/splat/routes now that all three are final.
             if (genPois != null && genSeed.HasValue) ProcIslandMap.Bake(terr, genSeed.Value);
+            var plField = new PowerLineField(); editor.AddChild(plField);
+            var plEd = new EditorPowerLines(editor, cam, plField, null, editor.Objects);   // a generated island ships no poles -- you place them
+            editor.AddChild(plEd); editor.PowerLinesEd = plEd; editor.PowerLines = plField;
             var roadsEd = new EditorRoads(editor, cam, rf); editor.AddChild(roadsEd); editor.RoadsEd = roadsEd;
             var roadDrawEd = new EditorRoadDraw(editor, cam, rf); editor.AddChild(roadDrawEd); editor.RoadDrawEd = roadDrawEd;   // R = draw, Shift+R = legacy nodes
             var riverEd = new EditorRiver(editor, cam, terr); editor.AddChild(riverEd); editor.RiverEd = riverEd;   // V = carve river (spline tool, sits with the road tools)
@@ -7479,6 +7482,16 @@ namespace UnturnedGodot
                 rf.LoadFromEnvironment(_mapRoot + "/Environment");
                 AddChild(rf);
             }
+            // POWER LINES (master 2026-10-06). The field holds the wires; the tool strings them. Fed the poles the
+            // MAP placed, plus -- inside the tool -- any placed this session, so both kinds carry wires.
+            var plField = new PowerLineField(); editor.AddChild(plField);
+            var plEd = new EditorPowerLines(editor, cam, plField, res.PowerLinePoles, editor.Objects);
+            editor.AddChild(plEd); editor.PowerLinesEd = plEd; editor.PowerLines = plField;
+            // Seed the field with the map's poles and whatever wires were saved last time, so the lines are THERE
+            // on load rather than only after you open the tool.
+            plField.RefreshPoles(res.PowerLinePoles, out _);
+            plField.Load(editor.MapName, out _);
+            plField.Rebuild();
             var roadsEd = new EditorRoads(editor, cam, rf);   // LEGACY node paving under the Environment tab (Shift+R)
             var roadDrawEd = new EditorRoadDraw(editor, cam, rf); editor.AddChild(roadDrawEd); editor.RoadDrawEd = roadDrawEd;   // draw-a-road/rail (R)
             var riverEd = new EditorRiver(editor, cam, res.Terr); editor.AddChild(riverEd); editor.RiverEd = riverEd;   // V = carve river (spline tool, sits with the road tools)
