@@ -786,6 +786,10 @@ namespace UnturnedGodot.Net
         readonly Dictionary<ushort, PlayerEntry> _byOwner = new Dictionary<ushort, PlayerEntry>();
         readonly Dictionary<uint, CrateEntry> _crates = new Dictionary<uint, CrateEntry>();
 
+        /// <summary>Bumped whenever a crate is registered or dropped. An adapter whose container is gone re-binds
+        /// to whatever is nearest, so a NEW container is a change to a pipe network even though no pipe moved.</summary>
+        public int CrateSetVersion { get; private set; }
+
         /// <summary>Client side: fires after ReadSnapshot rebuilt my replica (UI refresh hook).</summary>
         public event Action<ushort> ReplicaUpdated;
 
@@ -820,7 +824,7 @@ namespace UnturnedGodot.Net
         public void ServerRemoveCrate(uint netId, long tick)
         {
             ServerCloseCrateViewers(netId, tick);   // before the removal, or the copy-back is skipped
-            _crates.Remove(netId);
+            if (_crates.Remove(netId)) CrateSetVersion++;
         }
 
         // ---- server side ----
@@ -955,6 +959,7 @@ namespace UnturnedGodot.Net
             var c = new CrateEntry { NetIdValue = id.Value, Width = width, Height = height, Pos = pos, Storage = new Items(PlayerInventory.STORAGE) };
             c.Storage.loadSize(width, height);
             _crates[id.Value] = c;
+            CrateSetVersion++;
             return c;
         }
 

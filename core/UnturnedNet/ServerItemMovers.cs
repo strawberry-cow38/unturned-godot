@@ -15,6 +15,9 @@ namespace UnturnedGodot.Net
         public long UnpoweredSteps;  // mover-steps skipped for lack of power
         public long PowerSolves;     // full power solves the movers asked for (only when the power inputs changed)
         public long RouteVisits;     // junction/adapter evaluations by the routing walks -- the walk's real cost
+        public long Rebuilds;        // times the network counters moved and the mover caches were rebuilt
+        public long MissedChanges;   // ⚠ the backstop found the network changed with NO counter bump -- a forgotten ServerTouch
+        public long MissedWakes;     // ⚠ a mover the backstop woke (nothing it watched had changed) and then moved items -- a missed Items bump
     }
 
     /// <summary>
@@ -48,17 +51,26 @@ namespace UnturnedGodot.Net
         /// chain. Sixteen junctions between a mover and a container is far beyond anything built on purpose.</summary>
         public const int MaxRouteDepth = 16;
 
-        /// <summary>How often the power INPUTS are checked, in steps; the solve itself runs only when they changed.
-        /// Power changes at human speed, and at most a tenth of a second of over-run after a generator dies is ~3
-        /// items. The state ITSELF is exact -- this is only how stale the mover's view of it may be.
+        /// <summary>DIRTY FLAGS (strawberry 2026-10-06: "could we dirty flag the industrial stuff so we only recalc
+        /// if and where something changes in the network? trying hard not to break it").
         ///
-        /// ⚠ NOT "solve every 5 steps", which is what this was. PowerSolver runs wires+1 passes over every device,
-        /// so a solve is quadratic in the base: measured 2026-10-06 at ~15 ms for 100 movers among 1,000 other
-        /// deployables -- three quarters of a 20 ms tick, ten times a second, on a base where nothing had changed.
-        /// The inputs it reads are few (which devices exist, their def, on/fire/fuelled, which ports are wired),
-        /// so a scan of those is a few microseconds and the expensive part runs when a player actually did
-        /// something.</summary>
-        public const int PowerRefreshSteps = 5;
+        /// Nothing here is recomputed on a timer any more. Three counters say when something changed:
+        ///   DeployableReplication.GraphVersion  -- devices placed/removed, wires, config, on/off, fire, running dry
+        ///   ItemPipeGraph.Version               -- pipes connected or cut
+        ///   InventoryReplication.CrateSetVersion -- containers registered or dropped (adapters re-bind to them)
+        /// and when their sum moves, the mover list is rebuilt, power is re-solved if its inputs moved, and every
+        /// sleeping mover looks again. A mover that finds nothing to do sleeps on the Items.Version of exactly the
+        /// containers its last walk looked at, and wakes the step one of them changes -- WHERE it changed.
+        ///
+        /// THE BACKSTOP is how "not breaking it" is kept honest rather than hoped for. Once per BackstopSteps the
+        /// whole state the counters stand for is fingerprinted from scratch, and a sleeping mover takes one look
+        /// regardless. Either catching something the counters missed is COUNTED (Diag.MissedChanges,
+        /// Diag.MissedWakes) and then handled -- so a forgotten bump costs at most a second of latency, never a
+        /// frozen mover, and the tests that assert both counters are zero go red on it.
+        ///
+        /// (What it replaced, measured 2026-10-06: a power solve every 5 steps -- quadratic, ~15 ms at 100 movers
+        /// among 1,000 deployables -- and a scan of every deployable every step to find the movers.)</summary>
+        public const int BackstopSteps = 50;
 
         // Budgets are kept in MILLIONTHS of a unit, as integers. A float accumulator of 0.64 x 50 lands on
         // 31.999999 or 32.000001 depending on the order of the adds, and "32 in one second" would then be 31 on
@@ -84,16 +96,34 @@ namespace UnturnedGodot.Net
         readonly HashSet<uint> _visited = new HashSet<uint>();
         readonly List<Choice> _srcChoices = new List<Choice>(), _dstChoices = new List<Choice>();
 
-        /// <summary>After a mover finds nothing to do (source empty, destination full, filtered), how many steps it
-        /// sleeps before looking again -- its budget still fills meanwhile. Idle and stalled are a pipe network's
-        /// USUAL states, and a full route walk at 50 Hz to re-learn "still full" was most of the cost of a big
-        /// base (measured 2026-10-06). 5 steps = 0.1 s: a freed slot waits at most that long.</summary>
-        public const int StallRetrySteps = 5;
-        readonly Dictionary<uint, int> _rest = new Dictionary<uint, int>();
         struct Memo { public InventoryReplication.CrateEntry Crate; public Choice[] Choices; }
-        int _sinceSolve = PowerRefreshSteps;
-        ulong _solvedFor;          // PowerInputs() at the last solve
+
+        long _stamp = long.MinValue;   // NetStamp() the caches were built at
+        ulong _fingerprint;            // NetworkInputs() at that moment -- what the backstop compares against
+        ulong _poweredFor;             // PowerInputs() at the last solve
         bool _everSolved;
+        int _sinceBackstop;
+        readonly List<(DeployableReplication.DeployableEntity e, DeployableNetDef def)> _movers =
+            new List<(DeployableReplication.DeployableEntity, DeployableNetDef)>();
+
+        /// <summary>A mover that found nothing to do, and the containers whose contents decided that. It sleeps until
+        /// one of their Items.Version moves, the network changes (which clears every Watch), or Backstop runs out.
+        /// Idle and stalled are a pipe network's USUAL states: re-walking a route every step to re-learn "still
+        /// full" was most of a big stalled base's cost.</summary>
+        sealed class Watch
+        {
+            public Items[] Pages; public int[] Versions; public int Backstop;
+            public bool Unchanged()
+            {
+                for (int i = 0; i < Pages.Length; i++) if (Pages[i].Version != Versions[i]) return false;
+                return true;
+            }
+        }
+        readonly Dictionary<uint, Watch> _sleep = new Dictionary<uint, Watch>();
+        readonly List<Items> _watching = new List<Items>();   // the containers the walk in progress looked at
+
+        /// <summary>Is this mover asleep (nothing to do, waiting on a change)? For tests and the debug overlay.</summary>
+        public bool IsAsleep(uint moverId) => _sleep.ContainsKey(moverId);
 
         public ServerItemMoversDiagnostics Diag { get; } = new ServerItemMoversDiagnostics();
 
@@ -150,25 +180,62 @@ namespace UnturnedGodot.Net
         {
             long dtMicro = (long)Math.Round(dt * 1_000_000.0);
             if (dtMicro <= 0) return;
-            List<(DeployableReplication.DeployableEntity e, DeployableNetDef def)> movers = null;
+            long stamp = NetStamp();
+            bool rebuild = stamp != _stamp;
+            if (!rebuild && ++_sinceBackstop >= BackstopSteps)
+            {
+                _sinceBackstop = 0;
+                if (NetworkInputs() != _fingerprint) { Diag.MissedChanges++; rebuild = true; }
+            }
+            if (rebuild) Rebuild(stamp);
+            foreach (var (e, def) in _movers) StepMover(e, def, dtMicro);
+        }
+
+        long NetStamp() => _deployables.GraphVersion + _deployables.Pipes.Version + _inventories.CrateSetVersion;   // all only ever grow
+
+        void Rebuild(long stamp)
+        {
+            _stamp = stamp;
+            _fingerprint = NetworkInputs();
+            _sinceBackstop = 0;
+            Diag.Rebuilds++;
+            _movers.Clear();
             foreach (var e in _deployables.All)
                 if (_deployables.Schema.TryGet(e.DefId, out var def) && def.ItemDevice == ItemDeviceKind.Mover)
-                    (movers ??= new()).Add((e, def));
-            if (movers == null) { _budget.Clear(); return; }
-            if (++_sinceSolve >= PowerRefreshSteps)
-            {
-                _sinceSolve = 0;
-                ulong now = PowerInputs();
-                if (!_everSolved || now != _solvedFor) { _deployables.Solve(); _solvedFor = now; _everSolved = true; Diag.PowerSolves++; }
-            }
-            foreach (var (e, def) in movers) StepMover(e, def, dtMicro);
+                    _movers.Add((e, def));
+            // every verdict a sleeping mover holds was about the network as it WAS
+            _sleep.Clear();
             // A picked-up mover leaves its budget behind otherwise; harmless, but a registry that only grows
             // is how the next "is this NetId a mover" question gets answered yes for a dead one.
-            if (_budget.Count > movers.Count)
+            if (_budget.Count > _movers.Count)
             {
-                var live = new HashSet<uint>(); foreach (var (e, _) in movers) live.Add(e.NetIdValue);
-                foreach (uint id in new List<uint>(_budget.Keys)) if (!live.Contains(id)) { _budget.Remove(id); _rest.Remove(id); }
+                var live = new HashSet<uint>(); foreach (var (e, _) in _movers) live.Add(e.NetIdValue);
+                foreach (uint id in new List<uint>(_budget.Keys)) if (!live.Contains(id)) _budget.Remove(id);
             }
+            if (_movers.Count == 0) { _budget.Clear(); return; }
+            // a pipe or a config change moves the stamp too; only re-solve when what the solver READS moved
+            ulong power = PowerInputs();
+            if (!_everSolved || power != _poweredFor) { _deployables.Solve(); _poweredFor = power; _everSolved = true; Diag.PowerSolves++; }
+        }
+
+        /// <summary>The backstop's view: everything the three counters claim to cover, recomputed from scratch -- the
+        /// power inputs, every pipe's ends, every configurable device's config, every adapter's binding, and which
+        /// containers exist. If this moves while the counters did not, a bump was forgotten somewhere.</summary>
+        ulong NetworkInputs()
+        {
+            ulong h = PowerInputs();
+            foreach (var p in _deployables.Pipes.All)
+                h += Mix(Mix(((ulong)p.SrcId << 8) | p.SrcPort) ^ (((ulong)p.DstId << 8) | p.DstPort) ^ 0x2545F4914F6CDD1DUL);
+            foreach (var e in _deployables.All)
+            {
+                if (e.ItemCrateId != 0) h += Mix(((ulong)e.NetIdValue << 32) ^ e.ItemCrateId ^ 0x9E3779B97F4A7C15UL);
+                var c = e.ItemConfig;
+                if (c != null)
+                    h += Mix(((ulong)e.NetIdValue << 32) ^ ((ulong)(byte)c.Mode << 24) ^ ((ulong)c.Rate << 16)
+                             ^ Mix(((ulong)c.Weights[0] << 16) | ((ulong)c.Weights[1] << 8) | c.Weights[2]));
+            }
+            foreach (var c in _inventories.Crates) h += Mix(c.NetIdValue ^ 0xD6E8FEB86659FD93UL);
+            return h;
         }
 
         /// <summary>A fingerprint of everything DeployableReplication.Solve reads: the devices, their def (ports),
@@ -225,17 +292,19 @@ namespace UnturnedGodot.Net
             // Capped at one second's worth: a mover stalled behind a full chest must not bank an hour of throughput
             // and empty the source in a single tick the moment someone frees a slot.
             long b = Math.Min(rate * Unit, (_budget.TryGetValue(id, out long had) ? had : 0) + rate * dtMicro);
-            if (_rest.TryGetValue(id, out int rest) && rest > 0)
+            bool backstopWake = false;
+            if (_sleep.TryGetValue(id, out var z))
             {
-                // asleep after finding nothing to do: the budget fills, the walk waits (StallRetrySteps)
-                _rest[id] = rest - 1;
-                _budget[id] = b;
-                return;
+                // asleep: the budget fills, the walk waits for a container it looked at to change
+                if (z.Unchanged() && --z.Backstop > 0) { _budget[id] = b; return; }
+                backstopWake = z.Unchanged();   // nothing it watched moved -- only the backstop's timer woke it
+                _sleep.Remove(id);
             }
             byte inPort = PortAt(def, ItemPortDir.In, 0), outPort = PortAt(def, ItemPortDir.Out, 0);
             bool idle = false;
             for (int guard = 0; b >= Unit && guard < ItemDeviceConfig.MaxRate * 2; guard++)
             {
+                _watching.Clear();   // the containers THIS attempt looks at are the ones that decide it
                 var srcChoices = _srcChoices; srcChoices.Clear();
                 _srcMemo.Clear(); _cut = false; _visited.Clear(); _visited.Add(id);
                 var src = SourceThrough(id, inPort, 0, _visited, srcChoices);
@@ -256,6 +325,9 @@ namespace UnturnedGodot.Net
                 if (n <= 0) { Diag.Stalls++; idle = true; break; }
                 int moved = ItemTransfer.Transfer(src.Storage, jar, dst.Storage, n);
                 if (moved <= 0) { Diag.Stalls++; idle = true; break; }
+                // (no Touch needed: ItemTransfer only changes pages through Items' own operations, each of which bumps
+                // Items.Version -- a_mover_draining_a_container_wakes_the_mover_filling_it holds that true)
+                if (backstopWake) { Diag.MissedWakes++; backstopWake = false; }
                 b -= moved * Unit;
                 Diag.UnitsMoved += moved; Diag.Transfers++;
                 Commit(srcChoices); Commit(dstChoices);
@@ -265,7 +337,15 @@ namespace UnturnedGodot.Net
                 _inventories.ServerRepaintCrateViewers(dst.NetIdValue);
             }
             _budget[id] = b;
-            if (idle) _rest[id] = StallRetrySteps - 1;
+            if (idle)
+            {
+                // the backstop look is STAGGERED by id (50-99 steps): a base whose movers all stalled on the same step
+                // would otherwise have every one of them re-walk on the same later step -- measured as a ~1 ms spike
+                // once a second at 100 movers, where spread out it is noise
+                var w = new Watch { Pages = _watching.ToArray(), Versions = new int[_watching.Count], Backstop = BackstopSteps + (int)(id % BackstopSteps) };
+                for (int i = 0; i < w.Pages.Length; i++) w.Versions[i] = w.Pages[i].Version;
+                _sleep[id] = w;
+            }
         }
 
         // ---------------------------------------------------------------- routing
@@ -342,6 +422,7 @@ namespace UnturnedGodot.Net
                 case ItemDeviceKind.Adapter:
                 {
                     var crate = CrateFor(e);
+                    if (crate?.Storage != null) _watching.Add(crate.Storage);
                     return crate != null && crate.Storage != null && crate.Storage.getItemCount() > 0 ? crate : null;
                 }
                 case ItemDeviceKind.Combiner:
@@ -397,6 +478,7 @@ namespace UnturnedGodot.Net
                     // the source container is never a destination: moving a chest's last item back into the
                     // same chest is a loop that spends budget to change nothing
                     if (crate == null || crate == src || crate.Storage == null) return null;
+                    _watching.Add(crate.Storage);
                     if (Filter != null && !Filter(e, item)) return null;
                     return ItemTransfer.Acceptable(crate.Storage, item) > 0 ? crate : null;
                 }

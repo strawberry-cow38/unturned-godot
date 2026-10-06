@@ -109,7 +109,21 @@ namespace UnturnedNet.Tests
             return (a, b, mover);
         }
 
-        public void Run(int steps) { for (int i = 0; i < steps; i++) S.ItemMovers.Step(0.02f); }
+        /// <summary>Set by the one test that MEANS to bypass the dirty counters, to watch the backstop catch it.</summary>
+        public bool ExpectMisses;
+
+        public void Run(int steps)
+        {
+            for (int i = 0; i < steps; i++)
+            {
+                S.ItemMovers.Step(0.02f);
+                // EVERY pipe test doubles as a dirty-flag audit: anything the backstop had to catch is a change some
+                // path made without bumping its counter -- a mover that would have sat up to a second late
+                if (!ExpectMisses)
+                    Assert.That((S.ItemMovers.Diag.MissedChanges, S.ItemMovers.Diag.MissedWakes), Is.EqualTo((0L, 0L)),
+                                "(MissedChanges, MissedWakes): the backstop caught a change no counter announced");
+            }
+        }
 
         public static int Units(Items page, ushort id)
         {
@@ -309,12 +323,9 @@ namespace UnturnedNet.Tests
             r.Run(150);                                              // three seconds stalled
             Assert.That(PipeRig.Units(b.Storage, PipeFixtures.SINGLE), Is.EqualTo(0), "stalled: nothing moved");
             b.Storage.loadSize(8, 6);                                // room appears
-            // a stalled mover sleeps between looks (StallRetrySteps), so the room is noticed within that many steps
-            int steps = 0;
-            while (PipeRig.Units(b.Storage, PipeFixtures.SINGLE) == 0 && steps < ServerItemMovers.StallRetrySteps) { r.Run(1); steps++; }
+            r.Run(1);
             Assert.That(PipeRig.Units(b.Storage, PipeFixtures.SINGLE), Is.EqualTo(32),
-                        "the first step that sees the room moves the banked second -- 32, not 96 (three seconds) and not 0 or 1 (no bank)");
-            Assert.That(steps, Is.LessThanOrEqualTo(ServerItemMovers.StallRetrySteps), "and it noticed within one retry interval");
+                        "the step after the room appears moves the banked second -- 32, not 96 (three seconds) and not 0 or 1 (no bank)");
         }
 
         // ---- which item, and what "fits" means ----
@@ -452,26 +463,144 @@ namespace UnturnedNet.Tests
         }
 
         [Test]
-        public void a_stalled_mover_sleeps_between_looks()
+        public void a_stalled_mover_sleeps_until_something_changes()
         {
             // Idle and stalled are a network's usual states; a full route walk every step to re-learn "still full"
-            // was most of a big stalled base's cost (100 movers: 966 -> 328 us/step, measured).
+            // was most of a big stalled base's cost. Now it looks once, then only on a change or the backstop.
             var r = new PipeRig();
-            var (a, b, _) = r.Line(bw: 1, bh: 1);
+            var (a, b, mover) = r.Line(bw: 1, bh: 1);
             r.Fill(a, PipeFixtures.SINGLE, 10);
             b.Storage.tryAddItem(new Item(PipeFixtures.NAILS, 1));   // full, and SINGLE will not merge into nails
             r.Run(100);   // two seconds: the budget is past one unit from step 2 on, so every step COULD look
             long stalls = r.S.ItemMovers.Diag.Stalls;
             Assert.That(stalls, Is.GreaterThan(0), "it did look");
-            Assert.That(stalls, Is.LessThanOrEqualTo(100 / ServerItemMovers.StallRetrySteps + 1),
-                        $"{stalls} looks in 100 steps: once per {ServerItemMovers.StallRetrySteps}, not every step");
+            Assert.That(stalls, Is.LessThanOrEqualTo(1 + 100 / ServerItemMovers.BackstopSteps),
+                        $"{stalls} looks in 100 steps: once, plus one per backstop period -- not every step");
+            Assert.That(r.S.ItemMovers.IsAsleep(mover), Is.True, "and it is asleep now");
+        }
+
+        [Test]
+        public void a_sleeping_mover_wakes_the_step_a_container_it_watches_changes()
+        {
+            // both directions: a full DESTINATION that gets room, and an empty SOURCE that gets an item
+            var r = new PipeRig();
+            var (a, b, mover) = r.Line(bw: 1, bh: 1);
+            r.Fill(a, PipeFixtures.SINGLE, 3);
+            b.Storage.tryAddItem(new Item(PipeFixtures.NAILS, 1));
+            r.Run(10);
+            Assert.That(r.S.ItemMovers.IsAsleep(mover), Is.True, "stalled on a full B, asleep");
+            b.Storage.removeItem(0);                                 // someone takes the nails out of B
+            r.Run(1);
+            Assert.That(PipeRig.Units(b.Storage, PipeFixtures.SINGLE), Is.EqualTo(1), "the very next step fills the room");
+
+            var (c, d, m2) = new PipeRig() is var r2 ? r2.Line() : default;
+            r2.Run(10);
+            Assert.That(r2.S.ItemMovers.IsAsleep(m2), Is.True, "an empty source: idle, asleep");
+            long visits = r2.S.ItemMovers.Diag.RouteVisits;
+            r2.Run(40);
+            Assert.That(r2.S.ItemMovers.Diag.RouteVisits, Is.EqualTo(visits), "asleep means NO walking, not slower walking");
+            c.Storage.tryAddItem(new Item(PipeFixtures.SINGLE, 1));  // someone drops an item into the source
+            r2.Run(1);
+            Assert.That(PipeRig.Units(d.Storage), Is.EqualTo(1), "the very next step moves it");
+        }
+
+        [Test]
+        public void a_network_change_wakes_every_sleeping_mover()
+        {
+            var r = new PipeRig();
+            var (a, b, mover) = r.Line(bw: 1, bh: 1);
+            var c = r.Crate(new Vector3(0f, 0f, 20f), 8, 6);    // C and its adapter exist BEFORE the stall, unpiped
+            uint ac = r.Adapter(c);
+            r.Fill(a, PipeFixtures.SINGLE, 5);
+            b.Storage.tryAddItem(new Item(PipeFixtures.NAILS, 1));
+            r.Run(10);
+            Assert.That(r.S.ItemMovers.IsAsleep(mover), Is.True, "stalled, asleep");
+            // re-route with PIPES ONLY: cut mover -> B, pipe mover -> C. No container it watches changed, no device
+            // was placed -- the pipe graph's own counter is the only thing that can wake it.
+            uint pipe = r.S.Deployables.Pipes.All.First(p => p.SrcId == mover).NetIdValue;
+            r.S.Deployables.ServerRemovePipe(pipe, 0);
+            r.Pipe(mover, 1, ac, 0);
+            r.Run(1);
+            Assert.That(PipeRig.Units(c.Storage), Is.GreaterThan(0), "the next step uses the new route");
+
+            // and a CONNECT alone: a mover with nothing on its output is idle and asleep; piping it is the only change
+            var r2 = new PipeRig();
+            var src = r2.Crate(new Vector3(0f, 0f, 0f), 8, 6);
+            var dst = r2.Crate(new Vector3(10f, 0f, 0f), 8, 6);
+            uint asrc = r2.Adapter(src), adst = r2.Adapter(dst);
+            uint m = r2.PoweredMover(new Vector3(5f, 0f, 0f));
+            r2.Pipe(asrc, 1, m, 0);
+            r2.Fill(src, PipeFixtures.SINGLE, 3);
+            r2.Run(10);
+            Assert.That(r2.S.ItemMovers.IsAsleep(m), Is.True, "nowhere to put anything: asleep");
+            r2.Pipe(m, 1, adst, 0);
+            r2.Run(1);
+            Assert.That(PipeRig.Units(dst.Storage), Is.GreaterThan(0), "the step after the pipe goes in, items flow");
+        }
+
+        [Test]
+        public void a_mover_draining_a_container_wakes_the_mover_filling_it()
+        {
+            // Two movers share B: M1 fills it (asleep: B's one cell is a FULL stack of nails), M2 drains it one nail a
+            // second -- a PARTIAL take, which ItemTransfer does by writing the stack's amount directly. Room for one
+            // nail appears in B; M1 must hear it from B's version, not from the backstop.
+            var r = new PipeRig();
+            var (a, b, m1) = r.Line(bw: 1, bh: 1);
+            r.Fill(a, PipeFixtures.NAILS, 1, 30);
+            b.Storage.tryAddItem(new Item(PipeFixtures.NAILS, 64));
+            r.Run(10);
+            Assert.That(r.S.ItemMovers.IsAsleep(m1), Is.True, "M1 stalled on a full B, asleep");
+            var c = r.Crate(new Vector3(20f, 0f, 0f), 8, 6);
+            uint m2 = r.PoweredMover(new Vector3(15f, 0f, 0f));
+            uint ab2 = r.Place(PipeFixtures.ADAPTER, b.Pos + new Vector3(0f, 0f, 0.6f));
+            r.E(ab2).ItemCrateId = b.NetIdValue; r.S.Deployables.ServerTouch();
+            r.Pipe(ab2, 1, m2, 0);
+            r.Pipe(m2, 1, r.Adapter(c), 0);
+            r.S.Deployables.ServerConfigure(m2, ItemDeviceConfig.From(0, 1, 1, 1, 1), 0);   // one nail a second
+            r.Run(60);   // M2 takes 1 (B: 63), M1 tops it back up to 64 -- and NOT a second later via the backstop
+            Assert.That(PipeRig.Units(c.Storage), Is.GreaterThanOrEqualTo(1), "M2 drained B");
+            Assert.That(PipeRig.Units(b.Storage), Is.EqualTo(64), "M1 refilled the room the moment it appeared");
+        }
+
+        [Test]
+        public void the_backstop_catches_and_counts_a_change_nobody_announced()
+        {
+            // The counters are a promise; this is what happens when a path breaks it. A BARE field write (no Touch)
+            // frees room in B. The mover cannot see it -- until the backstop's look, which moves the item AND counts
+            // the miss, so the audit in PipeRig.Run would have failed any test that did this by accident.
+            var r = new PipeRig { ExpectMisses = true };
+            var (a, b, mover) = r.Line(bw: 1, bh: 1);
+            r.Fill(a, PipeFixtures.NAILS, 1, 10);
+            b.Storage.tryAddItem(new Item(PipeFixtures.NAILS, 64));   // B's one cell: a FULL stack of nails
+            r.Run(10);
+            Assert.That(r.S.ItemMovers.IsAsleep(mover), Is.True, "stalled, asleep");
+            b.Storage.getItem(0).item.amount = 60;                    // bare write: room for 4, and no Touch
+            r.Run(5);
+            Assert.That(PipeRig.Units(b.Storage), Is.EqualTo(60), "unannounced: the mover has not noticed");
+            r.Run(2 * ServerItemMovers.BackstopSteps);   // a sleeper's backstop look comes 50-99 steps in (staggered by id)
+            Assert.That(PipeRig.Units(b.Storage), Is.EqualTo(64), "the backstop's look found the room and filled it");
+            Assert.That(r.S.ItemMovers.Diag.MissedWakes, Is.EqualTo(1), "and COUNTED it");
+
+            var r2 = new PipeRig { ExpectMisses = true };
+            var (c, d, m2) = r2.Line(powered: true);
+            uint gen = r2.S.Deployables.All.First(e => e.DefId == PipeFixtures.GEN).NetIdValue;
+            r2.S.Deployables.ServerToggle(gen, false, 0);
+            r2.Fill(c, PipeFixtures.SINGLE, 5);
+            r2.Run(10);
+            Assert.That(PipeRig.Units(d.Storage), Is.EqualTo(0), "generator off: nothing");
+            r2.E(gen).ToggledOn = true;                               // bare write: no ServerToggle, no ServerTouch
+            r2.Run(ServerItemMovers.BackstopSteps + 1);
+            Assert.That(r2.S.ItemMovers.Diag.MissedChanges, Is.EqualTo(1), "the backstop's fingerprint caught it and COUNTED it");
+            r2.Run(20);
+            Assert.That(PipeRig.Units(d.Storage), Is.EqualTo(5), "and the mover runs on the re-solved power");
         }
 
         [Test]
         public void power_is_solved_only_when_its_inputs_change()
         {
             // A solve is quadratic in the base (~15 ms for 100 movers among 1,000 deployables, measured); it used to
-            // run every 5 steps whether or not anything had changed.
+            // run every 5 steps whether or not anything had changed. Now: when GraphVersion moves AND the solver's
+            // inputs did -- a pipe or a config change moves the version but must not cost a solve.
             var r = new PipeRig();
             var (a, b, mover) = r.Line();
             r.Fill(a, PipeFixtures.SINGLE, 40);
@@ -481,8 +610,11 @@ namespace UnturnedNet.Tests
             Assert.That(PipeRig.Units(b.Storage), Is.EqualTo(40), "and the mover ran on it");
             uint gen = r.S.Deployables.All.First(e => e.DefId == PipeFixtures.GEN).NetIdValue;
             r.S.Deployables.ServerToggle(gen, false, 0);
-            r.Run(ServerItemMovers.PowerRefreshSteps);
+            r.Run(1);
             Assert.That(diag.PowerSolves, Is.EqualTo(2), "switching the generator off is an input change: solved again");
+            r.S.Deployables.ServerConfigure(mover, ItemDeviceConfig.From(0, 1, 1, 1, 8), 0);
+            r.Run(1);
+            Assert.That(diag.PowerSolves, Is.EqualTo(2), "a mover's rate is not a power input: no solve for it");
             Assert.That(ServerItemMovers.IsPowered(r.E(mover), r.S.Deployables.Schema.TryGet(PipeFixtures.MOVER, out var md) ? md : null),
                         Is.False, "and the mover sees it");
         }
@@ -989,6 +1121,52 @@ namespace UnturnedNet.Tests
             Assert.That(h.StepUntil(() => a.Inventories.TryGet(a.PlayerId, out var ce)
                                        && PipeRig.Units(ce.Inventory.items[PlayerInventory.STORAGE]) == 6), Is.True,
                         "...and the owner echo carried it to the client: the player SEES them arrive");
+        }
+
+        [Test]
+        public void a_player_dropping_an_item_into_a_sleeping_movers_source_wakes_it()
+        {
+            // The dirty flags' REAL path, end to end: a client command moves an item from the player's bag into the
+            // open container's page; the server pushes that page into the crate (ServerPushView -> CopyPage), and the
+            // crate's Items.Version is what the sleeping mover is watching. No backstop allowed.
+            var h = Harness(5606, "a");
+            var a = h.Clients[0];
+            var s = h.Server;
+            var src = s.Inventories.ServerRegisterCrate(s.Ids.Mint(), 8, 6, new Vector3(-2f, 0f, 2f));
+            var dst = s.Inventories.ServerRegisterCrate(s.Ids.Mint(), 8, 6, new Vector3(2f, 0f, 1f));
+            uint aS = s.Deployables.ServerPlace(s.Ids.Mint(), PipeFixtures.ADAPTER, 0, new Vector3(-2f, 0f, 2.6f), 0f, 0).NetIdValue;
+            uint aD = s.Deployables.ServerPlace(s.Ids.Mint(), PipeFixtures.ADAPTER, 0, new Vector3(2f, 0f, 1.6f), 0f, 0).NetIdValue;
+            s.Deployables.TryGet(aS, out var es); es.ItemCrateId = src.NetIdValue;
+            s.Deployables.TryGet(aD, out var ed); ed.ItemCrateId = dst.NetIdValue;
+            uint mover = s.Deployables.ServerPlace(s.Ids.Mint(), PipeFixtures.MOVER, 0, new Vector3(0f, 0f, 3f), 0f, 0).NetIdValue;
+            uint gen = s.Deployables.ServerPlace(s.Ids.Mint(), PipeFixtures.GEN, 0, new Vector3(0f, 0f, 5f), 0f, 0).NetIdValue;
+            s.Deployables.ServerToggle(gen, true, 0);
+            s.Deployables.ServerConnectWire(s.Ids.Mint(), gen, 0, mover, 0, 0);
+            s.Deployables.ServerConnectPipe(s.Ids.Mint(), aS, 1, mover, 0, null, 0);
+            s.Deployables.ServerConnectPipe(s.Ids.Mint(), mover, 1, aD, 0, null, 0);
+            h.Grant(a.PlayerId, new Item(PipeFixtures.SINGLE));
+
+            a.SendOpenStorage(src.NetIdValue);   // the player opens the (empty) SOURCE
+            Assert.That(h.StepUntil(() => a.Inventories.TryGet(a.PlayerId, out var ce) && ce.Inventory.items[PlayerInventory.STORAGE].width == 8), Is.True,
+                        "the container opened on the client");
+            h.Step(20, () => s.ItemMovers.Step(0.02f));
+            Assert.That(s.ItemMovers.IsAsleep(mover), Is.True, "an empty source: the mover is asleep");
+
+            var inv = s.Transactions.InventoryForTest(a.PlayerId);
+            byte page = 255, x = 0, y = 0;
+            for (byte pg = 0; pg < PlayerInventory.PAGES && page == 255; pg++)
+            {
+                if (pg == PlayerInventory.STORAGE || inv.items[pg] == null) continue;
+                for (byte i = 0; i < inv.items[pg].getItemCount(); i++)
+                    if (inv.items[pg].getItem(i).item.id == PipeFixtures.SINGLE) { page = pg; x = inv.items[pg].getItem(i).x; y = inv.items[pg].getItem(i).y; break; }
+            }
+            Assert.That(page, Is.Not.EqualTo(255), "fixture: the granted item is in the player's bag");
+            a.SendMoveItem(page, x, y, PlayerInventory.STORAGE, 0, 0, 0);   // drag it into the open container
+            int steps = 0;
+            while (PipeRig.Units(dst.Storage) == 0 && steps < 3 * ServerItemMovers.BackstopSteps) { h.Step(1, () => s.ItemMovers.Step(0.02f)); steps++; }
+            Assert.That(PipeRig.Units(dst.Storage), Is.EqualTo(1), "the mover moved the player's item on");
+            Assert.That(steps, Is.LessThan(ServerItemMovers.BackstopSteps / 2), $"...{steps} steps after the drag: woken by the change, not the backstop");
+            Assert.That((s.ItemMovers.Diag.MissedChanges, s.ItemMovers.Diag.MissedWakes), Is.EqualTo((0L, 0L)), "and nothing went unannounced");
         }
 
         [Test]

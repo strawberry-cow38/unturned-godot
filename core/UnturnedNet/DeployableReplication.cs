@@ -495,6 +495,14 @@ namespace UnturnedGodot.Net
         // beats any already-composed snapshot; command-driven mutations just arrive one snapshot later.
         static long Stamp(long tick) => tick + 1;
 
+        /// <summary>Bumped by every change to which deployables and wires exist, their config, and the state the
+        /// power solve reads (on/off, fire, fuelled). The item movers' dirty flag: a version that has not moved means
+        /// nothing they cache -- the mover list, the power solve, a sleeping mover's verdict -- can have changed.
+        /// ⚠ A new direct field write that matters to power or to routing must call ServerTouch(); the movers'
+        /// backstop fingerprints the same state once a second and COUNTS what this missed (Diag.MissedChanges).</summary>
+        public long GraphVersion { get; private set; }
+        public void ServerTouch() => GraphVersion++;
+
         /// <summary>Place one. `health` and `fuel` carry a PICKED-UP device's condition back onto the world: pass
         /// null for a fresh build, which starts full.</summary>
         public DeployableEntity ServerPlace(NetId id, ushort defId, ushort owner, Vector3 pos, float yawDegrees, long tick,
@@ -527,6 +535,7 @@ namespace UnturnedGodot.Net
             };
             _deployables.Add(id, e);
             _removedAtTick.Remove(id.Value);
+            GraphVersion++;
             return e;
         }
 
@@ -537,6 +546,7 @@ namespace UnturnedGodot.Net
         {
             var cascaded = new List<uint>();
             if (!_deployables.Remove(new NetId(netId))) return cascaded;
+            GraphVersion++;
             _removedAtTick[netId] = Stamp(tick);
             foreach (var w in AllWires)
                 if (w.SrcId == netId || w.DstId == netId) cascaded.Add(w.NetIdValue);
@@ -556,6 +566,7 @@ namespace UnturnedGodot.Net
             if (e.ItemConfig != null && e.ItemConfig.SameAs(cfg)) return false;
             e.ItemConfig = cfg.Clone();
             e.LastChangedTick = Stamp(tick);
+            GraphVersion++;
             return true;
         }
 
@@ -569,6 +580,7 @@ namespace UnturnedGodot.Net
             var w = new WireEntity { NetIdValue = wireId.Value, SrcId = srcId, SrcPort = srcPort, DstId = dstId, DstPort = dstPort, LastChangedTick = Stamp(tick) };
             _wires.Add(wireId, w);
             _removedWiresAtTick.Remove(wireId.Value);
+            GraphVersion++;
             return w;
         }
 
@@ -579,6 +591,7 @@ namespace UnturnedGodot.Net
             if (!TryGet(netId, out var e) || e.ToggledOn == on) return false;
             e.ToggledOn = on;
             e.LastChangedTick = Stamp(tick);
+            GraphVersion++;
             return true;
         }
 
@@ -589,6 +602,8 @@ namespace UnturnedGodot.Net
             if (!TryGet(netId, out var e)) return;
             float qh = QuantizeScalar(health), qf = QuantizeScalar(fuel);
             if (e.Health == qh && e.Fuel == qf && e.OnFire == onFire) return;
+            // health and the fuel LEVEL do not move power or routing; catching fire and running dry do
+            if (e.OnFire != onFire || (e.Fuel > 0f) != (qf > 0f)) GraphVersion++;
             e.Health = qh;
             e.Fuel = qf;
             e.OnFire = onFire;
@@ -598,6 +613,7 @@ namespace UnturnedGodot.Net
         bool RemoveWireInternal(uint wireId, long tick)
         {
             if (!_wires.Remove(new NetId(wireId))) return false;
+            GraphVersion++;
             _removedWiresAtTick[wireId] = Stamp(tick);
             return true;
         }
@@ -709,6 +725,7 @@ namespace UnturnedGodot.Net
         public void ReadSnapshot(NetPakReader r, bool full)
         {
             if (!r.ReadUInt16(out ushort count)) return;
+            GraphVersion++;   // the client's copy; nothing server-side caches over it, but the counter stays honest
             if (full) { _deployables.Clear(); _wires.Clear(); }
             for (int i = 0; i < count; i++)
             {

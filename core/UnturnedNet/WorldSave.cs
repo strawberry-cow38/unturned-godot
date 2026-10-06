@@ -952,6 +952,7 @@ namespace UnturnedGodot.Net
                     }
                 }
                 e.ItemCrateId = bound != 0 ? bound : ServerItemMovers.FindCrateFor(host.Inventories, e.Pos);
+                host.Deployables.ServerTouch();
             }
 
             foreach (var p in Pipes)
@@ -985,6 +986,7 @@ namespace UnturnedGodot.Net
                 if (e.ToggledOn == GlobalPower) continue;
                 e.ToggledOn = GlobalPower;
                 e.LastChangedTick = tick;
+                host.Deployables.ServerTouch();   // a direct write: the item movers' power view must hear it
             }
         }
 

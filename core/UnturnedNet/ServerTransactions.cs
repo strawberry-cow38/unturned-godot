@@ -774,7 +774,10 @@ namespace UnturnedGodot.Net
             // The validator already proved this finds one; reading it again rather than caching is what keeps the
             // validator and the binding from ever disagreeing about which box.
             if (_deployables.Schema.TryGet(cmd.DefId, out var adef) && adef.ItemDevice == ItemDeviceKind.Adapter)
+            {
                 e.ItemCrateId = ServerItemMovers.FindCrateFor(_inventories, e.Pos, cmd.TargetId);
+                _deployables.ServerTouch();   // the binding is a direct write; a mover asleep on this network must re-look
+            }
             // A STORAGE DEVICE BRINGS ITS OWN GRID, registered under the deployable's OWN NetId -- which is
             // what the client stamps onto the materialized crate and what its F-open addresses. So the whole
             // open/move/close path a map container already uses works on a placed fridge with no new command

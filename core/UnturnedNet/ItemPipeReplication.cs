@@ -341,8 +341,12 @@ namespace UnturnedGodot.Net
             return p;
         }
 
+        /// <summary>Bumped by every connect, cut and clear: the item movers' cue that a route may have changed.</summary>
+        public long Version { get; private set; }
+
         void Add(ItemPipeEntity p)
         {
+            Version++;
             if (_pipes.TryGet(new NetId(p.NetIdValue), out var old)) Unindex(old);   // a re-read replaces, it must not leave the old ends indexed
             _pipes.Add(new NetId(p.NetIdValue), p);
             _byPort[(p.SrcId, p.SrcPort)] = p.NetIdValue;
@@ -358,6 +362,7 @@ namespace UnturnedGodot.Net
         bool RemoveNoTombstone(uint pipeId)
         {
             if (!_pipes.TryGet(new NetId(pipeId), out var p)) return false;
+            Version++;
             Unindex(p);
             return _pipes.Remove(new NetId(pipeId));
         }
@@ -382,6 +387,7 @@ namespace UnturnedGodot.Net
 
         public void Clear()
         {
+            Version++;
             foreach (var p in new List<ItemPipeEntity>(All)) Unindex(p);
             foreach (uint id in new List<uint>(_pipes.SortedIdValues())) _pipes.Remove(new NetId(id));
         }
