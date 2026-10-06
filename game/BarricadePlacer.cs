@@ -382,6 +382,12 @@ namespace UnturnedGodot
                 Valid = false; Reason = "Not on a door"; Normal = Vector3.Up; Yaw = aimYaw; Point = (Vector3)hit["position"];
                 Apply(); return false;
             }
+            if (hitNode is Deployable hd && hd.Def?.ItemDevice == UnturnedGodot.Net.ItemDeviceKind.Adapter)
+            {
+                // aimed straight at an adapter that is already there: say so, not "needs a storage container"
+                Valid = false; Reason = Occupied; Normal = Vector3.Up; Yaw = aimYaw; Point = (Vector3)hit["position"];
+                Apply(); return false;
+            }
             StorageCrate crate = hitNode != null ? ContainerOf(hitNode) : null;
             Node3D body = crate != null ? ContainerBody(crate) : null;
             if (crate == null || body == null || !ContainerBounds(body, out var box))
@@ -470,10 +476,38 @@ namespace UnturnedGodot
                 SnappedTop = true;
             }
             Point = body.GlobalTransform * p;
+            // ...and NOT where something already is. The aim can land on the box right beside an existing adapter and
+            // the clamp then slides the ghost half onto it -- nothing about the face says the spot is taken. Test the
+            // ghost's own box, shrunk 10% so two adapters edge to edge are fine, against everything but this container.
+            if (Blocked(space, crate))
+            {
+                Valid = false; Reason = Occupied; Apply(); return false;
+            }
             SnappedCrate = crate; SnappedCrateId = crate.NetId;
             Valid = true; Reason = null;
             Apply();
             return true;
+        }
+
+        const string Occupied = "Something is already there";
+
+        bool Blocked(PhysicsDirectSpaceState3D space, StorageCrate crate)
+        {
+            var t = GhostTransform();
+            var q = new PhysicsShapeQueryParameters3D
+            {
+                Shape = new BoxShape3D { Size = _localAabb.Size * 0.9f },
+                Transform = new Transform3D(t.Basis, t * _localAabb.GetCenter()),
+                CollisionMask = (1u << 0) | (1u << 6),
+            };
+            foreach (var h in space.IntersectShape(q, 16))
+            {
+                var c = h["collider"].As<Node>();
+                if (c == null || c.IsInGroup("terrain") || c.IsInGroup("ground")) continue;
+                if (ContainerOf(c) == crate) continue;   // the box it is bolted to
+                return true;
+            }
+            return false;
         }
 
         static Vector3 AxisDir(int axis) => axis == 0 ? Vector3.Right : axis == 1 ? Vector3.Up : Vector3.Back;

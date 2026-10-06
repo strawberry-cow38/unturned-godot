@@ -757,6 +757,84 @@ namespace UnturnedNet.Tests
             Assert.That(PipeRig.Units(src.Storage), Is.EqualTo(0), "nothing stalls at A");
         }
 
+        // ---- several adapters on ONE container (strawberry 2026-10-06: "do multiple adapters on a container work as
+        // you would expect?") ----
+
+        /// <summary>A second adapter bolted to the same crate, beside the first.</summary>
+        static uint SecondAdapter(PipeRig r, InventoryReplication.CrateEntry c)
+        {
+            uint id = r.Place(PipeFixtures.ADAPTER, c.Pos + new Vector3(0f, 0f, 0.6f));
+            r.E(id).ItemCrateId = ServerItemMovers.FindCrateFor(r.S.Inventories, r.E(id).Pos, c.NetIdValue);
+            r.S.Deployables.ServerTouch();
+            Assert.That(r.E(id).ItemCrateId, Is.EqualTo(c.NetIdValue), "the second adapter bound the same crate");
+            return id;
+        }
+
+        [Test]
+        public void one_container_filled_through_one_adapter_and_drained_through_another()
+        {
+            // A -> M1 -> [X via adapter 1] ... [X via adapter 2] -> M2 -> B: X is a buffer in the middle of a line
+            var r = new PipeRig();
+            var a = r.Crate(new Vector3(0f, 0f, 0f), 8, 6);
+            var x = r.Crate(new Vector3(10f, 0f, 0f), 8, 6);
+            var b = r.Crate(new Vector3(20f, 0f, 0f), 8, 6);
+            uint m1 = r.PoweredMover(new Vector3(5f, 0f, 0f)), m2 = r.PoweredMover(new Vector3(15f, 0f, 0f));
+            uint x1 = r.Adapter(x), x2 = SecondAdapter(r, x);
+            r.Pipe(r.Adapter(a), 1, m1, 0);
+            r.Pipe(m1, 1, x1, 0);
+            r.Pipe(x2, 1, m2, 0);
+            r.Pipe(m2, 1, r.Adapter(b), 0);
+            r.S.Deployables.ServerConfigure(m2, ItemDeviceConfig.From(0, 1, 1, 1, 8), 0);   // drains slower than it fills
+            r.Fill(a, PipeFixtures.SINGLE, 40);
+            r.Run(50);
+            int ua = PipeRig.Units(a.Storage), ux = PipeRig.Units(x.Storage), ub = PipeRig.Units(b.Storage);
+            Assert.That(ua + ux + ub, Is.EqualTo(40), $"conservation: A {ua} + X {ux} + B {ub}");
+            Assert.That(ub, Is.InRange(7, 9), "the slow mover drained X at its own 8/s");
+            Assert.That(ux, Is.GreaterThan(0), "and X is buffering what the fast one brought");
+            r.Run(500);
+            Assert.That((PipeRig.Units(a.Storage), PipeRig.Units(x.Storage), PipeRig.Units(b.Storage)), Is.EqualTo((0, 0, 40)), "everything ends up in B");
+        }
+
+        [Test]
+        public void a_mover_piped_from_a_container_back_into_the_same_container_does_nothing()
+        {
+            var r = new PipeRig();
+            var x = r.Crate(new Vector3(0f, 0f, 0f), 8, 6);
+            uint m = r.PoweredMover(new Vector3(5f, 0f, 0f));
+            uint x1 = r.Adapter(x), x2 = SecondAdapter(r, x);
+            r.Pipe(x1, 1, m, 0);
+            r.Pipe(m, 1, x2, 0);
+            r.Fill(x, PipeFixtures.SINGLE, 5);
+            var before = string.Join(",", Enumerable.Range(0, x.Storage.getItemCount()).Select(i => $"{x.Storage.getItem((byte)i).x}:{x.Storage.getItem((byte)i).y}"));
+            r.Run(200);
+            var after = string.Join(",", Enumerable.Range(0, x.Storage.getItemCount()).Select(i => $"{x.Storage.getItem((byte)i).x}:{x.Storage.getItem((byte)i).y}"));
+            Assert.That(PipeRig.Units(x.Storage), Is.EqualTo(5), "nothing lost");
+            Assert.That(after, Is.EqualTo(before), "and nothing shuffled: moving a chest's item into the same chest is not a move");
+            Assert.That(r.S.ItemMovers.Diag.UnitsMoved, Is.EqualTo(0));
+            Assert.That(r.S.ItemMovers.IsAsleep(m), Is.True, "it found nothing to do and went to sleep, rather than spinning");
+        }
+
+        [Test]
+        public void two_movers_drawing_from_one_container_share_it_without_losing_anything()
+        {
+            var r = new PipeRig();
+            var x = r.Crate(new Vector3(0f, 0f, 0f), 8, 6);
+            var b = r.Crate(new Vector3(10f, 0f, -5f), 8, 6);
+            var c = r.Crate(new Vector3(10f, 0f, 5f), 8, 6);
+            uint m1 = r.PoweredMover(new Vector3(5f, 0f, -5f)), m2 = r.PoweredMover(new Vector3(5f, 0f, 5f));
+            uint x1 = r.Adapter(x), x2 = SecondAdapter(r, x);
+            r.Pipe(x1, 1, m1, 0); r.Pipe(m1, 1, r.Adapter(b), 0);
+            r.Pipe(x2, 1, m2, 0); r.Pipe(m2, 1, r.Adapter(c), 0);
+            r.Fill(x, PipeFixtures.SINGLE, 40);
+            r.Run(40);
+            int ub = PipeRig.Units(b.Storage), uc = PipeRig.Units(c.Storage);
+            Assert.That(PipeRig.Units(x.Storage) + ub + uc, Is.EqualTo(40), "conservation");
+            Assert.That(ub, Is.GreaterThan(5), "both draw"); Assert.That(uc, Is.GreaterThan(5));
+            Assert.That(Mathf.Abs(ub - uc), Is.LessThanOrEqualTo(1), $"...at the same rate ({ub} / {uc})");
+            r.Run(200);
+            Assert.That((PipeRig.Units(x.Storage), PipeRig.Units(b.Storage) + PipeRig.Units(c.Storage)), Is.EqualTo((0, 40)), "until X is empty");
+        }
+
         [Test]
         public void routing_through_diamonds_costs_devices_not_paths()
         {

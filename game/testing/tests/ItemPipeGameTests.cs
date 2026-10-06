@@ -300,6 +300,81 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    /// <summary>strawberry 2026-10-06: "do multiple adapters on a container work as you would expect?" Routing says yes
+    /// (L0: fill through one and drain through another, two drains sharing one box, a box piped into itself). This is
+    /// the placement half: a second adapter can go on another face, or beside the first, but NOT into the same spot.</summary>
+    public class AdapterNoStacking : GameTest
+    {
+        public override string Name => "pipes.adapter_no_stacking";
+        public override double TimeoutSimSeconds => 40;
+
+        public override IEnumerable<Step> Run()
+        {
+            ItemCatalog.RegisterAll();
+            Rigs.Ground(World);
+            var driver = new SimDriver();
+            World.AddChild(driver);
+            var player = Rigs.Player(World, new Vector3(0f, 1f, 0f));
+            yield return Ticks(2);
+            var cratePos = new Vector3(0f, 0f, -2.6f);
+            var loop = PipeL1.Loopback(World, player, driver, cratePos);
+            yield return Until(() => loop.Client.State == NetSessionState.Connected
+                                     && loop.Server.Inventories.TryGet(loop.Client.PlayerId, out _), 15);
+            var crate = PipeL1.CrateAt(loop, cratePos);
+            StoreShelf shelf = null;
+            yield return Until(() => crate != null && loop.Storage.TryGetNode(crate.NetIdValue, out shelf), 10);
+            T.Check("the container materialized", shelf != null);
+            if (shelf == null) yield break;
+            loop.Server.Inventories.TryGet(loop.Client.PlayerId, out var sinv);
+            for (int i = 0; i < 3; i++) sinv.Inventory.tryAddItem(new Item(PipeL1.Adapter));
+            yield return Ticks(30);
+            T.Check($"adapters reached the bag ({player.Inventory.getItemCount(PipeL1.Adapter)})", player.Inventory.getItemCount(PipeL1.Adapter) >= 2);
+            T.Check("holding the Storage Adapter", player.EquipItemAsset(Assets.find(PipeL1.Adapter), new Item(PipeL1.Adapter)));
+            yield return Ticks(2);
+            BarricadePlacer.ContainerBounds(shelf, out var box);
+            var front = shelf.GlobalTransform * new Vector3(box.GetCenter().X, box.GetCenter().Y, box.End.Z);
+            var top = shelf.GlobalTransform * new Vector3(box.GetCenter().X, box.End.Y, box.GetCenter().Z);
+
+            player.DebugLookAt(front);
+            yield return Ticks(1);
+            T.Check($"the first adapter's spot is free (reason '{player.DebugPlacer?.Reason}')", player.DebugPlacerAim());
+            player.DebugTryPlace();
+            player.DebugDeployTick(5f);
+            Deployable first = null; uint firstId = 0;
+            yield return Ticks(60);
+            firstId = PipeL1.FindEntity(loop, PipeL1.Adapter);
+            if (firstId != 0) loop.Deploys.TryGetNode(firstId, out first);
+            T.Check($"server entity {firstId}, replica {(first != null)}", firstId != 0);
+            T.Check("the first adapter is placed and materialized", first != null);
+            if (first == null) yield break;
+            yield return Ticks(3);   // its collider is in the physics space
+
+            player.DebugLookAt(front);
+            yield return Ticks(1);
+            bool again = player.DebugPlacerAim();
+            T.Check($"the SAME spot again is RED (reason '{player.DebugPlacer?.Reason}', point {player.DebugPlacer?.Point}, first at {first.GlobalPosition})", !again);
+            T.Check($"...because something is already there (reason '{player.DebugPlacer?.Reason}')", player.DebugPlacer?.Reason == "Something is already there");
+            // BESIDE it: the ray lands on the crate's face, not on the adapter, and the clamp would slide the ghost half
+            // onto the first one -- the case a ray test alone cannot see
+            var right = shelf.GlobalBasis.X.Normalized();
+            var beside = front + right * (DeployableDef.StorageAdapter.Size.X * 0.5f + 0.06f);
+            player.DebugLookAt(beside);
+            yield return Ticks(1);
+            bool besideOk = player.DebugPlacerAim();
+            T.Check($"aimed at the face BESIDE it, the ghost would overlap it: RED (reason '{player.DebugPlacer?.Reason}', ghost {player.DebugPlacer?.Point}, first {first.GlobalPosition})",
+                    !besideOk && player.DebugPlacer?.Reason == "Something is already there");
+            player.DebugTryPlace();
+            player.DebugDeployTick(5f);
+            yield return Ticks(20);
+            int count = loop.Server.Deployables.All.Count(e => e.DefId == PipeL1.Adapter);
+            T.Check($"...and the click placed nothing ({count} adapters on the server)", count == 1);
+
+            player.DebugLookAt(top);
+            yield return Ticks(1);
+            T.Check($"CONTROL: the same container's TOP takes a second one (reason '{player.DebugPlacer?.Reason}')", player.DebugPlacerAim());
+        }
+    }
+
     /// <summary>The whole chain in the singleplayer loopback: crate -> adapter -> pipe -> powered mover -> pipe ->
     /// splitter -> two adapters -> two crates. Items arrive at the configured rate and split per mode.</summary>
     public class PipeChainEndToEnd : GameTest
