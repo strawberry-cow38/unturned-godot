@@ -51,6 +51,13 @@ namespace UnturnedGodot
         SubViewport _vp;
         Camera3D _cam;
         bool _filming;
+        ColorRect _nvRect; ShaderMaterial _nvMat;   // the feed's own night-vision pass (see SyncFeedEnv)
+        Godot.Environment _fenv;                     // the feed camera's env: a LIVE-SYNCED copy of the world's
+        bool _nvOn; float _envT;
+
+        /// <summary>How long between re-syncs of the feed's environment, seconds. The world's env is MUTATED in
+        /// place by DayNightCycle every frame, so a copy taken once is a copy of one instant.</summary>
+        const float EnvSyncEvery = 0.4f;
 
         public bool PowerProducing => false;
         public bool PowerOnFire => false;
@@ -114,6 +121,11 @@ namespace UnturnedGodot
             _filming = want && _vp != null;
             if (_vp != null && IsInstanceValid(_vp))
                 _vp.RenderTargetUpdateMode = _filming ? SubViewport.UpdateMode.Once : SubViewport.UpdateMode.Disabled;
+            // Only while filming, and only every EnvSyncEvery: duplicating an Environment is not free, and a camera
+            // nobody is watching does not render at all, so there is nothing for a fresh copy to be fresh FOR.
+            if (!_filming) return;
+            _envT += (float)delta;
+            if (_envT >= EnvSyncEvery) { _envT = 0f; SyncFeedEnv(force: false); }
         }
 
         void BuildViewport()
@@ -140,12 +152,57 @@ namespace UnturnedGodot
             //
             // The world's environment is DUPLICATED rather than replaced, so the feed keeps the map's own sky,
             // fog and ambient and differs from the naked-eye view in exactly one property.
-            var worldEnv = DayNightCycle.Current?.Env;
-            var fenv = worldEnv != null ? (Godot.Environment)worldEnv.Duplicate() : new Godot.Environment();
-            fenv.TonemapMode = Godot.Environment.ToneMapper.Linear;
-            _cam.Environment = fenv;
+            SyncFeedEnv(force: true);
             _vp.AddChild(_cam);
+
+            // ⭐ THE FEED GETS ITS OWN NIGHT-VISION PASS (master 2026-10-06: "below a certain light threshold,
+            // should get the civilian nightvision filter effect on the camera, that turns off when its bright
+            // again"). nightvision.gdshader is a `canvas_item` screen pass, and a SubViewport can host a canvas --
+            // so the SAME shader the goggles use runs over the SAME feed, rather than a second impression of what
+            // night vision looks like painted into screen.gdshader. Civilian settings exactly as NightVision.Set
+            // writes them for the civilian tube, which is what master asked for.
+            var nvLayer = new CanvasLayer { Layer = 1 };
+            _nvMat = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/nightvision.gdshader") };
+            _nvMat.SetShaderParameter("gain", 1.9f);
+            _nvMat.SetShaderParameter("tint", new Color(0.88f, 0.90f, 0.88f));   // civilian: black-and-white
+            _nvMat.SetShaderParameter("grain", NightVision.GrainCivilian);
+            _nvMat.SetShaderParameter("vignette", 0.45f);
+            _nvMat.SetShaderParameter("hot", 0.4f);
+            _nvRect = new ColorRect { Material = _nvMat, MouseFilter = Control.MouseFilterEnum.Ignore, Visible = false, Color = Colors.White };
+            _nvRect.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+            nvLayer.AddChild(_nvRect);
+            _vp.AddChild(nvLayer);
+
             AimAtLens();
+        }
+
+        /// <summary>Keep the feed's environment matching the world's, and switch the tube on when it gets dark.
+        ///
+        /// ⚠⚠ THE ENVIRONMENT WAS DUPLICATED ONCE AND NEVER AGAIN (master: "the viewports of cameras dont follow
+        /// lighting or fog"). DayNightCycle MUTATES the world's Environment in place every frame -- sky, ambient,
+        /// fog density, glow -- so `Duplicate()` at build time froze the feed at whatever instant the camera was
+        /// first switched on. A camera built at noon filmed a noon-lit world all night. The copy exists for exactly
+        /// ONE reason (the feed must tonemap LINEAR or the picture is tonemapped twice, once into the texture and
+        /// again by the screen that samples it), so it is re-taken on a timer and that one property re-applied.
+        ///
+        /// ⭐ The darkness test is `IsNightTime`, which is the SAME predicate the street lamps use -- so a camera
+        /// goes to night vision exactly when the lights outside come on, rather than on a second opinion about what
+        /// counts as dark. ⚠ It is a clock, not a light meter: a camera in an unlit room at noon stays daylight.
+        /// That is a real limit and the honest place to fix it is a luminance probe, not a fudge here.</summary>
+        void SyncFeedEnv(bool force)
+        {
+            if (_cam == null || !IsInstanceValid(_cam)) return;
+            var worldEnv = DayNightCycle.Current?.Env;
+            _fenv = worldEnv != null ? (Godot.Environment)worldEnv.Duplicate() : (_fenv ?? new Godot.Environment());
+            _fenv.TonemapMode = Godot.Environment.ToneMapper.Linear;   // the one deliberate difference from the world's
+            _cam.Environment = _fenv;
+
+            bool dark = DayNightCycle.Current != null && DayNightCycle.IsNightTime(DayNightCycle.Current.Time);
+            if (force || dark != _nvOn)
+            {
+                _nvOn = dark;
+                if (_nvRect != null && IsInstanceValid(_nvRect)) _nvRect.Visible = dark;
+            }
         }
 
         /// <summary>Put the eye just in front of the glass, looking the way the glass faces. Both come from the
