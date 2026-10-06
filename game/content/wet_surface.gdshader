@@ -2,7 +2,22 @@
 // ripple rings play on them (raindrop impacts). Driven by the global uniform `rain_wetness` (WeatherManager sets it;
 // the --raintest harness sets it directly). Master 2026-08-29: raindrop impact splashes + hard-surface wetness.
 shader_type spatial;
-render_mode diffuse_burley, specular_schlick_ggx, cull_disabled;
+// ⚠⚠ depth_prepass_alpha IS LOAD-BEARING HERE AND WAS MISSING. master 2026-10-06: "when LODS fade in/out, they
+// appear brighter than normal" -- and, asked whether the prop looked solid or see-through, "solid from what i
+// can see", which rules out a transparent gap between the LOD bands and leaves double-drawing.
+//
+// Props crossfade their LODs with VisibilityRangeFadeMode.Self (WorldBuilder), which makes the mesh TRANSPARENT
+// for the length of the handover. A transparent surface stops writing depth -- and every placement prop is
+// cull_disabled -- so for those few metres the prop's own BACK faces are no longer occluded by its front faces
+// and both blend together. One lit surface drawn twice reads as brighter, during the fade only, which is exactly
+// the report.
+//
+// ⭐ THE PROOF IS AN ASYMMETRY IN OUR OWN SHADERS, not a theory about Godot: wind_sway.gdshader, the OTHER
+// material a prop can render through, is `cull_disabled, depth_prepass_alpha` -- and foliage_up and
+// grass_displace declare it too. This one file was the only cull_disabled prop shader without it. It also never
+// writes ALPHA itself, so the engine's fade is the only thing that ever makes it transparent, which is precisely
+// the case the prepass exists to keep self-occluding.
+render_mode diffuse_burley, specular_schlick_ggx, cull_disabled, depth_prepass_alpha;
 #include "res://content/puddles.gdshaderinc"
 #include "res://content/rain_impacts.gdshaderinc"   // h21 + rain_impacts(): the ring AND the splashback crown, shared with the terrain shader
 
