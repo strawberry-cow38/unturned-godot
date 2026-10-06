@@ -18,6 +18,10 @@ namespace UnturnedGodot
         public const uint ReflLayer = 1u << 18;   // visual layer 19: reflection-worthy geometry ALSO renders here (NOT 1<<19 -- that's OutlineOverlay.OutlineLayer; sharing it would draw trees as solid outline silhouettes)
         public const uint WaterLayer = 1u << 17;   // visual layer 18: the water plane itself sits here so the mirror camera can SKIP it (else it looks up into the water's own underside + occludes the trees)
         SubViewport _vp; Camera3D _cam; ShaderMaterial _mat; float _y; int _f; int _every = 2; bool _censused;
+        /// Mirror buffer resolution as a fraction of the window. Half-res is the old 1024-square's pixel budget at a
+        /// 1080p window, and the ripple distortion hides the difference -- but unlike a fixed square it carries the
+        /// window's ASPECT, which is what SCREEN_UV sampling requires.
+        public const float MirrorScale = 0.5f;
         public static bool Enabled = true; public static int EveryFrames = 1;   // GraphicsOptions.PlanarReflection (retail PlanarReflectionQuality)
 
         /// <summary>Put one instance's geometry INTO the mirror pass, additively (it keeps every layer it had).
@@ -65,7 +69,7 @@ namespace UnturnedGodot
             bool all = System.Environment.GetEnvironmentVariable("UG_REFLALL") == "1";
             _vp = new SubViewport
             {
-                Size = res,
+                Size = res,   // initial only -- _Process resizes to the window's aspect (see MirrorScale); a square buffer misaligns the reflection
                 RenderTargetClearMode = SubViewport.ClearMode.Always,
                 RenderTargetUpdateMode = SubViewport.UpdateMode.Always,
                 TransparentBg = true,             // empty = alpha 0 so the shader composites reflected geometry over sky_tint
@@ -129,6 +133,19 @@ namespace UnturnedGodot
                 _cam.GlobalTransform = refl * mt;
             }
             _cam.Fov = main.Fov; _cam.Near = main.Near; _cam.Far = main.Far;
+            // ⚠⚠ AND THE ASPECT, WHICH IS NOT PART OF THE CAMERA. Fov/Near/Far were copied here from the start; the
+            // projection's aspect ratio comes from the VIEWPORT, and this one was a fixed 1024x1024 square while the
+            // window is wide. With KeepHeight (Godot's default) that leaves the vertical FOV right and the horizontal
+            // FOV wrong, so a point lands at a different X in the mirror buffer than in the main view -- and the
+            // shader samples this buffer by SCREEN_UV, which assumes the two agree exactly.
+            //
+            // That is the whole of master's report (2026-10-06): "they dont follow their actual world positions, and
+            // move with the camera". The error is zero at the screen centre and grows toward the edges, so it slides
+            // as you turn. ⭐ MY STILL COULD NOT HAVE CAUGHT IT: the treetest trees sit near the centre of frame and
+            // nothing moves -- [[feedback_renders_movie_mode_vs_live]], a reflection has to be judged in MOTION.
+            var vs = GetViewport().GetVisibleRect().Size;
+            var want = new Vector2I(Mathf.Max(64, (int)(vs.X * MirrorScale)), Mathf.Max(64, (int)(vs.Y * MirrorScale)));
+            if (_vp.Size != want) _vp.Size = want;   // only on resize; reallocating a render target every frame is not free
         }
     }
 }

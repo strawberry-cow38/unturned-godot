@@ -194,10 +194,12 @@ void fragment() {
         // the mirror SubViewport renders empty sky as bright/near-white (no environment in the buffer), so gate by
         // DARKNESS instead of alpha: dark samples are reflected geometry (trees/props/ground) -> reflect them; bright
         // samples are empty sky -> fall back to the flat sky tint (no white-out of the water).
-        // 0.72/0.90 -> 0.80/0.97: the window rejected anything mid-bright, so a sunlit canopy, a white hull or a
-        // pale wall counted as "sky" and got replaced by the flat tint -- the brightest things on the coast were
-        // exactly the ones that would not reflect. Only genuinely near-white sky falls back now.
-        float refl_geo = 1.0 - smoothstep(0.80, 0.97, dot(refl.rgb, vec3(0.3333)));
+        // ⚠ BACK TO 0.72/0.90 (2026-10-06). I had widened this to 0.80/0.97 to let a sunlit canopy reflect, which
+        // was speculative -- and master's report was "the trees in the reflection are just.. white?". Pushing the
+        // upper bound to 0.97 is exactly how BRIGHT SKY stops being rejected and starts compositing as though it
+        // were geometry. These are the numbers the reflection was tuned against when it looked right; the thing
+        // that was actually wrong lives in WaterReflection (the mirror's aspect), not in this window.
+        float refl_geo = 1.0 - smoothstep(0.72, 0.90, dot(refl.rgb, vec3(0.3333)));
         refl_src = mix(sky_tint.rgb, refl.rgb, refl_geo);
     }
     // OVERCAST BODY COLOUR: a storm sky lights the water greyer, and this is also the only one of the four that

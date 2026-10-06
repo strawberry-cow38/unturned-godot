@@ -21,7 +21,9 @@ namespace UnturnedGodot
     {
         /// <summary>How far below the surface the effect reaches full strength. A hair under the waterline should
         /// be a hint of blue rather than the full murk, or breaking the surface strobes.</summary>
-        public const float FadeDepth = 0.45f;
+        public const float FadeDepth = 0.45f;   // legacy: kept for the harness/tests that still name it; the live path is the OnDepth/OffDepth hysteresis below
+        public const float OnDepth = 0.06f;    // submerged by this much -> the pass is fully ON
+        public const float OffDepth = 0.0f;    // and only a clear break of the surface turns it off again
 
         public static bool Active;   // read by anything that wants to know the view is submerged
 
@@ -41,6 +43,7 @@ namespace UnturnedGodot
         MeshInstance3D _quad;
         ShaderMaterial _mat;
         float _shown = -1f;   // last submersion pushed, so a still camera does not re-set uniforms every frame
+        bool _under;          // hysteresis state: are the eyes under the surface (see Tick)
         float _forceDepth;    // UG_UNDERWATER: >0 pins the view submerged at this depth
 
         public override void _Ready()
@@ -93,9 +96,23 @@ namespace UnturnedGodot
             // plane says you are a metre down while your head is in the air on a crest -- and this number drives
             // both how dark the pass goes and how far it has faded in.
             float below = Terrain.WaterSurfaceY(cam.GlobalPosition) - cam.GlobalPosition.Y;
-            if (below <= 0f) { Off(); return; }
+            if (below <= 0f) { _under = false; Off(); return; }
 
-            float sub = Mathf.Clamp(below / FadeDepth, 0f, 1f);   // wash in over the first half metre
+            // ⭐ SUBMERSION IS A STATE, NOT A RAMP (master 2026-10-06: "it fades in based off depth instead of just
+            // being on/off underwater"). Your eyes are either under the surface or they are not; half a metre down is
+            // not "half submerged". The old `below / FadeDepth` ramp meant the whole veil faded up over the first
+            // 0.45 m, which reads as the effect being weak in the shallows rather than as water.
+            //
+            // ⚠ The ramp was not arbitrary -- it existed so that bobbing right at the waterline could not strobe the
+            // pass on and off every frame. So this is HYSTERESIS, not a hard compare: it takes 6 cm of submersion to
+            // switch on and a clear break of the surface to switch off, and the 6 cm band is what a crest can wash
+            // over without flipping the state. Binary where it matters, stable where it used to flicker.
+            if (!_under && below >= OnDepth) _under = true;
+            else if (_under && below <= OffDepth) _under = false;
+            if (!_under) { Off(); return; }
+            float sub = 1f;
+            // `depth_below` is untouched and still carries the REAL depth: the distance-murk that makes the far wall
+            // vanish is physics and does belong on a curve. Only the on/off of the pass itself is a state.
             _quad.Visible = true;
             Active = true;
             // Submersion moves with the material, not with the raw reading: it IS the published value, so the
