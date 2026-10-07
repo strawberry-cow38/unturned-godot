@@ -1956,14 +1956,14 @@
 9145	MAC-10	Gun	Rare	3	2	MAC-10 chambered in .45 ACP. Provisional Bulldog/Uzi gameplay baseline.	fd731fe0da9f4b97bdb970ee9de735e2
 9146	MAC-10 Magazine	Magazine	Rare	1	2	Proprietary MAC-10 magazine holding 30 rounds of .45 ACP.	0e07040eaf204e6f928a1dfae68a6e03
 9147	MAC-10 Iron Sights	Sight	Common	2	1	Factory MAC-10 iron sights.	9e5c1d41331b47ae9eba2ddfc98348b0
-9300	Cup	Generic	Common	1	1	A chipped ceramic mug. Placeholder: no model yet.	30bb3ea826a481ca78c51b82f8943f7f
+9300	Cup	Generic	Common	1	1	A chipped ceramic mug.	30bb3ea826a481ca78c51b82f8943f7f
 9301	Drinking Glass	Generic	Common	1	1	A plain drinking glass. Placeholder: no model yet.	8a563f96bcd64bc8dcc267e3ea464258
-9302	Plate	Generic	Common	1	1	A dinner plate. Placeholder: no model yet.	133074ea95e880f02aa001bdc10bad09
-9303	Dish Bowl	Generic	Common	1	1	A shallow serving bowl. Placeholder: no model yet.	620003e7c1fc6deb01e64b9f4b6b04c0
+9302	Plate	Generic	Common	1	1	A dinner plate.	133074ea95e880f02aa001bdc10bad09
+9303	Dish Bowl	Generic	Common	1	1	A shallow serving bowl.	620003e7c1fc6deb01e64b9f4b6b04c0
 9304	Fork	Generic	Common	1	1	A dinner fork. Placeholder: no model yet.	c93b660817d35ed5af0f215b21193023
 9305	Spoon	Generic	Common	1	1	A dinner spoon. Placeholder: no model yet.	0337cd32f6f55f0d428226f7fcc2c47d
 9306	Table Knife	Generic	Common	1	1	A blunt table knife. Placeholder: no model yet.	ee135286d9dace61460343b6387b973b
-9307	Cooking Pot	Generic	Common	2	2	A dented cooking pot. Placeholder: no model yet.	22169acf1426adc0a974b0e058ea8e31
+9307	Cooking Pot	Generic	Common	2	2	A dented cooking pot.	22169acf1426adc0a974b0e058ea8e31
 9308	Frying Pan	Generic	Common	2	1	A heavy frying pan. Placeholder: no model yet.	c888a7d69c005f84956fa53c233516f2
 9309	Baking Tray	Generic	Common	2	1	A blackened baking tray. Placeholder: no model yet.	279fdac7db2c5f8b3fedc48f67239199
 9310	Paperwork	Generic	Common	1	1	Someone's filing, still in order. Placeholder: no model yet.	b8e8c7f39f8b9f79ae8fa37f176201c8
@@ -1976,8 +1976,8 @@
 9317	Black Pen	Generic	Common	1	1	Black ballpoint. Placeholder: no model yet.	e6e1b2269ae774170f420fbe12a312ae
 9318	Blue Pen	Generic	Common	1	1	Blue ballpoint. Placeholder: no model yet.	7121f3a5e15433b4a567ee2fd11bff33
 9319	Red Pen	Generic	Common	1	1	Red ballpoint, mostly dry. Placeholder: no model yet.	e351cdc2becdc160d37a3cb3e3afd045
-9320	Pencil	Generic	Common	1	1	Chewed at one end. Placeholder: no model yet.	9386f5a2dec1666ca5ddf0b31b2ea692
-9321	Eraser	Generic	Common	1	1	Grubby but usable. Placeholder: no model yet.	f6e963ad7fced0ad4a7619c6e1bb3308
+9320	Pencil	Generic	Common	1	1	Chewed at one end.	9386f5a2dec1666ca5ddf0b31b2ea692
+9321	Eraser	Generic	Common	1	1	Grubby but usable.	f6e963ad7fced0ad4a7619c6e1bb3308
 9322	Food Wrapper	Generic	Common	1	1	Licked clean and thrown out. Placeholder: no model yet.	f3646595952791971c5b2808744f86fc
 9323	Empty Can	Generic	Common	1	1	Rinsed, dented, discarded. Placeholder: no model yet.	08a166399cb943bfcc0aa6e74d969e1b
 9324	Broken Glass	Generic	Common	1	1	Swept up and bagged. Placeholder: no model yet.	3c9c02b3da4ae908637c490ce7cb4ad3
@@ -2000,6 +2000,6 @@
 9341	Glass	Supply	Common	1	1	Salvaged glass, edges and all. Placeholder: no model yet.	7f26341dea32bb3738760f7216f0335d
 9342	Firewood	Supply	Common	2	1	Split and seasoned, so it burns hotter and longer than the wet log it came from -- and the chunks carry far easier than one. No species left on it, so it stacks with any other firewood. Nothing is made FROM it: splitting a log is a one-way bet on burning it. Placeholder: no model yet.	4f3a1c05c6274bc3a6d3b1da19247a80
 9343	Green Pen	Generic	Common	1	1	A green ballpoint. Placeholder: no model yet.	78cbe7d92a7d406f8a0557b3a4df534c
-9344	Side Plate	Generic	Common	1	1	A small ceramic side plate. Placeholder: no model yet.	85408e653380469fa61c4d54c965324e
-9345	Pot Lid	Generic	Common	1	1	The steel lid off a cooking pot. Placeholder: no model yet.	685350ff77a74fd19e97ad4c2f63fa64
+9344	Side Plate	Generic	Common	1	1	A small ceramic side plate.	85408e653380469fa61c4d54c965324e
+9345	Pot Lid	Generic	Common	1	1	The steel lid off a cooking pot.	685350ff77a74fd19e97ad4c2f63fa64
 9400	Water Bottle Silencer	Barrel	Common	1	1	A plastic bottle taped over the muzzle. Swallows exactly one shot, then it is done.	56d6a5da2bbf4638bb313fa11a583399

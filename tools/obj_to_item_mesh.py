@@ -63,6 +63,40 @@ def apply(m, v):
             m[1][0]*v[0] + m[1][1]*v[1] + m[1][2]*v[2],
             m[2][0]*v[0] + m[2][1]*v[1] + m[2][2]*v[2])
 
+def load_obj(path):
+    vs, vns, tris = [], [], []
+    for line in open(path, errors='replace'):
+        q = line.split()
+        if not q: continue
+        if q[0] == 'v': vs.append(tuple(float(x) for x in q[1:4]))
+        elif q[0] == 'vn': vns.append(tuple(float(x) for x in q[1:4]))
+        elif q[0] == 'f':
+            c = []
+            for t in q[1:]:
+                b = (t.split('/') + ['', ''])[:3]
+                c.append(tuple(int(x) if x else 0 for x in b))
+            for i in range(1, len(c) - 1): tris.append([c[0], c[i], c[i+1]])
+    return vs, vns, tris
+
+def winding_fraction(vs, vns, tris):
+    """What fraction of triangles run COUNTER-clockwise around their own stated normals. ~1.0 and ~0.0 are the
+    two conventions; anything in between means the mesh is not consistently wound and the caller should look at
+    it rather than trust a flip."""
+    if not vns: return None
+    agree = total = 0
+    for t in tris:
+        try: p0, p1, p2 = [vs[i[0]-1] for i in t]
+        except IndexError: continue
+        u = (p1[0]-p0[0], p1[1]-p0[1], p1[2]-p0[2])
+        w = (p2[0]-p0[0], p2[1]-p0[1], p2[2]-p0[2])
+        g = cross(u, w)
+        ns = [vns[i[2]-1] for i in t if i[2] and i[2] <= len(vns)]
+        if not ns: continue
+        avg = [sum(x[k] for x in ns)/len(ns) for k in range(3)]
+        total += 1
+        if g[0]*avg[0] + g[1]*avg[1] + g[2]*avg[2] > 0: agree += 1
+    return agree/total if total else None
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('obj'); ap.add_argument('--id', required=True)
@@ -73,6 +107,13 @@ def main():
                     help='left for an OBJ out of Unity/Max -- mirrors X and reverses the winding')
     ap.add_argument('--recentre', action='store_true', help='centre X/Z and sit the base at Y=0')
     ap.add_argument('--out-dir', default='game/content/items')
+    ap.add_argument('--match-winding', metavar='REF.txt',
+                    help='an already-shipped item mesh; reverse the triangles iff the input disagrees with it '
+                         'about whether vertex order runs CCW around the stated normals')
+    ap.add_argument('--manifest', default='game/content/items/items_manifest.json',
+                    help='the index WorldItem actually reads; "" to skip')
+    ap.add_argument('--catalog', default='game/content/items_catalog.tsv',
+                    help='where the name/type for the manifest entry come from')
     ap.add_argument('--dry-run', action='store_true')
     a = ap.parse_args()
 
@@ -82,21 +123,8 @@ def main():
     if abs(abs(d) - 1.0) > 1e-6:
         sys.exit(f"axis change is not a pure rotation/reflection (det={d:.4f}) -- check --up/--forward")
 
-    vs, vns, vts, faces = [], [], [], []
-    for line in open(a.obj, 'r', errors='replace'):
-        p = line.split()
-        if not p: continue
-        if p[0] == 'v':  vs.append(tuple(float(x) for x in p[1:4]))
-        elif p[0] == 'vn': vns.append(tuple(float(x) for x in p[1:4]))
-        elif p[0] == 'vt': vts.append(tuple(float(x) for x in p[1:3]))
-        elif p[0] == 'f':
-            # a | a/b | a//c | a/b/c, and fan-triangulate anything with >3 corners
-            corners = []
-            for tok in p[1:]:
-                bits = (tok.split('/') + ['', ''])[:3]
-                corners.append(tuple(int(b) if b else 0 for b in bits))
-            for i in range(1, len(corners) - 1):
-                faces.append([corners[0], corners[i], corners[i+1]])
+    vs, vns, faces = load_obj(a.obj)
+    vts = [tuple(float(x) for x in l.split()[1:3]) for l in open(a.obj, errors='replace') if l.startswith('vt ')]
     if not vs or not faces:
         sys.exit(f"{a.obj}: no geometry (v={len(vs)} f={len(faces)})")
 
@@ -106,6 +134,25 @@ def main():
         xs = [v[0] for v in vs]; ys = [v[1] for v in vs]; zs = [v[2] for v in vs]
         cx = (min(xs)+max(xs))/2; cz = (min(zs)+max(zs))/2; fy = min(ys)
         vs = [(v[0]-cx, v[1]-fy, v[2]-cz) for v in vs]
+    # ⭐⭐ MEASURED, NOT ASSUMED. The axis change above can only tell you about ROTATION; it cannot know that
+    # two pipelines disagree about which way a triangle runs around its own normal. Ours do: every shipped item
+    # mesh winds CW with respect to its normals (0 of 44, 0 of 64, 0 of 52 triangles CCW across three of them --
+    # unanimous), and a hand-authored OBJ out of Blender winds CCW (92 of 92, 200 of 200). Opposite. Passing that
+    # correction in as a flag is how you get it backwards once and ship an inside-out mesh, so instead the tool
+    # measures BOTH files the same way and flips only on a disagreement, and prints what it found.
+    if a.match_winding:
+        ref = winding_fraction(*load_obj(a.match_winding))
+        mine = winding_fraction(vs, vns, faces)
+        if ref is None or mine is None:
+            print("[obj->item] WARNING: cannot compare winding (a file has no normals) -- left untouched")
+        else:
+            print(f"[obj->item] winding: reference {ref*100:.0f}% CCW, input {mine*100:.0f}% CCW", end='')
+            if (ref > 0.5) != (mine > 0.5):
+                faces = [[t[0], t[2], t[1]] for t in faces]
+                flip = not flip
+                print(" -> DISAGREE, triangles reversed")
+            else:
+                print(" -> agree, kept")
     if flip:
         faces = [[t[0], t[2], t[1]] for t in faces]
 
@@ -113,8 +160,11 @@ def main():
     size = (max(xs)-min(xs), max(ys)-min(ys), max(zs)-min(zs))
     # ⭐ The size is PRINTED because it is the one thing the geometry cannot tell you is wrong: a pencil that
     # came out 19 metres long loads, renders and looks like nothing at all in the grid.
+    # ⚠ The determinant and the winding are now TWO separate facts and the label must not conflate them: after a
+    # --match-winding reversal `flip` is true while det is still +1, and printing "MIRROR" there would describe a
+    # reflection that never happened. Report what each one actually was.
     print(f"[obj->item] {os.path.basename(a.obj)} -> id {a.id}: {len(vs)} verts, {len(faces)} tris, "
-          f"det={d:+.0f} ({'MIRROR -> winding reversed' if flip else 'rotation -> winding kept'}), "
+          f"det={d:+.0f} ({'reflection' if d < 0 else 'rotation'}), "
           f"size {size[0]:.3f} x {size[1]:.3f} x {size[2]:.3f} m")
 
     out = [f"# hand-authored OBJ -> Godot item mesh (up={a.up} fwd={a.forward} scale={a.scale} "
@@ -133,6 +183,28 @@ def main():
         return
     with open(path, 'w') as fh: fh.write("\n".join(out) + "\n")
     print(f"[obj->item] wrote {path}")
+
+    # ⭐⭐ AND REGISTER IT, because writing the mesh is only half of wiring an item and the other half fails
+    # SILENTLY. WorldItem.GetModel looks the id up in items_manifest.json and falls back to a 0.24 m grey cube
+    # when it is missing -- it does not go looking for <id>.txt on disk. I shipped eight correct meshes with no
+    # manifest rows and rendered eight identical little boxes, which looks exactly like "the converter is
+    # broken" and is not. A tool that converts but does not register is a tool that lies about being done.
+    if a.manifest:
+        import json
+        man = json.load(open(a.manifest)) if os.path.exists(a.manifest) else {}
+        name, typ = f"Item {a.id}", "Generic"
+        if a.catalog and os.path.exists(a.catalog):
+            for line in open(a.catalog, errors='replace'):
+                c = line.rstrip('\n').split('\t')
+                if len(c) >= 3 and c[0] == str(a.id): name, typ = c[1], c[2]; break
+        tex = f"{a.id}.png"
+        if not os.path.exists(os.path.join(a.out_dir, tex)): tex = None
+        centre = [round((min(xs)+max(xs))/2, 4), round((min(ys)+max(ys))/2, 4), round((min(zs)+max(zs))/2, 4)]
+        man[str(a.id)] = {"name": name, "type": typ, "obj": f"{a.id}.txt", "tex": tex, "color": None,
+                          "box": [round(c, 4) for c in size], "center": centre, "parts": 1}
+        with open(a.manifest, 'w') as fh: json.dump(man, fh, indent=0, sort_keys=True)
+        print(f"[obj->item] registered {a.id} \"{name}\" ({typ}) in {os.path.basename(a.manifest)}"
+              + ("" if tex else "  ⚠ no texture, will render untextured"))
 
 if __name__ == '__main__':
     main()
