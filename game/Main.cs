@@ -265,7 +265,7 @@ namespace UnturnedGodot
             bool windowBarrTest = false;
             string arenaSpawns = null;   // --arenaspawns[=POIname] : debug-render the 8 arena spawn points in a POI (master 2026-09-02)
             bool chatshot = false;
-            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, playground = false, objects = false, peidrive = false, craftmenu = false, stationtest = false, editorMode = false, impactTest = false, throwTest = false, doorGallery = false, lampTest = false, cctvTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false, netobserve = false, zombieTier = false, zflow = false, zhunt = false, zkill = false, zsound = false, zface = false, zpath = false;
+            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, playground = false, objects = false, peidrive = false, craftmenu = false, stationtest = false, editorMode = false, impactTest = false, throwTest = false, doorGallery = false, lampTest = false, cctvTest = false, beamTest = false, impTest = false, treeSweep = false, bakeLods = false, bakeLodsDry = false, netobserve = false, zombieTier = false, zflow = false, zhunt = false, zkill = false, zsound = false, zface = false, zpath = false, powerLineTest = false;
             bool puppetAnim = false;   // --puppetanim: prove RemotePlayers locomotion animates
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
@@ -296,6 +296,7 @@ namespace UnturnedGodot
                 else if (arg == "--deploytest") deployTest = true;   // both deployables placed on a ground plane + a valid(blue)+invalid(red) ghost -> verify models/palette/stand-up/ghost materials
                 else if (arg == "--impacttest") impactTest = true;   // one bullet-impact FX per surface (concrete/metal/wood/dirt/grass/sand/water/blood) across a wall -> verify the reimplemented ImpactFx
                 else if (arg == "--throwtest") throwTest = true;     // thrown smoke + flares landing on a plain stage -> verify the throwable FX (--peiplay cannot show them: its script is in a jeep by 1.7 s)
+                else if (arg == "--powerlinetest") powerLineTest = true;   // --shot=OUT : three Power_Line_0 poles wired together -- proves the 4 grey anchors, the sag and the wind sway
                 else if (arg == "--doorgallery") doorGallery = true;   // --shot=OUT : lineup of the 12 ripped WOODEN door barricade models (Door/Doubledoor/Gate/Hatch x Birch/Maple/Pine) for master to eyeball
                 else if (arg == "--barricadetest") barricadeTest = true;   // barricades mounted on a STRUCTURE wall (upright, facing out) + a valid ghost + a floor barricade -> verify surface placement
                 else if (arg == "--barricadeplay") barricadePlay = true;   // INTERACTIVE: fly (hold RMB) + LMB-place barricades on a structure room -- test placement feel ([1-3]=def, Tab=mount, R=rotate)
@@ -558,7 +559,10 @@ namespace UnturnedGodot
                 // missing four of its stages (strawberry: "when going to the editor from a proc map. its not
                 // the same map"). Generate with UG_GENSEED, then shoot the same name back with this.
                 else if (!string.IsNullOrEmpty(System.Environment.GetEnvironmentVariable("UG_OPENMAP")))
-                    BuildEditorNew(System.Environment.GetEnvironmentVariable("UG_OPENMAP"));
+                    // UG_OPENPLAY=1 takes the Workshop "Play" path instead of the edit path, which is the only way
+                    // to render-verify that a custom map is actually PLAYABLE rather than merely openable.
+                    BuildEditorNew(System.Environment.GetEnvironmentVariable("UG_OPENMAP"),
+                                   autoPlay: System.Environment.GetEnvironmentVariable("UG_OPENPLAY") == "1");
                 else if (System.Environment.GetEnvironmentVariable("UG_NEWMAP") == "1") BuildEditorNew();
                 else BuildEditor();
                 return;
@@ -582,6 +586,13 @@ namespace UnturnedGodot
                 return;
             }
 
+            if (powerLineTest)   // --powerlinetest --shot=OUT : the wire rig on real poles
+            {
+                GetWindow().Size = new Vector2I(1920, 1080);
+                _shotPath = shot; _shotRequested = shot;
+                BuildPowerLineTest();
+                return;
+            }
             if (doorGallery)   // --doorgallery --shot=OUT : a front-on lineup of the 12 ripped WOODEN door barricade models for master to eyeball
             {
                 GetWindow().Size = new Vector2I(2560, 1440);
@@ -1700,7 +1711,9 @@ namespace UnturnedGodot
                 var mat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, Roughness = 0.9f };
                 var img = new Image();
                 if (ContentProvider.LoadOk(img, dir + name + "_" + i + "_tex.png")) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); mat.TextureFilter = BaseMaterial3D.TextureFilterEnum.LinearWithMipmaps; }
-                root.AddChild(new MeshInstance3D { Mesh = m, MaterialOverride = mat });
+                var tmi = new MeshInstance3D { Mesh = m, MaterialOverride = mat };
+                WaterReflection.MarkReflective(tmi);   // --treetest's reflection test is the only place I can SEE the mirror; an unflagged tree makes it render empty and look like a shader bug
+                root.AddChild(tmi);
             }
             return root;
         }
@@ -4401,6 +4414,91 @@ namespace UnturnedGodot
         // tints adjacent, a name label under each + the form name above -- so master can eyeball every wooden door
         // model at once. The meshes are barricade SkinnedMeshRenderer leaves (tools/extract_wooden_doors.py);
         // barricades are authored lying flat, so a +90 X stands them up (override UG_DOORROT="x,y,z", no rebuild).
+        /// <summary>Three real Power_Line_0 poles, wired. The gate for the wire rig: it proves the four grey
+        /// anchors land on the grey pads, that the sag reads as a hanging wire, and that a span between poles at
+        /// DIFFERENT yaws still pairs outer-to-outer instead of crossing over.
+        ///
+        /// ⭐ The poles are placed with the REAL map basis -- Basis(Y,180-ey)*Basis(X,270) straight out of
+        /// WorldBuilder.PlaceObject, with the yaws PEI actually uses on this prop -- so the harness exercises the
+        /// shipping transform rather than a convenient upright one. UG_PLANCHORS=1 puts a marker on each anchor.</summary>
+        void BuildPowerLineTest()
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.47f, 0.60f, 0.76f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.60f, 0.63f, 0.68f),
+                AmbientLightEnergy = 0.9f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-44f, -34f, 0f), LightEnergy = 1.1f, ShadowEnabled = true });
+            var ground = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(400f, 400f) } };
+            ground.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.33f, 0.38f, 0.30f), Roughness = 1f };
+            AddChild(ground);
+
+            string odir = ProjectSettings.GlobalizePath("res://content/objects/");
+            var mesh = ObjMesh.Load(odir + PowerLineField.PoleMesh + ".obj");
+            if (mesh == null) { Log.Err("[powerline] Power_Line_0.obj missing"); return; }
+            var mat = new StandardMaterial3D { Roughness = 0.95f };
+            var img = new Image();
+            if (ContentProvider.LoadOk(img, odir + PowerLineField.PoleMesh + "_tex.png"))
+            {
+                mat.AlbedoTexture = ImageTexture.CreateFromImage(img);
+                mat.TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest;   // a 2x2 palette: linear would blend the four colours into mush
+            }
+
+            var field = new PowerLineField();
+            AddChild(field);
+
+            // PEI's own yaws on this prop, so neighbouring poles are NOT parallel -- which is the case that would
+            // expose anchor pairing being done by world position instead of by index.
+            float[] yaw = { 332f, 317f, 304f };
+            var at = new Vector3[] { new Vector3(-32f, 0f, 0f), Vector3.Zero, new Vector3(32f, 0f, 6f) };
+            for (int i = 0; i < 3; i++)
+            {
+                var rot = new Basis(new Vector3(0, 1, 0), Mathf.DegToRad(180f - yaw[i]))
+                        * new Basis(new Vector3(1, 0, 0), Mathf.DegToRad(270f))
+                        * new Basis(new Vector3(0, 0, 1), 0f);
+                var xf = new Transform3D(rot, at[i]);
+                AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = mat, Transform = xf });
+                field.AddPole(xf);
+            }
+            for (int i = 0; i + 1 < field.PoleCount; i++)
+                if (!field.Connect(i, i + 1, out string why)) Log.Err($"[powerline] connect {i}-{i + 1} refused: {why}");
+            field.Rebuild();
+            Log.Print($"[powerline] test: {field.PoleCount} poles, {field.SpanCount} spans");
+
+            if (System.Environment.GetEnvironmentVariable("UG_PLANCHORS") == "1")
+            {
+                var am = new StandardMaterial3D { AlbedoColor = new Color(1f, 0.1f, 0.1f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded };
+                var pts = new Vector3[4];
+                for (int i = 0; i < field.PoleCount; i++)
+                {
+                    field.AnchorsWorld(i, pts);
+                    foreach (var w in pts)
+                        AddChild(new MeshInstance3D { Mesh = new SphereMesh { Radius = 0.16f, Height = 0.32f }, MaterialOverride = am, Position = w });
+                }
+            }
+
+            var cam = new Camera3D { Fov = 50f, Far = 900f };
+            AddChild(cam);
+            // Default frames all three poles; UG_PLCAM="ex,ey,ez,tx,ty,tz" moves it without a rebuild, which is how
+            // the anchor close-up is taken. Same pattern as UG_REFLCAM.
+            Vector3 ce = new Vector3(0f, 13f, 86f), ct = new Vector3(0f, 7f, 0f);
+            var pc = System.Environment.GetEnvironmentVariable("UG_PLCAM");
+            if (!string.IsNullOrEmpty(pc))
+            {
+                var a = pc.Split(',');
+                if (a.Length == 6)
+                {
+                    ce = new Vector3(float.Parse(a[0], System.Globalization.CultureInfo.InvariantCulture), float.Parse(a[1], System.Globalization.CultureInfo.InvariantCulture), float.Parse(a[2], System.Globalization.CultureInfo.InvariantCulture));
+                    ct = new Vector3(float.Parse(a[3], System.Globalization.CultureInfo.InvariantCulture), float.Parse(a[4], System.Globalization.CultureInfo.InvariantCulture), float.Parse(a[5], System.Globalization.CultureInfo.InvariantCulture));
+                }
+            }
+            cam.LookAtFromPosition(ce, ct, Vector3.Up);
+        }
+
         void BuildDoorGallery()
         {
             var env = new Godot.Environment
@@ -4850,6 +4948,17 @@ namespace UnturnedGodot
             AddChild(cam);
             cam.Position = new Vector3(1f, 4.2f, 15f);   // closer: at 26 m the effects were small in frame and read worse than they are
             cam.LookAt(new Vector3(-4f, 2.2f, -5f), Vector3.Up);
+            // UG_SMOKECAM=1: stand IN the cloud, which is the case master reported ("staring up close at the
+            // smoke particles"). ⭐ The showcase camera at 15 m cannot reproduce it and never could: the cost here
+            // is FILL RATE, so it scales with how much of the screen the puffs cover, and from 15 m away a 9 m
+            // cloud is a patch. The bug only exists at the distance the harness was not looking from.
+            if (System.Environment.GetEnvironmentVariable("UG_SMOKECAM") == "1")
+            {
+                cam.Position = new Vector3(-4f, 2.2f, -1.5f);
+                cam.LookAt(new Vector3(-4f, 2.2f, -6f), Vector3.Up);
+            }
+            if (System.Environment.GetEnvironmentVariable("UG_PERFPROBE") == "1")
+                AddChild(new FramePerfProbe { Tag = "smokeperf" });   // the A/B number; see FramePerfProbe
             Log.Print("[throwtest] 3 smokes + 2 flares thrown; UG_SHOTTIME picks the moment (fuse is " + SDG.Unturned.Throwables.FuseSeconds + "s)");
         }
 
@@ -5533,11 +5642,11 @@ namespace UnturnedGodot
             g.MaterialOverride = valid ? DeployablePlacer.ValidMat : DeployablePlacer.InvalidMat;
             AddChild(g);
             g.GlobalTransform = new Transform3D(DeployableDef.StandBasis(yaw) * def.MeshBasis(), surface + Vector3.Up * DeployableDef.GroundLift(ab));   // × MeshBasis: this ghost is the MeshInstance too (see BarricadePlacer.GhostTransform)
-            if (System.Environment.GetEnvironmentVariable("UG_WIREARROWS") == "1")   // mirror DeployablePlacer: in/out port arrows on the ghost (blueprint blue/red)
-            {
-                var mat = ConnectionPort.ArrowMaterial(valid ? ConnectionPort.ArrowBlue : ConnectionPort.ArrowRed);
-                foreach (var p in def.Ports) g.AddChild(ConnectionPort.MakeArrow(p, mat, p.Pos));
-            }
+            if (System.Environment.GetEnvironmentVariable("UG_WIREARROWS") == "1")
+                // CALLS DeployablePlacer, does not mirror it. This used to re-implement the port arrows, so the
+                // harness ghost and the real one could drift -- and anything added to the real one (the lamp
+                // direction arrow) would never show up here, which is a render of the wrong thing.
+                DeployablePlacer.AddGhostArrows(g, def, ConnectionPort.ArrowMaterial(valid ? ConnectionPort.ArrowBlue : ConnectionPort.ArrowRed));
         }
 
         // --croptest=NAME: a farm crop showcase -- the YOUNG (Foliage_0) crop left, the GROWN (Foliage_1) crop right,
@@ -6827,6 +6936,9 @@ namespace UnturnedGodot
             }
             // The island's own M-map, drawn from the heightmap/splat/routes now that all three are final.
             if (genPois != null && genSeed.HasValue) ProcIslandMap.Bake(terr, genSeed.Value);
+            var plField = new PowerLineField(); editor.AddChild(plField);
+            var plEd = new EditorPowerLines(editor, cam, plField, null, editor.Objects);   // a generated island ships no poles -- you place them
+            editor.AddChild(plEd); editor.PowerLinesEd = plEd; editor.PowerLines = plField;
             var roadsEd = new EditorRoads(editor, cam, rf); editor.AddChild(roadsEd); editor.RoadsEd = roadsEd;
             var roadDrawEd = new EditorRoadDraw(editor, cam, rf); editor.AddChild(roadDrawEd); editor.RoadDrawEd = roadDrawEd;   // R = draw, Shift+R = legacy nodes
             var riverEd = new EditorRiver(editor, cam, terr); editor.AddChild(riverEd); editor.RiverEd = riverEd;   // V = carve river (spline tool, sits with the road tools)
@@ -6839,6 +6951,35 @@ namespace UnturnedGodot
             // wrong for playing.
             play.SetWorldLighting(sun, env, dayNight);
             play.SetIsland(procSeed, _mapRoot);   // seed -> a reproducible horde; _mapRoot -> PEI's loot TABLES
+
+            // ⭐ THE MAP-TOOL SHOWCASE (master 2026-10-06: "a map thats a map tool showcase ... when we add new
+            // mapmaker tools we show them off/experiment there"). Authored ONCE, on the first open, and only when
+            // the map is genuinely empty -- after that it is an ordinary custom map and whatever you did to it is
+            // what loads. Re-authoring over your experiments would make the one place you are meant to experiment
+            // the one place you cannot keep anything.
+            if (editor.MapName == MapShowcase.MapName && (editor.Objects?.PlacedCount ?? 0) == 0)
+            {
+                int built = MapShowcase.Author(terr, rf, editor.Objects, plField, editor, editor.Spawns);
+                editor.MarkDirty();   // so the autosave keeps it without the user having to think about it
+                MapShowcase.OpenView(cam as EditorCamera, built);
+            }
+
+            // ⚠⚠ AND LOAD THE SAVED WIRES. This was missing, and it is why master reported the wires "GONE": a
+            // custom map authors its poles ONCE and then loads from disk forever after, so every visit after the
+            // first had poles, had a saved span file, and never put the two together. The PEI path has done this
+            // since the tool landed; this one was simply never written -- the same TWO PATHS, ONE FEATURE drift
+            // that bit the ocean builders.
+            //
+            // ⭐ Order matters: a custom map's poles ARE its placed objects, so the field has to be seeded from
+            // EditorObjects AFTER those have loaded, and only then can the saved spans re-match by position.
+            plField.RefreshPoles(editor.Objects != null
+                                     ? editor.Objects.PlacedOf(PowerLineField.PoleMesh)
+                                     : System.Array.Empty<Transform3D>(),
+                                 out _);
+            int loadedSpans = plField.Load(editor.MapName, out int orphanSpans);
+            plField.Rebuild();
+            if (loadedSpans > 0 || orphanSpans > 0)
+                Log.Print($"[powerline] custom map '{editor.MapName}': {plField.PoleCount} poles, {loadedSpans} spans loaded, {orphanSpans} orphaned");
             // Workshop's per-map Play opens the editor and goes straight in, so the map you play is the
             // map the editor built -- one world-building path, not two that can disagree.
             if (loading != null)
@@ -7549,6 +7690,16 @@ namespace UnturnedGodot
                 rf.LoadFromEnvironment(_mapRoot + "/Environment");
                 AddChild(rf);
             }
+            // POWER LINES (master 2026-10-06). The field holds the wires; the tool strings them. Fed the poles the
+            // MAP placed, plus -- inside the tool -- any placed this session, so both kinds carry wires.
+            var plField = new PowerLineField(); editor.AddChild(plField);
+            var plEd = new EditorPowerLines(editor, cam, plField, res.PowerLinePoles, editor.Objects);
+            editor.AddChild(plEd); editor.PowerLinesEd = plEd; editor.PowerLines = plField;
+            // Seed the field with the map's poles and whatever wires were saved last time, so the lines are THERE
+            // on load rather than only after you open the tool.
+            plField.RefreshPoles(res.PowerLinePoles, out _);
+            plField.Load(editor.MapName, out _);
+            plField.Rebuild();
             var roadsEd = new EditorRoads(editor, cam, rf);   // LEGACY node paving under the Environment tab (Shift+R)
             var roadDrawEd = new EditorRoadDraw(editor, cam, rf); editor.AddChild(roadDrawEd); editor.RoadDrawEd = roadDrawEd;   // draw-a-road/rail (R)
             var riverEd = new EditorRiver(editor, cam, res.Terr); editor.AddChild(riverEd); editor.RiverEd = riverEd;   // V = carve river (spline tool, sits with the road tools)
@@ -7994,8 +8145,28 @@ namespace UnturnedGodot
                 cam.GlobalPosition = c + new Vector3(1f, 0.8f, 1f).Normalized() * (s.Length() + 3f);   // front-right-above
                 cam.LookAt(c, Vector3.Up);
             }
+            else if (System.Environment.GetEnvironmentVariable("UG_ICON_VIEW") == "front")
+            {
+                // ⭐ FRONT ELEVATION FOR AN AUTHORED, Y-UP, FLOOR-ALIGNED MESH. The branch below is tuned for the
+                // RIPPED meshes, and both of its rules are wrong for a modelled one:
+                //   * its up vector is -middle-axis, which for a mug (middle axis = Y) is -Y -- so it baked the
+                //     mug UPSIDE DOWN. Master: "mug icon is upside down". Here it is just world up.
+                //   * it points the camera down the SHORTEST axis, which for a cooking pot is Y, so a pot baked
+                //     as a circle seen from above. Master: "i want a front facing one for the pot". Here the
+                //     camera sits on the narrower HORIZONTAL axis, so the widest profile faces it -- a pot shows
+                //     its handles out to the sides, a mug shows its handle in profile.
+                var horiz = s.X <= s.Z ? Vector3.Right : Vector3.Back;   // stand off the narrower side
+                cam.Size = Mathf.Max(s.Y, Mathf.Max(s.X, s.Z)) * 1.18f;
+                cam.GlobalPosition = c + horiz * (s.Length() + 3f);
+                cam.LookAt(c, Vector3.Up);
+            }
             else
             {
+                // ⚠ TUNED FOR THE RIPPED MESHES AND LEFT ALONE DELIBERATELY. 1878 shipped icons and every other
+                // harness that bakes one come through here; the authored-mesh corrections live in the branch
+                // above, behind UG_ICON_VIEW, rather than changing what this does for everything that already
+                // works. "The model's height axis points down in mesh space" is true of the rip and of nothing
+                // anybody models by hand.
                 cam.GlobalPosition = c + ax[0].dir * (s.Length() + 2f);
                 cam.LookAt(c, -ax[1].dir);   // -middle axis = up (the model's height axis points "down" in mesh space)
             }

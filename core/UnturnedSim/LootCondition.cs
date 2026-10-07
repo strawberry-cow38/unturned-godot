@@ -20,7 +20,41 @@ namespace SDG.Unturned
     {
         static readonly Dictionary<int, float> _bias = new Dictionary<int, float>();
 
-        public static float Bias(int table) => table >= 0 && _bias.TryGetValue(table, out var b) ? b : 0f;
+        /// <summary>Biases declared in CODE for tables that only exist in code (a fridge, a garbage bag). ⚠ Kept
+        /// SEPARATE from `_bias` because Load() clears that dictionary on every map load -- a virtual table has no
+        /// row in any map's file, so anything registered into `_bias` would be wiped the moment a map opened and
+        /// the fridge would quietly go back to rolling uniform condition.
+        ///
+        /// ⭐ The file still WINS where it says something: a mapper who sets a bias for a table in the editor is
+        /// making a decision about THEIR map, and a default in our source should not override it.</summary>
+        static readonly Dictionary<int, float> _codeDefault = new Dictionary<int, float>();
+
+        /// <summary>Per-table CEILING on rolled condition, 0-100 (100 = no cap). ⚠ A ceiling is NOT a bias:
+        /// master 2026-10-07 asked that "items in garbage can spawn with MAX of like 15% durability", and a bias
+        /// only bends the distribution -- at -0.85 a garbage bag still rolls the occasional pristine axe, which is
+        /// exactly the thing being ruled out. The bias says what is TYPICAL; this says what is POSSIBLE.</summary>
+        static readonly Dictionary<int, byte> _codeMax = new Dictionary<int, byte>();
+
+        public static void SetCodeMax(int table, byte max)
+        {
+            if (table < 0) return;
+            _codeMax[table] = max > 100 ? (byte)100 : max;
+        }
+
+        public static byte MaxCondition(int table)
+            => table >= 0 && _codeMax.TryGetValue(table, out var m) ? m : (byte)100;
+
+        public static void SetCodeDefault(int table, float bias)
+        {
+            if (table < 0) return;
+            _codeDefault[table] = Math.Clamp(bias, -1f, 1f);
+        }
+
+        public static float Bias(int table)
+            => table < 0 ? 0f
+             : _bias.TryGetValue(table, out var b) ? b
+             : _codeDefault.TryGetValue(table, out var d) ? d
+             : 0f;
 
         public static void Set(int table, float bias)
         {

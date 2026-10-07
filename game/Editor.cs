@@ -25,6 +25,8 @@ namespace UnturnedGodot
         public EditorSpawns Spawns;                       // Phase 3 spawns sub-editor (set by BuildEditor)
         public EditorEnvironment Environment;             // Phase 4 environment sub-editor (set by BuildEditor)
         public EditorTerrain TerrainEd;                   // Phase 5 terrain sub-editor (set by BuildEditor)
+        public EditorPowerLines PowerLinesEd;             // Shift+P: string wires between power-line poles
+        public PowerLineField PowerLines;                 // the wires themselves (saved/loaded with the map)
         public EditorRoads RoadsEd;                       // Phase 6 roads sub-editor (Environment tab, LEGACY paving mode -- Shift+R)
         public EditorRoadDraw RoadDrawEd;                 // draw-a-road/rail tool (Environment tab, R) -- the primary one
         public EditorRiver RiverEd;                       // river carving tool (Environment tab, V) -- a spline tool, not a terrain brush
@@ -77,6 +79,14 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)
         {
+            // ⭐ THE EDITOR HAS NO PLAYER, AND THE WIND USED TO BE DRIVEN FROM ONE. Everything that sways -- grass,
+            // flowers, flags, and the power-line wires -- reads the `wind_vec` global, and the only thing writing it
+            // was PlayerController. So the whole editor was dead still, which nobody noticed because the GAME looked
+            // right. Driven from the editor camera so the wind is sampled where you are actually looking.
+            // ⚠ Before the IsDirty early-out below, or wind would only blow while there were unsaved changes.
+            var ecam = GetViewport()?.GetCamera3D();
+            WindField.PushGlobalsIfIdle(ecam != null ? ecam.GlobalPosition : GlobalPosition, delta);
+
             SecondsSinceSave += delta;
             if (!IsDirty) { _autosaveTimer = 0.0; return; }
             _autosaveTimer += delta;
@@ -138,9 +148,11 @@ namespace UnturnedGodot
             int r = RoadsEd?.Save() ?? 0;
             int b2 = Buildings?.Save() ?? 0;
             int np = Npcs?.Save() ?? 0;
+            int pl = 0;
+            if (PowerLines != null) { PowerLines.Save(MapName); pl = PowerLines.SpanCount; }
             IsDirty = false; SecondsSinceSave = 0.0;
             LastSaveLabel = autosave ? "autosaved" : "saved";
-            Log.Print($"[editor] {(autosave ? "AUTOsaved" : "saved")} '{MapName}' ({n} props, {s} spawns, {e} env, {t} terrain, {r} roads, {b2} walls, {np} npcs)");
+            Log.Print($"[editor] {(autosave ? "AUTOsaved" : "saved")} '{MapName}' ({n} props, {s} spawns, {e} env, {t} terrain, {r} roads, {b2} walls, {np} npcs, {pl} power spans)");
             EmitSignal(SignalName.Saved, autosave);
         }
 

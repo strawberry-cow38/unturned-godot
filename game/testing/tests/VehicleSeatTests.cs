@@ -211,12 +211,29 @@ namespace UnturnedGodot.Testing
             p.DriveFP = true;
             yield return Ticks(4);   // let the seated clips run and overwrite whatever they are going to
             var bodyRig = p.BodyRigForTest;
-            T.Check("driving 1P: the legs model's LEFT shoulder is collapsed " +
-                    $"(scale {bodyRig?.ShoulderScaleForTest(true) ?? -1f:0.###})",
-                bodyRig != null && bodyRig.ShoulderScaleForTest(true) == 0f);
-            T.Check("driving 1P: the legs model's RIGHT shoulder is collapsed " +
-                    $"(scale {bodyRig?.ShoulderScaleForTest(false) ?? -1f:0.###})",
-                bodyRig != null && bodyRig.ShoulderScaleForTest(false) == 0f);
+            // ⚠⚠ THE MECHANISM CHANGED 2026-10-06 AND THIS ASSERTION WENT STALE WITH IT. "One arm, one rig" is
+            // still the requirement; trimming the body's shoulders is no longer how it is met. Master chose to
+            // hide the local body from the player's OWN camera by layer instead (000764ae), because the bone trim
+            // was visible to EVERY other camera -- a security feed filmed an armless player and the sun cast an
+            // armless shadow. So the body now keeps its arms and simply is not drawn to you.
+            //
+            // ⭐ Asserted on the LAYER, which is the thing that now enforces it, and on the arms being INTACT,
+            // which is the property the change was made to win. Checking the old bone scale here would assert the
+            // absence of a mechanism we deliberately removed.
+            uint bodyLayers = 0;
+            void GatherLayers(Node n)
+            {
+                if (n is VisualInstance3D vi) bodyLayers |= vi.Layers;
+                foreach (var c in n.GetChildren()) GatherLayers(c);
+            }
+            if (bodyRig != null) GatherLayers(bodyRig);
+            T.Check($"driving 1P: the legs model is on the own-body layer, which the player's camera culls (layers 0x{bodyLayers:X})",
+                bodyRig != null && (bodyLayers & PlayerController.OwnBodyLayer) != 0);
+            T.Check($"driving 1P: ...and OFF the default layer, so it cannot draw over the viewmodel's hands (layers 0x{bodyLayers:X})",
+                bodyRig != null && (bodyLayers & 1u) == 0);
+            T.Check("driving 1P: the legs model KEEPS both arms now -- feeds and shadows see a whole person " +
+                    $"(L {bodyRig?.ShoulderScaleForTest(true) ?? -1f:0.###}, R {bodyRig?.ShoulderScaleForTest(false) ?? -1f:0.###})",
+                bodyRig != null && bodyRig.ShoulderScaleForTest(true) != 0f && bodyRig.ShoulderScaleForTest(false) != 0f);
 
             p.DriveFP = true;
             T.Check("the DRIVER cannot fire -- hands on the wheel", p.IsDriver && !p.Fire());

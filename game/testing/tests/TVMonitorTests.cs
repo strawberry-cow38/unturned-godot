@@ -414,33 +414,37 @@ namespace UnturnedGodot.Testing
                 var up = new Vector3(0f, 0f, 1f);
                 var plug = TVDevice.PlugLocal(bodyAabb, normal, up);
                 T.Check($"{nm}: the plug is OUTSIDE the cabinet", !bodyAabb.HasPoint(plug));
-                T.Check($"{nm}: ...on the BACK, not through the screen ({(plug - bodyAabb.GetCenter()).Dot(normal):0.00} along the screen normal)",
-                    (plug - bodyAabb.GetCenter()).Dot(normal) < 0f);
-                // Two separate properties, because one distance conflates them and passes for the wrong reason. On a
-                // 3.55 m wall television the quarter-height slide is a big LATERAL move, so straight-line distance from
-                // the back face's midpoint is half a metre even when the port is sitting flush on the panel.
-                //   1. clearance ALONG THE NORMAL: a few cm, i.e. resting on the surface rather than out in the room.
-                float back = (bodyAabb.GetCenter() - normal * (bodyAabb.Size * 0.5f).Dot(normal.Abs())).Dot(normal);
-                float clear = back - plug.Dot(normal);
-                T.Check($"{nm}: ...resting on the back panel ({clear:0.000} m proud of it)", clear > 0f && clear < 0.15f);
-                //   2. ...and ON the cabinet's footprint, not off past its edge -- a port floating a metre to the side
-                //      passes check 1 alone. Measured in the SCREEN'S OWN PLANE, not by pushing the point back through
-                //      the panel and asking the AABB whether it contains it: along a tilted normal the box's support
-                //      point is a CORNER, so that construction lands a few mm outside on the laptop and would have
-                //      reported a correctly-placed port as off the prop.
-                Vector3 pax = (Mathf.Abs(normal.Z) < 0.9f ? Vector3.Back : Vector3.Right);
-                pax = (pax - normal * pax.Dot(normal)).Normalized();
-                Vector3 pay = normal.Cross(pax).Normalized();
-                float aLo = float.MaxValue, aHi = float.MinValue, bLo = float.MaxValue, bHi = float.MinValue;
-                for (int i = 0; i < 8; i++)
-                {
-                    var e = bodyAabb.GetEndpoint(i);
-                    aLo = Mathf.Min(aLo, e.Dot(pax)); aHi = Mathf.Max(aHi, e.Dot(pax));
-                    bLo = Mathf.Min(bLo, e.Dot(pay)); bHi = Mathf.Max(bHi, e.Dot(pay));
-                }
-                T.Check($"{nm}: ...and within the cabinet's own footprint ({plug.Dot(pax):0.00} in [{aLo:0.00},{aHi:0.00}], {plug.Dot(pay):0.00} in [{bLo:0.00},{bHi:0.00}])",
-                    plug.Dot(pax) >= aLo - 1e-3f && plug.Dot(pax) <= aHi + 1e-3f
-                    && plug.Dot(pay) >= bLo - 1e-3f && plug.Dot(pay) <= bHi + 1e-3f);
+                // ⚠⚠ THESE ASSERTED THE BACK PANEL UNTIL 2026-10-06 AND WENT STALE THE DAY THE SOCKETS MOVED.
+                // Master: "move the data io and power io on the flatscreen to the SIDE. its impossible to reach on
+                // the back" -- so `PlugLocal` now steps out along up x normal, and a test demanding a few cm of
+                // clearance ALONG THE NORMAL was asserting the old product. It was shipped failing in 64c3e784
+                // because I did not run it; it is written here as the new contract rather than loosened.
+                //
+                // ⭐ Stated as INVARIANTS, not by recomputing PlugLocal's own `side` vector. A test that rebuilds
+                // the formula it is checking passes for any implementation that shares the formula, including a
+                // wrong one -- it asserts that two copies of the same arithmetic agree. What actually has to be
+                // true is reachability: outside the cabinet, resting against it, beside it rather than off its
+                // front or back, at a height you can point at.
+
+                //   1. BESIDE IT, not off the front or the back. Measured along the screen normal: the port must
+                //      stay within the cabinet's own depth, which is what makes it a SIDE socket. This is the
+                //      check that would have caught the back-panel placement master complained about, and it does
+                //      not care how the side direction is derived.
+                float halfN = (bodyAabb.Size * 0.5f).Dot(normal.Abs());
+                float alongN = Mathf.Abs((plug - bodyAabb.GetCenter()).Dot(normal));
+                T.Check($"{nm}: ...BESIDE the set, within its depth ({alongN:0.000} m along the screen normal, half-depth {halfN:0.000})",
+                    alongN <= halfN + 1e-3f);
+
+                //   2. RESTING ON IT: a few cm from the cabinet's surface, so the socket sits on the case rather
+                //      than floating in the room. Point-to-box distance, which is true of any face it ends up on.
+                var bLo2 = bodyAabb.Position; var bHi2 = bodyAabb.Position + bodyAabb.Size;
+                var gap = new Vector3(
+                    Mathf.Max(Mathf.Max(bLo2.X - plug.X, 0f), plug.X - bHi2.X),
+                    Mathf.Max(Mathf.Max(bLo2.Y - plug.Y, 0f), plug.Y - bHi2.Y),
+                    Mathf.Max(Mathf.Max(bLo2.Z - plug.Z, 0f), plug.Z - bHi2.Z));
+                float surf = gap.Length();
+                T.Check($"{nm}: ...resting on the cabinet ({surf:0.000} m off its surface)", surf > 0f && surf < 0.15f);
+
                 float lo = float.MaxValue, hi = float.MinValue;
                 for (int i = 0; i < 8; i++) { float d = bodyAabb.GetEndpoint(i).Dot(up); lo = Mathf.Min(lo, d); hi = Mathf.Max(hi, d); }
                 float frac = (plug.Dot(up) - lo) / Mathf.Max(1e-5f, hi - lo);
@@ -480,8 +484,13 @@ namespace UnturnedGodot.Testing
             {
                 var p = TVDevice.PlugLocal(box, nrm, Vector3.Up);
                 T.Check($"plug stays outside the cabinet when {why}", !box.HasPoint(p));
-                T.Check($"...and behind the screen ({(p - box.GetCenter()).Dot(nrm):0.00} along the normal)",
-                    (p - box.GetCenter()).Dot(nrm) < 0f);
+                // Was "behind the screen" until the sockets moved to the side (2026-10-06). The point of this
+                // block is the DEGENERATE UP -- the port must not be dragged back through the cabinet and lost
+                // inside it -- and that invariant is unchanged; only the direction it should sit in moved. Beside
+                // the set now means within its depth along the normal, rather than past its back face.
+                float halfD = (box.Size * 0.5f).Dot(nrm.Abs());
+                T.Check($"...and beside the screen, within its depth ({(p - box.GetCenter()).Dot(nrm):0.00} along the normal, half-depth {halfD:0.00}) when {why}",
+                    Mathf.Abs((p - box.GetCenter()).Dot(nrm)) <= halfD + 1e-3f);
             }
 
             yield break;

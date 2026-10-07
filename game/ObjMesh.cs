@@ -233,6 +233,46 @@ namespace UnturnedGodot
             return res;
         }
 
+        /// <summary>UV predicate AND a position predicate, both on the triangle CENTROID.
+        ///
+        /// ⚠⚠ EXISTS BECAUSE A TEXEL ALONE CANNOT NAME "THE BULBS". Spotlight_deploy shares ONE palette texel
+        /// (the 138-grey) between the lamp-head interiors and the whole mast: of its 336 triangles, 90 carry that
+        /// texel and they run from Z -1.42 (the heads) to +1.00 (the top of the pole). Splitting on the texel made
+        /// the entire fixture emissive -- a warm lamppost, not two glowing bulbs -- which is what the render
+        /// showed before this existed. Neither axis identifies the bulbs; the intersection does.
+        ///
+        /// Keep this for "the part of a shared material that is HERE", and prefer SplitLens/SplitByUvCentroid
+        /// when a texel really is unique to the thing you want.</summary>
+        public static (ArrayMesh Body, ArrayMesh Region) SplitByUvAndPos(ArrayMesh src, System.Func<Vector2, bool> uvIn, System.Func<Vector3, bool> posIn)
+        {
+            if (src == null || src.GetSurfaceCount() < 1 || uvIn == null || posIn == null) return (src, null);
+            var a0 = src.SurfaceGetArrays(0);
+            var V = a0[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+            var N = a0[(int)Mesh.ArrayType.Normal].AsVector3Array();
+            var U = a0[(int)Mesh.ArrayType.TexUV].AsVector2Array();
+            var C = a0[(int)Mesh.ArrayType.Color].AsColorArray();
+            if (V.Length < 3 || U.Length != V.Length) return (src, null);
+
+            var bv = new List<Vector3>(); var bn = new List<Vector3>(); var bu = new List<Vector2>(); var bc = new List<Color>();
+            var rv = new List<Vector3>(); var rn = new List<Vector3>(); var ru = new List<Vector2>(); var rc = new List<Color>();
+            for (int i = 0; i + 2 < V.Length; i += 3)
+            {
+                var uc = (U[i] + U[i + 1] + U[i + 2]) / 3f;
+                var pc = (V[i] + V[i + 1] + V[i + 2]) / 3f;
+                bool pick = uvIn(uc) && posIn(pc);
+                var dv = pick ? rv : bv; var dn = pick ? rn : bn; var du = pick ? ru : bu; var dc = pick ? rc : bc;
+                for (int k = 0; k < 3; k++)
+                {
+                    dv.Add(V[i + k]);
+                    dn.Add(i + k < N.Length ? N[i + k] : Vector3.Up);
+                    du.Add(U[i + k]);
+                    dc.Add(i + k < C.Length ? C[i + k] : Colors.White);
+                }
+            }
+            if (rv.Count == 0) return (src, null);
+            return (Build(bv, bn, bu, bc), Build(rv, rn, ru, rc));
+        }
+
         // General UV-predicate cousin of SplitLens: carve every triangle whose UV CENTROID satisfies `uvIn` onto its
         // own surface, hand back the rest as body. For palette regions outside SplitLens's hardcoded u>0.5,v>0.5 lens
         // quadrant -- e.g. Lamp_1's shade is the top-left 181-grey texel, which after Load's V-flip is u<0.5, v>0.5.

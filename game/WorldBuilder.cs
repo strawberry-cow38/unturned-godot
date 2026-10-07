@@ -35,7 +35,13 @@ namespace UnturnedGodot
         public PlayerController Player;    // Playable/PeiPlay only
         public DeadzoneField Deadzones;    // contaminated volumes ticking the player's vitals
         public DayNightCycle DayNight;     // the world clock -- MP Phase 8 syncs read/drive it (§3.7)
-        public ResourceField Resources;    // trees/rocks -- MP Phase 8's alive-bitmap indexes into it (§3.7)
+        public ResourceField Resources;
+        /// <summary>Every Power_Line_0 placement's transform, in placement order. ⭐ Recorded here rather than
+        /// discovered later by walking the scene for meshes that look like poles: the transform is exactly what
+        /// PowerLineField needs to put the four wire anchors in the world, and it is known for free at the moment
+        /// the prop is placed. A scene walk would have to re-derive it and would miss the editor's own copies.</summary>
+        public System.Collections.Generic.List<Transform3D> PowerLinePoles = new();
+    // trees/rocks -- MP Phase 8's alive-bitmap indexes into it (§3.7)
         public FoliageField Foliage;       // grass/flowers/pebbles -- the editor's paint tool authors into it
         public DestructibleField Destructibles;   // destructible props (rubble) -- the DestructibleReplication(16) alive-bitmap indexes into it
         public DirectionalLight3D Sun;     // world sun + env (C3: the client session LinkWorldLightings its late-spawned shell)
@@ -75,6 +81,19 @@ namespace UnturnedGodot
     // the capture/demo scripting; this owns the nodes.
     public static class WorldBuilder
     {
+        /// <summary>Give the NPC gunship its tree occlusion (master 2026-10-06: "add occlusions for its line of
+        /// sight through trees"). NpcHeli asks through a delegate so it need not know how the world stores trees;
+        /// this is the one place that answer is supplied.
+        ///
+        /// ⚠ LOGGED, because an unset hook is a SILENT no-op that looks exactly like trees not blocking -- the
+        /// same shape as the ten retail skills wired to nothing. If the count reads 0, the trees built without
+        /// canopy records and the gunship can see through the forest again.</summary>
+        static void WireCanopyOcclusion(ResourceField rsf)
+        {
+            if (rsf == null) return;
+            NpcHeli.CanopyBlocks = rsf.CanopyBlocksSegment;
+            Log.Print($"[heli] tree canopy occlusion wired: {rsf.CanopyCount} canopies");
+        }
         /// <summary>wind_sway.gdshader, loaded once. Shared with the swaying props (hedges); tree leaves load
         /// their own copy in ResourceField, which builds its materials on a different path.</summary>
         static Shader _windSway;
@@ -237,15 +256,15 @@ namespace UnturnedGodot
             ["54ce5b19a2564000bd0227e9a51410a0"] = ("Cardboard_1", 21, false, "Cardboard Box"),
             ["5f56c3fa62254a5eab04750d1738bae9"] = ("Cardboard_2", 21, false, "Cardboard Box"),
             ["579a96c41b3d4175aa984902d5ab368f"] = ("Cardboard_3", 21, false, "Cardboard Box"),
-            ["91dbbf923c8c401bb6b2d56084783f73"] = ("Fridge_0", 6, false, "Fridge"),      // fridge x17 -> Food
+            ["91dbbf923c8c401bb6b2d56084783f73"] = ("Fridge_0", LootTables.Fridge, false, "Fridge"),      // perishables + the odd drink (master 2026-10-07); was table 6 Food, which stocked it with cans
             ["8388edfa33b84f78ad7f5d277412433b"] = ("Wardrobe_0", 19, false, "Wardrobe"), // wardrobe x24 -> Cloth
             ["7259ea03530a4ff880e857ca62a0c662"] = ("Cooler_0", 6, false, "Cooler"),      // drink cooler -> Food (master 2026-08-02: washer/dryer/cooler ARE containers now)
-            ["68339521990c4d70903dfd68da2cd886"] = ("Washer_0", 19, false, "Washer"),      // washing machine -> Cloth
-            ["90da84de3f214d129de92b6ee8df60af"] = ("Dryer_0", 19, false, "Dryer"),        // dryer -> Cloth
-            ["050dbe869b1c4fd5b215c552d145effd"] = ("Counter_0", 17, false, "Counter"),   // counter x103 -> Kitchen
+            ["68339521990c4d70903dfd68da2cd886"] = ("Washer_0", LootTables.Laundry, false, "Washer"),      // table 19 Cloth, but near-full condition (master 2026-10-07)
+            ["90da84de3f214d129de92b6ee8df60af"] = ("Dryer_0", LootTables.Laundry, false, "Dryer"),        // ditto
+            ["050dbe869b1c4fd5b215c552d145effd"] = ("Counter_0", LootTables.Counter, false, "Counter"),   // non-perishables + crockery/cookware (master 2026-10-07)
             // Counter_1 is NOT a loot container (strawberry 2026-08-03): it is a SINK, and it now reaches
             // PlaceObject like Counter_3 so its tap is wired on the ordinary path.
-            ["02923364713c4385a2bdaa7221d717ae"] = ("Counter_2", 17, false, "Counter"),   // counter x23 -> Kitchen
+            ["02923364713c4385a2bdaa7221d717ae"] = ("Counter_2", LootTables.Counter, false, "Counter"),
             // business/industrial containers (crates + shipping containers) -> prime in-genre loot
             ["cb0d8bf87fca47e3b73f634959a9f523"] = ("Crate_0", 8, false, "Crate"),         // business crate x31 -> Construction
             ["054a9392fed9484e950ff92d13631f06"] = ("Crate_3", 8, false, "Crate"),         // business crate x20 -> Construction
@@ -266,7 +285,7 @@ namespace UnturnedGodot
             // THE ICE BOX -- the upright merchandiser outside a shop (2.0 x 2.47 m). A container as of
             // 2026-09-06 ("turn the ice box into a smart container that acts as a freezer"); ContainerNetSync
             // marks it a body-freezer, so everything inside it freezes rather than merely keeping.
-            ["486dda0171c645f7a3855f3c46796380"] = ("Ice_Box_0", 6, false, "Freezer"),
+            ["486dda0171c645f7a3855f3c46796380"] = ("Ice_Box_0", LootTables.Freezer, false, "Freezer"),   // perishables in GOOD condition, no drinks
             // Beach cool boxes. Containers, but NOT the shop's glass-front display coolers -- see
             // StoreShelf.IsDisplayCooler for why sharing the "Cooler" prefix was giving them a glass pane and
             // a permanently lit interior.
@@ -284,26 +303,28 @@ namespace UnturnedGodot
             // not guesses -- 11 "Chef" and 24 "Booty" were considered and passed over, Booty because it is a single
             // tier of two ids and every register in the world would hand back the same two things. (The register
             // has since moved OFF table 21 to the virtual cash table -- see its entry below.)
-            ["086b683233c245968b38d98c2c9e10f1"] = ("Disher_0", 17, false, "Dishwasher"),      // has a door leaf, like Fridge_0
-            ["a305bcc1cdaa486fb91d05201e7d3e6f"] = ("Oven_0", 17, false, "Stove"),             // ditto
+            ["086b683233c245968b38d98c2c9e10f1"] = ("Disher_0", LootTables.Dishwasher, false, "Dishwasher"),   // crockery/cutlery/cookware; has a door leaf, like Fridge_0
+            ["a305bcc1cdaa486fb91d05201e7d3e6f"] = ("Oven_0", LootTables.Oven, false, "Stove"),             // trays + pots, NO food (master); ditto on the door leaf
             ["6fb78536e8cb4b01b6050a2efb3d912c"] = ("Microwave_0", 17, false, "Microwave"),
-            ["2d1daa0412b94503aa57a5b422187d48"] = ("Toaster_0", 6, false, "Toaster"),         // 2 slots + keeps its pop (see StoreShelf)
-            ["2db512fea15a4434bafe0c45a0dd2016"] = ("Barbecue_0", 6, false, "BBQ"),
-            ["5feb0d40c34d4117912b4df420bea1b7"] = ("Barbecue_1", 6, false, "BBQ"),
-            ["65906f4174724825849478b60ecc348a"] = ("Files_0", 21, false, "Filing Cabinet"),   // 4-drawer cabinet (rendered to confirm; "Files" is also a name for loose paper)
-            ["8c05d039f62a4e40a3e448fcaeb31efd"] = ("Files_1", 21, false, "Filing Cabinet"),
+            // ⭐ BREAD ONLY (master 2026-10-07). Was table 6 "Food", which is why a toaster handed back canned beans
+            // and MREs. LootTables.Toaster is a virtual table for the same reason the till's is -- see it there.
+            ["2d1daa0412b94503aa57a5b422187d48"] = ("Toaster_0", LootTables.Toaster, false, "Toaster"),   // 2 slots + keeps its pop (see StoreShelf)
+            ["2db512fea15a4434bafe0c45a0dd2016"] = ("Barbecue_0", LootTables.Barbecue, false, "BBQ"),   // charcoal + grill food (master 2026-10-07)
+            ["5feb0d40c34d4117912b4df420bea1b7"] = ("Barbecue_1", LootTables.Barbecue, false, "BBQ"),   // charcoal + grill food (master 2026-10-07)
+            ["65906f4174724825849478b60ecc348a"] = ("Files_0", LootTables.FilingCabinet, false, "Filing Cabinet"),   // office junk (master 2026-10-07); 4-drawer cabinet
+            ["8c05d039f62a4e40a3e448fcaeb31efd"] = ("Files_1", LootTables.FilingCabinet, false, "Filing Cabinet"),
             // A TILL HOLDS CASH (strawberry 2026-09-15). LootTables.CashRegister is a virtual table -- see the
             // note there for why a real one could not do it: PEI's only money table is 24 "Booty", one tier of
             // {loonie, toonie}, which is what this entry used to reject Booty for in the comment above.
             ["84b3a672bc0643d1b12b2b345a88ba46"] = ("Register_0", LootTables.CashRegister, false, "Cash Register"),
-            ["61e43d05791d4269b626de9bedbf0a03"] = ("Garbage_0", 21, false, "Garbage Bag"),    // a tied-off bag, not a bin
-            ["a19b3ec55a2046668611c9d2775efd99"] = ("Garbage_1", 21, false, "Garbage Bag"),
-            ["ba109246d52c400a8f35704aef77a3ee"] = ("DL_Garbage", 21, false, "Garbage Bag"),
+            ["61e43d05791d4269b626de9bedbf0a03"] = ("Garbage_0", LootTables.GarbageBag, false, "Garbage Bag"),    // junk, spoiled food, worn-out gear; a tied-off bag, not a bin
+            ["a19b3ec55a2046668611c9d2775efd99"] = ("Garbage_1", LootTables.GarbageBag, false, "Garbage Bag"),
+            ["ba109246d52c400a8f35704aef77a3ee"] = ("DL_Garbage", LootTables.GarbageBag, false, "Garbage Bag"),
             // "trash cans (SMALL ones)" -- there is no prop called a trash can. The Dumpster family splits cleanly by
             // size: _2 is 6.31 m (industrial), _0/_1 are 2.84 m (skips), _3/_4 are 1.11 m wheelie bins with a wheel
             // modelled on the side. Only the wheelie bins are here; the skips are deliberately left out.
-            ["99c4048f91634e45986add0a89ffc2df"] = ("Dumpster_3", 21, false, "Trash Can"),
-            ["9bce22473d334aefad8864f0bc8447cb"] = ("Dumpster_4", 21, false, "Trash Can"),
+            ["99c4048f91634e45986add0a89ffc2df"] = ("Dumpster_3", LootTables.GarbageBag, false, "Trash Can"),   // ⚠ WAS table 21, which carries GUNS AND MAGAZINES -- master: "remove guns and magazines from garbage loot spawns". The bags were repointed and the BINS were missed.
+            ["9bce22473d334aefad8864f0bc8447cb"] = ("Dumpster_4", LootTables.GarbageBag, false, "Trash Can"),
             // NOT converted, and each for a checked reason rather than an oversight:
             //   Oven_1   -- named like a stove, is a 6.42 m FLUE PIPE on a bracket (rendered it).
             //   Office_0..3 -- office BUILDINGS, 18-44 m, not furniture.
@@ -1047,6 +1068,11 @@ namespace UnturnedGodot
                 // purely because that is where the lens split needed to be). Verified rather than assumed: the two
                 // props have IDENTICAL plinths -- local Z -1.00 at radius 0.35, 0.00 at 0.18, 1.00 at 0.35 on both --
                 // so the same cut height applies unchanged and no second constant is needed.
+                // POWER LINE POLES: remember where they are so wires can be strung between them (PowerLineField).
+                // Visual-only, so the dedicated server -- which has no visual layer at all -- does not collect them.
+                if (name == PowerLineField.PoleMesh && mode != WorldMode.Dedicated)
+                    result.PowerLinePoles.Add(new Transform3D(basis, gpos));
+
                 if ((name == "Street_Light_0" || name == "Traffic_Light_0") && mode != WorldMode.Dedicated)
                 {
                     var (baseMesh, upperMesh) = ObjMesh.SplitBelow(visMesh, StreetLightBaseCut);
@@ -2042,6 +2068,7 @@ namespace UnturnedGodot
                         await rsf.BuildTreeImpostorsAsync();
                     }
                     result.Resources = rsf;
+                    WireCanopyOcclusion(rsf);
                 }
             }
 
@@ -2352,6 +2379,7 @@ namespace UnturnedGodot
                     root.AddChild(rsf);
                     rsf.LoadResources(activeHoliday);
                     result.Resources = rsf;
+                    WireCanopyOcclusion(rsf);
                 }
                 // LOOT (Phase 6, §3.3): the rolls run server-side now that LootField keys spawn/despawn on
                 // ANY player's proximity via PlayerRegistry (no local player exists here). The catalog must

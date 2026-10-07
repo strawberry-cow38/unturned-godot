@@ -393,6 +393,16 @@ namespace UnturnedGodot
         public bool AnySelected => _selection.Count > 0;
         /// <summary>How many props this map has placed. For the world fingerprint that compares a generated
         /// island against the same island reopened -- terrain hashes alone cannot see a missing prop.</summary>
+        /// <summary>World transforms of every placed object of one prop type. The power-line tool uses it so that
+        /// poles YOU placed in this session carry wires too, not just the ones the map shipped with -- without it
+        /// the tool would silently ignore half the poles on screen, which reads as the tool being broken.</summary>
+        public System.Collections.Generic.IEnumerable<Transform3D> PlacedOf(string propName)
+        {
+            foreach (var n in _placed)
+                if (IsInstanceValid(n) && n.HasMeta("obj_name") && (string)n.GetMeta("obj_name") == propName)
+                    yield return n.GlobalTransform;
+        }
+
         public int PlacedCount => _placed.Count;
         public bool SelectedOmitFromBake => Primary != null && Primary.HasMeta(OmitMeta) && (bool)Primary.GetMeta(OmitMeta);
 

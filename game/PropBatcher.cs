@@ -219,6 +219,10 @@ namespace UnturnedGodot
                 // The scene-wide nearest-neighbour sweep would otherwise stamp over the material these props
                 // were built with -- same reason ResourceField's chunks join this group.
                 mmi.AddToGroup(NearestFilter.KeepFilterGroup);
+                // INTO THE WATER MIRROR, with the trees. "props" is the other half of what master asked reflections
+                // for; this is the one batcher every map object comes through, so flagging it here covers buildings,
+                // docks and rocks without a second list to keep in step.
+                WaterReflection.MarkReflective(mmi);
                 root.AddChild(mmi);
                 GroupCount++;
                 Batched += g.Slots.Count;

@@ -1956,4 +1956,50 @@
 9145	MAC-10	Gun	Rare	3	2	MAC-10 chambered in .45 ACP. Provisional Bulldog/Uzi gameplay baseline.	fd731fe0da9f4b97bdb970ee9de735e2
 9146	MAC-10 Magazine	Magazine	Rare	1	2	Proprietary MAC-10 magazine holding 30 rounds of .45 ACP.	0e07040eaf204e6f928a1dfae68a6e03
 9147	MAC-10 Iron Sights	Sight	Common	2	1	Factory MAC-10 iron sights.	9e5c1d41331b47ae9eba2ddfc98348b0
+9300	Cup	Generic	Common	1	1	A chipped ceramic mug.	30bb3ea826a481ca78c51b82f8943f7f
+9301	Drinking Glass	Generic	Common	1	1	A plain drinking glass. Placeholder: no model yet.	8a563f96bcd64bc8dcc267e3ea464258
+9302	Plate	Generic	Common	1	1	A dinner plate.	133074ea95e880f02aa001bdc10bad09
+9303	Dish Bowl	Generic	Common	1	1	A shallow serving bowl.	620003e7c1fc6deb01e64b9f4b6b04c0
+9304	Fork	Generic	Common	1	1	A dinner fork. Placeholder: no model yet.	c93b660817d35ed5af0f215b21193023
+9305	Spoon	Generic	Common	1	1	A dinner spoon. Placeholder: no model yet.	0337cd32f6f55f0d428226f7fcc2c47d
+9306	Table Knife	Generic	Common	1	1	A blunt table knife. Placeholder: no model yet.	ee135286d9dace61460343b6387b973b
+9307	Cooking Pot	Generic	Common	2	2	A dented cooking pot.	22169acf1426adc0a974b0e058ea8e31
+9308	Frying Pan	Generic	Common	2	1	A heavy frying pan. Placeholder: no model yet.	c888a7d69c005f84956fa53c233516f2
+9309	Baking Tray	Generic	Common	2	1	A blackened baking tray. Placeholder: no model yet.	279fdac7db2c5f8b3fedc48f67239199
+9310	Paperwork	Generic	Common	1	1	Someone's filing, still in order. Placeholder: no model yet.	b8e8c7f39f8b9f79ae8fa37f176201c8
+9311	Handwritten Letter	Generic	Common	1	1	A letter in looping handwriting. Placeholder: no model yet.	a9acc5924b69fb24e2d5fceb91f74c5e
+9312	Typed Letter	Generic	Common	1	1	A typed letter on headed paper. Placeholder: no model yet.	c2c55433af37d13d8e847e8b4a61b4a0
+9313	Unopened Letter	Generic	Common	1	1	Still sealed. Placeholder: no model yet.	47730116526dc0bb40d0bbc5a0c637f0
+9314	Stapler	Generic	Common	1	1	Office stapler, half loaded. Placeholder: no model yet.	4c23c0fd2818591eda8ec2aa06a0df97
+9315	Box of Paperclips	Generic	Common	1	1	More than anyone needs. Placeholder: no model yet.	7de01dd58f1bcb4b0fc08369e545822e
+9316	Hole Punch	Generic	Common	1	1	Two-hole, heavy for its size. Placeholder: no model yet.	9a48c82341d5e2883356555907ee06c6
+9317	Black Pen	Generic	Common	1	1	Black ballpoint. Placeholder: no model yet.	e6e1b2269ae774170f420fbe12a312ae
+9318	Blue Pen	Generic	Common	1	1	Blue ballpoint. Placeholder: no model yet.	7121f3a5e15433b4a567ee2fd11bff33
+9319	Red Pen	Generic	Common	1	1	Red ballpoint, mostly dry. Placeholder: no model yet.	e351cdc2becdc160d37a3cb3e3afd045
+9320	Pencil	Generic	Common	1	1	Chewed at one end.	9386f5a2dec1666ca5ddf0b31b2ea692
+9321	Eraser	Generic	Common	1	1	Grubby but usable.	f6e963ad7fced0ad4a7619c6e1bb3308
+9322	Food Wrapper	Generic	Common	1	1	Licked clean and thrown out. Placeholder: no model yet.	f3646595952791971c5b2808744f86fc
+9323	Empty Can	Generic	Common	1	1	Rinsed, dented, discarded. Placeholder: no model yet.	08a166399cb943bfcc0aa6e74d969e1b
+9324	Broken Glass	Generic	Common	1	1	Swept up and bagged. Placeholder: no model yet.	3c9c02b3da4ae908637c490ce7cb4ad3
+9325	Cardboard Scrap	Generic	Common	1	1	Flattened packaging. Placeholder: no model yet.	4e6de1891c37649ffdbe5fde1f2241f0
+9326	Soiled Rag	Generic	Common	1	1	You do not want to know. Placeholder: no model yet.	5a01e6410de4855b435d4209c1b4f836
+9327	Gunpowder	Supply	Rare	1	1	Finished propellant. Placeholder: no model yet.	47c55c9f0ccae55106bbc64a750ad930
+9328	Sulfur	Supply	Uncommon	1	1	Yellow and acrid. Placeholder: no model yet.	1412fffd4c625d50ce453771c04b8053
+9329	Screws	Supply	Common	1	1	A handful of assorted screws. Placeholder: no model yet.	b478fa798b6390d6cb06f0caf77d3803
+9330	Springs	Supply	Common	1	1	Salvaged coil springs. Placeholder: no model yet.	7b7b659d14c8eb1de6df5b3c3ff8988f
+9331	Gears	Supply	Uncommon	1	1	Toothed cogs from something mechanical. Placeholder: no model yet.	3e299d993148029e7a4540f9346d89b4
+9332	Hinges	Supply	Common	1	1	Door hinges, still greasy. Placeholder: no model yet.	8a5cbc5e93bad2b12246ac07066de982
+9333	Charcoal	Supply	Common	1	1	A bag of charcoal briquettes. The only thing a barbecue will burn -- load it into the BBQ, switch it on, and whatever you are cooking comes out charcoal grilled.	2469a3ad44eb651cf7cf0970c938319e
+9334	Black Powder	Supply	Uncommon	1	1	Sulfur and charcoal, ground together. Placeholder: no model yet.	adef07d59c974c56d15746172593c3c1
+9335	Pipe	Supply	Common	1	1	A short length of salvaged pipe. Placeholder: no model yet.	a9a940fad3488dbc69db8fc9c8335772
+9336	Sheet of Paper	Supply	Common	1	1	A blank sheet. Placeholder: no model yet.	52dd31a262354018897d48f03431f925
+9337	Handwritten Note	Supply	Common	1	1	Scrawled, half legible. Placeholder: no model yet.	af1ed5c4914ff7420117a615afcda9b8
+9338	Ceramic	Supply	Common	1	1	Fired clay, broken into usable pieces. Placeholder: no model yet.	58f78af341bd3d1bee2e4fbd2be626df
+9339	Circuitry	Supply	Uncommon	1	1	Salvaged boards and wiring. Placeholder: no model yet.	c99d1d75ed4e80575554369b53fefa2e
+9340	Asbestos	Supply	Uncommon	1	1	Fibrous, heat-proof, and best handled with gloves. Placeholder: no model yet.	f7816a8cf107a2ec8779efefb4e6bd58
+9341	Glass	Supply	Common	1	1	Salvaged glass, edges and all. Placeholder: no model yet.	7f26341dea32bb3738760f7216f0335d
+9342	Firewood	Supply	Common	2	1	Split and seasoned, so it burns hotter and longer than the wet log it came from -- and the chunks carry far easier than one. No species left on it, so it stacks with any other firewood. Nothing is made FROM it: splitting a log is a one-way bet on burning it. Placeholder: no model yet.	4f3a1c05c6274bc3a6d3b1da19247a80
+9343	Green Pen	Generic	Common	1	1	A green ballpoint. Placeholder: no model yet.	78cbe7d92a7d406f8a0557b3a4df534c
+9344	Side Plate	Generic	Common	1	1	A small ceramic side plate.	85408e653380469fa61c4d54c965324e
+9345	Pot Lid	Generic	Common	1	1	The steel lid off a cooking pot.	685350ff77a74fd19e97ad4c2f63fa64
 9400	Water Bottle Silencer	Barrel	Common	1	1	A plastic bottle taped over the muzzle. Swallows exactly one shot, then it is done.	56d6a5da2bbf4638bb313fa11a583399

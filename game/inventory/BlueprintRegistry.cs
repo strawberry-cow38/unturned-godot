@@ -11,6 +11,41 @@ namespace UnturnedGodot
         static readonly List<BlueprintDef> _all = new();
         public static IReadOnlyList<BlueprintDef> All => _all;
 
+        /// <summary>Recipes that turn an item ITSELF into materials, keyed by the item id they consume.
+        ///
+        /// ⭐ AN INDEX, NOT A PREDICATE OVER _all. "Is this item salvageable" is asked once per right-click, by the
+        /// inventory menu, and the obvious alternative -- scan every recipe for one whose single input is this item --
+        /// is both O(recipes) per click and WRONG at the edges: a recolour (Blue Daypack from White Daypack) and a
+        /// processing recipe (Log to Planks) have exactly that shape too, so a derived test would offer "Salvage" on
+        /// things that are not salvage. The generator below is the only thing that makes these, so it records them
+        /// and nothing has to infer what it meant. Sniffing the Name for "Salvage " would be the same inference with
+        /// a string in it.</summary>
+        static readonly Dictionary<ushort, BlueprintDef> _salvage = new();
+
+        /// <summary>The recipe that breaks `id` down into materials, or null if it has none. Already EnsureLoaded,
+        /// because its caller is a UI click and a menu that silently has no Salvage button is indistinguishable from
+        /// an item that genuinely cannot be salvaged.</summary>
+        public static BlueprintDef SalvageFor(ushort id)
+        {
+            EnsureLoaded();
+            return _salvage.TryGetValue(id, out var bp) ? bp : null;
+        }
+
+        /// <summary>How many salvage recipes exist, for a test that must prove the index is actually populated --
+        /// SalvageFor returning null for one id cannot tell "not salvageable" from "the index was never filled".</summary>
+        public static int SalvageCount { get { EnsureLoaded(); return _salvage.Count; } }
+
+        /// <summary>Is THIS recipe a salvage? Asked by the UI, which has to keep 800 "Salvage X" rows out of the
+        /// places that are meant to show you what you can MAKE -- the Quick Craft strip and the craft menu's All
+        /// category. They are reached from the item instead (its right-click menu), which is the whole point of
+        /// having the shortcut.</summary>
+        public static bool IsSalvage(BlueprintDef bp)
+        {
+            if (bp == null || !ushort.TryParse(bp.OwnerItemId, out var id)) return false;
+            EnsureLoaded();
+            return _salvage.TryGetValue(id, out var s) && ReferenceEquals(s, bp);
+        }
+
         /// <summary>Has the catalog been read off disk yet? Separate from `_all.Count > 0` because THE SHIPPING
         /// CATALOG IS NOW EMPTY (strawberry 2026-09-06: "completely empty crafting list"), and a count-based guard
         /// cannot tell "never loaded" from "loaded, and it genuinely has no rows". That mattered twice over: it made
@@ -38,7 +73,7 @@ namespace UnturnedGodot
         /// fourth path and forgetting. It is idempotent and costs one int comparison after the first call.</summary>
         /// <summary>Empty the catalog so a test can prove the self-load actually fires. Without this a test
         /// cannot distinguish "Index() loaded it" from "some earlier test in the same boot already had".</summary>
-        public static void ResetForTests() { _all.Clear(); Loaded = false; }
+        public static void ResetForTests() { _all.Clear(); _salvage.Clear(); Loaded = false; }
 
         public static void EnsureLoaded()
         {
@@ -48,6 +83,7 @@ namespace UnturnedGodot
         public static int Load(string resPath = "res://content/blueprints.tsv")
         {
             _all.Clear();
+            _salvage.Clear();   // rebuilt by GenerateSalvageRecipes below; a stale entry would point at a freed recipe
             Loaded = true;   // set even on a missing/empty file: the attempt is what EnsureLoaded must not repeat
             LoadCountForTests++;
             string path = ProjectSettings.GlobalizePath(resPath);
@@ -58,9 +94,267 @@ namespace UnturnedGodot
                 var bp = BlueprintDef.FromTsv(line);
                 if (bp != null) _all.Add(bp);
             }
+            GenerateAmmoRecipes();
+            GenerateFirewoodRecipes();   // BEFORE salvage: a log is now a crafting ingredient, and the salvage sweep
+                                         // skips anything an existing recipe already consumes
+            GenerateSalvageRecipes();
             SDG.Unturned.Durability.RegisterTools(_all);   // a recipe's non-consumed input is a TOOL, and tools wear (Durability)
             Log.Print($"[bp] loaded {_all.Count} blueprints from {resPath} ({SDG.Unturned.Durability.ToolIds.Count} tools)");
             return _all.Count;
+        }
+
+        /// <summary>Split a log into firewood with an axe.
+        ///
+        /// Master 2026-10-07: "add a new firewood item. crafted with logs + axe (tool) 1 log:2 firewood. firewood
+        /// doesnt have a 'type' so it stacks regardless of the log that made it."
+        ///
+        /// ⭐ ONE RECIPE PER (LOG, AXE) PAIR, because a blueprint input names ONE guid -- there is no "any axe" in
+        /// the format. Three species times two axes is six rows, all producing the same species-less Firewood, and
+        /// generating them is what keeps that true: adding a fourth wood or a third axe needs no edit here. Hand-
+        /// writing six TSV rows would have been the same six rows, correct on the day they were typed.
+        ///
+        /// ⭐ THE AXE IS A TOOL, NOT AN INGREDIENT (`Consume = false`), which is what master's "(tool)" asks for --
+        /// and it falls out for free that the axe WEARS, because Durability.RegisterTools walks exactly the
+        /// non-consumed inputs of every recipe. Nothing extra was needed to make chopping cost the axe something.</summary>
+        static void GenerateFirewoodRecipes()
+        {
+            var firewood = SDG.Unturned.Assets.find(SDG.Unturned.Cooking.FirewoodId);
+            if (firewood == null || string.IsNullOrEmpty(firewood.guid)) return;
+
+            int made = 0;
+            foreach (ushort logId in new ushort[] { 37, 39, 41 })          // Birch / Maple / Pine Log
+            {
+                var log = SDG.Unturned.Assets.find(logId);
+                if (log == null || string.IsNullOrEmpty(log.guid)) continue;
+                foreach (ushort axeId in new ushort[] { 16, 104 })          // Camp Axe / Fire Axe
+                {
+                    var axe = SDG.Unturned.Assets.find(axeId);
+                    if (axe == null || string.IsNullOrEmpty(axe.guid)) continue;
+                    var bp = new BlueprintDef
+                    {
+                        // OWNER = the PRODUCT, the retail convention (a recipe lives in the .dat of the thing it
+                        // makes). It also keeps IsRecolour honest: owner Firewood vs input Birch Log are different
+                        // names, so these do not get mistaken for repaints the way the salvage rows were.
+                        OwnerItemId = firewood.id.ToString(), Operation = "Craft",
+                        Name = $"Split {log.itemName}", Skill = "", SkillLevel = 0, Seconds = 4f,
+                    };
+                    bp.Inputs.Add(new BlueprintDef.Ingredient { Guid = log.guid, Amount = 1, Consume = true });
+                    bp.Inputs.Add(new BlueprintDef.Ingredient { Guid = axe.guid, Amount = 1, Consume = false });
+                    bp.Outputs.Add(new BlueprintDef.Ingredient { Guid = firewood.guid, Amount = 2, Consume = true });
+                    _all.Add(bp); made++;
+                }
+            }
+            if (made > 0) Log.Print($"[bp] generated {made} firewood recipe(s)");
+        }
+
+        /// <summary>Reload a round of every ammunition the game carries, from metal scrap and gunpowder.
+        ///
+        /// Master 2026-10-07: "add crafting recipes for every ammo with balances ratios of metal scrap + gunpowder".
+        ///
+        /// ⭐⭐ GENERATED, NOT WRITTEN OUT. "Every ammo" is a statement about a SET that changes -- the MAC-10's
+        /// .45 arrived three days ago -- so a hand-written block of TSV rows would be true on the day it was typed
+        /// and quietly incomplete after the next gun. Walking `Assets.all()` for `isAmmo` means the answer is
+        /// recomputed from the thing being described, and a new cartridge gets its recipe by existing.
+        ///
+        /// ⭐ THE RATIO COMES FROM THE ROUND'S OWN STACK SIZE, which is the only size signal every ammo already
+        /// carries: a cartridge that stacks 180 (9mm) is small, one that stacks 32 (a 12-gauge shell) is big. So
+        /// `128 / stackSize` is "how much round is this, relative to a 5.56", and both the batch you get and the
+        /// materials you spend ride it. That is a derivation rather than a table of my opinions, and it stays
+        /// balanced for a cartridge nobody has added yet.
+        ///
+        /// ⚠ Skips anything that already has a Craft recipe producing it, so an authored recipe always wins -- a
+        /// generator that overwrote hand-tuned content would be the worst of both.</summary>
+        static void GenerateAmmoRecipes()
+        {
+            const string ScrapGuid = "", PowderName = "Gunpowder";
+            var scrap = SDG.Unturned.Assets.find(67);          // Metal Scrap
+            var powder = SDG.Unturned.Assets.find(9327);       // Gunpowder
+            if (scrap == null || powder == null || string.IsNullOrEmpty(scrap.guid) || string.IsNullOrEmpty(powder.guid))
+            { Log.Print("[bp] ammo recipes skipped: metal scrap or gunpowder missing a guid"); return; }
+
+            // What already has a recipe -- authored content wins.
+            var alreadyMade = new HashSet<ushort>();
+            foreach (var bp in _all)
+                if (bp.Operation == "Craft")
+                    foreach (var o in bp.Outputs)
+                    { var a = SDG.Unturned.Assets.findByGuid(o.Guid); if (a != null) alreadyMade.Add(a.id); }
+
+            int made = 0;
+            foreach (var a in SDG.Unturned.Assets.all())
+            {
+                if (a == null || !a.isAmmo || string.IsNullOrEmpty(a.guid)) continue;
+                if (alreadyMade.Contains(a.id)) continue;
+
+                int stack = Mathf.Clamp(a.stackSize, 8, 256);
+                float size = 128f / stack;                                  // 1.0 = a 5.56; 4.0 = a 12-gauge shell
+                int batch = Mathf.Max(5, stack / 8);                        // worth the trip to the bench
+                int scrapCost = Mathf.Max(1, Mathf.CeilToInt(batch * size / 6f));
+                int powderCost = Mathf.Max(1, Mathf.CeilToInt(batch * size / 8f));
+
+                var bp = new BlueprintDef
+                {
+                    OwnerItemId = a.id.ToString(),
+                    Operation = "Craft",
+                    Name = a.itemName,
+                    Skill = "", SkillLevel = 0,
+                    Seconds = Mathf.Clamp(batch * 0.25f, 2f, 12f),
+                };
+                bp.Inputs.Add(new BlueprintDef.Ingredient { Guid = scrap.guid, Amount = scrapCost, Consume = true });
+                bp.Inputs.Add(new BlueprintDef.Ingredient { Guid = powder.guid, Amount = powderCost, Consume = true });
+                bp.Outputs.Add(new BlueprintDef.Ingredient { Guid = a.guid, Amount = batch, Consume = true });
+                _all.Add(bp);
+                made++;
+            }
+            if (made > 0) Log.Print($"[bp] generated {made} ammo recipe(s) from metal scrap + gunpowder");
+        }
+
+        /// <summary>Break things down for parts.
+        ///
+        /// Master 2026-10-07: "add salvage recipes for smoke grenades, flares, frag grenades -> metal scrap +
+        /// gunpowder. firefighter shirt and pants -> asbestos + cloth. firefighter helmet -> asbestos + scrap.
+        /// military helmets -> 2 scrap. all 'hats' (caps tophats etc) scrap for cloth. most shirts and pants
+        /// recycle for cloth too. backpacks too."
+        ///
+        /// ⭐ THE SHAPE OF THE REQUEST IS "A FEW NAMED THINGS, THEN WHOLE CATEGORIES", so the code is the same:
+        /// explicit overrides first, then a sweep by item TYPE for everything that did not get one. "All hats" and
+        /// "most shirts and pants" are categories that grow, and a hand-written list of them would be wrong by the
+        /// next clothing drop.
+        ///
+        /// ⚠ Authored as `Craft` recipes that CONSUME the item, not as the `Salvage` operation: Salvage rows carry
+        /// no inputs and nothing in this port acts on that operation, so they would load, list, and do nothing.
+        /// What makes this a salvage is that the thing itself is the ingredient.
+        ///
+        /// ⚠ An item that already has a Craft recipe consuming it is skipped, so authored content wins.</summary>
+        static void GenerateSalvageRecipes()
+        {
+            var scrap = SDG.Unturned.Assets.find(67);        // Metal Scrap
+            var cloth = SDG.Unturned.Assets.find(66);        // Cloth
+            var powder = SDG.Unturned.Assets.find(9327);     // Gunpowder
+            var asbestos = SDG.Unturned.Assets.find(9340);   // Asbestos
+            if (scrap == null || cloth == null || powder == null || asbestos == null) return;
+
+            var consumedAlready = new HashSet<ushort>();
+            foreach (var bp in _all)
+                if (bp.Operation == "Craft")
+                    foreach (var i in bp.Inputs)
+                    { var a = SDG.Unturned.Assets.findByGuid(i.Guid); if (a != null && i.Consume) consumedAlready.Add(a.id); }
+
+            int made = 0;
+            void Salvage(ushort id, params (SDG.Unturned.ItemAsset mat, int n)[] yields)
+            {
+                var src = SDG.Unturned.Assets.find(id);
+                if (src == null || string.IsNullOrEmpty(src.guid) || consumedAlready.Contains(id)) return;
+                var bp = new BlueprintDef
+                {
+                    OwnerItemId = id.ToString(), Operation = "Craft",
+                    Name = $"Salvage {src.itemName}", Skill = "", SkillLevel = 0, Seconds = 3f,
+                };
+                bp.Inputs.Add(new BlueprintDef.Ingredient { Guid = src.guid, Amount = 1, Consume = true });
+                foreach (var y in yields)
+                    if (y.mat != null && !string.IsNullOrEmpty(y.mat.guid))
+                        bp.Outputs.Add(new BlueprintDef.Ingredient { Guid = y.mat.guid, Amount = y.n, Consume = true });
+                if (bp.Outputs.Count == 0) return;
+                _all.Add(bp); _salvage[id] = bp; consumedAlready.Add(id); made++;
+            }
+
+            // ---- THE NAMED ONES, which must land BEFORE the sweep or the sweep would give them plain cloth ----
+            // ⚠ Scrap too: these are armoured (armor 0.90), and master's later rule is that anything realistically
+            // metal gives scrap as well. An override that runs BEFORE the sweep also opts out of it, so whatever
+            // the sweep would have added has to be restated here -- that is the cost of overriding first, and it
+            // is why the suite checks the rule over every garment rather than trusting the branch.
+            Salvage(233, (asbestos, 1), (cloth, 2), (scrap, 1));   // Firefighter Top
+            Salvage(234, (asbestos, 1), (cloth, 2), (scrap, 1));   // Firefighter Bottom
+            Salvage(241, (asbestos, 1), (scrap, 2));   // Firefighter Helmet
+            foreach (ushort mh in new ushort[] { 309, 1010, 1335, 1519 }) Salvage(mh, (scrap, 2));   // military helmets
+            // ⭐ GAS MASK AND ITS FILTER (master 2026-10-07: "add gas mask to your asbestos + scrap list. as well
+            // as gas mask filters"). Named rather than derived, because neither is fireproof -- the asbestos is in
+            // the FILTER MEDIUM, which is a fact about what the thing is made of and not one any field records.
+            // ⚠ A Gasmask is EItemType.MASK and a Filter is EItemType.FILTER, so neither is in the clothing sweep
+            // at all -- without these two lines they would stay unsalvageable whatever the material rules said.
+            Salvage(1270, (asbestos, 1), (scrap, 1));   // Gasmask
+            Salvage(1271, (asbestos, 1), (scrap, 1));   // Filter
+
+            // ---- KITCHENWARE BREAKS DOWN INTO WHAT IT IS MADE OF (master 2026-10-07) -----------------------
+            //
+            // ⭐ The lists come from LootTables, which is what STOCKS these containers -- so "what counts as
+            // crockery" is answered in one place. Two private copies would disagree the first time either moved.
+            var ceramic = SDG.Unturned.Assets.find(9338);
+            var glass = SDG.Unturned.Assets.find(9341);
+            if (ceramic != null && glass != null)
+            {
+                foreach (var id in LootTables.Crockery)
+                {
+                    // ⚠ The drinking glass is in the crockery list because that is where it is STOCKED, and it is
+                    // the one piece in it that is not ceramic. Breaking it into ceramic would be the tidy answer
+                    // and the wrong one.
+                    if (id == 9301) Salvage(id, (glass, 1));
+                    else Salvage(id, (ceramic, 1));
+                }
+                Salvage(1928, (ceramic, 1));   // Ceramic Plate -- the retail item, genuinely ceramic
+                Salvage(1930, (ceramic, 1));   // Ceramic Bowl
+            }
+            // "forks, spoons, pots, pans etc -> scrap"
+            // A LID IS NOT A POT: named before the Cookware sweep below, which would give it a pot's 2 scrap.
+            // A named override runs first and opts that id out of the sweep, which is this file's existing idiom.
+            Salvage(9345, (scrap, 1));
+            foreach (var id in LootTables.Cutlery) Salvage(id, (scrap, 1));
+            foreach (var id in LootTables.Cookware) Salvage(id, (scrap, 2));   // a pot is more metal than a fork
+
+            // ---- THEN THE CATEGORIES ------------------------------------------------------------------------
+            var byType = new List<SDG.Unturned.ItemAsset>(SDG.Unturned.Assets.all());
+            byType.Sort((x, y) => x.id.CompareTo(y.id));   // stable order, so the catalog is the same every run
+            foreach (var a in byType)
+            {
+                if (a == null || string.IsNullOrEmpty(a.guid)) continue;
+                // ⭐⭐ "ANYTHING REALISTICALLY METAL SHOULD GIVE SCRAP AS WELL. FIREPROOF GIVES ASBESTOS" (master
+                // 2026-10-07) -- and both of those are FACTS THE ITEM ALREADY CARRIES, not judgements I have to
+                // make garment by garment. `proofFire` says fireproof outright. `armor` is damage MULTIPLIER, so
+                // anything below 1 is a piece that actually stops something, which in this game's terms is a
+                // plate or a mail layer: that is the "realistically metal" test, and it is the item's own number.
+                //
+                // ⚠ Naming would have been the obvious route -- "helmet", "plate", "mail" -- and it would have
+                // missed every armoured piece whose name says none of that, while catching a Tophat with "plate"
+                // in its description. The data knows; I do not have to.
+                var extra = new List<(SDG.Unturned.ItemAsset mat, int n)>();
+                if (a.proofFire) extra.Add((asbestos, 1));
+                if (a.armor < 0.95f) extra.Add((scrap, 1));
+
+                (SDG.Unturned.ItemAsset mat, int n)[] With(params (SDG.Unturned.ItemAsset mat, int n)[] baseYield)
+                {
+                    if (extra.Count == 0) return baseYield;
+                    var all = new List<(SDG.Unturned.ItemAsset, int)>(baseYield);
+                    all.AddRange(extra);
+                    return all.ToArray();
+                }
+
+                switch (a.type)
+                {
+                    case SDG.Unturned.EItemType.HAT: Salvage(a.id, With((cloth, 1))); break;
+                    case SDG.Unturned.EItemType.SHIRT:
+                    case SDG.Unturned.EItemType.PANTS: Salvage(a.id, With((cloth, 2))); break;
+                    case SDG.Unturned.EItemType.BACKPACK: Salvage(a.id, With((cloth, 2))); break;
+                    // ⚠⚠ A VEST IS NOT THE ARMOURED LAYER -- I assumed that and the data says otherwise (master
+                    // 2026-10-07: "did u make all vests scrap? bc theres sweatervests and ponchos lol"). The VEST
+                    // type is a SLOT, and its 138 members include sweatervests, ponchos, ties, scarves, a Rose and
+                    // a Parrot. Scrap was never the problem -- the armor<0.95 rule already excludes sweatervests
+                    // and ponchos, which sit at exactly 0.95 -- but handing out CLOTH for a parrot is.
+                    //
+                    // ⭐ So a vest is salvageable only if it has a real armour figure (armor < 1, i.e. an entry in
+                    // clothing_armor.tsv). That is the same trick as everywhere else here: a garment the game has
+                    // measured protection for is a garment; a Rose is wearing-slot furniture.
+                    case SDG.Unturned.EItemType.VEST:
+                        if (a.armor < 1f) Salvage(a.id, With((cloth, 1)));
+                        break;
+                    case SDG.Unturned.EItemType.THROWABLE:
+                        // ⚠ Not a snowball. It is a Throwable by type and gives neither metal nor propellant, and
+                        // a recipe turning one into gunpowder is the kind of thing a type sweep produces if nobody
+                        // reads what is in the category.
+                        if (a.id == 1132) break;
+                        Salvage(a.id, (scrap, 1), (powder, 1));
+                        break;
+                }
+            }
+            if (made > 0) Log.Print($"[bp] generated {made} salvage recipe(s)");
         }
 
         /// <summary>
@@ -115,7 +409,14 @@ namespace UnturnedGodot
         {
             if (bp.Inputs.Count != 1) return false;
             if (!ushort.TryParse(bp.OwnerItemId, out var oid)) return false;
-            var outItem = SDG.Unturned.Assets.find(oid);
+            // ⚠⚠ THE PRODUCT, NOT THE OWNER. This read the owner item and called it the output, which is true of a
+            // retail recolour row (the .dat the recipe came from IS the new colour) and false of anything whose
+            // owner is its INGREDIENT -- every salvage recipe. Owner == input made the two names trivially equal,
+            // so all 800 salvages tested as recolours and the craft menu filed them under "Dyes": 801 dyes, and no
+            // salvage anywhere else, with the browse list reporting "36 shown" out of 837. MEASURED, not guessed --
+            // All excludes nothing but Dyes, so 837 - 36 is how many it thought were dyes.
+            var outItem = bp.Outputs.Count > 0 ? SDG.Unturned.Assets.findByGuid(bp.Outputs[0].Guid)
+                                               : SDG.Unturned.Assets.find(oid);
             var inItem = SDG.Unturned.Assets.findByGuid(bp.Inputs[0].Guid);
             if (outItem == null || inItem == null) return false;
             string a = _colour.Replace(outItem.itemName ?? "", "").Trim();

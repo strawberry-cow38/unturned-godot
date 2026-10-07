@@ -42,6 +42,58 @@ namespace UnturnedGodot
         /// <summary>Total placed resource instances, in the deterministic load order (the wire index space).</summary>
         public int InstanceCount => _instances.Count;
 
+        // ---- CANOPY OCCLUSION FOR AI SIGHT ------------------------------------------------------------------
+        // ⚠⚠ DELIBERATELY NOT A COLLIDER. The trunk body above is a FIXED 0.5 m x 8 m cylinder precisely because
+        // part-0's mesh AABB -- the whole tree including the canopy -- gave "a giant ~5m-radius cylinder floating
+        // at canopy height that missed the ground", which is wrong for a trunk you walk into and shoot. That
+        // decision stands. But the same volume is exactly RIGHT for "can something above the trees see through
+        // them", so it is kept as plain numbers and tested in software by whoever asks.
+        //
+        // master 2026-10-06: "add occlusions for its line of sight through trees". Before this the NPC gunship's
+        // LOS ray met only the 8 m trunk, so a player standing under a canopy was in open sight from above --
+        // the ray passed straight through the leaves and usually missed the narrow trunk entirely.
+        //
+        // ⭐ The 5 m radius is MEASURED, not invented: it is the figure the rejected AABB cylinder produced.
+        struct Canopy { public float X, Z, R, YLo, YHi; }
+        readonly List<Canopy> _canopies = new List<Canopy>();
+        const float CanopyRadius = 5f, CanopyLowY = 5f, CanopyHighY = 16f;
+
+        public int CanopyCount => _canopies.Count;
+
+        /// <summary>Does the segment a->b pass through any tree canopy? Used by NpcHeli for line of sight.
+        ///
+        /// Vertical-cylinder test: clip the segment to the canopy's height band, then ask whether the clipped
+        /// part passes within R of the trunk axis in XZ. Cheap enough to call per LOS check (a few times a
+        /// second per aircraft) and it touches no physics state, so it cannot affect bullets or movement.</summary>
+        public bool CanopyBlocksSegment(Vector3 a, Vector3 b)
+        {
+            for (int i = 0; i < _canopies.Count; i++)
+            {
+                var c = _canopies[i];
+                // 1. Clip to the canopy's vertical band. Fully above or below -> this tree cannot be in the way.
+                float y0 = a.Y, y1 = b.Y, t0 = 0f, t1 = 1f;
+                if (Mathf.Abs(y1 - y0) > 1e-5f)
+                {
+                    float lo = (c.YLo - y0) / (y1 - y0), hi = (c.YHi - y0) / (y1 - y0);
+                    if (lo > hi) (lo, hi) = (hi, lo);
+                    t0 = Mathf.Max(t0, lo); t1 = Mathf.Min(t1, hi);
+                    if (t0 > t1) continue;
+                }
+                else if (y0 < c.YLo || y0 > c.YHi) continue;   // horizontal segment outside the band
+
+                // 2. Distance from the trunk axis to the clipped segment, in XZ.
+                float ax = a.X + (b.X - a.X) * t0, az = a.Z + (b.Z - a.Z) * t0;
+                float bx = a.X + (b.X - a.X) * t1, bz = a.Z + (b.Z - a.Z) * t1;
+                float dx = bx - ax, dz = bz - az;
+                float len2 = dx * dx + dz * dz;
+                float px = c.X - ax, pz = c.Z - az;
+                float u = len2 > 1e-6f ? Mathf.Clamp((px * dx + pz * dz) / len2, 0f, 1f) : 0f;
+                float qx = px - dx * u, qz = pz - dz * u;
+                if (qx * qx + qz * qz <= c.R * c.R) return true;
+            }
+            return false;
+        }
+
         public bool IsAlive(int index) => index >= 0 && index < _instances.Count && _instances[index].Alive;
 
         /// <summary>Test seam: the tree-trunk StaticBody3D for an instance (null for non-trees) -- L1s
@@ -309,6 +361,9 @@ namespace UnturnedGodot
                         recs[k].Trunk = body;
                         recs[k].TrunkLayer = body.CollisionLayer;
                         treeCols++;
+                        // ...and a CANOPY record, for AI line-of-sight ONLY -- never physics. See CanopyBlocksSegment.
+                        _canopies.Add(new Canopy { X = t.Origin.X, Z = t.Origin.Z, R = CanopyRadius * sr,
+                                                   YLo = t.Origin.Y + CanopyLowY * sh, YHi = t.Origin.Y + CanopyHighY * sh });
                     }
                 }
                 else if (isForage)
@@ -508,6 +563,11 @@ namespace UnturnedGodot
                                              : GeometryInstance3D.ShadowCastingSetting.On,
                                 VisibilityRangeEnd = cullRange, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled };
                             mmi.AddToGroup(NearestFilter.KeepFilterGroup);   // keep the bilinear MakeMat set; the scene-wide sweep would stamp it back to Nearest
+                            // INTO THE WATER MIRROR. Trees are the reflection master actually asked for ("reflections
+                            // on water with trees + props"), and this is the real-tree chunk -- the IMPOSTOR chunk
+                            // below is deliberately left out, because a card oriented for the main camera turns
+                            // edge-on in a mirrored one, which reflects as a flicker of nothing rather than a treeline.
+                            WaterReflection.MarkReflective(mmi);
                             AddChild(mmi);
                         }
                     }
@@ -1348,6 +1408,10 @@ namespace UnturnedGodot
                 }
                 parent.AddChild(new MeshInstance3D { Mesh = m, MaterialOverride = mat });
             }
+            // A FELLED TREE STILL REFLECTS. Marked here in one sweep rather than at each of the three AddChild
+            // branches above (leaf / trunk / generic part), so a fourth branch added later cannot miss it.
+            foreach (var c in parent.GetChildren())
+                if (c is VisualInstance3D vi) WaterReflection.MarkReflective(vi);
         }
 
         /// <summary>Test seam: regrow NOW rather than after the reset timer, so a test can prove the stump's

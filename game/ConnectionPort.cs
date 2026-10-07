@@ -157,12 +157,20 @@ namespace UnturnedGodot
             }
             Vector3 flow = p.Kind == DeployableDef.PortKind.Consumer ? -outDir : outDir;         // consumer draws IN; producer pushes OUT
 
-            // two crossed quads sharing the flow axis (grass "X"): the flat arrow reads from any viewing angle. The quad
-            // texture points +Y in quad-local; RotateYTo aims that +Y along `flow`. Double-sided (material CullMode off).
+            // ONE quad that turns to face you, spinning only about the flow axis (master 2026-10-06: "shouldnt be
+            // crossing billboards. should be one arrow billboard that spins on one axis following the camera").
+            //
+            // ⚠ It used to be TWO crossed quads -- a grass-style "X" -- so that the flat arrow read from any angle
+            // without any per-frame work. It does read from any angle, but you can SEE that it is two sheets: the
+            // second quad is a visible blade through the first at most viewing angles, and near 45 degrees the pair
+            // reads as a cross rather than as one arrow. A single billboarded quad is the thing the X was imitating.
+            //
+            // The quad texture points +Y in quad-local and RotateYTo aims that +Y along `flow`, so AxisBillboard's
+            // local-Y spin keeps the arrow pointing exactly where it did and only turns its face. Still double-sided
+            // (material CullMode off), which now only matters for the instant it passes edge-on.
             const float W = 0.17f, L = 0.24f;
             var root = new Node3D { Position = basePos + outDir * 0.20f, Basis = RotateYTo(flow) };
-            root.AddChild(new MeshInstance3D { Mesh = new QuadMesh { Size = new Vector2(W, L) }, MaterialOverride = mat, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off });
-            root.AddChild(new MeshInstance3D { Mesh = new QuadMesh { Size = new Vector2(W, L) }, MaterialOverride = mat, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off, Basis = new Basis(Vector3.Up, Mathf.Pi / 2f) });
+            root.AddChild(AxisBillboard.Make(new Vector2(W, L), mat));
             return root;
         }
 

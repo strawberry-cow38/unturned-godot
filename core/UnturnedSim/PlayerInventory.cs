@@ -465,6 +465,34 @@ namespace SDG.Unturned
         }
 
         // consume up to `amount` of item id across the player's pages (crafting supply consumption); removes emptied jars
+        /// <summary>Take `amount` off ONE EXACT copy -- the Item instance handed in, not the first one with its id.
+        /// Returns how much was actually taken (0 if that instance is not in your own pages any more).
+        ///
+        /// ⭐ WHY THIS EXISTS: removeItemAmount scans page-then-index and eats the FIRST match, which is the right
+        /// behaviour for a recipe ("spend 2 cloth") and the wrong one for an action aimed at a particular jar. The
+        /// inventory's Salvage button is aimed at a particular jar: right-click the 8% helmet, press Salvage, and
+        /// first-found could take the 100% one instead. Identical yield, so nothing looks broken -- the player just
+        /// quietly loses the good one. Reference equality on the instance, because an id plus a quality still does
+        /// not name WHICH of two 40% shirts you meant.</summary>
+        public int removeItemInstance(Item it, int amount)
+        {
+            if (it == null || amount <= 0) return 0;
+            for (byte b = 0; b < OWNPAGES; b++)
+            {
+                var page = items[b];
+                for (byte i = 0; i < page.getItemCount(); i++)
+                {
+                    var jar = page.getItem(i);
+                    if (!ReferenceEquals(jar?.item, it)) continue;
+                    int take = Math.Min(amount, it.amount);
+                    it.amount -= (ushort)take;
+                    if (it.amount == 0) page.removeItem(i);
+                    return take;
+                }
+            }
+            return 0;
+        }
+
         public void removeItemAmount(ushort id, int amount)
         {
             for (byte b = 0; b < OWNPAGES && amount > 0; b++)

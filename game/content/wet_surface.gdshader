@@ -126,14 +126,25 @@ void fragment(){
     // so a quarter of the world behind shows through. Master reported that as "brighter" once and "actually
     // transparent" once; it is one artifact, and against bright sky it reads both ways.
     //
-    // ⭐ Hashing also keeps this in the OPAQUE pass -- it discards pixels, it does not blend them -- so props do
-    // not move into transparent sorting, and depth stays correct through the handover. That is the point of
-    // dithered LOD transitions generally, and it is why this beats the depth prepass I tried first (reverted in
-    // 4456a8a8): that one left both LODs blending AND gave two overlapping meshes a depth fight.
+    // ⚠⚠ DISABLED 2026-10-06 -- master: "LOD dithering fade-in/out renders on top of all other transparency".
+    //
+    // ⭐⭐ I WROTE THE OPPOSITE OF THAT IN THIS COMMENT AND NEVER MEASURED IT. The line said "hashing also keeps
+    // this in the OPAQUE pass ... so props do not move into transparent sorting". That was reasoning about what
+    // alpha-hash is FOR, not an observation of what this shader compiled to -- and this shader never writes ALPHA
+    // at all, so the only alpha here is the one the engine's visibility fade injects. Master's report is the
+    // measurement, and it says the material moved into transparent sorting: roads and wet surfaces now draw over
+    // glass, water and rain. That is a worse and broader artifact than the LOD brightness it was fixing, and it
+    // reaches every surface RoadField/WetSurface paints, not just the ones mid-fade.
+    //
+    // ⚠ THIRD ATTEMPT AT THIS FADE, SO IT STOPS HERE RATHER THAN GUESSING AGAIN. The depth prepass (reverted in
+    // 4456a8a8) and this hash were both changes I could not see the result of. The next one computes the fade
+    // DISTANCE in the shader and does its own hashed `discard` -- the way foliage_fade.gdshaderinc already does
+    // it -- so the material never writes ALPHA and its pass cannot be decided for us. That needs a render to
+    // confirm, and master has the box. [[feedback_dont_flail_on_visuals]], [[feedback_a_comment_is_not_a_measurement]].
     //
     // ⚠ SCOPED TO THIS SHADER ON PURPOSE. wind_sway.gdshader is the other material a prop can take, and it writes
     // ALPHA itself for cutout foliage (`ALPHA = c.a; ALPHA_SCISSOR_THRESHOLD = alpha_scissor`). Hashing there
     // would dither the LEAF CUTOUT, not just the fade, so it is deliberately left alone -- the two shaders differ
     // for a reason, which is the lesson from the prepass attempt.
-    ALPHA_HASH_SCALE = 1.0;
+    // ALPHA_HASH_SCALE = 1.0;   // re-enable only together with the self-computed discard described above
 }

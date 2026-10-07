@@ -92,7 +92,37 @@ namespace SDG.Unturned
         /// is `give Charcoal` until then, and deliberately NOT craftable: a blueprint invented now would be the
         /// thing that has to be unpicked when the spawn entry lands. PEI loot cannot carry it meanwhile because
         /// loot comes from the real Items.dat, which has never heard of item 9150.</summary>
-        public const ushort CharcoalId = 9150;
+        ///
+        /// ⚠⚠ 2026-10-07: THIS WAS 9150 AND THERE WERE TWO CHARCOALS. When master asked whether charcoal existed
+        /// already, I added a second one -- 9333, in items_catalog.tsv, with a guid, a stack size, the black-powder
+        /// recipe and the barbecue's new loot entry all pointing at it. 9150 is registered by ItemCatalog.Add(), so
+        /// BOTH existed, and this constant still named the old one: the charcoal a player finds in a BBQ was 9333
+        /// and the only thing the BBQ would burn was 9150. Nothing threw. You just could not light it.
+        /// ⭐ The id space has FOUR issuers (this TSV, ItemCatalog.Add, DeployableDef, content/items/*.txt) and I had
+        /// checked one of them. 9333 wins because it is the one with a guid -- a blueprint keys by guid, and an
+        /// Add()-only item has none, so 9150 could never have been craftable with or into anything.</summary>
+        public const ushort CharcoalId = 9333;
+
+        /// <summary>Split logs (master 2026-10-07: "add a new firewood item ... firewood doesnt have a 'type' so it
+        /// stacks regardless of the log that made it ... burns at the sane rate as logs").
+        ///
+        /// ⭐ IT NEEDS AN ID HERE BECAUSE IT HAS NO SPECIES. Every other wooden fuel is recognised by its NAME --
+        /// SpeciesBurn looks for Maple/Birch/Pine -- and the entire point of firewood is that the species is gone,
+        /// which is exactly what lets it stack. So the name test returns 0, IsWood would say it is not wood, and
+        /// the thing whose whole purpose is burning would not burn. Named explicitly instead, like charcoal.</summary>
+        public const ushort FirewoodId = 9342;
+
+        /// <summary>What a species-less wood burns at: the MIDDLE species (birch, 1.0). "The same rate as logs" has
+        /// to mean one of the three, and the one that is neither the dense nor the resinous end is the honest answer
+        /// for a pile with no species on it -- so one firewood burns exactly as long as one birch log.
+        ///
+        /// ⭐ AND THE ARITHMETIC THAT FALLS OUT IS DELIBERATE, so do not "fix" it: 1 log gives 2 firewood that each
+        /// burn a whole log's worth, and 12 fit the 2x1 a log stacks 4 into. Master 2026-10-07, asked directly:
+        /// "say our character somehow magically dried out the wood too when splitting it: burns better than a wet
+        /// log. chunks of firewood easier to carry than a full heavy log". What pays for it is that firewood is a
+        /// DEAD END -- "it cant be used to craft anything else, its a one way 'i WILL burn this' choice" -- which
+        /// craft.firewood asserts, so it stays a choice rather than quietly becoming a free upgrade.</summary>
+        public const float SpeciesReference = 1.0f;
 
         /// <summary>The three wood species, and how long each burns relative to the others. Hardwood outlasts
         /// softwood: maple is the dense one, pine the resinous fast one, birch in between. strawberry
@@ -134,8 +164,10 @@ namespace SDG.Unturned
         /// three items that make a substring wrong), AND a type of SUPPLY or GENERIC -- so a Maple DOOR burns
         /// and a Maple-anything that is food, clothing or a weapon does not.</summary>
         public static bool IsWood(ItemAsset a)
-            => a != null && SpeciesBurn(a.itemName) > 0f
-               && (a.type == EItemType.SUPPLY || a.type == EItemType.GENERIC);
+            => a != null
+               && (a.id == FirewoodId                       // species-less by design -- see FirewoodId
+                   || (SpeciesBurn(a.itemName) > 0f
+                       && (a.type == EItemType.SUPPLY || a.type == EItemType.GENERIC)));
 
         /// <summary>How long one unit of this fuel burns, in seconds. Size counts (strawberry: "the size of
         /// wooden fuel having different burn times") and the GRID FOOTPRINT is the measure -- it is already in
@@ -145,7 +177,9 @@ namespace SDG.Unturned
         {
             if (a == null) return 0f;
             if (a.id == CharcoalId) return 45f;
-            float species = SpeciesBurn(a.itemName);
+            // Firewood takes the reference species rather than 0, so its footprint still sets the number: at its
+            // 2x1 that is 40 s, the same as a birch log, which is what "the same rate as logs" asks for.
+            float species = a.id == FirewoodId ? SpeciesReference : SpeciesBurn(a.itemName);
             if (species <= 0f) return 0f;
             int area = System.Math.Max(1, a.size_x * a.size_y);
             return WoodBurnPerCell * species * area;
@@ -171,14 +205,29 @@ namespace SDG.Unturned
         /// (see PowerWatts) and are not modelled as needing anything to put in them.</summary>
         public static bool NeedsFuel(ECookerKind k) => k == ECookerKind.Barbecue || k == ECookerKind.Campfire;
 
-        /// <summary>Will this appliance burn this item? A barbecue takes charcoal and nothing else (strawberry:
-        /// "bbqs can only take charcoal as a fuel"); a campfire takes anything wooden.</summary>
+        /// <summary>Will this appliance burn this item? A barbecue takes charcoal plus the small wooden fuels
+        /// (master 2026-10-07: "bbq should burn logs, sticks, planks, firewood" -- it was charcoal-only before,
+        /// strawberry 2026-09-06: "bbqs can only take charcoal as a fuel"); a campfire takes anything wooden,
+        /// doors and barricades included.</summary>
         public static bool IsFuelFor(ECookerKind k, ItemAsset a) => k switch
         {
-            ECookerKind.Barbecue => a != null && a.id == CharcoalId,
+            ECookerKind.Barbecue => a != null && (a.id == CharcoalId || IsGrillWood(a)),
             ECookerKind.Campfire => IsWood(a),
             _ => false,
         };
+
+        /// <summary>Wood a BARBECUE will take, as opposed to wood a bonfire will take.
+        ///
+        /// Master 2026-10-07: "bbq should burn logs, sticks, planks, firewood" -- which replaces the older
+        /// charcoal-only rule. ⭐ DERIVED, NOT A LIST OF THE FOUR. Those four are exactly the wooden items whose
+        /// type is SUPPLY. MEASURED, and the measurement is the whole argument: the 9 wooden-named SUPPLY items are
+        /// precisely the three logs, three sticks and three planks, plus firewood -- master's list, with nothing
+        /// else in it. Everything else wooden (Maple Doorway, Pine Fortification, Birch Wall) loads as GENERIC,
+        /// ⚠ NOT as Structure/Barricade: the TSV says "Structure" but the runtime enum does not keep it, which is
+        /// why the filter has to be "is SUPPLY" rather than "is not a structure". So the type does the work, a
+        /// fifth kind of log is included the day it exists, and you still cannot feed a doorway into a kettle
+        /// grill -- the difference between a barbecue and a bonfire, and the reason this is not just IsWood.</summary>
+        public static bool IsGrillWood(ItemAsset a) => IsWood(a) && a.type == EItemType.SUPPLY;
 
         public static bool IsBread(ushort id) => Breads.Contains(id);
         public static bool IsMetal(ushort id) => Metals.Contains(id);

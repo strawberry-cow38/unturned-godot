@@ -121,7 +121,14 @@ void fragment() {
     COLOR = vec4(mix(c, tint.rgb, tint.a), 1.0);
 }";
 
-        static readonly string[] CatOrder = { "All", "Weapons", "Attachments", "Ammo", "Clothing", "Medical", "Food", "Building", "Resources", "Tools", "Other", "Dyes" };
+        static readonly string[] CatOrder = { "All", "Weapons", "Attachments", "Ammo", "Clothing", "Medical", "Food", "Building", "Resources", "Tools", "Other", "Dyes", "Salvage" };
+
+        /// <summary>Categories "All" leaves out. Dyes are 100+ repaints of things you already have and salvage is
+        /// one row per salvageable item in the game -- either one dropped into All buries the handful of recipes
+        /// that are actually a recipe. They keep their own category so nothing is unreachable, and salvage has the
+        /// item's right-click menu as its real entry point. ⭐ ONE PLACE: the count and the grid both ask here, and
+        /// they disagreed the first time this rule had two copies.</summary>
+        static bool OffAll(string cat) => cat == "Dyes" || cat == "Salvage";
 
         // group the output item's EItemType (by name, so a type this build doesn't know just falls to Other).
         static string CategoryOf(ItemAsset a)
@@ -547,7 +554,8 @@ void fragment() {
                 _all.Add(bp);
                 var a = OutAsset(bp);
                 _out[bp] = a;
-                _catOf[bp] = BlueprintRegistry.IsRecolour(bp) ? "Dyes" : CategoryOf(a);
+                _catOf[bp] = BlueprintRegistry.IsSalvage(bp) ? "Salvage"
+                           : BlueprintRegistry.IsRecolour(bp) ? "Dyes" : CategoryOf(a);
             }
         }
 
@@ -564,7 +572,7 @@ void fragment() {
             foreach (var bp in _all)
             {
                 if (!Known(bp)) continue;   // the category counts are what browsing would show, and browsing hides the unknown
-                if (cat == "All") { if (_catOf[bp] != "Dyes") n++; }
+                if (cat == "All") { if (!OffAll(_catOf[bp])) n++; }
                 else if (_catOf[bp] == cat) n++;
             }
             return n;
@@ -584,7 +592,7 @@ void fragment() {
                 if (q.Length == 0 || _look != ItemLookup.None) { if (!Known(bp)) continue; }
                 if (_look != ItemLookup.None) { if (!LookupMatches(bp, _look, _lookId)) continue; }
                 else if (q.Length > 0) { if (!Matches(bp, q)) continue; }
-                else if (_cat == "All") { if (_catOf[bp] == "Dyes") continue; }
+                else if (_cat == "All") { if (OffAll(_catOf[bp])) continue; }
                 else if (_catOf[bp] != _cat) continue;
                 res.Add(bp);
             }
@@ -915,7 +923,11 @@ void fragment() {
 
         // the quick-craft entry point (InventoryUI's bottom-right bar): queue a specific recipe. SP escrows into the
         // queue like the CRAFT button; MP sends the immediate NetCraft. Clamps to what the bag can actually make.
-        public void QueueCraft(BlueprintDef bp, int qty)
+        /// <param name="prefer">The exact copy of an ingredient to spend first, when the caller is aiming at one
+        /// particular jar rather than at the bag (the inventory's Salvage button). ⚠ LOCAL PATH ONLY: the MP branch
+        /// below sends a recipe INDEX and the server picks its own copy, so under a server the preference is
+        /// best-effort. Carrying it over the wire would mean a protocol change, which takes the server off air.</param>
+        public void QueueCraft(BlueprintDef bp, int qty, Item prefer = null)
         {
             if (Inv == null || bp == null || !Known(bp) || !Crafting.MeetsSkill(bp, Player?.Skills)) return;
             if (!Crafting.HasStations(bp, Player?.CraftingStationTags())) return;   // require the recipe's workbench/station
@@ -929,14 +941,14 @@ void fragment() {
                     if (ReferenceEquals(BlueprintRegistry.All[i], bp)) { idx = i; break; }
                 if (idx >= 0) for (int k = 0; k < n; k++) Player.NetCraft((ushort)idx);
             }
-            else Enqueue(bp, n);
+            else Enqueue(bp, n, prefer);
             if (_open) Rebuild();
         }
 
         // queue a job: resolve + consume its per-unit ingredients x n into limbo, then prepend it on the LEFT.
-        void Enqueue(BlueprintDef bp, int n)
+        void Enqueue(BlueprintDef bp, int n, Item prefer = null)
         {
-            var inv = new Crafting.PlayerInvAdapter(Inv);
+            var inv = new Crafting.PlayerInvAdapter(Inv) { Prefer = prefer };
             var perUnit = new List<(ushort id, int amt)>();
             foreach (var ing in bp.Inputs)
             {
@@ -1134,6 +1146,8 @@ void fragment() {
         public void DebugSetSearch(string q) { if (_search != null) _search.Text = q; _sel = null; _look = ItemLookup.None; Rebuild(); }
         /// <summary>Test seam: how many tiles in the grid carry the padlock right now.</summary>
         public string DebugBlocker(BlueprintDef bp) => CraftBlocker(bp, new Crafting.PlayerInvAdapter(Inv), 1);
+        /// <summary>Test seam: which category a recipe was filed under.</summary>
+        public string DebugCategoryOf(BlueprintDef bp) => _catOf.TryGetValue(bp, out var c) ? c : "(not in the menu)";
         public int DebugPadlocks() { int n = 0; foreach (Node t in _grid.GetChildren()) foreach (Node c in t.GetChildren()) if (c is PadlockGlyph) n++; return n; }
         public BlueprintDef DebugSelected => _sel;
         public Vector2 DebugLaidOutFor => _laidOutFor;

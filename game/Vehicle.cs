@@ -1573,6 +1573,11 @@ namespace UnturnedGodot
                     Position = Turrets[i].GunnerAt,
                     MaxHealth = new PlayerVitalsSim().MaxHealth,   // "same hp as a player", taken FROM the player's sim
                     NeverRespawn = true,
+                    // A REAL CREWMAN, NOT THE RANGE TARGET (master 2026-10-06). TargetDummy stays the body --
+                    // it owns the hit zones, the player-equal health and the collision box that TurretCrewAlive
+                    // reads -- and only its MESH changes, so a gunner is exactly as killable as before.
+                    CharacterModel = true,
+                    CharacterGun = Turrets[i].GunId,   // he holds the gun his mount fires
                 };
                 AddChild(crew);
                 AddCollisionExceptionWith(crew);
@@ -2902,9 +2907,48 @@ namespace UnturnedGodot
             if (_fireLight != null) { _fireLight.Visible = true; _fireLight.LightEnergy = 3f; }
             _burnTime = 0f;   // start the fire lifecycle (dies down at 40s, out at 60s, despawns 5 min later)
             _explosionAudio?.Play();
-            if (_bodyMesh != null) _bodyMesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.05f, 0.05f, 0.05f), Metallic = 0f, Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };   // charred wreck
+            CharWreck();        // master 2026-10-06: "make sure destroyed helis are turning black in their corpse"
+            ShedRotors();       // ...and "destroyed helis should lose their rotors"
             SpawnWheelDebris();
             ExplodeDamage();
+        }
+
+        /// <summary>Char EVERY mesh in the wreck, not just the body.
+        ///
+        /// ⚠ This used to be one line setting _bodyMesh.MaterialOverride, which is right for a CAR -- one body
+        /// mesh -- and wrong for a HELICOPTER, which Build splits across many MeshInstance3Ds: the fuselage, the
+        /// tail boom, the rotor blades and discs, the nav-light lenses. So a downed gunship kept its factory
+        /// paint everywhere except the one node that happened to be _bodyMesh, which is master's report
+        /// (2026-10-06) that destroyed helis were not turning black.
+        ///
+        /// ⭐ Walks the tree rather than listing the nodes: the heli build adds meshes in several places
+        /// (MountRotor, the lens split, the belly beacon) and a list here would be a second place to remember.</summary>
+        void CharWreck()
+        {
+            var charred = new StandardMaterial3D { AlbedoColor = new Color(0.05f, 0.05f, 0.05f), Metallic = 0f, Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            int n = 0;
+            void Walk(Node node)
+            {
+                if (node is MeshInstance3D mi) { mi.MaterialOverride = charred; n++; }
+                foreach (var c in node.GetChildren()) Walk(c);
+            }
+            Walk(this);
+            if (_bodyMesh != null) _bodyMesh.MaterialOverride = charred;   // belt and braces: it may not be parented under us
+        }
+
+        /// <summary>A destroyed helicopter loses its rotors (master 2026-10-06). The blades are the first thing
+        /// to leave a real one, and a wreck sitting under a perfectly intact disc reads as parked rather than
+        /// destroyed -- doubly so now that the disc stops spinning (spinScale is already gated on _exploded).
+        ///
+        /// Frees the PIVOTS, which takes the blades, the disc and anything mounted on them with it, and nulls
+        /// the references so the per-frame spin code skips them instead of touching freed nodes -- the FREED
+        /// wrap trap this repo has been bitten by before.</summary>
+        void ShedRotors()
+        {
+            if (!_heli) return;
+            if (_rotorNode != null && GodotObject.IsInstanceValid(_rotorNode)) _rotorNode.QueueFree();
+            if (_tailRotorNode != null && GodotObject.IsInstanceValid(_tailRotorNode)) _tailRotorNode.QueueFree();
+            _rotorNode = null; _tailRotorNode = null;
         }
 
         // source InteractableVehicle explode: DamageTool.explode(pos, radius 8, playerDmg 200, zombieDmg 200, vehicleDmg 500).
@@ -4673,13 +4717,24 @@ namespace UnturnedGodot
         ///
         /// Each mount declares a GunnerAt, so a killable body is built behind it. That is the whole point: these
         /// are people leaning out of a doorway, not the Hind's remote chin turret.</summary>
-        static TurretDef[] DoorGuns(string gunId, string gunMesh, float halfWidth, float gunY, float floorY, float z)
+        /// <summary>The port/starboard door-gun pair. `portSeat`/`starboardSeat` name which SEATS crew them --
+        /// master 2026-10-06: "seats 3 and 4 should be the door gunner seats", i.e. indices 2 and 3, the pair
+        /// behind the two front seats.
+        ///
+        /// ⚠ THEY USED TO BE SEATS 1 AND 2, which put one gunner in the COPILOT'S CHAIR and left one of the two
+        /// rear door seats with no gun. The huey's seat table makes that obvious once you look: seats 2 and 3 sit
+        /// at X -1.261 / +1.261, the door positions, while seat 1 is the right-hand front seat at X +0.625.
+        ///
+        /// A PARAMETER rather than a hardcoded 2/3 because the orca's table is a different shape -- six seats,
+        /// with the widest pair at X +-1.500 further aft -- so the airframe that owns the geometry should name
+        /// its own gunner seats rather than inherit the huey's.</summary>
+        static TurretDef[] DoorGuns(string gunId, string gunMesh, float halfWidth, float gunY, float floorY, float z, int portSeat = 2, int starboardSeat = 3)
         {
             return new[]
             {
                 new TurretDef
                 {
-                    Seat = 1,   // PORT
+                    Seat = portSeat,   // PORT
                     PitchMesh = gunMesh,
                     Pivot = new Vector3(-halfWidth, gunY, z),
                     GunnerAt = new Vector3(-halfWidth, floorY, z),
@@ -4691,7 +4746,7 @@ namespace UnturnedGodot
                 },
                 new TurretDef
                 {
-                    Seat = 2,   // STARBOARD
+                    Seat = starboardSeat,   // STARBOARD
                     PitchMesh = gunMesh,
                     Pivot = new Vector3(halfWidth, gunY, z),
                     GunnerAt = new Vector3(halfWidth, floorY, z),
@@ -4750,7 +4805,16 @@ namespace UnturnedGodot
                 // it and the GSh-23L's 3,400-3,600 is clipped to the same number. The rate of fire is identical before
                 // and after this swap. What changes is the shell (175 g HEI vs ~48 g) and the belt -- the Mi-24VP's real
                 // 450 rounds against the YakB's 1,470 drum, which at the ceiling rate is 9 seconds of fire instead of 29.
-                GunId = "gsh23", DisplayName = "HMG", Cycle = 0.02f, Belt = 450,
+                // ⭐ 450 RPM, MASTER'S NUMBER (2026-10-06: "change the hind's gun to not be an insane rate of
+                // fire, more like 450rpm"). Cycle is SECONDS PER ROUND, so 60/450 = 0.1333. The note above is
+                // kept because it explains where 0.02 came from -- the engine's one-round-per-physics-tick
+                // ceiling, 3,000 rpm -- but a real gunship's cannon reading as a firehose is the complaint, and
+                // "it is what the real GSh-23L does" does not survive it being unplayable.
+                //
+                // ⚠ THE BELT IS NOW 60 SECONDS OF FIRE, not 9. At 3,000 rpm the 450-round belt was the limiter;
+                // at 450 rpm it stops being one, which is the intended trade -- the gun is survivable per second
+                // and still cannot fire forever.
+                GunId = "gsh23", DisplayName = "HMG", Cycle = 0.1333f, Belt = 450,
             },
         };
         // HIND -- the gunship, and the FASTEST thing in the fleet as well as the second heaviest. Fast and
@@ -7910,7 +7974,16 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             // thrust ... main rotor dead -> no more gaining vertical thrust, quickly lose height" -- with zero
             // lift the machine simply falls, which is the quick loss of height without needing a special case
             // to shove it downward.
-            float mainEff = MainRotorNorm;
+            // ⭐⭐ FULL LIFT UNTIL THE ROTOR IS VISIBLY HURT (master 2026-10-06: "rotors should smoke and fire
+            // before any weakening power effect takes place"). This used to be MainRotorNorm raw, so lift began
+            // dropping on the FIRST point of rotor damage while smoke does not start until RotorSmokeAt (70%).
+            // That is a 100%->70% band where the machine quietly loses power with nothing on screen to explain
+            // it -- the pilot feels it sinking and sees an undamaged aircraft.
+            //
+            // Rescaling by RotorSmokeAt makes the two line up by construction rather than by two constants
+            // happening to agree: full authority down to the exact point the smoke appears, then a linear fall
+            // to nothing as the rotor dies. Tuning RotorSmokeAt moves BOTH, so they cannot drift apart.
+            float mainEff = Mathf.Clamp(MainRotorNorm / RotorSmokeAt, 0f, 1f);
             float lift = _heliThrust * spool * _inCollective * (0.20f + 0.80f * mainEff);
             // NO THRUST UNTIL THE STARTER HAS FINISHED. Zeroed at the SOURCE rather than at the ApplyForce so
             // that everything downstream -- the tilt loss, the dead-tail clamp, ETL, ground effect -- sees a
@@ -8066,7 +8139,10 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             // a damaged tail should be alarming well before it is dead. Applies to ROLL as well as yaw (both
             // are horizontal control, and roll is where the mouse lives); PITCH is left alone because it is
             // the main rotor's axis and the vertical one.
-            float tn = TailRotorNorm;
+            // Same grace band as the main rotor above, and for the same reason: the tail's authority must not
+            // start bleeding away before its smoke gives you the reason. The SQUARE is kept -- that is the
+            // signed-off "damaged tail is alarming before it is dead" curve -- it simply starts at the smoke.
+            float tn = Mathf.Clamp(TailRotorNorm / RotorSmokeAt, 0f, 1f);
             float tailEff = 0.04f + 0.96f * tn * tn;
             float agi = SlingAgility;   // empty hook -> crisper; heavy load -> the spec figures
             Vector3 cmd = b.X * (_inPitch * HeliPitchRate * _heliPitchTq * agi / 2.6f)

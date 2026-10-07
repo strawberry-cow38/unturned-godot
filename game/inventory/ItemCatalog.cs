@@ -110,7 +110,7 @@ namespace SDG.Unturned
             Add(9217, "Item Splitter",        2, 2, EItemType.GENERIC, EItemRarity.UNCOMMON, 0, 0, "One item pipe in, three out. [F] picks how it shares: round-robin, overflow (fill the first, then the next), or weighted. Unconnected outputs are ignored.");
             Add(9218, "Item Combiner",        2, 2, EItemType.GENERIC, EItemRarity.UNCOMMON, 0, 0, "Three item pipes in, one out. A mover pulling through it takes turns between the connected inputs, skipping any that are empty.");
             Add(9219, "Item Mover",           2, 2, EItemType.GENERIC, EItemRarity.RARE,     0, 0, "The only thing that moves items through pipes. Wire it to power (100 W) and it pulls from whatever is piped into its input and pushes to whatever is on its output -- up to 32 items a second, set with [F]. Starts from the last slot of the source container; stops if the destination is full.");
-            // DOORS -- ids from DeployableDef.WoodDoors (9160-9171), NOT the 9140 block: that is already the
+            // DOORS -- ids from DeployableDef.WoodDoors (9305-9316), NOT the 9140 block: that is already the
             // Augewehr / Nightraider / .300 Blackout / Heartbreaker magazines, and a duplicate id here does not
             // error, it silently overwrites whichever entry was registered first. deploy.ids_do_not_collide
             // guards it now.
@@ -128,11 +128,11 @@ namespace SDG.Unturned
             Add(385,  "Wooden Spikes",    2, 2, EItemType.GENERIC, EItemRarity.RARE,     0, 0, "A bed of sharpened stakes. Anything that steps onto it gets shredded (60 to zombies, 30 to players); it wears ~5 HP per hit and breaks after ~8. Unrepairable, and not explosive -- a shot just snaps it.");
             Add(1241, "Remote Explosive", 2, 2, EItemType.GENERIC, EItemRarity.EPIC,     0, 0, "A plantable raiding charge -- placed INERT (no proximity/contact trigger); blows only when you set it off with a Detonator or shoot it. Huge blast: 200 to bodies, 500 to vehicles, 1000 to structures. Fragile + unrepairable.");
             Add(1240, "Detonator",        2, 2, EItemType.GENERIC, EItemRarity.RARE,     0, 0, "The remote trigger for your charges. Equip it and LEFT-CLICK to detonate every Remote Explosive you've planted, at once. (Held model is a placeholder coil for now.)");
-            // Charcoal: the barbecue's only fuel. A NEW item -- retail has no charcoal and no coal (the only
-            // "coal" in the catalog is Coalition uniforms), so a BBQ that "can only take charcoal" needed one
-            // to exist before it could take anything. See Cooking.CharcoalId for the known source gap.
-            Add(9150, "Charcoal", 1, 1, EItemType.SUPPLY, EItemRarity.COMMON, 0, 0,
-                "A bag of charcoal briquettes. The only thing a barbecue will burn -- load it into the BBQ, switch it on, and whatever you are cooking comes out charcoal grilled.");
+            // ⚠ THE Add(9150, "Charcoal", ...) THAT WAS HERE IS GONE, and this comment is the gravestone. It made a
+            // SECOND charcoal: 9333 arrived later in items_catalog.tsv with a guid, a stack, the black-powder recipe
+            // and the barbecue's loot entry, while Cooking.CharcoalId still pointed at 9150 -- so the charcoal you
+            // could find was not the charcoal the BBQ would burn, and nothing anywhere said so. 9333 is the only one
+            // now; see Cooking.CharcoalId. An Add()-only item has no guid, so it can never be crafted with.
             Add(386,  "Barbed Wire",      2, 2, EItemType.GENERIC, EItemRarity.UNCOMMON, 0, 0, "Coils of barbed wire. Anything that walks into it gets torn up (80 to zombies, 40 to players); it wears ~5 HP per hit and breaks after ~14. Tougher + nastier than wooden spikes, and unrepairable.");
             WireExtractedGuns();
             WireExtractedMelee();
@@ -167,6 +167,15 @@ namespace SDG.Unturned
             Cont(473, 2000f, UnturnedGodot.FluidType.Soda,  1, 2);   // Bottled Soda: 2 L, 1x2 (VERTICAL — a tall bottle, strawberry)
             Cont(472, 2000f, UnturnedGodot.FluidType.Cola,  1, 2);   // Bottled Cola: 2 L, 1x2 (vertical)
             Cont(337,  500f, UnturnedGodot.FluidType.None,  1, 1);   // Canteen: 500 mL, 1 slot, spawns EMPTY
+            // KITCHENWARE YOU CAN ACTUALLY POUR INTO (master 2026-10-07: "make mug and pot fluid containers").
+            // ⭐ THE CAPACITIES ARE MEASURED OFF THE MESHES astraclaw modelled, not picked: the mug's rim has an
+            // inner radius of 3.55 cm over a 10 cm body (pi r^2 h = 396 mL to the brim) and the pot's is 11 cm
+            // over 15 cm (5702 mL). Rounded DOWN to what you would actually carry without slopping it everywhere.
+            // Both spawn EMPTY like the canteen -- a mug found in a dishwasher is not full of water. 0,0 keeps
+            // their catalog footprints (mug 1x1, pot 2x2), so the pot is 1.25 L per slot against a bottle's 1.0:
+            // better per slot, and it costs you four of them at once.
+            Cont(9300,  350f, UnturnedGodot.FluidType.None,  0, 0);   // Cup/mug:     350 mL of a measured 396
+            Cont(9307, 5000f, UnturnedGodot.FluidType.None,  0, 0);   // Cooking Pot:   5 L of a measured 5.7
             // drink fluids (strawberry 2026-07-23) -- each spawns in its own retail bottle/carton, keeps its retail size (0 = don't override)
             Cont(463, 1000f, UnturnedGodot.FluidType.OrangeJuice,  0, 0);   // Orange Juice: 1 L carton, retail 1x2
             Cont(462, 1000f, UnturnedGodot.FluidType.Milk,         0, 0);   // Milk Box: 1 L carton, 1x2
@@ -219,6 +228,41 @@ namespace SDG.Unturned
         {
             void Wood(ushort id, int cap) { var a = Assets.find(id); if (a != null) a.stackSize = cap; }
 
+            // ⭐ FIREFIGHTER KIT IS FIREPROOF, AND NOTHING SAID SO. `ItemAsset.proofFire` exists and is set on
+            // EXACTLY ZERO items -- measured: the salvage rule "fireproof gives asbestos" (master 2026-10-07)
+            // matched 0/0 garments because the flag was never populated, so the rule was correct and inert.
+            // ⚠ The fix is the DATA, not a name check in the recipe generator: once the turnout gear says what it
+            // is, every system that asks -- salvage, and whatever fire mechanic comes later -- gets the right
+            // answer for free, and anything fireproof added after this inherits it.
+            foreach (ushort ff in new ushort[] { 233, 234, 241 })   // Firefighter Top / Bottom / Helmet
+            { var a = Assets.find(ff); if (a != null) a.proofFire = true; }
+
+            // ---- CRAFTING MATERIALS STACK (master 2026-10-07: "make duct tape, rope, metal scrap, nails
+            // stackable", plus the new components). These are things you pick up by the handful and spend by the
+            // handful, and a 1-per-slot nail is a bag full of nails.
+            //
+            // ⚠ "Duct tape" is item 69, whose catalog name is just **Tape** -- the retail name. Left alone rather
+            // than renamed: the name is what blueprints and the UI already say, and a rename is a separate
+            // decision from a stack size.
+            // ⭐ Sized by what the thing IS, not one number for the lot: fasteners come in handfuls, salvage in
+            // pieces, rolls one at a time.
+            Wood(71, 100);   // Nails
+            Wood(9329, 100); // Screws
+            Wood(9328, 50);  // Sulfur     -- powders, measured out
+            Wood(9333, 50);  // Charcoal
+            Wood(9334, 50);  // Black Powder
+            Wood(9327, 50);  // Gunpowder
+            Wood(67, 20);    // Metal Scrap
+            Wood(9330, 20);  // Springs
+            Wood(9331, 20);  // Gears
+            Wood(9332, 20);  // Hinges
+            Wood(9335, 20);  // Pipe       -- the SUPPLY component; Metal Pipe (1094) is the barricade piece, a different item
+            Wood(9338, 20);  // Ceramic    -- salvage, in pieces
+            Wood(9339, 20);  // Circuitry
+            Wood(9340, 20);  // Asbestos
+            Wood(64, 10);    // Rope       -- a coil at a time
+            Wood(69, 10);    // Tape
+
             // CURRENCY: one stack, named for the currency rather than for the coin carrying it, and stacking to
             // Currency.MaxPerStack so a wallet is a wallet. The other six denominations keep their catalog rows --
             // they still exist as loot and as the thing you pick up -- but Items.tryAddItem converts every one
@@ -233,6 +277,8 @@ namespace SDG.Unturned
             // stacks without anyone remembering to come back here, and no id can be in one list but not the other.
             foreach (var t in SDG.Unturned.Throwables.All) Wood(t.Id, ThrowableStackSize);
 
+            Wood(9342, 12);  // Firewood -- master: "stacks to 12 per 2x1". Split logs have no species, so unlike the
+                             // logs below there is only ONE of them and a stack never splits three ways.
             foreach (ushort log in new ushort[] { 37, 39, 41 }) Wood(log, 4);      // Birch/Maple/Pine Log   (2x1)
             foreach (ushort plank in new ushort[] { 61, 62, 63 }) Wood(plank, 6);  // Maple/Birch/Pine Plank (1x2)
             foreach (ushort stick in new ushort[] { 38, 40, 42 }) Wood(stick, 8);  // Birch/Maple/Pine Stick (1x1)

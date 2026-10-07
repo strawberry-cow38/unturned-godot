@@ -32,7 +32,7 @@ uniform float shore_depth = 2.2;      // vertical water depth (m) under which sh
 uniform float foam_amount : hint_range(0.0, 1.0) = 1.0;
 uniform float detail_strength = 0.30; // fbm fine-ripple perturbation of the normal
 uniform vec4 sky_tint : source_color = vec4(0.52, 0.67, 0.86, 1.0);  // colour reflected at grazing angles (the sky)
-uniform float reflectivity = 0.20;    // how strongly the sky shows at grazing angles (Fresnel). 0.45 -> 0.20 (strawberry 2026-09-15 "reduce the reflectivity by quite a bit"). This scales the planar mirror too (see the reflection blend), so the sea stops acting like a mirror, not just stops blowing out at the horizon
+uniform float reflectivity = 0.80;    // how strongly the sky AND the planar mirror show (Fresnel-gated). 0.45 -> 0.20 (strawberry 2026-09-15 "reduce the reflectivity by quite a bit") -> 0.80 (strawberry 2026-10-06 "make water wayy more reflective" -- 0.55 still rendered the reflected trees as a pale ghost, measured on the treetest A/B, so the first pass undershot "wayy"). ⭐ THE 09-15 CUT WAS AIMED AT A DIFFERENT THING: with the mirror never built on a map, this number only ever scaled the FLAT sky_tint, so turning it up blew the horizon white and turning it down was the only cure. Now that it scales a real reflected image, high reads as reflection rather than wash -- which is why the same knob can go the other way without re-earning the old complaint
 uniform sampler2D depth_tex : hint_depth_texture, repeat_disable, filter_linear;
 // CLOUDINESS THROUGH THE WATER COLUMN (master 2026-10-04: "the water should look visibly cloudy at depth,
 // instead of perfectly translucent").
@@ -175,7 +175,14 @@ void fragment() {
 
     // FRESNEL SKY REFLECTION: grazing angles reflect the sky, so the horizon brightens + the water reads as reflective
     // (real water isn't flat-dark edge-on). Uses the ripple-perturbed normal, so the reflection shimmers with the chop.
-    float fres = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 4.0);
+    // ⭐ THE EXPONENT IS "HOW MUCH OF THE WATER REFLECTS", not how strongly -- and it mattered more than the
+    // reflectivity scalar. At 4.0 the term is ~0.06 at a 45-degree look and only climbs near the horizon, so the
+    // water a player is actually looking AT (down at the surface from a shore, a boat, a bridge) reflected almost
+    // nothing no matter how high reflectivity went. 2.5 widens the band into those mid angles (~0.18 at 45) while
+    // leaving the grazing end where it already was, so this buys reflection where it was missing rather than more
+    // of it where there was already plenty. (Schlick's physical 5.0 is for a flat optical interface; stylised water
+    // is chop-perturbed over a whole pixel footprint, which flattens the real curve the same way.)
+    float fres = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 2.5);
     // REFLECTION: sample the planar-reflection buffer (mirror camera), UV perturbed by the wave normal so the
     // reflection SHIMMERS with the chop. Where the buffer has coverage (alpha>0) that's a reflected tree/prop/
     // building; where it's empty, fall back to the flat sky tint. Both are Fresnel-gated below, so the reflection
@@ -187,6 +194,11 @@ void fragment() {
         // the mirror SubViewport renders empty sky as bright/near-white (no environment in the buffer), so gate by
         // DARKNESS instead of alpha: dark samples are reflected geometry (trees/props/ground) -> reflect them; bright
         // samples are empty sky -> fall back to the flat sky tint (no white-out of the water).
+        // ⚠ BACK TO 0.72/0.90 (2026-10-06). I had widened this to 0.80/0.97 to let a sunlit canopy reflect, which
+        // was speculative -- and master's report was "the trees in the reflection are just.. white?". Pushing the
+        // upper bound to 0.97 is exactly how BRIGHT SKY stops being rejected and starts compositing as though it
+        // were geometry. These are the numbers the reflection was tuned against when it looked right; the thing
+        // that was actually wrong lives in WaterReflection (the mirror's aspect), not in this window.
         float refl_geo = 1.0 - smoothstep(0.72, 0.90, dot(refl.rgb, vec3(0.3333)));
         refl_src = mix(sky_tint.rgb, refl.rgb, refl_geo);
     }
@@ -198,7 +210,11 @@ void fragment() {
     // grazing angles a player on a shore actually stands at.
     float refl_w = reflectivity * mix(1.0, storm_mirror, storm);
     vec3 water_col = mix(base, refl_src, clamp(fres * refl_w * reflection_strength, 0.0, 1.0));
-    a = mix(a, 1.0, fres * refl_w * 0.25);   // gentler opacity bump at grazing -> stays see-through low-angle (master)
+    // ⚠ 0.25 -> 0.12 ON PURPOSE, against the direction of everything else here. This line turns reflection into
+    // OPACITY, and both changes above push its two inputs up -- so leaving it alone would have smuggled in the one
+    // thing master has already rejected twice ("opaque" from a shore, "stays see-through low-angle"). Halving it
+    // holds the measured see-through roughly where it was while the reflection itself goes up.
+    a = mix(a, 1.0, fres * refl_w * 0.12);
 
     // rain rings: a bright dimple where each drop lands, and a rougher patch around it so the reflection breaks up
     float rint_w = clamp(rain_intensity, 0.0, 1.0);
@@ -237,7 +253,7 @@ void fragment() {
         ALBEDO = surf_col;
         ALPHA = mix(a, 1.0, foam);
     }
-    float rough_base = mix(0.35, 0.08, lod);   // rougher (softer, less mirror-bright reflection) far -> calmer grazing; glassy near
+    float rough_base = mix(0.22, 0.05, lod);   // 0.35/0.08 -> 0.22/0.05: a sharper specular lobe = a mirror rather than a sheen. The LOD stays (far water still rougher) because that is what calmed the distant shimmer master called "busy" -- this lifts the whole curve without flattening it
     ROUGHNESS = mix(mix(rough_base, 0.9, foam), 0.55, clamp(ring, 0.0, 1.0));   // a struck patch scatters instead of mirroring
     // ...and TILT the surface where a ring passes. A brightness ring alone is a decal painted on flat water -- it
     // does not catch the sky differently, so it stays a faint smudge however bright it is. The screen-space

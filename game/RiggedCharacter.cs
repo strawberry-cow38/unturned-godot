@@ -357,6 +357,23 @@ namespace UnturnedGodot
         /// torso shares weights across Spine/Skull/hands, so zeroing a bone stretches the half-weighted vertices
         /// into spikes rather than removing anything. The clip also stays on the BODY -- moving the camera's near
         /// plane out instead would clip the world and let you see through walls you stood against.</summary>
+        /// <summary>Put every visual piece of this rig on `layers`. Used to take the LOCAL player's body off the
+        /// layer their own camera renders, while leaving it on for every other camera in the world -- security
+        /// feeds, and the lights that cast its shadow.
+        ///
+        /// ⭐ A rig is a Skeleton3D with several MeshInstance3D children (body, clothes, face quad, attachments),
+        /// and `layers` lives on each VisualInstance3D, not on the root -- so this walks. Setting it on the Node3D
+        /// root would compile, change nothing, and look exactly like it had worked.</summary>
+        public void SetRenderLayers(uint layers)
+        {
+            void Walk(Node n)
+            {
+                if (n is VisualInstance3D vi) vi.Layers = layers;
+                foreach (var c in n.GetChildren()) Walk(c);
+            }
+            Walk(this);
+        }
+
         public bool FirstPersonTrim
         {
             get => _fpTrim;

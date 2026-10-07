@@ -950,10 +950,22 @@ namespace UnturnedGodot
         {
             var n = screenNormalLocal.LengthSquared() > 1e-9f ? screenNormalLocal.Normalized() : Vector3.Forward;
             var c = bodyLocal.GetCenter();
-            // Step from the centre out to the back face along the screen normal, then 6 cm clear of it so the cube sits
-            // ON the cabinet rather than buried in it (the same failure GridPowerSource.PortLocal records at Y=0.60).
-            float reach = (bodyLocal.Size * 0.5f).Dot(n.Abs()) + 0.06f;
-            var p = c - n * reach;
+            // ⭐ THE SIDE, NOT THE BACK (master 2026-10-06: "move the data io and power io on the flatscreen to
+            // the SIDE. its impossible to reach on the back"). A flatscreen is normally against a wall or on a
+            // stand with its back inches from something, so a socket on the rear face is geometrically present
+            // and practically unclickable -- you cannot get the cursor on it without moving the television.
+            //
+            // The side axis is up x normal, so it stays perpendicular to BOTH the screen and the height slide
+            // below -- the same orthogonality the old comment makes load-bearing for the height. Falls back to a
+            // world axis when the set has no usable up (lying on its back), where any perpendicular will do.
+            var upRaw = localUp - n * localUp.Dot(n);
+            Vector3 side = upRaw.LengthSquared() > 1e-6f ? upRaw.Normalized().Cross(n) : n.Cross(Vector3.Up);
+            if (side.LengthSquared() < 1e-6f) side = n.Cross(Vector3.Right);
+            side = side.Normalized();
+            // Out to the side face, then 6 cm clear so the cube sits ON the cabinet rather than buried in it
+            // (the same failure GridPowerSource.PortLocal records at Y=0.60).
+            float reach = (bodyLocal.Size * 0.5f).Dot(side.Abs()) + 0.06f;
+            var p = c + side * reach;
 
             // ...then drop it to a quarter height, measured along whatever local axis the placement basis stands up.
             // Not simply bodyLocal's Y: these props are authored Z-up and the basis rotates them, so the local "up"

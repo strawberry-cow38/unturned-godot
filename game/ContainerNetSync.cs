@@ -89,7 +89,9 @@ namespace UnturnedGodot
                 n++;
                 ushort kindId = ContainerSchema.KindFor(c.mesh, c.display, c.label);
                 var (w, h) = StoreShelf.GridDims(c.mesh, c.display);
-                var (min, max) = StoreShelf.LootCount(c.mesh);
+                // ⚠ c.display, for the same reason GridDims above takes it: without it every solid container on the
+                // SERVER falls through to the store gondola's 12-22 and the MP world is stocked differently from SP.
+                var (min, max) = StoreShelf.LootCount(c.mesh, c.display);
 
                 NetId id = _server.Ids.Mint();
                 UnityEngine.Vector3 upos = ToU(c.pos);

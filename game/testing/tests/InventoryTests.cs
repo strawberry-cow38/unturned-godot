@@ -80,7 +80,8 @@ namespace UnturnedGodot.Testing
         public override IEnumerable<Step> Run()
         {
             ItemCatalog.RegisterAll();
-            foreach (var (id, name) in new[] { ((ushort)14, "Bottled Water"), ((ushort)473, "Bottled Soda"), ((ushort)337, "Canteen") })
+            foreach (var (id, name) in new[] { ((ushort)14, "Bottled Water"), ((ushort)473, "Bottled Soda"), ((ushort)337, "Canteen"),
+                                               ((ushort)9300, "Cup"), ((ushort)9307, "Cooking Pot") })
             {
                 var a = Assets.find(id);
                 T.Check($"{name} ({id}) resolves as a fluid container", a != null && a.IsFluidContainer);
@@ -88,6 +89,24 @@ namespace UnturnedGodot.Testing
                 p.EquipItemAsset(a, new Item(id));
                 T.Check($"{name} equips as a container, NOT a chug-consumable", !p.HoldingConsumable);
             }
+
+            // ---- THE KITCHENWARE CONTAINERS (master 2026-10-07: "make mug and pot fluid containers") ---------
+            // The capacities are MEASURED off astraclaw's meshes rather than chosen -- the mug's rim has a 3.55 cm
+            // inner radius over a 10 cm body (396 mL to the brim) and the pot's is 11 cm over 15 cm (5702 mL) --
+            // so these assert the rounded-down carry figures actually reached the catalog.
+            foreach (var (id, name, cap) in new[] { ((ushort)9300, "Cup", 350f), ((ushort)9307, "Cooking Pot", 5000f) })
+            {
+                var a = Assets.find(id);
+                T.Check($"{name} holds {cap:0} mL ({a?.fluidCapacity ?? 0:0})", a != null && System.Math.Abs(a.fluidCapacity - cap) < 1f);
+                // ⚠ EMPTY, like the canteen: a mug out of a dishwasher is not full of water. Without this the
+                // Cont() default would quietly hand every dishwasher a free litre of clean water.
+                T.Check($"{name} spawns EMPTY ({(FluidType)(a?.fluidDefaultType ?? 0)})",
+                        a != null && (FluidType)a.fluidDefaultType == FluidType.None);
+            }
+            // CONTROL that must fail if "spawns empty" were vacuous -- a bottle of water spawns as WATER.
+            var bw = Assets.find(14);
+            T.Check($"control: Bottled Water does NOT spawn empty ({(FluidType)(bw?.fluidDefaultType ?? 0)})",
+                    bw != null && (FluidType)bw.fluidDefaultType == FluidType.Water);
 
             // equipped + LMB = CHUG: empties the whole bottle at once, big hydration, the (empty) bottle stays reusable
             var wb = Assets.find(14);

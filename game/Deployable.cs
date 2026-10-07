@@ -86,6 +86,14 @@ namespace UnturnedGodot
         // --- consumer lamps (spotlight): src InteractableSpot.updateLights turns the "Spots" lights on when wired+powered ---
         readonly System.Collections.Generic.List<Light3D> _lamps = new();
         readonly System.Collections.Generic.List<float> _lampBase = new();   // per-lamp base energy (display = base * envelope * flicker)
+        // THE BULB ITSELF. master 2026-10-06: "make the white parts inside the lamp parts of the spotlights
+        // emissive glow when the spotlight is on". The lamp drove a real Light3D and a beam shaft but left the
+        // fixture's own diffuser geometry flat, so a lit spotlight threw light while its bulb stayed dull grey.
+        MeshInstance3D _lampLens;
+        StandardMaterial3D _lampLensLitMat;
+        Material _lampLensOffMat;
+        const float LensEmission = 6.0f;   // double StreetLight's 3.0: this bulb sits INSIDE its own floodlight, so it
+                                           // puts emission in HDR where the glow pass finds it (Unshaded killed it).
         LampLight _fixtureLamp;   // room lamps (desk / standing): the real fixture, which glows its own housing. Driven by THIS deployable's consumer, not the mains -- see DeployableDef.LampKind
         ConnectionPort _consumerPort, _outputPort;
         public float LoadFraction => _outputPort != null && GodotObject.IsInstanceValid(_outputPort) && _outputPort.Watts > 0f ? Mathf.Clamp(_outputPort.Draw / _outputPort.Watts, 0f, 1f) : 0f;   // generator: 0..1 of capacity currently drawn
@@ -192,6 +200,64 @@ namespace UnturnedGodot
             return dflt;
         }
 
+        /// <summary>Carve the fixture's diffuser out of the body mesh so it can be lit independently.
+        ///
+        /// ⚠ THE LENS IS REAL GEOMETRY AND IS NEVER HIDDEN, only re-materialled. StreetLight learned this the
+        /// hard way: the bulb triangles are TAKEN OUT of the body, so hiding them when the lamp is off leaves an
+        /// empty socket in the fixture in broad daylight. Dark = the prop's own material, lit = the emissive one.
+        ///
+        /// Only lamps are split (def.Lights non-empty), and only where SplitLens actually finds diffuser texels --
+        /// it keys on the palette's lens region, which not every model has. A miss is LOGGED rather than silently
+        /// leaving the bulb dull, because "the glow does not work" and "this model has no lens texels" look
+        /// identical from in front of it.</summary>
+        void SplitLampLens(DeployableDef def, MeshInstance3D body)
+        {
+            if (def?.Lights == null || def.Lights.Length == 0) return;
+            if (body?.Mesh is not ArrayMesh am) return;
+            // ⚠⚠ NOT SplitLens -- IT SELECTS THE WRONG TEXEL ON THIS MODEL, and the render said so before any of
+            // this was believed. Spotlight_deploy's palette is 2x2: dark grey x2, a mid grey (138,138,138) and the
+            // warm lamp glass (213,167,44). Counted over the real OBJ's 336 triangles:
+            //     (0,1) dark grey  236      (1,1) mid grey  90      (1,0) lamp glass  4      (0,0)  6
+            // SplitLens's hardcoded u>0.5,v>0.5 quadrant takes the NINETY mid-grey triangles -- the housings, the
+            // arms and the mast -- so the first attempt lit the entire fixture up like a warm red lamppost
+            // instead of its bulbs. The lens is the FOUR-triangle amber region, two faces, one per head.
+            //
+            // So the selector is the general UV-predicate cousin with the lamp-glass texel named explicitly.
+            // THE TEXEL *AND* THE PLACE. The 138-grey texel is shared by the lamp-head interiors and the mast, so
+            // it is intersected with "within BulbReach of one of this fixture's own lamp positions" -- which is
+            // literally what master asked for, "the white parts INSIDE the lamp parts". Measured on the real OBJ:
+            // 90 triangles carry the texel, 16 of them sit inside the two heads.
+            const float BulbReach = 0.42f;
+            var lampPos = new System.Collections.Generic.List<Vector3>();
+            foreach (var l in def.Lights) lampPos.Add(l.Pos);
+            var (bodyMesh, lensMesh) = ObjMesh.SplitByUvAndPos(am,
+                uv => uv.X > 0.5f && uv.Y > 0.5f,
+                pos => { foreach (var lp in lampPos) if (pos.DistanceTo(lp) <= BulbReach) return true; return false; });
+            if (lensMesh == null) { Log.Print($"[deploy] {def.Name}: no lamp-glass texels in the model -- the bulb cannot glow"); return; }
+            body.Mesh = bodyMesh;
+            _lampLensOffMat = body.MaterialOverride;   // whatever the prop is normally textured with
+            // ⭐ WHITE-HOT, NOT LAMP-COLOURED, and the render is why. The fixture's own warm spots wash the whole
+            // housing and pillar red (DeployableDef says so outright: "a lit spotlight used to glow out of the back
+            // of its own housing and up its pillar"), so a bulb emitting the SAME warm colour at the same rough
+            // intensity vanishes into that wash -- it was working and simply unreadable. A real filament reads
+            // white at the source with the warm tint in the spill, which is also what master asked for in those
+            // words: "the WHITE parts inside the lamp".
+            Color col = def.Lights[0].Color;
+            Color hot = col.Lerp(Colors.White, 0.75f);
+            _lampLensLitMat = new StandardMaterial3D
+            {
+                AlbedoColor = hot, EmissionEnabled = true, Emission = hot,
+                EmissionEnergyMultiplier = 0f, Metallic = 0f, Roughness = 0.4f,
+            };
+            _lampLens = new MeshInstance3D
+            {
+                Mesh = lensMesh, Transform = body.Transform, MaterialOverride = _lampLensOffMat,
+                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,   // a glowing bulb must not shadow its own fixture
+            };
+            AddChild(_lampLens);
+            Log.Print($"[deploy] {def.Name}: lamp lens split out -- bulb glows with the light");
+        }
+
         // `surface` = the ground contact point (the raycast hit); the model is lifted so its base sits there.
         // `backing` = the inventory item being planted (null = fresh/console spawn); a picked-up deployable carries its
         // HP (item.quality %) + fuel (item.fuelLevel) so re-placing it restores them instead of resetting to full.
@@ -203,6 +269,7 @@ namespace UnturnedGodot
             var mi = BuildMesh(def, out Aabb ab);
             d._mesh = mi;
             d.AddChild(mi);
+            d.SplitLampLens(def, mi);
             // collider hugs the real mesh (in the same flat frame as the mesh, so it stands up with the node)
             d.AddChild(new CollisionShape3D
             {
@@ -786,6 +853,15 @@ namespace UnturnedGodot
                         if (_lamps[i].Visible != vis) _lamps[i].Visible = vis;
                         _lamps[i].LightEnergy = _lampBase[i] * disp;
                     }
+                // ...and the bulb, off the SAME envelope -- so it warms up, flickers and dies in lockstep with
+                // the light it belongs to rather than snapping on at full while the lamp is still stuttering up.
+                if (_lampLens != null && IsInstanceValid(_lampLens) && _lampLensLitMat != null)
+                {
+                    bool glow = disp > 0.02f;
+                    var want = glow ? (Material)_lampLensLitMat : _lampLensOffMat;
+                    if (_lampLens.MaterialOverride != want) _lampLens.MaterialOverride = want;
+                    if (glow) _lampLensLitMat.EmissionEnergyMultiplier = LensEmission * disp;
+                }
                 if (DbgFlicker) Log.Print($"[FLICK] lvl={_lampLevel:0.00} disp={disp:0.00} vis={vis}");
             }
 
