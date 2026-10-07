@@ -95,10 +95,56 @@ namespace UnturnedGodot
                 if (bp != null) _all.Add(bp);
             }
             GenerateAmmoRecipes();
+            GenerateFirewoodRecipes();   // BEFORE salvage: a log is now a crafting ingredient, and the salvage sweep
+                                         // skips anything an existing recipe already consumes
             GenerateSalvageRecipes();
             SDG.Unturned.Durability.RegisterTools(_all);   // a recipe's non-consumed input is a TOOL, and tools wear (Durability)
             Log.Print($"[bp] loaded {_all.Count} blueprints from {resPath} ({SDG.Unturned.Durability.ToolIds.Count} tools)");
             return _all.Count;
+        }
+
+        /// <summary>Split a log into firewood with an axe.
+        ///
+        /// Master 2026-10-07: "add a new firewood item. crafted with logs + axe (tool) 1 log:2 firewood. firewood
+        /// doesnt have a 'type' so it stacks regardless of the log that made it."
+        ///
+        /// ⭐ ONE RECIPE PER (LOG, AXE) PAIR, because a blueprint input names ONE guid -- there is no "any axe" in
+        /// the format. Three species times two axes is six rows, all producing the same species-less Firewood, and
+        /// generating them is what keeps that true: adding a fourth wood or a third axe needs no edit here. Hand-
+        /// writing six TSV rows would have been the same six rows, correct on the day they were typed.
+        ///
+        /// ⭐ THE AXE IS A TOOL, NOT AN INGREDIENT (`Consume = false`), which is what master's "(tool)" asks for --
+        /// and it falls out for free that the axe WEARS, because Durability.RegisterTools walks exactly the
+        /// non-consumed inputs of every recipe. Nothing extra was needed to make chopping cost the axe something.</summary>
+        static void GenerateFirewoodRecipes()
+        {
+            var firewood = SDG.Unturned.Assets.find(SDG.Unturned.Cooking.FirewoodId);
+            if (firewood == null || string.IsNullOrEmpty(firewood.guid)) return;
+
+            int made = 0;
+            foreach (ushort logId in new ushort[] { 37, 39, 41 })          // Birch / Maple / Pine Log
+            {
+                var log = SDG.Unturned.Assets.find(logId);
+                if (log == null || string.IsNullOrEmpty(log.guid)) continue;
+                foreach (ushort axeId in new ushort[] { 16, 104 })          // Camp Axe / Fire Axe
+                {
+                    var axe = SDG.Unturned.Assets.find(axeId);
+                    if (axe == null || string.IsNullOrEmpty(axe.guid)) continue;
+                    var bp = new BlueprintDef
+                    {
+                        // OWNER = the PRODUCT, the retail convention (a recipe lives in the .dat of the thing it
+                        // makes). It also keeps IsRecolour honest: owner Firewood vs input Birch Log are different
+                        // names, so these do not get mistaken for repaints the way the salvage rows were.
+                        OwnerItemId = firewood.id.ToString(), Operation = "Craft",
+                        Name = $"Split {log.itemName}", Skill = "", SkillLevel = 0, Seconds = 4f,
+                    };
+                    bp.Inputs.Add(new BlueprintDef.Ingredient { Guid = log.guid, Amount = 1, Consume = true });
+                    bp.Inputs.Add(new BlueprintDef.Ingredient { Guid = axe.guid, Amount = 1, Consume = false });
+                    bp.Outputs.Add(new BlueprintDef.Ingredient { Guid = firewood.guid, Amount = 2, Consume = true });
+                    _all.Add(bp); made++;
+                }
+            }
+            if (made > 0) Log.Print($"[bp] generated {made} firewood recipe(s)");
         }
 
         /// <summary>Reload a round of every ammunition the game carries, from metal scrap and gunpowder.

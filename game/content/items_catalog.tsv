@@ -1989,7 +1989,7 @@
 9330	Springs	Supply	Common	1	1	Salvaged coil springs. Placeholder: no model yet.	7b7b659d14c8eb1de6df5b3c3ff8988f
 9331	Gears	Supply	Uncommon	1	1	Toothed cogs from something mechanical. Placeholder: no model yet.	3e299d993148029e7a4540f9346d89b4
 9332	Hinges	Supply	Common	1	1	Door hinges, still greasy. Placeholder: no model yet.	8a5cbc5e93bad2b12246ac07066de982
-9333	Charcoal	Supply	Common	1	1	Burnt black and brittle. Placeholder: no model yet.	2469a3ad44eb651cf7cf0970c938319e
+9333	Charcoal	Supply	Common	1	1	A bag of charcoal briquettes. The only thing a barbecue will burn -- load it into the BBQ, switch it on, and whatever you are cooking comes out charcoal grilled.	2469a3ad44eb651cf7cf0970c938319e
 9334	Black Powder	Supply	Uncommon	1	1	Sulfur and charcoal, ground together. Placeholder: no model yet.	adef07d59c974c56d15746172593c3c1
 9335	Pipe	Supply	Common	1	1	A short length of salvaged pipe. Placeholder: no model yet.	a9a940fad3488dbc69db8fc9c8335772
 9336	Sheet of Paper	Supply	Common	1	1	A blank sheet. Placeholder: no model yet.	52dd31a262354018897d48f03431f925
@@ -1998,4 +1998,5 @@
 9339	Circuitry	Supply	Uncommon	1	1	Salvaged boards and wiring. Placeholder: no model yet.	c99d1d75ed4e80575554369b53fefa2e
 9340	Asbestos	Supply	Uncommon	1	1	Fibrous, heat-proof, and best handled with gloves. Placeholder: no model yet.	f7816a8cf107a2ec8779efefb4e6bd58
 9341	Glass	Supply	Common	1	1	Salvaged glass, edges and all. Placeholder: no model yet.	7f26341dea32bb3738760f7216f0335d
+9342	Firewood	Supply	Common	2	1	Split logs, ready for a fire. No species left on it, so it stacks with any other firewood -- and one log splits into two. Placeholder: no model yet.	4f3a1c05c6274bc3a6d3b1da19247a80
 9400	Water Bottle Silencer	Barrel	Common	1	1	A plastic bottle taped over the muzzle. Swallows exactly one shot, then it is done.	56d6a5da2bbf4638bb313fa11a583399

@@ -107,8 +107,10 @@ namespace UnturnedGodot
         static readonly (float chance, ushort[] ids)[] FilingCabinetTiers = { (1.00f, Stationery) };
 
         // A BARBECUE HOLDS CHARCOAL (master 2026-10-07: "do we have charcoal added already? if not add it, if so,
-        // just add it to barbeque's spawn tables"). It did not exist, so 9333 is new -- and a BBQ keeps holding the
-        // grill food it already did, with the charcoal beside it rather than instead of it.
+        // just add it to barbeque's spawn tables"). ⚠ It DID exist -- ItemCatalog.Add() had one at 9150 that I did
+        // not find, so for a day a BBQ spawned 9333 and would only burn 9150. One charcoal now; see
+        // Cooking.CharcoalId. A BBQ keeps the grill food it already had, with the fuel beside it, not instead of it.
+        // ...and FIREWOOD (master: "firewood can also spawn in bbqs").
         static (float chance, ushort[] ids)[] _barbecue;
 
         // ---- derived-from-the-catalog tiers, built once on first use -----------------------------------------
@@ -163,8 +165,9 @@ namespace UnturnedGodot
                 case Barbecue:
                     return _barbecue ??= new[]
                     {
-                        (0.45f, new ushort[] { 9333 }),                         // charcoal
-                        (0.55f, FoodsWhere(r => r >= PerishableAtLeast)),       // the stuff you would grill
+                        (0.35f, new ushort[] { 9333 }),                         // charcoal
+                        (0.18f, new ushort[] { 9342 }),                         // firewood (master)
+                        (0.47f, FoodsWhere(r => r >= PerishableAtLeast)),       // the stuff you would grill
                     };
                 case GarbageBag:
                     // "low durability melee weapons, spoiled food, tattered clothes, add a few misc random garbage"

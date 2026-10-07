@@ -39,8 +39,8 @@
 # BLACK POWDER AND GUNPOWDER (strawberry 2026-10-07: "add a recipe for sulfur + charcoal to make black
 # powder. black powder + fertilizer = gunpowder"). Two steps on purpose, as asked -- the intermediate is a
 # real item you can hold and trade, not a hidden stage inside one recipe.
-9183	Craft	Black Powder		0	1412fffd4c625d50ce453771c04b8053:1:1|2469a3ad44eb651cf7cf0970c938319e:1:1	adef07d59c974c56d15746172593c3c1:1		4
-9189	Craft	Gunpowder		0	adef07d59c974c56d15746172593c3c1:1:1|54ebe428a6e34922b8764ca40a95d165:1:1	47c55c9f0ccae55106bbc64a750ad930:1		6
+9334	Craft	Black Powder		0	1412fffd4c625d50ce453771c04b8053:1:1|2469a3ad44eb651cf7cf0970c938319e:1:1	adef07d59c974c56d15746172593c3c1:1		4
+9327	Craft	Gunpowder		0	adef07d59c974c56d15746172593c3c1:1:1|54ebe428a6e34922b8764ca40a95d165:1:1	47c55c9f0ccae55106bbc64a750ad930:1		6
 # MAKESHIFT SCOPE (strawberry 2026-10-07: "give the makeshift scope a recipe, binoculars + tape"). Owner is the
 # binoculars: it is the part you are sacrificing, and the recipe should surface on the thing you are holding.
 333	Craft	Makeshift Scope		0	f260c581cf504098956f424d62345982:1:1|8c25cf28c76a4634855f404c8972c0ae:1:1	806bc882292247b78bd730ba073eb45a:1		5

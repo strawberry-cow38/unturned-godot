@@ -70,10 +70,22 @@ namespace UnturnedGodot.Testing
                 return false;
             }
 
+            // ⚠⚠ REACHABLE, NOT MERELY PRESENT. Making() walks BlueprintRegistry.All, which keeps rows whose OWNER
+            // item does not exist; Index() drops those, and the craft menu only ever shows Index(). Both powder
+            // rows had owner ids orphaned by an item-id remap (9183/9189), so every assertion in this block passed
+            // for a day while neither recipe could be reached in game. "A recipe exists" is not "you can craft it".
+            bool Reachable(BlueprintDef bp)
+            {
+                if (bp == null) return false;
+                foreach (var r in BlueprintRegistry.Index()) if (ReferenceEquals(r, bp)) return true;
+                return false;
+            }
+
             var powder = Making(9334);
             T.Check("there is a recipe that makes Black Powder", powder != null);
             T.Check("...from Sulfur", Takes(powder, 9328));
             T.Check("...and Charcoal", Takes(powder, 9333));
+            T.Check("...and it is REACHABLE, not just present in the catalog", Reachable(powder));
 
             var gun = Making(9327);
             T.Check("there is a recipe that makes Gunpowder", gun != null);
@@ -82,18 +94,32 @@ namespace UnturnedGodot.Testing
             // ⭐ THE CHAIN IS TWO STEPS, which is what master asked for. If anyone later folds it into one recipe
             // that takes sulfur straight to gunpowder, this is the check that notices.
             T.Check("gunpowder does NOT come straight from sulfur -- the chain stays two steps", !Takes(gun, 9328));
+            T.Check("...and the Gunpowder recipe is REACHABLE too", Reachable(gun));
+
+            // ---- THERE IS EXACTLY ONE CHARCOAL -------------------------------------------------------------
+            // ⚠⚠ There were TWO. 9150 was registered by ItemCatalog.Add() for the barbecue and 9333 arrived in the
+            // TSV with the guid, the stack and this loot entry, and Cooking.CharcoalId still named 9150 -- so the
+            // charcoal a player could find was not the charcoal a barbecue would burn. Both halves are checked:
+            // one item by that name, and the id this table yields is the id the appliance accepts.
+            int charcoals = 0;
+            foreach (var a in Assets.all()) if (a != null && a.itemName == "Charcoal") charcoals++;
+            T.Check($"there is exactly one Charcoal item ({charcoals})", charcoals == 1);
+            T.Check("...and the charcoal a barbecue SPAWNS is the charcoal it BURNS",
+                    Cooking.IsFuelFor(ECookerKind.Barbecue, Assets.find(9333)));
 
             // ---- CHARCOAL IN A BARBECUE --------------------------------------------------------------------
-            int coal = 0, food = 0, bad = 0;
+            int coal = 0, food = 0, wood = 0, bad = 0;
             for (int i = 0; i < 400; i++)
             {
                 int id = LootTables.Roll(LootTables.Barbecue);
                 if (id == 9333) coal++;
+                else if (id == 9342) wood++;   // firewood (master 2026-10-07: "firewood can also spawn in bbqs")
                 else if (id < 0) bad++;
                 else { var a = Assets.find((ushort)id); if (a != null && a.type == EItemType.FOOD) food++; else bad++; }
             }
-            GD.Print($"[craft-test] barbecue rolls: {coal} charcoal, {food} food, {bad} neither");
+            GD.Print($"[craft-test] barbecue rolls: {coal} charcoal, {wood} firewood, {food} food, {bad} neither");
             T.Check($"a barbecue holds charcoal ({coal}/400)", coal > 0);
+            T.Check($"...and firewood ({wood}/400)", wood > 0);
             T.Check($"...and still holds the food it used to ({food}/400)", food > 0);
             T.Check($"...and nothing else ({bad} unexpected)", bad == 0);
 

@@ -128,11 +128,11 @@ namespace SDG.Unturned
             Add(385,  "Wooden Spikes",    2, 2, EItemType.GENERIC, EItemRarity.RARE,     0, 0, "A bed of sharpened stakes. Anything that steps onto it gets shredded (60 to zombies, 30 to players); it wears ~5 HP per hit and breaks after ~8. Unrepairable, and not explosive -- a shot just snaps it.");
             Add(1241, "Remote Explosive", 2, 2, EItemType.GENERIC, EItemRarity.EPIC,     0, 0, "A plantable raiding charge -- placed INERT (no proximity/contact trigger); blows only when you set it off with a Detonator or shoot it. Huge blast: 200 to bodies, 500 to vehicles, 1000 to structures. Fragile + unrepairable.");
             Add(1240, "Detonator",        2, 2, EItemType.GENERIC, EItemRarity.RARE,     0, 0, "The remote trigger for your charges. Equip it and LEFT-CLICK to detonate every Remote Explosive you've planted, at once. (Held model is a placeholder coil for now.)");
-            // Charcoal: the barbecue's only fuel. A NEW item -- retail has no charcoal and no coal (the only
-            // "coal" in the catalog is Coalition uniforms), so a BBQ that "can only take charcoal" needed one
-            // to exist before it could take anything. See Cooking.CharcoalId for the known source gap.
-            Add(9150, "Charcoal", 1, 1, EItemType.SUPPLY, EItemRarity.COMMON, 0, 0,
-                "A bag of charcoal briquettes. The only thing a barbecue will burn -- load it into the BBQ, switch it on, and whatever you are cooking comes out charcoal grilled.");
+            // ⚠ THE Add(9150, "Charcoal", ...) THAT WAS HERE IS GONE, and this comment is the gravestone. It made a
+            // SECOND charcoal: 9333 arrived later in items_catalog.tsv with a guid, a stack, the black-powder recipe
+            // and the barbecue's loot entry, while Cooking.CharcoalId still pointed at 9150 -- so the charcoal you
+            // could find was not the charcoal the BBQ would burn, and nothing anywhere said so. 9333 is the only one
+            // now; see Cooking.CharcoalId. An Add()-only item has no guid, so it can never be crafted with.
             Add(386,  "Barbed Wire",      2, 2, EItemType.GENERIC, EItemRarity.UNCOMMON, 0, 0, "Coils of barbed wire. Anything that walks into it gets torn up (80 to zombies, 40 to players); it wears ~5 HP per hit and breaks after ~14. Tougher + nastier than wooden spikes, and unrepairable.");
             WireExtractedGuns();
             WireExtractedMelee();
@@ -268,6 +268,8 @@ namespace SDG.Unturned
             // stacks without anyone remembering to come back here, and no id can be in one list but not the other.
             foreach (var t in SDG.Unturned.Throwables.All) Wood(t.Id, ThrowableStackSize);
 
+            Wood(9342, 12);  // Firewood -- master: "stacks to 12 per 2x1". Split logs have no species, so unlike the
+                             // logs below there is only ONE of them and a stack never splits three ways.
             foreach (ushort log in new ushort[] { 37, 39, 41 }) Wood(log, 4);      // Birch/Maple/Pine Log   (2x1)
             foreach (ushort plank in new ushort[] { 61, 62, 63 }) Wood(plank, 6);  // Maple/Birch/Pine Plank (1x2)
             foreach (ushort stick in new ushort[] { 38, 40, 42 }) Wood(stick, 8);  // Birch/Maple/Pine Stick (1x1)
