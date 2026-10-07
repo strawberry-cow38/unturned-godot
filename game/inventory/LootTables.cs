@@ -54,7 +54,7 @@ namespace UnturnedGodot
         // after someone adds a food item. A hand-written id list would be a second opinion about the same question,
         // and the two would drift the first time anyone touched either.
         public const int Fridge = 1002, Freezer = 1003, Dishwasher = 1004, Oven = 1005,
-                         Counter = 1006, GarbageBag = 1007, FilingCabinet = 1008, Barbecue = 1009;
+                         Counter = 1006, GarbageBag = 1007, FilingCabinet = 1008, Barbecue = 1009, Laundry = 1010;
 
         /// <summary>Spoil rate at or above which a food counts PERISHABLE -- i.e. belongs in a fridge rather than a
         /// cupboard. 5%/day sits between FoodSpoil's "dried/packaged" band (3) and its root veg (5), so canned and
@@ -67,9 +67,10 @@ namespace UnturnedGodot
         /// -1 = mostly worst, +1 = mostly best (tinyclaw's Durability.RollCondition bend).</summary>
         public static readonly Dictionary<int, float> VirtualBias = new()
         {
+            [Laundry] = 0.85f,       // "clothes in washers/dryers should spawn at near-full condition" (master 2026-10-07)
             [Fridge] = 0.65f,        // a working fridge: food in good condition
             [Freezer] = 0.85f,       // better still -- frozen is the point of it
-            [Counter] = 0.25f,       // a cupboard: fine, not pristine
+            [Counter] = 0.80f,       // "non-perishables in cupboards should spawn near-full too" (master 2026-10-07); was 0.25
             [GarbageBag] = -0.85f,   // "low durability melee weapons, spoiled food, tattered clothes"
             [Oven] = 0f, [Dishwasher] = 0f, [FilingCabinet] = 0f,
         };
@@ -147,6 +148,15 @@ namespace UnturnedGodot
                         (0.12f, Cutlery),
                         (0.08f, Cookware),
                     };
+                case Laundry:
+                    // ⭐ THE SAME CLOTHES, A DIFFERENT CONDITION. A washer holds exactly what PEI's table 19
+                    // "Cloth" holds -- there is nothing special about laundry-machine garments -- so this borrows
+                    // that table's tiers wholesale rather than inventing a second list of shirts that would drift
+                    // from the first. What differs is ONLY the condition bias above, which is the actual request.
+                    // ⚠ And it has to be a separate table id to do that: LootCondition is keyed by table, so
+                    // biasing 19 itself would have made every Cloth spawn on the MAP near-full, not just the ones
+                    // in a washing machine.
+                    return (_tiers != null && _tiers.Length > 19) ? _tiers[19] : null;
                 case Barbecue:
                     return _barbecue ??= new[]
                     {
@@ -200,15 +210,23 @@ namespace UnturnedGodot
             : t == Toaster ? "Toaster"
             : t == Fridge ? "Fridge" : t == Freezer ? "Freezer" : t == Dishwasher ? "Dishwasher"
             : t == Oven ? "Oven" : t == Counter ? "Counter" : t == GarbageBag ? "Garbage Bag"
-            : t == FilingCabinet ? "Filing Cabinet" : t == Barbecue ? "Barbecue"
+            : t == FilingCabinet ? "Filing Cabinet" : t == Barbecue ? "Barbecue" : t == Laundry ? "Laundry"
             : _names != null && t >= 0 && t < _names.Length ? _names[t] : $"table {t}";
 
         /// <summary>Push the code-defined condition biases into LootCondition. Idempotent, and called from Load so
         /// it lands once per map -- LootCondition.Load() clears its file-backed map every time one opens, and these
         /// tables have no row in any file to be cleared back to.</summary>
+        /// <summary>Condition CEILINGS for code-defined tables, 0-100. See LootCondition.SetCodeMax for why a
+        /// ceiling is not a bias.</summary>
+        public static readonly Dictionary<int, byte> VirtualMaxCondition = new()
+        {
+            [GarbageBag] = 15,   // "items in garbage can spawn with MAX of like 15% durability" (master 2026-10-07)
+        };
+
         public static void ApplyVirtualBias()
         {
             foreach (var kv in VirtualBias) SDG.Unturned.LootCondition.SetCodeDefault(kv.Key, kv.Value);
+            foreach (var kv in VirtualMaxCondition) SDG.Unturned.LootCondition.SetCodeMax(kv.Key, kv.Value);
         }
 
         public static void Load(string itemsDatPath)
@@ -262,7 +280,7 @@ namespace UnturnedGodot
                       : table == Dishwasher ? DishwasherTiers
                       : table == Oven ? OvenTiers
                       : table == FilingCabinet ? FilingCabinetTiers
-                      : (table == Fridge || table == Freezer || table == Counter || table == GarbageBag || table == Barbecue) ? VirtualTiers(table)
+                      : (table == Fridge || table == Freezer || table == Counter || table == GarbageBag || table == Barbecue || table == Laundry) ? VirtualTiers(table)
                       : (_tiers == null || table < 0 || table >= _tiers.Length) ? null : _tiers[table];
             // A derived table can come back with an EMPTY tier if the catalog has no item of that kind -- drop those,
             // or the weighted pick can land on a tier with nothing in it and silently return -1 forever.

@@ -38,10 +38,24 @@ namespace UnturnedGodot.Testing
             foreach (var d in DeployableDef.All)
             {
                 var item = SDG.Unturned.Assets.find(d.Id);
+                if (item == null) continue;
                 // A deployable is ALLOWED to have an item of the same id -- that is how you carry one. The fault is
-                // an item that is something ELSE entirely, i.e. the names disagree.
-                if (item != null && !string.Equals(item.itemName, d.Name, System.StringComparison.OrdinalIgnoreCase))
-                    clashes.Add($"{d.Id}: deployable \"{d.Name}\" vs item \"{item.itemName}\"");
+                // an item that is something ELSE ENTIRELY.
+                //
+                // ⚠ "The names must match exactly" was my first rule and it was wrong: it flagged three legitimate
+                // pairs on the first run -- Workbench/"Simple Workbench", Kiln/"Pottery Kiln", Electric
+                // Oven/"Electric Stove". A carry-item is routinely named a bit differently from the thing it
+                // places, so exact equality measures naming style, not identity.
+                //
+                // ⭐ SHARING NO WORD AT ALL is the thing that separates those from the real bug: "Door" vs "Spoon",
+                // "Gate" vs "Frying Pan", "Hatch" vs "Typed Letter" have nothing in common, because they ARE
+                // nothing in common. Loose enough for how people name things, strict enough to catch a collision.
+                var dw = new HashSet<string>(d.Name.ToLowerInvariant().Split(' ', System.StringSplitOptions.RemoveEmptyEntries));
+                bool shares = false;
+                foreach (var w in item.itemName.ToLowerInvariant().Split(' ', System.StringSplitOptions.RemoveEmptyEntries))
+                    if (dw.Contains(w)) { shares = true; break; }
+                if (!shares)
+                    clashes.Add($"{d.Id}: deployable \"{d.Name}\" vs unrelated item \"{item.itemName}\"");
             }
             GD.Print($"[loot-test] deployable/item id clashes: {clashes.Count}");
             foreach (var c in clashes) GD.Print($"[loot-test]   {c}");
@@ -177,6 +191,58 @@ namespace UnturnedGodot.Testing
             T.Check($"a fridge keeps its GOOD-condition bias across a map load ({fridgeBias:0.00})", fridgeBias > 0.4f);
             T.Check($"a garbage bag keeps its WORN bias across a map load ({binBias:0.00})", binBias < -0.4f);
             T.Check("control: an ordinary map table is still unbiased by default", Mathf.IsZeroApprox(SDG.Unturned.LootCondition.Bias(17)));
+
+            // ---- GARBAGE HOLDS NO GUNS, AND NOTHING IN GOOD CONDITION (master 2026-10-07) ------------------
+            //
+            // ⚠ The guns were never in my GarbageBag table -- they were in the BINS I had not repointed
+            // (Dumpster_3/4 were still on PEI table 21, "Civilian Canada", which carries firearms). So this
+            // asserts the TABLE's contents, and the container wiring is what the id-collision guard above covers.
+            int guns = 0, mags = 0, binRolls = 0;
+            for (int i = 0; i < 600; i++)
+            {
+                int id = LootTables.Roll(LootTables.GarbageBag);
+                if (id < 0) continue;
+                binRolls++;
+                var a = SDG.Unturned.Assets.find((ushort)id);
+                if (a == null) continue;
+                if (a.type == SDG.Unturned.EItemType.GUN) guns++;
+                if (a.type == SDG.Unturned.EItemType.MAGAZINE) mags++;
+            }
+            GD.Print($"[loot-test] garbage: {binRolls} rolls, {guns} guns, {mags} magazines");
+            T.Check($"garbage holds no guns ({guns}/{binRolls})", guns == 0);
+            T.Check($"...and no magazines ({mags}/{binRolls})", mags == 0);
+
+            // THE 15% CEILING. ⚠ Asserted on the ITEM THAT COMES OUT of makeLoot, not on the setting -- a ceiling
+            // that is stored and never consulted looks identical to one that works.
+            SDG.Unturned.LootCondition.Load("res://content/spawns/does_not_exist.txt");
+            LootTables.ApplyVirtualBias();
+            int worst = 0, condChecked = 0;
+            for (int i = 0; i < 600; i++)
+            {
+                int id = LootTables.Roll(LootTables.GarbageBag);
+                if (id < 0) continue;
+                var a = SDG.Unturned.Assets.find((ushort)id);
+                if (a == null || !(a.type == SDG.Unturned.EItemType.FOOD || SDG.Unturned.Durability.HasCondition(a))) continue;
+                var it = SDG.Unturned.Assets.makeLoot((ushort)id, LootTables.GarbageBag);
+                condChecked++;
+                worst = Mathf.Max(worst, it.quality);
+            }
+            GD.Print($"[loot-test] garbage condition: {condChecked} items, highest {worst}%");
+            T.Check($"garbage items are capped at 15% condition ({condChecked} sampled, highest {worst}%)",
+                    condChecked > 0 && worst <= 15);
+            // ⭐ CONTROL: the cap must be the GARBAGE BAG's, not a global one -- a fridge must still roll high, or
+            // I have quietly capped every container in the game at 15%.
+            int bestFridge = 0, fridgeChecked = 0;
+            for (int i = 0; i < 600; i++)
+            {
+                int id = LootTables.Roll(LootTables.Fridge);
+                if (id < 0) continue;
+                var it = SDG.Unturned.Assets.makeLoot((ushort)id, LootTables.Fridge);
+                fridgeChecked++;
+                bestFridge = Mathf.Max(bestFridge, it.quality);
+            }
+            GD.Print($"[loot-test] fridge condition: {fridgeChecked} items, highest {bestFridge}%");
+            T.Check($"control: a fridge is NOT capped ({bestFridge}% at best)", bestFridge > 50);
 
             // ---- CONTAINERS MAY SPAWN EMPTY ------------------------------------------------------------------
             StoreShelf.EmptyChanceForTests = null;   // ...and back to the REAL odds, which is what this part measures

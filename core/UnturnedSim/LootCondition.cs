@@ -29,6 +29,21 @@ namespace SDG.Unturned
         /// making a decision about THEIR map, and a default in our source should not override it.</summary>
         static readonly Dictionary<int, float> _codeDefault = new Dictionary<int, float>();
 
+        /// <summary>Per-table CEILING on rolled condition, 0-100 (100 = no cap). ⚠ A ceiling is NOT a bias:
+        /// master 2026-10-07 asked that "items in garbage can spawn with MAX of like 15% durability", and a bias
+        /// only bends the distribution -- at -0.85 a garbage bag still rolls the occasional pristine axe, which is
+        /// exactly the thing being ruled out. The bias says what is TYPICAL; this says what is POSSIBLE.</summary>
+        static readonly Dictionary<int, byte> _codeMax = new Dictionary<int, byte>();
+
+        public static void SetCodeMax(int table, byte max)
+        {
+            if (table < 0) return;
+            _codeMax[table] = max > 100 ? (byte)100 : max;
+        }
+
+        public static byte MaxCondition(int table)
+            => table >= 0 && _codeMax.TryGetValue(table, out var m) ? m : (byte)100;
+
         public static void SetCodeDefault(int table, float bias)
         {
             if (table < 0) return;

@@ -336,7 +336,16 @@ namespace SDG.Unturned
             // you to eat, and it decays a bit more each in-game day (FoodSpoil). v56: so does everything with DURABILITY --
             // guns, melee, clothing, tools -- in the same retail band (10-90 unless the item says otherwise).
             if (a != null && (a.type == EItemType.FOOD || Durability.HasCondition(a)))
-                it.quality = Durability.RollCondition(a.qualityMin, a.qualityMax, LootCondition.Bias(table), _lootRng);
+            {
+                // ⚠ A CEILING, APPLIED TO THE RANGE RATHER THAN TO THE RESULT. Clamping afterwards would pile every
+                // over-cap roll onto exactly the cap value, so a garbage bag would hand out a suspicious number of
+                // items at precisely 15%. Narrowing the range first keeps the distribution a distribution.
+                byte qMin = a.qualityMin, qMax = a.qualityMax;
+                byte cap = LootCondition.MaxCondition(table);
+                if (cap < qMax) qMax = cap;
+                if (qMin > qMax) qMin = qMax;   // an item whose MINIMUM is above the cap still has to roll something
+                it.quality = Durability.RollCondition(qMin, qMax, LootCondition.Bias(table), _lootRng);
+            }
             if (a != null && a.IsFuelContainer) it.fuelLevel = 0f;   // a fresh gas can starts EMPTY -> fill it at a pump
             if (a != null && a.IsFluidContainer)                     // a fluid container spawns holding its default fluid (a bottle = full; a canteen = empty)
             {

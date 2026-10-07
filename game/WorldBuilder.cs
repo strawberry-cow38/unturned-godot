@@ -259,8 +259,8 @@ namespace UnturnedGodot
             ["91dbbf923c8c401bb6b2d56084783f73"] = ("Fridge_0", LootTables.Fridge, false, "Fridge"),      // perishables + the odd drink (master 2026-10-07); was table 6 Food, which stocked it with cans
             ["8388edfa33b84f78ad7f5d277412433b"] = ("Wardrobe_0", 19, false, "Wardrobe"), // wardrobe x24 -> Cloth
             ["7259ea03530a4ff880e857ca62a0c662"] = ("Cooler_0", 6, false, "Cooler"),      // drink cooler -> Food (master 2026-08-02: washer/dryer/cooler ARE containers now)
-            ["68339521990c4d70903dfd68da2cd886"] = ("Washer_0", 19, false, "Washer"),      // washing machine -> Cloth
-            ["90da84de3f214d129de92b6ee8df60af"] = ("Dryer_0", 19, false, "Dryer"),        // dryer -> Cloth
+            ["68339521990c4d70903dfd68da2cd886"] = ("Washer_0", LootTables.Laundry, false, "Washer"),      // table 19 Cloth, but near-full condition (master 2026-10-07)
+            ["90da84de3f214d129de92b6ee8df60af"] = ("Dryer_0", LootTables.Laundry, false, "Dryer"),        // ditto
             ["050dbe869b1c4fd5b215c552d145effd"] = ("Counter_0", LootTables.Counter, false, "Counter"),   // non-perishables + crockery/cookware (master 2026-10-07)
             // Counter_1 is NOT a loot container (strawberry 2026-08-03): it is a SINK, and it now reaches
             // PlaceObject like Counter_3 so its tap is wired on the ordinary path.
@@ -323,8 +323,8 @@ namespace UnturnedGodot
             // "trash cans (SMALL ones)" -- there is no prop called a trash can. The Dumpster family splits cleanly by
             // size: _2 is 6.31 m (industrial), _0/_1 are 2.84 m (skips), _3/_4 are 1.11 m wheelie bins with a wheel
             // modelled on the side. Only the wheelie bins are here; the skips are deliberately left out.
-            ["99c4048f91634e45986add0a89ffc2df"] = ("Dumpster_3", 21, false, "Trash Can"),
-            ["9bce22473d334aefad8864f0bc8447cb"] = ("Dumpster_4", 21, false, "Trash Can"),
+            ["99c4048f91634e45986add0a89ffc2df"] = ("Dumpster_3", LootTables.GarbageBag, false, "Trash Can"),   // ⚠ WAS table 21, which carries GUNS AND MAGAZINES -- master: "remove guns and magazines from garbage loot spawns". The bags were repointed and the BINS were missed.
+            ["9bce22473d334aefad8864f0bc8447cb"] = ("Dumpster_4", LootTables.GarbageBag, false, "Trash Can"),
             // NOT converted, and each for a checked reason rather than an oversight:
             //   Oven_1   -- named like a stove, is a 6.42 m FLUE PIPE on a bracket (rendered it).
             //   Office_0..3 -- office BUILDINGS, 18-44 m, not furniture.
