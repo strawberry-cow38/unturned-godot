@@ -309,8 +309,8 @@ namespace UnturnedGodot
             // ⭐ BREAD ONLY (master 2026-10-07). Was table 6 "Food", which is why a toaster handed back canned beans
             // and MREs. LootTables.Toaster is a virtual table for the same reason the till's is -- see it there.
             ["2d1daa0412b94503aa57a5b422187d48"] = ("Toaster_0", LootTables.Toaster, false, "Toaster"),   // 2 slots + keeps its pop (see StoreShelf)
-            ["2db512fea15a4434bafe0c45a0dd2016"] = ("Barbecue_0", 6, false, "BBQ"),
-            ["5feb0d40c34d4117912b4df420bea1b7"] = ("Barbecue_1", 6, false, "BBQ"),
+            ["2db512fea15a4434bafe0c45a0dd2016"] = ("Barbecue_0", LootTables.Barbecue, false, "BBQ"),   // charcoal + grill food (master 2026-10-07)
+            ["5feb0d40c34d4117912b4df420bea1b7"] = ("Barbecue_1", LootTables.Barbecue, false, "BBQ"),   // charcoal + grill food (master 2026-10-07)
             ["65906f4174724825849478b60ecc348a"] = ("Files_0", LootTables.FilingCabinet, false, "Filing Cabinet"),   // office junk (master 2026-10-07); 4-drawer cabinet
             ["8c05d039f62a4e40a3e448fcaeb31efd"] = ("Files_1", LootTables.FilingCabinet, false, "Filing Cabinet"),
             // A TILL HOLDS CASH (strawberry 2026-09-15). LootTables.CashRegister is a virtual table -- see the

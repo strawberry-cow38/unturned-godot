@@ -35,3 +35,9 @@
 40	Craft			0	e73a23b102f24520a32ec0b2afaa6157:1:1|fd6bee4579884ee9ad0b729baf423ab1:1:0	46218740c256475b87dbc6a2e9a1fb19:2		4
 63	Craft			0	86bf08032a5147f9871e362e40812771:1:1|fd6bee4579884ee9ad0b729baf423ab1:1:0	719bfdf2c2dc4be6ad5be44d044583e4:2		8
 42	Craft			0	719bfdf2c2dc4be6ad5be44d044583e4:1:1|fd6bee4579884ee9ad0b729baf423ab1:1:0	55d9700ea53c477685458171932251f1:2		4
+
+# BLACK POWDER AND GUNPOWDER (strawberry 2026-10-07: "add a recipe for sulfur + charcoal to make black
+# powder. black powder + fertilizer = gunpowder"). Two steps on purpose, as asked -- the intermediate is a
+# real item you can hold and trade, not a hidden stage inside one recipe.
+9183	Craft	Black Powder		0	1412fffd4c625d50ce453771c04b8053:1:1|2469a3ad44eb651cf7cf0970c938319e:1:1	adef07d59c974c56d15746172593c3c1:1		4
+9189	Craft	Gunpowder		0	adef07d59c974c56d15746172593c3c1:1:1|54ebe428a6e34922b8764ca40a95d165:1:1	47c55c9f0ccae55106bbc64a750ad930:1		6

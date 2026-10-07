@@ -54,7 +54,7 @@ namespace UnturnedGodot
         // after someone adds a food item. A hand-written id list would be a second opinion about the same question,
         // and the two would drift the first time anyone touched either.
         public const int Fridge = 1002, Freezer = 1003, Dishwasher = 1004, Oven = 1005,
-                         Counter = 1006, GarbageBag = 1007, FilingCabinet = 1008;
+                         Counter = 1006, GarbageBag = 1007, FilingCabinet = 1008, Barbecue = 1009;
 
         /// <summary>Spoil rate at or above which a food counts PERISHABLE -- i.e. belongs in a fridge rather than a
         /// cupboard. 5%/day sits between FoodSpoil's "dried/packaged" band (3) and its root veg (5), so canned and
@@ -96,6 +96,11 @@ namespace UnturnedGodot
         };
         static readonly (float chance, ushort[] ids)[] FilingCabinetTiers = { (1.00f, Stationery) };
 
+        // A BARBECUE HOLDS CHARCOAL (master 2026-10-07: "do we have charcoal added already? if not add it, if so,
+        // just add it to barbeque's spawn tables"). It did not exist, so 9188 is new -- and a BBQ keeps holding the
+        // grill food it already did, with the charcoal beside it rather than instead of it.
+        static (float chance, ushort[] ids)[] _barbecue;
+
         // ---- derived-from-the-catalog tiers, built once on first use -----------------------------------------
         static (float chance, ushort[] ids)[] _fridge, _freezer, _counter, _garbage;
 
@@ -135,6 +140,12 @@ namespace UnturnedGodot
                         (0.25f, Crockery),
                         (0.12f, Cutlery),
                         (0.08f, Cookware),
+                    };
+                case Barbecue:
+                    return _barbecue ??= new[]
+                    {
+                        (0.45f, new ushort[] { 9188 }),                         // charcoal
+                        (0.55f, FoodsWhere(r => r >= PerishableAtLeast)),       // the stuff you would grill
                     };
                 case GarbageBag:
                     // "low durability melee weapons, spoiled food, tattered clothes, add a few misc random garbage"
@@ -183,7 +194,7 @@ namespace UnturnedGodot
             : t == Toaster ? "Toaster"
             : t == Fridge ? "Fridge" : t == Freezer ? "Freezer" : t == Dishwasher ? "Dishwasher"
             : t == Oven ? "Oven" : t == Counter ? "Counter" : t == GarbageBag ? "Garbage Bag"
-            : t == FilingCabinet ? "Filing Cabinet"
+            : t == FilingCabinet ? "Filing Cabinet" : t == Barbecue ? "Barbecue"
             : _names != null && t >= 0 && t < _names.Length ? _names[t] : $"table {t}";
 
         /// <summary>Push the code-defined condition biases into LootCondition. Idempotent, and called from Load so
@@ -245,7 +256,7 @@ namespace UnturnedGodot
                       : table == Dishwasher ? DishwasherTiers
                       : table == Oven ? OvenTiers
                       : table == FilingCabinet ? FilingCabinetTiers
-                      : (table == Fridge || table == Freezer || table == Counter || table == GarbageBag) ? VirtualTiers(table)
+                      : (table == Fridge || table == Freezer || table == Counter || table == GarbageBag || table == Barbecue) ? VirtualTiers(table)
                       : (_tiers == null || table < 0 || table >= _tiers.Length) ? null : _tiers[table];
             // A derived table can come back with an EMPTY tier if the catalog has no item of that kind -- drop those,
             // or the weighted pick can land on a tier with nothing in it and silently return -1 forever.

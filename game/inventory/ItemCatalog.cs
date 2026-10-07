@@ -219,6 +219,29 @@ namespace SDG.Unturned
         {
             void Wood(ushort id, int cap) { var a = Assets.find(id); if (a != null) a.stackSize = cap; }
 
+            // ---- CRAFTING MATERIALS STACK (master 2026-10-07: "make duct tape, rope, metal scrap, nails
+            // stackable", plus the new components). These are things you pick up by the handful and spend by the
+            // handful, and a 1-per-slot nail is a bag full of nails.
+            //
+            // ⚠ "Duct tape" is item 69, whose catalog name is just **Tape** -- the retail name. Left alone rather
+            // than renamed: the name is what blueprints and the UI already say, and a rename is a separate
+            // decision from a stack size.
+            // ⭐ Sized by what the thing IS, not one number for the lot: fasteners come in handfuls, salvage in
+            // pieces, rolls one at a time.
+            Wood(71, 100);   // Nails
+            Wood(9184, 100); // Screws
+            Wood(9183, 50);  // Sulfur     -- powders, measured out
+            Wood(9188, 50);  // Charcoal
+            Wood(9189, 50);  // Black Powder
+            Wood(9182, 50);  // Gunpowder
+            Wood(67, 20);    // Metal Scrap
+            Wood(9185, 20);  // Springs
+            Wood(9186, 20);  // Gears
+            Wood(9187, 20);  // Hinges
+            Wood(9190, 20);  // Pipe       -- the SUPPLY component; Metal Pipe (1094) is the barricade piece, a different item
+            Wood(64, 10);    // Rope       -- a coil at a time
+            Wood(69, 10);    // Tape
+
             // CURRENCY: one stack, named for the currency rather than for the coin carrying it, and stacking to
             // Currency.MaxPerStack so a wallet is a wallet. The other six denominations keep their catalog rows --
             // they still exist as loot and as the thing you pick up -- but Items.tryAddItem converts every one
