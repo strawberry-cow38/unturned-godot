@@ -1,4 +1,4 @@
-# Sedan Mk II — V13 cleanup, separate new vehicle
+# Sedan Mk II — V14 lower cabin, separate new vehicle
 
 ## Player access
 
@@ -9,12 +9,12 @@ No existing natural sedan spawns were replaced. This is an additional vehicle.
 
 ## Model and runtime
 
-28 new prefixed assets are byte-identical copies of the V13 refinement exports. The
+28 new prefixed assets are byte-identical copies of the V14 refinement exports. The
 stock 4x2 palette is retained, including paintable index 0 and fixed charcoal index 5.
 The fixed frame, four doors, hood/trunk, moving door panes, static fittings and
 four interior pieces are installed separately. Lid undersides are body-painted.
 The complete internal wheel housings are already in the approved frame; no diagnostic
-or duplicate housing meshes are installed. Total: 2,478 triangles excluding tyres.
+or duplicate housing meshes are installed. Total: 2,816 triangles excluding tyres.
 
 An opt-in `VehiclePanelRig` is shared by real cars and replica puppets. It uses body-space
 pivots, follows existing glass/collider nodes, shares the body paint and adds no moving
@@ -27,7 +27,7 @@ Body/stock fittings are 106% of original, tyre radius stays 0.6 m, track 2.18 m,
 axles -1.9292/+1.949 m. Wheel mount Y=0.25 m matches the original sedan and
 puts the nominal tyre centre at body Y=0 after the 0.25 m suspension drop.
 Both native cars settle on the same flat floor: stock root Y=0.55353 m, Mk II
-Y=0.55473 m in the focused regression run (1.2 mm difference). The separate
+Y=0.55473 m in the focused regression run (1.2 mm difference). The earlier V13
 shared-world camera capture settled at stock Y=0.5518 m / Mk II Y=0.5547 m
 (2.9 mm difference); neither car is repositioned vertically for the image. All four wheels
 are in contact and both ride heights remain stable over the final 20 ticks.
@@ -36,8 +36,8 @@ Loaded tyre meshes clear all faceted housing planes with zero measured overrun.
 V13 uses a single inverted-U outline (eight upper semicircle facets and straight
 lower legs) for the body openings, complete backed housings and liner reliefs.
 The inner housing radius is 0.70 m, outer radius 0.75 m. Its nominal centre is
-body Y=0, coherent with the native suspension. Original exterior slope planes,
-1.06 scale, wheelbase, stock fittings and hinge pivots are unchanged.
+body Y=0, coherent with the native suspension. Lower-body exterior slopes,
+1.06 footprint scale, wheelbase, stock fittings and hinge pivots remain unchanged.
 
 The cabin subtraction removes the thick hidden roof/cowl/rear-deck masses; slim
 painted jamb returns remain instead of broad interior blocks. Engine/trunk liners
@@ -54,6 +54,41 @@ Four explicit seat origins follow the approved shifted seat model. The visible b
 keeps the original sedan's tuned displacement coherently scaled and shifted. Real
 first-person camera follows the seated skull as the existing game does; DriverEyeLocal
 is a fallback, not an assertion that overrides the animated seated head.
+
+## V14 cabin-height correction
+
+Only the greenhouse is shortened. The roof crown moves down **0.40 m**, from
+body Y=2.31068692 to 1.91068692. Geometry at or below body Y=1.24 is unchanged;
+the window/pillar band compresses coherently and the roof-cap crown/slope geometry
+is translated intact. All six glazing panes receive the same deformation. There
+is no whole-car rescale: V13 seats, wheel mounts, width, axles, lower panels,
+hood/trunk, floor, tunnel, dashboard and fittings are retained. Twenty companion
+OBJ files (including diagnostics) remain byte-identical to V13. Coplanar redundant
+subdivision is simplified; the additional triangles are not decorative detail.
+
+The fallback RoofBox is updated to the shorter roof (size 2.65 x 0.11 x 2.4592,
+center Y=1.8556869). Normal runtime disables the fitted boxes after mesh-derived
+convex hulls are installed; frame/roof hit geometry is also updated, not merely
+this fallback box. The driver-eye fallback now follows the actual fully settled
+seated pose, body Y~1.295765, instead of retaining an inappropriate standing-height
+reference. The normal camera still follows the real animated Skull bone.
+
+Actual installed roof/floor rays give about 1.90–1.91 m vertical space over the
+front/center floor, below the authoritative 2.0 m standing capsule height.
+A native physics overlap in the center aisle hits this car for a standing capsule
+and remains clear for the 1.2 m crouched capsule. This check is independent of the
+real seated player's disabled collision shape. Negative control: restoring only
+the V13 frame (while retaining V14 roof metadata) makes both height tests fail,
+and the native standing-capsule overlap becomes clear again. This proves the test
+checks actual mesh collision rather than merely the new fallback-box numbers.
+
+After the drive/sit animation blend completes, CPU-skinned actual bare heads clear
+both frame and glass in all four seats: minimum clearance ~0.184 m front and
+~0.166 m rear. The rear head locations are measured from the seated rig, not guessed
+from backrest centers (those are behind the actual head). This does not guarantee
+all headwear, standing-to-seat transition frames, or arbitrary animation overlays.
+The showcase now waits 25 physics ticks after entering before capturing the driver;
+the previous five-tick capture was still in the standing-to-driving blend.
 
 ## Networking boundary
 
@@ -72,13 +107,13 @@ No main merge or server deployment is performed by the staging commit.
 
 - Build succeeded (existing warnings only).
 - L0: 2,364 passed / 0 failed.
-- Focused vehicle regression L1: 12 tests, 550 checks, all passed. Includes 272 new
-  model/rig checks and 26 real-runtime checks for native tyre contact/clearance,
+- Focused vehicle regression L1: 12 tests, 567 checks, all passed. Includes 281 new
+  model/rig checks and 37 real-runtime checks for native tyre contact/clearance,
   driver boarding/camera, safe exit, selective doors, UI closure, storage identity,
   teardown, driving and held braking.
-- V13 authoring audits: four doors sampled through the full 55-degree swing;
-  hood/trunk sampled every 0.5 degrees from 0 to 50. No fixed-frame/liner/seat
-  penetration in those sampled poses. These are discrete geometry audits, not
+- V14 independent authoring audits: four doors sampled every 0.1 degrees through
+  the full 55-degree swing; hood/trunk every 0.25 degrees from 0 to 50. No
+  fixed-frame/liner/seat penetration in those sampled poses. These are discrete geometry audits, not
   a proof of arbitrary runtime collision behaviour.
 - Existing access, door exits, glass, lamps, hit meshes, paint, puppet glass/solidity,
   tyres and wagon tests stayed green. This is not a claim of a full L1 sweep.
@@ -97,7 +132,7 @@ No main merge or server deployment is performed by the staging commit.
 
 `python3 tools/install_sedan_mk2.py --check` verifies installed files and original
 asset hashes through `docs/SEDAN_MK2_ASSETS.json`, even without the private art workspace.
-Reinstallation requires the V13 refinement workspace via `--art` and frozen palette via
+Reinstallation requires the V14 refinement workspace via `--art` and frozen palette via
 `--frozen`; the installer is a byte copier, not a geometry-authoring recipe.
 
 ## SHA-256: approved source geometry and installed bytes

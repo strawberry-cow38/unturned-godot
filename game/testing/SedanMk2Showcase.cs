@@ -85,7 +85,7 @@ namespace UnturnedGodot
                 }
                 var player=new PlayerController {Position=_new.Position+new Vector3(-4,1,0)}; AddChild(player);
                 _camera.Current=true; player.Camera.Current=false;
-                await Physics(3); player.EnterVehicle(_new,0); await Physics(5);
+                await Physics(3); player.EnterVehicle(_new,0); await Physics(25); // finish the standing-to-driving blend before measuring/capturing
                 if (!player.IsDriving || player.SeatIndex!=0) throw new InvalidOperationException("real driver boarding refused");
                 _camera.Current=false; player.Camera.Current=true;
                 GD.Print($"[sedan-mk2] actual driver eye={player.Camera.GlobalPosition} body={player.DebugSeatedBodyLocal} steering={_new.SteerPivotLocal}");

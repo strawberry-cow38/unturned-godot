@@ -1,45 +1,45 @@
 {
-  "approved_model": "sedan V13 refinement",
-  "manifest_sha256": "a4590d7e488374bf405148dd9d5e767c2279e25ff9ed2e97ae98dd690762be68",
+  "approved_model": "sedan V14 lower-cabin refinement",
+  "manifest_sha256": "f29b4902fb7e3d15f01efa24ffc4fc1f7c03e1a4a4fbf22856ca295dfc45c744",
   "counts": {
-    "frame_and_closure_lips": 1432,
-    "moving_panels": 360,
-    "glass": 30,
+    "frame_and_closure_lips": 1614,
+    "moving_panels": 436,
+    "glass": 110,
     "stock_hardware_and_interior": 408,
     "new_interior_liners": 248,
-    "body_and_panels": 1792,
-    "all_excluding_wheels": 2478
+    "body_and_panels": 2050,
+    "all_excluding_wheels": 2816
   },
   "assets": [
     {
       "file": "sedan_mk2_frame.txt",
       "source": "sedan_frame.obj",
-      "sha256": "b24d8f9cf7611ff8349eb784626af3b5b4b0273cc119a295198fc7c76957dd1a",
-      "triangles": 1432
+      "sha256": "db49b5414f792103cbe39b1546791064aac261921737d122737fb9733eaa7570",
+      "triangles": 1614
     },
     {
       "file": "sedan_mk2_front_door_left.txt",
       "source": "sedan_front_door_left.obj",
-      "sha256": "70f23bea1981085db263eb6a9da65261612ad4e351005337fb264320dd96f8ac",
-      "triangles": 88
+      "sha256": "0c93281d1f7677379e05bced2c164baf1245d9133038e8ae7b05ef1d52f75f9c",
+      "triangles": 98
     },
     {
       "file": "sedan_mk2_rear_door_left.txt",
       "source": "sedan_rear_door_left.obj",
-      "sha256": "8f9ddf7e9f6efd5371dd0dc271ee194a0178f0be2d9dcf96bc20711507c80f10",
-      "triangles": 68
+      "sha256": "d9403bd7093aa384f03a8f699aab6583580bc9284ff35656255efe785c467fe5",
+      "triangles": 94
     },
     {
       "file": "sedan_mk2_front_door_right.txt",
       "source": "sedan_front_door_right.obj",
-      "sha256": "df46ec66c3ac257f8d0b6a01980b1544b79b661dc938039953c0a99feaec86b7",
-      "triangles": 62
+      "sha256": "169b39cf4329291e00e1514da07639e3ffa5ddb3b1b4d2b5936af191b03c3e30",
+      "triangles": 82
     },
     {
       "file": "sedan_mk2_rear_door_right.txt",
       "source": "sedan_rear_door_right.obj",
-      "sha256": "0c8c55e794e78ae2cc0cf6579abb16eeb7a85cb4ca8dac7acf792c992a9e146c",
-      "triangles": 78
+      "sha256": "cbb930af87dcaf96b678f25ee0c283823c4dad4abcce40e6e359825689725ed1",
+      "triangles": 98
     },
     {
       "file": "sedan_mk2_hood.txt",
@@ -56,38 +56,38 @@
     {
       "file": "sedan_mk2_glass_l_front.txt",
       "source": "sedan_glass_l_front.obj",
-      "sha256": "87b737aca4d53436118fe8e599b3e725218701623b0f8b7a51d9040b76a5ea4b",
-      "triangles": 8
+      "sha256": "e5c27a6cc869b700c8a67251087a2ac891e325103922338c43621a3c13d77f49",
+      "triangles": 30
     },
     {
       "file": "sedan_mk2_glass_l_rear.txt",
       "source": "sedan_glass_l_rear.obj",
-      "sha256": "af0aa8497e54e6d023c2a7110cbcfb7c14f05cd1eea3b4c10a9d176a9bc9a23a",
-      "triangles": 5
+      "sha256": "e7567fe649ab62540779b43b5033bead59e8e8555d53fe15124820395f07b0f3",
+      "triangles": 19
     },
     {
       "file": "sedan_mk2_glass_r_front.txt",
       "source": "sedan_glass_r_front.obj",
-      "sha256": "9acb14687ddd1ff270397c3d2f1d304c4c22a953b05a2c260eabb42b3928e4ab",
-      "triangles": 8
+      "sha256": "1aeef194ca42fa26a3a69c71e8a9b3fdac54ef85369a938a025354b3b8d6f57a",
+      "triangles": 30
     },
     {
       "file": "sedan_mk2_glass_r_rear.txt",
       "source": "sedan_glass_r_rear.obj",
-      "sha256": "b91f02595ac84e649d5d75836092098b0fb1a411f4a2a8a3b4e1dc35a19c865d",
-      "triangles": 5
+      "sha256": "6b39b0ff4c1683b447a68473d119fe2228ce5af4feda29b3533e51ca2f4431f7",
+      "triangles": 19
     },
     {
       "file": "sedan_mk2_glass_rear.txt",
       "source": "sedan_glass_rear.obj",
-      "sha256": "4c374c404d1fceb2aac8cebfcdd4c77fdad61feb80a140ac6dd360f2e238f7db",
-      "triangles": 2
+      "sha256": "9b6a000429a6008c54c3e1b45ec6f26f6d0ec9db9875bb0f687f40f9831073b8",
+      "triangles": 6
     },
     {
       "file": "sedan_mk2_glass_windshield.txt",
       "source": "sedan_glass_windshield.obj",
-      "sha256": "e3bf87ee902c80d900bc931d1545b1ab76fabbce52f5078622c52cfd75ba8f2f",
-      "triangles": 2
+      "sha256": "e8d2362df3ef9b6925554458e8e75e945b9505e23a6384cb8103c695c927f433",
+      "triangles": 6
     },
     {
       "file": "sedan_mk2_stock_front_bumper.txt",

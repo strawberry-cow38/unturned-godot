@@ -1,4 +1,5 @@
 using Godot;
+using SDG.Unturned;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -11,6 +12,57 @@ namespace UnturnedGodot.Testing
         public override double TimeoutSimSeconds => 35;
         static void UI(PlayerController p, string method, Vehicle car) => typeof(PlayerController)
             .GetMethod(method, BindingFlags.Instance | BindingFlags.NonPublic).Invoke(p, new object[] { car });
+        // CPU-skin the installed body using its ACTUAL animated skeleton and bind poses. A mesh
+        // AABB is the standing bind pose, not the seated crown; gear / boarding transients are out of scope.
+        static IEnumerable<Vector3> SeatedHeadVertices(Vehicle car, RiggedCharacter rig)
+        {
+            if (rig?.Skeleton == null || rig.Body?.Skin == null) yield break;
+            int skull = rig.Skeleton.FindBone("Skull");
+            if (skull < 0) yield break;
+            var mesh = rig.Body.Mesh; var skin = rig.Body.Skin;
+            for (int surface = 0; surface < mesh.GetSurfaceCount(); surface++)
+            {
+                var arrays = mesh.SurfaceGetArrays(surface);
+                var vertices = arrays[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+                var bones = arrays[(int)Mesh.ArrayType.Bones].AsInt32Array();
+                var weights = arrays[(int)Mesh.ArrayType.Weights].AsFloat32Array();
+                if (vertices.Length == 0) continue;
+                int influences = bones.Length / vertices.Length;
+                for (int v = 0; v < vertices.Length; v++)
+                {
+                    var posed = Vector3.Zero; float skullWeight = 0f;
+                    for (int j = 0; j < influences; j++)
+                    {
+                        int index = v * influences + j; float weight = weights[index];
+                        if (weight <= 0f) continue;
+                        int bind = bones[index]; int bone = skin.GetBindBone(bind);
+                        if (bone == skull) skullWeight += weight;
+                        posed += (rig.Skeleton.GetBoneGlobalPose(bone) * skin.GetBindPose(bind) * vertices[v]) * weight;
+                    }
+                    // Majority-Skull vertices are the bare head, rather than torso blend vertices.
+                    if (skullWeight > .5f) yield return car.ToLocal(rig.Skeleton.ToGlobal(posed));
+                }
+            }
+        }
+        static IEnumerable<MeshInstance3D> DescendantMeshes(Node node)
+        {
+            foreach (var child in node.GetChildren())
+            {
+                if (child is MeshInstance3D mi) yield return mi;
+                foreach (var mesh in DescendantMeshes(child)) yield return mesh;
+            }
+        }
+        static float EnclosureCeiling(Vehicle car, Vector3 point)
+        {
+            float nearest = SedanMk2Tests.RayY(car.GetNode<MeshInstance3D>("Body"), car,
+                new Vector3(point.X, 1.24f, point.Z), Vector3.Up);
+            foreach (var pane in DescendantMeshes(car).Where(m => m.Name.ToString().StartsWith("Glass_")))
+            {
+                float hit = SedanMk2Tests.RayY(pane, car, new Vector3(point.X, 1.24f, point.Z), Vector3.Up);
+                if (!float.IsNaN(hit)) nearest = float.IsNaN(nearest) ? hit : Mathf.Min(nearest, hit);
+            }
+            return nearest;
+        }
         public override IEnumerable<Step> Run()
         {
             Rigs.Ground(World);
@@ -75,8 +127,83 @@ namespace UnturnedGodot.Testing
             yield return Ticks(25);
             T.Check("actual physics loop animates door", car.AuthoredPanelRig.GetFraction(0) > .99f);
             var eye = car.ToLocal(player.Camera.GlobalPosition);
-            T.Check($"actual seated eye sits inside the new cabin ({eye})", Mathf.Abs(eye.X - car.SeatBodyLocal(0).X) < .08f
-                && eye.Y > 1.2f && eye.Y < 2.31f && eye.Z > car.SteerPivotLocal.Z + .1f && eye.Z < car.SeatLocal(0).Z + .5f);
+            var frame = car.GetNode<MeshInstance3D>("Body");
+            var floor = SedanMk2Tests.InstalledMesh(car, "sedan_mk2_cabin_floor.txt");
+            var rig = (RiggedCharacter)typeof(PlayerController).GetField("_body", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(player);
+            var head = SeatedHeadVertices(car, rig).ToArray();
+            T.Check("settled real driver has an animated source head and installed cabin floor", head.Length > 0 && floor != null);
+            if (head.Length > 0 && floor != null)
+            {
+                var crown = head.OrderByDescending(v => v.Y).First();
+                float eyeRoof = SedanMk2Tests.RayY(frame, car, eye, Vector3.Up);
+                float crownRoof = SedanMk2Tests.RayY(frame, car, new Vector3(crown.X, 1.65f, crown.Z), Vector3.Up);
+                float minHeadGap = head.Min(v => SedanMk2Tests.RayY(frame, car, new Vector3(v.X, 1.65f, v.Z), Vector3.Up) - v.Y);
+                T.Check($"settled camera tracks the source seated eye, below actual roof ({eye}, roof={eyeRoof:F5})",
+                    Mathf.Abs(eye.X - car.SeatBodyLocal(0).X) < .08f && Mathf.Abs(eye.Y - 1.29576505f) < .02f
+                    && eyeRoof > eye.Y && eyeRoof > 1.80f && eyeRoof < 1.84f
+                    && eye.Z > car.SteerPivotLocal.Z + .1f && eye.Z < car.SeatLocal(0).Z + .5f);
+                T.Check($"actual CPU-skinned seated crown clears frame over the whole head footprint (crown={crown.Y:F5}, minGap={minHeadGap:F5})",
+                    Mathf.Abs(crown.Y - 1.6248f) < .02f && minHeadGap > .15f && crownRoof > crown.Y);
+
+                // The player's capsule is disabled while seated. Test the on-foot envelope independently:
+                // actual triangle roof/floor + the authoritative stance heights, NOT that seated shape.
+                // Crouch is a vertical-headroom check (seats/furniture can still obstruct lateral motion).
+                float floorY = SedanMk2Tests.RayY(floor, car, new Vector3(crown.X, .3f, crown.Z), Vector3.Down);
+                float standingHeight = PlayerMovementDef.HeightForStance(EPlayerStance.STAND);
+                float crouchingHeight = PlayerMovementDef.HeightForStance(EPlayerStance.CROUCH);
+                const float onFootRadius = .35f; // PlayerController's authoritative on-foot radius
+                float minCeiling = crownRoof;
+                for (int i = 0; i < 8; i++)
+                {
+                    float angle = i * Mathf.Tau / 8f;
+                    var sample = new Vector3(crown.X + onFootRadius * Mathf.Cos(angle), 1.65f,
+                        crown.Z + onFootRadius * Mathf.Sin(angle));
+                    minCeiling = Mathf.Min(minCeiling, SedanMk2Tests.RayY(frame, car, sample, Vector3.Up));
+                }
+                float clearance = crownRoof - floorY;
+                T.Check("independent on-foot standing capsule cannot fit under actual roof; crouch has overhead room across its radius",
+                    Mathf.Abs(floorY - (-.08724f)) < .0002f && Mathf.IsEqualApprox(standingHeight, 2f)
+                    && Mathf.IsEqualApprox(crouchingHeight, 1.2f) && clearance < standingHeight
+                    && minCeiling - floorY > crouchingHeight);
+                var skull = rig.Skeleton.GetBoneGlobalPose(rig.Skeleton.FindBone("Skull")).Origin;
+                GD.Print($"[mk2-seated-clearance] ticksAfterEnter=25 seatBody={car.SeatBodyLocal(0)} skull={skull} eye={eye} eyeRoof={eyeRoof:F7} eyeGap={eyeRoof-eye.Y:F7} crown={crown} crownRoof={crownRoof:F7} minHeadGap={minHeadGap:F7} headVertices={head.Length} floor={floorY:F7} floorToCeiling={clearance:F7} standingTop={floorY+standingHeight:F7} standHeight={standingHeight:F3} crouchHeight={crouchingHeight:F3} radius={onFootRadius:F3} minFootprintCeiling={minCeiling:F7} source=installedTriangles+animatedSkin (not disabled seated capsule)");
+            }
+            // Check the actual passenger poses too; rear backrest centers are not head positions.
+            // Include glazing: a metal-only roof test could miss a head intersecting the rear pane.
+            for (int seat = 1; seat < 4; seat++)
+            {
+                T.Check($"clearance audit: switch to real seat {seat}", player.TrySwitchSeat(seat));
+                yield return Ticks(25);
+                var posedHead = SeatedHeadVertices(car, rig).ToArray();
+                float minGap = posedHead.Min(v => EnclosureCeiling(car, v) - v.Y);
+                float seatedCrown = posedHead.Max(v => v.Y);
+                T.Check($"seat {seat}: actual settled bare head clears roof AND glass (minGap={minGap:F5})",
+                    minGap > .10f && Mathf.Abs(seatedCrown - 1.6248f) < .02f);
+                GD.Print($"[mk2-passenger-clearance] seat={seat} anchor={car.SeatBodyLocal(seat)} crownY={seatedCrown:F6} minimumRoofOrGlassGap={minGap:F6}");
+            }
+            // Actual physics overlap, independently of the disabled seated player capsule.
+            // Use the clear center aisle and its highest installed floor/tunnel surface.
+            float aisleFloor = float.NegativeInfinity;
+            foreach (string path in new[] { "sedan_mk2_cabin_floor.txt", "sedan_mk2_floor_tunnel.txt" })
+            {
+                var mi = SedanMk2Tests.InstalledMesh(car, path);
+                float y = SedanMk2Tests.RayY(mi, car, new Vector3(0f, .3f, .2f), Vector3.Down);
+                if (!float.IsNaN(y)) aisleFloor = Mathf.Max(aisleFloor, y);
+            }
+            foreach (var stance in new[] { EPlayerStance.STAND, EPlayerStance.CROUCH })
+            {
+                float h = PlayerMovementDef.HeightForStance(stance);
+                using var capsule = new CapsuleShape3D { Height = h, Radius = .35f };
+                var query = new PhysicsShapeQueryParameters3D {
+                    Shape = capsule, CollisionMask = Vehicle.HitMeshBit, CollideWithBodies = true,
+                    Transform = car.GlobalTransform * new Transform3D(Basis.Identity,
+                        new Vector3(0f, aisleFloor + .01f + h / 2f, .2f)) };
+                var overlaps = World.GetWorld3D().DirectSpaceState.IntersectShape(query, 32);
+                bool blocked = overlaps.Any(hit => Vehicle.Owning(hit["collider"].AsGodotObject() as Node) == car);
+                T.Check($"real on-foot {stance} capsule overlap in cabin aisle: {(blocked ? "blocked" : "clear")}",
+                    float.IsFinite(aisleFloor) && blocked == (stance == EPlayerStance.STAND));
+                GD.Print($"[mk2-native-stance] {stance} height={h:F2} floor={aisleFloor:F5} hits={overlaps.Count} blockedByCar={blocked}");
+            }
             yield return Ticks(150);
             T.Check("door finishes auto-closing on parked car", car.AuthoredPanelRig.GetFraction(0) == 0);
             T.Check("interior seat switch succeeds", player.TrySwitchSeat(1));

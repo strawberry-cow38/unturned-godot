@@ -1,4 +1,5 @@
 using Godot;
+using SDG.Unturned;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -45,6 +46,30 @@ namespace UnturnedGodot.Testing
             }
             return hits.Count < 2 ? 0f : hits.Max() - hits.Min();
         }
+        // Nearest vertical ray hit on installed triangles, in owner/body coordinates. This does not
+        // consult the disabled seated collider or the fitted fallback boxes. NaN means no roof/floor.
+        internal static float RayY(MeshInstance3D mesh, Node owner, Vector3 origin, Vector3 direction)
+        {
+            var faces = mesh.Mesh.GetFaces(); var pose = InOwner(mesh, owner);
+            float nearest = float.PositiveInfinity;
+            for (int i = 0; i + 2 < faces.Length; i += 3)
+            {
+                var a = pose * faces[i]; var e1 = pose * faces[i + 1] - a; var e2 = pose * faces[i + 2] - a;
+                var h = direction.Cross(e2); float det = e1.Dot(h);
+                if (Mathf.Abs(det) < .0000001f) continue;
+                var delta = origin - a; float u = delta.Dot(h) / det; var q = delta.Cross(e1);
+                float v = direction.Dot(q) / det; float distance = e2.Dot(q) / det;
+                if (u >= -.00001f && v >= -.00001f && u + v <= 1.00001f && distance >= 0f)
+                    nearest = Mathf.Min(nearest, distance);
+            }
+            return float.IsPositiveInfinity(nearest) ? float.NaN : (origin + direction * nearest).Y;
+        }
+        internal static MeshInstance3D InstalledMesh(Node owner, string path)
+        {
+            var source = ContentProvider.ParseObj("res://content/" + path);
+            return Meshes(owner).FirstOrDefault(mi => SameGeometry(mi.Mesh, source));
+        }
+
         void PanelThickness(MeshInstance3D panel, int index)
         {
             if (index < 4)
@@ -231,6 +256,26 @@ namespace UnturnedGodot.Testing
                 {
                     var body = ExactMesh(owner, "sedan_mk2_frame.txt");
                     if (body == null) continue;
+                    var installedFaces = body.Mesh.GetFaces().Select(v => InOwner(body, owner) * v).ToArray();
+                    float top = installedFaces.Max(v => v.Y);
+                    T.Check(owner.Name + ": V14 installed greenhouse top is 1.9107 m", Mathf.Abs(top - 1.91068692f) < .0002f);
+                    var floor = ExactMesh(owner, "sedan_mk2_cabin_floor.txt");
+                    if (floor != null)
+                    {
+                        foreach (var footprint in new[] { new Vector3(-.53f, .3f, -.29996f), new Vector3(0f, .3f, 0f) })
+                        {
+                            float floorY = RayY(floor, owner, footprint, Vector3.Down);
+                            float roofY = RayY(body, owner, new Vector3(footprint.X, 1.65f, footprint.Z), Vector3.Up);
+                            float clearance = roofY - floorY;
+                            float expectedRoof = footprint.X == 0f ? 1.8248f : 1.8176f;
+                            T.Check($"{owner.Name}: actual roof ray at X={footprint.X} clears seated crown but not standing height",
+                                Mathf.Abs(floorY - (-.08724f)) < .0002f && roofY > 1.6248f
+                                && Mathf.Abs(roofY - expectedRoof) < .001f
+                                && clearance < PlayerMovementDef.HeightForStance(EPlayerStance.STAND)
+                                && clearance > PlayerMovementDef.HeightForStance(EPlayerStance.CROUCH));
+                            GD.Print($"[mk2-greenhouse] {owner.Name} X={footprint.X:F3} top={top:F7} roof={roofY:F7} floor={floorY:F7} floorToCeiling={clearance:F7} seatedCrownReference=1.6248 stand={PlayerMovementDef.HeightForStance(EPlayerStance.STAND):F3} crouch={PlayerMovementDef.HeightForStance(EPlayerStance.CROUCH):F3}");
+                        }
+                    }
                     var paint = body.MaterialOverride as ShaderMaterial;
                     T.Check(owner.Name + ": body palette texture loaded", paint != null
                         && paint.GetShaderParameter("palette").AsGodotObject() is Texture2D);
@@ -273,7 +318,8 @@ namespace UnturnedGodot.Testing
                     T.Check($"seat {i}: visible body follows the moved seat without an extra row shift",
                         Near(car.SeatBodyLocal(i), seats[i] + new Vector3(0f, .04134f, .06254f)));
                 T.Check("fallback driver eye derives from the explicit moved driver seat",
-                    Near(car.DriverEyeLocal, seats[0] + new Vector3(0f, 1.929f, .06254f)));
+                    Near(car.DriverEyeLocal, seats[0] + new Vector3(0f, 1.358505f, .06254f))
+                    && Mathf.Abs(car.DriverEyeLocal.Y - 1.29576505f) < .00001f);
                 T.Check("eye over driver seat, behind repositioned wheel", Near(car.DriverEyeLocal, puppet.DriverEyeLocal)
                     && Mathf.Abs(car.DriverEyeLocal.X - seats[0].X) < .001f
                     && car.DriverEyeLocal.Z > car.SteerPivotLocal.Z && Mathf.Abs(car.DriverEyeLocal.Z - seats[0].Z) < .1f);
@@ -294,7 +340,18 @@ namespace UnturnedGodot.Testing
                 T.Check("main hull scales about ground", belly != null && Near(belly.Position, new Vector3(0f, .60188f, -.06678f)));
                 var roof = car.GetNodeOrNull<CollisionShape3D>("RoofBox");
                 T.Check("roof and cabin registration", roof?.Shape is BoxShape3D box
-                    && Near(box.Size, new Vector3(2.65f, .26924f, 2.4592f)) && Near(roof.Position, new Vector3(0f, 2.141f, .2067f)));
+                    && Near(box.Size, new Vector3(2.65f, .11f, 2.4592f)) && Near(roof.Position, new Vector3(0f, 1.8556869f, .2067f)));
+                if (roof?.Shape is BoxShape3D fallbackRoof)
+                {
+                    float bottom = roof.Position.Y - fallbackRoof.Size.Y / 2f;
+                    float top = roof.Position.Y + fallbackRoof.Size.Y / 2f;
+                    float standingTop = -.08724f + PlayerMovementDef.HeightForStance(EPlayerStance.STAND);
+                    T.Check("fallback slab clears seated crown and intersects independent standing envelope",
+                        Mathf.Abs(bottom - 1.8006869f) < .0001f && Mathf.Abs(top - 1.9106869f) < .0001f
+                        && bottom > 1.6248f && standingTop > bottom
+                        && -.08724f < top
+                        && -.08724f + PlayerMovementDef.HeightForStance(EPlayerStance.CROUCH) < bottom);
+                }
                 Occupancy(rig, "real rig");
                 rig.PulseSeat(0); rig.Tick(VehiclePanelRig.SwingSeconds);
                 var movingPane = rig.GetGlassPane(0);

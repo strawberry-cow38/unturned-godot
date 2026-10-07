@@ -12,9 +12,10 @@ namespace UnturnedGodot
         public static Vehicle BuildSedanMk2(int variant = 0) => Build(SedanMk2Spec, variant, "sedan_mk2");
 
         static Vector3 Mk2BodyPoint(Vector3 old) => old * 1.06f + new Vector3(0f, 0.021f, 0f);
-        // Main should add "Sedan Mk II" => SedanMk2RoofBox to RoofBox. This also preserves HasCabin.
+        // V14 greenhouse-only fallback slab; the lower-body hull and handling stay V13.
+        // Normal runtime replaces fitted boxes with frame hulls / HitMesh. Also preserves HasCabin.
         static (Vector3 size, Vector3 center) SedanMk2RoofBox =>
-            (new Vector3(2.5f, 0.254f, 2.320f) * 1.06f, Mk2BodyPoint(new Vector3(0f, 2f, 0.195f)));
+            (new Vector3(2.65f, .11f, 2.4592f), new Vector3(0f, 1.8556869f, .2067f));
 
         static Spec CreateSedanMk2Spec()
         {
@@ -43,9 +44,10 @@ namespace UnturnedGodot
             }
             // Preserve sedan's tuned visible-body rise (not the generic 8 cm); origins remain prefab based.
             s.SeatBodyRise = (SeatOf("Sedan").Y - oldSeats[0].Y) * 1.06f;
-            // Original driving eye HEIGHT relative to seated origin, relocated over the moved driver seat.
+            // Settled Idle_Drive eye: SeatBodyY (-.0214) + SkullY (1.00716505) + .31
+            // = 1.29576505. Express the fallback relative to the explicit driver seat.
             // Do not preserve the default eye Z=+0.4 (over a metre behind the original driver origin).
-            s.DriverEye = s.Seats[0] + new Vector3(0f, 1.85f - oldSeats[0].Y, 0.059f * 1.06f);
+            s.DriverEye = s.Seats[0] + new Vector3(0f, 1.358505f, 0.059f * 1.06f);
             // Same mount Y as the original sedan: minus the .25 m rest drop gives art centre Y=0.
             s.Wheels = new (float, float, float, bool)[] {
                 (-1.09f, 0.25f, -1.9292f, true), (1.09f, 0.25f, -1.9292f, true),
