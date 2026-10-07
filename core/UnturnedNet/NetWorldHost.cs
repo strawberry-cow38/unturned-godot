@@ -70,6 +70,8 @@ namespace UnturnedGodot.Net
         public ServerClothingWear ClothingWear { get; private set; }
         /// <summary>v58: vehicles' trunks and cabins (glovebox + a compartment per seat). The game layer sets ShapeOf.</summary>
         public ServerVehicleStorage VehicleStorage { get; private set; }
+        /// <summary>v59: autodrink, which only ever ran on the client and so never ran at all once vitals were server-owned.</summary>
+        public ServerAutoDrink AutoDrink { get; private set; }
         /// <summary>The save this world was loaded from, or null for a fresh one. Held for the whole session
         /// rather than consumed at load: a player's block is applied when THEY connect (PeerConnected below),
         /// which for a dedicated server is minutes or days after the world came up. The game side sets this
@@ -445,6 +447,7 @@ namespace UnturnedGodot.Net
             // routing runs only while SurvivalDrain is on (default OFF = SP byte-identical coarse-HP path).
             Vitals.IsAlive = pid => CombatState.IsAlive(pid);
             // v56 DURABILITY. Every loss lands on the SERVER's copy and rides the owner echo out; see Durability.
+            AutoDrink = new ServerAutoDrink(Inventories, Vitals) { IsAlive = pid => CombatState.IsAlive(pid) };
             ClothingWear = new ServerClothingWear(Inventories)
             {
                 IsAlive = pid => CombatState.IsAlive(pid),
@@ -743,6 +746,7 @@ namespace UnturnedGodot.Net
             // tick rather than the next one.
             Deadzones.Step((float)SimClock.FixedDelta, Players.All, CombatState.IsAlive);
             ClothingWear.Step((float)SimClock.FixedDelta);   // before ServerCommitDirty below, which stamps what it dirtied
+            AutoDrink.Step((float)SimClock.FixedDelta, Session.CurrentTick);   // ...same: a sip dirties the bag
             // v58: cars carry their containers along, and anyone who left the seat (or the trunk) is shut out of it.
             VehicleStorage.Step(Session.CurrentTick, pid => Players.TryGetByOwner(pid, out var pe) ? pe.Pos : (Vector3?)null,
                 // ...and told so, or their dashboard keeps a latch on a container the server has already shut them out of
@@ -1441,6 +1445,11 @@ namespace UnturnedGodot.Net
             => SendCommand(ReplicationIds.CommandFitAttachment, new FitAttachmentCommand { Page = page, X = x, Y = y, Id = id }.Write);
 
         /// <summary>v58: open a vehicle's trunk or cabin (glovebox + seats). See ServerVehicleStorage.</summary>
+        public bool SendDrinkFluid(byte page, byte x, byte y, ushort id)
+            => SendCommand(ReplicationIds.CommandDrinkFluid, new DrinkFluidCommand { Page = page, X = x, Y = y, Id = id }.Write);
+        public bool SendFillAtTap(byte page, byte x, byte y, ushort id)
+            => SendCommand(ReplicationIds.CommandFillAtTap, new FillAtTapCommand { Page = page, X = x, Y = y, Id = id }.Write);
+
         public bool SendOpenVehicleStorage(uint vehicleNetId, VehicleStorageKind kind)
             => SendCommand(ReplicationIds.CommandOpenVehicleStorage, new OpenVehicleStorageCommand { VehicleNetId = vehicleNetId, Kind = kind }.Write);
 

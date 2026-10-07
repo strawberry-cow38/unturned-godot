@@ -651,6 +651,8 @@ namespace UnturnedGodot
             shell.NetFitAttachment = (page, x, y, id) => Client.SendFitAttachment(page, x, y, id);
             shell.NetConsume = (page, x, y) => Client.SendConsume(page, x, y);
             shell.NetSetAutoDrink = (page, x, y, id, on) => Client.SendSetAutoDrink(page, x, y, id, on);
+            shell.NetDrinkFluid = (page, x, y, id) => Client.SendDrinkFluid(page, x, y, id);   // v59
+            shell.NetFillAtTap = (page, x, y, id) => Client.SendFillAtTap(page, x, y, id);     // v59
             shell.NetWeaponUse = (page, x, y, id, uses) => Client.SendWeaponUse(page, x, y, id, uses);   // v56 durability
             shell.NetGunState = (page, x, y, it) => Client.SendGunState(page, x, y, it.id, (short)it.gunAmmo, it.gunChambered,
                 (sbyte)it.gunFiremode, it.gunMagId, it.gunAttach, it.gunSightId, it.gunBarrelId, it.gunGripId,

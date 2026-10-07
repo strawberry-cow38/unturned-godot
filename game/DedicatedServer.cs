@@ -209,6 +209,7 @@ namespace UnturnedGodot
             // client build carries (content-hash-matched), feeding placement validation + the server solve.
             DeployableNetSchema.RegisterAll(Server.Deployables.Schema);
             Server.Transactions.Blueprints = BlueprintRegistry.All;
+            Server.Transactions.RunningTapNear = p => WaterTap.RunningNear(new Vector3(p.x, p.y, p.z));   // v59: the map's sinks + bathtubs (WorldBuilder registers them in Dedicated too)
             // ---- v47: the server's NPC catalog. INJECTED, not loaded there: core cannot see NpcCatalog, and a
             // server holding its own copy would be a second source of truth for exactly the thing both sides
             // must agree on byte for byte. One catalog, read from two places.

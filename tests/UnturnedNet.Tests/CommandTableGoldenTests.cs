@@ -118,6 +118,8 @@ namespace UnturnedNet.Tests
             [66] = "CommandConfigureItemDevice",
             [67] = "CommandWeaponUse",              // v56 durability: uses of the held weapon; the server rolls the wear (v56 is not released, so no bump)
             [68] = "CommandOpenVehicleStorage",     // v58 car storage: open a vehicle's trunk or cabin by VEHICLE id
+            [69] = "CommandDrinkFluid",             // v59: drink the held bottle on the server's copy
+            [70] = "CommandFillAtTap",              // v59: fill a bottle with clean water at a sink / bathtub
         };
 
         static Dictionary<byte, string> Actual() =>

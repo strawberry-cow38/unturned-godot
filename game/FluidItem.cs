@@ -17,27 +17,9 @@ namespace UnturnedGodot
         // disabled"): the FIRST container in scan order that is autodrink-ENABLED (its per-bottle opt-in) AND holds a SAFE,
         // non-empty fluid. Multiple bottles may be enabled, but only this one is drunk from + shows the icon; when it
         // empties the next enabled+safe bottle naturally becomes first, and a disabled bottle is skipped. Null = none.
-        public static Item ActiveAutoDrink(SDG.Unturned.PlayerInventory inv)
-        {
-            if (inv == null) return null;
-            // ⚠ OWNPAGES, not PAGES (strawberry 2026-09-10: "prevent items in containers being eligable for
-            // autodrink. only things in your inventory can have autodrink"). PAGES walks past the player's own
-            // pages into STORAGE (7) and AREA (8) -- the open crate's grid and the Nearby ground scan -- so
-            // standing over a crate of water, or merely near a dropped bottle, silently sipped from it. You were
-            // drinking out of a box on the floor.
-            for (byte pg = 0; pg < SDG.Unturned.PlayerInventory.OWNPAGES; pg++)
-            {
-                var page = inv.items[pg];
-                for (byte i = 0; i < page.getItemCount(); i++)
-                {
-                    var it = page.getItem(i)?.item; var a = it?.GetAsset();
-                    if (a == null || !a.IsFluidContainer || !it.autoDrink) continue;
-                    Read(it, a, out var t, out var amt, out var q);
-                    if (amt > 0.01f && FluidDef.Safe(t, q)) return it;
-                }
-            }
-            return null;
-        }
+        // ⚠ OWNPAGES, not PAGES (strawberry 2026-09-10: "prevent items in containers being eligable for autodrink").
+        // The rule lives in core now (FluidRules), because the SERVER is the one that drinks from it.
+        public static Item ActiveAutoDrink(SDG.Unturned.PlayerInventory inv) => FluidRules.ActiveAutoDrink(inv);
 
         // The in-hand VIEWMODEL mesh for a held container. Most match the item name (bottled_water, canteen, bottled_soda,
         // bottled_cola, bottled_coconut, bottled_energy); the two retail CARTONS don't (Orange Juice -> box_orange, Milk
@@ -62,12 +44,7 @@ namespace UnturnedGodot
         // creation path (loot, `give`, a hand-made Item) reads correct contents without every caller remembering to seed them.
         public static void Read(Item it, ItemAsset a, out FluidType type, out float amount, out WaterQuality q)
         {
-            if (it != null && a != null && a.IsFluidContainer && it.fluidAmount < 0f)
-            {
-                it.fluidType = a.fluidDefaultType;
-                it.fluidAmount = a.fluidDefaultType != 0 ? a.fluidCapacity : 0f;   // a None-default container (canteen) spawns EMPTY
-                it.fluidQuality = a.fluidDefaultQuality;
-            }
+            FluidRules.Seed(it, a);
             type = it != null ? (FluidType)it.fluidType : FluidType.None;
             amount = it != null ? Mathf.Max(0f, it.fluidAmount) : 0f;
             q = it != null ? (WaterQuality)it.fluidQuality : WaterQuality.Clean;
@@ -108,45 +85,40 @@ namespace UnturnedGodot
             return moved;
         }
 
-        // LMB (while NOT looking at a tank) to take a sip: SipML off the top, but only if the contents are DRINKABLE
-        // (clean water, or soda / cola -- tainted / dirty water can't be drunk). Returns mL drunk; `hydration` = Water-vital
-        // units to add (0..1 scale); msg carries the reason it did nothing (empty / undrinkable).
-        public const float SipML = 50f;
-        public const float HydrationPerML = 0.001f;   // a 50 mL sip restores 0.05 (5%) Water -> a 1 L bottle ~ a full hydrate (tunable)
+        // The DRINK rules are FluidRules' (core), so the server applies exactly what the client predicts. These wrap them
+        // with the words for the HUD.
+        public const float SipML = FluidRules.SipML;
+        public const float HydrationPerML = FluidRules.HydrationPerML;
+
+        /// <summary>The on-screen reason a drink or fill did nothing.</summary>
+        public static string Why(FluidRules.Refusal why, Item it) => why switch
+        {
+            FluidRules.Refusal.None => null,
+            FluidRules.Refusal.NotContainer => "not a fluid container",
+            FluidRules.Refusal.Empty => "container is empty",
+            FluidRules.Refusal.Full => "container is full",
+            FluidRules.Refusal.WontMix => $"won't mix {FluidDef.Name((FluidType)(it?.fluidType ?? 0))} and water",
+            FluidRules.Refusal.Undrinkable => (FluidType)(it?.fluidType ?? 0) == FluidType.Water
+                ? $"can't drink {FluidDef.WaterName(FluidType.Water, (WaterQuality)(it?.fluidQuality ?? 0)).ToLowerInvariant()}"
+                : $"can't drink {FluidDef.Name((FluidType)(it?.fluidType ?? 0))}",
+            _ => "can't do that",
+        };
+
+        // A 50 mL sip off the top -- autodrink's unit. Returns mL drunk; `hydration` = Water-vital units (0..1 scale).
         public static float Sip(Item held, ItemAsset a, out float hydration, out string msg)
         {
-            hydration = 0f; msg = null;
-            if (held == null || a == null || !a.IsFluidContainer) { msg = "not a fluid container"; return 0f; }
-            Read(held, a, out var type, out var amount, out var q);
-            if (amount <= 0.01f) { msg = "container is empty"; return 0f; }
-            if (!FluidDef.Drinkable(type, q))
-            {
-                msg = type == FluidType.Water ? $"can't drink {FluidDef.WaterName(type, q).ToLowerInvariant()}" : $"can't drink {FluidDef.Name(type)}";
-                return 0f;
-            }
-            float sip = Mathf.Min(SipML, amount);
-            Write(held, type, amount - sip, q);
-            hydration = sip * HydrationPerML;
-            return sip;
+            float drank = FluidRules.Sip(held, a, out hydration, out var why);
+            msg = Why(why, held);
+            return drank;
         }
 
-        // Equipped LMB (not aimed at a tank): CHUG the whole bottle at once (strawberry) — the deliberate big-gulp, distinct
-        // from the passive 50 mL autodrink. Empties the container (keeps the item + its type so you can refill it), applies
-        // the hydration for everything it held (Water-vital caps at 1). Same drinkable gate as a sip. Returns mL drunk.
+        // Equipped LMB (not aimed at a tank): CHUG the whole bottle at once (strawberry) -- the deliberate big gulp, distinct
+        // from the passive 50 mL autodrink. Empties the container (keeps the item + its type so you can refill it).
         public static float DrinkAll(Item held, ItemAsset a, out float hydration, out string msg)
         {
-            hydration = 0f; msg = null;
-            if (held == null || a == null || !a.IsFluidContainer) { msg = "not a fluid container"; return 0f; }
-            Read(held, a, out var type, out var amount, out var q);
-            if (amount <= 0.01f) { msg = "container is empty"; return 0f; }
-            if (!FluidDef.Drinkable(type, q))
-            {
-                msg = type == FluidType.Water ? $"can't drink {FluidDef.WaterName(type, q).ToLowerInvariant()}" : $"can't drink {FluidDef.Name(type)}";
-                return 0f;
-            }
-            Write(held, type, 0f, q);   // empty it, keep the type/quality (an empty bottle you can refill)
-            hydration = amount * HydrationPerML;
-            return amount;
+            float drank = FluidRules.DrinkAll(held, a, out hydration, out var why);
+            msg = Why(why, held);
+            return drank;
         }
     }
 }

@@ -2504,14 +2504,19 @@ namespace UnturnedGodot
         /// guessing. Review 2026-08-16.</summary>
         void RebindHeldRefs()
         {
-            if (_heldItem == null || _heldPage < 0 || Inventory == null) return;
+            // A BOTTLE AND A GAS CAN ARE HELD WITHOUT _heldItem -- their equips clear it -- so keying this on _heldItem
+            // alone skipped them, and the first echo left the hand holding a dead copy. For the bottle that was fatal
+            // once drinking went to the server: every drink is an echo, so the SECOND drink, the fill and the HUD line
+            // all acted on an object no longer in any page (and that copy said "empty" forever).
+            var held = _heldItem ?? _heldFluidItem ?? _heldFuelItem;
+            if (held == null || _heldPage < 0 || Inventory == null) return;
             if (_heldPage >= Inventory.items.Length) return;
             var pg = Inventory.items[_heldPage];
             byte idx = pg?.getIndex(_heldX, _heldY) ?? byte.MaxValue;
             var live = idx == byte.MaxValue ? null : pg.getItem(idx)?.item;
-            if (live == null || live.id != _heldItem.id || ReferenceEquals(live, _heldItem)) return;
-            bool wasFuel = ReferenceEquals(_heldFuelItem, _heldItem), wasFluid = ReferenceEquals(_heldFluidItem, _heldItem);
-            _heldItem = live;
+            if (live == null || live.id != held.id || ReferenceEquals(live, held)) return;
+            bool wasFuel = ReferenceEquals(_heldFuelItem, held), wasFluid = ReferenceEquals(_heldFluidItem, held);
+            if (_heldItem != null) _heldItem = live;
             if (wasFuel) _heldFuelItem = live;
             if (wasFluid) _heldFluidItem = live;
             // Stamp the state the CLIENT owns onto the newly adopted object straight away. The server never learns
@@ -4031,6 +4036,10 @@ namespace UnturnedGodot
             _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
             _heldFluidItem = backing;
+            // WHERE IT LIVES, found by identity. Drinking and filling are addressed to the server by cell, and the echo
+            // rebind needs the cell too -- but only the hotbar path recorded one; the inventory's Hold left whatever the
+            // PREVIOUS held item's cell was. Locating the object itself covers every way into this method.
+            if (GridAddressOf(backing, out byte hp, out byte hx, out byte hy)) NoteHeldFrom(hp, hx, hy);
             string mesh = FluidItem.HeldMesh(asset);   // most match the item name; the OJ/milk cartons map to box_orange/box_milk
             var an = ConsumableRegistry.Anims(mesh);   // reuse the drink archetype's equip/use clips so the bottle equips + a sip animates naturally
             _viewmodel?.QueueFree();
@@ -4053,7 +4062,11 @@ namespace UnturnedGodot
             if (_heldFluidItem == null) return;
             var asset = _heldFluidItem.GetAsset();
             if (asset == null || !asset.IsFluidContainer) return;
-            if (_focusFluid == null || !IsInstanceValid(_focusFluid) || _focusFluid.Tank == null) { FluidToast("aim at a tank to fill"); return; }
+            if (_focusFluid == null || !IsInstanceValid(_focusFluid) || _focusFluid.Tank == null)
+            {
+                if (AimedTap() is WaterTap tap) { TryFillAtTap(tap, asset); return; }
+                FluidToast("aim at a tank, a sink or a bathtub to fill"); return;
+            }
             float moved = FluidItem.Fill(_heldFluidItem, asset, _focusFluid.Tank, out string msg);
             if (moved <= 0f) { FluidToast(msg); return; }
             _invUI?.Refresh();
@@ -4061,6 +4074,52 @@ namespace UnturnedGodot
             FluidToast($"filled {FluidDef.Litres(moved)} {FluidDef.WaterName(t, q)}");
             Log.Print($"[fluid] filled {asset.itemName} +{FluidDef.Litres(moved)} -> {FluidDef.Litres(amt)} {FluidDef.WaterName(t, q)}");
         }
+
+        /// <summary>The sink or bathtub the look-ray stopped in, or null.</summary>
+        WaterTap AimedTap() => _lookEndDist > 0f ? WaterTap.AimedAt(_lookEnd) : null;
+
+        /// <summary>Where this exact Item object sits in the grid, found by identity -- two identical bottles are two
+        /// different bottles.</summary>
+        bool GridAddressOf(SDG.Unturned.Item it, out byte page, out byte x, out byte y)
+        {
+            page = 0; x = 0; y = 0;
+            if (it == null || Inventory == null) return false;
+            for (byte p = 0; p < Inventory.items.Length; p++)
+            {
+                var pg = Inventory.items[p];
+                if (pg == null) continue;
+                for (byte i = 0; i < pg.getItemCount(); i++)
+                {
+                    var j = pg.getItem(i);
+                    if (ReferenceEquals(j?.item, it)) { page = p; x = j.x; y = j.y; return true; }
+                }
+            }
+            return false;
+        }
+
+        /// <summary>RMB at a sink or bathtub: fill to the brim with clean water (strawberry 2026-10-07). Bad water already
+        /// in the bottle is poured out first -- see FluidRules.FillClean. The SERVER fills its copy and checks the tap is
+        /// in reach; the local fill is only the prediction the HUD shows until the echo lands.</summary>
+        void TryFillAtTap(WaterTap tap, ItemAsset asset)
+        {
+            if (!WaterTap.Running) { FluidToast($"the {tap.DisplayName.ToLowerInvariant()} is dry -- the water's off"); return; }
+            bool wire = InventoryIsServerOwned && NetFillAtTap != null;
+            byte fp = 0, fx = 0, fy = 0;
+            if (wire && !GridAddressOf(_heldFluidItem, out fp, out fx, out fy)) { FluidToast("put it in your bag to fill it"); return; }
+            ushort fillId = _heldFluidItem.id;
+            float moved = FluidRules.FillClean(_heldFluidItem, asset, out bool rinsed, out var why);
+            if (moved <= 0f) { FluidToast(FluidItem.Why(why, _heldFluidItem)); return; }
+            if (wire) NetFillAtTap(fp, fx, fy, fillId);
+            DebugTapFillsSent += wire ? 1 : 0;
+            _invUI?.Refresh();
+            FluidToast(rinsed ? $"poured it out, filled {FluidDef.Litres(moved)} clean water" : $"filled {FluidDef.Litres(moved)} clean water");
+            Log.Print($"[fluid] filled {asset.itemName} at the {tap.DisplayName.ToLowerInvariant()} +{FluidDef.Litres(moved)}{(rinsed ? " (rinsed)" : "")}");
+        }
+
+        internal int DebugDrinksSent, DebugTapFillsSent;
+        internal SDG.Unturned.Item DebugHeldFluidItem => _heldFluidItem;
+        internal WaterTap DebugAimedTap => AimedTap();
+        internal void DebugSecondaryUse() => TryFillContainer();
 
         // LMB with a fluid container in hand + NOT aimed at a tank: take a 50 mL sip. Only clean water / soda / cola are
         // drinkable (tainted/dirty water is refused); a sip restores hydration + plays the drink anim.
@@ -4070,11 +4129,21 @@ namespace UnturnedGodot
             var asset = _heldFluidItem.GetAsset();
             if (asset == null || !asset.IsFluidContainer) return;
             if (_focusFluid != null && IsInstanceValid(_focusFluid) && _focusFluid.Tank != null) { FluidToast("aim away from the tank to drink  ([RMB] fills)"); return; }   // spec: drink while NOT looking at a container
-            if (Water >= 0.999f) { FluidToast("not thirsty"); return; }   // don't waste a full bottle when already hydrated
-            // equipped + LMB = CHUG the whole bottle at once (strawberry); the passive 50 mL sips are autodrink's job
+            // NO "not thirsty" GATE (strawberry 2026-10-07: "remove the 'not thirsty' gate") -- LMB drinks, thirsty or not.
+            // SERVER-OWNED: the server drinks ITS copy and raises Water, and the echo brings both back. Writing Water
+            // here instead is what made drinking quench nothing: AdoptReplicatedFineVitals overwrote it within a tick,
+            // and the next inventory echo refilled the bottle (strawberry: "make sure we are actually granting thirst").
+            bool wire = InventoryIsServerOwned && NetDrinkFluid != null;
+            byte dp = 0, dx = 0, dy = 0;
+            if (wire && !GridAddressOf(_heldFluidItem, out dp, out dx, out dy)) { FluidToast("put it in your bag to drink it"); return; }
+            // equipped + LMB = CHUG the whole bottle at once (strawberry); the passive 50 mL sips are autodrink's job.
+            // On the wire this local drink is the PREDICTION -- the HUD reads this copy until the echo replaces it.
+            ushort drinkId = _heldFluidItem.id;
             float drank = FluidItem.DrinkAll(_heldFluidItem, asset, out float hydration, out string msg);
             if (drank <= 0f) { FluidToast(msg); return; }
-            Water = Mathf.Min(1f, Water + hydration);
+            if (wire) NetDrinkFluid(dp, dx, dy, drinkId);
+            else Water = Mathf.Min(1f, Water + hydration);   // offline: this shell owns its own vitals
+            DebugDrinksSent += wire ? 1 : 0;
             _invUI?.Refresh();
             _viewmodel?.PlayConsumeUse();   // drink animation (reuses the drink archetype's Use clip)
             FluidToast($"drank {FluidDef.Litres(drank)}  (+{hydration * 100f:0}% water)");
@@ -4096,7 +4165,10 @@ namespace UnturnedGodot
             else
             {
                 bool atTank = _focusFluid != null && IsInstanceValid(_focusFluid) && _focusFluid.Tank != null;
-                text = FluidItem.Label(_heldFluidItem, a) + (atTank ? "     [RMB] fill from tank" : "     [LMB] sip");
+                var tap = atTank ? null : AimedTap();
+                text = FluidItem.Label(_heldFluidItem, a) + (atTank ? "     [RMB] fill from tank"
+                     : tap != null ? (WaterTap.Running ? $"     [RMB] fill at the {tap.DisplayName.ToLowerInvariant()}" : "     the water's off")
+                     : "     [LMB] drink");
             }
             FluidContainerHudSet(text);
         }
@@ -6287,6 +6359,8 @@ namespace UnturnedGodot
             _wearFlushCd = WearFlushEvery;
         }
         public System.Action<byte, byte, byte, ushort, bool> NetSetAutoDrink;   // (page,x,y,id,on) -> Client.SendSetAutoDrink
+        public System.Func<byte, byte, byte, ushort, bool> NetDrinkFluid;      // v59 (page,x,y,id) -> Client.SendDrinkFluid: the server drinks its copy + raises Water
+        public System.Func<byte, byte, byte, ushort, bool> NetFillAtTap;       // v59 (page,x,y,id) -> Client.SendFillAtTap: clean water at a sink / bathtub
         public System.Action<byte, byte, byte, ushort, ushort> NetReloadSwap;   // (page,x,y, spentId,spentAmount) -> Client.SendReload (server spends the fresh mag + returns the spent one)
         public System.Action<byte, byte, byte, ushort, byte> NetGunUnload;    // (page,x,y of the GUN, roundId,count) -> the server checks its own gunAmmo, then pays out
         public System.Action<byte, byte, byte, byte> NetWearClothing;     // (page,x,y, EItemType slot) -> Client.SendWearClothing (server does the whole swap)

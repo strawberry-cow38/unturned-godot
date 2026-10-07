@@ -127,6 +127,7 @@ namespace UnturnedGodot
             DeployableNetSchema.RegisterAll(Server.Deployables.Schema);
             DeployableNetSchema.RegisterAll(Client.Deployables.Schema);
             Server.Transactions.Blueprints = BlueprintRegistry.All;
+            Server.Transactions.RunningTapNear = p => WaterTap.RunningNear(new Vector3(p.x, p.y, p.z));   // v59: sinks + bathtubs fill a bottle
             // ---- v47: the server's NPC catalog. INJECTED, not loaded there: core cannot see NpcCatalog, and a
             // server holding its own copy would be a second source of truth for exactly the thing both sides
             // must agree on byte for byte. One catalog, read from two places.
@@ -323,6 +324,8 @@ namespace UnturnedGodot
                 // disagrees, when i update my inv, they come back").
                 Player.NetSpendThrowable = itemId => Server.Transactions.SpendThrowable(Client.PlayerId, itemId);
                 Player.NetSetAutoDrink = (page, x, y, id, on) => Client.SendSetAutoDrink(page, x, y, id, on);
+                Player.NetDrinkFluid = (page, x, y, id) => Client.SendDrinkFluid(page, x, y, id);   // v59
+                Player.NetFillAtTap = (page, x, y, id) => Client.SendFillAtTap(page, x, y, id);     // v59
                 Player.NetWeaponUse = (page, x, y, id, uses) => Client.SendWeaponUse(page, x, y, id, uses);   // v56 durability
                 Player.NetGunState = (page, x, y, it) => Client.SendGunState(page, x, y, it.id, (short)it.gunAmmo, it.gunChambered,
                     (sbyte)it.gunFiremode, it.gunMagId, it.gunAttach, it.gunSightId, it.gunBarrelId, it.gunGripId,

@@ -63,9 +63,7 @@ namespace UnturnedGodot
             }
             : Color(id);
         // A BEVERAGE fluid (soda/cola/juice/milk/etc.) -- always drinkable, no water-quality flag. Fuel/oil/gas/plain water are not.
-        public static bool IsBeverage(FluidType id) => id == FluidType.Soda || id == FluidType.Cola || id == FluidType.OrangeJuice
-                                                    || id == FluidType.Milk || id == FluidType.CoconutWater || id == FluidType.EnergyDrink
-                                                    || id == FluidType.AppleJuice || id == FluidType.GrapeJuice;
+        public static bool IsBeverage(FluidType id) => SDG.Unturned.FluidRules.IsBeverage((byte)id);   // one list, shared with the server
         // Drinkable (strawberry's design intent): the ONLY thing the gate blocks is BAD WATER (tainted/dirty) -- so you
         // can't ACCIDENTALLY chug it. Every other fluid is a player's CHOICE to drink (beverages, syrup, glue, chemicals,
         // even fuel/oil/gas -- drink the gas if you want, that's on you). Per-fluid drink CONSEQUENCES (fuel hurts you,
@@ -85,13 +83,13 @@ namespace UnturnedGodot
             _ => WaterQuality.Tainted,          // Washington / Yukon / anything new: fresh but untreated
         };
 
-        public static bool Drinkable(FluidType id, WaterQuality q) => !(id == FluidType.Water && q != WaterQuality.Clean);
+        public static bool Drinkable(FluidType id, WaterQuality q) => SDG.Unturned.FluidRules.Drinkable((byte)id, (byte)q);
 
         // SAFE to AUTODRINK (strawberry): the narrower set autodrink defaults ON for + passively sips — CLEAN water or a
         // proper BEVERAGE. NOT tainted/dirty water, NOT fuel/oil/gas, and NOT the novelty "you can if you insist" liquids
         // (chemicals / glue / maple syrup — "syrup's more food in liquid form", strawberry). Those you drink only by manual
         // choice; autodrink never touches them.
-        public static bool Safe(FluidType id, WaterQuality q) => (id == FluidType.Water && q == WaterQuality.Clean) || IsBeverage(id);
+        public static bool Safe(FluidType id, WaterQuality q) => SDG.Unturned.FluidRules.Safe((byte)id, (byte)q);
 
         // Parse a fluid NAME (for the `fill <fluid>` console command) -> FluidType, with friendly aliases. False = unknown.
         public static bool TryParse(string s, out FluidType type)

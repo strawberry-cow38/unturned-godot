@@ -748,6 +748,7 @@ namespace UnturnedGodot
             Vector2I bestCell = Vector2I.Zero; int bestN = 0; int placed = 0; int lodMissing = 0; int lodLevels = 0;
             int signals = 0, signalsSide = 0;   // side-road flags are matched by POSITION; a silent miss would flash every junction amber
             int waterSources = 0;               // hydrants + towers + sinks; a silent zero here means the mains exist only in the console
+            int waterTaps = 0;                  // sinks + bathtubs a bottle can be filled at by hand -- EVERY mode, the server fills it
             int televisions = 0, monitors = 0, laptops = 0, monitorsPlaced = 0, radios = 0, vendors = 0;   // monitorsPlaced = Science_3 patient monitors   // Television_0/1 + Computer_0/2/3 interactive screens; printed unconditionally so a
                                                 //  hook attaching to NOTHING is visible. Counted SEPARATELY because the two share
                                                 //  one device class -- a combined total would still read "16" if every monitor
@@ -1622,6 +1623,10 @@ namespace UnturnedGodot
                         // Only LARGE opaque structures (buildings, gated by scaled mesh size) block the item LOS raycast; every small prop
                         // + all glass/alpha-cutout goes on the see-through layer 6 so the raycast passes through (master). Player collides with both.
                         var ab = mesh.GetAabb();
+                        // A SINK OR A BATHTUB is somewhere to fill a bottle. Registered in EVERY mode, Dedicated included,
+                        // because the server is the one that fills it (see WaterTap) -- unlike SinkSource above, which is
+                        // the fluid-net side and deliberately client-only.
+                        if (WaterTap.IsTapProp(name)) { root.AddChild(WaterTap.Make(name, new Transform3D(basis, gpos), ab)); waterTaps++; }
                         float maxDim = Mathf.Max(ab.Size.X * sx, Mathf.Max(ab.Size.Y * sy, ab.Size.Z * sz));
                         bool losBlocker = maxDim >= 5f && MatFor(matName).Transparency == BaseMaterial3D.TransparencyEnum.Disabled;
                         // Small props go on the see-through layer 6 (bullets/LOS pass through) PLUS bit8 = "solid to vehicles"
@@ -1974,6 +1979,7 @@ namespace UnturnedGodot
             if (alsoReplicated > 0) Log.Print($"[containers] suppressed {alsoReplicated} decoration prop(s) that are server-replicated containers -- StorageReplicaView draws these, so keeping the scenery copy drew each one TWICE");
             var focus = placed > 0 ? cellSum[bestCell] / bestN : Vector3.Zero;
             Log.Print($"[OBJECTS] placed {placed} objects ({cache.Count} meshes); densest cluster {bestN} near {focus}; holiday-gated {holidaySkipped}{(deferredHoliday != null ? $", deferred {deferredHoliday.Count} to the join handshake" : "")} (active={activeHoliday})");
+            if (waterTaps > 0) Log.Print($"[water] {waterTaps} sinks + bathtubs to fill a bottle at");
             if (waterSources > 0) Log.Print($"[water] {waterSources} municipal water sources placed (hydrants + towers + sinks); mains {(FluidNet.GlobalWater ? "ON" : "OFF")}");
             Log.Print($"[tv] {televisions} interactive televisions, {monitors} computer monitors, {laptops} laptops");
             Log.Print($"[medical] {monitorsPlaced} patient monitors");

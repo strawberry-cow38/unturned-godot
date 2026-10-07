@@ -38,6 +38,10 @@ namespace UnturnedGodot.Net
         public long GunStatesApplied;       // the client's gun state landed on the server's copy of that item
         public long GunStatesRejected;      // empty cell / a different item at that address (a stale client grid)
         public long VehicleStorageRefused;  // v58: an open of a vehicle's trunk/cabin that no such container, or no access, refused
+        public long DrinksApplied;          // v59: a held bottle drunk on the server's copy, Water raised
+        public long DrinksRejected;         // ...a different item at that address, not a container, empty, or undrinkable
+        public long TapFillsApplied;        // v59: a bottle filled with clean water at a sink / bathtub
+        public long TapFillsRejected;       // ...no running tap in reach, or the container is full / holds another fluid
         public long WeaponUsesApplied;      // durability: uses rolled against a weapon (each report, not each roll)
         public long WeaponUsesRejected;     // durability: the address held no weapon of that id
         public long WeaponWearPoints;       // durability: condition points actually lost by weapons
@@ -603,6 +607,13 @@ namespace UnturnedGodot.Net
                     Diag.AutoDrinkApplied++;
                     pg.raiseStateUpdated();
                 },
+                validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.Page < PlayerInventory.PAGES);
+
+            // v59: drinking and filling a bottle, on the server's copy. Both used to be client-only writes the next owner
+            // echo put back, so a drink quenched nothing and a fill evaporated.
+            commands.Register<DrinkFluidCommand>(ReplicationIds.CommandDrinkFluid, DrinkFluidCommand.TryRead, OnDrinkFluid,
+                validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.Page < PlayerInventory.PAGES);
+            commands.Register<FillAtTapCommand>(ReplicationIds.CommandFillAtTap, FillAtTapCommand.TryRead, OnFillAtTap,
                 validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.Page < PlayerInventory.PAGES);
 
             commands.Register<GunStateCommand>(ReplicationIds.CommandGunState, GunStateCommand.TryRead,
@@ -1743,6 +1754,40 @@ namespace UnturnedGodot.Net
         {
             if (Crafting_ == null) { Diag.CraftCancelsRejected++; return; }
             if (Crafting_.Cancel(sender, cmd.Slot)) Diag.CraftCancelsApplied++; else Diag.CraftCancelsRejected++;
+        }
+
+        /// <summary>The fluid container at a validated address, or null (counted as a rejection by the caller).</summary>
+        Item FluidAt(ushort sender, byte page, byte x, byte y, ushort id, out ItemAsset asset)
+        {
+            asset = null;
+            var pg = SenderInventory(sender)?.items[page];
+            byte ix = pg?.getIndex(x, y) ?? byte.MaxValue;
+            var it = ix == byte.MaxValue ? null : pg.getItem(ix)?.item;
+            if (it == null || it.id != id) return null;
+            asset = Assets.find(it.id);
+            return asset != null && asset.IsFluidContainer ? it : null;
+        }
+
+        void OnDrinkFluid(ushort sender, DrinkFluidCommand cmd)
+        {
+            var it = FluidAt(sender, cmd.Page, cmd.X, cmd.Y, cmd.Id, out var asset);
+            if (it == null || FluidRules.DrinkAll(it, asset, out float hydration, out _) <= 0f) { Diag.DrinksRejected++; return; }
+            _inventories.ServerMarkDirty(sender);   // a bare field write raises no grid event -- without this the empty bottle never echoes
+            _vitals?.ServerRaise(sender, 0f, hydration, 0f, 0f, false, false, _tick());
+            Diag.DrinksApplied++;
+        }
+
+        /// <summary>Is a sink or bathtub with the water on within reach of this position? The game layer answers (it
+        /// owns the map's props); unset = there are no taps, and every fill is refused.</summary>
+        public Func<Vector3, bool> RunningTapNear;
+
+        void OnFillAtTap(ushort sender, FillAtTapCommand cmd)
+        {
+            if (RunningTapNear == null || !TryGetSenderPos(sender, out var pos) || !RunningTapNear(pos)) { Diag.TapFillsRejected++; return; }
+            var it = FluidAt(sender, cmd.Page, cmd.X, cmd.Y, cmd.Id, out var asset);
+            if (it == null || FluidRules.FillClean(it, asset, out _, out _) <= 0f) { Diag.TapFillsRejected++; return; }
+            _inventories.ServerMarkDirty(sender);
+            Diag.TapFillsApplied++;
         }
 
         void OnConsume(ushort sender, ConsumeCommand cmd)
