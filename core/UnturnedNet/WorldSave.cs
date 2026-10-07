@@ -611,7 +611,11 @@ namespace UnturnedGodot.Net
                 p.WornMaskItem = ItemOf(wi.wornMask); p.WornShirtItem = ItemOf(wi.wornShirt);
                 p.WornVestItem = ItemOf(wi.wornVest); p.WornBackpackItem = ItemOf(wi.wornBackpack);
                 p.WornPantsItem = ItemOf(wi.wornPants);
-                for (byte pg = 0; pg < PlayerInventory.PAGES; pg++)
+                // ⚠ The player's OWN pages only. Pages from STORAGE up are views of a container (or the ground) that
+                // happens to be open, and the container saves its own contents -- writing the view as well put the
+                // same items in the save twice, and on load handed them back in a page attached to nothing, free to
+                // drag out. v58 added a dozen more view pages (a car's seats), which is what made this worth closing.
+                for (byte pg = 0; pg < PlayerInventory.OWNPAGES; pg++)
                 {
                     var page = ie.Inventory.items[pg];
                     var ps = new PageSave { Width = page.width, Height = page.height };
@@ -732,7 +736,9 @@ namespace UnturnedGodot.Net
                 if (p.WornBackpackItem != null) inv.wearBackpack(ToItem(p.WornBackpackItem));
                 if (p.WornPantsItem != null) inv.wearPants(ToItem(p.WornPantsItem));
 
-                for (byte pg = 0; pg < PlayerInventory.PAGES && pg < p.Pages.Count; pg++)
+                // OWNPAGES, not PAGES: a save written before v58 carries the open container's view pages too, and
+                // restoring them would conjure that container's contents into a page nothing backs (see the save side).
+                for (byte pg = 0; pg < PlayerInventory.OWNPAGES && pg < p.Pages.Count; pg++)
                 {
                     var ps = p.Pages[pg];
                     var page = inv.items[pg];

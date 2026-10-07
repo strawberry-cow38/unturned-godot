@@ -37,6 +37,7 @@ namespace UnturnedGodot.Net
         public long AutoDrinkRejected;      // empty cell / a different item at that address
         public long GunStatesApplied;       // the client's gun state landed on the server's copy of that item
         public long GunStatesRejected;      // empty cell / a different item at that address (a stale client grid)
+        public long VehicleStorageRefused;  // v58: an open of a vehicle's trunk/cabin that no such container, or no access, refused
         public long WeaponUsesApplied;      // durability: uses rolled against a weapon (each report, not each roll)
         public long WeaponUsesRejected;     // durability: the address held no weapon of that id
         public long WeaponWearPoints;       // durability: condition points actually lost by weapons
@@ -636,25 +637,21 @@ namespace UnturnedGodot.Net
                 (sender, cmd) =>
                 {
                     if (!TryGetSenderPos(sender, out var pos)) return;
-                    if (_inventories.ServerOpenStorage(sender, cmd.NetId, pos, _tick())
-                        && _inventories.TryGetCrate(cmd.NetId, out var crate))
-                    {
-                        ServerCooking.Cooker ck = null;
-                        bool isCooker = Cooking != null && Cooking.TryGet(cmd.NetId, out ck);
-                        var evt = new StorageOpenedEvent
-                        {
-                            NetId = cmd.NetId, Width = crate.Width, Height = crate.Height,
-                            IsCooker = isCooker,
-                            CookerKind = isCooker ? (byte)ck.Kind : (byte)0,
-                            CookerOn = isCooker && ck.On,
-                            CookerFuel = isCooker ? ck.FuelFrac : (byte)0,   // v29: the bar opens at the right height
-                            FreezerWidth = crate.FreezerWidth, FreezerHeight = crate.FreezerHeight,   // v30: 0x0 = no freezer
-                        };
-                        _sendTo(sender, NetMessagePak.Pack(ReplicationIds.EventStorageOpened, evt.Write));
-                        // ...and from here on this player is the one who hears the fuel burn down.
-                        if (isCooker) Cooking.ForceStateSync(cmd.NetId);
-                    }
+                    OpenAndAnnounce(sender, cmd.NetId, pos);
                 });
+
+            // v58: a car's trunk or cabin. The containers are made on first open (ServerVehicleStorage.CrateFor), then
+            // opened and announced through the SAME path as a fridge, so nothing about them is a second implementation.
+            commands.Register<OpenVehicleStorageCommand>(ReplicationIds.CommandOpenVehicleStorage, OpenVehicleStorageCommand.TryRead,
+                (sender, cmd) =>
+                {
+                    if (VehicleStorage == null || !TryGetSenderPos(sender, out var pos)) return;
+                    uint crateId = VehicleStorage.CrateFor(cmd.VehicleNetId, cmd.Kind);
+                    if (crateId == 0) { Diag.VehicleStorageRefused++; return; }
+                    if (!OpenAndAnnounce(sender, crateId, pos)) Diag.VehicleStorageRefused++;
+                },
+                validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.VehicleNetId != 0
+                                           && (cmd.Kind == VehicleStorageKind.Trunk || cmd.Kind == VehicleStorageKind.Cabin));
 
             // F on an item sitting on a shelf: take THAT one, without opening the container (v34). The grab is
             // an intent like every other grid mutation -- the client's shelf grid and its bag are both display
@@ -2357,6 +2354,35 @@ namespace UnturnedGodot.Net
         /// every client-side assertion passed while this object never changed, so a test that cannot read
         /// it cannot tell a working command from a no-op.</summary>
         public PlayerInventory InventoryForTest(ushort playerId) => SenderInventory(playerId);
+
+        /// <summary>v58: a vehicle's containers (set by the host). Null = vehicles have none.</summary>
+        public ServerVehicleStorage VehicleStorage;
+
+        /// <summary>Open a container for this player and tell them what they opened -- its size, whether it cooks,
+        /// its freezer, and (v58) the names of its grids and compartments. The one place a StorageOpened is built.</summary>
+        bool OpenAndAnnounce(ushort sender, uint crateId, Vector3 pos)
+        {
+            if (!_inventories.ServerOpenStorage(sender, crateId, pos, _tick()) || !_inventories.TryGetCrate(crateId, out var crate))
+                return false;
+            ServerCooking.Cooker ck = null;
+            bool isCooker = Cooking != null && Cooking.TryGet(crateId, out ck);
+            var comps = new (byte W, byte H, string Label)[crate.Compartments.Length];
+            for (int i = 0; i < comps.Length; i++) comps[i] = (crate.Compartments[i].Width, crate.Compartments[i].Height, crate.Compartments[i].Label);
+            var evt = new StorageOpenedEvent
+            {
+                NetId = crateId, Width = crate.Width, Height = crate.Height,
+                IsCooker = isCooker,
+                CookerKind = isCooker ? (byte)ck.Kind : (byte)0,
+                CookerOn = isCooker && ck.On,
+                CookerFuel = isCooker ? ck.FuelFrac : (byte)0,   // v29: the bar opens at the right height
+                FreezerWidth = crate.FreezerWidth, FreezerHeight = crate.FreezerHeight,   // v30: 0x0 = no freezer
+                StorageLabel = crate.StorageLabel, Compartments = comps,                  // v58
+            };
+            _sendTo(sender, NetMessagePak.Pack(ReplicationIds.EventStorageOpened, evt.Write));
+            // ...and from here on this player is the one who hears the fuel burn down.
+            if (isCooker) Cooking.ForceStateSync(crateId);
+            return true;
+        }
 
         bool TryGetSenderPos(ushort sender, out Vector3 pos)
         {

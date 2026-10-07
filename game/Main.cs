@@ -8297,6 +8297,32 @@ namespace UnturnedGodot
             AddChild(player);                    // _Ready builds the inventory + dashboard
             player.GlobalPosition = new Vector3(0, 1.0f, 0);
 
+            // UG_CARDEMO=1 (v58 car storage): the dashboard as a SEATED player sees it -- glovebox + a pocket per seat, under
+            // the names the server sends. UI-only on purpose: the route from the key to these grids is the L1's job
+            // (carstorage.*); this exists to be LOOKED at, with a sedan's four seats or UG_CARSEATS of them (a bus is 10).
+            if (System.Environment.GetEnvironmentVariable("UG_CARDEMO") == "1")
+            {
+                SDG.Unturned.ItemCatalog.RegisterAll();
+                int seats = int.TryParse(System.Environment.GetEnvironmentVariable("UG_CARSEATS"), out var cs) ? Mathf.Clamp(cs, 1, SDG.Unturned.PlayerInventory.MAXCOMPARTMENTS) : 4;
+                var car = Vehicle.BuildByName(seats > 4 ? "bus" : "sedan");
+                var shape = car.StorageShape();
+                car.QueueFree();
+                var inv = player.Inventory;
+                inv.items[SDG.Unturned.PlayerInventory.STORAGE].loadSize(shape.GloveboxWidth, shape.GloveboxHeight);
+                inv.items[SDG.Unturned.PlayerInventory.STORAGE].addItem(0, 0, 0, new SDG.Unturned.Item(95, 4));   // bandages in the glovebox
+                var labels = new string[Mathf.Min(seats, shape.Seats.Length)];
+                for (int i = 0; i < labels.Length; i++)
+                {
+                    labels[i] = shape.Seats[i].label;
+                    inv.items[SDG.Unturned.PlayerInventory.COMPARTMENT0 + i].loadSize(shape.Seats[i].w, shape.Seats[i].h);
+                }
+                inv.items[SDG.Unturned.PlayerInventory.COMPARTMENT0 + 0].addItem(0, 0, 0, new SDG.Unturned.Item(14));       // water on the driver's seat
+                if (labels.Length > 2) inv.items[SDG.Unturned.PlayerInventory.COMPARTMENT0 + 2].addItem(0, 0, 0, new SDG.Unturned.Item(15));   // medkit on the back seat
+                player.OnReplicatedStorageOpened(1, null, false, 0, "Glovebox", labels);
+                Log.Print($"[CARDEMO] glovebox + {labels.Length} seats: {string.Join(", ", labels)}");
+                return;
+            }
+
             // a crate 1.2 m in front, seeded with loot
             var crate = StorageCrate.Spawn(this, new Vector3(0f, 0f, -1.2f), 5, 4);
             crate.Add(new SDG.Unturned.Item(4));      // Eaglefire

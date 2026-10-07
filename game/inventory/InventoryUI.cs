@@ -139,6 +139,7 @@ void fragment() {
         float _storageW, _storageH;
         static readonly HashSet<byte> _collapsed = new();                    // clothing pages whose grid is folded away (items stay, header stays); STATIC so it survives inventory open/close and a rebuilt dashboard (master)
         readonly List<(Control icon, EItemType type)> _headerIcons = new();  // the small worn-item icon on each page header: draggable = take it off
+        VScrollBar _vscroll2; float _scrollY2; bool _scrollTest2Applied;   // v58: the container column's own scroll (a bus's ten seats)
         VScrollBar _vscroll; float _scrollY; bool _scrollTestApplied, _foldTestApplied;                                 // clothing column scroll (master 2026-09-03: "scrollbar to the right of the main inventory grid")
 
         // quick-craft: a dashboard SECTION under the bags (icons of recipes you can afford); LMB queues 1, RMB queues 5.
@@ -376,6 +377,11 @@ void fragment() {
         /// <summary>Test seam: the clothing column's scroll offset, and the storage box itself so a test can
         /// aim a wheel event at something real inside it.</summary>
         public float DebugScrollY => _scrollY;
+        public float DebugScrollY2 => _scrollY2;          // v58: the container column's own scroll
+        public float DebugStorageWidth => _storageW;
+        /// <summary>Test seam (v58): the names over the container column's grids, top to bottom, as last drawn.</summary>
+        public IReadOnlyList<string> DebugContainerTitles => _containerTitles;
+        readonly List<string> _containerTitles = new List<string>();
         public Control DebugStorageCol => _storageCol;
 
         /// <summary>Wheel notches, including the horizontal pair. They ride InputEventMouseButton like a click
@@ -639,7 +645,7 @@ void fragment() {
             // Collection stops while an item is in hand -- the cursor is carrying something, so what it passes
             // over is not a thing you are pointing AT. Draining carries on regardless; that is the whole ask.
             if (held && !_dragging && PointToCell(DebugQtMouse ?? GetViewport().GetMousePosition(), out byte hp, out byte hx, out byte hy, out _, out bool isSlot)
-                && !isSlot && hp <= PlayerInventory.STORAGE)   // AREA (the ground scan) is not part of "both ways"
+                && !isSlot && hp != PlayerInventory.AREA && (hp < PlayerInventory.OWNPAGES || PlayerInventory.IsContainerView(hp)))   // AREA (the ground scan) is not part of "both ways"; a container's every grid is (v58: a car's seats)
             {
                 byte hidx = Inv.items[hp].getIndex(hx, hy);
                 if (hidx != byte.MaxValue && Inv.items[hp].getItem(hidx) is { item: not null } hj)
@@ -660,7 +666,7 @@ void fragment() {
                 // goes and the queue moves on. Without the id half, the second case transferred the replacement.
                 if (jar?.item == null || jar.item.id != qid) { _qtQueue.RemoveAt(0); _qtT = 0f; continue; }
                 if (page != _qtPage || x != _qtX || y != _qtY) { _qtPage = page; _qtX = x; _qtY = y; _qtT = 0f; }
-                _qtToCrate = page != PlayerInventory.STORAGE;
+                _qtToCrate = !PlayerInventory.IsContainerView(page);
 
                 _qtT += dt;
                 _magFx?.QueueRedraw();
@@ -766,9 +772,10 @@ void fragment() {
             // protect them from.
             if (e is InputEventMouseButton pb && !IsWheel(pb.ButtonIndex) && PressLandsOnButton(pb.GlobalPosition)) return;
             if (e is InputEventMouseButton wh && wh.Pressed && IsWheel(wh.ButtonIndex)
-                && _storageCol != null && new Rect2(_storageCol.GlobalPosition, _storageCol.Size).HasPoint(wh.GlobalPosition) && _vscroll != null && _vscroll.Visible)
+                && _storageCol != null && new Rect2(_storageCol.GlobalPosition, _storageCol.Size).HasPoint(wh.GlobalPosition)
+                && WheelBar(wh.GlobalPosition) is { } bar)
             {
-                _vscroll.Value = Mathf.Clamp(_vscroll.Value + (wh.ButtonIndex == MouseButton.WheelUp ? -60 : 60), 0, _vscroll.MaxValue - _vscroll.Page);   // wheel over the box scrolls the clothing column
+                bar.Value = Mathf.Clamp(bar.Value + (wh.ButtonIndex == MouseButton.WheelUp ? -60 : 60), 0, bar.MaxValue - bar.Page);   // wheel over the box scrolls the column under it
                 GetViewport().SetInputAsHandled(); return;
             }
             if (e is InputEventMouseButton mb && mb.ButtonIndex == MouseButton.Left)
@@ -1161,7 +1168,7 @@ void fragment() {
             // ⚠ A FULL BAG SNAPS HOME rather than falling through. Below this, an unmatched release on the right
             // half of the screen DROPS the item -- so without this return, dragging onto your own body with no
             // room would throw a crate's item on the floor, which is the opposite of what the gesture means.
-            if (toDoll && sp == PlayerInventory.STORAGE && _dragJar?.GetAsset() is { } takeAsset)
+            if (toDoll && PlayerInventory.IsContainerView(sp) && _dragJar?.GetAsset() is { } takeAsset)
             {
                 if (FirstFreeOwnCell(takeAsset, out byte tkPage, out byte tkX, out byte tkY)
                     && (Player == null || !Player.RequestMoveItem(sp, sx, sy, tkPage, tkX, tkY, 0)))
@@ -1176,7 +1183,7 @@ void fragment() {
             // ...but only from your OWN pages. Putting a crate's bandage straight into your hands would leave the
             // item sitting in the crate while your hands claimed it -- taking it first is a separate gesture, and
             // "equipables ... onto the primary/secondary slots" is the slot case above, not this one.
-            if (toDoll && sp != PlayerInventory.STORAGE && _dragJar?.GetAsset() is { } handAsset && HasHandAction(handAsset))
+            if (toDoll && !PlayerInventory.IsContainerView(sp) && _dragJar?.GetAsset() is { } handAsset && HasHandAction(handAsset))
             {
                 _selPage = sp; _selX = sx; _selY = sy;
                 HandActionSelected(handAsset);
@@ -1479,7 +1486,7 @@ void fragment() {
                 // The head shows its real charge; everything behind it shows an empty ring, so a queued item is
                 // visibly WAITING rather than indistinguishable from one you merely passed over.
                 DrawTransferRing(qr, qi == 0 ? Mathf.Clamp(_qtT / QuickTransferSeconds, 0f, 1f) : 0f,
-                                 qp != PlayerInventory.STORAGE);
+                                 !PlayerInventory.IsContainerView(qp));
             }
             if (_dragging && _dragJar != null)
             {
@@ -1647,7 +1654,7 @@ void fragment() {
 
             // where should it go?
             byte dest;
-            if (crateOpen) dest = page == PlayerInventory.STORAGE ? (byte)255 : PlayerInventory.STORAGE;   // 255 = "any of my pages"
+            if (crateOpen) dest = PlayerInventory.IsContainerView(page) ? (byte)255 : StoreTarget(jar);   // 255 = "any of my pages"
             else if (page == PlayerInventory.AREA) dest = 255;                                            // pick up off the ground
             else { return QuickEquip(page, cx, cy, jar); }                                                // wear/equip it
 
@@ -1681,6 +1688,23 @@ void fragment() {
 
         // Move a jar out of `page` into `dest` (255 = first of my own pages with room). Puts it back if the
         // destination has no room, so a failed quick-move can never eat an item.
+        /// <summary>v58: where "Store" puts an item when the open container has several grids -- the main one first
+        /// (a car's glovebox), then each compartment in order (its seats), the first with room. Judged on the local
+        /// view; the server re-checks, and if every grid looks full the main one is asked and refuses.</summary>
+        byte StoreTarget(ItemJar jar)
+        {
+            var a = jar?.GetAsset();
+            if (a == null) return PlayerInventory.STORAGE;
+            for (int i = -1; i < PlayerInventory.MAXCOMPARTMENTS; i++)
+            {
+                byte pg = i < 0 ? PlayerInventory.STORAGE : (byte)(PlayerInventory.COMPARTMENT0 + i);
+                var items = Inv.items[pg];
+                if (items.width == 0 || items.height == 0) continue;
+                if (items.tryFindSpace(a.size_x, a.size_y, out _, out _, out _)) return pg;
+            }
+            return PlayerInventory.STORAGE;
+        }
+
         bool MoveTo(byte page, byte idx, ItemJar jar, byte dest)
         {
             // SERVER-OWNED BAG: the transfer has to be a REQUEST, exactly like the drag path above. This used to
@@ -2140,7 +2164,7 @@ void fragment() {
             { AddActionButton(panel, jar.item.autoDrink ? "Autodrink: ON" : "Autodrink: OFF", new Vector2(228, by), ToggleAutoDrinkSelected); by += 44; }
             if (Inv.items[PlayerInventory.STORAGE].width > 0 && Inv.items[PlayerInventory.STORAGE].height > 0)   // #7: a crate is open -> Store/Take quick-move (source onClickedStore; reuses QuickAction's crate<->pages logic)
             {
-                string smove = _selPage == PlayerInventory.STORAGE ? "Take" : "Store";
+                string smove = PlayerInventory.IsContainerView(_selPage) ? "Take" : "Store";
                 AddActionButton(panel, smove, new Vector2(228, by), () => { QuickAction(_selPage, _selX, _selY); CloseSelection(); }); by += 44;
             }
             if (asset.IsMagazine && jar.item != null && jar.item.amount > 0)   // a loaded mag: RMB Unload -> eject its rounds back to the bag, the wheel emptying (strawberry: rmb menu, not drag)
@@ -2921,8 +2945,8 @@ void fragment() {
             // second 'container' to the inventory ui above the fridge container"). It is sized 0x0 by the server
             // for every container that has no freezer, and the loop already skips an empty non-AREA page, so a
             // plain crate is completely unchanged -- no header, no gap, nothing.
-            foreach (var (page, name) in new (byte, string)[] {
-                         (PlayerInventory.FREEZER, "Freezer"), (PlayerInventory.STORAGE, "Storage"), (PlayerInventory.AREA, "Nearby") })
+            _containerTitles.Clear();
+            foreach (var (page, name) in ContainerColumnPages())
             {
                 var pg = Inv.items[page];
                 bool always = page == PlayerInventory.AREA;   // source: headers[AREA].IsVisible = true, always
@@ -2934,6 +2958,7 @@ void fragment() {
                     continue;
                 }
                 AddGridAt(name, pg, new Vector2(0, yA), aCol, colW);
+                _containerTitles.Add(name);
                 yA += pg.height * CELL + GRIDPAD + PAGEADV;
                 // THE COOKING SWITCH (strawberry 2026-09-05: "a new on/off button for cooking"). Under the
                 // STORAGE grid only, and only when the container you have open actually cooks -- so a fridge
@@ -2980,17 +3005,59 @@ void fragment() {
             if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_INVSCROLLTEST"), out var _vh) && _vh > 100f) visibleH = _vh;   // render harness: cap the box height so the scrollbar shows on a short column
             if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_INVSCROLLY"), out var _sy) && !_scrollTestApplied) { _scrollY = _sy; _scrollTestApplied = true; }   // render harness: pre-scrolled
             _storageCol.ClipContents = true; _storageCol.Size = new Vector2(boxW, visibleH);
-            float maxScroll = Mathf.Max(0f, yC - visibleH);
+            // v58: the CONTAINER column scrolls too, and ON ITS OWN. It never needed to while a container was one grid
+            // (plus a freezer), but a bus opens ten seat pockets under its glovebox and that runs off any screen. A shared
+            // scroll was tried first and is wrong: scrolling down to the back rows carried your own pockets off the top,
+            // and a drag from your pockets to row 5 is the whole point. So in the split layout each half has its own
+            // bar; in the single-column layout there is one column, so one bar covers it.
+            float contentH = split ? yC : Mathf.Max(yC, yA);
+            float maxScroll = Mathf.Max(0f, contentH - visibleH);
             _scrollY = Mathf.Clamp(_scrollY, 0f, maxScroll);
-            _clothingCol.Position = new Vector2(0f, -_scrollY);
-            if (_vscroll == null) { _vscroll = new VScrollBar { Step = 10 }; _vscroll.ValueChanged += v => { _scrollY = (float)v; _clothingCol.Position = new Vector2(0f, -_scrollY); }; _storageCol.AddChild(_vscroll); }
+            float maxScroll2 = split ? Mathf.Max(0f, yA - visibleH) : 0f;
+            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_INVSCROLLY2"), out var _sy2) && !_scrollTest2Applied) { _scrollY2 = _sy2; _scrollTest2Applied = true; }   // render harness: container column pre-scrolled
+            _scrollY2 = Mathf.Clamp(_scrollY2, 0f, maxScroll2);
+            ApplyScroll(boxW);
+            if (_vscroll == null) { _vscroll = new VScrollBar { Step = 10 }; _vscroll.ValueChanged += v => { _scrollY = (float)v; ApplyScroll(_storageW); }; _storageCol.AddChild(_vscroll); }
             _vscroll.Visible = maxScroll > 0f;
-            _vscroll.MaxValue = yC; _vscroll.Page = visibleH; _vscroll.SetValueNoSignal(_scrollY);
+            _vscroll.MaxValue = contentH; _vscroll.Page = visibleH; _vscroll.SetValueNoSignal(_scrollY);
+            if (_vscroll2 == null) { _vscroll2 = new VScrollBar { Step = 10 }; _vscroll2.ValueChanged += v => { _scrollY2 = (float)v; ApplyScroll(_storageW); }; _storageCol.AddChild(_vscroll2); }
+            _vscroll2.Visible = maxScroll2 > 0f;
+            _vscroll2.MaxValue = yA; _vscroll2.Page = visibleH; _vscroll2.SetValueNoSignal(_scrollY2);
+            _vscroll2.Position = new Vector2(boxW * 0.5f + 5f + Mathf.Min(colW, 8 * CELL) + 8f, 0f); _vscroll2.Size = new Vector2(14f, visibleH);
             _vscroll.Position = new Vector2(Mathf.Min(colW, 8 * CELL) + 8f, 0f); _vscroll.Size = new Vector2(14f, visibleH);   // hugs the widest grid (8 cells), not the split -- it was landing on the Nearby column
             _storageH = Mathf.Max(yC, split ? yA : yA) - 10f;   // source ContentSizeOffset = y - 10
 
             LayoutDash();
             MaybeShowSplitUi();   // render harness only; no-op unless UG_SPLITUI=1
+        }
+
+        /// <summary>v58: which scrollbar the wheel moves -- the container column's over the right half of the split
+        /// layout, the main one anywhere else. Null when the column under the cursor has nothing to scroll.</summary>
+        VScrollBar WheelBar(Vector2 at)
+        {
+            bool right = _areaCol != null && _areaCol.Visible && at.X >= _storageCol.GlobalPosition.X + _storageW * 0.5f;
+            var bar = right ? _vscroll2 : _vscroll;
+            return bar != null && bar.Visible ? bar : null;
+        }
+
+        void ApplyScroll(float boxW)
+        {
+            _clothingCol.Position = new Vector2(0f, -_scrollY);
+            _areaCol.Position = new Vector2(boxW * 0.5f + 5f, -_scrollY2);   // v58: the container column has its own scroll
+        }
+
+        /// <summary>The container column, top to bottom: a fridge's freezer above its body, then the open container's
+        /// own grid under ITS name, then (v58) each compartment -- a car's seats under the glovebox -- then Nearby.
+        /// Every page the open container does not have is 0x0 and is skipped by the loop, so a plain crate is unchanged.</summary>
+        IEnumerable<(byte, string)> ContainerColumnPages()
+        {
+            yield return (PlayerInventory.FREEZER, "Freezer");
+            yield return (PlayerInventory.STORAGE, Player?.OpenStorageLabel ?? "Storage");
+            var labels = Player?.OpenCompartmentLabels;
+            for (int i = 0; i < PlayerInventory.MAXCOMPARTMENTS; i++)
+                yield return ((byte)(PlayerInventory.COMPARTMENT0 + i),
+                              labels != null && i < labels.Length && !string.IsNullOrEmpty(labels[i]) ? labels[i] : $"Compartment {i + 1}");
+            yield return (PlayerInventory.AREA, "Nearby");
         }
 
         void LayoutDash()

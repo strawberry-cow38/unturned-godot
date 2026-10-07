@@ -1783,6 +1783,66 @@ namespace UnturnedGodot
         }
         const byte TrunkWidth = 6, TrunkHeight = 4;
 
+        // ---- v58 CAR STORAGE (strawberry 2026-10-07: "when opening the inventory in a car, add several storage
+        //      'containers' (like how we have both a fridge and freezer compartment on fridges) for each seat +
+        //      glovebox"). The grids live on the SERVER (ServerVehicleStorage); this only says what this car has. ----
+        const byte GloveboxWidth = 3, GloveboxHeight = 2;
+        const byte SeatPocketWidth = 4, SeatPocketHeight = 2;
+
+        /// <summary>This car's containers, for the server. A CABIN (glovebox + a pocket per seat) on the same hulls
+        /// that have a hood -- an engine in front of a dashboard is what a glovebox is in -- so cars, vans, trucks and
+        /// the bus get one, and a quad, a bike, a boat or a heli does not. The trunk is the one the F zone opens.</summary>
+        public Net.VehicleStorageShape StorageShape()
+        {
+            var s = new Net.VehicleStorageShape();
+            if (HasTrunk) { s.TrunkWidth = TrunkWidth; s.TrunkHeight = TrunkHeight; }
+            if (HasHood && SeatCount > 0)
+            {
+                s.GloveboxWidth = GloveboxWidth; s.GloveboxHeight = GloveboxHeight;
+                int n = Mathf.Min(SeatCount, SDG.Unturned.PlayerInventory.MAXCOMPARTMENTS);
+                var labels = SeatLabels(n);
+                s.Seats = new (byte, byte, string)[n];
+                for (int i = 0; i < n; i++) s.Seats[i] = (SeatPocketWidth, SeatPocketHeight, labels[i]);
+            }
+            return s;
+        }
+
+        /// <summary>A name for each seat's pocket, off where the seat IS rather than its index: the driver's row is
+        /// "front", then each row behind it. Two rows read Front / Rear; more read Row 2, Row 3... Side from the seat's
+        /// X (front is -Z, so -X is the left). Any name that comes out twice gets the seat number on it.</summary>
+        string[] SeatLabels(int n)
+        {
+            const float rowTol = 0.4f, sideTol = 0.15f;
+            var rows = new System.Collections.Generic.List<float>();
+            for (int i = 0; i < n; i++)
+            {
+                float z = SeatLocal(i).Z;
+                bool known = false;
+                foreach (var r in rows) if (Mathf.Abs(r - z) < rowTol) { known = true; break; }
+                if (!known) rows.Add(z);
+            }
+            rows.Sort();   // front (most negative Z) first
+            var labels = new string[n];
+            for (int i = 0; i < n; i++)
+            {
+                var st = SeatLocal(i);
+                int row = 0;
+                for (int r = 0; r < rows.Count; r++) if (Mathf.Abs(rows[r] - st.Z) < rowTol) { row = r; break; }
+                string side = st.X < -sideTol ? "left" : st.X > sideTol ? "right" : "middle";
+                labels[i] = i == 0 ? "Driver's seat"
+                          : row == 0 ? "Front passenger"
+                          : rows.Count == 2 ? $"Rear {side}"
+                          : $"Row {row + 1} {side}";
+            }
+            for (int i = 0; i < n; i++)
+            {
+                int dup = 0;
+                for (int j = 0; j < n; j++) if (labels[j] == labels[i]) dup++;
+                if (dup > 1) labels[i] = $"{labels[i]} ({i + 1})";
+            }
+            return labels;
+        }
+
         /// <summary>A StorageCrate with no crate. The base class builds a visible box mesh and culls it by
         /// distance; a car boot is already drawn by the car, so the visual is suppressed rather than parked
         /// inside the bodywork where it would z-fight the panel it is behind.</summary>

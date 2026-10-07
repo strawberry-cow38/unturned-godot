@@ -4704,6 +4704,7 @@ namespace UnturnedGodot
         }
         public CraftingMenu DebugCraftMenu => _craftMenu;
         public InventoryUI DebugInvUI => _invUI;
+        internal void OpenVehicleTrunkForTest(Vehicle v) => OpenVehicleTrunk(v);   // v58: the F-on-the-trunk path, without aiming
 
         // ---- BLUEPRINT KNOWLEDGE (v55, strawberry 2026-10-04) ----
         // This player's MIRROR of the server's answer to "which locked recipes do I know". The server owns it
@@ -5568,6 +5569,7 @@ namespace UnturnedGodot
                 // MP: the server saves the STORAGE page back into the crate and clears it; the owner
                 // echo empties the local view (no local copy-back -- the crate grid is the server's).
                 NetCloseStorage(); _openCrateNetId = 0; NoteOpenCooker(null, false, 0);
+                OpenStorageLabel = null; OpenCompartmentLabels = System.Array.Empty<string>();   // v58
                 return;
             }
             // GAP B1: a NON-replicated crate (_openCrateNetId==0 -- a look-opened / SP-local shelf that was
@@ -5672,7 +5674,9 @@ namespace UnturnedGodot
         /// <summary>StorageOpened landed (server-validated): latch the crate + open the dashboard. The
         /// CRATE grid itself arrives via the owner-block echo (the server loads it into STORAGE page 7,
         /// the SP OpenNearestCrate mechanic), so there's nothing to copy here.</summary>
-        public void OnReplicatedStorageOpened(uint netId) => OnReplicatedStorageOpened(netId, null, false, 0);
+        public void OnReplicatedStorageOpened(uint netId) => OnReplicatedStorageOpened(netId, null, false, 0, null, null);
+        public void OnReplicatedStorageOpened(uint netId, ECookerKind? cookerKind, bool cookerOn, byte cookerFuel)
+            => OnReplicatedStorageOpened(netId, cookerKind, cookerOn, cookerFuel, null, null);
 
         /// <summary>The server's StorageOpened fact, cooker facts INCLUDED, applied in the one order that works.
         ///
@@ -5688,17 +5692,32 @@ namespace UnturnedGodot
         /// standing invitation to transpose one -- and this exact pair has already gone wrong once here, when the
         /// loopback handler claimed to mirror ClientWorldSession and simply omitted the cooker line. Folding them
         /// into a single ordered operation makes the order un-gettable-wrong instead of merely correct today.</summary>
-        public void OnReplicatedStorageOpened(uint netId, ECookerKind? cookerKind, bool cookerOn, byte cookerFuel)
+        public void OnReplicatedStorageOpened(uint netId, ECookerKind? cookerKind, bool cookerOn, byte cookerFuel,
+                                              string storageLabel, string[] compartmentLabels)
         {
             _openCrateNetId = netId;
+            bool wasCabin = _cabinPending; _cabinPending = false;
+            if (wasCabin && (_invUI == null || !_invUI.IsOpen)) { CloseCrate(); return; }   // put away before the car answered
             NoteOpenCooker(cookerKind, cookerOn, cookerFuel);   // BEFORE Open(): the panel is built from these
-            _invUI?.Open();
+            OpenStorageLabel = string.IsNullOrEmpty(storageLabel) ? null : storageLabel;   // v58: ...and so are these names
+            OpenCompartmentLabels = compartmentLabels ?? System.Array.Empty<string>();
+            // Already open is the CABIN case: the inventory key put the panel up and this is the car answering. Repaint
+            // rather than re-open, which would replay the swoop-in on a panel the player is already looking at.
+            if (_invUI != null && _invUI.IsOpen) _invUI.Refresh();
+            else _invUI?.Open();
             Input.MouseMode = Input.MouseModeEnum.Visible;
         }
 
         /// <summary>StorageClosed landed (ours or a server-side force-close): drop the latch; the echo
         /// clears the STORAGE page.</summary>
-        public void OnReplicatedStorageClosed() => _openCrateNetId = 0;
+        public void OnReplicatedStorageClosed()
+        {
+            _openCrateNetId = 0;
+            // v58: the server can shut you out (you got out of the car with the glovebox open). The echo empties the
+            // pages; the names go here, and the panel repaints so the car's grids leave with them.
+            OpenStorageLabel = null; OpenCompartmentLabels = System.Array.Empty<string>();
+            if (_invUI != null && _invUI.IsOpen) _invUI.Refresh();
+        }
 
         static void CopyPage(SDG.Unturned.Items from, SDG.Unturned.Items to, byte w, byte h)
         {
@@ -6289,6 +6308,17 @@ namespace UnturnedGodot
         public System.Func<uint, UnturnedGodot.Net.ItemDeviceConfig> NetItemConfigOf;
         public System.Action<uint, bool> NetToggleDeployable;        // (netId,on) -> Client.SendToggleDeployable (NetSetPowered lands the echo)
         public System.Action<uint> NetOpenStorage;                   // crate netId -> Client.SendOpenStorage (StorageOpened + the owner echo carry the grid back)
+        /// <summary>v58: open the CABIN of the car this player sits in (glovebox + a pocket per seat) -> Client.SendOpenVehicleStorage.
+        /// Returns false when not seated. Wired by the session that knows the seat: the loopback reads Driving (a real server
+        /// node), a joined client its _ridingNetId (its Driving is a local twin the server has no id for). The server
+        /// decides whether the car HAS one.</summary>
+        public System.Func<bool> NetOpenCabinStorage;
+        /// <summary>v58: open a car's trunk on the server. Null = no server owns it (pure singleplayer), and the local grid opens.</summary>
+        public System.Func<Vehicle, bool> NetOpenTrunk;
+        /// <summary>v58: the names the server gave the open container's grids, for the inventory to draw ("Glovebox",
+        /// "Driver's seat"). Null label = "Storage"; empty array = no compartments.</summary>
+        public string OpenStorageLabel { get; private set; }
+        public string[] OpenCompartmentLabels { get; private set; } = System.Array.Empty<string>();
         public System.Action NetCloseStorage;                        // -> Client.SendCloseStorage (server saves the STORAGE page back into the crate)
         public System.Action<uint, byte, byte> NetTakeFromStorage;   // (crate netId, cell x, cell y) -> Client.SendTakeFromStorage: F on an item sitting ON a shelf, without opening the container
         public System.Action<byte, byte> NetUpgradeSkill;            // (speciality,index) -> Client.SendUpgradeSkill
@@ -9022,7 +9052,17 @@ namespace UnturnedGodot
             else ShowMenu(MenuNavbar.Tab.Inventory);
         }
 
-        public void OpenInventory() { _invUI?.Open(); Input.MouseMode = Input.MouseModeEnum.Visible; }
+        public void OpenInventory()
+        {
+            _invUI?.Open(); Input.MouseMode = Input.MouseModeEnum.Visible;
+            // v58: sitting in a car, the inventory opens onto its glovebox and seat pockets too. Asked for AFTER the panel
+            // is up so it never waits on the wire, and only when nothing else is open -- the grids arrive with the
+            // server's StorageOpened, exactly like a fridge's.
+            if (_openCrate == null && _openCrateNetId == 0 && NetOpenCabinStorage != null) _cabinPending = NetOpenCabinStorage();
+        }
+        /// <summary>v58: a cabin open is in flight. If the panel was shut again before the car answered, the answer is
+        /// turned straight into a close rather than popping the inventory back up under a player who put it away.</summary>
+        bool _cabinPending;
         public void OpenSkills() { _skillsUI?.Open(); Input.MouseMode = Input.MouseModeEnum.Visible; }
         public void OpenMap() { MapUI.Current?.Open(); Input.MouseMode = Input.MouseModeEnum.Visible; }
         /// <summary>The unified menu: exactly one of Inventory / Craft / Skills / Information(map) is open at a time, and
@@ -11368,6 +11408,10 @@ namespace UnturnedGodot
         /// leave in a car is still there when you come back to it.</summary>
         void OpenVehicleTrunk(Vehicle v)
         {
+            // v58: the SERVER's trunk when there is a server. The local grid below is what a pure-singleplayer shell has;
+            // under a server-owned inventory it could never take an item -- the server had opened nothing, so every drag
+            // into it was refused.
+            if (NetOpenTrunk != null && NetOpenTrunk(v)) return;
             var trunk = v.EnsureTrunk();
             if (trunk == null) return;   // no boot on this hull -- the zone would not exist, but belt and braces
             OpenCrate(trunk);

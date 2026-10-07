@@ -310,7 +310,8 @@ namespace UnturnedGodot
                 // button. The client never decides this for itself -- it would have to guess from a mesh name.
                 // Passed INTO the open rather than set after it: the panel is built from these (see the overload).
                 Shell.OnReplicatedStorageOpened(e.NetId,
-                    e.IsCooker ? (SDG.Unturned.ECookerKind)e.CookerKind : (SDG.Unturned.ECookerKind?)null, e.CookerOn, e.CookerFuel);
+                    e.IsCooker ? (SDG.Unturned.ECookerKind)e.CookerKind : (SDG.Unturned.ECookerKind?)null, e.CookerOn, e.CookerFuel,
+                    e.StorageLabel, MpLoopback.CompartmentLabels(e));   // v58: the names of a car's glovebox and seats
             };
             // v29: the fuel bar, while you stand there watching it burn.
             Client.CookerState += e => { if (Shell != null && IsInstanceValid(Shell)) Shell.NoteCookerState(e.NetId, e.On, e.Fuel); };
@@ -685,6 +686,10 @@ shell.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, ri
             shell.NetItemConfigOf = netId => Client.Deployables.TryGet(netId, out var ie) ? ie.ItemConfig : null;
             shell.NetOpenStorage = netId => Client.SendOpenStorage(netId);
             shell.NetCloseStorage = () => Client.SendCloseStorage();
+            // v58 CAR STORAGE: the car this shell sits in is a local TWIN (BuildLocalVehicle) the server has no id for, so
+            // "which car am I in" is the seat the server latched (_ridingNetId), read at call time. No trunk seam: from
+            // outside a joiner sees a puppet, which has no F zones to aim at yet.
+            shell.NetOpenCabinStorage = () => _ridingNetId != 0 && Client.SendOpenVehicleStorage(_ridingNetId, VehicleStorageKind.Cabin);
             shell.NetTakeFromStorage = (netId, x, y) => Client.SendTakeFromStorage(netId, x, y);   // F on an item ON a shelf: take that one, no open/close
             shell.NetUpgradeSkill = (spec, index) => Client.SendUpgradeSkill(spec, index);
             // A4: crops route as intents -- plant sends seed+point, harvest sends the grown replica's NetId;

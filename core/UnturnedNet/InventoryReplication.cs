@@ -574,6 +574,12 @@ namespace UnturnedGodot.Net
         public bool CookerOn;
         public byte CookerFuel;   // v29: 0..255 of the CURRENT fuel item's burn, 0 when nothing is lit
         public byte FreezerWidth, FreezerHeight;   // v30: 0x0 = this container has no freezer compartment
+        /// <summary>v58: the Storage grid's name ("Glovebox", "Trunk"); empty = the plain "Storage".</summary>
+        public string StorageLabel;
+        /// <summary>v58: the container's extra grids in page order from PlayerInventory.COMPARTMENT0 -- sizes and the
+        /// names the inventory draws over them ("Driver's seat"). Empty for every ordinary container.</summary>
+        public (byte W, byte H, string Label)[] Compartments;
+        public const int MaxLabelBytes = 32;
         public void Write(NetPakWriter w)
         {
             w.WriteUInt32(NetId); w.WriteUInt8(Width); w.WriteUInt8(Height);
@@ -582,7 +588,16 @@ namespace UnturnedGodot.Net
             bool freezer = FreezerWidth > 0 && FreezerHeight > 0;
             w.WriteBit(freezer);
             if (freezer) { w.WriteUInt8(FreezerWidth); w.WriteUInt8(FreezerHeight); }
+            w.WriteString(Clip(StorageLabel), 6);   // v58
+            int n = Math.Min(Compartments?.Length ?? 0, PlayerInventory.MAXCOMPARTMENTS);
+            w.WriteUInt8((byte)n);
+            for (int i = 0; i < n; i++)
+            {
+                w.WriteUInt8(Compartments[i].W); w.WriteUInt8(Compartments[i].H);
+                w.WriteString(Clip(Compartments[i].Label), 6);
+            }
         }
+        static string Clip(string s) => string.IsNullOrEmpty(s) ? "" : s.Length > MaxLabelBytes ? s.Substring(0, MaxLabelBytes) : s;
         public static bool TryRead(NetPakReader r, out StorageOpenedEvent evt)
         {
             evt = default;
@@ -593,8 +608,16 @@ namespace UnturnedGodot.Net
             byte fw = 0, fh = 0;
             if (!r.ReadBit(out bool freezer)) return false;
             if (freezer) { if (!r.ReadUInt8(out fw)) return false; if (!r.ReadUInt8(out fh)) return false; }
+            if (!r.ReadString(out string storageLabel, 6)) return false;   // v58
+            if (!r.ReadUInt8(out byte n) || n > PlayerInventory.MAXCOMPARTMENTS) return false;
+            var comps = new (byte W, byte H, string Label)[n];
+            for (int i = 0; i < n; i++)
+            {
+                if (!r.ReadUInt8(out byte cw) || !r.ReadUInt8(out byte ch) || !r.ReadString(out string cl, 6)) return false;
+                comps[i] = (cw, ch, cl);
+            }
             evt = new StorageOpenedEvent { NetId = id, Width = width, Height = height, IsCooker = isCooker, CookerKind = kind, CookerOn = on, CookerFuel = fuel,
-                                           FreezerWidth = fw, FreezerHeight = fh };
+                                           FreezerWidth = fw, FreezerHeight = fh, StorageLabel = storageLabel, Compartments = comps };
             return true;
         }
     }
@@ -803,6 +826,30 @@ namespace UnturnedGodot.Net
             /// than adding a second grid. Distinct from HasFreezer for exactly that reason: one is a container
             /// with a freezer IN it, this is a container that IS one.</summary>
             public bool BodyFreezes;
+
+            /// <summary>v58: extra grids beyond Storage, each shown on its own page from PlayerInventory.COMPARTMENT0
+            /// up -- a car's seats (strawberry 2026-10-07). Empty on every ordinary container.</summary>
+            public Compartment[] Compartments = System.Array.Empty<Compartment>();
+            /// <summary>v58: what the inventory calls the Storage grid ("Glovebox", "Trunk"). Null = "Storage".</summary>
+            public string StorageLabel;
+            /// <summary>v58: who may open this, replacing the fixed StorageReach test (sender, sender position) -> ok.
+            /// A container that MOVES (a car) cannot be judged by where it was registered, and a seat compartment is
+            /// not about distance at all. Null = the reach test, unchanged for every fixed container.</summary>
+            public Func<ushort, Vector3, bool> Access;
+            /// <summary>v58: belongs to a vehicle. Item pipes never bind to one: an adapter that grabbed a parked car
+            /// would keep feeding a grid that has since driven across the map.</summary>
+            public bool OnVehicle;
+
+            public bool CanAccess(ushort sender, Vector3 senderPos)
+                => Access != null ? Access(sender, senderPos) : (Pos - senderPos).magnitude <= StorageReach;
+        }
+
+        /// <summary>v58: one extra grid of a container, shown on its own view page under its own name.</summary>
+        public sealed class Compartment
+        {
+            public Items Grid;
+            public byte Width, Height;
+            public string Label;
         }
 
         /// <summary>Server-side crate interaction reach. SP opens at 2.5 m (OpenNearestCrate); the server
@@ -871,7 +918,7 @@ namespace UnturnedGodot.Net
                     // Hooked here rather than at each command handler on purpose: ten handlers can reach page 7
                     // (move, drop, wear, reload-swap, mag-load, consume...) and the one that gets forgotten is
                     // the one that silently edits a private copy nobody else ever sees.
-                    if (pg == PlayerInventory.STORAGE || pg == PlayerInventory.FREEZER) ServerPushView(e, pg);
+                    if (PlayerInventory.IsContainerView(pg)) ServerPushView(e, pg);
                 };
             }
             _byOwner[ownerPlayerId] = e;
@@ -927,21 +974,17 @@ namespace UnturnedGodot.Net
         {
             if (_viewSyncing || e == null || e.OpenCrateId == 0) return;
             if (!_crates.TryGetValue(e.OpenCrateId, out var crate)) return;
-            bool freezer = page == PlayerInventory.FREEZER;
-            if (freezer && !crate.HasFreezer) return;
-            if (!freezer && page != PlayerInventory.STORAGE) return;
+            if (!TryBacking(crate, page, out var backing, out byte w, out byte h)) return;
             _viewSyncing = true;
             try
             {
                 var mine = e.Inventory.items[page];
-                byte w = freezer ? crate.FreezerWidth : crate.Width;
-                byte h = freezer ? crate.FreezerHeight : crate.Height;
                 if (mine.width != w || mine.height != h) return;   // mid open/close resize -- not an edit
-                CopyPage(mine, freezer ? crate.Freezer : crate.Storage, w, h);
+                CopyPage(mine, backing, w, h);
                 foreach (var pid in crate.Viewers)
                 {
                     if (pid == e.OwnerPlayerId || !_byOwner.TryGetValue(pid, out var other)) continue;
-                    CopyPage(freezer ? crate.Freezer : crate.Storage, other.Inventory.items[page], w, h);
+                    CopyPage(backing, other.Inventory.items[page], w, h);
                     other.Dirty = true;
                 }
             }
@@ -959,8 +1002,7 @@ namespace UnturnedGodot.Net
                 foreach (var pid in crate.Viewers)
                 {
                     if (!_byOwner.TryGetValue(pid, out var v)) continue;
-                    CopyPage(crate.Storage, v.Inventory.items[PlayerInventory.STORAGE], crate.Width, crate.Height);
-                    if (crate.HasFreezer) CopyPage(crate.Freezer, v.Inventory.items[PlayerInventory.FREEZER], crate.FreezerWidth, crate.FreezerHeight);
+                    ProjectInto(crate, v.Inventory);
                     v.Dirty = true;
                 }
             }
@@ -1011,6 +1053,78 @@ namespace UnturnedGodot.Net
             return true;
         }
 
+        /// <summary>v58: give a registered crate its extra compartments (a car's seats), in display order. Capped at
+        /// PlayerInventory.MAXCOMPARTMENTS -- there are only that many view pages to show them on.</summary>
+        public bool ServerAddCompartments(uint crateId, IReadOnlyList<(byte w, byte h, string label)> compartments)
+        {
+            if (!_crates.TryGetValue(crateId, out var c) || compartments == null) return false;
+            int n = Math.Min(compartments.Count, PlayerInventory.MAXCOMPARTMENTS);
+            var arr = new Compartment[n];
+            for (int i = 0; i < n; i++)
+            {
+                var (w, h, label) = compartments[i];
+                var grid = new Items((byte)(PlayerInventory.COMPARTMENT0 + i));
+                grid.loadSize(w, h);
+                arr[i] = new Compartment { Grid = grid, Width = w, Height = h, Label = label };
+            }
+            c.Compartments = arr;
+            return true;
+        }
+
+        /// <summary>v58: shut every viewer who may no longer open the crate they are in -- a passenger who got out of
+        /// the car, someone who walked away from a trunk. Only crates with an Access rule are swept: a fixed
+        /// container's reach was only ever checked at open, and that is left as it was.</summary>
+        public int ServerRevalidateAccess(Func<ushort, Vector3?> positionOf, long tick, Action<ushort, uint> closed = null)
+        {
+            int n = 0;
+            List<ushort> drop = null;
+            foreach (var kv in _byOwner)
+            {
+                uint id = kv.Value.OpenCrateId;
+                if (id == 0 || !_crates.TryGetValue(id, out var crate) || crate.Access == null) continue;
+                var pos = positionOf?.Invoke(kv.Key);
+                if (pos.HasValue && crate.Access(kv.Key, pos.Value)) continue;
+                (drop ??= new List<ushort>()).Add(kv.Key);
+            }
+            if (drop != null)
+                foreach (var pid in drop)
+                {
+                    uint was = _byOwner[pid].OpenCrateId;
+                    if (ServerCloseStorage(pid, tick)) { n++; closed?.Invoke(pid, was); }
+                }
+            return n;
+        }
+
+        /// <summary>The grid behind one container VIEW page: the crate's own, its freezer, or a compartment. False for
+        /// a page this crate does not have (a freezer page on a crate, the third seat of a two-seat car).</summary>
+        static bool TryBacking(CrateEntry crate, byte page, out Items grid, out byte w, out byte h)
+        {
+            grid = null; w = h = 0;
+            if (page == PlayerInventory.STORAGE) { grid = crate.Storage; w = crate.Width; h = crate.Height; }
+            else if (page == PlayerInventory.FREEZER) { if (!crate.HasFreezer) return false; grid = crate.Freezer; w = crate.FreezerWidth; h = crate.FreezerHeight; }
+            else if (PlayerInventory.IsCompartment(page))
+            {
+                int i = page - PlayerInventory.COMPARTMENT0;
+                if (i >= crate.Compartments.Length) return false;
+                var c = crate.Compartments[i];
+                grid = c.Grid; w = c.Width; h = c.Height;
+            }
+            return grid != null;
+        }
+
+        /// <summary>Paint one viewer's container pages from the crate: Storage, the freezer if it has one, and its
+        /// compartments. Callers hold _viewSyncing.</summary>
+        static void ProjectInto(CrateEntry crate, PlayerInventory inv)
+        {
+            CopyPage(crate.Storage, inv.items[PlayerInventory.STORAGE], crate.Width, crate.Height);
+            if (crate.HasFreezer) CopyPage(crate.Freezer, inv.items[PlayerInventory.FREEZER], crate.FreezerWidth, crate.FreezerHeight);
+            for (int i = 0; i < crate.Compartments.Length; i++)
+            {
+                var c = crate.Compartments[i];
+                CopyPage(c.Grid, inv.items[PlayerInventory.COMPARTMENT0 + i], c.Width, c.Height);
+            }
+        }
+
         /// <summary>Open arbitration (§3.7: one opener at a time, server-enforced). On success the crate
         /// grid is copied into the opener's STORAGE page -- the exact SP OpenNearestCrate mechanic.</summary>
         public bool ServerOpenStorage(ushort ownerPlayerId, uint crateId, Vector3 senderPos, long tick)
@@ -1023,7 +1137,7 @@ namespace UnturnedGodot.Net
             // last-writer-wins over a whole grid, i.e. duplicated and destroyed items, not a lost drag. What
             // makes sharing safe is that the copy-back is GONE -- the crate is authoritative at every instant
             // and each viewer's page is a view that is rewritten the moment anyone changes anything.
-            if ((crate.Pos - senderPos).magnitude > StorageReach) return false;
+            if (!crate.CanAccess(ownerPlayerId, senderPos)) return false;
             if (e.OpenCrateId != 0 && e.OpenCrateId != crateId) ServerCloseStorage(ownerPlayerId, tick);   // one container at a time, per player
 
             bool wasOpen = crate.IsOpen;
@@ -1034,11 +1148,9 @@ namespace UnturnedGodot.Net
             _viewSyncing = true;
             try
             {
-                CopyPage(crate.Storage, e.Inventory.items[PlayerInventory.STORAGE], crate.Width, crate.Height);
-                // The freezer rides along as its own page, so both compartments are open at once and an item can be
-                // dragged straight from one to the other -- which is the entire interaction a freezer exists for.
-                if (crate.HasFreezer)
-                    CopyPage(crate.Freezer, e.Inventory.items[PlayerInventory.FREEZER], crate.FreezerWidth, crate.FreezerHeight);
+                // The freezer and any compartments ride along as their own pages, so every grid is open at once and an
+                // item can be dragged straight from one to another -- the entire interaction a freezer exists for.
+                ProjectInto(crate, e.Inventory);
             }
             finally { _viewSyncing = false; }
             e.Dirty = true;
@@ -1064,7 +1176,7 @@ namespace UnturnedGodot.Net
             // Used to refuse while somebody else had it open, because that player was editing a COPY that would
             // be written back over this. There is no copy any more -- viewers are repainted from the crate the
             // moment it changes -- so a grab off the shelf is fine with a crowd around it.
-            if ((crate.Pos - senderPos).magnitude > StorageReach) return false;
+            if (!crate.CanAccess(ownerPlayerId, senderPos)) return false;
             for (byte i = 0; i < crate.Storage.getItemCount(); i++)
             {
                 var jar = crate.Storage.getItem(i);
@@ -1111,6 +1223,13 @@ namespace UnturnedGodot.Net
             var fz = e.Inventory.items[PlayerInventory.FREEZER];
             fz.clear();
             fz.loadSize(0, 0);
+            // ...and so is every compartment page, for the same reason: out of a car and into a crate, the seats go.
+            for (int i = 0; i < PlayerInventory.MAXCOMPARTMENTS; i++)
+            {
+                var cp = e.Inventory.items[PlayerInventory.COMPARTMENT0 + i];
+                cp.clear();
+                cp.loadSize(0, 0);
+            }
             if (crate != null && !crate.IsOpen) CrateOpenChanged?.Invoke(closedId, false);   // last one out shuts the door
             e.Dirty = true;
             return true;
