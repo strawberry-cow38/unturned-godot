@@ -1956,39 +1956,41 @@
 9145	MAC-10	Gun	Rare	3	2	MAC-10 chambered in .45 ACP. Provisional Bulldog/Uzi gameplay baseline.	fd731fe0da9f4b97bdb970ee9de735e2
 9146	MAC-10 Magazine	Magazine	Rare	1	2	Proprietary MAC-10 magazine holding 30 rounds of .45 ACP.	0e07040eaf204e6f928a1dfae68a6e03
 9147	MAC-10 Iron Sights	Sight	Common	2	1	Factory MAC-10 iron sights.	9e5c1d41331b47ae9eba2ddfc98348b0
-9155	Cup	Generic	Common	1	1	A chipped ceramic mug. Placeholder: no model yet.
-9156	Drinking Glass	Generic	Common	1	1	A plain drinking glass. Placeholder: no model yet.
-9157	Plate	Generic	Common	1	1	A dinner plate. Placeholder: no model yet.
-9158	Dish Bowl	Generic	Common	1	1	A shallow serving bowl. Placeholder: no model yet.
-9159	Fork	Generic	Common	1	1	A dinner fork. Placeholder: no model yet.
-9160	Spoon	Generic	Common	1	1	A dinner spoon. Placeholder: no model yet.
-9161	Table Knife	Generic	Common	1	1	A blunt table knife. Placeholder: no model yet.
-9162	Cooking Pot	Generic	Common	2	2	A dented cooking pot. Placeholder: no model yet.
-9163	Frying Pan	Generic	Common	2	1	A heavy frying pan. Placeholder: no model yet.
-9164	Baking Tray	Generic	Common	2	1	A blackened baking tray. Placeholder: no model yet.
-9165	Paperwork	Generic	Common	1	1	Someone's filing, still in order. Placeholder: no model yet.
-9166	Handwritten Letter	Generic	Common	1	1	A letter in looping handwriting. Placeholder: no model yet.
-9167	Typed Letter	Generic	Common	1	1	A typed letter on headed paper. Placeholder: no model yet.
-9168	Unopened Letter	Generic	Common	1	1	Still sealed. Placeholder: no model yet.
-9169	Stapler	Generic	Common	1	1	Office stapler, half loaded. Placeholder: no model yet.
-9170	Box of Paperclips	Generic	Common	1	1	More than anyone needs. Placeholder: no model yet.
-9171	Hole Punch	Generic	Common	1	1	Two-hole, heavy for its size. Placeholder: no model yet.
-9172	Black Pen	Generic	Common	1	1	Black ballpoint. Placeholder: no model yet.
-9173	Blue Pen	Generic	Common	1	1	Blue ballpoint. Placeholder: no model yet.
-9174	Red Pen	Generic	Common	1	1	Red ballpoint, mostly dry. Placeholder: no model yet.
-9175	Pencil	Generic	Common	1	1	Chewed at one end. Placeholder: no model yet.
-9176	Eraser	Generic	Common	1	1	Grubby but usable. Placeholder: no model yet.
-9177	Food Wrapper	Generic	Common	1	1	Licked clean and thrown out. Placeholder: no model yet.
-9178	Empty Can	Generic	Common	1	1	Rinsed, dented, discarded. Placeholder: no model yet.
-9179	Broken Glass	Generic	Common	1	1	Swept up and bagged. Placeholder: no model yet.
-9180	Cardboard Scrap	Generic	Common	1	1	Flattened packaging. Placeholder: no model yet.
-9181	Soiled Rag	Generic	Common	1	1	You do not want to know. Placeholder: no model yet.
-9182	Gunpowder	Supply	Rare	1	1	Finished propellant. Placeholder: no model yet.	47c55c9f0ccae55106bbc64a750ad930
-9183	Sulfur	Supply	Uncommon	1	1	Yellow and acrid. Placeholder: no model yet.	1412fffd4c625d50ce453771c04b8053
-9184	Screws	Supply	Common	1	1	A handful of assorted screws. Placeholder: no model yet.	b478fa798b6390d6cb06f0caf77d3803
-9185	Springs	Supply	Common	1	1	Salvaged coil springs. Placeholder: no model yet.	7b7b659d14c8eb1de6df5b3c3ff8988f
-9186	Gears	Supply	Uncommon	1	1	Toothed cogs from something mechanical. Placeholder: no model yet.	3e299d993148029e7a4540f9346d89b4
-9187	Hinges	Supply	Common	1	1	Door hinges, still greasy. Placeholder: no model yet.	8a5cbc5e93bad2b12246ac07066de982
-9188	Charcoal	Supply	Common	1	1	Burnt black and brittle. Placeholder: no model yet.	2469a3ad44eb651cf7cf0970c938319e
-9189	Black Powder	Supply	Uncommon	1	1	Sulfur and charcoal, ground together. Placeholder: no model yet.	adef07d59c974c56d15746172593c3c1
-9190	Pipe	Supply	Common	1	1	A short length of salvaged pipe. Placeholder: no model yet.	a9a940fad3488dbc69db8fc9c8335772
+9300	Cup	Generic	Common	1	1	A chipped ceramic mug. Placeholder: no model yet.
+9301	Drinking Glass	Generic	Common	1	1	A plain drinking glass. Placeholder: no model yet.
+9302	Plate	Generic	Common	1	1	A dinner plate. Placeholder: no model yet.
+9303	Dish Bowl	Generic	Common	1	1	A shallow serving bowl. Placeholder: no model yet.
+9304	Fork	Generic	Common	1	1	A dinner fork. Placeholder: no model yet.
+9305	Spoon	Generic	Common	1	1	A dinner spoon. Placeholder: no model yet.
+9306	Table Knife	Generic	Common	1	1	A blunt table knife. Placeholder: no model yet.
+9307	Cooking Pot	Generic	Common	2	2	A dented cooking pot. Placeholder: no model yet.
+9308	Frying Pan	Generic	Common	2	1	A heavy frying pan. Placeholder: no model yet.
+9309	Baking Tray	Generic	Common	2	1	A blackened baking tray. Placeholder: no model yet.
+9310	Paperwork	Generic	Common	1	1	Someone's filing, still in order. Placeholder: no model yet.
+9311	Handwritten Letter	Generic	Common	1	1	A letter in looping handwriting. Placeholder: no model yet.
+9312	Typed Letter	Generic	Common	1	1	A typed letter on headed paper. Placeholder: no model yet.
+9313	Unopened Letter	Generic	Common	1	1	Still sealed. Placeholder: no model yet.
+9314	Stapler	Generic	Common	1	1	Office stapler, half loaded. Placeholder: no model yet.
+9315	Box of Paperclips	Generic	Common	1	1	More than anyone needs. Placeholder: no model yet.
+9316	Hole Punch	Generic	Common	1	1	Two-hole, heavy for its size. Placeholder: no model yet.
+9317	Black Pen	Generic	Common	1	1	Black ballpoint. Placeholder: no model yet.
+9318	Blue Pen	Generic	Common	1	1	Blue ballpoint. Placeholder: no model yet.
+9319	Red Pen	Generic	Common	1	1	Red ballpoint, mostly dry. Placeholder: no model yet.
+9320	Pencil	Generic	Common	1	1	Chewed at one end. Placeholder: no model yet.
+9321	Eraser	Generic	Common	1	1	Grubby but usable. Placeholder: no model yet.
+9322	Food Wrapper	Generic	Common	1	1	Licked clean and thrown out. Placeholder: no model yet.
+9323	Empty Can	Generic	Common	1	1	Rinsed, dented, discarded. Placeholder: no model yet.
+9324	Broken Glass	Generic	Common	1	1	Swept up and bagged. Placeholder: no model yet.
+9325	Cardboard Scrap	Generic	Common	1	1	Flattened packaging. Placeholder: no model yet.
+9326	Soiled Rag	Generic	Common	1	1	You do not want to know. Placeholder: no model yet.
+9327	Gunpowder	Supply	Rare	1	1	Finished propellant. Placeholder: no model yet.	47c55c9f0ccae55106bbc64a750ad930
+9328	Sulfur	Supply	Uncommon	1	1	Yellow and acrid. Placeholder: no model yet.	1412fffd4c625d50ce453771c04b8053
+9329	Screws	Supply	Common	1	1	A handful of assorted screws. Placeholder: no model yet.	b478fa798b6390d6cb06f0caf77d3803
+9330	Springs	Supply	Common	1	1	Salvaged coil springs. Placeholder: no model yet.	7b7b659d14c8eb1de6df5b3c3ff8988f
+9331	Gears	Supply	Uncommon	1	1	Toothed cogs from something mechanical. Placeholder: no model yet.	3e299d993148029e7a4540f9346d89b4
+9332	Hinges	Supply	Common	1	1	Door hinges, still greasy. Placeholder: no model yet.	8a5cbc5e93bad2b12246ac07066de982
+9333	Charcoal	Supply	Common	1	1	Burnt black and brittle. Placeholder: no model yet.	2469a3ad44eb651cf7cf0970c938319e
+9334	Black Powder	Supply	Uncommon	1	1	Sulfur and charcoal, ground together. Placeholder: no model yet.	adef07d59c974c56d15746172593c3c1
+9335	Pipe	Supply	Common	1	1	A short length of salvaged pipe. Placeholder: no model yet.	a9a940fad3488dbc69db8fc9c8335772
+9336	Sheet of Paper	Supply	Common	1	1	A blank sheet. Placeholder: no model yet.	52dd31a262354018897d48f03431f925
+9337	Handwritten Note	Supply	Common	1	1	Scrawled, half legible. Placeholder: no model yet.	af1ed5c4914ff7420117a615afcda9b8

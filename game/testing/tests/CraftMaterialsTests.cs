@@ -42,8 +42,8 @@ namespace UnturnedGodot.Testing
             // ---- THE NEW COMPONENTS EXIST AND ARE REAL ITEMS ------------------------------------------------
             var wanted = new (ushort id, string name)[]
             {
-                (9182, "Gunpowder"), (9183, "Sulfur"), (9184, "Screws"), (9185, "Springs"),
-                (9186, "Gears"), (9187, "Hinges"), (9188, "Charcoal"), (9189, "Black Powder"), (9190, "Pipe"),
+                (9327, "Gunpowder"), (9328, "Sulfur"), (9329, "Screws"), (9330, "Springs"),
+                (9331, "Gears"), (9332, "Hinges"), (9333, "Charcoal"), (9334, "Black Powder"), (9335, "Pipe"),
             };
             foreach (var w in wanted)
             {
@@ -68,25 +68,25 @@ namespace UnturnedGodot.Testing
                 return false;
             }
 
-            var powder = Making(9189);
+            var powder = Making(9334);
             T.Check("there is a recipe that makes Black Powder", powder != null);
-            T.Check("...from Sulfur", Takes(powder, 9183));
-            T.Check("...and Charcoal", Takes(powder, 9188));
+            T.Check("...from Sulfur", Takes(powder, 9328));
+            T.Check("...and Charcoal", Takes(powder, 9333));
 
-            var gun = Making(9182);
+            var gun = Making(9327);
             T.Check("there is a recipe that makes Gunpowder", gun != null);
-            T.Check("...from Black Powder", Takes(gun, 9189));
+            T.Check("...from Black Powder", Takes(gun, 9334));
             T.Check("...and Fertilizer", Takes(gun, 332));
             // ⭐ THE CHAIN IS TWO STEPS, which is what master asked for. If anyone later folds it into one recipe
             // that takes sulfur straight to gunpowder, this is the check that notices.
-            T.Check("gunpowder does NOT come straight from sulfur -- the chain stays two steps", !Takes(gun, 9183));
+            T.Check("gunpowder does NOT come straight from sulfur -- the chain stays two steps", !Takes(gun, 9328));
 
             // ---- CHARCOAL IN A BARBECUE --------------------------------------------------------------------
             int coal = 0, food = 0, bad = 0;
             for (int i = 0; i < 400; i++)
             {
                 int id = LootTables.Roll(LootTables.Barbecue);
-                if (id == 9188) coal++;
+                if (id == 9333) coal++;
                 else if (id < 0) bad++;
                 else { var a = Assets.find((ushort)id); if (a != null && a.type == EItemType.FOOD) food++; else bad++; }
             }
@@ -134,7 +134,7 @@ namespace UnturnedGodot.Testing
                 {
                     var ia = Assets.findByGuid(i.Guid);
                     if (ia?.id == 67) scrapAmt = i.Amount;
-                    else if (ia?.id == 9182) powderAmt = i.Amount;
+                    else if (ia?.id == 9327) powderAmt = i.Amount;
                 }
                 foreach (var o in made.Outputs) if (Assets.findByGuid(o.Guid)?.id == a.id) batch = o.Amount;
 
@@ -164,7 +164,7 @@ namespace UnturnedGodot.Testing
                     int batch = 0, cost = 0;
                     foreach (var o in bp.Outputs) if (Assets.findByGuid(o.Guid)?.id == id) batch = o.Amount;
                     if (batch <= 0) continue;
-                    foreach (var i in bp.Inputs) { var ia = Assets.findByGuid(i.Guid); if (ia?.id == 67 || ia?.id == 9182) cost += i.Amount; }
+                    foreach (var i in bp.Inputs) { var ia = Assets.findByGuid(i.Guid); if (ia?.id == 67 || ia?.id == 9327) cost += i.Amount; }
                     return cost / (float)batch;
                 }
                 return -1f;

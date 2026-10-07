@@ -23,6 +23,30 @@ namespace UnturnedGodot.Testing
 
         public override IEnumerable<Step> Run()
         {
+            // ---- ⚠⚠ NO ITEM MAY SHARE AN ID WITH A DEPLOYABLE ------------------------------------------------
+            //
+            // Master, 2026-10-07: "why are gates and doors spawning as dishwasher, oven and cabinet loot?" --
+            // because I added placeholder items at 9155-9190 after checking ONLY items_catalog.tsv for clashes,
+            // and DeployableDef hands out 9160-9171 to the wooden doors, gates and hatches. A dishwasher rolled
+            // "Cooking Pot" and produced a Pine Door.
+            //
+            // ⭐ THE REAL FAULT IS THAT TWO REGISTRIES ISSUE IDS INTO ONE SPACE AND NEITHER CONSULTS THE OTHER, so
+            // this asserts the INVARIANT rather than my particular ids: whatever anyone adds next, on either side,
+            // a collision fails here instead of showing up as a door in an oven.
+            SDG.Unturned.ItemCatalog.RegisterAll();
+            var clashes = new List<string>();
+            foreach (var d in DeployableDef.All)
+            {
+                var item = SDG.Unturned.Assets.find(d.Id);
+                // A deployable is ALLOWED to have an item of the same id -- that is how you carry one. The fault is
+                // an item that is something ELSE entirely, i.e. the names disagree.
+                if (item != null && !string.Equals(item.itemName, d.Name, System.StringComparison.OrdinalIgnoreCase))
+                    clashes.Add($"{d.Id}: deployable \"{d.Name}\" vs item \"{item.itemName}\"");
+            }
+            GD.Print($"[loot-test] deployable/item id clashes: {clashes.Count}");
+            foreach (var c in clashes) GD.Print($"[loot-test]   {c}");
+            T.Check($"no item id collides with a different deployable ({clashes.Count} clash(es))", clashes.Count == 0);
+
             // ---- THE DEFAULT: a solid container is not a shop aisle ---------------------------------------
             var (dmin, dmax) = StoreShelf.LootCount("No_Such_Prop_0", display: false);
             var (gmin, gmax) = StoreShelf.LootCount("No_Such_Prop_0", display: true);

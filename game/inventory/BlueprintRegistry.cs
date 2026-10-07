@@ -85,7 +85,7 @@ namespace UnturnedGodot
         {
             const string ScrapGuid = "", PowderName = "Gunpowder";
             var scrap = SDG.Unturned.Assets.find(67);          // Metal Scrap
-            var powder = SDG.Unturned.Assets.find(9182);       // Gunpowder
+            var powder = SDG.Unturned.Assets.find(9327);       // Gunpowder
             if (scrap == null || powder == null || string.IsNullOrEmpty(scrap.guid) || string.IsNullOrEmpty(powder.guid))
             { Log.Print("[bp] ammo recipes skipped: metal scrap or gunpowder missing a guid"); return; }
 

@@ -76,11 +76,17 @@ namespace UnturnedGodot
 
         // Kitchenware. Kitchen Knife is the REAL item 120, not a placeholder -- it already existed, so a second one
         // would be two items with the same name and only one of them a weapon.
-        static readonly ushort[] Crockery = { 9155, 9156, 9157, 9158 };            // cup, glass, plate, bowl
-        static readonly ushort[] Cutlery = { 9159, 9160, 9161 };                   // fork, spoon, table knife
-        static readonly ushort[] Cookware = { 9162, 9163, 9164 };                  // pot, pan, baking tray
-        static readonly ushort[] Stationery = { 499, 1328, 9165, 9166, 9167, 9168, 9169, 9170, 9171, 9172, 9173, 9174, 9175, 9176 };
-        static readonly ushort[] GarbageJunk = { 9177, 9178, 9179, 9180, 9181 };
+        static readonly ushort[] Crockery = { 9300, 9301, 9302, 9303 };            // cup, glass, plate, bowl
+        static readonly ushort[] Cutlery = { 9304, 9305, 9306 };                   // fork, spoon, table knife
+        static readonly ushort[] Cookware = { 9307, 9308, 9309 };                  // pot, pan, baking tray
+        // ⚠⚠ 499 AND 1328 WERE WRONG AND ARE GONE (master 2026-10-07: "\"paper\" item is a paper hat, not a sheet
+        // of paper"). 499 "Paper" is a cosmetic **Hat**; 1328 "Note" is a **Barricade**, a placeable sign. I reused
+        // both because the NAME matched, without reading the TYPE column sitting next to it -- so a filing cabinet
+        // was handing out headwear. Replaced with real placeholders (9336, 9337).
+        // ⭐ The lesson generalises past these two: when reusing an existing item, match on what it IS, not on
+        // what it is called.
+        static readonly ushort[] Stationery = { 9336, 9337, 9310, 9311, 9312, 9313, 9314, 9315, 9316, 9317, 9318, 9319, 9320, 9321 };
+        static readonly ushort[] GarbageJunk = { 9322, 9323, 9324, 9325, 9326 };
 
         static readonly (float chance, ushort[] ids)[] DishwasherTiers =
         {
@@ -91,13 +97,13 @@ namespace UnturnedGodot
         };
         static readonly (float chance, ushort[] ids)[] OvenTiers =
         {
-            (0.55f, new ushort[] { 9164 }),   // baking tray
-            (0.45f, new ushort[] { 9162, 9163 }),   // pot, pan -- and NO food (master)
+            (0.55f, new ushort[] { 9309 }),   // baking tray
+            (0.45f, new ushort[] { 9307, 9308 }),   // pot, pan -- and NO food (master)
         };
         static readonly (float chance, ushort[] ids)[] FilingCabinetTiers = { (1.00f, Stationery) };
 
         // A BARBECUE HOLDS CHARCOAL (master 2026-10-07: "do we have charcoal added already? if not add it, if so,
-        // just add it to barbeque's spawn tables"). It did not exist, so 9188 is new -- and a BBQ keeps holding the
+        // just add it to barbeque's spawn tables"). It did not exist, so 9333 is new -- and a BBQ keeps holding the
         // grill food it already did, with the charcoal beside it rather than instead of it.
         static (float chance, ushort[] ids)[] _barbecue;
 
@@ -144,7 +150,7 @@ namespace UnturnedGodot
                 case Barbecue:
                     return _barbecue ??= new[]
                     {
-                        (0.45f, new ushort[] { 9188 }),                         // charcoal
+                        (0.45f, new ushort[] { 9333 }),                         // charcoal
                         (0.55f, FoodsWhere(r => r >= PerishableAtLeast)),       // the stuff you would grill
                     };
                 case GarbageBag:

@@ -110,7 +110,7 @@ namespace SDG.Unturned
             Add(9217, "Item Splitter",        2, 2, EItemType.GENERIC, EItemRarity.UNCOMMON, 0, 0, "One item pipe in, three out. [F] picks how it shares: round-robin, overflow (fill the first, then the next), or weighted. Unconnected outputs are ignored.");
             Add(9218, "Item Combiner",        2, 2, EItemType.GENERIC, EItemRarity.UNCOMMON, 0, 0, "Three item pipes in, one out. A mover pulling through it takes turns between the connected inputs, skipping any that are empty.");
             Add(9219, "Item Mover",           2, 2, EItemType.GENERIC, EItemRarity.RARE,     0, 0, "The only thing that moves items through pipes. Wire it to power (100 W) and it pulls from whatever is piped into its input and pushes to whatever is on its output -- up to 32 items a second, set with [F]. Starts from the last slot of the source container; stops if the destination is full.");
-            // DOORS -- ids from DeployableDef.WoodDoors (9160-9171), NOT the 9140 block: that is already the
+            // DOORS -- ids from DeployableDef.WoodDoors (9305-9316), NOT the 9140 block: that is already the
             // Augewehr / Nightraider / .300 Blackout / Heartbreaker magazines, and a duplicate id here does not
             // error, it silently overwrites whichever entry was registered first. deploy.ids_do_not_collide
             // guards it now.
@@ -229,16 +229,16 @@ namespace SDG.Unturned
             // ⭐ Sized by what the thing IS, not one number for the lot: fasteners come in handfuls, salvage in
             // pieces, rolls one at a time.
             Wood(71, 100);   // Nails
-            Wood(9184, 100); // Screws
-            Wood(9183, 50);  // Sulfur     -- powders, measured out
-            Wood(9188, 50);  // Charcoal
-            Wood(9189, 50);  // Black Powder
-            Wood(9182, 50);  // Gunpowder
+            Wood(9329, 100); // Screws
+            Wood(9328, 50);  // Sulfur     -- powders, measured out
+            Wood(9333, 50);  // Charcoal
+            Wood(9334, 50);  // Black Powder
+            Wood(9327, 50);  // Gunpowder
             Wood(67, 20);    // Metal Scrap
-            Wood(9185, 20);  // Springs
-            Wood(9186, 20);  // Gears
-            Wood(9187, 20);  // Hinges
-            Wood(9190, 20);  // Pipe       -- the SUPPLY component; Metal Pipe (1094) is the barricade piece, a different item
+            Wood(9330, 20);  // Springs
+            Wood(9331, 20);  // Gears
+            Wood(9332, 20);  // Hinges
+            Wood(9335, 20);  // Pipe       -- the SUPPLY component; Metal Pipe (1094) is the barricade piece, a different item
             Wood(64, 10);    // Rope       -- a coil at a time
             Wood(69, 10);    // Tape
 
