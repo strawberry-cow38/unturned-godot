@@ -8,7 +8,7 @@ namespace UnturnedGodot.Testing
     public sealed class SedanMk2DetailsTests : GameTest
     {
         public override string Name => "vehicle.sedan_mk2_details";
-        static float[] Hits(Mesh mesh, Vector3 origin, Vector3 direction)
+        internal static float[] Hits(Mesh mesh, Vector3 origin, Vector3 direction)
         {
             var f=mesh.GetFaces(); var hits=new List<float>();
             for(int i=0;i+2<f.Length;i+=3)
@@ -35,7 +35,7 @@ namespace UnturnedGodot.Testing
             {
                 int[] ids={indices[i],indices[i+1],indices[i+2]};var pts=ids.Select(j=>p[j]).ToArray();
                 var n=(ns[ids[0]]+ns[ids[1]]+ns[ids[2]]).Normalized();int c=Palette(uv[ids[0]]);
-                foreach(float z in new[]{-1.9292f,1.949f})
+                foreach(float z in new[]{-2.2892f,1.949f})
                 {
                     if(!pts.All(v=>Mathf.Abs(v.Z-z)<=.751f&&v.Y>=-.131f&&v.Y<=.751f&&Mathf.Abs(v.X)>=.794f))continue;
                     bool rim=pts.All(v=>Mathf.Abs(Mathf.Abs(v.X)-1.275f)<.00005f)&&Mathf.Abs(n.X)>.99f&&n.X*pts[0].X>0f;
@@ -83,7 +83,10 @@ namespace UnturnedGodot.Testing
                         T.Check($"rear flange leaves fixed taillight border at Y={y}",edge.Length>0&&edge[0]>.779f
                             &&edge[0]<.781f&&lampInner-edge[0]>.03f);
                     }
-                    foreach(float z in new[]{-2.3f,2.3f})
+                    // Keep the original section and add its rigidly shifted V17 counterpart.
+                    // OBJ triangle rays at Z=-2.66 give top returns .996803/1.006803/1.016803;
+                    // cowl remains Z=-1.58..-1.55, so its existing probes must NOT shift.
+                    foreach(float z in new[]{-2.66f,-2.3f,2.3f})
                     foreach(float x in new[]{.975f,.985f,.995f})
                     {
                         var sheet=Hits(frame.Mesh,new Vector3(x,0,z),Vector3.Up).Where(y=>y>.9f&&y<1.12f).ToArray();

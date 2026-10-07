@@ -159,6 +159,84 @@ namespace UnturnedGodot.Testing
             T.Check($"{owner.Name}: exactly one copy of {path}", found.Length == 1);
             return found.FirstOrDefault();
         }
+        static IEnumerable<T> Descendants<T>(Node root) where T : Node
+        {
+            foreach (var child in root.GetChildren())
+            {
+                if (child is T found) yield return found;
+                foreach (var nested in Descendants<T>(child)) yield return nested;
+            }
+        }
+        void LampGeometry(Node3D owner, string end, float noseShift)
+        {
+            // Match all source triangles, not merely a spec field or the installed asset's filename.
+            var original = ContentProvider.ParseObj($"res://content/sedan_{end}lights.txt").GetFaces();
+            var expected = original.Select(v => v * 1.06f + new Vector3(0f, .021f, noseShift)).ToArray();
+            // Names differ for split shootable lamps. Use the exact asset geometry to find those halves.
+            var source = ContentProvider.ParseObj($"res://content/sedan_mk2_stock_{end}lights.txt").GetFaces();
+            var installed = Meshes(owner).Where(mi => mi.Mesh != null && mi.Mesh.GetFaces().Length > 0
+                && mi.Mesh.GetFaces().All(v => source.Any(e => Near(v, e))))
+                .SelectMany(mi => mi.Mesh.GetFaces().Select(v => InOwner(mi, owner) * v)).ToArray();
+            // As with seats, native faces snap to 0.1 mm before/after the 1.06 transform.
+            // Installed OBJ audit: maximum nearest combined rounding error is < .118 mm.
+            var unmatched = new List<Vector3>(installed);
+            bool same = expected.Length == installed.Length && expected.Length > 0;
+            foreach (var v in expected)
+            {
+                int index = unmatched.FindIndex(other => v.DistanceTo(other) < .0002f);
+                if (index < 0) { same = false; break; }
+                unmatched.RemoveAt(index);
+            }
+            T.Check($"{owner.Name}: {end} lens triangles retain stock shape with only the approved body/nose transform",
+                same && unmatched.Count == 0);
+        }
+        void FrontOpening(Node3D owner, VehiclePanelRig rig)
+        {
+            for (int i = 0; i < 2; i++)
+            {
+                var faces = rig.GetMesh(i).Mesh.GetFaces();
+                float front = faces.Min(v => v.Z);
+                var edge = faces.Where(v => Mathf.Abs(v.Z - front) < .0001f).ToArray();
+                float outerX = i == 0 ? edge.Min(v => v.X) : edge.Max(v => v.X);
+                var lower = edge.Where(v => Mathf.Abs(v.X - outerX) < .0001f).ToArray();
+                T.Check($"{owner.Name}: front door {i} forward lower skin edge is vertical from sill to beltline and aligned with hinge",
+                    lower.Length >= 2 && Mathf.Abs(lower.Min(v => v.Y) - .1588f) < .0002f
+                    && Mathf.Abs(lower.Max(v => v.Y) - 1.12976f) < .0002f
+                    && Mathf.Abs(front - rig.GetDefinition(i).Pivot.Z) < .0001f
+                    && Mathf.Abs(outerX - rig.GetDefinition(i).Pivot.X) < .005f);
+                T.Check($"{owner.Name}: front door {i} triangle slices have the same forward edge throughout the lower skin",
+                    new[] { .20f, .55f, .90f, 1.10f }.All(y => {
+                        var hits = SedanMk2DetailsTests.Hits(rig.GetMesh(i).Mesh,
+                            new Vector3(i == 0 ? -1.30f : 1.30f, y, -2f), Vector3.Back);
+                        return hits.Length == 2 && Mathf.Abs(hits[0] - (front + 2f)) < .0002f;
+                    }));
+                var trailing = faces.Where(v => v.Y < .2f).OrderByDescending(v => v.Z).First();
+                var hinge = rig.GetDefinition(i).Pivot;
+                rig.PulseSeat(i); rig.Tick(VehiclePanelRig.SwingSeconds);
+                var pose = InOwner(rig.GetMesh(i), owner);
+                var opened = pose * trailing;
+                float angle = Mathf.DegToRad(i == 0 ? -55f : 55f);
+                var delta = trailing - hinge;
+                var expected = hinge + new Vector3(Mathf.Cos(angle) * delta.X + Mathf.Sin(angle) * delta.Z,
+                    delta.Y, -Mathf.Sin(angle) * delta.X + Mathf.Cos(angle) * delta.Z);
+                T.Check($"{owner.Name}: actual door {i} metal opens outward 55 degrees around a stationary vertical hinge",
+                    Near(opened, expected) && Near(pose * hinge, hinge)
+                    && Mathf.Abs(opened.Y - trailing.Y) < .0001f
+                    && Mathf.Abs(opened.X) > Mathf.Abs(trailing.X) + 1f);
+                rig.Tick(4f);
+                PoseIdentity($"{owner.Name}: door {i} metal returns to its baked closed pose", InOwner(rig.GetMesh(i), owner));
+            }
+            rig.SetCompartment(Vehicle.AccessKind.Hood, true); rig.Tick(VehiclePanelRig.SwingSeconds);
+            var hood = rig.GetMesh(4).Mesh.GetFaces();
+            var tip = hood.OrderBy(v => v.Z).First();
+            var hoodPose = InOwner(rig.GetMesh(4), owner);
+            T.Check(owner.Name + ": longer installed hood raises its nose while retaining its rear hinge",
+                (hoodPose * tip).Y > tip.Y + .9f
+                && Near(hoodPose * rig.GetDefinition(4).Pivot, rig.GetDefinition(4).Pivot)
+                && Mathf.Abs(hood.Max(v => v.Z) - rig.GetDefinition(4).Pivot.Z) < .0001f);
+            rig.SetCompartment(Vehicle.AccessKind.Hood, false); rig.Tick(VehiclePanelRig.SwingSeconds);
+        }
+
         void Occupancy(VehiclePanelRig rig, string label)
         {
             rig.ResetOccupancyBaseline();
@@ -213,7 +291,7 @@ namespace UnturnedGodot.Testing
                 && (string)Field(newSpec, "GlassMesh") == "sedan_mk2_glass.txt");
 
             // Keep detached builds: this checks construction, not suspension compression/handling.
-            var old = Vehicle.BuildSedan(5); var car = Vehicle.BuildSedanMk2(5);
+            var old = Vehicle.BuildSedan(5); var car = Vehicle.BuildByName("sedan_mk2", 5);
             var puppet = Vehicle.BuildPuppetByName("sedan_mk2", 5);
             try
             {
@@ -237,9 +315,9 @@ namespace UnturnedGodot.Testing
                 var defs = (AuthoredPanelDef[])Field(newSpec, "AuthoredPanels");
                 string[] panelFiles = { "front_door_left", "front_door_right", "rear_door_left", "rear_door_right", "hood", "trunk_lid" };
                 string[] labels = { "l_front", "r_front", "l_rear", "r_rear" };
-                Vector3[] pivots = { new(-1.3091f, 1.0598f, -1.39178f), new(1.3091f, 1.0598f, -1.39178f),
+                Vector3[] pivots = { new(-1.3091f, 1.0598f, -1.41722f), new(1.3091f, 1.0598f, -1.41722f),
                     new(-1.3091f, 1.0598f, 0.2279f), new(1.3091f, 1.0598f, 0.2279f),
-                    new(0f, 1.209352463f, -1.5953f), new(0f, 1.204066608f, 1.9451f) };
+                    new(0f, 1.209352463f, -1.9553f), new(0f, 1.204066608f, 1.9451f) };
                 float[] degrees = { -55f, 55f, -55f, 55f, 50f, -50f };
                 for (int i = 0; i < 6; i++)
                 {
@@ -308,11 +386,56 @@ namespace UnturnedGodot.Testing
                     }
                     foreach (var part in parts) ExactMesh(owner, part.Item1);
                     CleanSeatGeometry(owner);
+                    LampGeometry(owner, "head", -.36f);
+                    LampGeometry(owner, "tail", 0f);
+                    var ownerRig = owner is Vehicle real ? real.AuthoredPanelRig : ((VehiclePuppet)owner).AuthoredPanelRig;
+                    FrontOpening(owner, ownerRig);
+                    for (int axle = 0; axle < 2; axle++)
+                    {
+                        // Installed U-leg ends determine arch centers independently of wheel/spec coordinates.
+                        var legs = installedFaces.Where(v => Mathf.Abs(Mathf.Abs(v.X) - 1.275f) < .0001f
+                            && Mathf.Abs(v.Y + .13f) < .0001f && (axle == 0 ? v.Z < 0f : v.Z > 0f)).ToArray();
+                        float center = legs.Length > 0 ? (legs.Min(v => v.Z) + legs.Max(v => v.Z)) / 2f : float.NaN;
+                        var mounts = owner is Vehicle physical
+                            ? physical.GetChildren().OfType<VehicleWheel3D>().Select(w => w.Position).ToArray()
+                            : ((VehiclePuppet)owner).Wheels.Select(w => w.Pivot.Position).ToArray();
+                        T.Check($"{owner.Name}: axle {axle} centers both wheels in the installed wheelhouse, with unchanged 750 mm outer radius",
+                            legs.Length > 0 && Mathf.Abs(legs.Max(v => v.Z) - legs.Min(v => v.Z) - 1.5f) < .0002f
+                            && mounts.Length == 4 && mounts.Skip(axle * 2).Take(2).All(w => Mathf.Abs(w.Z - center) < .0001f));
+                    }
                     foreach (var label in new[] { "windshield", "rear", "l_front", "r_front", "l_rear", "r_rear" })
                     {
                         var pane = ExactMesh(owner, $"sedan_mk2_glass_{label}.txt");
                         if (pane != null) PoseIdentity(label + ": closed glass stays in body space", InOwner(pane, owner));
                     }
+                }
+                var puppetHead = ExactMesh(puppet, "sedan_mk2_stock_headlights.txt");
+                var puppetTail = ExactMesh(puppet, "sedan_mk2_stock_taillights.txt");
+                T.Check("Mk II replica flag materials are the actual installed separate lamp lenses",
+                    puppet.HeadlightMat != null && puppet.TaillightMat != null
+                    && puppetHead?.MaterialOverride == puppet.HeadlightMat
+                    && puppetTail?.MaterialOverride == puppet.TaillightMat);
+                if (puppet.HeadlightMat != null && puppet.TaillightMat != null)
+                {
+                    T.Check("new replica lamp lenses start unlit", !puppet.HeadlightMat.EmissionEnabled && !puppet.TaillightMat.EmissionEnabled);
+                    puppet.ApplyReplicatedFlags(true, true, false, false);
+                    T.Check("replicated head/tail flags illuminate the actual Mk II lens materials",
+                        puppet.HeadlightMat.EmissionEnabled && puppet.TaillightMat.EmissionEnabled);
+                    puppet.ApplyReplicatedFlags(false, false, true, false);
+                    T.Check("replicated braking lights the rear lenses without lighting the headlights",
+                        !puppet.HeadlightMat.EmissionEnabled && puppet.TaillightMat.EmissionEnabled);
+                    puppet.ApplyReplicatedFlags(false, false, false, false);
+                    T.Check("replicated off flags extinguish both lens materials",
+                        !puppet.HeadlightMat.EmissionEnabled && !puppet.TaillightMat.EmissionEnabled);
+                    var second = Vehicle.BuildPuppetByName("sedan_mk2", 5);
+                    try
+                    {
+                        puppet.ApplyReplicatedFlags(true, true, false, false);
+                        T.Check("two Mk II replicas do not share mutable lamp emission", second.HeadlightMat != puppet.HeadlightMat
+                            && second.TaillightMat != puppet.TaillightMat && !second.HeadlightMat.EmissionEnabled && !second.TaillightMat.EmissionEnabled);
+                        puppet.ApplyReplicatedFlags(false, false, false, false);
+                    }
+                    finally { second.Free(); }
                 }
                 Vector3[] seats = { new(-0.53f, 0.05726f, -0.3625f), new(0.53f, 0.05726f, -0.3625f),
                     new(-0.4346f, 0.05726f, 0.95832f), new(0.4346f, 0.05726f, 0.95832f) };
@@ -336,15 +459,40 @@ namespace UnturnedGodot.Testing
                 T.Check("four physical and four puppet wheels", wheels.Length == 4 && puppet.Wheels.Length == 4);
                 for (int i = 0; i < Math.Min(Math.Min(wheels.Length, puppet.Wheels.Length), 4); i++)
                 {
-                    var rest = new Vector3(i % 2 == 0 ? -1.09f : 1.09f, 0f, i < 2 ? -1.9292f : 1.949f);
+                    var rest = new Vector3(i % 2 == 0 ? -1.09f : 1.09f, 0f, i < 2 ? -2.2892f : 1.949f);
                     T.Check($"wheel {i}: stock-height mount and zero-Y nominal visual centre",
                         Near(wheels[i].Position, rest + Vector3.Up * .25f) && wheels[i].WheelRestLength == .25f
                         && Near(wheels[i].Position - Vector3.Up * wheels[i].WheelRestLength, rest)
                         && Near(puppet.Wheels[i].Pivot.Position, rest) && wheels[i].WheelRadius == .6f);
                 }
                 var belly = car.GetChildren().OfType<CollisionShape3D>().FirstOrDefault(c => c.Shape is BoxShape3D
-                    && Near(((BoxShape3D)c.Shape).Size, new Vector3(2.65f, .97096f, 5.99536f)));
-                T.Check("main hull scales about ground", belly != null && Near(belly.Position, new Vector3(0f, .60188f, -.06678f)));
+                    && Near(((BoxShape3D)c.Shape).Size, new Vector3(2.65f, .97096f, 6.35536f)));
+                T.Check("main hull scales about ground", belly != null && Near(belly.Position, new Vector3(0f, .60188f, -.24678f)));
+                if (belly?.Shape is BoxShape3D hull)
+                {
+                    var frameFaces = car.GetNode<MeshInstance3D>("Body").Mesh.GetFaces();
+                    T.Check("extended hull follows installed nose within 8 mm, while rear envelope stays registered within 1 mm",
+                        Mathf.Abs(belly.Position.Z - hull.Size.Z / 2f - frameFaces.Min(v => v.Z)) < .008f
+                        && Mathf.Abs(belly.Position.Z + hull.Size.Z / 2f - frameFaces.Max(v => v.Z)) < .001f);
+                }
+                var oldSpots = Descendants<SpotLight3D>(old).Where(l => l.Position.Z < 0f).OrderBy(l => l.Position.X).ToArray();
+                var newSpots = Descendants<SpotLight3D>(car).Where(l => l.Position.Z < 0f).OrderBy(l => l.Position.X).ToArray();
+                T.Check("real headlight beam origins follow the .36 m nose extension without cabin/Y drift", oldSpots.Length == 2
+                    && newSpots.Length == 2 && oldSpots.Zip(newSpots, (a, b) => Near(InOwner(b, car).Origin,
+                        InOwner(a, old).Origin * 1.06f + new Vector3(0f, .021f, -.36f))).All(ok => ok));
+                // Select the actual builder-owned fill. A Z<0 scan also catches the wreck fire light,
+                // which follows the body center and is not a headlight emitter.
+                var fillField = typeof(Vehicle).GetField("_headlightFill", BindingFlags.NonPublic | BindingFlags.Instance);
+                var oldFill = fillField.GetValue(old) as OmniLight3D;
+                var newFill = fillField.GetValue(car) as OmniLight3D;
+                T.Check("real front fill follows extended nose and retains the independent half-metre lift", oldFill != null
+                    && newFill != null && Near(InOwner(newFill, car).Origin,
+                        (InOwner(oldFill, old).Origin - Vector3.Up * .5f) * 1.06f + new Vector3(0f, .521f, -.36f)));
+                var oldTails = Descendants<SpotLight3D>(old).Where(l => l.Position.Z > 0f).OrderBy(l => l.Position.X).ToArray();
+                var newTails = Descendants<SpotLight3D>(car).Where(l => l.Position.Z > 0f).OrderBy(l => l.Position.X).ToArray();
+                T.Check("real rear emitters retain the original body transform, not the nose shift", oldTails.Length == 2
+                    && newTails.Length == 2 && oldTails.Zip(newTails, (a, b) => Near(InOwner(b, car).Origin,
+                        InOwner(a, old).Origin * 1.06f + new Vector3(0f, .021f, 0f))).All(ok => ok));
                 var roof = car.GetNodeOrNull<CollisionShape3D>("RoofBox");
                 T.Check("roof and cabin registration", roof?.Shape is BoxShape3D box
                     && Near(box.Size, new Vector3(2.65f, .11f, 2.4592f)) && Near(roof.Position, new Vector3(0f, 2.0556869f, .2067f)));

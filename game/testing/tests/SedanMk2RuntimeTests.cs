@@ -94,7 +94,7 @@ namespace UnturnedGodot.Testing
             for(int i=0;i<4;i++)
             {
                 var mi=car.RimNodeForTest(i); var centre=car.ToLocal(mi.GlobalPosition);
-                float maxOver=0; float axle=i<2?-1.9292f:1.949f; int sampled=0;
+                float maxOver=0; float axle=i<2?-2.2892f:1.949f; int sampled=0;
                 foreach(var vertex in mi.Mesh.GetFaces())
                 {
                     var v=car.ToLocal(mi.ToGlobal(vertex));
@@ -112,6 +112,8 @@ namespace UnturnedGodot.Testing
                         maxOver=Mathf.Max(maxOver,(v.Z-axle)*Mathf.Cos(a)+v.Y*Mathf.Sin(a)-.70f*Mathf.Cos(Mathf.Pi/16));
                     }
                 }
+                T.Check($"loaded tyre {i}: settled visual axle stays at the approved longitudinal center",
+                    Mathf.Abs(centre.Z - axle) < .002f && Mathf.Abs(Mathf.Abs(centre.X) - 1.09f) < .002f);
                 T.Check($"loaded tyre {i}: visible tread clears its faceted housing", sampled > 0 && maxOver < .002f);
                 GD.Print($"[mk2-loaded-wheel] {i} local centre={centre} max arch-plane overrun={maxOver:F5}");
                 wheelAudit.Add(new {wheel=i, centre=new[]{centre.X,centre.Y,centre.Z}, maxOverrun=maxOver});

@@ -5010,7 +5010,16 @@ namespace UnturnedGodot
             if (s.Parts != null)
                 foreach (var (txt, color) in s.Parts)
                 {
-                    var mi = new MeshInstance3D { Mesh = ContentProvider.ParseObj($"res://content/{txt}"), MaterialOverride = SolidMat(color) };
+                    var partMat = SolidMat(color);
+                    // Mk II lamps are separate approved stock fittings, not body-zone cutouts.
+                    // Register their per-puppet material with the existing replicated lamp flags.
+                    // Keep this opt-in: no changes to the original sedan or other parts builders.
+                    if (name == "sedan_mk2")
+                    {
+                        if (txt == "sedan_mk2_stock_headlights.txt") p.HeadlightMat = partMat;
+                        if (txt == "sedan_mk2_stock_taillights.txt") p.TaillightMat = partMat;
+                    }
+                    var mi = new MeshInstance3D { Mesh = ContentProvider.ParseObj($"res://content/{txt}"), MaterialOverride = partMat };
                     if (txt.Contains("steer") && s.SteerAxis != Vector3.Zero)   // wrap the steering wheel in a pivot so DressWheels can turn it (#38) -- mirrors Build()'s Parts loop
                     {
                         p.SteerPivot = new Node3D { Position = s.SteerPivot };

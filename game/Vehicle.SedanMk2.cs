@@ -12,7 +12,7 @@ namespace UnturnedGodot
         public static Vehicle BuildSedanMk2(int variant = 0) => Build(SedanMk2Spec, variant, "sedan_mk2");
 
         static Vector3 Mk2BodyPoint(Vector3 old) => old * 1.06f + new Vector3(0f, 0.021f, 0f);
-        // V15 fallback slab: V13 roof lowered .20 m; lower-body hull and handling stay V13.
+        // V15 cabin height retained; the approved V17 forebody/front axle extend .36 m forward.
         // Normal runtime replaces fitted boxes with frame hulls / HitMesh. Also preserves HasCabin.
         static (Vector3 size, Vector3 center) SedanMk2RoofBox =>
             (new Vector3(2.65f, .11f, 2.4592f), new Vector3(0f, 2.0556869f, .2067f));
@@ -25,11 +25,12 @@ namespace UnturnedGodot
             s.Palette = "sedan_mk2_palette.png";
             s.GlassMesh = "sedan_mk2_glass.txt"; // prefix for six independent panes; no aggregate required
             // Stock 0.6 m tyre, its mesh and texture are intentionally not scaled/copied.
-            s.BoxSize = _sedan.BoxSize * 1.06f;
-            s.BoxCenter = Mk2BodyPoint(_sedan.BoxCenter);
+            s.BoxSize = _sedan.BoxSize * 1.06f + new Vector3(0f, 0f, .36f);
+            s.BoxCenter = Mk2BodyPoint(_sedan.BoxCenter) + new Vector3(0f, 0f, -.18f);
             s.FifthWheel = Mk2BodyPoint(_sedan.FifthWheel);
-            s.SpotPos = Array.ConvertAll(_sedan.SpotPos, Mk2BodyPoint);
-            s.OmniPos = Mk2BodyPoint(_sedan.OmniPos);
+            // Front lamp meshes and emitters follow the rigid .36 m nose extension; rear fittings stay put.
+            s.SpotPos = Array.ConvertAll(_sedan.SpotPos, p => Mk2BodyPoint(p) + new Vector3(0f, 0f, -.36f));
+            s.OmniPos = Mk2BodyPoint(_sedan.OmniPos) + new Vector3(0f, 0f, -.36f);
             s.TailPos = Array.ConvertAll(_sedan.TailPos, Mk2BodyPoint);
             // Original duct outlet, not the stock fallback (which sits above the actual pipe).
             s.ExhaustPos = Mk2BodyPoint(new Vector3(0.7937f, -0.1747f, 2.8269f));
@@ -52,7 +53,7 @@ namespace UnturnedGodot
             s.DriverEye = s.Seats[0] + new Vector3(0f, 1.358505f, 0.059f * 1.06f);
             // Same mount Y as the original sedan: minus the .25 m rest drop gives art centre Y=0.
             s.Wheels = new (float, float, float, bool)[] {
-                (-1.09f, 0.25f, -1.9292f, true), (1.09f, 0.25f, -1.9292f, true),
+                (-1.09f, 0.25f, -2.2892f, true), (1.09f, 0.25f, -2.2892f, true),
                 (-1.09f, 0.25f, 1.949f, false), (1.09f, 0.25f, 1.949f, false) };
             // Fixed solid-colour meshes only. The column filename must NOT contain "steer".
             s.Parts = new (string, Color)[] {
@@ -70,11 +71,11 @@ namespace UnturnedGodot
                 "sedan_mk2_engine_bay_liner.txt", "sedan_mk2_trunk_liner.txt" };
             // Deliberately reordered from manifest: indices are seats, NOT manifest list order.
             s.AuthoredPanels = new[] {
-                new AuthoredPanelDef("sedan_mk2_front_door_left.txt", 0, 0, new Vector3(-1.3091f, 1.0598f, -1.39178f), Vector3.Up, -55f, "l_front"),
-                new AuthoredPanelDef("sedan_mk2_front_door_right.txt", 1, 1, new Vector3(1.3091f, 1.0598f, -1.39178f), Vector3.Up, 55f, "r_front"),
+                new AuthoredPanelDef("sedan_mk2_front_door_left.txt", 0, 0, new Vector3(-1.3091f, 1.0598f, -1.41722f), Vector3.Up, -55f, "l_front"),
+                new AuthoredPanelDef("sedan_mk2_front_door_right.txt", 1, 1, new Vector3(1.3091f, 1.0598f, -1.41722f), Vector3.Up, 55f, "r_front"),
                 new AuthoredPanelDef("sedan_mk2_rear_door_left.txt", 2, 2, new Vector3(-1.3091f, 1.0598f, 0.2279f), Vector3.Up, -55f, "l_rear"),
                 new AuthoredPanelDef("sedan_mk2_rear_door_right.txt", 3, 3, new Vector3(1.3091f, 1.0598f, 0.2279f), Vector3.Up, 55f, "r_rear"),
-                new AuthoredPanelDef("sedan_mk2_hood.txt", 4, -1, new Vector3(0f, 1.209352463f, -1.5953f), Vector3.Right, 50f),
+                new AuthoredPanelDef("sedan_mk2_hood.txt", 4, -1, new Vector3(0f, 1.209352463f, -1.9553f), Vector3.Right, 50f),
                 new AuthoredPanelDef("sedan_mk2_trunk_lid.txt", 5, -2, new Vector3(0f, 1.204066608f, 1.9451f), Vector3.Right, -50f) };
             return s;
         }
