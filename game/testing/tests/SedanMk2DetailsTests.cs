@@ -83,11 +83,18 @@ namespace UnturnedGodot.Testing
                         T.Check($"rear flange leaves fixed taillight border at Y={y}",edge.Length>0&&edge[0]>.779f
                             &&edge[0]<.781f&&lampInner-edge[0]>.03f);
                     }
+                    foreach(float z in new[]{-2.3f,2.3f})
+                    foreach(float x in new[]{.975f,.985f,.995f})
+                    {
+                        var sheet=Hits(frame.Mesh,new Vector3(x,0,z),Vector3.Up).Where(y=>y>.9f&&y<1.12f).ToArray();
+                        T.Check($"hood/trunk edge is one 6mm sheet return, not a stepped filler X={x},Z={z}",
+                            sheet.Length==2&&Mathf.Abs(sheet[1]-sheet[0]-.006f)<.0004f);
+                    }
                     foreach(float y in new[]{.951f,.958f,.965f,.969f})
                     {
                         float x=.780f+(y-.950f)*(.99852f-.780f)/.020f;
                         var hits=Hits(frame.Mesh,new Vector3(x,y,2.740f),Vector3.Back);
-                        T.Check($"diagonal trunk shutline has real painted backing at Y={y}",hits.Any(d=>d>.01f&&d<.04f));
+                        T.Check($"diagonal trunk shutline has real painted backing at Y={y}",hits.Any(d=>d>.008f&&d<.068f));
                     }
                 }
             }

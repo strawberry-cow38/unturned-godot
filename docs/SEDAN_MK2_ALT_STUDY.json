@@ -1,0 +1,153 @@
+{
+  "status": "long-nose alternate study only, approval pending; not registered or installed by default",
+  "manifest_sha256": "a85274037b39f0dd2580885a32f1fad7db7cc34ab204ba9ebee7488791663313",
+  "counts": {
+    "frame_and_closure_lips": 1736,
+    "moving_panels": 462,
+    "glass": 110,
+    "stock_hardware_and_interior": 408,
+    "new_interior_liners": 258,
+    "body_and_panels": 2198,
+    "all_excluding_wheels": 2974
+  },
+  "front_shift_m": -0.36,
+  "front_axle_z": -2.2892,
+  "lower_hinge_edge_z": -1.41722,
+  "assets": [
+    {
+      "file": "sedan_frame.obj",
+      "triangles": 1736,
+      "sha256": "2d130edf4987a30bca2dfbd734c8de6f1c13664bff423848644ad2e82ff0db22"
+    },
+    {
+      "file": "sedan_front_door_left.obj",
+      "triangles": 74,
+      "sha256": "9b1638d08f713582688b22658e809abd8f59cacbc6ea5f5ea79372f60c93dd45"
+    },
+    {
+      "file": "sedan_rear_door_left.obj",
+      "triangles": 88,
+      "sha256": "a0a57f84c309cd3ac04a945be9ce2512229d6efa0845cb5a2021d5a9325d7f31"
+    },
+    {
+      "file": "sedan_front_door_right.obj",
+      "triangles": 74,
+      "sha256": "dee62c4d963d6be534b9002c346932d5f96ef4c25a470e5d419a15255f697287"
+    },
+    {
+      "file": "sedan_rear_door_right.obj",
+      "triangles": 100,
+      "sha256": "7ff648bac36444b60e65ea685e5b8b6ee2260a53bb4ffcc544b721dcc42079fe"
+    },
+    {
+      "file": "sedan_hood.obj",
+      "triangles": 32,
+      "sha256": "c1bf580012d89f337014963d335d0f9ef18c64044452cd1602bf7010d5af253c"
+    },
+    {
+      "file": "sedan_trunk_lid.obj",
+      "triangles": 94,
+      "sha256": "ed5fc009e99a2e88c26aacb15adf98e01b20e556b06f0af547eb89b4b1e96ef8"
+    },
+    {
+      "file": "sedan_glass_l_front.obj",
+      "triangles": 30,
+      "sha256": "223d1da2fe2dc98c8c792e4054e17ae74097665d748d12ba91814a092598f26a"
+    },
+    {
+      "file": "sedan_glass_l_rear.obj",
+      "triangles": 19,
+      "sha256": "a0fe986d67e2da6f3af40aa1aefa26d4976d635b3dc9643faf27287964767169"
+    },
+    {
+      "file": "sedan_glass_r_front.obj",
+      "triangles": 30,
+      "sha256": "0a9c9a46469b5e543485f07c8bb202f68f3f7c09e8acfa314f414d293342192e"
+    },
+    {
+      "file": "sedan_glass_r_rear.obj",
+      "triangles": 19,
+      "sha256": "46b0f498b42bd1d6abf95f06c5137e6eb97e2d10d4c7d3a2993cd3742accdf21"
+    },
+    {
+      "file": "sedan_glass_rear.obj",
+      "triangles": 6,
+      "sha256": "bcc06fafe2ba97dcf1f7a68d7dab34b4b747505b74751816e6da6fdd4f8ce002"
+    },
+    {
+      "file": "sedan_glass_windshield.obj",
+      "triangles": 6,
+      "sha256": "a9f8346c623802465963cb0ea3b96fa2f5241a6d86c02e38e7245e1be2907671"
+    },
+    {
+      "file": "sedan_stock_front_bumper.obj",
+      "triangles": 28,
+      "sha256": "cc09b7dc5981be7f2940eecaa26aa6045a4e109272cdbd4bd8dcf91058519395"
+    },
+    {
+      "file": "sedan_stock_rear_bumper.obj",
+      "triangles": 28,
+      "sha256": "cf8c07161f34ee5e6874bde043a8228a884564a624f62bffdba284bd933ebea0"
+    },
+    {
+      "file": "sedan_stock_exhaust.obj",
+      "triangles": 10,
+      "sha256": "892409df2dfc5aad899599d9ad5404743684915e7b6b054bb1224c627f49ca65"
+    },
+    {
+      "file": "sedan_stock_headlights.obj",
+      "triangles": 20,
+      "sha256": "dc05f3a79f7ef70bfe536fad1ab116f64fbf04c37d2a0e68738b021075da8087"
+    },
+    {
+      "file": "sedan_stock_taillights.obj",
+      "triangles": 20,
+      "sha256": "f96953110910401f91bd39b7d66f7e92d4d896ec7edb60277624c0259a077a5b"
+    },
+    {
+      "file": "sedan_stock_hitch.obj",
+      "triangles": 40,
+      "sha256": "adff7e44427813c2349b45cb7710829046cb65f6372f60424f77edc2c2433588"
+    },
+    {
+      "file": "sedan_stock_seats.obj",
+      "triangles": 96,
+      "sha256": "8d26a0f149b3646a1544ac37938328cea6305be0423c783392f8e8f62a9ea160"
+    },
+    {
+      "file": "sedan_stock_steer.obj",
+      "triangles": 122,
+      "sha256": "880473cc6daf7a3fb520bc9d99ee1f0c4533a5cbc2e1c21212eda6f81f91e66f"
+    },
+    {
+      "file": "sedan_dashboard.obj",
+      "triangles": 16,
+      "sha256": "ccdf14275efe4faf1312f9388aa64867654bce4a888acf04fb85638862345ac8"
+    },
+    {
+      "file": "sedan_steering_column.obj",
+      "triangles": 28,
+      "sha256": "767f79470bcb4ca059db379af1e7ddc017f1a7468276b1c43e6214524f63fb27"
+    },
+    {
+      "file": "sedan_cabin_floor.obj",
+      "triangles": 44,
+      "sha256": "fff49c93f38102851b03a1fed9fdc57b9a8fa29e5e8be7bf1bf2ad4a44f9edbd"
+    },
+    {
+      "file": "sedan_floor_tunnel.obj",
+      "triangles": 20,
+      "sha256": "047e85767f954e2763808697a253c14928f85a70a82800b453885e501ec77161"
+    },
+    {
+      "file": "sedan_engine_bay_liner.obj",
+      "triangles": 76,
+      "sha256": "78c48d0680cc6ce9d4ef53ae6e7b6af4bbc57dae347ebb47719f5a42c454867b"
+    },
+    {
+      "file": "sedan_trunk_liner.obj",
+      "triangles": 118,
+      "sha256": "0237fdbdc2c6e9fd36ad2e0afa39211e51343b1ea69c0f450effe889cae5f8d8"
+    }
+  ]
+}

@@ -1,6 +1,6 @@
-# Sedan Mk II — V16 detail preview (approval pending)
+# Sedan Mk II — V17 cleanup and long-nose study (approval pending)
 
-**Local preview only:** this revision is on `Preview-Sedan-V16`, not published.
+**Local preview only:** this revision is on `Preview-Sedan-V17`, not published.
 `Staging-Astra` remains at the currently published V14 commit `b572d1e9`.
 Wait for visual approval before moving this model to staging. Main/server are unchanged.
 
@@ -13,12 +13,12 @@ No existing natural sedan spawns were replaced. This is an additional vehicle.
 
 ## Model and runtime
 
-28 new prefixed assets are byte-identical copies of the V16 preview exports. The
+28 new prefixed assets are byte-identical copies of the V17 normal preview exports. The
 stock 4x2 palette is retained, including paintable index 0 and fixed charcoal index 5.
 The fixed frame, four doors, hood/trunk, moving door panes, static fittings and
 four interior pieces are installed separately. Lid undersides are body-painted.
 The complete internal wheel housings are already in the approved frame; no diagnostic
-or duplicate housing meshes are installed. Total: 2,794 triangles excluding tyres.
+or duplicate housing meshes are installed. Total: 2,984 triangles excluding tyres.
 
 An opt-in `VehiclePanelRig` is shared by real cars and replica puppets. It uses body-space
 pivots, follows existing glass/collider nodes, shares the body paint and adds no moving
@@ -132,6 +132,45 @@ passes all 46 checks. Matched before/after captures use the same compiled runtim
 cameras and lighting, with only the installed model assets exchanged. Sampled
 trunk/door sweeps clear fixed geometry and hardware; they are not continuous proofs.
 
+## V17 closure cleanup and separate alternate
+
+The normal V17 retains all V16 proportions, moving skins, hinges and companion
+parts. It replaces the old hood/trunk flat lip shelves and rear gap-stop slab
+with welded, continuous 6 mm sheet-metal aperture returns. At X=.975/.985/.995,
+Z=-2.3 and +2.3, each deck-edge section is a single 6 mm interval. Both lid
+apertures remain hollow and the outer closed envelope is unchanged within
+numerical export tolerance. Rear shutline backing is integrated rather than a
+second stop shelf. No black weatherstrip or cosmetic overlaid cover is added.
+
+A separate **long-nose study** is exported at `models/sedanV17Alt`; it is NOT a
+registered game vehicle/type or a replacement for the normal preview. The forebody
+is split before wheel/aperture construction, translated forward **0.36 m**, and
+joined with an extrusion of its real cross-section from world Z=-1.930 to -1.570.
+This is not a whole-car stretch. Old front wheel holes are rebuilt, not left behind.
+Front axle Z=-2.2892, rear Z=1.949; wheelbase 4.2382 m. Windshield/side glazing,
+greenhouse, rear body and seat pack remain in place. The lower front-door leading
+edge is vertical at Z=-1.41722 from the sill to the window base; upper rake remains.
+Front hinge pivots are (+/-1.3091,1.0598,-1.41722); hood pivot shifts to
+(0,1.209352463,-1.9553). Front bumper, lamps and hood move rigidly forward.
+
+The local `BuildSedanMk2LongNoseStudy` constructor copies wheel/hinge arrays,
+updates body bounds and front emitters, and is called only by the offline showcase
+with `UG_MK2_LONG_NOSE_STUDY=1`. It does not mutate the standard spec or append
+`SpecNames`. Matching alternate assets are temporarily installed for that process;
+the runner restores the normal V17 bytes afterwards. Both captures use actual
+native suspension; the alternate settles on four contacts around root Y=.5524 m,
+versus stock .5525 m, without a render-only height offset.
+
+Export validation initially exposed numerical sliver triangles/parity errors.
+Positions were precision-welded and Manifold remeshed coherently, never by dropping
+individual triangles or disabling validators. Final exported OBJ normals, closed
+edges, signed volume, independent solid-angle winding and ray parity pass, including
+simulation of the native original-normal/clockwise conversion. Alternate engine
+floor extension is relieved around full-width tyres; all static components clear
+the conservative 12-gon .6 m tyre envelope at half-width .200003 m. Opening audits
+include the re-cut doors and moved hinges. These remain discrete geometry checks;
+native renders are not proof of handling or every possible steering/suspension pose.
+
 ## Networking boundary
 
 This isolated preview's base wire format is **v55**, unchanged by these model changes.
@@ -154,7 +193,7 @@ No main merge or server deployment is performed by this preview.
 - L0: all six engine-free suites, 2,364 passed / 0 failed. Rerun with
   `--no-build --no-restore` because this preview changes no core/test project
   sources and concurrent builds exceeded the runner timeout on the shared box.
-- Focused vehicle regression L1: 13 tests, 624 checks, all passed. Includes 287 new
+- Focused vehicle regression L1: 13 tests, 636 checks, all passed. Includes 287 new
   model/rig checks and 42 real-runtime checks for native tyre contact/clearance,
   driver boarding/camera, safe exit, selective doors, UI closure, storage identity,
   teardown, driving and held braking.
@@ -170,6 +209,7 @@ No main merge or server deployment is performed by this preview.
   real PlayerController first-person camera and runtime rig. It does not reload
   the private art-preview scene. Output is explicitly a DIRECTORY, and PNG errors
   abort the capture. Dry rain shader globals are initialized before materials link.
+  `UG_MK2_LONG_NOSE_STUDY=1` selects the isolated alternate spec only in the showcase.
   `UG_MK2_DETAILS_ONLY=1` captures matched closed/open rear, engine, trunk and
   close jamb views through the real builder, avoiding private-art-viewer substitutes.
   `UG_MK2_REMAINING=1` resumes just the driver/open-panel views;
@@ -183,17 +223,17 @@ No main merge or server deployment is performed by this preview.
 
 `python3 tools/install_sedan_mk2.py --check` verifies installed files and original
 asset hashes through `docs/SEDAN_MK2_ASSETS.json`, even without the private art workspace.
-Reinstallation requires the V16 preview workspace via `--art` and frozen palette via
+Reinstallation requires the V17 normal preview workspace via `--art` and frozen palette via
 `--frozen`; the installer is a byte copier, not a geometry-authoring recipe.
 
-## SHA-256: preview source geometry and installed bytes
+## SHA-256: normal preview source geometry and installed bytes
 
 Every row below is byte-identical source -> installed asset. Manifest SHA-256:
-`76c45a4212625c68a6d46a1150461328068e1694a6a832e065d67a67ecfb881c`.
+`cc7169fcc012463958fdf3cf5c4c00c57a05bc8715a8e5cfc8f5b8ab0a21ff5a`.
 
 | Source file | Installed file | SHA-256 |
 |---|---|---|
-| `sedan_frame.obj` | `sedan_mk2_frame.txt` | `5511f3d5b89b87a1327a4465a26c237fc7a6abe7b42407ebdc4db0a74ffba12b` |
+| `sedan_frame.obj` | `sedan_mk2_frame.txt` | `cf97df89bc6b6f97d3aa56305f2c8635580b846385e3323676117f89fd249d15` |
 | `sedan_front_door_left.obj` | `sedan_mk2_front_door_left.txt` | `d09dc8b87e2e5d6797cdb8037aeac9b50f5bd40b8e08b759d85f9aba723f28da` |
 | `sedan_rear_door_left.obj` | `sedan_mk2_rear_door_left.txt` | `a0a57f84c309cd3ac04a945be9ce2512229d6efa0845cb5a2021d5a9325d7f31` |
 | `sedan_front_door_right.obj` | `sedan_mk2_front_door_right.txt` | `4074a20132f548a66418813c649a7598e4ddd9491f6af6fa735fd11effd101a6` |

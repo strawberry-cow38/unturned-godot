@@ -63,7 +63,8 @@ namespace UnturnedGodot
                 ground.AddChild(new MeshInstance3D { Mesh=new PlaneMesh { Size=new Vector2(70,70) },
                     MaterialOverride=new StandardMaterial3D {AlbedoColor=new Color(.38f,.43f,.40f),Roughness=1} });
                 AddChild(ground);
-                _old=Vehicle.BuildByName("sedan",5); _new=Vehicle.BuildByName("sedan_mk2",5);
+                _old=Vehicle.BuildByName("sedan",5); _new=System.Environment.GetEnvironmentVariable("UG_MK2_LONG_NOSE_STUDY")=="1"
+                    ? Vehicle.BuildSedanMk2LongNoseStudy(5) : Vehicle.BuildByName("sedan_mk2",5);
                 _old.Position=heightOnly ? new Vector3(0,1.2f,-4.2f) : new Vector3(-5,1.2f,0);
                 _new.Position=heightOnly ? new Vector3(0,1.2f,4.2f) : new Vector3(5,1.2f,0);
                 AddChild(_old); AddChild(_new);
@@ -71,6 +72,12 @@ namespace UnturnedGodot
                 await Physics(140);
                 foreach(var car in new[]{_old,_new})
                     GD.Print($"[sedan-mk2] {car.DisplayName}: grounded={car.DebugWheelNodes.Count(w=>w.IsInContact())}/4 rootY={car.Position.Y:F4} speed={car.LinearVelocity.Length():F4} seats={car.SeatCount} panels={car.AuthoredPanelRig?.Count??0}");
+                if (System.Environment.GetEnvironmentVariable("UG_MK2_LONG_NOSE_STUDY")=="1")
+                {
+                    var f=_new.GetNode<MeshInstance3D>("Body").Mesh.GetFaces();
+                    GD.Print($"[long-nose-study] bodyZ={f.Min(v=>v.Z):F5}..{f.Max(v=>v.Z):F5} frontWheelZ={_new.DebugWheelNodes[0].Position.Z:F5} frontHinge={_new.AuthoredPanelRig.GetDefinition(0).Pivot} hoodHinge={_new.AuthoredPanelRig.GetDefinition(4).Pivot}");
+                    if(_new.DebugWheelNodes.Count(w=>w.IsInContact())!=4)throw new InvalidOperationException("Alternate did not settle on all four native wheels");
+                }
                 if (heightOnly)
                 {
                     // ONE world-space camera and floor, after native suspension has settled.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install approved V16 OBJ bytes under a new prefix; never touch stock sedan.
+"""Install approved V17 OBJ bytes under a new prefix; never touch stock sedan.
 No mesh processing, rescaling, triangulation, texture conversion, or Godot invocation.
 Use --check for a read-only byte/triangle/UV audit. Source roots may be supplied explicitly.
 """
@@ -27,7 +27,7 @@ def entries(manifest, art, frozen):
 def main():
     repo = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--art', type=Path, default=repo.parent / 'ug-vehicle-study/models/sedanV16')
+    parser.add_argument('--art', type=Path, default=repo.parent / 'ug-vehicle-study/models/sedanV17')
     parser.add_argument('--frozen', type=Path, default=repo.parent / 'ug-vehicle-study/sources/sedan')
     parser.add_argument('--check', action='store_true')
     args = parser.parse_args()

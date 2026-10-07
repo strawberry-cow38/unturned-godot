@@ -1,21 +1,21 @@
 {
-  "approved_model": "sedan V16 detail preview (approval pending)",
-  "manifest_sha256": "76c45a4212625c68a6d46a1150461328068e1694a6a832e065d67a67ecfb881c",
+  "approved_model": "sedan V17 closure preview (approval pending)",
+  "manifest_sha256": "cc7169fcc012463958fdf3cf5c4c00c57a05bc8715a8e5cfc8f5b8ab0a21ff5a",
   "counts": {
-    "frame_and_closure_lips": 1518,
+    "frame_and_closure_lips": 1708,
     "moving_panels": 486,
     "glass": 110,
     "stock_hardware_and_interior": 408,
     "new_interior_liners": 272,
-    "body_and_panels": 2004,
-    "all_excluding_wheels": 2794
+    "body_and_panels": 2194,
+    "all_excluding_wheels": 2984
   },
   "assets": [
     {
       "file": "sedan_mk2_frame.txt",
       "source": "sedan_frame.obj",
-      "sha256": "5511f3d5b89b87a1327a4465a26c237fc7a6abe7b42407ebdc4db0a74ffba12b",
-      "triangles": 1518
+      "sha256": "cf97df89bc6b6f97d3aa56305f2c8635580b846385e3323676117f89fd249d15",
+      "triangles": 1708
     },
     {
       "file": "sedan_mk2_front_door_left.txt",
