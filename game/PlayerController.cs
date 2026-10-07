@@ -988,12 +988,12 @@ namespace UnturnedGodot
                 _focusSeat = hitSeat;
                 _focusSeat?.SetLookFocused(true);
             }
-            if (hitVendor != _focusVendor)   // drinks machine look-focus: same whole-prop white outline
+            if (hitVendor != _focusVendor)   // drinks machine look-focus: whole-prop outline, coloured by what F would do
             {
                 if (IsInstanceValid(_focusVendor)) _focusVendor.SetLookFocused(false);
                 _focusVendor = hitVendor;
-                _focusVendor?.SetLookFocused(true);
             }
+            VendPromptSet(_focusVendor);   // EVERY scan, not just on focus change: the state moves under the player
             if (hitRadio != _focusRadio)   // radio look-focus: same whole-prop white outline as the TV
             {
                 if (IsInstanceValid(_focusRadio)) _focusRadio.SetLookFocused(false);
@@ -2042,6 +2042,25 @@ namespace UnturnedGodot
             _forageInfo.SetPrompt($"[{Keybinds.Get(GameAction.Interact).Label}] forage", Colors.White);
             _forageInfo.SetActive(true);
         }
+
+        // THE VENDING MACHINE'S PROMPT (strawberry 2026-10-07: "add prompts and feedback (outline color) to vending
+        // machines. ie showing insufficient funds, $1 soda/cola, dispensing, no power etc"). The forage billboard's
+        // shape: the machine's name over one line saying what F does -- or why it won't -- coloured to match the rim.
+        InfoBillboard _vendInfo;
+
+        void VendPromptSet(VendingMachine v)
+        {
+            if (v == null || !IsInstanceValid(v)) { _vendInfo?.SetActive(false); return; }
+            if (_vendInfo == null) { _vendInfo = new InfoBillboard { TopLevel = true }; AddChild(_vendInfo); }
+            var s = v.StateFor(this);
+            v.SetLookFocused(true, this);   // re-claims the rim colour too: it is the machine's state, and that moves
+            _vendInfo.GlobalPosition = v.PromptAnchor;
+            _vendInfo.SetName(v.MachineName, v.MachineColor);
+            _vendInfo.SetPrompt(v.PromptFor(s, Keybinds.Get(GameAction.Interact).Label), v.Denying ? VendingMachine.NoFundsColor : VendingMachine.ColorOf(s));
+            _vendInfo.SetActive(true);
+        }
+        internal VendingMachine DebugFocusVendor => _focusVendor;
+        internal InfoBillboard DebugVendInfo => _vendInfo;
 
         void FluidPickupHudSet(string text)
         {
@@ -6640,6 +6659,10 @@ namespace UnturnedGodot
         /// 2026-09-15: "consume the dollar, shake the machine a bit and then spawn") -- a real machine takes your
         /// coin before it thinks about it, and paying only on delivery would let you walk away mid-shake with the
         /// dollar still in your pocket.</summary>
+        /// <summary>Can a vend be PAID for at all from here -- a seam to the authority, or a bag this shell owns. False on
+        /// a joined multiplayer client, which has no vend command yet; the machine then reads "Out of order".</summary>
+        public bool CanVend => NetVendPay != null || !InventoryIsServerOwned;
+
         public bool RequestVendPay()
         {
             if (NetVendPay != null) return NetVendPay();
@@ -8925,8 +8948,15 @@ namespace UnturnedGodot
                 else if (_focusVendor != null && IsInstanceValid(_focusVendor))
                 {
                     string why = _focusVendor.RefusalFor(this);
-                    if (why != null) Log.Print($"[vending] refused: {why}");
-                    else _focusVendor.Vend(this);
+                    // A refusal FLASHES the rim -- the billboard already says why; the flash says "that press was
+                    // the problem". Not while it is dispensing: pressing again then is impatience, not an error.
+                    if (why != null)
+                    {
+                        if (_focusVendor.StateFor(this) != VendingMachine.VendState.Dispensing) _focusVendor.Deny();
+                        Log.Print($"[vending] refused: {why}");
+                    }
+                    else if (!_focusVendor.Vend(this)) _focusVendor.Deny();   // the server would not take the dollar
+                    VendPromptSet(_focusVendor);   // show the answer on this frame, not at the next 30 Hz scan
                 }
                 else if (_focusLamp != null && IsInstanceValid(_focusLamp)) _focusLamp.Toggle();   // looking at a standing/desk lamp: F toggles it on/off
                 else if (_focusElevButton != null && IsInstanceValid(_focusElevButton)) _focusElevButton.Press();   // looking at a floor button: F sends the car to that floor (the button panel is the interactable now, not the car)

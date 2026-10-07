@@ -102,6 +102,12 @@ namespace UnturnedGodot
 
         const int NameFontSize = 30, PromptFontSize = 26, MinFontSize = 15;
 
+        // L1: what the billboard is actually showing, so a test reads the screen rather than the string it passed in.
+        internal string DebugNameText => _name?.Text;
+        internal string DebugPromptText => _prompt?.Text;
+        internal Color DebugPromptColor => _prompt?.Modulate ?? default;
+        internal bool DebugShown => _sprite != null && _sprite.Visible && IsInsideTree();   // SetActive toggles the sprite, not the node
+
         /// <summary>Shrink the face until the text fits the billboard, instead of letting it run off the edge.
         ///
         /// A Label that overflows does not announce it -- "Red Spotted Mushroom" rendered as "Red Spotted

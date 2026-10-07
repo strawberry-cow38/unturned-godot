@@ -100,16 +100,82 @@ namespace UnturnedGodot
             PowerNet.MarkDirty();
         }
 
+        /// <summary>What the machine would do if this player pressed F right now. Drives the prompt and the outline
+        /// colour as well as the press itself, so what it SAYS and what it DOES are one decision (strawberry
+        /// 2026-10-07: "add prompts and feedback (outline color) to vending machines. ie showing insufficient funds,
+        /// $1 soda/cola, dispensing, no power etc").
+        ///
+        /// Order matters: a machine mid-vend says Dispensing even to someone broke, because that is what it is
+        /// visibly doing; and No power outranks the wallet, because a dollar would not fix it.</summary>
+        public enum VendState { Ready, NoFunds, NoPower, Dispensing, OutOfOrder }
+
+        public VendState StateFor(PlayerController p)
+        {
+            if (_cooldown > 0f) return VendState.Dispensing;   // one can at a time (strawberry 2026-09-15)
+            if (!HasFeed) return VendState.NoPower;
+            // ⚠ A JOINED MULTIPLAYER CLIENT CANNOT BUY: there is no server command for a vend yet, only the singleplayer
+            // loopback's in-process seam (RequestVendPay refuses rather than dupe). Without this the machine would
+            // promise "[F] $1 cola" in green and then refuse every press -- so it says what is true instead.
+            if (p != null && !p.CanVend) return VendState.OutOfOrder;
+            return p?.Inventory == null || p.Inventory.getItemCount(Currency.StackId) < Price ? VendState.NoFunds : VendState.Ready;
+        }
+
+        public string DrinkName => DrinkId == SodaId ? "soda" : "cola";
+        public string MachineName => DrinkId == SodaId ? "Soda Machine" : "Cola Machine";
+        /// <summary>The machine's own livery, lifted to a readable text colour: Vendor_0 is #802020, Vendor_1 #204080.</summary>
+        public Color MachineColor => DrinkId == SodaId ? new Color(0.45f, 0.65f, 1f) : new Color(1f, 0.42f, 0.38f);
+
+        public static readonly Color ReadyColor = new Color(0.35f, 0.92f, 0.42f);       // green: press F and it works
+        public static readonly Color NoFundsColor = new Color(0.95f, 0.25f, 0.2f);      // red: you are short
+        public static readonly Color NoPowerColor = new Color(0.5f, 0.5f, 0.52f);       // grey: the machine is dead
+        public static readonly Color DispensingColor = new Color(1f, 0.74f, 0.16f);     // amber: busy, wait for the can
+
+        public static Color ColorOf(VendState s) => s switch
+        {
+            VendState.Ready => ReadyColor,
+            VendState.NoFunds => NoFundsColor,
+            VendState.NoPower or VendState.OutOfOrder => NoPowerColor,
+            _ => DispensingColor,
+        };
+
+        /// <summary>The line under the machine's name.</summary>
+        public string PromptFor(VendState s, string key) => s switch
+        {
+            VendState.Ready => $"[{key}] ${Price} {DrinkName}",
+            VendState.NoFunds => $"Insufficient funds -- ${Price} {DrinkName}",
+            VendState.NoPower => "No power",
+            VendState.OutOfOrder => "Out of order",
+            _ => "Dispensing...",
+        };
+
         /// <summary>Why a press did nothing, or null when it would work. Returned as TEXT because every one of
         /// these is something the player can fix, and a machine that just ignores you reads as broken -- the
         /// same argument the connect-reject reasons make.</summary>
-        public string RefusalFor(PlayerController p)
+        public string RefusalFor(PlayerController p) => StateFor(p) switch
         {
-            if (_cooldown > 0f) return "Dispensing...";   // one can at a time (strawberry 2026-09-15)
-            if (!HasFeed) return "No power";
-            if (p?.Inventory == null) return "No power";
-            return p.Inventory.getItemCount(Currency.StackId) < Price ? $"Need ${Price}" : null;
+            VendState.Ready => null,
+            VendState.NoFunds => $"Insufficient funds -- a {DrinkName} is ${Price}",
+            VendState.NoPower => "No power",
+            VendState.OutOfOrder => "Out of order (multiplayer vending isn't wired yet)",
+            _ => "Dispensing...",
+        };
+
+        /// <summary>A refused press FLASHES the outline red, so the answer lands where the player is looking
+        /// rather than only in a line of text.</summary>
+        public const float DenySeconds = 0.6f;
+        float _denied;
+        public bool Denying => _denied > 0f;
+        public void Deny() => _denied = DenySeconds;
+
+        /// <summary>The rim colour right now: the refusal flash (red, blinking) over the machine's state.</summary>
+        public Color OutlineColorFor(PlayerController p)
+        {
+            if (_denied > 0f) return Mathf.PosMod(_denied, 0.2f) < 0.1f ? NoFundsColor : Colors.White;
+            return ColorOf(StateFor(p));
         }
+
+        /// <summary>Where the prompt floats: just above the machine's roof, centred on it.</summary>
+        public Vector3 PromptAnchor => GlobalTransform * new Vector3(_bodyCenterLocal.X, _bodyCenterLocal.Y, _bodyLocal.End.Z) + Vector3.Up * 0.3f;
 
         /// <summary>Where the can comes out: the machine's own dispensing tray, in MESH-LOCAL coordinates and
         /// then through its transform (strawberry 2026-09-15: "should spawn relative to the machine, not the
@@ -141,7 +207,11 @@ namespace UnturnedGodot
             return true;
         }
 
-        public void SetLookFocused(bool on) => OutlineOverlay.ShowOutline(on, Colors.White, _outline);
+        /// <summary>Light or drop the outline. Re-called every look scan while focused, because the colour is the
+        /// machine's STATE and changes under the player -- the dollar spent, the can still dropping, the power cut.</summary>
+        public void SetLookFocused(bool on, PlayerController p = null)
+            => OutlineOverlay.ShowOutline(on, on ? OutlineColorFor(p) : Colors.White, _outline);
+        internal bool DebugOutlineVisible => _outline != null && IsInstanceValid(_outline) && _outline.Visible;
 
         public override void _EnterTree() { TickHub.Add(this, HubTick, 30f); }
         public override void _ExitTree() { TickHub.Remove(this); }
@@ -165,6 +235,7 @@ namespace UnturnedGodot
         void HubTick(double dt)
         {
             if (_cooldown > 0f) _cooldown = Mathf.Max(0f, _cooldown - (float)dt);
+            if (_denied > 0f) _denied = Mathf.Max(0f, _denied - (float)dt);
             if (_shake <= 0f) return;   // NOTE: the drop below runs on the tick the shake REACHES zero, not after
             _shake = Mathf.Max(0f, _shake - (float)dt);
             float amp = 0.018f * (_shake / ShakeSeconds);           // decays to nothing
