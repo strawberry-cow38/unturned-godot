@@ -4808,7 +4808,35 @@ namespace UnturnedGodot
         /// and the next grid move repaints the bag from the server, which puts it back (the exact shape of
         /// "sometimes ammo magically refills into guns", one field over). Forced rather than coalesced because
         /// fitting a scope is a deliberate single act, not a burst like firing.</summary>
-        public void NoteAttachmentChanged() { SaveGunState(); FlushGunState(force: true); }
+        public void NoteAttachmentChanged()
+        {
+            // A fitted or removed BARREL changes the shot -- its clip, volume and the flash -- and that was only ever
+            // applied on equip, so fitting a silencer in the T menu left the gun loud and flashing until you holstered
+            // it. Mostly a nuisance; for the water bottle silencer it is the whole item, because it only gets one shot.
+            // The 3P body was the same: only an equip re-mounted it, so a fitted part never showed on your own model.
+            if (_heldItem != null) _viewmodel?.SetBarrelAudio(AttachmentFit.InstalledId(_heldItem, "Barrel"));
+            MountBody3PAttachments();
+            SaveGunState(); FlushGunState(force: true);
+        }
+
+        /// <summary>The water bottle silencer bursts on the shot it silences (strawberry 2026-10-07: "breaks after the first
+        /// shot"). Called from Fire after every read of Suppressed, so THIS shot keeps the silencing; the part, the id and the
+        /// 3P model go now, and the sound/flash revert once the shot's flash is over (Viewmodel.BreakBarrel). True = it burst,
+        /// and the caller forces the gun state out so the server's copy -- and every puppet drawn from it -- drops it too.
+        /// The id is the whole destroy: the item was already spent from the bag when it was fitted.</summary>
+        bool BreakSingleUseBarrel()
+        {
+            if (_heldItem == null) return false;
+            int barrel = AttachmentFit.InstalledId(_heldItem, "Barrel");
+            if (!AttachmentFit.BreaksOnShot(barrel)) return false;
+            AttachmentFit.SetInstalledId(_heldItem, "Barrel", -1);
+            _viewmodel?.BreakBarrel();
+            MountBody3PAttachments();
+            HUD.Notice("The bottle silencer burst", 1.5f);
+            DebugBarrelsBurst++;
+            return true;
+        }
+        public int DebugBarrelsBurst;   // test seam
         public void DebugStartReload() => StartReload();                            // test: begin a real reload (timer + anim), so a swap can land MID-reload
         public bool DebugIsReloading => _reloading;                                 // test: is a reload still in flight?
         public void DebugRestoreGunState(SDG.Unturned.Item it) => RestoreGunState(it);   // test: restore a gun's state from an item
@@ -9470,7 +9498,11 @@ namespace UnturnedGodot
             // bolt/pump: this shot needs the action cycled before the next one (source RechamberAfterShotCount -> needsRechamber)
             if (Gun != null && Gun.RechamberAfterShotCount > 0 && ++_shotCountForRechamber >= Gun.RechamberAfterShotCount)
             { _needsRechamber = true; _rechamberDelayTimer = Gun.RechamberAfterShotDelay; }
+            // A single-use barrel goes BEFORE the save: SaveGunState reads the barrel part's visibility into the attach mask,
+            // and a mask still saying "barrel fitted" would bring the default suppressor back on the next equip.
+            bool burst = BreakSingleUseBarrel();
             SaveGunState();   // keep the backing item's ammo current so a drop/holster mid-fight preserves it (master)
+            if (burst) FlushGunState(force: true);   // the server's copy must lose it NOW -- an echo before the flush would hand it back
             ReportWeaponUse(heldGun);   // DURABILITY: one shot fired -- the server rolls the wear
             NetFire?.Invoke(bulletOrigin, aim);   // D1: the UNDEVIATED aim ray over the wire -- the server spawns the authoritative bullet (spread is client fx; the bullets above went cosmetic in SpawnBullet)
             return true;   // shot fired; the actual hits/kills land later in StepBullets

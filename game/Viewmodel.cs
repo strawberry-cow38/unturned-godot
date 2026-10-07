@@ -1038,7 +1038,8 @@ namespace UnturnedGodot
                     // SILENCES the shot (source: a silenced barrel skips the zombie AlertTool.alert entirely, UseableGun ~936).
                     // Mounted at the eaglefire Barrel hook (per-gun barrel hooks are still hardcoded, like the other slots).
                     var barrelMat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = new Color(0.05f, 0.05f, 0.055f), Metallic = 0f, MetallicSpecular = 0f, Roughness = 0.85f };   // dark matte, like the gun body
-                    mi.AddChild(new MeshInstance3D { Name = "Barrel", Mesh = ContentProvider.ParseObj("res://content/suppressor.txt"), MaterialOverride = barrelMat, Position = new Vector3(0f, 0.7307f, -0.0818f), Visible = false });
+                    _barrelDefaultMat = barrelMat;
+                    mi.AddChild(new MeshInstance3D { Name = "Barrel", Mesh = ContentProvider.ParseObj("res://content/suppressor.txt"), MaterialOverride = barrelMat, Position = AttachmentFit.DefaultBarrelHook, Visible = false });
 
                     // TACTICAL slot (strawberry 2026-09-13: "wire the tactical laser, flashlight attachments").
                     // Empty and hidden until something is installed -- unlike Sight and Magazine, NO gun ships with a
@@ -1282,8 +1283,35 @@ namespace UnturnedGodot
         /// and the `Silenced` key agree; both are read rather than one inferred from the other.
         ///
         /// id 0 / an unknown barrel = back to the gun's own clip at its own loudness.</summary>
+        const string BottleMeta = "ug_bottle_silencer";
+        StandardMaterial3D _barrelDefaultMat;
+        bool _barrelAudioResetPending;
+
+        void RestoreBarrelNode(MeshInstance3D m)
+        {
+            m.Mesh = ContentProvider.ParseObj("res://content/suppressor.txt");
+            m.Position = AttachmentFit.DefaultBarrelHook;
+            if (_barrelDefaultMat != null) m.MaterialOverride = _barrelDefaultMat;
+            m.RemoveMeta(BottleMeta);
+        }
+
+        /// <summary>A single-use barrel just went (the water bottle silencer bursts on the shot it silenced). The part
+        /// vanishes now; the SOUND and FLASH revert only once this shot's flash window has run out -- the flash check runs
+        /// every frame, so flipping BarrelSilenced on the same frame as the shot would light the one shot the bottle
+        /// was there to hide.</summary>
+        public void BreakBarrel()
+        {
+            if (_gun?.GetNodeOrNull<MeshInstance3D>("Barrel") is MeshInstance3D m) { RestoreBarrelNode(m); m.Visible = false; }
+            _barrelAudioResetPending = true;
+        }
+        public bool DebugBarrelNodeVisible => _gun?.GetNodeOrNull<MeshInstance3D>("Barrel") is MeshInstance3D m && m.Visible;
+        public bool DebugBarrelIsBottle => _gun?.GetNodeOrNull<MeshInstance3D>("Barrel") is MeshInstance3D m && m.Visible && m.HasMeta(BottleMeta);
+        public Vector3 DebugBarrelPosition => _gun?.GetNodeOrNull<MeshInstance3D>("Barrel") is MeshInstance3D m ? m.Position : Vector3.Zero;
+        public Vector3 DebugMuzzleHook => _muzzleFlash?.Position ?? Vector3.Zero;
+
         public void SetBarrelAudio(int barrelItemId)
         {
+            _barrelAudioResetPending = false;
             var def = AttachmentFit.BarrelFor(barrelItemId);
             BarrelSilenced = def.Silenced;
             _shootVolDb = Mathf.IsEqualApprox(def.Volume, 1f) ? 0f : Mathf.LinearToDb(Mathf.Max(def.Volume, 0.0001f));
@@ -1603,6 +1631,10 @@ namespace UnturnedGodot
         public void SetSlotAttached(string slot, bool on)
         {
             if (slot == "Sight" && !on) HideScopePiP();   // a hidden Sight slot must not leave a live scope picture / scope aim hook behind
+            // A meshless barrel shows the node's DEFAULT part (the suppressor) -- and after a water bottle silencer the node
+            // still holds the bottle, so it would show a bottle on the end of a gun that has none fitted. Put it back first.
+            if (slot == "Barrel" && on && _gun?.GetNodeOrNull<MeshInstance3D>("Barrel") is MeshInstance3D bm && bm.HasMeta(BottleMeta))
+                RestoreBarrelNode(bm);
             if (_attachMesh.TryGetValue(slot, out var n)) { var m = _gun?.GetNodeOrNull<MeshInstance3D>(n); if (m != null) m.Visible = on; }
         }
         public string DefaultSightTxt => _defaultSightTxt;   // the gun's own iron-sight mesh (null/empty = the gun has no irons of its own)
@@ -1663,6 +1695,25 @@ namespace UnturnedGodot
             if (string.IsNullOrEmpty(txtName)) { m.Visible = false; return; }
             m.Mesh = ContentProvider.ParseObj($"res://content/{txtName}");
             m.Visible = true;   // the node may have been hidden by a detach -- a freshly mounted mesh must show (was: new scope stayed invisible after detaching the old one)
+            if (slot == "Barrel")
+            {
+                // THE WATER BOTTLE SILENCER sits on the tip of THIS gun's muzzle with its own label colours; every real barrel
+                // keeps the shared hook and the dark part material. Decided per mount, so swapping one for the other never
+                // leaves the bottle's position or texture on a suppressor.
+                bool bottle = txtName == AttachmentFit.MeshFor(AttachmentFit.WaterBottleSilencerId);
+                if (bottle)
+                {
+                    m.Position = AttachmentFit.BarrelMount(AttachmentFit.WaterBottleSilencerId, _muzzleFlash?.Position ?? Vector3.Zero);
+                    m.MaterialOverride = new StandardMaterial3D
+                    {
+                        CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = Colors.White,
+                        AlbedoTexture = AttachmentFit.TexFor(AttachmentFit.WaterBottleSilencerId), TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest,
+                        Roughness = 0.35f,   // clear plastic catches a highlight; the dark gun parts are matte
+                    };
+                    m.SetMeta(BottleMeta, true);
+                }
+                else if (m.HasMeta(BottleMeta)) { m.Position = AttachmentFit.DefaultBarrelHook; m.MaterialOverride = _barrelDefaultMat; m.RemoveMeta(BottleMeta); }
+            }
             if (slot == "Tactical")
             {
                 // The tactical pair are the only attachments whose colour is a TEXTURE rather than a flat tint --
@@ -2089,6 +2140,7 @@ namespace UnturnedGodot
             // it on would keep lighting the room from a gun that is meant to be hiding you -- the tell that matters
             // most at night, and the one the tracer/zombie-alert gating already removes on the other axes.
             if (_muzzleFlash != null) _muzzleFlash.Visible = _flash > 0f && !BarrelSilenced;
+            if (_barrelAudioResetPending && _flash <= 0f) SetBarrelAudio(-1);   // the burst bottle's shot is over: the gun is loud again
             // aim-in/out ramp (AimInDuration seconds) + the source smootherstep-squared ease
             _aimT = Mathf.Clamp(_aimT + (_aiming ? 1f : -1f) * (float)delta / AimInDuration, 0f, 1f);
             _aimAlpha = AimEase(_aimT);

@@ -285,7 +285,10 @@ namespace UnturnedGodot
                 parts.Add(("Magazine", mm, magMount.Hook, tex != null ? Godot.Colors.White : new Godot.Color(0.07f, 0.07f, 0.08f), tex));
             }
             if (barrelId > 0 && MeshFor((ushort)barrelId) is string bt && ContentProvider.ParseObj($"res://content/{bt}") is Godot.Mesh bm)
-                parts.Add(("Barrel", bm, new Godot.Vector3(0f, 0.7307f, -0.0818f), new Godot.Color(0.05f, 0.05f, 0.055f), null));
+            {
+                var btex = TexFor((ushort)barrelId);   // the bottle's label and cap; every real barrel is a flat dark part
+                parts.Add(("Barrel", bm, BarrelMount(barrelId, gv.MuzzleHook), btex != null ? Godot.Colors.White : new Godot.Color(0.05f, 0.05f, 0.055f), btex));
+            }
             // TACTICAL (strawberry 2026-09-13: "wire the tactical laser, flashlight attachments"). The hook is the
             // one Viewmodel._hookLocal already publishes for the slot -- the same table the T menu projects to place
             // its slot icons, so the part lands exactly where the menu says the slot is. There is no factory
@@ -297,6 +300,17 @@ namespace UnturnedGodot
                            Godot.Colors.White, TexFor((ushort)tacticalId)));
             return parts;
         }
+
+        /// <summary>The Eaglefire's Barrel hook, where every real barrel part is mounted on every gun (the per-gun hook
+        /// is not wired for barrels yet -- a standing gap, see Viewmodel's Barrel node).</summary>
+        public static readonly Godot.Vector3 DefaultBarrelHook = new Godot.Vector3(0f, 0.7307f, -0.0818f);
+
+        /// <summary>Where a barrel part goes on THIS gun. The bottle goes on the TIP OF THE MUZZLE (strawberry: "the bottle
+        /// model on the tip of the muzzle"), which is the per-gun MuzzleHook from guns_visual.tsv -- its mesh is baked with
+        /// the bottle's neck at its origin, so the neck seats on the muzzle on any gun, short pistol or long rifle. A gun
+        /// whose row has no muzzle (the bows read 0,0,0) falls back to the shared hook rather than sitting at the grip.</summary>
+        public static Godot.Vector3 BarrelMount(int barrelId, Godot.Vector3 muzzleHook)
+            => barrelId == WaterBottleSilencerId && muzzleHook != Godot.Vector3.Zero ? muzzleHook : DefaultBarrelHook;
 
         public static void MountOn(RiggedCharacter body, string gunName, int sightId, int magId, int barrelId)
             => MountOn(body, gunName, sightId, magId, barrelId, 0);
@@ -366,6 +380,7 @@ namespace UnturnedGodot
         static readonly System.Collections.Generic.Dictionary<ushort, string> Textures = new()
         {
             { 9146, "mag_mac10_albedo.png" },
+            { WaterBottleSilencerId, "bottle_silencer_albedo.png" },   // the bottle's own 2x2 palette (clear plastic + label blue)
             { 9147, "mac10_sight_albedo.png" },
             { 151, "tactical_laser_tex.png" },
             { 152, "tactical_light_tex.png" },
@@ -416,6 +431,10 @@ namespace UnturnedGodot
             { 1338, new BarrelDef("paintballgun_barrel_shoot.ogg",  0.90f, true) },
             { 350,  new BarrelDef("crossbow_barrel_shoot.ogg",      0.60f, true) },
             { 354,  new BarrelDef("bow_barrel_shoot.ogg",           0.60f, true) },
+            // WATER BOTTLE SILENCER (strawberry 2026-10-07): a crude muffler, so the crude muffler's clip, a touch quieter
+            // than the Makeshift Muffler's 0.80 -- a bottle swallows the first crack well, which is the whole point of it
+            // and the reason it only gets one. Silenced, so no flash, no tracer, no zombie alert -- for the one shot.
+            { WaterBottleSilencerId, new BarrelDef("makeshift_muffler_shoot.ogg", 0.60f, true) },
             { 149,  new BarrelDef(null, 1f, false) },   // Military Barrel -- accuracy
             { 150,  new BarrelDef(null, 1f, false) },   // Military Muzzle -- BRAKED, not silenced
             { 1191, new BarrelDef(null, 1f, false) },   // Ranger Barrel
@@ -425,6 +444,16 @@ namespace UnturnedGodot
         /// <summary>The barrel's shot profile; an unknown or absent barrel reads as "the gun's own, unsilenced".</summary>
         public static BarrelDef BarrelFor(int id)
             => id > 0 && Barrels.TryGetValue((ushort)id, out var b) ? b : new BarrelDef(null, 1f, false);
+
+        /// <summary>The Water Bottle Silencer's item id (items_catalog.tsv). Universal -- it has no Calibers entry, so it
+        /// fits every gun -- and single-use: see BreaksOnShot.</summary>
+        public const ushort WaterBottleSilencerId = 9400;
+        /// <summary>The bottle it is made of, whose model it wears on the muzzle.</summary>
+        public const ushort WaterBottleId = 14;
+
+        /// <summary>Is this barrel used up by the shot it silences (strawberry: "breaks after the first shot")? The shot
+        /// still gets the silencing -- the bottle bursts doing its job -- and the attachment is gone after it.</summary>
+        public static bool BreaksOnShot(int id) => id == WaterBottleSilencerId;
 
         /// <summary>Does this barrel actually silence? The ONE place that question is answered.</summary>
         public static bool IsSilencer(int id) => BarrelFor(id).Silenced;
@@ -486,6 +515,7 @@ namespace UnturnedGodot
             { 5,   "eaglefire_iron_sights.txt" },   // Eaglefire Iron Sights
             { 6,   "military_30_mag.txt" },         // Military Magazine
             { 7,   "suppressor.txt" },              // Military Suppressor
+            { WaterBottleSilencerId, "bottle_silencer.txt" },   // Water Bottle Silencer -- bottled_water.txt baked onto the barrel axis, neck at the origin
             { 8,   null },                          // Vertical Grip -- no rip yet
             { 17,  "military_100_mag.txt" },        // Military Drum -- real ripped drum model (96v; was the STANAG military_30 stand-in)
             { 21,  "scope_8x_sight.txt" },          // 8x Scope (was a red_kobra stand-in)

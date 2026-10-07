@@ -3031,6 +3031,17 @@ namespace UnturnedGodot
             { var hud = new HUD { Player = player }; AddChild(hud); player.Hud = hud; }
             _ftPlayer = player;
             if (suppressed) player.SetSuppressor(true);
+            // UG_BARREL=<item id> : fit that barrel to the held gun, the way an installed one rides an equip -- the water
+            // bottle silencer (9400) is the reason, photographed on the muzzle with UG_NOFIRE=1 (it bursts on the first shot).
+            if (int.TryParse(System.Environment.GetEnvironmentVariable("UG_BARREL"), out var _bid) && _bid > 0)
+            {
+                SDG.Unturned.ItemCatalog.RegisterAll();
+                ushort gunItem = 4;
+                foreach (var a in SDG.Unturned.Assets.all()) if (a.gunName == (gun ?? "eaglefire")) { gunItem = a.id; break; }
+                var withBarrel = new SDG.Unturned.Item(gunItem);
+                AttachmentFit.SetInstalledId(withBarrel, "Barrel", _bid);
+                player.EquipHeldGun(gun ?? "eaglefire", withBarrel);
+            }
             // UG_LASER=1 : fit the Tactical Laser (151) to the held gun and switch it on, so the beam + dot can
             // be photographed against the downrange wall. Render-only dressing, same shape as UG_HITWALL.
             if (System.Environment.GetEnvironmentVariable("UG_LASER") == "1")

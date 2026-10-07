@@ -66,12 +66,29 @@ namespace UnturnedGodot.Testing
             // emptying or refilling the catalog can never silently defang that one -- which is exactly what this
             // block just went through: it asserted "empty on purpose" for a day, and then strawberry asked for
             // the wood recipes (2026-09-06), so the assertion follows the requirement rather than being deleted.
-            var shipped = BlueprintRegistry.Index();
-            T.Check($"the shipped catalog holds the six wood recipes ({shipped.Count})", shipped.Count == 6);
+            var all = BlueprintRegistry.Index();
+            const string SawGuid = "fd6bee4579884ee9ad0b729baf423ab1";
+
+            // ⚠⚠ SCOPED TO THE WOOD RECIPES, NOT "everything shipped". This read `shipped.Count == 6` and then
+            // asserted saw-and-yield rules over EVERY recipe in the catalog -- correct while wood was the only
+            // thing in it, and wrong the moment anything else was added (strawberry's black powder chain,
+            // 2026-10-07, took it to 8 and broke both halves at once).
+            //
+            // ⭐ The requirement was never "the catalog has exactly six entries"; it was "the six wood recipes
+            // behave like this". A count over a shared, growing collection is a PROXY for that, and it fails on
+            // every unrelated addition while still not checking the thing it stands for.
+            var shipped = new System.Collections.Generic.List<BlueprintDef>();
+            foreach (var bp in all)
+                foreach (var ing in bp.Inputs)
+                    if (string.Equals(ing.Guid, SawGuid, System.StringComparison.OrdinalIgnoreCase)) { shipped.Add(bp); break; }
+
+            T.Check($"the shipped catalog holds the six wood recipes ({shipped.Count} of {all.Count} total)", shipped.Count == 6);
+            // ...and the catalog is not EMPTY of everything else either, which the old count check used to cover
+            // by accident. An empty catalog is a real failure mode -- it has happened here before.
+            T.Check($"the catalog carries the rest of its recipes too ({all.Count})", all.Count >= shipped.Count);
 
             // Every one of them: consumes exactly one wood input, needs the SAW without consuming it, yields 2.
             int toolConsumed = 0, wrongYield = 0, noSaw = 0;
-            const string SawGuid = "fd6bee4579884ee9ad0b729baf423ab1";
             foreach (var bp in shipped)
             {
                 bool sawPresent = false;
