@@ -26,7 +26,8 @@ namespace UnturnedGodot.Testing
             // ---- STACKABLE (master named four; the new components stack too) --------------------------------
             // ⚠ 69 is "Tape" in the catalog -- the retail name for what master calls duct tape. Asserted by ID so
             // this does not quietly start testing a different item if anything is ever renamed.
-            foreach (var (id, least) in new[] { ((ushort)69, 10), ((ushort)64, 10), ((ushort)67, 20), ((ushort)71, 100) })
+            foreach (var (id, least) in new[] { ((ushort)69, 10), ((ushort)64, 10), ((ushort)67, 20), ((ushort)71, 100),
+                                                ((ushort)9338, 20), ((ushort)9339, 20), ((ushort)9340, 20) })
             {
                 var a = Assets.find(id);
                 T.Check($"item {id} exists", a != null);
@@ -44,6 +45,7 @@ namespace UnturnedGodot.Testing
             {
                 (9327, "Gunpowder"), (9328, "Sulfur"), (9329, "Screws"), (9330, "Springs"),
                 (9331, "Gears"), (9332, "Hinges"), (9333, "Charcoal"), (9334, "Black Powder"), (9335, "Pipe"),
+                (9338, "Ceramic"), (9339, "Circuitry"), (9340, "Asbestos"),
             };
             foreach (var w in wanted)
             {

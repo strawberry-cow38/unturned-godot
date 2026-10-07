@@ -239,6 +239,9 @@ namespace SDG.Unturned
             Wood(9331, 20);  // Gears
             Wood(9332, 20);  // Hinges
             Wood(9335, 20);  // Pipe       -- the SUPPLY component; Metal Pipe (1094) is the barricade piece, a different item
+            Wood(9338, 20);  // Ceramic    -- salvage, in pieces
+            Wood(9339, 20);  // Circuitry
+            Wood(9340, 20);  // Asbestos
             Wood(64, 10);    // Rope       -- a coil at a time
             Wood(69, 10);    // Tape
 
