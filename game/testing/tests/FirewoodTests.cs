@@ -117,6 +117,34 @@ namespace UnturnedGodot.Testing
             T.Check($"control: metal scrap does not burn ({Cooking.BurnSecondsFor(scrap):0.#}s)",
                     scrap != null && Cooking.BurnSecondsFor(scrap) == 0f && !Cooking.IsWood(scrap));
 
+            // ---- A BARBECUE BURNS IT, AND SO DOES A CAMPFIRE -------------------------------------------------
+            // Master 2026-10-07: "bbq should burn logs, sticks, planks, firewood". The four named things are
+            // checked by NAME here and the rule is derived from their type, so if the two ever disagree this is
+            // the check that notices -- and the control is a wooden DOORWAY, which a campfire takes and a grill
+            // must not, because without it "IsGrillWood" passing for everything wooden would look correct.
+            foreach (var (id, what) in new[] { (BirchLog, "a log"), ((ushort)38, "a stick"), ((ushort)62, "a plank"),
+                                               (Cooking.FirewoodId, "firewood"), (Cooking.CharcoalId, "charcoal") })
+            {
+                var a = Assets.find(id);
+                T.Check($"a barbecue burns {what} (#{id} {a?.itemName})",
+                        a != null && Cooking.IsFuelFor(ECookerKind.Barbecue, a));
+            }
+            var doorway = Assets.find(32);   // Maple Doorway -- wooden, but a STRUCTURE
+            T.Check($"control: a barbecue will NOT burn {doorway?.itemName} ({doorway?.type})",
+                    doorway != null && Cooking.IsWood(doorway) && !Cooking.IsFuelFor(ECookerKind.Barbecue, doorway));
+            T.Check("...though a campfire still will", doorway != null && Cooking.IsFuelFor(ECookerKind.Campfire, doorway));
+
+            // ---- IT IS A ONE-WAY CHOICE ----------------------------------------------------------------------
+            // Master 2026-10-07: "firewood cant be used to craft anything else, its a one way 'i WILL burn this'
+            // choice" -- that is what pays for the doubled burn time, so it is an invariant, not an accident of
+            // nobody having written a recipe yet.
+            var usesFirewood = new List<string>();
+            foreach (var bp in BlueprintRegistry.All)
+                foreach (var i in bp.Inputs)
+                    if (Assets.findByGuid(i.Guid)?.id == Cooking.FirewoodId) usesFirewood.Add(bp.Name ?? "(unnamed)");
+            T.Check($"nothing crafts WITH firewood -- burning it is the only use ({usesFirewood.Count}: {string.Join(", ", usesFirewood)})",
+                    usesFirewood.Count == 0);
+
             yield break;
         }
     }

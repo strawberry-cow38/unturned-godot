@@ -114,7 +114,14 @@ namespace SDG.Unturned
 
         /// <summary>What a species-less wood burns at: the MIDDLE species (birch, 1.0). "The same rate as logs" has
         /// to mean one of the three, and the one that is neither the dense nor the resinous end is the honest answer
-        /// for a pile with no species on it -- so one firewood burns exactly as long as one birch log.</summary>
+        /// for a pile with no species on it -- so one firewood burns exactly as long as one birch log.
+        ///
+        /// ⭐ AND THE ARITHMETIC THAT FALLS OUT IS DELIBERATE, so do not "fix" it: 1 log gives 2 firewood that each
+        /// burn a whole log's worth, and 12 fit the 2x1 a log stacks 4 into. Master 2026-10-07, asked directly:
+        /// "say our character somehow magically dried out the wood too when splitting it: burns better than a wet
+        /// log. chunks of firewood easier to carry than a full heavy log". What pays for it is that firewood is a
+        /// DEAD END -- "it cant be used to craft anything else, its a one way 'i WILL burn this' choice" -- which
+        /// craft.firewood asserts, so it stays a choice rather than quietly becoming a free upgrade.</summary>
         public const float SpeciesReference = 1.0f;
 
         /// <summary>The three wood species, and how long each burns relative to the others. Hardwood outlasts
@@ -198,14 +205,29 @@ namespace SDG.Unturned
         /// (see PowerWatts) and are not modelled as needing anything to put in them.</summary>
         public static bool NeedsFuel(ECookerKind k) => k == ECookerKind.Barbecue || k == ECookerKind.Campfire;
 
-        /// <summary>Will this appliance burn this item? A barbecue takes charcoal and nothing else (strawberry:
-        /// "bbqs can only take charcoal as a fuel"); a campfire takes anything wooden.</summary>
+        /// <summary>Will this appliance burn this item? A barbecue takes charcoal plus the small wooden fuels
+        /// (master 2026-10-07: "bbq should burn logs, sticks, planks, firewood" -- it was charcoal-only before,
+        /// strawberry 2026-09-06: "bbqs can only take charcoal as a fuel"); a campfire takes anything wooden,
+        /// doors and barricades included.</summary>
         public static bool IsFuelFor(ECookerKind k, ItemAsset a) => k switch
         {
-            ECookerKind.Barbecue => a != null && a.id == CharcoalId,
+            ECookerKind.Barbecue => a != null && (a.id == CharcoalId || IsGrillWood(a)),
             ECookerKind.Campfire => IsWood(a),
             _ => false,
         };
+
+        /// <summary>Wood a BARBECUE will take, as opposed to wood a bonfire will take.
+        ///
+        /// Master 2026-10-07: "bbq should burn logs, sticks, planks, firewood" -- which replaces the older
+        /// charcoal-only rule. ⭐ DERIVED, NOT A LIST OF THE FOUR. Those four are exactly the wooden items whose
+        /// type is SUPPLY. MEASURED, and the measurement is the whole argument: the 9 wooden-named SUPPLY items are
+        /// precisely the three logs, three sticks and three planks, plus firewood -- master's list, with nothing
+        /// else in it. Everything else wooden (Maple Doorway, Pine Fortification, Birch Wall) loads as GENERIC,
+        /// ⚠ NOT as Structure/Barricade: the TSV says "Structure" but the runtime enum does not keep it, which is
+        /// why the filter has to be "is SUPPLY" rather than "is not a structure". So the type does the work, a
+        /// fifth kind of log is included the day it exists, and you still cannot feed a doorway into a kettle
+        /// grill -- the difference between a barbecue and a bonfire, and the reason this is not just IsWood.</summary>
+        public static bool IsGrillWood(ItemAsset a) => IsWood(a) && a.type == EItemType.SUPPLY;
 
         public static bool IsBread(ushort id) => Breads.Contains(id);
         public static bool IsMetal(ushort id) => Metals.Contains(id);
