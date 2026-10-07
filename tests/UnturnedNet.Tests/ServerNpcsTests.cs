@@ -51,6 +51,9 @@ namespace UnturnedNet.Tests
             if (Assets.find(Tomato) == null) Assets.add(new ItemAsset { id = Tomato, itemName = "Tomato", size_x = 1, size_y = 1 });
             if (Assets.find(Steak) == null)  Assets.add(new ItemAsset { id = Steak,  itemName = "Steak",  size_x = 1, size_y = 1 });
             if (Assets.find(Syrup) == null)  Assets.add(new ItemAsset { id = Syrup,  itemName = "Syrup",  size_x = 1, size_y = 1 });
+            // the wallet: one stack that merges to $500, which is what makes "amount == dollars" true
+            if (Assets.find(Currency.StackId) == null)
+                Assets.add(new ItemAsset { id = Currency.StackId, itemName = Currency.DisplayName, size_x = 1, size_y = 1, stackSize = Currency.MaxPerStack });
         }
 
         static (ServerNpcs npcs, InventoryReplication inv, PlayerInventory bag) Rig(int tomatoes = 0)
@@ -125,8 +128,9 @@ namespace UnturnedNet.Tests
                 var bare = new ServerNpcs();
                 Assert.That(bare.IsConfigured, Is.False);
                 Assert.That(bare.Open(1, 59), Is.False);
-                Assert.That(bare.Trade(1, "abc", 0, new[] { ((ushort)70, 2) }), Is.False);
-                Assert.That(bare.UnconfiguredRefusals, Is.EqualTo(2), "counted, not silent");
+                Assert.That(bare.Buy(1, "abc", 0, 1), Is.EqualTo(0));
+                Assert.That(bare.Sell(1, "abc", 0, 1), Is.EqualTo(0));
+                Assert.That(bare.UnconfiguredRefusals, Is.EqualTo(3), "counted, not silent");
 
                 // Only the STATIC registered -- no per-instance assignment at all, which is what a server built
                 // by a call site that knows nothing about NPCs looks like. It must work anyway.
@@ -216,64 +220,103 @@ namespace UnturnedNet.Tests
             Assert.That(npcs.Open(1, 4242), Is.False, "a dialogue that does not exist");
         }
 
-        // ⭐ PAYING WITH ITEMS YOU DO NOT HAVE. The affordability maths says 2x30 covers 60 and it is right --
-        // about a pile that does not exist. Without the holdings check the first ones are removed, the rest are
-        // silently ignored, and you are paid anyway.
-        [Test]
-        public void ATradeYouCannotStockIsRefusedAndTakesNothing()
-        {
-            var (npcs, _, bag) = Rig(tomatoes: 1);
-            var offer = new[] { (Tomato, 2) };
-            Assert.That(npcs.Trade(1, "abc", 0, offer), Is.False, "claims two, holds one");
-            Assert.That(bag.getItemCount(Tomato), Is.EqualTo(1), "and the one it DOES hold is untouched");
-            Assert.That(bag.getItemCount(Syrup), Is.EqualTo(0), "and nothing was paid out");
-        }
+        // ---- DOLLARS (strawberry 2026-10-07: "make npc vendors trade in $") ----------------------------------
+        static void Wallet(PlayerInventory bag, int dollars) => Assert.That(Currency.Pay(bag, dollars), Is.True, $"fixture: ${dollars} into the bag");
 
         [Test]
-        public void ATradeThatIsShortIsRefused()
-        {
-            var (npcs, _, bag) = Rig(tomatoes: 1);
-            Assert.That(npcs.Trade(1, "abc", 0, new[] { (Tomato, 1) }), Is.False, "30 of 60");
-            Assert.That(bag.getItemCount(Tomato), Is.EqualTo(1));
-            Assert.That(bag.getItemCount(Syrup), Is.EqualTo(0));
-        }
-
-        [Test]
-        public void AGoodTradeMovesTheGoodsOnce()
-        {
-            var (npcs, _, bag) = Rig(tomatoes: 3);
-            Assert.That(npcs.Trade(1, "abc", 0, new[] { (Tomato, 2) }), Is.True);
-            Assert.That(bag.getItemCount(Tomato), Is.EqualTo(1), "two handed over, one kept");
-            Assert.That(bag.getItemCount(Syrup), Is.EqualTo(1));
-        }
-
-        // An "offer" of a negative or zero count is an attempt to be PAID for handing over nothing.
-        [Test]
-        public void ANonPositiveOfferIsRefused()
-        {
-            var (npcs, _, bag) = Rig(tomatoes: 3);
-            Assert.That(npcs.Trade(1, "abc", 0, new[] { (Tomato, 0) }), Is.False);
-            Assert.That(npcs.Trade(1, "abc", 0, new[] { (Tomato, -5) }), Is.False);
-            Assert.That(bag.getItemCount(Syrup), Is.EqualTo(0));
-        }
-
-        // An item the vendor does not buy is worth nothing, and offering a pile of them must not coincidentally
-        // pass by arriving with enough entries.
-        [Test]
-        public void OfferingSomethingTheyDoNotBuyIsRefused()
+        public void BuyingSpendsTheWalletAndDeliversTheGoods()
         {
             var (npcs, _, bag) = Rig();
-            npcs.For(1).GiveItem(Steak, 10);
-            Assert.That(npcs.Trade(1, "abc", 0, new[] { (Steak, 10) }), Is.False);
-            Assert.That(bag.getItemCount(Steak), Is.EqualTo(10), "untouched");
+            Wallet(bag, 150);
+            Assert.That(npcs.Buy(1, "abc", 0, 2), Is.EqualTo(2), "two syrups at $60");
+            Assert.That(bag.getItemCount(Syrup), Is.EqualTo(2));
+            Assert.That(bag.getItemCount(Currency.StackId), Is.EqualTo(30), "$150 - $120");
         }
 
+        // Asking for more than you can pay for buys what you CAN pay for and stops -- never a debt.
+        [Test]
+        public void BuyingStopsWhenTheMoneyRunsOut()
+        {
+            var (npcs, _, bag) = Rig();
+            Wallet(bag, 130);
+            Assert.That(npcs.Buy(1, "abc", 0, 5), Is.EqualTo(2), "$130 covers two at $60");
+            Assert.That(bag.getItemCount(Currency.StackId), Is.EqualTo(10));
+            Assert.That(npcs.Buy(1, "abc", 0, 1), Is.EqualTo(0), "$10 of $60");
+            Assert.That(bag.getItemCount(Syrup), Is.EqualTo(2), "and the refused one delivered nothing");
+            Assert.That(bag.getItemCount(Currency.StackId), Is.EqualTo(10), "...and charged nothing");
+        }
+
+        // ⭐ A FULL BAG MUST NOT EAT THE MONEY. The item is placed first and paid for second, so "no room" stops
+        // the purchase with the dollars still in your pocket.
+        [Test]
+        public void AFullBagIsNotCharged()
+        {
+            var (npcs, _, bag) = Rig();
+            Wallet(bag, 500);
+            for (int i = 0; i < 2000 && bag.tryAddItem(new Item(Steak)); i++) { }   // fill every free cell
+            Assert.That(bag.tryAddItem(new Item(Syrup)), Is.False, "fixture: the bag really is full");
+            Assert.That(npcs.Buy(1, "abc", 0, 1), Is.EqualTo(0));
+            Assert.That(bag.getItemCount(Currency.StackId), Is.EqualTo(500), "not a cent taken for goods that could not be handed over");
+        }
+
+        [Test]
+        public void SellingPaysPerItemAndTakesOnlyWhatWasSold()
+        {
+            var (npcs, _, bag) = Rig(tomatoes: 3);
+            Assert.That(npcs.Sell(1, "abc", 0, 2), Is.EqualTo(2));
+            Assert.That(bag.getItemCount(Tomato), Is.EqualTo(1), "two sold, one kept");
+            Assert.That(bag.getItemCount(Currency.StackId), Is.EqualTo(60), "2 x $30");
+        }
+
+        // SELLING WHAT YOU DO NOT HAVE. Without the holdings check the three you hold are taken and eleven are paid for.
+        [Test]
+        public void SellingMoreThanYouHoldIsRefusedAndTakesNothing()
+        {
+            var (npcs, _, bag) = Rig(tomatoes: 3);
+            Assert.That(npcs.Sell(1, "abc", 0, 11), Is.EqualTo(0));
+            Assert.That(bag.getItemCount(Tomato), Is.EqualTo(3), "untouched");
+            Assert.That(bag.getItemCount(Currency.StackId), Is.EqualTo(0), "and nothing paid");
+        }
+
+        // A zero or negative count is an attempt to be paid for nothing; a huge one is a probe.
+        [Test]
+        public void ANonsenseCountIsRefused()
+        {
+            var (npcs, _, bag) = Rig(tomatoes: 3);
+            Assert.That(npcs.Sell(1, "abc", 0, 0), Is.EqualTo(0));
+            Assert.That(npcs.Sell(1, "abc", 0, -5), Is.EqualTo(0));
+            Assert.That(npcs.Buy(1, "abc", 0, -1), Is.EqualTo(0));
+            Assert.That(npcs.Sell(1, "abc", 0, ServerNpcs.MaxTradeCount + 1), Is.EqualTo(0));
+            Assert.That(bag.getItemCount(Currency.StackId), Is.EqualTo(0));
+            Assert.That(bag.getItemCount(Tomato), Is.EqualTo(3));
+        }
+
+        // Only what they BUY sells. The steak is not on their buying list, and the buying-line index is the only
+        // thing a client can name -- so a line they do not have is refused, not mapped onto some other item.
         [Test]
         public void AnUnknownVendorOrLineIsRefused()
         {
-            var (npcs, _, _) = Rig(tomatoes: 4);
-            Assert.That(npcs.Trade(1, "nope", 0, new[] { (Tomato, 2) }), Is.False);
-            Assert.That(npcs.Trade(1, "abc", 7, new[] { (Tomato, 2) }), Is.False);
+            var (npcs, _, bag) = Rig(tomatoes: 4);
+            Wallet(bag, 500);
+            Assert.That(npcs.Buy(1, "nope", 0, 1), Is.EqualTo(0));
+            Assert.That(npcs.Buy(1, "abc", 7, 1), Is.EqualTo(0));
+            Assert.That(npcs.Sell(1, "abc", 7, 1), Is.EqualTo(0));
+            Assert.That(bag.getItemCount(Currency.StackId), Is.EqualTo(500));
+            Assert.That(bag.getItemCount(Tomato), Is.EqualTo(4));
+        }
+
+        // The wire: one shape both ways, so the count and the side survive the trip.
+        [Test]
+        public void TheTradeCommandRoundTrips()
+        {
+            var w = new SDG.NetPak.NetPakWriter { buffer = new byte[64] };
+            w.Reset();
+            new NpcTradeCommand { Vendor = "abc", Sell = true, Index = 3, Count = 42 }.Write(w);
+            w.Flush();
+            var r = new SDG.NetPak.NetPakReader();
+            r.SetBufferSegment(w.buffer, w.writeByteIndex);
+            Assert.That(NpcTradeCommand.TryRead(r, out var c), Is.True);
+            Assert.That((c.Vendor, c.Sell, c.Index, c.Count), Is.EqualTo(("abc", true, (byte)3, (ushort)42)));
         }
 
         // Opening a shop is a one-shot: parked for the next state push and cleared by it. Left on the player it

@@ -185,76 +185,6 @@ namespace UnturnedSim.Tests
             },
         };
 
-        static System.Func<ushort, int> Bag(params (ushort id, int n)[] held)
-            => id => { foreach (var h in held) if (h.id == id) return h.n; return 0; };
-
-        // ⭐ THE PILE IS JUDGED BY WHAT IT COST YOU, NOT BY WHAT EACH PIECE OF IT COST.
-        //
-        // Cheapest-unit-first fills correctly and then overshoots on the LAST unit, because the last unit is
-        // indivisible: 85 covered as 2x10 + 2x30 + 1x30 = 110 when 3x30 = 90 was sitting in the same bag. Both
-        // piles "can afford" it, so every affordability assertion passes on the wasteful one -- which is why
-        // this asserts the TOTAL and not just that a trade was possible.
-        [Test]
-        public void AutoOffer_DoesNotOverpayWhenASmallerPileWouldDo()
-        {
-            var v = Chef();
-            var bag = Bag((1952, 2), (1954, 2), (1956, 2), (1959, 2));
-            var pile = TradeRules.AutoOffer(v, v.Selling[0], bag);
-            Assert.That(pile, Is.Not.Null);
-            int paid = TradeRules.OfferValue(v, pile);
-            Assert.That(paid, Is.GreaterThanOrEqualTo(85), "it still has to cover the asking price");
-            Assert.That(paid, Is.EqualTo(90), "3x30. The untrimmed cheapest-first pile is 110 and also 'affords' it");
-            Assert.That(pile.ContainsKey(1959), Is.False, "the 50-value MRE stays in your bag; cheap tins cover this");
-            foreach (var kv in pile) Assert.That(kv.Value, Is.LessThanOrEqualTo(bag(kv.Key)), "never offers more than you hold");
-        }
-
-        // A pile that is SHORT is not a smaller success. Returning one would make the caller discover the
-        // failure by re-totalling it, and a UI that skips that check offers a trade that cannot be made.
-        [Test]
-        public void AutoOffer_IsNullWhenTheBagCannotCoverIt()
-        {
-            var v = Chef();
-            Assert.That(TradeRules.AutoOffer(v, v.Selling[0], Bag((1952, 3))), Is.Null, "30 of 85");
-            Assert.That(TradeRules.AutoOffer(v, v.Selling[0], Bag((4, 99))), Is.Null, "they do not buy it at any quantity");
-            Assert.That(TradeRules.AutoOffer(v, v.Selling[0], Bag()), Is.Null, "an empty bag");
-        }
-
-        // The same bag must produce the same pile every time. An auto-fill that reshuffles between presses
-        // reads as broken even when every pile it lands on is valid.
-        [Test]
-        public void AutoOffer_IsDeterministic()
-        {
-            var v = Chef();
-            var bag = Bag((1952, 5), (1954, 5), (1956, 5), (1959, 5));
-            var first = TradeRules.AutoOffer(v, v.Selling[0], bag);
-            for (int i = 0; i < 5; i++)
-                Assert.That(TradeRules.AutoOffer(v, v.Selling[0], bag), Is.EquivalentTo(first), "run " + i);
-        }
-
-        // Exactly-coverable bags must come out EXACT, not over. This is the case the trim is most likely to
-        // get wrong by one unit in either direction.
-        [Test]
-        public void AutoOffer_LandsExactlyWhenItCan()
-        {
-            var v = Chef();
-            var pile = TradeRules.AutoOffer(v, new NpcTradeLine { Item = 1159, Cost = 60 }, Bag((1954, 2), (1959, 2)));
-            Assert.That(TradeRules.OfferValue(v, pile), Is.EqualTo(60), "2x30 exactly -- not 30+50");
-            var free = TradeRules.AutoOffer(v, new NpcTradeLine { Item = 1159, Cost = 0 }, Bag((1954, 2)));
-            Assert.That(free, Is.Not.Null.And.Empty, "a free line is covered by the empty pile, not by a null");
-        }
-
-        // The counts overload and the flat-list overload are two ways of saying the same sum. If they ever
-        // disagree the UI and the tests are measuring different trades.
-        [Test]
-        public void OfferValue_CountsAndListAgree()
-        {
-            var v = Chef();
-            var counts = new Dictionary<ushort, int> { [1954] = 2, [1952] = 3 };
-            Assert.That(TradeRules.OfferValue(v, counts), Is.EqualTo(90));
-            Assert.That(TradeRules.OfferValue(v, new ushort[] { 1954, 1954, 1952, 1952, 1952 }), Is.EqualTo(90));
-            Assert.That(TradeRules.OfferValue(v, (IReadOnlyDictionary<ushort, int>)null), Is.EqualTo(0));
-        }
-
         // Retail writes rarity into the name as markup. Anything that shows one raw puts <color=legendary> on
         // screen, and the vendor window is the one place a vendor's name is displayed.
         [Test]
@@ -266,46 +196,34 @@ namespace UnturnedSim.Tests
             Assert.That(TradeRules.PlainText(null), Is.EqualTo(""));
         }
 
+        // ---- DOLLARS: a line's Cost is its price; their buying list is what they pay you ---------------------
         [Test]
-        public void APriceListIsAnExchangeRate()
+        public void CanBuyIsAWalletAgainstTheAskingPrice()
         {
-            var v = Shop();
-            Assert.That(TradeRules.PriceIn(v, v.Selling[0], 70), Is.EqualTo(4), "1000 / 250");
-            Assert.That(TradeRules.PriceIn(v, v.Selling[0], 71), Is.EqualTo(10), "1000 / 100");
+            var line = new NpcTradeLine { Item = 4, Cost = 1000 };
+            Assert.That(TradeRules.CanBuy(line, 999), Is.False);
+            Assert.That(TradeRules.CanBuy(line, 1000), Is.True, "exactly enough is enough");
+            Assert.That(TradeRules.CanBuy(new NpcTradeLine { Item = 0, Cost = 10 }, 500), Is.False, "a vehicle line is not deliverable here");
+            Assert.That(TradeRules.CanBuy(null, 500), Is.False);
         }
 
-        // ⭐ AN ITEM THE VENDOR DOES NOT BUY IS WORTH NOTHING TO THEM. Not "worth its sell price" -- a vendor
-        // who takes anything at its own asking price is an infinite-item machine the moment two vendors
-        // disagree on what something is worth.
+        [Test]
+        public void AffordableIsWholeItemsOnly()
+        {
+            var line = new NpcTradeLine { Item = 4, Cost = 60 };
+            Assert.That(TradeRules.Affordable(line, 179, 100), Is.EqualTo(2), "$179 is two, not two-and-change");
+            Assert.That(TradeRules.Affordable(line, 59, 100), Is.EqualTo(0));
+            Assert.That(TradeRules.Affordable(new NpcTradeLine { Item = 4, Cost = 0 }, 0, 7), Is.EqualTo(7), "free is capped, not infinite");
+        }
+
+        // ⭐ AN ITEM THE VENDOR DOES NOT BUY IS WORTH NOTHING TO THEM. Not "worth its sell price" -- a vendor who
+        // takes anything at its own asking price is an infinite-money machine the moment two vendors disagree.
         [Test]
         public void AnItemTheyDoNotBuyIsWorthNothing()
         {
             var v = Shop();
             Assert.That(TradeRules.ValueOf(v, 4), Is.EqualTo(0), "they SELL the rifle; that does not mean they buy it");
-            Assert.That(TradeRules.PriceIn(v, v.Selling[0], 4), Is.EqualTo(0));
-            Assert.That(TradeRules.CanAfford(v, v.Selling[0], new ushort[] { 4, 4, 4, 4, 4 }), Is.False);
-        }
-
-        [Test]
-        public void OverpayingIsAllowedAndUnderpayingIsNot()
-        {
-            var v = Shop();
-            Assert.That(TradeRules.CanAfford(v, v.Selling[0], new ushort[] { 70, 70, 70 }), Is.False, "750 of 1000");
-            Assert.That(TradeRules.CanAfford(v, v.Selling[0], new ushort[] { 70, 70, 70, 70 }), Is.True, "exactly 1000");
-            // ...and over is fine: refusing it would make a trade impossible whenever nothing adds up exactly.
-            Assert.That(TradeRules.CanAfford(v, v.Selling[0], new ushort[] { 70, 70, 70, 70, 71 }), Is.True);
-        }
-
-        [Test]
-        public void RoundingIsUp_BecauseYouCannotHandOverAFractionOfAnItem()
-        {
-            var v = new NpcVendorDef
-            {
-                Selling = new[] { new NpcTradeLine { Item = 4, Cost = 1000 } },
-                Buying = new[] { new NpcTradeLine { Item = 70, Cost = 300 } },
-            };
-            Assert.That(TradeRules.PriceIn(v, v.Selling[0], 70), Is.EqualTo(4), "3.33 -> 4, and 4 of them is an overpay");
-            Assert.That(TradeRules.CanAfford(v, v.Selling[0], new ushort[] { 70, 70, 70 }), Is.False, "900 is not 1000");
+            Assert.That(TradeRules.ValueOf(v, 70), Is.EqualTo(250), "and what they DO buy pays its line's price");
         }
     }
 }

@@ -84,5 +84,23 @@ namespace SDG.Unturned
         /// because a narrow mix makes 44 and 300 the same byte and therefore the same hash, which is a desync
         /// that no test failure would ever point at.</summary>
         public const int MaxPerStack = 500;
+
+        /// <summary>Put this many dollars into a bag. tryAddItem already collapses money into the wallet stack and
+        /// spills past MaxPerStack, so this only feeds it stacks it can take; false = not all of it fitted (what
+        /// did fit stays -- money is never destroyed to make the books balance).</summary>
+        public static bool Pay(PlayerInventory inv, int dollars)
+        {
+            if (inv == null || dollars < 0) return false;
+            while (dollars > 0)
+            {
+                int chunk = System.Math.Min(dollars, MaxPerStack);
+                int before = inv.getItemCount(StackId);
+                inv.tryAddItem(new Item(StackId) { amount = (ushort)chunk });
+                int landed = inv.getItemCount(StackId) - before;   // MEASURED: tryAddItem says true when part of a stack fitted
+                dollars -= landed;
+                if (landed < chunk) return false;
+            }
+            return true;
+        }
     }
 }

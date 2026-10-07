@@ -125,9 +125,8 @@ namespace SDG.Unturned
         public string Shop = "";
     }
 
-    /// <summary>One line of a vendor's list. Retail prices everything in a single currency (experience), which
-    /// is exactly what makes master's "items for items" workable without authoring anything: one price list
-    /// gives every PAIR an exchange rate. See TradeRules.</summary>
+    /// <summary>One line of a vendor's list. Retail prices everything in a single currency (experience); the port
+    /// reads that same number as DOLLARS. See TradeRules.</summary>
     public sealed class NpcTradeLine
     {
         public string Type = "Item";   // Item | Vehicle
@@ -291,16 +290,19 @@ namespace SDG.Unturned
         }
     }
 
-    /// <summary>ITEMS FOR ITEMS (master 2026-09-11: "the shop ui should be more of a trade ui. items for
-    /// items"), built out of retail's own numbers rather than an authored barter table.
+    /// <summary>VENDORS TRADE IN DOLLARS (strawberry 2026-10-07: "make npc vendors trade in $").
     ///
-    /// Every vendor line already carries a Cost in a single currency, so one price list gives EVERY pair an
-    /// exchange rate: if they sell a rifle for 1000 and buy scrap at 250, the rifle costs four scrap. That is
-    /// a trade in items with no new content invented and no rate I chose -- which matters, because a barter
-    /// rate I made up is a balance decision wearing a mechanic's clothes.
+    /// Every vendor line already carries a retail Cost (retail charged it in experience). Those numbers are now the
+    /// prices in Canadian dollars, 1:1 --
+    /// a line selling at 85 costs $85, and a line buying at 30 pays you $30 for each one. No rate is invented
+    /// here; a multiplier, if the economy wants one, is a balance call made in one place.
     ///
-    /// ⚠ An item the vendor does NOT buy is worth nothing to them. Not "worth its sell price" -- a vendor who
-    /// accepts anything at its own asking price is an infinite-money machine the moment two vendors disagree.</summary>
+    /// This replaces the items-for-items barter (master 2026-09-11), where the Buying list doubled as an exchange
+    /// rate and you piled up goods to cover a price. With money, Buying goes back to meaning what it says: the
+    /// things this vendor will pay you for.
+    ///
+    /// ⚠ An item the vendor does NOT buy is still worth nothing to them -- not "its sell price". A vendor who
+    /// buys anything at its own asking price is an infinite-money machine the moment two vendors disagree.</summary>
     public static class TradeRules
     {
         /// <summary>Retail writes rarity into the NAME -- "&lt;color=legendary&gt;Coalition&lt;/color&gt; Aircraft Hangar" --
@@ -323,6 +325,7 @@ namespace SDG.Unturned
             return sb.ToString().Trim();
         }
 
+        /// <summary>What this vendor pays for ONE of this item, in dollars, or 0 if they do not buy it.</summary>
         public static int ValueOf(NpcVendorDef v, ushort itemId)
         {
             if (v == null) return 0;
@@ -330,94 +333,18 @@ namespace SDG.Unturned
             return 0;
         }
 
-        /// <summary>What a pile of offered items is worth to this vendor.</summary>
-        public static int OfferValue(NpcVendorDef v, IEnumerable<ushort> offered)
+        /// <summary>Can a wallet holding this many dollars buy one of this line? A vehicle line (no item) is never
+        /// buyable here -- it needs a spawn and a delivery point this does not do yet.</summary>
+        public static bool CanBuy(NpcTradeLine want, int dollars)
+            => want != null && want.Item != 0 && want.Cost >= 0 && dollars >= want.Cost;
+
+        /// <summary>The most of this line a wallet can buy, capped at <paramref name="cap"/>. A free line is capped
+        /// rather than infinite.</summary>
+        public static int Affordable(NpcTradeLine want, int dollars, int cap)
         {
-            int t = 0;
-            if (offered != null) foreach (var id in offered) t += ValueOf(v, id);
-            return t;
-        }
-
-        /// <summary>Is this pile enough for that line? Deliberately NOT "exactly enough": you may overpay, the
-        /// same way you can hand over a note and not get change, and refusing an overpay would make a trade
-        /// impossible whenever no combination adds up exactly.</summary>
-        public static bool CanAfford(NpcVendorDef v, NpcTradeLine want, IEnumerable<ushort> offered)
-            => want != null && OfferValue(v, offered) >= want.Cost;
-
-        /// <summary>How many of `pay` it takes to cover `want`, or 0 if the vendor will not take that item at
-        /// all. Rounds UP -- four-and-a-bit scrap means five.</summary>
-        public static int PriceIn(NpcVendorDef v, NpcTradeLine want, ushort pay)
-        {
-            int unit = ValueOf(v, pay);
-            if (unit <= 0 || want == null || want.Cost <= 0) return 0;
-            return (want.Cost + unit - 1) / unit;
-        }
-
-        /// <summary>What a pile is worth when the pile is COUNTS -- three tomatoes rather than three entries.
-        /// The IEnumerable overload above computes the same sum for a flat list; both exist because a bag holds
-        /// stacks and a test holds a list, and making either side convert is how the two drift apart.</summary>
-        public static int OfferValue(NpcVendorDef v, IReadOnlyDictionary<ushort, int> offered)
-        {
-            int t = 0;
-            if (offered != null) foreach (var kv in offered) t += ValueOf(v, kv.Key) * kv.Value;
-            return t;
-        }
-
-        public static bool CanAfford(NpcVendorDef v, NpcTradeLine want, IReadOnlyDictionary<ushort, int> offered)
-            => want != null && OfferValue(v, offered) >= want.Cost;
-
-        /// <summary>Build a pile out of what the player HAS that covers `want`, or null if their bag cannot cover
-        /// it at all. <paramref name="have"/> answers "how many of this id do I hold".
-        ///
-        /// CHEAPEST UNIT FIRST, deliberately -- not fewest items. Handing over your one valuable thing to buy a
-        /// tomato is the trade nobody makes on purpose, and an "offer for me" button that makes it is a trap
-        /// dressed as a convenience. Ties break on the lower id so the same bag always produces the same pile:
-        /// an auto-fill that shuffles between presses looks broken even when every pile it picks is valid.
-        ///
-        /// Returns null rather than a partial pile. A short pile that cannot buy anything is not a smaller
-        /// success, and handing one back leaves the caller to discover the failure by checking the total.</summary>
-        public static Dictionary<ushort, int> AutoOffer(NpcVendorDef v, NpcTradeLine want, System.Func<ushort, int> have)
-        {
-            var pile = new Dictionary<ushort, int>();
-            if (v == null || want == null || have == null) return null;
-            if (want.Cost <= 0) return pile;   // free: the empty pile already covers it
-
-            var rate = new List<NpcTradeLine>(v.Buying);
-            rate.Sort((a, b) => a.Cost != b.Cost ? a.Cost.CompareTo(b.Cost) : a.Item.CompareTo(b.Item));
-
-            int paid = 0;
-            foreach (var line in rate)
-            {
-                if (paid >= want.Cost) break;
-                if (line.Cost <= 0) continue;              // a thing they will take but pay nothing for buys nothing
-                int held = have(line.Item);
-                if (held <= 0) continue;
-                int need = (want.Cost - paid + line.Cost - 1) / line.Cost;   // round UP: part of an item is an item
-                int take = System.Math.Min(held, need);
-                pile[line.Item] = take;
-                paid += take * line.Cost;
-            }
-            if (paid < want.Cost) return null;
-
-            // ---- TRIM ------------------------------------------------------------------------------------
-            // Cheapest-first fills the pile but OVERSHOOTS on the last unit, and the overshoot can be large:
-            // 85 covered by 2x10 + 2x30 + 1x30 = 110, when 3x30 = 90 was available out of the same bag. The
-            // player does not care that each individual item was cheap; they care what the pile cost them.
-            //
-            // So walk back over it and drop any unit the pile can spare. MOST VALUABLE FIRST, so the expensive
-            // things get the first chance to go back in your bag; when the pile cannot spare them it is the small
-            // change that comes out instead, which is the 110 -> 90 case above. One pass is enough in this order:
-            // every removal only LOWERS the total, so a unit that could not be spared when it was offered up
-            // cannot become sparable later.
-            var byValue = new List<NpcTradeLine>(rate);
-            byValue.Reverse();   // `rate` is ascending; this is the same order read backwards
-            foreach (var line in byValue)
-            {
-                if (!pile.TryGetValue(line.Item, out int n) || line.Cost <= 0) continue;
-                while (n > 0 && paid - line.Cost >= want.Cost) { n--; paid -= line.Cost; }
-                if (n > 0) pile[line.Item] = n; else pile.Remove(line.Item);
-            }
-            return pile;
+            if (want == null || want.Item == 0 || want.Cost < 0 || cap <= 0) return 0;
+            if (want.Cost == 0) return cap;
+            return System.Math.Min(cap, dollars / want.Cost);
         }
     }
 }

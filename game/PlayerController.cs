@@ -2972,7 +2972,7 @@ namespace UnturnedGodot
         public System.Action<int> NetNpcTalk;
         public System.Action<int, byte> NetNpcChoose;
         public System.Action NetNpcClose;
-        public System.Action<string, byte, (ushort Id, byte N)[]> NetNpcTrade;
+        public System.Func<string, bool, byte, ushort, bool> NetNpcTrade;   // (vendor, sell?, line, count) -- v59: in dollars
         public bool NpcServerAuthoritative => NetNpcChoose != null;
 
         /// <summary>Replace the local copy with the server's. WHOLESALE, not merged: the server's state is the

@@ -664,7 +664,7 @@ shell.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, ri
             shell.NetNpcTalk = d => Client.SendNpcTalk(d);
             shell.NetNpcChoose = (d, i) => Client.SendNpcChoose(d, i);
             shell.NetNpcClose = () => Client.SendNpcClose();
-            shell.NetNpcTrade = (v, i, offer) => Client.SendNpcTrade(v, i, offer);
+            shell.NetNpcTrade = (v, sell, i, n) => Client.SendNpcTrade(v, sell, i, n);
             shell.NetCraft = index => Client.SendCraft(index);
             if (Client.KnownBlueprints != null) shell.AdoptKnownBlueprints(Client.KnownBlueprints);   // v55: the set routinely arrives before the shell does
             shell.NetCraftCancel = slot => Client.SendCraftCancel(slot);

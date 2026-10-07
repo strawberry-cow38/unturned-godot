@@ -98,6 +98,25 @@ namespace UnturnedGodot.Net
                 _s.Inventories.ServerMarkDirty(_owner);
             }
 
+            /// <summary>ONE item into the bag, or false with nothing changed. A purchase's delivery: unlike GiveItem it
+            /// reports a full bag, because a purchase that cannot be delivered must not be charged.</summary>
+            public bool TryGiveOne(ushort itemId)
+            {
+                if (_s.Inventories == null || !_s.Inventories.TryGet(_owner, out var e)) return false;
+                if (!e.Inventory.tryAddItem(new Item(itemId))) return false;
+                _s.Inventories.ServerMarkDirty(_owner);
+                return true;
+            }
+
+            /// <summary>Dollars into the wallet. False = not all of it fitted.</summary>
+            public bool PayDollars(int dollars)
+            {
+                if (_s.Inventories == null || !_s.Inventories.TryGet(_owner, out var e)) return false;
+                bool ok = Currency.Pay(e.Inventory, dollars);
+                _s.Inventories.ServerMarkDirty(_owner);
+                return ok;
+            }
+
             /// <summary>Reward items that would not fit. Counted rather than ignored, so "the quest paid me
             /// nothing" has an answer other than a shrug.</summary>
             public int Undelivered;
@@ -261,43 +280,59 @@ namespace UnturnedGodot.Net
             return true;
         }
 
-        // ---- trade -------------------------------------------------------------------------------------------
-        /// <summary>Settle a trade. The client says WHAT it wants and WHAT it is putting up; the server checks
-        /// the player actually holds every one of those items, that the vendor takes them, and that they cover
-        /// the price -- then moves the goods itself.
-        ///
-        /// ⚠ THE OFFER IS COUNTED AGAINST THE REAL BAG BEFORE ANYTHING MOVES. A client that offers eleven of an
-        /// item it holds three of would otherwise have the first three removed and the rest silently ignored,
-        /// and still be paid -- the same "paid out of nothing" hole the affordability check is there to close.</summary>
-        public bool Trade(ushort owner, string vendorGuid, int sellIndex, IReadOnlyList<(ushort id, int n)> offer)
+        // ---- trade: in DOLLARS (strawberry 2026-10-07: "make npc vendors trade in $") --------------------------
+        /// <summary>Most of one line moved in one message. A bigger count is not a purchase, it is a probe.</summary>
+        public const int MaxTradeCount = 100;
+
+        /// <summary>Buy <paramref name="count"/> of the vendor's selling line, each for its Cost in dollars out of the
+        /// wallet. Each one is placed in the bag BEFORE it is paid for, so a full bag stops the purchase with the
+        /// money still in your pocket -- paying first and then failing to deliver is the one outcome a trade must
+        /// never have. Returns how many were bought (0 = refused, nothing moved).</summary>
+        public int Buy(ushort owner, string vendorGuid, int sellIndex, int count)
         {
-            if (Vendors == null) { UnconfiguredRefusals++; return false; }
+            if (Vendors == null) { UnconfiguredRefusals++; return 0; }
             var v = Vendors(vendorGuid);
-            if (v == null || (uint)sellIndex >= (uint)v.Selling.Length) return false;
+            if (v == null || (uint)sellIndex >= (uint)v.Selling.Length || count <= 0 || count > MaxTradeCount) return 0;
             var want = v.Selling[sellIndex];
-            if (want.Item == 0) return false;                 // a vehicle line: nothing to hand over yet
             var p = For(owner);
-
-            var pile = new Dictionary<ushort, int>();
-            if (offer != null)
-                foreach (var (id, n) in offer)
-                {
-                    if (n <= 0) return false;                 // a negative "offer" is an attempt to be paid
-                    pile.TryGetValue(id, out int had);
-                    pile[id] = had + n;
-                }
-            foreach (var kv in pile)
+            int bought = 0;
+            while (bought < count && TradeRules.CanBuy(want, p.CountItem(Currency.StackId)))
             {
-                if (TradeRules.ValueOf(v, kv.Key) <= 0) return false;   // they do not take it at all
-                if (p.CountItem(kv.Key) < kv.Value) return false;       // and you must actually have it
+                if (!p.TryGiveOne(want.Item)) break;   // no room: stop, and this one is not charged
+                if (want.Cost > 0) p.TakeItem(Currency.StackId, want.Cost);
+                bought++;
             }
-            if (!TradeRules.CanAfford(v, want, pile)) return false;
-
-            foreach (var kv in pile) p.TakeItem(kv.Key, kv.Value);
-            p.GiveItem(want.Item, 1);
-            Touch(owner);
-            return true;
+            if (bought > 0) Touch(owner);
+            return bought;
         }
+
+        /// <summary>Sell <paramref name="count"/> of an item the vendor buys, for its Cost each in dollars. Checked
+        /// against the REAL bag before anything moves -- "I hand over eleven" from a player holding three would
+        /// otherwise take the three and pay for eleven. Returns how many were sold (0 = refused, nothing moved).</summary>
+        public int Sell(ushort owner, string vendorGuid, int buyIndex, int count)
+        {
+            if (Vendors == null) { UnconfiguredRefusals++; return 0; }
+            var v = Vendors(vendorGuid);
+            if (v == null || (uint)buyIndex >= (uint)v.Buying.Length || count <= 0 || count > MaxTradeCount) return 0;
+            var line = v.Buying[buyIndex];
+            // money for money is not a trade, and a line that pays nothing buys nothing
+            if (line.Item == 0 || line.Cost <= 0 || Currency.IsCurrency(line.Item)) return 0;
+            var p = For(owner);
+            if (p.CountItem(line.Item) < count) return 0;
+            p.TakeItem(line.Item, count);
+            if (!p.PayDollars(line.Cost * count))
+            {
+                // The wallet would not fit. Whatever DID land stays (money is never destroyed); the goods go back.
+                // Rare -- the wallet is one stack that merges -- but a sale that eats your goods is not a sale.
+                p.GiveItem(line.Item, (short)count);
+                RefundedSales++;
+            }
+            Touch(owner);
+            return count;
+        }
+
+        /// <summary>Sales whose payout did not fit the bag, so the goods were handed back.</summary>
+        public int RefundedSales;
     }
 
     // ---- the wire (v47) --------------------------------------------------------------------------------------
@@ -338,37 +373,30 @@ namespace UnturnedGodot.Net
         public static bool TryRead(NetPakReader r, out NpcCloseCommand c) { c = default; return true; }
     }
 
-    /// <summary>A whole trade in one message. The vendor is named by GUID because that is how vendors are
-    /// addressed end to end -- they have no numeric id at all -- and a trade is a rare reliable message, so the
-    /// 32 characters cost nothing worth optimising away.</summary>
+    /// <summary>One trade, in dollars (v59): BUY n of the vendor's selling line, or SELL n of an item on its buying
+    /// line. The vendor is named by GUID because that is how vendors are addressed end to end -- they have no
+    /// numeric id -- and a trade is a rare reliable message, so the 32 characters cost nothing worth saving.
+    ///
+    /// It used to carry an item PILE (the barter); there is nothing to pile now, the wallet pays. v59 changed the
+    /// payload, which is why it rides the same version bump as the drink commands.</summary>
     public struct NpcTradeCommand
     {
-        public const int MaxOffer = 16;   // a pile bigger than this is not a trade, it is a probe
         public string Vendor;
-        public byte SellIndex;
-        public (ushort Id, byte N)[] Offer;
+        public bool Sell;          // false = buy from their Selling list, true = sell into their Buying list
+        public byte Index;         // the line on that list
+        public ushort Count;
         public void Write(NetPakWriter w)
         {
-            var offer = Offer ?? System.Array.Empty<(ushort, byte)>();
-            byte n = (byte)System.Math.Min(offer.Length, MaxOffer);
             w.WriteString(Vendor ?? "");
-            w.WriteUInt8(SellIndex);
-            w.WriteUInt8(n);
-            for (int i = 0; i < n; i++) { w.WriteUInt16(offer[i].Id); w.WriteUInt8(offer[i].N); }
+            w.WriteBit(Sell);
+            w.WriteUInt8(Index);
+            w.WriteUInt16(Count);
         }
         public static bool TryRead(NetPakReader r, out NpcTradeCommand c)
         {
             c = default;
-            if (!r.ReadString(out string vendor)) return false;
-            if (!r.ReadUInt8(out byte sell) || !r.ReadUInt8(out byte n)) return false;
-            if (n > MaxOffer) return false;   // BEFORE the allocation, not after
-            var offer = new (ushort, byte)[n];
-            for (int i = 0; i < n; i++)
-            {
-                if (!r.ReadUInt16(out ushort id) || !r.ReadUInt8(out byte amt)) return false;
-                offer[i] = (id, amt);
-            }
-            c = new NpcTradeCommand { Vendor = vendor, SellIndex = sell, Offer = offer };
+            if (!r.ReadString(out string vendor) || !r.ReadBit(out bool sell) || !r.ReadUInt8(out byte index) || !r.ReadUInt16(out ushort count)) return false;
+            c = new NpcTradeCommand { Vendor = vendor, Sell = sell, Index = index, Count = count };
             return true;
         }
     }

@@ -337,7 +337,7 @@ Player.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, r
                 Player.NetNpcTalk = d => Client.SendNpcTalk(d);
             Player.NetNpcChoose = (d, i) => Client.SendNpcChoose(d, i);
             Player.NetNpcClose = () => Client.SendNpcClose();
-            Player.NetNpcTrade = (v, i, offer) => Client.SendNpcTrade(v, i, offer);
+            Player.NetNpcTrade = (v, sell, i, n) => Client.SendNpcTrade(v, sell, i, n);
             Player.NetCraft = index => Client.SendCraft(index);
                 Player.NetCraftCancel = slot => Client.SendCraftCancel(slot);
                 Player.NetMagLoad = (mp, mx, my, mid, rp, rx, ry, rid, un) =>

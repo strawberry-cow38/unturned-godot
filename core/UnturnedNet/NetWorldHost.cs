@@ -336,9 +336,8 @@ namespace UnturnedGodot.Net
             Commands.Register<NpcTradeCommand>(ReplicationIds.CommandNpcTrade, NpcTradeCommand.TryRead,
                 (sender, cmd) =>
                 {
-                    var offer = new List<(ushort, int)>();
-                    foreach (var (id, n) in cmd.Offer ?? System.Array.Empty<(ushort, byte)>()) offer.Add((id, n));
-                    Npcs.Batch(() => Npcs.Trade(sender, cmd.Vendor, cmd.SellIndex, offer));
+                    // the inventory echo carries the result back; a refusal moves nothing and says nothing
+                    Npcs.Batch(() => { if (cmd.Sell) Npcs.Sell(sender, cmd.Vendor, cmd.Index, cmd.Count); else Npcs.Buy(sender, cmd.Vendor, cmd.Index, cmd.Count); });
                 });
 
             Transactions.Register(Commands);
@@ -1511,8 +1510,8 @@ namespace UnturnedGodot.Net
             => SendCommand(ReplicationIds.CommandNpcChoose, new NpcChooseCommand { Dialogue = dialogue, Response = response }.Write);
         public bool SendNpcClose()
             => SendCommand(ReplicationIds.CommandNpcClose, new NpcCloseCommand().Write);
-        public bool SendNpcTrade(string vendor, byte sellIndex, (ushort Id, byte N)[] offer)
-            => SendCommand(ReplicationIds.CommandNpcTrade, new NpcTradeCommand { Vendor = vendor, SellIndex = sellIndex, Offer = offer }.Write);
+        public bool SendNpcTrade(string vendor, bool sell, byte index, ushort count)
+            => SendCommand(ReplicationIds.CommandNpcTrade, new NpcTradeCommand { Vendor = vendor, Sell = sell, Index = index, Count = count }.Write);
 
         public bool SendConsume(byte page, byte x, byte y)
             => SendCommand(ReplicationIds.CommandConsume, new ConsumeCommand { Page = page, X = x, Y = y }.Write);

@@ -1243,14 +1243,12 @@ namespace UnturnedGodot
             }
             else if (verb == "tradepick")
             {
-                // tradepick <n>  -- select the nth thing the open vendor is selling and let TradeRules build the
-                // offer. An EMPTY offer column is the least interesting state this window has, and it is the only
-                // one an offline capture can otherwise reach; this is how the exchange itself gets rendered.
+                // tradepick <n>  -- select the nth thing the open vendor is selling, so a capture shows the price
+                // against your wallet (affordable or short) rather than the empty "pick something" state.
                 if (!Player.TradeOpen) { Echo("no trade window open -- `trade <vendor>` first"); return; }
                 if (!int.TryParse((arg ?? "").Trim(), System.Globalization.NumberStyles.Integer,
                                   System.Globalization.CultureInfo.InvariantCulture, out int pick)) pick = 0;
-                Player.TradeWindow.DebugSelect(pick);
-                Player.TradeWindow.DebugAutoFill();
+                Player.TradeWindow.DebugPickSelling(pick);
                 Echo($"picked {pick}: {Player.TradeWindow.DebugStatus}");
             }
             else if (verb == "tradestock")
