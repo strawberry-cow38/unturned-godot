@@ -275,6 +275,14 @@ namespace UnturnedGodot
                 PlayerRegistry.FlinchAllFromExplosion(ep, Mathf.Max(e.Radius * 2f, 12f), 30f);
                 if (IsInsideTree()) GameAudio.Explosion(this, ep, e.Radius);   // a remote blast is heard too (retail Bomb effect audio)
             };
+            Client.VehicleExitRefused += e =>
+            {
+                // the server kept us in the seat: our door is blocked (v54). Nothing to roll back -- the client never
+                // unseats itself, it waits for VehicleExited -- so the whole job is saying so, the same line the
+                // local direct exit puts up (PlayerController.TryExitVehicle).
+                Log.Print($"[CLIENT] exit refused (vehicle {e.NetId}, seat {e.Seat}) -- door blocked");
+                HUD.Alert(Vehicle.ExitRefusedText, 2f);
+            };
             Client.ItemPickupDenied += e =>
             {
                 // a LEGAL pickup the server grid had no room for -- the item stays in the world; tell the
@@ -307,6 +315,10 @@ namespace UnturnedGodot
             // v29: the fuel bar, while you stand there watching it burn.
             Client.CookerState += e => { if (Shell != null && IsInstanceValid(Shell)) Shell.NoteCookerState(e.NetId, e.On, e.Fuel); };
                 Client.CraftQueue_ += e => { if (Shell != null && IsInstanceValid(Shell)) Shell.NoteServerCraftQueue(e.Jobs); };
+                // v55: what this player knows. Sent from PeerConnected, so it routinely arrives BEFORE the shell
+                // exists; NetWorldClient keeps the last set, and the shell takes it here as soon as it is wired.
+                Client.KnownBlueprintsChanged += e => { if (Shell != null && IsInstanceValid(Shell)) Shell.AdoptKnownBlueprints(e.Keys); };
+                if (Client.KnownBlueprints != null && Shell != null) Shell.AdoptKnownBlueprints(Client.KnownBlueprints);
                 // v47: the owner's NPC state, whole. This is the ONLY thing that writes the client's flags,
                 // quests and open dialogue in MP -- the local paths all send and wait for this.
                 Client.NpcState += e =>
@@ -461,7 +473,8 @@ namespace UnturnedGodot
                                   // scope that is visibly still swaying.
                                   | (Shell.SteadyingNow ? MoveInput.ButtonSteady : 0));
             Client.SendPlayerState(new UnityEngine.Vector3(p.X, p.Y, p.Z), Shell.RotationDegrees.Y, Shell.LookPitchDegrees,
-                                   Shell.MoveSimVelocity, buttons, Shell.LastGroundedInput, _recovAck);
+                                   Shell.MoveSimVelocity, buttons, Shell.LastGroundedInput, _recovAck,
+                                   Shell.HeldItemIdForNet);   // v57: what is in the hands -- see PlayerStateCommand.HeldItemId
 
             if (NetLog.Enabled) LogClientAuthRollupIfDue();
         }
@@ -509,6 +522,7 @@ namespace UnturnedGodot
             var v = Vehicle.BuildByName(key, e.Variant);
             v.NetClientPredicted = true;    // server owns health/explosion (replica Exploded flag); local damage is a no-op
             v.RemoveFromGroup("vehicles");  // never a group-scan target (VehicleNetSync minting in a shared-tree L1 host, tow/roadkill/grenade scans)
+            v.AddToGroup(Vehicle.ClientTwinGroup);   // ...and the server's door probe looks through it in that same shared tree (Vehicle.ClientTwinGroup)
             v.CollisionLayer = 0;           // nothing collides INTO the local car; it collides OUT via its mask (bit0: the static world -- plan A4's collision posture)
             AddChild(v);
             var basis = Basis.FromEuler(new Vector3(Mathf.DegToRad(e.PitchDegrees),
@@ -636,6 +650,7 @@ namespace UnturnedGodot
             shell.NetFitAttachment = (page, x, y, id) => Client.SendFitAttachment(page, x, y, id);
             shell.NetConsume = (page, x, y) => Client.SendConsume(page, x, y);
             shell.NetSetAutoDrink = (page, x, y, id, on) => Client.SendSetAutoDrink(page, x, y, id, on);
+            shell.NetWeaponUse = (page, x, y, id, uses) => Client.SendWeaponUse(page, x, y, id, uses);   // v56 durability
             shell.NetGunState = (page, x, y, it) => Client.SendGunState(page, x, y, it.id, (short)it.gunAmmo, it.gunChambered,
                 (sbyte)it.gunFiremode, it.gunMagId, it.gunAttach, it.gunSightId, it.gunBarrelId, it.gunGripId,
                 it.gunTacticalId, it.gunAttachSeeded);
@@ -648,10 +663,11 @@ shell.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, ri
             shell.NetNpcClose = () => Client.SendNpcClose();
             shell.NetNpcTrade = (v, i, offer) => Client.SendNpcTrade(v, i, offer);
             shell.NetCraft = index => Client.SendCraft(index);
+            if (Client.KnownBlueprints != null) shell.AdoptKnownBlueprints(Client.KnownBlueprints);   // v55: the set routinely arrives before the shell does
             shell.NetCraftCancel = slot => Client.SendCraftCancel(slot);
             shell.NetMagLoad = (mp, mx, my, mid, rp, rx, ry, rid, un) =>
                 Client.SendMagLoad(mp, mx, my, mid, rp, rx, ry, rid, un);
-            shell.NetPlaceDeployable = (defId, pos, yaw, pg, px, py) => Client.SendPlaceDeployable(defId, ToU(pos), yaw, pg, px, py);
+            shell.NetPlaceDeployable = (defId, pos, yaw, pg, px, py, target, up) => Client.SendPlaceDeployable(defId, ToU(pos), yaw, pg, px, py, target, up);
             shell.NetSalvageDeployable = netId => Client.SendSalvageDeployable(netId);
             shell.NetPickupDeployable = netId => Client.SendPickupDeployable(netId);   // B2: hold-F returns the live deployable to the bag over the wire
             shell.NetExtractFuel = pumpId => Client.SendExtractFuel(pumpId);   // A2: RMB a replica gas pump -> server drains the shared station tank into the held can
@@ -663,6 +679,10 @@ shell.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, ri
             shell.NetConnectWire = (srcId, srcPort, dstId, dstPort) => Client.SendConnectWire(srcId, srcPort, dstId, dstPort);
             shell.NetRemoveWire = wireId => Client.SendRemoveWire(wireId);
             shell.NetToggleDeployable = (netId, on) => Client.SendToggleDeployable(netId, on);
+            shell.NetConnectPipe = (srcId, srcPort, dstId, dstPort, route) => Client.SendConnectPipe(srcId, srcPort, dstId, dstPort, route);   // v56 item pipes
+            shell.NetRemovePipe = pipeId => Client.SendRemovePipe(pipeId);
+            shell.NetConfigureItemDevice = (netId, cfg) => Client.SendConfigureItemDevice(netId, cfg);
+            shell.NetItemConfigOf = netId => Client.Deployables.TryGet(netId, out var ie) ? ie.ItemConfig : null;
             shell.NetOpenStorage = netId => Client.SendOpenStorage(netId);
             shell.NetCloseStorage = () => Client.SendCloseStorage();
             shell.NetTakeFromStorage = (netId, x, y) => Client.SendTakeFromStorage(netId, x, y);   // F on an item ON a shelf: take that one, no open/close

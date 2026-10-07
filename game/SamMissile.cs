@@ -378,7 +378,7 @@ namespace UnturnedGodot
                     if (n is PlayerController pl)
                     {
                         float d = pl.GlobalPosition.DistanceTo(p);
-                        if (d <= BlastRadius) pl.TakeDamage(SDG.Unturned.ExplosionMath.Linear(BlastDamage, d, BlastRadius));
+                        if (d <= BlastRadius) pl.TakeDamage(SDG.Unturned.ExplosionMath.Linear(BlastDamage, d, BlastRadius), null, SDG.Unturned.Durability.Zone.Whole);
                     }
                 foreach (var n in tree.GetNodesInGroup("samsites"))
                     if (n is SamSite sam && !sam.Destroyed)

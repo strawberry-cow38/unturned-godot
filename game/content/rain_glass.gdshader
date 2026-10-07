@@ -72,11 +72,11 @@ void vertex(){
 }
 
 void fragment(){
-	// Godot does NOT flip NORMAL for a back face in a CUSTOM spatial shader the way it does for a built-in
-	// material, and this one draws cull_disabled -- so without this every back-facing fragment is lit with a
-	// normal pointing the wrong way. Found on the vehicles (7b1ceae5), where it made every car look
-	// permanently in shadow; master: "fix em".
-	NORMAL = FRONT_FACING ? NORMAL : -NORMAL;
+	// NO manual back-face flip here (removed 2026-10-04). cull_disabled ALREADY makes Godot negate the normal of a
+	// back-facing fragment before this function runs (DO_SIDE_CHECK, scene_forward_clustered.glsl; true of custom
+	// shaders and built-in materials alike). The `NORMAL = FRONT_FACING ? NORMAL : -NORMAL` that used to sit here
+	// undid that, so every back face was lit from the wrong side -- the always-dark back of a flag, a guard rail
+	// seen from behind. Measured on a bare quad: back face lit WITHOUT the line, black WITH it.
     float rint = clamp(rain_intensity, 0.0, 1.0);
     float wet  = clamp(rain_wetness, 0.0, 1.0);
     float open = 1.0 - clamp(covered, 0.0, 1.0);   // under cover -> dry (see face_ok in vertex(): NOT a gate, the rips have no normals to gate on)

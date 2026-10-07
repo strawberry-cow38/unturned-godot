@@ -8,24 +8,14 @@ uniform sampler2D palette : filter_nearest, source_color;
 uniform vec3 paint_color : source_color = vec3(1.0);
 
 void fragment() {
-    // ⚠ THE NORMAL ARRIVES INVERTED, AND THIS IS WHY EVERY VEHICLE LOOKED PERMANENTLY IN SHADOW
-    // (strawberry 2026-09-11: "the lighting on vehicles is really dark ... like they are always in shadow").
-    //
-    // The bodies are drawn BACK-FACE: the meshes load raw (ContentProvider.ParseObj does no axis negation,
-    // matching ObjMesh's CONV=1), so Unity's left-handed winding lands in Godot's right-handed space reversed.
-    // cull_disabled hides that -- the surface still draws -- but Godot does NOT flip NORMAL for a back face in
-    // a custom spatial shader the way it does for a built-in material. So every fragment on every car was lit
-    // with a normal pointing INTO the body: the sun was always on the wrong side of the panel and only ambient
-    // got through. Uniformly dark, with no gradient between a bonnet and a door, which is exactly what
-    // "always in shadow" looks like.
-    //
-    // Diagnosed by rendering dot(NORMAL, worldUp) as brightness: the whole body came back BLACK including the
-    // flat bonnet and the roll-bar top. With the flip below those go white and the vertical panels stay dark,
-    // which is the correct answer for that probe.
-    // Since the winding fix in ContentProvider.ParseObj this is a NO-OP on the front faces that now make up
-    // every body panel; it stays for the genuinely two-sided case (looking at the inside of a hull through a
-    // window or a missing door), which cull_disabled draws and which would otherwise light from the wrong side.
-    NORMAL = FRONT_FACING ? NORMAL : -NORMAL;
+    // NO manual back-face flip (removed 2026-10-04). History, because it was right once and then wrong:
+    // the bodies used to load reverse-wound, so every visible panel was a BACK face, and cull_disabled makes Godot
+    // negate a back face's normal before fragment() runs (DO_SIDE_CHECK) -- which pointed every outward normal
+    // into the body ("always in shadow", strawberry 2026-09-11). A manual `NORMAL = FRONT_FACING ? NORMAL : -NORMAL`
+    // cancelled that, so it fixed the cars, but for the opposite reason to the one its comment gave (it claimed
+    // Godot does NOT flip for custom shaders; it does). Since ContentProvider.ParseObj orients each triangle the
+    // panels are FRONT faces, the line was a no-op on them, and on the genuinely two-sided case (the inside of a
+    // hull through a window) it undid Godot's correct flip and lit the inside from the wrong side.
     vec4 t = texture(palette, UV);
     ALBEDO = (t.a < 0.5) ? paint_color : t.rgb; // paintable panels take the paint colour; fixed parts keep theirs
     METALLIC = 0.0;

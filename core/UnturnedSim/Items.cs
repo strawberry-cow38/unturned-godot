@@ -32,6 +32,15 @@ namespace SDG.Unturned
             items = new List<ItemJar>();
         }
 
+        /// <summary>Bumped by every change this class makes to the page, and by Touch() for a caller that writes an
+        /// Item's fields directly. NOT an event: nothing is invoked, a reader compares the number it saw last time --
+        /// which is what lets an item mover sleep on a full chest and wake the step anyone changes it, without a
+        /// subscription to keep alive. A path that writes `jar.item.amount` itself and does not Touch() is a change
+        /// this cannot see; ServerItemMovers' backstop counts those (Diag.MissedWakes).</summary>
+        public int Version => _version;
+        int _version;
+        public void Touch() => _version++;
+
         public byte getItemCount() => (byte)items.Count;
 
         public ItemJar getItem(byte index) => (index < items.Count) ? items[index] : null;
@@ -68,6 +77,7 @@ namespace SDG.Unturned
             ItemJar itemJar = new ItemJar(x, y, rot, item);
             fillSlot(itemJar, isOccupied: true);
             items.Add(itemJar);
+            _version++;
             onItemAdded?.Invoke(page, (byte)(items.Count - 1), itemJar);
             onStateUpdated?.Invoke();
         }
@@ -107,6 +117,7 @@ namespace SDG.Unturned
         bool AddCore(Item item)
         {
             if (getItemCount() >= 200) return false;
+            _version++;   // a merge below may change amounts and still fail to place the rest: count it either way
             // Per-item stacking: ammo (shotgun shells) stack up to their asset stackSize; most Unturned items = 1 (never stack).
             // The old global StackingEnabled option is subsumed -> it just makes the cap effectively unlimited.
             // A declared stackSize always wins, even under StackingEnabled: money declares 500 and must not be
@@ -152,6 +163,7 @@ namespace SDG.Unturned
             var jar = new ItemJar(x, y, rot, made);
             fillSlot(jar, isOccupied: true);
             items.Add(jar);
+            _version++;
             onStateUpdated?.Invoke();
             return jar;
         }
@@ -169,6 +181,7 @@ namespace SDG.Unturned
             var made = src.item.Clone();
             made.amount = (ushort)amount;
             src.item.amount = (ushort)(src.item.amount - amount);
+            _version++;
             onStateUpdated?.Invoke();
             return made;
         }
@@ -180,6 +193,7 @@ namespace SDG.Unturned
                 fillSlot(items[index], isOccupied: false);
                 onItemRemoved?.Invoke(page, index, items[index]);
                 items.RemoveAt(index);
+                _version++;
                 onStateUpdated?.Invoke();
             }
         }
@@ -192,7 +206,7 @@ namespace SDG.Unturned
         /// `items[page].getItemCount() == 0`, and an owner echo rebuilds all nine pages every time it lands, so a
         /// chatty clear() would rip the gun out of the player's hands on every echo. The rebuild announces itself
         /// ONCE at the end instead.</summary>
-        public void clear() => items.Clear();
+        public void clear() { items.Clear(); _version++; }   // silent for EVENTS (above), never for the version
 
         /// <summary>Announce that this page changed, for a caller that mutated it in a way the grid operations
         /// cannot see: a whole-page rebuild (clear + re-add), or a bare field write on an Item.
@@ -202,12 +216,13 @@ namespace SDG.Unturned
         /// something to add -- so a page that the server emptied raised no event at all on the path every real
         /// singleplayer game runs, while a direct-path test (which calls removeItem in-process) passed happily.
         /// Review 2026-08-16.</summary>
-        public void raiseStateUpdated() => onStateUpdated?.Invoke();
+        public void raiseStateUpdated() { _version++; onStateUpdated?.Invoke(); }
 
         // rebuild the occupancy grid at a new size and re-seat existing items, discarding any that no longer fit a
         // real grid page (source: page >= SLOTS && x+w > width || y+h > height) -- e.g. shrinking a bag page
         public void loadSize(byte newWidth, byte newHeight)
         {
+            _version++;
             _width = newWidth;
             _height = newHeight;
             slots = new bool[width, height];

@@ -23,10 +23,20 @@
 // it: it keeps the body transparent. As an opaque surface the body draws in the opaque pass, writes real depth, and
 // the water (transparent) depth-tests against it -- submerged parts are correctly occluded/tinted. The FLANKER_STALK
 // ghost shimmer is the ATLAS body path (StandardMaterial3D, RiggedCharacter._bodyMat) -- the clothes-shader body
-// (player/corpse/1P arms) never ghosts, so no ALPHA is needed here. cull_front replicates the old CullMode.Front
-// (the rig's Z-flip reverses winding).
+// (player/corpse/1P arms) never ghosts, so no ALPHA is needed here.
+// cull_BACK (was cull_front, 2026-10-04): RiggedCharacter now reverses the rig's winding where it builds the mesh, so
+// the outer surface is front-facing. cull_front drew the same fragments but also switched on Godot's back-face side
+// check, which negated every (outward) normal and lit the body from inside.
 shader_type spatial;
-render_mode cull_front;
+render_mode cull_back;
+
+#include "res://content/tatter.gdshaderinc"
+
+// WORN CLOTHING (v56 durability): 0 = new, 1 = broken. Set from each garment's condition by
+// PlayerClothingController (and for another player, off the replicated appearance). A shirt hole shows SKIN, not
+// a void: the shirt is paint on the body, so a hole is the paint's alpha going to 0.
+uniform float shirt_wear : hint_range(0.0, 1.0) = 0.0;
+uniform float pants_wear : hint_range(0.0, 1.0) = 0.0;
 
 uniform vec4 skin_color : source_color = vec4(0.82, 0.66, 0.52, 1.0);
 // FIRST-PERSON BODY CLIP (strawberry 2026-09-09: "show legs in 1p when looking down"). 0 = off. Above 0, any
@@ -72,6 +82,15 @@ void fragment() {
 	vec4 shirtMetallic = has_shirt_metallic ? texture(shirt_metallic, shirtUV) : vec4(0.0);
 	vec4 pantsMetallic = has_pants_metallic ? texture(pants_metallic, UV) : vec4(0.0);
 
+	// wear: grime + frayed edges on the cloth, and holes that let the skin through (scale tuned on the 3P render)
+	// snapped to the garment texture's own texel grid, so a hole is blocky like the pixel art it is cut out of
+	vec2 sTex = has_shirt_albedo ? vec2(textureSize(shirt_albedo, 0)) : vec2(64.0);
+	vec2 pTex = has_pants_albedo ? vec2(textureSize(pants_albedo, 0)) : vec2(64.0);
+	vec2 sCell = floor(shirtUV * sTex) / sTex, pCell = floor(UV * pTex) / pTex;
+	vec3 ts = tatter(sCell * 34.0 + vec2(1.37, 7.1), shirt_wear);
+	vec3 tp = tatter(pCell * 34.0 + vec2(5.9, 2.3), pants_wear);
+	shirtAlbedo.rgb = tatter_tint(shirtAlbedo.rgb, ts); shirtAlbedo.a *= ts.x;
+	pantsAlbedo.rgb = tatter_tint(pantsAlbedo.rgb, tp); pantsAlbedo.a *= tp.x;
 	vec3 albedo = mix(mix(skin_color.rgb, shirtAlbedo.rgb, shirtAlbedo.a), pantsAlbedo.rgb, pantsAlbedo.a);
 	ALBEDO = albedo;
 

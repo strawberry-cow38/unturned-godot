@@ -3276,8 +3276,19 @@ namespace UnturnedGodot.Testing
             yield return Until(() => sess.Shell.IsDriving, 5);
             sess.Shell.ScriptedDrive = new Vector2(0f, 1f);
             yield return Until(() => jeep.NetHeld, 5);
-            yield return Ticks(100);
-            T.Check("second drive held + moving", jeep.NetHeld && jeep.GlobalPosition.DistanceTo(exitSpot) > 3f);
+            // "MOVING" IS MEASURED FROM WHERE THIS DRIVE STARTED. It used to read DistanceTo(exitSpot) > 3, and the
+            // setup above parks the car 2.5 m +X of the shell -- so while the driver got out on the RIGHT, the car sat
+            // ~4.9 m from exitSpot before a wheel turned and the check could not fail (measured on that build: the
+            // second drive covered 0.61 m and passed on the offset alone). The driver leaves by his own LEFT-hand door
+            // now (strawberry 2026-10-04), the same setup parks the car 0.85 m from exitSpot, and the vacuous check
+            // went red over a drive that was unchanged. The question is whether THIS drive is moving the car.
+            // AND FOR LONG ENOUGH TO TELL. The throttle has to crank the engine first (it was left off), so the first
+            // 100 ticks are IDENTICAL with the throttle held and with no input at all -- 0.86 m both ways, the car
+            // settling off the teleport above. Measured over 200: 13.34 m driven vs 1.21 m with no input.
+            var secondStart = jeep.GlobalPosition;
+            yield return Ticks(200);
+            float secondDriven = jeep.GlobalPosition.DistanceTo(secondStart);
+            T.Check($"second drive held + moving ({secondDriven:0.00} m in 200 ticks; 1.2 m is the no-input drift)", jeep.NetHeld && secondDriven > 4f);
             sess.Client.Disconnect();
             yield return Ticks(25);
             bool freed = ded.Server.Vehicles.TryGet(netId, out var fe) && fe.DriverPlayerId == 0;

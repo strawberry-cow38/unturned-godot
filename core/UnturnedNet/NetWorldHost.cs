@@ -66,6 +66,8 @@ namespace UnturnedGodot.Net
         // peer already has, and the only thing that crosses the wire is the damage/infection it causes,
         // which the existing vitals + combat paths already replicate.
         public readonly ServerDeadzones Deadzones = new ServerDeadzones();
+        /// <summary>v56 DURABILITY: worn clothing wearing out over in-game time (ServerClothingWear).</summary>
+        public ServerClothingWear ClothingWear { get; private set; }
         /// <summary>The save this world was loaded from, or null for a fresh one. Held for the whole session
         /// rather than consumed at load: a player's block is applied when THEY connect (PeerConnected below),
         /// which for a dedicated server is minutes or days after the world came up. The game side sets this
@@ -83,6 +85,11 @@ namespace UnturnedGodot.Net
         public readonly ServerCooking Cooking;
         public readonly ServerFreezing Freezing;
         public readonly ServerCrafting CraftQueue;
+        /// <summary>v56: the item movers. Stepped by the HOST (a DelegateSimStep beside the container publish), not
+        /// from TickSimulation, so a bare harness that never asked for it is not moving items behind its back.</summary>
+        public readonly ServerItemMovers ItemMovers;
+        /// <summary>v55: which locked recipes each player knows. See ServerBlueprints.</summary>
+        public readonly ServerBlueprints BlueprintKnowledge = new ServerBlueprints();
         public readonly ServerNpcs Npcs = new ServerNpcs();   // v47: conversations, quests and trades, server-side
 
         /// <summary>The mains, as the SERVER sees them: any GridSource fixture switched on. Deliberately not
@@ -110,6 +117,12 @@ namespace UnturnedGodot.Net
         /// out-reward the direct path. Bump both together when kill XP lands in SP.</summary>
         public uint KillExperience = 0;
 
+        /// <summary>Death lines in chat. `AnnounceDeaths` off silences them entirely; with it on and every
+        /// option off you get exactly "playername died", which is the default strawberry asked for. The four
+        /// detail flags are INDEPENDENT opt-ins, not a ladder -- see DeathMessageRules.</summary>
+        public bool AnnounceDeaths = true;
+        public DeathMessageOptions DeathMessages;
+
         public NetWorldServer(IServerTransport transport,
                               ServerTransportConnectionFailureCallback connectionFailureCallback = null,
                               int maxPeers = 32,
@@ -132,6 +145,7 @@ namespace UnturnedGodot.Net
             Cooking = new ServerCooking(Inventories, () => Session.CurrentTick);
             Freezing = new ServerFreezing(Inventories);
             CraftQueue = new ServerCrafting(Inventories);
+            ItemMovers = new ServerItemMovers(Deployables, Inventories);
             // destructible props (rubble): health/respawn authority; combat routes an object hit into it
             DestructibleHost = new ServerDestructibles(Destructibles, BroadcastEvent);
             Combat.DamageObject = (index, amount, tick) => DestructibleHost.DamageObject(index, amount, tick);
@@ -217,6 +231,18 @@ namespace UnturnedGodot.Net
             // The queue indexes the same catalog the command validates against -- one list, so an index cannot
             // mean two different recipes on the two sides of the same tick.
             CraftQueue.BlueprintsSource = () => Transactions.Blueprints;
+            // BLUEPRINT KNOWLEDGE (v55): the same catalog again, the skills it reads its triggers from, and the
+            // owner-only event that tells a client what it knows. OnCraft refuses a recipe the sender does not know;
+            // OnConsume teaches from an item; the console grants and revokes.
+            BlueprintKnowledge.Catalog = () => Transactions.Blueprints;
+            BlueprintKnowledge.Skills = Skills;
+            BlueprintKnowledge.Changed = owner =>
+            {
+                var keys = new List<string>(BlueprintKnowledge.KnownBy(owner));
+                var evt = new KnownBlueprintsEvent { Keys = keys.ToArray() };
+                SendEventTo(owner, NetMessagePak.Pack(ReplicationIds.EventKnownBlueprints, evt.Write));
+            };
+            Transactions.Knowledge = BlueprintKnowledge;
             // A craft in flight is invisible to the MP client otherwise: it skips its own queue when NetCraft is
             // wired, so without this an 8 s recipe looks like a command that did nothing.
             CraftQueue.QueueChanged = owner =>
@@ -335,7 +361,9 @@ namespace UnturnedGodot.Net
             // P3b (SP/MP-unify): route the server-DERIVED fall + out-of-bounds damage (computed off the owner's
             // adopted Vel/Grounded/Pos, never a client-reported number) into the same ServerCombat sink the weapon
             // paths funnel through. Keeps HP fully server-authored for the client-auth walker.
-            PlayerHost.DamageOwner = (victim, dmg) => Combat.DamagePlayerExternal(victim, dmg);
+            // v57: a joiner's FALL lands on the legs -- the trousers take the wear, as the SP fall's does (the out-of-bounds
+            // kill rides the same hook; a 9999 hit wearing a pair of jeans by one point is not worth a second hook)
+            PlayerHost.DamageOwner = (victim, dmg) => Combat.DamagePlayerExternal(victim, dmg, 0, Durability.Zone.Legs);
             // mp-event-coalesce (v10): route each deduped carried combat event to the ServerCombat handler
             // by Kind. The authority holds only a PlayerCombatReplication (for IsAlive); the OnFire/etc
             // handlers live on ServerCombat, so the carry is dispatched through this delegate. The standalone
@@ -379,6 +407,30 @@ namespace UnturnedGodot.Net
             // touched the inventory, so a corpse kept its bag and stood back up with it. Wired in core so
             // every host (dedicated, loopback SP, the L0 harness) gets it -- there is no game-side death.
             Combat.PlayerDied = (victim, tick) => Transactions.DropInventoryOnDeath(victim);
+            Combat.DeathResolved = (victim, killer, weapon) =>
+            {
+                if (!AnnounceDeaths) return;
+                bool hasKiller = killer != 0;
+                string victimName = Transactions.NameOf?.Invoke(victim);
+                string killerName = hasKiller ? Transactions.NameOf?.Invoke(killer) : null;
+
+                // ⚠ Distance is measured from the ATTACKER, never from ServerCombat's `sourcePos`. sourcePos is
+                // the source of the HIT -- for a bullet, its position at impact, i.e. on top of the victim --
+                // so a range taken from it reads ~0 m on every kill and looks entirely plausible. -1 means "we
+                // could not resolve it", which the formatter drops rather than printing as a measurement.
+                bool haveVictimPos = Players.TryGetByOwner(victim, out var vpe);
+                float distance = -1f;
+                if (hasKiller && haveVictimPos && Players.TryGetByOwner(killer, out var kpe))
+                {
+                    distance = (kpe.Pos - vpe.Pos).magnitude;
+                }
+
+                string line = DeathMessageRules.Format(
+                    victimName, killerName, weapon, hasKiller, distance,
+                    haveVictimPos, haveVictimPos ? vpe.Pos.x : 0f, haveVictimPos ? vpe.Pos.y : 0f,
+                    haveVictimPos ? vpe.Pos.z : 0f, DeathMessages);
+                Transactions.SayAsServer(line);
+            };
             // B5 (SP/MP-unify): server-authoritative fine vitals. HP is NEVER owned by the vitals sim -- each
             // tick ServerStep re-seeds Sim.Health from the single HP authority (CombatState.HealthExact) and
             // routes the delta OUT: starvation loss through the queued DamagePlayerExternal env sink (death-
@@ -388,6 +440,48 @@ namespace UnturnedGodot.Net
             // for the MP shell, or the held MoveInput for a loopback/demo walker) -- no second body. HP-delta
             // routing runs only while SurvivalDrain is on (default OFF = SP byte-identical coarse-HP path).
             Vitals.IsAlive = pid => CombatState.IsAlive(pid);
+            // v56 DURABILITY. Every loss lands on the SERVER's copy and rides the owner echo out; see Durability.
+            ClothingWear = new ServerClothingWear(Inventories)
+            {
+                IsAlive = pid => CombatState.IsAlive(pid),
+                DayLengthSeconds = () => Clock.HasClock ? Clock.DayLengthSeconds : 0f,
+            };
+            // a hit wears whatever covers where it landed, and that clothing (as worn as it now is) stops its share
+            Combat.ClothingHit = (victim, zone, dmg, armor) =>
+            {
+                if (!Inventories.TryGet(victim, out var e)) return dmg;
+                var inv = e.Inventory;
+                bool worn = false;
+                foreach (var t in Durability.Covering(zone))
+                {
+                    var it = inv.WornIn(t);
+                    if (it == null || it.quality == 0 || PlayerInventory.IsFilterMask(Assets.find(it.id))) continue;
+                    it.quality = (byte)System.Math.Max(0, it.quality - Durability.ClothingHitPoints);
+                    worn = true;
+                }
+                if (worn) Inventories.ServerMarkDirty(victim);
+                // retail wears the piece FIRST and then reads its armor at the new condition (DamageTool.getPlayerArmor)
+                float through = armor == ServerCombat.ArmorKind.Weapon ? inv.PassThrough(zone)
+                              : armor == ServerCombat.ArmorKind.Explosion ? inv.ExplosionArmor : 1f;
+                return dmg * through;
+            };
+            // the condition of what the player is HOLDING, found by the held id the move input carries. Two identical
+            // guns in the holsters are indistinguishable this way; the first is taken -- the cost of a server that is
+            // told an id, not an address, every tick.
+            Combat.HeldCondition = pid =>
+            {
+                if (!Players.TryGetHeldInput(pid, out var mi) || mi.HeldItemId == 0 || !Inventories.TryGet(pid, out var e)) return null;
+                var a = Assets.find(mi.HeldItemId);
+                if (!Durability.HasCondition(a)) return null;
+                for (byte pg = 0; pg < PlayerInventory.OWNPAGES; pg++)
+                {
+                    var page = e.Inventory.items[pg];
+                    if (page == null) continue;
+                    for (byte i = 0; i < page.getItemCount(); i++)
+                        if (page.getItem(i)?.item?.id == mi.HeldItemId) return page.getItem(i).item.quality;
+                }
+                return null;
+            };
             // BREATH. The server owns oxygen like every other vital, so it has to answer "is this head under
             // water" itself -- off the same adopted position it already validates, and the same per-stance eye
             // table the shell uses. Core has no terrain, so the game layer hands down the two numbers that
@@ -519,8 +613,14 @@ namespace UnturnedGodot.Net
                 // The key is the name as PROFILES holds it, not peer.Name: ServerAdd sanitises on the way in and
                 // Capture reads it back out, so keying on the raw handshake string would miss every name the
                 // sanitiser touched.
+                BlueprintKnowledge.ServerAdd(peer.PlayerId);   // before the restore below, which fills it
                 if (PendingSave != null && Profiles.TryGet(peer.PlayerId, out var prof))
                     PendingSave.TryApplyPlayer(this, peer.PlayerId, prof.Name, Session.CurrentTick, prof.SteamId);
+                // TELL THEM WHAT THEY KNOW, once, after the restore -- even when it is nothing, so a client never has
+                // to guess whether "no known blueprints" means "none" or "not told yet". Skill triggers are checked
+                // first so a save from before a recipe gained a skill unlock catches up the moment they join.
+                BlueprintKnowledge.CheckSkillUnlocks(peer.PlayerId);
+                BlueprintKnowledge.Changed?.Invoke(peer.PlayerId);
                 _pendingJoinSnapshots.Add(peer);
             };
             Session.PeerDisconnected += (peer, reason) =>
@@ -531,6 +631,7 @@ namespace UnturnedGodot.Net
                 Players.ServerRemove(peer.PlayerId, Session.CurrentTick);
                 CombatState.ServerRemove(peer.PlayerId, Session.CurrentTick);
                 Skills.ServerRemove(peer.PlayerId);
+                BlueprintKnowledge.ServerRemove(peer.PlayerId);   // a recycled playerId must not inherit what they knew
                 Profiles.ServerRemove(peer.PlayerId);
                 Profiles.ServerForgetPeer(peer.PlayerId);   // player ids are RECYCLED: a new peer must not inherit "already has these pictures"
                 Vitals.ServerRemove(peer.PlayerId);   // B5: the leaving peer's vitals sim dies with it
@@ -637,10 +738,12 @@ namespace UnturnedGodot.Net
             // external-damage queue, which Combat.Step drains at its top, so queueing here kills in THIS
             // tick rather than the next one.
             Deadzones.Step((float)SimClock.FixedDelta, Players.All, CombatState.IsAlive);
+            ClothingWear.Step((float)SimClock.FixedDelta);   // before ServerCommitDirty below, which stamps what it dirtied
             Combat.Step(Session.CurrentTick);
             // TIMED CRAFTING, before the dirty stamp below -- a job that finishes this tick writes into the
             // inventory, and stamping first would leave that write waiting a whole tick for its baseline.
             CraftQueue.Step((float)SimClock.FixedDelta);
+            BlueprintKnowledge.Step();   // a skill that levelled this tick teaches its recipes this tick
             // stamp this tick onto every inventory the dispatch round dirtied (owner-block delta baseline)
             Inventories.ServerCommitDirty(Session.CurrentTick);
             if (NetLog.Enabled) LogRollupIfDue();
@@ -843,6 +946,9 @@ namespace UnturnedGodot.Net
         public event System.Action<WireConnectedEvent> WireConnected;
         public event System.Action<WireRemovedEvent> WireRemoved;
         public event System.Action<DeployableToggledEvent> DeployableToggled;
+        public event System.Action<PipeConnectedEvent> PipeConnected;                   // v56
+        public event System.Action<PipeRemovedEvent> PipeRemoved;                       // v56
+        public event System.Action<ItemDeviceConfiguredEvent> ItemDeviceConfigured;    // v56
         public event System.Action<WorldItemSpawnedEvent> WorldItemSpawned;
         public event System.Action<WorldItemSettledEvent> WorldItemSettled;
         public event System.Action<WorldItemRemovedEvent> WorldItemRemoved;
@@ -860,6 +966,11 @@ namespace UnturnedGodot.Net
         public event System.Action<PlayerMeleeEvent> PlayerMeleed;   // somebody swung: the puppet plays the weak/strong clip   // somebody pulled a trigger: report + tracer
         public event System.Action<VehicleEnteredEvent> VehicleEntered;
         public event System.Action<VehicleExitedEvent> VehicleExited;
+        public event System.Action<VehicleExitRefusedEvent> VehicleExitRefused;   // v54: your door is blocked -- still seated
+        public event System.Action<KnownBlueprintsEvent> KnownBlueprintsChanged;   // v55: the locked recipes I know, whole
+        /// <summary>The last set the server sent, kept HERE because it can arrive before the shell exists (it is sent
+        /// from PeerConnected, ahead of the join snapshot). Null until the server has said anything.</summary>
+        public HashSet<string> KnownBlueprints;
         // Part A: the server rolled this driver's vehicle back (out-of-envelope state) -- teleport the
         // local vehicle to the payload, freeze, echo RecovCounter in the outgoing state stream
         public event System.Action<VehicleRecovEvent> VehicleRecov;
@@ -943,6 +1054,13 @@ namespace UnturnedGodot.Net
                 e => { Deployables.ApplyWireRemoved(e, Applier.LastAppliedServerTick); WireRemoved?.Invoke(e); });
             Events.Register<DeployableToggledEvent>(ReplicationIds.EventDeployableToggled, DeployableToggledEvent.TryRead,
                 e => { Deployables.ApplyToggled(e, Applier.LastAppliedServerTick); DeployableToggled?.Invoke(e); });
+            // v56 item pipes: topology + config facts, applied straight onto the replica like the wire events
+            Events.Register<PipeConnectedEvent>(ReplicationIds.EventPipeConnected, PipeConnectedEvent.TryRead,
+                e => { Deployables.ApplyPipeConnected(e, Applier.LastAppliedServerTick); PipeConnected?.Invoke(e); });
+            Events.Register<PipeRemovedEvent>(ReplicationIds.EventPipeRemoved, PipeRemovedEvent.TryRead,
+                e => { Deployables.ApplyPipeRemoved(e, Applier.LastAppliedServerTick); PipeRemoved?.Invoke(e); });
+            Events.Register<ItemDeviceConfiguredEvent>(ReplicationIds.EventItemDeviceConfigured, ItemDeviceConfiguredEvent.TryRead,
+                e => { Deployables.ApplyItemConfigured(e, Applier.LastAppliedServerTick); ItemDeviceConfigured?.Invoke(e); });
             Events.Register<WorldItemSpawnedEvent>(ReplicationIds.EventWorldItemSpawned, WorldItemSpawnedEvent.TryRead,
                 e => { WorldItems.ApplySpawned(e, Applier.LastAppliedServerTick); WorldItemSpawned?.Invoke(e); });
             Events.Register<WorldItemSettledEvent>(ReplicationIds.EventWorldItemSettled, WorldItemSettledEvent.TryRead,
@@ -965,6 +1083,10 @@ namespace UnturnedGodot.Net
                 e => { Vehicles.ApplyEntered(e, Applier.LastAppliedServerTick); VehicleEntered?.Invoke(e); });
             Events.Register<VehicleExitedEvent>(ReplicationIds.EventVehicleExited, VehicleExitedEvent.TryRead,
                 e => { Vehicles.ApplyExited(e, Applier.LastAppliedServerTick); VehicleExited?.Invoke(e); });
+            Events.Register<KnownBlueprintsEvent>(ReplicationIds.EventKnownBlueprints, KnownBlueprintsEvent.TryRead,
+                e => { KnownBlueprints = new HashSet<string>(e.Keys ?? System.Array.Empty<string>()); KnownBlueprintsChanged?.Invoke(e); });
+            Events.Register<VehicleExitRefusedEvent>(ReplicationIds.EventVehicleExitRefused, VehicleExitRefusedEvent.TryRead,
+                e => VehicleExitRefused?.Invoke(e));   // touches no replica -- nothing changed, that is the point
             Events.Register<VehicleRecovEvent>(ReplicationIds.EventVehicleRecov, VehicleRecovEvent.TryRead,
                 e => VehicleRecov?.Invoke(e));   // touches no replica -- the rollback targets the driver's LOCAL vehicle only
             Events.Register<PlayerRecovEvent>(ReplicationIds.EventPlayerRecov, PlayerRecovEvent.TryRead,
@@ -1224,8 +1346,8 @@ namespace UnturnedGodot.Net
         public bool SendUpgradeSkill(byte speciality, byte index)
             => SendCommand(ReplicationIds.CommandUpgradeSkill, new UpgradeSkillCommand { Speciality = speciality, Index = index }.Write);
 
-        public bool SendPlaceDeployable(ushort defId, Vector3 pos, float yawDegrees, byte page = 255, byte x = 0, byte y = 0)
-            => SendCommand(ReplicationIds.CommandPlaceDeployable, new PlaceDeployableCommand { DefId = defId, Pos = pos, YawDegrees = yawDegrees, Page = page, X = x, Y = y }.Write);
+        public bool SendPlaceDeployable(ushort defId, Vector3 pos, float yawDegrees, byte page = 255, byte x = 0, byte y = 0, uint targetId = 0, bool mountUp = false)
+            => SendCommand(ReplicationIds.CommandPlaceDeployable, new PlaceDeployableCommand { DefId = defId, Pos = pos, YawDegrees = yawDegrees, Page = page, X = x, Y = y, TargetId = targetId, MountUp = mountUp }.Write);
 
         public bool SendSalvageDeployable(uint netId)
             => SendCommand(ReplicationIds.CommandSalvageDeployable, new SalvageDeployableCommand { NetId = netId }.Write);
@@ -1250,6 +1372,22 @@ namespace UnturnedGodot.Net
 
         public bool SendToggleDeployable(uint netId, bool on)
             => SendCommand(ReplicationIds.CommandToggleDeployable, new ToggleDeployableCommand { NetId = netId, On = on }.Write);
+
+        /// <summary>v56: run an item pipe. <paramref name="path"/> is the route nodes BETWEEN the two ports (world
+        /// points), at most ItemPipeRules.MaxNodes; the committed pipe renders when PipeConnected echoes back.</summary>
+        public bool SendConnectPipe(uint srcId, byte srcPort, uint dstId, byte dstPort, Vector3[] path)
+            => SendCommand(ReplicationIds.CommandConnectPipe,
+                           new ConnectPipeCommand { SrcId = srcId, SrcPort = srcPort, DstId = dstId, DstPort = dstPort, Path = path ?? System.Array.Empty<Vector3>() }.Write,
+                           bufferSize: 64 + 16 * ((path?.Length ?? 0) + 1));
+
+        public bool SendRemovePipe(uint pipeId)
+            => SendCommand(ReplicationIds.CommandRemovePipe, new RemovePipeCommand { PipeId = pipeId }.Write);
+
+        public bool SendConfigureItemDevice(uint netId, ItemDeviceConfig cfg)
+            => SendCommand(ReplicationIds.CommandConfigureItemDevice, new ConfigureItemDeviceCommand
+               {
+                   NetId = netId, Mode = (byte)cfg.Mode, W0 = cfg.Weights[0], W1 = cfg.Weights[1], W2 = cfg.Weights[2], Rate = cfg.Rate,
+               }.Write);
 
         public bool SendMoveItem(byte page0, byte x0, byte y0, byte page1, byte x1, byte y1, byte rot1)
             => SendCommand(ReplicationIds.CommandMoveItem, new MoveItemCommand { Page0 = page0, X0 = x0, Y0 = y0, Page1 = page1, X1 = x1, Y1 = y1, Rot1 = rot1 }.Write);
@@ -1293,6 +1431,10 @@ namespace UnturnedGodot.Net
 
         public bool SendFitAttachment(byte page, byte x, byte y, ushort id)
             => SendCommand(ReplicationIds.CommandFitAttachment, new FitAttachmentCommand { Page = page, X = x, Y = y, Id = id }.Write);
+
+        /// <summary>v56 durability: report uses of the weapon at (page,x,y). See ReplicationIds.CommandWeaponUse.</summary>
+        public bool SendWeaponUse(byte page, byte x, byte y, ushort id, byte uses)
+            => SendCommand(ReplicationIds.CommandWeaponUse, new WeaponUseCommand { Page = page, X = x, Y = y, Id = id, Uses = uses }.Write);
 
         /// <summary>Tell the server the gun state the client owns for the item at (page,x,y). Coalesced by the
         /// caller -- SaveGunState runs on every shot, and one reliable-ordered datagram per shot is the
@@ -1481,7 +1623,7 @@ namespace UnturnedGodot.Net
         /// recovAck echoes the last PlayerRecovEvent counter received (0 = none yet). Returns the seq
         /// (0 = not connected, nothing sent).</summary>
         public ushort SendPlayerState(Vector3 pos, float yawDegrees, float pitchDegrees, Vector3 velocity,
-                                      byte buttons, bool grounded, byte recovAck)
+                                      byte buttons, bool grounded, byte recovAck, ushort heldItemId = 0)
         {
             if (Session.State != NetSessionState.Connected) return 0;
             if (++_playerStateSeq == 0) _playerStateSeq = 1;
@@ -1489,7 +1631,7 @@ namespace UnturnedGodot.Net
             {
                 Seq = _playerStateSeq, RecovAck = recovAck,
                 Pos = pos, YawDegrees = yawDegrees, PitchDegrees = pitchDegrees,
-                LinVel = velocity, Buttons = buttons, Grounded = grounded,
+                LinVel = velocity, Buttons = buttons, Grounded = grounded, HeldItemId = heldItemId,
             };
             // v10 (mp-event-coalesce): fold the whole pending combat ring in, oldest-first. The ring array
             // is shared by reference (Write consumes only the first EventCount entries synchronously here) so

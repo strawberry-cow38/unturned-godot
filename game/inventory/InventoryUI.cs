@@ -308,6 +308,7 @@ void fragment() {
                 if (BlueprintRegistry.IsRecolour(bp)) continue;         // skip the 126 dye repaints
                 if (!Crafting.HasStations(bp, stations)) continue;      // only if the recipe's workbench/station is satisfied (in range + LOS)
                 if (!Crafting.MeetsSkill(bp, Player?.Skills)) continue;
+                if (Player != null && !Player.KnowsBlueprint(bp)) continue;   // an unknown blueprint is never a quick craft (v55)
                 show.Add(bp);
                 if (show.Count >= QUICK_MAX) break;
             }
@@ -462,6 +463,7 @@ void fragment() {
         public bool DebugQuickAction(byte page, byte x, byte y) => QuickAction(page, x, y);
         // demo/verify: advance the held-item rotation one step and report it (proves 4 states, not a toggle)
         public int DebugCycleRot() { _dragRot = (byte)((_dragRot + 1) % 4); return _dragRot; }
+        public byte DebugDragRot => _dragRot;
         // #9 seam: headless can't hold Ctrl and click, so drive the Ctrl+LMB branch (drop from own pages / take from AREA)
         // directly. Ctrl+RMB is already covered by DebugQuickAction, which is the same QuickAction the RMB branch calls.
         public bool DebugCtrlGrab(byte page, byte x, byte y) => CtrlGrab(page, x, y);
@@ -877,6 +879,15 @@ void fragment() {
                 PlayInventoryAudio();   // #4: source plays inventory audio on rotate
                 GetViewport().SetInputAsHandled();
             }
+            // U / R OVER AN ITEM (strawberry 2026-10-04): jump to the crafting menu showing what that item is USED in, or
+            // what MAKES it. After the drag-rotate branch on purpose -- carrying something, R still turns it; empty-handed
+            // over an item it looks the item up. Nothing under the cursor -> not handled, and the key goes where it went.
+            else if (!_dragging && (Keybinds.JustPressed(GameAction.ItemUses, e) || Keybinds.JustPressed(GameAction.ItemRecipes, e))
+                     && LookupHovered(Keybinds.JustPressed(GameAction.ItemUses, e) ? CraftingMenu.ItemLookup.Uses : CraftingMenu.ItemLookup.Recipes,
+                                      GetViewport().GetMousePosition()))
+            {
+                GetViewport().SetInputAsHandled();
+            }
             else if (Keybinds.IsDown(e) && _selPanel != null && Keybinds.HotbarSlot(e) is int hbNum && hbNum >= 3)
             {
                 // RMB'd an item (its selection panel is open) + a hotbar 3-10 control -> BIND it to equip this item (master).
@@ -886,6 +897,26 @@ void fragment() {
                 GetViewport().SetInputAsHandled();
             }
         }
+
+        /// <summary>The item under `global` -- a grid cell, a hand slot, or a worn clothing slot -- handed to the crafting
+        /// menu as a lookup. False when the point is over no item, so the caller leaves the key alone.</summary>
+        bool LookupHovered(CraftingMenu.ItemLookup mode, Vector2 global)
+        {
+            if (Player == null) return false;
+            ushort id = 0;
+            if (PointToCell(global, out byte page, out byte cx, out byte cy, out _, out _))
+            {
+                byte idx = Inv.items[page].getIndex(cx, cy);
+                if (idx != byte.MaxValue) id = Inv.items[page].getItem(idx).item?.id ?? 0;
+            }
+            else if (PointToClothSlot(global, out int ci)) id = _clothing[ci].worn()?.id ?? 0;
+            if (id == 0) return false;
+            CloseSelection();
+            Player.ShowCraftingLookup(mode, id);
+            return true;
+        }
+        /// <summary>Test seam: U / R as if the cursor were at `global` -- the same resolve-and-switch the key runs.</summary>
+        public bool DebugLookupAt(CraftingMenu.ItemLookup mode, Vector2 global) => LookupHovered(mode, global);
 
         bool PointToHeaderIcon(Vector2 global, out EItemType type, out Control icon)
         {
@@ -2041,6 +2072,20 @@ void fragment() {
             }
             // a FOOD item shows its CONDITION (freshness) as a % coloured red->yellow->green (source getQualityColor);
             // under the sick threshold it's flagged spoiled -- eating it feeds you less + raises infection (FoodSpoil).
+            // v56: the same line for an item with DURABILITY, with what its condition costs you
+            if (jar.item != null && Durability.HasCondition(asset))
+            {
+                int q = jar.item.quality;
+                var kind = Durability.KindOf(asset);
+                string tag = q == 0 ? (kind == Durability.Kind.Clothing ? "  ·  BROKEN: no protection" : "  ·  BROKEN: unusable")
+                           : q < 50 && (kind == Durability.Kind.Gun) ? "  ·  worn: kicks, spreads, hits softer"
+                           : q < 50 && (kind == Durability.Kind.Melee) ? "  ·  worn: hits softer"
+                           : q < 100 && kind == Durability.Kind.Clothing ? $"  ·  protects at {q}%" : "";
+                var dl = new Label { Text = $"Condition: {q}%{tag}", Position = new Vector2(228, 120), Size = new Vector2(258, 22) };
+                dl.AddThemeColorOverride("font_color", (q == 0 ? new Color(0.85f, 0.2f, 0.18f) : ItemTool.QualityColor(q / 100f)).Lerp(Colors.White, 0.3f));
+                dl.AddThemeFontSizeOverride("font_size", UITheme.FontBody);
+                panel.AddChild(dl);
+            }
             if (asset.type == EItemType.FOOD && jar.item != null)
             {
                 int q = jar.item.quality;
@@ -2083,6 +2128,9 @@ void fragment() {
                     AddActionButton(panel, "Equip", new Vector2(228, by), HandDispatchSelected);
                 by += 44;
             }
+            // A SCHEMATIC: using it teaches the locked recipes that name it (a blueprint's `item:` unlock), and spends one.
+            if (PlayerController.TeachesBlueprint(asset.id))
+            { AddActionButton(panel, "Learn", new Vector2(228, by), LearnSelected); by += 44; }
             if (asset.IsFuelContainer)   // a gas can gets an extra "Empty" action -> dump its fuel (master)
             { AddActionButton(panel, "Empty", new Vector2(228, by), EmptyFuelSelected); by += 44; }
             // OWN pages only: a bottle in the open crate or on the ground is not yours to sip from, so it does not
@@ -2515,6 +2563,27 @@ void fragment() {
         }
 
         // Use a consumable: apply its effects to the player's vitals, then consume the item
+        /// <summary>The Learn button. The server teaches and spends one (it rides ConsumeCommand, which recognises a
+        /// teaching item before it asks whether the thing is edible); with no server at all it is learned locally. An
+        /// item that teaches nothing NEW is refused and kept -- reading a manual twice should not eat it.</summary>
+        void LearnSelected()
+        {
+            var pg = Inv.items[_selPage];
+            byte idx = pg.getIndex(_selX, _selY);
+            if (idx == byte.MaxValue) return;
+            var jar = pg.getItem(idx);
+            if (Player != null && Player.RequestConsume(_selPage, _selX, _selY)) { }   // the server teaches; the echo spends it
+            else if (Player != null && jar.item != null)
+            {
+                int n = Player.LearnFromItemLocal(jar.item.id);
+                if (n > 0) { if (jar.item.amount > 1) jar.item.amount--; else pg.removeItem(idx); }
+                else if (n == 0) HUD.Notice("You already know everything this teaches");
+            }
+            CloseSelection();
+            Refresh();
+        }
+        public void DebugLearn(byte page, byte x, byte y) { _selPage = page; _selX = x; _selY = y; LearnSelected(); }
+
         void UseSelected()
         {
             var pg = Inv.items[_selPage];
@@ -3432,7 +3501,7 @@ void fragment() {
             return _snowTex;
         }
 
-        Control MakeTile(ItemJar jar, int w, int h, int rotParam = -1)
+        Control MakeTile(ItemJar jar, int w, int h, int rotParam = -1, bool conditionChip = true)
         {
             var asset = jar.GetAsset();
             bool rotated = ((rotParam >= 0 ? rotParam : jar.rot) % 2) == 1;   // drawn rotated? (the drag preview passes the live _dragRot)
@@ -3546,17 +3615,22 @@ void fragment() {
                 }
             }
 
-            if (asset?.type == EItemType.FOOD && jar.item != null)   // FOOD shows its CONDITION as a coloured % in the bottom-right corner (source SleekItem quality box: red->yellow->green)
+            // FOOD shows its CONDITION as a coloured % in the bottom-right corner (source SleekItem quality box: red->yellow->green).
+            // v56: so does everything with DURABILITY (weapons, clothing, tools) -- the same chip, "like how food has durability";
+            // at 0 it reads BROKEN instead of 0%.
+            // (not on a worn garment's tiny header icon: its bar already prints the % beside it)
+            if (jar.item != null && (asset?.type == EItemType.FOOD || (Durability.HasCondition(asset) && conditionChip)))
             {
                 int q = jar.item.quality;
-                var qcol = ItemTool.QualityColor(q / 100f);
+                bool broken = q == 0 && Durability.HasCondition(asset);
+                var qcol = broken ? new Color(0.85f, 0.2f, 0.18f) : ItemTool.QualityColor(q / 100f);
                 var bs = new StyleBoxFlat { BgColor = UITheme.Chip };
                 bs.SetCornerRadiusAll(3); bs.BorderColor = qcol; bs.SetBorderWidthAll(1);   // dark chip, outlined in the condition colour so it reads on any icon
                 bs.ContentMarginLeft = 4; bs.ContentMarginRight = 4; bs.ContentMarginTop = 0; bs.ContentMarginBottom = 0;   // even breathing room L/R so the text sits centred in the card
                 // A PanelContainer SIZES ITSELF to the label, so the chip always wraps "{q}%" exactly (5% / 85% / 100%) and
                 // the text is centred inside its card by construction. The old fixed-width Panel let a wide "100%" spill past
                 // the card's edges no matter the width I picked (master: "the %s werent centered in their mini card").
-                var lbl = new Label { Text = $"{q}%", HorizontalAlignment = HorizontalAlignment.Center, MouseFilter = Control.MouseFilterEnum.Ignore };
+                var lbl = new Label { Text = broken ? "BROKEN" : $"{q}%", HorizontalAlignment = HorizontalAlignment.Center, MouseFilter = Control.MouseFilterEnum.Ignore };
                 lbl.AddThemeColorOverride("font_color", qcol.Lerp(Colors.White, 0.45f));   // brighten the text so even the dark-red (spoiled) end reads on the chip; the border keeps the pure hue
                 lbl.AddThemeFontSizeOverride("font_size", UITheme.FontSmall);
                 var card = new PanelContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
@@ -3623,7 +3697,7 @@ void fragment() {
 
             if (worn != null)
             {
-                var icon = MakeTile(new ItemJar(worn), HDRH - 12, HDRH - 12);
+                var icon = MakeTile(new ItemJar(worn), HDRH - 12, HDRH - 12, conditionChip: false);   // the bar prints the % itself
                 icon.Position = new Vector2(6, 6);
                 icon.MouseFilter = Control.MouseFilterEnum.Ignore;
                 bar.AddChild(icon);
@@ -3641,7 +3715,7 @@ void fragment() {
 
             if (worn != null)
             {
-                var pct = new Label { Text = $"{worn.quality}%", Position = new Vector2(width - 116, 0),
+                var pct = new Label { Text = worn.quality == 0 ? "BROKEN" : $"{worn.quality}%", Position = new Vector2(width - 116, 0),
                                       Size = new Vector2(94, HDRH), HorizontalAlignment = HorizontalAlignment.Right,
                                       VerticalAlignment = VerticalAlignment.Center,
                                       MouseFilter = Control.MouseFilterEnum.Ignore };

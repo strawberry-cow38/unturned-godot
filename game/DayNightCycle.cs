@@ -255,7 +255,7 @@ void sky() {
                     }
                 }
                 else Apply();
-                DriveStreetlights((float)delta); DriveMoteFade();
+                DriveStreetlights((float)delta);
             }
             DriveBlackout();   // gameplay (sets the grid flag) -> runs even headless/server, unlike the visual sweep
         }
@@ -358,25 +358,6 @@ void sky() {
             return _mainsCached;
         }
 
-
-        // Mote opacity tracks the clock CONTINUOUSLY (unlike the lamps, which are a hard on/off edge), so this
-        // cannot ride the edge-triggered sweep above. Stepped: only re-sweeps when the fade actually moved a
-        // couple of percent, which is ~50 sweeps spread across each dusk/dawn rather than one per frame.
-        float _lastMoteFade = -1f;
-        void DriveMoteFade()
-        {
-            var tree = GetTree();
-            if (tree == null) return;
-            float a = StreetLight.MoteFadeFor(Time);
-            if (_lastMoteFade >= 0f && Mathf.Abs(a - _lastMoteFade) < 0.02f) return;
-            _lastMoteFade = a;
-            foreach (Node n in tree.GetNodesInGroup("streetlights"))
-                if (n is StreetLight sl) sl.SetMoteFade(a);
-            // Vehicle headlight beams ride the SAME curve and the same stepped sweep -- strawberry asked for the
-            // identical fade in/out timings, so they read one value rather than each deriving its own.
-            foreach (Node n in tree.GetNodesInGroup("vehicles"))
-                if (n is Vehicle vh) vh.SetHeadlightMoteFade(a);
-        }
 
         // Sun sits at the horizon at t=0.25 (dawn) / 0.75 (dusk); lamps are lit while it's below, with a small dusk margin.
         public static bool IsNightTime(float t) => t < 0.26f || t > 0.74f;

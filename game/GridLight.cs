@@ -75,8 +75,8 @@ namespace UnturnedGodot
 
         protected abstract void BuildVisual();                 // build the fixture's own emitters (spot/lens/cone, or a lamp bulb)
         protected abstract void ApplyLit(bool lit);            // toggle those emitters on/off (the flicker drives this)
-        protected virtual void PostRefresh() { }               // StreetLight folds in its motes here
-        protected virtual void PrimeFlicker() { }              // StreetLight keeps its motes emitting through a flicker
+        protected virtual void PostRefresh() { }               // a subclass's own follow-up to a lit-state change (none use it since the streetlight motes went, 2026-10-04)
+        protected virtual void PrimeFlicker() { }              // a subclass's prep before a flicker (was the streetlight motes)
 
         /// <summary>Does the MUNICIPAL MAINS drive this fixture? A lamp owned by a Deployable does not join the
         /// DayNightCycle sweep and does not seed itself from PowerNet.MainsLive: its power comes from its own

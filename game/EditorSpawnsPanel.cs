@@ -67,16 +67,34 @@ namespace UnturnedGodot
             {
                 var h = new HBoxContainer();
                 var lbl = new Label { Text = _spawns.TypeLabel(_spawns.TypeIdx) };
+                HSlider cond = null; Label condLbl = null;
+                void Picked() { lbl.Text = _spawns.TypeLabel(_spawns.TypeIdx); if (cond != null) { cond.SetValueNoSignal(_spawns.LootBias * 100f); condLbl.Text = CondText(cond.Value); } }
                 var prev = new Button { Text = "◀" };
-                prev.Pressed += () => { _spawns.SetType((_spawns.TypeIdx - 1 + _spawns.NumTypes) % _spawns.NumTypes); lbl.Text = _spawns.TypeLabel(_spawns.TypeIdx); };
+                prev.Pressed += () => { _spawns.SetType((_spawns.TypeIdx - 1 + _spawns.NumTypes) % _spawns.NumTypes); Picked(); };
                 var next = new Button { Text = "▶" };
-                next.Pressed += () => { _spawns.SetType((_spawns.TypeIdx + 1) % _spawns.NumTypes); lbl.Text = _spawns.TypeLabel(_spawns.TypeIdx); };
+                next.Pressed += () => { _spawns.SetType((_spawns.TypeIdx + 1) % _spawns.NumTypes); Picked(); };
                 h.AddChild(new Label { Text = "Type:" }); h.AddChild(prev); h.AddChild(lbl); h.AddChild(next);
                 _dynamic.AddChild(h);
+                if (_spawns.IsItemCategory)
+                {
+                    // v56 DURABILITY: this TABLE's loot condition, worse <-> better (strawberry: "some way to weight
+                    // condition towards better/worse in the editors spawn tables"). Per table, so it follows the picker;
+                    // it covers the table's shelves too, not just the points placed here.
+                    var v = new VBoxContainer();
+                    condLbl = new Label { Text = CondText(_spawns.LootBias * 100f) };
+                    cond = new HSlider { MinValue = -100, MaxValue = 100, Step = 5, Value = _spawns.LootBias * 100f,
+                                         CustomMinimumSize = new Vector2(190, 0), FocusMode = FocusModeEnum.None,
+                                         TooltipText = "How worn this table's loot spawns: left = mostly beat-up, right = mostly near-new. Middle = even." };
+                    cond.ValueChanged += x => { _spawns.LootBias = (float)x / 100f; condLbl.Text = CondText(x); };
+                    v.AddChild(condLbl); v.AddChild(cond);
+                    _dynamic.AddChild(v);
+                }
             }
             _dynamic.AddChild(Slider("Facing", 0, 360, _spawns.RotationDeg, v => _spawns.RotationDeg = (float)v));
             _dynamic.AddChild(Slider("Remove radius", 2, 30, _spawns.RemoveRadius, v => _spawns.RemoveRadius = (int)v));
         }
+
+        static string CondText(double v) => v > 2 ? $"Loot condition: better (+{v:0})" : v < -2 ? $"Loot condition: worse ({v:0})" : "Loot condition: even";
 
         static Label Dim(string t)
         {

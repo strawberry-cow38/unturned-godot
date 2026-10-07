@@ -122,6 +122,9 @@ namespace UnturnedGodot
         /// <summary>Does this def relay a data stream over the air rather than down a wire? The transmitter takes
         /// a signal in and broadcasts it on its code; the receiver picks up whatever is broadcast on the same
         /// code and puts it out. Both need POWER -- an unpowered radio is a box (strawberry 2026-09-14).</summary>
+        /// <summary>A fuel-burning generator: has a tank and is not a battery. The ONLY deployable that smokes when hurt,
+        /// catches fire at 0 HP and explodes (strawberry 2026-10-04) -- see Deployable.Burns.</summary>
+        public bool IsGenerator => Fuel > 0f && !IsBattery;
         public bool IsDataTransmitter => Id == 9213;
         public bool IsDataReceiver => Id == 9214;
         public bool IsDataRadio => IsDataTransmitter || IsDataReceiver;
@@ -129,12 +132,23 @@ namespace UnturnedGodot
         public struct Port { public PortKind Kind; public Vector3 Pos; public float Watts; public SwitchRole Role; }   // Output.Watts = produced (when source on); Consumer.Watts = drawn; Passthrough.Watts unused (= input - consumers)
         public Port[] Ports = System.Array.Empty<Port>();
 
+        // --- ITEM ports (v56 industrial pipes, strawberry 2026-10-06). A SEPARATE array from Ports on purpose:
+        //     Ports go to the power solver, these never do, and a pipe's port byte indexes THIS array. Pos is the
+        //     same flat authored frame as Ports, so the cubes stand up with the model. In = items arrive, Out =
+        //     items leave; a pipe always runs Out -> In (ItemPipeRules). ---
+        public struct ItemPort { public ItemPortDir Dir; public Vector3 Pos; }
+        public ItemPort[] ItemPorts = System.Array.Empty<ItemPort>();
+        /// <summary>What the item router treats this as -- carried onto the net def (DeployableNetSchema).</summary>
+        public ItemDeviceKind ItemDevice = ItemDeviceKind.None;
+        /// <summary>A splitter or a mover: F opens the config panel instead of doing nothing.</summary>
+        public bool IsItemConfigurable => ItemDevice == ItemDeviceKind.Splitter || ItemDevice == ItemDeviceKind.Mover;
+
         // --- lamps a CONSUMER lights up when powered (src InteractableSpot: the "Spots" node of Light children,
         //     toggled on when isWired && isPowered). Pos/Dir are in the flat authored frame (stand up with the model);
         //     Godot SpotAngle is the HALF-angle so it's src m_SpotAngle/2. ---
         // AngleAtten = Godot SpotAngleAttenuation (0 leaves the engine default, a hard rim; the car headlights run
-        // 1.3 for a soft edge). Beam/BeamLength/BeamHalf draw the VISIBLE shaft -- see Deployable.BeamShaft.
-        public struct DeployLight { public bool Spot; public Vector3 Pos; public Vector3 Dir; public float Range; public float AngleDeg; public float Energy; public Color Color; public float AngleAtten; public bool Beam; public float BeamLength; public float BeamHalf; public float BeamHalfV; }
+        // 1.3 for a soft edge). (Beam/BeamLength/BeamHalf drew a visible shaft; removed with it, 2026-10-04.)
+        public struct DeployLight { public bool Spot; public Vector3 Pos; public Vector3 Dir; public float Range; public float AngleDeg; public float Energy; public Color Color; public float AngleAtten; }
         public DeployLight[] Lights = System.Array.Empty<DeployLight>();
         // A REAL FIXTURE instead of a bare Light3D. Non-Generic hands the lamp to LampLight, which already knows how
         // to carve the emitting sub-mesh off each of these housings (the shade's 181-grey texel, the desk head's
@@ -229,29 +243,15 @@ namespace UnturnedGodot
             // glow at the lenses instead of an omnidirectional halo.
             //
             // The THROW is matched to a car headlight, which is the reference master pointed at: SpotRange 45,
-            // SpotAngle 25, SpotAngleAttenuation 1.3, LightEnergy 9 (Vehicle.cs, the "hs" spot). The light reaches
-            // further than the shaft is drawn on purpose, or the air itself looks like it ends.
+            // SpotAngle 25, SpotAngleAttenuation 1.3, LightEnergy 9 (Vehicle.cs, the "hs" spot).
             //
-            // The SHAFTS are 7 m, not the car's 14, and that is the one number that cannot be copied across. A headlight
-            // sits low and throws FLAT down a road, so 14 m of cone hangs in the air the whole way. This fixture is
-            // 1.5 m up and aimed ~15 deg DOWN, so its axis reaches the floor at about 5.6 m -- drawn at 14 m, two
-            // thirds of the cone is UNDERGROUND and what is left above the surface is a huge flat sheet, not a beam.
-            // 7 m ends the shaft just past where the light lands, and the gradient has it transparent by then anyway.
-            // BeamHalf 0.62 spans BOTH lamp heads (they sit at +-0.48), so one shaft leaves the whole housing rather
-            // than a thin core floating between the lenses.
-            // TWO LIGHTS, ONE PER HEAD, and one shaft each (master 2026-09-07: "is it two spotlights? one for each
-            // head? two faux beams too?" -> "it should be 2 lights not 3").
+            // TWO LIGHTS, ONE PER HEAD (master 2026-09-07: "is it two spotlights? one for each head? two faux beams
+            // too?" -> "it should be 2 lights not 3"). The faux beams themselves were removed 2026-10-04.
             //
             // The src prefab's two POINT bulbs are GONE, not converted. They were a separate near-field glow sitting
             // just in front of the lenses, which is what made the count three; with a real spot now throwing out of
             // each head the glow is doing nothing the throw does not already do, and master asked for two.
             //
-            // Each shaft is drawn per head rather than merged into one volume the way HeadlightBeam does. That merge
-            // exists because a car's lamps sit ~1.5 m apart with dark grille between them, so two crossing cones make
-            // a distinct lens-shaped wedge in the middle of the bonnet ("weird overlap"). These heads are 0.96 m
-            // apart throwing 6.5 m wide cones -- near enough concentric that the overlap has no separate silhouette
-            // to read as an artefact, and the brighter core where they cross is what two lamps pointed the same way
-            // actually do.
             // MEASURED off Spotlight_deploy.obj rather than guessed (master 2026-09-07: "the faux cone isnt matching
             // the lamps very well"). The mesh welds into 13 components; two of them are the heads --
             //     x[-0.812,-0.168] y[-0.380,-0.140] z[-1.568,-1.138]   mid (-0.490,-0.260,-1.353)
@@ -259,14 +259,9 @@ namespace UnturnedGodot
             // -- each a 0.644 x 0.240 x 0.429 box (the remaining ten are the 0.046 bulb tubes inside them, six per
             // head). The beam runs along flat -Y, so the face light leaves is y=-0.380 and the aperture it leaves
             // through is the head's X by Z: half-extents 0.322 WIDE by 0.215 TALL.
-            //
-            // I had the lamp 0.17 below the head and the shaft a 0.34 SQUARE that BeamMesh then rounded to a circle
-            // by 38% of the throw -- a round cone out of a wide flat rectangle, sitting under the thing emitting it.
             Lights = new[] {
-                new DeployLight { Spot = true, Pos = new Vector3(-0.490f, -0.400f, -1.353f), Dir = SpotBeamDir, Range = 45f, AngleDeg = 25f, AngleAtten = 1.3f, Energy = 9f, Color = LampWarm,
-                                  Beam = true, BeamLength = 7f, BeamHalf = 0.322f, BeamHalfV = 0.215f },
-                new DeployLight { Spot = true, Pos = new Vector3( 0.490f, -0.400f, -1.353f), Dir = SpotBeamDir, Range = 45f, AngleDeg = 25f, AngleAtten = 1.3f, Energy = 9f, Color = LampWarm,
-                                  Beam = true, BeamLength = 7f, BeamHalf = 0.322f, BeamHalfV = 0.215f },
+                new DeployLight { Spot = true, Pos = new Vector3(-0.490f, -0.400f, -1.353f), Dir = SpotBeamDir, Range = 45f, AngleDeg = 25f, AngleAtten = 1.3f, Energy = 9f, Color = LampWarm },
+                new DeployLight { Spot = true, Pos = new Vector3( 0.490f, -0.400f, -1.353f), Dir = SpotBeamDir, Range = 45f, AngleDeg = 25f, AngleAtten = 1.3f, Energy = 9f, Color = LampWarm },
             },
         };
 
@@ -311,6 +306,63 @@ namespace UnturnedGodot
             };
         }
         public static readonly DeployableDef Combiner2 = MakeCombiner(9104, "2-Way Combiner", 0.55f, new[] { -0.14f, 0.14f });
+
+        // ---- INDUSTRIAL ITEM PIPES (strawberry 2026-10-06: "storage adapter: connects to any storage container,
+        //      has a pipe i/o input and output. 1-3 splitter and 3-1 industrial pipe combiners. item mover
+        //      (industrial pipe i/o input, output, power i/o input, passthrough.)") ----
+        //
+        // Grey ProcBoxes, the same placeholder the power splitters use ("a basic gray box will do"), until real
+        // models exist. 9215-9219: the next free run in our 9xxx block (9213/9214 are the data radios; 9148 is
+        // spoken for elsewhere and deliberately skipped). 9215 itself is the Industrial Pipe Tool -- a ToolDef,
+        // not a deployable -- so the defs start at 9216.
+        //
+        // PORT ORDER IS THE WIRE: a pipe end is (NetId, index into ItemPorts), so these arrays are append-only once
+        // a world has pipes in it -- reordering them reconnects every saved pipe to a different socket.
+        static ItemPort ItemIn(float x, float y, float z) => new ItemPort { Dir = ItemPortDir.In, Pos = new Vector3(x, y, z) };
+        static ItemPort ItemOut(float x, float y, float z) => new ItemPort { Dir = ItemPortDir.Out, Pos = new Vector3(x, y, z) };
+
+        // The adapter is the ONLY device that touches a container ("the adapter should snap to the storage
+        // container. has to snap or it wont place -red."). Its BACK face goes against the box; both sockets sit on
+        // the front face, the one you can reach. Thin (0.24 deep) so it reads as bolted on, not stood beside.
+        public static readonly DeployableDef StorageAdapter = new()
+        {
+            Id = 9216, Name = "Storage Adapter", ProcBox = true, PlaceSound = "metalplacement",
+            Mount = BarricadeMount.Container, ItemDevice = ItemDeviceKind.Adapter,
+            Size = new Vector3(0.5f, 0.24f, 0.5f), Offset = 0.12f, Radius = 0.2f, Range = 4f, Health = 150f,
+            // In = items go INTO the container; Out = items come OUT of it. Y = +0.12 is the front face, and Y
+            // dominating X is what makes the in/out arrows point out of that face rather than sideways.
+            ItemPorts = new[] { ItemIn(-0.1f, 0.12f, 0f), ItemOut(0.1f, 0.12f, 0f) },
+        };
+
+        // Port layout copies the 3-way power splitter's: the input on the back, the three outputs fanned across
+        // the front, so a player who has wired one reads the other without being told.
+        public static readonly DeployableDef ItemSplitter = new()
+        {
+            Id = 9217, Name = "Item Splitter", ProcBox = true, PlaceSound = "metalplacement", ItemDevice = ItemDeviceKind.Splitter,
+            Size = new Vector3(0.80f, 0.36f, 0.5f), Offset = 0.7f, Radius = 0.35f, Range = 4f, Health = 200f,
+            ItemPorts = new[] { ItemIn(0f, -0.18f, 0f), ItemOut(-0.26f, 0.18f, 0f), ItemOut(0f, 0.18f, 0f), ItemOut(0.26f, 0.18f, 0f) },
+        };
+
+        public static readonly DeployableDef ItemCombiner = new()
+        {
+            Id = 9218, Name = "Item Combiner", ProcBox = true, PlaceSound = "metalplacement", ItemDevice = ItemDeviceKind.Combiner,
+            Size = new Vector3(0.80f, 0.36f, 0.5f), Offset = 0.7f, Radius = 0.35f, Range = 4f, Health = 200f,
+            ItemPorts = new[] { ItemIn(-0.26f, -0.18f, 0f), ItemIn(0f, -0.18f, 0f), ItemIn(0.26f, -0.18f, 0f), ItemOut(0f, 0.18f, 0f) },
+        };
+
+        // "only a mover can move". Items in one END and out the other (so the flow reads left-to-right along the
+        // box), power on the back like every other consumer: a 100 W input ("100w fine") and a passthrough, so a
+        // row of movers daisy-chains off one feed the way a row of lamps does.
+        public static readonly DeployableDef ItemMover = new()
+        {
+            Id = 9219, Name = "Item Mover", ProcBox = true, PlaceSound = "metalplacement", ItemDevice = ItemDeviceKind.Mover,
+            Size = new Vector3(0.9f, 0.4f, 0.45f), Offset = 0.7f, Radius = 0.4f, Range = 4f, Health = 250f,
+            Ports = new[] {
+                new Port { Kind = PortKind.Consumer,    Pos = new Vector3(-0.15f, -0.2f, 0f), Watts = 100f },
+                new Port { Kind = PortKind.Passthrough, Pos = new Vector3( 0.15f, -0.2f, 0f), Watts = 0f },
+            },
+            ItemPorts = new[] { ItemIn(-0.45f, 0f, 0f), ItemOut(0.45f, 0f, 0f) },
+        };
 
         // A procedural stand-in for a WALL barricade -- a thin metal plate that mounts flush + upright on a structure
         // wall, facing out (BarricadeMount.Wall). Real Unturned ships this as an ItemBarricadeAsset with a ripped mesh;
@@ -772,7 +824,7 @@ namespace UnturnedGodot
             FluidTank, WaterSource, FluidSplitter, FluidCombiner, FluidPumpDef, FluidValve, Refinery, Sluice, WaterInlet, WaterOutlet, Purifier, Refrigerator, Landmine, Spike, Charge, Barbedwire,
             DoorBirch, DoorMaple, DoorPine, GateBirch, GateMaple, GatePine, HatchBirch, HatchMaple, HatchPine,
             DoorMetal, GateMetal, HatchMetal, Workbench, Campfire, ChemistryLab, Kiln, Loom, OvenBrick, OvenElectric, SewingTable, SpinningWheel, WindowBarricade, WindowBars, WindowPlate,
-            CeilingBulbLamp, CeilingConeLamp, CeilingDomeLamp };
+            CeilingBulbLamp, CeilingConeLamp, CeilingDomeLamp, StorageAdapter, ItemSplitter, ItemCombiner, ItemMover };
         /// <summary>The deployable a WORLD PROP of this name IS, or null for an ordinary prop (master 2026-09-07:
         /// "change the world props to be the deployable"). Derived from the defs themselves -- Model plus a real
         /// LampKind -- rather than a second name list beside LampLight.KindFor, which is the table that would drift.
@@ -825,6 +877,10 @@ namespace UnturnedGodot
             9102 => Splitter3,
             9103 => Splitter4,
             9104 => Combiner2,
+            9216 => StorageAdapter,
+            9217 => ItemSplitter,
+            9218 => ItemCombiner,
+            9219 => ItemMover,
             9105 => Switch,
             1450 => Battery,
             9106 => WindTurbine,

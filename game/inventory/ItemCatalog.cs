@@ -13,6 +13,26 @@ namespace SDG.Unturned
         {
             Assets.clear();
             LoadCatalogFile();
+            // New MAC-10 identity; mutate TSV assets to retain their unique GUIDs and names.
+            // Gameplay is provisionally the Bulldog/Uzi baseline, not real-performance tuning.
+            {
+                var gun = Assets.find(9145);
+                if (gun != null)
+                {
+                    gun.gunName = "mac10";
+                    gun.gunAmmoMax = 30;
+                    gun.gunCaliber = 205;
+                    gun.slot = ESlotType.SECONDARY;
+                }
+                var mag = Assets.find(9146);
+                if (mag != null)
+                {
+                    mag.magCapacity = 30;
+                    mag.magCaliber = 205;
+                    mag.magRound = ".45 ACP";
+                    mag.ammoType = "FMJ";
+                }
+            }
             //  id   name            sx sy  type                 rarity               storage   description (real, from English.dat)
             // ⚠⚠ THESE Add() ROWS RE-SPECIFY THE NAME AND RUN AFTER LoadCatalogFile(), SO THEY WIN. Renaming a gun
             // in items_catalog.tsv alone does NOTHING for any item that also has a hand-tuned row here -- the TSV
@@ -83,6 +103,13 @@ namespace SDG.Unturned
             Add(9212, "Dome Pendant",  2, 2, EItemType.GENERIC, EItemRarity.COMMON,   0, 0, "A wide enamel dish on a ceiling flex. Spreads the light broadly across a room. Ceiling only; wire it into your grid.");
             Add(9121, "Fluid Purifier",   2, 2, EItemType.GENERIC, EItemRarity.RARE,     0, 0, "A powered water purifier. Wire it to power, hose tainted or dirty water into its input, and clean drinkable water comes out. Dead without power.");
             Add(9130, "Refrigerator",     3, 3, EItemType.GENERIC, EItemRarity.RARE,     0, 0, "A powered fridge. Wire it to power -- while powered, [F] opens its storage and the food inside won't spoil. Cut its power and it warms up again.");
+            // INDUSTRIAL ITEM PIPES (strawberry 2026-10-06). Spawn-only for now -- no recipes yet. The tool equips via
+            // ToolDef.ById, the four devices via DeployableDef.ById, the same split the hose tool and fluid gear use.
+            Add(9215, "Industrial Pipe Tool", 1, 1, EItemType.GENERIC, EItemRarity.COMMON, 0, 0, "Runs item pipes. Look at an amber OUT socket and left-click, click to lay bends, then click a violet IN socket to connect. Hold right-click on a piped socket to cut the pipe; tap it to pick the pipe back up and re-route.");
+            Add(9216, "Storage Adapter",      2, 2, EItemType.GENERIC, EItemRarity.UNCOMMON, 0, 0, "Bolts onto the side of any storage container -- it will only place against one. Its OUT socket feeds the container's items into a pipe; its IN socket fills the container from one.");
+            Add(9217, "Item Splitter",        2, 2, EItemType.GENERIC, EItemRarity.UNCOMMON, 0, 0, "One item pipe in, three out. [F] picks how it shares: round-robin, overflow (fill the first, then the next), or weighted. Unconnected outputs are ignored.");
+            Add(9218, "Item Combiner",        2, 2, EItemType.GENERIC, EItemRarity.UNCOMMON, 0, 0, "Three item pipes in, one out. A mover pulling through it takes turns between the connected inputs, skipping any that are empty.");
+            Add(9219, "Item Mover",           2, 2, EItemType.GENERIC, EItemRarity.RARE,     0, 0, "The only thing that moves items through pipes. Wire it to power (100 W) and it pulls from whatever is piped into its input and pushes to whatever is on its output -- up to 32 items a second, set with [F]. Starts from the last slot of the source container; stops if the destination is full.");
             // DOORS -- ids from DeployableDef.WoodDoors (9160-9171), NOT the 9140 block: that is already the
             // Augewehr / Nightraider / .300 Blackout / Heartbreaker magazines, and a duplicate id here does not
             // error, it silently overwrites whichever entry was registered first. deploy.ids_do_not_collide
@@ -663,6 +690,7 @@ namespace SDG.Unturned
                     if (a == null) continue;
                     a.gunName = name; n++;
                     a.gunAmmoMax = d.ParseInt32("Ammo_Max", 30);   // the server's only handle on a gun's real capacity -- see ItemAsset.gunAmmoMax
+                    WireWear(a, d);
                     a.gunCaliber = d.ParseInt32("Caliber", 0);     // ...and on which rounds it accepts -- see ItemAsset.gunCaliber
                     // ...and the caliber SET, retail's own shape (ItemGunAsset: Magazine_Calibers +
                     // Magazine_Caliber_N, else a one-element array holding plain Caliber). Parsed even though no
@@ -803,6 +831,15 @@ namespace SDG.Unturned
 
         // Wire meleeName on the extracted PEI melee items (content/<folder>.dat's ID -> ItemAsset.meleeName) so equipping
         // a knife/axe/bat loads its viewmodel + weapon-specific swings via EquipHeldMelee. Folders from content/melee_list.tsv.
+        /// <summary>v56 DURABILITY: retail ItemWeaponAsset `Durability` (chance per use) and `Wear` (points per loss, at
+        /// least 1) onto the core asset, where the server rolls them (Durability.UseWeapon).</summary>
+        static void WireWear(ItemAsset a, IDatDictionary d)
+        {
+            a.durability = d.ParseFloat("Durability", 0f);
+            byte w = d.ParseUInt8("Wear", 1);
+            a.wear = w < 1 ? (byte)1 : w;
+        }
+
         static void WireExtractedMelee()
         {
             const string ml = "res://content/melee_list.tsv";
@@ -819,7 +856,7 @@ namespace SDG.Unturned
                 try
                 {
                     var d = new DatParser().Parse(System.IO.File.ReadAllText(datPath));
-                    if (ushort.TryParse(d.GetString("ID"), out var id)) { var a = Assets.find(id); if (a != null) { a.meleeName = name; n++; } }
+                    if (ushort.TryParse(d.GetString("ID"), out var id)) { var a = Assets.find(id); if (a != null) { a.meleeName = name; WireWear(a, d); n++; } }
                 }
                 catch { /* skip a malformed .dat */ }
             }

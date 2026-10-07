@@ -477,6 +477,9 @@ namespace UnturnedGodot
             bool syncLoad, string activeHoliday)
         {
             var result = new WorldBuildResult();
+            // v56: PEI's per-loot-table condition bias, set in the editor (EditorSpawns.LootBias). Before ANY loot rolls:
+            // the ground field AND the server's shelves both read it, and this runs on every host that builds the map.
+            SDG.Unturned.LootCondition.Load(EditorSpawns.LootConditionPath("PEI"));
             // The sim spine (SimRoot/SimDriver) now exists in every world: gameplay systems migrate onto it
             // per-phase as their authority split lands (MP_PLAN §2.5); replication registers LAST.
             var sim = new SimDriver();
@@ -2492,10 +2495,7 @@ namespace UnturnedGodot
             }
             NearestFilter.Apply(root);   // Unturned point-filters level/object textures (FilterMode.Point) -- match it scene-wide (crisp pixel look)
             if (curPhase != null) { timings[curPhase] = phaseSw.Elapsed.TotalMilliseconds; loading?.Advance(); }   // record the final phase
-            // CLIENT: hand the cover to the session instead of dropping it -- the world being built is not the
-            // player being in it. Every other mode is done here and finishes as before.
-            if (mode == WorldMode.Client) result.Timings = timings;   // Loading was handed over at creation; only the breakdown is late
-            else loading?.Finish(timings);   // hide the overlay + show the per-category timing breakdown top-left for a few seconds (master)
+            EndLoad(root, mode, loading, timings, result);
             {
                 // Same numbers as the overlay, on stdout -- the overlay is unreadable in a headless/xvfb profiling run,
                 // and Dedicated builds no overlay at all, so this was the one mode whose load cost was invisible.
@@ -2511,9 +2511,31 @@ namespace UnturnedGodot
                 Log.Print($"[loadprof] WORK {sum:F0} ms | YIELD {ysum:F0} ms | WALL {wallSw.Elapsed.TotalMilliseconds:F0} ms   (Ny = ms spent waiting for a drawn frame, NOT that phase's work)");
             }
             // (zombie navmesh bake removed 2026-08-25 -- master: rip out everything zombie)
-            if (mode != WorldMode.Dedicated) ShaderWarm.Begin(root);   // every content shader compiled behind the load, not on its first sight (GPU-timeout class, 2026-09-04)
+            // (the shader warm starts in EndLoad, BEFORE the cover is finished -- see there)
             result.Ready = true;   // async world fully built (terrain..trees) -> the --shot harness can now capture a loaded frame
             return result;
+        }
+
+        /// <summary>THE END OF A WORLD BUILD, in the one order the loading cover needs: start the shader warm, THEN
+        /// finish the cover (strawberry 2026-10-05: "see if u can finally hide this screen within the loading screen.
+        /// its a bunch of our shaders prewarmed").
+        ///
+        /// The cover already knew to wait for the warm (2026-09-10): Finish holds it up while ShaderWarm.Busy. But
+        /// BuildFullWorld called Finish here and only started the warm sixteen lines LATER -- so at Finish, Busy was
+        /// false because the warm had not begun, the cover dropped on the spot, and then the warm put its grid of
+        /// quads 0.6 m in front of the camera on the world you had just walked into. The wait was right and could
+        /// never fire on the path everyone loads through. Its test set Busy before calling Finish, which is the
+        /// one order production never used. One method owns both lines now, so the order is a fact of the code and
+        /// the test calls this, not a copy of it.
+        ///
+        /// CLIENT: the cover is handed to the session instead (the world being built is not the player being in it);
+        /// it finishes when the shell lands, which waits on the same Busy, so starting the warm here is right for it
+        /// too.</summary>
+        internal static void EndLoad(Node root, WorldMode mode, LoadingScreen loading, System.Collections.Generic.Dictionary<string, double> timings, WorldBuildResult result)
+        {
+            if (mode != WorldMode.Dedicated) ShaderWarm.Begin(root);   // every content shader compiled behind the load, not on its first sight (GPU-timeout class, 2026-09-04)
+            if (mode == WorldMode.Client) { if (result != null) result.Timings = timings; }   // Loading was handed over at creation; only the breakdown is late
+            else loading?.Finish(timings);   // hide the overlay + show the per-category timing breakdown top-left for a few seconds (master)
         }
 
         /// <summary>Place the three ported interactables: a door and a bed beside the map's spawn point (F

@@ -44,6 +44,7 @@ namespace UnturnedGodot
         sealed class Av
         {
             public RiggedCharacter Body; public PlayerInventory Inv; public PlayerClothingController Clothing; public ulong AppSig; public int Face = -1;   // v26: the face the puppet wears (profile block)
+            public uint WornCond;        // v56: the packed wear the puppet is currently drawn with
             public float Speed;          // smoothed horizontal glide speed -> idle/walk/run locomotion (the puppet used to be a frozen Idle pose)
             public Nameplate Plate;      // name + profile picture over the head
             public string PlateName;     // what the plate currently reads -- rebuild only on a change
@@ -275,7 +276,15 @@ namespace UnturnedGodot
                 if (Client.CombatState.TryGet(e.OwnerPlayerId, out var ce))
                 {
                     ulong sig = AppSig(ce);
-                    if (sig != av.AppSig) { Dress(av, ce); av.AppSig = sig; }
+                    if (sig != av.AppSig) { Dress(av, ce); av.AppSig = sig; av.WornCond = ce.WornCond; }
+                    else if (ce.WornCond != av.WornCond)
+                    {
+                        // v56: the outfit is the same, only its WEAR moved -- re-read the conditions and let the
+                        // clothing controller push a uniform, rather than re-dressing (which reloads every texture)
+                        ApplyWorn(av.Inv, ce);
+                        av.Clothing.ReconcileTick();
+                        av.WornCond = ce.WornCond;
+                    }
                 }
 
                 // WHO THIS IS. Name + profile picture from the replicated profile block; the picture's bytes
@@ -430,13 +439,15 @@ namespace UnturnedGodot
         /// because a puppet only spawns for a networked REMOTE player (so the L1 exercises it directly).</summary>
         public static void ApplyWorn(PlayerInventory inv, PlayerCombatReplication.CombatEntity ce)
         {
-            inv.wearShirt(ce.WornShirt != 0 ? new Item(ce.WornShirt) : null);
-            inv.wearPants(ce.WornPants != 0 ? new Item(ce.WornPants) : null);
-            inv.wearHat(ce.WornHat != 0 ? new Item(ce.WornHat) : null);
-            inv.wearVest(ce.WornVest != 0 ? new Item(ce.WornVest) : null);
-            inv.wearMask(ce.WornMask != 0 ? new Item(ce.WornMask) : null);
-            inv.wearGlasses(ce.WornGlasses != 0 ? new Item(ce.WornGlasses) : null);
-            inv.wearBackpack(ce.WornBackpack != 0 ? new Item(ce.WornBackpack) : null);
+            // v56: each piece carries the condition the server packed (WornCond), so the puppet wears it tattered too
+            Item W(ushort id, int slot) => id != 0 ? new Item(id) { quality = Durability.UnpackWorn(ce.WornCond, slot) } : null;
+            inv.wearShirt(W(ce.WornShirt, 3));
+            inv.wearPants(W(ce.WornPants, 6));
+            inv.wearHat(W(ce.WornHat, 0));
+            inv.wearVest(W(ce.WornVest, 4));
+            inv.wearMask(W(ce.WornMask, 2));
+            inv.wearGlasses(W(ce.WornGlasses, 1));
+            inv.wearBackpack(W(ce.WornBackpack, 5));
         }
 
         static ulong AppSig(PlayerCombatReplication.CombatEntity ce)

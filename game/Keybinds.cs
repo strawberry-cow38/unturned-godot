@@ -43,6 +43,11 @@ namespace UnturnedGodot
         // guarded by `_build.Active`, so the menu could not list them and a player could not discover or move
         // them. Defaults are the keys they were already hardcoded to.
         BuildCycleType, BuildSalvage, BuildUpgrade,
+
+        // HOVER LOOKUPS in the bag (strawberry 2026-10-04): with the cursor over an item, U jumps to the crafting
+        // menu showing every recipe that USES it, R to every recipe that MAKES it. BagOpen, so R is free to mean
+        // reload out in the world and rotate while you are carrying something (that branch runs first).
+        ItemUses, ItemRecipes,
     }
 
     /// <summary>When an action's control is live. Two actions in DIFFERENT non-Anywhere contexts never fire in the
@@ -193,6 +198,8 @@ namespace UnturnedGodot
             [GameAction.BuildCycleType] = new Bind(Key.C),      // build mode: cycle floor/wall/pillar/rampart/roof
             [GameAction.BuildSalvage] = new Bind(Key.R),        // build mode: take the aimed piece back down (reload is meaningless here)
             [GameAction.BuildUpgrade] = new Bind(Key.Y),        // build mode: wood -> brick -> metal in place
+            [GameAction.ItemUses] = new Bind(Key.U),            // bag open, cursor on an item: the recipes that USE it
+            [GameAction.ItemRecipes] = new Bind(Key.R),         // bag open, cursor on an item: the recipes that MAKE it. Shares R with Reload and BuildSalvage legally -- see BagOpenExclusive
             [GameAction.Flashlight] = new Bind(Key.N),          // the HEADLAMP toggle (strawberry 2026-09-04 "n toggles a flashlight emitted from the head"). Was B for the HANDHELD torch, which moved to RMB in the same pass -- so B is free again and the build-mode collision the handheld used to cause is gone. The enum member keeps its name deliberately: this file's own header warns that renaming a GameAction orphans that user's line in keybinds.cfg, and "Flashlight" still describes what the key does.
             [GameAction.Inventory] = new Bind(Key.G),   // master 2026-09-03: G opens the inventory; Tab is kept as a fixed alternate (PlayerController)
             [GameAction.Map] = new Bind(Key.M),
@@ -241,6 +248,8 @@ namespace UnturnedGodot
             // at all -- see BagOpenExclusive. Tagged so the REBIND UI knows what the input layer already
             // enforces; without it the shipped H default is a pairing the UI itself would refuse.
             [GameAction.QuickTransfer] = BindContext.BagOpen,
+            [GameAction.ItemUses] = BindContext.BagOpen,
+            [GameAction.ItemRecipes] = BindContext.BagOpen,
             [GameAction.VehicleHandbrake] = BindContext.Driving,
             [GameAction.VehicleLights] = BindContext.Driving, [GameAction.VehicleIgnition] = BindContext.Driving,
             [GameAction.LandingGear] = BindContext.Driving,
@@ -267,6 +276,7 @@ namespace UnturnedGodot
             BindContext.OnFoot => "on foot",
             BindContext.Driving => "in vehicle",
             BindContext.Building => "while building",
+            BindContext.BagOpen => "in inventory",
             _ => "",
         };
 

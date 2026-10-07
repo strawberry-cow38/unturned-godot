@@ -63,7 +63,7 @@ namespace UnturnedGodot
                     // owned follower body into the server HP sink (this is the SOLE thing that damages the body --
                     // fall/OOB never call TakeDamage on a NetAvatar, they are server-derived from the owner's claims).
                     ushort owner = e.OwnerPlayerId;
-                    body.NetDamageSink = amount => _server.Combat.DamagePlayerExternal(owner, amount);
+                    body.NetDamageSink = (amount, zone) => _server.Combat.DamagePlayerExternal(owner, amount, 0, zone);
                     _host.AddChild(body);                       // in the tree FIRST, else GlobalPosition no-ops
                     body.GlobalPosition = ToG(e.Pos);
                     body.RotationDegrees = new Vector3(0f, e.YawDegrees, 0f);

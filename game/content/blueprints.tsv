@@ -13,6 +13,18 @@
 #                                       row leaves that column empty and implies the owner instead.
 # FromTsv skips any line with fewer than 8 tabs, which is why these comments cost nothing.
 #
+# OPTIONAL TAIL (columns 9-11, any can be left blank):  seconds  unlocks  key
+#   seconds = how long one unit takes (blank = the 1 s base)
+#   unlocks = BLANK -> everyone knows the recipe (every row below). Anything here LOCKS it until one fires:
+#               skill:<skill>:<level>   learned automatically at that level (names as the console's `skill` verb)
+#               item:<itemId>           using that item (a schematic) teaches it and spends one
+#               learn                   only the admin console (`learn <key|item name>`, `learnall`)
+#             pipe-separate several, e.g.  skill:crafting:3|item:1234
+#             A locked recipe is hidden from browsing and only turns up, padlocked, in a typed search.
+#   key     = the stable id a player's knowledge is SAVED under. Leave blank to derive it from the recipe's
+#             contents; give one if you expect to edit a locked recipe's ingredients later and want everyone
+#             who learned it to keep it.
+#
 # The saw is item 141 (fd6bee...), "Construction tool for cutting lumber". NOT item 1704, which is also
 # called "Saw" but is the Epic holiday candy-cane chainsaw reskin -- requiring that would have put every
 # one of these recipes behind a seasonal drop.

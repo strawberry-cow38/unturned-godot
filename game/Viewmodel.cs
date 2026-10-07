@@ -68,7 +68,7 @@ namespace UnturnedGodot
             {
                 if (_gun != null && Godot.GodotObject.IsInstanceValid(_gun)) _gun.Visible = true;
                 _arms.Position = _armsPos;
-                _arms.Play(_holdClip);   // back to the item's ready hold
+                RestoreHold();   // back to the item's ready hold
             }
         }
         void SetDrivingDeferred() => SetDriving(true);
@@ -86,6 +86,7 @@ namespace UnturnedGodot
         public void SetDrivingWheel(Vector2 screenPx, float depth, Vector3 axisCamLocal, float steerDeg, Vector3 camLocal, bool inFront, Basis vehBasisCam)
         { _wheelScreen = screenPx; _wheelDepth = depth; _wheelAxisCam = axisCamLocal; _wheelSteerDeg = steerDeg; _wheelCamLocal = camLocal; _wheelInFront = inFront; _wheelKnown = true; _vehBasisCam = vehBasisCam; }
         public void ClearDrivingWheel() { _wheelKnown = false; _vehBasisCam = Basis.Identity; }
+
 
         /// <summary>The VEHICLE's basis expressed in camera space. Identity when you are looking straight down the
         /// car; it rotates the opposite way to your head as you look around, which is exactly the correction the
@@ -190,6 +191,7 @@ namespace UnturnedGodot
         // REFITTED iron sight restores its real per-gun colour instead of the near-black scope/red-dot default.
         Color _sightColor = new(0.3f, 0.3f, 0.3f);
         string _defaultSightTxt;
+        Texture2D _defaultSightAlbedo;
         string _gunTxt;   // current gun's mesh name (gv.Gun) -- gates gun-specific attachment tuning (the red-dot ADS aim is eaglefire-tuned for now)
 
         // The spinning assembly, when the equipped gun has one. Null for every other gun, which is what makes
@@ -392,7 +394,7 @@ namespace UnturnedGodot
         // guns mount at their Model_0 origin, and the maple/shotgun models sit higher than the (reference) eaglefire.
         // AlbedoTint multiplies the albedo (Godot AlbedoColor*AlbedoTexture): the masterkey's base albedo is a mostly
         // WHITE paint-base that the game tints dark, so we tint it to a dark gunmetal (the eaglefire's is already dark).
-        struct GunVisual { public string Gun, Sight, Mag, Albedo, Shoot, Reload, Hammer; public Vector3 AimHook, MuzzleHook, ViewOffset, SightPos; public Color AlbedoTint, SightColor; public bool Ejects; }
+        struct GunVisual { public string Gun, Sight, Mag, Albedo, Shoot, Reload, Hammer, SightAlbedo; public Vector3 AimHook, MuzzleHook, ViewOffset, SightPos; public Color AlbedoTint, SightColor; public bool Ejects; }
         // EVERY gun now comes from content/guns_visual.tsv (strawberry: "could we un-hardcode eaglefire n maplestrike
         // to be in line with the rest of the weapons"). The three that used to live here as switch arms -- eaglefire,
         // maplestrike, masterkey -- are ordinary rows in the table, using the optional mag/tint columns added for
@@ -406,24 +408,24 @@ namespace UnturnedGodot
         /// compare, and exposes it as data rather than opening the table up.</summary>
         public readonly struct GunVisualInfo
         {
-            public readonly string Gun, Sight, Mag, Albedo, Shoot, Reload, Hammer;
+            public readonly string Gun, Sight, Mag, Albedo, Shoot, Reload, Hammer, SightAlbedo;
             public readonly Vector3 AimHook, MuzzleHook, SightPos;
             public readonly Color Tint, SightColor;
             public readonly bool Ejects;
             public GunVisualInfo(string gun, string sight, string mag, string albedo, string shoot, string reload,
-                                 string hammer, Vector3 aim, Vector3 muzzle, Color tint, bool ejects, Vector3 sightPos, Color sightColor)
+                                 string hammer, Vector3 aim, Vector3 muzzle, Color tint, bool ejects, Vector3 sightPos, Color sightColor, string sightAlbedo = null)
             {
                 Gun = gun; Sight = sight; Mag = mag; Albedo = albedo;
                 Shoot = shoot; Reload = reload; Hammer = hammer;
                 AimHook = aim; MuzzleHook = muzzle; Tint = tint; Ejects = ejects;
-                SightPos = sightPos; SightColor = sightColor;
+                SightPos = sightPos; SightColor = sightColor; SightAlbedo = sightAlbedo;
             }
         }
         public static GunVisualInfo VisualForTest(string name)
         {
             var g = Visual(name);
             return new GunVisualInfo(g.Gun, g.Sight, g.Mag, g.Albedo, g.Shoot, g.Reload, g.Hammer,
-                                     g.AimHook, g.MuzzleHook, g.AlbedoTint, g.Ejects, g.SightPos, g.SightColor);
+                                     g.AimHook, g.MuzzleHook, g.AlbedoTint, g.Ejects, g.SightPos, g.SightColor, g.SightAlbedo);
         }
 
         /// <summary>Is this a gun the visual table knows about? The equip path asks BEFORE putting it in your hands,
@@ -536,6 +538,7 @@ namespace UnturnedGodot
                     if (c.Length < 3 || !d.TryGetValue(c[0], out var gv)) continue;
                     gv.Sight = c[1]; gv.SightPos = V3(c[2]);
                     if (c.Length >= 4) { var rgb = V3(c[3]); gv.SightColor = new Color(rgb.X, rgb.Y, rgb.Z); }   // real per-gun sight _Color
+                    if (c.Length >= 5 && c[4].Trim().Length > 0) gv.SightAlbedo = c[4].Trim();   // optional authored iron palette
                     d[c[0]] = gv;
                 }
             // NOTE: no per-gun Sight-hook gap-fill for sightless guns. The raw Sight-child hook (guns_sighthook.tsv) is
@@ -545,6 +548,23 @@ namespace UnturnedGodot
             // guns_sighthook.tsv stays as extracted reference data; the eaglefire/maplestrike 0,0,0 sentinel -> fallback path is untouched.
             return d;
         }
+        /// <summary>Named animation reuse for a new authored gun. Own clips always win in GunClipFor;
+        /// this donor is provisional, not a claim that MAC-10 clips were ripped.</summary>
+        public static string AnimationDonorFor(string gunName)
+            => gunName == "mac10" ? "Bulldog" : null;
+
+        /// <summary>The same magazine mount for 1P, paperdoll, remote players and dropped guns.
+        /// A nonzero authored mount must not become Eaglefire's offset in one of those viewers.</summary>
+        public static (string Mesh, Vector3 Hook) MagazineVisualFor(string gunName)
+        {
+            // This construction block also runs for held tools/food. They must not borrow a rifle's mag.
+            if (!IsKnownGun(gunName)) return (null, Vector3.Zero);
+            var visual = Visual(gunName);
+            _magHooks ??= LoadMagHooks();
+            if (_magHooks.TryGetValue(gunName, out var mount) && mount.Mesh != null) return (mount.Mesh, mount.Hook);
+            return (visual.Mag, new Vector3(0f, 0.0166f, 0.0238f));
+        }
+
         static Color Col(string s) { var v = V3(s); return new Color(v.X, v.Y, v.Z); }
         static Vector3 V3(string s)
         {
@@ -696,8 +716,8 @@ namespace UnturnedGodot
                 // per-gun reload clip ({Gun}_Reload, extracted from that gun's animations.prefab); fall back to Gun_Reload
                 string capGun = char.ToUpper(GunName[0]) + GunName.Substring(1);
                 if (MeleeMesh != null) { string mn = MeleeMesh.Replace(".txt", ""); if (mn.Length > 0) _meleeCap = char.ToUpper(mn[0]) + mn.Substring(1); }   // per-melee clip prefix: "blowtorch.txt" -> "Blowtorch", "knife_military.txt" -> "Knife_military"
-                _reloadClip = _arms.ClipLength(capGun + "_Reload") > 0f ? capGun + "_Reload" : "Gun_Reload";
-                _hammerClip = _arms.ClipLength(capGun + "_Hammer") > 0f ? capGun + "_Hammer" : null;   // rechamber rack (empty-reload second half)
+                _reloadClip = _arms.GunClipFor(GunName, "_Reload", "Gun_Reload");
+                _hammerClip = _arms.GunClipFor(GunName, "_Hammer");   // rechamber rack (empty-reload second half)
                 if (_hammerClip != null) _arms.SetClipLoop(_hammerClip, false);
                 _arms.SetClipLoop(_reloadClip, false);
                 // per-gun inspect clip ({Gun}_Inspect, from that gun's animations.prefab). null = play nothing.
@@ -717,24 +737,24 @@ namespace UnturnedGodot
                 // model was measured against. This does NOT reopen the hole the gate above closes: that bug was
                 // every NON-gun silently inheriting "Eaglefire" from a defaulted GunName, whereas this is a named
                 // gun opting in to a named clip. A gun not in this map still gets nothing.
-                _inspectClip = IsGunViewmodel && _arms.ClipLength(capGun + "_Inspect") > 0f ? capGun + "_Inspect"
+                _inspectClip = IsGunViewmodel && _arms.GunClipFor(GunName, "_Inspect") is string inspectClip ? inspectClip
                              : IsGunViewmodel && InspectDonor.TryGetValue(capGun, out var donor) && _arms.ClipLength(donor) > 0f ? donor
                              : null;
                 if (_inspectClip != null) _arms.SetClipLoop(_inspectClip, false);
-                _attachStartClip = _arms.ClipLength(capGun + "_AttachStart") > 0f ? capGun + "_AttachStart" : null;
-                _attachStopClip = _arms.ClipLength(capGun + "_AttachStop") > 0f ? capGun + "_AttachStop" : null;
+                _attachStartClip = _arms.GunClipFor(GunName, "_AttachStart");
+                _attachStopClip = _arms.GunClipFor(GunName, "_AttachStop");
                 if (_attachStartClip != null) _arms.SetClipLoop(_attachStartClip, false);
                 // per-gun un-shoulder pose ({Gun}_Sprint_Start/Stop, from its animations.prefab). Gun-only (IsGunViewmodel)
                 // like Inspect, so a non-gun holdable never matches the default-"Eaglefire" cap. Both play ONCE and hold.
-                _sprintStartClip = IsGunViewmodel && _arms.ClipLength(capGun + "_Sprint_Start") > 0f ? capGun + "_Sprint_Start" : null;
-                _sprintStopClip  = IsGunViewmodel && _arms.ClipLength(capGun + "_Sprint_Stop")  > 0f ? capGun + "_Sprint_Stop"  : null;
+                _sprintStartClip = IsGunViewmodel ? _arms.GunClipFor(GunName, "_Sprint_Start") : null;
+                _sprintStopClip = IsGunViewmodel ? _arms.GunClipFor(GunName, "_Sprint_Stop") : null;
                 if (_sprintStartClip != null) _arms.SetClipLoop(_sprintStartClip, false);
                 if (_sprintStopClip  != null) _arms.SetClipLoop(_sprintStopClip,  false);
                 // ADS aim POSE: re-bake the additive from THIS gun's own aim clip ({Gun}_Aim, ripped from its "Aim_Start"),
                 // else the generic rifle-tuned Gun_Aim. Source: UseableGun aims by playing the equipped gun's own Aim_Start,
                 // so a pistol levels FLAT; the single generic delta pitched every pistol UP in ADS. Re-bake each equip so a
                 // gun-switch never inherits the previous weapon's aim delta.
-                _arms.SetupAimAdditive(_arms.ClipLength(capGun + "_Aim") > 0f ? capGun + "_Aim" : "Gun_Aim");
+                _arms.SetupAimAdditive(_arms.GunClipFor(GunName, "_Aim", "Gun_Aim"));
                 _arms.SetClipLoop("Melee_Equip", false); _arms.SetClipLoop("Melee_Weak", false); _arms.SetClipLoop("Melee_Strong", false);   // generic (knife) melee fallback clips play once
                 _arms.SetClipLoop("Punch_Left", false); _arms.SetClipLoop("Punch_Right", false);   // bare-fists jabs play once (ported from Punch.fbx)
                 if (_meleeCap != null)   // this melee's OWN ripped clips ALL play once and hold (source animator.play plays non-looping); a Repeated tool's continuous "blowtorching" is the spark EMISSION while held, NOT a looping Start_Swing
@@ -744,7 +764,7 @@ namespace UnturnedGodot
                                  : ToolMesh != null ? "Melee_Equip"   // held tool (wire): the generic one-hand ready hold
                                  : DeployableMesh != null ? (NaturalHold ? (_arms.ClipLength("Fuel_Equip") > 0f ? "Fuel_Equip" : "Deploy_Equip") : (_arms.ClipLength("Deploy_Equip") > 0f ? "Deploy_Equip" : "Melee_Equip"))   // deployable: the src barricade "Equip" raise-to-hold; NaturalHold (gas can) = its OWN TWO-HANDED Fuel_Equip carry (both hands on the can, source animations.prefab)
                                  : ConsumableMesh != null ? (_arms.ClipLength(ConsumableEquipClip) > 0f ? ConsumableEquipClip : _arms.ClipLength("Consume_Equip") > 0f ? "Consume_Equip" : "Melee_Equip")   // consumable: this item's OWN raise-to-hold archetype (CE_n), else generic Consume_Equip, else the melee raise
-                                 : MeleeMesh != null ? (_arms.ClipLength(_meleeCap + "_Equip") > 0f ? _meleeCap + "_Equip" : "Melee_Equip") : (_arms.ClipLength(capGun + "_Equip") > 0f ? capGun + "_Equip" : "Gun_Equip");   // melee: its OWN raise anim (fallback generic knife); gun: its OWN per-weapon hold (pistol grip / rifle stance / etc.)
+                                 : MeleeMesh != null ? (_arms.ClipLength(_meleeCap + "_Equip") > 0f ? _meleeCap + "_Equip" : "Melee_Equip") : _arms.GunClipFor(GunName, "_Equip", "Gun_Equip");   // melee: its OWN raise anim (fallback generic knife); gun: its OWN per-weapon hold (pistol grip / rifle stance / etc.)
                 Log.Print($"[vm] hold clip {equipClip} (capGun {capGun}, len {_arms.ClipLength(equipClip):0.###}s)");   // which per-item hold posed the hands (bow frame audit)
                 _arms.SetClipLoop(equipClip, false);   // equip/ready-hold ALWAYS plays once and holds (src: one-shot wrapMode) -- the looping empty-hand pose was the bug
                 _holdClip = equipClip;   // remember THIS item's hold so sprint-exit (etc.) restores it, not the gun pose
@@ -912,7 +932,10 @@ namespace UnturnedGodot
                     _sightHooks ??= LoadSightHooks();
                     _sightHook = gv.Gun != null && _sightHooks.TryGetValue(gv.Gun.Replace("_gun.txt", ""), out var _hk) ? _hk : (Vector3?)null;   // the rail an ATTACHMENT bolts to (see LoadSightHooks)
                     _defaultAimHook = gv.AimHook;   // the ADS aim (all optics aim down this eye point)
-                    var sightMat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = sightCol, Metallic = 0f, MetallicSpecular = 0f, Roughness = 1f };
+                    _defaultSightAlbedo = gv.SightAlbedo != null ? LoadTex($"res://content/{gv.SightAlbedo}") : null;
+                    var sightMat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                        AlbedoColor = _defaultSightAlbedo != null ? Colors.White : sightCol, AlbedoTexture = _defaultSightAlbedo,
+                        TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Metallic = 0f, MetallicSpecular = 0f, Roughness = 1f };
                     var ironMesh = gv.Sight != null ? ContentProvider.ParseObj($"res://content/{gv.Sight}") : null;
                     if (ironMesh != null)
                         mi.AddChild(new MeshInstance3D { Name = "IronSights", Mesh = ironMesh, MaterialOverride = sightMat, Position = gv.SightPos != Vector3.Zero ? gv.SightPos : new Vector3(0f, 0.1312f, -0.118f) });
@@ -999,11 +1022,9 @@ namespace UnturnedGodot
                     // the game has been sitting ~2 cm short this whole time. The extracted meshes are root-relative
                     // and carry it, which is why they measure exactly that delta away from the old one. gv.Mag stays
                     // as the escape hatch for a hand-authored mesh on a gun the table has no row for.
-                    string _magFile = null;
-                    Vector3 _magPos = new(0f, 0.0166f, 0.0238f);
-                    if (_magKey != null && _magHooks.TryGetValue(_magKey, out var _mh) && _mh.Mesh != null)
-                    { _magFile = _mh.Mesh; _magPos = _mh.Hook; }
-                    _magFile ??= gv.Mag;
+                    var _mountedMag = MagazineVisualFor(_magKey ?? GunName);
+                    string _magFile = _mountedMag.Mesh;
+                    Vector3 _magPos = _mountedMag.Hook;
                     var magMesh = _magFile != null ? ContentProvider.ParseObj($"res://content/{_magFile}") : null;
                     if (magMesh != null)
                     {
@@ -1170,8 +1191,21 @@ namespace UnturnedGodot
             else if (wasOff)
             {
                 if (_gun != null && Godot.GodotObject.IsInstanceValid(_gun)) _gun.Visible = true;
-                _arms.Play(_holdClip);
+                RestoreHold();
             }
+        }
+
+        /// <summary>Back to the held item's ready pose after something took the hands away (a ladder, water, a car).
+        /// FISTS SNAP, EVERYTHING ELSE PLAYS (strawberry 2026-10-05: "when getting off a ladder unarmed, it plays the
+        /// punch animation for some reason"). Bare hands have no raise-to-hold clip of their own: their guard IS the
+        /// last frame of the left jab, which is why equipping fists already snaps to it. Leaving a ladder PLAYED it
+        /// from the top instead -- a full jab, every time you stepped off, out of water, or out of a car. Anything
+        /// with a real raise clip still plays it, as it did.</summary>
+        void RestoreHold()
+        {
+            if (_arms == null) return;
+            if (Fists) _arms.SnapToEnd(_holdClip);
+            else _arms.Play(_holdClip);
         }
 
         // ---- INPUT INERTIA (PlayerAnimator.rotationInputViewmodelRoll, source lines 1480-1485) ----------------
@@ -1603,6 +1637,7 @@ namespace UnturnedGodot
         public bool IsRopeViewmodel => ToolMesh != null && HeldToolKind == ToolKind.Rope;
         public bool IsHoseViewmodel => ToolMesh != null && HeldToolKind == ToolKind.Hose;
         public bool IsDetonatorViewmodel => ToolMesh != null && HeldToolKind == ToolKind.Detonator;
+        public bool IsPipeViewmodel => ToolMesh != null && HeldToolKind == ToolKind.Pipe;   // v56 industrial item pipes
         /// <summary>The walkie-talkie (1445): a carry-only holdable with its own LMB toggle.</summary>
         public bool IsWalkieViewmodel => ToolMesh != null && HeldToolKind == ToolKind.Handheld;
         public int GetAttachMask() { int m = 0; for (int i = 0; i < AttachSlots.Length; i++) if (SlotHasModel(AttachSlots[i]) && SlotAttached(AttachSlots[i])) m |= 1 << i; return m; }
@@ -1676,7 +1711,7 @@ namespace UnturnedGodot
                 // Falls back to SightPos when a gun has no hook row, i.e. exactly the old behaviour.
                 m.Position = (!_isIron && _sightHook.HasValue) ? _sightHook.Value + AttachModel0 : _defaultSightPos;
                 Color _bodyCol = _isSc ? _sc.Col : (_isIron ? _sightColor : new Color(0.06f, 0.065f, 0.075f));
-                m.MaterialOverride = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = _bodyCol, Metallic = 0f, MetallicSpecular = 0f, Roughness = 1f };   // FULLY MATTE like the gun body/irons/mags -- Unturned guns are non-reflective (master: "why are the scope bodies so shiny"); the old satin 0.35/0.5 broke that convention
+                m.MaterialOverride = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = _isIron && _defaultSightAlbedo != null ? Colors.White : _bodyCol, AlbedoTexture = _isIron ? _defaultSightAlbedo : null, TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Metallic = 0f, MetallicSpecular = 0f, Roughness = 1f };   // FULLY MATTE like the gun body/irons/mags -- Unturned guns are non-reflective (master: "why are the scope bodies so shiny"); the old satin 0.35/0.5 broke that convention
                 if (_sight != null) _sight.Position = _defaultAimHook;   // ADS aim at the gun's eye point (iron/scope/red-dot all share this; a red dot just adds a reticle billboard, no aim override)
                 if (_isSc)
                 {

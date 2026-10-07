@@ -4,13 +4,17 @@ namespace UnturnedGodot
 {
     // A placed deployable in the world (the result of planting a held barricade). Mesh + a box collider + health/fuel,
     // in group "deployables". Look-at gets the same screen-space outline + info billboard (name / HP / fuel) as
-    // vehicles, and the same damage lifecycle: smoke at low HP, fire + explosion at 0 HP, a burning wreck that cools
-    // into a blowtorch-salvageable husk (src runtime InteractableGenerator + the shared vehicle explode/salvage path).
+    // vehicles. A GENERATOR keeps the vehicle-style damage lifecycle: smoke at low HP, fire + explosion at 0 HP, a burning
+    // wreck that cools into a blowtorch-salvageable husk (src runtime InteractableGenerator + the shared vehicle
+    // explode/salvage path). EVERY OTHER deployable -- lamps, spotlights, switches, batteries, turbines... -- just breaks
+    // apart at 0 HP: no smoke, no fire, no blast (strawberry 2026-10-04: "stop lamps and every deployables except
+    // generators from smoking then catching fire and exploding when damaged"). Traps keep their own paths.
     public partial class Deployable : StaticBody3D, IPowerDevice
     {
         public DeployableDef Def;
         public uint NetId;   // MP: the replicated entity this node mirrors (set by DeployableReplicaView); 0 = SP/local
         public readonly System.Collections.Generic.List<ConnectionPort> Ports = new();   // power connection cubes (output/consumer/passthrough)
+        public readonly System.Collections.Generic.List<ItemPortNode> ItemPorts = new(); // v56 item-pipe sockets, in DeployableDef.ItemPorts order (the pipe sub-address)
         // IPowerDevice: how the power net sees this deployable (a gas pump implements the same interface w/o being a Deployable)
         public bool PowerProducing => IsPowered;
         public bool PowerOnFire => OnFire;
@@ -65,92 +69,23 @@ namespace UnturnedGodot
         AudioStreamPlayer3D _engineAudio;
         float _vibePhase;
         const float WarmupTime = 1.3f, CooldownTime = 1.1f;   // spin-up / wind-down; doubles as the anti-spam buffer (can't re-toggle mid-ramp)
-        public bool OnFire => _deadTimer >= 0f || _exploded;   // catching fire at 0 HP (deadTimer) through the burning wreck -> a dead/dying generator, can't be run (PowerNet reads this)
+        /// <summary>Does this deployable smoke / burn / explode when it dies? Generators only (and a Def-less legacy
+        /// node, which predates defs and was always a generator).</summary>
+        public bool Burns => Def == null || Def.IsGenerator;
+        public bool OnFire => _deadTimer >= 0f || (_exploded && Burns);   // a lamp that broke apart is GONE, not burning -- it used to read OnFire for its last frame, which is what the server replicates (deploy.only_generators_burn)   // catching fire at 0 HP (deadTimer) through the burning wreck -> a dead/dying generator, can't be run (PowerNet reads this)
         float RunTarget => (_powered && !OnFire && FuelMax > 0f && Fuel > 0f) ? 1f : 0f;   // the engine's effective on/off: needs power ON, not on fire, and fuel left
         bool PowerSettled => Mathf.Abs(_powerLevel - RunTarget) < 0.001f;   // ramp reached its EFFECTIVE target (so a fuel-dry/on-fire gen still settles -> no toggle deadlock)
         public bool CanTogglePower => !OnFire && Def != null && (Def.IsSwitch || (Def.Fuel > 0f && PowerSettled));   // a switch always toggles; a generator only when fuelled + ramp-settled (buffer)
         public bool IsPowered => Def == null ? (!OnFire && _powerLevel > 0.02f) : Def.IsBattery ? (Energy > 0f && !OnFire) : Def.IsWindTurbine ? (!OnFire && _windFactor > 0.03f) : (!OnFire && _powerLevel > 0.02f);   // battery: charged; wind turbine: wind present; generator: engine spun up (_powerLevel); a FIRE kills output instantly -- PowerNet reads this
         public float Energy;   // battery: stored energy (watt-SECONDS); the OUT produces while > 0, the IN charges it up to Def.EnergyMax
 
-        // THE VISIBLE SHAFT in front of a spotlight (master 2026-09-07: "with a similar light cone as car headlights
-        // alr have"). Same recipe as Vehicle.BuildHeadlightBeam -- a lofted volume, additive and unshaded so it reads
-        // as light in the air rather than a surface, brightest at the lens and gone by the far end.
-        //
-        // Built as a CHILD OF THE LAMP, which is what keeps the drawn shaft and the lit cone honest: the lamp already
-        // carries the aim (Basis.LookingAt(Dir)) and the on/off, so the shaft inherits both for free and there is no
-        // second copy of the direction to fall out of step. The only fixup needed is the axis -- StreetLight.BeamMesh
-        // lofts along -Y and a Godot spot throws along -Z, so rotate +90 about X (which sends -Y to -Z).
-        static MeshInstance3D BeamShaft(in DeployableDef.DeployLight ld, out StandardMaterial3D mat)
-        {
-            mat = null;
-            float len = ld.BeamLength > 0f ? ld.BeamLength : ld.Range;
-            float halfW = ld.BeamHalf > 0f ? ld.BeamHalf : 0.3f;          // across the aperture
-            float halfV = ld.BeamHalfV > 0f ? ld.BeamHalfV : halfW;       // ...and through it; equal = the old square
-            // The shaft ends exactly as wide as the light it is drawing: the spot's own half-angle over its own
-            // length. Deriving it means retuning SpotAngle cannot leave a cone of air that misses the lit ground.
-            float baseR = len * Mathf.Tan(Mathf.DegToRad(Mathf.Clamp(ld.AngleDeg, 1f, 80f)));
-            // KEEP THE LAMP'S SHAPE. BeamMesh's default lerps both half-extents toward a single baseR and morphs the
-            // cross-section to a circle over the first 38% of the throw -- so any aperture, however wide and flat,
-            // leaves as a round cone. That is what stopped the shaft matching the heads. endScale grows the aperture
-            // instead, which preserves its aspect, and keepRect stops the circularisation: a wide flat lamp throws a
-            // wide flat wedge. It is also what the car does -- HeadlightBeam extrudes the lens HULL and never
-            // circularises anything. Scale is solved on the WIDE axis so the silhouette still ends on the spot's
-            // 25 deg; the short axis lands narrower, which under-claims lit air rather than over-claiming it.
-            float endScale = baseR / Mathf.Max(halfW, 0.001f);
-            // ...and it opens WIDE before it opens TALL, at the same 0.40 ratio HeadlightBeam uses ("a headlight
-            // throws WIDE and comparatively flat, not a round cone"). Growing both axes by the one endScale kept the
-            // head's aspect but scaled it up 10x, which from the side is a 3.5 m tall wall of grey, not a beam.
-            float endScaleV = 1f + (endScale - 1f) * BeamVertical;
-            var mesh = StreetLight.BeamMesh(len, halfW, halfV, baseR, keepRect: true, endScale: endScale, endScaleV: endScaleV);
-            if (mesh == null) return null;
-            mat = new StandardMaterial3D
-            {
-                AlbedoColor = new Color(ld.Color.R, ld.Color.G, ld.Color.B, BeamAlpha),
-                AlbedoTexture = ThrowGradient(),
-                Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-                BlendMode = BaseMaterial3D.BlendModeEnum.Add,
-                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-                CullMode = BaseMaterial3D.CullModeEnum.Disabled,   // walking INTO the beam must not show a hole (the streetlight case)
-                DisableReceiveShadows = true,
-                TextureFilter = BaseMaterial3D.TextureFilterEnum.Linear,
-                TextureRepeat = false,   // linear sampling wraps v=0 into the far end otherwise -- the phantom bright band (StreetLight)
-            };
-            return new MeshInstance3D
-            {
-                Name = "SpotBeam", Mesh = mesh, MaterialOverride = mat,
-                Basis = new Basis(Vector3.Right, Mathf.Pi * 0.5f),   // mesh -Y -> lamp -Z
-                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
-                VisibilityRangeEnd = BeamCull, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Self,
-            };
-        }
-
-        public static float BeamAlpha = 0.020f;   // matched to Vehicle.BeamAlpha -- the density the night tuning was built against
-        public static float BeamVertical = 0.40f; // vertical spread as a fraction of horizontal (Vehicle.BeamVertical)
-        public static float BeamCull  = 90f;      // a close-range detail; retire it well before the object itself
-
-        // BeamMesh writes v = t * 0.5 (its own comment explains why: CylinderMesh reserves the top half of UV space
-        // for its caps, and the shipped shaft was authored against that mapping), so only the BOTTOM half of this
-        // texture is ever sampled, and v=0 is the LENS end. StreetLight.ConeGradient is faint-at-the-lamp ->
-        // dense-at-the-base, which is right for light pooling on a pavement and backwards for a throw: a headlight is
-        // brightest at the lens and gone by the end. So this is its own ramp. The unused top half falls out at 0,
-        // which is also the safe value for a stray sample.
-        static ImageTexture ThrowGradient()
-        {
-            int n = 64;
-            var img = Image.CreateEmpty(1, n, false, Image.Format.Rgba8);
-            for (int y = 0; y < n; y++)
-            {
-                float t = Mathf.Clamp((float)y / (n - 1) * 2f, 0f, 1f);   // v in 0..0.5 -> 0..1 of the throw
-                img.SetPixel(0, y, new Color(1f, 1f, 1f, Mathf.Pow(1f - t, 1.7f)));
-            }
-            return ImageTexture.CreateFromImage(img);
-        }
+        // NO VISIBLE SHAFT (strawberry 2026-10-04: "remove the other faux beams too"). A spotlight used to draw an
+        // additive lofted volume in front of its heads; now it is the real SpotLight3D and nothing else, like the car
+        // headlights and the streetlights.
 
         // --- consumer lamps (spotlight): src InteractableSpot.updateLights turns the "Spots" lights on when wired+powered ---
         readonly System.Collections.Generic.List<Light3D> _lamps = new();
         readonly System.Collections.Generic.List<float> _lampBase = new();   // per-lamp base energy (display = base * envelope * flicker)
-        readonly System.Collections.Generic.List<StandardMaterial3D> _lampBeamMat = new();   // the visible shaft's material, or null for a lamp that draws none -- indices match _lamps
-
         // THE BULB ITSELF. master 2026-10-06: "make the white parts inside the lamp parts of the spotlights
         // emissive glow when the spotlight is on". The lamp drove a real Light3D and a beam shaft but left the
         // fixture's own diffuser geometry flat, so a lit spotlight threw light while its bulb stayed dull grey.
@@ -356,6 +291,12 @@ namespace UnturnedGodot
                 if (pdef.Kind == DeployableDef.PortKind.Consumer) d._consumerPort = port;   // this consumer's Powered flag lights the lamps
                 else if (pdef.Kind == DeployableDef.PortKind.Output) d._outputPort = port;   // this output's Draw drives the load bar + vibration
             }
+            for (int i = 0; i < def.ItemPorts.Length; i++)   // v56 item-pipe sockets: their own nodes on their own layer, never power ports
+            {
+                var ip = ItemPortNode.Create(d, def.ItemPorts[i], (byte)i, def.Name);
+                d.AddChild(ip);
+                d.ItemPorts.Add(ip);
+            }
             if (def.IsSwitch)   // a state light on top: green = on (passing power) / red = off
             {
                 d._switchLight = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.12f, 0.06f, 0.12f) }, Position = EnvVec3("UG_SWLP", new Vector3(0f, 0.20f, -0.14f)) };   // front face, upper (flat frame: +Y front, -Z = up after stand-up)
@@ -365,7 +306,6 @@ namespace UnturnedGodot
             foreach (var ldef in def.Lights)   // consumer lamps (spotlight): children in the flat frame -> stand up with the model, off until powered
             {
                 Light3D lamp;
-                StandardMaterial3D beamMat = null;
                 if (ldef.Spot)
                 {
                     var s = new SpotLight3D { SpotRange = ldef.Range, SpotAngle = ldef.AngleDeg };
@@ -377,17 +317,15 @@ namespace UnturnedGodot
                 lamp.Position = ldef.Pos; lamp.LightColor = ldef.Color; lamp.LightEnergy = 0f; lamp.Visible = false;
                 lamp.AddToGroup("dynlight");   // the lit beam spills onto the FP gun (light-scan), like the fire light
                 d.AddChild(lamp);
-                if (ldef.Beam)   // the visible shaft rides the lamp, so it is aimed and shown/hidden by it and cannot drift
-                {
-                    var shaft = BeamShaft(ldef, out beamMat);
-                    if (shaft != null) lamp.AddChild(shaft);
-                }
-                d._lamps.Add(lamp); d._lampBase.Add(ldef.Energy); d._lampBeamMat.Add(beamMat);
+                d._lamps.Add(lamp); d._lampBase.Add(ldef.Energy);
             }
             d._firePos = surface + Vector3.Up * Mathf.Max(0.6f, def.Size.Z * 1.4f);   // fire from the top of the object (Size.Z = flat-frame height that stands up)
 
             // fire/smoke rig (TopLevel = world space, so it rises straight up regardless of the stood-up body basis).
-            // Smaller + fewer than a car's engine-bay plume -- a generator is a ~0.8m object.
+            // Smaller + fewer than a car's engine-bay plume -- a generator is a ~0.8m object. GENERATORS ONLY: nothing
+            // else smokes, burns or explodes, so nothing else carries the emitters (see Burns).
+            if (def.IsGenerator)
+            {
             d._smoke  = Vehicle.MakeSmoke("veh_smoke_1.png", new Color(0.55f, 0.55f, 0.55f), 2.0f, 1.8f, 12, false, 0.8f, 1.6f);   // light damage smoke (< 45% HP)
             d._smoke0 = Vehicle.MakeSmoke("veh_smoke_0.png", new Color(0.30f, 0.29f, 0.27f), 2.6f, 2.2f, 16, false, 0.8f, 1.6f);   // heavy smoke (< 22% HP)
             d._fire   = Vehicle.MakeSmoke("veh_fire.png",   new Color(1f, 0.72f, 0.32f),    0.6f, 3.0f, 20, true,  0.6f, 1.3f);    // fire (0 HP + wreck)
@@ -395,6 +333,7 @@ namespace UnturnedGodot
             d._fireLight = new OmniLight3D { TopLevel = true, OmniRange = 6f, LightColor = new Color(1f, 0.55f, 0.2f), LightEnergy = 0f, Visible = false };
             d._fireLight.AddToGroup("dynlight");   // a burning wreck spills onto the FP gun (light-scan)
             d.AddChild(d._fireLight);
+            }
 
             if (def.Fuel > 0f)   // generator: the looping engine sound (src Engine-node AudioSource), silent until powered on
             {
@@ -408,7 +347,7 @@ namespace UnturnedGodot
             parent.AddChild(d);
             if (def.Fuel > 0f && !def.IsBattery)   // a fuel generator gets a fluid FUEL hose input -> plumb a fuel line to it instead of hand-carrying cans (strawberry)
                 d.AddChild(FluidFuelInlet.Make(d));
-            foreach (var p in new Node3D[] { d._smoke, d._smoke0, d._fire, d._fireLight }) p.GlobalPosition = d._firePos;   // TopLevel: set world pos after entering the tree
+            foreach (var p in new Node3D[] { d._smoke, d._smoke0, d._fire, d._fireLight }) if (p != null) p.GlobalPosition = d._firePos;   // TopLevel: set world pos after entering the tree (null on a non-generator: no rig)
             if (def.LampKind != LampLight.Kind.Generic && d._mesh != null && d._mesh.Mesh != null)
             {
                 // AFTER the body is in the tree, because LampLight is TopLevel and resolves its emitter position off
@@ -474,6 +413,7 @@ namespace UnturnedGodot
             {
                 // a trap at 0 HP: explosive (landmine, Health 1) DETONATES when shot/blasted; a contact trap (spike) worn or shot out just BREAKS apart
                 if (Def != null && Def.IsTrap) { if (Def.TrapExplosive) DetonateTrap(); else BreakTrap(); return; }
+                if (!Burns) { BreakApart(); return; }   // not a generator: it just breaks -- no fire, no 4 s fuse, no blast
                 _deadTimer = ExplodeDelay;
                 _powered = false; _powerLevel = 0f;   // a dying generator cuts out INSTANTLY (no wind-down); the ramp tick stops the audio + settles the mesh
                 if (_fire != null) _fire.Emitting = true;   // a small fire the moment it dies, before Explode() ramps the blaze
@@ -545,7 +485,7 @@ namespace UnturnedGodot
             if (p != null && p.GlobalPosition.DistanceSquaredTo(me) <= r2)
             {
                 ulong id = p.GetInstanceId(); nowInside.Add(id);
-                if (Def.TrapPlayerDamage > 0f && !_trapInside.Contains(id)) TrapShred(() => p.TakeDamage(Def.TrapPlayerDamage, me));
+                if (Def.TrapPlayerDamage > 0f && !_trapInside.Contains(id)) TrapShred(() => p.TakeDamage(Def.TrapPlayerDamage, me, SDG.Unturned.Durability.Zone.Legs));
             }
             _trapInside = nowInside;
         }
@@ -557,6 +497,18 @@ namespace UnturnedGodot
             _trapCd = Def.TrapCooldown;
             TakeDamage(Def.TrapWearPerHit);   // src BarricadeManager.damage(transform, 5f); at 0 HP TakeDamage routes a contact trap to BreakTrap
         }
+        // A non-generator at 0 HP (strawberry 2026-10-04): breaks into pieces and is gone. The same debris + removal the
+        // spotlight's ShatterOnDeath always used, minus the explosion that used to come first -- and without the blast it
+        // no longer chain-damages its neighbours either.
+        void BreakApart()
+        {
+            if (_exploded) return;
+            _exploded = true; _deadTimer = -1f;
+            _powered = false; _powerLevel = 0f;
+            KillPowerHardware();   // snap its wires + retire its port cubes, exactly as the explode path did
+            SpawnDebris(); QueueFree();
+        }
+
         // a CONTACT trap worn/shot to 0 HP: it just breaks apart -- no blast, no burning wreck, no salvage (src barricade destroy).
         void BreakTrap()
         {
@@ -660,7 +612,7 @@ namespace UnturnedGodot
                 if (n is PlayerController pl)
                 {
                     float d = pl.GlobalPosition.DistanceTo(p);
-                    if (d <= R) pl.TakeDamage(SDG.Unturned.ExplosionMath.Linear(120f, d, R));
+                    if (d <= R) pl.TakeDamage(SDG.Unturned.ExplosionMath.Linear(120f, d, R), null, SDG.Unturned.Durability.Zone.Whole);
                 }
             foreach (var n in GetTree().GetNodesInGroup("vehicles"))
                 if (n is Vehicle v && !v.Exploded)
@@ -718,6 +670,7 @@ namespace UnturnedGodot
         {
             DisconnectWires();
             foreach (var p in Ports) if (IsInstanceValid(p)) p.Deactivate();
+            foreach (var p in ItemPorts) if (IsInstanceValid(p)) p.Deactivate();   // a wreck takes no pipe (the server's rule too)
         }
 
         // Hold-F pickup (master): a LIVE placed deployable is returned to the bag -> free any wires plugged into it
@@ -899,14 +852,6 @@ namespace UnturnedGodot
                     {
                         if (_lamps[i].Visible != vis) _lamps[i].Visible = vis;
                         _lamps[i].LightEnergy = _lampBase[i] * disp;
-                        // the shaft is a child, so it is already shown/hidden with the lamp -- but a mesh has no
-                        // LightEnergy, so its density has to be driven by hand or it would blaze at full while the
-                        // lamp is still stuttering up (the same reason ApplyHeadlightMotes exists on the car).
-                        if (i < _lampBeamMat.Count && _lampBeamMat[i] is StandardMaterial3D bm)
-                        {
-                            var bc = bm.AlbedoColor;
-                            bm.AlbedoColor = new Color(bc.R, bc.G, bc.B, BeamAlpha * disp);
-                        }
                     }
                 // ...and the bulb, off the SAME envelope -- so it warms up, flickers and dies in lockstep with
                 // the light it belongs to rather than snapping on at full while the lamp is still stuttering up.
@@ -940,7 +885,9 @@ namespace UnturnedGodot
                 else if (OnFire) prompt = "";
                 else
                 {
-                    string toggle = (Def != null && (Def.Fuel > 0f || Def.IsSwitch)) ? $"[{Keybinds.Get(GameAction.Interact).Label}] Turn {((Def.IsSwitch ? _switchOn : _powered) ? "Off" : "On")}" : "";
+                    string toggle = (Def != null && (Def.Fuel > 0f || Def.IsSwitch)) ? $"[{Keybinds.Get(GameAction.Interact).Label}] Turn {((Def.IsSwitch ? _switchOn : _powered) ? "Off" : "On")}"
+                                  : (Def != null && Def.IsItemConfigurable && NetId != 0) ? $"[{Keybinds.Get(GameAction.Interact).Label}] Configure"   // v56: splitter mode / mover rate
+                                  : "";
                     // World scenery has no pickup to offer -- see WorldScenery. A fixture that can still be switched
                     // keeps its toggle; one that cannot is simply not interactive and says nothing.
                     string pick = WorldScenery && NetId == 0 ? "" : $"Hold [{Keybinds.Get(GameAction.Interact).Label}]: pick up";

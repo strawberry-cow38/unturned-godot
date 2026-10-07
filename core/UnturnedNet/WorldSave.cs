@@ -83,6 +83,9 @@ namespace UnturnedGodot.Net
         // refers to them anyway (wires are remapped through SaveId below).
         public List<DeployableSave> Deployables { get; set; } = new List<DeployableSave>();
         public List<WireSave> Wires { get; set; } = new List<WireSave>();
+        /// <summary>v56 item pipes, remapped through SaveId exactly like Wires. A save written before pipes existed
+        /// has no such property and loads with none.</summary>
+        public List<PipeSave> Pipes { get; set; } = new List<PipeSave>();
         public List<WorldItemSave> WorldItems { get; set; } = new List<WorldItemSave>();
         public List<CropSave> Crops { get; set; } = new List<CropSave>();
         //
@@ -124,6 +127,41 @@ namespace UnturnedGodot.Net
             /// Attached to the OWNER rather than filed in a crate list of its own, because the crate is
             /// registered under the deployable's NetId -- which changes on load.</summary>
             public PageSave Storage { get; set; }
+            /// <summary>v56: a splitter's or mover's settings. Null on everything else (and on every save made
+            /// before pipes), which loads as a fresh device -- round-robin, 32/s.</summary>
+            public ItemConfigSave ItemConfig { get; set; }
+            /// <summary>v56: a Storage Adapter mounted on its container's TOP face. Absent in older saves = false = a side mount.</summary>
+            public bool MountUp { get; set; }
+            /// <summary>v56: for a Storage Adapter, WHERE the container it was bolted to stood. Not its NetId: crate
+            /// ids are minted per boot, so the id in the file would name nothing (or something else) after a
+            /// restart. The position names the same box on every boot -- map containers come back at their
+            /// manifest position and a placed fridge at its saved one. Null = unbound, re-derived by nearest.</summary>
+            public PointSave ItemCrate { get; set; }
+        }
+
+        public sealed class ItemConfigSave
+        {
+            public byte Mode { get; set; }
+            public byte W0 { get; set; } = 1;
+            public byte W1 { get; set; } = 1;
+            public byte W2 { get; set; } = 1;
+            public byte Rate { get; set; } = ItemDeviceConfig.DefaultRate;
+        }
+
+        public sealed class PointSave
+        {
+            public float X { get; set; }
+            public float Y { get; set; }
+            public float Z { get; set; }
+        }
+
+        public sealed class PipeSave
+        {
+            public int SrcSaveId { get; set; }
+            public byte SrcPort { get; set; }
+            public int DstSaveId { get; set; }
+            public byte DstPort { get; set; }
+            public List<PointSave> Path { get; set; } = new List<PointSave>();
         }
 
         public sealed class WireSave
@@ -255,6 +293,11 @@ namespace UnturnedGodot.Net
             public uint Experience { get; set; }
             public List<List<byte>> SkillLevels { get; set; } = new List<List<byte>>();
 
+            /// <summary>v55: the LOCKED recipes this player has learned, by recipe Key (never by skill -- see
+            /// ServerBlueprints). An old save has no such property and loads as empty: nobody knew anything locked,
+            /// because nothing was.</summary>
+            public List<string> KnownBlueprints { get; set; } = new List<string>();
+
             // The seven GARMENTS THEMSELVES, as Items -- distinct from the WornHat/WornShirt/... ids above,
             // which are the replicated APPEARANCE and only say how you look to other people. PlayerInventory's
             // own wornX fields are what carries the garment's quality, what its armour reads, what "take it
@@ -370,11 +413,17 @@ namespace UnturnedGodot.Net
                     Health = d.Health, Fuel = d.Fuel,
                     ToggledOn = d.ToggledOn, OnFire = d.OnFire,
                     IsMapFixture = isFixture,
+                    MountUp = d.MountUp,
                 };
                 // A storage deployable's grid is registered under the deployable's OWN NetId, so this finds a
                 // placed fridge's contents with no separate bookkeeping.
                 if (host.Inventories.TryGetCrate(d.NetIdValue, out var crate) && crate.Storage != null)
                     ds.Storage = CapturePage(crate.Storage);
+                if (d.ItemConfig != null)
+                    ds.ItemConfig = new ItemConfigSave { Mode = (byte)d.ItemConfig.Mode, W0 = d.ItemConfig.Weights[0], W1 = d.ItemConfig.Weights[1],
+                                                         W2 = d.ItemConfig.Weights[2], Rate = d.ItemConfig.Rate };
+                if (d.ItemCrateId != 0 && host.Inventories.TryGetCrate(d.ItemCrateId, out var bound))
+                    ds.ItemCrate = new PointSave { X = bound.Pos.x, Y = bound.Pos.y, Z = bound.Pos.z };
                 save.Deployables.Add(ds);
             }
 
@@ -385,6 +434,16 @@ namespace UnturnedGodot.Net
                 if (!saveIdByNetId.TryGetValue(w.SrcId, out int src)) continue;
                 if (!saveIdByNetId.TryGetValue(w.DstId, out int dst)) continue;
                 save.Wires.Add(new WireSave { SrcSaveId = src, SrcPort = w.SrcPort, DstSaveId = dst, DstPort = w.DstPort });
+            }
+
+            foreach (var p in host.Deployables.Pipes.All)
+            {
+                // same rule as a wire: a pipe with an end that did not make it into the save is dropped, not dangled
+                if (!saveIdByNetId.TryGetValue(p.SrcId, out int src)) continue;
+                if (!saveIdByNetId.TryGetValue(p.DstId, out int dst)) continue;
+                var ps = new PipeSave { SrcSaveId = src, SrcPort = p.SrcPort, DstSaveId = dst, DstPort = p.DstPort };
+                foreach (var v in p.Path) ps.Path.Add(new PointSave { X = v.x, Y = v.y, Z = v.z });
+                save.Pipes.Add(ps);
             }
 
             foreach (var wi in host.WorldItems.All)
@@ -542,6 +601,9 @@ namespace UnturnedGodot.Net
                     }
             }
 
+            if (host.BlueprintKnowledge.Has(pe.OwnerPlayerId))
+                p.KnownBlueprints.AddRange(host.BlueprintKnowledge.KnownBy(pe.OwnerPlayerId));
+
             if (host.Inventories.TryGet(pe.OwnerPlayerId, out var ie) && ie.Inventory != null)
             {
                 var wi = ie.Inventory;
@@ -653,6 +715,8 @@ namespace UnturnedGodot.Net
                     }
                 se.LastChangedTick = tick;
             }
+
+            host.BlueprintKnowledge.Restore(playerId, p.KnownBlueprints);   // PeerConnected sends the set once this returns
 
             if (host.Inventories.TryGet(playerId, out var ie) && ie.Inventory != null && p.Pages.Count > 0)
             {
@@ -805,6 +869,8 @@ namespace UnturnedGodot.Net
                 host.Deployables.ServerConnectWire(host.Ids.Mint(), src, w.SrcPort, dst, w.DstPort, tick);
             }
 
+            ApplyItemPipes(host, netIdBySaveId, tick);
+
             foreach (var wi in WorldItems)
             {
                 if (wi == null || wi.ItemId == 0) continue;
@@ -863,6 +929,59 @@ namespace UnturnedGodot.Net
             }
         }
 
+        /// <summary>v56: configs, adapter bindings and pipes, AFTER every deployable is back -- a pipe needs both
+        /// ends, and an adapter's container may be a placed fridge restored in the loop above. Map containers were
+        /// registered before the save loaded at all (both hosts build ContainerNetSync first).</summary>
+        void ApplyItemPipes(NetWorldServer host, Dictionary<int, uint> netIdBySaveId, long tick)
+        {
+            foreach (var ds in Deployables)
+            {
+                if (ds == null || !netIdBySaveId.TryGetValue(ds.SaveId, out uint id) || !host.Deployables.TryGet(id, out var e)) continue;
+                var c = ds.ItemConfig;
+                if (c != null && ItemDeviceConfig.IsValid(c.Mode, c.W0, c.W1, c.W2, c.Rate))
+                    host.Deployables.ServerConfigure(id, ItemDeviceConfig.From(c.Mode, c.W0, c.W1, c.W2, c.Rate), tick);
+                if (!host.Deployables.Schema.TryGet(e.DefId, out var def) || def.ItemDevice != ItemDeviceKind.Adapter) continue;
+                e.MountUp = ds.MountUp;
+                // The saved container's position first -- it names the box the player chose, even beside a bigger
+                // neighbour whose origin is closer. Only if nothing stands there any more is the binding re-derived.
+                uint bound = 0;
+                if (ds.ItemCrate != null)
+                {
+                    var at = new Vector3(ds.ItemCrate.X, ds.ItemCrate.Y, ds.ItemCrate.Z);
+                    float bestD = SavedCrateMatch;
+                    foreach (var crate in host.Inventories.Crates)
+                    {
+                        float d = (crate.Pos - at).magnitude;
+                        if (d <= bestD && (crate.Pos - e.Pos).magnitude <= ServerItemMovers.AdapterReach) { bestD = d; bound = crate.NetIdValue; }
+                    }
+                }
+                e.ItemCrateId = bound != 0 ? bound : ServerItemMovers.FindCrateFor(host.Inventories, e.Pos);
+                host.Deployables.ServerTouch();
+            }
+
+            foreach (var p in Pipes)
+            {
+                if (p == null) continue;
+                if (!netIdBySaveId.TryGetValue(p.SrcSaveId, out uint src) || !netIdBySaveId.TryGetValue(p.DstSaveId, out uint dst)) continue;
+                // The ends are re-checked against the CURRENT defs: a save is trusted about what it says, not about
+                // a def table that may have changed since it was written. A port that is no longer Out -> In is skipped.
+                if (!host.Deployables.TryGet(src, out var se) || !host.Deployables.TryGet(dst, out var de)) continue;
+                if (!host.Deployables.Schema.TryGet(se.DefId, out var sd) || !host.Deployables.Schema.TryGet(de.DefId, out var dd)) continue;
+                if (p.SrcPort >= sd.ItemPorts.Length || p.DstPort >= dd.ItemPorts.Length) continue;
+                if (sd.ItemPorts[p.SrcPort] != (byte)ItemPortDir.Out || dd.ItemPorts[p.DstPort] != (byte)ItemPortDir.In) continue;
+                if (host.Deployables.Pipes.IsPortPiped(src, p.SrcPort) || host.Deployables.Pipes.IsPortPiped(dst, p.DstPort)) continue;
+                var path = new Vector3[p.Path?.Count ?? 0];
+                for (int i = 0; i < path.Length; i++) path[i] = new Vector3(p.Path[i].X, p.Path[i].Y, p.Path[i].Z);
+                host.Deployables.ServerConnectPipe(host.Ids.Mint(), src, p.SrcPort, dst, p.DstPort, path, tick);
+            }
+        }
+
+        /// <summary>How close a container must stand to where the save says an adapter's container stood. Both
+        /// kinds come back on the SAME grid -- map containers at their manifest position, placed ones at their
+        /// quantized saved one -- so this only has to absorb float noise, and is far smaller than the gap between
+        /// any two containers.</summary>
+        const float SavedCrateMatch = 0.25f;
+
         void ApplyGlobalPower(NetWorldServer host, long tick)
         {
             foreach (var e in host.Deployables.All)
@@ -871,6 +990,7 @@ namespace UnturnedGodot.Net
                 if (e.ToggledOn == GlobalPower) continue;
                 e.ToggledOn = GlobalPower;
                 e.LastChangedTick = tick;
+                host.Deployables.ServerTouch();   // a direct write: the item movers' power view must hear it
             }
         }
 

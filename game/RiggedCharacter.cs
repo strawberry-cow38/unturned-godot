@@ -109,6 +109,66 @@ namespace UnturnedGodot
             _clothesMat.SetShaderParameter("has_pants_metallic", false);
         }
 
+        // ---- v56 DURABILITY: the worn-clothing look (content/tatter.gdshaderinc). wear = 1 - condition. ----
+
+        /// <summary>How worn the painted shirt and pants look (0 new .. 1 broken). A no-op on the atlas body.</summary>
+        public void SetClothingWear(float shirt, float pants)
+        {
+            if (_clothesMat == null) return;
+            _clothesMat.SetShaderParameter("shirt_wear", Mathf.Clamp(shirt, 0f, 1f));
+            _clothesMat.SetShaderParameter("pants_wear", Mathf.Clamp(pants, 0f, 1f));
+        }
+        public float DebugShirtWear => _clothesMat?.GetShaderParameter("shirt_wear").AsSingle() ?? -1f;
+
+        static Shader _gearWearShader;
+
+        /// <summary>How worn a bone-attached gear piece looks. Unworn gear keeps the plain StandardMaterial3D it was
+        /// attached with; the first time it shows any wear its mesh is moved onto gear_wear.gdshader (same texture,
+        /// same sampling) and back again if it is ever new. A piece with an EMISSIVE lens keeps its StandardMaterial3D
+        /// -- the lens toggle writes that material's energy, and nightvision that stopped glowing because it got
+        /// scuffed would be a worse bug than a pristine-looking pair of goggles.</summary>
+        public void SetGearWear(SDG.Unturned.EItemType slot, float wear)
+        {
+            var att = slot switch
+            {
+                SDG.Unturned.EItemType.HAT => _hatAtt, SDG.Unturned.EItemType.MASK => _maskAtt, SDG.Unturned.EItemType.GLASSES => _glassesAtt,
+                SDG.Unturned.EItemType.VEST => _vestAtt, SDG.Unturned.EItemType.BACKPACK => _backpackAtt, _ => null,
+            };
+            if (att == null || !GodotObject.IsInstanceValid(att)) return;
+            MeshInstance3D mi = null;
+            foreach (var c in att.GetChildren()) if (c is MeshInstance3D m) { mi = m; break; }
+            if (mi == null) return;
+            wear = Mathf.Clamp(wear, 0f, 1f);
+            if (mi.MaterialOverride is StandardMaterial3D std)
+            {
+                if (wear < 0.01f || std.EmissionEnabled) return;
+                _gearWearShader ??= GD.Load<Shader>("res://content/gear_wear.gdshader");
+                var sm = new ShaderMaterial { Shader = _gearWearShader };
+                sm.SetShaderParameter("has_albedo", std.AlbedoTexture != null);
+                if (std.AlbedoTexture != null) sm.SetShaderParameter("albedo_tex", std.AlbedoTexture);
+                sm.SetShaderParameter("albedo_color", std.AlbedoColor);
+                sm.SetShaderParameter("wear", wear);
+                mi.SetMeta("ug_gear_std", std);   // kept, to go back to if the piece is ever new again
+                mi.MaterialOverride = sm;
+                return;
+            }
+            if (mi.MaterialOverride is ShaderMaterial wsm && mi.HasMeta("ug_gear_std"))
+            {
+                if (wear < 0.01f) { mi.MaterialOverride = mi.GetMeta("ug_gear_std").As<StandardMaterial3D>(); return; }
+                wsm.SetShaderParameter("wear", wear);
+            }
+        }
+
+        /// <summary>Test seam: the wear the gear in a slot is DRAWN with (-1 = plain material / nothing attached).</summary>
+        public float DebugGearWear(SDG.Unturned.EItemType slot)
+        {
+            var att = slot switch { SDG.Unturned.EItemType.HAT => _hatAtt, SDG.Unturned.EItemType.VEST => _vestAtt, SDG.Unturned.EItemType.BACKPACK => _backpackAtt, SDG.Unturned.EItemType.MASK => _maskAtt, _ => _glassesAtt };
+            if (att == null || !GodotObject.IsInstanceValid(att)) return -1f;
+            foreach (var c in att.GetChildren())
+                if (c is MeshInstance3D m && m.MaterialOverride is ShaderMaterial s && m.HasMeta("ug_gear_std")) return s.GetShaderParameter("wear").AsSingle();
+            return -1f;
+        }
+
         // ---- gear attach (P3b): hat/mask/glasses ride the Skull bone, vest/backpack ride the Spine bone -- the port of
         //      HumanClothes.apply()'s Instantiate(prefab, parent=skull|spine) + name it + destroy colliders/rigidbody
         //      (a runtime ArrayMesh has neither). Each slot is a BoneAttachment3D (tracks the bone through animation +
@@ -1181,11 +1241,21 @@ namespace UnturnedGodot
         /// ShowMeleeHold on purpose: the live body and the inventory paperdoll are both RiggedCharacters holding
         /// the same weapon, and two callers each assembling "Capitalised_Equip" by hand is how they drift apart.
         /// Falls back to the generic Gun_Equip for a weapon with no clips of its own.</summary>
+        /// <summary>Authored clips first, explicitly named donor second, existing fallback last.</summary>
+        public string GunClipFor(string gunName, string suffix, string fallback = null)
+        {
+            if (string.IsNullOrEmpty(gunName)) return fallback;
+            string own = char.ToUpper(gunName[0]) + gunName[1..] + suffix;
+            if (ClipLength(own) > 0f) return own;
+            string donor = Viewmodel.AnimationDonorFor(gunName);
+            return donor != null && ClipLength(donor + suffix) > 0f ? donor + suffix : fallback;
+        }
+
         public void ShowGunHold(string gunName)
         {
             if (string.IsNullOrEmpty(gunName)) return;
             string cap = char.ToUpper(gunName[0]) + gunName[1..];
-            string equip = ClipLength(cap + "_Equip") > 0f ? cap + "_Equip" : "Gun_Equip";
+            string equip = GunClipFor(gunName, "_Equip", "Gun_Equip");
             if (ClipLength(equip) <= 0f) return;
             if (!_gunLayer) EnableGunLayer("Gun_Aim");   // additive aim bake is inert at AimBlend 0; the LAYER is what we want
             SnapGunOverlay(equip);
@@ -1622,8 +1692,21 @@ namespace UnturnedGodot
                     float sum = w0 + w1; if (sum < 1e-6f) { w0 = 1f; w1 = 0f; sum = 1f; }
                     weights[v * 4 + 0] = w0 / sum; weights[v * 4 + 1] = w1 / sum;
                 }
+                // REVERSE THE WINDING. Every rig.json (human body + arms, cow, deer, horse, pig) is wound so that NOT ONE
+                // triangle's Godot front face (clockwise from the camera) is on the side its authored normal points to:
+                // measured 0% across all of them. The body used to be drawn with cull_front to show the "back" faces, and
+                // that looked right in silhouette -- but cull_front (like cull_disabled) makes Godot negate the normal of
+                // every back-facing fragment (DO_SIDE_CHECK in scene_forward_clustered), so every outward normal was turned
+                // INWARD and the body was lit from inside: belly bright, back dark (strawberry 2026-10-04: "animals are
+                // appearing dark"). Swapping two corners makes the outer surface front-facing; the materials below cull
+                // BACK, which draws exactly the same fragments as before, now with normals that point out.
                 var idx = new int[m.faces.Length];
-                Array.Copy(m.faces, idx, m.faces.Length);
+                for (int t = 0; t + 2 < m.faces.Length; t += 3)
+                {
+                    idx[t] = m.faces[t];
+                    idx[t + 1] = m.faces[t + 2];
+                    idx[t + 2] = m.faces[t + 1];
+                }
 
                 var arr = new Godot.Collections.Array();
                 arr.Resize((int)Mesh.ArrayType.Max);
@@ -1671,7 +1754,7 @@ namespace UnturnedGodot
                 var bodyMat = new StandardMaterial3D
                 {
                     AlbedoColor = tint,
-                    CullMode = BaseMaterial3D.CullModeEnum.Front, // Z-flip reverses winding -> cull the (reversed) BACK faces = single-sided = HALF the fragment cost (was Disabled/double-sided, the horde's per-pixel killer)
+                    CullMode = BaseMaterial3D.CullModeEnum.Back, // single-sided = HALF the fragment cost (was Disabled/double-sided, the horde's per-pixel killer). BACK, not Front: the winding is corrected where the mesh is built, and cull_front would turn the side check on and light the body from inside
                 };
                 var tex = LoadTexCached(albedoTexPath);   // shared across every zombie using this atlas
                 if (tex != null)
