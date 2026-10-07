@@ -41,6 +41,9 @@ namespace UnturnedGodot
                     changed |= SetU(ref ce.WornMask, Id(pi.wornMask));
                     changed |= SetU(ref ce.WornGlasses, Id(pi.wornGlasses));
                     changed |= SetU(ref ce.WornBackpack, Id(pi.wornBackpack));
+                    // v56: how worn each piece is, so other players see it in tatters too
+                    uint wc = SDG.Unturned.Durability.PackWorn(pi);
+                    if (ce.WornCond != wc) { ce.WornCond = wc; changed = true; }
                 }
                 if (_server.Players.TryGetHeldInput(pid, out var mi))
                 {

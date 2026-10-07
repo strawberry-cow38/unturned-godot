@@ -69,11 +69,54 @@ namespace SDG.Unturned
         public float FallingDamageMultiplier => WornProduct(a => a.fallingDamageMultiplier);
         public float ExplosionArmor => WornProduct(a => a.explosionArmor);
 
+        // DURABILITY: each piece's multiplier relaxes toward 1 as it wears and IS 1 when broken (strawberry:
+        // "clothing protection/insulation should scale with durability") -- Durability.ScaleMultiplier.
         float WornProduct(Func<ItemAsset, float> pick)
         {
             float m = 1f;
             foreach (var it in new[] { wornShirt, wornPants, wornHat, wornBackpack, wornVest, wornMask, wornGlasses })
-                if (it != null) { var a = Assets.find(it.id); if (a != null) m *= pick(a); }
+                if (it != null) { var a = Assets.find(it.id); if (a != null) m *= Durability.ScaleMultiplier(pick(a), ConditionOf(it, a)); }
+            return m;
+        }
+
+        /// <summary>A worn piece's condition for PROTECTION purposes. A respirator's quality byte is its FILTER (see
+        /// DeadzoneSim), not wear, so it always protects at full; everything else is its durability.</summary>
+        static byte ConditionOf(Item it, ItemAsset a) => IsFilterMask(a) ? (byte)100 : it.quality;
+
+        /// <summary>A gas mask: its quality is the filter left, drained by deadzones and refilled by a new filter. It is
+        /// kept out of clothing wear for that reason -- the same byte cannot mean two things.</summary>
+        public static bool IsFilterMask(ItemAsset a) => a != null && a.type == EItemType.MASK && a.proofRadiation;
+
+        /// <summary>Every worn piece, with its slot type (empty slots skipped).</summary>
+        public System.Collections.Generic.IEnumerable<(EItemType slot, Item item)> WornPieces()
+        {
+            if (wornHat != null) yield return (EItemType.HAT, wornHat);
+            if (wornMask != null) yield return (EItemType.MASK, wornMask);
+            if (wornGlasses != null) yield return (EItemType.GLASSES, wornGlasses);
+            if (wornShirt != null) yield return (EItemType.SHIRT, wornShirt);
+            if (wornVest != null) yield return (EItemType.VEST, wornVest);
+            if (wornBackpack != null) yield return (EItemType.BACKPACK, wornBackpack);
+            if (wornPants != null) yield return (EItemType.PANTS, wornPants);
+        }
+
+        public Item WornIn(EItemType slot) => slot switch
+        {
+            EItemType.HAT => wornHat, EItemType.MASK => wornMask, EItemType.GLASSES => wornGlasses, EItemType.SHIRT => wornShirt,
+            EItemType.VEST => wornVest, EItemType.BACKPACK => wornBackpack, EItemType.PANTS => wornPants, _ => null,
+        };
+
+        /// <summary>The share of a weapon hit that reaches the body through what covers this zone: the product of every
+        /// covering piece's pass-through (retail getPlayerArmor; Durability.PassThrough). 1 = nothing stops it.</summary>
+        public float PassThrough(Durability.Zone zone)
+        {
+            float m = 1f;
+            foreach (var t in Durability.Covering(zone))
+            {
+                var it = WornIn(t);
+                if (it == null) continue;
+                var a = Assets.find(it.id);
+                if (a != null) m *= Durability.PassThrough(a, ConditionOf(it, a));
+            }
             return m;
         }
 
@@ -94,7 +137,7 @@ namespace SDG.Unturned
         {
             float total = 0f;
             foreach (var it in new[] { wornShirt, wornPants, wornHat, wornBackpack, wornVest, wornMask, wornGlasses })
-                if (it != null) { var a = Assets.find(it.id); if (a != null) total += pick(a); }
+                if (it != null) { var a = Assets.find(it.id); if (a != null) total += pick(a) * Durability.InsulationScale(ConditionOf(it, a)); }
             return total;
         }
 
@@ -119,10 +162,11 @@ namespace SDG.Unturned
             return a != null && a.proofRadiation;
         }
 
+        // a BROKEN piece no longer keeps the rain off or saves your legs on a fall
         bool AnyWorn(Func<ItemAsset, bool> pred)
         {
             foreach (var it in new[] { wornShirt, wornPants, wornHat, wornBackpack, wornVest, wornMask, wornGlasses })
-                if (it != null) { var a = Assets.find(it.id); if (a != null && pred(a)) return true; }
+                if (it != null) { var a = Assets.find(it.id); if (a != null && ConditionOf(it, a) > 0 && pred(a)) return true; }
             return false;
         }
 

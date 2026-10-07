@@ -468,6 +468,10 @@ namespace UnturnedGodot.Net
             // change, replicated for EVERY player) so a joiner's RemotePlayers puppets dress right, WITHOUT bloating
             // the 25 Hz transform. Server publishes them from each player's server-side worn inventory (PlayerAppearanceNetSync).
             public ushort WornHat, WornGlasses, WornMask, WornShirt, WornVest, WornBackpack, WornPants;
+            /// <summary>v56 DURABILITY: each worn slot's condition, 4 bits apiece (0..15 = 0..100%), in the field order
+            /// above (hat, glasses, mask, shirt, vest, backpack, pants). Only for the LOOK -- another player sees your
+            /// shirt in tatters -- so 16 steps is plenty and the whole outfit is one uint. See WornCondition.Pack.</summary>
+            public uint WornCond;
             public ushort HeldId;   // equipped item id (0 = nothing / fists)
             // What is BOLTED to the held gun (strawberry 2026-09-10: "fix for mp"). The Item itself never crosses
             // the wire -- only its id does -- so a puppet had no way to know the gun had a scope on it and every
@@ -604,6 +608,7 @@ namespace UnturnedGodot.Net
                 h = NetHash.MixUInt32(h, e.Deaths);
                 h = NetHash.MixUInt32(h, e.WornHat); h = NetHash.MixUInt32(h, e.WornGlasses); h = NetHash.MixUInt32(h, e.WornMask);
                 h = NetHash.MixUInt32(h, e.WornShirt); h = NetHash.MixUInt32(h, e.WornVest); h = NetHash.MixUInt32(h, e.WornBackpack); h = NetHash.MixUInt32(h, e.WornPants);
+                h = NetHash.MixUInt32(h, e.WornCond);
                 h = NetHash.MixUInt32(h, e.HeldId); h = NetHash.MixByte(h, e.Stance); h = NetHash.MixByte(h, e.Gesture);
                 h = NetHash.MixUInt32(h, e.HeldSight); h = NetHash.MixUInt32(h, e.HeldMagazine); h = NetHash.MixUInt32(h, e.HeldBarrel);
                 h = NetHash.MixByte(h, (byte)((e.WornLightOn ? 1 : 0) | (e.HeldLightOn ? 2 : 0)));
@@ -620,6 +625,7 @@ namespace UnturnedGodot.Net
             w.WriteUInt16(e.Deaths);
             w.WriteUInt16(e.WornHat); w.WriteUInt16(e.WornGlasses); w.WriteUInt16(e.WornMask);
             w.WriteUInt16(e.WornShirt); w.WriteUInt16(e.WornVest); w.WriteUInt16(e.WornBackpack); w.WriteUInt16(e.WornPants);
+            w.WriteUInt32(e.WornCond);   // v56
             w.WriteUInt16(e.HeldId); w.WriteUInt8(e.Stance); w.WriteUInt8(e.Gesture);
             w.WriteUInt16(e.HeldSight); w.WriteUInt16(e.HeldMagazine); w.WriteUInt16(e.HeldBarrel);
             w.WriteBit(e.WornLightOn); w.WriteBit(e.HeldLightOn);
@@ -635,12 +641,13 @@ namespace UnturnedGodot.Net
             if (!r.ReadUInt16(out ushort deaths)) return false;
             if (!r.ReadUInt16(out ushort wHat) || !r.ReadUInt16(out ushort wGlasses) || !r.ReadUInt16(out ushort wMask)) return false;
             if (!r.ReadUInt16(out ushort wShirt) || !r.ReadUInt16(out ushort wVest) || !r.ReadUInt16(out ushort wBackpack) || !r.ReadUInt16(out ushort wPants)) return false;
+            if (!r.ReadUInt32(out uint wCond)) return false;
             if (!r.ReadUInt16(out ushort held) || !r.ReadUInt8(out byte stance) || !r.ReadUInt8(out byte gesture)) return false;
             if (!r.ReadUInt16(out ushort aSight) || !r.ReadUInt16(out ushort aMag) || !r.ReadUInt16(out ushort aBarrel)) return false;
             if (!r.ReadBit(out bool wLight) || !r.ReadBit(out bool hLight)) return false;
             e = new CombatEntity { OwnerPlayerId = owner, Alive = alive, Health = health, Kills = kills, Deaths = deaths,
                 WornHat = wHat, WornGlasses = wGlasses, WornMask = wMask, WornShirt = wShirt, WornVest = wVest,
-                WornBackpack = wBackpack, WornPants = wPants, HeldId = held, Stance = stance, Gesture = gesture,
+                WornBackpack = wBackpack, WornPants = wPants, WornCond = wCond, HeldId = held, Stance = stance, Gesture = gesture,
                 HeldSight = aSight, HeldMagazine = aMag, HeldBarrel = aBarrel,
                 WornLightOn = wLight, HeldLightOn = hLight };
             return true;

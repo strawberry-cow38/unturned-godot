@@ -37,6 +37,10 @@ namespace UnturnedGodot.Net
         public long AutoDrinkRejected;      // empty cell / a different item at that address
         public long GunStatesApplied;       // the client's gun state landed on the server's copy of that item
         public long GunStatesRejected;      // empty cell / a different item at that address (a stale client grid)
+        public long WeaponUsesApplied;      // durability: uses rolled against a weapon (each report, not each roll)
+        public long WeaponUsesRejected;     // durability: the address held no weapon of that id
+        public long WeaponWearPoints;       // durability: condition points actually lost by weapons
+        public long ToolWearPoints;         // durability: condition points lost by crafting tools
         public long ConsoleApplied;
         public long ConsoleRejected;        // unknown verb / cheats disabled / bad args
         public long ChatSent;               // v49: chat lines broadcast (player + server)
@@ -296,6 +300,7 @@ namespace UnturnedGodot.Net
                 OnPlaceDeployable,
                 validate: (sender, cmd) => TryGetSenderPos(sender, out var pos)
                                         && _deployables.CanPlace(cmd.DefId, cmd.Pos, pos)
+                                        && AdapterHasContainer(cmd)                                  // v56: "has to snap or it wont place"
                                         && SenderInventory(sender)?.getItemCount(cmd.DefId) > 0);   // placing spends the held item
 
             // Ownership (review M2, previously a TODO here): salvage/pickup/wire/toggle now run through
@@ -359,6 +364,38 @@ namespace UnturnedGodot.Net
                                         && _deployables.TryGet(w.SrcId, out var src)
                                         && MayModify(sender, src)
                                         && (src.Pos - pos).magnitude <= DeployableReplication.WireReach);
+
+            // v56 ITEM PIPES. Same shape as the wire pair above -- reach + ownership in the validator, so a refused
+            // attempt never reaches the graph -- with the pipe rules themselves in CanConnectPipe, where a test
+            // can call the exact gate the wire runs.
+            commands.Register<ConnectPipeCommand>(ReplicationIds.CommandConnectPipe, ConnectPipeCommand.TryRead,
+                OnConnectPipe,
+                validate: (sender, cmd) => TryGetSenderPos(sender, out var pos)
+                                        && (!EnforceOwnership
+                                            || (_deployables.TryGet(cmd.SrcId, out var s) && MayModify(sender, s)
+                                             && _deployables.TryGet(cmd.DstId, out var d) && MayModify(sender, d)))
+                                        && _deployables.CanConnectPipe(cmd.SrcId, cmd.SrcPort, cmd.DstId, cmd.DstPort, cmd.Path, pos));
+
+            // Cutting a pipe: reach to EITHER end, for the reason the connect checks one end -- a 40 m pipe has
+            // no point both ends of it are near, and the player cutting it is standing at one of them.
+            commands.Register<RemovePipeCommand>(ReplicationIds.CommandRemovePipe, RemovePipeCommand.TryRead,
+                OnRemovePipe,
+                validate: (sender, cmd) => TryGetSenderPos(sender, out var pos)
+                                        && _deployables.Pipes.TryGet(cmd.PipeId, out var p)
+                                        && _deployables.TryGet(p.SrcId, out var src)
+                                        && MayModify(sender, src)
+                                        && NearEither(p, pos));
+
+            // The F panel. The RANGES are the security here: a forged rate of 255 is a mover that empties a chest
+            // in a tick, so the server re-checks what the stepper already clamped.
+            commands.Register<ConfigureItemDeviceCommand>(ReplicationIds.CommandConfigureItemDevice, ConfigureItemDeviceCommand.TryRead,
+                OnConfigureItemDevice,
+                validate: (sender, cmd) => TryGetSenderPos(sender, out var pos)
+                                        && _deployables.IsConfigurable(cmd.NetId, out var e)
+                                        && MayModify(sender, e)
+                                        && !e.OnFire
+                                        && (e.Pos - pos).magnitude <= DeployableReplication.WireReach
+                                        && ItemDeviceConfig.IsValid(cmd.Mode, cmd.W0, cmd.W1, cmd.W2, cmd.Rate));
 
             // Toggle is the one that stays open on world fixtures: OwnerPlayerId 0 means the level placed it,
             // so the street lamps and the grid mains keep answering to everybody (see MayModify).
@@ -571,6 +608,10 @@ namespace UnturnedGodot.Net
                 OnGunState,
                 validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.Page < PlayerInventory.PAGES);
 
+            commands.Register<WeaponUseCommand>(ReplicationIds.CommandWeaponUse, WeaponUseCommand.TryRead,
+                OnWeaponUse,
+                validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.Page < PlayerInventory.PAGES && cmd.Uses > 0);
+
             commands.Register<FitAttachmentCommand>(ReplicationIds.CommandFitAttachment, FitAttachmentCommand.TryRead,
                 OnFitAttachment,
                 validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.Page < PlayerInventory.PAGES);
@@ -737,6 +778,15 @@ namespace UnturnedGodot.Net
             if (!SpendAt(inv, cmd.Page, cmd.X, cmd.Y, cmd.DefId, sender)) SpendAnyOf(inv, cmd.DefId, sender);
             var e = _deployables.ServerPlace(_ids.Mint(), cmd.DefId, sender, cmd.Pos, cmd.YawDegrees, _tick(), placeHealth, placeFuel);
             if (e == null) return;
+            // v56: a Storage Adapter is bolted to ONE container, decided here and kept server-side (ItemCrateId).
+            // The validator already proved this finds one; reading it again rather than caching is what keeps the
+            // validator and the binding from ever disagreeing about which box.
+            if (_deployables.Schema.TryGet(cmd.DefId, out var adef) && adef.ItemDevice == ItemDeviceKind.Adapter)
+            {
+                e.ItemCrateId = ServerItemMovers.FindCrateFor(_inventories, e.Pos, cmd.TargetId);
+                e.MountUp = cmd.MountUp;      // on the container's top face; stamped with the place, so it rides the same delta
+                _deployables.ServerTouch();   // the binding is a direct write; a mover asleep on this network must re-look
+            }
             // A STORAGE DEVICE BRINGS ITS OWN GRID, registered under the deployable's OWN NetId -- which is
             // what the client stamps onto the materialized crate and what its F-open addresses. So the whole
             // open/move/close path a map container already uses works on a placed fridge with no new command
@@ -752,7 +802,7 @@ namespace UnturnedGodot.Net
                 if (pdef.CookerKind != 255 && Cooking != null)
                     Cooking.Register(e.NetIdValue, (ECookerKind)pdef.CookerKind);
             }
-            var evt = new DeployablePlacedEvent { NetId = e.NetIdValue, DefId = e.DefId, OwnerPlayerId = sender, Pos = e.Pos, YawDegrees = e.YawDegrees };
+            var evt = new DeployablePlacedEvent { NetId = e.NetIdValue, DefId = e.DefId, OwnerPlayerId = sender, Pos = e.Pos, YawDegrees = e.YawDegrees, MountUp = e.MountUp };
             _broadcast(NetMessagePak.Pack(ReplicationIds.EventDeployablePlaced, evt.Write));
         }
 
@@ -761,6 +811,7 @@ namespace UnturnedGodot.Net
             _deployables.TryGet(cmd.NetId, out var e);
             _deployables.Schema.TryGet(e.DefId, out var def);
             SpillStorage(cmd.NetId, def, e.Pos);   // a container's contents are never silently deleted
+            BroadcastPipeCascade(cmd.NetId);       // v56: its pipes go with it -- taken off first so each removal is announced
             var cascaded = _deployables.ServerRemove(cmd.NetId, _tick());
             var evt = new DeployableRemovedEvent { NetId = cmd.NetId };
             _broadcast(NetMessagePak.Pack(ReplicationIds.EventDeployableRemoved, evt.Write));
@@ -813,6 +864,7 @@ namespace UnturnedGodot.Net
             _deployables.TryGet(cmd.NetId, out var e);
             _deployables.Schema.TryGet(e.DefId, out var def);
             SpillStorage(cmd.NetId, def, e.Pos);   // a container's contents are never silently deleted
+            BroadcastPipeCascade(cmd.NetId);       // v56: its pipes go with it -- taken off first so each removal is announced
             var cascaded = _deployables.ServerRemove(cmd.NetId, _tick());
             var evt = new DeployableRemovedEvent { NetId = cmd.NetId };
             _broadcast(NetMessagePak.Pack(ReplicationIds.EventDeployableRemoved, evt.Write));
@@ -920,6 +972,53 @@ namespace UnturnedGodot.Net
             if (!_deployables.ServerRemoveWire(cmd.WireId, _tick())) return;
             var evt = new WireRemovedEvent { WireId = cmd.WireId };
             _broadcast(NetMessagePak.Pack(ReplicationIds.EventWireRemoved, evt.Write));
+        }
+
+        // ---- v56 item pipes ----
+
+        /// <summary>The place validator's adapter rule: a Storage Adapter must land on a container. Everything else
+        /// passes untouched. In the VALIDATOR, not the handler, because the handler spends the item first -- a
+        /// refusal there would cost the player an adapter for a placement that never happened.</summary>
+        bool AdapterHasContainer(PlaceDeployableCommand cmd)
+        {
+            if (!_deployables.Schema.TryGet(cmd.DefId, out var def) || def.ItemDevice != ItemDeviceKind.Adapter) return true;
+            return ServerItemMovers.FindCrateFor(_inventories, cmd.Pos, cmd.TargetId) != 0;
+        }
+
+        bool NearEither(ItemPipeEntity p, Vector3 pos)
+        {
+            float best = float.MaxValue;
+            if (_deployables.TryGet(p.SrcId, out var a)) best = Mathf.Min(best, (a.Pos - pos).magnitude);
+            if (_deployables.TryGet(p.DstId, out var b)) best = Mathf.Min(best, (b.Pos - pos).magnitude);
+            return best <= ItemPipeRules.Reach;
+        }
+
+        void BroadcastPipeCascade(uint netId)
+        {
+            foreach (uint pid in _deployables.Pipes.ServerRemoveAllOn(netId, _tick()))
+                _broadcast(NetMessagePak.Pack(ReplicationIds.EventPipeRemoved, new PipeRemovedEvent { PipeId = pid }.Write));
+        }
+
+        void OnConnectPipe(ushort sender, ConnectPipeCommand cmd)
+        {
+            var p = _deployables.ServerConnectPipe(_ids.Mint(), cmd.SrcId, cmd.SrcPort, cmd.DstId, cmd.DstPort, cmd.Path, _tick());
+            // the QUANTIZED path, so the event and the snapshot describe the same pipe to the bit
+            var evt = new PipeConnectedEvent { PipeId = p.NetIdValue, SrcId = p.SrcId, SrcPort = p.SrcPort, DstId = p.DstId, DstPort = p.DstPort, Path = p.Path };
+            _broadcast(NetMessagePak.Pack(ReplicationIds.EventPipeConnected, evt.Write, bufferSize: 64 + 16 * (p.Path.Length + 1)));
+        }
+
+        void OnRemovePipe(ushort sender, RemovePipeCommand cmd)
+        {
+            if (!_deployables.ServerRemovePipe(cmd.PipeId, _tick())) return;
+            _broadcast(NetMessagePak.Pack(ReplicationIds.EventPipeRemoved, new PipeRemovedEvent { PipeId = cmd.PipeId }.Write));
+        }
+
+        void OnConfigureItemDevice(ushort sender, ConfigureItemDeviceCommand cmd)
+        {
+            var cfg = ItemDeviceConfig.From(cmd.Mode, cmd.W0, cmd.W1, cmd.W2, cmd.Rate);
+            if (!_deployables.ServerConfigure(cmd.NetId, cfg, _tick())) return;   // unchanged -> nothing to announce
+            var evt = new ItemDeviceConfiguredEvent { NetId = cmd.NetId, Config = cfg };
+            _broadcast(NetMessagePak.Pack(ReplicationIds.EventItemDeviceConfigured, evt.Write));
         }
 
         void OnToggleDeployable(ushort sender, ToggleDeployableCommand cmd)
@@ -1383,6 +1482,27 @@ namespace UnturnedGodot.Net
             item.gunChamberedType = cmd.Chambered && cmd.MagId > 0 && cmd.MagId <= ushort.MaxValue
                 ? Assets.find((ushort)cmd.MagId)?.ammoType : null;
             Diag.GunStatesApplied++;
+            page.raiseStateUpdated();   // the echo only re-sends a page it knows changed
+        }
+
+        /// <summary>DURABILITY: roll the wear for a client's reported uses of a weapon, on the SERVER's copy of it. The
+        /// client reports and never writes (see ReplicationIds.CommandWeaponUse). Clamped at WeaponUseCommand.MaxUses.
+        /// ⚠ An honest client is assumed for the COUNT: a modified one could under-report and keep its gun new. The
+        /// fix is for ServerCombat to count accepted shots itself, which it can only do for real-MP shots; recorded
+        /// rather than half-done.</summary>
+        void OnWeaponUse(ushort sender, WeaponUseCommand cmd)
+        {
+            var page = SenderInventory(sender)?.items[cmd.Page];
+            byte index = page?.getIndex(cmd.X, cmd.Y) ?? byte.MaxValue;
+            var jar = index == byte.MaxValue ? null : page.getItem(index);
+            var a = jar?.item != null && jar.item.id == cmd.Id ? Assets.find(cmd.Id) : null;
+            var kind = Durability.KindOf(a);
+            if (kind != Durability.Kind.Gun && kind != Durability.Kind.Melee) { Diag.WeaponUsesRejected++; return; }
+            int lost = 0;
+            for (int i = 0; i < Math.Min(cmd.Uses, WeaponUseCommand.MaxUses); i++) lost += Durability.UseWeapon(jar.item, a, () => Rand());
+            Diag.WeaponUsesApplied++;
+            if (lost == 0) return;
+            Diag.WeaponWearPoints += lost;
             page.raiseStateUpdated();   // the echo only re-sends a page it knows changed
         }
 
@@ -2052,6 +2172,7 @@ namespace UnturnedGodot.Net
                 var asset = ResolveItem(arg);
                 if (asset == null) { Diag.ConsoleRejected++; return $"no item matching '{arg}'"; }
                 var item = Assets.makeLoot(asset.id);
+                if (Durability.HasCondition(asset)) item.quality = 100;   // a console give is a fresh one, not a looted one
                 var inv = SenderInventory(sender);
                 if (inv == null) { Diag.ConsoleRejected++; return "no inventory"; }
                 Diag.ConsoleApplied++;

@@ -109,6 +109,66 @@ namespace UnturnedGodot
             _clothesMat.SetShaderParameter("has_pants_metallic", false);
         }
 
+        // ---- v56 DURABILITY: the worn-clothing look (content/tatter.gdshaderinc). wear = 1 - condition. ----
+
+        /// <summary>How worn the painted shirt and pants look (0 new .. 1 broken). A no-op on the atlas body.</summary>
+        public void SetClothingWear(float shirt, float pants)
+        {
+            if (_clothesMat == null) return;
+            _clothesMat.SetShaderParameter("shirt_wear", Mathf.Clamp(shirt, 0f, 1f));
+            _clothesMat.SetShaderParameter("pants_wear", Mathf.Clamp(pants, 0f, 1f));
+        }
+        public float DebugShirtWear => _clothesMat?.GetShaderParameter("shirt_wear").AsSingle() ?? -1f;
+
+        static Shader _gearWearShader;
+
+        /// <summary>How worn a bone-attached gear piece looks. Unworn gear keeps the plain StandardMaterial3D it was
+        /// attached with; the first time it shows any wear its mesh is moved onto gear_wear.gdshader (same texture,
+        /// same sampling) and back again if it is ever new. A piece with an EMISSIVE lens keeps its StandardMaterial3D
+        /// -- the lens toggle writes that material's energy, and nightvision that stopped glowing because it got
+        /// scuffed would be a worse bug than a pristine-looking pair of goggles.</summary>
+        public void SetGearWear(SDG.Unturned.EItemType slot, float wear)
+        {
+            var att = slot switch
+            {
+                SDG.Unturned.EItemType.HAT => _hatAtt, SDG.Unturned.EItemType.MASK => _maskAtt, SDG.Unturned.EItemType.GLASSES => _glassesAtt,
+                SDG.Unturned.EItemType.VEST => _vestAtt, SDG.Unturned.EItemType.BACKPACK => _backpackAtt, _ => null,
+            };
+            if (att == null || !GodotObject.IsInstanceValid(att)) return;
+            MeshInstance3D mi = null;
+            foreach (var c in att.GetChildren()) if (c is MeshInstance3D m) { mi = m; break; }
+            if (mi == null) return;
+            wear = Mathf.Clamp(wear, 0f, 1f);
+            if (mi.MaterialOverride is StandardMaterial3D std)
+            {
+                if (wear < 0.01f || std.EmissionEnabled) return;
+                _gearWearShader ??= GD.Load<Shader>("res://content/gear_wear.gdshader");
+                var sm = new ShaderMaterial { Shader = _gearWearShader };
+                sm.SetShaderParameter("has_albedo", std.AlbedoTexture != null);
+                if (std.AlbedoTexture != null) sm.SetShaderParameter("albedo_tex", std.AlbedoTexture);
+                sm.SetShaderParameter("albedo_color", std.AlbedoColor);
+                sm.SetShaderParameter("wear", wear);
+                mi.SetMeta("ug_gear_std", std);   // kept, to go back to if the piece is ever new again
+                mi.MaterialOverride = sm;
+                return;
+            }
+            if (mi.MaterialOverride is ShaderMaterial wsm && mi.HasMeta("ug_gear_std"))
+            {
+                if (wear < 0.01f) { mi.MaterialOverride = mi.GetMeta("ug_gear_std").As<StandardMaterial3D>(); return; }
+                wsm.SetShaderParameter("wear", wear);
+            }
+        }
+
+        /// <summary>Test seam: the wear the gear in a slot is DRAWN with (-1 = plain material / nothing attached).</summary>
+        public float DebugGearWear(SDG.Unturned.EItemType slot)
+        {
+            var att = slot switch { SDG.Unturned.EItemType.HAT => _hatAtt, SDG.Unturned.EItemType.VEST => _vestAtt, SDG.Unturned.EItemType.BACKPACK => _backpackAtt, SDG.Unturned.EItemType.MASK => _maskAtt, _ => _glassesAtt };
+            if (att == null || !GodotObject.IsInstanceValid(att)) return -1f;
+            foreach (var c in att.GetChildren())
+                if (c is MeshInstance3D m && m.MaterialOverride is ShaderMaterial s && m.HasMeta("ug_gear_std")) return s.GetShaderParameter("wear").AsSingle();
+            return -1f;
+        }
+
         // ---- gear attach (P3b): hat/mask/glasses ride the Skull bone, vest/backpack ride the Spine bone -- the port of
         //      HumanClothes.apply()'s Instantiate(prefab, parent=skull|spine) + name it + destroy colliders/rigidbody
         //      (a runtime ArrayMesh has neither). Each slot is a BoneAttachment3D (tracks the bone through animation +

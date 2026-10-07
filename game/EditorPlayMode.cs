@@ -158,6 +158,8 @@ namespace UnturnedGodot
             _editor.AddChild(_presence);
 
             // ---- ZOMBIES AND LOOT ---------------------------------------------------------------------------
+            // v56: this map's per-loot-table condition bias, as the editor left it
+            SDG.Unturned.LootCondition.Load(EditorSpawns.LootConditionPath(_editor?.MapName ?? ""));
             // ⚠ Only on a GENERATED island: a blank or hand-built custom map has no island data to scatter
             // against, and populating one with nothing is an empty field plus a log line.
             var terr = Terrain.Active;

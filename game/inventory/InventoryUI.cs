@@ -2072,6 +2072,20 @@ void fragment() {
             }
             // a FOOD item shows its CONDITION (freshness) as a % coloured red->yellow->green (source getQualityColor);
             // under the sick threshold it's flagged spoiled -- eating it feeds you less + raises infection (FoodSpoil).
+            // v56: the same line for an item with DURABILITY, with what its condition costs you
+            if (jar.item != null && Durability.HasCondition(asset))
+            {
+                int q = jar.item.quality;
+                var kind = Durability.KindOf(asset);
+                string tag = q == 0 ? (kind == Durability.Kind.Clothing ? "  ·  BROKEN: no protection" : "  ·  BROKEN: unusable")
+                           : q < 50 && (kind == Durability.Kind.Gun) ? "  ·  worn: kicks, spreads, hits softer"
+                           : q < 50 && (kind == Durability.Kind.Melee) ? "  ·  worn: hits softer"
+                           : q < 100 && kind == Durability.Kind.Clothing ? $"  ·  protects at {q}%" : "";
+                var dl = new Label { Text = $"Condition: {q}%{tag}", Position = new Vector2(228, 120), Size = new Vector2(258, 22) };
+                dl.AddThemeColorOverride("font_color", (q == 0 ? new Color(0.85f, 0.2f, 0.18f) : ItemTool.QualityColor(q / 100f)).Lerp(Colors.White, 0.3f));
+                dl.AddThemeFontSizeOverride("font_size", UITheme.FontBody);
+                panel.AddChild(dl);
+            }
             if (asset.type == EItemType.FOOD && jar.item != null)
             {
                 int q = jar.item.quality;
@@ -3487,7 +3501,7 @@ void fragment() {
             return _snowTex;
         }
 
-        Control MakeTile(ItemJar jar, int w, int h, int rotParam = -1)
+        Control MakeTile(ItemJar jar, int w, int h, int rotParam = -1, bool conditionChip = true)
         {
             var asset = jar.GetAsset();
             bool rotated = ((rotParam >= 0 ? rotParam : jar.rot) % 2) == 1;   // drawn rotated? (the drag preview passes the live _dragRot)
@@ -3601,17 +3615,22 @@ void fragment() {
                 }
             }
 
-            if (asset?.type == EItemType.FOOD && jar.item != null)   // FOOD shows its CONDITION as a coloured % in the bottom-right corner (source SleekItem quality box: red->yellow->green)
+            // FOOD shows its CONDITION as a coloured % in the bottom-right corner (source SleekItem quality box: red->yellow->green).
+            // v56: so does everything with DURABILITY (weapons, clothing, tools) -- the same chip, "like how food has durability";
+            // at 0 it reads BROKEN instead of 0%.
+            // (not on a worn garment's tiny header icon: its bar already prints the % beside it)
+            if (jar.item != null && (asset?.type == EItemType.FOOD || (Durability.HasCondition(asset) && conditionChip)))
             {
                 int q = jar.item.quality;
-                var qcol = ItemTool.QualityColor(q / 100f);
+                bool broken = q == 0 && Durability.HasCondition(asset);
+                var qcol = broken ? new Color(0.85f, 0.2f, 0.18f) : ItemTool.QualityColor(q / 100f);
                 var bs = new StyleBoxFlat { BgColor = UITheme.Chip };
                 bs.SetCornerRadiusAll(3); bs.BorderColor = qcol; bs.SetBorderWidthAll(1);   // dark chip, outlined in the condition colour so it reads on any icon
                 bs.ContentMarginLeft = 4; bs.ContentMarginRight = 4; bs.ContentMarginTop = 0; bs.ContentMarginBottom = 0;   // even breathing room L/R so the text sits centred in the card
                 // A PanelContainer SIZES ITSELF to the label, so the chip always wraps "{q}%" exactly (5% / 85% / 100%) and
                 // the text is centred inside its card by construction. The old fixed-width Panel let a wide "100%" spill past
                 // the card's edges no matter the width I picked (master: "the %s werent centered in their mini card").
-                var lbl = new Label { Text = $"{q}%", HorizontalAlignment = HorizontalAlignment.Center, MouseFilter = Control.MouseFilterEnum.Ignore };
+                var lbl = new Label { Text = broken ? "BROKEN" : $"{q}%", HorizontalAlignment = HorizontalAlignment.Center, MouseFilter = Control.MouseFilterEnum.Ignore };
                 lbl.AddThemeColorOverride("font_color", qcol.Lerp(Colors.White, 0.45f));   // brighten the text so even the dark-red (spoiled) end reads on the chip; the border keeps the pure hue
                 lbl.AddThemeFontSizeOverride("font_size", UITheme.FontSmall);
                 var card = new PanelContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
@@ -3678,7 +3697,7 @@ void fragment() {
 
             if (worn != null)
             {
-                var icon = MakeTile(new ItemJar(worn), HDRH - 12, HDRH - 12);
+                var icon = MakeTile(new ItemJar(worn), HDRH - 12, HDRH - 12, conditionChip: false);   // the bar prints the % itself
                 icon.Position = new Vector2(6, 6);
                 icon.MouseFilter = Control.MouseFilterEnum.Ignore;
                 bar.AddChild(icon);
@@ -3696,7 +3715,7 @@ void fragment() {
 
             if (worn != null)
             {
-                var pct = new Label { Text = $"{worn.quality}%", Position = new Vector2(width - 116, 0),
+                var pct = new Label { Text = worn.quality == 0 ? "BROKEN" : $"{worn.quality}%", Position = new Vector2(width - 116, 0),
                                       Size = new Vector2(94, HDRH), HorizontalAlignment = HorizontalAlignment.Right,
                                       VerticalAlignment = VerticalAlignment.Center,
                                       MouseFilter = Control.MouseFilterEnum.Ignore };

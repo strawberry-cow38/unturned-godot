@@ -68,7 +68,7 @@ namespace UnturnedGodot
             {
                 if (_gun != null && Godot.GodotObject.IsInstanceValid(_gun)) _gun.Visible = true;
                 _arms.Position = _armsPos;
-                _arms.Play(_holdClip);   // back to the item's ready hold
+                RestoreHold();   // back to the item's ready hold
             }
         }
         void SetDrivingDeferred() => SetDriving(true);
@@ -86,6 +86,7 @@ namespace UnturnedGodot
         public void SetDrivingWheel(Vector2 screenPx, float depth, Vector3 axisCamLocal, float steerDeg, Vector3 camLocal, bool inFront, Basis vehBasisCam)
         { _wheelScreen = screenPx; _wheelDepth = depth; _wheelAxisCam = axisCamLocal; _wheelSteerDeg = steerDeg; _wheelCamLocal = camLocal; _wheelInFront = inFront; _wheelKnown = true; _vehBasisCam = vehBasisCam; }
         public void ClearDrivingWheel() { _wheelKnown = false; _vehBasisCam = Basis.Identity; }
+
 
         /// <summary>The VEHICLE's basis expressed in camera space. Identity when you are looking straight down the
         /// car; it rotates the opposite way to your head as you look around, which is exactly the correction the
@@ -1191,8 +1192,21 @@ namespace UnturnedGodot
             else if (wasOff)
             {
                 if (_gun != null && Godot.GodotObject.IsInstanceValid(_gun)) _gun.Visible = true;
-                _arms.Play(_holdClip);
+                RestoreHold();
             }
+        }
+
+        /// <summary>Back to the held item's ready pose after something took the hands away (a ladder, water, a car).
+        /// FISTS SNAP, EVERYTHING ELSE PLAYS (strawberry 2026-10-05: "when getting off a ladder unarmed, it plays the
+        /// punch animation for some reason"). Bare hands have no raise-to-hold clip of their own: their guard IS the
+        /// last frame of the left jab, which is why equipping fists already snaps to it. Leaving a ladder PLAYED it
+        /// from the top instead -- a full jab, every time you stepped off, out of water, or out of a car. Anything
+        /// with a real raise clip still plays it, as it did.</summary>
+        void RestoreHold()
+        {
+            if (_arms == null) return;
+            if (Fists) _arms.SnapToEnd(_holdClip);
+            else _arms.Play(_holdClip);
         }
 
         // ---- INPUT INERTIA (PlayerAnimator.rotationInputViewmodelRoll, source lines 1480-1485) ----------------
@@ -1626,6 +1640,7 @@ namespace UnturnedGodot
         public bool IsRopeViewmodel => ToolMesh != null && HeldToolKind == ToolKind.Rope;
         public bool IsHoseViewmodel => ToolMesh != null && HeldToolKind == ToolKind.Hose;
         public bool IsDetonatorViewmodel => ToolMesh != null && HeldToolKind == ToolKind.Detonator;
+        public bool IsPipeViewmodel => ToolMesh != null && HeldToolKind == ToolKind.Pipe;   // v56 industrial item pipes
         /// <summary>The walkie-talkie (1445): a carry-only holdable with its own LMB toggle.</summary>
         public bool IsWalkieViewmodel => ToolMesh != null && HeldToolKind == ToolKind.Handheld;
         public int GetAttachMask() { int m = 0; for (int i = 0; i < AttachSlots.Length; i++) if (SlotHasModel(AttachSlots[i]) && SlotAttached(AttachSlots[i])) m |= 1 << i; return m; }

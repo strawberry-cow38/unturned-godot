@@ -26,6 +26,7 @@ namespace UnturnedGodot
         readonly Dictionary<uint, Refrigerator> _fridges = new();    // placed STORAGE devices (a Refrigerator/StorageCrate, not a Deployable body)
         readonly Dictionary<uint, FluidContainer> _fluids = new();   // placed FLUID devices (a FluidContainer/FluidPump/FluidValve, not a Deployable body)
         readonly Dictionary<uint, Wire> _wires = new();
+        readonly Dictionary<uint, ItemPipe> _pipes = new();   // v56 industrial item pipes, keyed by the server pipe NetId
 
         public int NodeCount => _nodes.Count;
         public bool TryGetNode(uint netId, out Deployable node) => _nodes.TryGetValue(netId, out node) && IsInstanceValid(node);
@@ -33,6 +34,8 @@ namespace UnturnedGodot
         public bool TryGetGrid(uint netId, out GridPowerSource grid) => _grids.TryGetValue(netId, out grid) && IsInstanceValid(grid);
         public int GasPumpCount => _gaspumps.Count;   // A2: how many gas-pump fixtures have materialized
         public bool TryGetGasPump(uint netId, out GasPump pump) => _gaspumps.TryGetValue(netId, out pump) && IsInstanceValid(pump);
+        public int PipeCount => _pipes.Count;   // v56: how many item pipes have materialized
+        public bool TryGetPipe(uint pipeId, out ItemPipe pipe) => _pipes.TryGetValue(pipeId, out pipe) && IsInstanceValid(pipe);
 
         public override void _PhysicsProcess(double delta) => HubPhysics(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubPhysics
         public void HubPhysics(double delta)
@@ -117,7 +120,7 @@ namespace UnturnedGodot
                     // slab -- see Barricade.NormalFromWire for why the normal is recoverable here at all.
                     var wPos = new Vector3(e.Pos.x, e.Pos.y, e.Pos.z);
                     node = Barricade.SeatsOnSurface(def.Mount)
-                        ? Barricade.PlaceOnSurface(parent, def, wPos, Barricade.NormalFromWire(def.Mount, e.YawDegrees), e.YawDegrees)
+                        ? Barricade.PlaceOnSurface(parent, def, wPos, Barricade.NormalFromWire(def.Mount, e.YawDegrees, e.MountUp), e.YawDegrees)
                         : Deployable.Spawn(parent, def, wPos, e.YawDegrees);
                     node.NetId = e.NetIdValue;   // the shell's salvage/toggle/wire requests address the entity by this
                     // A container that is NOT the fridge (the campfire) keeps its Deployable body and gets the
@@ -155,6 +158,36 @@ namespace UnturnedGodot
                 PowerNet.MarkDirty();
             }
             RetireMissing(_wires, seenWires, wire => { if (IsInstanceValid(wire)) wire.QueueFree(); PowerNet.MarkDirty(); });
+
+            // v56 ITEM PIPES: the same diff, between ITEM sockets, along the route the server kept. Unlike a wire (which
+            // the server stores as two endpoints and every client draws straight) a pipe's nodes ARE replicated, so
+            // everyone sees the run the player actually laid. Rebuilt if either end's node was replaced under it.
+            var seenPipes = new HashSet<uint>();
+            foreach (var p in Client.Deployables.Pipes.All)
+            {
+                seenPipes.Add(p.NetIdValue);
+                if (_pipes.TryGetValue(p.NetIdValue, out var pipe) && IsInstanceValid(pipe)
+                    && IsInstanceValid(pipe.Src) && IsInstanceValid(pipe.Dst)) continue;
+                if (!TryGetItemPort(p.SrcId, p.SrcPort, out var sp) || !TryGetItemPort(p.DstId, p.DstPort, out var dp)) continue;
+                if (pipe != null && IsInstanceValid(pipe)) pipe.QueueFree();
+                pipe = new ItemPipe { NetId = p.NetIdValue, Src = sp, Dst = dp };
+                parent.AddChild(pipe);
+                var pts = new List<Vector3> { sp.GlobalPosition };
+                foreach (var v in p.Path) pts.Add(new Vector3(v.x, v.y, v.z));
+                pts.Add(dp.GlobalPosition);
+                pipe.SetPoints(pts, true);
+                pipe.AddToGroup("item_pipes");
+                _pipes[p.NetIdValue] = pipe;
+            }
+            RetireMissing(_pipes, seenPipes, pipe => { if (IsInstanceValid(pipe)) pipe.QueueFree(); });
+        }
+
+        bool TryGetItemPort(uint netId, byte index, out ItemPortNode port)
+        {
+            port = null;
+            if (!_nodes.TryGetValue(netId, out var d) || !IsInstanceValid(d) || index >= d.ItemPorts.Count) return false;
+            port = d.ItemPorts[index];
+            return IsInstanceValid(port);
         }
 
         // Resolve a wire endpoint's ConnectionPort by (netId, portIndex), from either a materialized Deployable

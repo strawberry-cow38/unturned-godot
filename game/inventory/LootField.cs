@@ -172,7 +172,7 @@ namespace UnturnedGodot
                 if (!WithinAnyXZ(anchors, p.X, p.Z, SpawnR)) continue;
                 if (_live.Count >= MaxLive) break;
                 int id = Roll(idx, p.Type);
-                var item = id >= 0 ? Assets.makeLoot((ushort)id) : null;   // magazines spawn full (master)
+                var item = id >= 0 ? Assets.makeLoot((ushort)id, p.Type) : null;   // magazines spawn full (master); condition per the table's bias
                 float gy = Mathf.Max(p.Y, Terr.SampleHeight(p.X, p.Z));   // authored height (floors/shelves); never below the port's terrain
                 var pos = new Vector3(p.X, gy + 0.05f, p.Z);
                 _live[idx] = WorldItem.Spawn(this, item, pos, _tblColor[p.Type], _tblName[p.Type]);

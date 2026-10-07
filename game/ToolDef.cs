@@ -13,8 +13,10 @@ namespace UnturnedGodot
     /// Handheld exists so a tool can be carried without inheriting somebody else's trigger. The walkie-talkie
     /// has no implemented function yet, and every other kind here does something on click -- filing it under
     /// Detonator because it is "about the right shape" would arm every placed charge in the world the first
-    /// time a player pressed LMB while holding a radio.</summary>
-    public enum ToolKind { Wire, Rope, Hose, Detonator, Handheld }
+    /// time a player pressed LMB while holding a radio.
+    ///
+    /// Pipe (v56) is the industrial ITEM pipe tool -- appended, so no existing kind's value moves.</summary>
+    public enum ToolKind { Wire, Rope, Hose, Detonator, Handheld, Pipe }
 
     public sealed class ToolDef
     {
@@ -29,6 +31,7 @@ namespace UnturnedGodot
         public bool IsRope => Kind == ToolKind.Rope;   // the Viewmodel.IsRopeTool bit
         public bool IsHose => Kind == ToolKind.Hose;   // the Viewmodel.IsHoseTool bit
         public bool IsDetonator => Kind == ToolKind.Detonator;   // the Viewmodel.IsDetonatorTool bit
+        public bool IsPipe => Kind == ToolKind.Pipe;             // v56: the Viewmodel.IsPipeViewmodel bit
 
         // wire + rope + hose currently share wire_hold.obj (the coil), tinted; dedicated meshes are a drop-in HeldMesh swap.
         public static readonly ToolDef Wire = new() { Id = 65, Name = "Wire tool", HeldMesh = "wire_hold.obj", HeldColor = new Color(0.647f, 0.647f, 0.647f), Kind = ToolKind.Wire };
@@ -47,7 +50,12 @@ namespace UnturnedGodot
         // No ToolKind of its own behaviour: radio is not implemented, so this is a carry-only holdable.
         public static readonly ToolDef WalkieTalkie = new() { Id = 1445, Name = "Walkie Talkie", HeldMesh = "items/1445.txt", HeldAlbedo = "items/1445.png", HeldColor = new Color(1f, 1f, 1f), Kind = ToolKind.Handheld };
 
-        public static readonly ToolDef[] All = { Wire, Rope, Hose, Detonator, WalkieTalkie };
+        // v56 INDUSTRIAL PIPE TOOL (strawberry 2026-10-06: "new industrial pipe tool"). Same coil placeholder as the
+        // other cable tools, tinted the pipes' steel so it does not read as the wire or the hose in the hand. 9215:
+        // the head of the 9215-9219 run whose other four are the item-pipe deployables.
+        public static readonly ToolDef Pipe = new() { Id = 9215, Name = "Industrial Pipe Tool", HeldMesh = "wire_hold.obj", HeldColor = new Color(0.45f, 0.47f, 0.50f), Kind = ToolKind.Pipe };
+
+        public static readonly ToolDef[] All = { Wire, Rope, Hose, Detonator, WalkieTalkie, Pipe };
         public static ToolDef ById(ushort id) { foreach (var t in All) if (t.Id == id) return t; return null; }
     }
 }

@@ -291,6 +291,34 @@ namespace UnturnedGodot.Net
     ///
     /// gunChamberedType is NOT here: it is a string, this stack has no string primitive, and ReadJar already
     /// re-derives it from the loaded magazine id.</summary>
+    /// <summary>v56: uses of the weapon at (Page,X,Y) since the last report. See ReplicationIds.CommandWeaponUse.</summary>
+    public struct WeaponUseCommand
+    {
+        public byte Page, X, Y;
+        public ushort Id;     // identity: a stale address must not wear the wrong item
+        public byte Uses;
+
+        /// <summary>The most uses one report may claim. A minigun at 1,200 rpm fires 20 a second and the client reports
+        /// at least that often; anything bigger is a confused or hostile client, and is clamped rather than trusted.</summary>
+        public const byte MaxUses = 64;
+
+        public void Write(NetPakWriter w)
+        {
+            w.WriteUInt8(Page); w.WriteUInt8(X); w.WriteUInt8(Y);
+            w.WriteUInt16(Id);
+            w.WriteUInt8(Uses);
+        }
+
+        public static bool TryRead(NetPakReader r, out WeaponUseCommand cmd)
+        {
+            cmd = default;
+            if (!r.ReadUInt8(out byte p) || !r.ReadUInt8(out byte x) || !r.ReadUInt8(out byte y)) return false;
+            if (!r.ReadUInt16(out ushort id) || !r.ReadUInt8(out byte uses)) return false;
+            cmd = new WeaponUseCommand { Page = p, X = x, Y = y, Id = id, Uses = uses };
+            return true;
+        }
+    }
+
     public struct GunStateCommand
     {
         public byte Page, X, Y;
@@ -786,6 +814,10 @@ namespace UnturnedGodot.Net
         readonly Dictionary<ushort, PlayerEntry> _byOwner = new Dictionary<ushort, PlayerEntry>();
         readonly Dictionary<uint, CrateEntry> _crates = new Dictionary<uint, CrateEntry>();
 
+        /// <summary>Bumped whenever a crate is registered or dropped. An adapter whose container is gone re-binds
+        /// to whatever is nearest, so a NEW container is a change to a pipe network even though no pipe moved.</summary>
+        public int CrateSetVersion { get; private set; }
+
         /// <summary>Client side: fires after ReadSnapshot rebuilt my replica (UI refresh hook).</summary>
         public event Action<ushort> ReplicaUpdated;
 
@@ -820,7 +852,7 @@ namespace UnturnedGodot.Net
         public void ServerRemoveCrate(uint netId, long tick)
         {
             ServerCloseCrateViewers(netId, tick);   // before the removal, or the copy-back is skipped
-            _crates.Remove(netId);
+            if (_crates.Remove(netId)) CrateSetVersion++;
         }
 
         // ---- server side ----
@@ -935,6 +967,15 @@ namespace UnturnedGodot.Net
             finally { _viewSyncing = false; }
         }
 
+        /// <summary>Public face of ServerRepaintViewers, by crate id: for a system OUTSIDE this class that edits a
+        /// crate's grid directly -- the item mover (v56) is the first. Without it a player standing in a container
+        /// watches the mover take nothing until they close and reopen it, and the next drag they make is
+        /// validated against a page the server no longer agrees with.</summary>
+        public void ServerRepaintCrateViewers(uint crateId)
+        {
+            if (_crates.TryGetValue(crateId, out var crate)) ServerRepaintViewers(crate);
+        }
+
         public void ServerCommitDirty(long tick)
         {
             foreach (var e in _byOwner.Values)
@@ -946,6 +987,7 @@ namespace UnturnedGodot.Net
             var c = new CrateEntry { NetIdValue = id.Value, Width = width, Height = height, Pos = pos, Storage = new Items(PlayerInventory.STORAGE) };
             c.Storage.loadSize(width, height);
             _crates[id.Value] = c;
+            CrateSetVersion++;
             return c;
         }
 

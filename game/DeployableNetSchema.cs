@@ -61,6 +61,10 @@ namespace UnturnedGodot
                     StorageWidth = def.IsStorage ? Refrigerator.GridW : def.StorageW,
                     StorageHeight = def.IsStorage ? Refrigerator.GridH : def.StorageH,
                     CookerKind = def.Cooker.HasValue ? (byte)def.Cooker.Value : (byte)255,
+                    // v56: the item sockets, by direction, in the def's order -- the pipe sub-address -- and what the
+                    // router treats this device as. Never the power Ports: the solver must not see a pipe socket.
+                    ItemPorts = System.Array.ConvertAll(def.ItemPorts, p => (byte)p.Dir),
+                    ItemDevice = def.ItemDevice,
                 });
             }
         }
