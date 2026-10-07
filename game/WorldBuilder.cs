@@ -256,15 +256,15 @@ namespace UnturnedGodot
             ["54ce5b19a2564000bd0227e9a51410a0"] = ("Cardboard_1", 21, false, "Cardboard Box"),
             ["5f56c3fa62254a5eab04750d1738bae9"] = ("Cardboard_2", 21, false, "Cardboard Box"),
             ["579a96c41b3d4175aa984902d5ab368f"] = ("Cardboard_3", 21, false, "Cardboard Box"),
-            ["91dbbf923c8c401bb6b2d56084783f73"] = ("Fridge_0", 6, false, "Fridge"),      // fridge x17 -> Food
+            ["91dbbf923c8c401bb6b2d56084783f73"] = ("Fridge_0", LootTables.Fridge, false, "Fridge"),      // perishables + the odd drink (master 2026-10-07); was table 6 Food, which stocked it with cans
             ["8388edfa33b84f78ad7f5d277412433b"] = ("Wardrobe_0", 19, false, "Wardrobe"), // wardrobe x24 -> Cloth
             ["7259ea03530a4ff880e857ca62a0c662"] = ("Cooler_0", 6, false, "Cooler"),      // drink cooler -> Food (master 2026-08-02: washer/dryer/cooler ARE containers now)
             ["68339521990c4d70903dfd68da2cd886"] = ("Washer_0", 19, false, "Washer"),      // washing machine -> Cloth
             ["90da84de3f214d129de92b6ee8df60af"] = ("Dryer_0", 19, false, "Dryer"),        // dryer -> Cloth
-            ["050dbe869b1c4fd5b215c552d145effd"] = ("Counter_0", 17, false, "Counter"),   // counter x103 -> Kitchen
+            ["050dbe869b1c4fd5b215c552d145effd"] = ("Counter_0", LootTables.Counter, false, "Counter"),   // non-perishables + crockery/cookware (master 2026-10-07)
             // Counter_1 is NOT a loot container (strawberry 2026-08-03): it is a SINK, and it now reaches
             // PlaceObject like Counter_3 so its tap is wired on the ordinary path.
-            ["02923364713c4385a2bdaa7221d717ae"] = ("Counter_2", 17, false, "Counter"),   // counter x23 -> Kitchen
+            ["02923364713c4385a2bdaa7221d717ae"] = ("Counter_2", LootTables.Counter, false, "Counter"),
             // business/industrial containers (crates + shipping containers) -> prime in-genre loot
             ["cb0d8bf87fca47e3b73f634959a9f523"] = ("Crate_0", 8, false, "Crate"),         // business crate x31 -> Construction
             ["054a9392fed9484e950ff92d13631f06"] = ("Crate_3", 8, false, "Crate"),         // business crate x20 -> Construction
@@ -285,7 +285,7 @@ namespace UnturnedGodot
             // THE ICE BOX -- the upright merchandiser outside a shop (2.0 x 2.47 m). A container as of
             // 2026-09-06 ("turn the ice box into a smart container that acts as a freezer"); ContainerNetSync
             // marks it a body-freezer, so everything inside it freezes rather than merely keeping.
-            ["486dda0171c645f7a3855f3c46796380"] = ("Ice_Box_0", 6, false, "Freezer"),
+            ["486dda0171c645f7a3855f3c46796380"] = ("Ice_Box_0", LootTables.Freezer, false, "Freezer"),   // perishables in GOOD condition, no drinks
             // Beach cool boxes. Containers, but NOT the shop's glass-front display coolers -- see
             // StoreShelf.IsDisplayCooler for why sharing the "Cooler" prefix was giving them a glass pane and
             // a permanently lit interior.
@@ -303,23 +303,23 @@ namespace UnturnedGodot
             // not guesses -- 11 "Chef" and 24 "Booty" were considered and passed over, Booty because it is a single
             // tier of two ids and every register in the world would hand back the same two things. (The register
             // has since moved OFF table 21 to the virtual cash table -- see its entry below.)
-            ["086b683233c245968b38d98c2c9e10f1"] = ("Disher_0", 17, false, "Dishwasher"),      // has a door leaf, like Fridge_0
-            ["a305bcc1cdaa486fb91d05201e7d3e6f"] = ("Oven_0", 17, false, "Stove"),             // ditto
+            ["086b683233c245968b38d98c2c9e10f1"] = ("Disher_0", LootTables.Dishwasher, false, "Dishwasher"),   // crockery/cutlery/cookware; has a door leaf, like Fridge_0
+            ["a305bcc1cdaa486fb91d05201e7d3e6f"] = ("Oven_0", LootTables.Oven, false, "Stove"),             // trays + pots, NO food (master); ditto on the door leaf
             ["6fb78536e8cb4b01b6050a2efb3d912c"] = ("Microwave_0", 17, false, "Microwave"),
             // ⭐ BREAD ONLY (master 2026-10-07). Was table 6 "Food", which is why a toaster handed back canned beans
             // and MREs. LootTables.Toaster is a virtual table for the same reason the till's is -- see it there.
             ["2d1daa0412b94503aa57a5b422187d48"] = ("Toaster_0", LootTables.Toaster, false, "Toaster"),   // 2 slots + keeps its pop (see StoreShelf)
             ["2db512fea15a4434bafe0c45a0dd2016"] = ("Barbecue_0", 6, false, "BBQ"),
             ["5feb0d40c34d4117912b4df420bea1b7"] = ("Barbecue_1", 6, false, "BBQ"),
-            ["65906f4174724825849478b60ecc348a"] = ("Files_0", 21, false, "Filing Cabinet"),   // 4-drawer cabinet (rendered to confirm; "Files" is also a name for loose paper)
-            ["8c05d039f62a4e40a3e448fcaeb31efd"] = ("Files_1", 21, false, "Filing Cabinet"),
+            ["65906f4174724825849478b60ecc348a"] = ("Files_0", LootTables.FilingCabinet, false, "Filing Cabinet"),   // office junk (master 2026-10-07); 4-drawer cabinet
+            ["8c05d039f62a4e40a3e448fcaeb31efd"] = ("Files_1", LootTables.FilingCabinet, false, "Filing Cabinet"),
             // A TILL HOLDS CASH (strawberry 2026-09-15). LootTables.CashRegister is a virtual table -- see the
             // note there for why a real one could not do it: PEI's only money table is 24 "Booty", one tier of
             // {loonie, toonie}, which is what this entry used to reject Booty for in the comment above.
             ["84b3a672bc0643d1b12b2b345a88ba46"] = ("Register_0", LootTables.CashRegister, false, "Cash Register"),
-            ["61e43d05791d4269b626de9bedbf0a03"] = ("Garbage_0", 21, false, "Garbage Bag"),    // a tied-off bag, not a bin
-            ["a19b3ec55a2046668611c9d2775efd99"] = ("Garbage_1", 21, false, "Garbage Bag"),
-            ["ba109246d52c400a8f35704aef77a3ee"] = ("DL_Garbage", 21, false, "Garbage Bag"),
+            ["61e43d05791d4269b626de9bedbf0a03"] = ("Garbage_0", LootTables.GarbageBag, false, "Garbage Bag"),    // junk, spoiled food, worn-out gear; a tied-off bag, not a bin
+            ["a19b3ec55a2046668611c9d2775efd99"] = ("Garbage_1", LootTables.GarbageBag, false, "Garbage Bag"),
+            ["ba109246d52c400a8f35704aef77a3ee"] = ("DL_Garbage", LootTables.GarbageBag, false, "Garbage Bag"),
             // "trash cans (SMALL ones)" -- there is no prop called a trash can. The Dumpster family splits cleanly by
             // size: _2 is 6.31 m (industrial), _0/_1 are 2.84 m (skips), _3/_4 are 1.11 m wheelie bins with a wheel
             // modelled on the side. Only the wheelie bins are here; the skips are deliberately left out.

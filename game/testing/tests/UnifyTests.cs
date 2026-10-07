@@ -313,6 +313,11 @@ namespace UnturnedGodot.Testing
         public override IEnumerable<Step> Run()
         {
             ItemCatalog.RegisterAll();
+            // ⚠ Containers may now spawn EMPTY (master 2026-10-07, StoreShelf.EmptyChance). This test is about the
+            // display digest REPLICATING, so an empty shelf is not a result it has an opinion about -- it is an 18%
+            // chance of failing for an unrelated reason. Pin it off; the odds themselves are asserted in
+            // loot.container_counts.
+            StoreShelf.EmptyChanceForTests = 0f;
             // deterministic table 0: one always-hit tier of real demo items (so tryAddItem sizes + places them)
             LootTables.ResetForTests();
             LootTables.LoadTiersForTests(

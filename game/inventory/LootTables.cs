@@ -1,4 +1,5 @@
 using Godot;
+using System.Collections.Generic;
 
 namespace UnturnedGodot
 {
@@ -40,6 +41,127 @@ namespace UnturnedGodot
         /// MREs. One tier, one id, probability 1 -- there is nothing to weight when the answer is always bread.</summary>
         public const int Toaster = 1001;
 
+        // ---- PER-CONTAINER TABLES (master 2026-10-07) -------------------------------------------------------
+        //
+        // "fridges should spawn only perishable food (good spoil %), sometimes drinks ... dishwashers should spawn
+        // kitchen knives, cups, glasses, plates... ovens shouldnt spawn food, they should spawn trays, pots.
+        // counters should spawn non-perishables as well as plates cups dishes... garbage bags should spawn low
+        // durability melee weapons, spoiled food, tattered clothes ... add the following 'junk' to filing cabinets"
+        //
+        // ⭐⭐ THE FOOD TABLES ARE DERIVED FROM FoodSpoil.PerDay, NOT HAND-LISTED. "Perishable" is already a fact the
+        // game knows -- FoodSpoil rates every FOOD item per in-game day from its own name (canned 2%/day, meat 22%)
+        // -- so asking that function is the difference between a fridge that is right today and one that is right
+        // after someone adds a food item. A hand-written id list would be a second opinion about the same question,
+        // and the two would drift the first time anyone touched either.
+        public const int Fridge = 1002, Freezer = 1003, Dishwasher = 1004, Oven = 1005,
+                         Counter = 1006, GarbageBag = 1007, FilingCabinet = 1008;
+
+        /// <summary>Spoil rate at or above which a food counts PERISHABLE -- i.e. belongs in a fridge rather than a
+        /// cupboard. 5%/day sits between FoodSpoil's "dried/packaged" band (3) and its root veg (5), so canned and
+        /// bagged goods fall out and anything that actually goes off falls in.</summary>
+        public const float PerishableAtLeast = 5f;
+
+        /// <summary>⭐ CONDITION BIAS PER TABLE, set in CODE because these tables only exist in code.
+        /// LootCondition's biases load from a per-map file the editor writes, which a virtual table has no row in --
+        /// so a fridge would roll uniform condition and master's "good spoil %" would quietly not happen.
+        /// -1 = mostly worst, +1 = mostly best (tinyclaw's Durability.RollCondition bend).</summary>
+        public static readonly Dictionary<int, float> VirtualBias = new()
+        {
+            [Fridge] = 0.65f,        // a working fridge: food in good condition
+            [Freezer] = 0.85f,       // better still -- frozen is the point of it
+            [Counter] = 0.25f,       // a cupboard: fine, not pristine
+            [GarbageBag] = -0.85f,   // "low durability melee weapons, spoiled food, tattered clothes"
+            [Oven] = 0f, [Dishwasher] = 0f, [FilingCabinet] = 0f,
+        };
+
+        // Kitchenware. Kitchen Knife is the REAL item 120, not a placeholder -- it already existed, so a second one
+        // would be two items with the same name and only one of them a weapon.
+        static readonly ushort[] Crockery = { 9155, 9156, 9157, 9158 };            // cup, glass, plate, bowl
+        static readonly ushort[] Cutlery = { 9159, 9160, 9161 };                   // fork, spoon, table knife
+        static readonly ushort[] Cookware = { 9162, 9163, 9164 };                  // pot, pan, baking tray
+        static readonly ushort[] Stationery = { 499, 1328, 9165, 9166, 9167, 9168, 9169, 9170, 9171, 9172, 9173, 9174, 9175, 9176 };
+        static readonly ushort[] GarbageJunk = { 9177, 9178, 9179, 9180, 9181 };
+
+        static readonly (float chance, ushort[] ids)[] DishwasherTiers =
+        {
+            (0.45f, Crockery),
+            (0.35f, Cutlery),
+            (0.12f, Cookware),
+            (0.08f, new ushort[] { 120 }),   // the real Kitchen Knife
+        };
+        static readonly (float chance, ushort[] ids)[] OvenTiers =
+        {
+            (0.55f, new ushort[] { 9164 }),   // baking tray
+            (0.45f, new ushort[] { 9162, 9163 }),   // pot, pan -- and NO food (master)
+        };
+        static readonly (float chance, ushort[] ids)[] FilingCabinetTiers = { (1.00f, Stationery) };
+
+        // ---- derived-from-the-catalog tiers, built once on first use -----------------------------------------
+        static (float chance, ushort[] ids)[] _fridge, _freezer, _counter, _garbage;
+
+        static ushort[] FoodsWhere(System.Func<float, bool> rate)
+        {
+            var ids = new List<ushort>();
+            foreach (var a in SDG.Unturned.Assets.all())
+                if (a != null && a.type == SDG.Unturned.EItemType.FOOD && rate(UnturnedGodot.FoodSpoil.PerDay(a))) ids.Add(a.id);
+            ids.Sort();
+            return ids.ToArray();
+        }
+        static ushort[] OfType(SDG.Unturned.EItemType t)
+        {
+            var ids = new List<ushort>();
+            foreach (var a in SDG.Unturned.Assets.all()) if (a != null && a.type == t) ids.Add(a.id);
+            ids.Sort();
+            return ids.ToArray();
+        }
+
+        /// <summary>⚠ Built LAZILY, never at static init: these read the item catalog, and LootTables is touched by
+        /// code that can run before ItemCatalog.RegisterAll(). A static initialiser here would bake an empty table
+        /// and every fridge on the map would roll nothing, silently.</summary>
+        static (float chance, ushort[] ids)[] VirtualTiers(int table)
+        {
+            switch (table)
+            {
+                case Fridge:
+                    return _fridge ??= Build(FoodsWhere(r => r >= PerishableAtLeast), OfType(SDG.Unturned.EItemType.WATER), 0.78f);
+                case Freezer:
+                    // Frozen: perishables only, no drinks -- a freezer is not where the cola lives.
+                    return _freezer ??= Build(FoodsWhere(r => r >= PerishableAtLeast), null, 1f);
+                case Counter:
+                    // "non-perishables as well as plates cups dishes, pots pans utensils"
+                    return _counter ??= new[]
+                    {
+                        (0.55f, FoodsWhere(r => r > 0f && r < PerishableAtLeast)),
+                        (0.25f, Crockery),
+                        (0.12f, Cutlery),
+                        (0.08f, Cookware),
+                    };
+                case GarbageBag:
+                    // "low durability melee weapons, spoiled food, tattered clothes, add a few misc random garbage"
+                    // -- the CONDITION of those comes from VirtualBias[GarbageBag], not from picking different ids.
+                    return _garbage ??= new[]
+                    {
+                        (0.40f, GarbageJunk),
+                        (0.26f, FoodsWhere(r => r > 0f)),
+                        (0.22f, Concat(OfType(SDG.Unturned.EItemType.SHIRT), OfType(SDG.Unturned.EItemType.PANTS))),
+                        (0.12f, OfType(SDG.Unturned.EItemType.MELEE)),
+                    };
+            }
+            return null;
+        }
+
+        static (float, ushort[])[] Build(ushort[] main, ushort[] occasional, float mainChance)
+            => occasional == null || occasional.Length == 0
+                ? new[] { (1f, main) }
+                : new[] { (mainChance, main), (1f - mainChance, occasional) };
+
+        static ushort[] Concat(ushort[] a, ushort[] b)
+        {
+            var r = new ushort[a.Length + b.Length];
+            a.CopyTo(r, 0); b.CopyTo(r, a.Length);
+            return r;
+        }
+
         static readonly (float chance, ushort[] ids)[] ToasterTiers =
         {
             (1.00f, new ushort[] { 460 }),   // 460 Bread -- items_catalog.tsv
@@ -59,10 +181,22 @@ namespace UnturnedGodot
         public static void LoadTiersForTests((float chance, ushort[] ids)[][] tiers, string[] names) { _tiers = tiers; _names = names; _loaded = true; }
         public static string TableName(int t) => t == CashRegister ? "Cash Register"
             : t == Toaster ? "Toaster"
+            : t == Fridge ? "Fridge" : t == Freezer ? "Freezer" : t == Dishwasher ? "Dishwasher"
+            : t == Oven ? "Oven" : t == Counter ? "Counter" : t == GarbageBag ? "Garbage Bag"
+            : t == FilingCabinet ? "Filing Cabinet"
             : _names != null && t >= 0 && t < _names.Length ? _names[t] : $"table {t}";
+
+        /// <summary>Push the code-defined condition biases into LootCondition. Idempotent, and called from Load so
+        /// it lands once per map -- LootCondition.Load() clears its file-backed map every time one opens, and these
+        /// tables have no row in any file to be cleared back to.</summary>
+        public static void ApplyVirtualBias()
+        {
+            foreach (var kv in VirtualBias) SDG.Unturned.LootCondition.SetCodeDefault(kv.Key, kv.Value);
+        }
 
         public static void Load(string itemsDatPath)
         {
+            ApplyVirtualBias();   // before the early-out: the biases must land even when the tables are already loaded
             if (_loaded) return;
             _loaded = true;
             if (!System.IO.File.Exists(itemsDatPath)) { Log.Err($"[loot-tables] not found: {itemsDatPath}"); return; }
@@ -108,7 +242,14 @@ namespace UnturnedGodot
             // out-of-range -- and it needs no loaded Items.dat, so a till is stocked on any map.
             var tiers = table == CashRegister ? CashRegisterTiers
                       : table == Toaster ? ToasterTiers
+                      : table == Dishwasher ? DishwasherTiers
+                      : table == Oven ? OvenTiers
+                      : table == FilingCabinet ? FilingCabinetTiers
+                      : (table == Fridge || table == Freezer || table == Counter || table == GarbageBag) ? VirtualTiers(table)
                       : (_tiers == null || table < 0 || table >= _tiers.Length) ? null : _tiers[table];
+            // A derived table can come back with an EMPTY tier if the catalog has no item of that kind -- drop those,
+            // or the weighted pick can land on a tier with nothing in it and silently return -1 forever.
+            if (tiers != null) { var keep = new List<(float, ushort[])>(); foreach (var t in tiers) if (t.ids != null && t.ids.Length > 0) keep.Add(t); tiers = keep.ToArray(); }
             if (tiers == null || tiers.Length == 0) return -1;
             float total = 0f; foreach (var t in tiers) total += t.chance;
             int pick = tiers.Length - 1;

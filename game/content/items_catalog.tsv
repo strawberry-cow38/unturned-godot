@@ -1956,3 +1956,30 @@
 9145	MAC-10	Gun	Rare	3	2	MAC-10 chambered in .45 ACP. Provisional Bulldog/Uzi gameplay baseline.	fd731fe0da9f4b97bdb970ee9de735e2
 9146	MAC-10 Magazine	Magazine	Rare	1	2	Proprietary MAC-10 magazine holding 30 rounds of .45 ACP.	0e07040eaf204e6f928a1dfae68a6e03
 9147	MAC-10 Iron Sights	Sight	Common	2	1	Factory MAC-10 iron sights.	9e5c1d41331b47ae9eba2ddfc98348b0
+9155	Cup	Generic	Common	1	1	A chipped ceramic mug. Placeholder: no model yet.
+9156	Drinking Glass	Generic	Common	1	1	A plain drinking glass. Placeholder: no model yet.
+9157	Plate	Generic	Common	1	1	A dinner plate. Placeholder: no model yet.
+9158	Dish Bowl	Generic	Common	1	1	A shallow serving bowl. Placeholder: no model yet.
+9159	Fork	Generic	Common	1	1	A dinner fork. Placeholder: no model yet.
+9160	Spoon	Generic	Common	1	1	A dinner spoon. Placeholder: no model yet.
+9161	Table Knife	Generic	Common	1	1	A blunt table knife. Placeholder: no model yet.
+9162	Cooking Pot	Generic	Common	2	2	A dented cooking pot. Placeholder: no model yet.
+9163	Frying Pan	Generic	Common	2	1	A heavy frying pan. Placeholder: no model yet.
+9164	Baking Tray	Generic	Common	2	1	A blackened baking tray. Placeholder: no model yet.
+9165	Paperwork	Generic	Common	1	1	Someone's filing, still in order. Placeholder: no model yet.
+9166	Handwritten Letter	Generic	Common	1	1	A letter in looping handwriting. Placeholder: no model yet.
+9167	Typed Letter	Generic	Common	1	1	A typed letter on headed paper. Placeholder: no model yet.
+9168	Unopened Letter	Generic	Common	1	1	Still sealed. Placeholder: no model yet.
+9169	Stapler	Generic	Common	1	1	Office stapler, half loaded. Placeholder: no model yet.
+9170	Box of Paperclips	Generic	Common	1	1	More than anyone needs. Placeholder: no model yet.
+9171	Hole Punch	Generic	Common	1	1	Two-hole, heavy for its size. Placeholder: no model yet.
+9172	Black Pen	Generic	Common	1	1	Black ballpoint. Placeholder: no model yet.
+9173	Blue Pen	Generic	Common	1	1	Blue ballpoint. Placeholder: no model yet.
+9174	Red Pen	Generic	Common	1	1	Red ballpoint, mostly dry. Placeholder: no model yet.
+9175	Pencil	Generic	Common	1	1	Chewed at one end. Placeholder: no model yet.
+9176	Eraser	Generic	Common	1	1	Grubby but usable. Placeholder: no model yet.
+9177	Food Wrapper	Generic	Common	1	1	Licked clean and thrown out. Placeholder: no model yet.
+9178	Empty Can	Generic	Common	1	1	Rinsed, dented, discarded. Placeholder: no model yet.
+9179	Broken Glass	Generic	Common	1	1	Swept up and bagged. Placeholder: no model yet.
+9180	Cardboard Scrap	Generic	Common	1	1	Flattened packaging. Placeholder: no model yet.
+9181	Soiled Rag	Generic	Common	1	1	You do not want to know. Placeholder: no model yet.

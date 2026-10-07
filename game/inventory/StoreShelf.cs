@@ -73,9 +73,26 @@ namespace UnturnedGodot
             return display ? ((byte)pr.PerTier, (byte)pr.TierY.Length) : (pr.GridW != 0 ? pr.GridW : (byte)8, pr.GridH != 0 ? pr.GridH : (byte)6);
         }
         public static (int min, int max) LootCount(string mesh, bool display = true) { var pr = Prof(mesh, display); return (pr.Min, pr.Max); }
+        /// <summary>Chance a container comes up EMPTY, before any item is rolled (master 2026-10-07: "countainers
+        /// may also spawn empty").
+        ///
+        /// ⭐ A separate roll, not `Min = 0`. Dropping the minimum to zero would make empty just the bottom of the
+        /// count distribution -- rarer the wider the range, and impossible to tune without also changing how full a
+        /// stocked container is. As its own gate, "how often is it empty" and "how much is in it when it is not"
+        /// are two questions with two answers, which is what they are.</summary>
+        public const float EmptyChance = 0.18f;
+
+        /// <summary>L1 seam: pin the empty roll (0 = never empty, 1 = always) so a test about something ELSE is not
+        /// made flaky by it. ⚠ Needed the moment EmptyChance landed: unify.container_loot asserts that a stocked
+        /// shelf's DISPLAY DIGEST replicates, and an 18% chance of an empty shelf turned that into a test that
+        /// failed one run in five for a reason it was not testing. Same shape as WindField.TestWind. Cleared by
+        /// TestHost between tests.</summary>
+        public static float? EmptyChanceForTests;
+
         public static void RollInto(Items storage, int minItems, int maxItems, int table)
         {
             var rng = new RandomNumberGenerator();
+            if (rng.Randf() < (EmptyChanceForTests ?? EmptyChance)) return;   // picked over, or never stocked
             int n = rng.RandiRange(minItems, maxItems);
             for (int i = 0; i < n; i++)
             {

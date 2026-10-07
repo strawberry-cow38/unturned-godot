@@ -20,7 +20,26 @@ namespace SDG.Unturned
     {
         static readonly Dictionary<int, float> _bias = new Dictionary<int, float>();
 
-        public static float Bias(int table) => table >= 0 && _bias.TryGetValue(table, out var b) ? b : 0f;
+        /// <summary>Biases declared in CODE for tables that only exist in code (a fridge, a garbage bag). ⚠ Kept
+        /// SEPARATE from `_bias` because Load() clears that dictionary on every map load -- a virtual table has no
+        /// row in any map's file, so anything registered into `_bias` would be wiped the moment a map opened and
+        /// the fridge would quietly go back to rolling uniform condition.
+        ///
+        /// ⭐ The file still WINS where it says something: a mapper who sets a bias for a table in the editor is
+        /// making a decision about THEIR map, and a default in our source should not override it.</summary>
+        static readonly Dictionary<int, float> _codeDefault = new Dictionary<int, float>();
+
+        public static void SetCodeDefault(int table, float bias)
+        {
+            if (table < 0) return;
+            _codeDefault[table] = Math.Clamp(bias, -1f, 1f);
+        }
+
+        public static float Bias(int table)
+            => table < 0 ? 0f
+             : _bias.TryGetValue(table, out var b) ? b
+             : _codeDefault.TryGetValue(table, out var d) ? d
+             : 0f;
 
         public static void Set(int table, float bias)
         {
