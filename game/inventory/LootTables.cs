@@ -89,7 +89,9 @@ namespace UnturnedGodot
         // was handing out headwear. Replaced with real placeholders (9336, 9337).
         // ⭐ The lesson generalises past these two: when reusing an existing item, match on what it IS, not on
         // what it is called.
-        static readonly ushort[] Stationery = { 9336, 9337, 9310, 9311, 9312, 9313, 9314, 9315, 9316, 9317, 9318, 9319, 9320, 9321 };
+        // ⚠ 9343 (Green Pen) is out of sequence on purpose: master asked for pens in "red green blue black" and
+        // this list shipped with only three, so the green one was minted later rather than renumbering the rest.
+        static readonly ushort[] Stationery = { 9336, 9337, 9310, 9311, 9312, 9313, 9314, 9315, 9316, 9317, 9318, 9319, 9343, 9320, 9321 };
         static readonly ushort[] GarbageJunk = { 9322, 9323, 9324, 9325, 9326 };
 
         static readonly (float chance, ushort[] ids)[] DishwasherTiers =
