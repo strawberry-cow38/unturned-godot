@@ -306,7 +306,9 @@ namespace UnturnedGodot
             ["086b683233c245968b38d98c2c9e10f1"] = ("Disher_0", 17, false, "Dishwasher"),      // has a door leaf, like Fridge_0
             ["a305bcc1cdaa486fb91d05201e7d3e6f"] = ("Oven_0", 17, false, "Stove"),             // ditto
             ["6fb78536e8cb4b01b6050a2efb3d912c"] = ("Microwave_0", 17, false, "Microwave"),
-            ["2d1daa0412b94503aa57a5b422187d48"] = ("Toaster_0", 6, false, "Toaster"),         // 2 slots + keeps its pop (see StoreShelf)
+            // ⭐ BREAD ONLY (master 2026-10-07). Was table 6 "Food", which is why a toaster handed back canned beans
+            // and MREs. LootTables.Toaster is a virtual table for the same reason the till's is -- see it there.
+            ["2d1daa0412b94503aa57a5b422187d48"] = ("Toaster_0", LootTables.Toaster, false, "Toaster"),   // 2 slots + keeps its pop (see StoreShelf)
             ["2db512fea15a4434bafe0c45a0dd2016"] = ("Barbecue_0", 6, false, "BBQ"),
             ["5feb0d40c34d4117912b4df420bea1b7"] = ("Barbecue_1", 6, false, "BBQ"),
             ["65906f4174724825849478b60ecc348a"] = ("Files_0", 21, false, "Filing Cabinet"),   // 4-drawer cabinet (rendered to confirm; "Files" is also a name for loose paper)

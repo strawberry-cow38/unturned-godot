@@ -31,6 +31,20 @@ namespace UnturnedGodot
         /// really is $20 and the whole till collapses into ONE wallet stack rather than filling the grid.</summary>
         public const int CashRegister = 1000;
 
+        /// <summary>A TOASTER HOLDS BREAD (master 2026-10-07: "switch the loot tables inside toasters to only
+        /// spawn bread"). Virtual, for the same reason CashRegister is: the real tables are parsed per map and
+        /// their count differs, so a synthetic table appended to the loaded array could not be named by one
+        /// number across PEI and Washington.
+        ///
+        /// ⚠ Table 6 "Food" is what it used to roll, which is why toasters came out full of canned beans and
+        /// MREs. One tier, one id, probability 1 -- there is nothing to weight when the answer is always bread.</summary>
+        public const int Toaster = 1001;
+
+        static readonly (float chance, ushort[] ids)[] ToasterTiers =
+        {
+            (1.00f, new ushort[] { 460 }),   // 460 Bread -- items_catalog.tsv
+        };
+
         static readonly (float chance, ushort[] ids)[] CashRegisterTiers =
         {
             (0.40f, new ushort[] { 1056, 1057 }),   // $1 loonie, $2 toonie -- the float in the drawer
@@ -44,6 +58,7 @@ namespace UnturnedGodot
         public static void ResetForTests() { _loaded = false; _tiers = null; _names = null; }
         public static void LoadTiersForTests((float chance, ushort[] ids)[][] tiers, string[] names) { _tiers = tiers; _names = names; _loaded = true; }
         public static string TableName(int t) => t == CashRegister ? "Cash Register"
+            : t == Toaster ? "Toaster"
             : _names != null && t >= 0 && t < _names.Length ? _names[t] : $"table {t}";
 
         public static void Load(string itemsDatPath)
@@ -92,6 +107,7 @@ namespace UnturnedGodot
             // The virtual table is answered BEFORE the bounds check, which would otherwise reject it as
             // out-of-range -- and it needs no loaded Items.dat, so a till is stocked on any map.
             var tiers = table == CashRegister ? CashRegisterTiers
+                      : table == Toaster ? ToasterTiers
                       : (_tiers == null || table < 0 || table >= _tiers.Length) ? null : _tiers[table];
             if (tiers == null || tiers.Length == 0) return -1;
             float total = 0f; foreach (var t in tiers) total += t.chance;
