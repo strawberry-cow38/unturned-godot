@@ -1107,8 +1107,15 @@ namespace UnturnedGodot
         static float SlopeCostFor(LinkKind k) => k switch
         {
             LinkKind.Rail => 14f,
-            LinkKind.Road or LinkKind.Junction => 6f,
-            _ => 2.5f,                // a trail is allowed to be steep; that is what makes it a trail
+            // ⚠ A TRAIL IS NOT ALLOWED TO BE STEEPER THAN A ROAD, and this used to say the opposite: Trail fell
+            // through to 2.5f under the comment "a trail is allowed to be steep; that is what makes it a trail".
+            // That is what produced a 41.2% per-step gradient against the fleet-wide 35% bound -- the
+            // long-standing world.proc_island red. Asked directly whether a dirt trail should get its own looser
+            // bound instead, master 2026-10-07: "should match road's steepness". So it costs the same to climb.
+            // ⭐ What still makes a trail a trail is its WIDTH and SURFACE, which is where the difference belongs;
+            // letting it shrug at a hillside was the router answering a question about materials with geometry.
+            // (LinkKind has four members and Rail is the only other one named, so this arm is Road/Junction/Trail.)
+            _ => 6f,
         };
 
         /// <summary>Route every link over the terrain and carve it into the heightmap.
