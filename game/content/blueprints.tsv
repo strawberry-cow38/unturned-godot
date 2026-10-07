@@ -44,3 +44,6 @@
 # MAKESHIFT SCOPE (strawberry 2026-10-07: "give the makeshift scope a recipe, binoculars + tape"). Owner is the
 # binoculars: it is the part you are sacrificing, and the recipe should surface on the thing you are holding.
 333	Craft	Makeshift Scope		0	f260c581cf504098956f424d62345982:1:1|8c25cf28c76a4634855f404c8972c0ae:1:1	806bc882292247b78bd730ba073eb45a:1		5
+# WATER BOTTLE SILENCER (strawberry 2026-10-07: "crafted w a water bottle + tape. attaches to any weapon w the bottle
+# model on the tip of the muzzle. breaks after the first shot"). Bottled Water (14) + Tape (69) -> item 9400.
+9400	Craft			0	f81d68ebb2a8490dbe1545d432b9c099:1:1|8c25cf28c76a4634855f404c8972c0ae:1:1	56d6a5da2bbf4638bb313fa11a583399:1		4

@@ -96,6 +96,11 @@ namespace UnturnedGodot
             // process -- which is every L1 run after the first -- would answer proximity out of a dead
             // session's player list. That is the leaked-global shape, and it is silent, because a stale
             // answer is still an answer.
+            // v58: what each car's trunk and cabin are, answered off the real node -- the same HasTrunk/HasHood the F
+            // zones are built from, so the trunk the server will open is the one the player can aim at.
+            if (_server?.VehicleStorage != null)
+                _server.VehicleStorage.ShapeOf = netId => TryGetNode(netId, out var v) ? v.StorageShape() : null;
+
             var owner = host;
             Vehicle.AlarmProximityTest = Proximity;
             if (owner != null)

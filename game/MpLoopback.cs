@@ -16,6 +16,17 @@ namespace UnturnedGodot
     // Steps ride the world's SimRoot in §2.5 order, replication LAST.
     public partial class MpLoopback : Node
     {
+        /// <summary>v58: the compartment names off a StorageOpened, in page order. Shared with ClientWorldSession so both
+        /// sessions hand the shell the same thing.</summary>
+        public static string[] CompartmentLabels(StorageOpenedEvent e)
+        {
+            var c = e.Compartments;
+            if (c == null || c.Length == 0) return System.Array.Empty<string>();
+            var labels = new string[c.Length];
+            for (int i = 0; i < c.Length; i++) labels[i] = c[i].Label;
+            return labels;
+        }
+
         public PlayerController Player;   // the SP shell (WorldBuildResult.Player)
         public SimDriver Driver;          // the world's sim spine
         public DayNightCycle DayNight;    // Phase 8 (§3.7): the world clock this session publishes
@@ -205,6 +216,16 @@ namespace UnturnedGodot
                 Player.NetItemConfigOf = netId => Client.Deployables.TryGet(netId, out var ie) ? ie.ItemConfig : null;
                 Player.NetOpenStorage = netId => Client.SendOpenStorage(netId);
                 Player.NetCloseStorage = () => Client.SendCloseStorage();
+                // v58 CAR STORAGE: the host's own player is on REAL vehicle nodes, so the car it sits in is Driving and the
+                // vehicle id is the one VehicleSync minted for that node. Read at call time -- VehicleSync is built later.
+                Player.NetOpenCabinStorage = () =>
+                {
+                    var v = Player.Driving;
+                    if (v == null || VehicleSync == null || !VehicleSync.TryGetNetId(v, out uint vid)) return false;
+                    return Client.SendOpenVehicleStorage(vid, VehicleStorageKind.Cabin);
+                };
+                Player.NetOpenTrunk = v => v != null && VehicleSync != null && VehicleSync.TryGetNetId(v, out uint vid)
+                                           && Client.SendOpenVehicleStorage(vid, VehicleStorageKind.Trunk);
                 Player.NetTakeFromStorage = (netId, x, y) => Client.SendTakeFromStorage(netId, x, y);
                 // THE COOKER SWITCH, and its absence is why nothing cooked in singleplayer (strawberry
                 // 2026-09-07: "stuff isnt getting cooked. anywhere. ever"). v28 added the button and wired this
@@ -228,8 +249,12 @@ namespace UnturnedGodot
                 {
                     if (Player == null || !IsInstanceValid(Player)) return;
                     Player.OnReplicatedStorageOpened(e.NetId,
-                        e.IsCooker ? (SDG.Unturned.ECookerKind)e.CookerKind : (SDG.Unturned.ECookerKind?)null, e.CookerOn, e.CookerFuel);
+                        e.IsCooker ? (SDG.Unturned.ECookerKind)e.CookerKind : (SDG.Unturned.ECookerKind?)null, e.CookerOn, e.CookerFuel,
+                        e.StorageLabel, CompartmentLabels(e));   // v58: the names of a car's glovebox and seats
                 };
+                // v58: the server shuts a container on its own now (you got out of the car), and on death. The joined client
+                // always listened for this; the loopback never did, so its dashboard kept a latch on a container it had lost.
+                Client.StorageClosed += e => { if (Player != null && IsInstanceValid(Player)) Player.OnReplicatedStorageClosed(); };
                 Client.CookerState += e => { if (Player != null && IsInstanceValid(Player)) Player.NoteCookerState(e.NetId, e.On, e.Fuel); };
                 Client.CraftQueue_ += e => { if (Player != null && IsInstanceValid(Player)) Player.NoteServerCraftQueue(e.Jobs); };
                 // v55: what the local player knows. The ONLY writer of the shell's KnownBlueprints on this path.

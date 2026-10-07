@@ -49,6 +49,10 @@ namespace UnturnedGodot.Net
                 // grid to a stocked freezer a real loss rather than a cosmetic one.
                 float bodyRate = crate.BodyFreezes && powered ? Freezing.FreezePerSecond : -Freezing.ThawPerSecond;
                 if (Sweep(crate.Storage, bodyRate, dt)) NoteAll(crate.Viewers);
+                // v58: a car's seat pockets are plain grids -- a frozen steak left on the back seat thaws like one in a
+                // crate. Without this it stayed frozen forever, because nothing else ever sweeps a compartment.
+                foreach (var comp in crate.Compartments)
+                    if (Sweep(comp.Grid, -Freezing.ThawPerSecond, dt)) NoteAll(crate.Viewers);
             }
 
             // (2) WHAT PLAYERS ARE CARRYING. A frozen steak in a backpack thaws; that is the cost of taking it

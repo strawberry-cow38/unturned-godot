@@ -111,17 +111,7 @@ namespace UnturnedGodot
                     string mesh = AttachmentFit.MeshFor(a.id);
                     string sl = slot;
                     string label = rounds >= 0 ? $"{a.itemName} — {rounds} rounds" : a.itemName;
-                    list.Add(AddOption(sl, label, a.id, () =>
-                    {
-                        if (!FitAttachment(sl, a.id, inst)) return;
-                        // An attachment with no ripped mesh still ATTACHES -- it just renders nothing. Hiding those
-                        // would hide most of the arsenal from a menu whose whole job is showing what you own.
-                        if (mesh != null) VM.SetSlotMesh(sl, mesh);
-                        else if (VM.SlotHasModel(sl)) VM.SetSlotAttached(sl, true);
-                        Player?.NoteAttachmentChanged();     // the gun's item just changed -- tell the server before the next grid move repaints over it
-                        Player?.PlaySelectorSwitchSound();   // attach click (source: shared firemode/selector sound)
-                        Refresh();
-                    }, rounds: rounds, vertical: isMag));
+                    list.Add(AddOption(sl, label, a.id, () => ClickFit(sl, a.id, inst), rounds: rounds, vertical: isMag));
                 }
                 if (list.Count > 0) _rings[slot] = list;
             }
@@ -179,6 +169,23 @@ namespace UnturnedGodot
         ///
         /// If the bag cannot take what we displaced, the consume is undone rather than the attachment destroyed,
         /// matching DetachSlot's rule: a full bag refuses the swap, it does not eat the difference.</summary>
+        /// <summary>What clicking an attachment in the ring does, whole: fit it, show it on the gun, and tell the server.
+        /// Public so a test drives the click itself rather than a piece of it -- FitAttachment alone writes the item and
+        /// draws nothing, which is the half that already had coverage.</summary>
+        public bool ClickFit(string slot, ushort id, Item clicked)
+        {
+            if (!FitAttachment(slot, id, clicked)) return false;
+            // An attachment with no ripped mesh still ATTACHES -- it just renders nothing. Hiding those
+            // would hide most of the arsenal from a menu whose whole job is showing what you own.
+            string mesh = AttachmentFit.MeshFor(id);
+            if (mesh != null) VM.SetSlotMesh(slot, mesh);
+            else if (VM.SlotHasModel(slot)) VM.SetSlotAttached(slot, true);
+            Player?.NoteAttachmentChanged();     // the gun's item just changed -- tell the server before the next grid move repaints over it
+            Player?.PlaySelectorSwitchSound();   // attach click (source: shared firemode/selector sound)
+            Refresh();
+            return true;
+        }
+
         public bool FitAttachment(string slot, ushort newId, Item clicked)
         {
             // SERVER-OWNED BAG (MP, and singleplayer too -- SP runs through the loopback server): the spend has
