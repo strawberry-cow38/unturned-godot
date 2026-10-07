@@ -176,6 +176,96 @@ namespace UnturnedGodot.Testing
             if (shell > 0f && pistol > 0f)
                 T.Check($"a 12-gauge shell costs more per round than a 9mm ({shell:0.00} vs {pistol:0.00})", shell > pistol);
 
+            // ---- SALVAGE (master 2026-10-07) ----------------------------------------------------------------
+            //
+            // Helper: the recipe that CONSUMES this item, and what it yields.
+            (BlueprintDef bp, Dictionary<ushort,int> yields) SalvageOf(ushort id)
+            {
+                foreach (var bp in BlueprintRegistry.All)
+                {
+                    if (bp.Operation != "Craft") continue;
+                    bool consumesIt = false;
+                    foreach (var i in bp.Inputs) if (i.Consume && Assets.findByGuid(i.Guid)?.id == id) { consumesIt = true; break; }
+                    if (!consumesIt) continue;
+                    var y = new Dictionary<ushort,int>();
+                    foreach (var o in bp.Outputs) { var oa = Assets.findByGuid(o.Guid); if (oa != null) y[oa.id] = o.Amount; }
+                    return (bp, y);
+                }
+                return (null, null);
+            }
+            bool Yields(ushort item, ushort mat, int atLeast)
+            {
+                var (bp, y) = SalvageOf(item);
+                return bp != null && y.TryGetValue(mat, out int n) && n >= atLeast;
+            }
+
+            // THE NAMED ONES. ⚠ Each also asserts it did NOT fall through to the plain category rule -- the whole
+            // risk with "overrides first, then a sweep" is an override that silently never ran.
+            T.Check("firefighter top salvages to asbestos", Yields(233, 9340, 1));
+            T.Check("...and cloth", Yields(233, 66, 1));
+            T.Check("firefighter bottom salvages to asbestos", Yields(234, 9340, 1));
+            T.Check("firefighter helmet salvages to asbestos", Yields(241, 9340, 1));
+            T.Check("...and scrap, not cloth", Yields(241, 67, 1) && !Yields(241, 66, 1));
+            foreach (ushort mh in new ushort[] { 309, 1010, 1335, 1519 })
+                T.Check($"military helmet {mh} salvages to 2 scrap", Yields(mh, 67, 2));
+
+            // THE CATEGORIES, counted rather than spot-checked: "all hats" is the requirement.
+            int hats = 0, hatsCovered = 0, clothes = 0, clothesCovered = 0, packs = 0, packsCovered = 0;
+            foreach (var a in Assets.all())
+            {
+                if (a == null || string.IsNullOrEmpty(a.guid)) continue;
+                if (a.type == EItemType.HAT) { hats++; if (SalvageOf(a.id).bp != null) hatsCovered++; }
+                else if (a.type == EItemType.SHIRT || a.type == EItemType.PANTS) { clothes++; if (SalvageOf(a.id).bp != null) clothesCovered++; }
+                else if (a.type == EItemType.BACKPACK) { packs++; if (SalvageOf(a.id).bp != null) packsCovered++; }
+            }
+            GD.Print($"[craft-test] salvage: hats {hatsCovered}/{hats}, shirts+pants {clothesCovered}/{clothes}, backpacks {packsCovered}/{packs}");
+            T.Check($"every hat can be salvaged ({hatsCovered}/{hats})", hats > 0 && hatsCovered == hats);
+            T.Check($"shirts and pants can be salvaged ({clothesCovered}/{clothes})", clothes > 0 && clothesCovered == clothes);
+            T.Check($"backpacks can be salvaged ({packsCovered}/{packs})", packs > 0 && packsCovered == packs);
+
+            // THROWABLES -> scrap + gunpowder, and the snowball exclusion.
+            T.Check("a frag grenade salvages to scrap", Yields(254, 67, 1));
+            T.Check("...and gunpowder", Yields(254, 9327, 1));
+            T.Check("a smoke grenade salvages to gunpowder", Yields(267, 9327, 1));
+            T.Check("a flare salvages to gunpowder", Yields(259, 9327, 1));
+            // ⭐ CONTROL: a type sweep that read nothing would have turned a SNOWBALL into gunpowder.
+            T.Check("control: a snowball does NOT salvage into gunpowder", !Yields(1132, 9327, 1));
+
+            // ---- KITCHENWARE BREAKS INTO WHAT IT IS MADE OF (master 2026-10-07) ----------------------------
+            // ⚠⚠ EVERY PLACEHOLDER MUST CARRY A GUID. Blueprints key by guid, so an item without one is
+            // unreferenceable: it loads, shows in the catalog, and silently cannot appear in any recipe. My first
+            // batch (9300-9326) was written without the guid column and that is exactly how it failed -- "a plate
+            // salvages to ceramic" with the plate having no identity to put in the recipe.
+            int noGuid = 0; string firstNoGuid = null;
+            for (ushort id = 9300; id <= 9341; id++)
+            {
+                var a = Assets.find(id);
+                if (a == null) continue;
+                if (string.IsNullOrEmpty(a.guid)) { noGuid++; firstNoGuid ??= $"{a.itemName} ({id})"; }
+            }
+            T.Check($"every placeholder item has a guid ({noGuid} missing, first: {firstNoGuid ?? "none"})", noGuid == 0);
+
+            {
+                var cer = Assets.find(9338); var gl = Assets.find(9341); var plate = Assets.find(9302);
+                var (pbp, py) = SalvageOf(9302);
+                GD.Print($"[craft-test] diag: ceramic={(cer != null ? cer.itemName : "NULL")} glass={(gl != null ? gl.itemName : "NULL")} "
+                       + $"plate={(plate != null ? plate.itemName : "NULL")} plateGuid={(plate?.guid ?? "-")} "
+                       + $"salvage={(pbp != null ? pbp.Name : "NONE")} yields={(py == null ? "-" : string.Join(",", py.Keys))}");
+            }
+            T.Check("a plate salvages to ceramic", Yields(9302, 9338, 1));
+            T.Check("a bowl salvages to ceramic", Yields(9303, 9338, 1));
+            T.Check("a cup salvages to ceramic", Yields(9300, 9338, 1));
+            T.Check("the retail Ceramic Plate salvages to ceramic", Yields(1928, 9338, 1));
+            T.Check("the retail Ceramic Bowl salvages to ceramic", Yields(1930, 9338, 1));
+            // ⚠ The drinking glass sits in the CROCKERY list because that is where it is stocked, and it is the one
+            // piece in that list that is not ceramic. Breaking it into ceramic would be the tidy answer and wrong.
+            T.Check("a drinking glass salvages to GLASS", Yields(9301, 9341, 1));
+            T.Check("...and not to ceramic", !Yields(9301, 9338, 1));
+            T.Check("a fork salvages to scrap", Yields(9304, 67, 1));
+            T.Check("a spoon salvages to scrap", Yields(9305, 67, 1));
+            T.Check("a pot salvages to more scrap than a fork does", Yields(9307, 67, 2));
+            T.Check("a pan salvages to scrap", Yields(9308, 67, 2));
+
             yield break;
         }
     }

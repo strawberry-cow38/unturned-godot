@@ -59,6 +59,7 @@ namespace UnturnedGodot
                 if (bp != null) _all.Add(bp);
             }
             GenerateAmmoRecipes();
+            GenerateSalvageRecipes();
             SDG.Unturned.Durability.RegisterTools(_all);   // a recipe's non-consumed input is a TOOL, and tools wear (Durability)
             Log.Print($"[bp] loaded {_all.Count} blueprints from {resPath} ({SDG.Unturned.Durability.ToolIds.Count} tools)");
             return _all.Count;
@@ -123,6 +124,108 @@ namespace UnturnedGodot
                 made++;
             }
             if (made > 0) Log.Print($"[bp] generated {made} ammo recipe(s) from metal scrap + gunpowder");
+        }
+
+        /// <summary>Break things down for parts.
+        ///
+        /// Master 2026-10-07: "add salvage recipes for smoke grenades, flares, frag grenades -> metal scrap +
+        /// gunpowder. firefighter shirt and pants -> asbestos + cloth. firefighter helmet -> asbestos + scrap.
+        /// military helmets -> 2 scrap. all 'hats' (caps tophats etc) scrap for cloth. most shirts and pants
+        /// recycle for cloth too. backpacks too."
+        ///
+        /// ⭐ THE SHAPE OF THE REQUEST IS "A FEW NAMED THINGS, THEN WHOLE CATEGORIES", so the code is the same:
+        /// explicit overrides first, then a sweep by item TYPE for everything that did not get one. "All hats" and
+        /// "most shirts and pants" are categories that grow, and a hand-written list of them would be wrong by the
+        /// next clothing drop.
+        ///
+        /// ⚠ Authored as `Craft` recipes that CONSUME the item, not as the `Salvage` operation: Salvage rows carry
+        /// no inputs and nothing in this port acts on that operation, so they would load, list, and do nothing.
+        /// What makes this a salvage is that the thing itself is the ingredient.
+        ///
+        /// ⚠ An item that already has a Craft recipe consuming it is skipped, so authored content wins.</summary>
+        static void GenerateSalvageRecipes()
+        {
+            var scrap = SDG.Unturned.Assets.find(67);        // Metal Scrap
+            var cloth = SDG.Unturned.Assets.find(66);        // Cloth
+            var powder = SDG.Unturned.Assets.find(9327);     // Gunpowder
+            var asbestos = SDG.Unturned.Assets.find(9340);   // Asbestos
+            if (scrap == null || cloth == null || powder == null || asbestos == null) return;
+
+            var consumedAlready = new HashSet<ushort>();
+            foreach (var bp in _all)
+                if (bp.Operation == "Craft")
+                    foreach (var i in bp.Inputs)
+                    { var a = SDG.Unturned.Assets.findByGuid(i.Guid); if (a != null && i.Consume) consumedAlready.Add(a.id); }
+
+            int made = 0;
+            void Salvage(ushort id, params (SDG.Unturned.ItemAsset mat, int n)[] yields)
+            {
+                var src = SDG.Unturned.Assets.find(id);
+                if (src == null || string.IsNullOrEmpty(src.guid) || consumedAlready.Contains(id)) return;
+                var bp = new BlueprintDef
+                {
+                    OwnerItemId = id.ToString(), Operation = "Craft",
+                    Name = $"Salvage {src.itemName}", Skill = "", SkillLevel = 0, Seconds = 3f,
+                };
+                bp.Inputs.Add(new BlueprintDef.Ingredient { Guid = src.guid, Amount = 1, Consume = true });
+                foreach (var y in yields)
+                    if (y.mat != null && !string.IsNullOrEmpty(y.mat.guid))
+                        bp.Outputs.Add(new BlueprintDef.Ingredient { Guid = y.mat.guid, Amount = y.n, Consume = true });
+                if (bp.Outputs.Count == 0) return;
+                _all.Add(bp); consumedAlready.Add(id); made++;
+            }
+
+            // ---- THE NAMED ONES, which must land BEFORE the sweep or the sweep would give them plain cloth ----
+            Salvage(233, (asbestos, 1), (cloth, 2));   // Firefighter Top
+            Salvage(234, (asbestos, 1), (cloth, 2));   // Firefighter Bottom
+            Salvage(241, (asbestos, 1), (scrap, 2));   // Firefighter Helmet
+            foreach (ushort mh in new ushort[] { 309, 1010, 1335, 1519 }) Salvage(mh, (scrap, 2));   // military helmets
+
+            // ---- KITCHENWARE BREAKS DOWN INTO WHAT IT IS MADE OF (master 2026-10-07) -----------------------
+            //
+            // ⭐ The lists come from LootTables, which is what STOCKS these containers -- so "what counts as
+            // crockery" is answered in one place. Two private copies would disagree the first time either moved.
+            var ceramic = SDG.Unturned.Assets.find(9338);
+            var glass = SDG.Unturned.Assets.find(9341);
+            if (ceramic != null && glass != null)
+            {
+                foreach (var id in LootTables.Crockery)
+                {
+                    // ⚠ The drinking glass is in the crockery list because that is where it is STOCKED, and it is
+                    // the one piece in it that is not ceramic. Breaking it into ceramic would be the tidy answer
+                    // and the wrong one.
+                    if (id == 9301) Salvage(id, (glass, 1));
+                    else Salvage(id, (ceramic, 1));
+                }
+                Salvage(1928, (ceramic, 1));   // Ceramic Plate -- the retail item, genuinely ceramic
+                Salvage(1930, (ceramic, 1));   // Ceramic Bowl
+            }
+            // "forks, spoons, pots, pans etc -> scrap"
+            foreach (var id in LootTables.Cutlery) Salvage(id, (scrap, 1));
+            foreach (var id in LootTables.Cookware) Salvage(id, (scrap, 2));   // a pot is more metal than a fork
+
+            // ---- THEN THE CATEGORIES ------------------------------------------------------------------------
+            var byType = new List<SDG.Unturned.ItemAsset>(SDG.Unturned.Assets.all());
+            byType.Sort((x, y) => x.id.CompareTo(y.id));   // stable order, so the catalog is the same every run
+            foreach (var a in byType)
+            {
+                if (a == null || string.IsNullOrEmpty(a.guid)) continue;
+                switch (a.type)
+                {
+                    case SDG.Unturned.EItemType.HAT: Salvage(a.id, (cloth, 1)); break;
+                    case SDG.Unturned.EItemType.SHIRT:
+                    case SDG.Unturned.EItemType.PANTS: Salvage(a.id, (cloth, 2)); break;
+                    case SDG.Unturned.EItemType.BACKPACK: Salvage(a.id, (cloth, 2)); break;
+                    case SDG.Unturned.EItemType.THROWABLE:
+                        // ⚠ Not a snowball. It is a Throwable by type and gives neither metal nor propellant, and
+                        // a recipe turning one into gunpowder is the kind of thing a type sweep produces if nobody
+                        // reads what is in the category.
+                        if (a.id == 1132) break;
+                        Salvage(a.id, (scrap, 1), (powder, 1));
+                        break;
+                }
+            }
+            if (made > 0) Log.Print($"[bp] generated {made} salvage recipe(s)");
         }
 
         /// <summary>

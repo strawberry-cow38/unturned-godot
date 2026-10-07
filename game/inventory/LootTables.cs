@@ -77,9 +77,12 @@ namespace UnturnedGodot
 
         // Kitchenware. Kitchen Knife is the REAL item 120, not a placeholder -- it already existed, so a second one
         // would be two items with the same name and only one of them a weapon.
-        static readonly ushort[] Crockery = { 9300, 9301, 9302, 9303 };            // cup, glass, plate, bowl
-        static readonly ushort[] Cutlery = { 9304, 9305, 9306 };                   // fork, spoon, table knife
-        static readonly ushort[] Cookware = { 9307, 9308, 9309 };                  // pot, pan, baking tray
+        /// <summary>⭐ PUBLIC so the SALVAGE recipes break down exactly what the loot tables stock. Two private
+        /// lists of "what counts as crockery" would disagree the first time either was edited.
+        /// ⚠ 9301 is the drinking GLASS and salvages to glass, not ceramic -- see BlueprintRegistry.</summary>
+        public static readonly ushort[] Crockery = { 9300, 9301, 9302, 9303 };            // cup, glass, plate, bowl
+        public static readonly ushort[] Cutlery = { 9304, 9305, 9306 };                   // fork, spoon, table knife
+        public static readonly ushort[] Cookware = { 9307, 9308, 9309 };                  // pot, pan, baking tray
         // ⚠⚠ 499 AND 1328 WERE WRONG AND ARE GONE (master 2026-10-07: "\"paper\" item is a paper hat, not a sheet
         // of paper"). 499 "Paper" is a cosmetic **Hat**; 1328 "Note" is a **Barricade**, a placeable sign. I reused
         // both because the NAME matched, without reading the TYPE column sitting next to it -- so a filing cabinet
