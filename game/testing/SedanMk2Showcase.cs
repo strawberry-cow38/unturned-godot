@@ -34,6 +34,8 @@ namespace UnturnedGodot
                 case "side": _camera.Size=4.7f; eye=new(12,2.1f,0); target=new(0,1,0); break;
                 case "front": _camera.Size=5.8f; eye=new(9,6,-11); target=new(0,1,0); break;
                 case "rear": _camera.Size=5.8f; eye=new(9,6,11); target=new(0,1,0); break;
+                case "back": _camera.Size=4.3f; eye=new(0,1.8f,11); target=new(0,.85f,2.15f); break;
+                case "jamb": _camera.Size=2.2f; eye=new(3.5f,1.9f,.25f); target=new(.95f,.85f,.215f); break;
                 case "cabin": _camera.Size=3.4f; eye=new(4.8f,4.2f,0); target=new(0,.82f,.25f); break;
                 case "engine": _camera.Size=2.5f; eye=new(4.6f,4.1f,-5.2f); target=new(0,.72f,-2.25f); break;
                 default: _camera.Size=2.4f; eye=new(4.2f,3.8f,5); target=new(0,.76f,2.33f); break;
@@ -77,6 +79,16 @@ namespace UnturnedGodot
                     _camera.LookAtFromPosition(new Vector3(15,2.3f,0),new Vector3(0,1.3f,0),Vector3.Up);
                     await Save("stock_and_mk2_native_rest");
                     GD.Print("SEDAN_MK2_RUNTIME_HEIGHT_SUCCESS"); GetTree().Quit(0); return;
+                }
+                if (System.Environment.GetEnvironmentVariable("UG_MK2_DETAILS_ONLY") == "1")
+                {
+                    foreach(string v in new[]{"side","rear","back"}) await View(_new,"mk2_closed",v);
+                    for(int i=0;i<4;i++) _new.AuthoredPanelRig.PulseSeat(i);
+                    _new.AuthoredPanelRig.SetCompartment(Vehicle.AccessKind.Hood,true);
+                    _new.AuthoredPanelRig.SetCompartment(Vehicle.AccessKind.Trunk,true);
+                    _new.AuthoredPanelRig.Tick(VehiclePanelRig.SwingSeconds);
+                    foreach(string v in new[]{"engine","trunk","jamb","back"}) await View(_new,"mk2_open",v);
+                    GD.Print("SEDAN_MK2_RUNTIME_DETAILS_SUCCESS");GetTree().Quit(0);return;
                 }
                 if (System.Environment.GetEnvironmentVariable("UG_MK2_REMAINING") != "1")
                 {

@@ -1,6 +1,6 @@
-# Sedan Mk II — V15 proportion preview (approval pending)
+# Sedan Mk II — V16 detail preview (approval pending)
 
-**Local preview only:** this revision is on `Preview-Sedan-V15`, not published.
+**Local preview only:** this revision is on `Preview-Sedan-V16`, not published.
 `Staging-Astra` remains at the currently published V14 commit `b572d1e9`.
 Wait for visual approval before moving this model to staging. Main/server are unchanged.
 
@@ -13,12 +13,12 @@ No existing natural sedan spawns were replaced. This is an additional vehicle.
 
 ## Model and runtime
 
-28 new prefixed assets are byte-identical copies of the V15 preview exports. The
+28 new prefixed assets are byte-identical copies of the V16 preview exports. The
 stock 4x2 palette is retained, including paintable index 0 and fixed charcoal index 5.
 The fixed frame, four doors, hood/trunk, moving door panes, static fittings and
 four interior pieces are installed separately. Lid undersides are body-painted.
 The complete internal wheel housings are already in the approved frame; no diagnostic
-or duplicate housing meshes are installed. Total: 2,798 triangles excluding tyres.
+or duplicate housing meshes are installed. Total: 2,794 triangles excluding tyres.
 
 An opt-in `VehiclePanelRig` is shared by real cars and replica puppets. It uses body-space
 pivots, follows existing glass/collider nodes, shares the body paint and adds no moving
@@ -99,9 +99,45 @@ measured from the actual rig, not backrest-center proxies. This is not a guarant
 for every headwear piece, initial boarding transition, or arbitrary animation overlay.
 The showcase waits 25 physics ticks after boarding before capturing the seated driver.
 
+## V16 detail corrections
+
+- **Wheel wells:** outward arch facets, straight leg faces and outboard rim faces
+  now use paintable texel 0. Tyre-facing inner surfaces and inboard backs remain
+  dark texel 5. Geometry/extents stay unchanged; this is not a blanket recolour.
+- **Door jambs:** the separate 26.5 mm lip slab and stepped cutter are replaced
+  by a single continuous aperture bevel. Old Y=.9/Z=.2173 and sill Y=.15/Z=0
+  probes now see ONE fixed interval per side, approximately X=1.1342..1.3048,
+  rather than a disconnected inner slab and cabin shoulder. Original outer shutline
+  and moving-door skin/pivots remain unchanged.
+- **Dashboard/cowl:** the dashboard moves 40 mm rearward and its outer caps trim
+  to +/-1.065 m. Actual dash/frame overlap is zero; steering-column embed remains
+  positive (~0.00041439 m3). Moving the dash alone still left a cowl sight gap.
+  A body-painted firewall behind the hood hinge closes it, joins the fixed cowl,
+  and is relieved around the front wheelhousing envelope. Measured engine-to-dash
+  rays now hit the real opaque frame, not merely a nominal bulkhead boundary.
+- **Trunk:** one connected painted L-shaped skin extends to the original rear
+  surface and down to Y=.49. At lamp heights its half-width is .78, widening to
+  the original top width .99852 above Y=.97; taillights stay fixed with at least
+  36.2 mm sampled clearance. The old aft top seam is healed, rear cut relocated,
+  tall old cargo-wall removed and floor extended to a low threshold. A slim
+  recessed painted stop backs the diagonal shutline without filling the central
+  cargo passage. Hinge and -50-degree opening remain unchanged.
+
+V15 height, raised seat/floor pack, dash-to-wheel support, original hardware,
+headroom, tyre clearance and resting-height behaviour are retained. Native details
+checks verify both real car and puppet paint selection, contiguous jamb sections,
+actual cowl interception, rear-flange border and backed diagonal seam. Reinstalling
+V15 as a negative control makes each changed feature's checks fail; restoring V16
+passes all 46 checks. Matched before/after captures use the same compiled runtime,
+cameras and lighting, with only the installed model assets exchanged. Sampled
+trunk/door sweeps clear fixed geometry and hardware; they are not continuous proofs.
+
 ## Networking boundary
 
-Wire format remains **v55**, unchanged. Replicas use the new spec/paint/parts/glass.
+This isolated preview's base wire format is **v55**, unchanged by these model changes.
+This is NOT a claim of compatibility with current main; main has since advanced via
+other work. Rebase/integrate and rerun relevant tests after visual approval.
+Replicas use the new spec/paint/parts/glass.
 Door pulses derive from existing occupant identity snapshots; driver twin-to-puppet
 handoff preserves the local exit pulse. Unchanged occupancy does not allocate or
 rebuild sets every frame, and closed panels do not rewrite node transforms.
@@ -118,12 +154,14 @@ No main merge or server deployment is performed by this preview.
 - L0: all six engine-free suites, 2,364 passed / 0 failed. Rerun with
   `--no-build --no-restore` because this preview changes no core/test project
   sources and concurrent builds exceeded the runner timeout on the shared box.
-- Focused vehicle regression L1: 12 tests, 578 checks, all passed. Includes 287 new
+- Focused vehicle regression L1: 13 tests, 624 checks, all passed. Includes 287 new
   model/rig checks and 42 real-runtime checks for native tyre contact/clearance,
   driver boarding/camera, safe exit, selective doors, UI closure, storage identity,
   teardown, driving and held braking.
 - V15 independent authoring audit: all four doors and both lids sampled every
-  0.25 degrees through their complete 55/50-degree swings (1,286 poses). No
+  0.25 degrees through their complete 55/50-degree swings (1,286 poses).
+  V16 revised jambs/trunk were additionally checked at finer initial angles;
+  the final firewall/closure stop passed the 204-sample trunk sweep and tyre envelopes. No
   fixed-frame/liner/seat penetration in those sampled poses. These are discrete geometry audits, not
   a proof of arbitrary runtime collision behaviour.
 - Existing access, door exits, glass, lamps, hit meshes, paint, puppet glass/solidity,
@@ -132,6 +170,8 @@ No main merge or server deployment is performed by this preview.
   real PlayerController first-person camera and runtime rig. It does not reload
   the private art-preview scene. Output is explicitly a DIRECTORY, and PNG errors
   abort the capture. Dry rain shader globals are initialized before materials link.
+  `UG_MK2_DETAILS_ONLY=1` captures matched closed/open rear, engine, trunk and
+  close jamb views through the real builder, avoiding private-art-viewer substitutes.
   `UG_MK2_REMAINING=1` resumes just the driver/open-panel views;
   `UG_MK2_HEIGHT_ONLY=1` uses ONE fixed world camera/floor after native suspension
   settles, with no per-car camera recentering or height adjustment.
@@ -143,23 +183,23 @@ No main merge or server deployment is performed by this preview.
 
 `python3 tools/install_sedan_mk2.py --check` verifies installed files and original
 asset hashes through `docs/SEDAN_MK2_ASSETS.json`, even without the private art workspace.
-Reinstallation requires the V15 preview workspace via `--art` and frozen palette via
+Reinstallation requires the V16 preview workspace via `--art` and frozen palette via
 `--frozen`; the installer is a byte copier, not a geometry-authoring recipe.
 
 ## SHA-256: preview source geometry and installed bytes
 
 Every row below is byte-identical source -> installed asset. Manifest SHA-256:
-`f5ea668bf35d513352e037b220e1364755a8093c655f4cfd199ef7a523254117`.
+`76c45a4212625c68a6d46a1150461328068e1694a6a832e065d67a67ecfb881c`.
 
 | Source file | Installed file | SHA-256 |
 |---|---|---|
-| `sedan_frame.obj` | `sedan_mk2_frame.txt` | `c7cca9e496265be86fd83d09feb4742a1277df0eac144d86180b9ba24bc95618` |
+| `sedan_frame.obj` | `sedan_mk2_frame.txt` | `5511f3d5b89b87a1327a4465a26c237fc7a6abe7b42407ebdc4db0a74ffba12b` |
 | `sedan_front_door_left.obj` | `sedan_mk2_front_door_left.txt` | `d09dc8b87e2e5d6797cdb8037aeac9b50f5bd40b8e08b759d85f9aba723f28da` |
 | `sedan_rear_door_left.obj` | `sedan_mk2_rear_door_left.txt` | `a0a57f84c309cd3ac04a945be9ce2512229d6efa0845cb5a2021d5a9325d7f31` |
 | `sedan_front_door_right.obj` | `sedan_mk2_front_door_right.txt` | `4074a20132f548a66418813c649a7598e4ddd9491f6af6fa735fd11effd101a6` |
 | `sedan_rear_door_right.obj` | `sedan_mk2_rear_door_right.txt` | `7ff648bac36444b60e65ea685e5b8b6ee2260a53bb4ffcc544b721dcc42079fe` |
 | `sedan_hood.obj` | `sedan_mk2_hood.txt` | `2e513a74b847f0706ac0abbf8f9d67621166854eae613cbf621d7cc6ff813eea` |
-| `sedan_trunk_lid.obj` | `sedan_mk2_trunk_lid.txt` | `7f38ebfda52c8f2e349504fd0fcd9654677bee37f2ae67d60c09a12ad0d377e3` |
+| `sedan_trunk_lid.obj` | `sedan_mk2_trunk_lid.txt` | `ed5fc009e99a2e88c26aacb15adf98e01b20e556b06f0af547eb89b4b1e96ef8` |
 | `sedan_glass_l_front.obj` | `sedan_mk2_glass_l_front.txt` | `223d1da2fe2dc98c8c792e4054e17ae74097665d748d12ba91814a092598f26a` |
 | `sedan_glass_l_rear.obj` | `sedan_mk2_glass_l_rear.txt` | `a0fe986d67e2da6f3af40aa1aefa26d4976d635b3dc9643faf27287964767169` |
 | `sedan_glass_r_front.obj` | `sedan_mk2_glass_r_front.txt` | `0a9c9a46469b5e543485f07c8bb202f68f3f7c09e8acfa314f414d293342192e` |
@@ -174,12 +214,12 @@ Every row below is byte-identical source -> installed asset. Manifest SHA-256:
 | `sedan_stock_hitch.obj` | `sedan_mk2_stock_hitch.txt` | `adff7e44427813c2349b45cb7710829046cb65f6372f60424f77edc2c2433588` |
 | `sedan_stock_seats.obj` | `sedan_mk2_stock_seats.txt` | `8d26a0f149b3646a1544ac37938328cea6305be0423c783392f8e8f62a9ea160` |
 | `sedan_stock_steer.obj` | `sedan_mk2_stock_steer.txt` | `880473cc6daf7a3fb520bc9d99ee1f0c4533a5cbc2e1c21212eda6f81f91e66f` |
-| `sedan_dashboard.obj` | `sedan_mk2_dashboard.txt` | `3b56a23003d9900e1a0139881c4c61979f9b8bebf6c1abac90d2976353502401` |
+| `sedan_dashboard.obj` | `sedan_mk2_dashboard.txt` | `ccdf14275efe4faf1312f9388aa64867654bce4a888acf04fb85638862345ac8` |
 | `sedan_steering_column.obj` | `sedan_mk2_column_support.txt` | `767f79470bcb4ca059db379af1e7ddc017f1a7468276b1c43e6214524f63fb27` |
 | `sedan_cabin_floor.obj` | `sedan_mk2_cabin_floor.txt` | `fff49c93f38102851b03a1fed9fdc57b9a8fa29e5e8be7bf1bf2ad4a44f9edbd` |
 | `sedan_floor_tunnel.obj` | `sedan_mk2_floor_tunnel.txt` | `047e85767f954e2763808697a253c14928f85a70a82800b453885e501ec77161` |
 | `sedan_engine_bay_liner.obj` | `sedan_mk2_engine_bay_liner.txt` | `104481bb736844a79fe8a5968edf72472335a4003ede31731f9161c6df3b445f` |
-| `sedan_trunk_liner.obj` | `sedan_mk2_trunk_liner.txt` | `9e7d4458aaa4303bc4c7446f55ada89f4eecb5c7488d5c8af55913d02f54b53e` |
+| `sedan_trunk_liner.obj` | `sedan_mk2_trunk_liner.txt` | `0237fdbdc2c6e9fd36ad2e0afa39211e51343b1ea69c0f450effe889cae5f8d8` |
 | `sedan_palette.png` | `sedan_mk2_palette.png` | `df13338fc3cd5ac95c0de41b7273ae3d3f9a4c4a815f3113ee898bc3637b276b` |
 
 ### Frozen original sedan sources (unchanged)
