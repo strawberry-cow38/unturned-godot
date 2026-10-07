@@ -159,10 +159,27 @@ namespace UnturnedSim.Tests
         [Test]
         public void each_appliance_burns_only_its_own_fuel()
         {
+            // ⚠ THIS USED TO ASSERT "bbqs can only take charcoal" (strawberry 2026-09-06) AND THAT RULE IS GONE.
+            // Master 2026-10-07: "bbq should burn logs, sticks, planks, firewood". The assertion was correct when
+            // written and the CHANGE made it false on purpose -- a stale premise, not a regression. What stays
+            // true, and what this now pins, is that a barbecue and a bonfire are still DIFFERENT: a grill takes
+            // the small wooden fuels, a campfire takes anything wooden including a door.
             var charcoal = Wooden(Cooking.CharcoalId, "Charcoal");
             var log = Wooden(37, "Birch Log", 2, 1);
+            var stick = Wooden(38, "Birch Stick");
+            var plank = Wooden(62, "Birch Plank", 1, 2);
+            var firewood = Wooden(Cooking.FirewoodId, "Firewood", 2, 1);
+            var door = Wooden(282, "Birch Door", 1, 2, EItemType.GENERIC);   // wooden, but a STRUCTURE
+
             Assert.That(Cooking.IsFuelFor(ECookerKind.Barbecue, charcoal), Is.True);
-            Assert.That(Cooking.IsFuelFor(ECookerKind.Barbecue, log), Is.False, "'bbqs can only take charcoal'");
+            foreach (var fuel in new[] { log, stick, plank, firewood })
+                Assert.That(Cooking.IsFuelFor(ECookerKind.Barbecue, fuel), Is.True, $"a bbq burns {fuel.itemName}");
+            // ⭐ THE CONTROL, and the only reason the four above mean anything: if a grill took everything wooden
+            // they would pass on a rule that had simply become "IsWood". A door is wood a campfire takes and a
+            // kettle grill must not -- that distinction IS the feature.
+            Assert.That(Cooking.IsFuelFor(ECookerKind.Barbecue, door), Is.False, "a kettle grill does not take a doorway");
+            Assert.That(Cooking.IsFuelFor(ECookerKind.Campfire, door), Is.True, "...though a bonfire does");
+
             Assert.That(Cooking.IsFuelFor(ECookerKind.Campfire, log), Is.True);
             Assert.That(Cooking.IsFuelFor(ECookerKind.Campfire, charcoal), Is.False, "a campfire takes wood");
             foreach (var k in new[] { ECookerKind.Oven, ECookerKind.Toaster, ECookerKind.Microwave })
