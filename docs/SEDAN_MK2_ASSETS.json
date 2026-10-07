@@ -1,21 +1,21 @@
 {
-  "approved_model": "Sedan Mk II V17 long-nose (approved 2026-10-07)",
-  "manifest_sha256": "a85274037b39f0dd2580885a32f1fad7db7cc34ab204ba9ebee7488791663313",
+  "approved_model": "Sedan Mk II V18 conservative cleanup of approved V17 long nose",
+  "manifest_sha256": "7eed246ea1e5d50c400b1f626ada43f556571b5a349d47dbcc7b7162ff79c183",
   "counts": {
-    "frame_and_closure_lips": 1736,
-    "moving_panels": 462,
+    "frame_and_closure_lips": 1730,
+    "moving_panels": 434,
     "glass": 110,
     "stock_hardware_and_interior": 408,
-    "new_interior_liners": 258,
-    "body_and_panels": 2198,
-    "all_excluding_wheels": 2974
+    "new_interior_liners": 232,
+    "body_and_panels": 2164,
+    "all_excluding_wheels": 2914
   },
   "assets": [
     {
       "file": "sedan_mk2_frame.txt",
       "source": "sedan_frame.obj",
-      "sha256": "2d130edf4987a30bca2dfbd734c8de6f1c13664bff423848644ad2e82ff0db22",
-      "triangles": 1736
+      "sha256": "0859747f64bf1d4c591757bc0cc8962949104a2b783ca4e72e19aa499e6fe0ea",
+      "triangles": 1730
     },
     {
       "file": "sedan_mk2_front_door_left.txt",
@@ -26,8 +26,8 @@
     {
       "file": "sedan_mk2_rear_door_left.txt",
       "source": "sedan_rear_door_left.obj",
-      "sha256": "a0a57f84c309cd3ac04a945be9ce2512229d6efa0845cb5a2021d5a9325d7f31",
-      "triangles": 88
+      "sha256": "67fb6c080da43246f7726644552c463191468731438184ae985b16ab498fd2ad",
+      "triangles": 80
     },
     {
       "file": "sedan_mk2_front_door_right.txt",
@@ -38,8 +38,8 @@
     {
       "file": "sedan_mk2_rear_door_right.txt",
       "source": "sedan_rear_door_right.obj",
-      "sha256": "7ff648bac36444b60e65ea685e5b8b6ee2260a53bb4ffcc544b721dcc42079fe",
-      "triangles": 100
+      "sha256": "18631ba86d284dc81bf91a73e364b1634786989448edd394dd5edf9120780f7c",
+      "triangles": 80
     },
     {
       "file": "sedan_mk2_hood.txt",
@@ -170,8 +170,8 @@
     {
       "file": "sedan_mk2_trunk_liner.txt",
       "source": "sedan_trunk_liner.obj",
-      "sha256": "0237fdbdc2c6e9fd36ad2e0afa39211e51343b1ea69c0f450effe889cae5f8d8",
-      "triangles": 118
+      "sha256": "0c3ab39a5e7b2a641c29deaf48d720a327063ef308e5df7de7633d422efb4fd1",
+      "triangles": 92
     },
     {
       "file": "sedan_mk2_palette.png",

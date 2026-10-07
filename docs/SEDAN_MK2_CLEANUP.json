@@ -1,0 +1,108 @@
+{
+  "source_revision": "approved V17 long nose, 08327d82",
+  "cleanup": "V18: redundant coplanar tessellation and numerical join facets only; no hand deleted faces or visible-design changes",
+  "counts_before": 2974,
+  "counts_after": 2914,
+  "changes": [
+    {
+      "name": "sedan_frame",
+      "before_triangles": 1736,
+      "after_triangles": 1730,
+      "same_colour_bidirectional_triangle_coverage": true,
+      "surface_distance_bound_m": 2e-05,
+      "removed_volume_m3": 7.260542293890761e-08,
+      "added_volume_m3": 6.09524154687056e-08
+    },
+    {
+      "name": "sedan_rear_door_left",
+      "before_triangles": 88,
+      "after_triangles": 80,
+      "same_colour_bidirectional_triangle_coverage": true,
+      "surface_distance_bound_m": 2e-05,
+      "removed_volume_m3": 4.018013597717585e-08,
+      "added_volume_m3": 1.687620236959485e-09
+    },
+    {
+      "name": "sedan_rear_door_right",
+      "before_triangles": 100,
+      "after_triangles": 80,
+      "same_colour_bidirectional_triangle_coverage": true,
+      "surface_distance_bound_m": 2e-05,
+      "removed_volume_m3": 2.5471564824042267e-09,
+      "added_volume_m3": 8.467306236365039e-09
+    },
+    {
+      "name": "sedan_trunk_liner",
+      "before_triangles": 118,
+      "after_triangles": 92,
+      "same_colour_bidirectional_triangle_coverage": true,
+      "surface_distance_bound_m": 2.0784609690826524e-08,
+      "removed_volume_m3": 8.44e-14,
+      "added_volume_m3": 0
+    }
+  ],
+  "unchanged_companion_obj_files": [
+    "sedan_front_door_left.obj",
+    "sedan_front_door_right.obj",
+    "sedan_hood.obj",
+    "sedan_trunk_lid.obj",
+    "sedan_glass_l_front.obj",
+    "sedan_glass_l_rear.obj",
+    "sedan_glass_r_front.obj",
+    "sedan_glass_r_rear.obj",
+    "sedan_glass_rear.obj",
+    "sedan_glass_windshield.obj",
+    "sedan_stock_front_bumper.obj",
+    "sedan_stock_rear_bumper.obj",
+    "sedan_stock_exhaust.obj",
+    "sedan_stock_headlights.obj",
+    "sedan_stock_taillights.obj",
+    "sedan_stock_hitch.obj",
+    "sedan_stock_seats.obj",
+    "sedan_stock_steer.obj",
+    "sedan_dashboard.obj",
+    "sedan_steering_column.obj",
+    "sedan_cabin_floor.obj",
+    "sedan_floor_tunnel.obj",
+    "sedan_engine_bay_liner.obj"
+  ],
+  "all_hinges_and_runtime_spec_unchanged": true,
+  "all_original_sedan_assets_unchanged": true,
+  "inspection": {
+    "closed_manifold_inspected_solids": 11,
+    "detached_components_found": 0
+  },
+  "opening_sweeps": {
+    "sedan_front_door_left": {
+      "poses": 224,
+      "max_overlap_m3": 0.0
+    },
+    "sedan_rear_door_left": {
+      "poses": 224,
+      "max_overlap_m3": 0.0
+    },
+    "sedan_front_door_right": {
+      "poses": 224,
+      "max_overlap_m3": 0.0
+    },
+    "sedan_rear_door_right": {
+      "poses": 224,
+      "max_overlap_m3": 0.0
+    },
+    "sedan_hood": {
+      "poses": 204,
+      "max_overlap_m3": 0.0
+    },
+    "sedan_trunk_lid": {
+      "poses": 204,
+      "max_overlap_m3": 0.0
+    }
+  },
+  "all_static_vs_actual_width_conservative_tyres_clear": true,
+  "validation": {
+    "L1_tests": 13,
+    "L1_checks": 682,
+    "L1_failed": 0
+  },
+  "not_changed": "An attempted trunk-lid sliver cleanup did not obtain a complete surface-equivalence proof and was rejected. Original lid remains byte-identical. No blanket decimation."
+}

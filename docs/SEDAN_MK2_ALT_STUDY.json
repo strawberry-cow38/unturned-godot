@@ -1,5 +1,5 @@
 {
-  "status": "Approved long-nose model installed as Sedan Mk II; original sedan unchanged",
+  "status": "Historical approved V17 long-nose source; current installed V18 cleanup recorded in SEDAN_MK2_ASSETS/CLEANUP",
   "manifest_sha256": "a85274037b39f0dd2580885a32f1fad7db7cc34ab204ba9ebee7488791663313",
   "counts": {
     "frame_and_closure_lips": 1736,

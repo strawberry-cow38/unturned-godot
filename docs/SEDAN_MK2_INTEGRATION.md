@@ -1,4 +1,4 @@
-# Sedan Mk II — approved V17 long-nose integration
+# Sedan Mk II — approved long nose, V18 geometry cleanup
 
 Approved by strawberry on 2026-10-07. The long-nose alternate is now the normal
 `sedan_mk2` builder, not a harness-only study. Original sedan assets and TypeId 3
@@ -15,9 +15,9 @@ branch. Main/server are not updated by publishing this staging branch.
 
 ## Approved geometry and canonical runtime
 
-- Exact approved exports from `models/sedanV17Alt`, manifest SHA256
-  `a85274037b39f0dd2580885a32f1fad7db7cc34ab204ba9ebee7488791663313`.
-  28 prefixed assets; 2,974 triangles excluding tyres. The stock palette retains
+- Cleaned exports from `models/sedanV18`, derived from the approved V17 long nose.
+  Current manifest SHA256 `7eed246ea1e5d50c400b1f626ada43f556571b5a349d47dbcc7b7162ff79c183`.
+  28 prefixed assets; 2,914 triangles excluding tyres. The stock palette retains
   paintable index 0 and fixed charcoal index 5. Fifteen original source asset
   hashes are preserved and checked separately.
 - Forebody split before wheel/aperture construction, shifted rigidly **0.36 m**
@@ -108,5 +108,35 @@ main merge. Staging-Tinyclaw's later v58 car-storage work is not folded into thi
 
 `python3 tools/install_sedan_mk2.py --check` verifies approved installed hashes and
 unchanged stock assets even without the private art workspace. Reinstallation
-requires the approved V17 long-nose workspace via `--art` and frozen palette via
+requires the V18 cleaned long-nose workspace via `--art` and frozen palette via
 `--frozen`. Installer is a byte copier, not a hidden mesh-processing operation.
+
+## V18 conservative geometry cleanup
+
+Only four installed OBJ assets change: fixed frame, both rear door skins and
+cargo liner. Redundant coplanar subdivisions and microscopic join facets are
+collapsed coherently, rather than dropping faces. Frame 1736→1730, rear doors
+88/100→80/80, cargo liner 118→92. Total 2974→2914; not a target-budget remodel.
+
+All original-body design angles, palette selection boundaries, structural returns,
+panel thickness, wheelhouse backs, firewall, openings, seat/glass/hardware fit and
+runtime pivots/spec remain. Twenty-three companion OBJ assets are byte-identical.
+No detached component was found in the eleven inspected closed solids. The
+cleanup does not claim that every subjectively unwanted interior feature is gone.
+
+A bidirectional same-colour triangle-coverage audit bounds fixed/rear-door surface
+changes below 0.02 mm; cargo-floor retessellation has a tighter nanometre-scale
+bound. These are geometric bounds, not nearest-vertex samples. Surface winding,
+closed topology and normals are independently validated on the exported OBJ. A
+trunk-lid simplification trial could not establish the same full-surface proof,
+so it was rejected: the approved lid geometry stays byte-identical.
+
+Changed rear doors are re-swept against ALL fixed geometry; unchanged moving
+parts are re-swept against the changed frame/cargo liner. Each door has 224
+poses and each lid 204, with initial .01/.05/.10-degree probes and .25-degree
+steps. Unchanged pairs reuse the preceding byte-identical source evidence. No
+measured overlap >1e-10 m3, no static/conservative nominal-tyre interference.
+The same 13 runtime tests/682 checks pass with the cleaned installed meshes.
+Native before/after details capture retains the normal builder/camera/lighting;
+this cleanup has no C# or core/wire changes, and uses the already validated
+08327d82 assembly. Proof/count/hash summary: `SEDAN_MK2_CLEANUP.json`.
