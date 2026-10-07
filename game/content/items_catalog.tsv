@@ -1956,3 +1956,4 @@
 9145	MAC-10	Gun	Rare	3	2	MAC-10 chambered in .45 ACP. Provisional Bulldog/Uzi gameplay baseline.	fd731fe0da9f4b97bdb970ee9de735e2
 9146	MAC-10 Magazine	Magazine	Rare	1	2	Proprietary MAC-10 magazine holding 30 rounds of .45 ACP.	0e07040eaf204e6f928a1dfae68a6e03
 9147	MAC-10 Iron Sights	Sight	Common	2	1	Factory MAC-10 iron sights.	9e5c1d41331b47ae9eba2ddfc98348b0
+9400	Water Bottle Silencer	Barrel	Common	1	1	A plastic bottle taped over the muzzle. Swallows exactly one shot, then it is done.	56d6a5da2bbf4638bb313fa11a583399

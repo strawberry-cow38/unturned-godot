@@ -62,15 +62,20 @@ namespace UnturnedGodot.Testing
             T.Check($"...and it sits inside the scroll region (btn {at})",
                     new Rect2(box.GlobalPosition, box.Size).HasPoint(at));
 
-            float before = ui.DebugScrollY;
+            // v58: the container column scrolls on its own now (a bus's ten seat pockets), so "the column" is the one
+            // the button sits in -- the left (your own pages) or the right (the open container). Both have to scroll
+            // under a button; which one moves is decided by where the button is, read off the box's own split.
+            bool rightCol = at.X >= box.GlobalPosition.X + ui.DebugStorageWidth * 0.5f;
+            float Col() => rightCol ? ui.DebugScrollY2 : ui.DebugScrollY;
+            float before = Col();
             ui._Input(new InputEventMouseButton { ButtonIndex = MouseButton.WheelDown, Pressed = true, GlobalPosition = at });
             yield return Ticks(2);
-            float after = ui.DebugScrollY;
-            T.Check($"wheeling over a BUTTON still scrolls the column ({before:0.0} -> {after:0.0})", after > before);
+            float after = Col();
+            T.Check($"wheeling over a BUTTON still scrolls the column it is in ({(rightCol ? "container" : "own")} column, {before:0.0} -> {after:0.0})", after > before);
 
             ui._Input(new InputEventMouseButton { ButtonIndex = MouseButton.WheelUp, Pressed = true, GlobalPosition = at });
             yield return Ticks(2);
-            T.Check($"...and back up ({after:0.0} -> {ui.DebugScrollY:0.0})", ui.DebugScrollY < after);
+            T.Check($"...and back up ({after:0.0} -> {Col():0.0})", Col() < after);
 
             System.Environment.SetEnvironmentVariable("UG_INVSCROLLTEST", null);
             ui.QueueFree();

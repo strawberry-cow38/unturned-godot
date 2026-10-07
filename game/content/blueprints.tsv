@@ -35,3 +35,6 @@
 40	Craft			0	e73a23b102f24520a32ec0b2afaa6157:1:1|fd6bee4579884ee9ad0b729baf423ab1:1:0	46218740c256475b87dbc6a2e9a1fb19:2		4
 63	Craft			0	86bf08032a5147f9871e362e40812771:1:1|fd6bee4579884ee9ad0b729baf423ab1:1:0	719bfdf2c2dc4be6ad5be44d044583e4:2		8
 42	Craft			0	719bfdf2c2dc4be6ad5be44d044583e4:1:1|fd6bee4579884ee9ad0b729baf423ab1:1:0	55d9700ea53c477685458171932251f1:2		4
+# WATER BOTTLE SILENCER (strawberry 2026-10-07: "crafted w a water bottle + tape. attaches to any weapon w the bottle
+# model on the tip of the muzzle. breaks after the first shot"). Bottled Water (14) + Tape (69) -> item 9400.
+9400	Craft			0	f81d68ebb2a8490dbe1545d432b9c099:1:1|8c25cf28c76a4634855f404c8972c0ae:1:1	56d6a5da2bbf4638bb313fa11a583399:1		4

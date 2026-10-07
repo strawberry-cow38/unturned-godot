@@ -151,10 +151,11 @@ namespace UnturnedGodot.Net
         {
             if (inv == null) return 0;
             if (named != 0)
-                return inv.TryGetCrate(named, out var c) && (c.Pos - at).magnitude <= AdapterReach ? named : 0;
+                return inv.TryGetCrate(named, out var c) && !c.OnVehicle && (c.Pos - at).magnitude <= AdapterReach ? named : 0;
             uint best = 0; float bestD = float.MaxValue;
             foreach (var c in inv.Crates)
             {
+                if (c.OnVehicle) continue;   // v58: a car's trunk or cabin drives away -- never something a pipe binds
                 float d = (c.Pos - at).magnitude;
                 if (d > AdapterReach) continue;
                 if (d < bestD || (d == bestD && c.NetIdValue < best)) { best = c.NetIdValue; bestD = d; }

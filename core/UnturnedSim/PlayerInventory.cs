@@ -5,6 +5,7 @@ using System;
 //   2 pockets  fixed 5x3 grid, always present (source: items[2].loadSize(5,3))
 //   3 BACKPACK 4 VEST 5 SHIRT 6 PANTS    -- grids sized by the worn bag (0x0 when nothing is worn)
 //   7 STORAGE  8 AREA  9 FREEZER          -- external containers (not the player; left empty here)
+//   10.. COMPARTMENTS                     -- v58: a container's extra grids beyond STORAGE (a car's seats)
 // tryAddItem walks pages SLOTS..OWNPAGES exactly like the source, so an item auto-lands in the first page with a
 // free slot. This is a plain model owned by PlayerController (the dashboard UI renders it).
 namespace SDG.Unturned
@@ -12,7 +13,7 @@ namespace SDG.Unturned
     public class PlayerInventory
     {
         public static readonly byte SLOTS = 2;
-        public static readonly byte PAGES = 10;
+        public static readonly byte PAGES = 22;   // v58: 10 + MAXCOMPARTMENTS
         public static readonly byte BACKPACK = 3;
         public static readonly byte VEST = 4;
         public static readonly byte SHIRT = 5;
@@ -20,6 +21,19 @@ namespace SDG.Unturned
         public static readonly byte STORAGE = 7;
         public static readonly byte AREA = 8;
         public static readonly byte FREEZER = 9;   // a fridge's freezer compartment -- a SECOND external grid shown above the fridge one (strawberry 2026-09-06)
+
+        /// <summary>v58: the first of a container's extra COMPARTMENT views (strawberry 2026-10-07: "when opening the
+        /// inventory in a car, add several storage 'containers' ... for each seat + glovebox"). A car's cabin opens as
+        /// one container whose STORAGE page is the glovebox and whose compartments are its seats, the same way a
+        /// fridge's freezer rides page 9 -- but a bus has ten seats, so these are a run of pages rather than one.
+        /// Views like STORAGE and FREEZER: never the player's, never swept by auto-add or crafting.</summary>
+        public static readonly byte COMPARTMENT0 = 10;
+        public const int MAXCOMPARTMENTS = 12;
+
+        /// <summary>A page that shows an open CONTAINER rather than something the player carries: the container's
+        /// own grid, its freezer, or one of its compartments. (AREA, the ground, is external but not a container.)</summary>
+        public static bool IsContainerView(byte page) => page == STORAGE || page == FREEZER || IsCompartment(page);
+        public static bool IsCompartment(byte page) => page >= COMPARTMENT0 && page < COMPARTMENT0 + MAXCOMPARTMENTS;
 
         /// <summary>Exclusive upper bound of the pages the PLAYER carries (0..6: two holsters, pockets, and the
         /// four clothing grids). Everything at or above it is an EXTERNAL container being viewed -- a crate, the

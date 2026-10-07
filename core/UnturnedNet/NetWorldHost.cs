@@ -68,6 +68,8 @@ namespace UnturnedGodot.Net
         public readonly ServerDeadzones Deadzones = new ServerDeadzones();
         /// <summary>v56 DURABILITY: worn clothing wearing out over in-game time (ServerClothingWear).</summary>
         public ServerClothingWear ClothingWear { get; private set; }
+        /// <summary>v58: vehicles' trunks and cabins (glovebox + a compartment per seat). The game layer sets ShapeOf.</summary>
+        public ServerVehicleStorage VehicleStorage { get; private set; }
         /// <summary>The save this world was loaded from, or null for a fresh one. Held for the whole session
         /// rather than consumed at load: a player's block is applied when THEY connect (PeerConnected below),
         /// which for a dedicated server is minutes or days after the world came up. The game side sets this
@@ -343,6 +345,8 @@ namespace UnturnedGodot.Net
             // the content table. One hook rather than each growing a copy of the other's half.
             VehicleHost.TrySpendPaint = (sender, itemId) => Transactions.SpendPaintCan(sender, itemId);
             VehicleHost.TrySpendTire = sender => Transactions.SpendTire(sender);   // v45
+            VehicleStorage = new ServerVehicleStorage(Inventories, Vehicles, Ids);   // v58
+            Transactions.VehicleStorage = VehicleStorage;
             Transactions.TireItemId = 1451;   // v45: retail's generic Tire. Core has no item catalogue and should not grow one for a single id; the game layer's PlayerController.TireItemId is the same constant and the pair is asserted by TireWireTests.
             // ApplyCarjackForce stays unset here: shoving a rigid body is the GAME layer's, and a bare host
             // (the wire tests) has no bodies to shove. VehicleNetSync sets it.
@@ -739,6 +743,10 @@ namespace UnturnedGodot.Net
             // tick rather than the next one.
             Deadzones.Step((float)SimClock.FixedDelta, Players.All, CombatState.IsAlive);
             ClothingWear.Step((float)SimClock.FixedDelta);   // before ServerCommitDirty below, which stamps what it dirtied
+            // v58: cars carry their containers along, and anyone who left the seat (or the trunk) is shut out of it.
+            VehicleStorage.Step(Session.CurrentTick, pid => Players.TryGetByOwner(pid, out var pe) ? pe.Pos : (Vector3?)null,
+                // ...and told so, or their dashboard keeps a latch on a container the server has already shut them out of
+                (pid, crate) => SendEventTo(pid, NetMessagePak.Pack(ReplicationIds.EventStorageClosed, new StorageClosedEvent { NetId = crate }.Write)));
             Combat.Step(Session.CurrentTick);
             // TIMED CRAFTING, before the dirty stamp below -- a job that finishes this tick writes into the
             // inventory, and stamping first would leave that write waiting a whole tick for its baseline.
@@ -1431,6 +1439,10 @@ namespace UnturnedGodot.Net
 
         public bool SendFitAttachment(byte page, byte x, byte y, ushort id)
             => SendCommand(ReplicationIds.CommandFitAttachment, new FitAttachmentCommand { Page = page, X = x, Y = y, Id = id }.Write);
+
+        /// <summary>v58: open a vehicle's trunk or cabin (glovebox + seats). See ServerVehicleStorage.</summary>
+        public bool SendOpenVehicleStorage(uint vehicleNetId, VehicleStorageKind kind)
+            => SendCommand(ReplicationIds.CommandOpenVehicleStorage, new OpenVehicleStorageCommand { VehicleNetId = vehicleNetId, Kind = kind }.Write);
 
         /// <summary>v56 durability: report uses of the weapon at (page,x,y). See ReplicationIds.CommandWeaponUse.</summary>
         public bool SendWeaponUse(byte page, byte x, byte y, ushort id, byte uses)
