@@ -167,6 +167,15 @@ namespace SDG.Unturned
             Cont(473, 2000f, UnturnedGodot.FluidType.Soda,  1, 2);   // Bottled Soda: 2 L, 1x2 (VERTICAL — a tall bottle, strawberry)
             Cont(472, 2000f, UnturnedGodot.FluidType.Cola,  1, 2);   // Bottled Cola: 2 L, 1x2 (vertical)
             Cont(337,  500f, UnturnedGodot.FluidType.None,  1, 1);   // Canteen: 500 mL, 1 slot, spawns EMPTY
+            // KITCHENWARE YOU CAN ACTUALLY POUR INTO (master 2026-10-07: "make mug and pot fluid containers").
+            // ⭐ THE CAPACITIES ARE MEASURED OFF THE MESHES astraclaw modelled, not picked: the mug's rim has an
+            // inner radius of 3.55 cm over a 10 cm body (pi r^2 h = 396 mL to the brim) and the pot's is 11 cm
+            // over 15 cm (5702 mL). Rounded DOWN to what you would actually carry without slopping it everywhere.
+            // Both spawn EMPTY like the canteen -- a mug found in a dishwasher is not full of water. 0,0 keeps
+            // their catalog footprints (mug 1x1, pot 2x2), so the pot is 1.25 L per slot against a bottle's 1.0:
+            // better per slot, and it costs you four of them at once.
+            Cont(9300,  350f, UnturnedGodot.FluidType.None,  0, 0);   // Cup/mug:     350 mL of a measured 396
+            Cont(9307, 5000f, UnturnedGodot.FluidType.None,  0, 0);   // Cooking Pot:   5 L of a measured 5.7
             // drink fluids (strawberry 2026-07-23) -- each spawns in its own retail bottle/carton, keeps its retail size (0 = don't override)
             Cont(463, 1000f, UnturnedGodot.FluidType.OrangeJuice,  0, 0);   // Orange Juice: 1 L carton, retail 1x2
             Cont(462, 1000f, UnturnedGodot.FluidType.Milk,         0, 0);   // Milk Box: 1 L carton, 1x2
