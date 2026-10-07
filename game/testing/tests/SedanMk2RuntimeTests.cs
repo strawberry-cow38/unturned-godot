@@ -15,26 +15,52 @@ namespace UnturnedGodot.Testing
         {
             Rigs.Ground(World);
             var car = Vehicle.BuildSedanMk2(5); World.AddChild(car); car.Position = new Vector3(0, 1.2f, 0);
-            yield return Ticks(100);
-            T.Check("new car settles on four tyres", car.DebugWheelNodes.Count(w => w.IsInContact()) == 4
-                && car.LinearVelocity.Length() < .5f);
+            // Same infinite flat floor, same spawn height and paint; keep stock well away from the Mk II.
+            var stock = Vehicle.BuildSedan(5); World.AddChild(stock); stock.Position = new Vector3(20, 1.2f, 0);
+            yield return Ticks(120);
+            var stockRest = stock.GlobalPosition; var mk2Rest = car.GlobalPosition;
+            yield return Ticks(20);
+            foreach (var parked in new[] { stock, car })
+                T.Check($"{parked.DisplayName}: settles on four contacts with low linear/angular velocity",
+                    parked.DebugWheelNodes.Count == 4 && parked.DebugWheelNodes.All(w => w.IsInContact())
+                    && parked.LinearVelocity.Length() < .1f && parked.AngularVelocity.Length() < .1f);
+            float stockYDrift = Mathf.Abs(stock.GlobalPosition.Y - stockRest.Y);
+            float mk2YDrift = Mathf.Abs(car.GlobalPosition.Y - mk2Rest.Y);
+            T.Check($"both parked ride heights remain settled over the final 20 ticks (stock={stockYDrift:F5}, mk2={mk2YDrift:F5} m)",
+                stockYDrift < .005f && mk2YDrift < .005f);
+            GD.Print($"[mk2-rest-height] stock={stock.GlobalPosition.Y:F5} mk2={car.GlobalPosition.Y:F5} finalYDrift={stockYDrift:F5}/{mk2YDrift:F5}");
+            float rootDelta = Mathf.Abs(car.GlobalPosition.Y - stock.GlobalPosition.Y);
+            float bodyDelta = Mathf.Abs(car.GetNode<MeshInstance3D>("Body").GlobalPosition.Y
+                - stock.GetNode<MeshInstance3D>("Body").GlobalPosition.Y);
+            T.Check($"Mk II matches stock ROOT resting height within 25 mm (stock={stock.GlobalPosition.Y:F4}, mk2={car.GlobalPosition.Y:F4})",
+                rootDelta <= .025f);
+            // Compare body origins, not roof/bounds tops: the intentional 1.06 scale stays unchanged.
+            T.Check($"Mk II matches stock BODY-origin resting height within 25 mm (delta={bodyDelta:F4})", bodyDelta <= .025f);
             T.Check("chassis stands above the ground", car.GlobalPosition.Y > .1f && car.GlobalPosition.Y < 1.2f);
+            stock.QueueFree();
             var wheelAudit = new System.Collections.Generic.List<object>();
             for(int i=0;i<4;i++)
             {
                 var mi=car.RimNodeForTest(i); var centre=car.ToLocal(mi.GlobalPosition);
-                float maxOver=0; float axle=i<2?-1.9292f:1.949f;
+                float maxOver=0; float axle=i<2?-1.9292f:1.949f; int sampled=0;
                 foreach(var vertex in mi.Mesh.GetFaces())
                 {
                     var v=car.ToLocal(mi.ToGlobal(vertex));
-                    if(v.Y<.25f || Mathf.Abs(v.X)<.845f || Mathf.Abs(v.X)>1.275f) continue;
-                    for(int k=0;k<6;k++)
+                    if(Mathf.Abs(v.X)<.830f || Mathf.Abs(v.X)>1.275f || v.Y<-.13f) continue;
+                    sampled++;
+                    if(v.Y<0f)
                     {
-                        float a=(k+.5f)*Mathf.Pi/6;
-                        maxOver=Mathf.Max(maxOver,(v.Z-axle)*Mathf.Cos(a)+(v.Y-.25f)*Mathf.Sin(a)-.655f*Mathf.Cos(Mathf.Pi/12));
+                        // Straight U legs below the centre, ending at body Y=-.13.
+                        maxOver=Mathf.Max(maxOver,Mathf.Abs(v.Z-axle)-.70f);
+                        continue;
+                    }
+                    for(int k=0;k<8;k++)
+                    {
+                        float a=(k+.5f)*Mathf.Pi/8;
+                        maxOver=Mathf.Max(maxOver,(v.Z-axle)*Mathf.Cos(a)+v.Y*Mathf.Sin(a)-.70f*Mathf.Cos(Mathf.Pi/16));
                     }
                 }
-                T.Check($"loaded tyre {i}: visible tread clears its faceted housing", maxOver < .002f);
+                T.Check($"loaded tyre {i}: visible tread clears its faceted housing", sampled > 0 && maxOver < .002f);
                 GD.Print($"[mk2-loaded-wheel] {i} local centre={centre} max arch-plane overrun={maxOver:F5}");
                 wheelAudit.Add(new {wheel=i, centre=new[]{centre.X,centre.Y,centre.Z}, maxOverrun=maxOver});
             }

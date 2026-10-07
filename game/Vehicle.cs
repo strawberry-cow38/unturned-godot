@@ -3023,7 +3023,7 @@ namespace UnturnedGodot
         static Vector3 SeatOf(string name) => name switch
         {
             "Sedan" => new Vector3(-0.50f, -0.04f, -0.566f),
-            "Sedan Mk II" => Mk2BodyPoint(new Vector3(-0.50f, -0.04f, -0.566f)) + new Vector3(0f, 0f, .18f),
+            "Sedan Mk II" => Mk2BodyPoint(new Vector3(-0.50f, -0.04f, -0.566f)) + new Vector3(0f, 0f, .30f),
             "SUV" => new Vector3(-0.50f, -0.04f, -0.361f),   // front row +0.205 Z; retain sedan's body-to-seat offset
             "Hatchback" => new Vector3(-0.50f, -0.04f, -0.239f),
             "Humvee" => new Vector3(-0.50f, 0.07f, -0.480f),

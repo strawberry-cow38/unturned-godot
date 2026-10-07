@@ -36,16 +36,20 @@ namespace UnturnedGodot
             var oldSeats = SeatTable["sedan"];
             s.Seats = new Vector3[oldSeats.Length];
             for (int i = 0; i < oldSeats.Length; i++)
-                s.Seats[i] = Mk2BodyPoint(oldSeats[i]) + new Vector3(0f, 0f, i < 2 ? 0.18f : 0.06f);
+            {
+                var seat = Mk2BodyPoint(oldSeats[i]);
+                if (i >= 2) seat.X *= 0.82f; // Narrowed clean rear bench clears the full housing backs.
+                s.Seats[i] = seat + new Vector3(0f, 0f, i < 2 ? 0.30f : 0.14f);
+            }
             // Preserve sedan's tuned visible-body rise (not the generic 8 cm); origins remain prefab based.
             s.SeatBodyRise = (SeatOf("Sedan").Y - oldSeats[0].Y) * 1.06f;
             // Original driving eye HEIGHT relative to seated origin, relocated over the moved driver seat.
             // Do not preserve the default eye Z=+0.4 (over a metre behind the original driver origin).
             s.DriverEye = s.Seats[0] + new Vector3(0f, 1.85f - oldSeats[0].Y, 0.059f * 1.06f);
-            // Actual tyre centre = mount minus WheelRestDrop. Art rest centre is Y=.25, NOT the mount.
+            // Same mount Y as the original sedan: minus the .25 m rest drop gives art centre Y=0.
             s.Wheels = new (float, float, float, bool)[] {
-                (-1.09f, 0.50f, -1.9292f, true), (1.09f, 0.50f, -1.9292f, true),
-                (-1.09f, 0.50f, 1.949f, false), (1.09f, 0.50f, 1.949f, false) };
+                (-1.09f, 0.25f, -1.9292f, true), (1.09f, 0.25f, -1.9292f, true),
+                (-1.09f, 0.25f, 1.949f, false), (1.09f, 0.25f, 1.949f, false) };
             // Fixed solid-colour meshes only. The column filename must NOT contain "steer".
             s.Parts = new (string, Color)[] {
                 ("sedan_mk2_stock_front_bumper.txt", new Color(82/255f, 82/255f, 82/255f)),

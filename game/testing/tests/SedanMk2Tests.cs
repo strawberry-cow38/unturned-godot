@@ -28,6 +28,76 @@ namespace UnturnedGodot.Testing
             var af = a.GetFaces(); var bf = b.GetFaces();
             return af.Length > 0 && af.Length == bf.Length && af.Zip(bf, Near).All(x => x);
         }
+        // Intersect an infinite unit-direction line with actual installed triangles. Thickness is
+        // measured through the panel, not the AABB (which would confuse lid slope with thickness).
+        static float ThroughThickness(Mesh mesh, Vector3 origin, Vector3 direction)
+        {
+            var faces = mesh.GetFaces(); var hits = new List<float>();
+            for (int i = 0; i + 2 < faces.Length; i += 3)
+            {
+                var a = faces[i]; var e1 = faces[i + 1] - a; var e2 = faces[i + 2] - a;
+                var h = direction.Cross(e2); float det = e1.Dot(h);
+                if (Mathf.Abs(det) < .0000001f) continue;
+                var t = origin - a; float u = t.Dot(h) / det; var q = t.Cross(e1);
+                float v = direction.Dot(q) / det;
+                if (u >= -.00001f && v >= -.00001f && u + v <= 1.00001f)
+                    hits.Add(e2.Dot(q) / det);
+            }
+            return hits.Count < 2 ? 0f : hits.Max() - hits.Min();
+        }
+        void PanelThickness(MeshInstance3D panel, int index)
+        {
+            if (index < 4)
+            {
+                // Full lower skin, away from the window frame, bevel and rear arch boundary.
+                foreach (float y in new[] { .55f, .8f })
+                {
+                    float thickness = ThroughThickness(panel.Mesh, new Vector3(0f, y, index < 2 ? -.5f : .65f), Vector3.Right);
+                    T.Check($"panel {index}: lower metal at Y={y} is at least 170 mm ({thickness:F4} m)", thickness >= .17f);
+                }
+            }
+            else
+            {
+                float slope = index == 4 ? .125046f / 1.401192f : -.125f / .991946f;
+                var normal = new Vector3(0f, 1f, -slope).Normalized();
+                float thickness = ThroughThickness(panel.Mesh, new Vector3(0f, 1.3f, index == 4 ? -2.25f : 2.35f), normal);
+                T.Check($"panel {index}: sloped lid is approximately 120 mm thick ({thickness:F4} m)",
+                    thickness >= .11f && thickness <= .135f);
+            }
+        }
+        void CleanSeatGeometry(Node owner)
+        {
+            var installed = ExactMesh(owner, "sedan_mk2_stock_seats.txt");
+            if (installed == null) return;
+            var original = ContentProvider.ParseObj("res://content/sedan_seats.txt").GetFaces();
+            var expected = original.Select(v => {
+                bool rear = v.Z > .25f;
+                var moved = v * 1.06f + new Vector3(0f, .021f, rear ? .14f : .30f);
+                if (rear) moved.X *= .82f;
+                return moved;
+            }).ToArray();
+            var actual = installed.Mesh.GetFaces();
+            // GetFaces snaps native triangle-mesh coordinates to 0.1 mm. The original is snapped
+            // before scaling, the installed export afterwards: allow the combined <=0.18 mm
+            // Euclidean rounding bound, not arbitrary model deformation. Match multiplicity too.
+            var unmatched = new List<Vector3>(actual);
+            bool same = expected.Length > 0 && expected.Length == actual.Length;
+            foreach (var point in expected)
+            {
+                int match = unmatched.FindIndex(other => point.DistanceTo(other) < .0002f);
+                if (match < 0)
+                {
+                    same = false; break;
+                }
+                unmatched.RemoveAt(match);
+            }
+            GD.Print($"[mk2-seat-shape] {expected.Length / 3} stock triangles, max nearest native rounding error={expected.Max(point => actual.Min(other => point.DistanceTo(other))):F7} m");
+            T.Check(owner.Name + ": entire clean stock seat shape retained, moved and rear-narrowed without CSG notches",
+                same && unmatched.Count == 0);
+            var rearFaces = actual.Where(v => v.Z > .5f).ToArray();
+            T.Check(owner.Name + ": rear bench clears the full inboard housing backs",
+                rearFaces.Length > 0 && rearFaces.All(v => Mathf.Abs(v.X) < .795f));
+        }
         static Transform3D InOwner(Node3D node, Node owner)
         {
             var t = node.Transform;
@@ -123,8 +193,17 @@ namespace UnturnedGodot.Testing
                 T.Check("old BuildSedan still uses original geometry", SameGeometry(old.GetNode<MeshInstance3D>("Body").Mesh,
                     ContentProvider.ParseObj("res://content/sedan_body.txt")));
                 T.Check("old builder did not acquire authored panels", old.AuthoredPanelRig == null);
-                T.Check("old rider origin and wheel mounts stay unchanged", Near(old.SeatLocal(0), new Vector3(-.5f, -.079f, -.625f))
-                    && old.GetChildren().OfType<VehicleWheel3D>().Any(w => Near(w.Position, new Vector3(-1.30f, .25f, -1.62f))));
+                Vector3[] oldSeats = { new(-.5f, -.079f, -.625f), new(.5f, -.079f, -.625f),
+                    new(-.5f, -.079f, .772f), new(.5f, -.079f, .772f) };
+                var oldWheels = old.GetChildren().OfType<VehicleWheel3D>().ToArray();
+                T.Check("old sedan keeps four original seats and wheels", old.SeatCount == 4 && oldWheels.Length == 4);
+                T.Check("old tuned visible driver origin stays unchanged", Near(old.SeatOffset, new Vector3(-.5f, -.04f, -.566f)));
+                for (int i = 0; i < 4; i++)
+                    T.Check($"old seat {i}: prefab origin unchanged", Near(old.SeatLocal(i), oldSeats[i]));
+                for (int i = 0; i < Math.Min(oldWheels.Length, 4); i++)
+                    T.Check($"old wheel {i}: mount and tyre unchanged",
+                        Near(oldWheels[i].Position, new Vector3(i % 2 == 0 ? -1.30f : 1.30f, .25f, i < 2 ? -1.62f : 1.38f))
+                        && oldWheels[i].WheelRestLength == .25f && oldWheels[i].WheelRadius == .6f);
                 var rig = car.AuthoredPanelRig;
                 T.Check("new builder opted in to six authored panels", rig != null && rig.Count == 6);
                 if (rig == null) yield break;
@@ -163,6 +242,8 @@ namespace UnturnedGodot.Testing
                         PoseIdentity(path + ": closed body space", InOwner(mi, owner));
                         T.Check(path + ": palette UV loaded", mi.Mesh.SurfaceGetArrays(0)[(int)Mesh.ArrayType.TexUV]
                             .AsVector2Array().Length > 0);
+                        int panelIndex = Array.FindIndex(defs, d => d.MeshPath == path);
+                        if (panelIndex >= 0) PanelThickness(mi, panelIndex);
                     }
                     foreach (var d in defs)
                     {
@@ -175,17 +256,24 @@ namespace UnturnedGodot.Testing
                                 && pivot.GetChildren().OfType<MeshInstance3D>().Any(mi => mi.Name.ToString() == "Glass_" + d.GlassLabel));
                     }
                     foreach (var part in parts) ExactMesh(owner, part.Item1);
+                    CleanSeatGeometry(owner);
                     foreach (var label in new[] { "windshield", "rear", "l_front", "r_front", "l_rear", "r_rear" })
                     {
                         var pane = ExactMesh(owner, $"sedan_mk2_glass_{label}.txt");
                         if (pane != null) PoseIdentity(label + ": closed glass stays in body space", InOwner(pane, owner));
                     }
                 }
-                Vector3[] seats = { new(-0.53f, -0.06274f, -0.4825f), new(0.53f, -0.06274f, -0.4825f),
-                    new(-0.53f, -0.06274f, 0.87832f), new(0.53f, -0.06274f, 0.87832f) };
+                Vector3[] seats = { new(-0.53f, -0.06274f, -0.3625f), new(0.53f, -0.06274f, -0.3625f),
+                    new(-0.4346f, -0.06274f, 0.95832f), new(0.4346f, -0.06274f, 0.95832f) };
                 T.Check("explicit four seats", car.SeatCount == 4);
-                for (int i = 0; i < 4; i++) T.Check($"seat {i}: baked seat shift", Near(car.SeatLocal(i), seats[i]));
-                T.Check("puppet and real visible seat origins agree", Near(car.SeatOffset, puppet.SeatOffset));
+                for (int i = 0; i < 4; i++) T.Check($"seat {i}: total authored seat shift and rear narrowing", Near(car.SeatLocal(i), seats[i]));
+                T.Check("puppet and real visible seat origins agree at the total +.30 body bias",
+                    Near(car.SeatOffset, new Vector3(-.53f, -.0214f, -.29996f)) && Near(car.SeatOffset, puppet.SeatOffset));
+                for (int i = 0; i < 4; i++)
+                    T.Check($"seat {i}: visible body follows the moved seat without an extra row shift",
+                        Near(car.SeatBodyLocal(i), seats[i] + new Vector3(0f, .04134f, .06254f)));
+                T.Check("fallback driver eye derives from the explicit moved driver seat",
+                    Near(car.DriverEyeLocal, seats[0] + new Vector3(0f, 1.929f, .06254f)));
                 T.Check("eye over driver seat, behind repositioned wheel", Near(car.DriverEyeLocal, puppet.DriverEyeLocal)
                     && Mathf.Abs(car.DriverEyeLocal.X - seats[0].X) < .001f
                     && car.DriverEyeLocal.Z > car.SteerPivotLocal.Z && Mathf.Abs(car.DriverEyeLocal.Z - seats[0].Z) < .1f);
@@ -193,10 +281,12 @@ namespace UnturnedGodot.Testing
                     && puppet.SteerPivot != null && Near(puppet.SteerPivot.Position, car.SteerPivotLocal));
                 var wheels = car.GetChildren().OfType<VehicleWheel3D>().ToArray();
                 T.Check("four physical and four puppet wheels", wheels.Length == 4 && puppet.Wheels.Length == 4);
-                for (int i = 0; i < Math.Min(wheels.Length, 4); i++)
+                for (int i = 0; i < Math.Min(Math.Min(wheels.Length, puppet.Wheels.Length), 4); i++)
                 {
-                    var rest = new Vector3(i % 2 == 0 ? -1.09f : 1.09f, .25f, i < 2 ? -1.9292f : 1.949f);
-                    T.Check($"wheel {i}: mount/rest centre follows art", Near(wheels[i].Position - Vector3.Up * wheels[i].WheelRestLength, rest)
+                    var rest = new Vector3(i % 2 == 0 ? -1.09f : 1.09f, 0f, i < 2 ? -1.9292f : 1.949f);
+                    T.Check($"wheel {i}: stock-height mount and zero-Y nominal visual centre",
+                        Near(wheels[i].Position, rest + Vector3.Up * .25f) && wheels[i].WheelRestLength == .25f
+                        && Near(wheels[i].Position - Vector3.Up * wheels[i].WheelRestLength, rest)
                         && Near(puppet.Wheels[i].Pivot.Position, rest) && wheels[i].WheelRadius == .6f);
                 }
                 var belly = car.GetChildren().OfType<CollisionShape3D>().FirstOrDefault(c => c.Shape is BoxShape3D

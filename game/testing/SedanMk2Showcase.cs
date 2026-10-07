@@ -34,6 +34,7 @@ namespace UnturnedGodot
                 case "side": _camera.Size=4.7f; eye=new(12,2.1f,0); target=new(0,1,0); break;
                 case "front": _camera.Size=5.8f; eye=new(9,6,-11); target=new(0,1,0); break;
                 case "rear": _camera.Size=5.8f; eye=new(9,6,11); target=new(0,1,0); break;
+                case "cabin": _camera.Size=3.4f; eye=new(4.8f,4.2f,0); target=new(0,.82f,.25f); break;
                 case "engine": _camera.Size=2.5f; eye=new(4.6f,4.1f,-5.2f); target=new(0,.72f,-2.25f); break;
                 default: _camera.Size=2.4f; eye=new(4.2f,3.8f,5); target=new(0,.76f,2.33f); break;
             }
@@ -47,6 +48,8 @@ namespace UnturnedGodot
                 if (string.IsNullOrWhiteSpace(OutputDir)) throw new ArgumentException("output directory missing");
                 OutputDir=Path.GetFullPath(OutputDir); Directory.CreateDirectory(OutputDir);
                 GetWindow().Size=new Vector2I(1280,720);
+                RainSystem3D.EnsureGlobals(); // same dry shader globals as a real world, before materials link
+                bool heightOnly = System.Environment.GetEnvironmentVariable("UG_MK2_HEIGHT_ONLY") == "1";
                 var env=new Godot.Environment { BackgroundMode=Godot.Environment.BGMode.Color,
                     BackgroundColor=new Color(.53f,.61f,.67f), AmbientLightSource=Godot.Environment.AmbientSource.Color,
                     AmbientLightColor=Colors.White, AmbientLightEnergy=.55f, TonemapMode=Godot.Environment.ToneMapper.Linear };
@@ -59,12 +62,22 @@ namespace UnturnedGodot
                     MaterialOverride=new StandardMaterial3D {AlbedoColor=new Color(.38f,.43f,.40f),Roughness=1} });
                 AddChild(ground);
                 _old=Vehicle.BuildByName("sedan",5); _new=Vehicle.BuildByName("sedan_mk2",5);
-                _old.Position=new Vector3(-5,1.2f,0); _new.Position=new Vector3(5,1.2f,0);
+                _old.Position=heightOnly ? new Vector3(0,1.2f,-4.2f) : new Vector3(-5,1.2f,0);
+                _new.Position=heightOnly ? new Vector3(0,1.2f,4.2f) : new Vector3(5,1.2f,0);
                 AddChild(_old); AddChild(_new);
                 _camera=new Camera3D { Current=true, Near=.05f,Far=100 }; AddChild(_camera);
-                await Physics(100);
+                await Physics(140);
                 foreach(var car in new[]{_old,_new})
                     GD.Print($"[sedan-mk2] {car.DisplayName}: grounded={car.DebugWheelNodes.Count(w=>w.IsInContact())}/4 rootY={car.Position.Y:F4} speed={car.LinearVelocity.Length():F4} seats={car.SeatCount} panels={car.AuthoredPanelRig?.Count??0}");
+                if (heightOnly)
+                {
+                    // ONE world-space camera and floor, after native suspension has settled.
+                    // No per-car camera recentering or body-height adjustment can hide a difference.
+                    _camera.Projection=Camera3D.ProjectionType.Orthogonal; _camera.Size=8.9f;
+                    _camera.LookAtFromPosition(new Vector3(15,2.3f,0),new Vector3(0,1.3f,0),Vector3.Up);
+                    await Save("stock_and_mk2_native_rest");
+                    GD.Print("SEDAN_MK2_RUNTIME_HEIGHT_SUCCESS"); GetTree().Quit(0); return;
+                }
                 if (System.Environment.GetEnvironmentVariable("UG_MK2_REMAINING") != "1")
                 {
                     foreach(string v in new[]{"side","front","rear"}) await View(_old,"original",v);
@@ -83,7 +96,7 @@ namespace UnturnedGodot
                 _new.AuthoredPanelRig.SetCompartment(Vehicle.AccessKind.Hood,true);
                 _new.AuthoredPanelRig.SetCompartment(Vehicle.AccessKind.Trunk,true);
                 _new.AuthoredPanelRig.Tick(VehiclePanelRig.SwingSeconds); // runtime rig endpoint for inspection; UI lifecycle has L1 coverage
-                foreach(string v in new[]{"side","front","rear","engine","trunk"}) await View(_new,"mk2_open",v);
+                foreach(string v in new[]{"side","front","rear","cabin","engine","trunk"}) await View(_new,"mk2_open",v);
                 GD.Print("SEDAN_MK2_RUNTIME_SHOWCASE_SUCCESS");GetTree().Quit(0);
             }
             catch(Exception e) { GD.PrintErr("[sedan-mk2] FAILED "+e);GetTree().Quit(1); }
