@@ -396,6 +396,11 @@ namespace UnturnedGodot
         /// the HUD and the tests can read the band without re-deriving it from six inputs.</summary>
         public readonly PlayerTemperatureSim Temperature = new PlayerTemperatureSim();
 
+        /// <summary>The Thermometer (strawberry 2026-10-07). Carried anywhere in your own pages, the temperature bar
+        /// reads out its number. 9346: checked free across the tsv, ItemCatalog.Add, DeployableDef and the item meshes.</summary>
+        public const ushort ThermometerId = 9346;
+        public bool HasThermometer => Inventory != null && Inventory.getItemCount(ThermometerId) > 0;
+
         // The environment probes (a group walk, two raycasts) are sampled at 4 Hz, not 50. The body has a 45 s
         // time constant, so a quarter-second sample is indistinguishable from a per-tick one -- and the
         // per-tick version is a raycast per player per frame for a number that cannot visibly move in 20 ms.
@@ -8185,6 +8190,20 @@ namespace UnturnedGodot
         {
             if (NetAvatar) return;   // v1 invulnerability (see TakeDamage): no local starvation/infection death on a server avatar either
             if (_dead) return;
+            // ⚠ SEATED IS NOT SPRINTING (strawberry 2026-09-13: "prevent stamina decay when not able to sprint (ie in a car)").
+            // `moving` is true in a moving car because the VEHICLE is carrying you, and the stance stays whatever it
+            // was when you got in -- so driving anywhere drained stamina as if you had run there. The rule the other
+            // clauses already follow is "if your legs cannot answer, it costs nothing"; broken legs and a major dose
+            // were covered, sitting down was not. Trains and cranes ride the parallel boarded path, so they are named
+            // too rather than left to be discovered as a third case.
+            bool cannotSprint = _driving != null || _riding != null || _ridingTrain != null || _ridingCrane != null || IsSeatedOnProp;
+            bool sprinting = moving && _move.Stance == EPlayerStance.SPRINT && !Broken && !MajorlyIrradiated && !cannotSprint;   // broken legs cannot sprint, so they cost no stamina either (jump is gated at the input, PlayerMovement.cs:1310); a major dose does the same (strawberry 2026-09-11) -- same failure, your legs will not answer
+            // ⚠ BODY TEMPERATURE STEPS HERE, BEFORE THE SERVER-OWNED RETURN BELOW (strawberry 2026-10-07: "confirm
+            // temperature and the temperature bar is actually working"). It used to sit after it, so in every game with
+            // a server -- singleplayer's loopback included -- the body never moved off its 19 C spawn value and the bar
+            // sat dead centre forever. Temperature is simulated HERE because its probes are this client's world (sky,
+            // fire in sight, rain); the band goes to the server on the state stream, which applies what it costs.
+            TemperatureTick(sprinting, dt);
             // B5 (SP/MP-unify): when the fine vitals (food/water/stamina/infection) are server-owned, the
             // owner-block adoption (AdoptReplicatedFineVitals) is their SOLE writer -- SKIP the local sim's
             // fine mutation entirely (running it would re-introduce the shipped bug: local food draining to 0
@@ -8195,15 +8214,6 @@ namespace UnturnedGodot
                 return;
             }
             AutoDrinkTick(dt);   // passively sip a SAFE bottle to top up hydration BEFORE the drain/death check (strawberry)
-            // ⚠ SEATED IS NOT SPRINTING (strawberry 2026-09-13: "prevent stamina decay when not able to sprint (ie in a car)").
-            // `moving` is true in a moving car because the VEHICLE is carrying you, and the stance stays whatever it
-            // was when you got in -- so driving anywhere drained stamina as if you had run there. The rule the other
-            // clauses already follow is "if your legs cannot answer, it costs nothing"; broken legs and a major dose
-            // were covered, sitting down was not. Trains and cranes ride the parallel boarded path, so they are named
-            // too rather than left to be discovered as a third case.
-            bool cannotSprint = _driving != null || _riding != null || _ridingTrain != null || _ridingCrane != null || IsSeatedOnProp;
-            bool sprinting = moving && _move.Stance == EPlayerStance.SPRINT && !Broken && !MajorlyIrradiated && !cannotSprint;   // broken legs cannot sprint, so they cost no stamina either (jump is gated at the input, PlayerMovement.cs:1310); a major dose does the same (strawberry 2026-09-11) -- same failure, your legs will not answer
-            TemperatureTick(sprinting, dt);
             bool died = _vitals.Step(sprinting, HeadUnderwater, SurvivalDrain, Bleeding, Broken, Temperature.CurrentBand, dt, new PlayerVitalsSim.Multipliers
             {
                 ExerciseStaminaDrain = Skills.ExerciseStaminaDrainMultiplier(),   // EXERCISE slows the drain

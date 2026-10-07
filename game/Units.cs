@@ -45,6 +45,12 @@ namespace UnturnedGodot
         public static string Temperature(float celsius) =>
             Pick($"{Mathf.RoundToInt(celsius)} °C", $"{Mathf.RoundToInt(celsius * 9f / 5f + 32f)} °F", bothMetric: true);
 
+        // The THERMOMETER's readout on the temperature bar (strawberry 2026-10-07: "the temperature in °c/f"). BOTH shows
+        // both side by side -- the one place a temperature is a reading you sit and look at, not a label in passing.
+        public static string TemperatureReadout(float celsius) => System == MeasurementSystem.Both
+            ? $"{Mathf.RoundToInt(celsius)} °C / {Mathf.RoundToInt(celsius * 9f / 5f + 32f)} °F"
+            : Temperature(celsius);
+
         // For the scope range ladder: just the number+unit for a metre value, no "both" fallback spacing issues.
         public static string RangeLabel(int metres) => Length(metres);
 

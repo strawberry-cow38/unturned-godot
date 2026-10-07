@@ -34,6 +34,11 @@ namespace UnturnedGodot.Net
         /// joiner the server never knew, and other players' puppets, gestures and lamps, the authored gun profile
         /// and the broken-gun refusal all read "empty hands". Only the SP/listen loopback still sends MoveInput.</summary>
         public ushort HeldItemId;
+        /// <summary>v59: the band the player's OWN temperature sim is in (PlayerTemperatureSim.Band, 3 bits). Body
+        /// temperature is simulated where the probes are -- the sky overhead, the fire in line of sight, the rain --
+        /// which is the client's world, so it is reported like the stance is. Before this the server stepped every
+        /// player's vitals as permanently Comfortable: cold and heat cost nothing in any game with a server.</summary>
+        public byte TempBand;
 
         // mp-event-coalesce (wire v10): a REDUNDANT list of recent combat events (Fire/Melee/Grenade/
         // Reload) the client keeps re-including every tick until the server ACKs them (see AckCombat). The
@@ -63,6 +68,7 @@ namespace UnturnedGodot.Net
             w.WriteUInt8(Buttons);
             w.WriteBit(Grounded);
             w.WriteUInt16(HeldItemId);   // v57
+            w.WriteBits(TempBand, 3);    // v59
             // v10: the redundant combat-event carry, oldest-first (see CarriedCombatEvent). EventCount is
             // bounded by MaxCarriedEvents at the fill site; Events holds at least that many valid entries.
             w.WriteUInt8(EventCount);
@@ -81,6 +87,7 @@ namespace UnturnedGodot.Net
             if (!r.ReadUInt8(out byte buttons)) return false;
             if (!r.ReadBit(out bool grounded)) return false;
             if (!r.ReadUInt16(out ushort held)) return false;   // v57
+            if (!r.ReadBits(3, out uint band)) return false;    // v59
             if (!r.ReadUInt8(out byte eventCount)) return false;
             if (eventCount > MaxCarriedEvents) return false;   // malformed carry -> reject the whole claim
             CarriedCombatEvent[] events = null;
@@ -93,7 +100,7 @@ namespace UnturnedGodot.Net
             cmd = new PlayerStateCommand
             {
                 Seq = seq, RecovAck = recovAck, Pos = pos, YawDegrees = yaw, PitchDegrees = pitch,
-                LinVel = vel, Buttons = buttons, Grounded = grounded, HeldItemId = held,
+                LinVel = vel, Buttons = buttons, Grounded = grounded, HeldItemId = held, TempBand = (byte)band,
                 Events = events, EventCount = eventCount,
             };
             return true;
@@ -227,6 +234,7 @@ namespace UnturnedGodot.Net
             public Vector3 Vel;
             public byte Buttons;
             public bool Grounded;
+            public byte TempBand;   // v59: the client's PlayerTemperatureSim.Band
             public bool Jump => (Buttons & MoveInput.ButtonJump) != 0;
             public EPlayerStance Stance => new MoveInput { Buttons = Buttons }.Stance;
         }
@@ -397,7 +405,7 @@ namespace UnturnedGodot.Net
             st.Adopted = new DrivenPlayerState
             {
                 Pos = cmd.Pos, YawDegrees = cmd.YawDegrees, PitchDegrees = cmd.PitchDegrees,
-                Vel = cmd.LinVel, Buttons = cmd.Buttons, Grounded = cmd.Grounded,
+                Vel = cmd.LinVel, Buttons = cmd.Buttons, Grounded = cmd.Grounded, TempBand = cmd.TempBand,
             };
             _players.ServerDrive(sender, cmd.Pos, cmd.YawDegrees, cmd.Seq, tick);
 

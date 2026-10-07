@@ -128,6 +128,13 @@ namespace UnturnedGodot
             DeployableNetSchema.RegisterAll(Client.Deployables.Schema);
             Server.Transactions.Blueprints = BlueprintRegistry.All;
             Server.Transactions.RunningTapNear = p => WaterTap.RunningNear(new Vector3(p.x, p.y, p.z));   // v59: sinks + bathtubs fill a bottle
+            // v59: the local player's temperature band, IN-PROCESS. This shell streams MoveInput, not the state command
+            // that carries the band, so without this the server's vitals would feel a permanent Comfortable for the one
+            // player singleplayer has. Anyone else (a listen-server peer) still reads theirs off the wire.
+            var bandOffWire = Server.Vitals.TemperatureBandOf;
+            Server.Vitals.TemperatureBandOf = pid => pid == Client.PlayerId && Player != null && IsInstanceValid(Player)
+                ? Player.Temperature.CurrentBand
+                : bandOffWire != null ? bandOffWire(pid) : PlayerTemperatureSim.Band.Comfortable;
             // ---- v47: the server's NPC catalog. INJECTED, not loaded there: core cannot see NpcCatalog, and a
             // server holding its own copy would be a second source of truth for exactly the thing both sides
             // must agree on byte for byte. One catalog, read from two places.

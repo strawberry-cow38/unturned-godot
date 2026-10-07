@@ -143,6 +143,11 @@ namespace UnturnedGodot.Net
         /// no new command and no version bump.</summary>
         public Func<ushort, bool> SteadyingOf;
 
+        /// <summary>v59: the player's temperature band, from their own sim (the client reports it on the state stream;
+        /// the singleplayer loopback hands it over in-process). Unset = Comfortable for everyone -- which is what
+        /// every server shipped with, so cold and heat never cost anything with a server running.</summary>
+        public Func<ushort, PlayerTemperatureSim.Band> TemperatureBandOf;
+
         /// <summary>Per-owner steady state. The rules are engine-free in ScopeSteadySim and the CLIENT runs
         /// the same type for its own prediction -- this instance is the authoritative one, and it is what
         /// the replicated oxygen bar reflects.</summary>
@@ -176,7 +181,8 @@ namespace UnturnedGodot.Net
                 if (!_steady.TryGetValue(pid, out var steady)) _steady[pid] = steady = new ScopeSteadySim();
                 m.HoldingBreath = wantsSteady && steady.Lockout <= 0f && e.Sim.Oxygen > ScopeSteadySim.SteadyFloor;
 
-                bool diedThisStep = e.Sim.Step(sprinting, submerged, SurvivalDrain, e.Bleeding, e.Broken, dt, m);
+                var band = TemperatureBandOf != null ? TemperatureBandOf(pid) : PlayerTemperatureSim.Band.Comfortable;
+                bool diedThisStep = e.Sim.Step(sprinting, submerged, SurvivalDrain, e.Bleeding, e.Broken, band, dt, m);
                 float ox = e.Sim.Oxygen;
                 steady.Step(wantsSteady, ref ox, dt);
                 e.Sim.Oxygen = ox;   // fine vitals always step; food/water drain gated inside by SurvivalDrain. The bleed/broken bits are the SERVER's copies -- it owns the HP they cost and gate.

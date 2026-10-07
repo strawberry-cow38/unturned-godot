@@ -531,6 +531,12 @@ namespace UnturnedGodot.Net
                 PlayerHost.TryGetDrivenState(pid, out var sds)
                     ? (sds.Buttons & MoveInput.ButtonSteady) != 0
                     : Players.TryGetHeldInput(pid, out var si) && (si.Buttons & MoveInput.ButtonSteady) != 0;
+            // v59: the temperature band, off the state stream like the stance. A held-input (loopback) player has no
+            // band on the wire; MpLoopback overrides this with an in-process read of its one local player.
+            Vitals.TemperatureBandOf = pid =>
+                PlayerHost.TryGetDrivenState(pid, out var tds) && tds.TempBand <= (byte)PlayerTemperatureSim.Band.Boiling
+                    ? (PlayerTemperatureSim.Band)tds.TempBand
+                    : PlayerTemperatureSim.Band.Comfortable;
             Vitals.MultipliersOf = pid => Skills.TryGet(pid, out var se)
                 ? new PlayerVitalsSim.Multipliers
                 {
@@ -1643,7 +1649,7 @@ namespace UnturnedGodot.Net
         /// recovAck echoes the last PlayerRecovEvent counter received (0 = none yet). Returns the seq
         /// (0 = not connected, nothing sent).</summary>
         public ushort SendPlayerState(Vector3 pos, float yawDegrees, float pitchDegrees, Vector3 velocity,
-                                      byte buttons, bool grounded, byte recovAck, ushort heldItemId = 0)
+                                      byte buttons, bool grounded, byte recovAck, ushort heldItemId = 0, byte tempBand = (byte)PlayerTemperatureSim.Band.Comfortable)
         {
             if (Session.State != NetSessionState.Connected) return 0;
             if (++_playerStateSeq == 0) _playerStateSeq = 1;
@@ -1651,7 +1657,7 @@ namespace UnturnedGodot.Net
             {
                 Seq = _playerStateSeq, RecovAck = recovAck,
                 Pos = pos, YawDegrees = yawDegrees, PitchDegrees = pitchDegrees,
-                LinVel = velocity, Buttons = buttons, Grounded = grounded, HeldItemId = heldItemId,
+                LinVel = velocity, Buttons = buttons, Grounded = grounded, HeldItemId = heldItemId, TempBand = tempBand,
             };
             // v10 (mp-event-coalesce): fold the whole pending combat ring in, oldest-first. The ring array
             // is shared by reference (Write consumes only the first EventCount entries synchronously here) so

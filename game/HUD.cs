@@ -83,7 +83,7 @@ namespace UnturnedGodot
         /// List cannot hold -- foreach hands back a copy.</summary>
         sealed class VitalBar { public ColorRect Fill; public System.Func<float> Val; public float Shown = -1f; }
         readonly System.Collections.Generic.List<VitalBar> _vitals = new();
-        sealed class BipolarBar { public ColorRect Fill; public Color Cold, Hot; public System.Func<float> Val; public float Shown = 2f; }
+        sealed class BipolarBar { public ColorRect Fill; public Color Cold, Hot; public System.Func<float> Val; public float Shown = 2f; public Label Text; public System.Func<string> TextOf; }
         // HOTBAR (strawberry 2026-09-16 "make the hotbar icons much bigger. we only need to fit 1-10, fit it
         // neatly between the vitals panel and the ammo panel"). The cell is SIZED TO THE GAP rather than fixed:
         // ten cells at a hardcoded 112 px need 1192 px of gap and there is only ~640 at 1280 wide, so a constant
@@ -255,7 +255,11 @@ namespace UnturnedGodot
             AddVital(lifeBox, 5, "hud_oxygen.png",  CC, () => Player != null ? Player.Oxygen  : 1f);   // BELOW infection (master 2026-09-06)
             // strawberry 2026-09-11: "add a new bar below the oxygen bar. temperature. middle is comfortable,
             // the bar goes left/down for cold, and right/up for hot". The only bar that reads a SIGNED value.
-            AddBipolarVital(lifeBox, 6, "hud_temperature.png", CCold, CHot, () => Player != null ? Player.Temperature.Comfort : 0f);
+            AddBipolarVital(lifeBox, 6, "hud_temperature.png", CCold, CHot, () => Player != null ? Player.Temperature.Comfort : 0f,
+                // THE THERMOMETER (strawberry 2026-10-07: "add a thermometer item that adds the temperature in °c/f on
+                // the temp bar"): carry one and the bar reads out the number it is drawing -- your FELT temperature,
+                // clothes, wet and exertion included, which is exactly what the bar's position means.
+                () => Player != null && Player.HasThermometer ? Units.TemperatureReadout(Player.Temperature.BodyC) : null);
 
             // status icons (PlayerLifeUI.statusIconsContainer): a row of 40x40 boxes above the vitals, each shown
             // ONLY on its condition — bleeding after a hit; broken/starved need the survival sim so they stay hidden.
@@ -463,7 +467,7 @@ namespace UnturnedGodot
         /// one of those a comfortable player sees a half-full bar, which reads as "half of something", and the
         /// one state worth no attention is the one drawn loudest. Empty-at-comfortable means the bar is only
         /// ever saying something when there is something to say.</summary>
-        void AddBipolarVital(Control box, int i, string icon, Color cold, Color hot, System.Func<float> val)
+        void AddBipolarVital(Control box, int i, string icon, Color cold, Color hot, System.Func<float> val, System.Func<string> text = null)
         {
             float y = TopPad + i * RowH;
             var ic = new TextureRect { Texture = LoadTex($"res://content/{icon}"), StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered };
@@ -493,7 +497,22 @@ namespace UnturnedGodot
             fill.OffsetLeft = 0; fill.OffsetRight = 0; fill.OffsetTop = 0; fill.OffsetBottom = 0;
             fill.MouseFilter = Control.MouseFilterEnum.Ignore;
             bg.AddChild(fill);
-            _bipolar.Add(new BipolarBar { Fill = fill, Cold = cold, Hot = hot, Val = val });
+            // An optional readout ON the bar (the thermometer). Centred over the trough with an outline so it reads over
+            // either colour of fill, and hidden whenever there is nothing to say rather than drawing an empty label.
+            Label lbl = null;
+            if (text != null)
+            {
+                lbl = new Label { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Visible = false };
+                lbl.AnchorLeft = 0; lbl.AnchorRight = 1; lbl.AnchorTop = 0; lbl.AnchorBottom = 0;
+                lbl.OffsetLeft = BarX; lbl.OffsetRight = -10; lbl.OffsetTop = y - 3; lbl.OffsetBottom = y + 5 + BarH + 3;
+                lbl.AddThemeFontSizeOverride("font_size", 15);
+                lbl.AddThemeColorOverride("font_color", new Color(1f, 1f, 1f));
+                lbl.AddThemeColorOverride("font_outline_color", new Color(0f, 0f, 0f, 0.95f));
+                lbl.AddThemeConstantOverride("outline_size", 5);
+                lbl.MouseFilter = Control.MouseFilterEnum.Ignore;
+                box.AddChild(lbl);
+            }
+            _bipolar.Add(new BipolarBar { Fill = fill, Cold = cold, Hot = hot, Val = val, Text = lbl, TextOf = text });
         }
 
         // a 40x40 status box (SleekBoxIcon): dark background + centred icon, shown only on its condition
@@ -535,6 +554,9 @@ namespace UnturnedGodot
         /// <summary>Test seam: how many hotbar cells are actually on screen. Distinct from counting slots and
         /// binds, which is the input -- this is what the player sees.</summary>
         public int DebugHotbarCells => _hotbar?.GetChildCount() ?? 0;
+        // L1: the temperature bar as DRAWN -- its signed position, and the thermometer readout on it (null = not shown).
+        internal float DebugTemperatureShown => _bipolar.Count > 0 ? _bipolar[0].Shown : 0f;
+        internal string DebugTemperatureText => _bipolar.Count > 0 && _bipolar[0].Text != null && _bipolar[0].Text.Visible ? _bipolar[0].Text.Text : null;
 
         /// <summary>Drop the row's cells. RemoveChild BEFORE QueueFree, which is deferred to end-of-frame: while
         /// the dying cells are still children the HBoxContainer lays out old AND new together for a frame (the row
@@ -691,6 +713,12 @@ namespace UnturnedGodot
                 b.Fill.AnchorLeft  = 0.5f + Mathf.Min(v, 0f) * 0.5f;
                 b.Fill.AnchorRight = 0.5f + Mathf.Max(v, 0f) * 0.5f;
                 b.Fill.Color = v < 0f ? b.Cold : b.Hot;
+                if (b.Text != null)
+                {
+                    string s = b.TextOf?.Invoke();
+                    b.Text.Visible = s != null;
+                    if (s != null && b.Text.Text != s) b.Text.Text = s;
+                }
             }
             foreach (var (ic, bg, show) in _vitalRows) { bool s = show(); ic.Visible = s; bg.Visible = s; }   // situational vitals (virus) shown only on condition
             foreach (var (box, on) in _status)

@@ -35106,6 +35106,24 @@
 "tex": "9345.png",
 "type": "Generic"
 },
+"9346": {
+"box": [
+0.0143,
+0.0143,
+0.1355
+],
+"center": [
+0.0,
+0.0,
+-0.0018
+],
+"color": null,
+"name": "Thermometer",
+"obj": "9346.txt",
+"parts": 1,
+"tex": "9346.png",
+"type": "Generic"
+},
 "935": {
 "box": [
 0.42,

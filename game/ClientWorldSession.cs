@@ -475,7 +475,8 @@ namespace UnturnedGodot
                                   | (Shell.SteadyingNow ? MoveInput.ButtonSteady : 0));
             Client.SendPlayerState(new UnityEngine.Vector3(p.X, p.Y, p.Z), Shell.RotationDegrees.Y, Shell.LookPitchDegrees,
                                    Shell.MoveSimVelocity, buttons, Shell.LastGroundedInput, _recovAck,
-                                   Shell.HeldItemIdForNet);   // v57: what is in the hands -- see PlayerStateCommand.HeldItemId
+                                   Shell.HeldItemIdForNet,    // v57: what is in the hands -- see PlayerStateCommand.HeldItemId
+                                   (byte)Shell.Temperature.CurrentBand);   // v59: so the server's vitals feel the cold too
 
             if (NetLog.Enabled) LogClientAuthRollupIfDue();
         }
