@@ -241,10 +241,18 @@ namespace UnturnedGodot
                     case SDG.Unturned.EItemType.SHIRT:
                     case SDG.Unturned.EItemType.PANTS: Salvage(a.id, With((cloth, 2))); break;
                     case SDG.Unturned.EItemType.BACKPACK: Salvage(a.id, With((cloth, 2))); break;
-                    // A VEST is the armoured layer by definition -- it was not in master's list because it goes
-                    // without saying, and leaving it out would make the one obviously-metal garment the one you
-                    // cannot break down.
-                    case SDG.Unturned.EItemType.VEST: Salvage(a.id, With((cloth, 1))); break;
+                    // ⚠⚠ A VEST IS NOT THE ARMOURED LAYER -- I assumed that and the data says otherwise (master
+                    // 2026-10-07: "did u make all vests scrap? bc theres sweatervests and ponchos lol"). The VEST
+                    // type is a SLOT, and its 138 members include sweatervests, ponchos, ties, scarves, a Rose and
+                    // a Parrot. Scrap was never the problem -- the armor<0.95 rule already excludes sweatervests
+                    // and ponchos, which sit at exactly 0.95 -- but handing out CLOTH for a parrot is.
+                    //
+                    // ⭐ So a vest is salvageable only if it has a real armour figure (armor < 1, i.e. an entry in
+                    // clothing_armor.tsv). That is the same trick as everywhere else here: a garment the game has
+                    // measured protection for is a garment; a Rose is wearing-slot furniture.
+                    case SDG.Unturned.EItemType.VEST:
+                        if (a.armor < 1f) Salvage(a.id, With((cloth, 1)));
+                        break;
                     case SDG.Unturned.EItemType.THROWABLE:
                         // ⚠ Not a snowball. It is a Throwable by type and gives neither metal nor propellant, and
                         // a recipe turning one into gunpowder is the kind of thing a type sweep produces if nobody

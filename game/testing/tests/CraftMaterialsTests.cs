@@ -266,6 +266,21 @@ namespace UnturnedGodot.Testing
             var plainShirt = Assets.find(3);   // Orange Hoodie
             T.Check($"control: a plain hoodie gives cloth but NOT scrap", Yields(3, 66, 1) && !Yields(3, 67, 1));
 
+            // ---- THE VEST SLOT IS A GRAB BAG (master 2026-10-07) ------------------------------------------
+            // "did u make all vests scrap? bc theres sweatervests and ponchos lol" -- and worse, the slot also
+            // holds a Rose and a Parrot. Pinned with real examples so the rule cannot quietly widen again.
+            var sweater = Assets.find(215); var poncho = Assets.find(410);
+            GD.Print($"[craft-test] vests: sweatervest armor {sweater?.armor:0.00}, poncho {poncho?.armor:0.00}, "
+                   + $"police {Assets.find(10)?.armor:0.00}, rose {Assets.find(531)?.armor:0.00}, parrot {Assets.find(606)?.armor:0.00}");
+            T.Check("a sweatervest gives cloth", Yields(215, 66, 1));
+            T.Check("...but NOT scrap -- it is a jumper", !Yields(215, 67, 1));
+            T.Check("a poncho gives cloth and not scrap", Yields(410, 66, 1) && !Yields(410, 67, 1));
+            T.Check("a police vest DOES give scrap", Yields(10, 67, 1));
+            T.Check("a military vest gives scrap", Yields(310, 67, 1));
+            // ⭐ The slot furniture is not clothing and salvages into nothing at all.
+            T.Check("a Rose does not salvage", SalvageOf(531).bp == null);
+            T.Check("a Parrot does not salvage", SalvageOf(606).bp == null);
+
             // ---- KITCHENWARE BREAKS INTO WHAT IT IS MADE OF (master 2026-10-07) ----------------------------
             // ⚠⚠ EVERY PLACEHOLDER MUST CARRY A GUID. Blueprints key by guid, so an item without one is
             // unreferenceable: it loads, shows in the catalog, and silently cannot appear in any recipe. My first
