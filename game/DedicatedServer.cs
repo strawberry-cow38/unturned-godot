@@ -352,6 +352,7 @@ namespace UnturnedGodot
             CropSync = new CropNetSync(Server, this);
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => CropSync.Tick(), "net.crops.sync"));
             ContainerSync = new ContainerNetSync(Server, this, Containers);   // A1: register + publish the world-build containers as server-owned fixtures
+            Driver.Sim.Add(new DelegateSimStep((tick, dt) => Server.ItemMovers.Step((float)dt), "net.itemmovers.step"));   // v56: the movers, before the container publish (see MpLoopback)
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => ContainerSync.Tick(), "net.containers.publish"));
             ResourceSync = new ResourceNetSync(Server, Resources);
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => ResourceSync.Tick(), "net.resources.sync"));

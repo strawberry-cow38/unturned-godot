@@ -63,7 +63,7 @@ namespace UnturnedGodot
             {
                 int id = LootTables.Roll(table);
                 if (id < 0) continue;
-                var item = Assets.makeLoot((ushort)id);
+                var item = Assets.makeLoot((ushort)id, table);
                 if (item != null) storage.tryAddItem(item);
             }
         }

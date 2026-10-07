@@ -47,6 +47,11 @@ namespace UnturnedGodot.Net
 
         public ServerCrafting(InventoryReplication inventories) { _inventories = inventories; }
 
+        /// <summary>The tool-wear roll, [0,1). Server-only; a test injects a fixed sequence.</summary>
+        public System.Func<double> ToolRoll = new System.Random().NextDouble;
+        /// <summary>Condition points crafting tools have lost on this server.</summary>
+        public long ToolWearPoints;
+
         public int JobCount(ushort owner) => _byOwner.TryGetValue(owner, out var l) ? l.Count : 0;
         public IReadOnlyList<Job> Jobs(ushort owner) => _byOwner.TryGetValue(owner, out var l) ? l : (IReadOnlyList<Job>)System.Array.Empty<Job>();
 
@@ -74,6 +79,19 @@ namespace UnturnedGodot.Net
                 if (id == 0) continue;
                 adapter.Remove(id, ing.Amount);
                 spent.Add((id, ing.Amount));
+            }
+
+            // DURABILITY: every tool the recipe needed takes its chance of wear now, as it is used ("tools get worn by
+            // being crafted with (its a chance to lower durability)"). The copy that wears is the one CanCraft
+            // counted -- a working one; a broken saw in the same bag is never picked.
+            foreach (var ing in bp.Inputs)
+            {
+                if (ing.Consume) continue;
+                ushort id = Crafting.Resolve(ing.Guid);
+                var tool = id == 0 ? null : adapter.UsableTool(id);
+                if (tool == null) continue;
+                int lost = Durability.UseTool(tool, () => ToolRoll());
+                ToolWearPoints += lost;
             }
 
             float secs = SecondsFor(bp);

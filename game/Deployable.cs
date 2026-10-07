@@ -14,6 +14,7 @@ namespace UnturnedGodot
         public DeployableDef Def;
         public uint NetId;   // MP: the replicated entity this node mirrors (set by DeployableReplicaView); 0 = SP/local
         public readonly System.Collections.Generic.List<ConnectionPort> Ports = new();   // power connection cubes (output/consumer/passthrough)
+        public readonly System.Collections.Generic.List<ItemPortNode> ItemPorts = new(); // v56 item-pipe sockets, in DeployableDef.ItemPorts order (the pipe sub-address)
         // IPowerDevice: how the power net sees this deployable (a gas pump implements the same interface w/o being a Deployable)
         public bool PowerProducing => IsPowered;
         public bool PowerOnFire => OnFire;
@@ -223,6 +224,12 @@ namespace UnturnedGodot
                 if (pdef.Kind == DeployableDef.PortKind.Consumer) d._consumerPort = port;   // this consumer's Powered flag lights the lamps
                 else if (pdef.Kind == DeployableDef.PortKind.Output) d._outputPort = port;   // this output's Draw drives the load bar + vibration
             }
+            for (int i = 0; i < def.ItemPorts.Length; i++)   // v56 item-pipe sockets: their own nodes on their own layer, never power ports
+            {
+                var ip = ItemPortNode.Create(d, def.ItemPorts[i], (byte)i, def.Name);
+                d.AddChild(ip);
+                d.ItemPorts.Add(ip);
+            }
             if (def.IsSwitch)   // a state light on top: green = on (passing power) / red = off
             {
                 d._switchLight = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.12f, 0.06f, 0.12f) }, Position = EnvVec3("UG_SWLP", new Vector3(0f, 0.20f, -0.14f)) };   // front face, upper (flat frame: +Y front, -Z = up after stand-up)
@@ -411,7 +418,7 @@ namespace UnturnedGodot
             if (p != null && p.GlobalPosition.DistanceSquaredTo(me) <= r2)
             {
                 ulong id = p.GetInstanceId(); nowInside.Add(id);
-                if (Def.TrapPlayerDamage > 0f && !_trapInside.Contains(id)) TrapShred(() => p.TakeDamage(Def.TrapPlayerDamage, me));
+                if (Def.TrapPlayerDamage > 0f && !_trapInside.Contains(id)) TrapShred(() => p.TakeDamage(Def.TrapPlayerDamage, me, SDG.Unturned.Durability.Zone.Legs));
             }
             _trapInside = nowInside;
         }
@@ -538,7 +545,7 @@ namespace UnturnedGodot
                 if (n is PlayerController pl)
                 {
                     float d = pl.GlobalPosition.DistanceTo(p);
-                    if (d <= R) pl.TakeDamage(SDG.Unturned.ExplosionMath.Linear(120f, d, R));
+                    if (d <= R) pl.TakeDamage(SDG.Unturned.ExplosionMath.Linear(120f, d, R), null, SDG.Unturned.Durability.Zone.Whole);
                 }
             foreach (var n in GetTree().GetNodesInGroup("vehicles"))
                 if (n is Vehicle v && !v.Exploded)
@@ -596,6 +603,7 @@ namespace UnturnedGodot
         {
             DisconnectWires();
             foreach (var p in Ports) if (IsInstanceValid(p)) p.Deactivate();
+            foreach (var p in ItemPorts) if (IsInstanceValid(p)) p.Deactivate();   // a wreck takes no pipe (the server's rule too)
         }
 
         // Hold-F pickup (master): a LIVE placed deployable is returned to the bag -> free any wires plugged into it
@@ -801,7 +809,9 @@ namespace UnturnedGodot
                 else if (OnFire) prompt = "";
                 else
                 {
-                    string toggle = (Def != null && (Def.Fuel > 0f || Def.IsSwitch)) ? $"[{Keybinds.Get(GameAction.Interact).Label}] Turn {((Def.IsSwitch ? _switchOn : _powered) ? "Off" : "On")}" : "";
+                    string toggle = (Def != null && (Def.Fuel > 0f || Def.IsSwitch)) ? $"[{Keybinds.Get(GameAction.Interact).Label}] Turn {((Def.IsSwitch ? _switchOn : _powered) ? "Off" : "On")}"
+                                  : (Def != null && Def.IsItemConfigurable && NetId != 0) ? $"[{Keybinds.Get(GameAction.Interact).Label}] Configure"   // v56: splitter mode / mover rate
+                                  : "";
                     // World scenery has no pickup to offer -- see WorldScenery. A fixture that can still be switched
                     // keeps its toggle; one that cannot is simply not interactive and says nothing.
                     string pick = WorldScenery && NetId == 0 ? "" : $"Hold [{Keybinds.Get(GameAction.Interact).Label}]: pick up";

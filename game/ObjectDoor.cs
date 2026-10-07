@@ -187,8 +187,20 @@ namespace UnturnedGodot
             return d;
         }
 
+        /// <summary>Every prop door leaf, for a question asked about doors from the OUTSIDE -- the storage adapter's
+        /// "which face of this container is its door" (BarricadePlacer.DoorFaces). Cached by the asker, not walked
+        /// per frame: an island has hundreds of these.</summary>
+        public const string Group = "object_doors";
+
+        /// <summary>Where the leaf's middle sits when the door is SHUT, in world space -- the same whether it is open
+        /// right now or not, so a container's door face does not move because someone left the fridge open.</summary>
+        public Vector3 ClosedLeafCentreWorld => GlobalTransform * _leafColliderCenter;
+        /// <summary>Test seam: the leaf's hitbox where it is NOW (it tracks the swing).</summary>
+        public CollisionShape3D DebugLeafCollider => _leafCollider;
+
         public override void _Ready()
         {
+            AddToGroup(Group);
             // Small-prop LOOK-FOCUS layer (bit 6) -- already in PlayerController's look-ray mask (mirrors
             // GasPump.AddInteractionCollider's dedicated hit box). NOT the world/LOS layer: the prop's own
             // placed-mesh collider (built by WorldBuilder.PlaceObject) already blocks movement over the whole

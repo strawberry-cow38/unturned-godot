@@ -473,7 +473,8 @@ namespace UnturnedGodot
                                   // scope that is visibly still swaying.
                                   | (Shell.SteadyingNow ? MoveInput.ButtonSteady : 0));
             Client.SendPlayerState(new UnityEngine.Vector3(p.X, p.Y, p.Z), Shell.RotationDegrees.Y, Shell.LookPitchDegrees,
-                                   Shell.MoveSimVelocity, buttons, Shell.LastGroundedInput, _recovAck);
+                                   Shell.MoveSimVelocity, buttons, Shell.LastGroundedInput, _recovAck,
+                                   Shell.HeldItemIdForNet);   // v57: what is in the hands -- see PlayerStateCommand.HeldItemId
 
             if (NetLog.Enabled) LogClientAuthRollupIfDue();
         }
@@ -649,6 +650,7 @@ namespace UnturnedGodot
             shell.NetFitAttachment = (page, x, y, id) => Client.SendFitAttachment(page, x, y, id);
             shell.NetConsume = (page, x, y) => Client.SendConsume(page, x, y);
             shell.NetSetAutoDrink = (page, x, y, id, on) => Client.SendSetAutoDrink(page, x, y, id, on);
+            shell.NetWeaponUse = (page, x, y, id, uses) => Client.SendWeaponUse(page, x, y, id, uses);   // v56 durability
             shell.NetGunState = (page, x, y, it) => Client.SendGunState(page, x, y, it.id, (short)it.gunAmmo, it.gunChambered,
                 (sbyte)it.gunFiremode, it.gunMagId, it.gunAttach, it.gunSightId, it.gunBarrelId, it.gunGripId,
                 it.gunTacticalId, it.gunAttachSeeded);
@@ -665,7 +667,7 @@ shell.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, ri
             shell.NetCraftCancel = slot => Client.SendCraftCancel(slot);
             shell.NetMagLoad = (mp, mx, my, mid, rp, rx, ry, rid, un) =>
                 Client.SendMagLoad(mp, mx, my, mid, rp, rx, ry, rid, un);
-            shell.NetPlaceDeployable = (defId, pos, yaw, pg, px, py) => Client.SendPlaceDeployable(defId, ToU(pos), yaw, pg, px, py);
+            shell.NetPlaceDeployable = (defId, pos, yaw, pg, px, py, target, up) => Client.SendPlaceDeployable(defId, ToU(pos), yaw, pg, px, py, target, up);
             shell.NetSalvageDeployable = netId => Client.SendSalvageDeployable(netId);
             shell.NetPickupDeployable = netId => Client.SendPickupDeployable(netId);   // B2: hold-F returns the live deployable to the bag over the wire
             shell.NetExtractFuel = pumpId => Client.SendExtractFuel(pumpId);   // A2: RMB a replica gas pump -> server drains the shared station tank into the held can
@@ -677,6 +679,10 @@ shell.NetGunUnload = (page, x, y, rid, n) => Client.SendGunUnload(page, x, y, ri
             shell.NetConnectWire = (srcId, srcPort, dstId, dstPort) => Client.SendConnectWire(srcId, srcPort, dstId, dstPort);
             shell.NetRemoveWire = wireId => Client.SendRemoveWire(wireId);
             shell.NetToggleDeployable = (netId, on) => Client.SendToggleDeployable(netId, on);
+            shell.NetConnectPipe = (srcId, srcPort, dstId, dstPort, route) => Client.SendConnectPipe(srcId, srcPort, dstId, dstPort, route);   // v56 item pipes
+            shell.NetRemovePipe = pipeId => Client.SendRemovePipe(pipeId);
+            shell.NetConfigureItemDevice = (netId, cfg) => Client.SendConfigureItemDevice(netId, cfg);
+            shell.NetItemConfigOf = netId => Client.Deployables.TryGet(netId, out var ie) ? ie.ItemConfig : null;
             shell.NetOpenStorage = netId => Client.SendOpenStorage(netId);
             shell.NetCloseStorage = () => Client.SendCloseStorage();
             shell.NetTakeFromStorage = (netId, x, y) => Client.SendTakeFromStorage(netId, x, y);   // F on an item ON a shelf: take that one, no open/close

@@ -222,7 +222,8 @@ namespace UnturnedGodot.Net
                 if (!Cooking.IsFuelFor(c.Kind, asset)) continue;
                 float secs = Cooking.BurnSecondsFor(asset);
                 if (secs <= 0f) continue;
-                if (jar.item.amount > 1) jar.item.amount--; else crate.Storage.removeItem(i);
+                if (jar.item.amount > 1) { jar.item.amount--; crate.Storage.Touch(); }   // a bare write: tell the page's version
+                else crate.Storage.removeItem(i);
                 c.Fuel = secs;
                 c.FuelTotal = secs;   // the denominator the progress bar divides by
                 return true;

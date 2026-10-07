@@ -106,10 +106,15 @@ namespace UnturnedGodot.Testing
             float top = 6.75f, roofY = top + RoofOffsetFromTop;
 
             // Roof slab on the +Z side (where the player climbs), starting just clear of the ladder.
+            // 14 m deep, not 8: the 2 s walk-away below covers ~8.6 m, so an 8 m roof was only ever passed by
+            // the player still being at its far edge when the clock ran out -- main measured them at z 7.29,
+            // y 6.16, already 0.09 m into falling off the end (2026-10-05). Stepping off the top now sets them
+            // down 0.75 m further onto the roof, which spent that margin. The claim is "you end up on the roof",
+            // so the roof has to outlast the walk.
             var roof = new StaticBody3D { CollisionLayer = 1u << 0 };
-            roof.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(12f, 0.4f, 8f) } });
+            roof.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(12f, 0.4f, 14f) } });
             World.AddChild(roof);
-            roof.GlobalPosition = new Vector3(0f, roofY - 0.2f, -1.0f + 4f);   // top face at roofY, spans z -1..+7
+            roof.GlobalPosition = new Vector3(0f, roofY - 0.2f, -1.0f + 7f);   // top face at roofY, spans z -1..+13
 
             var p = new PlayerController();
             World.AddChild(p);
@@ -147,6 +152,10 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // ⚠ SUPERSEDED 2026-10-05 -- see LadderSafetyTests.cs. The note below was right about the old ladder and is
+    // kept as history: with the top now a step-off rather than a detach, a roof flush with the ladder's top (on the
+    // far side, where buildings put it) IS reachable, and ladder.top_over_flush_roof requires it.
+    //
     // A FLUSH-ROOF VARIANT LIVED HERE AND I DELETED IT RATHER THAN SHIP IT. It put the roof exactly level
     // with the ladder's top and required the player to reach it; it failed, and I nearly "fixed" the engine
     // against it. It is unreachable BY CONSTRUCTION: the attach probe is a forward ray cast from the player's

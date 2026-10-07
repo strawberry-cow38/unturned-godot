@@ -9,6 +9,11 @@ namespace UnturnedGodot
     // closing saves them back. In the "crates" group for proximity interaction.
     public partial class StorageCrate : Node3D
     {
+        /// <summary>World points on this container's DOOR face(s), for a container whose door is part of its own
+        /// body rather than a separate ObjectDoor leaf (the placed fridge). The storage adapter refuses those faces
+        /// (BarricadePlacer.DoorFaces). Empty for an open shelf.</summary>
+        public virtual System.Collections.Generic.IEnumerable<Vector3> DoorPointsWorld => System.Array.Empty<Vector3>();
+
         public Items Storage;   // this crate's own grid (independent of the player)
         public byte Width = 5, Height = 4;
         public uint NetId = 0;   // A1 (MP): the server ContainerReplication entity this materialized crate mirrors (0 = SP-local); the F-open request addresses the server by this (B9)
@@ -106,6 +111,10 @@ namespace UnturnedGodot
         public bool PowerProducing => false;
         public bool PowerOnFire => false;
         public uint PowerNetId => NetId;
+
+        /// <summary>The fridge's door is its +Z face -- where the handle is (see the body build below: a 0.7 deep box
+        /// centred on the origin, handle at z 0.36). The middle of that face, in world space.</summary>
+        public override System.Collections.Generic.IEnumerable<Vector3> DoorPointsWorld => new[] { GlobalTransform * new Vector3(0f, 0.85f, 0.35f) };
         public System.Collections.Generic.IReadOnlyList<ConnectionPort> PowerPorts => _powerPorts;
 
         // preserves ONLY while its own port is wired + powered (was PowerNet.GlobalPower in the stub)

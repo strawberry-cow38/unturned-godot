@@ -58,7 +58,8 @@ namespace UnturnedGodot
                 var bp = BlueprintDef.FromTsv(line);
                 if (bp != null) _all.Add(bp);
             }
-            Log.Print($"[bp] loaded {_all.Count} blueprints from {resPath}");
+            SDG.Unturned.Durability.RegisterTools(_all);   // a recipe's non-consumed input is a TOOL, and tools wear (Durability)
+            Log.Print($"[bp] loaded {_all.Count} blueprints from {resPath} ({SDG.Unturned.Durability.ToolIds.Count} tools)");
             return _all.Count;
         }
 

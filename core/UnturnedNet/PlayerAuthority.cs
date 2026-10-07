@@ -29,6 +29,11 @@ namespace UnturnedGodot.Net
         public byte Buttons;       // MoveInput encoding: bit 0 = jump (effect dressing), bits 1-2 = stance
                                    // (drives the server body's hitbox capsule + zombie stealth radius)
         public bool Grounded;      // the shell's deterministic grounded flag (diagnostics/future envelope refinement)
+        /// <summary>v57: what is in the hands (PlayerController.HeldItemIdForNet; 0 = nothing). v22 put this on
+        /// MoveInput, which a JOINED client stopped sending when it went client-auth (2026-07-18) -- so for every
+        /// joiner the server never knew, and other players' puppets, gestures and lamps, the authored gun profile
+        /// and the broken-gun refusal all read "empty hands". Only the SP/listen loopback still sends MoveInput.</summary>
+        public ushort HeldItemId;
 
         // mp-event-coalesce (wire v10): a REDUNDANT list of recent combat events (Fire/Melee/Grenade/
         // Reload) the client keeps re-including every tick until the server ACKs them (see AckCombat). The
@@ -57,6 +62,7 @@ namespace UnturnedGodot.Net
             NetWire.WriteVel(w, LinVel);
             w.WriteUInt8(Buttons);
             w.WriteBit(Grounded);
+            w.WriteUInt16(HeldItemId);   // v57
             // v10: the redundant combat-event carry, oldest-first (see CarriedCombatEvent). EventCount is
             // bounded by MaxCarriedEvents at the fill site; Events holds at least that many valid entries.
             w.WriteUInt8(EventCount);
@@ -74,6 +80,7 @@ namespace UnturnedGodot.Net
             if (!NetWire.ReadVel(r, out Vector3 vel)) return false;
             if (!r.ReadUInt8(out byte buttons)) return false;
             if (!r.ReadBit(out bool grounded)) return false;
+            if (!r.ReadUInt16(out ushort held)) return false;   // v57
             if (!r.ReadUInt8(out byte eventCount)) return false;
             if (eventCount > MaxCarriedEvents) return false;   // malformed carry -> reject the whole claim
             CarriedCombatEvent[] events = null;
@@ -86,7 +93,7 @@ namespace UnturnedGodot.Net
             cmd = new PlayerStateCommand
             {
                 Seq = seq, RecovAck = recovAck, Pos = pos, YawDegrees = yaw, PitchDegrees = pitch,
-                LinVel = vel, Buttons = buttons, Grounded = grounded,
+                LinVel = vel, Buttons = buttons, Grounded = grounded, HeldItemId = held,
                 Events = events, EventCount = eventCount,
             };
             return true;
@@ -304,6 +311,11 @@ namespace UnturnedGodot.Net
             // can still deliver two commands out of order)
             if (st.HasSeq && !NetSeq.IsNewer(cmd.Seq, st.LastSeq)) return;
             st.HasSeq = true; st.LastSeq = cmd.Seq;
+
+            // v57: what the hands hold and the stance/lamp bits, as the held input every server reader already asks
+            // (TryGetHeldInput). BEFORE the combat carry below, because a shot in this packet was fired holding what
+            // this packet says -- the broken-gun refusal and the worn-gun damage read it.
+            _players.ServerSetStateInput(sender, cmd.Buttons, cmd.HeldItemId);
 
             // ---- mp-event-coalesce (v10): apply the redundant combat carry BEFORE the recov-ack gate and
             // the envelope, so a player who momentarily trips the movement envelope still legitimately fired

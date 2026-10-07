@@ -18,6 +18,17 @@ namespace UnturnedGodot
             void Add(ushort id, int amount);
         }
 
+        /// <summary>An inventory that can tell a BROKEN tool from a working one (Durability: "a broken tool does not count
+        /// for a recipe"). An IInv without it counts every copy, which is what the dictionary test inventory wants.</summary>
+        public interface IToolInv
+        {
+            int CountUsable(ushort id);
+            /// <summary>The copy a craft would use (a working one), or null.</summary>
+            Item UsableTool(ushort id);
+        }
+
+        static int ToolCount(IInv inv, ushort id) => inv is IToolInv t ? t.CountUsable(id) : inv.Count(id);
+
         /// <summary>Blueprint guid -> item id, 0 when this port does not ship the item. Public since
         /// 2026-09-06: ServerCrafting spends and pays out through the same resolution the validator uses, and
         /// a second copy of this line is a second place for the two to disagree.</summary>
@@ -53,9 +64,13 @@ namespace UnturnedGodot
             {
                 ushort id = Resolve(ing.Guid);
                 if (id == 0) { reason = $"unresolved ingredient {ing.Guid}"; return false; }
-                if (inv.Count(id) < ing.Amount)
+                int have = ing.Consume ? inv.Count(id) : ToolCount(inv, id);
+                if (have < ing.Amount)
                 {
-                    reason = $"need {ing.Amount}x {Assets.find(id)?.itemName ?? id.ToString()} (have {inv.Count(id)})";
+                    string name = Assets.find(id)?.itemName ?? id.ToString();
+                    reason = !ing.Consume && inv.Count(id) > have
+                        ? $"your {name} is broken"
+                        : $"need {ing.Amount}x {name} (have {have})";
                     return false;
                 }
             }
@@ -119,11 +134,34 @@ namespace UnturnedGodot
         }
 
         // Adapts the real grid PlayerInventory to IInv so crafting runs against the player's actual items.
-        public sealed class PlayerInvAdapter : IInv
+        public sealed class PlayerInvAdapter : IInv, IToolInv
         {
             readonly PlayerInventory _inv;
             public PlayerInvAdapter(PlayerInventory inv) { _inv = inv; }
             public int Count(ushort id) => _inv.getItemCount(id);
+            public int CountUsable(ushort id)
+            {
+                int n = 0;
+                foreach (var it in Copies(id)) if (!Durability.IsBroken(it)) n += it.amount;
+                return n;
+            }
+            public Item UsableTool(ushort id)
+            {
+                foreach (var it in Copies(id)) if (!Durability.IsBroken(it)) return it;
+                return null;
+            }
+            System.Collections.Generic.IEnumerable<Item> Copies(ushort id)
+            {
+                for (byte b = 0; b < PlayerInventory.OWNPAGES; b++)
+                {
+                    var page = _inv.items[b];
+                    for (byte i = 0; i < page.getItemCount(); i++)
+                    {
+                        var jar = page.getItem(i);
+                        if (jar?.item != null && jar.item.id == id) yield return jar.item;
+                    }
+                }
+            }
             public void Remove(ushort id, int amount) => _inv.removeItemAmount(id, amount);
             public void Add(ushort id, int amount)
             {

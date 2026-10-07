@@ -45,7 +45,11 @@ namespace UnturnedNet.Tests
             //
             // ⚠ What this case does NOT cover: Page defaults to 0, which is page ZERO, not the 255 "unaddressed"
             // sentinel the handler falls back on. The addressed path and the fallback path are both unpinned here.
-            Assert.That(Pack(ReplicationIds.CommandPlaceDeployable, cmd.Write), Is.EqualTo("07CA01FE030008C040400001000000"));
+            //
+            // Re-goldened again for v56, by the same derivation: the command grew a trailing uint TargetId (the
+            // container a Storage Adapter snapped to). The fixture leaves it 0, so it appends 32 ZERO bits after
+            // bits that were already zero -- four more zero bytes on the end, and nothing before them moves.
+            Assert.That(Pack(ReplicationIds.CommandPlaceDeployable, cmd.Write), Is.EqualTo("07CA01FE030008C04040000100000000000000"));
         }
 
         [Test]
