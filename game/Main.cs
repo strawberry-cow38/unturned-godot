@@ -8145,8 +8145,28 @@ namespace UnturnedGodot
                 cam.GlobalPosition = c + new Vector3(1f, 0.8f, 1f).Normalized() * (s.Length() + 3f);   // front-right-above
                 cam.LookAt(c, Vector3.Up);
             }
+            else if (System.Environment.GetEnvironmentVariable("UG_ICON_VIEW") == "front")
+            {
+                // ⭐ FRONT ELEVATION FOR AN AUTHORED, Y-UP, FLOOR-ALIGNED MESH. The branch below is tuned for the
+                // RIPPED meshes, and both of its rules are wrong for a modelled one:
+                //   * its up vector is -middle-axis, which for a mug (middle axis = Y) is -Y -- so it baked the
+                //     mug UPSIDE DOWN. Master: "mug icon is upside down". Here it is just world up.
+                //   * it points the camera down the SHORTEST axis, which for a cooking pot is Y, so a pot baked
+                //     as a circle seen from above. Master: "i want a front facing one for the pot". Here the
+                //     camera sits on the narrower HORIZONTAL axis, so the widest profile faces it -- a pot shows
+                //     its handles out to the sides, a mug shows its handle in profile.
+                var horiz = s.X <= s.Z ? Vector3.Right : Vector3.Back;   // stand off the narrower side
+                cam.Size = Mathf.Max(s.Y, Mathf.Max(s.X, s.Z)) * 1.18f;
+                cam.GlobalPosition = c + horiz * (s.Length() + 3f);
+                cam.LookAt(c, Vector3.Up);
+            }
             else
             {
+                // ⚠ TUNED FOR THE RIPPED MESHES AND LEFT ALONE DELIBERATELY. 1878 shipped icons and every other
+                // harness that bakes one come through here; the authored-mesh corrections live in the branch
+                // above, behind UG_ICON_VIEW, rather than changing what this does for everything that already
+                // works. "The model's height axis points down in mesh space" is true of the rip and of nothing
+                // anybody models by hand.
                 cam.GlobalPosition = c + ax[0].dir * (s.Length() + 2f);
                 cam.LookAt(c, -ax[1].dir);   // -middle axis = up (the model's height axis points "down" in mesh space)
             }
