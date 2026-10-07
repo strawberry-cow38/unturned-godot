@@ -58,9 +58,71 @@ namespace UnturnedGodot
                 var bp = BlueprintDef.FromTsv(line);
                 if (bp != null) _all.Add(bp);
             }
+            GenerateAmmoRecipes();
             SDG.Unturned.Durability.RegisterTools(_all);   // a recipe's non-consumed input is a TOOL, and tools wear (Durability)
             Log.Print($"[bp] loaded {_all.Count} blueprints from {resPath} ({SDG.Unturned.Durability.ToolIds.Count} tools)");
             return _all.Count;
+        }
+
+        /// <summary>Reload a round of every ammunition the game carries, from metal scrap and gunpowder.
+        ///
+        /// Master 2026-10-07: "add crafting recipes for every ammo with balances ratios of metal scrap + gunpowder".
+        ///
+        /// ⭐⭐ GENERATED, NOT WRITTEN OUT. "Every ammo" is a statement about a SET that changes -- the MAC-10's
+        /// .45 arrived three days ago -- so a hand-written block of TSV rows would be true on the day it was typed
+        /// and quietly incomplete after the next gun. Walking `Assets.all()` for `isAmmo` means the answer is
+        /// recomputed from the thing being described, and a new cartridge gets its recipe by existing.
+        ///
+        /// ⭐ THE RATIO COMES FROM THE ROUND'S OWN STACK SIZE, which is the only size signal every ammo already
+        /// carries: a cartridge that stacks 180 (9mm) is small, one that stacks 32 (a 12-gauge shell) is big. So
+        /// `128 / stackSize` is "how much round is this, relative to a 5.56", and both the batch you get and the
+        /// materials you spend ride it. That is a derivation rather than a table of my opinions, and it stays
+        /// balanced for a cartridge nobody has added yet.
+        ///
+        /// ⚠ Skips anything that already has a Craft recipe producing it, so an authored recipe always wins -- a
+        /// generator that overwrote hand-tuned content would be the worst of both.</summary>
+        static void GenerateAmmoRecipes()
+        {
+            const string ScrapGuid = "", PowderName = "Gunpowder";
+            var scrap = SDG.Unturned.Assets.find(67);          // Metal Scrap
+            var powder = SDG.Unturned.Assets.find(9182);       // Gunpowder
+            if (scrap == null || powder == null || string.IsNullOrEmpty(scrap.guid) || string.IsNullOrEmpty(powder.guid))
+            { Log.Print("[bp] ammo recipes skipped: metal scrap or gunpowder missing a guid"); return; }
+
+            // What already has a recipe -- authored content wins.
+            var alreadyMade = new HashSet<ushort>();
+            foreach (var bp in _all)
+                if (bp.Operation == "Craft")
+                    foreach (var o in bp.Outputs)
+                    { var a = SDG.Unturned.Assets.findByGuid(o.Guid); if (a != null) alreadyMade.Add(a.id); }
+
+            int made = 0;
+            foreach (var a in SDG.Unturned.Assets.all())
+            {
+                if (a == null || !a.isAmmo || string.IsNullOrEmpty(a.guid)) continue;
+                if (alreadyMade.Contains(a.id)) continue;
+
+                int stack = Mathf.Clamp(a.stackSize, 8, 256);
+                float size = 128f / stack;                                  // 1.0 = a 5.56; 4.0 = a 12-gauge shell
+                int batch = Mathf.Max(5, stack / 8);                        // worth the trip to the bench
+                int scrapCost = Mathf.Max(1, Mathf.CeilToInt(batch * size / 6f));
+                int powderCost = Mathf.Max(1, Mathf.CeilToInt(batch * size / 8f));
+
+                var bp = new BlueprintDef
+                {
+                    OwnerItemId = a.id.ToString(),
+                    Operation = "Craft",
+                    Name = a.itemName,
+                    Skill = "", SkillLevel = 0,
+                    Seconds = Mathf.Clamp(batch * 0.25f, 2f, 12f),
+                };
+                bp.Inputs.Add(new BlueprintDef.Ingredient { Guid = scrap.guid, Amount = scrapCost, Consume = true });
+                bp.Inputs.Add(new BlueprintDef.Ingredient { Guid = powder.guid, Amount = powderCost, Consume = true });
+                bp.Outputs.Add(new BlueprintDef.Ingredient { Guid = a.guid, Amount = batch, Consume = true });
+                _all.Add(bp);
+                made++;
+            }
+            if (made > 0) Log.Print($"[bp] generated {made} ammo recipe(s) from metal scrap + gunpowder");
         }
 
         /// <summary>

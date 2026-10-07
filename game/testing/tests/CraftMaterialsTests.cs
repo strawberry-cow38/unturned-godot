@@ -95,6 +95,85 @@ namespace UnturnedGodot.Testing
             T.Check($"...and still holds the food it used to ({food}/400)", food > 0);
             T.Check($"...and nothing else ({bad} unexpected)", bad == 0);
 
+            // ---- MAKESHIFT SCOPE = BINOCULARS + TAPE (master 2026-10-07) -----------------------------------
+            var scope = Making(476);
+            T.Check("there is a recipe that makes the Makeshift Scope", scope != null);
+            T.Check("...from Binoculars", Takes(scope, 333));
+            T.Check("...and Tape", Takes(scope, 69));
+            // ⚠ The binoculars are CONSUMED -- you are sacrificing them for the lens. A non-consumed input would
+            // make this a tool recipe that prints free scopes, which is the opposite of the trade being described.
+            bool binosConsumed = false;
+            if (scope != null)
+                foreach (var i in scope.Inputs)
+                    if (Assets.findByGuid(i.Guid)?.id == 333) binosConsumed = i.Consume;
+            T.Check("...and the binoculars are consumed, not used as a tool", binosConsumed);
+
+            // ---- AN AMMO RECIPE FOR EVERY AMMO (master 2026-10-07) -----------------------------------------
+            //
+            // ⭐ Asserted over the SET, not over a list I wrote down. "Every ammo" is the requirement, so the test
+            // enumerates isAmmo the same way the generator does -- if someone adds a cartridge and the generator
+            // stops covering it, this fails without anyone remembering to add a case.
+            int ammo = 0, covered = 0; string uncovered = null;
+            int minScrap = int.MaxValue, maxScrap = 0, minBatch = int.MaxValue, maxBatch = 0;
+            foreach (var a in Assets.all())
+            {
+                if (a == null || !a.isAmmo || string.IsNullOrEmpty(a.guid)) continue;
+                ammo++;
+                BlueprintDef made = null;
+                foreach (var bp in BlueprintRegistry.All)
+                {
+                    if (bp.Operation != "Craft") continue;
+                    foreach (var o in bp.Outputs) if (Assets.findByGuid(o.Guid)?.id == a.id) { made = bp; break; }
+                    if (made != null) break;
+                }
+                if (made == null) { uncovered ??= $"{a.itemName} ({a.id})"; continue; }
+                covered++;
+
+                int scrapAmt = 0, powderAmt = 0, batch = 0;
+                foreach (var i in made.Inputs)
+                {
+                    var ia = Assets.findByGuid(i.Guid);
+                    if (ia?.id == 67) scrapAmt = i.Amount;
+                    else if (ia?.id == 9182) powderAmt = i.Amount;
+                }
+                foreach (var o in made.Outputs) if (Assets.findByGuid(o.Guid)?.id == a.id) batch = o.Amount;
+
+                if (scrapAmt <= 0 || powderAmt <= 0)
+                    uncovered ??= $"{a.itemName} is made without scrap+powder";
+                minScrap = Mathf.Min(minScrap, scrapAmt); maxScrap = Mathf.Max(maxScrap, scrapAmt);
+                minBatch = Mathf.Min(minBatch, batch); maxBatch = Mathf.Max(maxBatch, batch);
+            }
+            GD.Print($"[craft-test] ammo: {covered}/{ammo} craftable, scrap {minScrap}-{maxScrap}, batch {minBatch}-{maxBatch}");
+            T.Check($"there is ammo in the catalog to check ({ammo})", ammo > 0);
+            T.Check($"every ammo has a recipe ({covered}/{ammo}, first gap: {uncovered ?? "none"})",
+                    covered == ammo && uncovered == null);
+            T.Check($"every one costs metal scrap AND gunpowder ({uncovered ?? "ok"})", uncovered == null);
+
+            // ⭐ THE RATIO IS BALANCED, i.e. it actually VARIES with the round. A generator that returned the same
+            // cost for everything would satisfy "every ammo has a recipe" perfectly.
+            T.Check($"the cost varies by round rather than being flat (scrap {minScrap}-{maxScrap})", maxScrap > minScrap);
+            T.Check($"...and so does the batch ({minBatch}-{maxBatch})", maxBatch > minBatch);
+
+            // ⚠ A BIG round must cost MORE PER ROUND than a small one -- the actual meaning of "balanced ratios".
+            // 12-gauge buckshot (113, stacks 32) vs 9mm (5007, stacks 180).
+            float PerRound(ushort id)
+            {
+                foreach (var bp in BlueprintRegistry.All)
+                {
+                    if (bp.Operation != "Craft") continue;
+                    int batch = 0, cost = 0;
+                    foreach (var o in bp.Outputs) if (Assets.findByGuid(o.Guid)?.id == id) batch = o.Amount;
+                    if (batch <= 0) continue;
+                    foreach (var i in bp.Inputs) { var ia = Assets.findByGuid(i.Guid); if (ia?.id == 67 || ia?.id == 9182) cost += i.Amount; }
+                    return cost / (float)batch;
+                }
+                return -1f;
+            }
+            float shell = PerRound(113), pistol = PerRound(5007);
+            GD.Print($"[craft-test] per-round cost: 12ga {shell:0.00}, 9mm {pistol:0.00}");
+            if (shell > 0f && pistol > 0f)
+                T.Check($"a 12-gauge shell costs more per round than a 9mm ({shell:0.00} vs {pistol:0.00})", shell > pistol);
+
             yield break;
         }
     }
