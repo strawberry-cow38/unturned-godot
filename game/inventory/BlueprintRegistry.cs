@@ -176,8 +176,12 @@ namespace UnturnedGodot
             }
 
             // ---- THE NAMED ONES, which must land BEFORE the sweep or the sweep would give them plain cloth ----
-            Salvage(233, (asbestos, 1), (cloth, 2));   // Firefighter Top
-            Salvage(234, (asbestos, 1), (cloth, 2));   // Firefighter Bottom
+            // ⚠ Scrap too: these are armoured (armor 0.90), and master's later rule is that anything realistically
+            // metal gives scrap as well. An override that runs BEFORE the sweep also opts out of it, so whatever
+            // the sweep would have added has to be restated here -- that is the cost of overriding first, and it
+            // is why the suite checks the rule over every garment rather than trusting the branch.
+            Salvage(233, (asbestos, 1), (cloth, 2), (scrap, 1));   // Firefighter Top
+            Salvage(234, (asbestos, 1), (cloth, 2), (scrap, 1));   // Firefighter Bottom
             Salvage(241, (asbestos, 1), (scrap, 2));   // Firefighter Helmet
             foreach (ushort mh in new ushort[] { 309, 1010, 1335, 1519 }) Salvage(mh, (scrap, 2));   // military helmets
 
@@ -210,12 +214,37 @@ namespace UnturnedGodot
             foreach (var a in byType)
             {
                 if (a == null || string.IsNullOrEmpty(a.guid)) continue;
+                // ⭐⭐ "ANYTHING REALISTICALLY METAL SHOULD GIVE SCRAP AS WELL. FIREPROOF GIVES ASBESTOS" (master
+                // 2026-10-07) -- and both of those are FACTS THE ITEM ALREADY CARRIES, not judgements I have to
+                // make garment by garment. `proofFire` says fireproof outright. `armor` is damage MULTIPLIER, so
+                // anything below 1 is a piece that actually stops something, which in this game's terms is a
+                // plate or a mail layer: that is the "realistically metal" test, and it is the item's own number.
+                //
+                // ⚠ Naming would have been the obvious route -- "helmet", "plate", "mail" -- and it would have
+                // missed every armoured piece whose name says none of that, while catching a Tophat with "plate"
+                // in its description. The data knows; I do not have to.
+                var extra = new List<(SDG.Unturned.ItemAsset mat, int n)>();
+                if (a.proofFire) extra.Add((asbestos, 1));
+                if (a.armor < 0.95f) extra.Add((scrap, 1));
+
+                (SDG.Unturned.ItemAsset mat, int n)[] With(params (SDG.Unturned.ItemAsset mat, int n)[] baseYield)
+                {
+                    if (extra.Count == 0) return baseYield;
+                    var all = new List<(SDG.Unturned.ItemAsset, int)>(baseYield);
+                    all.AddRange(extra);
+                    return all.ToArray();
+                }
+
                 switch (a.type)
                 {
-                    case SDG.Unturned.EItemType.HAT: Salvage(a.id, (cloth, 1)); break;
+                    case SDG.Unturned.EItemType.HAT: Salvage(a.id, With((cloth, 1))); break;
                     case SDG.Unturned.EItemType.SHIRT:
-                    case SDG.Unturned.EItemType.PANTS: Salvage(a.id, (cloth, 2)); break;
-                    case SDG.Unturned.EItemType.BACKPACK: Salvage(a.id, (cloth, 2)); break;
+                    case SDG.Unturned.EItemType.PANTS: Salvage(a.id, With((cloth, 2))); break;
+                    case SDG.Unturned.EItemType.BACKPACK: Salvage(a.id, With((cloth, 2))); break;
+                    // A VEST is the armoured layer by definition -- it was not in master's list because it goes
+                    // without saying, and leaving it out would make the one obviously-metal garment the one you
+                    // cannot break down.
+                    case SDG.Unturned.EItemType.VEST: Salvage(a.id, With((cloth, 1))); break;
                     case SDG.Unturned.EItemType.THROWABLE:
                         // ⚠ Not a snowball. It is a Throwable by type and gives neither metal nor propellant, and
                         // a recipe turning one into gunpowder is the kind of thing a type sweep produces if nobody

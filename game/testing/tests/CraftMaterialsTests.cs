@@ -231,6 +231,41 @@ namespace UnturnedGodot.Testing
             // ⭐ CONTROL: a type sweep that read nothing would have turned a SNOWBALL into gunpowder.
             T.Check("control: a snowball does NOT salvage into gunpowder", !Yields(1132, 9327, 1));
 
+            // ---- METAL GIVES SCRAP, FIREPROOF GIVES ASBESTOS (master 2026-10-07) --------------------------
+            //
+            // ⭐ Both are derived from the item's OWN data -- `armor < 1` (a damage multiplier, so below 1 means it
+            // actually stops something, i.e. there is a plate in it) and `proofFire`. So the test asserts the
+            // RULE over the whole catalog rather than spot-checking garments I happened to think of.
+            int armoured = 0, armouredWithScrap = 0, fireproof = 0, fireproofWithAsbestos = 0;
+            string missScrap = null, missAsb = null;
+            foreach (var a in Assets.all())
+            {
+                if (a == null || string.IsNullOrEmpty(a.guid)) continue;
+                bool wearable = a.type == EItemType.HAT || a.type == EItemType.SHIRT || a.type == EItemType.PANTS
+                             || a.type == EItemType.BACKPACK || a.type == EItemType.VEST;
+                if (!wearable) continue;
+                if (a.armor < 0.95f)
+                {
+                    armoured++;
+                    if (Yields(a.id, 67, 1)) armouredWithScrap++; else missScrap ??= $"{a.itemName} ({a.id}, armor {a.armor:0.00})";
+                }
+                if (a.proofFire)
+                {
+                    fireproof++;
+                    if (Yields(a.id, 9340, 1)) fireproofWithAsbestos++; else missAsb ??= $"{a.itemName} ({a.id})";
+                }
+            }
+            GD.Print($"[craft-test] armoured {armouredWithScrap}/{armoured} give scrap; fireproof {fireproofWithAsbestos}/{fireproof} give asbestos");
+            T.Check($"there is armoured gear to check ({armoured})", armoured > 0);
+            T.Check($"every armoured garment also gives scrap ({armouredWithScrap}/{armoured}, first gap: {missScrap ?? "none"})",
+                    armoured > 0 && armouredWithScrap == armoured);
+            T.Check($"every fireproof garment gives asbestos ({fireproofWithAsbestos}/{fireproof}, first gap: {missAsb ?? "none"})",
+                    fireproof == 0 || fireproofWithAsbestos == fireproof);
+            // ⭐ CONTROL: a PLAIN garment must NOT give scrap, or "armoured gives scrap" is passing because
+            // everything does and the rule is not discriminating at all.
+            var plainShirt = Assets.find(3);   // Orange Hoodie
+            T.Check($"control: a plain hoodie gives cloth but NOT scrap", Yields(3, 66, 1) && !Yields(3, 67, 1));
+
             // ---- KITCHENWARE BREAKS INTO WHAT IT IS MADE OF (master 2026-10-07) ----------------------------
             // ⚠⚠ EVERY PLACEHOLDER MUST CARRY A GUID. Blueprints key by guid, so an item without one is
             // unreferenceable: it loads, shows in the catalog, and silently cannot appear in any recipe. My first

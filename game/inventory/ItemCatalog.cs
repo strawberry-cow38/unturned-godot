@@ -219,6 +219,15 @@ namespace SDG.Unturned
         {
             void Wood(ushort id, int cap) { var a = Assets.find(id); if (a != null) a.stackSize = cap; }
 
+            // ⭐ FIREFIGHTER KIT IS FIREPROOF, AND NOTHING SAID SO. `ItemAsset.proofFire` exists and is set on
+            // EXACTLY ZERO items -- measured: the salvage rule "fireproof gives asbestos" (master 2026-10-07)
+            // matched 0/0 garments because the flag was never populated, so the rule was correct and inert.
+            // ⚠ The fix is the DATA, not a name check in the recipe generator: once the turnout gear says what it
+            // is, every system that asks -- salvage, and whatever fire mechanic comes later -- gets the right
+            // answer for free, and anything fireproof added after this inherits it.
+            foreach (ushort ff in new ushort[] { 233, 234, 241 })   // Firefighter Top / Bottom / Helmet
+            { var a = Assets.find(ff); if (a != null) a.proofFire = true; }
+
             // ---- CRAFTING MATERIALS STACK (master 2026-10-07: "make duct tape, rope, metal scrap, nails
             // stackable", plus the new components). These are things you pick up by the handful and spend by the
             // handful, and a 1-per-slot nail is a bag full of nails.
