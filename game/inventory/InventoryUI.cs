@@ -306,6 +306,10 @@ void fragment() {
             foreach (var bp in BlueprintRegistry.Applicable(inv))   // Applicable = every input present (consumables AND tools)
             {
                 if (BlueprintRegistry.IsRecolour(bp)) continue;         // skip the 126 dye repaints
+                // ...and skip SALVAGE. Every salvageable thing in the bag satisfies its own salvage recipe, so these
+                // would fill all 18 tiles with "break your clothes down" and push out the recipes this strip exists
+                // to surface. Salvage is reached from the item's own right-click menu instead.
+                if (BlueprintRegistry.IsSalvage(bp)) continue;
                 if (!Crafting.HasStations(bp, stations)) continue;      // only if the recipe's workbench/station is satisfied (in range + LOS)
                 if (!Crafting.MeetsSkill(bp, Player?.Skills)) continue;
                 if (Player != null && !Player.KnowsBlueprint(bp)) continue;   // an unknown blueprint is never a quick craft (v55)
@@ -2014,7 +2018,6 @@ void fragment() {
             _selPanel = panel;
             Vector2 vp = GetViewport().GetVisibleRect().Size;
             panel.Position = new Vector2(Mathf.Round((vp.X - 500) / 2f), Mathf.Round((vp.Y - panelH) / 2f));
-            if (splittable) BuildSplitStrip(panel, jar, page, x, y);
 
             // left: the item's tile, fit into a 200x280 icon box
             bool rot = jar.rot % 2 == 1;
@@ -2145,8 +2148,86 @@ void fragment() {
             }
             if (asset.IsMagazine && jar.item != null && jar.item.amount > 0)   // a loaded mag: RMB Unload -> eject its rounds back to the bag, the wheel emptying (strawberry: rmb menu, not drag)
             { AddActionButton(panel, "Unload", new Vector2(228, by), UnloadSelected); by += 44; }
+            // SALVAGE (master 2026-10-07: "add salvage shortcuts to the rmb menu of salvagable inventory items").
+            // The recipe is already in the craft menu, so this adds no rule -- it just puts the one recipe that is
+            // ABOUT this item on the item, instead of making you find it in a list of hundreds. The yield goes in the
+            // tooltip rather than the label: every other button here is one word, and a 258px button cannot hold
+            // "Salvage -> 1x Asbestos, 2x Metal Scrap" without clipping the part that matters.
+            //
+            // ⚠ OWN PAGES ONLY, and that is not tidiness: crafting counts and spends through PlayerInventory's
+            // OWNPAGES scan, so an open crate and the ground are invisible to it. A Salvage button on a crated
+            // helmet would either do nothing at all or quietly eat the copy in your bag instead.
+            var salvage = _selPage < PlayerInventory.OWNPAGES && jar.item != null
+                        ? BlueprintRegistry.SalvageFor(asset.id) : null;
+            if (salvage != null)
+            { AddActionButton(panel, "Salvage", new Vector2(228, by), SalvageSelected, SalvageTip(salvage)); by += 44; }
             AddActionButton(panel, "Drop", new Vector2(228, by), DropSelected); by += 44;
             AddActionButton(panel, "Close", new Vector2(228, by), CloseSelection);
+
+            // ⭐ THE PANEL IS SIZED TO THE BUTTONS IT GREW, not to a constant. 300 fits three rows, and the stack is
+            // up to six (hand action, Learn/Empty/Autodrink, Store, Unload, Salvage, Drop, Close) -- a Panel does not
+            // clip its children, so the overflow did not look like a layout bug, it looked like Close had wandered
+            // off the frame onto the inventory behind it. Grown AFTER the chain so the count comes from the buttons
+            // that were actually added and no predicate is restated here to drift from the ones above.
+            float needH = by + 36f + 14f + (splittable ? SplitStripH : 0f);
+            if (needH > panel.Size.Y)
+            {
+                panel.Size = new Vector2(panel.Size.X, needH);
+                panel.Position = new Vector2(panel.Position.X, Mathf.Round((GetViewport().GetVisibleRect().Size.Y - needH) / 2f));
+            }
+            // AFTER the resize: the strip lays itself out from the panel's FINAL height, so building it earlier
+            // pinned it to where the bottom used to be and a grown panel left it floating in the middle.
+            if (splittable) BuildSplitStrip(panel, jar, page, x, y);
+        }
+
+        /// <summary>What a salvage gives back, for the Salvage button's tooltip. Read off the recipe rather than
+        /// written out, so the one place the yields are decided (BlueprintRegistry's salvage generator) is the one
+        /// place they can be wrong.</summary>
+        static string SalvageTip(BlueprintDef bp)
+        {
+            var parts = new List<string>();
+            foreach (var o in bp.Outputs)
+            {
+                var a = Assets.findByGuid(o.Guid);
+                if (a != null) parts.Add($"{o.Amount}x {a.itemName}");
+            }
+            return parts.Count == 0 ? "Break this down for materials" : "Break down into " + string.Join(", ", parts);
+        }
+
+        /// <summary>Queue the selected item's salvage. Goes through the ordinary craft queue -- same escrow, same
+        /// timer, same cancel -- so salvaging is not a second way to turn items into items that has to be kept in
+        /// step with the first.
+        ///
+        /// ⭐ IT SPENDS THE JAR YOU CLICKED. The queue normally eats the first copy it finds in page order, which is
+        /// right for "spend 2 cloth" and wrong here: right-click the 8% helmet, press Salvage, and first-found takes
+        /// the 100% one. The yield is identical either way, so nothing looks broken -- you just lose the good one.
+        /// Hence `prefer`.</summary>
+        void SalvageSelected()
+        {
+            var jar = JarAt(_selPage, _selX, _selY);
+            var asset = jar?.GetAsset();
+            var bp = asset == null ? null : BlueprintRegistry.SalvageFor(asset.id);
+            if (bp != null && jar.item != null) Player?.QuickCraft(bp, 1, jar.item);
+            CloseSelection();
+            Refresh();
+        }
+        public void DebugSalvage(byte page, byte x, byte y) { _selPage = page; _selX = x; _selY = y; SalvageSelected(); }
+
+        /// <summary>Open the right-click menu for a slot and report the actions it offers, plus whether they FIT.
+        /// Both halves matter: a test that only asked "is Salvage in the list" would pass with the button rendering
+        /// below the bottom edge of the panel, which is what the old fixed 300px height did once the stack grew.
+        /// Only the panel's own Buttons are action buttons -- the split strip adds labels, a slider and a SpinBox,
+        /// and the SpinBox's own arrows are its children, not the panel's.</summary>
+        public List<string> DebugSelectionActions(byte page, byte x, byte y, out float panelH, out float lastBottom)
+        {
+            OpenSelection(page, x, y);
+            var labels = new List<string>();
+            panelH = 0f; lastBottom = 0f;
+            if (_selPanel == null) return labels;
+            panelH = _selPanel.Size.Y;
+            foreach (var c in _selPanel.GetChildren())
+                if (c is Button b) { labels.Add(b.Text); lastBottom = Mathf.Max(lastBottom, b.Position.Y + b.Size.Y); }
+            return labels;
         }
 
         // Tall enough to clear the preview SLOT and its caption: a CELL-sized tile plus its frame, the number
@@ -2313,9 +2394,10 @@ void fragment() {
 
         void CloseSelection() { _selPanel?.QueueFree(); _selPanel = null; _splitSlot = null; }
 
-        void AddActionButton(Control parent, string text, Vector2 pos, System.Action onClick)
+        void AddActionButton(Control parent, string text, Vector2 pos, System.Action onClick, string tip = null)
         {
             var b = new Button { Text = text, Position = pos, Size = new Vector2(258, 36) };
+            if (!string.IsNullOrEmpty(tip)) b.TooltipText = tip;
             b.Pressed += onClick;
             parent.AddChild(b);
         }

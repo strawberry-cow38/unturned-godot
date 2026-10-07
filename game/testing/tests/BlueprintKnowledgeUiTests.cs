@@ -47,13 +47,23 @@ namespace UnturnedGodot.Testing
             var p = Rigs.Player(World, new Vector3(0f, 1f, 0f));
             yield return Ticks(4);
             var craft = p.DebugCraftMenu; var ui = p.DebugInvUI;
-            int open = BlueprintRegistry.Index().Count - 1;
+            // What BROWSING is expected to show: every recipe the player knows, minus the two classes that have
+            // their own category and are deliberately out of "All" -- dyes (100+ repaints) and salvage (one row per
+            // salvageable item in the game), either of which dropped into All buries the handful of real recipes.
+            // ⚠ This used to be `Index().Count - 1`, i.e. "browsing shows everything except the locked one". That
+            // held while the catalog was 37 rows and broke the day 800 salvage recipes were generated -- a stale
+            // PREMISE, not a regression. Derived from the registry rather than from the menu, so it is not View()
+            // being checked against itself.
+            int browsable = 0;
+            foreach (var bp in BlueprintRegistry.Index())
+                if (!bp.Locked && !BlueprintRegistry.IsRecolour(bp) && !BlueprintRegistry.IsSalvage(bp)) browsable++;
 
             // ---- 1. BROWSING HIDES IT.
             p.ShowMenu(MenuNavbar.Tab.Craft);
             yield return Ticks(2);
             var view = craft.DebugView();
-            T.Check($"browsing shows only the known recipes ({view.Count} of {open + 1})", view.Count == open && !view.Contains(locked));
+            T.Check($"browsing shows the known, browsable recipes and not the locked one ({view.Count} of {browsable})",
+                    view.Count == browsable && browsable > 0 && !view.Contains(locked));
 
             // ---- 2. A TYPED SEARCH SHOWS IT, PADLOCKED, beside the open recipe for the same thing.
             string stickName = CraftingMenu.Title(locked).Split(" x")[0];

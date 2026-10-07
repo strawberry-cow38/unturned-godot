@@ -11,6 +11,41 @@ namespace UnturnedGodot
         static readonly List<BlueprintDef> _all = new();
         public static IReadOnlyList<BlueprintDef> All => _all;
 
+        /// <summary>Recipes that turn an item ITSELF into materials, keyed by the item id they consume.
+        ///
+        /// ⭐ AN INDEX, NOT A PREDICATE OVER _all. "Is this item salvageable" is asked once per right-click, by the
+        /// inventory menu, and the obvious alternative -- scan every recipe for one whose single input is this item --
+        /// is both O(recipes) per click and WRONG at the edges: a recolour (Blue Daypack from White Daypack) and a
+        /// processing recipe (Log to Planks) have exactly that shape too, so a derived test would offer "Salvage" on
+        /// things that are not salvage. The generator below is the only thing that makes these, so it records them
+        /// and nothing has to infer what it meant. Sniffing the Name for "Salvage " would be the same inference with
+        /// a string in it.</summary>
+        static readonly Dictionary<ushort, BlueprintDef> _salvage = new();
+
+        /// <summary>The recipe that breaks `id` down into materials, or null if it has none. Already EnsureLoaded,
+        /// because its caller is a UI click and a menu that silently has no Salvage button is indistinguishable from
+        /// an item that genuinely cannot be salvaged.</summary>
+        public static BlueprintDef SalvageFor(ushort id)
+        {
+            EnsureLoaded();
+            return _salvage.TryGetValue(id, out var bp) ? bp : null;
+        }
+
+        /// <summary>How many salvage recipes exist, for a test that must prove the index is actually populated --
+        /// SalvageFor returning null for one id cannot tell "not salvageable" from "the index was never filled".</summary>
+        public static int SalvageCount { get { EnsureLoaded(); return _salvage.Count; } }
+
+        /// <summary>Is THIS recipe a salvage? Asked by the UI, which has to keep 800 "Salvage X" rows out of the
+        /// places that are meant to show you what you can MAKE -- the Quick Craft strip and the craft menu's All
+        /// category. They are reached from the item instead (its right-click menu), which is the whole point of
+        /// having the shortcut.</summary>
+        public static bool IsSalvage(BlueprintDef bp)
+        {
+            if (bp == null || !ushort.TryParse(bp.OwnerItemId, out var id)) return false;
+            EnsureLoaded();
+            return _salvage.TryGetValue(id, out var s) && ReferenceEquals(s, bp);
+        }
+
         /// <summary>Has the catalog been read off disk yet? Separate from `_all.Count > 0` because THE SHIPPING
         /// CATALOG IS NOW EMPTY (strawberry 2026-09-06: "completely empty crafting list"), and a count-based guard
         /// cannot tell "never loaded" from "loaded, and it genuinely has no rows". That mattered twice over: it made
@@ -38,7 +73,7 @@ namespace UnturnedGodot
         /// fourth path and forgetting. It is idempotent and costs one int comparison after the first call.</summary>
         /// <summary>Empty the catalog so a test can prove the self-load actually fires. Without this a test
         /// cannot distinguish "Index() loaded it" from "some earlier test in the same boot already had".</summary>
-        public static void ResetForTests() { _all.Clear(); Loaded = false; }
+        public static void ResetForTests() { _all.Clear(); _salvage.Clear(); Loaded = false; }
 
         public static void EnsureLoaded()
         {
@@ -48,6 +83,7 @@ namespace UnturnedGodot
         public static int Load(string resPath = "res://content/blueprints.tsv")
         {
             _all.Clear();
+            _salvage.Clear();   // rebuilt by GenerateSalvageRecipes below; a stale entry would point at a freed recipe
             Loaded = true;   // set even on a missing/empty file: the attempt is what EnsureLoaded must not repeat
             LoadCountForTests++;
             string path = ProjectSettings.GlobalizePath(resPath);
@@ -172,7 +208,7 @@ namespace UnturnedGodot
                     if (y.mat != null && !string.IsNullOrEmpty(y.mat.guid))
                         bp.Outputs.Add(new BlueprintDef.Ingredient { Guid = y.mat.guid, Amount = y.n, Consume = true });
                 if (bp.Outputs.Count == 0) return;
-                _all.Add(bp); consumedAlready.Add(id); made++;
+                _all.Add(bp); _salvage[id] = bp; consumedAlready.Add(id); made++;
             }
 
             // ---- THE NAMED ONES, which must land BEFORE the sweep or the sweep would give them plain cloth ----
@@ -324,7 +360,14 @@ namespace UnturnedGodot
         {
             if (bp.Inputs.Count != 1) return false;
             if (!ushort.TryParse(bp.OwnerItemId, out var oid)) return false;
-            var outItem = SDG.Unturned.Assets.find(oid);
+            // ⚠⚠ THE PRODUCT, NOT THE OWNER. This read the owner item and called it the output, which is true of a
+            // retail recolour row (the .dat the recipe came from IS the new colour) and false of anything whose
+            // owner is its INGREDIENT -- every salvage recipe. Owner == input made the two names trivially equal,
+            // so all 800 salvages tested as recolours and the craft menu filed them under "Dyes": 801 dyes, and no
+            // salvage anywhere else, with the browse list reporting "36 shown" out of 837. MEASURED, not guessed --
+            // All excludes nothing but Dyes, so 837 - 36 is how many it thought were dyes.
+            var outItem = bp.Outputs.Count > 0 ? SDG.Unturned.Assets.findByGuid(bp.Outputs[0].Guid)
+                                               : SDG.Unturned.Assets.find(oid);
             var inItem = SDG.Unturned.Assets.findByGuid(bp.Inputs[0].Guid);
             if (outItem == null || inItem == null) return false;
             string a = _colour.Replace(outItem.itemName ?? "", "").Trim();

@@ -162,7 +162,18 @@ namespace UnturnedGodot
                     }
                 }
             }
-            public void Remove(ushort id, int amount) => _inv.removeItemAmount(id, amount);
+            /// <summary>The one copy a caller wants spent FIRST, when it has a specific jar in mind (the
+            /// inventory's Salvage button: the item you right-clicked is the item that goes). Null -- the normal
+            /// case -- is plain first-found, which is what a recipe spending supplies should do. Anything the
+            /// preferred copy does not cover falls through to the ordinary scan, so a 3-cloth recipe aimed at a
+            /// 1-cloth jar still works.</summary>
+            public Item Prefer;
+
+            public void Remove(ushort id, int amount)
+            {
+                if (Prefer != null && Prefer.id == id) amount -= _inv.removeItemInstance(Prefer, amount);
+                if (amount > 0) _inv.removeItemAmount(id, amount);
+            }
             public void Add(ushort id, int amount)
             {
                 while (amount > 0) { int take = System.Math.Min(amount, ushort.MaxValue); _inv.tryAddItem(new Item(id, (ushort)take)); amount -= take; }

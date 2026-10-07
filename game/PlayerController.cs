@@ -4777,7 +4777,7 @@ namespace UnturnedGodot
         }
 
         // the inventory's quick-craft bar queues a craft into the SAME crafting queue (LMB = 1, RMB = 5).
-        public void QuickCraft(BlueprintDef bp, int n) => _craftMenu?.QueueCraft(bp, n);
+        public void QuickCraft(BlueprintDef bp, int n, Item prefer = null) => _craftMenu?.QueueCraft(bp, n, prefer);
 
         // The crafting-station tags the player currently has access to (strawberry's mechanic): for each placed
         // deployable that PROVIDES crafting tags, grant them if the player is within its CraftingRange AND a single
