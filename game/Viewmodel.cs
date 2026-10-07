@@ -1703,7 +1703,9 @@ namespace UnturnedGodot
                 bool bottle = txtName == AttachmentFit.MeshFor(AttachmentFit.WaterBottleSilencerId);
                 if (bottle)
                 {
-                    m.Position = AttachmentFit.BarrelMount(AttachmentFit.WaterBottleSilencerId, _muzzleFlash?.Position ?? Vector3.Zero);
+                    var fit = AttachmentFit.BottleFit(GunName);   // the same seat and size the 3P body, puppets and drops get
+                    m.Mesh = AttachmentFit.BottleMesh(fit.Scale) ?? m.Mesh;
+                    m.Position = fit.Seat;
                     m.MaterialOverride = new StandardMaterial3D
                     {
                         CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = Colors.White,

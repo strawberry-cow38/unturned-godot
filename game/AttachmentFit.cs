@@ -284,11 +284,15 @@ namespace UnturnedGodot
                 var tex = magId > 0 ? TexFor((ushort)magId) : null;
                 parts.Add(("Magazine", mm, magMount.Hook, tex != null ? Godot.Colors.White : new Godot.Color(0.07f, 0.07f, 0.08f), tex));
             }
-            if (barrelId > 0 && MeshFor((ushort)barrelId) is string bt && ContentProvider.ParseObj($"res://content/{bt}") is Godot.Mesh bm)
+            if (barrelId == WaterBottleSilencerId)
             {
-                var btex = TexFor((ushort)barrelId);   // the bottle's label and cap; every real barrel is a flat dark part
-                parts.Add(("Barrel", bm, BarrelMount(barrelId, gv.MuzzleHook), btex != null ? Godot.Colors.White : new Godot.Color(0.05f, 0.05f, 0.055f), btex));
+                // The bottle is sized and seated for THIS gun (BottleFit), off the same answer the 1P viewmodel uses.
+                var fit = BottleFit(gunName);
+                if (BottleMesh(fit.Scale) is Godot.Mesh bottle)
+                    parts.Add(("Barrel", bottle, fit.Seat, Godot.Colors.White, TexFor(WaterBottleSilencerId)));
             }
+            else if (barrelId > 0 && MeshFor((ushort)barrelId) is string bt && ContentProvider.ParseObj($"res://content/{bt}") is Godot.Mesh bm)
+                parts.Add(("Barrel", bm, DefaultBarrelHook, new Godot.Color(0.05f, 0.05f, 0.055f), null));
             // TACTICAL (strawberry 2026-09-13: "wire the tactical laser, flashlight attachments"). The hook is the
             // one Viewmodel._hookLocal already publishes for the slot -- the same table the T menu projects to place
             // its slot icons, so the part lands exactly where the menu says the slot is. There is no factory
@@ -305,12 +309,91 @@ namespace UnturnedGodot
         /// is not wired for barrels yet -- a standing gap, see Viewmodel's Barrel node).</summary>
         public static readonly Godot.Vector3 DefaultBarrelHook = new Godot.Vector3(0f, 0.7307f, -0.0818f);
 
-        /// <summary>Where a barrel part goes on THIS gun. The bottle goes on the TIP OF THE MUZZLE (strawberry: "the bottle
-        /// model on the tip of the muzzle"), which is the per-gun MuzzleHook from guns_visual.tsv -- its mesh is baked with
-        /// the bottle's neck at its origin, so the neck seats on the muzzle on any gun, short pistol or long rifle. A gun
-        /// whose row has no muzzle (the bows read 0,0,0) falls back to the shared hook rather than sitting at the grip.</summary>
-        public static Godot.Vector3 BarrelMount(int barrelId, Godot.Vector3 muzzleHook)
-            => barrelId == WaterBottleSilencerId && muzzleHook != Godot.Vector3.Zero ? muzzleHook : DefaultBarrelHook;
+        /// <summary>The bottle's radius at its widest, after the bake (bottled_water.txt's 0.1273 x 0.42).</summary>
+        public const float BottleBodyRadius = 0.12727f * 0.42f;
+
+        /// <summary>WHERE THE BOTTLE GOES ON THIS GUN AND HOW BIG IT IS (strawberry 2026-10-07: "the bottle model on the tip of
+        /// the muzzle", then "make sure the bottle maintains its size no matter what gun its on, only scaling up when it needs
+        /// to fit a bigger barrel"). Read off the gun's own mesh, once per gun:
+        ///
+        ///   SEAT  -- the tip of the geometry around the bore, so the neck sits ON the barrel. The muzzle hook alone is not
+        ///            that: several hand-authored rows put it ahead of the mesh for the flash (the Eaglefire's is 5 cm past
+        ///            its barrel), and a bottle there floats. Where the bore geometry ends far short of the hook (the fury's
+        ///            barrels are a separate spinning part), the hook is trusted instead.
+        ///   SCALE -- 1 on every gun whose muzzle face fits inside the bottle; bigger only when it does not, by exactly as
+        ///            much as covers it. The face is measured in a band round the bore (+-12 cm across, +-5 cm vertically --
+        ///            wide enough for a side-by-side double, narrow enough that a pistol's frame below the slide is not
+        ///            counted as barrel). Measured 2026-10-07: only the rocket launcher, the sawed-off and the crossbow grow.
+        ///
+        /// A gun with no muzzle in its row (the bows) gets the shared hook at scale 1.</summary>
+        public static (Godot.Vector3 Seat, float Scale) BottleFit(string gunName)
+        {
+            if (string.IsNullOrEmpty(gunName)) return (DefaultBarrelHook, 1f);
+            if (_bottleFit.TryGetValue(gunName, out var cached)) return cached;
+            var gv = Viewmodel.VisualForTest(gunName);
+            var m = gv.MuzzleHook;
+            var fit = (DefaultBarrelHook, 1f);
+            if (m != Godot.Vector3.Zero)
+            {
+                fit = (m, 1f);
+                var mesh = string.IsNullOrEmpty(gv.Gun) ? null : ContentProvider.ParseObj($"res://content/{gv.Gun}") as Godot.ArrayMesh;
+                if (mesh != null)
+                {
+                    var band = new System.Collections.Generic.List<Godot.Vector3>();
+                    for (int s = 0; s < mesh.GetSurfaceCount(); s++)
+                        foreach (var v in mesh.SurfaceGetArrays(s)[(int)Godot.Mesh.ArrayType.Vertex].AsVector3Array())
+                            if (Godot.Mathf.Abs(v.X - m.X) <= 0.12f && Godot.Mathf.Abs(v.Z - m.Z) <= 0.05f && v.Y <= m.Y + 0.01f) band.Add(v);
+                    if (band.Count > 0)
+                    {
+                        float tip = float.MinValue;
+                        foreach (var v in band) tip = Godot.Mathf.Max(tip, v.Y);
+                        float seatY = m.Y - tip > 0.08f ? m.Y : Godot.Mathf.Min(m.Y, tip);
+                        float half = Face(band, m, seatY, 0.015f, 0.005f);
+                        if (half <= 0f) half = Face(band, m, seatY, 0.05f, 0.01f);
+                        // snapped to the step BottleMesh builds at, so the size the fit reports is the size that is drawn
+                        float scale = Godot.Mathf.Snapped(Godot.Mathf.Clamp(half * 1.05f / BottleBodyRadius, 1f, 3f), 0.01f);
+                        fit = (new Godot.Vector3(m.X, seatY, m.Z), scale);
+                    }
+                }
+            }
+            _bottleFit[gunName] = fit;
+            return fit;
+        }
+        static float Face(System.Collections.Generic.List<Godot.Vector3> band, Godot.Vector3 m, float seatY, float behind, float ahead)
+        {
+            float half = 0f;
+            foreach (var v in band)
+                if (v.Y >= seatY - behind && v.Y <= seatY + ahead)
+                    half = Godot.Mathf.Max(half, Godot.Mathf.Max(Godot.Mathf.Abs(v.X - m.X), Godot.Mathf.Abs(v.Z - m.Z)));
+            return half;
+        }
+        static readonly System.Collections.Generic.Dictionary<string, (Godot.Vector3, float)> _bottleFit = new();
+
+        /// <summary>The bottle at a scale, built once per scale. The mount paths take a position and no scale, so a bigger
+        /// bottle is a bigger MESH -- its neck stays at the origin, which is what keeps it seated when it grows.</summary>
+        public static Godot.Mesh BottleMesh(float scale)
+        {
+            float key = Godot.Mathf.Snapped(scale, 0.01f);
+            if (_bottleMeshes.TryGetValue(key, out var hit)) return hit;
+            var src = ContentProvider.ParseObj($"res://content/{MeshFor(WaterBottleSilencerId)}") as Godot.ArrayMesh;
+            if (src == null) return null;
+            Godot.ArrayMesh outMesh = src;
+            if (!Godot.Mathf.IsEqualApprox(key, 1f))
+            {
+                outMesh = new Godot.ArrayMesh();
+                for (int s = 0; s < src.GetSurfaceCount(); s++)
+                {
+                    var arrays = src.SurfaceGetArrays(s);
+                    var verts = arrays[(int)Godot.Mesh.ArrayType.Vertex].AsVector3Array();
+                    for (int i = 0; i < verts.Length; i++) verts[i] *= key;
+                    arrays[(int)Godot.Mesh.ArrayType.Vertex] = verts;
+                    outMesh.AddSurfaceFromArrays(Godot.Mesh.PrimitiveType.Triangles, arrays);
+                }
+            }
+            _bottleMeshes[key] = outMesh;
+            return outMesh;
+        }
+        static readonly System.Collections.Generic.Dictionary<float, Godot.Mesh> _bottleMeshes = new();
 
         public static void MountOn(RiggedCharacter body, string gunName, int sightId, int magId, int barrelId)
             => MountOn(body, gunName, sightId, magId, barrelId, 0);

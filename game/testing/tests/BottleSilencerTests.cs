@@ -47,22 +47,40 @@ namespace UnturnedGodot.Testing
             T.Check($"crafted from a water bottle + tape ({string.Join(", ", ins)})",
                 recipe != null && recipe.Inputs.Count == 2 && ins.Contains("14x1") && ins.Contains("69x1"));
 
-            // ---- 1. ANY WEAPON: it fits every gun in the game, and sits on THAT gun's muzzle tip.
-            int guns = 0, fits = 0, onMuzzle = 0, withMuzzle = 0;
+            // ---- 1. ANY WEAPON, ONE SIZE: it fits every gun, keeps the SAME size on all of them, and only grows on a barrel
+            // too big for it (strawberry: "maintains its size no matter what gun its on, only scaling up when it needs to fit
+            // a bigger barrel"). The 3P/puppet/drop part is checked here; the 1P one is checked against it below.
+            int guns = 0, fits = 0, sameSize = 0, oneScale = 0, grown = 0, partOk = 0;
+            var bad = new List<string>();
+            var baseSize = AttachmentFit.BottleMesh(1f)?.GetAabb().Size ?? Vector3.Zero;
             foreach (var g in Assets.all())
             {
                 if (string.IsNullOrEmpty(g.gunName)) continue;
                 guns++;
                 if (AttachmentFit.Fits(asset, "Barrel", g.gunCaliber, g.gunCaliberName, g)) fits++;
-                var muzzle = Viewmodel.VisualForTest(g.gunName).MuzzleHook;
-                if (muzzle == Vector3.Zero) continue;
-                withMuzzle++;
+                var fit = AttachmentFit.BottleFit(g.gunName);
                 foreach (var part in AttachmentFit.PartsFor(g.gunName, 0, 0, Bottle))
-                    if (part.Slot == "Barrel" && part.Pos == muzzle && part.Tex != null) onMuzzle++;
+                {
+                    if (part.Slot != "Barrel") continue;
+                    var size = part.Mesh.GetAabb().Size;
+                    if (part.Pos == fit.Seat && part.Tex != null && (size - baseSize * fit.Scale).Length() < 1e-3f) partOk++;
+                    else bad.Add($"{g.gunName} x{fit.Scale:0.00}");
+                    if (fit.Scale == 1f) { oneScale++; if ((size - baseSize).Length() < 1e-4f) sameSize++; }
+                    else grown++;
+                }
             }
             T.Check($"fits every gun ({fits}/{guns})", guns > 0 && fits == guns);
-            T.Check($"...and on every gun with a muzzle, the 3P/puppet/drop model sits ON it, in its own colours ({onMuzzle}/{withMuzzle})",
-                withMuzzle > 0 && onMuzzle == withMuzzle);
+            T.Check($"the mounted part is the fitted bottle on every gun, in its own colours ({partOk}/{guns}{(bad.Count > 0 ? ": " + string.Join(", ", bad) : "")})", partOk == guns);
+            T.Check($"ONE size: every gun whose barrel it fits gets exactly the same bottle ({sameSize}/{oneScale} identical, {grown} grown)",
+                oneScale >= 40 && sameSize == oneScale);
+            // ...and the ones that grow are the ones with a barrel too big for it -- and grown just enough to cover it
+            var rocket = AttachmentFit.BottleFit("launcher_rocket"); var sawed = AttachmentFit.BottleFit("sawed_off");
+            T.Check($"a rocket tube and a side-by-side double get a bigger bottle ({rocket.Scale:0.00}x, {sawed.Scale:0.00}x)",
+                rocket.Scale > 1.5f && sawed.Scale > 1.5f);
+            // a hand-authored muzzle hook can sit ahead of the barrel (for the flash); the bottle goes on the BARREL
+            var ef = AttachmentFit.BottleFit("eaglefire"); var efHook = Viewmodel.VisualForTest("eaglefire").MuzzleHook;
+            T.Check($"on the AR-15 it sits on the barrel tip, not floating at the flash hook ({ef.Seat.Y:0.000} vs hook {efHook.Y:0.000})",
+                ef.Seat.Y < efHook.Y - 0.03f && ef.Seat.Y > 0.7f);
             // CONTROL: a real suppressor still mounts at the shared hook, so the muzzle placement is the bottle's, not every barrel's.
             bool supAtHook = false;
             foreach (var part in AttachmentFit.PartsFor("cobra", 0, 0, 7)) if (part.Slot == "Barrel") supAtHook = part.Pos == AttachmentFit.DefaultBarrelHook;
@@ -101,8 +119,9 @@ namespace UnturnedGodot.Testing
             yield return Wait(() => CountOf(sinv.Inventory, Bottle) == 0 && AttachmentFit.InstalledId(served, "Barrel") == Bottle, 5);
             T.Check($"the SERVER spent it from the bag and has it on the gun ({CountOf(sinv.Inventory, Bottle)} left, barrel {AttachmentFit.InstalledId(served, "Barrel")})",
                 CountOf(sinv.Inventory, Bottle) == 0 && AttachmentFit.InstalledId(served, "Barrel") == Bottle);
-            T.Check($"1P: the bottle is drawn, ON the muzzle tip ({vm.DebugBarrelPosition} vs muzzle {vm.DebugMuzzleHook})",
-                vm.DebugBarrelIsBottle && vm.DebugBarrelPosition == vm.DebugMuzzleHook && vm.DebugMuzzleHook != AttachmentFit.DefaultBarrelHook);
+            var heldFit = AttachmentFit.BottleFit(vm.GunName);
+            T.Check($"1P: the bottle is drawn, seated where the 3P one is ({vm.DebugBarrelPosition} vs {heldFit.Seat})",
+                vm.DebugBarrelIsBottle && vm.DebugBarrelPosition == heldFit.Seat && heldFit.Seat != AttachmentFit.DefaultBarrelHook);
             T.Check("...and the gun is SILENCED from the moment it is fitted -- no re-equip (the sound/flash used to apply only on equip)",
                 vm.BarrelSilenced && player.Suppressed);
             yield return Wait(() => loop.Server.CombatState.TryGet(pid, out var c) && c.HeldBarrel == Bottle, 3);
