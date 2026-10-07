@@ -184,6 +184,13 @@ namespace UnturnedGodot
             Salvage(234, (asbestos, 1), (cloth, 2), (scrap, 1));   // Firefighter Bottom
             Salvage(241, (asbestos, 1), (scrap, 2));   // Firefighter Helmet
             foreach (ushort mh in new ushort[] { 309, 1010, 1335, 1519 }) Salvage(mh, (scrap, 2));   // military helmets
+            // ⭐ GAS MASK AND ITS FILTER (master 2026-10-07: "add gas mask to your asbestos + scrap list. as well
+            // as gas mask filters"). Named rather than derived, because neither is fireproof -- the asbestos is in
+            // the FILTER MEDIUM, which is a fact about what the thing is made of and not one any field records.
+            // ⚠ A Gasmask is EItemType.MASK and a Filter is EItemType.FILTER, so neither is in the clothing sweep
+            // at all -- without these two lines they would stay unsalvageable whatever the material rules said.
+            Salvage(1270, (asbestos, 1), (scrap, 1));   // Gasmask
+            Salvage(1271, (asbestos, 1), (scrap, 1));   // Filter
 
             // ---- KITCHENWARE BREAKS DOWN INTO WHAT IT IS MADE OF (master 2026-10-07) -----------------------
             //

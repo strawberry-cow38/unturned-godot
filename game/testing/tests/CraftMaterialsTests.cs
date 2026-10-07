@@ -266,6 +266,12 @@ namespace UnturnedGodot.Testing
             var plainShirt = Assets.find(3);   // Orange Hoodie
             T.Check($"control: a plain hoodie gives cloth but NOT scrap", Yields(3, 66, 1) && !Yields(3, 67, 1));
 
+            // ---- GAS MASK + FILTER (master 2026-10-07) ----------------------------------------------------
+            T.Check("a gasmask salvages to asbestos", Yields(1270, 9340, 1));
+            T.Check("...and scrap", Yields(1270, 67, 1));
+            T.Check("a filter salvages to asbestos", Yields(1271, 9340, 1));
+            T.Check("...and scrap", Yields(1271, 67, 1));
+
             // ---- THE VEST SLOT IS A GRAB BAG (master 2026-10-07) ------------------------------------------
             // "did u make all vests scrap? bc theres sweatervests and ponchos lol" -- and worse, the slot also
             // holds a Rose and a Parrot. Pinned with real examples so the rule cannot quietly widen again.
