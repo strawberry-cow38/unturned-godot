@@ -137,13 +137,13 @@ namespace UnturnedGodot.Testing
                 var crown = head.OrderByDescending(v => v.Y).First();
                 float eyeRoof = SedanMk2Tests.RayY(frame, car, eye, Vector3.Up);
                 float crownRoof = SedanMk2Tests.RayY(frame, car, new Vector3(crown.X, 1.65f, crown.Z), Vector3.Up);
-                float minHeadGap = head.Min(v => SedanMk2Tests.RayY(frame, car, new Vector3(v.X, 1.65f, v.Z), Vector3.Up) - v.Y);
+                float minHeadGap = head.Min(v => EnclosureCeiling(car, v) - v.Y);
                 T.Check($"settled camera tracks the source seated eye, below actual roof ({eye}, roof={eyeRoof:F5})",
-                    Mathf.Abs(eye.X - car.SeatBodyLocal(0).X) < .08f && Mathf.Abs(eye.Y - 1.29576505f) < .02f
-                    && eyeRoof > eye.Y && eyeRoof > 1.80f && eyeRoof < 1.84f
+                    Mathf.Abs(eye.X - car.SeatBodyLocal(0).X) < .08f && Mathf.Abs(eye.Y - 1.41576505f) < .02f
+                    && eyeRoof > eye.Y && eyeRoof > 2.00f && eyeRoof < 2.04f
                     && eye.Z > car.SteerPivotLocal.Z + .1f && eye.Z < car.SeatLocal(0).Z + .5f);
-                T.Check($"actual CPU-skinned seated crown clears frame over the whole head footprint (crown={crown.Y:F5}, minGap={minHeadGap:F5})",
-                    Mathf.Abs(crown.Y - 1.6248f) < .02f && minHeadGap > .15f && crownRoof > crown.Y);
+                T.Check($"actual CPU-skinned seated crown clears frame AND glass over the whole head footprint (crown={crown.Y:F5}, minGap={minHeadGap:F5})",
+                    Mathf.Abs(crown.Y - 1.7448f) < .02f && minHeadGap > .15f && Mathf.Abs(minHeadGap - .264f) < .02f && crownRoof > crown.Y);
 
                 // The player's capsule is disabled while seated. Test the on-foot envelope independently:
                 // actual triangle roof/floor + the authoritative stance heights, NOT that seated shape.
@@ -162,10 +162,12 @@ namespace UnturnedGodot.Testing
                 }
                 float clearance = crownRoof - floorY;
                 T.Check("independent on-foot standing capsule cannot fit under actual roof; crouch has overhead room across its radius",
-                    Mathf.Abs(floorY - (-.08724f)) < .0002f && Mathf.IsEqualApprox(standingHeight, 2f)
+                    Mathf.Abs(floorY - .03276f) < .0002f && Mathf.IsEqualApprox(standingHeight, 2f)
                     && Mathf.IsEqualApprox(crouchingHeight, 1.2f) && clearance < standingHeight
                     && minCeiling - floorY > crouchingHeight);
                 var skull = rig.Skeleton.GetBoneGlobalPose(rig.Skeleton.FindBone("Skull")).Origin;
+                T.Check("V15 retains the source seated Skull height; only the body anchor rises",
+                    Mathf.Abs(skull.Y - 1.00716505f) < .02f);
                 GD.Print($"[mk2-seated-clearance] ticksAfterEnter=25 seatBody={car.SeatBodyLocal(0)} skull={skull} eye={eye} eyeRoof={eyeRoof:F7} eyeGap={eyeRoof-eye.Y:F7} crown={crown} crownRoof={crownRoof:F7} minHeadGap={minHeadGap:F7} headVertices={head.Length} floor={floorY:F7} floorToCeiling={clearance:F7} standingTop={floorY+standingHeight:F7} standHeight={standingHeight:F3} crouchHeight={crouchingHeight:F3} radius={onFootRadius:F3} minFootprintCeiling={minCeiling:F7} source=installedTriangles+animatedSkin (not disabled seated capsule)");
             }
             // Check the actual passenger poses too; rear backrest centers are not head positions.
@@ -175,10 +177,14 @@ namespace UnturnedGodot.Testing
                 T.Check($"clearance audit: switch to real seat {seat}", player.TrySwitchSeat(seat));
                 yield return Ticks(25);
                 var posedHead = SeatedHeadVertices(car, rig).ToArray();
+                T.Check($"seat {seat}: installed source skeleton produces a nonempty seated head", posedHead.Length > 0);
+                if (posedHead.Length == 0) continue;
                 float minGap = posedHead.Min(v => EnclosureCeiling(car, v) - v.Y);
                 float seatedCrown = posedHead.Max(v => v.Y);
                 T.Check($"seat {seat}: actual settled bare head clears roof AND glass (minGap={minGap:F5})",
-                    minGap > .10f && Mathf.Abs(seatedCrown - 1.6248f) < .02f);
+                    minGap > .10f
+                    && Mathf.Abs(minGap - (seat < 2 ? .264f : .246f)) < .02f
+                    && Mathf.Abs(seatedCrown - 1.7448f) < .02f);
                 GD.Print($"[mk2-passenger-clearance] seat={seat} anchor={car.SeatBodyLocal(seat)} crownY={seatedCrown:F6} minimumRoofOrGlassGap={minGap:F6}");
             }
             // Actual physics overlap, independently of the disabled seated player capsule.
@@ -190,6 +196,8 @@ namespace UnturnedGodot.Testing
                 float y = SedanMk2Tests.RayY(mi, car, new Vector3(0f, .3f, .2f), Vector3.Down);
                 if (!float.IsNaN(y)) aisleFloor = Mathf.Max(aisleFloor, y);
             }
+            T.Check("V15 raised center tunnel is the actual .18 m aisle floor",
+                Mathf.Abs(aisleFloor - .18f) < .0002f);
             foreach (var stance in new[] { EPlayerStance.STAND, EPlayerStance.CROUCH })
             {
                 float h = PlayerMovementDef.HeightForStance(stance);

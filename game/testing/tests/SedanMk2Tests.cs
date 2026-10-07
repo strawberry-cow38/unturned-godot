@@ -94,11 +94,13 @@ namespace UnturnedGodot.Testing
         {
             var installed = ExactMesh(owner, "sedan_mk2_stock_seats.txt");
             if (installed == null) return;
+            PoseIdentity(owner.Name + ": raised clean seats stay in baked body space", InOwner(installed, owner));
             var original = ContentProvider.ParseObj("res://content/sedan_seats.txt").GetFaces();
             var expected = original.Select(v => {
                 bool rear = v.Z > .25f;
-                var moved = v * 1.06f + new Vector3(0f, .021f, rear ? .14f : .30f);
+                var moved = v * 1.06f + new Vector3(0f, .021f + .12f, rear ? .14f : .30f);
                 if (rear) moved.X *= .82f;
+                if (rear && moved.Y > 1.2f && moved.Z > 1.5f) moved.Z -= .16f;
                 return moved;
             }).ToArray();
             var actual = installed.Mesh.GetFaces();
@@ -117,8 +119,8 @@ namespace UnturnedGodot.Testing
                 unmatched.RemoveAt(match);
             }
             GD.Print($"[mk2-seat-shape] {expected.Length / 3} stock triangles, max nearest native rounding error={expected.Max(point => actual.Min(other => point.DistanceTo(other))):F7} m");
-            T.Check(owner.Name + ": entire clean stock seat shape retained, moved and rear-narrowed without CSG notches",
-                same && unmatched.Count == 0);
+            T.Check(owner.Name + ": all 96 source seat triangles retained, raised, rear-narrowed and upper backrest tapered without CSG notches",
+                same && unmatched.Count == 0 && actual.Length == 96 * 3);
             var rearFaces = actual.Where(v => v.Z > .5f).ToArray();
             T.Check(owner.Name + ": rear bench clears the full inboard housing backs",
                 rearFaces.Length > 0 && rearFaces.All(v => Mathf.Abs(v.X) < .795f));
@@ -258,7 +260,7 @@ namespace UnturnedGodot.Testing
                     if (body == null) continue;
                     var installedFaces = body.Mesh.GetFaces().Select(v => InOwner(body, owner) * v).ToArray();
                     float top = installedFaces.Max(v => v.Y);
-                    T.Check(owner.Name + ": V14 installed greenhouse top is 1.9107 m", Mathf.Abs(top - 1.91068692f) < .0002f);
+                    T.Check(owner.Name + ": V15 installed greenhouse top is 2.1107 m", Mathf.Abs(top - 2.11068692f) < .0002f);
                     var floor = ExactMesh(owner, "sedan_mk2_cabin_floor.txt");
                     if (floor != null)
                     {
@@ -267,15 +269,19 @@ namespace UnturnedGodot.Testing
                             float floorY = RayY(floor, owner, footprint, Vector3.Down);
                             float roofY = RayY(body, owner, new Vector3(footprint.X, 1.65f, footprint.Z), Vector3.Up);
                             float clearance = roofY - floorY;
-                            float expectedRoof = footprint.X == 0f ? 1.8248f : 1.8176f;
+                            float expectedRoof = footprint.X == 0f ? 2.0248f : 2.0176f;
                             T.Check($"{owner.Name}: actual roof ray at X={footprint.X} clears seated crown but not standing height",
-                                Mathf.Abs(floorY - (-.08724f)) < .0002f && roofY > 1.6248f
+                                Mathf.Abs(floorY - .03276f) < .0002f && roofY > 1.7448f
                                 && Mathf.Abs(roofY - expectedRoof) < .001f
                                 && clearance < PlayerMovementDef.HeightForStance(EPlayerStance.STAND)
                                 && clearance > PlayerMovementDef.HeightForStance(EPlayerStance.CROUCH));
-                            GD.Print($"[mk2-greenhouse] {owner.Name} X={footprint.X:F3} top={top:F7} roof={roofY:F7} floor={floorY:F7} floorToCeiling={clearance:F7} seatedCrownReference=1.6248 stand={PlayerMovementDef.HeightForStance(EPlayerStance.STAND):F3} crouch={PlayerMovementDef.HeightForStance(EPlayerStance.CROUCH):F3}");
+                            GD.Print($"[mk2-greenhouse] {owner.Name} X={footprint.X:F3} top={top:F7} roof={roofY:F7} floor={floorY:F7} floorToCeiling={clearance:F7} seatedCrownReference=1.7448 stand={PlayerMovementDef.HeightForStance(EPlayerStance.STAND):F3} crouch={PlayerMovementDef.HeightForStance(EPlayerStance.CROUCH):F3}");
                         }
                     }
+                    var tunnel = ExactMesh(owner, "sedan_mk2_floor_tunnel.txt");
+                    if (tunnel != null)
+                        T.Check(owner.Name + ": raised tunnel aisle top is .18 m",
+                            Mathf.Abs(RayY(tunnel, owner, new Vector3(0f, .3f, .2f), Vector3.Down) - .18f) < .0002f);
                     var paint = body.MaterialOverride as ShaderMaterial;
                     T.Check(owner.Name + ": body palette texture loaded", paint != null
                         && paint.GetShaderParameter("palette").AsGodotObject() is Texture2D);
@@ -308,22 +314,23 @@ namespace UnturnedGodot.Testing
                         if (pane != null) PoseIdentity(label + ": closed glass stays in body space", InOwner(pane, owner));
                     }
                 }
-                Vector3[] seats = { new(-0.53f, -0.06274f, -0.3625f), new(0.53f, -0.06274f, -0.3625f),
-                    new(-0.4346f, -0.06274f, 0.95832f), new(0.4346f, -0.06274f, 0.95832f) };
-                T.Check("explicit four seats", car.SeatCount == 4);
+                Vector3[] seats = { new(-0.53f, 0.05726f, -0.3625f), new(0.53f, 0.05726f, -0.3625f),
+                    new(-0.4346f, 0.05726f, 0.95832f), new(0.4346f, 0.05726f, 0.95832f) };
+                T.Check("explicit four seats retain the original body rise", car.SeatCount == 4
+                    && Mathf.Abs((float)Field(newSpec, "SeatBodyRise") - .04134f) < .00001f);
                 for (int i = 0; i < 4; i++) T.Check($"seat {i}: total authored seat shift and rear narrowing", Near(car.SeatLocal(i), seats[i]));
-                T.Check("puppet and real visible seat origins agree at the total +.30 body bias",
-                    Near(car.SeatOffset, new Vector3(-.53f, -.0214f, -.29996f)) && Near(car.SeatOffset, puppet.SeatOffset));
+                T.Check("puppet and real visible seat origins agree at the +.12 Y / +.30 Z body bias",
+                    Near(car.SeatOffset, new Vector3(-.53f, .0986f, -.29996f)) && Near(car.SeatOffset, puppet.SeatOffset));
                 for (int i = 0; i < 4; i++)
                     T.Check($"seat {i}: visible body follows the moved seat without an extra row shift",
                         Near(car.SeatBodyLocal(i), seats[i] + new Vector3(0f, .04134f, .06254f)));
                 T.Check("fallback driver eye derives from the explicit moved driver seat",
                     Near(car.DriverEyeLocal, seats[0] + new Vector3(0f, 1.358505f, .06254f))
-                    && Mathf.Abs(car.DriverEyeLocal.Y - 1.29576505f) < .00001f);
+                    && Mathf.Abs(car.DriverEyeLocal.Y - 1.41576505f) < .00001f);
                 T.Check("eye over driver seat, behind repositioned wheel", Near(car.DriverEyeLocal, puppet.DriverEyeLocal)
                     && Mathf.Abs(car.DriverEyeLocal.X - seats[0].X) < .001f
                     && car.DriverEyeLocal.Z > car.SteerPivotLocal.Z && Mathf.Abs(car.DriverEyeLocal.Z - seats[0].Z) < .1f);
-                T.Check("steering wheel uses baked shift once", Near(car.SteerPivotLocal, new Vector3(-.49184f, .96864f, -1.00096f))
+                T.Check("steering wheel uses baked shift once", Near(car.SteerPivotLocal, new Vector3(-.49184f, 1.08864f, -1.00096f))
                     && puppet.SteerPivot != null && Near(puppet.SteerPivot.Position, car.SteerPivotLocal));
                 var wheels = car.GetChildren().OfType<VehicleWheel3D>().ToArray();
                 T.Check("four physical and four puppet wheels", wheels.Length == 4 && puppet.Wheels.Length == 4);
@@ -340,17 +347,17 @@ namespace UnturnedGodot.Testing
                 T.Check("main hull scales about ground", belly != null && Near(belly.Position, new Vector3(0f, .60188f, -.06678f)));
                 var roof = car.GetNodeOrNull<CollisionShape3D>("RoofBox");
                 T.Check("roof and cabin registration", roof?.Shape is BoxShape3D box
-                    && Near(box.Size, new Vector3(2.65f, .11f, 2.4592f)) && Near(roof.Position, new Vector3(0f, 1.8556869f, .2067f)));
+                    && Near(box.Size, new Vector3(2.65f, .11f, 2.4592f)) && Near(roof.Position, new Vector3(0f, 2.0556869f, .2067f)));
                 if (roof?.Shape is BoxShape3D fallbackRoof)
                 {
                     float bottom = roof.Position.Y - fallbackRoof.Size.Y / 2f;
                     float top = roof.Position.Y + fallbackRoof.Size.Y / 2f;
-                    float standingTop = -.08724f + PlayerMovementDef.HeightForStance(EPlayerStance.STAND);
+                    float standingTop = .03276f + PlayerMovementDef.HeightForStance(EPlayerStance.STAND);
                     T.Check("fallback slab clears seated crown and intersects independent standing envelope",
-                        Mathf.Abs(bottom - 1.8006869f) < .0001f && Mathf.Abs(top - 1.9106869f) < .0001f
-                        && bottom > 1.6248f && standingTop > bottom
-                        && -.08724f < top
-                        && -.08724f + PlayerMovementDef.HeightForStance(EPlayerStance.CROUCH) < bottom);
+                        Mathf.Abs(bottom - 2.0006869f) < .0001f && Mathf.Abs(top - 2.1106869f) < .0001f
+                        && bottom > 1.7448f && standingTop > bottom
+                        && .03276f < top
+                        && .03276f + PlayerMovementDef.HeightForStance(EPlayerStance.CROUCH) < bottom);
                 }
                 Occupancy(rig, "real rig");
                 rig.PulseSeat(0); rig.Tick(VehiclePanelRig.SwingSeconds);

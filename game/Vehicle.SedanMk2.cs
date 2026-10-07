@@ -12,10 +12,10 @@ namespace UnturnedGodot
         public static Vehicle BuildSedanMk2(int variant = 0) => Build(SedanMk2Spec, variant, "sedan_mk2");
 
         static Vector3 Mk2BodyPoint(Vector3 old) => old * 1.06f + new Vector3(0f, 0.021f, 0f);
-        // V14 greenhouse-only fallback slab; the lower-body hull and handling stay V13.
+        // V15 fallback slab: V13 roof lowered .20 m; lower-body hull and handling stay V13.
         // Normal runtime replaces fitted boxes with frame hulls / HitMesh. Also preserves HasCabin.
         static (Vector3 size, Vector3 center) SedanMk2RoofBox =>
-            (new Vector3(2.65f, .11f, 2.4592f), new Vector3(0f, 1.8556869f, .2067f));
+            (new Vector3(2.65f, .11f, 2.4592f), new Vector3(0f, 2.0556869f, .2067f));
 
         static Spec CreateSedanMk2Spec()
         {
@@ -33,19 +33,21 @@ namespace UnturnedGodot
             s.TailPos = Array.ConvertAll(_sedan.TailPos, Mk2BodyPoint);
             // Original duct outlet, not the stock fallback (which sits above the actual pipe).
             s.ExhaustPos = Mk2BodyPoint(new Vector3(0.7937f, -0.1747f, 2.8269f));
-            s.SteerPivot = Mk2BodyPoint(_sedan.SteerPivot) + new Vector3(0f, 0f, 0.50f);
+            // Cabin floor, tunnel, clean seats, wheel and column rise .12 m in the V15 art.
+            // Dashboard, lower exterior and wheel/ride-height mounts do not move.
+            s.SteerPivot = Mk2BodyPoint(_sedan.SteerPivot) + new Vector3(0f, .12f, 0.50f);
             var oldSeats = SeatTable["sedan"];
             s.Seats = new Vector3[oldSeats.Length];
             for (int i = 0; i < oldSeats.Length; i++)
             {
                 var seat = Mk2BodyPoint(oldSeats[i]);
                 if (i >= 2) seat.X *= 0.82f; // Narrowed clean rear bench clears the full housing backs.
-                s.Seats[i] = seat + new Vector3(0f, 0f, i < 2 ? 0.30f : 0.14f);
+                s.Seats[i] = seat + new Vector3(0f, .12f, i < 2 ? 0.30f : 0.14f);
             }
             // Preserve sedan's tuned visible-body rise (not the generic 8 cm); origins remain prefab based.
             s.SeatBodyRise = (SeatOf("Sedan").Y - oldSeats[0].Y) * 1.06f;
-            // Settled Idle_Drive eye: SeatBodyY (-.0214) + SkullY (1.00716505) + .31
-            // = 1.29576505. Express the fallback relative to the explicit driver seat.
+            // Settled Idle_Drive eye: SeatBodyY (.0986) + SkullY (1.00716505) + .31
+            // = 1.41576505. Express the fallback relative to the explicit driver seat.
             // Do not preserve the default eye Z=+0.4 (over a metre behind the original driver origin).
             s.DriverEye = s.Seats[0] + new Vector3(0f, 1.358505f, 0.059f * 1.06f);
             // Same mount Y as the original sedan: minus the .25 m rest drop gives art centre Y=0.

@@ -1,4 +1,8 @@
-# Sedan Mk II — V14 lower cabin, separate new vehicle
+# Sedan Mk II — V15 proportion preview (approval pending)
+
+**Local preview only:** this revision is on `Preview-Sedan-V15`, not published.
+`Staging-Astra` remains at the currently published V14 commit `b572d1e9`.
+Wait for visual approval before moving this model to staging. Main/server are unchanged.
 
 ## Player access
 
@@ -9,12 +13,12 @@ No existing natural sedan spawns were replaced. This is an additional vehicle.
 
 ## Model and runtime
 
-28 new prefixed assets are byte-identical copies of the V14 refinement exports. The
+28 new prefixed assets are byte-identical copies of the V15 preview exports. The
 stock 4x2 palette is retained, including paintable index 0 and fixed charcoal index 5.
 The fixed frame, four doors, hood/trunk, moving door panes, static fittings and
 four interior pieces are installed separately. Lid undersides are body-painted.
 The complete internal wheel housings are already in the approved frame; no diagnostic
-or duplicate housing meshes are installed. Total: 2,816 triangles excluding tyres.
+or duplicate housing meshes are installed. Total: 2,798 triangles excluding tyres.
 
 An opt-in `VehiclePanelRig` is shared by real cars and replica puppets. It uses body-space
 pivots, follows existing glass/collider nodes, shares the body paint and adds no moving
@@ -46,49 +50,54 @@ The level floor, low tunnel, dashboard and steering support remain. Lower door
 metal is about 0.18 m thick (previously about 0.086 m); hood/trunk panels are
 about 0.12 m thick (previously about 0.064 m). All lid surfaces remain body paint.
 Free-edge underside relief keeps the thicker lids clear during opening, without
-changing the closed exterior top edge. Seat geometry is the clean original shape,
-not boolean-notched: front seats move another 0.12 m back, rear another 0.08 m.
+changing the closed exterior top edge. Seat geometry is the source topology without
+boolean notches: front seats move another 0.12 m back, rear another 0.08 m.
 The rear bench is narrowed to 82% width to clear the solid inboard housing backs.
 
-Four explicit seat origins follow the approved shifted seat model. The visible body
+Four explicit seat origins follow the preview shifted seat model. The visible body
 keeps the original sedan's tuned displacement coherently scaled and shifted. Real
 first-person camera follows the seated skull as the existing game does; DriverEyeLocal
 is a fallback, not an assertion that overrides the animated seated head.
 
-## V14 cabin-height correction
+## V15 proportion correction
 
-Only the greenhouse is shortened. The roof crown moves down **0.40 m**, from
-body Y=2.31068692 to 1.91068692. Geometry at or below body Y=1.24 is unchanged;
-the window/pillar band compresses coherently and the roof-cap crown/slope geometry
-is translated intact. All six glazing panes receive the same deformation. There
-is no whole-car rescale: V13 seats, wheel mounts, width, axles, lower panels,
-hood/trunk, floor, tunnel, dashboard and fittings are retained. Twenty companion
-OBJ files (including diagnostics) remain byte-identical to V13. Coplanar redundant
-subdivision is simplified; the additional triangles are not decorative detail.
+The V14 0.40 m roof drop was visually rejected as too squashed. V15 derives fresh
+from V13 and restores half that height: the crown is now **0.20 m below V13**, at
+body Y=2.11068692. The exterior below body Y=1.24 remains unchanged; the window/pillar
+band is shortened more gently, and the cap's crown/slope planes are translated intact.
+All six glazing panes use the same deformation. Footprint, axles, tyre size, wheel
+mounts, lower exterior, original fittings, hinge pivots and corrected ride height stay put.
 
-The fallback RoofBox is updated to the shorter roof (size 2.65 x 0.11 x 2.4592,
-center Y=1.8556869). Normal runtime disables the fitted boxes after mesh-derived
-convex hulls are installed; frame/roof hit geometry is also updated, not merely
-this fallback box. The driver-eye fallback now follows the actual fully settled
-seated pose, body Y~1.295765, instead of retaining an inappropriate standing-height
-reference. The normal camera still follows the real animated Skull bone.
+To avoid returning to the old standing-room cabin, the floor top, tunnel and seats
+rise **0.12 m**. The floor bottom stays at Y=-0.13, making a single supported slab,
+not a floating carpet. Its top is Y=0.03276; source seat bottoms meet it within export
+rounding. Fore/aft seat placement and rear width remain as V13. Rear backrest tops
+are tapered only on their overly thick rear face (0.16 m forward), leaving their front
+surface and 96-triangle source topology intact; this clears the rear glazing.
 
-Actual installed roof/floor rays give about 1.90–1.91 m vertical space over the
-front/center floor, below the authoritative 2.0 m standing capsule height.
-A native physics overlap in the center aisle hits this car for a standing capsule
-and remains clear for the 1.2 m crouched capsule. This check is independent of the
-real seated player's disabled collision shape. Negative control: restoring only
-the V13 frame (while retaining V14 roof metadata) makes both height tests fail,
-and the native standing-capsule overlap becomes clear again. This proves the test
-checks actual mesh collision rather than merely the new fallback-box numbers.
+The steering wheel rises with the seated pose. The support is rebuilt between its
+original embedded dashboard base and the raised wheel hub; the dashboard itself
+is not moved into the windscreen. Positive support/dashboard overlap is about
+0.00020974 m3, support/wheel overlap about 0.00017706 m3. Seat/glass intersections
+are zero; minimum rear-seat/glass clearance is 0.0595 m. The floor overlaps the
+fixed frame (about 0.1004611 m3), so its underside is connected rather than suspended.
 
-After the drive/sit animation blend completes, CPU-skinned actual bare heads clear
-both frame and glass in all four seats: minimum clearance ~0.184 m front and
-~0.166 m rear. The rear head locations are measured from the seated rig, not guessed
-from backrest centers (those are behind the actual head). This does not guarantee
-all headwear, standing-to-seat transition frames, or arbitrary animation overlays.
-The showcase now waits 25 physics ticks after entering before capturing the driver;
-the previous five-tick capture was still in the standing-to-driving blend.
+The fallback RoofBox size stays 2.65 x 0.11 x 2.4592, center Y=2.0556869. Actual frame
+hulls/roof hit geometry also follow V15. Seated body-anchor Y is 0.0986; driver-eye
+fallback follows the final seated pose at Y~1.415765. The normal camera still follows
+the real animated Skull bone. The driving body/seat vertical displacement and steering
+pivot are updated coherently for real cars and replica puppets.
+
+Actual roof/floor checks leave about 1.98–1.99 m of room over the flat floor, less than
+the authoritative 2.0 m standing capsule. Native physics at the center aisle/tunnel
+blocks the standing capsule and clears the 1.2 m crouching capsule. This query is
+independent of the disabled seated player's collider.
+
+After the driving/sitting blend, actual CPU-skinned bare heads clear BOTH roof and
+glass in all four seats: minimum ~0.264 m front, ~0.246 m rear. Head locations are
+measured from the actual rig, not backrest-center proxies. This is not a guarantee
+for every headwear piece, initial boarding transition, or arbitrary animation overlay.
+The showcase waits 25 physics ticks after boarding before capturing the seated driver.
 
 ## Networking boundary
 
@@ -101,18 +110,20 @@ rebuild sets every frame, and closed panels do not rewrite node transforms.
 compartment interactions, synchronized lid targets, or new vehicle storage/mechanics
 protocols. Existing multiplayer glass-break propagation is likewise not expanded.
 Server and clients still need this new vehicle's build/assets to spawn/display it.
-No main merge or server deployment is performed by the staging commit.
+No main merge or server deployment is performed by this preview.
 
 ## Verification
 
 - Build succeeded (existing warnings only).
-- L0: 2,364 passed / 0 failed.
-- Focused vehicle regression L1: 12 tests, 567 checks, all passed. Includes 281 new
-  model/rig checks and 37 real-runtime checks for native tyre contact/clearance,
+- L0: all six engine-free suites, 2,364 passed / 0 failed. Rerun with
+  `--no-build --no-restore` because this preview changes no core/test project
+  sources and concurrent builds exceeded the runner timeout on the shared box.
+- Focused vehicle regression L1: 12 tests, 578 checks, all passed. Includes 287 new
+  model/rig checks and 42 real-runtime checks for native tyre contact/clearance,
   driver boarding/camera, safe exit, selective doors, UI closure, storage identity,
   teardown, driving and held braking.
-- V14 independent authoring audits: four doors sampled every 0.1 degrees through
-  the full 55-degree swing; hood/trunk every 0.25 degrees from 0 to 50. No
+- V15 independent authoring audit: all four doors and both lids sampled every
+  0.25 degrees through their complete 55/50-degree swings (1,286 poses). No
   fixed-frame/liner/seat penetration in those sampled poses. These are discrete geometry audits, not
   a proof of arbitrary runtime collision behaviour.
 - Existing access, door exits, glass, lamps, hit meshes, paint, puppet glass/solidity,
@@ -132,43 +143,43 @@ No main merge or server deployment is performed by the staging commit.
 
 `python3 tools/install_sedan_mk2.py --check` verifies installed files and original
 asset hashes through `docs/SEDAN_MK2_ASSETS.json`, even without the private art workspace.
-Reinstallation requires the V14 refinement workspace via `--art` and frozen palette via
+Reinstallation requires the V15 preview workspace via `--art` and frozen palette via
 `--frozen`; the installer is a byte copier, not a geometry-authoring recipe.
 
-## SHA-256: approved source geometry and installed bytes
+## SHA-256: preview source geometry and installed bytes
 
 Every row below is byte-identical source -> installed asset. Manifest SHA-256:
-`b452b2abf752e618a015ccf4f7ba3f8993446e3a8dc8641c646df64c18874bfc`.
+`f5ea668bf35d513352e037b220e1364755a8093c655f4cfd199ef7a523254117`.
 
 | Source file | Installed file | SHA-256 |
 |---|---|---|
-| `sedan_frame.obj` | `sedan_mk2_frame.txt` | `65af06bc22f8b19fc67f9797dd1d22ffef88009d103d85aead133b68864cf733` |
-| `sedan_front_door_left.obj` | `sedan_mk2_front_door_left.txt` | `c9402a8a818aebb461f66700acd298cc60ab3e7392df1c9614d0160b11cbf37a` |
-| `sedan_rear_door_left.obj` | `sedan_mk2_rear_door_left.txt` | `9ff7d919879c555f4c764d73b6df44713843735cab8d2753b8e3578eaf881bc3` |
-| `sedan_front_door_right.obj` | `sedan_mk2_front_door_right.txt` | `024e2db1f00683c7a2d27ea3630382c63e591d15db8a16d20ff6485da71813ec` |
-| `sedan_rear_door_right.obj` | `sedan_mk2_rear_door_right.txt` | `d0d97e2d93758ad6cc58cf98dfaeb0f051aa0bd0c714a48815237bef00ec5a59` |
-| `sedan_hood.obj` | `sedan_mk2_hood.txt` | `5554595b874aa754d99e48aedec07ecca1aca7c59b668c7b61098940fe5a0adf` |
-| `sedan_trunk_lid.obj` | `sedan_mk2_trunk_lid.txt` | `46f8652cbed8233a1ce99db83c8d93b94b429356c9e2f870c3f492c76b412d12` |
-| `sedan_glass_l_front.obj` | `sedan_mk2_glass_l_front.txt` | `87b737aca4d53436118fe8e599b3e725218701623b0f8b7a51d9040b76a5ea4b` |
-| `sedan_glass_l_rear.obj` | `sedan_mk2_glass_l_rear.txt` | `af0aa8497e54e6d023c2a7110cbcfb7c14f05cd1eea3b4c10a9d176a9bc9a23a` |
-| `sedan_glass_r_front.obj` | `sedan_mk2_glass_r_front.txt` | `9acb14687ddd1ff270397c3d2f1d304c4c22a953b05a2c260eabb42b3928e4ab` |
-| `sedan_glass_r_rear.obj` | `sedan_mk2_glass_r_rear.txt` | `b91f02595ac84e649d5d75836092098b0fb1a411f4a2a8a3b4e1dc35a19c865d` |
-| `sedan_glass_rear.obj` | `sedan_mk2_glass_rear.txt` | `4c374c404d1fceb2aac8cebfcdd4c77fdad61feb80a140ac6dd360f2e238f7db` |
-| `sedan_glass_windshield.obj` | `sedan_mk2_glass_windshield.txt` | `e3bf87ee902c80d900bc931d1545b1ab76fabbce52f5078622c52cfd75ba8f2f` |
+| `sedan_frame.obj` | `sedan_mk2_frame.txt` | `c7cca9e496265be86fd83d09feb4742a1277df0eac144d86180b9ba24bc95618` |
+| `sedan_front_door_left.obj` | `sedan_mk2_front_door_left.txt` | `d09dc8b87e2e5d6797cdb8037aeac9b50f5bd40b8e08b759d85f9aba723f28da` |
+| `sedan_rear_door_left.obj` | `sedan_mk2_rear_door_left.txt` | `a0a57f84c309cd3ac04a945be9ce2512229d6efa0845cb5a2021d5a9325d7f31` |
+| `sedan_front_door_right.obj` | `sedan_mk2_front_door_right.txt` | `4074a20132f548a66418813c649a7598e4ddd9491f6af6fa735fd11effd101a6` |
+| `sedan_rear_door_right.obj` | `sedan_mk2_rear_door_right.txt` | `7ff648bac36444b60e65ea685e5b8b6ee2260a53bb4ffcc544b721dcc42079fe` |
+| `sedan_hood.obj` | `sedan_mk2_hood.txt` | `2e513a74b847f0706ac0abbf8f9d67621166854eae613cbf621d7cc6ff813eea` |
+| `sedan_trunk_lid.obj` | `sedan_mk2_trunk_lid.txt` | `7f38ebfda52c8f2e349504fd0fcd9654677bee37f2ae67d60c09a12ad0d377e3` |
+| `sedan_glass_l_front.obj` | `sedan_mk2_glass_l_front.txt` | `223d1da2fe2dc98c8c792e4054e17ae74097665d748d12ba91814a092598f26a` |
+| `sedan_glass_l_rear.obj` | `sedan_mk2_glass_l_rear.txt` | `a0fe986d67e2da6f3af40aa1aefa26d4976d635b3dc9643faf27287964767169` |
+| `sedan_glass_r_front.obj` | `sedan_mk2_glass_r_front.txt` | `0a9c9a46469b5e543485f07c8bb202f68f3f7c09e8acfa314f414d293342192e` |
+| `sedan_glass_r_rear.obj` | `sedan_mk2_glass_r_rear.txt` | `46b0f498b42bd1d6abf95f06c5137e6eb97e2d10d4c7d3a2993cd3742accdf21` |
+| `sedan_glass_rear.obj` | `sedan_mk2_glass_rear.txt` | `bcc06fafe2ba97dcf1f7a68d7dab34b4b747505b74751816e6da6fdd4f8ce002` |
+| `sedan_glass_windshield.obj` | `sedan_mk2_glass_windshield.txt` | `a9f8346c623802465963cb0ea3b96fa2f5241a6d86c02e38e7245e1be2907671` |
 | `sedan_stock_front_bumper.obj` | `sedan_mk2_stock_front_bumper.txt` | `30ced7ffce1dcf3dd631bcda9dca60242b4d548bc6affe215f259e45295efac7` |
 | `sedan_stock_rear_bumper.obj` | `sedan_mk2_stock_rear_bumper.txt` | `cf8c07161f34ee5e6874bde043a8228a884564a624f62bffdba284bd933ebea0` |
 | `sedan_stock_exhaust.obj` | `sedan_mk2_stock_exhaust.txt` | `892409df2dfc5aad899599d9ad5404743684915e7b6b054bb1224c627f49ca65` |
 | `sedan_stock_headlights.obj` | `sedan_mk2_stock_headlights.txt` | `51bb3b2b658ce3e90e58e73de531aa52fcb84b7ded87e7bc46c012ca368829a0` |
 | `sedan_stock_taillights.obj` | `sedan_mk2_stock_taillights.txt` | `f96953110910401f91bd39b7d66f7e92d4d896ec7edb60277624c0259a077a5b` |
 | `sedan_stock_hitch.obj` | `sedan_mk2_stock_hitch.txt` | `adff7e44427813c2349b45cb7710829046cb65f6372f60424f77edc2c2433588` |
-| `sedan_stock_seats.obj` | `sedan_mk2_stock_seats.txt` | `236513ff339a71837c447b36a5bdc5ef75f9250e48a821eef8fb918c4aea867c` |
-| `sedan_stock_steer.obj` | `sedan_mk2_stock_steer.txt` | `22cfbf7e6cee4da838b2298ffa8c1a0902f4acf61b0e0c3139eb60911f7fd328` |
+| `sedan_stock_seats.obj` | `sedan_mk2_stock_seats.txt` | `8d26a0f149b3646a1544ac37938328cea6305be0423c783392f8e8f62a9ea160` |
+| `sedan_stock_steer.obj` | `sedan_mk2_stock_steer.txt` | `880473cc6daf7a3fb520bc9d99ee1f0c4533a5cbc2e1c21212eda6f81f91e66f` |
 | `sedan_dashboard.obj` | `sedan_mk2_dashboard.txt` | `3b56a23003d9900e1a0139881c4c61979f9b8bebf6c1abac90d2976353502401` |
-| `sedan_steering_column.obj` | `sedan_mk2_column_support.txt` | `e664f3d8313b6b545f13deb2eac46837d0d367c9aae88428b3019b835a357171` |
-| `sedan_cabin_floor.obj` | `sedan_mk2_cabin_floor.txt` | `e6b0e0a87e41a1d770bfb9605bd1a0c659574d8bf393556d44becd84e94e2164` |
-| `sedan_floor_tunnel.obj` | `sedan_mk2_floor_tunnel.txt` | `18611b196ef035e87f4a56589ee2d1b34ff0902edda92865469a3370a77c53be` |
-| `sedan_engine_bay_liner.obj` | `sedan_mk2_engine_bay_liner.txt` | `09d712bd433b36948070b29cfd9c25bd565aba9ad99b138a21657c1fb167f388` |
-| `sedan_trunk_liner.obj` | `sedan_mk2_trunk_liner.txt` | `0e6fe924343cd743940e9b161589571d8598f8c2a259cf8fa1f53a5020cc0223` |
+| `sedan_steering_column.obj` | `sedan_mk2_column_support.txt` | `767f79470bcb4ca059db379af1e7ddc017f1a7468276b1c43e6214524f63fb27` |
+| `sedan_cabin_floor.obj` | `sedan_mk2_cabin_floor.txt` | `fff49c93f38102851b03a1fed9fdc57b9a8fa29e5e8be7bf1bf2ad4a44f9edbd` |
+| `sedan_floor_tunnel.obj` | `sedan_mk2_floor_tunnel.txt` | `047e85767f954e2763808697a253c14928f85a70a82800b453885e501ec77161` |
+| `sedan_engine_bay_liner.obj` | `sedan_mk2_engine_bay_liner.txt` | `104481bb736844a79fe8a5968edf72472335a4003ede31731f9161c6df3b445f` |
+| `sedan_trunk_liner.obj` | `sedan_mk2_trunk_liner.txt` | `9e7d4458aaa4303bc4c7446f55ada89f4eecb5c7488d5c8af55913d02f54b53e` |
 | `sedan_palette.png` | `sedan_mk2_palette.png` | `df13338fc3cd5ac95c0de41b7273ae3d3f9a4c4a815f3113ee898bc3637b276b` |
 
 ### Frozen original sedan sources (unchanged)
