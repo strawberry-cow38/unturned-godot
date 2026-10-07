@@ -294,6 +294,9 @@ namespace UnturnedGodot
                 Salvage(1930, (ceramic, 1));   // Ceramic Bowl
             }
             // "forks, spoons, pots, pans etc -> scrap"
+            // A LID IS NOT A POT: named before the Cookware sweep below, which would give it a pot's 2 scrap.
+            // A named override runs first and opts that id out of the sweep, which is this file's existing idiom.
+            Salvage(9345, (scrap, 1));
             foreach (var id in LootTables.Cutlery) Salvage(id, (scrap, 1));
             foreach (var id in LootTables.Cookware) Salvage(id, (scrap, 2));   // a pot is more metal than a fork
 

@@ -80,9 +80,11 @@ namespace UnturnedGodot
         /// <summary>⭐ PUBLIC so the SALVAGE recipes break down exactly what the loot tables stock. Two private
         /// lists of "what counts as crockery" would disagree the first time either was edited.
         /// ⚠ 9301 is the drinking GLASS and salvages to glass, not ceramic -- see BlueprintRegistry.</summary>
-        public static readonly ushort[] Crockery = { 9300, 9301, 9302, 9303 };            // cup, glass, plate, bowl
+        // ⚠ 9344/9345 are out of sequence because they were minted LATER, when master listed what astraclaw had
+        // actually modelled -- "plates, bowls, pot + pot lid and cup" -- and the set had one plate and no lid.
+        public static readonly ushort[] Crockery = { 9300, 9301, 9302, 9303, 9344 };      // cup, glass, plate, bowl, side plate
         public static readonly ushort[] Cutlery = { 9304, 9305, 9306 };                   // fork, spoon, table knife
-        public static readonly ushort[] Cookware = { 9307, 9308, 9309 };                  // pot, pan, baking tray
+        public static readonly ushort[] Cookware = { 9307, 9308, 9309, 9345 };            // pot, pan, baking tray, pot lid
         // ⚠⚠ 499 AND 1328 WERE WRONG AND ARE GONE (master 2026-10-07: "\"paper\" item is a paper hat, not a sheet
         // of paper"). 499 "Paper" is a cosmetic **Hat**; 1328 "Note" is a **Barricade**, a placeable sign. I reused
         // both because the NAME matched, without reading the TYPE column sitting next to it -- so a filing cabinet
