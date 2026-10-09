@@ -1093,6 +1093,7 @@ namespace UnturnedGodot
             SaveGridPower();
             SaveGasPump();
             SaveSigns();
+            SaveTunnels();
             SaveBakeOmit();
             Log.Print($"[editor] saved {n} placed props -> {SavePath}");
             return n;
@@ -1126,6 +1127,7 @@ namespace UnturnedGodot
             LoadGridPower();
             LoadGasPump();
             LoadSigns();
+            LoadTunnels();
         }
 
         void LoadSaved()   // restore previously-saved editor placements on open (custom placeables + main mesh objects from the sidecar)
@@ -1306,6 +1308,108 @@ namespace UnturnedGodot
             }
             if (n > 0) Log.Print($"[editor] loaded {n} highway signs");
         }
+
+        // ---- GENERATED GEOMETRY (the swept tunnel) ---------------------------------------------------------
+        //
+        // ⚠ A SWEPT TUNNEL HAS NO GUID, so Save() skips it by design (it writes placements keyed on one) and
+        // it needs a sidecar of its own. What is stored is the CENTRELINE, not the mesh: the mesh is a pure
+        // function of it, so a reload rebuilds rather than persisting thousands of triangles -- and a later
+        // change to the profile or the step improves every saved tunnel instead of baking the old one in.
+        public const string TunnelName = "⛰ Tunnel (swept)";
+
+        /// <summary>UG_TUNNEL_UNSHADED=1: a one-render bisect. Dark-with-correct-albedo is either lighting
+        /// or albedo, and five guesses had not told me which; an unshaded material answers it outright.</summary>
+        static Material UnshadedProbe()
+        {
+            string m = System.Environment.GetEnvironmentVariable("UG_TUNNEL_UNSHADED");
+            if (m == "1")
+                return new StandardMaterial3D { ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                                                AlbedoColor = new Color(0.60f, 0.55f, 0.47f),
+                                                CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            // =normal: the project's own normal probe -- up-facing WHITE, vertical BLACK, and deliberately
+            // uncorrected for FRONT_FACING so a back-facing surface reports as back-facing.
+            if (m == "normal")
+                return new ShaderMaterial { Shader = GD.Load<Shader>("res://content/normal_probe.gdshader") };
+            return null;
+        }
+
+        public Node3D AddGeneratedTunnel(ArrayMesh mesh, Vector3[] centre)
+        {
+            if (mesh == null || centre == null || centre.Length < 2) return null;
+            var root = new Node3D();
+            root.SetMeta("obj_name", TunnelName);
+            root.SetMeta("tunnel_centre", centre);
+            // ⚠ THE SAME MATERIAL THE PROP USES, not a hand-rolled one. The portal beside it renders tan
+            // through MatFor while my own StandardMaterial3D came out dark, and reasoning about which
+            // property differed was two wrong guesses deep -- MatFor is the one factory every other prop
+            // goes through, so going through it removes the question instead of answering it.
+            root.AddChild(new MeshInstance3D
+            {
+                Mesh = mesh,
+                MaterialOverride = UnshadedProbe() ?? MatFor("Tunnel_Line_0"),
+                // ⚠ DoubleSided shadows. The default casts with front faces culled, which is right for a
+                // closed solid and wrong for an open shell drawn with CullMode.Disabled: a long tube then
+                // shadows its own outer wall with its inner one and the whole bore renders unlit.
+                CastShadow = GeometryInstance3D.ShadowCastingSetting.DoubleSided,
+            });
+            var shp = mesh.CreateTrimeshShape();
+            if (shp != null)
+            {
+                var body = new StaticBody3D { CollisionLayer = PickLayer, CollisionMask = 0 };
+                body.AddChild(new CollisionShape3D { Shape = shp });
+                root.AddChild(body);
+                _pickToObj[body.GetRid()] = root;
+            }
+            _world.AddChild(root);
+            _placed.Add(root);
+            return root;
+        }
+
+        string TunnelPath => Dir + $"editor_{_editor.MapName}_tunnels.txt";
+        void SaveTunnels()
+        {
+            var tus = _placed.FindAll(t => IsInstanceValid(t) && t.HasMeta("tunnel_centre"));
+            using var w = new System.IO.StreamWriter(TunnelPath, false);
+            foreach (var t in tus)
+            {
+                var c = (Vector3[])t.GetMeta("tunnel_centre");
+                var sb = new System.Text.StringBuilder();
+                foreach (var v in c) sb.Append($"{v.X:0.###} {v.Y:0.###} {(-v.Z):0.###} ");
+                w.WriteLine(sb.ToString().TrimEnd());
+            }
+            if (tus.Count > 0) Log.Print($"[editor] saved {tus.Count} swept tunnel(s) -> {TunnelPath}");
+        }
+        void LoadTunnels()
+        {
+            if (!System.IO.File.Exists(TunnelPath)) return;
+            int n = 0;
+            foreach (var line in System.IO.File.ReadLines(TunnelPath))
+            {
+                var p = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                if (p.Length < 6 || p.Length % 3 != 0) continue;
+                var c = new Vector3[p.Length / 3];
+                bool ok = true;
+                for (int i = 0; i < c.Length && ok; i++)
+                    ok = float.TryParse(p[i * 3], out float x) && float.TryParse(p[i * 3 + 1], out float y)
+                      && float.TryParse(p[i * 3 + 2], out float z) && Set(ref c[i], x, y, -z);
+                if (!ok) continue;
+                var prof = TunnelProfile();
+                if (prof == null) continue;
+                if (AddGeneratedTunnel(TunnelMesh.Sweep(prof, c), c) != null) n++;
+            }
+            if (n > 0) Log.Print($"[editor] loaded {n} swept tunnel(s)");
+        }
+        static bool Set(ref Vector3 v, float x, float y, float z) { v = new Vector3(x, y, z); return true; }
+
+        /// <summary>L1 seams: round-trip the swept-tunnel sidecar on its own.</summary>
+        public void DebugSaveTunnels() => SaveTunnels();
+        public string DebugTunnelPath => TunnelPath;
+        public void DebugLoadTunnels() => LoadTunnels();
+
+        /// <summary>The tunnel section's profile, read off the shipped prop once and cached.</summary>
+        System.Collections.Generic.List<Vector2[]> _tunnelProfile;
+        public System.Collections.Generic.List<Vector2[]> TunnelProfile()
+            => _tunnelProfile ??= TunnelMesh.ProfileFrom(MeshFor("Tunnel_Line_0"));
 
         /// <summary>L1 seam: make a placed prop the selection, the way a click would. The editable-field
         /// API all hangs off Primary, so a test that cannot select cannot reach any of it.</summary>

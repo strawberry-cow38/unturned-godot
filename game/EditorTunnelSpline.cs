@@ -8,12 +8,13 @@ namespace UnturnedGodot
     /// Master 2026-10-09, straight after the bridge landed: "now work on tunnel splines. same method."
     /// Same method, and the differences are the interesting part.
     ///
-    /// ⭐⭐ NO CUT ASSET. The bridge needed a real shortened unit because its deck carries PAINT, and scaling
-    /// the geometry would have stretched a 48 m dash rhythm over 7.8 m. Tunnel_Line_0 has no texture at all
-    /// and is a pure prism along Y -- vertices at -12 and +12 and nowhere between -- so a shorter section is
-    /// just the same prop scaled on its own axis. That round-trips because the placements format carries
-    /// sx sy sz and the loader applies them (`FromEuler(...) * Basis.FromScale(...)`), which is the fact that
-    /// decided this: without it, a saved map would reload every tunnel at full length, overlapping.
+    /// ⭐⭐ THE BORE IS SWEPT, NOT TILED, and that is the correction master asked for: "theres gaps and
+    /// probably overlaps inside the tunnel. you need cuts/blending." Tiling a rigid section works for the
+    /// fence, the rail and the bridge deck because their joint overlap is buried in solid geometry. A tunnel
+    /// is hollow and you stand inside it, so the overlap that closes the outer shell (half-width 12 m)
+    /// over-closes the bore (8 m) and leaves a lip at every joint on the one surface anybody sees. No single
+    /// value settles both walls, because they are at different radii. A sweep has no joint at all -- see
+    /// TunnelMesh. The scaled-prop tiling that preceded it is gone.
     ///
     /// ⭐ AND RETAIL ALREADY SHIPS THE END-CLOSER. Tunnel_Line_Cap_0 is the portal: the same section with a
     /// 16-triangle facade across its Y=+12 end. The bridge had to have one generated because its spans are
@@ -37,13 +38,6 @@ namespace UnturnedGodot
         /// factor and the portal's footprint are derived from it rather than typed twice.</summary>
         public const float SourceLength = 24.0f;
 
-        /// <summary>⭐ 4 m, and it is a WHOLE FRACTION of the shipped 24 m section -- six units reproduce
-        /// retail's own piece exactly, so the tiling cannot drift away from the source geometry.
-        ///
-        /// Unlike the bridge there is no paint to read a rhythm off, so the only other constraint is the
-        /// chord wedge, and 4 m is comfortable: at tinyclaw's tightest measured highway radius (301 m) a
-        /// joint turns 0.76 degrees and buries 32 cm of a 24 m-wide section, which is invisible.</summary>
-        public const float Pitch = 4.0f;
 
         /// <summary>Half the section's width (X -12..+12). Drives how much each joint has to close on a bend
         /// -- and at 12 m this is the widest thing the port tiles, so the overlap matters more here than
@@ -54,8 +48,10 @@ namespace UnturnedGodot
         /// extending past it. The bore is laid between the two.</summary>
         public const float PortalLength = SourceLength;
 
-        /// <summary>L1 seam: lay with the joint overlap disabled, the placement rule before the seam fix.</summary>
-        public static bool DebugNoJointOverlap;
+        /// <summary>How far apart the swept rings sit. 2 m keeps the chord error under a millimetre even on
+        /// the tightest real highway bend (301 m -> 2^2/(8*301) = 0.17 cm), and a ring costs a handful of
+        /// triangles rather than a whole prop, so there is no reason to space them like tiles.</summary>
+        public const float Step = 2.0f;
 
         bool _on;
 
@@ -105,45 +101,32 @@ namespace UnturnedGodot
             bool portals = total >= PortalLength * 2f;
             float boreFrom = portals ? PortalLength : 0f;
             float boreTo = portals ? total - PortalLength : total;
-            if (!portals && total < Pitch)
-            { Log.Print($"[editor-tunnel] {total:0.#} m is under one {Pitch:0.##} m section -- nothing laid"); return 0; }
+            if (!portals && total < Step * 2f)
+            { Log.Print($"[editor-tunnel] {total:0.#} m is too short to sweep -- nothing bored"); return 0; }
 
-            float tightest = float.PositiveInfinity, totalOverlap = 0f;
-            int n = 0;
-            float s = boreFrom;
+            // ⭐⭐ SWEPT, NOT TILED. Master on the tiled first version: "theres gaps and probably overlaps
+            // inside the tunnel. you need cuts/blending." Consecutive rings of a sweep SHARE their vertices,
+            // so every station is mitered exactly and there is no joint to open or bury -- see TunnelMesh for
+            // why no single overlap value could have settled both walls of a hollow section at once.
+            var profile = objects.TunnelProfile();
+            if (profile == null)
+            { Log.Print("[editor-tunnel] could not read the section profile off Tunnel_Line_0 -- nothing bored"); return 0; }
 
-            while (s + Pitch <= boreTo + 1e-3f)
+            var centre = new System.Collections.Generic.List<Vector3>();
+            for (float t = boreFrom; t <= boreTo + 1e-3f; t += Step)
             {
-                if (!roads.EvaluateAlong(road, s, out var p0, out _, snapTerrain: false)) break;
-                if (!roads.EvaluateAlong(road, s + Pitch, out var p1, out _, snapTerrain: false)) break;
-                var span = p1 - p0;
-                if (span.LengthSquared() < 1e-8f) break;
-                var dir = span.Normalized();
-
-                var mid = (p0 + p1) * 0.5f;
-                mid.Y += lift;
-                // ⚠ SCALED ON ITS OWN Y COLUMN. Godot's Basis.Scaled multiplies the basis ROWS, which scales
-                // in the PARENT frame -- the same trap that put a bridge pier's foot 24 m out. The section's
-                // length is its local +Y, so that is the column to shorten.
-                var b = StandBasis(dir);
-                var shrunk = new Basis(b.X, b.Y * (Pitch / SourceLength), b.Z);
-                var u = objects.Place(BoreUnit, mid, shrunk);
-                if (u != null) placed?.Add(u);
-                n++;
-
-                float turn = 0f;
-                if (roads.EvaluateAlong(road, s + Pitch, out var q0, out _, snapTerrain: false)
-                    && roads.EvaluateAlong(road, s + Pitch * 2f, out var q1, out _, snapTerrain: false))
-                {
-                    var nd = q1 - q0;
-                    if (nd.LengthSquared() > 1e-8f) turn = Mathf.Abs(dir.AngleTo(nd.Normalized()));
-                }
-                if (turn > 1e-4f) tightest = Mathf.Min(tightest, Pitch / turn);
-
-                float overlap = DebugNoJointOverlap ? 0f : SplineTiling.OverlapFor(HalfWidth, Pitch, turn);
-                totalOverlap += overlap;
-                s += Pitch - overlap;
+                if (!roads.EvaluateAlong(road, Mathf.Min(t, boreTo), out var cp, out _, snapTerrain: false)) break;
+                cp.Y += lift;
+                if (centre.Count == 0 || cp.DistanceSquaredTo(centre[centre.Count - 1]) > 1e-6f) centre.Add(cp);
             }
+            int n = centre.Count;
+            if (n >= 2)
+            {
+                var mesh = TunnelMesh.Sweep(profile, centre);
+                var node = objects.AddGeneratedTunnel(mesh, centre.ToArray());
+                if (node != null) placed?.Add(node); else n = 0;
+            }
+            else n = 0;
 
             int ports = 0;
             if (portals)
@@ -167,11 +150,10 @@ namespace UnturnedGodot
             if (n == 0 && ports == 0)
             { Log.Print($"[editor-tunnel] {total:0.#} m laid nothing -- the spline could not be walked"); return 0; }
 
-            Log.Print($"[editor-tunnel] road {road}: {total:0.#} m -> {n} bore section(s) at {Pitch:0.##} m + {ports} portal(s)"
+            Log.Print($"[editor-tunnel] road {road}: {total:0.#} m -> swept bore of {n} ring(s) at {Step:0.##} m"
+                    + $" + {ports} portal(s)"
                     + (portals ? "" : $"  ⚠ under {PortalLength * 2f:0.#} m, too short to portal")
-                    + ", painted road kept (a tunnel has no floor of its own)"
-                    + (float.IsPositiveInfinity(tightest) ? ", straight (no joint overlap needed)"
-                       : $", tightest bend ~{tightest:0} m, joints closed by {totalOverlap / Mathf.Max(n, 1) * 100f:0.0} cm avg"));
+                    + ", rings share vertices so no joint can gap; painted road kept (a tunnel has no floor)");
             return n;
         }
 

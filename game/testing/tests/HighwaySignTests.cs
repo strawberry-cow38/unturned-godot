@@ -22,6 +22,9 @@ namespace UnturnedGodot.Testing
         {
             var ed = new Editor();
             World.AddChild(ed);
+            // ⚠ same reason as the tunnel test: the sidecar is loaded during construction, so a file left
+            // by a previous run is already placed before the first check.
+            try { System.IO.File.Delete(ProjectSettings.GlobalizePath("res://content/objects/editor__signs.txt")); } catch { }
             var objs = new EditorObjects(ed, World, null);
             World.AddChild(objs);
             yield return Ticks(2);

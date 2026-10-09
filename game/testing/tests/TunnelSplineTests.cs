@@ -3,37 +3,15 @@ using Godot;
 
 namespace UnturnedGodot.Testing
 {
-    /// <summary>"Tunnel": the shipped bore run along a road spline, portalled at both ends.
+    /// <summary>"Tunnel": the shipped section's profile SWEPT along a road spline, portalled at both ends.
     ///
-    /// Master 2026-10-09, straight after the bridge landed: "now work on tunnel splines. same method."
-    /// Same method, three real differences -- no cut asset, retail's own end-closer, and the road stays
-    /// drawn -- and each of them is a thing that fails quietly if it is wrong.</summary>
+    /// Master, on the tiled first version: "theres gaps and probably overlaps inside the tunnel. you need
+    /// cuts/blending." The checks below are about that correction, so they are about the thing tiling could
+    /// not give: a bore wall with no joint in it at all.</summary>
     public sealed class TunnelSplineTests : GameTest
     {
         public override string Name => "editor.tunnel_spline";
         public override double TimeoutSimSeconds => 30;
-
-        static (float gap, float overlap) WorstJoint(List<Node3D> bores)
-        {
-            float g = 0f, o = 0f;
-            const float half = EditorTunnelSpline.Pitch * 0.5f, hw = EditorTunnelSpline.HalfWidth;
-            for (int i = 1; i < bores.Count; i++)
-            {
-                var a = bores[i - 1]; var b = bores[i];
-                var af = a.GlobalTransform.Basis.Y.Normalized();
-                for (int sgn = -1; sgn <= 1; sgn += 2)
-                {
-                    // ⚠ the section is CENTRED on its length, and SCALED, so its ends are half a pitch out
-                    // along the already-shortened Y axis -- expressed in world units, not local ones.
-                    var endC = a.GlobalPosition + af * half + a.GlobalTransform.Basis.X.Normalized() * sgn * hw;
-                    var startC = b.GlobalPosition - b.GlobalTransform.Basis.Y.Normalized() * half
-                               + b.GlobalTransform.Basis.X.Normalized() * sgn * hw;
-                    float along = af.Dot(startC - endC);
-                    g = Mathf.Max(g, along); o = Mathf.Max(o, -along);
-                }
-            }
-            return (g, o);
-        }
 
         public override IEnumerable<Step> Run()
         {
@@ -41,6 +19,10 @@ namespace UnturnedGodot.Testing
             World.AddChild(ed);
             var cam = new Camera3D();
             World.AddChild(cam);
+            // ⚠ CLEAR THE SIDECAR BEFORE CONSTRUCTING, not only after. EditorObjects loads the custom
+            // placeables in its own setup, so a file left behind by a previous run is already placed before
+            // the first assertion -- which is exactly how this test came back reporting two tunnels for one.
+            try { System.IO.File.Delete(ProjectSettings.GlobalizePath("res://content/objects/editor__tunnels.txt")); } catch { }
             var objs = new EditorObjects(ed, World, null);
             World.AddChild(objs);
             var field = new RoadField();
@@ -53,121 +35,174 @@ namespace UnturnedGodot.Testing
             yield return Ticks(2);
             float g0 = terr.SampleHeight(50f, 0f);
 
-            // ---- 0. THE ASSET CONTRACT, because every constant in the tool is read off these two meshes.
-            var bore = ContentProvider.ParseObj($"res://content/objects/{EditorTunnelSpline.BoreUnit}.obj");
-            var portal = ContentProvider.ParseObj($"res://content/objects/{EditorTunnelSpline.PortalUnit}.obj");
-            T.Check("the bore and portal meshes load", bore != null && portal != null);
-            if (bore == null || portal == null) yield break;
-            var bb = bore.GetAabb();
-            T.Check($"the bore section is {EditorTunnelSpline.SourceLength:0.#} m long and "
-                  + $"{EditorTunnelSpline.HalfWidth * 2f:0.#} m wide (Y {bb.Position.Y:0.#}..{bb.End.Y:0.#}, "
-                  + $"X {bb.Position.X:0.#}..{bb.End.X:0.#})",
-                    Mathf.Abs((bb.End.Y - bb.Position.Y) - EditorTunnelSpline.SourceLength) < 0.05f
-                 && Mathf.Abs(bb.Position.X + EditorTunnelSpline.HalfWidth) < 0.05f);
-
-            // ⭐ THE PITCH IS A WHOLE FRACTION OF THE SHIPPED SECTION, so N units reproduce retail's piece.
-            float ratio = EditorTunnelSpline.SourceLength / EditorTunnelSpline.Pitch;
-            T.Check($"...and the pitch divides it exactly ({ratio:0.###} units per shipped section)",
-                    Mathf.Abs(ratio - Mathf.Round(ratio)) < 1e-4f);
-
-            // ⚠ NO FLOOR. The tool keeps the painted road for exactly this reason; if the bore ever gained a
-            // floor face the road would z-fight it and the right answer would flip.
-            var ba = bore.SurfaceGetArrays(0);
-            var BV = ba[(int)Mesh.ArrayType.Vertex].AsVector3Array();
-            float zlo = float.MaxValue;
-            foreach (var v in BV) zlo = Mathf.Min(zlo, v.Z);
-            int floor = 0;
-            for (int i = 0; i + 2 < BV.Length; i += 3)
-                if (Mathf.Abs(BV[i].Z - zlo) < 1e-3f && Mathf.Abs(BV[i + 1].Z - zlo) < 1e-3f
-                 && Mathf.Abs(BV[i + 2].Z - zlo) < 1e-3f) floor++;
-            T.Check($"the bore has NO floor ({floor} face(s) in its lowest plane) -- so the road must stay drawn",
-                    floor == 0);
-
-            // ---- 1. A RUN, STRAIGHT.
-            var pts = new List<Vector3>();
-            for (int k = 0; k <= 10; k++) pts.Add(new Vector3(k * 20f, g0, 0f));
-            int road = field.AddRoadFromPolyline(pts, 0, false, true);
-            yield return Ticks(1);
-            T.Check("fixture: a road with its ribbon drawn", field.RoadRibbonVisible(road));
-
-            int n = EditorTunnelSpline.LayAlong(objs, terr, field, road, null);
-            yield return Ticks(1);
-            var bores = new List<Node3D>();
-            foreach (var b in objs.PlacedOfNodes(EditorTunnelSpline.BoreUnit)) bores.Add(b);
-            var ports = new List<Node3D>();
-            foreach (var p in objs.PlacedOfNodes(EditorTunnelSpline.PortalUnit)) ports.Add(p);
-
-            float len = field.RoadLength(road);
-            float wantBore = len - EditorTunnelSpline.PortalLength * 2f;
-            T.Check($"bored the span BETWEEN the portals ({n} sections over {wantBore:0.#} m of a {len:0.#} m road)",
-                    n == Mathf.FloorToInt(wantBore / EditorTunnelSpline.Pitch + 1e-3f));
-            T.Check($"...with a portal at each end ({ports.Count})", ports.Count == 2);
-
-            // ⭐ THE SECTIONS ARE SHORTENED, which is the whole no-cut-asset idea. A tool that forgot the
-            // scale would place full 24 m shells every 4 m and look like a solid block.
-            bool scaled = true;
-            foreach (var b in bores)
-                if (Mathf.Abs(b.GlobalTransform.Basis.Y.Length() - EditorTunnelSpline.Pitch / EditorTunnelSpline.SourceLength) > 0.01f)
-                    scaled = false;
-            T.Check($"each section is scaled to the pitch on its OWN axis "
-                  + $"({(bores.Count > 0 ? bores[0].GlobalTransform.Basis.Y.Length() : -1f):0.000}, want "
-                  + $"{EditorTunnelSpline.Pitch / EditorTunnelSpline.SourceLength:0.000})", bores.Count > 0 && scaled);
-            // ...and ONLY on that axis: a parent-frame scale would shrink the width and height too.
-            bool crossOk = true;
-            foreach (var b in bores)
-                if (Mathf.Abs(b.GlobalTransform.Basis.X.Length() - 1f) > 0.01f
-                 || Mathf.Abs(b.GlobalTransform.Basis.Z.Length() - 1f) > 0.01f) crossOk = false;
-            T.Check("...leaving its width and height untouched", crossOk);
-
-            // ⚠ THE PORTALS FACE OUT. Each one's facade is its local +Y; reversed, you would be looking at
-            // the back of a wall from inside the tunnel and at an open hole from outside.
-            if (ports.Count == 2)
+            // ---- 0. THE PROFILE IS READ OFF THE SHIPPED PROP, and comes out as TWO OPEN ARCHES: the bore
+            // and the outer shell, both floorless. A first pass that assumed closed loops reported three,
+            // splitting the shell in half -- so the count is asserted, not trusted.
+            var prof = objs.TunnelProfile();
+            T.Check($"the section profile reads as two open arches ({(prof == null ? -1 : prof.Count)})",
+                    prof != null && prof.Count == 2);
+            if (prof == null || prof.Count != 2) yield break;
+            int profPts = 0;
+            float widest = 0f, tallest = 0f, lowest = float.MaxValue;
+            foreach (var ch in prof)
             {
-                var centre = Vector3.Zero;
-                foreach (var p in ports) centre += p.GlobalPosition;
-                centre *= 0.5f;
-                bool outward = true;
-                foreach (var p in ports)
-                    if (p.GlobalTransform.Basis.Y.Normalized().Dot((p.GlobalPosition - centre).Normalized()) < 0.9f)
-                        outward = false;
-                T.Check("each portal's facade faces out of the tunnel", outward);
+                profPts += ch.Length;
+                foreach (var pt in ch)
+                {
+                    widest = Mathf.Max(widest, Mathf.Abs(pt.X));
+                    tallest = Mathf.Max(tallest, pt.Y);
+                    lowest = Mathf.Min(lowest, pt.Y);
+                }
             }
+            T.Check($"...spanning the section's own measured extents (half-width {widest:0.##} m, "
+                  + $"height {lowest:0.##}..{tallest:0.##})",
+                    Mathf.Abs(widest - EditorTunnelSpline.HalfWidth) < 0.05f && tallest > 16f && lowest < -0.9f);
+            // ⚠ NO FLOOR, which is why the tool keeps the painted road drawn.
+            bool floored = false;
+            foreach (var ch in prof)
+                for (int k = 0; k + 1 < ch.Length; k++)
+                    if (Mathf.Abs(ch[k].Y - lowest) < 1e-3f && Mathf.Abs(ch[k + 1].Y - lowest) < 1e-3f) floored = true;
+            T.Check("the section has no floor span -- the road through it stays drawn", !floored);
 
-            // ⚠ AND THE ROAD IS STILL THERE -- the opposite of the bridge, which hides it.
-            T.Check("the painted road is KEPT (a tunnel has no floor of its own)", field.RoadRibbonVisible(road));
-
-            // ---- 2. THE SEAM, at the widest section the port tiles.
+            // ---- 1. A BORE ON THE TIGHTEST REAL BEND.
             var arc = new List<Vector3>();
             const float ArcR = 301f;
             for (int k = 0; k <= 30; k++)
             {
                 float ang = k * 0.012f;
-                arc.Add(new Vector3(ArcR * Mathf.Sin(ang), g0, 900f + ArcR * (1f - Mathf.Cos(ang))));
+                arc.Add(new Vector3(ArcR * Mathf.Sin(ang), g0, ArcR * (1f - Mathf.Cos(ang))));
             }
-            int ctlRoad = field.AddRoadFromPolyline(arc, 0, false, true);
-            var before = new List<Node3D>(); foreach (var b in objs.PlacedOfNodes(EditorTunnelSpline.BoreUnit)) before.Add(b);
-            EditorTunnelSpline.DebugNoJointOverlap = true;
-            EditorTunnelSpline.LayAlong(objs, terr, field, ctlRoad, null);
-            EditorTunnelSpline.DebugNoJointOverlap = false;
-            var ctlBores = new List<Node3D>();
-            foreach (var b in objs.PlacedOfNodes(EditorTunnelSpline.BoreUnit)) if (!before.Contains(b)) ctlBores.Add(b);
-            var ctl = WorstJoint(ctlBores);
-            T.Check($"control: WITHOUT the overlap a {ArcR:0} m bend opens {ctl.gap * 100f:0.0} cm at the "
-                  + $"outer wall of a {EditorTunnelSpline.HalfWidth * 2f:0.#} m section ({ctlBores.Count} sections)",
-                    ctlBores.Count > 5 && ctl.gap > 0.05f);
+            int road = field.AddRoadFromPolyline(arc, 0, false, true);
+            yield return Ticks(1);
+            T.Check("fixture: a curved road with its ribbon drawn", field.RoadRibbonVisible(road));
 
-            int fixRoad = field.AddRoadFromPolyline(arc, 0, false, true);
-            var before2 = new List<Node3D>(); foreach (var b in objs.PlacedOfNodes(EditorTunnelSpline.BoreUnit)) before2.Add(b);
-            EditorTunnelSpline.LayAlong(objs, terr, field, fixRoad, null);
-            var fixBores = new List<Node3D>();
-            foreach (var b in objs.PlacedOfNodes(EditorTunnelSpline.BoreUnit)) if (!before2.Contains(b)) fixBores.Add(b);
-            var fx = WorstJoint(fixBores);
-            T.Check($"...and WITH it the same bend closes to {fx.gap * 1000f:0.#} mm ({fixBores.Count} sections)",
-                    fixBores.Count > 5 && fx.gap < 0.01f);
-            T.Check($"...paid for on the inside, buried not gapped ({fx.overlap * 100f:0.0} cm vs "
-                  + $"{ctl.overlap * 100f:0.0} cm)", fx.overlap > ctl.overlap + 0.01f);
+            int rings = EditorTunnelSpline.LayAlong(objs, terr, field, road, null);
+            yield return Ticks(1);
+            var tunnels = new List<Node3D>();
+            foreach (var t in objs.PlacedOfNodes(EditorObjects.TunnelName)) tunnels.Add(t);
+            T.Check($"the bore is ONE swept mesh, not a run of props ({tunnels.Count} node(s), {rings} rings)",
+                    tunnels.Count == 1 && rings > 20);
 
-            // ---- 3. TOO SHORT TO PORTAL is reported, not silently half-done.
+            // ---- 2. ⭐⭐ THE THING MASTER REPORTED. A tiled run cannot avoid a seam at every joint: flat
+            // parallel ends on a curve gap on one wall and overlap on the other, and the overlap that closes
+            // the 12 m shell over-closes the 8 m bore. A sweep's consecutive rings SHARE their vertices, so
+            // there is nothing to gap -- and that is checkable exactly: the number of DISTINCT vertex
+            // positions must be rings x profile points. Duplicated rings would double it.
+            if (tunnels.Count == 1)
+            {
+                var mi = tunnels[0].GetChild<MeshInstance3D>(0);
+                var am = mi.Mesh as ArrayMesh;
+                T.Check("fixture: the swept mesh exists and has geometry",
+                        am != null && am.GetSurfaceCount() > 0);
+                if (am != null && am.GetSurfaceCount() > 0)
+                {
+                    // ⚠⚠ VERTEX COLOURS, because MatFor sets VertexColorUseAsAlbedo and therefore
+                    // MULTIPLIES by them. Every prop mesh gets a white COLOR array from ObjMesh.Load; a
+                    // generated mesh without one is albedo x nothing and renders near-black, which is
+                    // exactly what the first three sweeps did.
+                    // one-shot: diff MY mesh against the one the PROP path produces, slot by slot. Comparing
+                    // against ContentProvider.ParseObj earlier was the wrong artifact -- props load through
+                    // ObjMesh.Load, which writes arrays ParseObj does not.
+                    var refProp = objs.Place("Tunnel_Line_0", new Vector3(500f, 0f, 500f), EditorObjects.Upright(0f));
+                    if (refProp != null)
+                    {
+                        var rm = refProp.GetChild<MeshInstance3D>(0).Mesh as ArrayMesh;
+                        var ra = rm.SurfaceGetArrays(0);
+                        var ma = am.SurfaceGetArrays(0);
+                        string[] slot = { "Vertex", "Normal", "Tangent", "Color", "TexUV", "TexUV2" };
+                        for (int q = 0; q < slot.Length; q++)
+                            Log.Print($"[tundiag] {slot[q],-8} prop={(ra[q].VariantType == Variant.Type.Nil ? "nil" : "SET")}"
+                                    + $"  swept={(ma[q].VariantType == Variant.Type.Nil ? "nil" : "SET")}");
+                        Log.Print($"[tundiag] prop surface format = {rm.SurfaceGetFormat(0)}");
+                        Log.Print($"[tundiag] swept surface format = {am.SurfaceGetFormat(0)}");
+                        var rn = ra[(int)Mesh.ArrayType.Normal].AsVector3Array();
+                        var mn = ma[(int)Mesh.ArrayType.Normal].AsVector3Array();
+                        Log.Print($"[tundiag] prop n[0]={rn[0]} swept n[0]={mn[0]}");
+                    }
+
+                    var swC = am.SurfaceGetArrays(0)[(int)Mesh.ArrayType.Color];
+                    T.Check("the swept mesh carries vertex colours -- the shared material multiplies by them",
+                            swC.VariantType != Variant.Type.Nil && swC.AsColorArray().Length > 0);
+                    if (swC.VariantType != Variant.Type.Nil && swC.AsColorArray().Length > 0)
+                    {
+                        var cc = swC.AsColorArray();
+                        bool white = true;
+                        foreach (var col in cc) if (col.R < 0.99f || col.G < 0.99f || col.B < 0.99f) white = false;
+                        T.Check($"...and they are white, so the material's own albedo shows through ({cc[0]})", white);
+                    }
+
+                    var V = am.SurfaceGetArrays(0)[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+                    var uniq = new HashSet<Vector3>();
+                    foreach (var v in V)
+                        uniq.Add(new Vector3(Mathf.Round(v.X * 1000f) / 1000f, Mathf.Round(v.Y * 1000f) / 1000f,
+                                             Mathf.Round(v.Z * 1000f) / 1000f));
+                    int want = rings * profPts;
+                    T.Check($"every ring SHARES its vertices with the next -- no joint to gap "
+                          + $"({uniq.Count} distinct positions for {rings} rings x {profPts} profile points)",
+                            uniq.Count == want);
+
+                    // ⭐ AND THE BORE WALL HOLDS ITS RADIUS. This is the lip master saw, measured: project
+                    // every vertex onto the nearest centreline station and compare its lateral offset with
+                    // the profile's. A tiled run steps at each joint; a sweep must not move at all.
+                    var centre = (Vector3[])tunnels[0].GetMeta("tunnel_centre");
+                    float worst = 0f;
+                    foreach (var v in uniq)
+                    {
+                        float best = float.MaxValue; int bi = 0;
+                        for (int i = 0; i < centre.Length; i++)
+                        {
+                            float d = new Vector2(v.X - centre[i].X, v.Z - centre[i].Z).LengthSquared();
+                            if (d < best) { best = d; bi = i; }
+                        }
+                        float lat = Mathf.Sqrt(best);
+                        // the nearest station's lateral offset must be one the profile actually contains
+                        float near = float.MaxValue;
+                        foreach (var ch in prof) foreach (var pt in ch) near = Mathf.Min(near, Mathf.Abs(Mathf.Abs(pt.X) - lat));
+                        worst = Mathf.Max(worst, near);
+                    }
+                    T.Check($"...and every wall vertex sits at a lateral offset the profile declares "
+                          + $"(worst {worst * 1000f:0.#} mm off)", worst < 0.06f);
+                }
+            }
+
+            // ---- 3. PORTALS AT BOTH ENDS, facing out, and the road still drawn.
+            var ports = new List<Node3D>();
+            foreach (var p in objs.PlacedOfNodes(EditorTunnelSpline.PortalUnit)) ports.Add(p);
+            T.Check($"a portal at each end ({ports.Count})", ports.Count == 2);
+            if (ports.Count == 2)
+            {
+                var mid = (ports[0].GlobalPosition + ports[1].GlobalPosition) * 0.5f;
+                bool outward = true;
+                foreach (var p in ports)
+                    if (p.GlobalTransform.Basis.Y.Normalized().Dot((p.GlobalPosition - mid).Normalized()) < 0.9f)
+                        outward = false;
+                T.Check("...each facade facing out of the tunnel", outward);
+            }
+            T.Check("the painted road is KEPT -- the opposite of the bridge, which hides it",
+                    field.RoadRibbonVisible(road));
+
+            // ---- 4. IT SURVIVES A SAVE. The mesh has no guid, so Save() skips it by design and the
+            // CENTRELINE goes to a sidecar instead -- rebuilt on load rather than persisting the triangles.
+            objs.DebugSaveTunnels();
+            var removed = new List<Node3D>(tunnels);
+            objs.RemovePlaced(removed);
+            yield return Ticks(1);
+            int after = 0;
+            foreach (var _ in objs.PlacedOfNodes(EditorObjects.TunnelName)) after++;
+            T.Check($"fixture: removed before reloading ({after})", after == 0);
+            objs.DebugLoadTunnels();
+            yield return Ticks(1);
+            var back = new List<Node3D>();
+            foreach (var t in objs.PlacedOfNodes(EditorObjects.TunnelName)) back.Add(t);
+            T.Check($"the swept tunnel comes back from its centreline ({back.Count})", back.Count == 1);
+            if (back.Count == 1)
+            {
+                var c2 = (Vector3[])back[0].GetMeta("tunnel_centre");
+                T.Check($"...with the same station count, so the rebuild is the same tunnel "
+                      + $"({c2.Length} vs {rings})", c2.Length == rings);
+            }
+
+            // ---- 5. TOO SHORT TO PORTAL is reported rather than half-done.
             var tiny = new List<Vector3> { new Vector3(0f, g0, 2000f), new Vector3(30f, g0, 2000f) };
             int shortRoad = field.AddRoadFromPolyline(tiny, 0, false, true);
             int pBefore = 0; foreach (var _ in objs.PlacedOfNodes(EditorTunnelSpline.PortalUnit)) pBefore++;
@@ -175,6 +210,7 @@ namespace UnturnedGodot.Testing
             int pAfter = 0; foreach (var _ in objs.PlacedOfNodes(EditorTunnelSpline.PortalUnit)) pAfter++;
             T.Check($"a road under {EditorTunnelSpline.PortalLength * 2f:0.#} m gets no portals rather than "
                   + $"two overlapping ones ({pAfter - pBefore} added)", pAfter == pBefore);
+            try { System.IO.File.Delete(objs.DebugTunnelPath); } catch { }
         }
     }
 }
