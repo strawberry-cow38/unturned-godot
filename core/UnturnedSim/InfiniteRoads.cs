@@ -80,29 +80,34 @@ namespace SDG.Unturned
             /// <summary>Highways: where the road runs deep below the natural ground across its whole width -- the
             /// carve has dug a trench through a hill, and a tunnel is the candidate.</summary>
             public List<Stretch> Cut;
-            public bool[] RaisedSeg, CutSeg;   // per segment, the same marking (what PiecesIn copies onto pieces)
+            public bool[][] RaisedSeg, CutSeg;   // [carriageway: 0 = -offset side, 1 = +offset side][segment] (what PiecesIn copies onto pieces)
             public bool Exists => X != null;
             public int Segments => X.Length - 1;
         }
         static readonly Line None = new Line();
 
-        /// <summary>A stretch of highway where the carve has moved a lot of ground. RAISED (bridge candidate): the road
-        /// is at least RaiseFill above the natural terrain under both carriageways and the median, or any of them is
-        /// over water, for at least RaiseMinLength. CUT (tunnel candidate): at least CutDepth BELOW it under all three,
-        /// for at least CutMinLength. Indices are into the line's dense X/Z/H.</summary>
+        /// <summary>A stretch of ONE carriageway where the carve has moved a lot of ground (strawberry: "both lanes may
+        /// candidate separately" -- on a side slope one carriageway can stand on fill while the other sits in a cut).
+        /// RAISED (bridge candidate): the carriageway is at least RaiseFill above the natural terrain at its centre and
+        /// both its edges, or any of them is over water, for at least RaiseMinLength. CUT (tunnel candidate): at least
+        /// CutDepth BELOW it at all three, for at least CutMinLength. Indices are into the line's dense X/Z/H.</summary>
         public struct Stretch
         {
+            public int Side;            // which carriageway: -1 = the -HighwayRibbonOffset one, +1 = the + one
             public int I0, I1;          // first and last dense point
             public float Length;        // metres of road
             public float Max;           // the tallest the embankment / deepest the cut gets (m, across the whole width)
             public bool OverWater;      // raised only: some of it crosses water, a bridge proper rather than a viaduct
         }
-        public const float RaiseFill = 4f;          // m of fill across the whole width before it counts
+        // strawberry 2026-10-09: 4 m / 8 m "need more". UG_INF_RAISE / UG_INF_CUT override them, for tuning.
+        public static readonly float RaiseFill = EnvF("UG_INF_RAISE", 8f);   // m of fill under the whole carriageway
         public const float RaiseMinLength = 30f;    // shorter than this is a bump, not a bridge
         public const float RaiseMergeGap = 40f;     // two stretches closer than this are one bridge
-        public const float CutDepth = 8f;           // m of cut across the whole width: "carved a lot of mountain away"
+        public static readonly float CutDepth = EnvF("UG_INF_CUT", 16f);     // m of cut under the whole carriageway
         public const float CutMinLength = 40f;      // a tunnel shorter than this is a culvert
         public const float CutMergeGap = 40f;
+        static float EnvF(string name, float fallback) =>
+            float.TryParse(Environment.GetEnvironmentVariable(name), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float v) && v > 0f ? v : fallback;
         /// <summary>Why each highway segment that does not exist was dropped (diagnostics; a dropped segment is a dead end).</summary>
         public readonly ConcurrentDictionary<(int axis, long band, long k), string> HighwayDrops = new();
         Line Drop(int axis, long band, long k, string why) { HighwayDrops[(axis, band, k)] = why; return None; }
@@ -424,39 +429,55 @@ namespace SDG.Unturned
             return line;
         }
 
-        /// <summary>Find a highway's raised and cut Stretches. Samples the natural ground under the median and both
-        /// carriageway centres at every dense point; the fill (or cut) that counts is the SMALLEST of the three, so a
-        /// road along a side slope -- fill on one side, cut on the other -- is a retaining wall, neither a bridge nor a
-        /// tunnel.</summary>
+        /// <summary>Find a highway's raised and cut Stretches, each CARRIAGEWAY on its own. Samples the natural ground
+        /// at the carriageway's centre and both its edges at every dense point; the fill (or cut) that counts is the
+        /// SMALLEST of the three, so a carriageway half on fill and half in a cut is a retaining wall, neither.</summary>
         void MarkStretches(Line e)
         {
             int n = e.X.Length;
-            var on = new bool[n]; var fill = new float[n]; var wet = new bool[n];
-            var deep = new bool[n]; var cut = new float[n];
-            for (int i = 0; i < n; i++)
-            {
-                int a = Math.Max(0, i - 1), b = Math.Min(n - 1, i + 1);
-                double tx = e.X[b] - e.X[a], tz = e.Z[b] - e.Z[a], tl = Math.Sqrt(tx * tx + tz * tz);
-                double nx = -tz / tl, nz = tx / tl;
-                float ground = e.H[i] - Bed, minFill = float.MaxValue, minCut = float.MaxValue;
-                for (int s = -1; s <= 1; s++)
-                {
-                    float r = _t.RawHeight(e.X[i] + nx * s * HighwayRibbonOffset, e.Z[i] + nz * s * HighwayRibbonOffset);
-                    minFill = Math.Min(minFill, ground - r);
-                    minCut = Math.Min(minCut, r - ground);
-                    if (r < InfiniteTerrain.SeaLevel) wet[i] = true;
-                }
-                fill[i] = minFill; cut[i] = minCut;
-                on[i] = minFill >= RaiseFill || wet[i];
-                deep[i] = minCut >= CutDepth;
-            }
+            e.Raised = new List<Stretch>(); e.Cut = new List<Stretch>();
+            e.RaisedSeg = new bool[2][]; e.CutSeg = new bool[2][];
             var arc = Arc(e);
-            (e.Raised, e.RaisedSeg) = Stretches(e, arc, on, fill, wet, RaiseMinLength, RaiseMergeGap);
-            (e.Cut, e.CutSeg) = Stretches(e, arc, deep, cut, null, CutMinLength, CutMergeGap);
+            for (int side = -1; side <= 1; side += 2)
+            {
+                var on = new bool[n]; var fill = new float[n]; var wet = new bool[n];
+                var deep = new bool[n]; var cut = new float[n];
+                for (int i = 0; i < n; i++)
+                {
+                    CarriagewaySample(e, i, side, out float f, out float c, out bool w);
+                    fill[i] = f; cut[i] = c; wet[i] = w;
+                    on[i] = f >= RaiseFill || w;
+                    deep[i] = c >= CutDepth;
+                }
+                int si = side < 0 ? 0 : 1;
+                (var raised, e.RaisedSeg[si]) = Stretches(e, arc, on, fill, wet, RaiseMinLength, RaiseMergeGap, side);
+                (var cuts, e.CutSeg[si]) = Stretches(e, arc, deep, cut, null, CutMinLength, CutMergeGap, side);
+                e.Raised.AddRange(raised); e.Cut.AddRange(cuts);
+            }
+        }
+
+        /// <summary>Fill and cut under one carriageway at dense point i: the smallest of the three samples (centre and
+        /// both edges, just inside the asphalt), and whether any of them is over water. Public-facing twin of what the
+        /// marking uses, so a test can measure the same carriageway without re-deriving its geometry.</summary>
+        void CarriagewaySample(Line e, int i, int side, out float fill, out float cut, out bool wet)
+        {
+            int n = e.X.Length, a = Math.Max(0, i - 1), b = Math.Min(n - 1, i + 1);
+            double tx = e.X[b] - e.X[a], tz = e.Z[b] - e.Z[a], tl = Math.Sqrt(tx * tx + tz * tz);
+            double nx = -tz / tl, nz = tx / tl;
+            float ground = e.H[i] - Bed;
+            fill = float.MaxValue; cut = float.MaxValue; wet = false;
+            for (int s = -1; s <= 1; s++)
+            {
+                double o = side * HighwayRibbonOffset + s * HighwayLaneHalf * 0.9;
+                float r = _t.RawHeight(e.X[i] + nx * o, e.Z[i] + nz * o);
+                fill = Math.Min(fill, ground - r);
+                cut = Math.Min(cut, r - ground);
+                if (r < InfiniteTerrain.SeaLevel) wet = true;
+            }
         }
 
         /// <summary>Runs of marked points, merged across gaps under `mergeGap`, then the ones under `minLength` dropped.</summary>
-        static (List<Stretch>, bool[]) Stretches(Line e, double[] arc, bool[] on, float[] measure, bool[] wet, float minLength, float mergeGap)
+        static (List<Stretch>, bool[]) Stretches(Line e, double[] arc, bool[] on, float[] measure, bool[] wet, float minLength, float mergeGap, int side)
         {
             int n = on.Length;
             var runs = new List<(int i0, int i1)>();
@@ -476,7 +497,7 @@ namespace SDG.Unturned
                 if (len < minLength) continue;
                 float mx = 0f; bool w = false;
                 for (int i = i0; i <= i1; i++) { mx = Math.Max(mx, measure[i]); if (wet != null) w |= wet[i]; }
-                list.Add(new Stretch { I0 = i0, I1 = i1, Length = len, Max = mx, OverWater = w });
+                list.Add(new Stretch { Side = side, I0 = i0, I1 = i1, Length = len, Max = mx, OverWater = w });
                 for (int k = i0; k < i1; k++) seg[k] = true;
             }
             return (list, seg);
@@ -691,7 +712,7 @@ namespace SDG.Unturned
             var list = new List<RoadPiece>();
             foreach (var e in lines)
             {
-                if (e.Kind == RoadKind.Highway) { Ribbon(e, +HighwayRibbonOffset); Ribbon(e, -HighwayRibbonOffset); }
+                if (e.Kind == RoadKind.Highway) { Ribbon(e, +HighwayRibbonOffset); Ribbon(e, -HighwayRibbonOffset); }   // each carriageway carries its OWN marks
                 else Ribbon(e, 0.0);
             }
             return list;
@@ -732,8 +753,8 @@ namespace SDG.Unturned
                             S0 = s + segLen * (float)ta, S1 = s + segLen * (float)tb,
                             T0X = p == 0 ? tgx[k] : dX, T0Z = p == 0 ? tgz[k] : dZ,
                             T1X = p == pcs - 1 ? tgx[k + 1] : dX, T1Z = p == pcs - 1 ? tgz[k + 1] : dZ,
-                            Raised = e.RaisedSeg != null && e.RaisedSeg[k],
-                            Cut = e.CutSeg != null && e.CutSeg[k],
+                            Raised = offset != 0.0 && e.RaisedSeg != null && e.RaisedSeg[offset > 0 ? 1 : 0][k],
+                            Cut = offset != 0.0 && e.CutSeg != null && e.CutSeg[offset > 0 ? 1 : 0][k],
                         });
                     }
                     s += segLen;
@@ -813,13 +834,32 @@ namespace SDG.Unturned
             {
                 var list = cut ? l.Cut : l.Raised;
                 if (!l.Exists || list == null) return;
-                var all = Pts(l);
-                foreach (var s in list) r.Add((s, all[s.I0..(s.I1 + 1)]));
+                foreach (var s in list) r.Add((s, CarriagewayPts(l, s.Side, s.I0, s.I1)));
             }
             Add(e);
             if (e.Branches != null) foreach (var b in e.Branches) Add(b);
             return r;
         }
+        /// <summary>The centreline of one carriageway (side -1/+1) over dense points i0..i1, at the road's height.</summary>
+        static (double x, double z, float h)[] CarriagewayPts(Line e, int side, int i0, int i1)
+        {
+            int n = e.X.Length;
+            var pts = new (double, double, float)[i1 - i0 + 1];
+            for (int i = i0; i <= i1; i++)
+            {
+                int a = Math.Max(0, i - 1), b = Math.Min(n - 1, i + 1);
+                double tx = e.X[b] - e.X[a], tz = e.Z[b] - e.Z[a], tl = Math.Sqrt(tx * tx + tz * tz);
+                pts[i - i0] = (e.X[i] - tz / tl * side * HighwayRibbonOffset, e.Z[i] + tx / tl * side * HighwayRibbonOffset, e.H[i]);
+            }
+            return pts;
+        }
+        /// <summary>Test accessor: one carriageway of a highway segment, as a centreline.</summary>
+        public (double x, double z, float h)[] HighwayCarriageway(int axis, long band, long k, int side)
+        {
+            var e = Highway(axis, band, k);
+            return e.Exists ? CarriagewayPts(e, side, 0, e.X.Length - 1) : null;
+        }
+
         public List<(RoadKind kind, (double x, double z, float h)[] pts)> BranchesOf(long cx, long cz, int dir)
         {
             var e = Main(cx, cz, dir);

@@ -299,8 +299,8 @@ namespace UnturnedSim.Tests
 
         /// <summary>Judged against the CARVED ground the player walks on (HeightAt) rather than re-deriving MarkStretches'
         /// own profile arithmetic, so the test and the rule cannot be wrong together: a marked stretch must be one where
-        /// the carve has moved the ground (up for raised, down for cut) under the median AND both carriageways, and no
-        /// long unmarked run may be.</summary>
+        /// the carve has moved the ground (up for raised, down for cut) under its WHOLE CARRIAGEWAY, and no long
+        /// unmarked run may be. Each carriageway on its own (strawberry: "both lanes may candidate separately").</summary>
         void CheckStretches(bool cut)
         {
             // how far the carve moved the ground, in the direction this kind is about (up = raised, down = cut)
@@ -308,11 +308,12 @@ namespace UnturnedSim.Tests
             float threshold = cut ? InfiniteRoads.CutDepth : InfiniteRoads.RaiseFill, minLength = cut ? InfiniteRoads.CutMinLength : InfiniteRoads.RaiseMinLength;
             // the ground under asphalt is the profile minus Bed: a raise moves it Bed less than the fill, a cut Bed more
             float need = (cut ? threshold + InfiniteRoads.Bed : threshold - InfiniteRoads.Bed) - 0.05f;
+            // p is a CARRIAGEWAY's centreline: its centre and both edges, just inside the asphalt
             float AcrossWidth((double x, double z, float h)[] p, int i)
             {
                 int ia = Math.Max(0, i - 1), ib = Math.Min(p.Length - 1, i + 1);
                 double tx = p[ib].x - p[ia].x, tz = p[ib].z - p[ia].z, tl = Math.Sqrt(tx * tx + tz * tz);
-                double nx = -tz / tl, nz = tx / tl; float o = InfiniteRoads.HighwayRibbonOffset;
+                double nx = -tz / tl, nz = tx / tl; float o = InfiniteRoads.HighwayLaneHalf * 0.9f;
                 return Math.Min(Moved(p[i].x, p[i].z), Math.Min(Moved(p[i].x + nx * o, p[i].z + nz * o), Moved(p[i].x - nx * o, p[i].z - nz * o)));
             }
             int stretches = 0, wet = 0, peaks = 0; float biggest = 0f, worstPeak = float.MaxValue;
@@ -321,17 +322,17 @@ namespace UnturnedSim.Tests
                 for (long band = -2; band <= 1; band++)
                     for (long k = -4; k <= 3; k++)
                     {
-                        var line = Gen.Roads.HighwayCentreline(axis, band, k);
-                        if (line == null) continue;
-                        var marked = new HashSet<(long, long)>();
+                        if (Gen.Roads.HighwayCentreline(axis, band, k) == null) continue;
+                        var marked = new HashSet<(int, long, long)>();
                         foreach (var (r, pts) in cut ? Gen.Roads.CutOf(axis, band, k) : Gen.Roads.RaisedOf(axis, band, k))
                         {
+                            Assert.That(r.Side, Is.AnyOf(-1, 1), "a stretch belongs to one carriageway");
                             stretches++; if (r.OverWater) wet++;
                             biggest = Math.Max(biggest, r.Max);
                             Assert.That(r.Length, Is.GreaterThanOrEqualTo(minLength));
                             Assert.That(r.Max >= threshold || r.OverWater, $"a {r.Max:0.0} m stretch marked");
                             Assert.That(!cut || !r.OverWater, "a cut never claims water");
-                            foreach (var p in pts) marked.Add(((long)Math.Round(p.x * 100), (long)Math.Round(p.z * 100)));
+                            foreach (var p in pts) marked.Add((r.Side, (long)Math.Round(p.x * 100), (long)Math.Round(p.z * 100)));
                             // where it peaks the carve must have moved the ground under the whole width
                             if (!r.OverWater && r.Max > threshold + 1f)
                             {
@@ -341,15 +342,19 @@ namespace UnturnedSim.Tests
                                 Assert.That(best, Is.GreaterThan(need), "a marked stretch where the carve never moves the whole width");
                             }
                         }
-                        // completeness: an unmarked run (first moved point to last, as a stretch is measured) where the
-                        // carve moves the whole width by more than the threshold
-                        double arcI = 0, runStart = -1;
-                        for (int i = 1; i + 1 < line.Length; i++)
+                        // completeness, per carriageway: an unmarked run (first moved point to last, as a stretch is
+                        // measured) where the carve moves the whole carriageway by more than the threshold
+                        for (int side = -1; side <= 1; side += 2)
                         {
-                            arcI += Math.Sqrt((line[i].x - line[i - 1].x) * (line[i].x - line[i - 1].x) + (line[i].z - line[i - 1].z) * (line[i].z - line[i - 1].z));
-                            bool isMarked = marked.Contains(((long)Math.Round(line[i].x * 100), (long)Math.Round(line[i].z * 100)));
-                            if (!isMarked && AcrossWidth(line, i) > need + 0.5f) { if (runStart < 0) runStart = arcI; worstUnmarkedRun = Math.Max(worstUnmarkedRun, arcI - runStart); }
-                            else runStart = -1;
+                            var line = Gen.Roads.HighwayCarriageway(axis, band, k, side);
+                            double arcI = 0, runStart = -1;
+                            for (int i = 1; i + 1 < line.Length; i++)
+                            {
+                                arcI += Math.Sqrt((line[i].x - line[i - 1].x) * (line[i].x - line[i - 1].x) + (line[i].z - line[i - 1].z) * (line[i].z - line[i - 1].z));
+                                bool isMarked = marked.Contains((side, (long)Math.Round(line[i].x * 100), (long)Math.Round(line[i].z * 100)));
+                                if (!isMarked && AcrossWidth(line, i) > need + 0.5f) { if (runStart < 0) runStart = arcI; worstUnmarkedRun = Math.Max(worstUnmarkedRun, arcI - runStart); }
+                                else runStart = -1;
+                            }
                         }
                     }
             TestContext.WriteLine($"{stretches} {(cut ? "cut" : "raised")} stretches ({wet} over water), biggest {biggest:0.0} m; at {peaks} peaks the carve moves the whole width by >= {worstPeak:0.0} m; longest unmarked run {worstUnmarkedRun:0} m");
