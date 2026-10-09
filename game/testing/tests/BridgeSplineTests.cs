@@ -42,6 +42,20 @@ namespace UnturnedGodot.Testing
             return (g, o);
         }
 
+        /// <summary>True when the mesh has no face lying in either of its extreme Y planes.</summary>
+        static bool OpenEnded(ArrayMesh m)
+        {
+            var a0 = m.SurfaceGetArrays(0);
+            var V = a0[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+            float lo = float.MaxValue, hi = float.MinValue;
+            foreach (var p in V) { lo = Mathf.Min(lo, p.Y); hi = Mathf.Max(hi, p.Y); }
+            for (int i = 0; i + 2 < V.Length; i += 3)
+                foreach (float pl in new[] { lo, hi })
+                    if (Mathf.Abs(V[i].Y - pl) < 1e-3f && Mathf.Abs(V[i + 1].Y - pl) < 1e-3f
+                     && Mathf.Abs(V[i + 2].Y - pl) < 1e-3f) return false;
+            return true;
+        }
+
         public override IEnumerable<Step> Run()
         {
             var ed = new Editor();
@@ -134,6 +148,46 @@ namespace UnturnedGodot.Testing
             }
             T.Check($"every unit is right-handed, not mirrored ({decks.Count} checked)", handed && decks.Count > 0);
             T.Check("...and its length axis lies along the run", aligned);
+
+            // ---- 1c. ⭐ BOTH ENDS CLOSED. Master: "close up the ends." Retail's Bridge_Line_1 is an
+            // open-ended tube -- the check below asserts that on the source asset, because if a future
+            // re-cut ever capped it this cap prop would be a coincident double face instead of a fix.
+            var srcDeck = ContentProvider.ParseObj($"res://content/objects/Bridge_Line_1.obj");
+            T.Check("fixture: the shipped span really is open-ended -- else the cap is a duplicate",
+                    srcDeck != null && OpenEnded(srcDeck));
+
+            var caps = new List<Node3D>();
+            foreach (var c in objs.PlacedOfNodes(EditorBridgeSpline.DeckCap)) caps.Add(c);
+            T.Check($"exactly two end caps for the run ({caps.Count})", caps.Count == 2);
+
+            // ⭐ AND THEY FACE OUTWARD, which a count cannot see. The cap's normal is its local +Y; each must
+            // point AWAY from the deck's centre, so a cap placed with the wrong basis (facing into the
+            // bridge, back-faces out) fails here rather than looking fine until someone walks round it.
+            if (caps.Count == 2 && decks.Count > 0)
+            {
+                var centre = Vector3.Zero;
+                foreach (var d in decks) centre += d.GlobalPosition;
+                centre /= decks.Count;
+                bool outward = true;
+                float worst = 1f;
+                foreach (var c in caps)
+                {
+                    var outv = (c.GlobalPosition - centre).Normalized();
+                    float dot = c.GlobalTransform.Basis.Y.Normalized().Dot(outv);
+                    worst = Mathf.Min(worst, dot);
+                    if (dot < 0.9f) outward = false;
+                }
+                T.Check($"...each facing out of the run, not into it (worst normal.out = {worst:0.000})", outward);
+
+                // ⭐ AND SEATED ON THE END PLANE: half a pitch beyond the outermost deck centre, not at it.
+                float far = 0f;
+                foreach (var d in decks) far = Mathf.Max(far, (d.GlobalPosition - centre).Length());
+                float capFar = 0f;
+                foreach (var c in caps) capFar = Mathf.Max(capFar, (c.GlobalPosition - centre).Length());
+                T.Check($"...and sitting half a unit beyond the last deck ({capFar - far:0.00} m past, "
+                      + $"expected {EditorBridgeSpline.Pitch * 0.5f:0.00})",
+                        Mathf.Abs((capFar - far) - EditorBridgeSpline.Pitch * 0.5f) < 0.15f);
+            }
 
             // ---- 2. PIERS, AND ONLY WHERE THERE IS A DROP.
             var piers = new List<Node3D>();

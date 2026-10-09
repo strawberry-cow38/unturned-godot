@@ -32,6 +32,7 @@ namespace UnturnedGodot
 
         public const string DeckUnit = "Bridge_Line_1_Deck_Unit";
         public const string PierUnit = "Bridge_Line_1_Pier";
+        public const string DeckCap = "Bridge_Line_1_Deck_Cap";
 
         /// <summary>⭐ 7.8349 m, AND IT CAME OFF THE PAINT RATHER THAN THE GEOMETRY. tinyclaw and I had
         /// settled on a round 4 m from the curve budget alone; then the texture turned out to carry a DASHED
@@ -120,6 +121,7 @@ namespace UnturnedGodot
             float tightest = float.PositiveInfinity, totalOverlap = 0f, deepest = 0f;
             int n = 0, piers = 0;
             float s = 0f;
+            Vector3 firstMid = Vector3.Zero, firstDir = Vector3.Zero, lastMid = Vector3.Zero, lastDir = Vector3.Zero;
 
             while (s + Pitch <= total + 1e-3f)
             {
@@ -137,6 +139,8 @@ namespace UnturnedGodot
                 var basis = DeckBasis(dir);
                 var d = objects.Place(DeckUnit, mid, basis);
                 if (d != null) placed?.Add(d);
+                if (n == 0) { firstMid = mid; firstDir = dir; }
+                lastMid = mid; lastDir = dir;
 
                 // A PIER PAIR on retail's rhythm, but only where there is actually a drop to span.
                 if (terr != null && n % PierEveryUnits == 0)
@@ -193,12 +197,26 @@ namespace UnturnedGodot
 
             if (n == 0) { Log.Print($"[editor-bridge] {total:0.#} m laid nothing -- the spline could not be walked"); return 0; }
 
+            // ⭐ CLOSE BOTH ENDS. Master, on the first bridge render: "close up the ends." Retail's own
+            // Bridge_Line_1 is an open-ended TUBE -- zero faces at either end plane -- because retail closes a
+            // run with its Cap props rather than capping each span, so a tiled run of them ends in a hole you
+            // see straight into. The cap is the deck's own section, ear-clipped (tools/cut_bridge_deck_unit.py)
+            // and area-checked against the section, so it cannot spill or leave a gap.
+            //
+            // ⚠ ONE AT EACH END, FACING OUT. The cap's normal is its local +Y, which the stand-up maps onto
+            // the run direction -- so the far end takes the run's own basis and the near end takes the
+            // REVERSED direction, which is a 180 degree turn about the vertical rather than a mirror.
+            var capEnd = objects.Place(DeckCap, lastMid + lastDir * (Pitch * 0.5f), DeckBasis(lastDir));
+            if (capEnd != null) placed?.Add(capEnd);
+            var capStart = objects.Place(DeckCap, firstMid - firstDir * (Pitch * 0.5f), DeckBasis(-firstDir));
+            if (capStart != null) placed?.Add(capStart);
+
             // ⭐ AND RETIRE THE PAINTED STRIP, same reason the rail does: the deck carries its own roadway, and
             // leaving the ribbon drawn puts the old paint inside the new deck. The road keeps its material, so
             // anything that looks roads up by type still finds it.
             roads.SetRoadRibbonVisible(road, false);
 
-            Log.Print($"[editor-bridge] road {road}: {total:0.#} m -> {n} deck unit(s) at {Pitch:0.###} m + {piers} pier(s)"
+            Log.Print($"[editor-bridge] road {road}: {total:0.#} m -> {n} deck unit(s) at {Pitch:0.###} m + {piers} pier(s) + 2 end cap(s)"
                     + (deepest > 0f ? $", deepest {deepest:0.#} m" : ", none deep enough to pier")
                     + ", painted ribbon hidden"
                     + (float.IsPositiveInfinity(tightest) ? ", straight (no joint overlap needed)"

@@ -141,6 +141,106 @@ def dash_period_texels(png, height):
     return None
 
 
+def end_loop(v, faces, yplane, tol=1e-3):
+    """The closed boundary loop the deck's open end leaves behind.
+
+    ⭐ Both retail's Bridge_Line_1 and the unit cut from it are open-ended TUBES -- zero faces at either end
+    plane -- because retail closes a run with its Cap props rather than capping each span. Tiled on its own
+    that leaves a hole you see straight into, which is what master meant by "close up the ends".
+
+    Every edge lying in the end plane bounds exactly one side face, so the whole set IS the loop; chaining
+    them is just bookkeeping, not a guess about which edges count."""
+    key, rep = {}, []
+    for q in v:
+        k = tuple(round(c, 4) for c in q)
+        key.setdefault(k, len(key))
+        rep.append(key[k])
+    pos = {i: k for k, i in key.items()}
+    adj = {}
+    for f in faces:
+        r = [rep[c[0] - 1] for c in f]
+        for a, b in ((r[0], r[1]), (r[1], r[2]), (r[2], r[0])):
+            if abs(pos[a][1] - yplane) <= tol and abs(pos[b][1] - yplane) <= tol and a != b:
+                adj.setdefault(a, set()).add(b)
+                adj.setdefault(b, set()).add(a)
+    if not adj:
+        return None
+    start = next(iter(adj))
+    loop, prev, cur = [start], None, start
+    while True:
+        nxt = [w for w in adj[cur] if w != prev]
+        if not nxt:
+            return None
+        nxt = nxt[0]
+        if nxt == start:
+            break
+        loop.append(nxt)
+        prev, cur = cur, nxt
+        if len(loop) > len(adj) + 2:
+            return None
+    return [(pos[i][0], pos[i][2]) for i in loop]
+
+
+def ear_clip(poly):
+    """Triangulate a simple polygon. ⚠ A FAN WOULD BE WRONG: the profile is concave at the two points where
+    the roadway meets the inside of each parapet, and a fan there spills triangles outside the section."""
+    pts = list(poly)
+    n = len(pts)
+    area2 = sum(pts[i][0] * pts[(i + 1) % n][1] - pts[(i + 1) % n][0] * pts[i][1] for i in range(n))
+    if area2 < 0:
+        pts.reverse()                                  # work CCW
+    idx = list(range(len(pts)))
+    out = []
+    guard = 0
+    while len(idx) > 3 and guard < 10000:
+        guard += 1
+        for j in range(len(idx)):
+            a, b, c = idx[j - 1], idx[j], idx[(j + 1) % len(idx)]
+            ax, ay = pts[a]; bx, by = pts[b]; cx, cy = pts[c]
+            cross = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
+            if cross <= 0:
+                continue                               # reflex, not an ear
+            bad = False
+            for m in idx:
+                if m in (a, b, c):
+                    continue
+                px, py = pts[m]
+                d1 = (bx - ax) * (py - ay) - (by - ay) * (px - ax)
+                d2 = (cx - bx) * (py - by) - (cy - by) * (px - bx)
+                d3 = (ax - cx) * (py - cy) - (ay - cy) * (px - cx)
+                if d1 >= 0 and d2 >= 0 and d3 >= 0:
+                    bad = True
+                    break
+            if not bad:
+                out.append((pts[a], pts[b], pts[c]))
+                idx.pop(j)
+                break
+        else:
+            return None
+    if len(idx) == 3:
+        out.append((pts[idx[0]], pts[idx[1]], pts[idx[2]]))
+    return out
+
+
+def write_cap(path, tris, uv, src_name):
+    """A flat cap in the XZ plane at Y=0, facing +Y, pinned to one concrete texel.
+
+    Authored at Y=0 rather than at the unit's end so the tool can drop it straight on the run's end plane,
+    and ParseObj decides winding per triangle off the authored normal, so emitting vn=+Y is enough."""
+    with open(path, 'w') as fh:
+        fh.write(f"# end cap for {src_name}, section ear-clipped from its open end "
+                 f"(tools/cut_bridge_deck_unit.py)\n")
+        for t in tris:
+            for (x, z) in t:
+                fh.write('v %.6f 0.000000 %.6f\n' % (x, z))
+        fh.write('vt %.6f %.6f\n' % uv)
+        fh.write('vn 0.000000 1.000000 0.000000\n')
+        for i in range(len(tris)):
+            a, b, c = 3 * i + 1, 3 * i + 2, 3 * i + 3
+            fh.write(f"f {a}/1/1 {b}/1/1 {c}/1/1\n")
+    return len(tris)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('prop')
@@ -233,6 +333,26 @@ def main():
         bb = [(min(c), max(c)) for c in zip(*pts)]
         print(f"[cut]   {name:28s} {cv:4d}v {cf:4d}t  X {bb[0][0]:+7.2f}..{bb[0][1]:+7.2f}  "
               f"Y {bb[1][0]:+7.2f}..{bb[1][1]:+7.2f}  Z {bb[2][0]:+7.2f}..{bb[2][1]:+7.2f}")
+
+    # ---- END CAP. Master, on the first bridge render: "close up the ends."
+    loop = end_loop(nv, deck, nv[deck[0][0][0] - 1][1] if False else max(nv[c[0] - 1][1] for f in deck for c in f))
+    if loop is None:
+        print("[cut]   ⚠ could not chain the deck's end profile -- no cap written")
+    else:
+        tris = ear_clip(loop)
+        if tris is None:
+            print(f"[cut]   ⚠ could not triangulate the {len(loop)}-point end profile -- no cap written")
+        else:
+            # the texel the deck's own CONCRETE faces are pinned to, so the cap matches rather than guessing
+            pin = min(((vspan(f), f) for f in deck if vspan(f) <= 1e-4 and all(c[1] for c in f)),
+                      default=(None, None))[1]
+            uv = tuple(vt[pin[0][1] - 1]) if pin else (0.99, 0.016)
+            cname = f"{a.prop}_Deck_Cap"
+            ct = write_cap(os.path.join(a.objects_dir, cname + '.obj'), tris, uv, a.prop)
+            shutil.copyfile(tex, os.path.join(a.objects_dir, cname + '_tex.png'))
+            xs = [x for t in tris for (x, _) in t]; zs = [z for t in tris for (_, z) in t]
+            print(f"[cut]   {cname:28s} {ct*3:4d}v {ct:4d}t  {len(loop)}-point section, "
+                  f"X {min(xs):+7.2f}..{max(xs):+7.2f}  Z {min(zs):+7.2f}..{max(zs):+7.2f}")
 
 
 if __name__ == '__main__':
