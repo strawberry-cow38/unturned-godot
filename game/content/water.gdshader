@@ -1,277 +1,63 @@
 shader_type spatial;
 render_mode cull_disabled, diffuse_burley, specular_schlick_ggx;
-// The swell field itself lives in its own include: the RAIN shader needs the same surface height, to the metre,
-// to know where a drop stops. See swell.gdshaderinc (and WaveField.cs, the CPU twin).
-#include "res://content/swell.gdshaderinc"
-// ...and what the water does to the light crossing it, shared with the SUBMERGED view so the sea does not change
-// character as you swim down through it. See water_optics.gdshaderinc.
+
+// ============================================================================================================
+// FLAT WATER. Master 2026-10-09: "rip out our entire water system until we are left with a totally flat water
+// plane with no effects. keep caustics and shore foam so we could revert those if we want them."
+//
+// What this file used to be: 277 lines of anisotropic fbm swell (vertex displacement + a per-pixel swell
+// normal), fine-ripple chop, crest-foam whitecaps, depth-tinted transparency, a Fresnel sky term, a planar
+// mirror reflection, rain rings, and a storm response that pushed all of the above. It is all gone. Recover any
+// of it with `git show 2d10f3d0:game/content/water.gdshader` -- this strip is one commit, so the old file is one
+// command away and nothing was lost.
+//
+// WHAT SURVIVES, AND WHY ONLY THIS:
+//   * SHORE FOAM, behind `shore_foam_on` (OFF). Master named it as a keeper, so it is here as a switch rather
+//     than in the history -- flip the bool and the band is back, untouched.
+//   * The water_optics include, because it OWNS water_deep/water_shallow and underwater.gdshader veils the
+//     submerged view with the same colours. Stripping the surface must not make the two disagree -- that exact
+//     mismatch is a bug master already caught once ("the color of the underwater fog doesnt match the surface").
+//
+// ⭐ THE GEOMETRY IS NOT FLATTENED HERE. The plane is flat because WaveField.Flat zeroes the swell at its
+// source, which also flattens the CPU twin (buoyancy, WaterSurfaceY) and rain_streak.gdshader, which reads the
+// same surface height. Flattening only the visual would have floated boats on an invisible swell.
+// ============================================================================================================
+
 #include "res://content/water_optics.gdshaderinc"
 
-// NOISE-BASED ocean (master 2026-08-16, "drawing board"): the wave HEIGHT is ANISOTROPIC fbm noise -- organic
-// directional swell with NO periodic term, so it physically cannot lattice the way summed sines always do.
-// Big swell displaces the vertices (coarse-plane safe); the swell NORMAL, fine chop and ALL foam are
-// evaluated per-pixel in the fragment, so nothing keyed to wave height follows the mesh triangles. Transparent,
-// depth-tinted, crest foam on the peaks, depth-based shore foam. WaveField.cs is the CPU twin of swell_at().
-
-// SLIGHTLY MORE OPAQUE AND MORE BLUE (strawberry 2026-09-08). Both moved a step, not a leap: deep alpha
-// 0.72 -> 0.82 and shallow 0.26 -> 0.36, so the seabed still shows through the shallows (which is the whole
-// reason the shallow alpha is low) but the water reads as water rather than as tinted glass. The hue shift is in
-// the RATIO rather than the brightness -- red down, blue up, green roughly held -- because that is what makes a
-// body of water look blue instead of merely darker.
-// ⚠ water_deep / water_shallow NOW LIVE IN water_optics.gdshaderinc, with their comments and their exact values.
-// They moved because the SUBMERGED view has to veil with the same colour the surface draws -- master, looking at
-// the first version: "the color of the underwater fog doesnt match the surface at all" -- and two shaders holding
-// a colour each is precisely how that happens. Same reasoning that put the swell constants in an include.
 uniform vec4 foam_color : source_color = vec4(0.92, 0.97, 1.0, 1.0);
-uniform float crest_foam = 0.36;      // swell-height fraction above which crest foam kicks in; raised -> fewer peak whitecaps (master)
-uniform float shore_depth = 2.2;      // vertical water depth (m) under which shore foam shows (wider = fuller shore band)
-// SILENCE BOTH FOAMS AT ONCE (strawberry 2026-09-09: "remove water reflections and foam in the bake").
-// crest_foam can be pushed out of reach, but SHORE foam has no uniform of its own -- its band is hardcoded
-// off the reconstructed depth below -- so a multiplier on the COMBINED foam is the only way to switch the
-// pair off from outside the shader. Defaults 1.0: every existing render is byte-identical.
-uniform float foam_amount : hint_range(0.0, 1.0) = 1.0;
-uniform float detail_strength = 0.30; // fbm fine-ripple perturbation of the normal
-uniform vec4 sky_tint : source_color = vec4(0.52, 0.67, 0.86, 1.0);  // colour reflected at grazing angles (the sky)
-uniform float reflectivity = 0.80;    // how strongly the sky AND the planar mirror show (Fresnel-gated). 0.45 -> 0.20 (strawberry 2026-09-15 "reduce the reflectivity by quite a bit") -> 0.80 (strawberry 2026-10-06 "make water wayy more reflective" -- 0.55 still rendered the reflected trees as a pale ghost, measured on the treetest A/B, so the first pass undershot "wayy"). ⭐ THE 09-15 CUT WAS AIMED AT A DIFFERENT THING: with the mirror never built on a map, this number only ever scaled the FLAT sky_tint, so turning it up blew the horizon white and turning it down was the only cure. Now that it scales a real reflected image, high reads as reflection rather than wash -- which is why the same knob can go the other way without re-earning the old complaint
+uniform bool shore_foam_on = false;   // master's keeper: the shoreline band, one flip from back
+uniform float shore_depth = 2.2;      // vertical water depth (m) under which shore foam shows
 uniform sampler2D depth_tex : hint_depth_texture, repeat_disable, filter_linear;
-// CLOUDINESS THROUGH THE WATER COLUMN (master 2026-10-04: "the water should look visibly cloudy at depth,
-// instead of perfectly translucent").
-//
-// ⚠⚠ THE SURFACE HAD NO SCREEN TEXTURE AT ALL. It set ALBEDO + ALPHA and let the hardware blend, which is
-// TINTED GLASS: the seabed stays perfectly sharp through any depth of water, only coloured. Tinting alone can
-// never read as water, because what actually happens in a water column is SCATTERING -- detail is lost with
-// distance, not merely recoloured. That is precisely "perfectly translucent", and it is a missing term rather
-// than a wrong number, which is why no amount of alpha tuning fixed it.
-//
-// ⭐ Same idea underwater.gdshader already uses for looking AROUND (mip level by absorption), applied to looking
-// DOWN. One notion of scattering, both sides of the surface.
-uniform sampler2D screen_tex : hint_screen_texture, repeat_disable, filter_linear_mipmap;
-uniform float cloud_blur = 4.0;     // mip level at FULL scattering -- how far detail is smeared by the water column
-uniform sampler2D reflection_tex : filter_linear;   // planar reflection buffer (mirror camera) -- WaterReflection.cs feeds it
-uniform bool reflection_on = false;                 // off until the reflection node wires the buffer in
-uniform bool reflection_debug = false;              // UG_REFLDEBUG: paint the raw reflection buffer onto the water (check mirror + UV)
-uniform float reflection_strength = 1.0;            // UG_REFLSTR: scale the reflection's blend-in for tuning
 
-varying vec3 v_wpos;     // world position of the displaced surface
-// RAIN ON OPEN WATER (master 2026-09-06 "add rain ripple impacts to water surface"). The same expanding rings the
-// roads and puddles show, on the sea -- rain does not stop at the shoreline, and a lake in a downpour that stays
-// glassy is the one surface in the scene that looks wrong. Kept CHEAP and near-field: the field is only evaluated
-// while it is actually raining and within rain_ring_distance, so a calm day and the far horizon cost nothing.
-global uniform float rain_intensity;
-uniform float rain_ring_distance = 70.0;
-uniform float rain_ring_strength : hint_range(0.0, 2.0) = 0.9;
-uniform float ring_normal_gain = 2.5;   // how hard a ring tilts the surface (see the NORMAL tweak at the end of fragment)
-
-// WEATHER DRIVES THE SEA (master 2026-09-12 "have weather affect the water"). All four ride the SAME
-// `rain_intensity` global the rain rings already read -- one weather signal, not a second one invented here that
-// could drift out of step with the sky, the streaks and the wetness. At intensity 0 every term below is exactly
-// 1.0/unchanged, so fair weather is byte-identical to before.
-uniform float storm_chop = 2.1;        // ripple-detail multiplier at full rain: wind-driven chop
-uniform float storm_foam = 0.55;       // crest_foam THRESHOLD multiplier: lower bar -> whitecaps appear sooner
-uniform float storm_mirror = 0.42;     // reflectivity multiplier: a broken surface scatters instead of mirroring
-uniform vec3 storm_tint : source_color = vec3(0.10, 0.14, 0.17);   // overcast grey-green the body colour shifts toward
-uniform float storm_tint_amt = 0.40;   // how far toward storm_tint at full rain
-float wr_h21(vec2 p){ p = fract(p * vec2(127.32, 311.7)); p += dot(p, p + 34.53); return fract(p.x * p.y); }
-// Voronoi-ish scatter of expanding rings, the same shape wet_surface uses so water and wet road ring alike.
-float wr_rings(vec2 wxz, float t, float amt){
-    float acc = 0.0;
-    float gate = 1.0 - clamp(amt, 0.0, 1.0) * 0.35;   // fraction of cells striking at once; heavy rain should look busy
-    for (int k = 0; k < 2; k++){
-        float sc = 0.9 + float(k) * 2.0;   // cells ~1.1 m and ~0.34 m across. The first pass used 1.6/4.4 -- rings ~20 cm and ~8 cm, which on open water from standing height were specks (the render showed them drawing and unreadable)
-        vec2 g = wxz * sc + float(k) * 21.0;
-        vec2 base = floor(g);
-        for (int dy = -1; dy <= 1; dy++){
-            for (int dx = -1; dx <= 1; dx++){
-                vec2 id = base + vec2(float(dx), float(dy));
-                float seed = wr_h21(id);
-                float tt = t * (0.65 + seed * 0.7) + seed;
-                float cyc = floor(tt), life = fract(tt);
-                vec2 q = id + cyc * 13.7;
-                vec2 centre = id + vec2(wr_h21(q + 1.3), wr_h21(q + 7.7));
-                float rad = life * (0.16 + seed * 0.20);
-                float ring = smoothstep(0.05, 0.0, abs(length(g - centre) - rad));
-                acc += ring * (1.0 - life) * step(gate, wr_h21(q)) * (0.55 + seed * 0.45);
-            }
-        }
-    }
-    return acc;
-}
+varying vec3 v_wpos;
 
 void vertex() {
-    vec2 wp = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xz;
-    float tphase = swell_phase(TIME);
-    VERTEX.y += swell_at(wp, tphase) * swell_amp();   // weather-scaled, see swell.gdshaderinc
-    v_wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;   // normal is computed PER-PIXEL in the fragment (below)
+    // No displacement. The mesh is the surface.
+    v_wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 }
 
 void fragment() {
-    // PER-PIXEL SWELL NORMAL: sample the big-wave gradient HERE (not interpolated from the coarse mesh vertices) so
-    // the big waves SHADE smooth even on a low-poly grid -> no grid/snap. The vertex still displaces the geometry.
-    float tp = swell_phase(TIME);
-    float se = 0.6;
-    float sh  = swell_at(v_wpos.xz, tp);
-    float shx = swell_at(v_wpos.xz + vec2(se, 0.0), tp);
-    float shz = swell_at(v_wpos.xz + vec2(0.0, se), tp);
-    float _sa = swell_amp();
-    vec3 swell_n = vec3((sh - shx) * _sa / se, 1.0, (sh - shz) * _sa / se);
-    // DISTANCE LOD: fade the high-freq ripple detail out with distance. At a LOW/grazing angle (standing on the
-    // shore) far water crushes many wavelengths into each pixel -> the normals alias into a BUSY shimmer, and the
-    // Fresnel (below) turns that into a wall of glitter. Fading detail with distance keeps far/grazing water calm;
-    // top-down (heli) is near-field everywhere so it's basically unaffected. (master: busy+opaque at low angle)
-    float vdist = length(VERTEX);   // fragment distance from camera (view space)
-    float lod = clamp(1.0 - (vdist - 25.0) / 140.0, 0.0, 1.0);   // 1 near (<25m) -> 0 far (>165m)
-    // FINE RIPPLE DETAIL: fbm-gradient perturbs the normal (fragment space), LOD-faded with distance
-    // 0.10 -> 0.055: the ripple CREASES roughly double in size (strawberry 2026-09-12 "up the size of the ripple
-    // creases"; second time this has been scaled up, hence the note). The finite-difference epsilon below stays at
-    // 0.06 ON PURPOSE -- it is in NOISE space, not world space, so it tracks the pattern automatically and the
-    // creases keep their sharpness instead of flattening as they grow. Scaling it with the frequency would widen
-    // the gradient stencil and soften exactly what was asked to be made bigger.
-    vec2 np = v_wpos.xz * 0.055 + vec2(TIME * 0.03, TIME * -0.02);
-    float n0 = fbm5(np);
-    float nx = fbm5(np + vec2(0.06, 0.0));
-    float nz = fbm5(np + vec2(0.0, 0.06));
-    float storm = clamp(rain_intensity, 0.0, 1.0);
-    // CHOP. The same fbm that makes the calm-water creases, pushed harder -- so a storm roughens the surface
-    // the sea already has rather than layering a separate "storm pattern" over it.
-    vec3 detail = vec3((n0 - nx), 0.0, (n0 - nz)) * detail_strength * 6.0 * lod * mix(1.0, storm_chop, storm);
-    vec3 wn = normalize(swell_n + detail);
-    NORMAL = normalize((VIEW_MATRIX * vec4(wn, 0.0)).xyz);
+    // Straight up, everywhere. No swell gradient, no chop.
+    NORMAL = normalize((VIEW_MATRIX * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
 
-    // SHORE FOAM: reconstruct the opaque scene behind the water, foam where the water is shallow over it.
-    float raw = texture(depth_tex, SCREEN_UV).r;
-    vec4 vp = INV_PROJECTION_MATRIX * vec4(SCREEN_UV * 2.0 - 1.0, raw, 1.0);
-    vp.xyz /= vp.w;
-    float bed_y = (INV_VIEW_MATRIX * vec4(vp.xyz, 1.0)).y;
-    float depth_v = max(v_wpos.y - bed_y, 0.0);
-    float shore = 1.0 - smoothstep(0.0, 0.85, depth_v);       // WIDER band = more shore-foam AREA (master "up the amount")
-    shore *= 0.45 + 0.15 * fbm5(v_wpos.xz * 0.4 + TIME * 0.15);  // ...but lower intensity -> 20% less opaque (master)
-
-    // CREST FOAM, PER-PIXEL. It used to threshold a `v_crest` varying -- the swell height sampled at the mesh
-    // CORNERS and linearly smeared between them. On the real map's coarse (~5 m) water grid that puts a hard
-    // smoothstep edge across an interpolated ramp, so the whitecap boundary follows the triangle edges instead
-    // of the wave: straight diagonal foam seams and caps that pop as the crest crosses a vertex. Exactly the
-    // disease the swell NORMAL was moved to the fragment to cure, left behind on the foam.
-    //
-    // `sh` above is the same quantity evaluated HERE, per pixel, and it is already computed for the normal --
-    // so this costs nothing. It is genuinely identical at a vertex: the vertex samples swell_at() at the
-    // undisplaced world XZ, displacement is Y-only so v_wpos.xz is that same XZ, and the interpolation of a
-    // planar XZ across a triangle is exact. Same input, same function, finer sampling.
-    float capMask = fbm5(v_wpos.xz * 0.09 + vec2(TIME * 0.04, TIME * -0.03));
-    float gate = smoothstep(-0.2, 0.05, capMask);   // stricter -> fewer peaks foam (master: tone down peak foam amount)
-    // WHITECAPS. Lower the swell-height BAR in a storm rather than adding foam directly: the caps still appear
-    // on real crests, there are just more of them, so they stay tied to the wave field instead of floating on it.
-    float crest_bar = crest_foam * mix(1.0, storm_foam, storm);
-    float crest = smoothstep(crest_bar, crest_bar + 0.20, sh) * gate;
-
-    float foam = clamp(max(crest, shore) * 0.8 * foam_amount, 0.0, 1.0);   // all foam -20% opacity (master; whitecaps + shore softer)
-
-    // SEE-THROUGH depth-tinted water
-    // FOGGIER: reach the deep colour in roughly half the water depth it used to take, so the seabed is swallowed
-    // sooner instead of staying legible well out from shore (master 2026-09-12 "more foggy"). shore_depth still
-    // owns the FOAM band -- this is only the colour/opacity ramp, which is why it gets its own multiplier.
-    float dt = smoothstep(0.0, shore_depth * 2.0, depth_v);
-    vec3 base = mix(water_shallow.rgb, water_deep.rgb, dt);
-    float a = mix(water_shallow.a, water_deep.a, dt);
-
-    // FRESNEL SKY REFLECTION: grazing angles reflect the sky, so the horizon brightens + the water reads as reflective
-    // (real water isn't flat-dark edge-on). Uses the ripple-perturbed normal, so the reflection shimmers with the chop.
-    // ⭐ THE EXPONENT IS "HOW MUCH OF THE WATER REFLECTS", not how strongly -- and it mattered more than the
-    // reflectivity scalar. At 4.0 the term is ~0.06 at a 45-degree look and only climbs near the horizon, so the
-    // water a player is actually looking AT (down at the surface from a shore, a boat, a bridge) reflected almost
-    // nothing no matter how high reflectivity went. 2.5 widens the band into those mid angles (~0.18 at 45) while
-    // leaving the grazing end where it already was, so this buys reflection where it was missing rather than more
-    // of it where there was already plenty. (Schlick's physical 5.0 is for a flat optical interface; stylised water
-    // is chop-perturbed over a whole pixel footprint, which flattens the real curve the same way.)
-    float fres = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 2.5);
-    // REFLECTION: sample the planar-reflection buffer (mirror camera), UV perturbed by the wave normal so the
-    // reflection SHIMMERS with the chop. Where the buffer has coverage (alpha>0) that's a reflected tree/prop/
-    // building; where it's empty, fall back to the flat sky tint. Both are Fresnel-gated below, so the reflection
-    // only shows where the water reads edge-on -- top-down you see through, and it costs nothing there.
-    vec3 refl_src = sky_tint.rgb;
-    if (reflection_on) {
-        vec2 refl_uv = clamp(SCREEN_UV + wn.xz * 0.04 * lod, vec2(0.001), vec2(0.999));   // exact negative-det mirror -> sample straight by SCREEN_UV; wn.xz ripple-distorts. (UG_REFLLOOKAT fallback needs a Y-flip; not wired since the exact mirror is default.)
-        vec4 refl = texture(reflection_tex, refl_uv);
-        // the mirror SubViewport renders empty sky as bright/near-white (no environment in the buffer), so gate by
-        // DARKNESS instead of alpha: dark samples are reflected geometry (trees/props/ground) -> reflect them; bright
-        // samples are empty sky -> fall back to the flat sky tint (no white-out of the water).
-        // ⚠ BACK TO 0.72/0.90 (2026-10-06). I had widened this to 0.80/0.97 to let a sunlit canopy reflect, which
-        // was speculative -- and master's report was "the trees in the reflection are just.. white?". Pushing the
-        // upper bound to 0.97 is exactly how BRIGHT SKY stops being rejected and starts compositing as though it
-        // were geometry. These are the numbers the reflection was tuned against when it looked right; the thing
-        // that was actually wrong lives in WaterReflection (the mirror's aspect), not in this window.
-        float refl_geo = 1.0 - smoothstep(0.72, 0.90, dot(refl.rgb, vec3(0.3333)));
-        refl_src = mix(sky_tint.rgb, refl.rgb, refl_geo);
+    float foam = 0.0;
+    if (shore_foam_on) {
+        // KEPT VERBATIM from the stripped shader: reconstruct the opaque scene behind the water and foam where
+        // the water is shallow over it. Depth-based, so it is angle-independent and follows the real shoreline.
+        float raw = texture(depth_tex, SCREEN_UV).r;
+        vec4 vp = INV_PROJECTION_MATRIX * vec4(SCREEN_UV * 2.0 - 1.0, raw, 1.0);
+        vp.xyz /= vp.w;
+        float bed_y = (INV_VIEW_MATRIX * vec4(vp.xyz, 1.0)).y;
+        float depth_v = max(v_wpos.y - bed_y, 0.0);
+        foam = (1.0 - smoothstep(0.0, 0.85, depth_v)) * 0.45;
     }
-    // OVERCAST BODY COLOUR: a storm sky lights the water greyer, and this is also the only one of the four that
-    // shows from straight down, where Fresnel contributes nothing.
-    base = mix(base, storm_tint, storm * storm_tint_amt);
-    // BROKEN SURFACE SCATTERS. Chop destroys the mirror, so the sky reflection has to fall off with weather --
-    // otherwise a storm reads as a ROUGHER surface that is somehow still glassy, which looks wrong at the exact
-    // grazing angles a player on a shore actually stands at.
-    float refl_w = reflectivity * mix(1.0, storm_mirror, storm);
-    vec3 water_col = mix(base, refl_src, clamp(fres * refl_w * reflection_strength, 0.0, 1.0));
-    // ⚠ 0.25 -> 0.12 ON PURPOSE, against the direction of everything else here. This line turns reflection into
-    // OPACITY, and both changes above push its two inputs up -- so leaving it alone would have smuggled in the one
-    // thing master has already rejected twice ("opaque" from a shore, "stays see-through low-angle"). Halving it
-    // holds the measured see-through roughly where it was while the reflection itself goes up.
-    a = mix(a, 1.0, fres * refl_w * 0.12);
 
-    // rain rings: a bright dimple where each drop lands, and a rougher patch around it so the reflection breaks up
-    float rint_w = clamp(rain_intensity, 0.0, 1.0);
-    float ring = 0.0;
-    if (rint_w > 0.02) {
-        float rrange = 1.0 - smoothstep(rain_ring_distance * 0.7, rain_ring_distance, length(VERTEX));
-        if (rrange > 0.01) ring = wr_rings(v_wpos.xz, TIME, rint_w) * rint_w * rrange * rain_ring_strength;
-    }
-    vec3 surf_col = mix(water_col, foam_color.rgb, foam) + vec3(ring * 0.30);
-    // ⚠ ONLY FROM ABOVE. Looking UP at the surface from underwater, what is "behind" it is the sky at the far
-    // plane -- feeding that to the water column would put 16 km of sea between you and the sun and paint the sky
-    // the colour of the seabed. There is no water between a submerged eye and the surface; the submerged view's
-    // own pass is what tints that. One comparison, and it also keeps Snell's window working.
-    bool from_above = (INV_VIEW_MATRIX * vec4(0.0, 0.0, 0.0, 1.0)).y > v_wpos.y;
-    if (water_optics > 0.001 && from_above) {
-        // ⭐ COMPOSITE BY HAND. The hardware blend mixes the SHARP scene behind the surface, and nothing written
-        // to ALBEDO can soften it -- so the only way to scatter the bed is to read it ourselves, put it through
-        // the water column, and hand back an opaque result. ALPHA = 1 is therefore not "solid water", it means
-        // "this fragment has already done its own blending".
-        //
-        // ⭐⭐ THE PATH IS THE SLANT DISTANCE THROUGH THE WATER, surface fragment to seabed along the view ray --
-        // not the vertical depth. Both points are already in view space here (VERTEX is this fragment, vp.xyz is
-        // the reconstructed bed), so it is one distance() and it is exact. At the grazing angle a player on a
-        // beach looks at the sea, this is many times the depth, which is why the far water now closes up while
-        // the shallows at your feet stay clear.
-        float path = distance(vp.xyz, VERTEX);
-        vec3 bed = textureLod(screen_tex, SCREEN_UV, cloud_blur * water_scatter(path) * water_optics).rgb;
-        bed = mix(bed, water_through(bed, path, water_deep.rgb), water_optics);
-        // The old alpha curve keeps its exact meaning -- how much of the bed survives -- it is simply applied to
-        // light that has crossed the water now instead of to a sharp, untouched bed. So the tuning behind those
-        // numbers is preserved rather than thrown away and re-guessed.
-        float see = (1.0 - mix(a, 1.0, foam));
-        ALBEDO = mix(surf_col, bed, see);
-        ALPHA = 1.0;
-    } else {
-        ALBEDO = surf_col;
-        ALPHA = mix(a, 1.0, foam);
-    }
-    float rough_base = mix(0.22, 0.05, lod);   // 0.35/0.08 -> 0.22/0.05: a sharper specular lobe = a mirror rather than a sheen. The LOD stays (far water still rougher) because that is what calmed the distant shimmer master called "busy" -- this lifts the whole curve without flattening it
-    ROUGHNESS = mix(mix(rough_base, 0.9, foam), 0.55, clamp(ring, 0.0, 1.0));   // a struck patch scatters instead of mirroring
-    // ...and TILT the surface where a ring passes. A brightness ring alone is a decal painted on flat water -- it
-    // does not catch the sky differently, so it stays a faint smudge however bright it is. The screen-space
-    // gradient of the ring is the direction the little wave is leaning, which is enough to make it break the
-    // reflection like real disturbed water. (Gated on ring itself, so the distance cutoff's own branch -- where
-    // ring is zero either side -- never feeds this a garbage derivative.)
-    if (ring > 0.002) {
-        vec2 rg = clamp(vec2(dFdx(ring), dFdy(ring)) * ring_normal_gain, vec2(-0.6), vec2(0.6));
-        NORMAL = normalize(NORMAL + vec3(rg, 0.0));
-    }
-    // THE SUN'S OWN GLINT RIDES ON `reflectivity` TOO. The Fresnel blend above is only the SKY term; Godot's
-    // specular lobe is a separate path, and zeroing reflectivity for the map bake still left a sun streak
-    // burned across the middle of the sea. Scaling by the same uniform keeps "how reflective is this water"
-    // as ONE number instead of two that can disagree. The /0.45 is where this expression CAME FROM, not the
-    // current default: it was written when reflectivity was 0.45, so the glint came out at Godot's own 0.5 and
-    // nothing changed that day. It is the tie between glint and sky term -- at today's 0.20 it gives 0.22.
-    SPECULAR = 0.5 * clamp(reflectivity / 0.45, 0.0, 1.0);
+    // ONE flat colour and ONE alpha -- no depth ramp, so a shallow is the same water as a deep. The alpha is
+    // water_deep's: the sea stays see-through enough that the caustics read when they are switched back on.
+    ALBEDO = mix(water_deep.rgb, foam_color.rgb, foam);
+    ALPHA = mix(water_deep.a, 1.0, foam);
+    ROUGHNESS = 1.0;   // fully matte: no sheen, and no sun glint (SPECULAR 0) -- a glint is an effect
+    SPECULAR = 0.0;
     METALLIC = 0.0;
-    // UG_REFLDEBUG: overwrite the water with the raw reflection buffer to eyeball the mirror camera + UV alignment
-    if (reflection_on && reflection_debug) { ALBEDO = texture(reflection_tex, SCREEN_UV).rgb; ALPHA = 1.0; ROUGHNESS = 1.0; }
 }

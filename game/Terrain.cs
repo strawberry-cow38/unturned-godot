@@ -51,7 +51,12 @@ uniform float tileWorld = 16.0;
 uniform float splat_jitter = 0.75;                               // texels of world-noise warp on the splat lookup (see the boundary note in fragment); 0 = the raw texel lattice
 uniform float sea_level = 25.6;                                  // world-Y of the ocean surface -> caustics show only below it
 uniform vec3 caustic_tint : source_color = vec3(0.55, 0.9, 1.0);
-uniform float caustic_strength = 0.15;   // toned down 70% (master)
+// MASTER'S OTHER KEEPER, SWITCHED OFF RATHER THAN DELETED (2026-10-09: keep caustics and shore foam so we could
+// revert those if we want them). The whole caustics() web below is untouched -- put this back to 0.15 and the
+// seabed lights up again exactly as it did. 0.15 was itself the tuned value (toned down 70%, master).
+// NB this GLSL lives inside a C# @-verbatim string, so a double quote here would END THE LITERAL -- it did, and
+// cost a 19-error build. No quotes in this block.
+uniform float caustic_strength = 0.0;
 global uniform float rain_wetness;                              // 0..1 wet soak (WeatherManager drives it) -> darken + gloss up-facing terrain
 global uniform float rain_intensity;                           // 0..1 raindrop-impact splash density/brightness
 global uniform float rain_puddle;                              // 0..1 standing water, minutes behind the rain (WeatherManager)
@@ -393,10 +398,11 @@ void fragment() {
             water.MaterialOverride = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/water.gdshader") };
             water.Layers = WaterReflection.WaterLayer;   // keep the ocean out of its own mirror pass
             AddChild(water);
-            // ⚠ THIS PATH HAD NO MIRROR AT ALL -- not even behind the old UG_REFLECT opt-in, so a generated island's
-            // sea could never reflect whatever stood on its coast while the retail sea at least could be flagged on.
-            // Attached right beside the AddChild, the same way ShoreField.Bake is, so the two ocean paths stay level.
-            WaterReflection.Attach(this, (ShaderMaterial)water.MaterialOverride, SeaLevelY);
+            // ⚠ NO MIRROR WHILE THE WATER IS FLAT (master 2026-10-09, "no effects"). The reflection is a whole
+            // SubViewport rendering the world a second time, so leaving it attached to a shader that no longer
+            // samples reflection_tex would pay the entire cost for nothing. Gated on the same one switch as the
+            // swell so the strip cannot half-revert. (Both ocean paths do this; they have drifted before.)
+            if (!WaveField.Flat) WaterReflection.Attach(this, (ShaderMaterial)water.MaterialOverride, SeaLevelY);
             Log.Print($"[terrain] ocean plane built at y={SeaLevelY:0.#} ({wsx:0}x{wsz:0} m)");
             // SHORE DIRECTION: baked from THIS terrain, right after the sea it describes exists. Both the shader
             // and WaveField read it, so swell bends toward the coast and boats bob to the same bend.
@@ -2812,7 +2818,7 @@ void fragment() {
                 // UG_REFLECT=1 "until proven", which meant no shipped map ever reflected anything -- the graphics
                 // option that gates it has read Medium the whole time and never had a node to gate. UG_REFLECT=0
                 // ablates it for a frametime A/B; GraphicsOptions.PlanarReflection=Off turns it off for real.
-                WaterReflection.Attach(terr, (ShaderMaterial)water.MaterialOverride, waterY);
+                if (!WaveField.Flat) WaterReflection.Attach(terr, (ShaderMaterial)water.MaterialOverride, waterY);   // see BuildOceanPlane: no mirror while flat
                 // Bullets-only splash collider on a dedicated layer (bit9): the bullet raycast checks it, but player/
                 // vehicles don't mask bit9 so it never blocks movement/swimming. Shooting the ocean -> Water_Static splash.
                 var wbody = new StaticBody3D { CollisionLayer = 1u << 9, Position = water.Position };

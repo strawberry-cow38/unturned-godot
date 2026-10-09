@@ -110,8 +110,9 @@ namespace UnturnedGodot
             if (!_globalsRegistered) return;   // never registered -> nothing to reset (and Set on a missing global warns)
             RenderingServer.GlobalShaderParameterSet("rain_wetness", 0f);
             RenderingServer.GlobalShaderParameterSet("rain_intensity", 0f);
-            RenderingServer.GlobalShaderParameterSet("swell_scale", 1f);   // back to CALM, not 0 -- 0 would flatten the sea entirely
-            WaveField.AmpScale = 1f;
+            float calm = WaveField.Flat ? 0f : 1f;   // "back to calm" is FLAT while the water system is stripped
+            RenderingServer.GlobalShaderParameterSet("swell_scale", calm);
+            WaveField.AmpScale = calm;
             RenderingServer.GlobalShaderParameterSet("rain_puddle", 0f);
             RenderingServer.GlobalShaderParameterSet("rain_canopy", new Vector4(0f, 0f, 1f, 0f));
             RenderingServer.GlobalShaderParameterSet("rain_sea_level", NoSea);
@@ -130,7 +131,11 @@ namespace UnturnedGodot
         public static void SetWeatherSwell(float rainIntensity)
         {
             float w = Mathf.Clamp(rainIntensity, 0f, 1f);
-            float s = Mathf.Lerp(1f, StormSwell, w);
+            // ⭐ FLAT WATER WINS OVER THE WEATHER. WaveField.Flat is the one switch for the strip (master
+            // 2026-10-09), and this is the setter that owns BOTH the GPU global and the CPU twin -- so forcing
+            // zero here is what makes the picture, the buoyancy and the rain-on-water surface agree. A storm
+            // still rains; it just no longer raises a swell there is no shader left to draw.
+            float s = WaveField.Flat ? 0f : Mathf.Lerp(1f, StormSwell, w);
             if (_globalsRegistered) RenderingServer.GlobalShaderParameterSet("swell_scale", s);
             WaveField.AmpScale = s;
             SetWaterOptics(w);

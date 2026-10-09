@@ -12,6 +12,19 @@ namespace UnturnedGodot
     /// </summary>
     public static class WaveField
     {
+        /// <summary>⭐ THE MASTER SWITCH FOR THE WHOLE WATER SYSTEM. Master 2026-10-09: "rip out our entire water
+        /// system until we are left with a totally flat water plane with no effects."
+        ///
+        /// Flat = true zeroes the swell AT ITS SOURCE, and that is deliberately ONE place rather than three,
+        /// because the swell has three consumers that must agree: this CPU twin (buoyancy, Terrain.WaterSurfaceY),
+        /// the GPU `swell_scale` global that water.gdshader used to displace by, and rain_streak.gdshader, which
+        /// reads the same surface height to know where a raindrop stops. Flattening the picture alone would have
+        /// floated boats and landed rain on a swell nobody could see.
+        ///
+        /// Setting it false restores the wave FIELD; the surface EFFECTS (chop, foam, Fresnel, reflection) were
+        /// removed from water.gdshader in the same commit and come back from git, not from this flag.</summary>
+        public const bool Flat = true;
+
         // --- must mirror the matching uniforms in content/water.gdshader ---
         public const float SwellAmp    = 0.5f;    // metres of vertical swell (CALM baseline; scaled by AmpScale)
 
@@ -20,7 +33,10 @@ namespace UnturnedGodot
         /// Boats float on THIS, the water is drawn from the shader -- so if the two ever disagree the sea visibly
         /// roughens while the runabout keeps bobbing to the calm-water height. They are therefore written by ONE
         /// setter (RainSystem3D.SetWeatherSwell) and never assigned anywhere else.</summary>
-        public static float AmpScale = 1f;
+        /// ⚠ Defaults from Flat, not to 1: a harness that never runs RainSystem3D's setter would otherwise leave
+        /// the twin at calm-swell amplitude, and Terrain.SwellReach (which reads this directly) would claim the
+        /// sea can rise half a metre above a plane that cannot move.
+        public static float AmpScale = Flat ? 0f : 1f;
         public const float SwellDirDeg = 30.0f;
         public const float SwellFu     = 0.081f;  // freq along travel (matches the shader; waves ~10% bigger)
         /// <summary>fu/fw -- how stretched the swell is (2 = crests twice as long as they are wide). THE ONE OWNER
@@ -117,11 +133,12 @@ namespace UnturnedGodot
 
         /// <summary>Vertical wave offset (m) at a world point, at an explicit time (deterministic).</summary>
         public static float Height(float wx, float wz, float timeSec)
-            => SwellAt(wx, wz, timeSec * SwellSpeed * SwellFu) * SwellAmp * AmpScale;
+            => Flat ? 0f : SwellAt(wx, wz, timeSec * SwellSpeed * SwellFu) * SwellAmp * AmpScale;
 
         /// <summary>Wave-surface normal at a world point (finite-difference, matches the shader) -- for buoyancy tilt.</summary>
         public static Vector3 Normal(float wx, float wz, float timeSec)
         {
+            if (Flat) return Vector3.Up;
             float tp = timeSec * SwellSpeed * SwellFu;
             float h  = SwellAt(wx, wz, tp);
             float hx = SwellAt(wx + 1f, wz, tp);

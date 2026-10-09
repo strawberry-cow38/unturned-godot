@@ -3605,6 +3605,11 @@ namespace UnturnedGodot
             var _terr = Terrain.LoadMapMerged(_mapRoot + "/Landscape/Heightmaps", withCollider: false);   // --map= aware (defaults to PEI); any modern-Landscape map renders here
             if (_terr == null) { Log.Err($"[TERRAIN] no map data at {_mapRoot} -- nothing loaded"); return; }   // do NOT fall through to the success line below: it printed "loaded" over an empty scene and a profiling run measured nothing for it
             AddChild(_terr);
+            // ⚠ THE SEA. This harness's own camera comment says UG_CAMPOS is "needed to look at the SEA at all"
+            // and reasons about swell wavelengths -- but it only ever loaded TERRAIN, so there was no water plane
+            // to look at and the comment was aspirational. One line, and the only harness with an aimable camera
+            // can finally show the ocean it already documents. (The real-map game path builds this separately.)
+            _terr.BuildOceanPlane();
 
             var cam = new Camera3D { Current = true, Fov = 55f, Far = 16000f };
             AddChild(cam);
@@ -5732,9 +5737,11 @@ namespace UnturnedGodot
                 {
                     if (mi.MaterialOverride is not ShaderMaterial wm) continue;
                     if (!(wm.Shader?.ResourcePath ?? "").EndsWith("water.gdshader")) continue;
-                    wm.SetShaderParameter("reflection_on", false);
-                    wm.SetShaderParameter("reflectivity", 0f);
-                    wm.SetShaderParameter("foam_amount", 0f);
+                    // ⚠ reflection_on / reflectivity / foam_amount ARE GONE -- water.gdshader was stripped to a
+                    // flat plane (master 2026-10-09) and no longer declares them, so setting them here would be
+                    // three silent no-ops. The bake's intent survives as the one switch that still exists: if
+                    // shore foam is ever flipped back on, the map still wants it off.
+                    wm.SetShaderParameter("shore_foam_on", false);
                     seas++;
                 }
 
