@@ -84,7 +84,11 @@ namespace UnturnedGodot
         // actually modelled -- "plates, bowls, pot + pot lid and cup" -- and the set had one plate and no lid.
         public static readonly ushort[] Crockery = { 9300, 9301, 9302, 9303, 9344 };      // cup, glass, plate, bowl, side plate
         public static readonly ushort[] Cutlery = { 9304, 9305, 9306 };                   // fork, spoon, table knife
-        public static readonly ushort[] Cookware = { 9307, 9308, 9309, 9345 };            // pot, pan, baking tray, pot lid
+        // ⚠ 1030 is RETAIL'S Frying Pan, a MELEE, and it is the only pan. I minted a second one (9308,
+        // Generic, modelless) without checking the catalog for the name, so a kitchen rolled a grey box
+        // half the time while the real pan -- modelled, textured, and swingable, which is what a frying
+        // pan is for in this game -- sat unused. Master: "frying pan is a melee".
+        public static readonly ushort[] Cookware = { 9307, 1030, 9309, 9345 };            // pot, pan, baking tray, pot lid
         // ⚠⚠ 499 AND 1328 WERE WRONG AND ARE GONE (master 2026-10-07: "\"paper\" item is a paper hat, not a sheet
         // of paper"). 499 "Paper" is a cosmetic **Hat**; 1328 "Note" is a **Barricade**, a placeable sign. I reused
         // both because the NAME matched, without reading the TYPE column sitting next to it -- so a filing cabinet
@@ -106,7 +110,7 @@ namespace UnturnedGodot
         static readonly (float chance, ushort[] ids)[] OvenTiers =
         {
             (0.55f, new ushort[] { 9309 }),   // baking tray
-            (0.45f, new ushort[] { 9307, 9308 }),   // pot, pan -- and NO food (master)
+            (0.45f, new ushort[] { 9307, 1030 }),   // pot, pan (1030 = the retail melee pan) -- and NO food (master)
         };
         static readonly (float chance, ushort[] ids)[] FilingCabinetTiers = { (1.00f, Stationery) };
 
@@ -146,8 +150,12 @@ namespace UnturnedGodot
                 case Fridge:
                     return _fridge ??= Build(FoodsWhere(r => r >= PerishableAtLeast), OfType(SDG.Unturned.EItemType.WATER), 0.78f);
                 case Freezer:
-                    // Frozen: perishables only, no drinks -- a freezer is not where the cola lives.
-                    return _freezer ??= Build(FoodsWhere(r => r >= PerishableAtLeast), null, 1f);
+                    // ⭐ THE ICEBOX HOLDS ICE, AND NOTHING ELSE (master 2026-10-09: "spawns in the icebox,
+                    // remove all other spawns from the icebox"). It used to roll perishables; that is gone
+                    // rather than merely outweighed, because "remove" is what was asked and a 5% chance of a
+                    // steak is still a steak. Ice_Box_0 is the only prop on this table, so nothing else loses
+                    // its loot by this.
+                    return _freezer ??= new[] { (1.00f, new ushort[] { 9347 }) };
                 case Counter:
                     // "non-perishables as well as plates cups dishes, pots pans utensils"
                     return _counter ??= new[]

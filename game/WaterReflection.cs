@@ -36,6 +36,7 @@ namespace UnturnedGodot
         /// `MarkedCount` is published on the first mirror frame so a layer that goes empty again says so in the log
         /// instead of quietly costing a render target and returning sky.</summary>
         public static int MarkedCount;
+        static int _lastCensus, _censusHold;
         public static void MarkReflective(VisualInstance3D vi)
         {
             if (vi == null) return;
@@ -72,7 +73,18 @@ namespace UnturnedGodot
                 Size = res,   // initial only -- _Process resizes to the window's aspect (see MirrorScale); a square buffer misaligns the reflection
                 RenderTargetClearMode = SubViewport.ClearMode.Always,
                 RenderTargetUpdateMode = SubViewport.UpdateMode.Always,
-                TransparentBg = true,             // empty = alpha 0 so the shader composites reflected geometry over sky_tint
+                // ⭐⭐ THE MIRROR RENDERS THE REAL SKY. This was `true`, so the buffer held reflected GEOMETRY over
+                // nothing and the shader had to paste a hand-picked `sky_tint` constant in behind it. Measured on
+                // a PEI coast render: that constant displays as srgb(191,214,239) while the actual sky in the same
+                // frame is srgb(127,153,191) -- the water was reflecting a sky about 50% brighter than the one
+                // above it. On the old chopped surface, foam and depth-tint diluted it; on a flat clear mirror it
+                // is the whole sea, which is master's report, "the reflections are white in game".
+                // This SubViewport shares the scene's World3D (no OwnWorld3D), so simply not clearing to
+                // transparent makes the mirror camera draw that scene's own sky -- the right colour by
+                // construction, and it tracks the day/night cycle instead of being frozen at one hand-picked noon.
+                // It also retires the brightness heuristic the shader used to tell sky from geometry, which is the
+                // same guess that produced the earlier "trees in the reflection are just white" report.
+                TransparentBg = false,
                 Msaa3D = Viewport.Msaa.Disabled,
                 PositionalShadowAtlasSize = 0,   // no shadows in the reflection -- ripple hides them
             };
@@ -110,9 +122,19 @@ namespace UnturnedGodot
         public override void _Process(double delta)
         {
             if (_mat != null) { _mat.SetShaderParameter("reflection_on", Enabled); if (!Enabled) { if (_vp != null && _vp.RenderTargetUpdateMode != SubViewport.UpdateMode.Disabled) _vp.RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled; return; } }   // GraphicsOptions.PlanarReflection Off
+            // ⚠ RE-REPORT WHEN IT CHANGES, not once. Deferring to the first mirror frame was already an attempt to
+            // outrun the build order ("props and trees are instanced AFTER the ocean") -- and it still fired too
+            // early: a --peiplay world logged the SAME count as a terrain-only harness, which reads as "props do
+            // not reflect" and is indistinguishable from "the count was taken before they existed". A census that
+            // can only be wrong in one direction cannot be used to answer the question it was built for.
+            if (_censused && MarkedCount != _lastCensus && ++_censusHold >= 60)
+            {
+                _censusHold = 0; _lastCensus = MarkedCount;
+                Log.Print($"[water-refl] reflection layer now {MarkedCount} instance groups");
+            }
             if (!_censused)
             {
-                _censused = true;
+                _censused = true; _lastCensus = MarkedCount;
                 // Reported from the first mirror frame, not from Attach: props and trees are instanced AFTER the
                 // ocean, so counting at setup time would read 0 and mean nothing.
                 bool all = System.Environment.GetEnvironmentVariable("UG_REFLALL") == "1";

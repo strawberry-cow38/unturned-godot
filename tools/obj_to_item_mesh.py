@@ -23,7 +23,7 @@ Usage:
 ⚠ a NEGATIVE axis needs an equals sign -- argparse reads a bare "-z" as a flag: --forward=-z
 --forward  which axis of the SOURCE points "front"; used only to pick the yaw (default -z, Godot's forward)
 """
-import argparse, os, sys
+import argparse, math, os, sys
 
 AXES = {'x': (1,0,0), 'y': (0,1,0), 'z': (0,0,1),
         '-x': (-1,0,0), '-y': (0,-1,0), '-z': (0,0,-1)}
@@ -100,8 +100,16 @@ def winding_fraction(vs, vns, tris):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('obj'); ap.add_argument('--id', required=True)
-    ap.add_argument('--up', default='z', choices=list(AXES))
-    ap.add_argument('--forward', default='-y', choices=list(AXES))
+    # ⚠⚠ REQUIRED, AND IT USED TO DEFAULT TO 'z'. Blender's default export is Z-up, so that looked like the
+    # sensible default -- but every model this port has actually been handed is Y-up (astraclaw's stated export
+    # convention), so the default was wrong for 10 conversions out of 10 and silently rotated the mesh 90 deg
+    # about X. It is silent because --recentre then sits the tipped model's new base at Y=0, so it still looks
+    # placed; a pile of ice cubes merely stopped being a pile. Master caught it by eye -- "u got rotation
+    # right?" -- which is not a check. A default that is wrong every time is not a default.
+    ap.add_argument('--up', required=True, choices=list(AXES),
+                    help="which axis of the SOURCE points up. y for a Blender/glTF Y-up export (what we get); "
+                         "z for Blender's own Z-up scene convention. No default on purpose.")
+    ap.add_argument('--forward', default='-z', choices=list(AXES))
     ap.add_argument('--scale', type=float, default=1.0)
     ap.add_argument('--source-handedness', default='right', choices=['right','left'],
                     help='left for an OBJ out of Unity/Max -- mirrors X and reverses the winding')
@@ -110,6 +118,9 @@ def main():
     ap.add_argument('--match-winding', metavar='REF.txt',
                     help='an already-shipped item mesh; reverse the triangles iff the input disagrees with it '
                          'about whether vertex order runs CCW around the stated normals')
+    ap.add_argument('--smooth', type=float, default=0.0, metavar='DEG',
+                    help='recompute vertex normals, averaging faces that meet at under DEG (0 = keep as exported). '
+                         '60 is a good default: curves smooth, rims and handle joins stay crisp.')
     ap.add_argument('--manifest', default='game/content/items/items_manifest.json',
                     help='the index WorldItem actually reads; "" to skip')
     ap.add_argument('--catalog', default='game/content/items_catalog.tsv',
@@ -156,6 +167,43 @@ def main():
     if flip:
         faces = [[t[0], t[2], t[1]] for t in faces]
 
+    if a.smooth > 0.0:
+        # ⭐ ANGLE-WEIGHTED SMOOTHING, NOT "average everything". A flat-shaded export gives every face its own
+        # normal, which is what makes a turned object read as a stack of facets. Averaging ALL faces that touch a
+        # position would equally destroy the edges that SHOULD be sharp -- a plate's rim, where the mug's handle
+        # meets the body, the lip of a bowl -- and turn them into soft smears. So faces are only averaged into
+        # each other when they actually meet at a shallow angle; anything steeper stays its own surface.
+        # ⚠ Grouped by POSITION, rounded to 0.1 mm: a flat export duplicates the vertex per face, so the shared
+        # corner is several entries that are equal rather than one that is shared.
+        import collections
+        faces_n = []
+        for t in faces:
+            p0, p1, p2 = [vs[c[0]-1] for c in t]
+            u = (p1[0]-p0[0], p1[1]-p0[1], p1[2]-p0[2]); w = (p2[0]-p0[0], p2[1]-p0[1], p2[2]-p0[2])
+            n = cross(u, w); m = sum(k*k for k in n) ** 0.5
+            faces_n.append(tuple(k/m for k in n) if m > 1e-12 else (0.0, 1.0, 0.0))
+        at = collections.defaultdict(list)
+        key = lambda v: (round(v[0], 4), round(v[1], 4), round(v[2], 4))
+        for fi, t in enumerate(faces):
+            for c in t: at[key(vs[c[0]-1])].append(fi)
+        cosmin = math.cos(math.radians(a.smooth))
+        new_vn, new_faces = [], []
+        for fi, t in enumerate(faces):
+            fn = faces_n[fi]; corners = []
+            for c in t:
+                acc = [0.0, 0.0, 0.0]
+                for oj in at[key(vs[c[0]-1])]:
+                    on = faces_n[oj]
+                    if fn[0]*on[0] + fn[1]*on[1] + fn[2]*on[2] >= cosmin:
+                        acc[0] += on[0]; acc[1] += on[1]; acc[2] += on[2]
+                m = sum(k*k for k in acc) ** 0.5
+                nn = tuple(k/m for k in acc) if m > 1e-12 else fn
+                new_vn.append(nn); corners.append((c[0], c[1], len(new_vn)))
+            new_faces.append(corners)
+        vns, faces = new_vn, new_faces
+        print(f"[obj->item] smoothed at {a.smooth:.0f} deg: {len(new_vn)} normals "
+              f"({sum(1 for k, v in at.items() if len(v) > 1)} shared positions)")
+
     xs = [v[0] for v in vs]; ys = [v[1] for v in vs]; zs = [v[2] for v in vs]
     size = (max(xs)-min(xs), max(ys)-min(ys), max(zs)-min(zs))
     # ⭐ The size is PRINTED because it is the one thing the geometry cannot tell you is wrong: a pencil that
@@ -200,10 +248,21 @@ def main():
         tex = f"{a.id}.png"
         if not os.path.exists(os.path.join(a.out_dir, tex)): tex = None
         centre = [round((min(xs)+max(xs))/2, 4), round((min(ys)+max(ys))/2, 4), round((min(zs)+max(zs))/2, 4)]
-        man[str(a.id)] = {"name": name, "type": typ, "obj": f"{a.id}.txt", "tex": tex, "color": None,
-                          "box": [round(c, 4) for c in size], "center": centre, "parts": 1}
+        # ⚠⚠ RE-REGISTERING MUST NOT DROP HAND-SET KEYS. This used to assign a fresh dict, so every key the
+        # manifest carries that the converter does not generate -- "metal", "translucent", "rounds" -- was
+        # silently deleted the next time the mesh was re-exported. It cost exactly that: the spoon was marked
+        # metal, then master asked for its yaw turned 180, and the re-run wiped the flag. The spoon shipped as
+        # grey plastic next to a steel fork, and nothing anywhere said so. Geometry keys are overwritten
+        # because they are derived from THIS mesh; everything else is the manifest's own and is kept.
+        entry = man.get(str(a.id)) or {}
+        entry.update({"name": name, "type": typ, "obj": f"{a.id}.txt", "tex": tex, "color": entry.get("color"),
+                      "box": [round(c, 4) for c in size], "center": centre, "parts": entry.get("parts", 1)})
+        man[str(a.id)] = entry
+        kept = sorted(k for k in entry if k not in
+                      {"name", "type", "obj", "tex", "color", "box", "center", "parts"})
         with open(a.manifest, 'w') as fh: json.dump(man, fh, indent=0, sort_keys=True)
         print(f"[obj->item] registered {a.id} \"{name}\" ({typ}) in {os.path.basename(a.manifest)}"
+              + (f"  [kept: {', '.join(kept)}]" if kept else "")
               + ("" if tex else "  ⚠ no texture, will render untextured"))
 
 if __name__ == '__main__':

@@ -56,6 +56,91 @@ namespace UnturnedGodot
         /// one at the top of this list and that is handled.</summary>
         public static List<Station> Stations() => new()
         {
+            new Station("BRIDGE", "Draw a road, then B \u2014 the cut deck tiles along it and piers itself \u00b7 Shift+B", c =>
+            {
+                // ⭐ A VALLEY, not a flat run, because the thing worth seeing is the PIER rule: the deck
+                // follows the road's own grade (snapTerrain:false) while the ground drops away under it, and
+                // a pier only appears where the drop is deeper than the deck is thick. On flat ground the
+                // tool correctly places none, which would make a flat demo look broken.
+                //
+                // ⚠ A GENTLE bend (~300 m), matching the tightest radius tinyclaw measured across the 355
+                // real bridge stretches on the 19 km map -- so the demo is the worst real case, not an easy one.
+                // ⚠⚠ THE ROAD IS DRAWN ABOVE THE GROUND, ignoreTerrain:true. My first cut of this station let
+                // the polyline snap to the showcase's flat ground, which makes the drop under the deck ZERO --
+                // so the station would have demonstrated the one thing it exists to show by placing no piers
+                // at all, and looked like a broken tool. The L1 test fell into exactly the same hole an hour
+                // earlier (Terrain.CreateFlat sits at 30 m, so a road hardcoded "30 m up" was ON the dirt).
+                if (c.Roads == null || c.Objects == null || c.Terr == null) return;
+                float g = c.Terr.SampleHeight(c.Origin.X, c.Origin.Z);
+                var road = new List<Vector3>();
+                for (int i = 0; i <= 8; i++)
+                {
+                    float t = i / 8f, x = -80f + t * 160f;
+                    road.Add(new Vector3(c.Origin.X + x, g + 22f, c.Origin.Z - x * x / 600f));
+                }
+                int rd = c.Roads.AddRoadFromPolyline(road, 0, false, true);
+                if (rd >= 0) EditorBridgeSpline.LayAlong(c.Objects, c.Terr, c.Roads, rd, null);
+            }),
+
+            new Station("NEW RAIL", "Draw a Tracks spline, then T — modelled rail tiles itself along it · Shift+T", c =>
+            {
+                // A TRACKS spline (material 4) with the modelled unit tiled along it. The spline stays an
+                // ordinary track, which is what keeps Train.cs able to find it -- NearestTrack filters on
+                // exactly that material.
+                //
+                // ⚠ A GENTLE bend (~200 m radius) on purpose: the tile is 6.9 m wide, so its outer corners
+                // part by about HalfWidth * Pitch / R at every joint, and under ~139 m that opens past 5 cm.
+                // Rail curves are large in reality, so this is the realistic case rather than a concession.
+                if (c.Roads == null || c.Objects == null) return;
+                var track = new List<Vector3>
+                {
+                    c.Origin + new Vector3(-62f, 0f, -4f),
+                    c.Origin + new Vector3(  0f, 0f,  0f),
+                    c.Origin + new Vector3( 62f, 0f, -4f),
+                };
+                int rd = c.Roads.AddRoadFromPolyline(track, RoadField.TracksMaterial);
+                if (rd >= 0) EditorRailSpline.LayAlong(c.Objects, c.Terr, c.Roads, rd, null);
+            }),
+
+            new Station("FENCE ROAD", "Click a path — straight, or curved through 3+ points · Shift+F", c =>
+            {
+                // A CURVE, because that is the thing the tool does that placing the prop by hand cannot. A
+                // straight demo would be indistinguishable from dragging the same prop along a line.
+                if (c.Objects == null) return;
+                EditorFenceRoad.LayPath(c.Objects, c.Terr, new List<Vector3>
+                {
+                    // A proper S-bend. The run is tiled from 4 m units now, so it follows a far tighter
+                    // curve than the 16 m prop could -- the earlier versions of this station had to be opened
+                    // out until they barely read as a curve at all.
+                    c.Origin + new Vector3(-72f, 0f,  16f),
+                    c.Origin + new Vector3(-24f, 0f, -14f),
+                    c.Origin + new Vector3( 24f, 0f,  14f),
+                    c.Origin + new Vector3( 72f, 0f, -16f),
+                // ⭐ The two indices are WRECKED SECTIONS dropped into the run, which is how a broken piece
+                // is meant to be used: a mostly-intact roadside with a smashed stretch in it, not a separate
+                // all-broken fence. Their own posts land on the run's rhythm, so the run places none across
+                // them -- there is no seam and no doubled post where a wreck starts or ends.
+                }, false, false, null, null, new[] { 10, 28 });
+
+                // ⭐ AND A ROAD OF ITS OWN TO BE PARENTED TO (G). Master, on the first attempt: "lol why did u
+                // demo it on the wriggliest crumpled up road ever" -- the ROADS station's road is a deliberate
+                // S-bend at a ~13 m radius, which exists to prove the spline tool works and is tighter than
+                // anything a rigid barrier belongs on. A guardrail wants the opposite: one long sweeping bend,
+                // the kind you would actually fly off. So this station carries its own.
+                if (c.Roads != null && c.Objects != null)
+                {
+                    var road = new List<Vector3>();
+                    const float R = 150f;   // a real highway curve, not a hairpin
+                    for (int d = -34; d <= 34; d += 4)
+                    {
+                        float a = Mathf.DegToRad(d);
+                        road.Add(c.Origin + new Vector3(R * Mathf.Sin(a), 0f, -62f + R * (1f - Mathf.Cos(a))));
+                    }
+                    int rd = c.Roads.AddRoadFromPolyline(road);
+                    if (rd >= 0) EditorFenceRoad.LayAlongRoad(c.Objects, c.Terr, c.Roads, rd, false, null, null);
+                }
+            }),
+
             new Station("POWER LINES", "Pick a pole, pick the next — four wires string themselves · Shift+P", c =>
             {
                 // A RUN of poles, not a pair: the tool's whole point is chaining, and a single span would not show
@@ -173,6 +258,28 @@ namespace UnturnedGodot
             // station, so 180 points it at the empty horizon behind. That is exactly the blank frame it gave the
             // first time; the sign of a look direction is not worth guessing at twice.
             if (cam == null) return;
+            // ⭐ UG_CAMPOS / UG_CAMLOOK OVERRIDE IT, the same pair WorldBuilder's aerial camera already takes.
+            // The showcase exists to be LOOKED AT, so "open on a different station, close enough to see it" is
+            // the one thing a screenshot of it always needs -- and the default pose below frames station 1 from
+            // 88 m, which is fine for a person who can fly and useless for a single captured frame.
+            var cp = System.Environment.GetEnvironmentVariable("UG_CAMPOS");
+            if (!string.IsNullOrEmpty(cp))
+            {
+                var t = cp.Split(',');
+                var look = (System.Environment.GetEnvironmentVariable("UG_CAMLOOK") ?? "0,0,0").Split(',');
+                if (t.Length == 3 && look.Length == 3)
+                {
+                    float F(string[] a, int i) => float.Parse(a[i], System.Globalization.CultureInfo.InvariantCulture);
+                    var at = new Vector3(F(t, 0), F(t, 1), F(t, 2));
+                    var to = new Vector3(F(look, 0), F(look, 1), F(look, 2));
+                    var d = (to - at);
+                    float yaw = Mathf.RadToDeg(Mathf.Atan2(-d.X, -d.Z));
+                    float pitch = Mathf.RadToDeg(Mathf.Atan2(d.Y, new Vector2(d.X, d.Z).Length()));
+                    cam.SetPose(at, yaw, pitch);
+                    Log.Print($"[showcase] UG_CAMPOS {at} -> {to} (yaw {yaw:0.#}, pitch {pitch:0.#})");
+                    return;
+                }
+            }
             cam.SetPose(new Vector3(0f, 26f, 88f), 0f, -11f);
         }
 

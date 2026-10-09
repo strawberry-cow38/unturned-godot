@@ -346,7 +346,7 @@ namespace UnturnedGodot.Testing
             T.Check("a fork salvages to scrap", Yields(9304, 67, 1));
             T.Check("a spoon salvages to scrap", Yields(9305, 67, 1));
             T.Check("a pot salvages to more scrap than a fork does", Yields(9307, 67, 2));
-            T.Check("a pan salvages to scrap", Yields(9308, 67, 2));
+            T.Check("a pan salvages to scrap", Yields(1030, 67, 2));   // 1030 = retail's Frying Pan (a MELEE); the minted 9308 duplicate is gone
 
             yield break;
         }

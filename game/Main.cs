@@ -3601,20 +3601,52 @@ namespace UnturnedGodot
 
         void BuildTerrainTest()
         {
+            // ⭐⭐ THE GAME'S REAL SKY, NOT A FLAT COLOUR -- and for a WATER harness this is the whole ballgame.
+            // Water at a grazing angle mirrors the HORIZON band, and PEI's own Lighting.dat puts the midday
+            // horizon at (0.784,0.784,0.784), i.e. near WHITE, while this harness used one flat blue everywhere.
+            // So every water shot I took came back blue and master's game came back white, twice, and I went
+            // hunting the shader both times. The sky was the variable. Same class as the fog this harness was
+            // also missing: a harness that differs from the game in the ONE input the effect is mostly made of
+            // cannot be used to judge that effect.
+            var sky = new ProceduralSkyMaterial
+            {
+                SkyTopColor = new Color(0.400f, 0.627f, 0.808f),       // DayNightCycle SkyTop[noon]
+                SkyHorizonColor = new Color(0.784f, 0.784f, 0.784f),   // SkyHorizon[noon] -- the near-white the water reflects
+                GroundHorizonColor = new Color(0.784f, 0.784f, 0.784f),
+                GroundBottomColor = new Color(0.329f, 0.518f, 0.780f), // Ground[noon]
+            };
             var env = new Godot.Environment
             {
-                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundMode = Godot.Environment.BGMode.Sky,
+                Sky = new Sky { SkyMaterial = sky },
                 BackgroundColor = new Color(0.5f, 0.6f, 0.75f),
                 AmbientLightSource = Godot.Environment.AmbientSource.Color,
                 AmbientLightColor = new Color(0.6f, 0.6f, 0.62f),
                 AmbientLightEnergy = 0.8f,
             };
+            // ⚠ FOG, BECAUSE THE GAME HAS FOG AND THIS HARNESS DID NOT. Master looked at a water render taken here
+            // and then at the same water in game: "very milky and white in game compared to ur screenshot". A
+            // harness missing an effect the game applies does not render the game -- it renders a flattering
+            // version of it, which is the same mistake as the boattest that was subdivided finer than the real map
+            // and hid the facets for a week. Matches DayNightCycle's noon end (0.0005, tinted to the horizon).
+            // UG_NOFOG=1 turns it off, the same knob the day/night cycle already honours for aerial shots.
+            if (System.Environment.GetEnvironmentVariable("UG_NOFOG") != "1")
+            {
+                env.FogEnabled = true;
+                env.FogDensity = 0.0005f;
+                env.FogLightColor = new Color(0.5f, 0.6f, 0.75f);   // the horizon it tints to = this env's sky
+            }
             AddChild(new WorldEnvironment { Environment = env });
             AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-45f, -55f, 0f), LightEnergy = 1.15f, ShadowEnabled = true });
 
             var _terr = Terrain.LoadMapMerged(_mapRoot + "/Landscape/Heightmaps", withCollider: false);   // --map= aware (defaults to PEI); any modern-Landscape map renders here
             if (_terr == null) { Log.Err($"[TERRAIN] no map data at {_mapRoot} -- nothing loaded"); return; }   // do NOT fall through to the success line below: it printed "loaded" over an empty scene and a profiling run measured nothing for it
             AddChild(_terr);
+            // ⚠ THE SEA. This harness's own camera comment says UG_CAMPOS is "needed to look at the SEA at all"
+            // and reasons about swell wavelengths -- but it only ever loaded TERRAIN, so there was no water plane
+            // to look at and the comment was aspirational. One line, and the only harness with an aimable camera
+            // can finally show the ocean it already documents. (The real-map game path builds this separately.)
+            _terr.BuildOceanPlane();
 
             var cam = new Camera3D { Current = true, Fov = 55f, Far = 16000f };
             AddChild(cam);
@@ -5742,9 +5774,11 @@ namespace UnturnedGodot
                 {
                     if (mi.MaterialOverride is not ShaderMaterial wm) continue;
                     if (!(wm.Shader?.ResourcePath ?? "").EndsWith("water.gdshader")) continue;
-                    wm.SetShaderParameter("reflection_on", false);
-                    wm.SetShaderParameter("reflectivity", 0f);
-                    wm.SetShaderParameter("foam_amount", 0f);
+                    // ⚠ reflection_on / reflectivity / foam_amount ARE GONE -- water.gdshader was stripped to a
+                    // flat plane (master 2026-10-09) and no longer declares them, so setting them here would be
+                    // three silent no-ops. The bake's intent survives as the one switch that still exists: if
+                    // shore foam is ever flipped back on, the map still wants it off.
+                    wm.SetShaderParameter("shore_foam_on", false);
                     seas++;
                 }
 
@@ -6949,6 +6983,12 @@ namespace UnturnedGodot
             var plField = new PowerLineField(); editor.AddChild(plField);
             var plEd = new EditorPowerLines(editor, cam, plField, null, editor.Objects);   // a generated island ships no poles -- you place them
             editor.AddChild(plEd); editor.PowerLinesEd = plEd; editor.PowerLines = plField;
+            var fenceEd = new EditorFenceRoad(editor, cam, editor.Objects, terr, rf);   // Shift+F: roadside guardrail runs
+            var railEd = new EditorRailSpline(editor, cam, editor.Objects, terr, rf);   // Shift+T: modelled rail along a Tracks spline
+            var bridgeEd = new EditorBridgeSpline(editor, cam, editor.Objects, terr, rf);   // Shift+B: cut bridge deck along a road spline
+            editor.AddChild(fenceEd); editor.FenceRoadEd = fenceEd;
+            editor.AddChild(railEd); editor.RailEd = railEd;
+            editor.AddChild(bridgeEd); editor.BridgeEd = bridgeEd;
             var roadsEd = new EditorRoads(editor, cam, rf); editor.AddChild(roadsEd); editor.RoadsEd = roadsEd;
             var roadDrawEd = new EditorRoadDraw(editor, cam, rf); editor.AddChild(roadDrawEd); editor.RoadDrawEd = roadDrawEd;   // R = draw, Shift+R = legacy nodes
             var riverEd = new EditorRiver(editor, cam, terr); editor.AddChild(riverEd); editor.RiverEd = riverEd;   // V = carve river (spline tool, sits with the road tools)
@@ -7705,6 +7745,12 @@ namespace UnturnedGodot
             var plField = new PowerLineField(); editor.AddChild(plField);
             var plEd = new EditorPowerLines(editor, cam, plField, res.PowerLinePoles, editor.Objects);
             editor.AddChild(plEd); editor.PowerLinesEd = plEd; editor.PowerLines = plField;
+            var fenceEd = new EditorFenceRoad(editor, cam, editor.Objects, res.Terr, rf);   // Shift+F: roadside guardrail runs
+            var railEd = new EditorRailSpline(editor, cam, editor.Objects, res.Terr, rf);   // Shift+T: modelled rail along a Tracks spline
+            var bridgeEd = new EditorBridgeSpline(editor, cam, editor.Objects, res.Terr, rf);   // Shift+B: cut bridge deck along a road spline
+            editor.AddChild(fenceEd); editor.FenceRoadEd = fenceEd;
+            editor.AddChild(railEd); editor.RailEd = railEd;
+            editor.AddChild(bridgeEd); editor.BridgeEd = bridgeEd;
             // Seed the field with the map's poles and whatever wires were saved last time, so the lines are THERE
             // on load rather than only after you open the tool.
             plField.RefreshPoles(res.PowerLinePoles, out _);
@@ -8104,12 +8150,24 @@ namespace UnturnedGodot
             if (colon >= 0) { modelsStr = spec[..colon]; albedo = spec[(colon + 1)..]; }
             var models = modelsStr.Split('+', System.StringSplitOptions.RemoveEmptyEntries);   // gun+sight+mag = assembled
 
+            // ⭐ UG_ICON_LIGHT SCALES THE WHOLE RIG, and it exists for PALE items. The defaults below total
+            // ambient 1.0 + key 1.7 + fill 0.7, which is tuned for the ripped meshes' mid-tone albedos -- a can
+            // of beans bakes perfectly under it. Point it at something near-white and every face clips to the
+            // same white: the ice pile baked as a flat silhouette with no cubes in it at all. Lowering it lets
+            // the directional do the modelling instead of the ambient.
+            // ⚠ DEFAULTS TO 1.0 SO EVERY ALREADY-BAKED ICON IS BYTE-IDENTICAL. This is a knob, not a retune.
+            float iconLight = 1f;
+            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_ICON_LIGHT"),
+                               System.Globalization.NumberStyles.Float,
+                               System.Globalization.CultureInfo.InvariantCulture, out float il) && il > 0f)
+                iconLight = il;
+
             var env = new Godot.Environment
             {
                 BackgroundMode = Godot.Environment.BGMode.Color,
                 BackgroundColor = new Color(1f, 0f, 1f),   // magenta key colour
                 AmbientLightSource = Godot.Environment.AmbientSource.Color,
-                AmbientLightColor = Colors.White, AmbientLightEnergy = 1f,
+                AmbientLightColor = Colors.White, AmbientLightEnergy = 1f * iconLight,
             };
             AddChild(new WorldEnvironment { Environment = env });
 
@@ -8141,8 +8199,8 @@ namespace UnturnedGodot
                 var mb = mesh.GetAabb();
                 aabb = firstMesh ? mb : aabb.Merge(mb); firstMesh = false;
             }
-            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-25f, 90f, 0f), LightEnergy = 1.7f });   // key from the camera side (+X)
-            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(25f, 70f, 0f), LightEnergy = 0.7f });    // soft fill
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-25f, 90f, 0f), LightEnergy = 1.7f * iconLight });   // key from the camera side (+X)
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(25f, 70f, 0f), LightEnergy = 0.7f * iconLight });    // soft fill
 
             Vector3 c = aabb.Position + aabb.Size * 0.5f, s = aabb.Size;
             var ax = new (float e, Vector3 dir)[] { (s.X, Vector3.Right), (s.Y, Vector3.Up), (s.Z, Vector3.Back) };

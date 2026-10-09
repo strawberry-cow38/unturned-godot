@@ -16,6 +16,7 @@ namespace UnturnedNet.Tests
         {
             TransactionalFixtures.RegisterAssets();
             Assets.add(new ItemAsset { id = 461, itemName = "Steak", size_x = 1, size_y = 1, type = EItemType.FOOD, useFood = 40 });
+            Assets.add(new ItemAsset { id = Freezing.IceId, itemName = "Ice", size_x = 1, size_y = 1, type = EItemType.SUPPLY });
         }
 
         static (ServerFreezing fz, InventoryReplication inv, InventoryReplication.CrateEntry crate) Fridge()
@@ -193,6 +194,113 @@ namespace UnturnedNet.Tests
             crate.Freezer.tryAddItem(gun);
             for (int i = 0; i < 50; i++) fz.Step(1f);
             Assert.That(gun.frozen, Is.Zero, "a frozen rifle is not a mechanic");
+            // ⚠ "not food" is no longer the same as "not freezable": ICE is SUPPLY and does freeze, by id. The
+            // rule this test actually pins is that freezing is opt-in, not that FOOD is the only way in.
         }
+
+        // ---- ICE (master 2026-10-09: "add a new ice item. spawns in the icebox, remove all other spawns from
+        // the icebox. if it goes below frozen, it disappears") -----------------------------------------------
+
+        static (ServerFreezing fz, InventoryReplication inv, InventoryReplication.CrateEntry box) IceBox(bool powered)
+        {
+            var inv = new InventoryReplication();
+            var box = inv.ServerRegisterCrate(new NetId(31), 6, 4, new Vector3(0f, 0f, 0f));
+            inv.ServerMakeFreezerBody(31);
+            return (new ServerFreezing(inv) { HasPower = _ => powered }, inv, box);
+        }
+
+        [Test]
+        public void ice_is_born_frozen()
+        {
+            // ⭐ FROM THE CONSTRUCTOR, because ice melts AT zero and melting removes it. Ice created at the
+            // default frozen = 0 would vanish on the very next sweep -- every ice a loot roll, a craft or a
+            // console command ever made, and the symptom would be "the item does not exist", not "it melted".
+            Assert.That(new Item(Freezing.IceId).frozen, Is.EqualTo(Freezing.Max), "ice starts solid");
+        }
+
+        [Test]
+        public void ice_melts_out_of_existence_when_you_carry_it_off()
+        {
+            // THE MECHANIC, on the player path: ice is only yours while it is cold.
+            var inv = new InventoryReplication();
+            var plain = inv.ServerRegisterCrate(new NetId(32), 6, 4, new Vector3(0f, 0f, 0f));
+            var fz = new ServerFreezing(inv);
+            var ice = new Item(Freezing.IceId);
+            plain.Storage.tryAddItem(ice);
+            Assert.That(plain.Storage.getItemCount(), Is.EqualTo(1), "fixture: the ice is in an ordinary crate");
+
+            // Long enough to cross the whole 0..100 range at the thaw rate, with room to spare.
+            for (int i = 0; i < (int)(2f * Freezing.Max / Freezing.ThawPerSecond); i++) fz.Step(1f);
+            Assert.That(plain.Storage.getItemCount(), Is.Zero, "thawed ice is GONE, not a 0 % lump of ice");
+        }
+
+        [Test]
+        public void melting_takes_the_ice_and_nothing_else()
+        {
+            // ⭐⭐ THE CONTROL, and the reason the test above means anything: "remove the item that reaches
+            // frozen 0" is one typo away from "remove every item that reaches frozen 0", which is every steak
+            // in the world. A thawed steak must still BE a steak.
+            var inv = new InventoryReplication();
+            var plain = inv.ServerRegisterCrate(new NetId(33), 6, 4, new Vector3(0f, 0f, 0f));
+            var fz = new ServerFreezing(inv);
+            plain.Storage.tryAddItem(new Item(461) { frozen = Freezing.Max });
+            plain.Storage.tryAddItem(new Item(Freezing.IceId));
+            Assert.That(plain.Storage.getItemCount(), Is.EqualTo(2));
+
+            for (int i = 0; i < (int)(2f * Freezing.Max / Freezing.ThawPerSecond); i++) fz.Step(1f);
+            Assert.That(plain.Storage.getItemCount(), Is.EqualTo(1), "exactly one of the two melts away");
+            var left = plain.Storage.getItem(0).item;
+            Assert.That(left.id, Is.EqualTo(461), "and it is the STEAK that survives");
+            Assert.That(left.frozen, Is.Zero, "fully thawed, still a steak");
+        }
+
+        [Test]
+        public void ice_keeps_in_an_ice_box_even_with_the_power_out()
+        {
+            // ⭐⭐ THE OTHER HALF OF THE ASK, and the one that is easy to ship broken. MainsAreUp() is FALSE
+            // until a player places and switches on a generator, so an icebox in a freshly loaded PEI is
+            // UNPOWERED. Thawing its body at 0.8 %/s empties every icebox in the world ~125 s after load --
+            // before a player can walk to one -- and "spawns in the icebox" becomes loot that provably never
+            // gets collected. An ice box is insulated: ice in one keeps regardless of the grid.
+            var (fz, _, box) = IceBox(powered: false);
+            var ice = new Item(Freezing.IceId);
+            box.Storage.tryAddItem(ice);
+
+            for (int i = 0; i < 4 * (int)(Freezing.Max / Freezing.ThawPerSecond); i++) fz.Step(1f);
+            Assert.That(box.Storage.getItemCount(), Is.EqualTo(1), "the ice a player walks up to is still there");
+            Assert.That(ice.frozen, Is.EqualTo(Freezing.Max), "and still solid, not part-melted");
+        }
+
+        [Test]
+        public void an_unpowered_ice_box_is_insulated_for_ICE_ONLY()
+        {
+            // ⭐ CONTROL for the exemption above, in the SAME grid on the SAME sweep: if it had been written as
+            // "an unpowered icebox holds its contents" rather than "holds its ice", cutting the grid to a
+            // stocked freezer would stop being a loss and an unpowered freezer would be as good as a powered
+            // one. The food has to still thaw.
+            var (fz, _, box) = IceBox(powered: false);
+            var ice = new Item(Freezing.IceId);
+            var steak = new Item(461) { frozen = Freezing.Max };
+            box.Storage.tryAddItem(ice);
+            box.Storage.tryAddItem(steak);
+
+            for (int i = 0; i < 2 * (int)(Freezing.Max / Freezing.ThawPerSecond); i++) fz.Step(1f);
+            Assert.That(ice.frozen, Is.EqualTo(Freezing.Max), "the ice is insulated");
+            Assert.That(steak.frozen, Is.Zero, "the steak in the very same box is not");
+            Assert.That(box.Storage.getItemCount(), Is.EqualTo(2), "and the thawed steak is still in there");
+        }
+
+        [Test]
+        public void a_powered_ice_box_still_freezes_food()
+        {
+            // The pre-existing behaviour, re-pinned because the ice exemption is a `continue` in the same loop:
+            // a per-item skip is exactly the shape of change that accidentally skips the whole page.
+            var (fz, _, box) = IceBox(powered: true);
+            var steak = new Item(461);
+            box.Storage.tryAddItem(steak);
+            for (int i = 0; i < 40; i++) fz.Step(0.5f);
+            Assert.That(steak.frozen, Is.GreaterThan(0), "a powered ice box is still a freezer");
+        }
+
     }
 }

@@ -81,6 +81,15 @@ namespace UnturnedGodot
             if (IsInstanceValid(n)) n.QueueFree();
             AttachGizmo(); RefreshMarkers();
         }
+        /// <summary>Detach props a TOOL placed, so the tool can undo its own batch. EditorFenceRoad lays a
+        /// whole RUN of segments on one click, and "place" undo here is per-prop -- without this the tool
+        /// would have to push one undo entry per segment and Ctrl+Z would walk back a fence post at a time.</summary>
+        public void RemovePlaced(IEnumerable<Node3D> nodes)
+        {
+            if (nodes == null) return;
+            foreach (var n in nodes) RemoveProp(n);
+        }
+
         Node3D RePlace(string guid, Transform3D x) => _guidToName.TryGetValue(guid, out var nm) ? Place(nm, x.Origin, x.Basis) : null;
 
         public EditorObjects(Editor editor, Node world, EditorCamera cam, bool objectsPreloaded = false)
@@ -401,6 +410,15 @@ namespace UnturnedGodot
             foreach (var n in _placed)
                 if (IsInstanceValid(n) && n.HasMeta("obj_name") && (string)n.GetMeta("obj_name") == propName)
                     yield return n.GlobalTransform;
+        }
+
+        /// <summary>The placed NODES of one prop type, for a caller that needs the mesh and not just the
+        /// transform -- "are these two segments touching" is a question about world BOUNDS.</summary>
+        public System.Collections.Generic.IEnumerable<Node3D> PlacedOfNodes(string propName)
+        {
+            foreach (var n in _placed)
+                if (IsInstanceValid(n) && n.HasMeta("obj_name") && (string)n.GetMeta("obj_name") == propName)
+                    yield return n;
         }
 
         public int PlacedCount => _placed.Count;
@@ -864,7 +882,7 @@ namespace UnturnedGodot
                 else if (k.Keycode == Key.T) _gizmo.CycleMode();                        // T = cycle translate/rotate/scale gizmo (source TransformHandles EMode)
                 else if (k.Keycode == Key.G) { _gizmo.LocalSpace = !_gizmo.LocalSpace; AttachGizmo(); }    // G = toggle gizmo local/global space (re-orient the centroid pivot)
                 else if (k.Keycode == Key.Period) _gizmo.CycleSnap();                   // . = cycle snap preset (1/0.5/0.25u, 15/10/5°); hold Ctrl while dragging to snap
-                else if (k.Keycode == Key.F) FocusSelection();                          // F = focus camera on the selection (source ControlsSettings.focus)
+                else if (k.Keycode == Key.F && !Input.IsKeyPressed(Key.Shift)) FocusSelection();   // F = focus camera on the selection (source ControlsSettings.focus). ⚠ NOT Shift+F, which is the fence-road tool -- unguarded, one press did both.
                 // ESC is the editor pause menu (EditorDashboard); deselect via a click on empty ground (FinishBoxSelect)
             }
         }

@@ -158,12 +158,19 @@ namespace UnturnedGodot.Testing
             T.Check($"control: canned food is NOT perishable by the rule (beans {FoodSpoil.PerDay(beans):0.#}/day < {LootTables.PerishableAtLeast})",
                     beans != null && FoodSpoil.PerDay(beans) < LootTables.PerishableAtLeast);
 
-            // FREEZER: perishables only, and no drinks at all.
-            bool freezeOk = AllRollsSatisfy(LootTables.Freezer, 200, a =>
-                a.type == SDG.Unturned.EItemType.FOOD && FoodSpoil.PerDay(a) >= LootTables.PerishableAtLeast,
-                out int freezeN, out string freezeBad);
-            T.Check($"a freezer holds perishables and no drinks ({freezeN} rolled, offender {freezeBad ?? "none"})",
-                    freezeOk && freezeN > 0);
+            // ⭐ ICEBOX: ICE, AND NOTHING ELSE. Master 2026-10-09: "spawns in the icebox, remove all other spawns
+            // from the icebox". This used to be "perishables, no drinks" -- if you are here because that line is
+            // gone, it was deliberate, and the loot table is the one place the "only" half of the ask lives.
+            bool freezeOk = AllRollsSatisfy(LootTables.Freezer, 200, a => a.id == SDG.Unturned.Freezing.IceId,
+                                            out int freezeN, out string freezeBad);
+            T.Check($"an icebox holds ice and nothing else ({freezeN} rolled, offender {freezeBad ?? "none"})",
+                    freezeOk && freezeN == 200);
+
+            // ⭐ CONTROL: the ice the icebox rolls has to be a REAL, FREEZABLE item, not just a matching id. An
+            // unregistered id would make the check above pass on a table that spawns a grey box in game.
+            var iceAsset = SDG.Unturned.Assets.find(SDG.Unturned.Freezing.IceId);
+            T.Check($"control: ice {SDG.Unturned.Freezing.IceId} is a real item and the freeze system moves it",
+                    iceAsset != null && SDG.Unturned.Freezing.Freezable(iceAsset) && new SDG.Unturned.Item(SDG.Unturned.Freezing.IceId).frozen == SDG.Unturned.Freezing.Max);
 
             // OVEN: master was explicit -- "ovens shouldnt spawn food".
             bool ovenOk = AllRollsSatisfy(LootTables.Oven, 200, a => a.type != SDG.Unturned.EItemType.FOOD,

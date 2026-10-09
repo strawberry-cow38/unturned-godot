@@ -1964,7 +1964,6 @@
 9305	Spoon	Generic	Common	1	1	A dinner spoon. Placeholder: no model yet.	0337cd32f6f55f0d428226f7fcc2c47d
 9306	Table Knife	Generic	Common	1	1	A blunt table knife. Placeholder: no model yet.	ee135286d9dace61460343b6387b973b
 9307	Cooking Pot	Generic	Common	2	2	A dented cooking pot.	22169acf1426adc0a974b0e058ea8e31
-9308	Frying Pan	Generic	Common	2	1	A heavy frying pan. Placeholder: no model yet.	c888a7d69c005f84956fa53c233516f2
 9309	Baking Tray	Generic	Common	2	1	A blackened baking tray. Placeholder: no model yet.	279fdac7db2c5f8b3fedc48f67239199
 9310	Paperwork	Generic	Common	1	1	Someone's filing, still in order. Placeholder: no model yet.	b8e8c7f39f8b9f79ae8fa37f176201c8
 9311	Handwritten Letter	Generic	Common	1	1	A letter in looping handwriting. Placeholder: no model yet.	a9acc5924b69fb24e2d5fceb91f74c5e
@@ -1973,9 +1972,9 @@
 9314	Stapler	Generic	Common	1	1	Office stapler, half loaded. Placeholder: no model yet.	4c23c0fd2818591eda8ec2aa06a0df97
 9315	Box of Paperclips	Generic	Common	1	1	More than anyone needs. Placeholder: no model yet.	7de01dd58f1bcb4b0fc08369e545822e
 9316	Hole Punch	Generic	Common	1	1	Two-hole, heavy for its size. Placeholder: no model yet.	9a48c82341d5e2883356555907ee06c6
-9317	Black Pen	Generic	Common	1	1	Black ballpoint. Placeholder: no model yet.	e6e1b2269ae774170f420fbe12a312ae
-9318	Blue Pen	Generic	Common	1	1	Blue ballpoint. Placeholder: no model yet.	7121f3a5e15433b4a567ee2fd11bff33
-9319	Red Pen	Generic	Common	1	1	Red ballpoint, mostly dry. Placeholder: no model yet.	e351cdc2becdc160d37a3cb3e3afd045
+9317	Black Pen	Generic	Common	1	1	Black ballpoint.	e6e1b2269ae774170f420fbe12a312ae
+9318	Blue Pen	Generic	Common	1	1	Blue ballpoint.	7121f3a5e15433b4a567ee2fd11bff33
+9319	Red Pen	Generic	Common	1	1	Red ballpoint, mostly dry.	e351cdc2becdc160d37a3cb3e3afd045
 9320	Pencil	Generic	Common	1	1	Chewed at one end.	9386f5a2dec1666ca5ddf0b31b2ea692
 9321	Eraser	Generic	Common	1	1	Grubby but usable.	f6e963ad7fced0ad4a7619c6e1bb3308
 9322	Food Wrapper	Generic	Common	1	1	Licked clean and thrown out. Placeholder: no model yet.	f3646595952791971c5b2808744f86fc
@@ -1992,15 +1991,16 @@
 9333	Charcoal	Supply	Common	1	1	A bag of charcoal briquettes. The only thing a barbecue will burn -- load it into the BBQ, switch it on, and whatever you are cooking comes out charcoal grilled.	2469a3ad44eb651cf7cf0970c938319e
 9334	Black Powder	Supply	Uncommon	1	1	Sulfur and charcoal, ground together. Placeholder: no model yet.	adef07d59c974c56d15746172593c3c1
 9335	Pipe	Supply	Common	1	1	A short length of salvaged pipe. Placeholder: no model yet.	a9a940fad3488dbc69db8fc9c8335772
-9336	Sheet of Paper	Supply	Common	1	1	A blank sheet. Placeholder: no model yet.	52dd31a262354018897d48f03431f925
-9337	Handwritten Note	Supply	Common	1	1	Scrawled, half legible. Placeholder: no model yet.	af1ed5c4914ff7420117a615afcda9b8
-9338	Ceramic	Supply	Common	1	1	Fired clay, broken into usable pieces. Placeholder: no model yet.	58f78af341bd3d1bee2e4fbd2be626df
-9339	Circuitry	Supply	Uncommon	1	1	Salvaged boards and wiring. Placeholder: no model yet.	c99d1d75ed4e80575554369b53fefa2e
-9340	Asbestos	Supply	Uncommon	1	1	Fibrous, heat-proof, and best handled with gloves. Placeholder: no model yet.	f7816a8cf107a2ec8779efefb4e6bd58
-9341	Glass	Supply	Common	1	1	Salvaged glass, edges and all. Placeholder: no model yet.	7f26341dea32bb3738760f7216f0335d
-9342	Firewood	Supply	Common	2	1	Split and seasoned, so it burns hotter and longer than the wet log it came from -- and the chunks carry far easier than one. No species left on it, so it stacks with any other firewood. Nothing is made FROM it: splitting a log is a one-way bet on burning it. Placeholder: no model yet.	4f3a1c05c6274bc3a6d3b1da19247a80
-9343	Green Pen	Generic	Common	1	1	A green ballpoint. Placeholder: no model yet.	78cbe7d92a7d406f8a0557b3a4df534c
+9336	Sheet of Paper	Supply	Common	1	1	A blank sheet.	52dd31a262354018897d48f03431f925
+9337	Handwritten Note	Supply	Common	1	1	Scrawled, half legible.	af1ed5c4914ff7420117a615afcda9b8
+9338	Ceramic	Supply	Common	1	1	Fired clay, broken into usable pieces.	58f78af341bd3d1bee2e4fbd2be626df
+9339	Circuitry	Supply	Uncommon	1	1	Salvaged boards and wiring.	c99d1d75ed4e80575554369b53fefa2e
+9340	Asbestos	Supply	Uncommon	1	1	Fibrous, heat-proof, and best handled with gloves.	f7816a8cf107a2ec8779efefb4e6bd58
+9341	Glass	Supply	Common	1	1	Salvaged glass, edges and all.	7f26341dea32bb3738760f7216f0335d
+9342	Firewood	Supply	Common	2	1	Split and seasoned, so it burns hotter and longer than the wet log it came from -- and the chunks carry far easier than one. No species left on it, so it stacks with any other firewood. Nothing is made FROM it: splitting a log is a one-way bet on burning it.	4f3a1c05c6274bc3a6d3b1da19247a80
+9343	Green Pen	Generic	Common	1	1	A green ballpoint.	78cbe7d92a7d406f8a0557b3a4df534c
 9344	Side Plate	Generic	Common	1	1	A small ceramic side plate.	85408e653380469fa61c4d54c965324e
 9345	Pot Lid	Generic	Common	1	1	The steel lid off a cooking pot.	685350ff77a74fd19e97ad4c2f63fa64
+9347	Ice	Supply	Common	1	1	A handful of ice cubes. Keeps only while it stays frozen -- out of the cold it is water, and then it is nothing.	322d7497bb934c23ae12b849783b6b88
 9346	Thermometer	Generic	Common	1	1	A glass thermometer. Carry one and your temperature bar shows the reading in degrees.	14e539a96db044248882224289d04660
 9400	Water Bottle Silencer	Barrel	Common	1	1	A plastic bottle taped over the muzzle. Swallows exactly one shot, then it is done.	56d6a5da2bbf4638bb313fa11a583399

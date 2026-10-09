@@ -211,7 +211,10 @@ namespace UnturnedSim.Tests
             // strawberry 2026-09-06: "cooked bread -> toast". A whole new NAME, not a prefix -- "Cooked Bread"
             // is a description of toast rather than the word for it.
             Assert.That(Cooking.DisplayName("Bread", 460, 95, ECookStyle.Plain, isFood: true), Is.EqualTo("Toast"));
-            Assert.That(Cooking.DisplayName("Bread", 460, 0, ECookStyle.Plain, isFood: true), Is.EqualTo("Raw Bread"));
+            // ⚠ THIS ASSERTED "Raw Bread" AND THAT IS THE BUG NOW, not the behaviour. Master 2026-10-09:
+            // "others that dont need 'raw'. only food thats dangerous uncooked". Bread is not dangerous raw, so
+            // raw bread is just Bread. Stale premise, not a regression.
+            Assert.That(Cooking.DisplayName("Bread", 460, 0, ECookStyle.Plain, isFood: true), Is.EqualTo("Bread"));
             Assert.That(Cooking.DisplayName("Bread", 460, 140, ECookStyle.Plain, isFood: true), Is.EqualTo("Burnt Bread"),
                         "burnt bread is burnt bread, not burnt toast");
             // Only a PLAIN cook earns the name: a slice out of a microwave is microwaved bread, and calling it
@@ -221,6 +224,43 @@ namespace UnturnedSim.Tests
             // Nothing else has an override, so everything else takes the prefix.
             Assert.That(Cooking.DisplayName("Canned Beans", 13, 95, ECookStyle.Plain, isFood: true),
                         Is.EqualTo("Cooked Canned Beans"));
+        }
+
+        [Test]
+        public void only_food_the_catalog_calls_raw_gets_a_raw_label()
+        {
+            // Master 2026-10-09, with a screenshot of "Frozen Raw Raw Goldfish": "fix instances of 'double raw'
+            // food titles ... as well as others that dont need 'raw'. only food thats dangerous uncooked".
+            //
+            // ⭐ The catalog already draws that line: 31 of its 119 foods ship as Raw X / Cooked X pairs, and
+            // they are the meat and the fish. So the rule is "the state word is authoritative, never
+            // cumulative" -- strip what the item shipped with, then add the one that is true now.
+
+            // THE REPORTED BUG: the item is CALLED "Raw Goldfish" and a second Raw was pasted on.
+            Assert.That(Cooking.DisplayName("Raw Goldfish", 1349, 0, ECookStyle.Plain, isFood: true),
+                        Is.EqualTo("Raw Goldfish"), "one Raw, not two");
+
+            // ⭐ AND COOKING IT LANDS ON RETAIL'S OWN SPELLING: item 1350 is literally called Cooked Goldfish.
+            // That is the check that says the rule is right rather than merely tidy -- it agrees with data it
+            // was not told about.
+            Assert.That(Cooking.DisplayName("Raw Goldfish", 1349, 95, ECookStyle.Plain, isFood: true),
+                        Is.EqualTo("Cooked Goldfish"));
+
+            // THE SECOND HALF: food that is not dangerous raw gets no word at all.
+            foreach (var safe in new[] { "Apple", "Canned Beans", "Bread", "Granola Bar" })
+                Assert.That(Cooking.DisplayName(safe, 13, 0, ECookStyle.Plain, isFood: true), Is.EqualTo(safe),
+                            $"{safe} raw is just {safe}");
+
+            // CONTROL -- without this the rule could be "never say Raw" and half the checks above would pass.
+            Assert.That(Cooking.DisplayName("Raw Venison", 514, 0, ECookStyle.Plain, isFood: true),
+                        Is.EqualTo("Raw Venison"), "meat must STILL read as raw");
+
+            // Burnt still wins over everything, and does not accumulate either.
+            Assert.That(Cooking.DisplayName("Raw Beef", 1120, 200, ECookStyle.Plain, isFood: true),
+                        Is.EqualTo("Burnt Beef"));
+            // A non-food never takes a state word, raw-named or not.
+            Assert.That(Cooking.DisplayName("Raw Goldfish", 1349, 0, ECookStyle.Plain, isFood: false),
+                        Is.EqualTo("Raw Goldfish"));
         }
 
         [Test]

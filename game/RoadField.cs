@@ -564,6 +564,78 @@ namespace UnturnedGodot
         public const int TracksMaterial = 4;
         public int RoadMaterialOf(int road) => (road >= 0 && road < _roads.Count) ? _roads[road].Material : -1;
         public bool RoadLoops(int road) => road >= 0 && road < _roads.Count && _roads[road].IsLoop;
+        /// <summary>L1 seam: give the material table a width when no map has been loaded.
+        ///
+        /// ⚠ Road materials come out of the real Unturned install (LoadMaterialsOnly reads the map's
+        /// Environment dir), so a bare test rig has an EMPTY table and every road reports a half-width of
+        /// zero -- which is correct, and which makes anything that derives an offset from the width
+        /// untestable. This is the one thing a rig cannot supply for itself.</summary>
+        public void DebugSetMaterialWidth(int material, float halfWidthMetres)
+        {
+            while (_mats.Count <= material) _mats.Add(new RoadMat());
+            var m = _mats[material];
+            m.Width = halfWidthMetres / WidthScale;
+            _mats[material] = m;
+        }
+
+        /// <summary>L1 seam: give the material a ribbon DEPTH, so RoadSurfaceOffset is non-zero.
+        ///
+        /// ⚠ Without this a test rig's offset is 0 and any assertion about something being lifted ONTO the
+        /// road surface passes against code that never lifts anything -- the exact shape of vacuous check
+        /// this project keeps catching.</summary>
+        public void DebugSetMaterialDepth(int material, float halfDepthMetres)
+        {
+            while (_mats.Count <= material) _mats.Add(new RoadMat());
+            var m = _mats[material];
+            m.Depth = halfDepthMetres / DepthScale;
+            _mats[material] = m;
+        }
+
+        /// <summary>Half the drawn carriageway width, in metres -- the same `Width * WidthScale` the mesh and
+        /// the collider are built from, so anything placed at this offset lands exactly at the asphalt's edge.
+        /// Exposed for EditorFenceRoad, which puts a guardrail a fixed clearance outside it: the alternative is
+        /// a magic constant in the tool that silently stops matching the day a road material's width changes.</summary>
+        public float RoadHalfWidth(int road) =>
+            road >= 0 && road < _roads.Count && _roads[road].Material < _mats.Count
+                ? _mats[_roads[road].Material].Width * WidthScale
+                : 0f;
+
+        /// <summary>How far the drawn ribbon's SURFACE sits above the spline point, in metres:
+        /// `Depth * DepthScale + Offset`, the same pair BuildRoadMesh raises its surface verts by.
+        ///
+        /// ⚠ EvaluateAlong RETURNS THE SPLINE POINT, NOT THE ROAD SURFACE -- they differ by exactly this, and
+        /// anything placed ON a road has to add it or it ends up buried. astraclaw's New Rail unit is datumed
+        /// at "the native centreline BEFORE road half-depth is added", and placing it at the raw spline point
+        /// put its 0.31 m rail tops 0.13 m UNDER a ribbon whose surface is 0.44 m up -- so the modelled track
+        /// was invisible and the painted one was what you saw. Master spotted it in a render: "the spline ur
+        /// showing here is the old one".</summary>
+        /// <summary>Hide a road's drawn ribbon while leaving the road itself -- its spline, its material and
+        /// its collider -- entirely in place.
+        ///
+        /// ⭐ THIS IS WHAT LETS "NEW RAIL" REPLACE THE PAINTED TRACK WITHOUT ORPHANING THE TRAINS. The modelled
+        /// rail is props tiled along the spline; the spline must stay material-4 or RoadField.NearestTrack
+        /// (and therefore Train.cs) can no longer find it. So the road stays a Tracks road in every respect
+        /// that matters and only its painted strip stops being drawn.
+        ///
+        /// ⚠ The alternative -- lifting the modelled track above the ribbon -- is what I tried first, and it
+        /// hides the old rails behind the new ones rather than removing them, at the cost of putting the
+        /// railhead 0.44 m off its authored datum. Visibility is not the same as correctness.</summary>
+        public void SetRoadRibbonVisible(int road, bool visible)
+        {
+            if (road < 0 || road >= _roads.Count) return;
+            var mi = _roads[road].Mi;
+            if (mi != null && IsInstanceValid(mi)) mi.Visible = visible;
+        }
+
+        public bool RoadRibbonVisible(int road) =>
+            road >= 0 && road < _roads.Count && _roads[road].Mi != null
+            && IsInstanceValid(_roads[road].Mi) && _roads[road].Mi.Visible;
+
+        public float RoadSurfaceOffset(int road) =>
+            road >= 0 && road < _roads.Count && _roads[road].Material < _mats.Count
+                ? _mats[_roads[road].Material].Depth * DepthScale + _mats[_roads[road].Material].Offset
+                : 0f;
+
         public float RoadLength(int road)
         {
             if (road < 0 || road >= _roads.Count) return 0f;
@@ -622,13 +694,25 @@ namespace UnturnedGodot
             }
             return SplinePos(r, segs - 1, 1f);
         }
+        /// <summary>Nearest road of ANY material to a world point. The bridge tool needs this where the rail
+        /// tool needs NearestTrack: a bridge carries whatever road it was drawn on, and filtering to one
+        /// material would quietly refuse every highway.</summary>
+        public bool NearestRoad(Vector3 world, out int road, out float distanceAlong)
+            => NearestRoadOf(world, -1, out road, out distanceAlong);
+
         /// <summary>Nearest TRACK road (material 4) to a world point, + the distance-along of the closest sampled point.</summary>
         public bool NearestTrack(Vector3 world, out int road, out float distanceAlong)
+            => NearestRoadOf(world, TracksMaterial, out road, out distanceAlong);
+
+        /// <summary>`material` < 0 matches any. One search, so the track and the any-road lookups cannot drift
+        /// apart -- they differ only in the filter.</summary>
+        bool NearestRoadOf(Vector3 world, int material, out int road, out float distanceAlong)
         {
             road = -1; distanceAlong = 0f; float best = float.MaxValue;
             for (int ri = 0; ri < _roads.Count; ri++)
             {
-                var r = _roads[ri]; if (r.Material != TracksMaterial || r.Joints.Count < 2) continue;
+                var r = _roads[ri];
+                if ((material >= 0 && r.Material != material) || r.Joints.Count < 2) continue;
                 int segs = r.IsLoop ? r.Joints.Count : r.Joints.Count - 1; float acc = 0f;
                 for (int i = 0; i < segs; i++)
                 {

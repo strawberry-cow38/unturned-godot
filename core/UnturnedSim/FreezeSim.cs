@@ -43,7 +43,14 @@ namespace SDG.Unturned
 
         /// <summary>Only FOOD freezes. A frozen rifle is not a mechanic, and letting `frozen` accumulate on
         /// arbitrary items would put a meaningless number on every tooltip in the game.</summary>
-        public static bool Freezable(ItemAsset a) => a != null && a.type == EItemType.FOOD;
+        /// <summary>ICE. Master 2026-10-09: "add a new ice item ... if it goes below frozen, it disappears".
+        /// It is the one non-FOOD item in the freeze system, and it is also the only item whose frozen value
+        /// decides whether it EXISTS -- see ServerFreezing.Sweep.</summary>
+        public const ushort IceId = 9347;
+
+        /// ⚠ Ice is SUPPLY, not FOOD, deliberately: FOOD would drag it into FoodSpoil, and "this ice is 40%
+        /// spoiled" is not a thing. So it opts into freezing by id rather than by type.
+        public static bool Freezable(ItemAsset a) => a != null && (a.type == EItemType.FOOD || a.id == IceId);
 
         // SUB-UNIT PROGRESS HAS TO BE REMEMBERED, and forgetting it is not a rounding nicety -- it is the
         // difference between the feature working and silently not.

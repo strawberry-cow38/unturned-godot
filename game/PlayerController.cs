@@ -5798,6 +5798,19 @@ namespace UnturnedGodot
             Log.Print($"[cook] {OpenCookerKind} {(OpenCookerOn ? "ON" : "OFF")}");
         }
         public bool DashboardOpen => _invUI?.IsOpen ?? false;   // L1 net tests: did the storage fact open the dashboard
+        /// <summary>L1 seams for ui.walk_with_dashboard_open. The movement gate's whole subject is "WHICH ui
+        /// freed the mouse", and that is not observable from outside -- a test that could only see the player's
+        /// position would be measuring physics, and one driving ScriptedInput would bypass the gate entirely
+        /// and pass on a build where it was never fixed.</summary>
+        public bool DebugMoveInputBlocked => MoveInputBlocked;
+        public bool DebugAnyDashboardScreenOpen => AnyDashboardScreenOpen;
+        public bool DebugSkillsOpen => _skillsUI != null && _skillsUI.IsOpen;
+        /// <summary>The Tab key's HANDLER, not the key. ⚠ A test cannot press Tab here: Input.ParseInputEvent
+        /// with a dashboard screen up never reaches _UnhandledInput, because Tab is Godot's own ui_focus_next
+        /// and the open UI's focusable Controls consume it first. Measured -- the inventory stayed open across
+        /// a parsed Tab. So this covers the branch the bug was in (which screen the press closes) and NOT the
+        /// routing that gets the press here.</summary>
+        public void DebugTabKey() => ToggleInventoryMenu();
         /// <summary>L1: is the cooker's on/off button DRAWN, as opposed to merely knowable? See
         /// OnReplicatedStorageOpened -- those were two different answers, and the player only gets the drawn one.</summary>
         public bool DebugCookerButtonShown => _invUI != null && IsInstanceValid(_invUI) && _invUI.DebugHasCookerButton;
@@ -9183,18 +9196,10 @@ namespace UnturnedGodot
             {
                 // ESC backs out of an open menu FIRST -- close the inventory/crafting/skills dashboard rather than
                 // stacking the pause menu on top of it (strawberry). Only when nothing's open does ESC pause.
-                if (_invUI != null && _invUI.IsOpen)
+                if (AnyDashboardScreenOpen)
                 {
-                    SaveGunState(); CloseCrate(); _invUI.Close();
-                    Input.MouseMode = Input.MouseModeEnum.Captured;
-                }
-                else if (_craftMenu != null && _craftMenu.IsOpen)
-                {
-                    _craftMenu.Close(); Input.MouseMode = Input.MouseModeEnum.Captured;
-                }
-                else if (_skillsUI != null && _skillsUI.IsOpen)
-                {
-                    _skillsUI.Close(); Input.MouseMode = Input.MouseModeEnum.Captured;
+                    SaveGunState();   // same as Tab: the held gun's live state is captured before the bag can move it
+                    CloseDashboard();   // ⚠ the SAME list Tab uses -- Escape used to miss the Information tab entirely
                 }
                 else if (PauseMenu != null)   // nothing open -> ESC opens the pause menu (freezes the sim; the menu handles ESC-to-resume itself since we're then paused)
                 {
@@ -9212,8 +9217,31 @@ namespace UnturnedGodot
         {
             if (_viewmodel != null && _viewmodel.InAttachView) return;   // no inventory while the attachment menu is up
             SaveGunState();   // capture the held gun's live state (ammo/mag/firemode/attachments) so dropping/moving it in the inventory keeps it (master)
-            if (_invUI != null && _invUI.IsOpen) { CloseCrate(); _invUI.Close(); Input.MouseMode = Input.MouseModeEnum.Captured; }   // closing the dashboard saves an open crate
-            else ShowMenu(MenuNavbar.Tab.Inventory);
+            // ⭐ TAB CLOSES WHATEVER IS OPEN, not just the inventory. Master 2026-10-09: "pressing tab on any of
+            // the crafting/skills/info ui should close them, not switch to the inventory tab". This only ever
+            // asked `_invUI.IsOpen`, so with the CRAFT screen up that test was false and it fell through to
+            // ShowMenu(Inventory) -- the key that should have put the dashboard away instead navigated one tab
+            // sideways, and it took a second press to get out. Tab is the way out of the dashboard; it opens the
+            // inventory only from a closed one.
+            if (CloseDashboard()) return;
+            ShowMenu(MenuNavbar.Tab.Inventory);
+        }
+
+        /// <summary>Shut whichever dashboard screen is up and give the mouse back. Returns whether there was one.
+        ///
+        /// ⚠ ONE HELPER, because the four screens are closed from Tab, from Escape and from each screen's own key,
+        /// and three hand-rolled copies of this list is how the Craft screen ends up being closable by one route
+        /// and not another. CloseCrate() belongs with the inventory specifically -- it swings the container door
+        /// shut and saves it -- so it stays attached to that branch rather than being run for all four.</summary>
+        bool CloseDashboard()
+        {
+            bool any = false;
+            if (_invUI != null && _invUI.IsOpen) { CloseCrate(); _invUI.Close(); any = true; }
+            if (_craftMenu != null && _craftMenu.IsOpen) { _craftMenu.Close(); any = true; }
+            if (_skillsUI != null && _skillsUI.IsOpen) { _skillsUI.Close(); any = true; }
+            if (MapUI.Current != null && MapUI.Current.IsOpen) { MapUI.Current.Close(); any = true; }
+            if (any) Input.MouseMode = Input.MouseModeEnum.Captured;
+            return any;
         }
 
         public void OpenInventory()
@@ -11837,6 +11865,32 @@ namespace UnturnedGodot
         // (harness) input bypasses -- it sets Scripted* directly. (strawberry 2026-07-15)
         bool UiInputBlocked => Input.MouseMode != Input.MouseModeEnum.Captured;
 
+        /// <summary>One of the four DASHBOARD screens -- Inventory, Craft, Skills, Information (the map) -- is up.
+        /// These are the screens the navbar switches between, and they are the ones you are meant to be able to
+        /// walk around with: retail Unturned does not root you to the spot for opening your bag.
+        ///
+        /// ⚠ NOT the public `DashboardOpen` a few thousand lines up, which is `_invUI.IsOpen` alone and answers
+        /// an L1 question ("did the server's StorageOpened fact open the panel"). Narrowing THAT one to the
+        /// inventory is the whole point of it, so this is a second, wider predicate rather than a change to it.</summary>
+        bool AnyDashboardScreenOpen => (_invUI != null && _invUI.IsOpen)
+                           || (_craftMenu != null && _craftMenu.IsOpen)
+                           || (_skillsUI != null && _skillsUI.IsOpen)
+                           || (MapUI.Current != null && MapUI.Current.IsOpen);
+
+        /// <summary>UiInputBlocked, but for the ON-FOOT MOVEMENT keys only. Master 2026-10-09: "allow wasd
+        /// movement with the inventory/crafting/skills/info ui open".
+        ///
+        /// ⭐ THE OLD TEST ANSWERED A DIFFERENT QUESTION. `UiInputBlocked` is "the mouse is not captured", which
+        /// is true for the pause menu, the console, the chat box, a vehicle radial AND the dashboard alike --
+        /// so one predicate was deciding both "should this click reach the world" and "may the player walk",
+        /// and those have different answers. This narrows it to the second question: the pause menu and the
+        /// console still root you, the dashboard does not.
+        ///
+        /// ⚠ STILL BLOCKED WHILE TYPING. The dashboard screens have no text field today, but chat and the dev
+        /// console can be open over the top of one, and "W" must not both walk and type a w.</summary>
+        bool MoveInputBlocked => UiInputBlocked
+                              && !(AnyDashboardScreenOpen && GetViewport().GuiGetFocusOwner() is not LineEdit);
+
         void DriveVehicle(float delta)
         {
             // THE VEHICLE CAN BE GONE. Every line below dereferences it, and nothing here ever checked more than null --
@@ -12320,9 +12374,9 @@ namespace UnturnedGodot
             // (X = crouch, Z = prone, sprint overlay, broken-legs demotion, headroom gate -- MP_PLAN §3.4).
             // NetAvatar never polls the keys -- PlayerNetSync forces ScriptedStance from the MoveInput
             // stance bits instead, so the avatar integrates at the stance the client shell predicted at.
-            bool xNow = !NetAvatar && !UiInputBlocked && Keybinds.Pressed(GameAction.CrouchToggle);
-            bool zNow = !NetAvatar && !UiInputBlocked && Keybinds.Pressed(GameAction.Prone);
-            bool sprintNow = !NetAvatar && !UiInputBlocked && Keybinds.Pressed(GameAction.Sprint);
+            bool xNow = !NetAvatar && !MoveInputBlocked && Keybinds.Pressed(GameAction.CrouchToggle);
+            bool zNow = !NetAvatar && !MoveInputBlocked && Keybinds.Pressed(GameAction.Prone);
+            bool sprintNow = !NetAvatar && !MoveInputBlocked && Keybinds.Pressed(GameAction.Sprint);
             // SCOPE STEADY (v49). Same control as sprint and that is not a clash: `equipmentAllowsSprint`
             // is `!_viewmodel.IsAiming`, so holding it while aiming does nothing today. The exclusivity is
             // structural and already there -- this only uses the key the aim already freed.
@@ -12365,13 +12419,13 @@ namespace UnturnedGodot
                 if (_viewmodel != null) _viewmodel.SteadyRateScale = _scopeSteady.SwayRateScale;
             }
             SteadyingNow = _scopeSteady.Steadying;
-            bool cHeld = !NetAvatar && !UiInputBlocked && !(_build?.Active ?? false) && Keybinds.Pressed(GameAction.Crouch);   // C = HOLD-to-crouch (master): forces CROUCH while held; CrouchToggle (X) stays the stand<->crouch TOGGLE. build mode keeps its own C as cycle-structure
+            bool cHeld = !NetAvatar && !MoveInputBlocked && !(_build?.Active ?? false) && Keybinds.Pressed(GameAction.Crouch);   // C = HOLD-to-crouch (master): forces CROUCH while held; CrouchToggle (X) stays the stand<->crouch TOGGLE. build mode keeps its own C as cycle-structure
             // The axes are read BEFORE the stance step now: the submerged-ladder gate below needs to know
             // whether the player is actively climbing OUT of the water, and this block is pure input with no
             // dependency on the stance it used to sit under.
             float forward, strafe;
             if (ScriptedInput.HasValue) { strafe = ScriptedInput.Value.x; forward = ScriptedInput.Value.y; }
-            else if (UiInputBlocked) { forward = 0f; strafe = 0f; }   // menu open -> don't walk through it
+            else if (MoveInputBlocked) { forward = 0f; strafe = 0f; }   // pause menu / console open -> don't walk through it (the DASHBOARD does not block -- see MoveInputBlocked)
             else
             {
                 forward = (Keybinds.Pressed(GameAction.MoveForward) ? 1f : 0f) - (Keybinds.Pressed(GameAction.MoveBack) ? 1f : 0f);
@@ -12385,7 +12439,7 @@ namespace UnturnedGodot
             if (_move.Stance == EPlayerStance.SPRINT) _sinceSprint = 0f; else _sinceSprint += (float)delta;   // Fire() reads this: no shooting mid-sprint or for SprintFireDelay after   // C-hold forces crouch via scriptedStance -> _move.Stance + the MP stance bits both follow (hold-to-crouch)
             if (_move.Stance == _recoilStance) _recoilStanceTime += (float)delta; else { _recoilStance = _move.Stance; _recoilStanceTime = 0f; }   // stance-settle timer for the recoil bonus (reset on any change) -- master
 
-            bool jump = (ScriptedJump ?? (!NetAvatar && !UiInputBlocked && Keybinds.Pressed(GameAction.Jump))) && !Broken && !MajorlyIrradiated;   // broken legs can't jump (PlayerMovement.cs:1310); a major dose likewise (strawberry 2026-09-11). ScriptedJump = the wire's MoveInput v2 jump bit (C2)
+            bool jump = (ScriptedJump ?? (!NetAvatar && !MoveInputBlocked && Keybinds.Pressed(GameAction.Jump))) && !Broken && !MajorlyIrradiated;   // broken legs can't jump (PlayerMovement.cs:1310); a major dose likewise (strawberry 2026-09-11). ScriptedJump = the wire's MoveInput v2 jump bit (C2)
 
             LastMoveInput = new UnityEngine.Vector2(strafe, forward);   // shell-captured axes for the MP input command
             LastJumpInput = jump;   // the wire jump bit is the HELD key the sim consumed (post-Broken) -- C3 reverted the F1 takeoff-edge encoding: a mispredicted takeoff is corrected by rewind+replay, not by wire gymnastics

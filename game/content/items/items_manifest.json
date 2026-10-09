@@ -34892,13 +34892,13 @@
 },
 "9300": {
 "box": [
-0.1145,
-0.1,
-0.085
+0.2863,
+0.25,
+0.2125
 ],
 "center": [
-0.0147,
-0.05,
+0.0369,
+0.125,
 0.0
 ],
 "color": null,
@@ -34910,13 +34910,13 @@
 },
 "9302": {
 "box": [
-0.26,
-0.021,
-0.26
+0.65,
+0.0525,
+0.65
 ],
 "center": [
 0.0,
-0.0105,
+0.0263,
 0.0
 ],
 "color": null,
@@ -34928,13 +34928,13 @@
 },
 "9303": {
 "box": [
-0.16,
-0.07,
-0.16
+0.4,
+0.175,
+0.4
 ],
 "center": [
 0.0,
-0.035,
+0.0875,
 0.0
 ],
 "color": null,
@@ -34944,15 +34944,53 @@
 "tex": "9303.png",
 "type": "Generic"
 },
-"9307": {
+"9304": {
 "box": [
-0.308,
-0.15,
-0.24
+0.1069,
+0.4283,
+0.0571
 ],
 "center": [
 0.0,
-0.075,
+0.1144,
+0.0204
+],
+"color": null,
+"metal": true,
+"name": "Fork",
+"obj": "9304.txt",
+"parts": 1,
+"tex": "9304.png",
+"type": "Generic"
+},
+"9305": {
+"box": [
+0.1707,
+0.5476,
+0.1076
+],
+"center": [
+0.0,
+-0.0418,
+-0.0127
+],
+"color": null,
+"metal": true,
+"name": "Spoon",
+"obj": "9305.txt",
+"parts": 1,
+"tex": "9305.png",
+"type": "Generic"
+},
+"9307": {
+"box": [
+0.77,
+0.375,
+0.6
+],
+"center": [
+0.0,
+0.1875,
 0.0
 ],
 "color": null,
@@ -34979,6 +35017,63 @@
 "parts": 1,
 "tex": "931.png",
 "type": "Hat"
+},
+"9317": {
+"box": [
+0.026,
+0.0283,
+0.375
+],
+"center": [
+0.0,
+0.0141,
+0.0
+],
+"color": null,
+"name": "Black Pen",
+"obj": "9317.txt",
+"parts": 1,
+"tex": "9317.png",
+"translucent": true,
+"type": "Generic"
+},
+"9318": {
+"box": [
+0.026,
+0.0283,
+0.375
+],
+"center": [
+0.0,
+0.0141,
+0.0
+],
+"color": null,
+"name": "Blue Pen",
+"obj": "9318.txt",
+"parts": 1,
+"tex": "9318.png",
+"translucent": true,
+"type": "Generic"
+},
+"9319": {
+"box": [
+0.026,
+0.0283,
+0.375
+],
+"center": [
+0.0,
+0.0141,
+0.0
+],
+"color": null,
+"name": "Red Pen",
+"obj": "9319.txt",
+"parts": 1,
+"tex": "9319.png",
+"translucent": true,
+"type": "Generic"
 },
 "932": {
 "box": [
@@ -35052,6 +35147,96 @@
 "tex": "933.png",
 "type": "Shirt"
 },
+"9333": {
+"box": [
+0.4,
+0.1875,
+0.3625
+],
+"center": [
+0.0,
+0.0938,
+0.0
+],
+"color": null,
+"name": "Charcoal",
+"obj": "9333.txt",
+"parts": 1,
+"tex": "9333.png",
+"type": "Supply"
+},
+"9336": {
+"box": [
+0.5,
+0.05,
+0.6667
+],
+"center": [
+0.0,
+0.0,
+-0.0
+],
+"color": null,
+"name": "Sheet of Paper",
+"obj": "9336.txt",
+"parts": 1,
+"tex": "9336.png",
+"type": "Supply"
+},
+"9337": {
+"box": [
+0.5,
+0.05,
+0.6667
+],
+"center": [
+0.0,
+0.0,
+-0.0
+],
+"color": null,
+"name": "Handwritten Note",
+"obj": "9337.txt",
+"parts": 1,
+"tex": "9337.png",
+"type": "Supply"
+},
+"9338": {
+"box": [
+0.35,
+0.1474,
+0.25
+],
+"center": [
+0.0,
+0.0737,
+0.0
+],
+"color": null,
+"name": "Ceramic",
+"obj": "9338.txt",
+"parts": 1,
+"tex": "9338.png",
+"type": "Supply"
+},
+"9339": {
+"box": [
+0.3903,
+0.0152,
+0.2882
+],
+"center": [
+0.0,
+0.0076,
+0.0
+],
+"color": null,
+"name": "Circuitry",
+"obj": "9339.txt",
+"parts": 1,
+"tex": "9339.png",
+"type": "Supply"
+},
 "934": {
 "box": [
 0.8652,
@@ -35070,15 +35255,88 @@
 "tex": "934.png",
 "type": "Pants"
 },
-"9344": {
+"9340": {
 "box": [
-0.18,
-0.018,
-0.18
+0.3,
+0.125,
+0.25
 ],
 "center": [
 0.0,
-0.009,
+0.0625,
+0.0
+],
+"color": null,
+"name": "Asbestos",
+"obj": "9340.txt",
+"parts": 1,
+"tex": "9340.png",
+"type": "Supply"
+},
+"9341": {
+"box": [
+0.2631,
+0.0695,
+0.1894
+],
+"center": [
+0.0,
+0.0347,
+0.0
+],
+"color": null,
+"name": "Glass",
+"obj": "9341.txt",
+"parts": 1,
+"tex": "9341.png",
+"type": "Supply"
+},
+"9342": {
+"box": [
+1.0,
+0.3,
+0.425
+],
+"center": [
+0.0,
+0.15,
+0.0
+],
+"color": null,
+"name": "Firewood",
+"obj": "9342.txt",
+"parts": 1,
+"tex": "9342.png",
+"type": "Supply"
+},
+"9343": {
+"box": [
+0.026,
+0.0283,
+0.375
+],
+"center": [
+0.0,
+0.0141,
+0.0
+],
+"color": null,
+"name": "Green Pen",
+"obj": "9343.txt",
+"parts": 1,
+"tex": "9343.png",
+"translucent": true,
+"type": "Generic"
+},
+"9344": {
+"box": [
+0.45,
+0.045,
+0.45
+],
+"center": [
+0.0,
+0.0225,
 0.0
 ],
 "color": null,
@@ -35090,13 +35348,13 @@
 },
 "9345": {
 "box": [
-0.242,
-0.05,
-0.242
+0.605,
+0.125,
+0.605
 ],
 "center": [
 0.0,
-0.025,
+0.0625,
 0.0
 ],
 "color": null,
@@ -35123,6 +35381,25 @@
 "parts": 1,
 "tex": "9346.png",
 "type": "Generic"
+},
+"9347": {
+"box": [
+0.2597,
+0.2132,
+0.2413
+],
+"center": [
+0.0,
+0.1066,
+0.0
+],
+"color": null,
+"name": "Ice",
+"obj": "9347.txt",
+"parts": 1,
+"tex": "9347.png",
+"translucent": true,
+"type": "Supply"
 },
 "935": {
 "box": [

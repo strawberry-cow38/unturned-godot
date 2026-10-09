@@ -174,6 +174,11 @@ namespace SDG.Unturned
             // Both spawn EMPTY like the canteen -- a mug found in a dishwasher is not full of water. 0,0 keeps
             // their catalog footprints (mug 1x1, pot 2x2), so the pot is 1.25 L per slot against a bottle's 1.0:
             // better per slot, and it costs you four of them at once.
+            // ⚠⚠ THESE CAPACITIES DO NOT FOLLOW THE MESH SCALE, AND MUST NOT. The world models were scaled 2.5x on
+            // 2026-10-09 because this game draws items roughly 3-4x life size (a 1x1 canned beans is 0.318 m
+            // across) and true-to-life crockery read as tiny next to them. That is a RENDERING convention, not a
+            // physical claim -- the mug is still a mug. Taken literally the volume would scale 2.5^3 = 15.6x and
+            // the mug would hold five and a half litres.
             Cont(9300,  350f, UnturnedGodot.FluidType.None,  0, 0);   // Cup/mug:     350 mL of a measured 396
             Cont(9307, 5000f, UnturnedGodot.FluidType.None,  0, 0);   // Cooking Pot:   5 L of a measured 5.7
             // drink fluids (strawberry 2026-07-23) -- each spawns in its own retail bottle/carton, keeps its retail size (0 = don't override)
