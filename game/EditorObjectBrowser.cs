@@ -22,6 +22,8 @@ namespace UnturnedGodot
         Control _gridBox;
         LineEdit _stationEdit;     // gas-pump station-id field (shown only when a gas pump is selected)
         Control _pumpBox;
+        LineEdit[] _signEdit;      // the two overhead-sign legends (shown only when a sign is selected)
+        Control _signBox;
 
         public EditorObjectBrowser(EditorObjects objects) { _objects = objects; }
 
@@ -153,10 +155,31 @@ namespace UnturnedGodot
             pbox.AddChild(_stationEdit);
             box.AddChild(pbox);
 
+            // overhead-sign legends -- appears when a placed 🛣 Highway Sign is selected. TWO fields because
+            // the prop carries two independent boards; one field editing "the sign" would be a lie about the art.
+            var sbox = new VBoxContainer { Visible = false };
+            _signBox = sbox;
+            var sl = new Label { Text = "▼ HIGHWAY SIGN — legends (\\n for a second line):" };
+            sl.AddThemeFontSizeOverride("font_size", 13);
+            sl.AddThemeColorOverride("font_color", new Color(0.55f, 0.9f, 0.6f));
+            sbox.AddChild(sl);
+            // ⭐ Built for the MAXIMUM, shown per selection: astraclaw's double-post gantry carries four
+            // boards, and a pair of fields sized to the two-board mast would silently hide half of them.
+            _signEdit = new LineEdit[EditorObjects.MaxSignBoards];
+            for (int i = 0; i < _signEdit.Length; i++)
+            {
+                int board = i;   // ⚠ captured per iteration: one shared loop variable would make both fields write board 1
+                _signEdit[i] = new LineEdit { PlaceholderText = $"board {i + 1} text (Enter to set)", CustomMinimumSize = new Vector2(CTRL, 32) };
+                _signEdit[i].TextSubmitted += t => { _objects.SetSelectedSignText(board, t); SyncSignPicker(); };
+                sbox.AddChild(_signEdit[i]);
+            }
+            box.AddChild(sbox);
+
             _objects.SelectionChanged += SyncOmitToggle;
             _objects.SelectionChanged += SyncCratePicker;
             _objects.SelectionChanged += SyncGridPicker;
             _objects.SelectionChanged += SyncPumpPicker;
+            _objects.SelectionChanged += SyncSignPicker;
 
             var sel = new Button { Text = "Select / move only", CustomMinimumSize = new Vector2(CTRL, 34), FocusMode = FocusModeEnum.None };
             sel.Pressed += () => { _objects.ClearPlaceType(); _list.DeselectAll(); ShowPreview(null); };
@@ -274,6 +297,20 @@ namespace UnturnedGodot
             _pumpBox.Visible = _objects.GasPumpSelected;
             if (_objects.GasPumpSelected && _stationEdit != null && !_stationEdit.HasFocus())
                 _stationEdit.Text = _objects.SelectedStationId.ToString();
+        }
+
+        void SyncSignPicker()   // selection changed: show both legend fields for a selected overhead sign
+        {
+            if (_signBox == null) return;
+            _signBox.Visible = _objects.SignSelected;
+            if (!_objects.SignSelected || _signEdit == null) return;
+            int boards = _objects.SelectedSignBoards;
+            for (int i = 0; i < _signEdit.Length; i++)
+            {
+                if (_signEdit[i] == null) continue;
+                _signEdit[i].Visible = i < boards;
+                if (i < boards && !_signEdit[i].HasFocus()) _signEdit[i].Text = _objects.SelectedSignText(i);
+            }
         }
     }
 }
