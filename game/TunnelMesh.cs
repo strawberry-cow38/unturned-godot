@@ -98,7 +98,22 @@ namespace UnturnedGodot
         /// Each station contributes one ring; consecutive rings are stitched into quads that SHARE their
         /// vertices, which is the whole point -- there is no joint to open or bury. `up` is world up and the
         /// lateral axis is derived per station, so the tube banks with the road's grade without twisting.</summary>
-        public static ArrayMesh Sweep(List<Vector2[]> profile, IReadOnlyList<Vector3> centre)
+        /// <summary>The authored bore's half-width: the INNER chain's lateral reach, taken as whichever of
+        /// the two arches is narrower rather than assumed to be first in the list.</summary>
+        public static float BoreHalfWidth(List<Vector2[]> profile)
+        {
+            if (profile == null || profile.Count == 0) return 0f;
+            float inner = float.MaxValue;
+            foreach (var ch in profile)
+            {
+                float w = 0f;
+                foreach (var p in ch) w = Mathf.Max(w, Mathf.Abs(p.X));
+                inner = Mathf.Min(inner, w);
+            }
+            return inner;
+        }
+
+        public static ArrayMesh Sweep(List<Vector2[]> profile, IReadOnlyList<Vector3> centre, float lateral = 1f)
         {
             if (profile == null || centre == null || centre.Count < 2) return null;
             var st = new SurfaceTool();
@@ -116,7 +131,10 @@ namespace UnturnedGodot
                 right = right.Normalized();
                 frames[i] = new Basis(right, right.Cross(fwd).Normalized() * -1f, fwd);
             }
-            Vector3 At(int i, Vector2 p) => centre[i] + frames[i].X * p.X + Vector3.Up * p.Y;
+            // ⚠ WIDENED LATERALLY ONLY. Master: "make the tunnel wider to fit the whole road spline + a
+            // small border." Scaling the height with it would make a wide carriageway's tunnel absurdly
+            // tall; a road tunnel gets wider, not proportionally bigger, so the arch goes elliptical.
+            Vector3 At(int i, Vector2 p) => centre[i] + frames[i].X * (p.X * lateral) + Vector3.Up * p.Y;
 
             float runLen = 0f;
             var sAlong = new float[centre.Count];

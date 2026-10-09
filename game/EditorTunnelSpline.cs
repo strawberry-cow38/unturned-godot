@@ -44,6 +44,11 @@ namespace UnturnedGodot
         /// anywhere else.</summary>
         public const float HalfWidth = 12.0f;
 
+        /// <summary>⭐ Clearance between the road's edge and the bore wall. Master: "make the tunnel wider to
+        /// fit the whole road spline + a small border" -- the border is the part they left to judgement, and
+        /// 1.5 m is about a kerb and a stumble, which is what a road tunnel actually leaves.</summary>
+        public const float BoreBorder = 1.5f;
+
         /// <summary>The portal piece's length along the run; it IS a section, so it occupies run rather than
         /// extending past it. The bore is laid between the two.</summary>
         public const float PortalLength = SourceLength;
@@ -112,6 +117,14 @@ namespace UnturnedGodot
             if (profile == null)
             { Log.Print("[editor-tunnel] could not read the section profile off Tunnel_Line_0 -- nothing bored"); return 0; }
 
+            // ⭐ WIDE ENOUGH FOR THE ROAD IT CARRIES. The shipped section's bore is a fixed 16 m, which is
+            // fine for the 13.8 m carriageway it was drawn for and far too narrow for a dual highway. Scale
+            // the profile laterally so the bore clears the actual road plus BoreBorder, and never shrink
+            // below what was authored -- a tunnel tighter than the prop would clip what already fits.
+            float roadHalf = roads.RoadHalfWidth(road);
+            float bore = TunnelMesh.BoreHalfWidth(profile);
+            float lateral = bore > 0.1f ? Mathf.Max(1f, (roadHalf + BoreBorder) / bore) : 1f;
+
             var centre = new System.Collections.Generic.List<Vector3>();
             for (float t = boreFrom; t <= boreTo + 1e-3f; t += Step)
             {
@@ -122,8 +135,8 @@ namespace UnturnedGodot
             int n = centre.Count;
             if (n >= 2)
             {
-                var mesh = TunnelMesh.Sweep(profile, centre);
-                var node = objects.AddGeneratedTunnel(mesh, centre.ToArray());
+                var mesh = TunnelMesh.Sweep(profile, centre, lateral);
+                var node = objects.AddGeneratedTunnel(mesh, centre.ToArray(), lateral);
                 if (node != null) placed?.Add(node); else n = 0;
             }
             else n = 0;
@@ -136,13 +149,13 @@ namespace UnturnedGodot
                 if (roads.EvaluateAlong(road, PortalLength * 0.5f, out var a0, out var at0, snapTerrain: false))
                 {
                     a0.Y += lift;
-                    var p = objects.Place(PortalUnit, a0, StandBasis(-at0.Normalized()));
+                    var p = objects.Place(PortalUnit, a0, WidenAcross(StandBasis(-at0.Normalized()), lateral));
                     if (p != null) { placed?.Add(p); ports++; }
                 }
                 if (roads.EvaluateAlong(road, total - PortalLength * 0.5f, out var b0, out var bt0, snapTerrain: false))
                 {
                     b0.Y += lift;
-                    var p = objects.Place(PortalUnit, b0, StandBasis(bt0.Normalized()));
+                    var p = objects.Place(PortalUnit, b0, WidenAcross(StandBasis(bt0.Normalized()), lateral));
                     if (p != null) { placed?.Add(p); ports++; }
                 }
             }
@@ -153,9 +166,16 @@ namespace UnturnedGodot
             Log.Print($"[editor-tunnel] road {road}: {total:0.#} m -> swept bore of {n} ring(s) at {Step:0.##} m"
                     + $" + {ports} portal(s)"
                     + (portals ? "" : $"  ⚠ under {PortalLength * 2f:0.#} m, too short to portal")
+                    + $", bore widened x{lateral:0.00} to clear a {roadHalf * 2f:0.#} m road + {BoreBorder:0.#} m border"
                     + ", rings share vertices so no joint can gap; painted road kept (a tunnel has no floor)");
             return n;
         }
+
+        /// <summary>Widen a placed section across the road only. ⚠ The X COLUMN, not Basis.Scaled -- that
+        /// multiplies the basis ROWS and so scales in the parent frame, the same trap that put a bridge
+        /// pier's foot 24 m out. The portal has to track the bore exactly or the mouth stops matching the
+        /// tube it opens into.</summary>
+        public static Basis WidenAcross(Basis b, float lateral) => new Basis(b.X * lateral, b.Y, b.Z);
 
         /// <summary>Stand the Z-up section on the run. No grade tilt and no terrain seating: a tunnel follows
         /// the road's own line through a hill, which is the whole reason it is a tunnel.</summary>

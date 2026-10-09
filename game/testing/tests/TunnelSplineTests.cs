@@ -156,13 +156,54 @@ namespace UnturnedGodot.Testing
                         }
                         float lat = Mathf.Sqrt(best);
                         // the nearest station's lateral offset must be one the profile actually contains
+                        // ⚠ against the profile AS WIDENED. The bore is scaled laterally to clear the road,
+                        // so comparing with the authored offsets reports the widening itself as an error.
+                        float latScale = (float)tunnels[0].GetMeta("tunnel_lateral");
                         float near = float.MaxValue;
-                        foreach (var ch in prof) foreach (var pt in ch) near = Mathf.Min(near, Mathf.Abs(Mathf.Abs(pt.X) - lat));
+                        foreach (var ch in prof)
+                            foreach (var pt in ch) near = Mathf.Min(near, Mathf.Abs(Mathf.Abs(pt.X) * latScale - lat));
                         worst = Mathf.Max(worst, near);
                     }
                     T.Check($"...and every wall vertex sits at a lateral offset the profile declares "
                           + $"(worst {worst * 1000f:0.#} mm off)", worst < 0.06f);
                 }
+            }
+
+            // ---- 2b. ⭐ THE BORE CLEARS THE ROAD IT CARRIES. Master: "make the tunnel wider to fit the
+            // whole road spline + a small border." The shipped section's bore is a fixed 16 m, right for the
+            // carriageway it was drawn for and far too narrow for a dual highway.
+            if (tunnels.Count == 1)
+            {
+                float roadHalf = field.RoadHalfWidth(road);
+                float authored = TunnelMesh.BoreHalfWidth(prof);
+                var mi2 = tunnels[0].GetChild<MeshInstance3D>(0);
+                var vv = (mi2.Mesh as ArrayMesh).SurfaceGetArrays(0)[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+                var cc = (Vector3[])tunnels[0].GetMeta("tunnel_centre");
+                // widest lateral reach of any wall vertex from its nearest station
+                float reach = 0f;
+                foreach (var v in vv)
+                {
+                    float best = float.MaxValue;
+                    foreach (var c in cc) best = Mathf.Min(best, new Vector2(v.X - c.X, v.Z - c.Z).LengthSquared());
+                    reach = Mathf.Max(reach, Mathf.Sqrt(best));
+                }
+                float wantBore = roadHalf + EditorTunnelSpline.BoreBorder;
+                T.Check($"fixture: the road is {roadHalf * 2f:0.#} m wide and the section's authored bore "
+                      + $"{authored * 2f:0.#} m", roadHalf > 1f && authored > 1f);
+                T.Check($"the swept bore clears the road plus its border (reaches {reach:0.##} m, needs "
+                      + $"{wantBore:0.##} m)", reach >= wantBore - 0.01f);
+                // ⭐ CONTROL: it must not simply be huge. A scale that ignored the road would pass "clears"
+                // trivially, so the OUTER wall has to stay in proportion to what was authored.
+                float lat = (float)tunnels[0].GetMeta("tunnel_lateral");
+                T.Check($"...by scaling laterally, not arbitrarily (x{lat:0.00}, never below the authored 1.00)",
+                        lat >= 1f && lat < 4f);
+                // ⚠ AND THE HEIGHT IS UNTOUCHED -- widening must not inflate the arch.
+                float tall = 0f;
+                foreach (var v in vv) tall = Mathf.Max(tall, v.Y - cc[0].Y);
+                float wantTall = 0f;
+                foreach (var ch in prof) foreach (var pt in ch) wantTall = Mathf.Max(wantTall, pt.Y);
+                T.Check($"...with the arch's HEIGHT unchanged ({tall:0.##} m vs the profile's {wantTall:0.##} m)",
+                        Mathf.Abs(tall - wantTall) < 0.3f);
             }
 
             // ---- 3. PORTALS AT BOTH ENDS, facing out, and the road still drawn.
@@ -177,6 +218,13 @@ namespace UnturnedGodot.Testing
                     if (p.GlobalTransform.Basis.Y.Normalized().Dot((p.GlobalPosition - mid).Normalized()) < 0.9f)
                         outward = false;
                 T.Check("...each facade facing out of the tunnel", outward);
+                // ⭐ AND WIDENED WITH THE BORE. A fixed-width portal on a widened tube is a mouth that no
+                // longer matches the tunnel behind it -- visible from the one place everybody looks.
+                float lat2 = (float)tunnels[0].GetMeta("tunnel_lateral");
+                float worstP = 0f;
+                foreach (var p in ports) worstP = Mathf.Max(worstP, Mathf.Abs(p.GlobalTransform.Basis.X.Length() - lat2));
+                T.Check($"...and scaled across to match the bore (worst {worstP:0.###} off x{lat2:0.00})",
+                        worstP < 0.01f);
             }
             T.Check("the painted road is KEPT -- the opposite of the bridge, which hides it",
                     field.RoadRibbonVisible(road));

@@ -1556,12 +1556,13 @@ namespace UnturnedGodot
             return null;
         }
 
-        public Node3D AddGeneratedTunnel(ArrayMesh mesh, Vector3[] centre)
+        public Node3D AddGeneratedTunnel(ArrayMesh mesh, Vector3[] centre, float lateral = 1f)
         {
             if (mesh == null || centre == null || centre.Length < 2) return null;
             var root = new Node3D();
             root.SetMeta("obj_name", TunnelName);
             root.SetMeta("tunnel_centre", centre);
+            root.SetMeta("tunnel_lateral", lateral);   // so a reload rebuilds the same width
             // ⚠ THE SAME MATERIAL THE PROP USES, not a hand-rolled one. The portal beside it renders tan
             // through MatFor while my own StandardMaterial3D came out dark, and reasoning about which
             // property differed was two wrong guesses deep -- MatFor is the one factory every other prop
@@ -1598,7 +1599,8 @@ namespace UnturnedGodot
                 var c = (Vector3[])t.GetMeta("tunnel_centre");
                 var sb = new System.Text.StringBuilder();
                 foreach (var v in c) sb.Append($"{v.X:0.###} {v.Y:0.###} {(-v.Z):0.###} ");
-                w.WriteLine(sb.ToString().TrimEnd());
+                float lat = t.HasMeta("tunnel_lateral") ? (float)t.GetMeta("tunnel_lateral") : 1f;
+                w.WriteLine(sb.ToString().TrimEnd() + $"\t{lat:0.####}");
             }
             if (tus.Count > 0) Log.Print($"[editor] saved {tus.Count} swept tunnel(s) -> {TunnelPath}");
         }
@@ -1608,7 +1610,11 @@ namespace UnturnedGodot
             int n = 0;
             foreach (var line in System.IO.File.ReadLines(TunnelPath))
             {
-                var p = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                var tab = line.Split('\t');
+                float lat = 1f;
+                if (tab.Length > 1) float.TryParse(tab[1], out lat);
+                if (lat < 0.01f) lat = 1f;
+                var p = tab[0].Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
                 if (p.Length < 6 || p.Length % 3 != 0) continue;
                 var c = new Vector3[p.Length / 3];
                 bool ok = true;
@@ -1618,7 +1624,7 @@ namespace UnturnedGodot
                 if (!ok) continue;
                 var prof = TunnelProfile();
                 if (prof == null) continue;
-                if (AddGeneratedTunnel(TunnelMesh.Sweep(prof, c), c) != null) n++;
+                if (AddGeneratedTunnel(TunnelMesh.Sweep(prof, c, lat), c, lat) != null) n++;
             }
             if (n > 0) Log.Print($"[editor] loaded {n} swept tunnel(s)");
         }
