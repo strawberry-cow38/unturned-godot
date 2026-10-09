@@ -44,15 +44,37 @@ namespace UnturnedGodot
         /// stretches -- the prop is rigid, so a run is a whole number of it and the remainder is left bare.</summary>
         public const float PostSpacing = 4.0f;
 
-        /// <summary>A bend tighter than this cannot be followed by a rigid 16 m chord without the segments
-        /// visibly cutting the corner. ProcIslandSpawn already refuses roadside fences on tighter curves for
-        /// the same reason, and this is its number -- one constant, one rule.</summary>
-        public const float MinBendRadius = 55f;
+        /// <summary>How far a run may turn at one joint before the rigid units visibly cut the corner.
+        ///
+        /// ⭐ A TURN LIMIT, NOT A RADIUS, because the limit depends on how long the unit is. ProcIslandSpawn
+        /// refuses roadside fences under a 55 m radius, and it places the WHOLE 16.25 m prop -- that is a turn
+        /// of 16.25 / 55 = 0.295 rad = 17 deg per joint. Expressed that way the same rule covers the 4 m unit
+        /// an intact run is now built from, where it works out at a 13.6 m radius. Keeping the 55 m number
+        /// would have the tool crying wolf on every curve a 4 m unit follows perfectly well.</summary>
+        public const float MaxTurnPerJointDeg = 17f;
+
+        /// <summary>The tightest radius a given unit length can follow within MaxTurnPerJointDeg.</summary>
+        public static float MinBendRadiusFor(float step) => step / Mathf.DegToRad(MaxTurnPerJointDeg);
 
         public const string Intact = "Fence_Road_0";
         public const string Broken = "Fence_Road_Broken_0";
         const string PostsSuffix = "_Posts";
         const string RailSuffix = "_Rail";
+
+        /// <summary>The tiling units: ONE post, and ONE 4 m span of rail between two posts.
+        ///
+        /// ⭐⭐ THE RUN IS BUILT FROM THESE, NOT FROM THE WHOLE PROP. Master 2026-10-09: "the segments should
+        /// be like.. the post-post width of guardrail, blending more seamlessly (and no dupe posts)". Tiling
+        /// the 16 m prop puts its end post exactly where the next one's start post goes -- two posts in the
+        /// same place, z-fighting and reading double -- and makes every joint a 16 m chord, which is what
+        /// forces the turn-per-joint limit in the first place. A 4 m unit has one post per boundary by
+        /// construction and chords the curve four times as finely.
+        ///
+        /// ⚠ Sliced, not re-authored: the rail carries vertex loops at exactly its post positions
+        /// (−8/−4/0/+4/+8) and NO triangle crosses one, so the span is a SELECTION of whole triangles out of
+        /// the shipped mesh. Nothing was cut, approximated or redrawn.</summary>
+        public const string PostUnit = "Fence_Road_0_Post";
+        public const string SpanUnit = "Fence_Road_0_Span";
 
         const uint TerrainLayer = 1u << 0;
         static readonly Color LineColor = new(0.45f, 0.95f, 0.55f);
@@ -199,7 +221,7 @@ namespace UnturnedGodot
         /// ⚠ EACH SEGMENT IS A CHORD, NOT AN ARC -- the prop is a rigid 16 m mesh and cannot bend. So its
         /// direction comes from the chord between its two ENDS on the curve rather than the tangent at its
         /// middle: on a bend those differ, and the tangent version leaves each segment's ends lifted off the
-        /// line it is supposed to be following. A bend tighter than MinBendRadius is reported, because at that
+        /// line it is supposed to be following. A bend tighter than MinBendRadiusFor(step) is reported, because at that
         /// point the chords visibly cut the corner and the mapper should know rather than wonder.</summary>
         public static int LayPath(EditorObjects objects, Terrain terr, IReadOnlyList<Vector3> pts,
                                   bool broken, bool flip, List<Node3D> posts, List<Node3D> rail)
@@ -207,26 +229,30 @@ namespace UnturnedGodot
             if (objects == null || pts == null || pts.Count < 2) return 0;
             var curve = BuildCurve(pts);
             float total = curve.GetBakedLength();
-            int n = Mathf.FloorToInt(total / SegmentLength);
+
+            // ⚠ THE WRECK IS NOT A TILING UNIT. Fence_Road_Broken_0's posts lean and its rail is twisted --
+            // measured, its vertex Y values are irregular where the intact one's land exactly on the 4 m post
+            // rhythm. Repeating a wreck every 4 m would produce the same wreck over and over; it is a one-off
+            // section, so it is still laid whole, at the retail 16 m pitch.
+            float step = broken ? SegmentLength : PostSpacing;
+            int n = Mathf.FloorToInt(total / step);
             if (n <= 0)
             {
-                Log.Print($"[editor-fence] {total:0.#} m is under one {SegmentLength:0.##} m segment -- nothing laid");
+                Log.Print($"[editor-fence] {total:0.#} m is under one {step:0.##} m unit -- nothing laid");
                 return 0;
             }
-            string b0 = broken ? Broken : Intact;
-            float half = SegmentLength * 0.5f;
-            float tightest = TightestBendRadius(pts);
+            float tightest = TightestBendRadius(pts, step);
+            float limit = MinBendRadiusFor(step);
             Vector3 lastCentre = Vector3.Zero; float minGap = float.MaxValue, maxGap = 0f;
 
             for (int i = 0; i < n; i++)
             {
-                float s = i * SegmentLength;                       // this segment starts here along the curve
+                float s = i * step;
                 var p0 = curve.SampleBaked(s, true);
-                var p1 = curve.SampleBaked(s + SegmentLength, true);
+                var p1 = curve.SampleBaked(s + step, true);
                 var chord = new Vector3(p1.X - p0.X, 0f, p1.Z - p0.Z);
                 if (chord.LengthSquared() < 1e-6f) continue;
                 var dir = chord.Normalized();
-
                 var centre = (p0 + p1) * 0.5f;
                 if (i > 0) { float gap = new Vector3(centre.X - lastCentre.X, 0f, centre.Z - lastCentre.Z).Length();
                              minGap = Mathf.Min(minGap, gap); maxGap = Mathf.Max(maxGap, gap); }
@@ -235,22 +261,51 @@ namespace UnturnedGodot
                 // ⚠⚠ YawForDir TAKES PROC-FRAME COORDINATES, WHERE +Y IS WORLD −Z. Feeding it a world
                 // direction mirrors the run about the X axis -- and a straight run along X has dz = 0, so it
                 // looks PERFECT and only a curve bends into the error. Caught by the curved joint check
-                // (17.7 m holes) after master asked "is that meant to be a curve?"; the straight-run touch
-                // test passed throughout. Same negation as reference_unturned_coord_znegate.
+                // (17.7 m holes) after master asked "is that meant to be a curve?"; every straight-run test
+                // passed throughout. Same negation as reference_unturned_coord_znegate.
                 float yaw = ProcIsland.YawForDir(dir.X, -dir.Z) + (flip ? 180f : 0f);
                 var basis = SeatedBasis(terr, centre, yaw);
-                var p = objects.Place(b0 + PostsSuffix, centre, basis);
-                var r = objects.Place(b0 + RailSuffix, centre, basis);
-                if (p != null) posts?.Add(p);
-                if (r != null) rail?.Add(r);
+
+                if (broken)
+                {
+                    var bp = objects.Place(Broken + PostsSuffix, centre, basis);
+                    var br = objects.Place(Broken + RailSuffix, centre, basis);
+                    if (bp != null) posts?.Add(bp);
+                    if (br != null) rail?.Add(br);
+                    continue;
+                }
+
+                // ⭐ ONE POST PER BOUNDARY, laid at the START of each span -- so N spans get N posts and the
+                // run is closed with one more at the far end below. Putting a post at both ends of every span
+                // is exactly the duplicate master saw.
+                var postAt = p0;
+                if (terr != null) postAt.Y = terr.SampleHeight(postAt.X, postAt.Z);
+                var pn = objects.Place(PostUnit, postAt, SeatedBasis(terr, postAt, yaw));
+                var sp = objects.Place(SpanUnit, centre, basis);
+                if (pn != null) posts?.Add(pn);
+                if (sp != null) rail?.Add(sp);
             }
 
-            Log.Print($"[editor-fence] {n}x {b0} over {n * SegmentLength:0.#} m of a {total:0.#} m path "
+            if (!broken)
+            {
+                // The closing post: a run of N spans has N+1 posts, and without this the last span ends in
+                // mid-air.
+                var end = curve.SampleBaked(n * step, true);
+                if (terr != null) end.Y = terr.SampleHeight(end.X, end.Z);
+                var prev = curve.SampleBaked(Mathf.Max(0f, n * step - step), true);
+                var d = new Vector3(end.X - prev.X, 0f, end.Z - prev.Z);
+                float endYaw = (d.LengthSquared() < 1e-6f ? 0f : ProcIsland.YawForDir(d.Normalized().X, -d.Normalized().Z))
+                             + (flip ? 180f : 0f);
+                var ep = objects.Place(PostUnit, end, SeatedBasis(terr, end, endYaw));
+                if (ep != null) posts?.Add(ep);
+            }
+
+            Log.Print($"[editor-fence] {n}x {(broken ? Broken : SpanUnit)} over {n * step:0.#} m of a {total:0.#} m path "
                     + $"({pts.Count} point(s)), rail on the {(flip ? "left" : "right")}"
-                    + (maxGap > 0f ? $", centre spacing {minGap:0.###}..{maxGap:0.###} m" : "")
+                    + (maxGap > 0f ? $", unit spacing {minGap:0.###}..{maxGap:0.###} m" : "")
                     + (float.IsPositiveInfinity(tightest) ? ", straight"
-                       : tightest < MinBendRadius
-                         ? $"  ⚠ tightest bend ~{tightest:0} m, under the {MinBendRadius:0} m a rigid segment can follow"
+                       : tightest < limit
+                         ? $"  ⚠ tightest bend ~{tightest:0.#} m, under the {limit:0.#} m a {step:0.##} m unit can follow"
                          : $", tightest bend ~{tightest:0} m"));
             return n;
         }
@@ -261,24 +316,24 @@ namespace UnturnedGodot
         /// samples the curve at its two ends.
         ///
         /// ⭐ PUBLIC SO IT CAN BE ASSERTED ON. A limit that only ever appears in a log line is a limit nothing
-        /// checks, and MinBendRadius came from ProcIslandSpawn where it is enforced; here it is a warning, so
+        /// checks, and the turn limit came from ProcIslandSpawn, where it is enforced; here it is a warning, so
         /// the test has to be able to ask the question directly.</summary>
-        public static float TightestBendRadius(IReadOnlyList<Vector3> pts)
+        public static float TightestBendRadius(IReadOnlyList<Vector3> pts, float step = PostSpacing)
         {
             if (pts == null || pts.Count < 3) return float.PositiveInfinity;
             var curve = BuildCurve(pts);
             float total = curve.GetBakedLength();
             float tightest = float.PositiveInfinity;
-            for (float s = SegmentLength; s + SegmentLength <= total; s += SegmentLength)
+            for (float s = step; s + step <= total; s += step)
             {
-                var a = curve.SampleBaked(s - SegmentLength, true);
+                var a = curve.SampleBaked(s - step, true);
                 var b = curve.SampleBaked(s, true);
-                var c = curve.SampleBaked(s + SegmentLength, true);
+                var c = curve.SampleBaked(s + step, true);
                 var c0 = new Vector3(b.X - a.X, 0f, b.Z - a.Z);
                 var c1 = new Vector3(c.X - b.X, 0f, c.Z - b.Z);
                 if (c0.LengthSquared() < 1e-6f || c1.LengthSquared() < 1e-6f) continue;
                 float turn = Mathf.Abs(c0.Normalized().AngleTo(c1.Normalized()));
-                if (turn > 1e-4f) tightest = Mathf.Min(tightest, SegmentLength / turn);
+                if (turn > 1e-4f) tightest = Mathf.Min(tightest, step / turn);
             }
             return tightest;
         }

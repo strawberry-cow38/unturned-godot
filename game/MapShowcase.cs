@@ -63,14 +63,13 @@ namespace UnturnedGodot
                 if (c.Objects == null) return;
                 EditorFenceRoad.LayPath(c.Objects, c.Terr, new List<Vector3>
                 {
-                    // ⚠ THE ARC IS TUNED, not drawn by eye. Too tight and a rigid 16 m chord leaves a visible
-                    // wedge at the outside of every joint -- at the 55 m limit you can count them, and the
-                    // first version of this station was 38 m, i.e. a demo of the thing the tool warns about.
-                    // Too gentle (the second was ~180 m) and master's reasonable question is "is that meant
-                    // to be a curve?". Around 90 m reads as a bend and still joins cleanly.
-                    c.Origin + new Vector3(-72f, 0f, -8f),
-                    c.Origin + new Vector3(  0f, 0f, 10f),
-                    c.Origin + new Vector3( 72f, 0f, -8f),
+                    // A proper S-bend. The run is tiled from 4 m units now, so it follows a far tighter
+                    // curve than the 16 m prop could -- the earlier versions of this station had to be opened
+                    // out until they barely read as a curve at all.
+                    c.Origin + new Vector3(-72f, 0f,  16f),
+                    c.Origin + new Vector3(-24f, 0f, -14f),
+                    c.Origin + new Vector3( 24f, 0f,  14f),
+                    c.Origin + new Vector3( 72f, 0f, -16f),
                 }, false, false, null, null);
                 // ...and a BROKEN run set back behind it, so the wrecked variant is visible beside the intact
                 // one rather than being a mode you have to know about.
