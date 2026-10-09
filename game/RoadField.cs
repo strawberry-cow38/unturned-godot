@@ -578,6 +578,19 @@ namespace UnturnedGodot
             _mats[material] = m;
         }
 
+        /// <summary>L1 seam: give the material a ribbon DEPTH, so RoadSurfaceOffset is non-zero.
+        ///
+        /// ⚠ Without this a test rig's offset is 0 and any assertion about something being lifted ONTO the
+        /// road surface passes against code that never lifts anything -- the exact shape of vacuous check
+        /// this project keeps catching.</summary>
+        public void DebugSetMaterialDepth(int material, float halfDepthMetres)
+        {
+            while (_mats.Count <= material) _mats.Add(new RoadMat());
+            var m = _mats[material];
+            m.Depth = halfDepthMetres / DepthScale;
+            _mats[material] = m;
+        }
+
         /// <summary>Half the drawn carriageway width, in metres -- the same `Width * WidthScale` the mesh and
         /// the collider are built from, so anything placed at this offset lands exactly at the asphalt's edge.
         /// Exposed for EditorFenceRoad, which puts a guardrail a fixed clearance outside it: the alternative is
@@ -585,6 +598,20 @@ namespace UnturnedGodot
         public float RoadHalfWidth(int road) =>
             road >= 0 && road < _roads.Count && _roads[road].Material < _mats.Count
                 ? _mats[_roads[road].Material].Width * WidthScale
+                : 0f;
+
+        /// <summary>How far the drawn ribbon's SURFACE sits above the spline point, in metres:
+        /// `Depth * DepthScale + Offset`, the same pair BuildRoadMesh raises its surface verts by.
+        ///
+        /// ⚠ EvaluateAlong RETURNS THE SPLINE POINT, NOT THE ROAD SURFACE -- they differ by exactly this, and
+        /// anything placed ON a road has to add it or it ends up buried. astraclaw's New Rail unit is datumed
+        /// at "the native centreline BEFORE road half-depth is added", and placing it at the raw spline point
+        /// put its 0.31 m rail tops 0.13 m UNDER a ribbon whose surface is 0.44 m up -- so the modelled track
+        /// was invisible and the painted one was what you saw. Master spotted it in a render: "the spline ur
+        /// showing here is the old one".</summary>
+        public float RoadSurfaceOffset(int road) =>
+            road >= 0 && road < _roads.Count && _roads[road].Material < _mats.Count
+                ? _mats[_roads[road].Material].Depth * DepthScale + _mats[_roads[road].Material].Offset
                 : 0f;
 
         public float RoadLength(int road)

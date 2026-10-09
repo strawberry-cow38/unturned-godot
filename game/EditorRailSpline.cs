@@ -106,6 +106,11 @@ namespace UnturnedGodot
             int n = Mathf.FloorToInt(total / Pitch);
             if (n <= 0) { Log.Print($"[editor-rail] {total:0.#} m is under one {Pitch:0.##} m unit -- nothing laid"); return 0; }
 
+            // ⚠⚠ THE SPLINE POINT IS NOT THE ROAD SURFACE. EvaluateAlong gives the centreline; the drawn
+            // ribbon's surface is RoadSurfaceOffset above it. The unit's datum is the centreline BEFORE road
+            // half-depth (astraclaw's handoff says so in as many words), so it has to be lifted by exactly
+            // that or the modelled track sits UNDER the painted one and you photograph the old rails.
+            float lift = roads.RoadSurfaceOffset(road);
             float tightest = float.PositiveInfinity;
             Vector3 prevDir = Vector3.Zero;
 
@@ -128,7 +133,7 @@ namespace UnturnedGodot
                 // ⚠ THE ROOT GOES ON THE SPLINE, NOT ON THE GROUND. The unit's datum is the centreline and its
                 // ballast is modelled BELOW it (Y down to -0.44). Seating it by its bbox -- which is what every
                 // other prop here wants -- would lift the whole track half a metre into the air.
-                var p = objects.Place(Unit, p0, BasisFor(terr, p0, dir));
+                var p = objects.Place(Unit, p0 + Vector3.Up * lift, BasisFor(terr, p0, dir));
                 if (p != null) placed?.Add(p);
             }
 
@@ -141,12 +146,13 @@ namespace UnturnedGodot
                 var d = endP - beforeP;
                 if (d.LengthSquared() > 1e-8f)
                 {
-                    var e = objects.Place(Sleeper, endP, BasisFor(terr, endP, d.Normalized()));
+                    var e = objects.Place(Sleeper, endP + Vector3.Up * lift, BasisFor(terr, endP, d.Normalized()));
                     if (e != null) placed?.Add(e);
                 }
             }
 
             Log.Print($"[editor-rail] road {road}: {total:0.#} m -> {n} unit(s) at {Pitch:0.##} m + 1 terminal sleeper"
+                    + $", lifted {lift:0.###} m onto the ribbon surface"
                     + (float.IsPositiveInfinity(tightest) ? ", straight"
                        : tightest < MinRadius
                          ? $"  ⚠ tightest bend ~{tightest:0} m, under the {MinRadius:0} m a {HalfWidth * 2f:0.#} m-wide tile "

@@ -76,6 +76,7 @@ namespace UnturnedGodot.Testing
             var field = new RoadField();
             World.AddChild(field);
             field.DebugSetMaterialWidth(RoadField.TracksMaterial, 4.0f);
+            field.DebugSetMaterialDepth(RoadField.TracksMaterial, 0.44f);   // a real ribbon has depth -- see below
             yield return Ticks(2);
 
             // ---- 0. THE ASSET ARRIVED UNMODIFIED. astraclaw's contract is a set of numbers in the mesh, and
@@ -145,6 +146,29 @@ namespace UnturnedGodot.Testing
             foreach (var _ in objs.PlacedOf(EditorRailSpline.Unit)) units++;
             T.Check($"...one sleeper per unit plus the terminal, none doubled ({units} units, {sleepers} terminal)",
                     units == n && sleepers == 1);
+
+            // ---- 1b. ⭐⭐ THE TRACK SITS ON THE ROAD SURFACE, NOT INSIDE IT. EvaluateAlong returns the
+            // SPLINE point; the drawn ribbon's surface is RoadSurfaceOffset above it. Placing the unit at the
+            // raw spline point buried its 0.31 m rail tops under a 0.44 m ribbon -- the modelled track was
+            // invisible and every screenshot I took was of the PAINTED one. Master caught it by eye: "the
+            // spline ur showing here is the old one."
+            float lift = field.RoadSurfaceOffset(road);
+            T.Check($"fixture: the ribbon has a real surface offset ({lift:0.###} m) -- at 0 this check is vacuous",
+                    lift > 0.1f);
+            float wantY = 0f, gotY = float.MinValue;
+            if (field.EvaluateAlong(road, 0f, out var sp, out _))
+            {
+                wantY = sp.Y + lift;
+                foreach (var x in objs.PlacedOf(EditorRailSpline.Unit))
+                    if (Mathf.Abs(x.Origin.X - sp.X) < 0.5f) { gotY = x.Origin.Y; break; }
+            }
+            T.Check($"the unit's datum is lifted onto the ribbon surface (y {gotY:0.###}, expected "
+                  + $"{wantY:0.###} = spline {wantY - lift:0.###} + {lift:0.###})",
+                    Mathf.Abs(gotY - wantY) < 0.01f);
+            // ⭐ AND THEREFORE THE RAILS CLEAR IT. The unit's rail top is +0.31 above its own datum, so once
+            // lifted the steel stands proud of the ribbon instead of 0.13 m under it.
+            T.Check($"...so the rail tops stand clear of the ribbon ({gotY + 0.31f:0.###} > {wantY - lift + lift:0.###})",
+                    gotY + 0.31f > wantY + 0.001f);
 
             // ---- 2. THE PITCH IS 2.000, NOT THE 2.5 m BBOX. Stepping by the bbox leaves a half-metre hole in
             // the rail at every joint, which is the mistake the fence made with 16.25 against 16.0.
