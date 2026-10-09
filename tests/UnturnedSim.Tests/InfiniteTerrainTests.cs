@@ -317,7 +317,7 @@ namespace UnturnedSim.Tests
                 return Math.Min(Moved(p[i].x, p[i].z), Math.Min(Moved(p[i].x + nx * o, p[i].z + nz * o), Moved(p[i].x - nx * o, p[i].z - nz * o)));
             }
             int stretches = 0, wet = 0, peaks = 0; float biggest = 0f, worstPeak = float.MaxValue;
-            double worstUnmarkedRun = 0;
+            double worstUnmarkedRun = 0; string worstWhere = "";
             for (int axis = 0; axis < 2; axis++)
                 for (long band = -2; band <= 1; band++)
                     for (long k = -4; k <= 3; k++)
@@ -352,12 +352,19 @@ namespace UnturnedSim.Tests
                             {
                                 arcI += Math.Sqrt((line[i].x - line[i - 1].x) * (line[i].x - line[i - 1].x) + (line[i].z - line[i - 1].z) * (line[i].z - line[i - 1].z));
                                 bool isMarked = marked.Contains((side, (long)Math.Round(line[i].x * 100), (long)Math.Round(line[i].z * 100)));
-                                if (!isMarked && AcrossWidth(line, i) > need + 0.5f) { if (runStart < 0) runStart = arcI; worstUnmarkedRun = Math.Max(worstUnmarkedRun, arcI - runStart); }
+                                // where ANOTHER road shapes the ground (a crossing highway 14 m higher, measured), the lift is
+                                // that road's embankment, not this carriageway's: the marking is about its own fill
+                                bool ownGround = Math.Abs(Gen.Roads.Influence(line[i].x, line[i].z).Height - line[i].h) < 1f;
+                                if (!isMarked && ownGround && AcrossWidth(line, i) > need + 0.5f)
+                                {
+                                    if (runStart < 0) runStart = arcI;
+                                    if (arcI - runStart > worstUnmarkedRun) { worstUnmarkedRun = arcI - runStart; worstWhere = $"side {side} ending ({line[i].x:0.0}, {line[i].z:0.0}) moved {AcrossWidth(line, i):0.00}"; }
+                                }
                                 else runStart = -1;
                             }
                         }
                     }
-            TestContext.WriteLine($"{stretches} {(cut ? "cut" : "raised")} stretches ({wet} over water), biggest {biggest:0.0} m; at {peaks} peaks the carve moves the whole width by >= {worstPeak:0.0} m; longest unmarked run {worstUnmarkedRun:0} m");
+            TestContext.WriteLine($"{stretches} {(cut ? "cut" : "raised")} stretches ({wet} over water), biggest {biggest:0.0} m; at {peaks} peaks the carve moves the whole width by >= {worstPeak:0.0} m; longest unmarked run {worstUnmarkedRun:0} m {worstWhere}");
             Assert.That(stretches, Is.GreaterThan(5)); Assert.That(peaks, Is.GreaterThan(3));
             Assert.That(worstUnmarkedRun, Is.LessThan(minLength), "a moved run the marking missed");
         }

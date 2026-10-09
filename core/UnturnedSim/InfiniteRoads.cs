@@ -99,11 +99,12 @@ namespace SDG.Unturned
             public float Max;           // the tallest the embankment / deepest the cut gets (m, across the whole width)
             public bool OverWater;      // raised only: some of it crosses water, a bridge proper rather than a viaduct
         }
-        // strawberry 2026-10-09: 4 m / 8 m "need more". UG_INF_RAISE / UG_INF_CUT override them, for tuning.
-        public static readonly float RaiseFill = EnvF("UG_INF_RAISE", 8f);   // m of fill under the whole carriageway
+        // strawberry 2026-10-09: 4 m / 8 m across the whole width, then "make it more sensitive than it was before" --
+        // so below both, per carriageway. UG_INF_RAISE / UG_INF_CUT override them, for tuning.
+        public static readonly float RaiseFill = EnvF("UG_INF_RAISE", 3f);   // m of fill under the whole carriageway
         public const float RaiseMinLength = 30f;    // shorter than this is a bump, not a bridge
         public const float RaiseMergeGap = 40f;     // two stretches closer than this are one bridge
-        public static readonly float CutDepth = EnvF("UG_INF_CUT", 16f);     // m of cut under the whole carriageway
+        public static readonly float CutDepth = EnvF("UG_INF_CUT", 6f);      // m of cut under the whole carriageway
         public const float CutMinLength = 40f;      // a tunnel shorter than this is a culvert
         public const float CutMergeGap = 40f;
         static float EnvF(string name, float fallback) =>
@@ -437,9 +438,13 @@ namespace SDG.Unturned
             int n = e.X.Length;
             e.Raised = new List<Stretch>(); e.Cut = new List<Stretch>();
             e.RaisedSeg = new bool[2][]; e.CutSeg = new bool[2][];
-            var arc = Arc(e);
             for (int side = -1; side <= 1; side += 2)
             {
+                // lengths along THIS carriageway: the outside of a bend is longer than the route's centreline
+                var cw = CarriagewayPts(e, side, 0, n - 1);
+                var arc = new double[n];
+                for (int i = 1; i < n; i++)
+                    arc[i] = arc[i - 1] + Math.Sqrt((cw[i].x - cw[i - 1].x) * (cw[i].x - cw[i - 1].x) + (cw[i].z - cw[i - 1].z) * (cw[i].z - cw[i - 1].z));
                 var on = new bool[n]; var fill = new float[n]; var wet = new bool[n];
                 var deep = new bool[n]; var cut = new float[n];
                 for (int i = 0; i < n; i++)
