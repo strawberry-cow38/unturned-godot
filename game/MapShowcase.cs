@@ -56,6 +56,22 @@ namespace UnturnedGodot
         /// one at the top of this list and that is handled.</summary>
         public static List<Station> Stations() => new()
         {
+            new Station("FENCE ROAD", "Click a point, click the next — guardrail runs itself out · Shift+F", c =>
+            {
+                // Two runs meeting at an angle, because the one thing a straight demo cannot show is that the
+                // segments TURN to follow the line and still butt together at the corner.
+                if (c.Objects == null) return;
+                var p0 = c.Origin + new Vector3(-55f, 0f, -20f);
+                var p1 = c.Origin + new Vector3(0f, 0f, 10f);
+                var p2 = c.Origin + new Vector3(55f, 0f, -14f);
+                EditorFenceRoad.LaySegments(c.Objects, c.Terr, p0, p1, false, false, null, null);
+                EditorFenceRoad.LaySegments(c.Objects, c.Terr, p1, p2, false, false, null, null);
+                // ...and a BROKEN run set back behind them, so the wrecked variant is visible beside the intact
+                // one rather than being a mode you have to know about.
+                EditorFenceRoad.LaySegments(c.Objects, c.Terr,
+                    c.Origin + new Vector3(-40f, 0f, 34f), c.Origin + new Vector3(40f, 0f, 34f), true, false, null, null);
+            }),
+
             new Station("POWER LINES", "Pick a pole, pick the next — four wires string themselves · Shift+P", c =>
             {
                 // A RUN of poles, not a pair: the tool's whole point is chaining, and a single span would not show
@@ -173,6 +189,28 @@ namespace UnturnedGodot
             // station, so 180 points it at the empty horizon behind. That is exactly the blank frame it gave the
             // first time; the sign of a look direction is not worth guessing at twice.
             if (cam == null) return;
+            // ⭐ UG_CAMPOS / UG_CAMLOOK OVERRIDE IT, the same pair WorldBuilder's aerial camera already takes.
+            // The showcase exists to be LOOKED AT, so "open on a different station, close enough to see it" is
+            // the one thing a screenshot of it always needs -- and the default pose below frames station 1 from
+            // 88 m, which is fine for a person who can fly and useless for a single captured frame.
+            var cp = System.Environment.GetEnvironmentVariable("UG_CAMPOS");
+            if (!string.IsNullOrEmpty(cp))
+            {
+                var t = cp.Split(',');
+                var look = (System.Environment.GetEnvironmentVariable("UG_CAMLOOK") ?? "0,0,0").Split(',');
+                if (t.Length == 3 && look.Length == 3)
+                {
+                    float F(string[] a, int i) => float.Parse(a[i], System.Globalization.CultureInfo.InvariantCulture);
+                    var at = new Vector3(F(t, 0), F(t, 1), F(t, 2));
+                    var to = new Vector3(F(look, 0), F(look, 1), F(look, 2));
+                    var d = (to - at);
+                    float yaw = Mathf.RadToDeg(Mathf.Atan2(-d.X, -d.Z));
+                    float pitch = Mathf.RadToDeg(Mathf.Atan2(d.Y, new Vector2(d.X, d.Z).Length()));
+                    cam.SetPose(at, yaw, pitch);
+                    Log.Print($"[showcase] UG_CAMPOS {at} -> {to} (yaw {yaw:0.#}, pitch {pitch:0.#})");
+                    return;
+                }
+            }
             cam.SetPose(new Vector3(0f, 26f, 88f), 0f, -11f);
         }
 
