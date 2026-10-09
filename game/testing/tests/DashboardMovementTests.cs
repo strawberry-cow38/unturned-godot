@@ -22,12 +22,17 @@ namespace UnturnedGodot.Testing
     /// genuinely absent rather than broken. Inventory, Craft and Skills are the three that exist here, and the
     /// bug lived in the branch they share, so they cover it.
     ///
-    /// ⚠ THE WORKAROUND BELOW AND THE THREE SCREENS both exist because of a renderer setting, not this feature:
-    /// with `driver/threads/thread_model=2` (Godot's experimental separate rendering thread, which it warns
-    /// about at startup) an L1 run aborts on a FATAL "Index 0 out of bounds (size() = 0)" at a DIFFERENT point
-    /// every time -- craft.layout 5 runs out of 5, and this test at a different screen on each attempt, which
-    /// is what made it look like "opening Craft crashes". Under thread_model=1 it is 0 out of 5. If this test
-    /// starts dying somewhere arbitrary, check that setting before reading the test.</summary>
+    /// ⚠ HEADLESS CANNOT CAPTURE THE MOUSE, so `UiInputBlocked` (MouseMode != Captured) is permanently true
+    /// there and the first control below cannot hold -- docs/CLIENT_SCRIPTING_HARNESS_PLAN.md already says so
+    /// and I walked into it anyway. The control is therefore SKIPPED when the capture does not stick, rather
+    /// than failing: test.sh runs L1 headless, and a test that reds the nightly to make a point is worse than
+    /// one that says what it could not check. Everything else runs in both, because the interesting assertion
+    /// -- dashboard open, therefore NOT blocked -- needs UiInputBlocked to be true, which headless gives free.
+    ///
+    /// ⚠ If you run this WINDOWED on the box and it aborts somewhere arbitrary with a FATAL "Index 0 out of
+    /// bounds (size() = 0)", that is the renderer, not this test: `driver/threads/thread_model=2` loses a race
+    /// in windowed runs (5 crashes of 5; 0 of 5 under `--render-thread safe`, which leaves project.godot
+    /// alone). Headless is unaffected, which is why the nightly never saw it.</summary>
     public sealed class DashboardMovementTests : GameTest
     {
         public override string Name => "ui.walk_with_dashboard_open";
@@ -51,7 +56,9 @@ namespace UnturnedGodot.Testing
             // below could be reading a predicate that is simply always false.
             Input.MouseMode = Input.MouseModeEnum.Captured;
             yield return Ticks(2);
-            T.Check("control: with nothing open the player can move", !player.DebugMoveInputBlocked);
+            bool captures = Input.MouseMode == Input.MouseModeEnum.Captured;   // false headless -- see the note above
+            if (captures) T.Check("control: with nothing open the player can move", !player.DebugMoveInputBlocked);
+            else GD.Print("[ui-walk] headless: the mouse will not capture, so the 'nothing open -> can move' control is SKIPPED");
 
             foreach (var (tab, label) in new[]
                      {
@@ -64,6 +71,8 @@ namespace UnturnedGodot.Testing
                 yield return Ticks(3);
                 T.Check($"{label}: the screen is up and it freed the mouse",
                         player.DebugAnyDashboardScreenOpen && Input.MouseMode != Input.MouseModeEnum.Captured);
+                // (headless reads "freed" trivially, since it never captured -- the check above is only
+                //  load-bearing windowed. The next one is the actual subject and is real in both.)
                 T.Check($"{label}: ...and the player can still WALK with it open", !player.DebugMoveInputBlocked);
 
                 // THE BUG: ToggleInventoryMenu only ever asked `_invUI.IsOpen`, so with any OTHER screen up that
@@ -75,8 +84,9 @@ namespace UnturnedGodot.Testing
                 T.Check($"{label}: Tab CLOSED the dashboard rather than switching tabs "
                       + $"(any open = {player.DebugAnyDashboardScreenOpen}, inventory = {player.DashboardOpen})",
                         !player.DebugAnyDashboardScreenOpen && !player.DashboardOpen);
-                T.Check($"{label}: ...and the mouse went back to the world",
-                        Input.MouseMode == Input.MouseModeEnum.Captured);
+                if (captures)
+                    T.Check($"{label}: ...and the mouse went back to the world",
+                            Input.MouseMode == Input.MouseModeEnum.Captured);
             }
 
             // ---- Tab FROM CLOSED must still OPEN the inventory: the fix must not make Tab close-only.
@@ -94,6 +104,8 @@ namespace UnturnedGodot.Testing
             T.Check("control: a freed mouse with NO dashboard screen open still blocks movement "
                   + $"(any open = {player.DebugAnyDashboardScreenOpen})",
                     !player.DebugAnyDashboardScreenOpen && player.DebugMoveInputBlocked);
+            // ⭐ THIS ONE SURVIVES HEADLESS, and it is the control that matters: it is what fails on a build
+            // where the gate was deleted rather than narrowed. The skipped control is the weaker direction.
 
             Input.MouseMode = Input.MouseModeEnum.Captured;
             yield return Ticks(2);
