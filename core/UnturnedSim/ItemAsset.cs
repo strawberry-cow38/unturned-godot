@@ -302,6 +302,11 @@ namespace SDG.Unturned
             id = newID;
             amount = newAmount;
             quality = newQuality;
+            // ⭐ ICE IS BORN FROZEN, and it has to happen HERE rather than in the loot roll. Ice melts at
+            // frozen 0 (ServerFreezing.Sweep), so an ice created at the default 0 would vanish on the next
+            // sweep -- which is every ice the console, a craft or a test ever makes, not just looted ones.
+            // One constructor covers every path that can bring one into the world.
+            if (newID == Freezing.IceId) frozen = Freezing.Max;
         }
 
         public ItemAsset GetAsset() => Assets.find(id);

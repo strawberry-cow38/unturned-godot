@@ -34975,6 +34975,7 @@
 -0.0127
 ],
 "color": null,
+"metal": true,
 "name": "Spoon",
 "obj": "9305.txt",
 "parts": 1,
@@ -35160,6 +35161,25 @@
 "parts": 1,
 "tex": "9346.png",
 "type": "Generic"
+},
+"9347": {
+"box": [
+0.2597,
+0.2413,
+0.2132
+],
+"center": [
+0.0,
+0.1207,
+0.0
+],
+"color": null,
+"name": "Ice",
+"obj": "9347.txt",
+"parts": 1,
+"tex": "9347.png",
+"translucent": true,
+"type": "Supply"
 },
 "935": {
 "box": [

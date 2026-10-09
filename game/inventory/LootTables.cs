@@ -146,8 +146,12 @@ namespace UnturnedGodot
                 case Fridge:
                     return _fridge ??= Build(FoodsWhere(r => r >= PerishableAtLeast), OfType(SDG.Unturned.EItemType.WATER), 0.78f);
                 case Freezer:
-                    // Frozen: perishables only, no drinks -- a freezer is not where the cola lives.
-                    return _freezer ??= Build(FoodsWhere(r => r >= PerishableAtLeast), null, 1f);
+                    // ⭐ THE ICEBOX HOLDS ICE, AND NOTHING ELSE (master 2026-10-09: "spawns in the icebox,
+                    // remove all other spawns from the icebox"). It used to roll perishables; that is gone
+                    // rather than merely outweighed, because "remove" is what was asked and a 5% chance of a
+                    // steak is still a steak. Ice_Box_0 is the only prop on this table, so nothing else loses
+                    // its loot by this.
+                    return _freezer ??= new[] { (1.00f, new ushort[] { 9347 }) };
                 case Counter:
                     // "non-perishables as well as plates cups dishes, pots pans utensils"
                     return _counter ??= new[]

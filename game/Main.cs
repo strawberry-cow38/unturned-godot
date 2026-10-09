@@ -8128,12 +8128,24 @@ namespace UnturnedGodot
             if (colon >= 0) { modelsStr = spec[..colon]; albedo = spec[(colon + 1)..]; }
             var models = modelsStr.Split('+', System.StringSplitOptions.RemoveEmptyEntries);   // gun+sight+mag = assembled
 
+            // ⭐ UG_ICON_LIGHT SCALES THE WHOLE RIG, and it exists for PALE items. The defaults below total
+            // ambient 1.0 + key 1.7 + fill 0.7, which is tuned for the ripped meshes' mid-tone albedos -- a can
+            // of beans bakes perfectly under it. Point it at something near-white and every face clips to the
+            // same white: the ice pile baked as a flat silhouette with no cubes in it at all. Lowering it lets
+            // the directional do the modelling instead of the ambient.
+            // ⚠ DEFAULTS TO 1.0 SO EVERY ALREADY-BAKED ICON IS BYTE-IDENTICAL. This is a knob, not a retune.
+            float iconLight = 1f;
+            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_ICON_LIGHT"),
+                               System.Globalization.NumberStyles.Float,
+                               System.Globalization.CultureInfo.InvariantCulture, out float il) && il > 0f)
+                iconLight = il;
+
             var env = new Godot.Environment
             {
                 BackgroundMode = Godot.Environment.BGMode.Color,
                 BackgroundColor = new Color(1f, 0f, 1f),   // magenta key colour
                 AmbientLightSource = Godot.Environment.AmbientSource.Color,
-                AmbientLightColor = Colors.White, AmbientLightEnergy = 1f,
+                AmbientLightColor = Colors.White, AmbientLightEnergy = 1f * iconLight,
             };
             AddChild(new WorldEnvironment { Environment = env });
 
@@ -8165,8 +8177,8 @@ namespace UnturnedGodot
                 var mb = mesh.GetAabb();
                 aabb = firstMesh ? mb : aabb.Merge(mb); firstMesh = false;
             }
-            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-25f, 90f, 0f), LightEnergy = 1.7f });   // key from the camera side (+X)
-            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(25f, 70f, 0f), LightEnergy = 0.7f });    // soft fill
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-25f, 90f, 0f), LightEnergy = 1.7f * iconLight });   // key from the camera side (+X)
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(25f, 70f, 0f), LightEnergy = 0.7f * iconLight });    // soft fill
 
             Vector3 c = aabb.Position + aabb.Size * 0.5f, s = aabb.Size;
             var ax = new (float e, Vector3 dir)[] { (s.X, Vector3.Right), (s.Y, Vector3.Up), (s.Z, Vector3.Back) };

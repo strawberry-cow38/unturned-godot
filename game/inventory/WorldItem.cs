@@ -177,8 +177,25 @@ namespace UnturnedGodot
                                 // whether the surface reflects the sky or just takes a diffuse tint. There was no
                                 // way to say it before: every item got the same Roughness 0.8, non-metallic.
                                 bool metal = e.ContainsKey("metal") && e["metal"].AsBool();
+                                // ⭐ "translucent": true LETS AN ALBEDO'S ALPHA THROUGH. Master 2026-10-09, on
+                                // the ice: "add translucency". Every other item here is opaque, and an RGBA
+                                // albedo on an opaque material is not a subtle difference -- the alpha is simply
+                                // DISCARDED, so a texture authored at 64 % opacity renders exactly as solid as
+                                // one authored at 100 % and the only symptom is that nothing happened.
+                                //
+                                // ⚠ AlphaDepthPrePass, NOT plain Alpha, and the reason is this mesh specifically.
+                                // The item loader hands us ONE surface containing all five cubes, so a plain
+                                // alpha material blends the far faces of a cube over the near ones in whatever
+                                // order the triangles happen to sit in the buffer -- cubes read inside-out and
+                                // the pile stops looking like solid objects. A depth pre-pass resolves the
+                                // nearest surface first and then blends once, which is a single clean sheet of
+                                // ice rather than a stack of them.
+                                bool translucent = e.ContainsKey("translucent") && e["translucent"].AsBool();
                                 m.Mat = new StandardMaterial3D
                                 {
+                                    Transparency = translucent
+                                        ? BaseMaterial3D.TransparencyEnum.AlphaDepthPrePass
+                                        : BaseMaterial3D.TransparencyEnum.Disabled,
                                     AlbedoTexture = ImageTexture.CreateFromImage(img),
                                     TextureFilter = BaseMaterial3D.TextureFilterEnum.NearestWithMipmaps,   // blocky Unturned pixels, like the rest of the port
                                     // ⚠ NOT Metallic = 1. Tried it, rendered it, and the fork and spoon came out
@@ -192,6 +209,16 @@ namespace UnturnedGodot
                                     Roughness = metal ? 0.3f : 0.8f,
                                     CullMode = BaseMaterial3D.CullModeEnum.Disabled,   // double-sided like all the port's ripped meshes (their winding is authored for it)
                                 };
+                                // ⭐ SAY SO, for the two flags whose whole failure mode is silence. A dropped
+                                // item is spawned with physics jitter, so two renders of the same item never
+                                // line up pixel for pixel -- an A/B of "flag on" against "flag off" showed 6,678
+                                // changed pixels AND 1,464 changed pixels on the OPAQUE control can beside it,
+                                // which measures the jitter and nothing else. This prints the chain instead:
+                                // the flag was read, the material took it, and the texture actually carries an
+                                // alpha channel to honour. Only for items that set a flag -- three of ~1,900.
+                                if (metal || translucent)
+                                    Log.Print($"[item-mat] {id} metal={metal} translucent={translucent} "
+                                            + $"transparency={((StandardMaterial3D)m.Mat).Transparency} fmt={img.GetFormat()} texHasAlpha={img.DetectAlpha()}");
                             }
                         }
                     }

@@ -240,10 +240,21 @@ def main():
         tex = f"{a.id}.png"
         if not os.path.exists(os.path.join(a.out_dir, tex)): tex = None
         centre = [round((min(xs)+max(xs))/2, 4), round((min(ys)+max(ys))/2, 4), round((min(zs)+max(zs))/2, 4)]
-        man[str(a.id)] = {"name": name, "type": typ, "obj": f"{a.id}.txt", "tex": tex, "color": None,
-                          "box": [round(c, 4) for c in size], "center": centre, "parts": 1}
+        # ⚠⚠ RE-REGISTERING MUST NOT DROP HAND-SET KEYS. This used to assign a fresh dict, so every key the
+        # manifest carries that the converter does not generate -- "metal", "translucent", "rounds" -- was
+        # silently deleted the next time the mesh was re-exported. It cost exactly that: the spoon was marked
+        # metal, then master asked for its yaw turned 180, and the re-run wiped the flag. The spoon shipped as
+        # grey plastic next to a steel fork, and nothing anywhere said so. Geometry keys are overwritten
+        # because they are derived from THIS mesh; everything else is the manifest's own and is kept.
+        entry = man.get(str(a.id)) or {}
+        entry.update({"name": name, "type": typ, "obj": f"{a.id}.txt", "tex": tex, "color": entry.get("color"),
+                      "box": [round(c, 4) for c in size], "center": centre, "parts": entry.get("parts", 1)})
+        man[str(a.id)] = entry
+        kept = sorted(k for k in entry if k not in
+                      {"name", "type", "obj", "tex", "color", "box", "center", "parts"})
         with open(a.manifest, 'w') as fh: json.dump(man, fh, indent=0, sort_keys=True)
         print(f"[obj->item] registered {a.id} \"{name}\" ({typ}) in {os.path.basename(a.manifest)}"
+              + (f"  [kept: {', '.join(kept)}]" if kept else "")
               + ("" if tex else "  ⚠ no texture, will render untextured"))
 
 if __name__ == '__main__':

@@ -48,7 +48,7 @@ namespace UnturnedGodot.Net
                 // as a compartment. Unpowered it thaws like anything else, which is what makes cutting the
                 // grid to a stocked freezer a real loss rather than a cosmetic one.
                 float bodyRate = crate.BodyFreezes && powered ? Freezing.FreezePerSecond : -Freezing.ThawPerSecond;
-                if (Sweep(crate.Storage, bodyRate, dt)) NoteAll(crate.Viewers);
+                if (Sweep(crate.Storage, bodyRate, dt, crate.BodyFreezes)) NoteAll(crate.Viewers);
                 // v58: a car's seat pockets are plain grids -- a frozen steak left on the back seat thaws like one in a
                 // crate. Without this it stayed frozen forever, because nothing else ever sweeps a compartment.
                 foreach (var comp in crate.Compartments)
@@ -76,7 +76,8 @@ namespace UnturnedGodot.Net
 
         /// <summary>Move every freezable item in one grid toward frozen (positive rate) or thawed (negative).
         /// Returns whether anything actually changed, so a still fridge costs no replication.</summary>
-        static bool Sweep(Items page, float perSecond, float dt)
+        /// <param name="insulated">Is this grid an ICE BOX body? Ice in one never melts -- see the note below.</param>
+        static bool Sweep(Items page, float perSecond, float dt, bool insulated = false)
         {
             if (page == null) return false;
             bool changed = false;
@@ -84,6 +85,16 @@ namespace UnturnedGodot.Net
             {
                 var item = page.getItem(i)?.item;
                 if (item == null) continue;
+                // ⭐⭐ AN ICE BOX IS ITS OWN COLD RESERVOIR, and this narrow exemption is what makes the icebox
+                // loot table actually pay out. MainsAreUp() is FALSE until a player places and switches on a
+                // generator, so without this the body thaws at 0.8 %/s, every spawned ice hits 0 about 125
+                // SECONDS after the world loads, and melting removes it -- so every icebox in PEI would be
+                // empty before any player could walk to one. "Spawns in the icebox" would have been a loot
+                // table that is provably never collected.
+                // ⚠ ICE ONLY, deliberately. FOOD in an unpowered icebox still thaws, because "cutting the grid
+                // to a stocked freezer is a real loss" is the rule the body-freezer case was built for, and a
+                // blanket hold would quietly make an unpowered freezer as good as a powered one.
+                if (insulated && item.id == Freezing.IceId) continue;
                 // Thawing an already-thawed item is the overwhelmingly common case -- every bullet in every
                 // crate in the world -- so it exits before touching the asset table.
                 if (perSecond < 0f && item.frozen == 0) continue;
@@ -91,6 +102,16 @@ namespace UnturnedGodot.Net
                 byte before = item.frozen;
                 Freezing.AdvanceCarried(item, perSecond, dt);   // carries the sub-percent remainder -- see the note there
                 if (item.frozen != before) changed = true;
+                // ⭐ ICE MELTS AWAY. Master: "if it goes below frozen, it disappears". Here rather than in a
+                // sweep of its own because this is the ONE place every freezable item in the world moves --
+                // freezers, crates, car compartments and what players carry all pass through it, so ice cannot
+                // melt in one of them and sit forever in another.
+                // ⚠ Do NOT advance i after removing: the page closes the gap, so i already points at the next
+                // item. Same shape as PlayerInventory.removeItemAmount.
+                if (item.frozen == 0 && item.id == Freezing.IceId)
+                {
+                    page.removeItem(i); i--; changed = true;
+                }
             }
             return changed;
         }
