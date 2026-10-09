@@ -128,7 +128,14 @@ namespace UnturnedGodot.Testing
                 foreach (var (desc, ok) in _ctx.Checks) if (!ok) GD.Print($"         ✗ {desc}");
                 GD.Print($"         repro: ./test.sh --l1 --only {_cur.Name}   (seed {_ctx.Rng.Seed})");
             }
-            else { _passed++; GD.Print($"[TEST] {_cur.Name,-42} | PASS | {secs:0.00}s ({_ctx.Checks.Count} checks)"); }
+            else
+            {
+                _passed++; GD.Print($"[TEST] {_cur.Name,-42} | PASS | {secs:0.00}s ({_ctx.Checks.Count} checks)");
+                // UG_TEST_SHOWPASS=1: print the passing checks too. Their descriptions carry the MEASURED values, and a
+                // green run that hides them leaves nothing to quote but "it passed".
+                if (System.Environment.GetEnvironmentVariable("UG_TEST_SHOWPASS") == "1")
+                    foreach (var (desc, _) in _ctx.Checks) GD.Print($"         ✓ {desc}");
+            }
 
             string name = _cur?.Name ?? "?";
             _sandbox?.QueueFree();

@@ -24,6 +24,7 @@ namespace UnturnedGodot
         {
             if (_globalsRegistered) return;
             _globalsRegistered = true;
+            WorldOrigin.EnsureGlobal();   // swell.gdshaderinc reads it, and the sea compiles behind this funnel
             RenderingServer.GlobalShaderParameterAdd("rain_wetness", RenderingServer.GlobalShaderParameterType.Float, 0f);
             RenderingServer.GlobalShaderParameterAdd("rain_intensity", RenderingServer.GlobalShaderParameterType.Float, 0f);
             RenderingServer.GlobalShaderParameterAdd("swell_scale", RenderingServer.GlobalShaderParameterType.Float, 1f);   // weather wave-height scale; 1 = calm (see swell.gdshaderinc)

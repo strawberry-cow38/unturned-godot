@@ -716,14 +716,25 @@ namespace UnturnedGodot
         // field would silently hand the next species the previous one's dimensions.
         async System.Threading.Tasks.Task<(ImageTexture Tex, float W, float H)> BakeImpostorAsync(ImpostorSpec spec)
         {
+            var (img, w, h) = await BakeImpostorImageAsync(this, spec.Dir, spec.Name, spec.Parts);
+            if (img == null) return (null, 0f, 0f);
+            img.GenerateMipmaps();
+            return (ImageTexture.CreateFromImage(img), w, h);
+        }
+
+        /// <summary>The bake itself, shared with the infinite world's streamer (which packs several species into one
+        /// atlas): the picture of `name`'s parts, ImpostorTexW x ImpostorTexH, plus the world box it was framed at.
+        /// `host` only needs to be in the tree -- the SubViewport hangs off it for the two frames the bake takes.</summary>
+        internal static async System.Threading.Tasks.Task<(Image Img, float W, float H)> BakeImpostorImageAsync(Node host, string dir, string name, int parts)
+        {
             var meshes = new List<(ArrayMesh Mesh, StandardMaterial3D Mat)>();
-            for (int i = 0; i < spec.Parts; i++)
+            for (int i = 0; i < parts; i++)
             {
-                string objP = spec.Dir + spec.Name + "_" + i + ".obj";
+                string objP = dir + name + "_" + i + ".obj";
                 if (!File.Exists(objP)) continue;
                 var m = ObjMesh.Load(objP);
                 if (m == null) continue;
-                var lit = MakeMat(spec.Dir + spec.Name + "_" + i + "_tex.png", false);
+                var lit = MakeMat(dir + name + "_" + i + "_tex.png", false);
                 var flat = (StandardMaterial3D)lit.Duplicate();
                 flat.ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded;   // albedo only -- see the note above
                 meshes.Add((m, flat));
@@ -744,7 +755,7 @@ namespace UnturnedGodot
                 RenderTargetClearMode = SubViewport.ClearMode.Always,
                 OwnWorld3D = true,   // its own World3D, or the real map's sun and fog land in the bake
             };
-            AddChild(vp);
+            host.AddChild(vp);
             foreach (var (mesh, mat) in meshes)
                 vp.AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = mat });
             var cam = new Camera3D
@@ -759,16 +770,15 @@ namespace UnturnedGodot
             cam.LookAtFromPosition(centre + new Vector3(0f, 0f, 2f * (bakeH + bakeW)), centre, Vector3.Up);
 
             // Two frames: one for the viewport to be laid out and drawn, one for the texture to be readable.
-            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
-            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+            await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
+            await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
             var img = vp.GetTexture()?.GetImage();
             vp.QueueFree();
             if (img == null || img.IsEmpty()) return (null, 0f, 0f);
             // A fully transparent bake means the camera framed nothing -- return null so the species just has no
             // far field, instead of every distant tree becoming an invisible quad that still costs a draw.
-            if (!HasAnyOpaque(img)) { Log.Err($"[imposter] {spec.Name}: bake came out empty, skipping"); return (null, 0f, 0f); }
-            img.GenerateMipmaps();
-            return (ImageTexture.CreateFromImage(img), bakeW, bakeH);
+            if (!HasAnyOpaque(img)) { Log.Err($"[imposter] {name}: bake came out empty, skipping"); return (null, 0f, 0f); }
+            return (img, bakeW, bakeH);
         }
 
         static bool HasAnyOpaque(Image img)
@@ -819,7 +829,7 @@ namespace UnturnedGodot
             return list;
         }
 
-        static StandardMaterial3D MakeMat(string texPath, bool unshaded)
+        internal static StandardMaterial3D MakeMat(string texPath, bool unshaded)
         {
             var mat = new StandardMaterial3D
             {

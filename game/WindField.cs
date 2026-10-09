@@ -74,23 +74,40 @@ namespace UnturnedGodot
         //
         // The wind is WindField's business, so the integration lives here and the callers just say "drive it".
         static float _phase;
-        static long _lastPushFrame = long.MinValue / 2;   // so the first idle caller always wins
+        static long _lastPushFrame = long.MinValue / 2, _lastIdleFrame = long.MinValue / 2;
+        static double _sinceAuthoritative = double.MaxValue;   // seconds of frames since the player last pushed
 
         /// <summary>Drive `wind_vec` from an authoritative position -- the local player. Always pushes.</summary>
         public static void PushGlobals(Vector3 at, double delta)
         {
-            _lastPushFrame = Engine.GetFramesDrawn();
+            _lastPushFrame = (long)Engine.GetProcessFrames();
+            _sinceAuthoritative = 0;
             Integrate(at, delta);
         }
 
-        /// <summary>Drive `wind_vec` only if nothing authoritative has for a few frames. This is what lets the
-        /// EDITOR and the render harnesses have wind without fighting the player for it in a live game -- the
-        /// player wins whenever there is one, and there is exactly one integrator either way.</summary>
+        /// <summary>Drive `wind_vec` only if nothing authoritative has recently. This is what lets the EDITOR and the
+        /// render harnesses have wind without fighting the player for it in a live game.
+        ///
+        /// ⚠⚠ "THE WIND ON THE INF MAP IS REALLY FAST" (strawberry 2026-10-09). Two holes, both here. Every
+        /// PowerLineField calls this from its _Process, and nothing stopped SEVERAL of them integrating in the same
+        /// frame -- one field on PEI, but one per region in the infinite world (13 round the spawn), so the phase ran
+        /// up to 13x. And "recently" was counted in FRAMES (<= 2), while the player pushes at 60 Hz: above ~120 fps there
+        /// are frames between its pushes, and every one of them let the idle callers in. Now: one integration per frame
+        /// whoever asks, and "recently" is measured in time.</summary>
         public static void PushGlobalsIfIdle(Vector3 at, double delta)
         {
-            if (Engine.GetFramesDrawn() - _lastPushFrame <= 2L) return;
+            // PROCESS frames, not frames drawn: a headless run draws none, and a counter that never moves made this
+            // guard swallow every call after the first -- the wind stopped dead (the L1 test caught it at 0.00/s)
+            long f = (long)Engine.GetProcessFrames();
+            if (f == _lastIdleFrame) return;   // another idle caller already had this frame
+            _lastIdleFrame = f;
+            if (f != _lastPushFrame) _sinceAuthoritative += delta;
+            if (_sinceAuthoritative < 0.25) return;   // the player is driving it (at 60 Hz, not necessarily every frame)
             Integrate(at, delta);
         }
+
+        /// <summary>Test seam: the integrated sway phase (wind_vec.w).</summary>
+        public static float PhaseForTest => _phase;
 
         static void Integrate(Vector3 at, double delta)
         {

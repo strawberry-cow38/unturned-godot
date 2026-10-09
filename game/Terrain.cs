@@ -62,6 +62,7 @@ global uniform float rain_intensity;                           // 0..1 raindrop-
 global uniform float rain_puddle;                              // 0..1 standing water, minutes behind the rain (WeatherManager)
 global uniform sampler2D rain_roof;                             // RainRoofMap (rain_streak.gdshader): roofed ground stays dry
 global uniform vec4 rain_roof_rect;
+global uniform vec2 ug_origin;                                  // WorldOrigin: local + this = the world position PATTERNS use
 varying vec3 wpos;
 void vertex() { wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz; }
 // --- caustics: gradient (Perlin) noise so the web is smooth, not blocky; projected in world XZ onto underwater terrain ---
@@ -90,11 +91,14 @@ void fragment() {
     // sub-texel world noise moves that crossing off the lattice: the same hard edge, wandering by a few tens of
     // centimetres, which is what a real material boundary looks like. splat_jitter = 0 restores the lattice exactly.
     vec2 sTexel = 1.0 / vec2(textureSize(splat0, 0));
-    vec2 sJit = (vec2(cnoise(wpos.xz * 1.9), cnoise(wpos.xz * 1.9 + 37.1)) - 0.5) * 2.0 * splat_jitter;
+    // Patterns read pxz, the floating-origin-corrected position (WorldOrigin): with the raw local wpos every
+    // pattern below jumped on a rebase. Lookups INTO local-space data (the rain-roof map, view distance) keep wpos.
+    vec2 pxz = wpos.xz + ug_origin;
+    vec2 sJit = (vec2(cnoise(pxz * 1.9), cnoise(pxz * 1.9 + 37.1)) - 0.5) * 2.0 * splat_jitter;
     vec2 sUV = UV + sJit * sTexel;
     vec4 w0 = texture(splat0, sUV);
     vec4 w1 = texture(splat1, sUV);
-    vec2 tuv = wpos.xz / tileWorld;
+    vec2 tuv = pxz / tileWorld;
     // WINNER-TAKE-ALL again (strawberry 2026-09-06 ""revert the terrain materials thing back to winner takes all from
     // blend""): the dominant splat layer per pixel, hard-edged distinct regions -- the look the reference shots have.
     // The weighted blend that stood here for a day (8421628e) is gone; the splat is still sampled bilinear so the
@@ -113,7 +117,7 @@ void fragment() {
     // caustics on underwater terrain: a light web projected in world XZ, faded with depth (master 2026-08-17)
     float cdepth = sea_level - wpos.y;
     if (cdepth > 0.0) {
-        vec2 cp = mat2(vec2(0.87, 0.5), vec2(-0.5, 0.87)) * (wpos.xz * 0.11);
+        vec2 cp = mat2(vec2(0.87, 0.5), vec2(-0.5, 0.87)) * (pxz * 0.11);
         cp += 0.8 * (vec2(cfbm(cp * 0.5), cfbm(cp * 0.5 + 7.0)) - 0.5);
         float caust = caustics(cp, TIME * 0.25);
         caust = max(caust, caustics(cp * 1.6 + 9.0, -TIME * 0.2));
@@ -167,7 +171,7 @@ void fragment() {
         // terrain materials a separate puddles shader""). Same field the road props and splines use -- one include,
         // so a puddle that straddles a kerb is the same puddle on both sides rather than two that disagree.
         float prange = 1.0 - smoothstep(42.0, 60.0, length((VIEW_MATRIX * vec4(wpos, 1.0)).xyz));   // no water drawn far away
-        float pud = puddle_mask(wpos.xz, clamp(rain_puddle, 0.0, 1.0), r_up, prange) * roadw;   // `level` stays the BARE global: it gates the branch puddle_mask's fwidth() sits behind, and r_up varies within a quad (it is already the upness argument anyway)
+        float pud = puddle_mask(pxz, clamp(rain_puddle, 0.0, 1.0), r_up, prange) * roadw;   // `level` stays the BARE global: it gates the branch puddle_mask's fwidth() sits behind, and r_up varies within a quad (it is already the upness argument anyway)
         ALBEDO *= mix(1.0, 0.62, pud);          // standing water reads darker than the wet road around it
         ROUGHNESS = mix(ROUGHNESS, 0.13, pud);  // ...and more reflective, which is the whole point of it -- but 0.06 was mirror-flat (master 2026-09-07 ""slightly less reflective"")
         if (rain_intensity > 0.0 && pud > 0.01) {
@@ -177,7 +181,7 @@ void fragment() {
             vec2 aw = wpos.xz - INV_VIEW_MATRIX[3].xz;   // crown leans away from the VIEWER; degenerate (overhead) disables it
             float awl = length(aw);
             float sp = 0.0, crown = 0.0;
-            rain_impacts(wpos.xz, TIME, rain_intensity, 1.0, awl > 1e-3 ? aw / awl : vec2(0.0), sp, crown);
+            rain_impacts(pxz, TIME, rain_intensity, 1.0, awl > 1e-3 ? aw / awl : vec2(0.0), sp, crown);
             sp *= rain_intensity * pud;
             crown *= rain_intensity * pud;
             ALBEDO += sp * 0.45 + crown * 0.58;                      // brighter than before because it only shows on water now; the crown a little more so, as a splash is brighter than its ring
@@ -187,19 +191,55 @@ void fragment() {
 }
 ";
 
-        static ShaderMaterial BuildTerrainMaterial(Texture2D splat0, Texture2D splat1)
+        static Texture2DArray LoadAlbedoArray(string[] dirs = null)
         {
             var imgs = new Godot.Collections.Array<Image>();
             for (int l = 0; l < SLAYERS; l++)
             {
                 var img = new Image();
-                if (!ContentProvider.LoadOk(img, ProjectSettings.GlobalizePath($"res://content/{MapDir}/layer{l}.png"))) { Log.Print($"[TERRAIN] texture load FAILED: {MapDir}/layer{l}"); return null; }
+                string dir = dirs?[l] ?? MapDir;
+                if (!ContentProvider.LoadOk(img, ProjectSettings.GlobalizePath($"res://content/{dir}/layer{l}.png"))) { Log.Print($"[TERRAIN] texture load FAILED: {dir}/layer{l}"); return null; }
                 img.Convert(Image.Format.Rgba8);
                 img.GenerateMipmaps();
                 imgs.Add(img);
             }
             var arr = new Texture2DArray();
-            if (arr.CreateFromImages(imgs) != Error.Ok) return null;
+            return arr.CreateFromImages(imgs) == Error.Ok ? arr : null;
+        }
+
+        // The infinite world (RegionStreamer) builds a material PER REGION -- hundreds of them, coming and going --
+        // so the 8-layer albedo array and the compiled shader are made once and shared; only the splat pair differs.
+        static Texture2DArray _regionAlbedos; static string _regionAlbedoDir; static Shader _regionShader;
+
+        /// <summary>Per-layer texture set for streamed regions, or null for MapDir's eight. The infinite world mixes
+        /// sets: PEI's own dirt, gravel and stone are its famous RED soil (avg 139,84,58 / 126,81,64 / 142,79,47), which
+        /// reads as rust on every mountainside; Yukon's are grey. Same eight SLOTS either way, so the splat is unchanged.</summary>
+        public static string[] RegionLayerDirs;
+
+        /// <summary>The terrain material for one streamed region: the same shader and layer textures as a loaded map,
+        /// with that region's own splat pair. The splat is sampled by the mesh's UV, so the caller lays UVs out over
+        /// its own texture; albedo tiling is world-space (16 m), which stays continuous across a floating-origin
+        /// shift because every shift is a whole number of 256 m regions.</summary>
+        public static ShaderMaterial RegionMaterial(Texture2D splat0, Texture2D splat1)
+        {
+            string key = RegionLayerDirs != null ? string.Join(",", RegionLayerDirs) : MapDir;
+            if (_regionAlbedos == null || _regionAlbedoDir != key) { _regionAlbedos = LoadAlbedoArray(RegionLayerDirs); _regionAlbedoDir = key; }
+            if (_regionAlbedos == null) return null;
+            RainSystem3D.EnsureGlobals();
+            _regionShader ??= new Shader { Code = TERRAIN_SHADER };
+            var mat = new ShaderMaterial { Shader = _regionShader };
+            mat.SetShaderParameter("albedos", _regionAlbedos);
+            mat.SetShaderParameter("splat0", splat0);
+            mat.SetShaderParameter("splat1", splat1);
+            mat.SetShaderParameter("tileWorld", 16f);
+            mat.SetShaderParameter("sea_level", SeaLevelY);
+            return mat;
+        }
+
+        static ShaderMaterial BuildTerrainMaterial(Texture2D splat0, Texture2D splat1)
+        {
+            var arr = LoadAlbedoArray();
+            if (arr == null) return null;
 
             RainSystem3D.EnsureGlobals();   // the shader reads the rain_wetness/rain_intensity globals -- they MUST exist before it compiles
             var mat = new ShaderMaterial { Shader = new Shader { Code = TERRAIN_SHADER } };

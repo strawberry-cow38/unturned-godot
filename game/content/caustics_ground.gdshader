@@ -14,6 +14,7 @@ uniform float caustic_strength = 0.15;   // toned down 70% (master)
 uniform float caustic_depth = 9.0;      // metres of depth the caustics fade out over
 
 varying vec3 v_wpos;
+global uniform vec2 ug_origin;   // WorldOrigin: the caustic web is a world pattern
 
 // GRADIENT (Perlin) noise -- unlike value noise it has NO axis-aligned cell artifacts (value is 0 at every lattice
 // point, random gradients interpolated between), so the caustic web doesn't read as blocks. Seed shared with the water.
@@ -47,7 +48,7 @@ void fragment() {
     ROUGHNESS = 1.0;
     float depth = sea_level - v_wpos.y;   // how far below the water surface this fragment sits
     if (depth > 0.0) {
-        vec2 cp = mat2(vec2(0.87, 0.5), vec2(-0.5, 0.87)) * (v_wpos.xz * caustic_scale);   // rotate the noise lattice off-axis
+        vec2 cp = mat2(vec2(0.87, 0.5), vec2(-0.5, 0.87)) * ((v_wpos.xz + ug_origin) * caustic_scale);   // rotate the noise lattice off-axis
         cp += 0.8 * (vec2(fbm(cp * 0.5), fbm(cp * 0.5 + 7.0)) - 0.5);   // domain warp -> the caustic web wanders instead of gridding
         float caust = caustics(cp, TIME * caustic_speed);
         caust = max(caust, caustics(cp * 1.6 + 9.0, -TIME * caustic_speed * 0.8));   // a counter-scrolling layer for a livelier shimmer

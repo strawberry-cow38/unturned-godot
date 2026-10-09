@@ -38,6 +38,7 @@ uniform float alpha_scissor : hint_range(0.0, 1.0) = 0.4;
 // WIND SWAY (master 2026-08-24): FLOWERS sway (do_sway=true), pebbles do NOT (do_sway=false). Same wind_vec global +
 // object-space, height-weighted, world-direction sway as wind_sway.gdshader; folded in here so flowers keep the
 // up-normal fix. FoliageField sets do_sway from `nm.StartsWith("flowers")`.
+global uniform vec2 ug_origin;   // WorldOrigin (see wind_sway.gdshader)
 global uniform vec4 wind_vec;   // xy = direction, z = 0..1 strength, w = SWAY PHASE (integrated CPU-side; see PlayerController)
 uniform bool do_sway = false;
 uniform float sway : hint_range(0.0, 0.4) = 0.08;
@@ -45,7 +46,7 @@ uniform float sway : hint_range(0.0, 0.4) = 0.08;
 void vertex() {
 	if (do_sway) {
 		float h = max(VERTEX.y, 0.0);
-		vec3 wp = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+		vec3 wp = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz + vec3(ug_origin.x, 0.0, ug_origin.y);
 		float gust = sin(wind_vec.w * 1.6 + wp.x * 0.2 + wp.z * 0.17);
 		float amp = h * sway * (0.4 + wind_vec.z) * (0.7 + 0.3 * gust);
 		VERTEX += inverse(mat3(MODEL_MATRIX)) * (vec3(wind_vec.x, 0.0, wind_vec.y) * amp);

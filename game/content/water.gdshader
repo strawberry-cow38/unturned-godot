@@ -81,7 +81,8 @@ void fragment() {
     float vdist = length(VERTEX);
     float lod = clamp(1.0 - (vdist - 25.0) / 140.0, 0.0, 1.0);
 
-    vec2 np = v_wpos.xz * ripple_freq + vec2(TIME * 0.03, TIME * -0.02);
+    vec2 pxz = v_wpos.xz + ug_origin;   // WorldOrigin (declared in swell.gdshaderinc): PATTERNS use the world position, so a rebase cannot move them
+    vec2 np = pxz * ripple_freq + vec2(TIME * 0.03, TIME * -0.02);
     float n0 = fbm5(np);
     float nx = fbm5(np + vec2(0.06, 0.0));
     float nz = fbm5(np + vec2(0.0, 0.06));
@@ -101,7 +102,7 @@ void fragment() {
         float shore = 1.0 - smoothstep(0.0, 0.85, max(v_wpos.y - bed_y, 0.0));
         // ...modulated by its own slow noise, which is what stops it reading as a painted ring around the island.
         // The strip had flattened this to a constant; a flat band is the thing that looks wrong, not the amount.
-        foam = shore * (shore_foam_amount + shore_foam_swing * fbm5(v_wpos.xz * 0.4 + TIME * 0.15));
+        foam = shore * (shore_foam_amount + shore_foam_swing * fbm5(pxz * 0.4 + TIME * 0.15));
     }
     foam = clamp(foam, 0.0, 1.0);
 
