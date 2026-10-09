@@ -18,19 +18,16 @@ namespace UnturnedGodot.Testing
     /// deleting the gate outright, and every other check below would still pass. A freed mouse with NO dashboard
     /// screen open -- the pause menu, the console -- has to STILL root you.
     ///
-    /// ⚠⚠ WHAT THIS DOES NOT COVER, measured rather than assumed. Only the INVENTORY can be opened in an L1
-    /// rig: Craft and Skills die on a Godot FATAL ("Index 0 out of bounds (size() = 0)") the moment they open
-    /// -- the same pre-existing crash that has left craft.layout dead, verified against a stashed tree at HEAD
-    /// -- and Information is the map, which a bare rig has no MapUI.Current for.
+    /// ⚠ INFORMATION (the map) IS NOT IN THE LOOP: a bare L1 rig has no MapUI.Current to open, so it is
+    /// genuinely absent rather than broken. Inventory, Craft and Skills are the three that exist here, and the
+    /// bug lived in the branch they share, so they cover it.
     ///
-    /// That makes this test VACUOUS FOR THE TAB HALF of the ask, and the only reason that is written down here
-    /// rather than quietly true is that it was mutation-checked: reverting ToggleInventoryMenu to its old
-    /// inventory-only form leaves this test GREEN. Of course it does -- the inventory is the one screen the old
-    /// code already closed correctly; the bug was that any OTHER screen fell through to ShowMenu(Inventory).
-    /// Reverting the MOVEMENT gate does turn it red, so that half is real coverage.
-    ///
-    /// So: the movement fix is tested. The Tab fix is NOT, and it needs the other three screens, which needs
-    /// that FATAL fixed first.</summary>
+    /// ⚠ THE WORKAROUND BELOW AND THE THREE SCREENS both exist because of a renderer setting, not this feature:
+    /// with `driver/threads/thread_model=2` (Godot's experimental separate rendering thread, which it warns
+    /// about at startup) an L1 run aborts on a FATAL "Index 0 out of bounds (size() = 0)" at a DIFFERENT point
+    /// every time -- craft.layout 5 runs out of 5, and this test at a different screen on each attempt, which
+    /// is what made it look like "opening Craft crashes". Under thread_model=1 it is 0 out of 5. If this test
+    /// starts dying somewhere arbitrary, check that setting before reading the test.</summary>
     public sealed class DashboardMovementTests : GameTest
     {
         public override string Name => "ui.walk_with_dashboard_open";
@@ -59,6 +56,8 @@ namespace UnturnedGodot.Testing
             foreach (var (tab, label) in new[]
                      {
                          (MenuNavbar.Tab.Inventory, "inventory"),
+                         (MenuNavbar.Tab.Craft, "crafting"),
+                         (MenuNavbar.Tab.Skills, "skills"),
                      })
             {
                 player.ShowMenu(tab);
