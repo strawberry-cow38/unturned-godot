@@ -303,6 +303,28 @@ namespace UnturnedGodot.Testing
                   + $"the centreline (expected all ~{wantOff:0.##} m OUTSIDE)",
                     sampled > 0 && worstInside < -wantOff * 0.5f);
 
+            // ⭐⭐ AND THE RAIL FACES THE ROAD, which is a different question from which SIDE the run is on and
+            // which the offset check above cannot see: the whole prop is 0.5 m wide, so both facings put every
+            // post ~11 m outside the curve. Master, on the first render: "the posts are on the inside? should
+            // be on the outside." A guardrail's beam takes the hit, so the beam belongs on the carriageway
+            // side and the posts behind it.
+            //
+            // The beam is the prop's local +X half (measured: the Span mesh spans local X +0.258..+0.305 while
+            // the Post is centred on 0), so basis.X is where the rail hangs -- and on the outer side of a bend
+            // that must point back TOWARD the centre of curvature.
+            float worstFacing = float.MinValue; int faced = 0;
+            foreach (var x in objs.PlacedOf(EditorFenceRoad.SpanUnit))
+            {
+                if (x.Origin.Z < 1100f) continue;
+                faced++;
+                var toCentre = new Vector3(centre.X - x.Origin.X, 0f, centre.Z - x.Origin.Z).Normalized();
+                // +1 = the beam points at the road, -1 = it points away into the field
+                worstFacing = Mathf.Max(worstFacing, -x.Basis.X.Normalized().Dot(toCentre));
+            }
+            T.Check($"...with the RAIL facing the carriageway, posts behind it ({faced} span(s), worst "
+                  + $"beam·road {-worstFacing:0.00}; +1 = at the road, -1 = away from it)",
+                    faced > 0 && -worstFacing > 0.8f);
+
             // ⭐ CONTROL: a STRAIGHT road gets nothing. "The outer edge on a turn" means a guardrail down a
             // straight is wrong, and without this the check above passes on a tool that guards everything.
             var straight = new List<Vector3>();

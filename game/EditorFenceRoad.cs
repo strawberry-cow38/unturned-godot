@@ -328,7 +328,14 @@ namespace UnturnedGodot
                     for (int k = i0; k <= i1; k++) pts.Add(pos[k] + side[k] * (off * s));
                     if (pts.Count >= 2)
                     {
-                        int got = LayPath(objects, terr, pts, false, s < 0f, posts, rail, null, smooth: false);
+                        // ⚠⚠ THE BEAM FACES THE ROAD, so the facing is the OPPOSITE of the side the run
+                        // sits on. The rail is the prop's local +X half, and YawForDir puts +X on the run's
+                        // RIGHT -- so a run offset to the right (s > 0) has the carriageway on its LEFT and
+                        // needs the 180. I had this inverted and every beam pointed into the field with the
+                        // posts presented to the traffic; master spotted it in a render, and the offset test
+                        // could not -- the prop is 0.5 m wide, so both facings put every post ~11 m outside
+                        // the curve and satisfy it equally.
+                        int got = LayPath(objects, terr, pts, false, s > 0f, posts, rail, null, smooth: false);
                         if (got > 0) { laid += got; stretches++; }
                     }
                 }
