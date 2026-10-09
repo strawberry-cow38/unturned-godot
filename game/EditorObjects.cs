@@ -412,6 +412,15 @@ namespace UnturnedGodot
                     yield return n.GlobalTransform;
         }
 
+        /// <summary>The placed NODES of one prop type, for a caller that needs the mesh and not just the
+        /// transform -- "are these two segments touching" is a question about world BOUNDS.</summary>
+        public System.Collections.Generic.IEnumerable<Node3D> PlacedOfNodes(string propName)
+        {
+            foreach (var n in _placed)
+                if (IsInstanceValid(n) && n.HasMeta("obj_name") && (string)n.GetMeta("obj_name") == propName)
+                    yield return n;
+        }
+
         public int PlacedCount => _placed.Count;
         public bool SelectedOmitFromBake => Primary != null && Primary.HasMeta(OmitMeta) && (bool)Primary.GetMeta(OmitMeta);
 

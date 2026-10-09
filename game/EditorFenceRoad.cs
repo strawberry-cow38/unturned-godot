@@ -216,6 +216,7 @@ namespace UnturnedGodot
             string b0 = broken ? Broken : Intact;
             float half = SegmentLength * 0.5f;
             float tightest = TightestBendRadius(pts);
+            Vector3 lastCentre = Vector3.Zero; float minGap = float.MaxValue, maxGap = 0f;
 
             for (int i = 0; i < n; i++)
             {
@@ -227,8 +228,16 @@ namespace UnturnedGodot
                 var dir = chord.Normalized();
 
                 var centre = (p0 + p1) * 0.5f;
+                if (i > 0) { float gap = new Vector3(centre.X - lastCentre.X, 0f, centre.Z - lastCentre.Z).Length();
+                             minGap = Mathf.Min(minGap, gap); maxGap = Mathf.Max(maxGap, gap); }
+                lastCentre = centre;
                 if (terr != null) centre.Y = terr.SampleHeight(centre.X, centre.Z);
-                float yaw = ProcIsland.YawForDir(dir.X, dir.Z) + (flip ? 180f : 0f);
+                // ⚠⚠ YawForDir TAKES PROC-FRAME COORDINATES, WHERE +Y IS WORLD −Z. Feeding it a world
+                // direction mirrors the run about the X axis -- and a straight run along X has dz = 0, so it
+                // looks PERFECT and only a curve bends into the error. Caught by the curved joint check
+                // (17.7 m holes) after master asked "is that meant to be a curve?"; the straight-run touch
+                // test passed throughout. Same negation as reference_unturned_coord_znegate.
+                float yaw = ProcIsland.YawForDir(dir.X, -dir.Z) + (flip ? 180f : 0f);
                 var basis = SeatedBasis(terr, centre, yaw);
                 var p = objects.Place(b0 + PostsSuffix, centre, basis);
                 var r = objects.Place(b0 + RailSuffix, centre, basis);
@@ -238,7 +247,11 @@ namespace UnturnedGodot
 
             Log.Print($"[editor-fence] {n}x {b0} over {n * SegmentLength:0.#} m of a {total:0.#} m path "
                     + $"({pts.Count} point(s)), rail on the {(flip ? "left" : "right")}"
-                    + (tightest < MinBendRadius ? $"  ⚠ tightest bend ~{tightest:0} m, under the {MinBendRadius:0} m a rigid segment can follow" : ""));
+                    + (maxGap > 0f ? $", centre spacing {minGap:0.###}..{maxGap:0.###} m" : "")
+                    + (float.IsPositiveInfinity(tightest) ? ", straight"
+                       : tightest < MinBendRadius
+                         ? $"  ⚠ tightest bend ~{tightest:0} m, under the {MinBendRadius:0} m a rigid segment can follow"
+                         : $", tightest bend ~{tightest:0} m"));
             return n;
         }
 

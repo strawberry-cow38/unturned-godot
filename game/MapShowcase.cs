@@ -63,12 +63,14 @@ namespace UnturnedGodot
                 if (c.Objects == null) return;
                 EditorFenceRoad.LayPath(c.Objects, c.Terr, new List<Vector3>
                 {
-                    // ⚠ A GENTLE arc: a rigid 16 m segment cannot follow a bend under MinBendRadius, and the
-                    // first version of this station used one tight enough (38 m) to trip the tool's own
-                    // warning -- a showcase that demonstrates the thing being warned about.
-                    c.Origin + new Vector3(-82f, 0f, -6f),
-                    c.Origin + new Vector3(  0f, 0f, 14f),
-                    c.Origin + new Vector3( 82f, 0f, -6f),
+                    // ⚠ THE ARC IS TUNED, not drawn by eye. Too tight and a rigid 16 m chord leaves a visible
+                    // wedge at the outside of every joint -- at the 55 m limit you can count them, and the
+                    // first version of this station was 38 m, i.e. a demo of the thing the tool warns about.
+                    // Too gentle (the second was ~180 m) and master's reasonable question is "is that meant
+                    // to be a curve?". Around 90 m reads as a bend and still joins cleanly.
+                    c.Origin + new Vector3(-72f, 0f, -8f),
+                    c.Origin + new Vector3(  0f, 0f, 10f),
+                    c.Origin + new Vector3( 72f, 0f, -8f),
                 }, false, false, null, null);
                 // ...and a BROKEN run set back behind it, so the wrecked variant is visible beside the intact
                 // one rather than being a mode you have to know about.

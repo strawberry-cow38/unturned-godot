@@ -50,6 +50,16 @@ namespace UnturnedGodot.Testing
             return string.Join("|", s);
         }
 
+        /// <summary>A placed prop's mesh bounds in WORLD space -- the only way to ask whether two segments
+        /// actually touch, as opposed to whether their origins are the right distance apart.</summary>
+        static Aabb? WorldAabb(Node3D root)
+        {
+            foreach (var c in root.GetChildren())
+                if (c is MeshInstance3D mi && mi.Mesh != null)
+                    return root.GlobalTransform * mi.Mesh.GetAabb();
+            return null;
+        }
+
         public override IEnumerable<Step> Run()
         {
             // ---- 1. THE SPLIT: posts + rail reassemble into the original, exactly.
@@ -116,6 +126,25 @@ namespace UnturnedGodot.Testing
             T.Check($"...and the first starts half a segment in, at the click ({centres[0].X:0.##} m)",
                     Mathf.Abs(centres[0].X - EditorFenceRoad.SegmentLength * 0.5f) < 0.01f);
 
+            // ⭐ AND THE RAILS ACTUALLY TOUCH. Centre spacing being right is necessary and NOT sufficient: it
+            // is also satisfied by segments whose MESH is shorter than the pitch, which would leave a hole at
+            // every joint while every number above stayed perfect. The showcase render looked exactly like
+            // that, so this measures the world-space bounds of consecutive rails instead of the origins.
+            var rails = new List<Node3D>();
+            foreach (var p in objs.PlacedOfNodes(EditorFenceRoad.Intact + "_Rail")) rails.Add(p);
+            rails.Sort((p1, p2) => p1.GlobalPosition.X.CompareTo(p2.GlobalPosition.X));
+            float worstHole = 0f; int measured = 0;
+            for (int i = 1; i < rails.Count; i++)
+            {
+                var a1 = WorldAabb(rails[i - 1]); var b1 = WorldAabb(rails[i]);
+                if (a1 == null || b1 == null) continue;
+                measured++;
+                float hole = b1.Value.Position.X - a1.Value.End.X;   // >0 means a visible hole along the run
+                worstHole = Mathf.Max(worstHole, hole);
+            }
+            T.Check($"consecutive rails meet: worst hole {worstHole:0.###} m over {measured} joint(s)",
+                    measured > 0 && worstHole < 0.05f);
+
             // ---- 3. CONTROL: shorter than one segment lays NOTHING. Without this, "it lays segments" is
             // satisfied by a tool that stretches or overlaps a prop to reach whatever was clicked.
             int b2 = objs.PlacedCount;
@@ -151,6 +180,25 @@ namespace UnturnedGodot.Testing
             T.Check($"...with the SAME {EditorFenceRoad.SegmentLength:0.##} m pitch round the bend "
                   + $"(worst error {cWorst:0.###} m over {cc.Count} segments, retail's own spread is 0.2)",
                     cc.Count == cn && cWorst < 0.25f);
+
+            // ⭐⭐ AND THE CURVED RUN'S SEGMENTS MEET TOO. An axis-aligned AABB is useless here -- rotated
+            // segments have inflated, overlapping AABBs, so the straight test's measure would pass trivially.
+            // This walks each segment's OWN length axis to its two ends instead: mesh local +Y is the prop's
+            // length, so end = origin + basis.Y * half, and the hole is the distance from one segment's end to
+            // the next one's start.
+            var xf = new List<Transform3D>();
+            foreach (var x in objs.PlacedOf(EditorFenceRoad.Intact + "_Rail"))
+                if (x.Origin.Z > 300f) xf.Add(x);
+            xf.Sort((p1, p2) => p1.Origin.X.CompareTo(p2.Origin.X));
+            float curveHole = 0f;
+            for (int i = 1; i < xf.Count; i++)
+            {
+                var endPrev = xf[i - 1].Origin + xf[i - 1].Basis.Y * (EditorFenceRoad.SegmentLength * 0.5f);
+                var startNow = xf[i].Origin - xf[i].Basis.Y * (EditorFenceRoad.SegmentLength * 0.5f);
+                curveHole = Mathf.Max(curveHole, endPrev.DistanceTo(startNow));
+            }
+            T.Check($"round the bend the segments still meet: worst joint {curveHole:0.###} m over "
+                  + $"{Mathf.Max(0, xf.Count - 1)} joint(s)", xf.Count > 1 && curveHole < 0.25f);
 
             // ⭐ CONTROL: the run actually BENT. Every check above passes on a tool that quietly laid a straight
             // line through the first two points and ignored the third.
