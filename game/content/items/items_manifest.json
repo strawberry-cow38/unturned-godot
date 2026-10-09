@@ -34972,10 +34972,9 @@
 "center": [
 0.0,
 -0.0418,
-0.0127
+-0.0127
 ],
 "color": null,
-"metal": true,
 "name": "Spoon",
 "obj": "9305.txt",
 "parts": 1,
