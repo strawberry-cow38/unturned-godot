@@ -87,6 +87,18 @@ namespace SDG.Unturned
         public bool Cut;
     }
 
+    /// <summary>One piece of a highway bridge (InfiniteRoads.BridgesIn), absolute metres. Kind 0 = a deck unit centred
+    /// here, 1 = a pier pair rooted here and stretched by K along its own long axis, 2 = an end cap. Dir is the run
+    /// direction INCLUDING the grade (a cap points it out of the bridge); the game turns it into the prop's basis with
+    /// the bridge tool's own convention, so the two placements cannot disagree.</summary>
+    public struct BridgePiece
+    {
+        public byte Kind;
+        public double X, Y, Z;
+        public float DX, DY, DZ;
+        public float K;
+    }
+
     /// <summary>A power-line pole beside a road (absolute metres), the road's direction there, and the next pole along
     /// the same line -- which may stand in the next region, so a region can string the span that leaves it.</summary>
     public struct PolePlacement
@@ -127,6 +139,7 @@ namespace SDG.Unturned
         public List<RoadPiece> Roads;
         /// <summary>Power-line poles standing in this region (LOD0/1 only).</summary>
         public List<PolePlacement> Poles;
+        public List<BridgePiece> Bridges;   // highway bridge pieces rooted in this region (all LODs)
         /// <summary>Grass, flowers, pebbles, bushes -- LOD0 only (it is only ever drawn within ~160-300 m).</summary>
         public List<FoliageSpawn> Foliage;
         public float MinHeight, MaxHeight;
@@ -382,6 +395,7 @@ namespace SDG.Unturned
             d.Foliage = lod == 0 ? PlaceFoliage(d) : null;
             d.Roads = Roads.PiecesIn(lines, ox, oz, ox + RegionSize, oz + RegionSize, Math.Max(4f, sp));
             d.Poles = lod <= 1 ? Roads.PolesIn(lines, ox, oz, ox + RegionSize, oz + RegionSize) : null;
+            d.Bridges = Roads.BridgesIn(lines, ox, oz, ox + RegionSize, oz + RegionSize);
             d.GenMs = (System.Diagnostics.Stopwatch.GetTimestamp() - t0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
             return d;
         }

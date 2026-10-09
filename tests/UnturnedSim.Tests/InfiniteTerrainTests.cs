@@ -303,6 +303,15 @@ namespace UnturnedSim.Tests
         /// unmarked run may be. Each carriageway on its own (strawberry: "both lanes may candidate separately").</summary>
         void CheckStretches(bool cut)
         {
+            // the marking is judged against the carve that WOULD lift a raised stretch: with bridges on, the ground
+            // under one is left natural on purpose (BridgesLeaveTheGroundAndJoinUp), so measure with them off
+            bool bridges = InfiniteRoads.Bridges;
+            InfiniteRoads.Bridges = false;
+            try { CheckStretchesWith(cut); } finally { InfiniteRoads.Bridges = bridges; }
+        }
+
+        void CheckStretchesWith(bool cut)
+        {
             // how far the carve moved the ground, in the direction this kind is about (up = raised, down = cut)
             float Moved(double x, double z) => (cut ? -1f : 1f) * (Gen.HeightAt(x, z) - Gen.NaturalHeight(x, z));
             float threshold = cut ? InfiniteRoads.CutDepth : InfiniteRoads.RaiseFill, minLength = cut ? InfiniteRoads.CutMinLength : InfiniteRoads.RaiseMinLength;
@@ -367,6 +376,90 @@ namespace UnturnedSim.Tests
             TestContext.WriteLine($"{stretches} {(cut ? "cut" : "raised")} stretches ({wet} over water), biggest {biggest:0.0} m; at {peaks} peaks the carve moves the whole width by >= {worstPeak:0.0} m; longest unmarked run {worstUnmarkedRun:0} m {worstWhere}");
             Assert.That(stretches, Is.GreaterThan(5)); Assert.That(peaks, Is.GreaterThan(3));
             Assert.That(worstUnmarkedRun, Is.LessThan(minLength), "a moved run the marking missed");
+        }
+
+        [Test]
+        public void BridgesLeaveTheGroundAndJoinUp()
+        {
+            // the kit numbers the core copies from the game's EditorBridgeSpline (asserted equal there, in L1)
+            const float P = InfiniteRoads.BridgePitch, W = InfiniteRoads.BridgeHalfWidth;
+            int bridges = 0, decks = 0, piers = 0, joints = 0, raised = 0;
+            double worstGap = 0, worstPierFoot = 0, worstPierTop = 0, worstOff = 0, worstGround = 0, liftOff = 0; int liftN = 0;
+            string groundWhere = "", gapWhere = ""; int overpasses = 0, atGrade = 0;
+            for (int axis = 0; axis < 2; axis++)
+                for (long band = -2; band <= 1; band++)
+                    for (long k = -4; k <= 3; k++)
+                    {
+                        if (Gen.Roads.HighwayCentreline(axis, band, k) == null) continue;
+                        foreach (var (r, _) in Gen.Roads.RaisedOf(axis, band, k)) if (r.Length >= P) raised++;
+                        var lanes = new[] { Gen.Roads.HighwayCarriageway(axis, band, k, -1), Gen.Roads.HighwayCarriageway(axis, band, k, 1) };
+                        BridgePiece? prevDeck = null;
+                        foreach (var p in Gen.Roads.BridgesOf(axis, band, k))
+                        {
+                            if (p.Kind == 2) { if (prevDeck != null) bridges++; prevDeck = null; continue; }   // caps close a bridge (two per bridge)
+                            if (p.Kind == 1)
+                            {
+                                piers++;
+                                // foot on the NATURAL ground, top 1.02 m up inside the deck it hangs from (retail's joint)
+                                worstPierFoot = Math.Max(worstPierFoot, Math.Abs(p.Y + InfiniteRoads.PierBottom * p.K - Gen.NaturalHeight(p.X, p.Z)));
+                                if (prevDeck is BridgePiece dk) worstPierTop = Math.Max(worstPierTop, Math.Abs(p.Y + InfiniteRoads.PierTop * p.K - (dk.Y + InfiniteRoads.PierTop)));
+                                continue;
+                            }
+                            decks++;
+                            // ON a carriageway centreline, at its road height
+                            double off = double.MaxValue; float dh = 0;
+                            foreach (var lane in lanes)
+                                for (int i = 0; i + 1 < lane.Length; i++)
+                                {
+                                    double sx = lane[i + 1].x - lane[i].x, sz = lane[i + 1].z - lane[i].z, qx = p.X - lane[i].x, qz = p.Z - lane[i].z;
+                                    double t = Math.Clamp((qx * sx + qz * sz) / (sx * sx + sz * sz), 0, 1);
+                                    double d = Math.Sqrt((qx - sx * t) * (qx - sx * t) + (qz - sz * t) * (qz - sz * t));
+                                    if (d < off) { off = d; dh = (float)(p.Y - (lane[i].h + (lane[i + 1].h - lane[i].h) * t)); }
+                                }
+                            worstOff = Math.Max(worstOff, off);
+                            Assert.That(Math.Abs(dh), Is.LessThan(0.25f), "a deck unit off its road's height");
+                            // nothing under it was carved: the ground stays natural (and with bridges off it would not)
+                            double moved = Math.Abs(Gen.HeightAt(p.X, p.Z) - Gen.NaturalHeight(p.X, p.Z));
+                            // ...unless a DIFFERENT road shapes it. Measured: another highway 6.5 m below a deck at
+                            // (-17176, -7642) -- an overpass, fine -- and a MAIN road at the deck's own height at
+                            // (19483, 21920), climbing on its own embankment to meet the bridge AT GRADE: roads still
+                            // cross highways at grade (no interchanges), so that is counted and reported, not hidden here
+                            var under = Gen.Roads.Influence(p.X, p.Z);
+                            if (under.Any && under.Kind != RoadKind.Highway) { atGrade++; moved = 0; }
+                            else if (under.Any && Math.Abs(under.Height - p.Y) > 1f) { overpasses++; moved = 0; }
+                            if (moved > worstGround) { worstGround = moved; var hit = Gen.Roads.Influence(p.X, p.Z); groundWhere = $" at ({p.X:0.0}, {p.Z:0.0}): carved by a {hit.Kind} {hit.Dist:0.0} m off at road height {hit.Height:0.0}, deck y {p.Y:0.0}, natural {Gen.NaturalHeight(p.X, p.Z):0.0}"; }
+                            InfiniteRoads.Bridges = false;
+                            try { liftOff += Gen.HeightAt(p.X, p.Z) - Gen.NaturalHeight(p.X, p.Z); liftN++; } finally { InfiniteRoads.Bridges = true; }
+                            // the JOINT with the previous unit: its front outer corner must meet this one's back corner
+                            if (prevDeck is BridgePiece a)
+                            {
+                                joints++;
+                                double ah = Math.Sqrt(a.DX * a.DX + a.DZ * a.DZ), bh = Math.Sqrt(p.DX * p.DX + p.DZ * p.DZ);
+                                double alx = -a.DZ / ah, alz = a.DX / ah, blx = -p.DZ / bh, blz = p.DX / bh;
+                                double gap = 0;
+                                for (int s = -1; s <= 1; s += 2)
+                                {
+                                    double fx = a.X + a.DX * P * 0.5 + alx * s * W, fz = a.Z + a.DZ * P * 0.5 + alz * s * W;
+                                    double bx = p.X - p.DX * P * 0.5 + blx * s * W, bz = p.Z - p.DZ * P * 0.5 + blz * s * W;
+                                    // signed: positive = daylight between them along the run, negative = solid inside solid
+                                    double along = (bx - fx) * (a.DX / ah) + (bz - fz) * (a.DZ / ah);
+                                    gap = Math.Max(gap, along);
+                                }
+                                if (gap > worstGap) { worstGap = gap; gapWhere = $" at ({p.X:0}, {p.Z:0})"; }
+                            }
+                            prevDeck = p;
+                        }
+                    }
+            TestContext.WriteLine($"{bridges} bridges over {raised} raised stretches: {decks} deck units, {piers} piers, {joints} joints; worst joint daylight {worstGap * 100:0.00} cm{gapWhere}; " +
+                                  $"decks within {worstOff:0.00} m of a carriageway; pier feet {worstPierFoot * 1000:0.0} mm off the ground, tops {worstPierTop * 1000:0.0} mm off the deck; " +
+                                  $"ground under decks moved {worstGround:0.000} m{groundWhere}, {overpasses} decks over another highway, {atGrade} where a lesser road meets the deck at grade (with bridges off it would rise {liftOff / Math.Max(1, liftN):0.0} m on average)");
+            Assert.That(bridges, Is.EqualTo(raised), "every raised stretch at least a unit long gets its bridge");
+            Assert.That(decks, Is.GreaterThan(50)); Assert.That(piers, Is.GreaterThan(5)); Assert.That(joints, Is.GreaterThan(40));
+            Assert.That(worstOff, Is.LessThan(0.5), "a deck unit off its carriageway");
+            Assert.That(worstGap, Is.LessThan(0.02), "daylight at a deck joint");
+            Assert.That(worstPierFoot, Is.LessThan(0.01)); Assert.That(worstPierTop, Is.LessThan(0.01));
+            Assert.That(worstGround, Is.LessThan(0.01), "the carve raised ground under a bridge");
+            Assert.That(liftOff / Math.Max(1, liftN), Is.GreaterThan(2.0), "control: without bridges the same spots ARE embanked");
         }
 
         [Test]

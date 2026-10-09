@@ -72,7 +72,7 @@ namespace UnturnedGodot
         public static int MaxRing => LodRing[LodRing.Length - 1];
 
         // ---- diagnostics (the overlay and the tests read these) ----
-        public int Rebases, Rescues, Committed, TreeCount, FoliageCount, ImpostorCount;
+        public int Rebases, Rescues, Committed, TreeCount, FoliageCount, ImpostorCount, BridgeCount;
         public double GenMsTotal; public int GenCount;
         public readonly int[] LoadedByLod = new int[4];
         public int Colliders => _colliders;
@@ -102,6 +102,9 @@ namespace UnturnedGodot
             public int FoliageCount;
             public (Vector3 P, float S, int Cell)[] ImpTrees;   // billboard placements on the DISPLAYED LOD's ground
             public MultiMeshInstance3D Impostors;   // ring >= ImpostorRing
+            public List<Transform3D>[] BridgeXf;    // [deck, pier, cap], region-local, from the first build (LOD-independent)
+            public Node3D Bridges;                  // the bridge MultiMeshes, every ring
+            public Node3D BridgeBodies;             // deck colliders, ring <= ColliderRing
         }
 
         sealed class Job { public RegionCoord C; public int Lod; }
@@ -117,6 +120,7 @@ namespace UnturnedGodot
             public RoadMesh[] Road;   // per RoadKind, null where the region has none of that class
             public List<(Transform3D Pole, bool HasNext, Transform3D Next)> Poles;
             public (Vector3 P, float S, int Cell)[] ImpTrees;
+            public List<Transform3D>[] BridgeXf;
         }
 
         readonly Dictionary<RegionCoord, Region> _regions = new();
@@ -255,6 +259,7 @@ namespace UnturnedGodot
             if (r.Trees != null) TreeCount -= r.TreeList?.Count ?? 0;
             if (r.Foliage != null) FoliageCount -= r.FoliageCount;
             if (r.Impostors != null) ImpostorCount -= r.Impostors.Multimesh.InstanceCount;
+            if (r.Bridges != null) BridgeCount -= r.BridgeXf[0].Count;
             r.Node.QueueFree();
             _regions.Remove(c);
             _pendingTrees.Remove(c);
@@ -279,6 +284,8 @@ namespace UnturnedGodot
                 TreeCount -= r.TreeList?.Count ?? 0;
             }
 
+            if (ring <= ColliderRing && r.BridgeBodies == null && r.BridgeXf != null && r.BridgeXf[0].Count > 0) { r.BridgeBodies = BuildDeckBodies(r.BridgeXf[0]); r.Node.AddChild(r.BridgeBodies); }
+            else if (ring > ColliderRing + 1 && r.BridgeBodies != null) { r.BridgeBodies.QueueFree(); r.BridgeBodies = null; }
             if (ring <= ColliderRing && r.TreeBodies == null && r.TreeList != null) { r.TreeBodies = BuildTrunks(r.TreeList); r.Node.AddChild(r.TreeBodies); }
             else if (ring > ColliderRing + 1 && r.TreeBodies != null) { r.TreeBodies.QueueFree(); r.TreeBodies = null; }
 
@@ -343,6 +350,7 @@ namespace UnturnedGodot
                 if (b.D.Trees != null && r.TreeList == null) { r.TreeList = b.D.Trees; _pendingTrees[r.C] = b.TreeXf; }
                 if (b.FoliageXf != null && r.FoliageXf == null) r.FoliageXf = b.FoliageXf;
                 if (b.Poles != null && r.PoleXf == null) r.PoleXf = b.Poles;
+                AdoptBridges(r, b);
                 if (useful)
                 {
                     Apply(r, b);
@@ -748,6 +756,72 @@ void fragment() {
             return new Transform3D(basis, new Vector3(lx, y - 0.3f, lz));   // a little sunk, so a pole on a slope never floats
         }
 
+        // ---- bridges (strawberry 2026-10-09: "implementing the bridges"): cow tools' Bridge_Line_1 kit, one MultiMesh per
+        // prop per region -- the deck unit repeats hundreds of times, which is exactly what a MultiMesh is for.
+        static readonly string[] BridgeProps = { EditorBridgeSpline.DeckUnit, EditorBridgeSpline.PierUnit, EditorBridgeSpline.DeckCap };
+        static readonly ArrayMesh[] _bridgeMesh = new ArrayMesh[3];
+        static readonly Material[] _bridgeMat = new Material[3];
+        static Shape3D _deckShape;
+
+        static void LoadBridgeKit(int i)
+        {
+            if (_bridgeMesh[i] != null) return;
+            string dir = ProjectSettings.GlobalizePath("res://content/objects/");
+            _bridgeMesh[i] = ObjMesh.Load(dir + BridgeProps[i] + ".obj");
+            var mat = new StandardMaterial3D { Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled, TextureFilter = BaseMaterial3D.TextureFilterEnum.NearestWithMipmaps };
+            var img = new Image();
+            string tp = dir + BridgeProps[i] + "_tex.png";
+            if (System.IO.File.Exists(tp) && ContentProvider.LoadOk(img, tp)) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); }
+            else mat.AlbedoColor = new Color(0.60f, 0.58f, 0.55f);
+            _bridgeMat[i] = mat;
+        }
+
+        /// <summary>Take a region's bridge pieces from its first build (they do not depend on LOD) and draw them. BOTH
+        /// paths that commit a build call this -- the streaming commit and SyncGround -- because SyncGround is what a
+        /// spawn or teleport uses for the 3x3 under the player, and it never re-commits those regions afterwards.</summary>
+        void AdoptBridges(Region r, Built b)
+        {
+            if (b.BridgeXf == null || r.BridgeXf != null) return;
+            r.BridgeXf = b.BridgeXf;
+            if (r.BridgeXf[0].Count + r.BridgeXf[1].Count + r.BridgeXf[2].Count > 0) { r.Bridges = BuildBridges(r.BridgeXf); r.Node.AddChild(r.Bridges); }
+        }
+
+        Node3D BuildBridges(List<Transform3D>[] xf)
+        {
+            var holder = new Node3D { Name = "Bridges" };
+            for (int i = 0; i < 3; i++)
+            {
+                if (xf[i].Count == 0) continue;
+                LoadBridgeKit(i);
+                if (_bridgeMesh[i] == null) continue;
+                var mm = new MultiMesh { TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, Mesh = _bridgeMesh[i] };
+                mm.InstanceCount = xf[i].Count;   // format BEFORE count
+                for (int k = 0; k < xf[i].Count; k++) mm.SetInstanceTransform(k, xf[i][k]);
+                var mmi = new MultiMeshInstance3D { Name = BridgeProps[i], Multimesh = mm, MaterialOverride = _bridgeMat[i] };
+                mmi.AddToGroup(NearestFilter.KeepFilterGroup);
+                holder.AddChild(mmi);
+            }
+            BridgeCount += xf[0].Count;
+            return holder;
+        }
+
+        /// <summary>One trimesh body per deck unit, so a car drives across. Shared shape: every unit is the same prop.</summary>
+        static Node3D BuildDeckBodies(List<Transform3D> decks)
+        {
+            LoadBridgeKit(0);
+            var holder = new Node3D { Name = "BridgeBodies" };
+            if (_bridgeMesh[0] == null) return holder;
+            _deckShape ??= _bridgeMesh[0].CreateTrimeshShape();
+            foreach (var t in decks)
+            {
+                var body = new StaticBody3D { CollisionLayer = 1u << 0, Transform = t };
+                body.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Concrete);
+                body.AddChild(new CollisionShape3D { Shape = _deckShape });
+                holder.AddChild(body);
+            }
+            return holder;
+        }
+
         static Node3D BuildTrunks(List<TreeSpawn> trees)
         {
             var holder = new Node3D { Name = "TreeTrunks" };
@@ -861,7 +935,9 @@ void fragment() {
                     r.TreeList = b.D.Trees; _pendingTrees[c] = b.TreeXf;
                     r.FoliageXf ??= b.FoliageXf;
                     r.PoleXf ??= b.Poles;
+                    AdoptBridges(r, b);   // ⚠ this path is how a teleport builds the 3x3 -- miss it and the bridges beside you never appear
                     Apply(r, b);
+                    r.ImpTrees = b.ImpTrees;
                     UpdateExtras(r, c.RingTo(center));
                 }
         }
@@ -1009,6 +1085,7 @@ void fragment() {
                 double ox = d.Coord.MinX, oz = d.Coord.MinZ;
                 foreach (var rp in d.Roads)
                 {
+                    if (rp.Raised && InfiniteRoads.Bridges && !ShowMarks) continue;   // the bridge deck carries its own roadway
                     int kind = rp.Kind, slot = !ShowMarks ? kind : rp.Raised ? RaisedSlot : rp.Cut ? CutSlot : kind;
                     lists[slot].V ??= new List<Vector3>(); lists[slot].N ??= new List<Vector3>(); lists[slot].UV ??= new List<Vector2>(); lists[slot].I ??= new List<int>();
                     var RV = lists[slot].V; var RN = lists[slot].N; var RUV = lists[slot].UV; var RI = lists[slot].I;
@@ -1033,6 +1110,26 @@ void fragment() {
                 for (int k = 0; k < RoadSlots; k++)
                     if (lists[k].V != null)
                         roadMeshes[k] = new RoadMesh { V = lists[k].V.ToArray(), N = lists[k].N.ToArray(), UV = lists[k].UV.ToArray(), I = lists[k].I.ToArray() };
+            }
+
+            // bridges: the bridge TOOL's own bases (EditorBridgeSpline.DeckBasis / StandBasis) on the core's walk, so the
+            // infinite world lays the kit exactly the way the editor does -- ripped props, Z-up, length on local +Y
+            List<Transform3D>[] bridgeXf = null;
+            if (d.Bridges != null)
+            {
+                bridgeXf = new[] { new List<Transform3D>(), new List<Transform3D>(), new List<Transform3D>() };
+                double bx0 = d.Coord.MinX, bz0 = d.Coord.MinZ;
+                foreach (var bp in d.Bridges)
+                {
+                    var dir = new Vector3(bp.DX, bp.DY, bp.DZ);
+                    var at = new Vector3((float)(bp.X - bx0), (float)bp.Y, (float)(bp.Z - bz0));
+                    if (bp.Kind == 1)
+                    {
+                        var up = EditorBridgeSpline.StandBasis(dir);
+                        bridgeXf[1].Add(new Transform3D(new Basis(up.X, up.Y, up.Z * bp.K), at));   // stretched on its OWN long axis
+                    }
+                    else bridgeXf[bp.Kind == 0 ? 0 : 2].Add(new Transform3D(EditorBridgeSpline.DeckBasis(dir), at));
+                }
             }
 
             List<(Transform3D, bool, Transform3D)> poles = null;
@@ -1063,7 +1160,7 @@ void fragment() {
                     list.Add(new Transform3D(basis, new Vector3(f.X, f.Y, f.Z)));
                 }
             }
-            return new Built { D = d, V = V.ToArray(), N = N.ToArray(), UV = UV.ToArray(), I = I.ToArray(), S0 = s0, S1 = s1, SplatSize = v, TreeXf = trees, ImpTrees = imp, FoliageXf = foliage,
+            return new Built { D = d, V = V.ToArray(), N = N.ToArray(), UV = UV.ToArray(), I = I.ToArray(), S0 = s0, S1 = s1, SplatSize = v, TreeXf = trees, ImpTrees = imp, BridgeXf = bridgeXf, FoliageXf = foliage,
                                Road = roadMeshes, Poles = poles };
         }
 

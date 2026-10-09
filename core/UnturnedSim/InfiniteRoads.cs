@@ -81,6 +81,7 @@ namespace SDG.Unturned
             /// carve has dug a trench through a hill, and a tunnel is the candidate.</summary>
             public List<Stretch> Cut;
             public bool[][] RaisedSeg, CutSeg;   // [carriageway: 0 = -offset side, 1 = +offset side][segment] (what PiecesIn copies onto pieces)
+            public List<BridgePiece> BridgePieces;   // the bridges over this line's Raised stretches, walked once with the line
             public bool Exists => X != null;
             public int Segments => X.Length - 1;
         }
@@ -107,6 +108,19 @@ namespace SDG.Unturned
         public static readonly float CutDepth = EnvF("UG_INF_CUT", 6f);      // m of cut under the whole carriageway
         public const float CutMinLength = 40f;      // a tunnel shorter than this is a culvert
         public const float CutMergeGap = 40f;
+        // ---- BRIDGES over the raised stretches (strawberry 2026-10-09: "implementing the bridges"). The kit is cow tools'
+        // Bridge_Line_1 cut (EditorBridgeSpline): a 7.8349 m deck unit, a pier pair, an end cap. These numbers are
+        // THAT tool's, copied because core cannot see the game; L1 world.inf_bridge_kit_matches asserts they agree.
+        /// <summary>UG_INF_BRIDGES=0: no bridges -- raised stretches stay embankments under the road ribbon, as before.</summary>
+        public static bool Bridges = Environment.GetEnvironmentVariable("UG_INF_BRIDGES") != "0";
+        public const float BridgePitch = 7.8349f;        // one lane-dash period of the deck's own paint
+        public const float BridgeHalfWidth = 8.5f;       // the deck's half-width: sets how much a joint closes on a bend
+        public const float DeckSoffit = -4.00f, DeckParapetTop = 1.25f;
+        public const float PierTop = -2.98f, PierBottom = -52.98f;
+        public const float PierSpan = PierTop - PierBottom;
+        public const float MinPierDrop = DeckParapetTop - DeckSoffit;   // the deck's own thickness
+        public const int PierEveryUnits = 6;             // retail's one pair per 48 m span
+
         static float EnvF(string name, float fallback) =>
             float.TryParse(Environment.GetEnvironmentVariable(name), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float v) && v > 0f ? v : fallback;
         /// <summary>Why each highway segment that does not exist was dropped (diagnostics; a dropped segment is a dead end).</summary>
@@ -459,6 +473,83 @@ namespace SDG.Unturned
                 (var cuts, e.CutSeg[si]) = Stretches(e, arc, deep, cut, null, CutMinLength, CutMergeGap, side);
                 e.Raised.AddRange(raised); e.Cut.AddRange(cuts);
             }
+            e.BridgePieces = new List<BridgePiece>();
+            foreach (var s in e.Raised) WalkBridge(e, s, e.BridgePieces);
+        }
+
+        /// <summary>Lay one carriageway's bridge over a raised stretch: deck units at BridgePitch along the carriageway,
+        /// each joint closed on a bend by the tiling rule (SplineTiling.OverlapFor: back off halfWidth*turn, at most
+        /// half a pitch -- free on a straight), a pier pair every PierEveryUnits where the drop clears the deck's own
+        /// thickness, and a cap at each end. Pier: top at deckY + PierTop (1.02 m up inside the deck, retail's own
+        /// joint), foot on the NATURAL ground -- under a bridge the carve leaves the ground alone.</summary>
+        void WalkBridge(Line e, Stretch st, List<BridgePiece> outp)
+        {
+            // the carriageway as a polyline, a little past each end so the deck reaches the stretch's ends
+            var pts = CarriagewayPts(e, st.Side, Math.Max(0, st.I0 - 1), Math.Min(e.X.Length - 1, st.I1 + 1));
+            int n = pts.Length;
+            var arc = new double[n];
+            for (int i = 1; i < n; i++) arc[i] = arc[i - 1] + Math.Sqrt((pts[i].x - pts[i - 1].x) * (pts[i].x - pts[i - 1].x) + (pts[i].z - pts[i - 1].z) * (pts[i].z - pts[i - 1].z));
+            // only the stretch itself is bridged: start and end at its own first and last points
+            double a0 = st.I0 > 0 ? arc[1] : 0, a1 = st.I1 < e.X.Length - 1 ? arc[n - 2] : arc[n - 1];
+            (double x, double y, double z) At(double s)
+            {
+                s = Math.Clamp(s, 0, arc[n - 1]);
+                int k = 0; while (k < n - 2 && arc[k + 1] < s) k++;
+                double t = (s - arc[k]) / Math.Max(1e-9, arc[k + 1] - arc[k]);
+                return (pts[k].x + (pts[k + 1].x - pts[k].x) * t, pts[k].h + (pts[k + 1].h - pts[k].h) * t, pts[k].z + (pts[k + 1].z - pts[k].z) * t);
+            }
+            (double x, double y, double z) Dir((double x, double y, double z) p, (double x, double y, double z) q)
+            {
+                double dx = q.x - p.x, dy = q.y - p.y, dz = q.z - p.z, l = Math.Sqrt(dx * dx + dy * dy + dz * dz);
+                return l < 1e-9 ? (1, 0, 0) : (dx / l, dy / l, dz / l);
+            }
+            int units = 0;
+            (double x, double y, double z) firstMid = default, lastMid = default, firstDir = default, lastDir = default;
+            for (double s = a0; s + BridgePitch <= a1 + 1e-3;)
+            {
+                var p0 = At(s); var p1 = At(s + BridgePitch);
+                var dir = Dir(p0, p1);
+                var mid = ((p0.x + p1.x) * 0.5, (p0.y + p1.y) * 0.5, (p0.z + p1.z) * 0.5);
+                outp.Add(new BridgePiece { Kind = 0, X = mid.Item1, Y = mid.Item2, Z = mid.Item3, DX = (float)dir.x, DY = (float)dir.y, DZ = (float)dir.z, K = 1f });
+                if (units == 0) { firstMid = mid; firstDir = dir; }
+                lastMid = mid; lastDir = dir;
+                if (units % PierEveryUnits == 0)
+                {
+                    float ground = _t.RawHeight(mid.Item1, mid.Item3);
+                    double drop = (mid.Item2 + DeckSoffit) - ground;
+                    if (drop >= MinPierDrop)
+                    {
+                        double k = (mid.Item2 + PierTop - ground) / PierSpan;
+                        outp.Add(new BridgePiece { Kind = 1, X = mid.Item1, Y = ground - PierBottom * k, Z = mid.Item3, DX = (float)dir.x, DY = (float)dir.y, DZ = (float)dir.z, K = (float)k });
+                    }
+                }
+                units++;
+                var nd = Dir(At(s + BridgePitch), At(s + 2 * BridgePitch));
+                double hx = dir.x, hz = dir.z, hl = Math.Sqrt(hx * hx + hz * hz), nx = nd.x, nz = nd.z, nl = Math.Sqrt(nx * nx + nz * nz);
+                double turn = hl > 1e-9 && nl > 1e-9 ? Math.Acos(Math.Clamp((hx * nx + hz * nz) / (hl * nl), -1.0, 1.0)) : 0;
+                double overlap = Math.Min(BridgeHalfWidth * turn, BridgePitch * 0.5);
+                s += BridgePitch - overlap;
+            }
+            if (units == 0) return;
+            // end caps, facing OUT: the far one along the run, the near one against it
+            outp.Add(new BridgePiece { Kind = 2, X = lastMid.x + lastDir.x * BridgePitch * 0.5, Y = lastMid.y + lastDir.y * BridgePitch * 0.5, Z = lastMid.z + lastDir.z * BridgePitch * 0.5,
+                                       DX = (float)lastDir.x, DY = (float)lastDir.y, DZ = (float)lastDir.z, K = 1f });
+            outp.Add(new BridgePiece { Kind = 2, X = firstMid.x - firstDir.x * BridgePitch * 0.5, Y = firstMid.y - firstDir.y * BridgePitch * 0.5, Z = firstMid.z - firstDir.z * BridgePitch * 0.5,
+                                       DX = -(float)firstDir.x, DY = -(float)firstDir.y, DZ = -(float)firstDir.z, K = 1f });
+        }
+
+        /// <summary>The bridge pieces whose root lies in the rectangle (each piece belongs to exactly one region).</summary>
+        public List<BridgePiece> BridgesIn(List<Line> lines, double x0, double z0, double x1, double z1)
+        {
+            var list = new List<BridgePiece>();
+            if (!Bridges) return list;
+            foreach (var e in lines)
+            {
+                if (e.BridgePieces == null || e.MaxX < x0 || e.MinX > x1 || e.MaxZ < z0 || e.MinZ > z1) continue;
+                foreach (var p in e.BridgePieces)
+                    if (p.X >= x0 && p.X < x1 && p.Z >= z0 && p.Z < z1) list.Add(p);
+            }
+            return list;
         }
 
         /// <summary>Fill and cut under one carriageway at dense point i: the smallest of the three samples (centre and
@@ -676,7 +767,7 @@ namespace SDG.Unturned
             foreach (var e in lines)
             {
                 if (x < e.MinX || x > e.MaxX || z < e.MinZ || z > e.MaxZ) continue;
-                float best = float.MaxValue, bh = 0f;
+                float best = float.MaxValue, bh = 0f; int bestK = -1; bool bestRight = false;
                 for (int c = 0; c < e.CMinX.Length; c++)
                 {
                     if (x < e.CMinX[c] || x > e.CMaxX[c] || z < e.CMinZ[c] || z > e.CMaxZ[c]) continue;
@@ -688,13 +779,16 @@ namespace SDG.Unturned
                         double t = Math.Clamp((qx * sx + qz * sz) / (sx * sx + sz * sz), 0.0, 1.0);
                         double ex = qx - sx * t, ez = qz - sz * t;
                         float dist = (float)Math.Sqrt(ex * ex + ez * ez);
-                        if (dist < best) { best = dist; bh = e.H[k] + (e.H[k + 1] - e.H[k]) * (float)t; }
+                        if (dist < best) { best = dist; bh = e.H[k] + (e.H[k + 1] - e.H[k]) * (float)t; bestK = k; bestRight = -ex * sz + ez * sx >= 0; }
                     }
                 }
                 if (best == float.MaxValue) continue;
                 float half = PavedHalf(e.Kind), sh = Shoulder(e.Kind);
                 hit.Clear = Math.Min(hit.Clear, best - half);
                 if (best >= half + sh) continue;
+                // UNDER A BRIDGE the carve leaves the ground alone: the deck spans it, piers stand on it. Per carriageway,
+                // so a road along a side slope keeps its embankment on the side that is not bridged.
+                if (Bridges && e.RaisedSeg != null && bestK >= 0 && e.RaisedSeg[bestRight ? 1 : 0][bestK]) continue;
                 float w = Smoothstep(half + sh, half, best);
                 // strongest carve wins; inside two corridors at once, the one you are deeper inside
                 if (!hit.Any || w > hit.Weight + 1e-6f || (w >= hit.Weight - 1e-6f && best - half < hit.Dist - PavedHalf(hit.Kind)))
@@ -857,6 +951,16 @@ namespace SDG.Unturned
                 pts[i - i0] = (e.X[i] - tz / tl * side * HighwayRibbonOffset, e.Z[i] + tx / tl * side * HighwayRibbonOffset, e.H[i]);
             }
             return pts;
+        }
+        /// <summary>Test accessor: the bridge pieces of a highway segment (and of the far side of a water gap), in walk
+        /// order -- each bridge's decks and piers, then its two caps.</summary>
+        public List<BridgePiece> BridgesOf(int axis, long band, long k)
+        {
+            var e = Highway(axis, band, k);
+            var r = new List<BridgePiece>();
+            if (e.Exists && e.BridgePieces != null) r.AddRange(e.BridgePieces);
+            if (e.Branches != null) foreach (var b in e.Branches) if (b.BridgePieces != null) r.AddRange(b.BridgePieces);
+            return r;
         }
         /// <summary>Test accessor: one carriageway of a highway segment, as a centreline.</summary>
         public (double x, double z, float h)[] HighwayCarriageway(int axis, long band, long k, int side)

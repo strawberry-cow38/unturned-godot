@@ -97,6 +97,13 @@ namespace UnturnedGodot.Testing
             T.Check($"the player is standing on it (y {P(p).Y:0.00}, ground {ground0:0.00})",
                 P(p).Y > ground0 - 0.3f && P(p).Y < ground0 + 2.5f);
             T.Check($"trees grew ({S.TreeCount})", S.TreeCount > 0);
+            // the core lays the bridge kit with numbers copied from the bridge tool (core cannot see the game): they must agree
+            T.Check($"the infinite world's bridge kit is the bridge tool's (pitch {InfiniteRoads.BridgePitch} / {EditorBridgeSpline.Pitch}, half-width {InfiniteRoads.BridgeHalfWidth} / {EditorBridgeSpline.HalfWidth})",
+                InfiniteRoads.BridgePitch == EditorBridgeSpline.Pitch && InfiniteRoads.BridgeHalfWidth == EditorBridgeSpline.HalfWidth
+                && InfiniteRoads.DeckSoffit == EditorBridgeSpline.DeckSoffit && InfiniteRoads.DeckParapetTop == EditorBridgeSpline.DeckParapetTop
+                && InfiniteRoads.PierTop == EditorBridgeSpline.PierTop && InfiniteRoads.PierBottom == EditorBridgeSpline.PierBottom
+                && InfiniteRoads.PierEveryUnits == EditorBridgeSpline.PierEveryUnits && InfiniteRoads.MinPierDrop == EditorBridgeSpline.MinPierDrop);
+
             T.Check($"ground cover grew round the player: {S.FoliageCount:N0} grass/flowers/pebbles/bushes", S.FoliageCount > 50000);
             float spawnRoad = S.Gen.RoadClearance(S.AbsX(P(p).X), S.AbsZ(P(p).Z));
             T.Check($"spawned beside a road ({spawnRoad:0.0} m from its asphalt)", spawnRoad > 0f && spawnRoad < 40f);
@@ -191,6 +198,28 @@ namespace UnturnedGodot.Testing
             yield return Wait(Settled, 60);
             l = S.LoadedByLod;
             T.Check($"...and the rings refill there: L0 {l[0]} L1 {l[1]} L2 {l[2]} L3 {l[3]}", l[0] == 25 && l[1] == 56 && l[2] == 144 && l[3] == 304);
+            // ---- 5. A BRIDGE: stand beside the first raised highway stretch the generator knows of, and drive-test its deck
+            BridgePiece? deck = null;
+            for (int axis = 0; axis < 2 && deck == null; axis++)
+                for (long band = -1; band <= 0 && deck == null; band++)
+                    for (long k = -2; k <= 1 && deck == null; k++)
+                        foreach (var bp in S.Gen.Roads.BridgesOf(axis, band, k))
+                            if (bp.Kind == 0) { deck = bp; break; }
+            T.Check("the generator has a bridge to visit", deck != null);
+            if (deck is BridgePiece dk)
+            {
+                S.TeleportAbsolute(dk.X + 40.0, dk.Z + 40.0);
+                yield return Wait(Settled, 60);
+                yield return Ticks(5);
+                T.Check($"bridges stream in round it: {S.BridgeCount} deck units in range", S.BridgeCount > 0);
+                // the deck is a SURFACE: a ray dropped onto a deck unit's centre stops on its roadway, not on the valley floor
+                var top = S.ToLocal(dk.X, dk.Y + 30.0, dk.Z);
+                var hit = World.GetWorld3D().DirectSpaceState.IntersectRay(PhysicsRayQueryParameters3D.Create(top, top + Vector3.Down * 200f, 1u << 0));
+                float roadY = hit.Count > 0 ? ((Vector3)hit["position"]).Y : float.NaN;
+                float ground = S.Gen.NaturalHeight(dk.X, dk.Z);
+                T.Check($"a ray onto the deck stops on its roadway: y {roadY:0.00} vs deck {dk.Y:0.00} (natural ground {ground:0.0} below)",
+                    hit.Count > 0 && Mathf.Abs(roadY - (float)dk.Y) < 0.3f && dk.Y - ground > 2f);
+            }
             T.Check($"nobody was ever rescued from under the ground ({S.Rescues})", S.Rescues == 0);
         }
     }
