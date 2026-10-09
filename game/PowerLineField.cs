@@ -72,7 +72,17 @@ namespace UnturnedGodot
 
         readonly List<Pole> _poles = new();
         readonly List<Span> _spans = new();
-        MeshInstance3D _wires;
+        Node3D _wires;                                  // holder; one MeshInstance3D child per span
+        readonly List<MeshInstance3D> _wireNodes = new();
+
+        /// <summary>⭐ THE SAME NUMBER THE POLES CULL AT. Master: "make sure the wires are actually culled
+        /// when both the parent poles are culled." Set by whoever placed the poles, from the very
+        /// LodTable.CullDistance it handed their MeshInstance3D, so the two cannot drift. Left at the table's
+        /// default when nobody says otherwise.</summary>
+        public float PoleCullDistance = LodTable.DefaultCullDistance;
+
+        public int WireNodeCount => _wireNodes.Count;
+        public MeshInstance3D WireNode(int i) => i >= 0 && i < _wireNodes.Count ? _wireNodes[i] : null;
         ShaderMaterial _mat;
 
         public int PoleCount => _poles.Count;
@@ -103,12 +113,12 @@ namespace UnturnedGodot
             // sway test produced two BYTE-IDENTICAL frames six seconds apart.
             GrassDisplacers.EnsureGlobals();
             _mat = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/powerline_wire.gdshader") };
-            _wires = new MeshInstance3D
-            {
-                MaterialOverride = _mat,
-                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,   // a 9 cm wire casts a shadow nobody can see and every span would pay for it
-                Name = "Wires",
-            };
+            // ⚠⚠ ONE NODE PER SPAN, NOT ONE FOR THE WHOLE GRID. A single combined mesh can only be culled
+            // as a unit, so the wires either all drew or all vanished and in practice they drew forever --
+            // master: "make sure the wires are actually culled when both the parent poles are culled."
+            // Godot culls per MeshInstance3D, so the span is the granularity the question is asked at. This
+            // is the same shape FoliageField already uses for its cells.
+            _wires = new Node3D { Name = "Wires" };
             AddChild(_wires);
         }
 
@@ -120,6 +130,60 @@ namespace UnturnedGodot
         {
             var cam = GetViewport()?.GetCamera3D();
             WindField.PushGlobalsIfIdle(cam != null ? cam.GlobalPosition : GlobalPosition, delta);
+        }
+
+        /// <summary>How many spans meet at this pole. 1 = an end, 2 = a through pole, 3 = a tee, 4 = a cross.
+        /// There has never been a limit -- Connect only refuses self-wiring, duplicates and over-long spans --
+        /// so three- and four-way junctions already WIRED. What they did not do is face the right way.</summary>
+        public int Degree(int pole)
+        {
+            int n = 0;
+            foreach (var e in _spans) if (e.A == pole || e.B == pole) n++;
+            return n;
+        }
+
+        /// <summary>⭐⭐ THE YAW THIS POLE SHOULD STAND AT, given the wires it actually carries. Master: "add
+        /// support for 3 and 4 way connections too, the power pole rotating however appropriate."
+        ///
+        /// The crossarm is the prop's local X (its anchors sit at X +/-1.658 and +/-0.880), so it wants to be
+        /// PERPENDICULAR to the line through the pole. With one span that is simply the span; with several it
+        /// is the direction they most agree on.
+        ///
+        /// ⚠ SPAN DIRECTIONS ARE AXES, NOT ARROWS. A through pole has one wire leaving east and one leaving
+        /// west, and averaging those two unit vectors gives ZERO -- the pole would spin to whatever the noise
+        /// said. The standard handling for axial data is to double the angle before averaging and halve it
+        /// after, which maps east and west onto the same direction and makes a straight run come out exactly
+        /// along itself. A tee then resolves to its through-line, which is right: the main run gets the clean
+        /// crossarm and the branch leaves at an angle.
+        ///
+        /// ⚠ A SYMMETRIC CROSS IS GENUINELY UNDETERMINED. Four spans at 90 degrees cancel in pairs and there
+        /// is no best answer -- every orientation is equally wrong for half the wires. `determined` says so
+        /// rather than returning a confident number from a zero-length vector, and the caller leaves the pole
+        /// where the mapper put it.</summary>
+        public float SuggestedYawDeg(int pole, out bool determined)
+        {
+            determined = false;
+            if (pole < 0 || pole >= _poles.Count) return 0f;
+            float sx = 0f, sz = 0f;
+            int n = 0;
+            foreach (var e in _spans)
+            {
+                int other = e.A == pole ? e.B : e.B == pole ? e.A : -1;
+                if (other < 0) continue;
+                var d = _poles[other].Origin - _poles[pole].Origin;
+                d.Y = 0f;
+                if (d.LengthSquared() < 1e-6f) continue;
+                d = d.Normalized();
+                float th = Mathf.Atan2(d.X, d.Z);
+                sx += Mathf.Cos(2f * th);
+                sz += Mathf.Sin(2f * th);
+                n++;
+            }
+            if (n == 0) return 0f;
+            // the resultant's LENGTH is how much the directions agree; near zero means they cancel.
+            if (Mathf.Sqrt(sx * sx + sz * sz) < 0.05f * n) return 0f;
+            determined = true;
+            return Mathf.RadToDeg(Mathf.Atan2(sz, sx) * 0.5f);
         }
 
         /// <summary>Register a pole. Called by WorldBuilder as it places props, and by the editor when one is
@@ -234,22 +298,43 @@ namespace UnturnedGodot
         public void Rebuild()
         {
             if (_wires == null) return;
-            if (_spans.Count == 0) { _wires.Mesh = null; return; }
+            foreach (var n in _wireNodes) { if (IsInstanceValid(n)) { _wires.RemoveChild(n); n.QueueFree(); } }
+            _wireNodes.Clear();
+            if (_spans.Count == 0) return;
 
-            var st = new SurfaceTool();
-            st.Begin(Mesh.PrimitiveType.Triangles);
             var an = new Vector3[4];
             var bn = new Vector3[4];
-            foreach (var s in _spans)
+            for (int i = 0; i < _spans.Count; i++)
             {
-                AnchorsWorld(s.A, an);
-                AnchorsWorld(s.B, bn);
+                var sp = _spans[i];
+                AnchorsWorld(sp.A, an);
+                AnchorsWorld(sp.B, bn);
+                var st = new SurfaceTool();
+                st.Begin(Mesh.PrimitiveType.Triangles);
                 for (int w = 0; w < 4; w++) AddWire(st, an[w], bn[w]);
+                st.GenerateNormals();
+
+                // ⭐ VISIBLE WHILE EITHER POLE IS. A node culls on its CENTRE, so a span whose range were
+                // just the pole distance would vanish while its far pole was still drawn -- half a span early.
+                // Adding the half-length makes the wire outlive whichever pole the camera is nearer to,
+                // which is what "culled when BOTH poles are culled" actually means.
+                float half = PoleOrigin(sp.A).DistanceTo(PoleOrigin(sp.B)) * 0.5f;
+                var mi = new MeshInstance3D
+                {
+                    Name = $"Span{i}",
+                    Mesh = st.Commit(),
+                    MaterialOverride = _mat,
+                    CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,   // a 9 cm wire casts a shadow nobody can see
+                    // ⚠ 0 would mean NO LIMIT in Godot, not "cull immediately" -- the trap FoliageField
+                    // already documents. Clamped so a misconfigured distance cannot silently disable culling.
+                    VisibilityRangeEnd = Mathf.Max(1f, PoleCullDistance + half),
+                    VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled,
+                };
+                _wires.AddChild(mi);
+                _wireNodes.Add(mi);
             }
-            st.GenerateNormals();
-            _wires.Mesh = st.Commit();
-            // The mesh is built in WORLD space (anchors come out of the poles' own transforms), so the holder must
-            // sit at the origin or every wire would be offset by it.
+            // The meshes are built in WORLD space (anchors come out of the poles' own transforms), so the
+            // holder must sit at the origin or every wire would be offset by it.
             _wires.Transform = Transform3D.Identity;
             GlobalTransform = Transform3D.Identity;
         }

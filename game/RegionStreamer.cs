@@ -713,7 +713,15 @@ void fragment() {
             // PowerLineField builds its wires in WORLD space and pins itself to the world origin -- so hand it world
             // transforms now, and parent it under the region: a later floating-origin shift moves the region node and
             // the wires go with it, since the field's local transform under it is fixed at build time.
-            var field = new PowerLineField { Name = "Wires" };
+            // ⭐ THE WIRES CULL WHERE THESE POLES DO. Master: "make sure the wires are actually culled when
+            // both the parent poles are culled." The poles above take (TreeRing + 0.5) * RegionSize, so the
+            // wires take the same expression rather than PowerLineField's LodTable default -- on the
+            // infinite map those are not the same number.
+            var field = new PowerLineField
+            {
+                Name = "Wires",
+                PoleCullDistance = (TreeRing + 0.5f) * InfiniteTerrain.RegionSize,
+            };
             holder.AddChild(field);
             var toWorld = r.Node.GlobalTransform;
             foreach (var p in poles)

@@ -77,7 +77,11 @@ namespace UnturnedGodot.Testing
             // ---- THE MESH actually gets built ------------------------------------------------------------
             field.Rebuild();
             yield return Ticks(1);
-            var wires = field.GetNodeOrNull<MeshInstance3D>("Wires");
+            // ⭐ ONE NODE PER SPAN now, not one mesh for the whole grid: Godot culls per MeshInstance3D, so
+            // the span is the granularity "is this wire still visible" can even be asked at.
+            T.Check($"one wire node per span ({field.WireNodeCount} for {field.SpanCount})",
+                    field.WireNodeCount == field.SpanCount);
+            var wires = field.WireNode(0);
             T.Check("the wire mesh exists", wires != null && wires.Mesh != null);
             if (wires?.Mesh != null)
             {
@@ -86,6 +90,39 @@ namespace UnturnedGodot.Testing
                 T.Check($"the wires span the gap ({aabb.Size.X:0.0} m wide)", aabb.Size.X > 30f);
                 T.Check($"...and sag below the anchors ({aabb.Position.Y:0.00} m at the lowest)",
                         aabb.Position.Y < lowest - 0.05f);
+            }
+
+            // ---- ⭐⭐ THE WIRES CULL WITH THEIR POLES. Master: "make sure the wires are actually culled when
+            // both the parent poles are culled." They never were: one combined mesh can only be culled as a
+            // unit, so in practice the whole grid drew at any distance.
+            {
+                float cull = field.PoleCullDistance;
+                T.Check($"fixture: a real pole cull distance to match ({cull:0.#} m) -- at 0 the check below "
+                      + $"is vacuous, because Godot reads VisibilityRangeEnd 0 as NO LIMIT", cull > 1f);
+                var wn = field.WireNode(0);
+                float span = field.PoleOrigin(field.Spans[0].A).DistanceTo(field.PoleOrigin(field.Spans[0].B));
+                T.Check($"every span node carries a cull range ({wn.VisibilityRangeEnd:0.#} m)",
+                        wn != null && wn.VisibilityRangeEnd > 1f);
+                // ⭐ AND IT OUTLASTS THE FARTHER POLE BY HALF A SPAN. A node culls on its CENTRE, so a range
+                // of exactly the pole distance would drop the wire while a pole it hangs from was still
+                // drawn -- which is the opposite of what was asked for.
+                T.Check($"...reaching past the pole distance by half the span "
+                      + $"({wn.VisibilityRangeEnd - cull:0.##} m for a {span:0.#} m span)",
+                        Mathf.Abs((wn.VisibilityRangeEnd - cull) - span * 0.5f) < 0.2f);
+                // ⚠ CONTROL: a longer span must get a LONGER range, or this is a constant dressed up as a
+                // derivation and every wire would cull at the same place regardless of its poles.
+                var rig2 = new PowerLineField();
+                World.AddChild(rig2);
+                yield return Ticks(1);
+                int q0 = rig2.AddPole(PoleAt(Vector3.Zero, 0f));
+                int q1 = rig2.AddPole(PoleAt(new Vector3(120f, 0f, 0f), 0f));
+                rig2.Connect(q0, q1, out _);
+                rig2.Rebuild();
+                yield return Ticks(1);
+                T.Check($"control: a {120f:0} m span culls further out than a {span:0.#} m one "
+                      + $"({rig2.WireNode(0).VisibilityRangeEnd:0.#} vs {wn.VisibilityRangeEnd:0.#} m)",
+                        rig2.WireNode(0).VisibilityRangeEnd > wn.VisibilityRangeEnd + 10f);
+                rig2.QueueFree();
             }
 
             // ---- ⚠⚠ WINDING: normals must face away from the wire ------------------------------------------
@@ -110,7 +147,7 @@ namespace UnturnedGodot.Testing
                 rig.Rebuild();
                 yield return Ticks(1);
 
-                var rm = rig.GetNodeOrNull<MeshInstance3D>("Wires");
+                var rm = rig.WireNode(0);
                 T.Check("the control rig built a mesh", rm?.Mesh != null);
                 if (rm?.Mesh != null)
                 {
@@ -219,6 +256,67 @@ namespace UnturnedGodot.Testing
 
             field.QueueFree();
             yield return Ticks(1);
+
+            // ---- ⭐⭐ THREE- AND FOUR-WAY JUNCTIONS. Master: "add support for 3 and 4 way connections too,
+            // the power pole rotating however appropriate." Connect never had a degree limit, so junctions
+            // already WIRED; what they did not do is face the right way.
+            {
+                var j = new PowerLineField();
+                World.AddChild(j);
+                yield return Ticks(1);
+                // a centre pole with neighbours east, west, north and south
+                int c = j.AddPole(PoleAt(Vector3.Zero, 0f));
+                int e = j.AddPole(PoleAt(new Vector3(40f, 0f, 0f), 0f));
+                int w = j.AddPole(PoleAt(new Vector3(-40f, 0f, 0f), 0f));
+                int nn = j.AddPole(PoleAt(new Vector3(0f, 0f, -40f), 0f));
+                int ss = j.AddPole(PoleAt(new Vector3(0f, 0f, 40f), 0f));
+
+                T.Check("a THROUGH pole takes two spans", j.Connect(c, e, out _) && j.Connect(c, w, out _));
+                T.Check($"...and reports degree 2 ({j.Degree(c)})", j.Degree(c) == 2);
+                float y2 = j.SuggestedYawDeg(c, out bool ok2);
+                // the run is along X, so the crossarm (the prop's local X) must end up perpendicular to it.
+                T.Check($"a straight run resolves to its own line ({y2:0.#} deg, determined={ok2})",
+                        ok2 && Mathf.Abs(Mathf.AngleDifference(Mathf.DegToRad(y2), Mathf.DegToRad(90f))) < 0.05f);
+
+                T.Check("a TEE takes a third span", j.Connect(c, nn, out _));
+                T.Check($"...and reports degree 3 ({j.Degree(c)})", j.Degree(c) == 3);
+                float y3 = j.SuggestedYawDeg(c, out bool ok3);
+                // ⭐ the tee must settle on its THROUGH-LINE, not swing a third of the way toward the branch:
+                // the main run gets the clean crossarm and the branch leaves at an angle.
+                T.Check($"a tee still resolves to the through-line, not a third of the way to the branch "
+                      + $"({y3:0.#} deg)",
+                        ok3 && Mathf.Abs(Mathf.AngleDifference(Mathf.DegToRad(y3), Mathf.DegToRad(90f))) < 0.05f);
+
+                T.Check("a CROSS takes a fourth span", j.Connect(c, ss, out _));
+                T.Check($"...and reports degree 4 ({j.Degree(c)})", j.Degree(c) == 4);
+                // ⚠ AND A SYMMETRIC CROSS IS UNDETERMINED. Four spans at 90 degrees cancel in pairs; every
+                // orientation is equally wrong for half the wires, so the honest answer is "leave it".
+                j.SuggestedYawDeg(c, out bool ok4);
+                T.Check("a symmetric cross reports UNDETERMINED rather than a confident wrong angle", !ok4);
+
+                // ⭐ CONTROL: break the symmetry and it must decide again -- otherwise "undetermined" is just
+                // what this returns for any four spans.
+                var j2 = new PowerLineField();
+                World.AddChild(j2);
+                yield return Ticks(1);
+                int c2 = j2.AddPole(PoleAt(Vector3.Zero, 0f));
+                int a1 = j2.AddPole(PoleAt(new Vector3(40f, 0f, 0f), 0f));
+                int a2 = j2.AddPole(PoleAt(new Vector3(-40f, 0f, 0f), 0f));
+                int a3 = j2.AddPole(PoleAt(new Vector3(0f, 0f, -40f), 0f));
+                int a4 = j2.AddPole(PoleAt(new Vector3(38f, 0f, 12f), 0f));   // a fourth leg, NOT opposite the third
+                j2.Connect(c2, a1, out _); j2.Connect(c2, a2, out _);
+                j2.Connect(c2, a3, out _); j2.Connect(c2, a4, out _);
+                j2.SuggestedYawDeg(c2, out bool ok5);
+                T.Check("control: an ASYMMETRIC four-way does resolve", ok5);
+
+                // and the wires themselves exist for every one of the four legs
+                j.Rebuild();
+                yield return Ticks(1);
+                T.Check($"the cross strings all four spans ({j.WireNodeCount} wire nodes for {j.SpanCount})",
+                        j.WireNodeCount == 4 && j.SpanCount == 4);
+                j.QueueFree(); j2.QueueFree();
+            }
+
         }
     }
 }

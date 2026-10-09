@@ -7745,7 +7745,7 @@ namespace UnturnedGodot
             }
             // POWER LINES (master 2026-10-06). The field holds the wires; the tool strings them. Fed the poles the
             // MAP placed, plus -- inside the tool -- any placed this session, so both kinds carry wires.
-            var plField = new PowerLineField(); editor.AddChild(plField);
+            var plField = new PowerLineField { PoleCullDistance = res.PowerLinePoleCull }; editor.AddChild(plField);
             var plEd = new EditorPowerLines(editor, cam, plField, res.PowerLinePoles, editor.Objects);
             editor.AddChild(plEd); editor.PowerLinesEd = plEd; editor.PowerLines = plField;
             var fenceEd = new EditorFenceRoad(editor, cam, editor.Objects, res.Terr, rf);   // Shift+F: roadside guardrail runs
