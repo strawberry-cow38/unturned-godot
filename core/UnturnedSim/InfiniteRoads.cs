@@ -487,8 +487,15 @@ namespace SDG.Unturned
             // the carriageway as a polyline, a little past each end so the deck reaches the stretch's ends
             var pts = CarriagewayPts(e, st.Side, Math.Max(0, st.I0 - 1), Math.Min(e.X.Length - 1, st.I1 + 1));
             int n = pts.Length;
+            // ⚠ 3D ARC LENGTH, grade included. A deck unit is BridgePitch long along its own graded axis; spacing the
+            // units by HORIZONTAL distance left every joint on a slope short by pitch*(1/cos(grade) - 1) -- 1.97 cm at
+            // 7% -- and strawberry saw the seams: "looks like theres some slight gaps"
             var arc = new double[n];
-            for (int i = 1; i < n; i++) arc[i] = arc[i - 1] + Math.Sqrt((pts[i].x - pts[i - 1].x) * (pts[i].x - pts[i - 1].x) + (pts[i].z - pts[i - 1].z) * (pts[i].z - pts[i - 1].z));
+            for (int i = 1; i < n; i++)
+            {
+                double dx = pts[i].x - pts[i - 1].x, dz = pts[i].z - pts[i - 1].z, dh = pts[i].h - pts[i - 1].h;
+                arc[i] = arc[i - 1] + Math.Sqrt(dx * dx + dz * dz + dh * dh);
+            }
             // only the stretch itself is bridged: start and end at its own first and last points
             double a0 = st.I0 > 0 ? arc[1] : 0, a1 = st.I1 < e.X.Length - 1 ? arc[n - 2] : arc[n - 1];
             (double x, double y, double z) At(double s)

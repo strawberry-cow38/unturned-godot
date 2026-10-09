@@ -434,15 +434,18 @@ namespace UnturnedSim.Tests
                             if (prevDeck is BridgePiece a)
                             {
                                 joints++;
+                                // IN 3D, along the deck's own (graded) axis: a unit is P long on that axis, so on a slope its
+                                // horizontal footprint is shorter than P. strawberry saw the seams this measures ("slight gaps")
+                                // when the walk spaced units by horizontal distance -- 1.96 cm at 7%, which a 2 cm bar passed.
                                 double ah = Math.Sqrt(a.DX * a.DX + a.DZ * a.DZ), bh = Math.Sqrt(p.DX * p.DX + p.DZ * p.DZ);
                                 double alx = -a.DZ / ah, alz = a.DX / ah, blx = -p.DZ / bh, blz = p.DX / bh;
                                 double gap = 0;
                                 for (int s = -1; s <= 1; s += 2)
                                 {
-                                    double fx = a.X + a.DX * P * 0.5 + alx * s * W, fz = a.Z + a.DZ * P * 0.5 + alz * s * W;
-                                    double bx = p.X - p.DX * P * 0.5 + blx * s * W, bz = p.Z - p.DZ * P * 0.5 + blz * s * W;
+                                    double fx = a.X + a.DX * P * 0.5 + alx * s * W, fy = a.Y + a.DY * P * 0.5, fz = a.Z + a.DZ * P * 0.5 + alz * s * W;
+                                    double bx = p.X - p.DX * P * 0.5 + blx * s * W, by = p.Y - p.DY * P * 0.5, bz = p.Z - p.DZ * P * 0.5 + blz * s * W;
                                     // signed: positive = daylight between them along the run, negative = solid inside solid
-                                    double along = (bx - fx) * (a.DX / ah) + (bz - fz) * (a.DZ / ah);
+                                    double along = (bx - fx) * a.DX + (by - fy) * a.DY + (bz - fz) * a.DZ;
                                     gap = Math.Max(gap, along);
                                 }
                                 if (gap > worstGap) { worstGap = gap; gapWhere = $" at ({p.X:0}, {p.Z:0})"; }
@@ -456,7 +459,7 @@ namespace UnturnedSim.Tests
             Assert.That(bridges, Is.EqualTo(raised), "every raised stretch at least a unit long gets its bridge");
             Assert.That(decks, Is.GreaterThan(50)); Assert.That(piers, Is.GreaterThan(5)); Assert.That(joints, Is.GreaterThan(40));
             Assert.That(worstOff, Is.LessThan(0.5), "a deck unit off its carriageway");
-            Assert.That(worstGap, Is.LessThan(0.02), "daylight at a deck joint");
+            Assert.That(worstGap, Is.LessThan(0.005), "daylight at a deck joint");
             Assert.That(worstPierFoot, Is.LessThan(0.01)); Assert.That(worstPierTop, Is.LessThan(0.01));
             Assert.That(worstGround, Is.LessThan(0.01), "the carve raised ground under a bridge");
             Assert.That(liftOff / Math.Max(1, liftN), Is.GreaterThan(2.0), "control: without bridges the same spots ARE embanked");
