@@ -23,7 +23,7 @@ Usage:
 ⚠ a NEGATIVE axis needs an equals sign -- argparse reads a bare "-z" as a flag: --forward=-z
 --forward  which axis of the SOURCE points "front"; used only to pick the yaw (default -z, Godot's forward)
 """
-import argparse, os, sys
+import argparse, math, os, sys
 
 AXES = {'x': (1,0,0), 'y': (0,1,0), 'z': (0,0,1),
         '-x': (-1,0,0), '-y': (0,-1,0), '-z': (0,0,-1)}
@@ -110,6 +110,9 @@ def main():
     ap.add_argument('--match-winding', metavar='REF.txt',
                     help='an already-shipped item mesh; reverse the triangles iff the input disagrees with it '
                          'about whether vertex order runs CCW around the stated normals')
+    ap.add_argument('--smooth', type=float, default=0.0, metavar='DEG',
+                    help='recompute vertex normals, averaging faces that meet at under DEG (0 = keep as exported). '
+                         '60 is a good default: curves smooth, rims and handle joins stay crisp.')
     ap.add_argument('--manifest', default='game/content/items/items_manifest.json',
                     help='the index WorldItem actually reads; "" to skip')
     ap.add_argument('--catalog', default='game/content/items_catalog.tsv',
@@ -155,6 +158,43 @@ def main():
                 print(" -> agree, kept")
     if flip:
         faces = [[t[0], t[2], t[1]] for t in faces]
+
+    if a.smooth > 0.0:
+        # ⭐ ANGLE-WEIGHTED SMOOTHING, NOT "average everything". A flat-shaded export gives every face its own
+        # normal, which is what makes a turned object read as a stack of facets. Averaging ALL faces that touch a
+        # position would equally destroy the edges that SHOULD be sharp -- a plate's rim, where the mug's handle
+        # meets the body, the lip of a bowl -- and turn them into soft smears. So faces are only averaged into
+        # each other when they actually meet at a shallow angle; anything steeper stays its own surface.
+        # ⚠ Grouped by POSITION, rounded to 0.1 mm: a flat export duplicates the vertex per face, so the shared
+        # corner is several entries that are equal rather than one that is shared.
+        import collections
+        faces_n = []
+        for t in faces:
+            p0, p1, p2 = [vs[c[0]-1] for c in t]
+            u = (p1[0]-p0[0], p1[1]-p0[1], p1[2]-p0[2]); w = (p2[0]-p0[0], p2[1]-p0[1], p2[2]-p0[2])
+            n = cross(u, w); m = sum(k*k for k in n) ** 0.5
+            faces_n.append(tuple(k/m for k in n) if m > 1e-12 else (0.0, 1.0, 0.0))
+        at = collections.defaultdict(list)
+        key = lambda v: (round(v[0], 4), round(v[1], 4), round(v[2], 4))
+        for fi, t in enumerate(faces):
+            for c in t: at[key(vs[c[0]-1])].append(fi)
+        cosmin = math.cos(math.radians(a.smooth))
+        new_vn, new_faces = [], []
+        for fi, t in enumerate(faces):
+            fn = faces_n[fi]; corners = []
+            for c in t:
+                acc = [0.0, 0.0, 0.0]
+                for oj in at[key(vs[c[0]-1])]:
+                    on = faces_n[oj]
+                    if fn[0]*on[0] + fn[1]*on[1] + fn[2]*on[2] >= cosmin:
+                        acc[0] += on[0]; acc[1] += on[1]; acc[2] += on[2]
+                m = sum(k*k for k in acc) ** 0.5
+                nn = tuple(k/m for k in acc) if m > 1e-12 else fn
+                new_vn.append(nn); corners.append((c[0], c[1], len(new_vn)))
+            new_faces.append(corners)
+        vns, faces = new_vn, new_faces
+        print(f"[obj->item] smoothed at {a.smooth:.0f} deg: {len(new_vn)} normals "
+              f"({sum(1 for k, v in at.items() if len(v) > 1)} shared positions)")
 
     xs = [v[0] for v in vs]; ys = [v[1] for v in vs]; zs = [v[2] for v in vs]
     size = (max(xs)-min(xs), max(ys)-min(ys), max(zs)-min(zs))

@@ -266,10 +266,30 @@ namespace SDG.Unturned
         /// cooked quality and burnt" -- so the STATE always shows on food, while the QUALITY still adds nothing
         /// of its own when it is average (her original "average (no label)"). Cooked + average reads "Cooked";
         /// cooked + microwaved reads "Microwaved", which is the quality doing the talking.</summary>
-        public static string Label(byte cooked, ECookStyle style)
+        /// <summary>The food's name with any state word it SHIPPED WITH removed, and whether it had one.
+        ///
+        /// ⭐⭐ RETAIL ALREADY SAYS WHICH FOODS CARE ABOUT BEING COOKED, and it says it in the name. The catalog
+        /// ships 31 of them as matched pairs -- Raw Trout / Cooked Trout, Raw Venison / Cooked Venison, Raw
+        /// Goldfish / Cooked Goldfish -- out of 119 foods. Those are the meat and the fish: exactly master's
+        /// "only food thats dangerous uncooked". An apple is just an Apple. So the test for "does this need a
+        /// RAW label" is not a keyword list I invent and have to maintain against the catalog; it is whether the
+        /// catalog already gave it one.</summary>
+        public static (string name, bool statesCooking) BaseFoodName(string n)
+        {
+            if (n == null) return (null, false);
+            if (n.StartsWith("Raw ", System.StringComparison.OrdinalIgnoreCase)) return (n.Substring(4), true);
+            if (n.StartsWith("Cooked ", System.StringComparison.OrdinalIgnoreCase)) return (n.Substring(7), true);
+            return (n, false);
+        }
+
+        public static string Label(byte cooked, ECookStyle style) => Label(cooked, style, true);
+
+        /// <param name="statesCooking">Does this food's own name carry a state word (Raw X / Cooked X)? Only
+        /// those get a RAW label; for everything else raw IS the normal condition and deserves no word.</param>
+        public static string Label(byte cooked, ECookStyle style, bool statesCooking)
         {
             if (IsBurnt(cooked)) return "Burnt";
-            if (!IsCooked(cooked)) return "Raw";
+            if (!IsCooked(cooked)) return statesCooking ? "Raw" : "";
             return style switch
             {
                 ECookStyle.Microwaved => "Microwaved",
@@ -284,8 +304,15 @@ namespace SDG.Unturned
         {
             if (!isFood) return itemName;
             if (IsCooked(cooked) && style == ECookStyle.Plain && CookedNames.TryGetValue(id, out var own)) return own;
-            string label = Label(cooked, style);
-            return label.Length > 0 ? $"{label} {itemName}" : itemName;
+            // ⚠⚠ STRIP THE SHIPPED STATE WORD BEFORE ADDING ONE. The item is CALLED "Raw Goldfish", and this
+            // used to paste a second Raw in front of it -- master's screenshot read "Frozen Raw Raw Goldfish".
+            // Cooking it would have been worse still: "Cooked Raw Goldfish". The state word has to be the
+            // shader of this name, not an accumulation of them.
+            // ⭐ And it lands on retail's own spelling for free: a cooked "Raw Goldfish" now reads "Cooked
+            // Goldfish", which is exactly what item 1350 is called.
+            var (baseName, statesCooking) = BaseFoodName(itemName);
+            string label = Label(cooked, style, statesCooking);
+            return label.Length > 0 ? $"{label} {baseName}" : baseName;
         }
 
         /// <summary>Advance one item by `dt` seconds in this appliance. Returns the new cooked value; the
