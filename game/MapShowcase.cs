@@ -56,6 +56,26 @@ namespace UnturnedGodot
         /// one at the top of this list and that is handled.</summary>
         public static List<Station> Stations() => new()
         {
+            new Station("TUNNEL", "Draw a road, then U \u2014 the bore tiles along it and portals both ends \u00b7 Shift+U", c =>
+            {
+                // ⚠ A GENTLE BEND, so the station shows the thing a straight demo cannot: this section is
+                // 24 m wide -- the widest thing the port tiles -- so its joints are where the chord overlap
+                // earns its keep. ~300 m matches the tightest radius tinyclaw measured on the real highway.
+                //
+                // ⚠ The road is drawn at ground level and KEPT visible, unlike the bridge: a tunnel is an
+                // arch with no floor, and the road through it is the road.
+                if (c.Roads == null || c.Objects == null || c.Terr == null) return;
+                float g = c.Terr.SampleHeight(c.Origin.X, c.Origin.Z);
+                var road = new List<Vector3>();
+                for (int i = 0; i <= 8; i++)
+                {
+                    float t = i / 8f, x = -80f + t * 160f;
+                    road.Add(new Vector3(c.Origin.X + x, g, c.Origin.Z - x * x / 600f));
+                }
+                int rd = c.Roads.AddRoadFromPolyline(road, 0, false, true);
+                if (rd >= 0) EditorTunnelSpline.LayAlong(c.Objects, c.Terr, c.Roads, rd, null);
+            }),
+
             new Station("BRIDGE", "Draw a road, then B \u2014 the cut deck tiles along it and piers itself \u00b7 Shift+B", c =>
             {
                 // ⭐ A VALLEY, not a flat run, because the thing worth seeing is the PIER rule: the deck

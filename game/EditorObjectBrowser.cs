@@ -22,6 +22,12 @@ namespace UnturnedGodot
         Control _gridBox;
         LineEdit _stationEdit;     // gas-pump station-id field (shown only when a gas pump is selected)
         Control _pumpBox;
+        LineEdit[] _signEdit;      // the two overhead-sign legends (shown only when a sign is selected)
+        Control _signBox;
+        CheckBox[] _laneTick;      // lane-selectable gantry: one tick + one legend per lane of the road below
+        LineEdit[] _laneEdit;
+        Control _laneBox;
+        const int MaxLanes = 8;
 
         public EditorObjectBrowser(EditorObjects objects) { _objects = objects; }
 
@@ -153,10 +159,58 @@ namespace UnturnedGodot
             pbox.AddChild(_stationEdit);
             box.AddChild(pbox);
 
+            // overhead-sign legends -- appears when a placed 🛣 Highway Sign is selected. TWO fields because
+            // the prop carries two independent boards; one field editing "the sign" would be a lie about the art.
+            var sbox = new VBoxContainer { Visible = false };
+            _signBox = sbox;
+            var sl = new Label { Text = "▼ HIGHWAY SIGN — legends (\\n for a second line):" };
+            sl.AddThemeFontSizeOverride("font_size", 13);
+            sl.AddThemeColorOverride("font_color", new Color(0.55f, 0.9f, 0.6f));
+            sbox.AddChild(sl);
+            // ⭐ Built for the MAXIMUM, shown per selection: astraclaw's double-post gantry carries four
+            // boards, and a pair of fields sized to the two-board mast would silently hide half of them.
+            _signEdit = new LineEdit[EditorObjects.MaxSignBoards];
+            for (int i = 0; i < _signEdit.Length; i++)
+            {
+                int board = i;   // ⚠ captured per iteration: one shared loop variable would make both fields write board 1
+                _signEdit[i] = new LineEdit { PlaceholderText = $"board {i + 1} text (Enter to set)", CustomMinimumSize = new Vector2(CTRL, 32) };
+                _signEdit[i].TextSubmitted += t => { _objects.SetSelectedSignText(board, t); SyncSignPicker(); };
+                sbox.AddChild(_signEdit[i]);
+            }
+            box.AddChild(sbox);
+
+            // lane-selectable gantry -- master: "can u make it smart, where u can choose which lanes get
+            // signs above them". One row per lane of the road underneath: tick it to get a board, type its
+            // legend beside it. Built for the maximum and shown per selection, because the lane count comes
+            // from the road's PAINTED markings and a four-lane highway is not the only thing this sits on.
+            var lbox = new VBoxContainer { Visible = false };
+            _laneBox = lbox;
+            var ll = new Label { Text = "▼ LANE SIGNS — tick a lane to give it a board:" };
+            ll.AddThemeFontSizeOverride("font_size", 13);
+            ll.AddThemeColorOverride("font_color", new Color(0.55f, 0.9f, 0.6f));
+            lbox.AddChild(ll);
+            _laneTick = new CheckBox[MaxLanes];
+            _laneEdit = new LineEdit[MaxLanes];
+            for (int i = 0; i < MaxLanes; i++)
+            {
+                int lane = i;   // ⚠ captured per iteration, or every row writes the last lane
+                var row = new HBoxContainer { Name = $"LaneRow{i}" };
+                _laneTick[i] = new CheckBox { Text = $"{i + 1}", ButtonPressed = true };
+                _laneTick[i].Toggled += on => { _objects.SetSelectedLaneOn(lane, on); SyncLanePicker(); };
+                row.AddChild(_laneTick[i]);
+                _laneEdit[i] = new LineEdit { PlaceholderText = $"lane {i + 1} text", CustomMinimumSize = new Vector2(CTRL - 48, 30) };
+                _laneEdit[i].TextSubmitted += t => { _objects.SetSelectedLaneText(lane, t); SyncLanePicker(); };
+                row.AddChild(_laneEdit[i]);
+                lbox.AddChild(row);
+            }
+            box.AddChild(lbox);
+
             _objects.SelectionChanged += SyncOmitToggle;
             _objects.SelectionChanged += SyncCratePicker;
             _objects.SelectionChanged += SyncGridPicker;
             _objects.SelectionChanged += SyncPumpPicker;
+            _objects.SelectionChanged += SyncSignPicker;
+            _objects.SelectionChanged += SyncLanePicker;
 
             var sel = new Button { Text = "Select / move only", CustomMinimumSize = new Vector2(CTRL, 34), FocusMode = FocusModeEnum.None };
             sel.Pressed += () => { _objects.ClearPlaceType(); _list.DeselectAll(); ShowPreview(null); };
@@ -274,6 +328,36 @@ namespace UnturnedGodot
             _pumpBox.Visible = _objects.GasPumpSelected;
             if (_objects.GasPumpSelected && _stationEdit != null && !_stationEdit.HasFocus())
                 _stationEdit.Text = _objects.SelectedStationId.ToString();
+        }
+
+        void SyncLanePicker()   // selection changed: one tick+legend row per lane the road below actually paints
+        {
+            if (_laneBox == null) return;
+            _laneBox.Visible = _objects.LaneSignSelected;
+            if (!_objects.LaneSignSelected) return;
+            int lanes = _objects.SelectedLaneCount, mask = _objects.SelectedLaneMask;
+            for (int i = 0; i < MaxLanes; i++)
+            {
+                var row = _laneBox.GetNodeOrNull<Control>($"LaneRow{i}");
+                if (row != null) row.Visible = i < lanes;
+                if (i >= lanes) continue;
+                if (_laneTick[i] != null) _laneTick[i].SetPressedNoSignal((mask & (1 << i)) != 0);
+                if (_laneEdit[i] != null && !_laneEdit[i].HasFocus()) _laneEdit[i].Text = _objects.SelectedLaneText(i);
+            }
+        }
+
+        void SyncSignPicker()   // selection changed: show both legend fields for a selected overhead sign
+        {
+            if (_signBox == null) return;
+            _signBox.Visible = _objects.SignSelected;
+            if (!_objects.SignSelected || _signEdit == null) return;
+            int boards = _objects.SelectedSignBoards;
+            for (int i = 0; i < _signEdit.Length; i++)
+            {
+                if (_signEdit[i] == null) continue;
+                _signEdit[i].Visible = i < boards;
+                if (i < boards && !_signEdit[i].HasFocus()) _signEdit[i].Text = _objects.SelectedSignText(i);
+            }
         }
     }
 }

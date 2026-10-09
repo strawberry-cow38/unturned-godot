@@ -155,6 +155,9 @@ namespace UnturnedGodot
             _catalog.Insert(1, StoreShelfName);  // store shelf right below it
             _catalog.Insert(2, GridPowerName);   // grid power box below that
             _catalog.Insert(3, GasPumpName);     // gas pump (station-id configurable) below that
+            _catalog.Insert(4, HighwaySignName); // overhead highway sign (two editable legends)
+            _catalog.Insert(5, HighwayGantryName); // full-width gantry (four editable legends)
+            _catalog.Insert(6, LaneSignName);      // lane-selectable gantry (a board per chosen lane)
             LoadBakedBuildings();
         }
 
@@ -284,6 +287,9 @@ namespace UnturnedGodot
             if (name == StoreShelfName) return PlaceStoreShelf(pos, rot);
             if (name == GridPowerName) return PlaceGridPower(pos, rot);
             if (name == GasPumpName) return PlaceGasPump(pos, rot);
+            if (name == HighwaySignName) return PlaceHighwaySign(HighwaySignMesh, pos, rot);
+            if (name == HighwayGantryName) return PlaceHighwaySign(HighwayGantryMesh, pos, rot);
+            if (name == LaneSignName) return PlaceLaneSigns(pos, rot);
             var mesh = MeshFor(name);
             if (mesh == null) return null;
             var root = new Node3D { Transform = new Transform3D(rot, pos) };
@@ -587,6 +593,176 @@ namespace UnturnedGodot
             if (!GasPumpSelected) return;
             Primary.SetMeta("station_id", Mathf.Max(0, s));
             UpdateGasPumpLabel(Primary);
+        }
+
+        // ---- HIGHWAY OVERHEAD SIGNS (master 2026-10-09: "allow custom text to be added") -------------------
+        //
+        // astraclaw supplied the art with the legend DELIBERATELY ABSENT -- blank green boards with white
+        // borders -- and two exclusive atlas regions for the faces, because the prop loader gives a prop
+        // exactly ONE MaterialOverride and baked words cannot be changed by anything downstream.
+        //
+        // ⭐ THE FACES ARE FOUND IN THE MESH, NOT FROM A TABLE OF CONSTANTS. astraclaw's handoff guarantees
+        // the body's UV v is >= 0.5 and both face regions sit wholly below 0.469, so v < 0.5 separates them
+        // with a wide margin (measured 0.5485 vs 0.4683 on the shipped asset). Copying the four rect floats
+        // out of their manifest into C# would be a second source of truth that goes stale on a re-export; the
+        // L1 test asserts the 4/74 split instead, so a re-export that breaks the invariant says so.
+        public const string HighwaySignName = "🛣 Highway Sign";
+        const string HighwaySignMesh = "Highway_Overhead_Signs";
+        /// <summary>astraclaw's two-post variant: 16.2 m over one 13.8 m carriageway, two boards facing the
+        /// same way. Same code path -- the board count and each board's facing come out of the mesh, so the
+        /// only thing that changed when master corrected this from a full-width four-board gantry ("oh i
+        /// meant just one of the directions") was which file it loads.</summary>
+        public const string HighwayGantryName = "🛣 Highway Gantry";
+        const string HighwayGantryMesh = "Highway_Overhead_Gantry_OneWay";
+        const float SignFaceUvSplit = 0.5f;
+
+        /// <summary>Every blank board's bounds AND OUTWARD NORMAL in MESH-NATIVE space, lowest first.
+        ///
+        /// ⭐ ANY COUNT, NOT EXACTLY TWO. The first cut hard-coded two and would have returned null -- no
+        /// legends at all -- the moment master asked astraclaw for "a double-post (end to end) version to
+        /// span a full highway", which is four boards. The asset says how many it has; this reads it.</summary>
+        static System.Collections.Generic.List<(Aabb box, Vector3 n)> SignFaceBounds(ArrayMesh m)
+        {
+            if (m == null || m.GetSurfaceCount() < 1) return null;
+            var a0 = m.SurfaceGetArrays(0);
+            var V = a0[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+            var U = a0[(int)Mesh.ArrayType.TexUV].AsVector2Array();
+            var N = a0[(int)Mesh.ArrayType.Normal].AsVector3Array();
+            if (U.Length != V.Length || V.Length < 3) return null;
+            var groups = new System.Collections.Generic.List<(float y, Aabb box, Vector3 n)>();
+            for (int i = 0; i + 2 < V.Length; i += 3)
+            {
+                if (U[i].Y >= SignFaceUvSplit || U[i + 1].Y >= SignFaceUvSplit || U[i + 2].Y >= SignFaceUvSplit) continue;
+                var b = new Aabb(V[i], Vector3.Zero).Expand(V[i + 1]).Expand(V[i + 2]);
+                // ⚠⚠ THE AUTHORED NORMAL, NOT A CROSS PRODUCT. ContentProvider.ParseObj decides winding PER
+                // TRIANGLE for Godot's convention, so the vertex order on the LOADED mesh no longer matches
+                // the OBJ's -- a cross product here comes out reversed and every legend faces into the post.
+                // The OBJ's own vn survives the load untouched, and on this asset it reads (-1,0,0), which is
+                // the direction the board is meant to be read from.
+                var nrm = N.Length == V.Length ? (N[i] + N[i + 1] + N[i + 2]) : Vector3.Zero;
+                if (nrm.LengthSquared() < 1e-12f) nrm = (V[i + 1] - V[i]).Cross(V[i + 2] - V[i]);
+                if (nrm.LengthSquared() < 1e-12f) continue;
+                nrm = nrm.Normalized();
+                float yc = (V[i].Y + V[i + 1].Y + V[i + 2].Y) / 3f;
+                // ⚠ GROUPED BY FACING AS WELL AS HEIGHT. The single mast's boards all look the same way, but
+                // astraclaw's gantry carries two per travel DIRECTION -- so two boards can share a height and
+                // differ only in which way they point, and a height-only bucket would fuse them into one.
+                int hit = -1;
+                for (int k = 0; k < groups.Count; k++)
+                    if (Mathf.Abs(groups[k].y - yc) < 2.0f && groups[k].n.Dot(nrm) > 0.9f) { hit = k; break; }
+                if (hit < 0) groups.Add((yc, b, nrm));
+                else groups[hit] = ((groups[hit].y + yc) * 0.5f, groups[hit].box.Merge(b), groups[hit].n);
+            }
+            if (groups.Count == 0) return null;
+            groups.Sort((x, y) => x.y != y.y ? x.y.CompareTo(y.y) : x.n.X.CompareTo(y.n.X));
+            var outp = new System.Collections.Generic.List<(Aabb, Vector3)>();
+            foreach (var g in groups) outp.Add((g.box, g.n));
+            return outp;
+        }
+
+        // ⚠⚠ THE STORED FORM IS SINGLE-LINE, ALWAYS. A legend's line break is the two characters \n, never a
+        // real newline: the sidecar is line-per-sign, so one raw newline in a DEFAULT split a four-board
+        // gantry's row across four physical lines and the reload rebuilt it as garbage. The setter already
+        // escaped user input; the defaults went straight to meta and bypassed it, so the mast survived (the
+        // test overwrote both its legends) while the gantry did not. One rule now, at every write.
+        static readonly string[] SignDefaults = { @"NORTH\nCity Centre", @"WEST\nAirport", @"SOUTH\nHarbour", @"EAST\nFerry" };
+
+        /// <summary>Make a legend safe to store: no tab (the sidecar's column separator), no real newline
+        /// (its row separator). A typed "\n" survives as the line break the mapper meant.</summary>
+        public static string SanitiseSignText(string text) =>
+            (text ?? "").Replace("\t", " ").Replace("\r\n", @"\n").Replace("\n", @"\n").Replace("\r", "");
+
+        /// <summary>...and the display form, where that escape becomes the break the board actually shows.</summary>
+        public static string SignTextForDisplay(string stored) => (stored ?? "").Replace(@"\n", "\n");
+        public static string DefaultSignText(int board) => SignDefaults[((board % SignDefaults.Length) + SignDefaults.Length) % SignDefaults.Length];
+        public const int MaxSignBoards = 8;
+
+        Node3D PlaceHighwaySign(string meshName, Vector3 pos, Basis rot)
+        {
+            var mesh = MeshFor(meshName);
+            if (mesh == null) return null;
+            float yaw = Mathf.Atan2(-rot.X.Z, rot.X.X);
+            var stand = new Basis(Vector3.Right, Mathf.DegToRad(-90f));   // Z-up authoring -> stand it on its base
+            var root = new Node3D { Transform = new Transform3D(new Basis(Vector3.Up, yaw), pos) };
+            // ⚠ obj_name IS SET EXPLICITLY. Only the generic Place() path tags it, and every composed
+            // placeable here (crate, shelf, grid box, pump) goes without -- so PlacedOfNodes cannot find them.
+            // The L1 round-trip failed on exactly this: the sidecar reloaded the sign and the lookup still
+            // returned nothing.
+            root.SetMeta("obj_name", meshName == HighwayGantryMesh ? HighwayGantryName : HighwaySignName);
+            root.SetMeta("sign_mesh", meshName);
+            root.SetMeta("sign_edit", true);
+            root.AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = MatFor(meshName), Basis = stand });
+
+            // ⚠ THE LEGEND IS A Label3D ON THE FACE, not a generated texture. astraclaw's 0..1 remap keeps the
+            // texture route open and it is the better finish, but it needs a SubViewport to rasterise glyphs,
+            // and a viewport render is exactly the thing that does not reliably produce pixels headless -- so
+            // the feature would be untestable in L1. A label needs no render target, stays crisp at any
+            // distance, and is the pattern four other editable props here already use.
+            var faces = SignFaceBounds(mesh);
+            int boards = faces == null ? 0 : Mathf.Min(faces.Count, MaxSignBoards);
+            root.SetMeta("sign_boards", boards);
+            for (int i = 0; i < boards; i++) root.SetMeta($"sign_text_{i}", SanitiseSignText(DefaultSignText(i)));
+            if (faces != null)
+                for (int i = 0; i < boards; i++)
+                {
+                    var c = faces[i].box.GetCenter();
+                    // native (x,y,z) -> root (x, z, -y) under the stand-up, for points and directions alike.
+                    var nRoot = new Vector3(faces[i].n.X, faces[i].n.Z, -faces[i].n.Y).Normalized();
+                    var cRoot = new Vector3(c.X, c.Z, -c.Y) + nRoot * 0.01f;   // 1 cm proud, so glyphs cannot z-fight the board
+                    // ⚠ ORIENTED FROM THE FACE'S OWN NORMAL, not a fixed turn. The single mast's boards all
+                    // look one way; the gantry's look BOTH ways (two per travel direction), so a hardcoded
+                    // -90 would leave half of every gantry's legends written backwards on the inside.
+                    var zCol = nRoot;                       // a Label3D's front is its local +Z
+                    var yCol = Vector3.Up;
+                    var xCol = yCol.Cross(zCol).Normalized();
+                    root.AddChild(new Label3D
+                    {
+                        Name = $"SignText{i}",
+                        Text = SignTextForDisplay(SanitiseSignText(DefaultSignText(i))),
+                        Position = cRoot,
+                        Basis = new Basis(xCol, yCol, zCol),
+                        Billboard = BaseMaterial3D.BillboardModeEnum.Disabled,
+                        FontSize = 64, PixelSize = 0.0075f,
+                        Width = 400f, AutowrapMode = TextServer.AutowrapMode.Word,
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Modulate = new Color(1f, 1f, 1f),
+                    });
+                }
+
+            var shp = mesh.CreateTrimeshShape();
+            if (shp != null)
+            {
+                var body = new StaticBody3D { CollisionLayer = PickLayer, CollisionMask = 0, Basis = stand };
+                body.AddChild(new CollisionShape3D { Shape = shp });
+                root.AddChild(body);
+                _pickToObj[body.GetRid()] = root;   // so clicking the sign selects it
+            }
+            _world.AddChild(root);
+            _placed.Add(root);
+            return root;
+        }
+
+        static int SignBoardCount(Node3D sign) =>
+            sign != null && sign.HasMeta("sign_boards") ? (int)sign.GetMeta("sign_boards") : 0;
+
+        void UpdateSignLabels(Node3D sign)
+        {
+            if (sign == null) return;
+            for (int i = 0; i < SignBoardCount(sign); i++)
+                if (sign.GetNodeOrNull<Label3D>($"SignText{i}") is Label3D l)
+                    l.Text = SignTextForDisplay(sign.HasMeta($"sign_text_{i}") ? (string)sign.GetMeta($"sign_text_{i}") : "");
+        }
+
+        public bool SignSelected => Primary != null && Primary.HasMeta("sign_edit");
+        public string SelectedSignText(int board) =>
+            SignSelected && Primary.HasMeta($"sign_text_{board}") ? (string)Primary.GetMeta($"sign_text_{board}") : "";
+        public int SelectedSignBoards => SignSelected ? SignBoardCount(Primary) : 0;
+        public void SetSelectedSignText(int board, string text)
+        {
+            if (!SignSelected || board < 0 || board >= SignBoardCount(Primary)) return;
+            Primary.SetMeta($"sign_text_{board}", SanitiseSignText(text));
+            UpdateSignLabels(Primary);
         }
 
         bool Raycast(Vector2 screen, uint mask, out Vector3 point, out Rid collider)
@@ -918,6 +1094,9 @@ namespace UnturnedGodot
             SaveStoreShelves();
             SaveGridPower();
             SaveGasPump();
+            SaveSigns();
+            SaveLaneSigns();
+            SaveTunnels();
             SaveBakeOmit();
             Log.Print($"[editor] saved {n} placed props -> {SavePath}");
             return n;
@@ -950,6 +1129,9 @@ namespace UnturnedGodot
             LoadStoreShelves();
             LoadGridPower();
             LoadGasPump();
+            LoadSigns();
+            LoadLaneSigns();
+            LoadTunnels();
         }
 
         void LoadSaved()   // restore previously-saved editor placements on open (custom placeables + main mesh objects from the sidecar)
@@ -1084,6 +1266,388 @@ namespace UnturnedGodot
             }
             if (n > 0) Log.Print($"[editor] loaded {n} gas pumps");
         }
+
+        string SignPath => Dir + $"editor_{_editor.MapName}_signs.txt";   // per-map overhead signs (pos + yaw + both legends)
+        void SaveSigns()
+        {
+            var signs = _placed.FindAll(p => IsInstanceValid(p) && p.HasMeta("sign_edit"));
+            using var w = new System.IO.StreamWriter(SignPath, false);
+            foreach (var b in signs)
+            {
+                var gp = b.GlobalPosition;
+                float yawDeg = Mathf.RadToDeg(b.GlobalTransform.Basis.GetEuler().Y);
+                // \t separated: a legend is free text and WILL contain spaces, so the space-separated layout
+                // the other editables use would split "City Centre" into two fields. ONE COLUMN PER BOARD,
+                // so a four-board gantry round-trips on the same format as a two-board mast -- and the mesh
+                // rides along as a 5th positional token, because without it every gantry reloads as a mast.
+                string meshName = b.HasMeta("sign_mesh") ? (string)b.GetMeta("sign_mesh") : HighwaySignMesh;
+                var sb = new System.Text.StringBuilder(
+                    $"{gp.X:0.###} {gp.Y:0.###} {(-gp.Z):0.###} {yawDeg:0.###} {meshName}");
+                for (int i = 0; i < SignBoardCount(b); i++)
+                    sb.Append('\t').Append(b.HasMeta($"sign_text_{i}") ? (string)b.GetMeta($"sign_text_{i}") : "");
+                w.WriteLine(sb.ToString());
+            }
+            if (signs.Count > 0) Log.Print($"[editor] saved {signs.Count} highway signs -> {SignPath}");
+        }
+        void LoadSigns()
+        {
+            if (!System.IO.File.Exists(SignPath)) return;
+            int n = 0;
+            foreach (var line in System.IO.File.ReadLines(SignPath))
+            {
+                var cols = line.Split('\t');
+                var p = cols[0].Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                if (p.Length < 3 || !float.TryParse(p[0], out var px) || !float.TryParse(p[1], out var py)
+                                 || !float.TryParse(p[2], out var pz)) continue;
+                float yawDeg = 0f; if (p.Length >= 4) float.TryParse(p[3], out yawDeg);
+                // ⚠ The mesh is a 5th token rather than a new file: a map with both a mast and a gantry on it
+                // must reload each as what it was, and an older sidecar without the token is the mast.
+                string meshName = p.Length >= 5 ? p[4] : HighwaySignMesh;
+                var root = PlaceHighwaySign(meshName, new Vector3(px, py, -pz), Upright(yawDeg));
+                if (root == null) continue;
+                for (int i = 0; i < SignBoardCount(root); i++)
+                    root.SetMeta($"sign_text_{i}", SanitiseSignText(cols.Length > i + 1 ? cols[i + 1] : DefaultSignText(i)));
+                UpdateSignLabels(root);
+                n++;
+            }
+            if (n > 0) Log.Print($"[editor] loaded {n} highway signs");
+        }
+
+        // ---- LANE-SELECTABLE OVERHEAD SIGNS -----------------------------------------------------------------
+        //
+        // Master: "can u make it smart, where u can choose which lanes get signs above them". astraclaw split
+        // their gantry into a bare FRAME plus one reusable BOARD, so the composition is ours: place the frame
+        // once, add a board only for the lanes that are ticked, and keep a legend per lane.
+        public const string LaneSignName = "🛣 Lane Signs";
+        const string LaneFrameMesh = "Highway_Lane_Sign_Frame";
+        const string LaneBoardMesh = "Highway_Lane_Sign_Board";
+
+        /// <summary>The road half-width the FRAME is authored for (13.8 m carriageway), and the height of its
+        /// mast axis. Both from astraclaw's handoff, named rather than inlined because the width adaptation
+        /// below is a difference against the first.</summary>
+        public const float LaneFrameAuthoredHalf = 6.9f;
+        public const float LaneBoardHeight = 6.547797f;
+
+        /// <summary>⭐ WIDEN THE FRAME BY MOVING VERTICES, NOT BY SCALING IT. astraclaw's rule verbatim: for
+        /// every vertex with |nativeY| > 0, nativeY += sign(nativeY) * (half - authoredHalf); the centre-joint
+        /// vertices at Y = 0 stay put. That lengthens only the straight crossbar and carries the posts and
+        /// knees out with it. Scaling the whole frame instead would thicken the posts and raise the boards --
+        /// "Do NOT scale the whole frame/basis", and they are right: a 18.4 m road would get fat poles.</summary>
+        static ArrayMesh WidenLaneFrame(ArrayMesh src, float half)
+        {
+            float d = half - LaneFrameAuthoredHalf;
+            if (src == null || Mathf.Abs(d) < 1e-4f) return src;
+            var a0 = src.SurfaceGetArrays(0);
+            var V = a0[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+            for (int i = 0; i < V.Length; i++)
+                if (Mathf.Abs(V[i].Y) > 1e-7f) V[i] = new Vector3(V[i].X, V[i].Y + Mathf.Sign(V[i].Y) * d, V[i].Z);
+            a0[(int)Mesh.ArrayType.Vertex] = V;
+            var outp = new ArrayMesh();
+            outp.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, a0);
+            return outp;
+        }
+
+        /// <summary>The lanes this sign spans, and how wide the road under it is. Falls back to the material
+        /// the frame was authored against so a sign dropped in open ground is still a sensible object.</summary>
+        (float half, float[] lanes) LaneLayoutAt(Vector3 pos)
+        {
+            var rf = _editor?.Roads;
+            if (rf == null) return (LaneFrameAuthoredHalf, null);
+            if (rf.NearestRoad(pos, out int road, out _))
+            {
+                float h = rf.RoadHalfWidth(road);
+                if (h > 1f)
+                {
+                    var l = rf.PaintedLaneCentres(rf.RoadMaterialOf(road), h);
+                    if (l != null && l.Length > 0) return (h, l);
+                }
+            }
+            // ⚠ still READ, not typed: the fallback asks the same texture reader about Highway_1 rather than
+            // hardcoding the four offsets out of the handoff, so a retexture moves both paths together.
+            return (LaneFrameAuthoredHalf, rf.PaintedLaneCentres(1, LaneFrameAuthoredHalf));
+        }
+
+        public static string DefaultLaneText(int lane) => $"LANE {lane + 1}";
+
+        Node3D PlaceLaneSigns(Vector3 pos, Basis rot) => PlaceLaneSigns(pos, rot, -1, null, 0f);
+
+        Node3D PlaceLaneSigns(Vector3 pos, Basis rot, int mask, string[] texts, float halfOverride)
+        {
+            var frameSrc = MeshFor(LaneFrameMesh);
+            var boardSrc = MeshFor(LaneBoardMesh);
+            if (frameSrc == null || boardSrc == null) return null;
+            var (half, lanes) = LaneLayoutAt(pos);
+            if (halfOverride > 1f) half = halfOverride;
+            lanes ??= new float[0];
+
+            float yaw = Mathf.Atan2(-rot.X.Z, rot.X.X);
+            var stand = new Basis(Vector3.Right, Mathf.DegToRad(-90f));
+            var root = new Node3D { Transform = new Transform3D(new Basis(Vector3.Up, yaw), pos) };
+            root.SetMeta("obj_name", LaneSignName);
+            root.SetMeta("lane_sign_edit", true);
+            root.SetMeta("lane_half", half);
+            root.SetMeta("lane_count", lanes.Length);
+            var lv = new Vector3[lanes.Length];
+            for (int i = 0; i < lanes.Length; i++) lv[i] = new Vector3(lanes[i], 0f, 0f);
+            root.SetMeta("lane_centres", lv);
+            // ⭐ Every lane ticked by default: a sign that appears with nothing on it reads as broken, and
+            // master's ask was to CHOOSE lanes, which implies starting from the obvious choice.
+            root.SetMeta("lane_mask", mask < 0 ? (1 << lanes.Length) - 1 : mask);
+            for (int i = 0; i < lanes.Length; i++)
+                root.SetMeta($"lane_text_{i}", SanitiseSignText(texts != null && i < texts.Length && texts[i] != null
+                                                                ? texts[i] : DefaultLaneText(i)));
+
+            root.AddChild(new MeshInstance3D
+            {
+                Name = "Frame",
+                Mesh = WidenLaneFrame(frameSrc, half),
+                MaterialOverride = MatFor(LaneFrameMesh),
+                Basis = stand,
+            });
+            RebuildLaneBoards(root);
+
+            var shp = frameSrc.CreateTrimeshShape();
+            if (shp != null)
+            {
+                var body = new StaticBody3D { CollisionLayer = PickLayer, CollisionMask = 0, Basis = stand };
+                body.AddChild(new CollisionShape3D { Shape = shp });
+                root.AddChild(body);
+                _pickToObj[body.GetRid()] = root;
+            }
+            _world.AddChild(root);
+            _placed.Add(root);
+            return root;
+        }
+
+        /// <summary>Rebuild the board children from the lane mask. ⭐ The TEXT of an unticked lane is kept in
+        /// meta, per astraclaw's "prefer preserving text for temporarily unchecked lanes" -- unticking a lane
+        /// to look at the road and ticking it back should not cost the mapper what they typed.</summary>
+        void RebuildLaneBoards(Node3D root)
+        {
+            if (root == null) return;
+            // ⚠⚠ REMOVED FROM THE TREE, not just QueueFree'd. QueueFree is DEFERRED, so the old Board0 is
+            // still a sibling when the new one is added and Godot silently renames it to "@Board0@2" -- the
+            // boards exist and nothing that looks them up by name can find them. RemoveChild frees the name
+            // immediately; the QueueFree after it still reclaims the node.
+            foreach (var c in new System.Collections.Generic.List<Node>(root.GetChildren()))
+                if (c is Node3D n && (n.Name.ToString().StartsWith("Board") || n.Name.ToString().StartsWith("LaneText")))
+                { root.RemoveChild(n); n.QueueFree(); }
+            int count = root.HasMeta("lane_count") ? (int)root.GetMeta("lane_count") : 0;
+            int mask = root.HasMeta("lane_mask") ? (int)root.GetMeta("lane_mask") : 0;
+            var lv = root.HasMeta("lane_centres") ? (Vector3[])root.GetMeta("lane_centres") : new Vector3[0];
+            var boardSrc = MeshFor(LaneBoardMesh);
+            if (boardSrc == null) return;
+            var faces = SignFaceBounds(boardSrc);
+            var stand = new Basis(Vector3.Right, Mathf.DegToRad(-90f));
+            for (int i = 0; i < count && i < lv.Length; i++)
+            {
+                if ((mask & (1 << i)) == 0) continue;
+                // the board's own origin is its centre, so it is translated to the lane and nothing else --
+                // "Do NOT floor-align or recentre either asset".
+                var nat = new Vector3(0f, lv[i].X, LaneBoardHeight);
+                var atRoot = new Vector3(nat.X, nat.Z, -nat.Y);     // native -> root under the stand-up
+                root.AddChild(new MeshInstance3D
+                {
+                    Name = $"Board{i}", Mesh = boardSrc, MaterialOverride = MatFor(LaneBoardMesh),
+                    Transform = new Transform3D(stand, atRoot),
+                });
+                if (faces == null || faces.Count == 0) continue;
+                var c0 = faces[0].box.GetCenter();
+                var nRoot = new Vector3(faces[0].n.X, faces[0].n.Z, -faces[0].n.Y).Normalized();
+                var cRoot = atRoot + new Vector3(c0.X, c0.Z, -c0.Y) + nRoot * 0.01f;
+                var zc = nRoot; var yc = Vector3.Up; var xc = yc.Cross(zc).Normalized();
+                root.AddChild(new Label3D
+                {
+                    Name = $"LaneText{i}",
+                    Text = SignTextForDisplay(root.HasMeta($"lane_text_{i}") ? (string)root.GetMeta($"lane_text_{i}") : ""),
+                    Position = cRoot, Basis = new Basis(xc, yc, zc),
+                    Billboard = BaseMaterial3D.BillboardModeEnum.Disabled,
+                    FontSize = 64, PixelSize = 0.0075f, Width = 380f,
+                    AutowrapMode = TextServer.AutowrapMode.Word,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center,
+                });
+            }
+        }
+
+        public bool LaneSignSelected => Primary != null && Primary.HasMeta("lane_sign_edit");
+        public int SelectedLaneCount => LaneSignSelected && Primary.HasMeta("lane_count") ? (int)Primary.GetMeta("lane_count") : 0;
+        public int SelectedLaneMask => LaneSignSelected && Primary.HasMeta("lane_mask") ? (int)Primary.GetMeta("lane_mask") : 0;
+        public string SelectedLaneText(int lane) =>
+            LaneSignSelected && Primary.HasMeta($"lane_text_{lane}") ? (string)Primary.GetMeta($"lane_text_{lane}") : "";
+        public void SetSelectedLaneOn(int lane, bool on)
+        {
+            if (!LaneSignSelected || lane < 0 || lane >= SelectedLaneCount) return;
+            int m = SelectedLaneMask;
+            Primary.SetMeta("lane_mask", on ? (m | (1 << lane)) : (m & ~(1 << lane)));
+            RebuildLaneBoards(Primary);
+        }
+        public void SetSelectedLaneText(int lane, string text)
+        {
+            if (!LaneSignSelected || lane < 0 || lane >= SelectedLaneCount) return;
+            Primary.SetMeta($"lane_text_{lane}", SanitiseSignText(text));
+            RebuildLaneBoards(Primary);
+        }
+
+        string LaneSignPath => Dir + $"editor_{_editor.MapName}_lanesigns.txt";
+        void SaveLaneSigns()
+        {
+            var sg = _placed.FindAll(x => IsInstanceValid(x) && x.HasMeta("lane_sign_edit"));
+            using var w = new System.IO.StreamWriter(LaneSignPath, false);
+            foreach (var b in sg)
+            {
+                var gp = b.GlobalPosition;
+                float yawDeg = Mathf.RadToDeg(b.GlobalTransform.Basis.GetEuler().Y);
+                int count = (int)b.GetMeta("lane_count"), mask = (int)b.GetMeta("lane_mask");
+                float half = (float)b.GetMeta("lane_half");
+                var sb = new System.Text.StringBuilder(
+                    $"{gp.X:0.###} {gp.Y:0.###} {(-gp.Z):0.###} {yawDeg:0.###} {half:0.###} {count} {mask}");
+                for (int i = 0; i < count; i++)
+                    sb.Append('\t').Append(b.HasMeta($"lane_text_{i}") ? (string)b.GetMeta($"lane_text_{i}") : "");
+                w.WriteLine(sb.ToString());
+            }
+            if (sg.Count > 0) Log.Print($"[editor] saved {sg.Count} lane sign(s) -> {LaneSignPath}");
+        }
+        void LoadLaneSigns()
+        {
+            if (!System.IO.File.Exists(LaneSignPath)) return;
+            int n = 0;
+            foreach (var line in System.IO.File.ReadLines(LaneSignPath))
+            {
+                var cols = line.Split('\t');
+                var p = cols[0].Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                if (p.Length < 7 || !float.TryParse(p[0], out var px) || !float.TryParse(p[1], out var py)
+                    || !float.TryParse(p[2], out var pz) || !float.TryParse(p[3], out var yaw)
+                    || !float.TryParse(p[4], out var half) || !int.TryParse(p[5], out var count)
+                    || !int.TryParse(p[6], out var mask)) continue;
+                var texts = new string[count];
+                for (int i = 0; i < count; i++) texts[i] = cols.Length > i + 1 ? cols[i + 1] : DefaultLaneText(i);
+                if (PlaceLaneSigns(new Vector3(px, py, -pz), Upright(yaw), mask, texts, half) != null) n++;
+            }
+            if (n > 0) Log.Print($"[editor] loaded {n} lane sign(s)");
+        }
+
+        /// <summary>L1 seams for the lane-sign sidecar.</summary>
+        public void DebugSaveLaneSigns() => SaveLaneSigns();
+        public void DebugLoadLaneSigns() => LoadLaneSigns();
+        public string DebugLaneSignPath => LaneSignPath;
+
+        // ---- GENERATED GEOMETRY (the swept tunnel) ---------------------------------------------------------
+        //
+        // ⚠ A SWEPT TUNNEL HAS NO GUID, so Save() skips it by design (it writes placements keyed on one) and
+        // it needs a sidecar of its own. What is stored is the CENTRELINE, not the mesh: the mesh is a pure
+        // function of it, so a reload rebuilds rather than persisting thousands of triangles -- and a later
+        // change to the profile or the step improves every saved tunnel instead of baking the old one in.
+        public const string TunnelName = "⛰ Tunnel (swept)";
+
+        /// <summary>UG_TUNNEL_UNSHADED=1: a one-render bisect. Dark-with-correct-albedo is either lighting
+        /// or albedo, and five guesses had not told me which; an unshaded material answers it outright.</summary>
+        static Material UnshadedProbe()
+        {
+            string m = System.Environment.GetEnvironmentVariable("UG_TUNNEL_UNSHADED");
+            if (m == "1")
+                return new StandardMaterial3D { ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                                                AlbedoColor = new Color(0.60f, 0.55f, 0.47f),
+                                                CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            // =normal: the project's own normal probe -- up-facing WHITE, vertical BLACK, and deliberately
+            // uncorrected for FRONT_FACING so a back-facing surface reports as back-facing.
+            if (m == "normal")
+                return new ShaderMaterial { Shader = GD.Load<Shader>("res://content/normal_probe.gdshader") };
+            return null;
+        }
+
+        public Node3D AddGeneratedTunnel(ArrayMesh mesh, Vector3[] centre, float lateral = 1f)
+        {
+            if (mesh == null || centre == null || centre.Length < 2) return null;
+            var root = new Node3D();
+            root.SetMeta("obj_name", TunnelName);
+            root.SetMeta("tunnel_centre", centre);
+            root.SetMeta("tunnel_lateral", lateral);   // so a reload rebuilds the same width
+            // ⚠ THE SAME MATERIAL THE PROP USES, not a hand-rolled one. The portal beside it renders tan
+            // through MatFor while my own StandardMaterial3D came out dark, and reasoning about which
+            // property differed was two wrong guesses deep -- MatFor is the one factory every other prop
+            // goes through, so going through it removes the question instead of answering it.
+            root.AddChild(new MeshInstance3D
+            {
+                Mesh = mesh,
+                MaterialOverride = UnshadedProbe() ?? MatFor("Tunnel_Line_0"),
+                // ⚠ DoubleSided shadows. The default casts with front faces culled, which is right for a
+                // closed solid and wrong for an open shell drawn with CullMode.Disabled: a long tube then
+                // shadows its own outer wall with its inner one and the whole bore renders unlit.
+                CastShadow = GeometryInstance3D.ShadowCastingSetting.DoubleSided,
+            });
+            var shp = mesh.CreateTrimeshShape();
+            if (shp != null)
+            {
+                var body = new StaticBody3D { CollisionLayer = PickLayer, CollisionMask = 0 };
+                body.AddChild(new CollisionShape3D { Shape = shp });
+                root.AddChild(body);
+                _pickToObj[body.GetRid()] = root;
+            }
+            _world.AddChild(root);
+            _placed.Add(root);
+            return root;
+        }
+
+        string TunnelPath => Dir + $"editor_{_editor.MapName}_tunnels.txt";
+        void SaveTunnels()
+        {
+            var tus = _placed.FindAll(t => IsInstanceValid(t) && t.HasMeta("tunnel_centre"));
+            using var w = new System.IO.StreamWriter(TunnelPath, false);
+            foreach (var t in tus)
+            {
+                var c = (Vector3[])t.GetMeta("tunnel_centre");
+                var sb = new System.Text.StringBuilder();
+                foreach (var v in c) sb.Append($"{v.X:0.###} {v.Y:0.###} {(-v.Z):0.###} ");
+                float lat = t.HasMeta("tunnel_lateral") ? (float)t.GetMeta("tunnel_lateral") : 1f;
+                w.WriteLine(sb.ToString().TrimEnd() + $"\t{lat:0.####}");
+            }
+            if (tus.Count > 0) Log.Print($"[editor] saved {tus.Count} swept tunnel(s) -> {TunnelPath}");
+        }
+        void LoadTunnels()
+        {
+            if (!System.IO.File.Exists(TunnelPath)) return;
+            int n = 0;
+            foreach (var line in System.IO.File.ReadLines(TunnelPath))
+            {
+                var tab = line.Split('\t');
+                float lat = 1f;
+                if (tab.Length > 1) float.TryParse(tab[1], out lat);
+                if (lat < 0.01f) lat = 1f;
+                var p = tab[0].Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                if (p.Length < 6 || p.Length % 3 != 0) continue;
+                var c = new Vector3[p.Length / 3];
+                bool ok = true;
+                for (int i = 0; i < c.Length && ok; i++)
+                    ok = float.TryParse(p[i * 3], out float x) && float.TryParse(p[i * 3 + 1], out float y)
+                      && float.TryParse(p[i * 3 + 2], out float z) && Set(ref c[i], x, y, -z);
+                if (!ok) continue;
+                var prof = TunnelProfile();
+                if (prof == null) continue;
+                if (AddGeneratedTunnel(TunnelMesh.Sweep(prof, c, lat), c, lat) != null) n++;
+            }
+            if (n > 0) Log.Print($"[editor] loaded {n} swept tunnel(s)");
+        }
+        static bool Set(ref Vector3 v, float x, float y, float z) { v = new Vector3(x, y, z); return true; }
+
+        /// <summary>L1 seams: round-trip the swept-tunnel sidecar on its own.</summary>
+        public void DebugSaveTunnels() => SaveTunnels();
+        public string DebugTunnelPath => TunnelPath;
+        public void DebugLoadTunnels() => LoadTunnels();
+
+        /// <summary>The tunnel section's profile, read off the shipped prop once and cached.</summary>
+        System.Collections.Generic.List<Vector2[]> _tunnelProfile;
+        public System.Collections.Generic.List<Vector2[]> TunnelProfile()
+            => _tunnelProfile ??= TunnelMesh.ProfileFrom(MeshFor("Tunnel_Line_0"));
+
+        /// <summary>L1 seam: make a placed prop the selection, the way a click would. The editable-field
+        /// API all hangs off Primary, so a test that cannot select cannot reach any of it.</summary>
+        public void DebugSelect(Node3D obj) => Select(obj);
+
+        /// <summary>L1 seams: round-trip the sign sidecar on its own, without driving a whole map save.</summary>
+        public void DebugSaveSigns() => SaveSigns();
+        public void DebugLoadSigns() => LoadSigns();
+        public string DebugSignPath => SignPath;
 
         // source Ctrl+B / Ctrl+N: copy the selection pivot's TRANSFORM, then stamp it onto another selection (align props)
         Vector3 _copyPos; Basis _copyBasis; bool _hasCopyXform, _copyFull;

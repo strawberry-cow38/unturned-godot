@@ -694,6 +694,68 @@ namespace UnturnedGodot
             }
             return SplinePos(r, segs - 1, 1f);
         }
+        /// <summary>⭐ THE PAINTED LANE CENTRES of a road material, as signed lateral offsets in metres,
+        /// driver-left to driver-right. Null when the material paints no lanes.
+        ///
+        /// ⚠⚠ NOT BuildLanePaths. astraclaw's warning, and it is correct: that forces an EVEN, two-way lane
+        /// count at a global 4.6 m spacing, which is wrong for a one-way carriageway -- road_1 actually
+        /// paints FOUR lanes across 13.8 m. So this reads the texture instead: a lane divider is a column
+        /// that VARIES down the image, because the dividers are dashed and the asphalt is not. Measured on
+        /// the shipped art, road_0 has two dividers and road_1 three, and the centres this returns reproduce
+        /// astraclaw's independently-derived demo figures to the millimetre.
+        ///
+        /// The same trick read the bridge deck's dash period. Paint is data; it is worth reading.</summary>
+        public float[] PaintedLaneCentres(int material, float halfWidth)
+        {
+            if (material < 0) return null;
+            if (_laneCentreCache.TryGetValue(material, out var cached))
+                return Scale(cached, halfWidth);
+            string path = ProjectSettings.GlobalizePath($"res://content/roads/road_{material}.png");
+            if (!System.IO.File.Exists(path)) return null;
+            var img = new Image();
+            if (!ContentProvider.LoadOk(img, path)) return null;
+            int w = img.GetWidth(), h = img.GetHeight();
+            if (w < 8 || h < 8) return null;
+
+            // contiguous runs of columns whose colour changes down the image = the dashed dividers
+            var runs = new System.Collections.Generic.List<(int a, int b)>();
+            for (int x = 0; x < w; x++)
+            {
+                var first = img.GetPixel(x, 0);
+                bool varies = false;
+                for (int y = 1; y < h && !varies; y++) if (!img.GetPixel(x, y).IsEqualApprox(first)) varies = true;
+                if (!varies) continue;
+                if (runs.Count > 0 && runs[runs.Count - 1].b == x - 1) runs[runs.Count - 1] = (runs[runs.Count - 1].a, x);
+                else runs.Add((x, x));
+            }
+            // ⚠ A run touching an edge is the road's own shoulder marking, not a lane divider between lanes.
+            var us = new System.Collections.Generic.List<float>();
+            foreach (var r in runs)
+            {
+                if (r.a == 0 || r.b == w - 1) continue;
+                us.Add((r.a + r.b + 1) * 0.5f / w);
+            }
+            if (us.Count == 0) return null;
+            us.Sort();
+            var centres = new float[us.Count + 1];
+            for (int i = 0; i <= us.Count; i++)
+            {
+                float lo = i == 0 ? 0f : us[i - 1];
+                float hi = i == us.Count ? 1f : us[i];
+                centres[i] = (lo + hi) * 0.5f - 0.5f;     // fraction of the full width, centred
+            }
+            System.Array.Reverse(centres);                 // driver-left first, matching the art handoff
+            _laneCentreCache[material] = centres;
+            return Scale(centres, halfWidth);
+        }
+        readonly System.Collections.Generic.Dictionary<int, float[]> _laneCentreCache = new();
+        static float[] Scale(float[] frac, float halfWidth)
+        {
+            var o = new float[frac.Length];
+            for (int i = 0; i < frac.Length; i++) o[i] = frac[i] * halfWidth * 2f;
+            return o;
+        }
+
         /// <summary>Nearest road of ANY material to a world point. The bridge tool needs this where the rail
         /// tool needs NearestTrack: a bridge carries whatever road it was drawn on, and filtering to one
         /// material would quietly refuse every highway.</summary>

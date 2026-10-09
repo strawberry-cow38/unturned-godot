@@ -162,7 +162,7 @@ namespace UnturnedGodot
             ShowMessage(
                 "Ctrl+S save   ·   Ctrl+Z undo   ·   F1/F2/F3 show-hide objects/roads/foliage   ·   Esc menu\n" +
                 "RMB-drag fly   ·   WASD move   ·   E/Q up-down   ·   scroll speed\n" +
-                "Tools: R draw road · Shift+R legacy pave · V river   ·   Shift+F fence · Shift+T rail · Shift+B bridge\n" +
+                "Tools: R draw road · Shift+R legacy pave · V river   ·   Shift+F fence · Shift+T rail · Shift+B bridge · Shift+U tunnel\n" +
                 "per-tool keys are in the status bar",
                 7.0);
         }
