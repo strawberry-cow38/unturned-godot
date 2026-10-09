@@ -56,20 +56,27 @@ namespace UnturnedGodot
         /// one at the top of this list and that is handled.</summary>
         public static List<Station> Stations() => new()
         {
-            new Station("FENCE ROAD", "Click a point, click the next — guardrail runs itself out · Shift+F", c =>
+            new Station("FENCE ROAD", "Click a path — straight, or curved through 3+ points · Shift+F", c =>
             {
-                // Two runs meeting at an angle, because the one thing a straight demo cannot show is that the
-                // segments TURN to follow the line and still butt together at the corner.
+                // A CURVE, because that is the thing the tool does that placing the prop by hand cannot. A
+                // straight demo would be indistinguishable from dragging the same prop along a line.
                 if (c.Objects == null) return;
-                var p0 = c.Origin + new Vector3(-55f, 0f, -20f);
-                var p1 = c.Origin + new Vector3(0f, 0f, 10f);
-                var p2 = c.Origin + new Vector3(55f, 0f, -14f);
-                EditorFenceRoad.LaySegments(c.Objects, c.Terr, p0, p1, false, false, null, null);
-                EditorFenceRoad.LaySegments(c.Objects, c.Terr, p1, p2, false, false, null, null);
-                // ...and a BROKEN run set back behind them, so the wrecked variant is visible beside the intact
+                EditorFenceRoad.LayPath(c.Objects, c.Terr, new List<Vector3>
+                {
+                    // ⚠ A GENTLE arc: a rigid 16 m segment cannot follow a bend under MinBendRadius, and the
+                    // first version of this station used one tight enough (38 m) to trip the tool's own
+                    // warning -- a showcase that demonstrates the thing being warned about.
+                    c.Origin + new Vector3(-82f, 0f, -6f),
+                    c.Origin + new Vector3(  0f, 0f, 14f),
+                    c.Origin + new Vector3( 82f, 0f, -6f),
+                }, false, false, null, null);
+                // ...and a BROKEN run set back behind it, so the wrecked variant is visible beside the intact
                 // one rather than being a mode you have to know about.
-                EditorFenceRoad.LaySegments(c.Objects, c.Terr,
-                    c.Origin + new Vector3(-40f, 0f, 34f), c.Origin + new Vector3(40f, 0f, 34f), true, false, null, null);
+                EditorFenceRoad.LayPath(c.Objects, c.Terr, new List<Vector3>
+                {
+                    c.Origin + new Vector3(-48f, 0f, 40f),
+                    c.Origin + new Vector3( 48f, 0f, 40f),
+                }, true, false, null, null);
             }),
 
             new Station("POWER LINES", "Pick a pole, pick the next — four wires string themselves · Shift+P", c =>

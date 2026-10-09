@@ -123,10 +123,53 @@ namespace UnturnedGodot.Testing
             T.Check($"a run shorter than one segment lays nothing ({none} segments, {objs.PlacedCount - b2} props)",
                     none == 0 && objs.PlacedCount == b2);
 
+            // ---- 3b. A CURVE: three or more points bend the run, and the pitch must survive the bend. That
+            // is the whole reason it is walked by arc length -- a per-spline-segment placement stretches the
+            // post rhythm on the long part of a curve and crowds it on the short part.
+            //
+            // ⚠ A GENTLE arc on purpose (~150 m radius): a rigid 16 m chord cannot follow a tighter one, and
+            // the first version of this test used a 32 m bend and then blamed the tool for the 0.69 m the
+            // chord-versus-arc difference accounts for. The tight case is checked separately, below.
+            var arc = new List<Vector3> { new(0, 0, 400), new(120, 0, 460), new(240, 0, 400) };
+            T.Check($"fixture: the test arc is within what a segment can follow "
+                  + $"({EditorFenceRoad.TightestBendRadius(arc):0} m radius, limit {EditorFenceRoad.MinBendRadius:0})",
+                    EditorFenceRoad.TightestBendRadius(arc) > EditorFenceRoad.MinBendRadius);
+            int cn = tool.LayPathRun(arc);
+            T.Check($"a 3-point path lays a curved run ({cn} segments)", cn >= 8);
+            var cc = new List<Vector3>();
+            foreach (var x in objs.PlacedOf(EditorFenceRoad.Intact + "_Rail"))
+                if (x.Origin.Z > 300f) cc.Add(x.Origin);
+            cc.Sort((p1, p2) => p1.X.CompareTo(p2.X));
+            float cWorst = 0f;
+            for (int i = 1; i < cc.Count; i++)
+                cWorst = Mathf.Max(cWorst, Mathf.Abs(cc[i].DistanceTo(cc[i - 1]) - EditorFenceRoad.SegmentLength));
+            // ⚠ THE TOLERANCE IS RETAIL'S OWN, not a number picked to make this pass. Consecutive segment
+            // centres are chord midpoints, so on a bend they sit very slightly under the arc pitch; the
+            // question is whether that is worse than the game's own placement. PEI's 22 Fence_Road_0
+            // placements span 15.948..16.15 m -- a 0.2 m spread by hand -- so 0.25 m is the bar, and this
+            // comes in at a sixth of a metre on a 150 m bend.
+            T.Check($"...with the SAME {EditorFenceRoad.SegmentLength:0.##} m pitch round the bend "
+                  + $"(worst error {cWorst:0.###} m over {cc.Count} segments, retail's own spread is 0.2)",
+                    cc.Count == cn && cWorst < 0.25f);
+
+            // ⭐ CONTROL: the run actually BENT. Every check above passes on a tool that quietly laid a straight
+            // line through the first two points and ignored the third.
+            float spread = 0f;
+            foreach (var c in cc) spread = Mathf.Max(spread, Mathf.Abs(c.Z - cc[0].Z));
+            T.Check($"control: the run really curves -- it departs {spread:0.#} m from its first segment "
+                  + "(a straight line would be 0)", spread > 5f);
+
+            // ⭐ AND THE LIMIT IS REAL, not a dead constant: a bend a rigid segment cannot follow must measure
+            // tighter than it. Without this the fixture check above passes on a function that returns infinity.
+            var hairpin = new List<Vector3> { new(0, 0, 600), new(40, 0, 630), new(80, 0, 600) };
+            T.Check($"control: a hairpin measures tighter than the limit "
+                  + $"({EditorFenceRoad.TightestBendRadius(hairpin):0} m < {EditorFenceRoad.MinBendRadius:0})",
+                    EditorFenceRoad.TightestBendRadius(hairpin) < EditorFenceRoad.MinBendRadius);
+
             // ---- 4. UNDO takes the whole run, not one post at a time -- the reason RemovePlaced exists.
             int b3 = objs.PlacedCount;
             tool.LayRun(new Vector3(0f, 0f, 200f), new Vector3(EditorFenceRoad.SegmentLength * 3f, 0f, 200f));
-            T.Check("a second run went down", objs.PlacedCount == b3 + 6);
+            T.Check("another run went down", objs.PlacedCount == b3 + 6);
             ed.Undo();
             yield return Ticks(1);
             T.Check($"one Ctrl+Z removes the WHOLE run ({objs.PlacedCount} props, back to {b3})",
