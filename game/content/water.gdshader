@@ -109,7 +109,14 @@ void fragment() {
         refl_src = srgb_to_linear(clamp(texture(reflection_tex, refl_uv).rgb, 0.0, 1.0));
     }
 
-    float fres = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 2.5);
+    // ⭐⭐ BACK TO SCHLICK'S 5.0, AND THE OLD COMMENT IS WHY. It had been lowered to 2.5 to widen reflection into
+    // mid angles, justified like this: "Schlick's physical 5.0 is for a FLAT OPTICAL INTERFACE; stylised water is
+    // chop-perturbed over a whole pixel footprint, which flattens the real curve the same way." That compensation
+    // was correct for a chopped sea. The surface is now literally a flat optical interface, so the compensation is
+    // backwards -- 2.5 put most of the visible sea above 60% mirror, which is master's "very milky and white in
+    // game". At 5.0 the near and middle water reads through to the seabed (which is what "crystal clear" asked
+    // for) and the mirror concentrates toward the horizon, where a flat surface genuinely does reflect.
+    float fres = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 5.0);
     float mirror = clamp(fres * reflectivity * reflection_strength, 0.0, 1.0);
 
     // The body tint comes from the SHARED optics include rather than a colour of this file's own, because the

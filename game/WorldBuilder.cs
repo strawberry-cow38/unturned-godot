@@ -1182,6 +1182,13 @@ namespace UnturnedGodot
                 var mainMi = batched ? null : new MeshInstance3D { Mesh = visMesh, MaterialOverride = WetMatFor(matName), Transform = new Transform3D(basis, gpos),
                     CastShadow = isDecal ? GeometryInstance3D.ShadowCastingSetting.Off : GeometryInstance3D.ShadowCastingSetting.On,
                     VisibilityRangeEnd = cull, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled };   // individual props already frustum-cull behind the player; add a distance cutoff (master)
+                // ⭐ THE BIG PROPS INTO THE MIRROR TOO (master 2026-10-09: "add very large props to the
+                // reflections"). PropBatcher already flags everything that goes THROUGH it, and its comment says
+                // that covers every map object -- but a prop that NeedsOwnNode skips the batcher entirely and so
+                // skipped the mirror with it. That deny list is exactly the distinctive stuff: buildings with
+                // doors, the big dock, the landmarks. The one class of prop worth reflecting was the one class
+                // not reflected, and the batcher's comment made it look handled.
+                if (mainMi != null) WaterReflection.MarkReflective(mainMi);
                 if (mainMi != null) { long _mi0 = System.Diagnostics.Stopwatch.GetTimestamp(); root.AddChild(mainMi); _objMiT += System.Diagnostics.Stopwatch.GetTimestamp() - _mi0; }
                 // A CCTV housing becomes a wired device: a power socket and a data output, and a feed while both
                 // are satisfied. Hung off the HOUSING, whose transform is where the lens is and which way it

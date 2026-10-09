@@ -36,6 +36,7 @@ namespace UnturnedGodot
         /// `MarkedCount` is published on the first mirror frame so a layer that goes empty again says so in the log
         /// instead of quietly costing a render target and returning sky.</summary>
         public static int MarkedCount;
+        static int _lastCensus, _censusHold;
         public static void MarkReflective(VisualInstance3D vi)
         {
             if (vi == null) return;
@@ -121,9 +122,19 @@ namespace UnturnedGodot
         public override void _Process(double delta)
         {
             if (_mat != null) { _mat.SetShaderParameter("reflection_on", Enabled); if (!Enabled) { if (_vp != null && _vp.RenderTargetUpdateMode != SubViewport.UpdateMode.Disabled) _vp.RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled; return; } }   // GraphicsOptions.PlanarReflection Off
+            // ⚠ RE-REPORT WHEN IT CHANGES, not once. Deferring to the first mirror frame was already an attempt to
+            // outrun the build order ("props and trees are instanced AFTER the ocean") -- and it still fired too
+            // early: a --peiplay world logged the SAME count as a terrain-only harness, which reads as "props do
+            // not reflect" and is indistinguishable from "the count was taken before they existed". A census that
+            // can only be wrong in one direction cannot be used to answer the question it was built for.
+            if (_censused && MarkedCount != _lastCensus && ++_censusHold >= 60)
+            {
+                _censusHold = 0; _lastCensus = MarkedCount;
+                Log.Print($"[water-refl] reflection layer now {MarkedCount} instance groups");
+            }
             if (!_censused)
             {
-                _censused = true;
+                _censused = true; _lastCensus = MarkedCount;
                 // Reported from the first mirror frame, not from Attach: props and trees are instanced AFTER the
                 // ocean, so counting at setup time would read 0 and mean nothing.
                 bool all = System.Environment.GetEnvironmentVariable("UG_REFLALL") == "1";

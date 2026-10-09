@@ -3599,6 +3599,18 @@ namespace UnturnedGodot
                 AmbientLightColor = new Color(0.6f, 0.6f, 0.62f),
                 AmbientLightEnergy = 0.8f,
             };
+            // ⚠ FOG, BECAUSE THE GAME HAS FOG AND THIS HARNESS DID NOT. Master looked at a water render taken here
+            // and then at the same water in game: "very milky and white in game compared to ur screenshot". A
+            // harness missing an effect the game applies does not render the game -- it renders a flattering
+            // version of it, which is the same mistake as the boattest that was subdivided finer than the real map
+            // and hid the facets for a week. Matches DayNightCycle's noon end (0.0005, tinted to the horizon).
+            // UG_NOFOG=1 turns it off, the same knob the day/night cycle already honours for aerial shots.
+            if (System.Environment.GetEnvironmentVariable("UG_NOFOG") != "1")
+            {
+                env.FogEnabled = true;
+                env.FogDensity = 0.0005f;
+                env.FogLightColor = new Color(0.5f, 0.6f, 0.75f);   // the horizon it tints to = this env's sky
+            }
             AddChild(new WorldEnvironment { Environment = env });
             AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-45f, -55f, 0f), LightEnergy = 1.15f, ShadowEnabled = true });
 
