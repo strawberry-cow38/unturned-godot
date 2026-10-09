@@ -70,14 +70,11 @@ namespace UnturnedGodot
                     c.Origin + new Vector3(-24f, 0f, -14f),
                     c.Origin + new Vector3( 24f, 0f,  14f),
                     c.Origin + new Vector3( 72f, 0f, -16f),
-                }, false, false, null, null);
-                // ...and a BROKEN run set back behind it, so the wrecked variant is visible beside the intact
-                // one rather than being a mode you have to know about.
-                EditorFenceRoad.LayPath(c.Objects, c.Terr, new List<Vector3>
-                {
-                    c.Origin + new Vector3(-48f, 0f, 40f),
-                    c.Origin + new Vector3( 48f, 0f, 40f),
-                }, true, false, null, null);
+                // ⭐ The two indices are WRECKED SECTIONS dropped into the run, which is how a broken piece
+                // is meant to be used: a mostly-intact roadside with a smashed stretch in it, not a separate
+                // all-broken fence. Their own posts land on the run's rhythm, so the run places none across
+                // them -- there is no seam and no doubled post where a wreck starts or ends.
+                }, false, false, null, null, new[] { 10, 28 });
             }),
 
             new Station("POWER LINES", "Pick a pole, pick the next — four wires string themselves · Shift+P", c =>

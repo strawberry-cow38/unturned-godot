@@ -83,6 +83,10 @@ namespace UnturnedGodot
         bool _broken;        // B: lay the wrecked variant instead
         bool _flip;          // R: which side of the line the rail faces
         readonly List<Vector3> _path = new();   // the clicked run, laid on Enter; 2 points = straight, 3+ = a curve
+        /// <summary>Points along the path where a WRECKED section should sit, dropped with B while building
+        /// the run. Stored as positions rather than unit indices because the unit count is not known until
+        /// Enter -- adding a path point afterwards would silently move every marker.</summary>
+        readonly List<Vector3> _wreckAt = new();
         MeshInstance3D _preview;
 
         /// <summary>Every run laid this session, newest last, so Delete can strip the rail off the last one.</summary>
@@ -97,8 +101,8 @@ namespace UnturnedGodot
 
         public string ModeText => _on
             ? (_path.Count == 0
-                ? $"FENCE ROAD · {(_broken ? "broken" : "intact")} · LMB to start a run · B = variant · R = side · Del = strip the last rail · Shift+F = off"
-                : $"FENCE ROAD · {_path.Count} point(s), 3+ curves · ENTER lays it · Backspace drops a point · R = rail faces {(_flip ? "left" : "right")} · Esc")
+                ? $"FENCE ROAD · {(_broken ? "all broken" : "intact")} · LMB to start a run · R = side · Del = strip the last rail · Shift+F = off"
+                : $"FENCE ROAD · {_path.Count} point(s), 3+ curves · ENTER lays it · B = wreck here ({_wreckAt.Count}) · Backspace drops a point · R = rail faces {(_flip ? "left" : "right")} · Esc")
             : "Shift+F = fence road";
 
         public void SetActive(bool on) { if (_on != on) Toggle(); }
@@ -107,7 +111,7 @@ namespace UnturnedGodot
         {
             _on = !_on;
             if (_on) Log.Print($"[editor-fence] ON: {SegmentLength:0.##} m segments, {_runs.Count} run(s) laid");
-            else { _path.Clear(); ClearPreview(); }
+            else { _path.Clear(); _wreckAt.Clear(); ClearPreview(); }
         }
 
         // ---- input ------------------------------------------------------------------------------------------
@@ -119,14 +123,23 @@ namespace UnturnedGodot
             if (!_on) return;
 
             if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.Z } && Input.IsKeyPressed(Key.Ctrl)) { _editor.Undo(); return; }
-            if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.Escape }) { _path.Clear(); ClearPreview(); return; }
+            if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.Escape }) { _path.Clear(); _wreckAt.Clear(); ClearPreview(); return; }
             // Backspace drops the last click. A curve is defined by EVERY point on it, so "that one was wrong"
             // would otherwise mean Esc and re-clicking the whole run.
             if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.Backspace } && _path.Count > 0)
             { _path.RemoveAt(_path.Count - 1); return; }
             if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.Enter or Key.KpEnter } && _path.Count >= 2)
-            { LayPathRun(_path); _path.Clear(); ClearPreview(); return; }
-            if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.B }) { _broken = !_broken; return; }
+            { LayPathRun(_path); _path.Clear(); _wreckAt.Clear(); ClearPreview(); return; }
+            // ⭐ B MARKS A WRECK WHERE THE CURSOR IS, rather than switching the whole run to the broken
+            // variant. A fully wrecked 100 m guardrail is not a thing anyone maps; a mostly-intact run with a
+            // smashed section in it is, and that is what master's "how do broken pieces integrate?" is about.
+            // Shift+B still lays a wholly broken run, for the rare case.
+            if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.B })
+            {
+                if (Input.IsKeyPressed(Key.Shift)) { _broken = !_broken; return; }
+                if (RaycastTerrain(GetViewport().GetMousePosition(), out var wreck)) _wreckAt.Add(wreck);
+                return;
+            }
             if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.R } && !Input.IsKeyPressed(Key.Shift)) { _flip = !_flip; return; }
 
             // ⭐ DELETE STRIPS THE RAIL AND LEAVES THE POSTS. Deleting the whole run is what Ctrl+Z is for; this
@@ -190,7 +203,7 @@ namespace UnturnedGodot
         {
             var posts = new List<Node3D>();
             var rail = new List<Node3D>();
-            int n = LayPath(_objects, _terr, pts, _broken, _flip, posts, rail);
+            int n = LayPath(_objects, _terr, pts, _broken, _flip, posts, rail, WreckUnits(pts));
             if (n == 0) return 0;
 
             var all = new List<Node3D>(posts); all.AddRange(rail);
@@ -223,8 +236,50 @@ namespace UnturnedGodot
         /// middle: on a bend those differ, and the tangent version leaves each segment's ends lifted off the
         /// line it is supposed to be following. A bend tighter than MinBendRadiusFor(step) is reported, because at that
         /// point the chords visibly cut the corner and the mapper should know rather than wonder.</summary>
+        /// <summary>Turn the dropped wreck markers into unit indices on THIS path. A marker is snapped to the
+        /// nearest unit boundary, and one that would overhang the end is dropped by LayPath.
+        ///
+        /// ⚠ RESOLVED AT LAY TIME, not when the marker is dropped: the path can still gain points afterwards,
+        /// and a curve through one more click is a different curve -- an index worked out early would point
+        /// somewhere else by the time the run went down.</summary>
+        List<int> WreckUnits(IReadOnlyList<Vector3> pts)
+        {
+            if (_wreckAt.Count == 0 || pts.Count < 2) return null;
+            var curve = BuildCurve(pts);
+            float total = curve.GetBakedLength();
+            int steps = Mathf.Max(2, Mathf.CeilToInt(total));
+            var outp = new List<int>();
+            foreach (var w in _wreckAt)
+            {
+                float bestS = 0f, bestD = float.MaxValue;
+                for (int i = 0; i <= steps; i++)
+                {
+                    float s = total * i / steps;
+                    var p = curve.SampleBaked(s, true);
+                    float d = new Vector3(p.X - w.X, 0f, p.Z - w.Z).LengthSquared();
+                    if (d < bestD) { bestD = d; bestS = s; }
+                }
+                // centre the wreck on the marker, then snap to a unit boundary
+                int k = Mathf.RoundToInt((bestS - PostSpacing * BrokenUnits * 0.5f) / PostSpacing);
+                if (!outp.Contains(k)) outp.Add(k);
+            }
+            return outp;
+        }
+
+        /// <summary>How many 4 m units a wrecked section spans. Measured: Fence_Road_Broken_0's own posts sit
+        /// at −8.00, −4.10, 0.00, +4.18, +8.00 -- the SAME 4 m rhythm as the intact prop, with the two middle
+        /// ones knocked askew, and its end posts at exactly ±8.00. So a wreck is four units of run, and it
+        /// drops into an otherwise intact fence with its end posts landing exactly where the run's would.</summary>
+        public const int BrokenUnits = 4;
+
         public static int LayPath(EditorObjects objects, Terrain terr, IReadOnlyList<Vector3> pts,
                                   bool broken, bool flip, List<Node3D> posts, List<Node3D> rail)
+            => LayPath(objects, terr, pts, broken, flip, posts, rail, null);
+
+        /// <param name="brokenAt">Unit indices where a WRECKED section starts, each covering BrokenUnits.</param>
+        public static int LayPath(EditorObjects objects, Terrain terr, IReadOnlyList<Vector3> pts,
+                                  bool broken, bool flip, List<Node3D> posts, List<Node3D> rail,
+                                  IReadOnlyCollection<int> brokenAt)
         {
             if (objects == null || pts == null || pts.Count < 2) return 0;
             var curve = BuildCurve(pts);
@@ -243,6 +298,23 @@ namespace UnturnedGodot
             }
             float tightest = TightestBendRadius(pts, step);
             float limit = MinBendRadiusFor(step);
+            int wrecks = 0;
+            HashSet<int> startsWreck = null, coveredByWreck = null, postSupplied = null;
+            if (!broken && brokenAt != null && brokenAt.Count > 0)
+            {
+                startsWreck = new HashSet<int>(); coveredByWreck = new HashSet<int>(); postSupplied = new HashSet<int>();
+                foreach (var k in brokenAt)
+                {
+                    if (k < 0 || k + BrokenUnits > n) continue;   // a wreck that would hang off the end is dropped
+                    startsWreck.Add(k);
+                    for (int u = k + 1; u < k + BrokenUnits; u++) coveredByWreck.Add(u);
+                    // ⚠ FIVE POSTS, NOT FOUR. A wreck spanning units k..k+3 carries posts at BOTH its ends --
+                    // boundaries k and k+4 -- so the unit that RESUMES the intact run at k+4 must place its
+                    // span but not its post. Getting this off by one puts a second post on the wreck's far
+                    // end, which is the same doubling as before, just hidden inside a damaged section.
+                    for (int u = k; u <= k + BrokenUnits; u++) postSupplied.Add(u);
+                }
+            }
             Vector3 lastCentre = Vector3.Zero; float minGap = float.MaxValue, maxGap = 0f;
 
             for (int i = 0; i < n; i++)
@@ -275,18 +347,44 @@ namespace UnturnedGodot
                     continue;
                 }
 
+                // ⭐⭐ A WRECK REPLACES FOUR UNITS AND BRINGS ITS OWN POSTS -- all five of them, including the
+                // two shared with the neighbouring intact spans. So the run places nothing at all across the
+                // stretch; laying its own posts here as well is precisely the doubling this whole rework was
+                // about, just hidden inside a damaged section where it is harder to spot.
+                if (coveredByWreck != null && coveredByWreck.Contains(i)) continue;
+                if (startsWreck != null && startsWreck.Contains(i))
+                {
+                    var w0 = curve.SampleBaked(s, true);
+                    var w1 = curve.SampleBaked(Mathf.Min(total, s + step * BrokenUnits), true);
+                    var wc = (w0 + w1) * 0.5f;
+                    if (terr != null) wc.Y = terr.SampleHeight(wc.X, wc.Z);
+                    var wd = new Vector3(w1.X - w0.X, 0f, w1.Z - w0.Z);
+                    float wyaw = (wd.LengthSquared() < 1e-6f ? yaw
+                                  : ProcIsland.YawForDir(wd.Normalized().X, -wd.Normalized().Z) + (flip ? 180f : 0f));
+                    var wb = SeatedBasis(terr, wc, wyaw);
+                    var wp = objects.Place(Broken + PostsSuffix, wc, wb);
+                    var wr = objects.Place(Broken + RailSuffix, wc, wb);
+                    if (wp != null) posts?.Add(wp);
+                    if (wr != null) rail?.Add(wr);
+                    wrecks++;
+                    continue;
+                }
+
                 // ⭐ ONE POST PER BOUNDARY, laid at the START of each span -- so N spans get N posts and the
                 // run is closed with one more at the far end below. Putting a post at both ends of every span
                 // is exactly the duplicate master saw.
-                var postAt = p0;
-                if (terr != null) postAt.Y = terr.SampleHeight(postAt.X, postAt.Z);
-                var pn = objects.Place(PostUnit, postAt, SeatedBasis(terr, postAt, yaw));
+                if (postSupplied == null || !postSupplied.Contains(i))
+                {
+                    var postAt = p0;
+                    if (terr != null) postAt.Y = terr.SampleHeight(postAt.X, postAt.Z);
+                    var pn = objects.Place(PostUnit, postAt, SeatedBasis(terr, postAt, yaw));
+                    if (pn != null) posts?.Add(pn);
+                }
                 var sp = objects.Place(SpanUnit, centre, basis);
-                if (pn != null) posts?.Add(pn);
                 if (sp != null) rail?.Add(sp);
             }
 
-            if (!broken)
+            if (!broken && !(postSupplied != null && postSupplied.Contains(n)))
             {
                 // The closing post: a run of N spans has N+1 posts, and without this the last span ends in
                 // mid-air.
@@ -302,6 +400,7 @@ namespace UnturnedGodot
 
             Log.Print($"[editor-fence] {n}x {(broken ? Broken : SpanUnit)} over {n * step:0.#} m of a {total:0.#} m path "
                     + $"({pts.Count} point(s)), rail on the {(flip ? "left" : "right")}"
+                    + (wrecks > 0 ? $", {wrecks} wrecked section(s)" : "")
                     + (maxGap > 0f ? $", unit spacing {minGap:0.###}..{maxGap:0.###} m" : "")
                     + (float.IsPositiveInfinity(tightest) ? ", straight"
                        : tightest < limit

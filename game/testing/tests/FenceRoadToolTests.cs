@@ -217,6 +217,48 @@ namespace UnturnedGodot.Testing
                   + $"({EditorFenceRoad.TightestBendRadius(hairpin):0.#} m < {EditorFenceRoad.MinBendRadiusFor(EditorFenceRoad.PostSpacing):0.#})",
                     EditorFenceRoad.TightestBendRadius(hairpin) < EditorFenceRoad.MinBendRadiusFor(EditorFenceRoad.PostSpacing));
 
+            // ---- 3c. A WRECKED SECTION DROPS INTO AN INTACT RUN. Master: "how do broken pieces integrate?"
+            // The wreck's own posts sit on the same 4 m rhythm with its end posts at exactly ±8, so it is four
+            // units of run -- and it brings all five of its posts, so the run must place NONE across it.
+            int bw = objs.PlacedCount;
+            const int Units = 20, WreckStart = 8;
+            int wn = EditorFenceRoad.LayPath(objs, null,
+                new List<Vector3> { new(0, 0, 800), new(EditorFenceRoad.PostSpacing * Units, 0, 800) },
+                false, false, null, null, new[] { WreckStart });
+            T.Check($"the run still measures {Units} units with a wreck in it ({wn})", wn == Units);
+
+            int spans = 0, postsIn = 0, wreckParts = 0;
+            float x0 = EditorFenceRoad.PostSpacing * WreckStart;
+            float x1 = EditorFenceRoad.PostSpacing * (WreckStart + EditorFenceRoad.BrokenUnits);
+            foreach (var x in objs.PlacedOf(EditorFenceRoad.SpanUnit)) if (x.Origin.Z > 700f) spans++;
+            foreach (var x in objs.PlacedOf(EditorFenceRoad.PostUnit))
+                if (x.Origin.Z > 700f && x.Origin.X > x0 - 0.1f && x.Origin.X < x1 + 0.1f) postsIn++;
+            foreach (var nmw in new[] { EditorFenceRoad.Broken + "_Posts", EditorFenceRoad.Broken + "_Rail" })
+                foreach (var x in objs.PlacedOf(nmw)) if (x.Origin.Z > 700f) wreckParts++;
+
+            T.Check($"the wreck replaced {EditorFenceRoad.BrokenUnits} spans "
+                  + $"({spans} intact spans, expected {Units - EditorFenceRoad.BrokenUnits})",
+                    spans == Units - EditorFenceRoad.BrokenUnits);
+            T.Check($"...and the wrecked section itself went down ({wreckParts} part(s), posts + rail)",
+                    wreckParts == 2);
+            // ⭐⭐ THE CHECK THAT MATTERS: the wreck carries its own five posts, so a run post anywhere across
+            // it is the doubling this rework removed -- just hidden inside a damaged section, where nobody
+            // would look for it.
+            T.Check($"...with NO run post inside it -- the wreck brings its own ({postsIn} found in "
+                  + $"{x0:0.#}..{x1:0.#} m)", postsIn == 0);
+
+            // ⭐ CONTROL: the same run with no marker DOES place posts there. Otherwise the check above passes
+            // on a tool that stopped placing posts altogether.
+            int bc = objs.PlacedCount;
+            EditorFenceRoad.LayPath(objs, null,
+                new List<Vector3> { new(0, 0, 900), new(EditorFenceRoad.PostSpacing * Units, 0, 900) },
+                false, false, null, null, null);
+            int postsThere = 0;
+            foreach (var x in objs.PlacedOf(EditorFenceRoad.PostUnit))
+                if (x.Origin.Z > 850f && x.Origin.X > x0 - 0.1f && x.Origin.X < x1 + 0.1f) postsThere++;
+            T.Check($"control: with no wreck marker the run DOES post that stretch ({postsThere} posts)",
+                    postsThere >= EditorFenceRoad.BrokenUnits);
+
             // ---- 4. UNDO takes the whole run, not one post at a time -- the reason RemovePlaced exists.
             int b3 = objs.PlacedCount;
             int rn = tool.LayRun(new Vector3(0f, 0f, 200f), new Vector3(EditorFenceRoad.PostSpacing * 3f, 0f, 200f));
