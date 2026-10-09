@@ -35090,6 +35090,96 @@
 "tex": "933.png",
 "type": "Shirt"
 },
+"9333": {
+"box": [
+0.4,
+0.1875,
+0.3625
+],
+"center": [
+0.0,
+0.0938,
+0.0
+],
+"color": null,
+"name": "Charcoal",
+"obj": "9333.txt",
+"parts": 1,
+"tex": "9333.png",
+"type": "Supply"
+},
+"9336": {
+"box": [
+0.5,
+0.05,
+0.6667
+],
+"center": [
+0.0,
+0.0,
+-0.0
+],
+"color": null,
+"name": "Sheet of Paper",
+"obj": "9336.txt",
+"parts": 1,
+"tex": "9336.png",
+"type": "Supply"
+},
+"9337": {
+"box": [
+0.5,
+0.05,
+0.6667
+],
+"center": [
+0.0,
+0.0,
+-0.0
+],
+"color": null,
+"name": "Handwritten Note",
+"obj": "9337.txt",
+"parts": 1,
+"tex": "9337.png",
+"type": "Supply"
+},
+"9338": {
+"box": [
+0.35,
+0.1474,
+0.25
+],
+"center": [
+0.0,
+0.0737,
+0.0
+],
+"color": null,
+"name": "Ceramic",
+"obj": "9338.txt",
+"parts": 1,
+"tex": "9338.png",
+"type": "Supply"
+},
+"9339": {
+"box": [
+0.3903,
+0.0152,
+0.2882
+],
+"center": [
+0.0,
+0.0076,
+0.0
+],
+"color": null,
+"name": "Circuitry",
+"obj": "9339.txt",
+"parts": 1,
+"tex": "9339.png",
+"type": "Supply"
+},
 "934": {
 "box": [
 0.8652,
@@ -35107,6 +35197,60 @@
 "parts": 1,
 "tex": "934.png",
 "type": "Pants"
+},
+"9340": {
+"box": [
+0.3,
+0.125,
+0.25
+],
+"center": [
+0.0,
+0.0625,
+0.0
+],
+"color": null,
+"name": "Asbestos",
+"obj": "9340.txt",
+"parts": 1,
+"tex": "9340.png",
+"type": "Supply"
+},
+"9341": {
+"box": [
+0.2631,
+0.0695,
+0.1894
+],
+"center": [
+0.0,
+0.0347,
+0.0
+],
+"color": null,
+"name": "Glass",
+"obj": "9341.txt",
+"parts": 1,
+"tex": "9341.png",
+"type": "Supply"
+},
+"9342": {
+"box": [
+1.0,
+0.3,
+0.425
+],
+"center": [
+0.0,
+0.15,
+0.0
+],
+"color": null,
+"name": "Firewood",
+"obj": "9342.txt",
+"parts": 1,
+"tex": "9342.png",
+"type": "Supply"
 },
 "9344": {
 "box": [
