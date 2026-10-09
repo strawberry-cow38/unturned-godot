@@ -398,11 +398,11 @@ void fragment() {
             water.MaterialOverride = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/water.gdshader") };
             water.Layers = WaterReflection.WaterLayer;   // keep the ocean out of its own mirror pass
             AddChild(water);
-            // ⚠ NO MIRROR WHILE THE WATER IS FLAT (master 2026-10-09, "no effects"). The reflection is a whole
-            // SubViewport rendering the world a second time, so leaving it attached to a shader that no longer
-            // samples reflection_tex would pay the entire cost for nothing. Gated on the same one switch as the
-            // swell so the strip cannot half-revert. (Both ocean paths do this; they have drifted before.)
-            if (!WaveField.Flat) WaterReflection.Attach(this, (ShaderMaterial)water.MaterialOverride, SeaLevelY);
+            // ⭐ THE MIRROR IS BACK ON, AND IT IS NOT TIED TO THE SWELL. Master 2026-10-09: "crystal clear water
+            // with ripples, and real reflections". The surface stays geometrically FLAT (WaveField.Flat) while
+            // reflecting for real -- they were briefly gated on the same switch during the strip, which conflated
+            // "the sea has no waves" with "the sea has no mirror". Two separate things. (Both ocean paths.)
+            WaterReflection.Attach(this, (ShaderMaterial)water.MaterialOverride, SeaLevelY);
             Log.Print($"[terrain] ocean plane built at y={SeaLevelY:0.#} ({wsx:0}x{wsz:0} m)");
             // SHORE DIRECTION: baked from THIS terrain, right after the sea it describes exists. Both the shader
             // and WaveField read it, so swell bends toward the coast and boats bob to the same bend.
@@ -2193,7 +2193,19 @@ void fragment() {
             arr[(int)Mesh.ArrayType.TexUV] = uvs; arr[(int)Mesh.ArrayType.Color] = cols; arr[(int)Mesh.ArrayType.Index] = idx;
             var mesh = new ArrayMesh(); mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arr);
             var mi = _chunkMi[cxi, cyi];
-            if (mi == null) { mi = new MeshInstance3D { MaterialOverride = _terrMat }; _chunkMi[cxi, cyi] = mi; AddChild(mi); }
+            if (mi == null)
+            {
+                mi = new MeshInstance3D { MaterialOverride = _terrMat };
+                // ⭐ THE LAND REFLECTS. Master 2026-10-09 asked for "real reflections", and before this ONLY trees
+                // and batched props were ever put on the mirror layer (a call-site census found exactly those) --
+                // so a coastal view reflected the odd tree floating over a mirror of empty sky, with the shoreline
+                // those trees stand on missing from it. The terrain is the biggest thing any water reflects.
+                // ⚠ Marked AT CREATION, not after the ocean is built: chunks are made lazily here, so a pass that
+                // walked the children at ocean-build time would mark whichever happened to exist and silently miss
+                // the rest. Costs nothing on a map with no water -- the layer only matters if a mirror camera exists.
+                WaterReflection.MarkReflective(mi);
+                _chunkMi[cxi, cyi] = mi; AddChild(mi);
+            }
             mi.Mesh = mesh;
             if (_withCollider && withCollider)
             {
@@ -2818,7 +2830,7 @@ void fragment() {
                 // UG_REFLECT=1 "until proven", which meant no shipped map ever reflected anything -- the graphics
                 // option that gates it has read Medium the whole time and never had a node to gate. UG_REFLECT=0
                 // ablates it for a frametime A/B; GraphicsOptions.PlanarReflection=Off turns it off for real.
-                if (!WaveField.Flat) WaterReflection.Attach(terr, (ShaderMaterial)water.MaterialOverride, waterY);   // see BuildOceanPlane: no mirror while flat
+                WaterReflection.Attach(terr, (ShaderMaterial)water.MaterialOverride, waterY);   // see BuildOceanPlane: flat surface, real mirror
                 // Bullets-only splash collider on a dedicated layer (bit9): the bullet raycast checks it, but player/
                 // vehicles don't mask bit9 so it never blocks movement/swimming. Shooting the ocean -> Water_Static splash.
                 var wbody = new StaticBody3D { CollisionLayer = 1u << 9, Position = water.Position };

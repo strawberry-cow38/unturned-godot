@@ -2,62 +2,101 @@ shader_type spatial;
 render_mode cull_disabled, diffuse_burley, specular_schlick_ggx;
 
 // ============================================================================================================
-// FLAT WATER. Master 2026-10-09: "rip out our entire water system until we are left with a totally flat water
-// plane with no effects. keep caustics and shore foam so we could revert those if we want them."
+// CRYSTAL-CLEAR WATER: ripples and real reflections, on a FLAT surface.
+// Master 2026-10-09, after the strip: "crystal clear water with ripples, and real reflections".
 //
-// What this file used to be: 277 lines of anisotropic fbm swell (vertex displacement + a per-pixel swell
-// normal), fine-ripple chop, crest-foam whitecaps, depth-tinted transparency, a Fresnel sky term, a planar
-// mirror reflection, rain rings, and a storm response that pushed all of the above. It is all gone. Recover any
-// of it with `git show 2d10f3d0:game/content/water.gdshader` -- this strip is one commit, so the old file is one
-// command away and nothing was lost.
+// ⭐ RIPPLES, NOT WAVES -- and that distinction is the whole design. The swell this file used to displace
+// vertices by is still gone (WaveField.Flat), so the surface is geometrically flat and boats, rain and
+// Terrain.WaterSurfaceY all agree with the picture. A ripple is a NORMAL, not a height: it costs no geometry,
+// cannot facet on the coarse ocean grid, and cannot drift from the CPU twin, because there is nothing to drift.
 //
-// WHAT SURVIVES, AND WHY ONLY THIS:
-//   * SHORE FOAM, behind `shore_foam_on` (OFF). Master named it as a keeper, so it is here as a switch rather
-//     than in the history -- flip the bool and the band is back, untouched.
-//   * The water_optics include, because it OWNS water_deep/water_shallow and underwater.gdshader veils the
-//     submerged view with the same colours. Stripping the surface must not make the two disagree -- that exact
-//     mismatch is a bug master already caught once ("the color of the underwater fog doesnt match the surface").
+// ⭐ "CRYSTAL CLEAR" IS AN ALPHA THAT MOVES WITH THE VIEW, not a low number. Straight down the surface is
+// almost not there (clarity) and you read the seabed; at a grazing angle Fresnel takes it to opaque and you
+// read the reflection. That is the same thing real water does, and it is why clear water does not look like
+// weak water -- you lose nothing looking down and gain a mirror looking across.
 //
-// ⭐ THE GEOMETRY IS NOT FLATTENED HERE. The plane is flat because WaveField.Flat zeroes the swell at its
-// source, which also flattens the CPU twin (buoyancy, WaterSurfaceY) and rain_streak.gdshader, which reads the
-// same surface height. Flattening only the visual would have floated boats on an invisible swell.
+// The noise comes from swell.gdshaderinc for its HASH, not its swell: hashv is the Hoskins hash that replaced
+// fract(sin()), which gridded at real-map world coordinates. Ripples are sampled in world XZ out at thousands
+// of units, so this file would reproduce that exact bug with any other hash.
 // ============================================================================================================
 
+#include "res://content/swell.gdshaderinc"
 #include "res://content/water_optics.gdshaderinc"
 
+uniform float clarity : hint_range(0.0, 1.0) = 0.10;   // surface alpha looking straight DOWN -- the see-through end
+uniform float ripple_freq = 0.055;      // world-space ripple frequency (the tuned fine-detail scale)
+uniform float ripple_strength = 0.30;   // how hard a ripple tilts the surface
+uniform vec4 sky_tint : source_color = vec4(0.52, 0.67, 0.86, 1.0);
+uniform float reflectivity = 0.80;
+uniform sampler2D reflection_tex : filter_linear;
+uniform bool reflection_on = false;
+uniform bool reflection_debug = false;
+uniform float reflection_strength = 1.0;
+
+// -- master's keeper from the strip, still a switch --
+uniform bool shore_foam_on = false;
 uniform vec4 foam_color : source_color = vec4(0.92, 0.97, 1.0, 1.0);
-uniform bool shore_foam_on = false;   // master's keeper: the shoreline band, one flip from back
-uniform float shore_depth = 2.2;      // vertical water depth (m) under which shore foam shows
 uniform sampler2D depth_tex : hint_depth_texture, repeat_disable, filter_linear;
 
 varying vec3 v_wpos;
 
 void vertex() {
-    // No displacement. The mesh is the surface.
-    v_wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+    v_wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;   // flat: the mesh IS the surface
 }
 
 void fragment() {
-    // Straight up, everywhere. No swell gradient, no chop.
-    NORMAL = normalize((VIEW_MATRIX * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
+    // DISTANCE LOD on the ripple detail. Kept from the pre-strip shader because it fixes a real complaint, and
+    // reflections make it matter MORE, not less: at a grazing angle far water crushes many ripples into each
+    // pixel, every normal goes edge-on at once, and the Fresnel term turns that aliasing into a wall of
+    // glitter. Master's word for it was "busy". Near water keeps its full detail.
+    float vdist = length(VERTEX);
+    float lod = clamp(1.0 - (vdist - 25.0) / 140.0, 0.0, 1.0);
+
+    vec2 np = v_wpos.xz * ripple_freq + vec2(TIME * 0.03, TIME * -0.02);
+    float n0 = fbm5(np);
+    float nx = fbm5(np + vec2(0.06, 0.0));
+    float nz = fbm5(np + vec2(0.0, 0.06));
+    // ⚠ The epsilon stays in NOISE space, not world space, so it tracks ripple_freq automatically -- scaling it
+    // alongside would widen the gradient stencil and soften exactly what the frequency just sharpened.
+    vec3 wn = normalize(vec3((n0 - nx), 0.0, (n0 - nz)) * ripple_strength * 6.0 * lod + vec3(0.0, 1.0, 0.0));
+    NORMAL = normalize((VIEW_MATRIX * vec4(wn, 0.0)).xyz);
 
     float foam = 0.0;
     if (shore_foam_on) {
-        // KEPT VERBATIM from the stripped shader: reconstruct the opaque scene behind the water and foam where
-        // the water is shallow over it. Depth-based, so it is angle-independent and follows the real shoreline.
         float raw = texture(depth_tex, SCREEN_UV).r;
         vec4 vp = INV_PROJECTION_MATRIX * vec4(SCREEN_UV * 2.0 - 1.0, raw, 1.0);
         vp.xyz /= vp.w;
         float bed_y = (INV_VIEW_MATRIX * vec4(vp.xyz, 1.0)).y;
-        float depth_v = max(v_wpos.y - bed_y, 0.0);
-        foam = (1.0 - smoothstep(0.0, 0.85, depth_v)) * 0.45;
+        foam = (1.0 - smoothstep(0.0, 0.85, max(v_wpos.y - bed_y, 0.0))) * 0.45;
     }
 
-    // ONE flat colour and ONE alpha -- no depth ramp, so a shallow is the same water as a deep. The alpha is
-    // water_deep's: the sea stays see-through enough that the caustics read when they are switched back on.
-    ALBEDO = mix(water_deep.rgb, foam_color.rgb, foam);
-    ALPHA = mix(water_deep.a, 1.0, foam);
-    ROUGHNESS = 1.0;   // fully matte: no sheen, and no sun glint (SPECULAR 0) -- a glint is an effect
-    SPECULAR = 0.0;
+    // REAL REFLECTION: the planar mirror buffer (WaterReflection.cs renders the world a second time about the
+    // water plane), UV-perturbed by the ripple normal so the reflection breaks up with the surface.
+    vec3 refl_src = sky_tint.rgb;
+    if (reflection_on) {
+        vec2 refl_uv = clamp(SCREEN_UV + wn.xz * 0.04 * lod, vec2(0.001), vec2(0.999));
+        vec4 refl = texture(reflection_tex, refl_uv);
+        // Gate by DARKNESS, not alpha: the mirror viewport has no environment, so empty sky comes back near-white.
+        // Dark samples are reflected geometry (trees, props, ground) and get reflected; bright ones fall back to
+        // the flat sky tint. ⚠ 0.72/0.90 are the numbers this was tuned at -- widening the top is how bright sky
+        // starts compositing as though it were geometry, which is the "trees in the reflection are just white"
+        // report. Not a knob to open up.
+        float refl_geo = 1.0 - smoothstep(0.72, 0.90, dot(refl.rgb, vec3(0.3333)));
+        refl_src = mix(sky_tint.rgb, refl.rgb, refl_geo);
+    }
+
+    float fres = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 2.5);
+    float mirror = clamp(fres * reflectivity * reflection_strength, 0.0, 1.0);
+
+    // The body tint comes from the SHARED optics include rather than a colour of this file's own, because the
+    // submerged view veils with the same one -- two shaders each holding a water colour is precisely how the
+    // surface and the underwater fog stopped matching last time.
+    vec3 body = water_shallow.rgb;
+    ALBEDO = mix(mix(body, refl_src, mirror), foam_color.rgb, foam);
+    // Clear looking down, mirror looking across. Foam is opaque wherever it is.
+    ALPHA = clamp(mix(mix(clarity, 1.0, mirror), 1.0, foam), 0.0, 1.0);
+    ROUGHNESS = mix(0.08, 0.9, foam);   // glassy, so the ripples catch a specular highlight
+    SPECULAR = 0.5 * clamp(reflectivity / 0.45, 0.0, 1.0);
     METALLIC = 0.0;
+    if (reflection_on && reflection_debug) { ALBEDO = texture(reflection_tex, SCREEN_UV).rgb; ALPHA = 1.0; ROUGHNESS = 1.0; }
 }
