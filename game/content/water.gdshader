@@ -33,8 +33,14 @@ uniform bool reflection_on = false;
 uniform bool reflection_debug = false;
 uniform float reflection_strength = 1.0;
 
-// -- master's keeper from the strip, still a switch --
-uniform bool shore_foam_on = false;
+// -- SHORE FOAM, back on (master 2026-10-09: "add back the shore foam only, but slightly reduced") --
+// ⭐ THE OLD EFFECTIVE NUMBER, THEN REDUCED -- not a fresh guess. Pre-strip this was
+// `(0.45 + 0.15*fbm5(...)) * 0.8`, the 0.8 being an all-foam cut master asked for separately, so what actually
+// reached the screen was 0.36 +/- 0.06. "Slightly reduced" is that, 20% down: 0.29 +/- 0.05. Reading the old
+// value out of the two places it was split across beats inventing a number that merely looks smaller.
+uniform bool shore_foam_on = true;
+uniform float shore_foam_amount = 0.29;   // mean peak opacity of the band (old effective: 0.36)
+uniform float shore_foam_swing = 0.10;    // how much the noise breathes it (old effective: 0.12)
 uniform vec4 foam_color : source_color = vec4(0.92, 0.97, 1.0, 1.0);
 uniform sampler2D depth_tex : hint_depth_texture, repeat_disable, filter_linear;
 
@@ -67,8 +73,14 @@ void fragment() {
         vec4 vp = INV_PROJECTION_MATRIX * vec4(SCREEN_UV * 2.0 - 1.0, raw, 1.0);
         vp.xyz /= vp.w;
         float bed_y = (INV_VIEW_MATRIX * vec4(vp.xyz, 1.0)).y;
-        foam = (1.0 - smoothstep(0.0, 0.85, max(v_wpos.y - bed_y, 0.0))) * 0.45;
+        // Depth-based, so the band follows the real shoreline and is angle-independent -- it does not slide
+        // around as the camera moves the way a view-dependent fake would.
+        float shore = 1.0 - smoothstep(0.0, 0.85, max(v_wpos.y - bed_y, 0.0));
+        // ...modulated by its own slow noise, which is what stops it reading as a painted ring around the island.
+        // The strip had flattened this to a constant; a flat band is the thing that looks wrong, not the amount.
+        foam = shore * (shore_foam_amount + shore_foam_swing * fbm5(v_wpos.xz * 0.4 + TIME * 0.15));
     }
+    foam = clamp(foam, 0.0, 1.0);
 
     // REAL REFLECTION: the planar mirror buffer (WaterReflection.cs renders the world a second time about the
     // water plane), UV-perturbed by the ripple normal so the reflection breaks up with the surface.
