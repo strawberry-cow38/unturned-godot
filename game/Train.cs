@@ -88,6 +88,15 @@ namespace UnturnedGodot
         const float RailY = 1.55f, BogieHalf = 3.5f, CoupleGap = 0.9f;
         const float WheelRadius = 0.6f;   // extracted wheel radius; wheels roll without slip
         static readonly Vector3[] WheelOff = { new Vector3(1.47f, -0.32f, 0.94f), new Vector3(-1.47f, -0.32f, 0.94f), new Vector3(1.47f, -0.32f, -0.94f), new Vector3(-1.47f, -0.32f, -0.94f) };
+
+        /// <summary>L1 seam: how far outboard the DRIVABLE train's wheels sit, for the rail asset to be
+        /// checked against.
+        ///
+        /// ⚠⚠ BECAUSE Train_Engine_0.obj IS NOT THIS TRAIN. It is the scenery prop, and I measured it by
+        /// mistake when fitting the modelled rail: its lowest band comes out at +/-1.439, the rail is at
+        /// +/-1.439, and the gauge check therefore passed by ONE MILLIMETRE while the train that actually
+        /// runs on the track is 62 mm wider. A test can be green against the wrong asset all day.</summary>
+        public static float DebugWheelHalfGauge => WheelOff[0].X;
         float _spinAngle;   // shared wheel roll angle (rad), advanced by distance travelled
         const float BrakeSparkDelay = 1f;   // sustained braking this long (s) -> sparks (master, time-based not decel-based)
         float _brakeTime;
