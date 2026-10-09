@@ -609,6 +609,28 @@ namespace UnturnedGodot
         /// put its 0.31 m rail tops 0.13 m UNDER a ribbon whose surface is 0.44 m up -- so the modelled track
         /// was invisible and the painted one was what you saw. Master spotted it in a render: "the spline ur
         /// showing here is the old one".</summary>
+        /// <summary>Hide a road's drawn ribbon while leaving the road itself -- its spline, its material and
+        /// its collider -- entirely in place.
+        ///
+        /// ⭐ THIS IS WHAT LETS "NEW RAIL" REPLACE THE PAINTED TRACK WITHOUT ORPHANING THE TRAINS. The modelled
+        /// rail is props tiled along the spline; the spline must stay material-4 or RoadField.NearestTrack
+        /// (and therefore Train.cs) can no longer find it. So the road stays a Tracks road in every respect
+        /// that matters and only its painted strip stops being drawn.
+        ///
+        /// ⚠ The alternative -- lifting the modelled track above the ribbon -- is what I tried first, and it
+        /// hides the old rails behind the new ones rather than removing them, at the cost of putting the
+        /// railhead 0.44 m off its authored datum. Visibility is not the same as correctness.</summary>
+        public void SetRoadRibbonVisible(int road, bool visible)
+        {
+            if (road < 0 || road >= _roads.Count) return;
+            var mi = _roads[road].Mi;
+            if (mi != null && IsInstanceValid(mi)) mi.Visible = visible;
+        }
+
+        public bool RoadRibbonVisible(int road) =>
+            road >= 0 && road < _roads.Count && _roads[road].Mi != null
+            && IsInstanceValid(_roads[road].Mi) && _roads[road].Mi.Visible;
+
         public float RoadSurfaceOffset(int road) =>
             road >= 0 && road < _roads.Count && _roads[road].Material < _mats.Count
                 ? _mats[_roads[road].Material].Depth * DepthScale + _mats[_roads[road].Material].Offset

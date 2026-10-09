@@ -147,28 +147,33 @@ namespace UnturnedGodot.Testing
             T.Check($"...one sleeper per unit plus the terminal, none doubled ({units} units, {sleepers} terminal)",
                     units == n && sleepers == 1);
 
-            // ---- 1b. ⭐⭐ THE TRACK SITS ON THE ROAD SURFACE, NOT INSIDE IT. EvaluateAlong returns the
-            // SPLINE point; the drawn ribbon's surface is RoadSurfaceOffset above it. Placing the unit at the
-            // raw spline point buried its 0.31 m rail tops under a 0.44 m ribbon -- the modelled track was
-            // invisible and every screenshot I took was of the PAINTED one. Master caught it by eye: "the
-            // spline ur showing here is the old one."
+            // ---- 1b. ⭐⭐ ON THE SPLINE, WITH THE PAINTED RIBBON RETIRED. EvaluateAlong returns the SPLINE
+            // point and the drawn ribbon's surface is RoadSurfaceOffset above it, so the modelled rail's
+            // 0.31 m tops sat 0.13 m UNDER the painted ones and every screenshot was of the old track. Master
+            // caught it by eye: "the spline ur showing here is the old one."
+            //
+            // ⚠ AND THE FIRST FIX WAS THE WRONG ONE. I lifted the unit by RoadSurfaceOffset, which made the
+            // steel visible -- and moved the railhead 0.44 m off the datum astraclaw had already fitted to the
+            // train. astraclaw's correction, verbatim: "Lifting above the old ribbon proves visibility, not
+            // wheel contact." The unit goes at the raw spline point and the RIBBON is hidden instead.
             float lift = field.RoadSurfaceOffset(road);
-            T.Check($"fixture: the ribbon has a real surface offset ({lift:0.###} m) -- at 0 this check is vacuous",
+            T.Check($"fixture: the ribbon has a real surface offset ({lift:0.###} m) -- at 0 this pair is vacuous",
                     lift > 0.1f);
             float wantY = 0f, gotY = float.MinValue;
             if (field.EvaluateAlong(road, 0f, out var sp, out _))
             {
-                wantY = sp.Y + lift;
+                wantY = sp.Y;
                 foreach (var x in objs.PlacedOf(EditorRailSpline.Unit))
                     if (Mathf.Abs(x.Origin.X - sp.X) < 0.5f) { gotY = x.Origin.Y; break; }
             }
-            T.Check($"the unit's datum is lifted onto the ribbon surface (y {gotY:0.###}, expected "
-                  + $"{wantY:0.###} = spline {wantY - lift:0.###} + {lift:0.###})",
+            T.Check($"the unit sits on the RAW spline point, not lifted onto the ribbon (y {gotY:0.###}, "
+                  + $"expected {wantY:0.###}; the lifted answer would be {wantY + lift:0.###})",
                     Mathf.Abs(gotY - wantY) < 0.01f);
-            // ⭐ AND THEREFORE THE RAILS CLEAR IT. The unit's rail top is +0.31 above its own datum, so once
-            // lifted the steel stands proud of the ribbon instead of 0.13 m under it.
-            T.Check($"...so the rail tops stand clear of the ribbon ({gotY + 0.31f:0.###} > {wantY - lift + lift:0.###})",
-                    gotY + 0.31f > wantY + 0.001f);
+            T.Check($"...and the painted ribbon is hidden, so the old rails do not draw under the new ones",
+                    !field.RoadRibbonVisible(road));
+            T.Check($"...while the road is STILL material {RoadField.TracksMaterial} -- hiding the paint must "
+                  + $"not retire the track (got {field.RoadMaterialOf(road)})",
+                    field.RoadMaterialOf(road) == RoadField.TracksMaterial);
 
             // ---- 2. THE PITCH IS 2.000, NOT THE 2.5 m BBOX. Stepping by the bbox leaves a half-metre hole in
             // the rail at every joint, which is the mistake the fence made with 16.25 against 16.0.
@@ -198,12 +203,99 @@ namespace UnturnedGodot.Testing
                   + $"NearestTrack -> {(foundPlain ? pr.ToString() : "none")})",
                     !foundPlain || pr != plain);
 
+            // ⭐ CONTROL FOR THE RIBBON HIDE: a road nobody laid rail on must KEEP its paint. Without this,
+            // "the ribbon is hidden" would pass just as well on a SetRoadRibbonVisible that hid every road.
+            T.Check($"control: a road never laid on keeps its painted ribbon",
+                    field.RoadRibbonVisible(plain));
+
             // ---- 4. THE BEND LIMIT IS DERIVED FROM THE TILE'S WIDTH, not guessed. A 6.9 m-wide rigid tile
             // chording a curve parts at its outer corners by about HalfWidth * Pitch / R.
             T.Check($"the bend limit follows from the tile ({EditorRailSpline.MinRadius:0} m for a "
                   + $"{EditorRailSpline.HalfWidth * 2f:0.#} m tile at {EditorRailSpline.MaxJointGap * 100f:0} cm)",
                     Mathf.Abs(EditorRailSpline.MinRadius
                               - EditorRailSpline.HalfWidth * EditorRailSpline.Pitch / EditorRailSpline.MaxJointGap) < 0.5f);
+
+            // ---- 5. ⭐⭐ THE SEAM. Master, on the first New Rail render: "nice but you can see a seam at
+            // each chunk" -- a dark hairline down the ballast at every joint. It is the CHORD WEDGE: two rigid
+            // tiles meeting at a turn have flat parallel ends whose planes splay, so the OUTER corners part
+            // while the inner ones overlap. Two other diagnoses (coincident end caps, a normals break) were
+            // both wrong, and a DEAD-STRAIGHT control render -- zero wedge by construction, perfectly clean
+            // slope -- is what settled it.
+            //
+            // ⭐ THIS MEASURES THE CORNERS, NOT THE FORMULA. The check walks the placed transforms and asks
+            // how far consecutive outer corners actually are from each other. Re-deriving HalfWidth*turn here
+            // would agree with OverlapFor by construction and could never fail -- see
+            // [[feedback_tests_must_derive_rates_not_copy_them]].
+            var arc = new List<Vector3>();
+            const float ArcR = 200f;
+            for (int k = 0; k <= 20; k++)
+            {
+                float ang = k * 0.01f;
+                arc.Add(new Vector3(ArcR * Mathf.Sin(ang), 0f, 1000f + ArcR * (1f - Mathf.Cos(ang))));
+            }
+
+            // ⚠⚠ SIGNED, AND THAT IS THE WHOLE POINT. The first version of this took the unsigned
+            // DistanceTo between consecutive corners and promptly failed the FIX at 73 mm while passing the
+            // control -- because backing a tile off closes the outer corner and deepens the INNER one by
+            // 2*HalfWidth*turn, and an unsigned distance cannot tell daylight from solid-inside-solid. Only a
+            // gap is a defect; an overlap is invisible. So project onto the leading tile's own forward axis
+            // and count the POSITIVE part. [[feedback_an_instrument_must_name_what_it_measured]]
+            //
+            // Returns (worst gap, worst overlap) in metres over every joint and both sides of the bed.
+            (float gap, float overlap) WorstJoint(List<Node3D> tiles)
+            {
+                float g = 0f, o = 0f;
+                for (int i = 1; i < tiles.Count; i++)
+                {
+                    var a = tiles[i - 1]; var b2 = tiles[i];
+                    var fwd = a.GlobalTransform.Basis.Z.Normalized();
+                    for (int sgn = -1; sgn <= 1; sgn += 2)
+                    {
+                        var endC = a.GlobalTransform * new Vector3(sgn * EditorRailSpline.HalfWidth, 0f, EditorRailSpline.Pitch);
+                        var startC = b2.GlobalTransform * new Vector3(sgn * EditorRailSpline.HalfWidth, 0f, 0f);
+                        float along = fwd.Dot(startC - endC);    // + = daylight, - = buried in the neighbour
+                        g = Mathf.Max(g, along);
+                        o = Mathf.Max(o, -along);
+                    }
+                }
+                return (g, o);
+            }
+
+            // ⭐ CONTROL FIRST, and it re-runs the SHIPPED path with only the fix switched off, so a control
+            // that passes would mean the test cannot see the bug at all.
+            int ctlRoad = field.AddRoadFromPolyline(arc, RoadField.TracksMaterial);
+            var ctlTiles = new List<Node3D>();
+            EditorRailSpline.DebugNoJointOverlap = true;
+            int ctlN = EditorRailSpline.LayAlong(objs, null, field, ctlRoad, ctlTiles);
+            EditorRailSpline.DebugNoJointOverlap = false;
+            ctlTiles.RemoveAt(ctlTiles.Count - 1);                       // drop the terminal sleeper
+            var ctl = WorstJoint(ctlTiles);
+            T.Check($"control: WITHOUT the overlap, a {ArcR:0} m bend opens {ctl.gap * 100f:0.0} cm of daylight "
+                  + $"at its outer corners over {ctlN} tiles -- the seam master saw",
+                    ctlN > 5 && ctl.gap > 0.02f);
+
+            var fixRoad = field.AddRoadFromPolyline(arc, RoadField.TracksMaterial);
+            var fixTiles = new List<Node3D>();
+            int fixN = EditorRailSpline.LayAlong(objs, null, field, fixRoad, fixTiles);
+            fixTiles.RemoveAt(fixTiles.Count - 1);
+            var fx = WorstJoint(fixTiles);
+            T.Check($"...and WITH it the same bend closes to {fx.gap * 1000f:0.#} mm over {fixN} tiles "
+                  + $"({ctl.gap / Mathf.Max(fx.gap, 1e-6f):0}x tighter)",
+                    fixN > 5 && fx.gap < 0.005f);
+
+            // ⭐ AND THE COST LANDS WHERE IT IS INVISIBLE. Closing the outer corner necessarily buries the
+            // inner one deeper -- about 2*HalfWidth*turn. Asserting that explicitly is what stops a future
+            // "fix" from backing tiles off the WRONG WAY, which would read as closed on one metric while
+            // tearing the inside open.
+            T.Check($"...paid for on the INSIDE, buried not gapped ({fx.overlap * 100f:0.0} cm of overlap vs "
+                  + $"{ctl.overlap * 100f:0.0} cm before)",
+                    fx.overlap > ctl.overlap + 0.01f);
+
+            // ⭐⭐ AND IT IS FREE ON A STRAIGHT. The straight fixture at the top of this test laid its units
+            // at exactly {Pitch} apart (check 2), which is the same assertion as "every overlap was zero" --
+            // so the fix cannot have disturbed the case that was already correct.
+            T.Check($"...while the straight run is untouched: {EditorRailSpline.OverlapFor(0f) * 1000f:0.#} mm "
+                  + $"of overlap at zero turn", Mathf.Abs(EditorRailSpline.OverlapFor(0f)) < 1e-6f);
         }
     }
 }
