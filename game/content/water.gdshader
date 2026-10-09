@@ -46,6 +46,13 @@ uniform sampler2D depth_tex : hint_depth_texture, repeat_disable, filter_linear;
 
 varying vec3 v_wpos;
 
+// The EXACT sRGB -> linear transfer, not pow(2.2). The approximation left the reflected sky about 6% bright
+// against a known-answer check (reflected sky vs the real sky in the same frame); this lands on it. Cheap, and
+// the whole point of the correction is that the number is right.
+vec3 srgb_to_linear(vec3 c) {
+    return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
+}
+
 void vertex() {
     v_wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;   // flat: the mesh IS the surface
 }
@@ -87,14 +94,19 @@ void fragment() {
     vec3 refl_src = sky_tint.rgb;
     if (reflection_on) {
         vec2 refl_uv = clamp(SCREEN_UV + wn.xz * 0.04 * lod, vec2(0.001), vec2(0.999));
-        vec4 refl = texture(reflection_tex, refl_uv);
-        // Gate by DARKNESS, not alpha: the mirror viewport has no environment, so empty sky comes back near-white.
-        // Dark samples are reflected geometry (trees, props, ground) and get reflected; bright ones fall back to
-        // the flat sky tint. ⚠ 0.72/0.90 are the numbers this was tuned at -- widening the top is how bright sky
-        // starts compositing as though it were geometry, which is the "trees in the reflection are just white"
-        // report. Not a knob to open up.
-        float refl_geo = 1.0 - smoothstep(0.72, 0.90, dot(refl.rgb, vec3(0.3333)));
-        refl_src = mix(sky_tint.rgb, refl.rgb, refl_geo);
+        // ⭐ USED WHOLE, no gate. The mirror buffer now contains the scene's OWN sky (WaterReflection no longer
+        // clears it to transparent), so a bright sample IS the sky rather than something to be guessed at and
+        // replaced. The brightness heuristic that used to live here existed only because the buffer had no sky in
+        // it, and it could not tell a sunlit canopy from a cloud -- which is exactly how reflected trees came out
+        // white. Deleting the guess is the fix; `sky_tint` survives only for the no-mirror fallback above.
+        // ⚠⚠ sRGB -> LINEAR ON THE WAY OUT OF THE MIRROR. MEASURED, not assumed: the harness environment's
+        // BackgroundColor is linear (0.5,0.6,0.75); the MAIN view renders that sky as srgb(127,153,191) -- the
+        // components straight through -- while the same sky sampled out of this buffer comes back
+        // srgb(196,211,233), which is that colour sRGB-ENCODED. The SubViewport's render target is encoded on
+        // write and sampling it does not undo that, so every reflection arrived ~50% too bright. That is
+        // master's "the reflections are white in game", and it is why reflected trees read white before: the
+        // brightness heuristic that used to guess sky-vs-geometry was being fed inflated values.
+        refl_src = srgb_to_linear(clamp(texture(reflection_tex, refl_uv).rgb, 0.0, 1.0));
     }
 
     float fres = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 2.5);
@@ -110,5 +122,5 @@ void fragment() {
     ROUGHNESS = mix(0.08, 0.9, foam);   // glassy, so the ripples catch a specular highlight
     SPECULAR = 0.5 * clamp(reflectivity / 0.45, 0.0, 1.0);
     METALLIC = 0.0;
-    if (reflection_on && reflection_debug) { ALBEDO = texture(reflection_tex, SCREEN_UV).rgb; ALPHA = 1.0; ROUGHNESS = 1.0; }
+    if (reflection_on && reflection_debug) { ALBEDO = srgb_to_linear(clamp(texture(reflection_tex, SCREEN_UV).rgb, 0.0, 1.0)); ALPHA = 1.0; ROUGHNESS = 1.0; }
 }

@@ -72,7 +72,18 @@ namespace UnturnedGodot
                 Size = res,   // initial only -- _Process resizes to the window's aspect (see MirrorScale); a square buffer misaligns the reflection
                 RenderTargetClearMode = SubViewport.ClearMode.Always,
                 RenderTargetUpdateMode = SubViewport.UpdateMode.Always,
-                TransparentBg = true,             // empty = alpha 0 so the shader composites reflected geometry over sky_tint
+                // ⭐⭐ THE MIRROR RENDERS THE REAL SKY. This was `true`, so the buffer held reflected GEOMETRY over
+                // nothing and the shader had to paste a hand-picked `sky_tint` constant in behind it. Measured on
+                // a PEI coast render: that constant displays as srgb(191,214,239) while the actual sky in the same
+                // frame is srgb(127,153,191) -- the water was reflecting a sky about 50% brighter than the one
+                // above it. On the old chopped surface, foam and depth-tint diluted it; on a flat clear mirror it
+                // is the whole sea, which is master's report, "the reflections are white in game".
+                // This SubViewport shares the scene's World3D (no OwnWorld3D), so simply not clearing to
+                // transparent makes the mirror camera draw that scene's own sky -- the right colour by
+                // construction, and it tracks the day/night cycle instead of being frozen at one hand-picked noon.
+                // It also retires the brightness heuristic the shader used to tell sky from geometry, which is the
+                // same guess that produced the earlier "trees in the reflection are just white" report.
+                TransparentBg = false,
                 Msaa3D = Viewport.Msaa.Disabled,
                 PositionalShadowAtlasSize = 0,   // no shadows in the reflection -- ripple hides them
             };
