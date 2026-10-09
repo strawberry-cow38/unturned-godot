@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 
 namespace SDG.Unturned
@@ -68,6 +69,22 @@ namespace SDG.Unturned
         public byte Kind;         // InfiniteTerrain.TreeKind
     }
 
+    /// <summary>A short straight piece of road centreline (absolute metres) with its profile height and its distance
+    /// along the road from the town it starts at -- so a road texture's UV runs on unbroken across region borders.</summary>
+    public struct RoadPiece
+    {
+        public double X0, Z0, X1, Z1;
+        public float H0, H1;
+        public float S0, S1;
+    }
+
+    /// <summary>Ground cover the generator scattered over a LOD0 region. Position LOCAL to the region's min corner.</summary>
+    public struct FoliageSpawn
+    {
+        public float X, Y, Z, Yaw, Scale;
+        public byte Kind;         // InfiniteTerrain.FoliageKind
+    }
+
     /// <summary>One generated region at one level of detail. Arrays are plain C# so this is built on a worker
     /// thread and handed to the engine whole.</summary>
     public sealed class RegionData
@@ -85,6 +102,10 @@ namespace SDG.Unturned
         /// <summary>Per-vertex dominant splat layer (Terrain's 8: Dirt Wheat Grass Gravel Road Sand Snow Stone).</summary>
         public byte[] Layers;
         public List<TreeSpawn> Trees;
+        /// <summary>The road surface through this region, cut into pieces no longer than its grid spacing.</summary>
+        public List<RoadPiece> Roads;
+        /// <summary>Grass, flowers, pebbles, bushes -- LOD0 only (it is only ever drawn within ~160-300 m).</summary>
+        public List<FoliageSpawn> Foliage;
         public float MinHeight, MaxHeight;
         public double GenMs;      // wall time spent generating (the streamer reports it)
     }
@@ -99,6 +120,7 @@ namespace SDG.Unturned
 
         public enum Layer : byte { Dirt = 0, Wheat = 1, Grass = 2, Gravel = 3, Road = 4, Sand = 5, Snow = 6, Stone = 7 }
         public enum TreeKind : byte { Pine = 0, Birch = 1, Maple = 2 }
+        public enum FoliageKind : byte { Grass = 0, Flower0 = 1, Flower1 = 2, Flower2 = 3, Flower3 = 4, Pebble = 5, PebbleSand = 6, Bush0 = 7, Bush1 = 8 }
 
         public readonly int Seed;
         readonly ulong _s;
@@ -209,10 +231,27 @@ namespace SDG.Unturned
 
         const ulong SaltWarpX = 0x1111, SaltWarpZ = 0x2222, SaltContinent = 0x3333, SaltMountainMask = 0x4444,
                     SaltRidge = 0x5555, SaltHills = 0x6666, SaltDetail = 0x7777, SaltTemp = 0x8888,
-                    SaltMoist = 0x9999, SaltForest = 0xAAAA, SaltPatch = 0xBBBB, SaltTree = 0xCCCC;
+                    SaltMoist = 0x9999, SaltForest = 0xAAAA, SaltPatch = 0xBBBB, SaltTree = 0xCCCC,
+                    SaltRoad = 0xDDDD, SaltFoliage = 0xEEEE, SaltMeadow = 0xF0F0;
 
-        /// <summary>Ground height (world Y, metres) at an absolute position.</summary>
-        public float HeightAt(double x, double z)
+        /// <summary>Ground height (world Y, metres) at an absolute position, roads cut in.</summary>
+        public float HeightAt(double x, double z) => Sample(x, z, out _);
+
+        /// <summary>Ground height AND the distance to the nearest road centreline (MaxValue when none is near). The
+        /// road is part of the ground, not laid on it: inside its half-width the height IS the road's smoothed profile,
+        /// and across the shoulder it blends back to the land -- so the collider, the mesh and the splat all agree on
+        /// where the road is without anything downstream knowing roads exist.</summary>
+        public float Sample(double x, double z, out float roadDist)
+        {
+            float raw = RawHeight(x, z);
+            roadDist = RoadInfo(x, z, out float roadH);
+            if (roadDist >= RoadHalfWidth + RoadShoulder) return raw;
+            float t = Smoothstep(RoadHalfWidth + RoadShoulder, RoadHalfWidth, roadDist);   // 1 on the road, 0 past the shoulder
+            return raw + (roadH - raw) * t;
+        }
+
+        /// <summary>The land before any road touches it.</summary>
+        float RawHeight(double x, double z)
         {
             // domain warp: drag the coordinates by a slow field so coasts grow bays and ridges bend
             double wx = x + 220.0 * Fbm(x, z, 1100.0, 3, SaltWarpX);
@@ -252,9 +291,11 @@ namespace SDG.Unturned
             moist = Math.Clamp(0.5f + 0.75f * Fbm(x, z, 5200.0, 3, SaltMoist), 0f, 1f);
         }
 
-        /// <summary>The splat layer for a point, from its height, slope (rise over run) and climate.</summary>
-        public Layer LayerAt(double x, double z, float h, float slope)
+        /// <summary>The splat layer for a point, from its height, slope (rise over run), climate -- and roads first.</summary>
+        public Layer LayerAt(double x, double z, float h, float slope, float roadDist = float.MaxValue)
         {
+            if (roadDist < RoadHalfWidth) return Layer.Road;
+            if (roadDist < RoadHalfWidth + 1.8f) return Layer.Gravel;   // the verge
             Climate(x, z, h, out float temp, out float moist);
             if (h < SeaLevel + 1.6f) return slope > 0.6f ? Layer.Gravel : Layer.Sand;   // beaches and the seabed
             if (slope > 0.85f) return Layer.Stone;                                          // cliffs
@@ -280,9 +321,10 @@ namespace SDG.Unturned
             float sp = RegionSize / n;
             double ox = rc.MinX, oz = rc.MinZ;
             var hb = new float[b * b];
+            var rd = new float[b * b];
             for (int j = 0; j < b; j++)
                 for (int i = 0; i < b; i++)
-                    hb[j * b + i] = HeightAt(ox + (i - 1) * (double)sp, oz + (j - 1) * (double)sp);
+                    hb[j * b + i] = Sample(ox + (i - 1) * (double)sp, oz + (j - 1) * (double)sp, out rd[j * b + i]);
 
             var d = new RegionData { Coord = rc, Lod = lod, Cells = n, Spacing = sp,
                                      Heights = new float[v * v], Normals = new float[v * v * 3], Layers = new byte[v * v],
@@ -298,9 +340,11 @@ namespace SDG.Unturned
                     float dx = (hb[kb + 1] - hb[kb - 1]) / (2f * sp), dz = (hb[kb + b] - hb[kb - b]) / (2f * sp);
                     float inv = 1f / MathF.Sqrt(dx * dx + 1f + dz * dz);
                     d.Normals[k * 3] = -dx * inv; d.Normals[k * 3 + 1] = inv; d.Normals[k * 3 + 2] = -dz * inv;
-                    d.Layers[k] = (byte)LayerAt(ox + i * (double)sp, oz + j * (double)sp, h, MathF.Sqrt(dx * dx + dz * dz));
+                    d.Layers[k] = (byte)LayerAt(ox + i * (double)sp, oz + j * (double)sp, h, MathF.Sqrt(dx * dx + dz * dz), rd[kb]);
                 }
             d.Trees = lod <= 1 ? PlaceTrees(rc) : null;
+            d.Foliage = lod == 0 ? PlaceFoliage(d) : null;
+            d.Roads = RoadPiecesIn(rc, Math.Max(4f, sp));
             d.GenMs = (System.Diagnostics.Stopwatch.GetTimestamp() - t0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
             return d;
         }
@@ -325,8 +369,9 @@ namespace SDG.Unturned
                     double ax = ox + lx, az = oz + lz;
                     float forest = Smoothstep(-0.05f, 0.45f, Fbm(ax, az, 1300.0, 3, SaltForest));
                     if ((h2 & 0xFFFF) / 65536f >= forest * 0.55f) continue;
-                    float y = HeightAt(ax, az);
+                    float y = Sample(ax, az, out float treeRoad);
                     if (y < SeaLevel + 2.5f) continue;
+                    if (treeRoad < RoadHalfWidth + 5f) continue;   // keep the road and its verge clear
                     float sx = HeightAt(ax + 2.0, az) - HeightAt(ax - 2.0, az), sz = HeightAt(ax, az + 2.0) - HeightAt(ax, az - 2.0);
                     float slope = MathF.Sqrt(sx * sx + sz * sz) / 4f;
                     if (slope > 0.55f) continue;
@@ -339,17 +384,261 @@ namespace SDG.Unturned
             return list;
         }
 
-        /// <summary>A dry, walkable, grassy spot near an absolute position -- a spiral search out from it.</summary>
+        // ---------------------------------------------------------------------------------------------------
+        // Roads. A town-to-town network that exists everywhere at once and is computed nowhere in particular:
+        // one NODE per 1536 m macro cell (jittered), and from each node an edge EAST and an edge SOUTH, each kept or
+        // dropped by a hash. An edge is a wiggled 25-point polyline with a smoothed height profile, built the first time
+        // ANY region asks for it and identical whichever asks -- so a road crosses a region border like the ground does.
+        // An edge that would run through the sea, above the tree line, or up a grade over 16% is never built.
+
+        public const float RoadHalfWidth = 4f;     // an 8 m carriageway, on the 4 m grid that is two cells
+        public const float RoadShoulder = 10f;     // the blend back to the land beside it
+        public const double RoadCell = 1536.0;     // 6 regions: roads ~1.5 km apart
+        const int RoadPoints = 24;
+        const float RoadMaxGrade = 0.16f;
+
+        sealed class RoadEdge
+        {
+            public double[] X, Z; public float[] H;
+            public double MinX, MaxX, MinZ, MaxZ;
+            public bool Exists => X != null;
+        }
+        static readonly RoadEdge NoRoad = new RoadEdge();
+        readonly ConcurrentDictionary<(long, long, int), RoadEdge> _roads = new();
+
+        void RoadNode(long cx, long cz, out double x, out double z)
+        {
+            uint h = Hash(cx, cz, _s ^ SaltRoad);
+            x = (cx + 0.2 + 0.6 * ((h & 0xFFFF) / 65536.0)) * RoadCell;
+            z = (cz + 0.2 + 0.6 * ((h >> 16) / 65536.0)) * RoadCell;
+        }
+
+        RoadEdge Edge(long cx, long cz, int dir)
+        {
+            if (_roads.Count > 20000) _roads.Clear();   // a cache, not a store: anything dropped is rebuilt identically
+            return _roads.GetOrAdd((cx, cz, dir), k => BuildEdge(k.Item1, k.Item2, k.Item3));
+        }
+
+        RoadEdge BuildEdge(long cx, long cz, int dir)
+        {
+            if (Hash(cx, cz, _s ^ SaltRoad ^ (ulong)(dir + 7)) % 100 >= 78) return NoRoad;   // ~4 in 5 links exist
+            RoadNode(cx, cz, out double ax, out double az);
+            RoadNode(cx + (dir == 0 ? 1 : 0), cz + (dir == 1 ? 1 : 0), out double bx, out double bz);
+            double dx = bx - ax, dz = bz - az, len = Math.Sqrt(dx * dx + dz * dz);
+            double px = -dz / len, pz = dx / len;   // perpendicular
+            ulong ws = Mix(_s ^ SaltRoad ^ (ulong)cx * 31UL ^ (ulong)cz * 1031UL ^ (ulong)dir);
+            var e = new RoadEdge { X = new double[RoadPoints + 1], Z = new double[RoadPoints + 1], H = new float[RoadPoints + 1] };
+            for (int k = 0; k <= RoadPoints; k++)
+            {
+                double t = (double)k / RoadPoints;
+                // a wiggle that is zero at both towns (4t(1-t)) and wanders up to 160 m sideways in between
+                double w = 160.0 * 4.0 * t * (1.0 - t) * Gradient(t * 2.7, 0.5, ws);
+                e.X[k] = ax + dx * t + px * w;
+                e.Z[k] = az + dz * t + pz * w;
+                float h = RawHeight(e.X[k], e.Z[k]);
+                if (h < SeaLevel + 1.5f || h > 135f) return NoRoad;   // no bridges, no mountain passes -- yet
+                e.H[k] = h;
+            }
+            // smooth the profile (ends pinned, so every road into a town meets it at the same height)
+            var tmp = new float[RoadPoints + 1];
+            for (int pass = 0; pass < 4; pass++)
+            {
+                tmp[0] = e.H[0]; tmp[RoadPoints] = e.H[RoadPoints];
+                for (int k = 1; k < RoadPoints; k++) tmp[k] = 0.25f * e.H[k - 1] + 0.5f * e.H[k] + 0.25f * e.H[k + 1];
+                Array.Copy(tmp, e.H, RoadPoints + 1);
+            }
+            double seg = len / RoadPoints;
+            for (int k = 0; k < RoadPoints; k++)
+                if (Math.Abs(e.H[k + 1] - e.H[k]) / seg > RoadMaxGrade) return NoRoad;
+            double m = RoadHalfWidth + RoadShoulder;
+            e.MinX = e.MaxX = e.X[0]; e.MinZ = e.MaxZ = e.Z[0];
+            for (int k = 1; k <= RoadPoints; k++)
+            {
+                e.MinX = Math.Min(e.MinX, e.X[k]); e.MaxX = Math.Max(e.MaxX, e.X[k]);
+                e.MinZ = Math.Min(e.MinZ, e.Z[k]); e.MaxZ = Math.Max(e.MaxZ, e.Z[k]);
+            }
+            e.MinX -= m; e.MaxX += m; e.MinZ -= m; e.MaxZ += m;
+            return e;
+        }
+
+        /// <summary>Distance from an absolute point to the nearest road centreline (MaxValue if none within the
+        /// shoulder), and that road's profile height at the closest point.</summary>
+        float RoadInfo(double x, double z, out float roadH)
+        {
+            long cx = (long)Math.Floor(x / RoadCell), cz = (long)Math.Floor(z / RoadCell);
+            float best = float.MaxValue; roadH = 0f;
+            // an east edge from (i,j) spans cells i..i+1; a south edge from (i,j) spans j..j+1; the wiggle can push either
+            // ~160 m into the neighbouring row -- so: east edges from columns cx-1..cx, rows cz-1..cz+1, and vice versa
+            for (long i = cx - 1; i <= cx + 1; i++)
+                for (long j = cz - 1; j <= cz + 1; j++)
+                    for (int dir = 0; dir < 2; dir++)
+                    {
+                        if (dir == 0 && i == cx + 1) continue;
+                        if (dir == 1 && j == cz + 1) continue;
+                        var e = Edge(i, j, dir);
+                        if (!e.Exists || x < e.MinX || x > e.MaxX || z < e.MinZ || z > e.MaxZ) continue;
+                        for (int k = 0; k < RoadPoints; k++)
+                        {
+                            double sx = e.X[k + 1] - e.X[k], sz = e.Z[k + 1] - e.Z[k];
+                            double qx = x - e.X[k], qz = z - e.Z[k];
+                            double t = Math.Clamp((qx * sx + qz * sz) / (sx * sx + sz * sz), 0.0, 1.0);
+                            double ex = qx - sx * t, ez = qz - sz * t;
+                            float dist = (float)Math.Sqrt(ex * ex + ez * ez);
+                            if (dist < best) { best = dist; roadH = e.H[k] + (e.H[k + 1] - e.H[k]) * (float)t; }
+                        }
+                    }
+            return best;
+        }
+
+        /// <summary>Every road piece whose MIDPOINT lies in this region, each at most `maxPiece` long. Owning by midpoint
+        /// hands each piece to exactly one region, and consecutive pieces share endpoints -- so the surface is continuous
+        /// across a border with nothing drawn twice.</summary>
+        public List<RoadPiece> RoadPiecesIn(RegionCoord rc, float maxPiece)
+        {
+            var list = new List<RoadPiece>();
+            double x0r = rc.MinX, z0r = rc.MinZ, x1r = x0r + RegionSize, z1r = z0r + RegionSize;
+            long cx = (long)Math.Floor((x0r + RegionSize * 0.5) / RoadCell), cz = (long)Math.Floor((z0r + RegionSize * 0.5) / RoadCell);
+            for (long i = cx - 1; i <= cx + 1; i++)
+                for (long j = cz - 1; j <= cz + 1; j++)
+                    for (int dir = 0; dir < 2; dir++)
+                    {
+                        var e = Edge(i, j, dir);
+                        if (!e.Exists || e.MaxX < x0r || e.MinX > x1r || e.MaxZ < z0r || e.MinZ > z1r) continue;
+                        float s = 0f;
+                        for (int k = 0; k < RoadPoints; k++)
+                        {
+                            double sx = e.X[k + 1] - e.X[k], sz = e.Z[k + 1] - e.Z[k];
+                            float segLen = (float)Math.Sqrt(sx * sx + sz * sz);
+                            int n = Math.Max(1, (int)Math.Ceiling(segLen / maxPiece));
+                            for (int p = 0; p < n; p++)
+                            {
+                                double ta = (double)p / n, tb = (double)(p + 1) / n;
+                                double mx = e.X[k] + sx * (ta + tb) * 0.5, mz = e.Z[k] + sz * (ta + tb) * 0.5;
+                                if (mx < x0r || mx >= x1r || mz < z0r || mz >= z1r) continue;
+                                list.Add(new RoadPiece
+                                {
+                                    X0 = e.X[k] + sx * ta, Z0 = e.Z[k] + sz * ta, X1 = e.X[k] + sx * tb, Z1 = e.Z[k] + sz * tb,
+                                    H0 = e.H[k] + (e.H[k + 1] - e.H[k]) * (float)ta, H1 = e.H[k] + (e.H[k + 1] - e.H[k]) * (float)tb,
+                                    S0 = s + segLen * (float)ta, S1 = s + segLen * (float)tb,
+                                });
+                            }
+                            s += segLen;
+                        }
+                    }
+            return list;
+        }
+
+        /// <summary>Height of a region's OWN mesh at a local point -- the two triangles each quad is drawn as. Anything
+        /// laid on the ground (a road surface, a blade of grass) must sit on this, not on the smooth function, or it
+        /// floats over the dips between vertices and sinks under the bumps.</summary>
+        public static float MeshHeightAt(RegionData d, float lx, float lz) => MeshHeight(d, lx, lz);
+
+        /// <summary>Distance to the nearest road (MaxValue past the shoulder). Public for the spawn search and tests.</summary>
+        public float RoadDistance(double x, double z) => RoadInfo(x, z, out _);
+
+        /// <summary>The centreline of the east (dir 0) or south (dir 1) road out of macro cell (cx,cz), or null when
+        /// that link does not exist. For tests: a road is checked by driving it, not by looking at its texture.</summary>
+        public (double x, double z, float h)[] RoadCentreline(long cx, long cz, int dir)
+        {
+            var e = Edge(cx, cz, dir);
+            if (!e.Exists) return null;
+            var r = new (double, double, float)[RoadPoints + 1];
+            for (int k = 0; k <= RoadPoints; k++) r[k] = (e.X[k], e.Z[k], e.H[k]);
+            return r;
+        }
+
+        // ---------------------------------------------------------------------------------------------------
+        // Ground cover, scattered over a LOD0 region's own arrays (no extra noise calls for the grass: 25k blades a
+        // region would cost more than the terrain did). Heights interpolate the SAME two triangles the mesh draws.
+
+        public const float GrassCell = 1.6f, FlowerCell = 6f, PebbleCell = 6f, BushCell = 7f;
+
+        static float MeshHeight(RegionData d, float lx, float lz)
+        {
+            int v = d.Cells + 1;
+            float gx = lx / d.Spacing, gz = lz / d.Spacing;
+            int i = Math.Clamp((int)gx, 0, d.Cells - 1), j = Math.Clamp((int)gz, 0, d.Cells - 1);
+            float fx = gx - i, fz = gz - j;
+            float ha = d.Heights[j * v + i], hb = d.Heights[j * v + i + 1], hc = d.Heights[(j + 1) * v + i], he = d.Heights[(j + 1) * v + i + 1];
+            return fx + fz <= 1f ? ha + (hb - ha) * fx + (hc - ha) * fz       // triangle (a, b, c)
+                                 : he + (hc - he) * (1f - fx) + (hb - he) * (1f - fz);   // triangle (b, e, c)
+        }
+
+        static Layer LayerNear(RegionData d, float lx, float lz)
+        {
+            int v = d.Cells + 1;
+            int i = Math.Clamp((int)MathF.Round(lx / d.Spacing), 0, d.Cells), j = Math.Clamp((int)MathF.Round(lz / d.Spacing), 0, d.Cells);
+            return (Layer)d.Layers[j * v + i];
+        }
+
+        public List<FoliageSpawn> PlaceFoliage(RegionData d)
+        {
+            var list = new List<FoliageSpawn>(24000);
+            var rc = d.Coord;
+            ulong s = _s ^ SaltFoliage;
+            void Scatter(float cell, ulong salt, Func<float, float, uint, Layer, float, byte> pick)
+            {
+                int cells = (int)(RegionSize / cell);
+                for (int cj = 0; cj < cells; cj++)
+                    for (int ci = 0; ci < cells; ci++)
+                    {
+                        long gx = (long)rc.X * cells + ci, gz = (long)rc.Z * cells + cj;
+                        uint h1 = Hash(gx, gz, s ^ salt), h2 = Hash(gx, gz, s ^ salt ^ 0x55);
+                        float lx = (ci + (h1 & 0xFFFF) / 65536f) * cell, lz = (cj + (h1 >> 16) / 65536f) * cell;
+                        float y = MeshHeight(d, lx, lz);
+                        if (y < SeaLevel + 0.4f) continue;
+                        byte k = pick(lx, lz, h2, LayerNear(d, lx, lz), y);
+                        if (k == 255) continue;
+                        list.Add(new FoliageSpawn { X = lx, Y = y, Z = lz, Yaw = (h2 >> 16) / 65536f * 360f,
+                                                    Scale = 0.8f + ((h2 >> 8) & 0xFF) / 255f * 0.5f, Kind = k });
+                    }
+            }
+            // grass: thick on Grass, thin on Wheat (dry) and Dirt
+            Scatter(GrassCell, 1, (x, z, h, l, y) =>
+            {
+                float p = l == Layer.Grass ? 0.92f : l == Layer.Wheat ? 0.35f : l == Layer.Dirt ? 0.08f : 0f;
+                return (h & 0xFFFF) / 65536f < p ? (byte)FoliageKind.Grass : (byte)255;
+            });
+            // flowers: in meadows, a slow noise field, so they come in drifts instead of a sprinkle
+            Scatter(FlowerCell, 2, (x, z, h, l, y) =>
+            {
+                if (l != Layer.Grass) return 255;
+                float meadow = Smoothstep(0.1f, 0.5f, Fbm(d.Coord.MinX + x, d.Coord.MinZ + z, 260.0, 2, SaltMeadow));
+                return (h & 0xFFFF) / 65536f < meadow * 0.55f ? (byte)((int)FoliageKind.Flower0 + (int)(h % 4)) : (byte)255;
+            });
+            // pebbles: on bare ground and sand
+            Scatter(PebbleCell, 3, (x, z, h, l, y) =>
+            {
+                float r = (h & 0xFFFF) / 65536f;
+                if (l == Layer.Sand) return r < 0.3f ? (byte)FoliageKind.PebbleSand : (byte)255;
+                if (l == Layer.Dirt || l == Layer.Gravel || l == Layer.Stone) return r < 0.35f ? (byte)FoliageKind.Pebble : (byte)255;
+                return 255;
+            });
+            // bushes: thickest at forest edges, never on the road (its layer is Road/Gravel, so it never gets here)
+            Scatter(BushCell, 4, (x, z, h, l, y) =>
+            {
+                if (l != Layer.Grass && l != Layer.Dirt) return 255;
+                float f = Fbm(d.Coord.MinX + x, d.Coord.MinZ + z, 1300.0, 3, SaltForest);
+                float edge = 1f - Math.Abs(f - 0.15f) / 0.35f;   // peaks where the forest field crosses into woodland
+                return (h & 0xFFFF) / 65536f < 0.03f + 0.22f * Math.Max(0f, edge) ? (byte)((int)FoliageKind.Bush0 + (int)(h % 2)) : (byte)255;
+            });
+            return list;
+        }
+
+        /// <summary>A dry, walkable, grassy spot near an absolute position -- a spiral search out from it, preferring
+        /// the side of a road (a world you spawn into next to a road is one you can see the roads of).</summary>
         public bool FindSpawn(double x, double z, out double sx, out double sz, out float sy, int maxRings = 400)
         {
-            for (int r = 0; r <= maxRings; r++)
+            for (int pass = 0; pass < 2; pass++)
+            for (int r = 0; r <= (pass == 0 ? 60 : maxRings); r++)
                 for (int k = -r; k <= r; k++)
                     foreach (var (dx, dz) in new[] { (k, -r), (k, r), (-r, k), (r, k) })
                     {
                         if (r > 0 && Math.Abs(dx) != r && Math.Abs(dz) != r) continue;
                         double px = x + dx * 24.0, pz = z + dz * 24.0;
-                        float h = HeightAt(px, pz);
+                        float h = Sample(px, pz, out float road);
                         if (h < SeaLevel + 4f || h > 120f) continue;
+                        if (pass == 0 && (road < RoadHalfWidth + 6f || road > RoadHalfWidth + 30f)) continue;
                         float gx = HeightAt(px + 3, pz) - HeightAt(px - 3, pz), gz = HeightAt(px, pz + 3) - HeightAt(px, pz - 3);
                         if (MathF.Sqrt(gx * gx + gz * gz) / 6f > 0.15f) continue;
                         sx = px; sz = pz; sy = h;

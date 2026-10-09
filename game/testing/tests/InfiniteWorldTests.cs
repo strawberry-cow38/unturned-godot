@@ -97,6 +97,12 @@ namespace UnturnedGodot.Testing
             T.Check($"the player is standing on it (y {P(p).Y:0.00}, ground {ground0:0.00})",
                 P(p).Y > ground0 - 0.3f && P(p).Y < ground0 + 2.5f);
             T.Check($"trees grew ({S.TreeCount})", S.TreeCount > 0);
+            T.Check($"ground cover grew round the player: {S.FoliageCount:N0} grass/flowers/pebbles/bushes", S.FoliageCount > 50000);
+            float spawnRoad = S.Gen.RoadDistance(S.AbsX(P(p).X), S.AbsZ(P(p).Z));
+            T.Check($"spawned beside a road ({spawnRoad:0.0} m from its centreline)", spawnRoad > InfiniteTerrain.RoadHalfWidth && spawnRoad < 40f);
+            int roadMeshes = 0;
+            foreach (var n in S.FindChildren("Road", "MeshInstance3D", true, false)) roadMeshes++;
+            T.Check($"...and the road is drawn: {roadMeshes} regions carry a road surface", roadMeshes > 0);
 
             // ---- 2. TRAVEL 3 km EAST at 50 m/s, across rebases, keeping to the ground
             double startAbsX = S.AbsX(P(p).X), startAbsZ = S.AbsZ(P(p).Z);

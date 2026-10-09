@@ -141,7 +141,7 @@ namespace UnturnedGodot
             var l = s.LoadedByLod;
             Text = $"INFINITE  seed {s.Gen.Seed}   abs {s.AbsX(p.X):N0}, {s.AbsZ(p.Z):N0} m   y {p.Y:0}   region {rc}\n" +
                    $"local {p.X:0}, {p.Z:0}   origin {s.OriginX:N0}, {s.OriginZ:N0}   rebases {s.Rebases}   rescues {s.Rescues}\n" +
-                   $"regions L0 {l[0]} · L1 {l[1]} · L2 {l[2]} · L3 {l[3]}   queued {s.Queued}+{s.InFlight}   colliders {s.Colliders}   trees {s.TreeCount:N0}   gen {(s.GenCount > 0 ? s.GenMsTotal / s.GenCount : 0):0.0} ms";
+                   $"regions L0 {l[0]} · L1 {l[1]} · L2 {l[2]} · L3 {l[3]}   queued {s.Queued}+{s.InFlight}   colliders {s.Colliders}   trees {s.TreeCount:N0}   foliage {s.FoliageCount:N0}   gen {(s.GenCount > 0 ? s.GenMsTotal / s.GenCount : 0):0.0} ms";
             // top-left: the vitals bars own the bottom-left corner and the FPS counter the top-right
             Position = new Vector2(12f, 10f);
         }

@@ -57,11 +57,13 @@ namespace UnturnedGodot
         public static bool DebugShiftLog;
 
         public static readonly int[] LodRing = { 2, 4, 7, 11 };
-        public const int ColliderRing = 1, TreeRing = 3;
+        public const int ColliderRing = 1, TreeRing = 3, FoliageRing = 1;
+        /// <summary>Foliage is batched in 64 m cells (4x4 a region) so each MultiMesh can be distance-culled on its own.</summary>
+        public const float FoliageCellSize = 64f;
         public static int MaxRing => LodRing[LodRing.Length - 1];
 
         // ---- diagnostics (the overlay and the tests read these) ----
-        public int Rebases, Rescues, Committed, TreeCount;
+        public int Rebases, Rescues, Committed, TreeCount, FoliageCount;
         public double GenMsTotal; public int GenCount;
         public readonly int[] LoadedByLod = new int[4];
         public int Colliders => _colliders;
@@ -76,12 +78,16 @@ namespace UnturnedGodot
             public RegionCoord C;
             public Node3D Node;
             public MeshInstance3D Mesh;
+            public MeshInstance3D Road;
             public int Lod = -1, PendingLod = -1;
             public float[] Lod0Heights;
             public List<TreeSpawn> TreeList;
             public Node3D Trees;            // the MultiMeshes
             public Node3D TreeBodies;       // trunk colliders, ring <= ColliderRing only
             public StaticBody3D Ground;
+            public Dictionary<(int kind, int cell), List<Transform3D>> FoliageXf;   // from the LOD0 build, kept across LOD swaps
+            public Node3D Foliage;          // grass / flowers / pebbles / bushes, ring <= FoliageRing only
+            public int FoliageCount;
         }
 
         sealed class Job { public RegionCoord C; public int Lod; }
@@ -92,6 +98,8 @@ namespace UnturnedGodot
             public Vector3[] V, N; public Vector2[] UV; public int[] I;
             public byte[] S0, S1; public int SplatSize;
             public Dictionary<string, List<Transform3D>> TreeXf;
+            public Dictionary<(int kind, int cell), List<Transform3D>> FoliageXf;
+            public Vector3[] RoadV, RoadN; public Vector2[] RoadUV; public int[] RoadI;
         }
 
         readonly Dictionary<RegionCoord, Region> _regions = new();
@@ -224,6 +232,7 @@ namespace UnturnedGodot
             if (r.Lod >= 0) LoadedByLod[r.Lod]--;
             if (r.Ground != null) _colliders--;
             if (r.Trees != null) TreeCount -= r.TreeList?.Count ?? 0;
+            if (r.Foliage != null) FoliageCount -= r.FoliageCount;
             r.Node.QueueFree();
             _regions.Remove(c);
             _pendingTrees.Remove(c);
@@ -250,6 +259,18 @@ namespace UnturnedGodot
 
             if (ring <= ColliderRing && r.TreeBodies == null && r.TreeList != null) { r.TreeBodies = BuildTrunks(r.TreeList); r.Node.AddChild(r.TreeBodies); }
             else if (ring > ColliderRing + 1 && r.TreeBodies != null) { r.TreeBodies.QueueFree(); r.TreeBodies = null; }
+
+            if (ring <= FoliageRing && r.Foliage == null && r.FoliageXf != null)
+            {
+                r.Foliage = BuildFoliage(r.FoliageXf, out r.FoliageCount);
+                r.Node.AddChild(r.Foliage);
+                FoliageCount += r.FoliageCount;
+            }
+            else if (ring > FoliageRing + 1 && r.Foliage != null)
+            {
+                r.Foliage.QueueFree(); r.Foliage = null;
+                FoliageCount -= r.FoliageCount;
+            }
         }
 
         // tree transforms are kept per region once built, so a region crossing the tree ring twice does not regenerate
@@ -276,6 +297,7 @@ namespace UnturnedGodot
                 if (b.D.Lod == r.PendingLod) r.PendingLod = -1;
                 if (b.D.Lod == 0) r.Lod0Heights = b.D.Heights;
                 if (b.D.Trees != null && r.TreeList == null) { r.TreeList = b.D.Trees; _pendingTrees[r.C] = b.TreeXf; }
+                if (b.FoliageXf != null && r.FoliageXf == null) r.FoliageXf = b.FoliageXf;
                 if (useful) Apply(r, b);
                 UpdateExtras(r, ring);
                 n++;
@@ -310,6 +332,25 @@ namespace UnturnedGodot
             r.Lod = b.D.Lod;
             LoadedByLod[r.Lod]++;
             Committed++;
+            // the road surface: rebuilt with every LOD, because it sits on THAT mesh's triangles
+            if (b.RoadI != null && b.RoadI.Length > 0)
+            {
+                var ra = new Godot.Collections.Array();
+                ra.Resize((int)Mesh.ArrayType.Max);
+                ra[(int)Mesh.ArrayType.Vertex] = b.RoadV;
+                ra[(int)Mesh.ArrayType.Normal] = b.RoadN;
+                ra[(int)Mesh.ArrayType.TexUV] = b.RoadUV;
+                ra[(int)Mesh.ArrayType.Index] = b.RoadI;
+                var rm = new ArrayMesh();
+                rm.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, ra);
+                if (r.Road == null)
+                {
+                    r.Road = new MeshInstance3D { Name = "Road", MaterialOverride = RoadMat(), CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
+                    r.Node.AddChild(r.Road);
+                }
+                r.Road.Mesh = rm;
+            }
+            else if (r.Road != null) { r.Road.QueueFree(); r.Road = null; }
         }
 
         void AddGround(Region r)
@@ -364,6 +405,97 @@ namespace UnturnedGodot
                     mmi.AddToGroup(NearestFilter.KeepFilterGroup);
                     holder.AddChild(mmi);
                 }
+            return holder;
+        }
+
+        // ---- roads: the paved-road look RoadField gives PEI's concrete splines (wet_surface: rain sheen, rings, puddles)
+        public const float RoadTexMetres = 24f;   // one repeat of the texture's dashes along the road
+        static Material _roadMat;
+        static Material RoadMat()
+        {
+            if (_roadMat != null) return _roadMat;
+            RainSystem3D.EnsureGlobals();
+            var m = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/wet_surface.gdshader") };
+            m.SetShaderParameter("dry_roughness", 1.0f);
+            m.SetShaderParameter("impact_amount", 1.0f);
+            m.SetShaderParameter("splash_scale", 1.0f);
+            m.SetShaderParameter("puddle_amount", 1.0f);
+            var img = new Image();
+            string p = ProjectSettings.GlobalizePath("res://content/roads/road_8.png");   // two lanes, dashed yellow centre line
+            if (System.IO.File.Exists(p) && ContentProvider.LoadOk(img, p)) { img.GenerateMipmaps(); m.SetShaderParameter("albedo_tex", ImageTexture.CreateFromImage(img)); m.SetShaderParameter("use_tex", true); }
+            else m.SetShaderParameter("dry_albedo", new Vector3(0.34f, 0.34f, 0.35f));
+            return _roadMat = m;
+        }
+
+        // ---- ground cover: the same meshes + shaders FoliageField draws PEI's baked foliage with
+        sealed class FoliageType { public Mesh Mesh; public Material Mat; public float Range; }
+        static FoliageType[] _foliageTypes;
+        static FoliageType[] FoliageTypes()
+        {
+            if (_foliageTypes != null) return _foliageTypes;
+            string fol = ProjectSettings.GlobalizePath("res://content/foliage/"), res = ProjectSettings.GlobalizePath("res://content/resources/");
+            GrassDisplacers.EnsureGlobals();   // grass/flower shaders read wind + displacer globals: they must exist BEFORE the material links
+            GrassDisplacers.SetFadeRange(160f);
+            Texture2D Tex(string path)
+            {
+                var img = new Image();
+                if (!System.IO.File.Exists(path) || !ContentProvider.LoadOk(img, path)) return null;
+                img.GenerateMipmaps();
+                return ImageTexture.CreateFromImage(img);
+            }
+            Material Grass()
+            {
+                var m = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/grass_displace.gdshader") };
+                m.SetShaderParameter("albedo_tex", Tex(fol + "grass_00_tex.png"));
+                return m;
+            }
+            Material Up(string tex, Color solid, bool sway)
+            {
+                var m = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/foliage_up.gdshader") };
+                var t = tex != null ? Tex(fol + tex) : null;
+                if (t != null) { m.SetShaderParameter("albedo_tex", t); m.SetShaderParameter("use_texture", true); }
+                else { m.SetShaderParameter("albedo_color", solid); m.SetShaderParameter("use_texture", false); }
+                m.SetShaderParameter("do_sway", sway);
+                return m;
+            }
+            var grey = new Color(0.456f, 0.456f, 0.456f);
+            _foliageTypes = new[]
+            {
+                new FoliageType { Mesh = ObjMesh.Load(fol + "grass_00.obj"), Mat = Grass(), Range = 160f },
+                new FoliageType { Mesh = ObjMesh.Load(fol + "flowers_00.obj"), Mat = Up("flowers_00_tex.png", grey, true), Range = 160f },
+                new FoliageType { Mesh = ObjMesh.Load(fol + "flowers_01.obj"), Mat = Up("flowers_01_tex.png", grey, true), Range = 160f },
+                new FoliageType { Mesh = ObjMesh.Load(fol + "flowers_02.obj"), Mat = Up("flowers_02_tex.png", grey, true), Range = 160f },
+                new FoliageType { Mesh = ObjMesh.Load(fol + "flowers_03.obj"), Mat = Up("flowers_03_tex.png", grey, true), Range = 160f },
+                new FoliageType { Mesh = ObjMesh.Load(fol + "pebble_00.obj"), Mat = Up(null, grey, false), Range = 100f },
+                new FoliageType { Mesh = ObjMesh.Load(fol + "pebble_sand_00.obj"), Mat = Up(null, new Color(0.506f, 0.506f, 0.506f), false), Range = 100f },
+                new FoliageType { Mesh = ObjMesh.Load(res + "Bush_0_0.obj"), Mat = ResourceField.MakeSwayMat(res + "Bush_0_0_tex.png"), Range = 320f },
+                new FoliageType { Mesh = ObjMesh.Load(res + "Bush_1_0.obj"), Mat = ResourceField.MakeSwayMat(res + "Bush_1_0_tex.png"), Range = 320f },
+            };
+            return _foliageTypes;
+        }
+
+        Node3D BuildFoliage(Dictionary<(int kind, int cell), List<Transform3D>> byCell, out int count)
+        {
+            var holder = new Node3D { Name = "Foliage" };
+            var types = FoliageTypes();
+            count = 0;
+            foreach (var kv in byCell)
+            {
+                var ft = types[kv.Key.kind];
+                if (ft.Mesh == null) continue;
+                bool bush = kv.Key.kind >= (int)InfiniteTerrain.FoliageKind.Bush0;
+                var mm = new MultiMesh { TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, UseCustomData = bush, Mesh = ft.Mesh };
+                mm.InstanceCount = kv.Value.Count;
+                for (int k = 0; k < kv.Value.Count; k++) mm.SetInstanceTransform(k, kv.Value[k]);
+                var mmi = new MultiMeshInstance3D
+                {
+                    Multimesh = mm, MaterialOverride = ft.Mat, VisibilityRangeEnd = ft.Range,
+                    CastShadow = bush ? GeometryInstance3D.ShadowCastingSetting.On : GeometryInstance3D.ShadowCastingSetting.Off,
+                };
+                mmi.AddToGroup(NearestFilter.KeepFilterGroup);
+                holder.AddChild(mmi);
+                count += kv.Value.Count;
+            }
             return holder;
         }
 
@@ -472,6 +604,7 @@ namespace UnturnedGodot
                     GenMsTotal += b.D.GenMs; GenCount++;
                     r.Lod0Heights = b.D.Heights;
                     r.TreeList = b.D.Trees; _pendingTrees[c] = b.TreeXf;
+                    r.FoliageXf ??= b.FoliageXf;
                     Apply(r, b);
                     UpdateExtras(r, c.RingTo(center));
                 }
@@ -600,7 +733,50 @@ namespace UnturnedGodot
                     list.Add(new Transform3D(basis, new Vector3(t.X, t.Y - ResourceField.TreeSink * t.Scale, t.Z)));
                 }
             }
-            return new Built { D = d, V = V.ToArray(), N = N.ToArray(), UV = UV.ToArray(), I = I.ToArray(), S0 = s0, S1 = s1, SplatSize = v, TreeXf = trees };
+            // road surface: a ribbon per centreline piece, sat on THIS mesh's triangles (max with the profile) + 7 cm
+            List<Vector3> RV = null, RN = null; List<Vector2> RUV = null; List<int> RI = null;
+            if (d.Roads != null && d.Roads.Count > 0)
+            {
+                RV = new List<Vector3>(); RN = new List<Vector3>(); RUV = new List<Vector2>(); RI = new List<int>();
+                float hw = InfiniteTerrain.RoadHalfWidth;
+                double ox = d.Coord.MinX, oz = d.Coord.MinZ;
+                float Y(float lx, float lz, float h) =>
+                    Mathf.Max(h, InfiniteTerrain.MeshHeightAt(d, Mathf.Clamp(lx, 0f, InfiniteTerrain.RegionSize), Mathf.Clamp(lz, 0f, InfiniteTerrain.RegionSize))) + 0.07f;
+                foreach (var rp in d.Roads)
+                {
+                    float ax = (float)(rp.X0 - ox), az = (float)(rp.Z0 - oz), bx = (float)(rp.X1 - ox), bz = (float)(rp.Z1 - oz);
+                    var dir = new Vector2(bx - ax, bz - az).Normalized();
+                    var perp = new Vector2(-dir.Y, dir.X) * hw;
+                    int b0 = RV.Count;
+                    RV.Add(new Vector3(ax + perp.X, Y(ax + perp.X, az + perp.Y, rp.H0), az + perp.Y));
+                    RV.Add(new Vector3(ax - perp.X, Y(ax - perp.X, az - perp.Y, rp.H0), az - perp.Y));
+                    RV.Add(new Vector3(bx + perp.X, Y(bx + perp.X, bz + perp.Y, rp.H1), bz + perp.Y));
+                    RV.Add(new Vector3(bx - perp.X, Y(bx - perp.X, bz - perp.Y, rp.H1), bz - perp.Y));
+                    for (int q = 0; q < 4; q++) RN.Add(Vector3.Up);
+                    RUV.Add(new Vector2(0f, rp.S0 / RoadTexMetres)); RUV.Add(new Vector2(1f, rp.S0 / RoadTexMetres));
+                    RUV.Add(new Vector2(0f, rp.S1 / RoadTexMetres)); RUV.Add(new Vector2(1f, rp.S1 / RoadTexMetres));
+                    Tri(RV, RI, b0, b0 + 1, b0 + 2, Vector3.Up);
+                    Tri(RV, RI, b0 + 1, b0 + 3, b0 + 2, Vector3.Up);
+                }
+            }
+
+            Dictionary<(int, int), List<Transform3D>> foliage = null;
+            if (d.Foliage != null)
+            {
+                foliage = new Dictionary<(int, int), List<Transform3D>>();
+                int per = (int)(InfiniteTerrain.RegionSize / FoliageCellSize);
+                foreach (var f in d.Foliage)
+                {
+                    int cell = Mathf.Clamp((int)(f.Z / FoliageCellSize), 0, per - 1) * per + Mathf.Clamp((int)(f.X / FoliageCellSize), 0, per - 1);
+                    var key = ((int)f.Kind, cell);
+                    if (!foliage.TryGetValue(key, out var list)) foliage[key] = list = new List<Transform3D>();
+                    float s = f.Kind == (byte)InfiniteTerrain.FoliageKind.Pebble || f.Kind == (byte)InfiniteTerrain.FoliageKind.PebbleSand ? f.Scale * 0.75f : f.Scale;
+                    var basis = new Basis(Vector3.Up, Mathf.DegToRad(f.Yaw)).Scaled(new Vector3(s, s, s));
+                    list.Add(new Transform3D(basis, new Vector3(f.X, f.Y, f.Z)));
+                }
+            }
+            return new Built { D = d, V = V.ToArray(), N = N.ToArray(), UV = UV.ToArray(), I = I.ToArray(), S0 = s0, S1 = s1, SplatSize = v, TreeXf = trees, FoliageXf = foliage,
+                               RoadV = RV?.ToArray(), RoadN = RN?.ToArray(), RoadUV = RUV?.ToArray(), RoadI = RI?.ToArray() };
         }
 
         /// <summary>Add a triangle FRONT-FACING along `front` whichever way round it was written: Godot's front face

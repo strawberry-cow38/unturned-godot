@@ -22,6 +22,10 @@ namespace UnturnedGodot
     {
         public const int Frames = 4;
         static bool _done;
+        /// <summary>UG_WARM_ONLY=a,b,c: warm only the shaders whose file name contains one of these (diagnostic: the
+        /// infinite world's exit hang on lavapipe was bisected to this pass, 2026-10-09; this narrows it to a shader).</summary>
+        static readonly string[] Only = System.Environment.GetEnvironmentVariable("UG_WARM_ONLY")?.Split(',', System.StringSplitOptions.RemoveEmptyEntries);
+        static bool Wanted(string file) { if (Only == null) return true; foreach (var o in Only) if (System.IO.Path.GetFileName(file).Contains(o)) return true; return false; }
         int _frames = Frames;
         readonly List<MeshInstance3D> _quads = new();
         public static int LastCount { get; private set; }
@@ -65,6 +69,7 @@ namespace UnturnedGodot
                     string text;
                     try { text = System.IO.File.ReadAllText(file); } catch { continue; }
                     if (!text.Contains("shader_type spatial")) continue;   // canvas/sky/particles shaders draw elsewhere (some headers run past a dozen comment lines, so read it all)
+                    if (!Wanted(file)) continue;
                     var shader = GD.Load<Shader>("res://content/" + System.IO.Path.GetFileName(file));
                     if (shader == null) continue;
                     var mi = new MeshInstance3D
@@ -105,6 +110,7 @@ namespace UnturnedGodot
                     string text;
                     try { text = System.IO.File.ReadAllText(file); } catch { continue; }
                     if (!text.Contains("shader_type canvas_item")) continue;
+                    if (!Wanted(file)) continue;
                     var shader = GD.Load<Shader>("res://content/" + System.IO.Path.GetFileName(file));
                     if (shader == null) continue;
                     layer.AddChild(new ColorRect

@@ -146,12 +146,90 @@ namespace UnturnedSim.Tests
             Assert.That(total, Is.GreaterThan(0), "a 1.3 km patch with no trees at all means the density field is dead");
         }
 
+        // ROADS (strawberry 2026-10-09: "get roads ... in first"). A road is checked by DRIVING it: walk every existing
+        // centreline near the origin and require that the ground there IS the road (height = profile, layer = Road), and
+        // that no stretch is steeper than the grade the builder promised.
+        [Test]
+        public void RoadsAreDrivable()
+        {
+            int edges = 0, points = 0; float worstGrade = 0f, worstGap = 0f;
+            for (long cx = -3; cx <= 3; cx++)
+                for (long cz = -3; cz <= 3; cz++)
+                    for (int dir = 0; dir < 2; dir++)
+                    {
+                        var line = Gen.RoadCentreline(cx, cz, dir);
+                        if (line == null) continue;
+                        edges++;
+                        for (int k = 0; k < line.Length; k++)
+                        {
+                            var (x, z, h) = line[k];
+                            float ground = Gen.Sample(x, z, out float rd);
+                            // at a junction the NEAREST road wins, so only judge points that are on this road and no other
+                            if (rd > 0.01f) continue;
+                            points++;
+                            worstGap = Math.Max(worstGap, Math.Abs(ground - h));
+                            Assert.That(Gen.LayerAt(x, z, ground, 0f, rd), Is.EqualTo(InfiniteTerrain.Layer.Road), $"centreline ({x:0},{z:0}) is not painted road");
+                            if (k > 0)
+                            {
+                                var (px, pz, ph) = line[k - 1];
+                                double run = Math.Sqrt((x - px) * (x - px) + (z - pz) * (z - pz));
+                                worstGrade = Math.Max(worstGrade, (float)(Math.Abs(h - ph) / run));
+                            }
+                        }
+                    }
+            TestContext.WriteLine($"{edges} road links over 10.7 km, {points} centreline points, worst grade {worstGrade:P1}, worst ground-vs-road {worstGap * 1000f:0.###} mm");
+            Assert.That(edges, Is.GreaterThan(20), "a 10 km square should be crossed by a road network, not a road or two");
+            Assert.That(points, Is.GreaterThan(edges * 10));
+            Assert.That(worstGap, Is.LessThan(0.001f), "the ground on the centreline must BE the road profile");
+            Assert.That(worstGrade, Is.LessThanOrEqualTo(0.16f));
+        }
+
+        [Test]
+        public void RoadsAreTheSameWhoeverAsks()
+        {
+            var a = Gen.RoadCentreline(1, 1, 0) ?? Gen.RoadCentreline(1, 1, 1) ?? Gen.RoadCentreline(0, 1, 0);
+            Assert.That(a, Is.Not.Null, "need one road to compare");
+            var fresh = new InfiniteTerrain(1337);
+            fresh.Generate(new RegionCoord(5, 5), 0);   // a different first question for the fresh instance's cache
+            var b = fresh.RoadCentreline(1, 1, 0) ?? fresh.RoadCentreline(1, 1, 1) ?? fresh.RoadCentreline(0, 1, 0);
+            Assert.That(b, Is.EqualTo(a));
+        }
+
+        [Test]
+        public void FoliageGrowsOnlyWhereItBelongs()
+        {
+            int grass = 0, flowers = 0, bushes = 0, pebbles = 0;
+            for (int k = 0; k < 6; k++)
+            {
+                var d = Gen.Generate(new RegionCoord(k * 3 - 6, 2 - k), 0);
+                int v = d.Cells + 1;
+                foreach (var f in d.Foliage)
+                {
+                    Assert.That(f.X, Is.InRange(0f, InfiniteTerrain.RegionSize));
+                    Assert.That(f.Z, Is.InRange(0f, InfiniteTerrain.RegionSize));
+                    var layer = (InfiniteTerrain.Layer)d.Layers[Math.Clamp((int)MathF.Round(f.Z / d.Spacing), 0, d.Cells) * v + Math.Clamp((int)MathF.Round(f.X / d.Spacing), 0, d.Cells)];
+                    Assert.That(layer, Is.Not.EqualTo(InfiniteTerrain.Layer.Road), "nothing grows on a road");
+                    switch ((InfiniteTerrain.FoliageKind)f.Kind)
+                    {
+                        case InfiniteTerrain.FoliageKind.Grass: grass++; Assert.That(layer, Is.AnyOf(InfiniteTerrain.Layer.Grass, InfiniteTerrain.Layer.Wheat, InfiniteTerrain.Layer.Dirt)); break;
+                        case InfiniteTerrain.FoliageKind.Bush0: case InfiniteTerrain.FoliageKind.Bush1: bushes++; break;
+                        case InfiniteTerrain.FoliageKind.Pebble: case InfiniteTerrain.FoliageKind.PebbleSand: pebbles++; break;
+                        default: flowers++; Assert.That(layer, Is.EqualTo(InfiniteTerrain.Layer.Grass)); break;
+                    }
+                    Assert.That(f.Y, Is.GreaterThan(InfiniteTerrain.SeaLevel), "nothing grows under the sea");
+                }
+            }
+            TestContext.WriteLine($"6 regions: grass {grass}, flowers {flowers}, bushes {bushes}, pebbles {pebbles}");
+            Assert.That(grass, Is.GreaterThan(6 * 5000), "grass should carpet a temperate region");
+            Assert.That(flowers + bushes, Is.GreaterThan(0));
+        }
+
         [Test]
         public void HeightsStayInsideTheWiresYRange()
         {
-            for (int k = 0; k < 400; k++)
+            for (int k = 0; k < 120; k++)   // scattered far apart, so every one builds its own roads cold
             {
-                var d = Gen.Generate(new RegionCoord(k * 7 - 1400, k * 13 - 2600), 3);
+                var d = Gen.Generate(new RegionCoord(k * 23 - 1400, k * 43 - 2600), 3);
                 Assert.That(d.MaxHeight, Is.LessThanOrEqualTo(InfiniteTerrain.MaxHeight));
                 Assert.That(d.MinHeight, Is.GreaterThan(-256f));
             }
