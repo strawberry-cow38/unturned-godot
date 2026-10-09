@@ -53,7 +53,16 @@ namespace UnturnedGodot
 
         /// <summary>Absolute position of local (0,0,0), in metres. Only ever a whole number of regions.</summary>
         public double OriginX, OriginZ;
-        public const float RebaseDistance = 1024f;
+        /// <summary>1024 m; UG_INF_REBASE overrides it so a render can cross a rebase without driving a kilometre
+        /// (the shift is still a whole number of regions, so a small value means "every region boundary").</summary>
+        public static readonly float RebaseDistance = float.TryParse(System.Environment.GetEnvironmentVariable("UG_INF_REBASE"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float rd) && rd > 0f ? rd : 1024f;
+        /// <summary>UG_INF_ORIGINFIX=0 leaves the shaders' world origin at zero: the A/B control for the rebase twitch.</summary>
+        static readonly bool OriginFix = System.Environment.GetEnvironmentVariable("UG_INF_ORIGINFIX") != "0";
+        void PublishOrigin() { if (OriginFix) WorldOrigin.Set(OriginX, OriginZ); }
+        /// <summary>Render probe: shift the world by whole regions NOW, wherever the focus is.</summary>
+        public void DebugShift(int rx, int rz) => ShiftWorld(rx * InfiniteTerrain.RegionSize, rz * InfiniteTerrain.RegionSize);
+        /// <summary>Wall-clock cost of the last ShiftWorld, ms (the rebase hitch).</summary>
+        public double LastShiftMs;
         public static bool DebugShiftLog;
 
         public static readonly int[] LodRing = { 2, 4, 7, 11 };
@@ -63,13 +72,13 @@ namespace UnturnedGodot
         public static int MaxRing => LodRing[LodRing.Length - 1];
 
         // ---- diagnostics (the overlay and the tests read these) ----
-        public int Rebases, Rescues, Committed, TreeCount, FoliageCount;
+        public int Rebases, Rescues, Committed, TreeCount, FoliageCount, ImpostorCount;
         public double GenMsTotal; public int GenCount;
         public readonly int[] LoadedByLod = new int[4];
         public int Colliders => _colliders;
         /// <summary>Nothing queued, cooking or waiting to upload, and the outermost ring has arrived -- what a --shot
         /// waits for, since a movie-mode frame takes seconds and the first frames would show a world half-built.</summary>
-        public bool Settled => Queued == 0 && InFlight == 0 && _done.IsEmpty && LoadedByLod[LodRing.Length - 1] > 0;
+        public bool Settled => Queued == 0 && InFlight == 0 && _done.IsEmpty && LoadedByLod[LodRing.Length - 1] > 0 && _impMissing == 0;
         public int Queued { get { lock (_lock) return _jobs.Count; } }
         public int InFlight => _inFlight;
 
@@ -78,7 +87,7 @@ namespace UnturnedGodot
             public RegionCoord C;
             public Node3D Node;
             public MeshInstance3D Mesh;
-            public MeshInstance3D[] Road = new MeshInstance3D[4];   // one surface per road class (RoadKind)
+            public MeshInstance3D[] Road = new MeshInstance3D[RoadSlots];   // one surface per road class (RoadKind), + the raised-highway debug slot
             public int Lod = -1, PendingLod = -1;
             public float[] Lod0Heights;
             public List<TreeSpawn> TreeList;
@@ -91,6 +100,8 @@ namespace UnturnedGodot
             public Node3D PoleBodies;       // pole colliders, ring <= ColliderRing
             public Node3D Foliage;          // grass / flowers / pebbles / bushes, ring <= FoliageRing only
             public int FoliageCount;
+            public (Vector3 P, float S, int Cell)[] ImpTrees;   // billboard placements on the DISPLAYED LOD's ground
+            public MultiMeshInstance3D Impostors;   // ring >= ImpostorRing
         }
 
         sealed class Job { public RegionCoord C; public int Lod; }
@@ -105,6 +116,7 @@ namespace UnturnedGodot
             public Dictionary<(int kind, int cell), List<Transform3D>> FoliageXf;
             public RoadMesh[] Road;   // per RoadKind, null where the region has none of that class
             public List<(Transform3D Pole, bool HasNext, Transform3D Next)> Poles;
+            public (Vector3 P, float S, int Cell)[] ImpTrees;
         }
 
         readonly Dictionary<RegionCoord, Region> _regions = new();
@@ -132,11 +144,14 @@ namespace UnturnedGodot
                 _workers[i] = new Thread(WorkerLoop) { IsBackground = true, Name = $"region-gen-{i}" };
                 _workers[i].Start();
             }
-            Log.Print($"[infinite] streamer up: {(Source != null ? Source.GetType().Name : $"seed {Gen.Seed}")}, {n} worker threads, rings {string.Join("/", LodRing)}, colliders <= {ColliderRing}, trees <= {TreeRing}");
+            Log.Print($"[infinite] streamer up: {(Source != null ? Source.GetType().Name : $"seed {Gen.Seed}")}, {n} worker threads, rings {string.Join("/", LodRing)}, colliders <= {ColliderRing}, trees <= {TreeRing}, billboards {(TreeImpostors ? $"ring {ImpostorRing}+" : "off")}");
+            if (TreeImpostors) BakeImpostorAtlas();
+            PublishOrigin();
         }
 
         public override void _ExitTree()
         {
+            WorldOrigin.Set(0, 0);   // the next world (a fixed map) draws its patterns from its own coordinates
             _quit = true;
             lock (_lock) Monitor.PulseAll(_lock);
             // wait for the workers to actually leave (a region takes milliseconds), so no managed thread of ours is
@@ -197,6 +212,7 @@ namespace UnturnedGodot
         void Sweep(RegionCoord center)
         {
             int max = MaxRing;
+            _impBudget = ImpostorBuildsPerSweep; _impMissing = 0;
             var drop = new List<RegionCoord>();
             foreach (var kv in _regions)
                 if (kv.Key.RingTo(center) > max + 1) drop.Add(kv.Key);
@@ -238,6 +254,7 @@ namespace UnturnedGodot
             if (r.Ground != null) _colliders--;
             if (r.Trees != null) TreeCount -= r.TreeList?.Count ?? 0;
             if (r.Foliage != null) FoliageCount -= r.FoliageCount;
+            if (r.Impostors != null) ImpostorCount -= r.Impostors.Multimesh.InstanceCount;
             r.Node.QueueFree();
             _regions.Remove(c);
             _pendingTrees.Remove(c);
@@ -264,6 +281,23 @@ namespace UnturnedGodot
 
             if (ring <= ColliderRing && r.TreeBodies == null && r.TreeList != null) { r.TreeBodies = BuildTrunks(r.TreeList); r.Node.AddChild(r.TreeBodies); }
             else if (ring > ColliderRing + 1 && r.TreeBodies != null) { r.TreeBodies.QueueFree(); r.TreeBodies = null; }
+
+            if (ring >= ImpostorRing && r.Impostors == null && r.ImpTrees != null && r.ImpTrees.Length > 0 && TreeImpostors)
+            {
+                if (_impMat != null && _impBudget > 0)
+                {
+                    _impBudget--;
+                    r.Impostors = BuildImpostors(r.ImpTrees);
+                    r.Node.AddChild(r.Impostors);
+                    ImpostorCount += r.ImpTrees.Length;
+                }
+                else _impMissing++;   // the atlas is still baking, or this sweep's budget is spent: not settled yet
+            }
+            else if (ring < ImpostorRing - 1 && r.Impostors != null)
+            {
+                ImpostorCount -= r.Impostors.Multimesh.InstanceCount;
+                r.Impostors.QueueFree(); r.Impostors = null;
+            }
 
             if (ring <= TreeRing && r.Power == null && r.PoleXf != null && r.PoleXf.Count > 0) { r.Power = BuildPower(r, r.PoleXf); }
             else if (ring > TreeRing + 1 && r.Power != null) { r.Power.QueueFree(); r.Power = null; }
@@ -309,7 +343,13 @@ namespace UnturnedGodot
                 if (b.D.Trees != null && r.TreeList == null) { r.TreeList = b.D.Trees; _pendingTrees[r.C] = b.TreeXf; }
                 if (b.FoliageXf != null && r.FoliageXf == null) r.FoliageXf = b.FoliageXf;
                 if (b.Poles != null && r.PoleXf == null) r.PoleXf = b.Poles;
-                if (useful) Apply(r, b);
+                if (useful)
+                {
+                    Apply(r, b);
+                    // billboards stand on THIS LOD's ground: a new mesh means re-planting them on it
+                    r.ImpTrees = b.ImpTrees;
+                    if (r.Impostors != null) { ImpostorCount -= r.Impostors.Multimesh.InstanceCount; r.Impostors.QueueFree(); r.Impostors = null; }
+                }
                 UpdateExtras(r, ring);
                 n++;
                 if (CommitCap <= 8 && (System.Diagnostics.Stopwatch.GetTimestamp() - t0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency > 4.0) break;
@@ -344,7 +384,7 @@ namespace UnturnedGodot
             LoadedByLod[r.Lod]++;
             Committed++;
             // the road surfaces, one mesh per class: rebuilt with every LOD, because they sit on THAT mesh's triangles
-            for (int k = 0; k < 4; k++)
+            for (int k = 0; k < RoadSlots; k++)
             {
                 var rd = b.Road?[k];
                 if (rd != null && rd.I.Length > 0)
@@ -359,7 +399,7 @@ namespace UnturnedGodot
                     rm.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, ra);
                     if (r.Road[k] == null)
                     {
-                        r.Road[k] = new MeshInstance3D { Name = "Road_" + (RoadKind)k, MaterialOverride = RoadMat((RoadKind)k), CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
+                        r.Road[k] = new MeshInstance3D { Name = k == RaisedSlot ? "Road_Raised" : k == CutSlot ? "Road_Cut" : "Road_" + (RoadKind)k, MaterialOverride = RoadMat(k), CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
                         r.Node.AddChild(r.Road[k]);
                     }
                     r.Road[k].Mesh = rm;
@@ -399,6 +439,97 @@ namespace UnturnedGodot
             return m;
         }
 
+        // ---- tree impostors (strawberry 2026-10-09: "can we render more tree imposters further?"). Real trees stop at
+        // TreeRing; past it every region keeps its trees as camera-facing cards out to the last LOD ring (~2.9 km).
+        // The pictures are ResourceField's bake (from the same .obj the real trees draw, so they cannot disagree),
+        // packed side by side into ONE atlas so a region's whole forest is one MultiMesh -- one draw call -- with the
+        // species picked per instance through INSTANCE_CUSTOM. The handover overlaps the way ResourceField's does:
+        // cards switch on at 88% of the real trees' cull, so no camera jitter can open a gap between the two.
+        public static bool TreeImpostors = System.Environment.GetEnvironmentVariable("UG_INF_TREEIMP") != "0";
+        public const int ImpostorRing = 2;              // built from here out (cards only DRAW past the handover distance)
+        const int ImpostorBuildsPerSweep = 48;          // MultiMeshes built per sweep, so the first fill is not one frame
+        static readonly string[] ImpNames = { "Pine_0", "Pine_1", "Birch_0", "Birch_1", "Maple_0", "Maple_1" };   // cell = kind * 2 + variant
+        readonly Vector2[] _impSize = new Vector2[6];   // world size each card was framed at (W from the bake's aspect)
+        ShaderMaterial _impMat;
+        static QuadMesh _impQuad;
+        int _impBudget, _impMissing;
+
+        const string ImpostorShader = @"
+shader_type spatial;
+render_mode cull_disabled, specular_disabled;
+uniform sampler2D atlas : source_color, filter_linear_mipmap;
+uniform float cells = 6.0;
+void vertex() {
+	// Y-billboard keeping the instance's scale: Godot's own BILLBOARD_FIXED_Y + keep_scale, so a tree turns to face
+	// you but never tips toward the camera
+	MODELVIEW_MATRIX = VIEW_MATRIX * mat4(
+			vec4(normalize(cross(vec3(0.0, 1.0, 0.0), MAIN_CAM_INV_VIEW_MATRIX[2].xyz)), 0.0),
+			vec4(0.0, 1.0, 0.0, 0.0),
+			vec4(normalize(cross(MAIN_CAM_INV_VIEW_MATRIX[0].xyz, vec3(0.0, 1.0, 0.0))), 0.0),
+			MODEL_MATRIX[3]);
+	MODELVIEW_MATRIX = MODELVIEW_MATRIX * mat4(vec4(length(MODEL_MATRIX[0].xyz), 0.0, 0.0, 0.0), vec4(0.0, length(MODEL_MATRIX[1].xyz), 0.0, 0.0), vec4(0.0, 0.0, length(MODEL_MATRIX[2].xyz), 0.0), vec4(0.0, 0.0, 0.0, 1.0));
+	MODELVIEW_NORMAL_MATRIX = mat3(MODELVIEW_MATRIX);
+	UV = vec2((UV.x + INSTANCE_CUSTOM.r) / cells, UV.y);   // this tree's species, out of the atlas
+}
+void fragment() {
+	vec4 c = texture(atlas, UV);
+	ALBEDO = c.rgb;
+	ALPHA = c.a;
+	ALPHA_SCISSOR_THRESHOLD = 0.5;
+	ROUGHNESS = 1.0;
+}";
+
+        async void BakeImpostorAtlas()
+        {
+            string dir = ProjectSettings.GlobalizePath("res://content/resources/");
+            int w = ResourceField.ImpostorTexW, h = ResourceField.ImpostorTexH;
+            var atlas = Image.CreateEmpty(w * ImpNames.Length, h, false, Image.Format.Rgba8);
+            int ok = 0;
+            for (int i = 0; i < ImpNames.Length; i++)
+            {
+                var (img, _, bh) = await ResourceField.BakeImpostorImageAsync(this, dir, ImpNames[i], 2);
+                if (!IsInstanceValid(this)) return;
+                if (img == null) { Log.Err($"[infinite] billboard bake failed for {ImpNames[i]}: that species gets no far trees"); continue; }
+                if (img.GetFormat() != Image.Format.Rgba8) img.Convert(Image.Format.Rgba8);
+                atlas.BlitRect(img, new Rect2I(0, 0, w, h), new Vector2I(i * w, 0));
+                // the ortho camera framed bh TALL and bh * w/h WIDE: that box is the card, or the picture stretches
+                _impSize[i] = new Vector2(bh * w / h, bh);
+                ok++;
+            }
+            atlas.GenerateMipmaps();
+            _impQuad = new QuadMesh { Size = Vector2.One, Orientation = PlaneMesh.OrientationEnum.Z };
+            var mat = new ShaderMaterial { Shader = new Shader { Code = ImpostorShader } };
+            mat.SetShaderParameter("atlas", ImageTexture.CreateFromImage(atlas));
+            mat.SetShaderParameter("cells", (float)ImpNames.Length);
+            _impMat = mat;
+            _resweep = 0;   // regions already out there get their cards on the next sweep
+            Log.Print($"[infinite] billboard atlas baked: {ok}/{ImpNames.Length} species, on at {ImpostorBegin:0} m");
+        }
+
+        static float ImpostorBegin => (TreeRing + 0.5f) * InfiniteTerrain.RegionSize * ResourceField.ImpostorOverlap;
+
+        MultiMeshInstance3D BuildImpostors((Vector3 P, float S, int Cell)[] trees)
+        {
+            var mm = new MultiMesh { TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, UseCustomData = true, Mesh = _impQuad };
+            mm.InstanceCount = trees.Length;   // format BEFORE count
+            for (int k = 0; k < trees.Length; k++)
+            {
+                var (p, s, cell) = trees[k];
+                var size = _impSize[cell] * s;   // zero for a species whose bake failed: an invisible card, never a black one
+                // a QuadMesh is centred on its origin: lift it half a card so the picture's foot is on the ground
+                mm.SetInstanceTransform(k, new Transform3D(Basis.Identity.Scaled(new Vector3(size.X, size.Y, 1f)), p + new Vector3(0f, size.Y * 0.5f, 0f)));
+                mm.SetInstanceCustomData(k, new Color(cell, 0f, 0f, 0f));
+            }
+            var mmi = new MultiMeshInstance3D
+            {
+                Name = "Impostors", Multimesh = mm, MaterialOverride = _impMat,
+                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,   // a flat card casts a flat wrong shadow
+                VisibilityRangeBegin = ImpostorBegin,
+            };
+            mmi.AddToGroup(NearestFilter.KeepFilterGroup);
+            return mmi;
+        }
+
         Node3D BuildTrees(Dictionary<string, List<Transform3D>> byName)
         {
             var holder = new Node3D { Name = "Trees" };
@@ -434,16 +565,28 @@ namespace UnturnedGodot
         /// <summary>Lift over the profile: main roads and highways above the small roads and trails that start under
         /// their edges, highways above the mains they cross, so no two surfaces z-fight.</summary>
         static readonly float[] RoadLift = { 0.045f, 0.03f, 0.015f, 0.01f };
-        static readonly Material[] _roadMats = new Material[4];
-        static Material RoadMat(RoadKind k)
+        /// <summary>UG_INF_MARKS=1: highway pieces on a raised stretch (bridge candidate) draw magenta and on a deep cut
+        /// (tunnel candidate) cyan, each from its own slot, so the marking can be checked by eye. Off, they are
+        /// ordinary highway.</summary>
+        public static bool ShowMarks = System.Environment.GetEnvironmentVariable("UG_INF_MARKS") == "1";
+        const int RoadSlots = 6, RaisedSlot = 4, CutSlot = 5;
+        static readonly Material[] _roadMats = new Material[RoadSlots];
+        static Material RoadMat(int slot)
         {
-            if (_roadMats[(int)k] != null) return _roadMats[(int)k];
+            if (_roadMats[slot] != null) return _roadMats[slot];
+            var k = slot >= RaisedSlot ? RoadKind.Highway : (RoadKind)slot;
             var img = new Image();
             string p = ProjectSettings.GlobalizePath($"res://content/roads/{RoadTex[(int)k]}.png");
             bool ok = System.IO.File.Exists(p) && ContentProvider.LoadOk(img, p);
             if (ok) img.GenerateMipmaps();
             Material mat;
-            if (k == RoadKind.Trail)
+            if (slot >= RaisedSlot)
+                mat = new StandardMaterial3D
+                {
+                    AlbedoTexture = ok ? ImageTexture.CreateFromImage(img) : null, AlbedoColor = slot == RaisedSlot ? new Color(1f, 0.25f, 1f) : new Color(0.1f, 0.9f, 1f),
+                    TextureFilter = BaseMaterial3D.TextureFilterEnum.LinearWithMipmapsAnisotropic, Roughness = 1f,
+                };
+            else if (k == RoadKind.Trail)
                 mat = new StandardMaterial3D
                 {
                     AlbedoTexture = ok ? ImageTexture.CreateFromImage(img) : null, AlbedoColor = ok ? Colors.White : new Color(0.45f, 0.37f, 0.28f),
@@ -461,7 +604,7 @@ namespace UnturnedGodot
                 else m.SetShaderParameter("dry_albedo", new Vector3(0.34f, 0.34f, 0.35f));
                 mat = m;
             }
-            return _roadMats[(int)k] = mat;
+            return _roadMats[slot] = mat;
         }
 
         // ---- ground cover: the same meshes + shaders FoliageField draws PEI's baked foliage with
@@ -634,6 +777,7 @@ namespace UnturnedGodot
         void ShiftWorld(float sx, float sz)
         {
             if (sx == 0f && sz == 0f) return;
+            long shiftT0 = System.Diagnostics.Stopwatch.GetTimestamp();
             var d = new Vector3(-sx, 0f, -sz);
             OriginX += sx; OriginZ += sz;
             var root = WorldRoot ?? GetParent();
@@ -652,8 +796,12 @@ namespace UnturnedGodot
                 n3.ResetPhysicsInterpolation();
             }
             foreach (var r in _regions.Values) r.Node.Position = RegionLocalOrigin(r.C);
+            // (Tried and measured: ResetPhysicsInterpolation() on the region subtree here changed NOTHING -- pixel-
+            // identical frames across a forced shift with and without it. The visible jump was the shaders, below.)
+            PublishOrigin();   // world-space shader patterns (swell, wind, ripples) follow the world, not the shift
             Rebases++;
-            Log.Print($"[infinite] rebase #{Rebases}: world shifted ({-sx:0}, {-sz:0}) m, origin now ({OriginX:0}, {OriginZ:0})");
+            LastShiftMs = (System.Diagnostics.Stopwatch.GetTimestamp() - shiftT0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+            Log.Print($"[infinite] rebase #{Rebases} at frame {Engine.GetFramesDrawn()}: world shifted ({-sx:0}, {-sz:0}) m, origin now ({OriginX:0}, {OriginZ:0}), took {LastShiftMs:0.0} ms");
         }
 
         /// <summary>The focus below the generator's own ground means a hole in the collider, a late region, or a
@@ -684,6 +832,7 @@ namespace UnturnedGodot
             double newOx = rc.MinX, newOz = rc.MinZ;
             ShiftWorld((float)(newOx - OriginX), (float)(newOz - OriginZ));
             OriginX = newOx; OriginZ = newOz;   // exact, even when the shift itself was too large for a float
+            PublishOrigin();
             foreach (var r in _regions.Values) r.Node.Position = RegionLocalOrigin(r.C);
             SyncGround(rc);
             float y = Src.HeightAt(x, z);
@@ -828,9 +977,19 @@ namespace UnturnedGodot
             }
 
             Dictionary<string, List<Transform3D>> trees = null;
+            (Vector3 P, float S, int Cell)[] imp = null;
             if (d.Trees != null)
             {
                 trees = new Dictionary<string, List<Transform3D>>();
+                imp = new (Vector3, float, int)[d.Trees.Count];
+                for (int ti = 0; ti < d.Trees.Count; ti++)
+                {
+                    var t = d.Trees[ti];
+                    int v2 = ((int)(t.X * 7f) + (int)(t.Z * 13f)) & 1;
+                    // on the mesh this LOD draws, not the smooth function: a coarse far LOD sits metres off it
+                    float gy = InfiniteTerrain.MeshHeightAt(d, t.X, t.Z);
+                    imp[ti] = (new Vector3(t.X, gy - ResourceField.TreeSink * t.Scale, t.Z), t.Scale, t.Kind * 2 + v2);
+                }
                 foreach (var t in d.Trees)
                 {
                     int variant = ((int)(t.X * 7f) + (int)(t.Z * 13f)) & 1;
@@ -845,14 +1004,14 @@ namespace UnturnedGodot
             RoadMesh[] roadMeshes = null;
             if (d.Roads != null && d.Roads.Count > 0)
             {
-                roadMeshes = new RoadMesh[4];
-                var lists = new (List<Vector3> V, List<Vector3> N, List<Vector2> UV, List<int> I)[4];
+                roadMeshes = new RoadMesh[RoadSlots];
+                var lists = new (List<Vector3> V, List<Vector3> N, List<Vector2> UV, List<int> I)[RoadSlots];
                 double ox = d.Coord.MinX, oz = d.Coord.MinZ;
                 foreach (var rp in d.Roads)
                 {
-                    int kind = rp.Kind;
-                    lists[kind].V ??= new List<Vector3>(); lists[kind].N ??= new List<Vector3>(); lists[kind].UV ??= new List<Vector2>(); lists[kind].I ??= new List<int>();
-                    var RV = lists[kind].V; var RN = lists[kind].N; var RUV = lists[kind].UV; var RI = lists[kind].I;
+                    int kind = rp.Kind, slot = !ShowMarks ? kind : rp.Raised ? RaisedSlot : rp.Cut ? CutSlot : kind;
+                    lists[slot].V ??= new List<Vector3>(); lists[slot].N ??= new List<Vector3>(); lists[slot].UV ??= new List<Vector2>(); lists[slot].I ??= new List<int>();
+                    var RV = lists[slot].V; var RN = lists[slot].N; var RUV = lists[slot].UV; var RI = lists[slot].I;
                     float hw = RibbonHalf((RoadKind)kind), lift = RoadLift[kind], texM = RoadTexMetres[kind];
                     float Y(float lx, float lz, float h) =>
                         Mathf.Max(h + lift, InfiniteTerrain.MeshHeightAt(d, Mathf.Clamp(lx, 0f, InfiniteTerrain.RegionSize), Mathf.Clamp(lz, 0f, InfiniteTerrain.RegionSize)) + 0.02f + lift);
@@ -871,7 +1030,7 @@ namespace UnturnedGodot
                     Tri(RV, RI, b0, b0 + 1, b0 + 2, Vector3.Up);
                     Tri(RV, RI, b0 + 1, b0 + 3, b0 + 2, Vector3.Up);
                 }
-                for (int k = 0; k < 4; k++)
+                for (int k = 0; k < RoadSlots; k++)
                     if (lists[k].V != null)
                         roadMeshes[k] = new RoadMesh { V = lists[k].V.ToArray(), N = lists[k].N.ToArray(), UV = lists[k].UV.ToArray(), I = lists[k].I.ToArray() };
             }
@@ -904,7 +1063,7 @@ namespace UnturnedGodot
                     list.Add(new Transform3D(basis, new Vector3(f.X, f.Y, f.Z)));
                 }
             }
-            return new Built { D = d, V = V.ToArray(), N = N.ToArray(), UV = UV.ToArray(), I = I.ToArray(), S0 = s0, S1 = s1, SplatSize = v, TreeXf = trees, FoliageXf = foliage,
+            return new Built { D = d, V = V.ToArray(), N = N.ToArray(), UV = UV.ToArray(), I = I.ToArray(), S0 = s0, S1 = s1, SplatSize = v, TreeXf = trees, ImpTrees = imp, FoliageXf = foliage,
                                Road = roadMeshes, Poles = poles };
         }
 

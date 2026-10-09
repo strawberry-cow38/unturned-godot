@@ -26,6 +26,7 @@ const float SWELL_AMP = 0.5;        // metres of vertical swell (CALM baseline; 
 // Declared with a default of 1.0 so a shader that loads before the global is registered still renders calm water
 // rather than a flat sea -- and EnsureGlobals runs before any water material is built, same rule as wind_vec.
 global uniform float swell_scale;
+global uniform vec2 ug_origin;   // WorldOrigin: the swell belongs to the world, not to the engine's coordinates
 float swell_amp() { return SWELL_AMP * max(swell_scale, 0.0001); }
 const float SWELL_DIR_DEG = 30.0;   // swell travel direction
 const float SWELL_FU = 0.081;       // noise freq ALONG travel (lowered 10% -> waves ~10% bigger, master "zoom in")
@@ -112,13 +113,14 @@ float swell_at(vec2 wp, float tphase) {
     vec2 open = vec2(cos(a), sin(a));          // the open-ocean heading
     // ⭐ The big linear part is computed here at full precision and never interpolated; only the CORRECTION comes
     // out of the texture. That is why the open ocean is untouched to the bit and why a 32 m field is enough.
-    float u = dot(wp, open) + clamp(shore_bend, 0.0, 1.0) * shore_phase(wp);
+    vec2 pp = wp + ug_origin;   // the shore field is baked in LOCAL space (a fixed map's, where ug_origin is 0), so it keeps wp
+    float u = dot(pp, open) + clamp(shore_bend, 0.0, 1.0) * shore_phase(wp);
     // ⚠⚠ THE ALONG-CREST COORDINATE STAYS IN THE OPEN-OCEAN FRAME, DELIBERATELY. Bending it too would need a
     // SECOND scalar field -- the conjugate of the first -- which only exists if the bend is conformal, and
     // building it out of the same rotating basis is precisely the mistake above. Its only job is to break the
     // crests into finite-length ridges instead of infinite lines, and a fixed frame does that perfectly while
     // being incapable of shearing anything.
-    float w = dot(wp, vec2(-open.y, open.x));
+    float w = dot(pp, vec2(-open.y, open.x));
     return fbm3(vec2(u * SWELL_FU + tphase, w * swell_fw()));
 }
 float swell_phase(float t) { return t * SWELL_SPEED * SWELL_FU; }   // scroll the field along the travel axis

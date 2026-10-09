@@ -72,6 +72,13 @@ namespace UnturnedGodot
             // a jeep beside you: the quickest way to watch regions arrive (and to cross a rebase at speed)
             var jeep = Vehicle.BuildByName("jeep");
             root.AddChild(jeep);
+            float.TryParse(System.Environment.GetEnvironmentVariable("UG_INF_DRIVE"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float driveSecs);
+            if (driveSecs > 0f || System.Environment.GetEnvironmentVariable("UG_INF_SHIFTAT") != null)
+            {
+                HoldShot = true;
+                float.TryParse(System.Environment.GetEnvironmentVariable("UG_INF_SHIFTAT"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float shiftAt);
+                root.AddChild(new InfiniteDriveProbe { S = streamer, P = player, Jeep = jeep, Secs = driveSecs, ShiftAt = shiftAt });
+            }
             jeep.GlobalPosition = streamer.ToLocal(sx + 5.0, gen.HeightAt(sx + 5.0, sz + 5.0) + 1.5, sz + 5.0);   // beside and behind, not parked across the first view
 
             if (ParseCsv("UG_INF_CAM") is double[] cam && cam.Length >= 3)
@@ -101,6 +108,9 @@ namespace UnturnedGodot
             return result;
         }
 
+        /// <summary>A render probe is still running: Main's --shot waits for this to clear.</summary>
+        public static bool HoldShot;
+
         static double[] ParseCsv(string env)
         {
             var s = System.Environment.GetEnvironmentVariable(env);
@@ -110,6 +120,76 @@ namespace UnturnedGodot
             for (int i = 0; i < parts.Length; i++)
                 if (!double.TryParse(parts[i].Trim(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out v[i])) return null;
             return v;
+        }
+    }
+
+    /// <summary>UG_INF_DRIVE=SECS (render probe): once the world has streamed in, put the jeep on the nearest main road
+    /// heading along it, get in, and drive flat out for SECS while logging every frame -- the way to see what a rebase
+    /// looks and sounds like at speed (pair with UG_INF_REBASE to make one happen within a region's drive).</summary>
+    public partial class InfiniteDriveProbe : Node
+    {
+        public RegionStreamer S; public PlayerController P; public Vehicle Jeep; public float Secs;
+        /// <summary>UG_INF_SHIFTAT: force a one-region rebase this far into the drive, so the frame it happens on is known.</summary>
+        public float ShiftAt;
+        int _phase, _wait; double _t; ulong _lastUs; bool _shifted;
+
+        public override void _PhysicsProcess(double delta)
+        {
+            if (S == null || P == null || Jeep == null) return;
+            switch (_phase)
+            {
+                case 0:
+                    if (!S.Settled) return;
+                    if (Secs <= 0f) { _phase = 3; _lastUs = Time.GetTicksUsec(); return; }   // shift only: no drive, the camera stays put
+                    PlaceOnRoad();
+                    _phase = 1; _wait = 20; return;
+                case 1:
+                    if (--_wait > 0) return;
+                    P.EnterNearestVehicle();
+                    _phase = 2; _wait = 10; return;
+                case 2:
+                    if (--_wait > 0) return;
+                    Log.Print($"[drive] in the jeep: {P.Driving != null}");
+                    _phase = 3; _lastUs = Time.GetTicksUsec(); return;
+                case 3:
+                    if (Secs > 0f) P.ScriptedDrive = new Vector2(0f, 1f);
+                    _t += delta;
+                    if (ShiftAt > 0f && !_shifted && _t >= ShiftAt) { _shifted = true; S.DebugShift(1, 0); }
+                    ulong now = Time.GetTicksUsec();
+                    var lp = Jeep.GlobalPosition;
+                    Log.Print($"[drive] f{Engine.GetFramesDrawn()} t {_t:0.000} local ({lp.X:0.0}, {lp.Z:0.0}) abs ({S.AbsX(lp.X):0.0}, {S.AbsZ(lp.Z):0.0}) v {Jeep.LinearVelocity.Length():0.0} m/s rebases {S.Rebases} wall {(now - _lastUs) / 1000.0:0} ms");
+                    _lastUs = now;
+                    if (_t >= System.Math.Max(Secs, ShiftAt + 0.5f)) { P.ScriptedDrive = null; InfiniteWorld.HoldShot = false; _phase = 4; }
+                    return;
+            }
+        }
+
+        void PlaceOnRoad()
+        {
+            var lp = Jeep.GlobalPosition;
+            double ax = S.AbsX(lp.X), az = S.AbsZ(lp.Z), best = double.MaxValue;
+            (double x, double z, float h) bp = default; double hx = 0, hz = 1;
+            long ci = (long)System.Math.Floor(ax / InfiniteRoads.MainCell), cj = (long)System.Math.Floor(az / InfiniteRoads.MainCell);
+            for (long i = ci - 1; i <= ci + 1; i++)
+                for (long j = cj - 1; j <= cj + 1; j++)
+                    for (int dir = 0; dir < 2; dir++)
+                    {
+                        var line = S.Gen.Roads.MainCentreline(i, j, dir);
+                        if (line == null) continue;
+                        for (int k = 0; k + 1 < line.Length; k++)
+                        {
+                            double d = (line[k].x - ax) * (line[k].x - ax) + (line[k].z - az) * (line[k].z - az);
+                            if (d < best) { best = d; bp = line[k]; hx = line[k + 1].x - line[k].x; hz = line[k + 1].z - line[k].z; }
+                        }
+                    }
+            if (best == double.MaxValue) { Log.Print("[drive] no main road nearby; driving from where the jeep is"); return; }
+            var pos = S.ToLocal(bp.x, bp.h + 1.2, bp.z);
+            var fwd = new Vector3((float)hx, 0f, (float)hz).Normalized();
+            Jeep.GlobalTransform = new Transform3D(Basis.LookingAt(fwd, Vector3.Up), pos);
+            Jeep.LinearVelocity = Vector3.Zero; Jeep.AngularVelocity = Vector3.Zero;
+            Jeep.ResetPhysicsInterpolation();
+            P.TeleportTo(pos + new Vector3(fwd.Z, 0f, -fwd.X) * 3f + Vector3.Up * 0.5f);
+            Log.Print($"[drive] jeep on the main road at ({bp.x:0}, {bp.z:0}), {System.Math.Sqrt(best):0} m from where it was");
         }
     }
 
@@ -141,7 +221,7 @@ namespace UnturnedGodot
             var l = s.LoadedByLod;
             Text = $"INFINITE  seed {s.Gen.Seed}   abs {s.AbsX(p.X):N0}, {s.AbsZ(p.Z):N0} m   y {p.Y:0}   region {rc}\n" +
                    $"local {p.X:0}, {p.Z:0}   origin {s.OriginX:N0}, {s.OriginZ:N0}   rebases {s.Rebases}   rescues {s.Rescues}\n" +
-                   $"regions L0 {l[0]} · L1 {l[1]} · L2 {l[2]} · L3 {l[3]}   queued {s.Queued}+{s.InFlight}   colliders {s.Colliders}   trees {s.TreeCount:N0}   foliage {s.FoliageCount:N0}   gen {(s.GenCount > 0 ? s.GenMsTotal / s.GenCount : 0):0.0} ms";
+                   $"regions L0 {l[0]} · L1 {l[1]} · L2 {l[2]} · L3 {l[3]}   queued {s.Queued}+{s.InFlight}   colliders {s.Colliders}   trees {s.TreeCount:N0} + {s.ImpostorCount:N0} far   foliage {s.FoliageCount:N0}   gen {(s.GenCount > 0 ? s.GenMsTotal / s.GenCount : 0):0.0} ms";
             // top-left: the vitals bars own the bottom-left corner and the FPS counter the top-right
             Position = new Vector2(12f, 10f);
         }

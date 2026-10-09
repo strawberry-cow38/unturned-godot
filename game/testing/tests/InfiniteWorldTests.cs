@@ -110,12 +110,15 @@ namespace UnturnedGodot.Testing
             // ---- 2. TRAVEL 3 km EAST at 50 m/s, across rebases, keeping to the ground
             double startAbsX = S.AbsX(P(p).X), startAbsZ = S.AbsZ(P(p).Z);
             int rebases0 = S.Rebases, worstRegions = 0, groundChecks = 0; float maxLocal = 0f, worstGround = 0f;
+            double patMin = double.MaxValue, patMax = double.MinValue;   // where the SHADERS see the start spot (WorldOrigin)
             for (int step = 0; step < 3000; step++)
             {
                 double ax = startAbsX + step + 1.0, az = startAbsZ;   // the TARGET track, not a read-back of where we ended up
                 PlaceOnGround(p, ax, az);
                 yield return Ticks(1);
                 maxLocal = Mathf.Max(maxLocal, Mathf.Max(Mathf.Abs(P(p).X), Mathf.Abs(P(p).Z)));
+                double pat = (float)(startAbsX - S.OriginX) + WorldOrigin.Offset.X;   // the engine's local x for that spot + the shaders' offset
+                patMin = System.Math.Min(patMin, pat); patMax = System.Math.Max(patMax, pat);
                 int total = l[0] + l[1] + l[2] + l[3];
                 worstRegions = System.Math.Max(worstRegions, total);
                 if (step % 250 == 249)
@@ -128,6 +131,11 @@ namespace UnturnedGodot.Testing
             double travelled = S.AbsX(P(p).X) - startAbsX;
             T.Check($"crossed {S.Rebases - rebases0} rebases on the way (origin now {S.OriginX:0}, {S.OriginZ:0})", S.Rebases - rebases0 >= 2);
             T.Check($"absolute position survived them: travelled {travelled:0.000} m, want 3000", System.Math.Abs(travelled - 3000.0) < 0.01);
+            // the rebase twitch (strawberry): water, wind and ripple patterns are drawn from local + WorldOrigin.Offset,
+            // so a FIXED spot must read the same pattern position through every rebase. Without the offset it moved a
+            // kilometre at each one.
+            T.Check($"world-space shader patterns stayed put through them: a fixed spot drifted {patMax - patMin:0.000} m (WorldOrigin.Offset {WorldOrigin.Offset.X:0}, {WorldOrigin.Offset.Y:0})",
+                patMax - patMin < 0.01);
             T.Check($"the engine never saw a coordinate past {maxLocal:0} m (rebase at {RegionStreamer.RebaseDistance:0})",
                 maxLocal < RegionStreamer.RebaseDistance + InfiniteTerrain.RegionSize);
             T.Check($"memory bounded: at most {worstRegions} regions resident at once (cap {(2 * RegionStreamer.MaxRing + 3) * (2 * RegionStreamer.MaxRing + 3)})",

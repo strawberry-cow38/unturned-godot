@@ -100,12 +100,14 @@ namespace UnturnedGodot
         {
             float a = Mathf.DegToRad(SwellDirDeg);
             float ox = MathF.Cos(a), oz = MathF.Sin(a);     // the open-ocean heading
-            float u = wx * ox + wz * oz;                   // along travel -- the linear part, exact
+            // the floating origin, as swell.gdshaderinc adds it: boats must ride the swell the GPU draws (WorldOrigin)
+            float px = wx + WorldOrigin.Offset.X, pz = wz + WorldOrigin.Offset.Y;
+            float u = px * ox + pz * oz;                   // along travel -- the linear part, exact
             if (ShoreField.Active != null)
                 u += Mathf.Clamp(ShoreBend, 0f, 1f) * ShoreField.Active.PhaseAt(wx, wz);
             // ⚠ The along-crest coordinate stays in the OPEN frame, matching the shader: bending it would need a
             // second (conjugate) field, and it only exists to break crests into finite ridges anyway.
-            float w = -wx * oz + wz * ox;
+            float w = -px * oz + pz * ox;
             return Fbm3(u * SwellFu + tphase, w * SwellFw);
         }
 

@@ -49,6 +49,7 @@ namespace UnturnedGodot
         {
             if (_globalsReady) return;
             _globalsReady = true;
+            WorldOrigin.EnsureGlobal();   // the foliage sway shaders read it alongside wind_vec
             // Registered at runtime rather than in project settings so the shader works from a fresh clone with no editor
             // step. Order matters relative to material creation (see the class note), NOT relative to each other.
             RenderingServer.GlobalShaderParameterAdd(PointParam, RenderingServer.GlobalShaderParameterType.Vec4, Variant.From(Vector4.Zero));

@@ -11,6 +11,7 @@ global uniform float rain_intensity;                     // 0 .. 1 -- drives the
 global uniform float rain_puddle;                        // 0 .. 1 standing water, minutes behind the rain (WeatherManager)
 global uniform sampler2D rain_roof;                      // RainRoofMap (see rain_streak.gdshader): roofed ground stays dry
 global uniform vec4 rain_roof_rect;
+global uniform vec2 ug_origin;                           // WorldOrigin: puddle + ripple PATTERNS use local + this
 uniform sampler2D albedo_tex : source_color, filter_nearest_mipmap_anisotropic, repeat_enable;   // ROADS (master 2026-09-04 "not seeing the ripple impacts on the road"): the textured surface variant.
                                                                                     // ...ANISOTROPIC as of 2026-09-16: the paved roads come through here, not through a StandardMaterial3D, so the
                                                                                     // road-prop aniso pass could not reach them -- a filter on a ShaderMaterial is a sampler HINT, not a C# property.
@@ -84,7 +85,7 @@ void fragment(){
     // `level` must be the BARE global: it is the one argument puddle_mask branches on, and a branch on anything
     // that varies within a quad (shelter does, at a roof edge) leaves the fwidth() in there undefined. Shelter
     // scales the mask instead, via the upness argument -- under a roof there is no puddle either way.
-    float pud = puddle_mask(world_pos.xz, clamp(rain_puddle, 0.0, 1.0), upness * sheltered, prange) * puddle_amount;
+    float pud = puddle_mask(world_pos.xz + ug_origin, clamp(rain_puddle, 0.0, 1.0), upness * sheltered, prange) * puddle_amount;
     float sp = 0.0, crown = 0.0;
     // RING AND CROWN NO LONGER SHARE A GATE (strawberry 2026-09-09: "allow the splashback (but not the ripple)
     // effect on any 'hard' surface"). They used to be computed under one `pud > 0.01` test, so a splash could
@@ -101,7 +102,7 @@ void fragment(){
         vec2 aw = world_pos.xz - INV_VIEW_MATRIX[3].xz;
         float awl = length(aw);
         float m = rint * upness * impact_amount;
-        rain_impacts(world_pos.xz, TIME, rint, splash_scale, awl > 1e-3 ? aw / awl : vec2(0.0), sp, crown);
+        rain_impacts(world_pos.xz + ug_origin, TIME, rint, splash_scale, awl > 1e-3 ? aw / awl : vec2(0.0), sp, crown);
         sp *= m * pud;                                                  // RIPPLE: standing water only, unchanged
         crown *= m * splashback_amount * sheltered * prange;            // SPLASHBACK: any hard surface the sky can reach
     }

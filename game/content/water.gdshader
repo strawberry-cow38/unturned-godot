@@ -126,7 +126,8 @@ void fragment() {
     // 0.06 ON PURPOSE -- it is in NOISE space, not world space, so it tracks the pattern automatically and the
     // creases keep their sharpness instead of flattening as they grow. Scaling it with the frequency would widen
     // the gradient stencil and soften exactly what was asked to be made bigger.
-    vec2 np = v_wpos.xz * 0.055 + vec2(TIME * 0.03, TIME * -0.02);
+    vec2 pxz = v_wpos.xz + ug_origin;   // WorldOrigin (declared in swell.gdshaderinc): patterns use the world position
+    vec2 np = pxz * 0.055 + vec2(TIME * 0.03, TIME * -0.02);
     float n0 = fbm5(np);
     float nx = fbm5(np + vec2(0.06, 0.0));
     float nz = fbm5(np + vec2(0.0, 0.06));
@@ -144,7 +145,7 @@ void fragment() {
     float bed_y = (INV_VIEW_MATRIX * vec4(vp.xyz, 1.0)).y;
     float depth_v = max(v_wpos.y - bed_y, 0.0);
     float shore = 1.0 - smoothstep(0.0, 0.85, depth_v);       // WIDER band = more shore-foam AREA (master "up the amount")
-    shore *= 0.45 + 0.15 * fbm5(v_wpos.xz * 0.4 + TIME * 0.15);  // ...but lower intensity -> 20% less opaque (master)
+    shore *= 0.45 + 0.15 * fbm5(pxz * 0.4 + TIME * 0.15);  // ...but lower intensity -> 20% less opaque (master)
 
     // CREST FOAM, PER-PIXEL. It used to threshold a `v_crest` varying -- the swell height sampled at the mesh
     // CORNERS and linearly smeared between them. On the real map's coarse (~5 m) water grid that puts a hard
@@ -156,7 +157,7 @@ void fragment() {
     // so this costs nothing. It is genuinely identical at a vertex: the vertex samples swell_at() at the
     // undisplaced world XZ, displacement is Y-only so v_wpos.xz is that same XZ, and the interpolation of a
     // planar XZ across a triangle is exact. Same input, same function, finer sampling.
-    float capMask = fbm5(v_wpos.xz * 0.09 + vec2(TIME * 0.04, TIME * -0.03));
+    float capMask = fbm5(pxz * 0.09 + vec2(TIME * 0.04, TIME * -0.03));
     float gate = smoothstep(-0.2, 0.05, capMask);   // stricter -> fewer peaks foam (master: tone down peak foam amount)
     // WHITECAPS. Lower the swell-height BAR in a storm rather than adding foam directly: the caps still appear
     // on real crests, there are just more of them, so they stay tied to the wave field instead of floating on it.
@@ -221,7 +222,7 @@ void fragment() {
     float ring = 0.0;
     if (rint_w > 0.02) {
         float rrange = 1.0 - smoothstep(rain_ring_distance * 0.7, rain_ring_distance, length(VERTEX));
-        if (rrange > 0.01) ring = wr_rings(v_wpos.xz, TIME, rint_w) * rint_w * rrange * rain_ring_strength;
+        if (rrange > 0.01) ring = wr_rings(pxz, TIME, rint_w) * rint_w * rrange * rain_ring_strength;
     }
     vec3 surf_col = mix(water_col, foam_color.rgb, foam) + vec3(ring * 0.30);
     // ⚠ ONLY FROM ABOVE. Looking UP at the surface from underwater, what is "behind" it is the sky at the far

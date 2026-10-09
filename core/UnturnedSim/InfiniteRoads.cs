@@ -74,10 +74,35 @@ namespace SDG.Unturned
             // per-chunk boxes (8 segments each) so a distance query skips most of a long line cheaply
             public double[] CMinX, CMaxX, CMinZ, CMaxZ;
             public List<Line> Branches;   // main roads only
+            /// <summary>Highways: where the road stands clear of the natural ground across its whole width -- the
+            /// places a spline bridge will replace the embankment the carve builds today. Null on other classes.</summary>
+            public List<Stretch> Raised;
+            /// <summary>Highways: where the road runs deep below the natural ground across its whole width -- the
+            /// carve has dug a trench through a hill, and a tunnel is the candidate.</summary>
+            public List<Stretch> Cut;
+            public bool[] RaisedSeg, CutSeg;   // per segment, the same marking (what PiecesIn copies onto pieces)
             public bool Exists => X != null;
             public int Segments => X.Length - 1;
         }
         static readonly Line None = new Line();
+
+        /// <summary>A stretch of highway where the carve has moved a lot of ground. RAISED (bridge candidate): the road
+        /// is at least RaiseFill above the natural terrain under both carriageways and the median, or any of them is
+        /// over water, for at least RaiseMinLength. CUT (tunnel candidate): at least CutDepth BELOW it under all three,
+        /// for at least CutMinLength. Indices are into the line's dense X/Z/H.</summary>
+        public struct Stretch
+        {
+            public int I0, I1;          // first and last dense point
+            public float Length;        // metres of road
+            public float Max;           // the tallest the embankment / deepest the cut gets (m, across the whole width)
+            public bool OverWater;      // raised only: some of it crosses water, a bridge proper rather than a viaduct
+        }
+        public const float RaiseFill = 4f;          // m of fill across the whole width before it counts
+        public const float RaiseMinLength = 30f;    // shorter than this is a bump, not a bridge
+        public const float RaiseMergeGap = 40f;     // two stretches closer than this are one bridge
+        public const float CutDepth = 8f;           // m of cut across the whole width: "carved a lot of mountain away"
+        public const float CutMinLength = 40f;      // a tunnel shorter than this is a culvert
+        public const float CutMergeGap = 40f;
         /// <summary>Why each highway segment that does not exist was dropped (diagnostics; a dropped segment is a dead end).</summary>
         public readonly ConcurrentDictionary<(int axis, long band, long k), string> HighwayDrops = new();
         Line Drop(int axis, long band, long k, string why) { HighwayDrops[(axis, band, k)] = why; return None; }
@@ -395,7 +420,66 @@ namespace SDG.Unturned
             (double, double)? endT = toShore ? null : Heading(fwd ? slope1 : slope0);
             var line = Finish(RoadKind.Highway, xs, zs, hs, startT, endT);
             if (line == null) why = "drawn curve over grade";
+            else MarkStretches(line);
             return line;
+        }
+
+        /// <summary>Find a highway's raised and cut Stretches. Samples the natural ground under the median and both
+        /// carriageway centres at every dense point; the fill (or cut) that counts is the SMALLEST of the three, so a
+        /// road along a side slope -- fill on one side, cut on the other -- is a retaining wall, neither a bridge nor a
+        /// tunnel.</summary>
+        void MarkStretches(Line e)
+        {
+            int n = e.X.Length;
+            var on = new bool[n]; var fill = new float[n]; var wet = new bool[n];
+            var deep = new bool[n]; var cut = new float[n];
+            for (int i = 0; i < n; i++)
+            {
+                int a = Math.Max(0, i - 1), b = Math.Min(n - 1, i + 1);
+                double tx = e.X[b] - e.X[a], tz = e.Z[b] - e.Z[a], tl = Math.Sqrt(tx * tx + tz * tz);
+                double nx = -tz / tl, nz = tx / tl;
+                float ground = e.H[i] - Bed, minFill = float.MaxValue, minCut = float.MaxValue;
+                for (int s = -1; s <= 1; s++)
+                {
+                    float r = _t.RawHeight(e.X[i] + nx * s * HighwayRibbonOffset, e.Z[i] + nz * s * HighwayRibbonOffset);
+                    minFill = Math.Min(minFill, ground - r);
+                    minCut = Math.Min(minCut, r - ground);
+                    if (r < InfiniteTerrain.SeaLevel) wet[i] = true;
+                }
+                fill[i] = minFill; cut[i] = minCut;
+                on[i] = minFill >= RaiseFill || wet[i];
+                deep[i] = minCut >= CutDepth;
+            }
+            var arc = Arc(e);
+            (e.Raised, e.RaisedSeg) = Stretches(e, arc, on, fill, wet, RaiseMinLength, RaiseMergeGap);
+            (e.Cut, e.CutSeg) = Stretches(e, arc, deep, cut, null, CutMinLength, CutMergeGap);
+        }
+
+        /// <summary>Runs of marked points, merged across gaps under `mergeGap`, then the ones under `minLength` dropped.</summary>
+        static (List<Stretch>, bool[]) Stretches(Line e, double[] arc, bool[] on, float[] measure, bool[] wet, float minLength, float mergeGap)
+        {
+            int n = on.Length;
+            var runs = new List<(int i0, int i1)>();
+            for (int i = 0; i < n; i++)
+            {
+                if (!on[i]) continue;
+                int j = i; while (j + 1 < n && on[j + 1]) j++;
+                if (runs.Count > 0 && arc[i] - arc[runs[^1].i1] < mergeGap) runs[^1] = (runs[^1].i0, j);
+                else runs.Add((i, j));
+                i = j;
+            }
+            var list = new List<Stretch>();
+            var seg = new bool[e.Segments];
+            foreach (var (i0, i1) in runs)
+            {
+                float len = (float)(arc[i1] - arc[i0]);
+                if (len < minLength) continue;
+                float mx = 0f; bool w = false;
+                for (int i = i0; i <= i1; i++) { mx = Math.Max(mx, measure[i]); if (wet != null) w |= wet[i]; }
+                list.Add(new Stretch { I0 = i0, I1 = i1, Length = len, Max = mx, OverWater = w });
+                for (int k = i0; k < i1; k++) seg[k] = true;
+            }
+            return (list, seg);
         }
 
         // =============================================================================================================
@@ -648,6 +732,8 @@ namespace SDG.Unturned
                             S0 = s + segLen * (float)ta, S1 = s + segLen * (float)tb,
                             T0X = p == 0 ? tgx[k] : dX, T0Z = p == 0 ? tgz[k] : dZ,
                             T1X = p == pcs - 1 ? tgx[k + 1] : dX, T1Z = p == pcs - 1 ? tgz[k + 1] : dZ,
+                            Raised = e.RaisedSeg != null && e.RaisedSeg[k],
+                            Cut = e.CutSeg != null && e.CutSeg[k],
                         });
                     }
                     s += segLen;
@@ -715,6 +801,25 @@ namespace SDG.Unturned
         }
         public (double x, double z, float h)[] MainCentreline(long cx, long cz, int dir) => Pts(Main(cx, cz, dir));
         public (double x, double z, float h)[] HighwayCentreline(int axis, long band, long k) => Pts(Highway(axis, band, k));
+        /// <summary>Test/tool accessor: the raised stretches of a highway segment (and of the far side of a water gap).</summary>
+        public List<(Stretch r, (double x, double z, float h)[] pts)> RaisedOf(int axis, long band, long k) => StretchesOf(axis, band, k, false);
+        /// <summary>Test/tool accessor: the cut (tunnel-candidate) stretches of a highway segment.</summary>
+        public List<(Stretch r, (double x, double z, float h)[] pts)> CutOf(int axis, long band, long k) => StretchesOf(axis, band, k, true);
+        List<(Stretch r, (double x, double z, float h)[] pts)> StretchesOf(int axis, long band, long k, bool cut)
+        {
+            var e = Highway(axis, band, k);
+            var r = new List<(Stretch, (double, double, float)[])>();
+            void Add(Line l)
+            {
+                var list = cut ? l.Cut : l.Raised;
+                if (!l.Exists || list == null) return;
+                var all = Pts(l);
+                foreach (var s in list) r.Add((s, all[s.I0..(s.I1 + 1)]));
+            }
+            Add(e);
+            if (e.Branches != null) foreach (var b in e.Branches) Add(b);
+            return r;
+        }
         public List<(RoadKind kind, (double x, double z, float h)[] pts)> BranchesOf(long cx, long cz, int dir)
         {
             var e = Main(cx, cz, dir);

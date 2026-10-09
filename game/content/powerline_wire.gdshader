@@ -20,6 +20,7 @@ render_mode diffuse_lambert, specular_disabled, cull_disabled;
 // weather. ⚠⚠ A global uniform reads ZERO until something registers it -- see the godot traps index; WindField's
 // registration runs before any material that samples it.
 global uniform vec4 wind_vec;
+global uniform vec2 ug_origin;   // WorldOrigin: neighbouring spans keep their phase through a rebase
 
 uniform vec3 wire_color : source_color = vec3(0.055, 0.055, 0.062);
 uniform float sway_metres = 0.16;   // how far the MIDDLE of a span moves at full wind. "very slightly" (master): a
@@ -44,7 +45,7 @@ void vertex() {
     // ⚠ 1.1 and 1.7, NOT arbitrary. wind_vec.w wraps at 20*PI, so a term reading sin(k * w) is only continuous
     // across that wrap when k*10 is a whole number -- otherwise every wire on the map jumps together once a cycle.
     // The grass and flags use 1.3/1.5/1.6 for the same reason. Keep any new multiplier a multiple of 0.1.
-    float drift = wp.x * 0.09 + wp.z * 0.07;
+    float drift = (wp.x + ug_origin.x) * 0.09 + (wp.z + ug_origin.y) * 0.07;
     float gust = sin(wind_vec.w * 1.1 + drift) * 0.75
                + sin(wind_vec.w * 1.7 + drift * 1.7 + 1.3) * 0.25;
 

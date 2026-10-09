@@ -21,6 +21,7 @@ render_mode world_vertex_coords, cull_disabled, depth_prepass_alpha, diffuse_lam
 global uniform vec4 grass_displacement_point;
 // FOLIAGE WIND (master 2026-08-24): set per-frame by PlayerController from WindField. xy = wind direction, z = 0..1 strength.
 global uniform vec4 wind_vec;
+global uniform vec2 ug_origin;   // WorldOrigin: the gust phase is a WORLD pattern; the displacers above stay local
 // EXTENDED DISPLACERS (master 2026-08-24: vehicles, dropped items, remote players -- BEYOND retail's local-player-only
 // point above). PlayerController packs the nearest few into this data texture: one texel each, xyz = world point,
 // w = footprint radius in metres (w <= 0 = an empty slot). grass_displacer_count = how many are live this frame, so
@@ -103,7 +104,7 @@ void vertex() {
 	VERTEX += off;
 	// WIND SWAY (master 2026-08-24): bend the tips in the wind direction with a gust wave crawling over the map.
 	float wh = 1.0 - UV.y;   // 1 at the tip, 0 at the root (same weight as the player push)
-	float gust = sin(wind_vec.w * 1.5 + VERTEX.x * 0.25 + VERTEX.z * 0.2);
+	float gust = sin(wind_vec.w * 1.5 + (VERTEX.x + ug_origin.x) * 0.25 + (VERTEX.z + ug_origin.y) * 0.2);
 	float wbend = wh * (0.10 + 0.35 * wind_vec.z) * (0.65 + 0.35 * gust);
 	VERTEX.xz += wind_vec.xy * wbend;
 	VERTEX.y -= abs(wbend) * 0.15;   // a bent blade sits a touch lower

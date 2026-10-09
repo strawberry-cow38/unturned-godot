@@ -81,6 +81,10 @@ namespace SDG.Unturned
         /// the SAME edge and the surface closes. Each piece's own direction left a wedge-shaped gap on the outside
         /// of every bend, and the gravel showed through it as lines across the lanes.</summary>
         public float T0X, T0Z, T1X, T1Z;
+        /// <summary>A highway piece on a RAISED stretch (InfiniteRoads.Stretch): where a spline bridge will go.</summary>
+        public bool Raised;
+        /// <summary>A highway piece on a deep CUT stretch: a tunnel candidate.</summary>
+        public bool Cut;
     }
 
     /// <summary>A power-line pole beside a road (absolute metres), the road's direction there, and the next pole along
@@ -275,6 +279,10 @@ namespace SDG.Unturned
         }
 
         /// <summary>The land before any road touches it.</summary>
+        /// <summary>The ground BEFORE any road carves it: what a bridge pier stands on, and what a raised stretch is
+        /// measured against.</summary>
+        public float NaturalHeight(double x, double z) => RawHeight(x, z);
+
         internal float RawHeight(double x, double z)
         {
             // domain warp: drag the coordinates by a slow field so coasts grow bays and ridges bend
@@ -370,7 +378,7 @@ namespace SDG.Unturned
                     d.Normals[k * 3] = -dx * inv; d.Normals[k * 3 + 1] = inv; d.Normals[k * 3 + 2] = -dz * inv;
                     d.Layers[k] = (byte)LayerAt(ox + i * (double)sp, oz + j * (double)sp, h, MathF.Sqrt(dx * dx + dz * dz), rh[kb].Clear, rh[kb].Kind);
                 }
-            d.Trees = lod <= 1 ? PlaceTrees(rc, lines) : null;
+            d.Trees = PlaceTrees(rc, lines);   // every LOD: the far rings draw them as billboards (RegionStreamer impostors)
             d.Foliage = lod == 0 ? PlaceFoliage(d) : null;
             d.Roads = Roads.PiecesIn(lines, ox, oz, ox + RegionSize, oz + RegionSize, Math.Max(4f, sp));
             d.Poles = lod <= 1 ? Roads.PolesIn(lines, ox, oz, ox + RegionSize, oz + RegionSize) : null;
