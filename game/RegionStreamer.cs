@@ -78,7 +78,7 @@ namespace UnturnedGodot
             public RegionCoord C;
             public Node3D Node;
             public MeshInstance3D Mesh;
-            public MeshInstance3D Road;
+            public MeshInstance3D[] Road = new MeshInstance3D[4];   // one surface per road class (RoadKind)
             public int Lod = -1, PendingLod = -1;
             public float[] Lod0Heights;
             public List<TreeSpawn> TreeList;
@@ -94,6 +94,7 @@ namespace UnturnedGodot
         }
 
         sealed class Job { public RegionCoord C; public int Lod; }
+        sealed class RoadMesh { public Vector3[] V, N; public Vector2[] UV; public int[] I; }
 
         sealed class Built
         {
@@ -102,7 +103,7 @@ namespace UnturnedGodot
             public byte[] S0, S1; public int SplatSize;
             public Dictionary<string, List<Transform3D>> TreeXf;
             public Dictionary<(int kind, int cell), List<Transform3D>> FoliageXf;
-            public Vector3[] RoadV, RoadN; public Vector2[] RoadUV; public int[] RoadI;
+            public RoadMesh[] Road;   // per RoadKind, null where the region has none of that class
             public List<(Transform3D Pole, bool HasNext, Transform3D Next)> Poles;
         }
 
@@ -342,25 +343,29 @@ namespace UnturnedGodot
             r.Lod = b.D.Lod;
             LoadedByLod[r.Lod]++;
             Committed++;
-            // the road surface: rebuilt with every LOD, because it sits on THAT mesh's triangles
-            if (b.RoadI != null && b.RoadI.Length > 0)
+            // the road surfaces, one mesh per class: rebuilt with every LOD, because they sit on THAT mesh's triangles
+            for (int k = 0; k < 4; k++)
             {
-                var ra = new Godot.Collections.Array();
-                ra.Resize((int)Mesh.ArrayType.Max);
-                ra[(int)Mesh.ArrayType.Vertex] = b.RoadV;
-                ra[(int)Mesh.ArrayType.Normal] = b.RoadN;
-                ra[(int)Mesh.ArrayType.TexUV] = b.RoadUV;
-                ra[(int)Mesh.ArrayType.Index] = b.RoadI;
-                var rm = new ArrayMesh();
-                rm.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, ra);
-                if (r.Road == null)
+                var rd = b.Road?[k];
+                if (rd != null && rd.I.Length > 0)
                 {
-                    r.Road = new MeshInstance3D { Name = "Road", MaterialOverride = RoadMat(), CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
-                    r.Node.AddChild(r.Road);
+                    var ra = new Godot.Collections.Array();
+                    ra.Resize((int)Mesh.ArrayType.Max);
+                    ra[(int)Mesh.ArrayType.Vertex] = rd.V;
+                    ra[(int)Mesh.ArrayType.Normal] = rd.N;
+                    ra[(int)Mesh.ArrayType.TexUV] = rd.UV;
+                    ra[(int)Mesh.ArrayType.Index] = rd.I;
+                    var rm = new ArrayMesh();
+                    rm.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, ra);
+                    if (r.Road[k] == null)
+                    {
+                        r.Road[k] = new MeshInstance3D { Name = "Road_" + (RoadKind)k, MaterialOverride = RoadMat((RoadKind)k), CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
+                        r.Node.AddChild(r.Road[k]);
+                    }
+                    r.Road[k].Mesh = rm;
                 }
-                r.Road.Mesh = rm;
+                else if (r.Road[k] != null) { r.Road[k].QueueFree(); r.Road[k] = null; }
             }
-            else if (r.Road != null) { r.Road.QueueFree(); r.Road = null; }
         }
 
         void AddGround(Region r)
@@ -418,24 +423,45 @@ namespace UnturnedGodot
             return holder;
         }
 
-        // ---- roads: the paved-road look RoadField gives PEI's concrete splines (wet_surface: rain sheen, rings, puddles)
-        /// <summary>Highway_0's own UV rule (RoadField: the texture repeats every texture.height / mat.height = 128/4 m).</summary>
-        public const float RoadTexMetres = 32f;
-        static Material _roadMat;
-        static Material RoadMat()
+        // ---- roads: PEI's own road materials, the way RoadField draws its splines. Paved classes wear wet_surface
+        // (rain sheen, rings, puddles); the dirt trail a plain material, as RoadField does for trails.
+        //   Highway (per carriageway) = Highway_1, road_1 | Main = Highway_0, road_0 | Small = road_8 (two lanes, dashed
+        //   yellow) | Trail = Trail, road_5.  UV repeats every texture.height / Roads.dat height, RoadField's rule.
+        static readonly string[] RoadTex = { "road_1", "road_0", "road_8", "road_5" };
+        static readonly float[] RoadTexMetres = { 128f / 4f, 128f / 4f, 256f / 8f, 64f / 8f };
+        /// <summary>Half-width of one drawn surface: a highway is TWO of these, one per carriageway.</summary>
+        static float RibbonHalf(RoadKind k) => k == RoadKind.Highway ? InfiniteRoads.HighwayLaneHalf : InfiniteRoads.PavedHalf(k);
+        /// <summary>Lift over the profile: main roads and highways above the small roads and trails that start under
+        /// their edges, highways above the mains they cross, so no two surfaces z-fight.</summary>
+        static readonly float[] RoadLift = { 0.045f, 0.03f, 0.015f, 0.01f };
+        static readonly Material[] _roadMats = new Material[4];
+        static Material RoadMat(RoadKind k)
         {
-            if (_roadMat != null) return _roadMat;
-            RainSystem3D.EnsureGlobals();
-            var m = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/wet_surface.gdshader") };
-            m.SetShaderParameter("dry_roughness", 1.0f);
-            m.SetShaderParameter("impact_amount", 1.0f);
-            m.SetShaderParameter("splash_scale", 1.0f);
-            m.SetShaderParameter("puddle_amount", 1.0f);
+            if (_roadMats[(int)k] != null) return _roadMats[(int)k];
             var img = new Image();
-            string p = ProjectSettings.GlobalizePath("res://content/roads/road_0.png");   // Highway_0: four lanes, yellow centre, dashed white
-            if (System.IO.File.Exists(p) && ContentProvider.LoadOk(img, p)) { img.GenerateMipmaps(); m.SetShaderParameter("albedo_tex", ImageTexture.CreateFromImage(img)); m.SetShaderParameter("use_tex", true); }
-            else m.SetShaderParameter("dry_albedo", new Vector3(0.34f, 0.34f, 0.35f));
-            return _roadMat = m;
+            string p = ProjectSettings.GlobalizePath($"res://content/roads/{RoadTex[(int)k]}.png");
+            bool ok = System.IO.File.Exists(p) && ContentProvider.LoadOk(img, p);
+            if (ok) img.GenerateMipmaps();
+            Material mat;
+            if (k == RoadKind.Trail)
+                mat = new StandardMaterial3D
+                {
+                    AlbedoTexture = ok ? ImageTexture.CreateFromImage(img) : null, AlbedoColor = ok ? Colors.White : new Color(0.45f, 0.37f, 0.28f),
+                    TextureFilter = BaseMaterial3D.TextureFilterEnum.NearestWithMipmapsAnisotropic, Roughness = 1f,
+                };
+            else
+            {
+                RainSystem3D.EnsureGlobals();
+                var m = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/wet_surface.gdshader") };
+                m.SetShaderParameter("dry_roughness", 1.0f);
+                m.SetShaderParameter("impact_amount", 1.0f);
+                m.SetShaderParameter("splash_scale", 1.0f);
+                m.SetShaderParameter("puddle_amount", 1.0f);
+                if (ok) { m.SetShaderParameter("albedo_tex", ImageTexture.CreateFromImage(img)); m.SetShaderParameter("use_tex", true); }
+                else m.SetShaderParameter("dry_albedo", new Vector3(0.34f, 0.34f, 0.35f));
+                mat = m;
+            }
+            return _roadMats[(int)k] = mat;
         }
 
         // ---- ground cover: the same meshes + shaders FoliageField draws PEI's baked foliage with
@@ -814,19 +840,22 @@ namespace UnturnedGodot
                     list.Add(new Transform3D(basis, new Vector3(t.X, t.Y - ResourceField.TreeSink * t.Scale, t.Z)));
                 }
             }
-            // road surface: a ribbon per centreline piece, sat on THIS mesh's triangles (max with the profile) + 7 cm
-            List<Vector3> RV = null, RN = null; List<Vector2> RUV = null; List<int> RI = null;
+            // road surfaces: a ribbon per centreline piece, one mesh per class, sat on the profile (the ground under it
+            // is the bed, lower) and lifted only where this LOD's coarser mesh still rises above it
+            RoadMesh[] roadMeshes = null;
             if (d.Roads != null && d.Roads.Count > 0)
             {
-                RV = new List<Vector3>(); RN = new List<Vector3>(); RUV = new List<Vector2>(); RI = new List<int>();
-                float hw = InfiniteTerrain.RoadHalfWidth;
+                roadMeshes = new RoadMesh[4];
+                var lists = new (List<Vector3> V, List<Vector3> N, List<Vector2> UV, List<int> I)[4];
                 double ox = d.Coord.MinX, oz = d.Coord.MinZ;
-                // the profile itself (the ground under it is RoadBed lower), lifted only where this LOD's coarser mesh
-                // still rises above it
-                float Y(float lx, float lz, float h) =>
-                    Mathf.Max(h + 0.03f, InfiniteTerrain.MeshHeightAt(d, Mathf.Clamp(lx, 0f, InfiniteTerrain.RegionSize), Mathf.Clamp(lz, 0f, InfiniteTerrain.RegionSize)) + 0.05f);
                 foreach (var rp in d.Roads)
                 {
+                    int kind = rp.Kind;
+                    lists[kind].V ??= new List<Vector3>(); lists[kind].N ??= new List<Vector3>(); lists[kind].UV ??= new List<Vector2>(); lists[kind].I ??= new List<int>();
+                    var RV = lists[kind].V; var RN = lists[kind].N; var RUV = lists[kind].UV; var RI = lists[kind].I;
+                    float hw = RibbonHalf((RoadKind)kind), lift = RoadLift[kind], texM = RoadTexMetres[kind];
+                    float Y(float lx, float lz, float h) =>
+                        Mathf.Max(h + lift, InfiniteTerrain.MeshHeightAt(d, Mathf.Clamp(lx, 0f, InfiniteTerrain.RegionSize), Mathf.Clamp(lz, 0f, InfiniteTerrain.RegionSize)) + 0.02f + lift);
                     float ax = (float)(rp.X0 - ox), az = (float)(rp.Z0 - oz), bx = (float)(rp.X1 - ox), bz = (float)(rp.Z1 - oz);
                     // perpendicular from each END's own tangent, so the next piece builds the identical edge
                     var pa = new Vector2(-rp.T0Z, rp.T0X) * hw;
@@ -837,11 +866,14 @@ namespace UnturnedGodot
                     RV.Add(new Vector3(bx + pb.X, Y(bx + pb.X, bz + pb.Y, rp.H1), bz + pb.Y));
                     RV.Add(new Vector3(bx - pb.X, Y(bx - pb.X, bz - pb.Y, rp.H1), bz - pb.Y));
                     for (int q = 0; q < 4; q++) RN.Add(Vector3.Up);
-                    RUV.Add(new Vector2(0f, rp.S0 / RoadTexMetres)); RUV.Add(new Vector2(1f, rp.S0 / RoadTexMetres));
-                    RUV.Add(new Vector2(0f, rp.S1 / RoadTexMetres)); RUV.Add(new Vector2(1f, rp.S1 / RoadTexMetres));
+                    RUV.Add(new Vector2(0f, rp.S0 / texM)); RUV.Add(new Vector2(1f, rp.S0 / texM));
+                    RUV.Add(new Vector2(0f, rp.S1 / texM)); RUV.Add(new Vector2(1f, rp.S1 / texM));
                     Tri(RV, RI, b0, b0 + 1, b0 + 2, Vector3.Up);
                     Tri(RV, RI, b0 + 1, b0 + 3, b0 + 2, Vector3.Up);
                 }
+                for (int k = 0; k < 4; k++)
+                    if (lists[k].V != null)
+                        roadMeshes[k] = new RoadMesh { V = lists[k].V.ToArray(), N = lists[k].N.ToArray(), UV = lists[k].UV.ToArray(), I = lists[k].I.ToArray() };
             }
 
             List<(Transform3D, bool, Transform3D)> poles = null;
@@ -873,7 +905,7 @@ namespace UnturnedGodot
                 }
             }
             return new Built { D = d, V = V.ToArray(), N = N.ToArray(), UV = UV.ToArray(), I = I.ToArray(), S0 = s0, S1 = s1, SplatSize = v, TreeXf = trees, FoliageXf = foliage,
-                               RoadV = RV?.ToArray(), RoadN = RN?.ToArray(), RoadUV = RUV?.ToArray(), RoadI = RI?.ToArray(), Poles = poles };
+                               Road = roadMeshes, Poles = poles };
         }
 
         /// <summary>Add a triangle FRONT-FACING along `front` whichever way round it was written: Godot's front face

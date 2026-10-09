@@ -98,10 +98,10 @@ namespace UnturnedGodot.Testing
                 P(p).Y > ground0 - 0.3f && P(p).Y < ground0 + 2.5f);
             T.Check($"trees grew ({S.TreeCount})", S.TreeCount > 0);
             T.Check($"ground cover grew round the player: {S.FoliageCount:N0} grass/flowers/pebbles/bushes", S.FoliageCount > 50000);
-            float spawnRoad = S.Gen.RoadDistance(S.AbsX(P(p).X), S.AbsZ(P(p).Z));
-            T.Check($"spawned beside a road ({spawnRoad:0.0} m from its centreline)", spawnRoad > InfiniteTerrain.RoadHalfWidth && spawnRoad < 40f);
+            float spawnRoad = S.Gen.RoadClearance(S.AbsX(P(p).X), S.AbsZ(P(p).Z));
+            T.Check($"spawned beside a road ({spawnRoad:0.0} m from its asphalt)", spawnRoad > 0f && spawnRoad < 40f);
             int roadMeshes = 0;
-            foreach (var n in S.FindChildren("Road", "MeshInstance3D", true, false)) roadMeshes++;
+            foreach (var n in S.FindChildren("Road_*", "MeshInstance3D", true, false)) roadMeshes++;
             T.Check($"...and the road is drawn: {roadMeshes} regions carry a road surface", roadMeshes > 0);
             int spans = 0, fields = 0;
             foreach (var n in S.FindChildren("Wires", "", true, false)) if (n is PowerLineField f) { fields++; spans += f.SpanCount; }

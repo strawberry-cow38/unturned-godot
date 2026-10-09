@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using NUnit.Framework;
 using SDG.Unturned;
@@ -146,80 +147,263 @@ namespace UnturnedSim.Tests
             Assert.That(total, Is.GreaterThan(0), "a 1.3 km patch with no trees at all means the density field is dead");
         }
 
-        // ROADS (strawberry 2026-10-09: "get roads ... in first"). A road is checked by DRIVING it: walk every existing
-        // centreline near the origin and require that the ground there IS the road (height = profile, layer = Road), and
-        // that no stretch is steeper than the grade the builder promised.
+        // ROADS (strawberry 2026-10-09): four classes -- highways (dual Highway_1 carriageways on a set course), main roads
+        // (Highway_0), and small roads + trails branching off the mains. A road is checked by DRIVING it: every centreline
+        // point where this road is the one in charge must have the ground at its profile less the bed, on its bed layer,
+        // and no stretch steeper than its class allows.
+        static IEnumerable<(RoadKind kind, (double x, double z, float h)[] pts)> AllRoads(long c0, long c1)
+        {
+            for (long cx = c0; cx <= c1; cx++)
+                for (long cz = c0; cz <= c1; cz++)
+                    for (int dir = 0; dir < 2; dir++)
+                    {
+                        var m = Gen.Roads.MainCentreline(cx, cz, dir);
+                        if (m == null) continue;
+                        yield return (RoadKind.Main, m);
+                        foreach (var b in Gen.Roads.BranchesOf(cx, cz, dir)) yield return b;
+                    }
+            for (int axis = 0; axis < 2; axis++)
+                for (long band = -2; band <= 1; band++)
+                    for (long k = -4; k <= 3; k++)
+                    {
+                        var h = Gen.Roads.HighwayCentreline(axis, band, k);
+                        if (h != null) yield return (RoadKind.Highway, h);
+                    }
+        }
+
         [Test]
         public void RoadsAreDrivable()
         {
-            int edges = 0, points = 0; float worstGrade = 0f, worstGap = 0f;
+            var lines = new Dictionary<RoadKind, int>(); var points = new Dictionary<RoadKind, int>();
+            var worstGrade = new Dictionary<RoadKind, float>(); float worstGap = 0f;
+            foreach (var (kind, pts) in AllRoads(-3, 3))
+            {
+                lines[kind] = lines.GetValueOrDefault(kind) + 1;
+                double run = 0;
+                for (int k = 0; k < pts.Length; k++)
+                {
+                    var (x, z, h) = pts[k];
+                    if (k > 0)
+                    {
+                        var (px, pz, ph) = pts[k - 1];
+                        double seg = Math.Sqrt((x - px) * (x - px) + (z - pz) * (z - pz));
+                        run += seg;
+                        worstGrade[kind] = Math.Max(worstGrade.GetValueOrDefault(kind), (float)(Math.Abs(h - ph) / seg));
+                    }
+                    if (k % 3 != 0) continue;   // the grade is checked on every piece; the ground on every third point
+                    float ground = Gen.Sample(x, z, out var hit);
+                    // judge only where THIS road is in charge (at a junction the other road may be)
+                    if (!hit.Any || hit.Kind != kind || hit.Dist > 0.01f || hit.Weight < 0.999f) continue;
+                    points[kind] = points.GetValueOrDefault(kind) + 1;
+                    worstGap = Math.Max(worstGap, Math.Abs(ground + InfiniteRoads.Bed - h));
+                    var bed = kind == RoadKind.Trail ? InfiniteTerrain.Layer.Dirt : InfiniteTerrain.Layer.Gravel;
+                    Assert.That(Gen.LayerAt(x, z, ground, 0f, hit.Clear, hit.Kind), Is.EqualTo(bed), $"{kind} centreline ({x:0},{z:0}) is not on its bed");
+                }
+            }
+            foreach (var k in lines.Keys)
+                TestContext.WriteLine($"{k}: {lines[k]} lines, {points.GetValueOrDefault(k)} centreline points checked, worst grade {worstGrade.GetValueOrDefault(k):P1} (limit {InfiniteRoads.MaxGrade(k):P0})");
+            TestContext.WriteLine($"worst ground-vs-road {worstGap * 1000f:0.###} mm");
+            foreach (RoadKind k in Enum.GetValues(typeof(RoadKind)))
+            {
+                Assert.That(lines.GetValueOrDefault(k), Is.GreaterThan(0), $"no {k} at all within ~11 km");
+                Assert.That(points.GetValueOrDefault(k), Is.GreaterThan(20), $"{k}: too few centreline points checked to mean anything");
+                Assert.That(worstGrade.GetValueOrDefault(k), Is.LessThanOrEqualTo(InfiniteRoads.MaxGrade(k) * 1.0001f), $"{k} too steep");
+            }
+            Assert.That(worstGap, Is.LessThan(0.001f), "the ground on a centreline must be the road profile, less its bed");
+        }
+
+        // "stay on a pretty set course, avoiding elevation shifts and obstacles while trying to stay somewhat straight"
+        [Test]
+        public void HighwaysRunStraightLevelAndDry()
+        {
+            int segs = 0; double worstSinuosity = 0;
+            for (int axis = 0; axis < 2; axis++)
+                for (long band = -2; band <= 1; band++)
+                    for (long k = -4; k <= 3; k++)
+                    {
+                        var h = Gen.Roads.HighwayCentreline(axis, band, k);
+                        if (h == null) continue;
+                        segs++;
+                        double arc = 0;
+                        for (int i = 1; i < h.Length; i++)
+                        {
+                            arc += Math.Sqrt((h[i].x - h[i - 1].x) * (h[i].x - h[i - 1].x) + (h[i].z - h[i - 1].z) * (h[i].z - h[i - 1].z));
+                            Assert.That(h[i].h, Is.GreaterThan(InfiniteTerrain.SeaLevel), "a highway never runs through water");
+                        }
+                        double chord = Math.Sqrt((h[^1].x - h[0].x) * (h[^1].x - h[0].x) + (h[^1].z - h[0].z) * (h[^1].z - h[0].z));
+                        worstSinuosity = Math.Max(worstSinuosity, arc / chord);
+                    }
+            TestContext.WriteLine($"{segs} highway segments (6 km each) over 48 km, worst sinuosity {worstSinuosity:0.000}");
+            Assert.That(segs, Is.GreaterThan(4));
+            Assert.That(worstSinuosity, Is.LessThan(1.15), "a highway segment wanders more than 15% over its straight line");
+        }
+
+        [Test]
+        public void HighwaySegmentsJoinWithoutAKink()
+        {
+            // each 6 km segment is routed on its own; where two meet at an anchor they must leave it on the same heading
+            int joins = 0; double worst = 0;
+            for (int axis = 0; axis < 2; axis++)
+                for (long band = -2; band <= 1; band++)
+                    for (long k = -4; k <= 2; k++)
+                    {
+                        var a = Gen.Roads.HighwayCentreline(axis, band, k);
+                        var b = Gen.Roads.HighwayCentreline(axis, band, k + 1);
+                        if (a == null || b == null) continue;
+                        if (Math.Abs(a[^1].x - b[0].x) + Math.Abs(a[^1].z - b[0].z) > 0.01) continue;   // a shore spur: not a join
+                        joins++;
+                        double h0 = Math.Atan2(a[^1].z - a[^2].z, a[^1].x - a[^2].x), h1 = Math.Atan2(b[1].z - b[0].z, b[1].x - b[0].x);
+                        double d = Math.Abs(Math.IEEERemainder(h1 - h0, 2 * Math.PI)) * 180 / Math.PI;
+                        worst = Math.Max(worst, d);
+                    }
+            TestContext.WriteLine($"{joins} joins, worst heading change across one {worst:0.00} degrees");
+            Assert.That(joins, Is.GreaterThan(10));
+            Assert.That(worst, Is.LessThan(3.0), "a highway kinks where two segments meet");
+        }
+
+        [Test]
+        public void BranchesStopShortOfHighways()
+        {
+            // small roads and trails end at a highway's shoulder instead of crossing it at grade
+            var hw = new List<(double x, double z, float h)[]>();
+            for (int axis = 0; axis < 2; axis++)
+                for (long band = -2; band <= 1; band++)
+                    for (long k = -4; k <= 3; k++) { var h = Gen.Roads.HighwayCentreline(axis, band, k); if (h != null) hw.Add(h); }
+            double clearance = InfiniteRoads.PavedHalf(RoadKind.Highway) + InfiniteRoads.PavedHalf(RoadKind.Small);
+            double closest = double.MaxValue; int branches = 0;
+            for (long cx = -4; cx <= 4; cx++)
+                for (long cz = -4; cz <= 4; cz++)
+                    for (int dir = 0; dir < 2; dir++)
+                        foreach (var (_, pts) in Gen.Roads.BranchesOf(cx, cz, dir))
+                        {
+                            branches++;
+                            foreach (var (x, z, _) in pts)
+                                foreach (var h in hw)
+                                    for (int i = 0; i + 1 < h.Length; i++)
+                                    {
+                                        double sx = h[i + 1].x - h[i].x, sz = h[i + 1].z - h[i].z, qx = x - h[i].x, qz = z - h[i].z;
+                                        double t = Math.Clamp((qx * sx + qz * sz) / (sx * sx + sz * sz), 0, 1);
+                                        closest = Math.Min(closest, Math.Sqrt((qx - sx * t) * (qx - sx * t) + (qz - sz * t) * (qz - sz * t)));
+                                    }
+                        }
+            TestContext.WriteLine($"{branches} branches, {hw.Count} highway segments; closest approach {closest:0.0} m (asphalt touches at {clearance:0.0})");
+            Assert.That(branches, Is.GreaterThan(20)); Assert.That(hw.Count, Is.GreaterThan(10));
+            Assert.That(closest, Is.GreaterThan(clearance), "a branch runs onto a highway");
+        }
+
+        [Test]
+        public void HighwaysAreTwoCarriageways()
+        {
+            // find a region a highway passes through, then require its Highway pieces to come in two parallel ribbons
+            foreach (var axis in new[] { 0, 1 })
+                for (long band = -1; band <= 0; band++)
+                {
+                    var h = Gen.Roads.HighwayCentreline(axis, band, 0);
+                    if (h == null) continue;
+                    var mid = h[h.Length / 2];
+                    var d = Gen.Generate(RegionCoord.Containing(mid.x, mid.z), 0);
+                    var hw = d.Roads.FindAll(p => p.Kind == (byte)RoadKind.Highway);
+                    Assert.That(hw.Count, Is.GreaterThan(4));
+                    // every highway piece's midpoint is HighwayRibbonOffset from the route's centreline, on one side or the other
+                    int left = 0, right = 0;
+                    foreach (var p in hw)
+                    {
+                        double mx = (p.X0 + p.X1) * 0.5, mz = (p.Z0 + p.Z1) * 0.5;
+                        double best = double.MaxValue, side = 0;
+                        for (int i = 0; i + 1 < h.Length; i++)
+                        {
+                            double sx = h[i + 1].x - h[i].x, sz = h[i + 1].z - h[i].z, qx = mx - h[i].x, qz = mz - h[i].z;
+                            double t = Math.Clamp((qx * sx + qz * sz) / (sx * sx + sz * sz), 0, 1);
+                            double ex = qx - sx * t, ez = qz - sz * t, dd = Math.Sqrt(ex * ex + ez * ez);
+                            if (dd < best) { best = dd; side = sx * ez - sz * ex; }
+                        }
+                        Assert.That(best, Is.EqualTo(InfiniteRoads.HighwayRibbonOffset).Within(0.6), "a carriageway sits its offset from the route");
+                        if (side > 0) left++; else right++;
+                    }
+                    TestContext.WriteLine($"highway in {d.Coord}: {left} pieces one side, {right} the other");
+                    Assert.That(left, Is.GreaterThan(0)); Assert.That(right, Is.GreaterThan(0));
+                    return;
+                }
+            Assert.Fail("no highway found near the origin to inspect");
+        }
+
+        [Test]
+        public void BranchesLeaveFromAMainRoad()
+        {
+            int small = 0, trail = 0;
             for (long cx = -3; cx <= 3; cx++)
                 for (long cz = -3; cz <= 3; cz++)
                     for (int dir = 0; dir < 2; dir++)
                     {
-                        var line = Gen.RoadCentreline(cx, cz, dir);
-                        if (line == null) continue;
-                        edges++;
-                        for (int k = 0; k < line.Length; k++)
+                        var main = Gen.Roads.MainCentreline(cx, cz, dir);
+                        if (main == null) continue;
+                        foreach (var (kind, pts) in Gen.Roads.BranchesOf(cx, cz, dir))
                         {
-                            var (x, z, h) = line[k];
-                            float ground = Gen.Sample(x, z, out float rd);
-                            // at a junction the NEAREST road wins, so only judge points that are on this road and no other
-                            if (rd > 0.01f) continue;
-                            points++;
-                            worstGap = Math.Max(worstGap, Math.Abs(ground + InfiniteTerrain.RoadBed - h));   // the bed is RoadBed under the surface
-                            Assert.That(Gen.LayerAt(x, z, ground, 0f, rd), Is.EqualTo(InfiniteTerrain.Layer.Gravel), $"centreline ({x:0},{z:0}) is not on its gravel bed");
-                            if (k > 0)
+                            if (kind == RoadKind.Small) small++; else if (kind == RoadKind.Trail) trail++;
+                            Assert.That(kind, Is.AnyOf(RoadKind.Small, RoadKind.Trail));
+                            var (x0, z0, h0) = pts[0];
+                            double best = double.MaxValue; float mh = 0;
+                            for (int i = 0; i + 1 < main.Length; i++)
                             {
-                                var (px, pz, ph) = line[k - 1];
-                                double run = Math.Sqrt((x - px) * (x - px) + (z - pz) * (z - pz));
-                                worstGrade = Math.Max(worstGrade, (float)(Math.Abs(h - ph) / run));
+                                double sx = main[i + 1].x - main[i].x, sz = main[i + 1].z - main[i].z, qx = x0 - main[i].x, qz = z0 - main[i].z;
+                                double t = Math.Clamp((qx * sx + qz * sz) / (sx * sx + sz * sz), 0, 1);
+                                double ex = qx - sx * t, ez = qz - sz * t, dd = Math.Sqrt(ex * ex + ez * ez);
+                                if (dd < best) { best = dd; mh = main[i].h + (main[i + 1].h - main[i].h) * (float)t; }
                             }
+                            Assert.That(best, Is.LessThan(InfiniteRoads.PavedHalf(RoadKind.Main)), "a branch must start ON its main road");
+                            // ...at the main's profile at the NEAREST point, which is what the carve reads; pinning to the
+                            // arc position the branch was spawned from instead put starts 0.4 m off on a 15% grade
+                            Assert.That(h0, Is.EqualTo(mh).Within(0.01f), "...at the main road's own height");
                         }
                     }
-            TestContext.WriteLine($"{edges} road links over 10.7 km, {points} centreline points, worst grade {worstGrade:P1}, worst ground-vs-road {worstGap * 1000f:0.###} mm");
-            Assert.That(edges, Is.GreaterThan(20), "a 10 km square should be crossed by a road network, not a road or two");
-            Assert.That(points, Is.GreaterThan(edges * 10));
-            Assert.That(worstGap, Is.LessThan(0.001f), "the ground on the centreline must be the road profile, less its bed");
-            Assert.That(worstGrade, Is.LessThanOrEqualTo(0.16f));
+            TestContext.WriteLine($"{small} small roads, {trail} trails off the mains within 10.7 km");
+            Assert.That(small, Is.GreaterThan(0)); Assert.That(trail, Is.GreaterThan(0));
         }
 
         [Test]
         public void RoadsAreTheSameWhoeverAsks()
         {
-            var a = Gen.RoadCentreline(1, 1, 0) ?? Gen.RoadCentreline(1, 1, 1) ?? Gen.RoadCentreline(0, 1, 0);
+            var a = Gen.Roads.MainCentreline(1, 1, 0) ?? Gen.Roads.MainCentreline(1, 1, 1) ?? Gen.Roads.MainCentreline(0, 1, 0);
             Assert.That(a, Is.Not.Null, "need one road to compare");
             var fresh = new InfiniteTerrain(1337);
             fresh.Generate(new RegionCoord(5, 5), 0);   // a different first question for the fresh instance's cache
-            var b = fresh.RoadCentreline(1, 1, 0) ?? fresh.RoadCentreline(1, 1, 1) ?? fresh.RoadCentreline(0, 1, 0);
+            var b = fresh.Roads.MainCentreline(1, 1, 0) ?? fresh.Roads.MainCentreline(1, 1, 1) ?? fresh.Roads.MainCentreline(0, 1, 0);
             Assert.That(b, Is.EqualTo(a));
+            Assert.That(fresh.Roads.HighwayCentreline(0, 0, 0), Is.EqualTo(Gen.Roads.HighwayCentreline(0, 0, 0)));
         }
 
-        // POWER LINES (strawberry 2026-10-09: "add power line wired splines along one side"). Every pole stands off the
-        // carriageway on the verge, the line is evenly spaced, and a span that leaves a region lands on a pole the NEXT
-        // region also places -- otherwise the wire would end in mid-air at the border.
+        // POWER LINES: main and small roads only (not highways, not dirt trails -- strawberry 2026-10-09). Every pole stands
+        // off the asphalt, and a span that leaves a region lands on a pole the NEXT region also places.
         [Test]
         public void PolesLineTheRoadsAndMeetAcrossBorders()
         {
+            Assert.That(InfiniteRoads.HasPowerLines(RoadKind.Main) && InfiniteRoads.HasPowerLines(RoadKind.Small));
+            Assert.That(!InfiniteRoads.HasPowerLines(RoadKind.Highway) && !InfiniteRoads.HasPowerLines(RoadKind.Trail));
             int poles = 0, crossings = 0;
+            var byRegion = new Dictionary<RegionCoord, List<PolePlacement>>();
+            List<PolePlacement> PolesOf(RegionCoord rc)
+            {
+                if (!byRegion.TryGetValue(rc, out var l)) byRegion[rc] = l = Gen.Generate(rc, 1).Poles;
+                return l;
+            }
             for (int rz = 0; rz < 8; rz++)
                 for (int rx = 0; rx < 8; rx++)
                 {
                     var rc = new RegionCoord(rx, rz);
-                    foreach (var p in Gen.PolesIn(rc))
+                    foreach (var p in PolesOf(rc))
                     {
                         poles++;
-                        float d = Gen.RoadDistance(p.X, p.Z);
-                        Assert.That(d, Is.GreaterThan(InfiniteTerrain.RoadHalfWidth), $"pole at ({p.X:0},{p.Z:0}) stands ON the road ({d:0.0} m from a centreline)");
+                        float clear = Gen.RoadClearance(p.X, p.Z);
+                        Assert.That(clear, Is.GreaterThan(0f), $"pole at ({p.X:0},{p.Z:0}) stands ON asphalt ({clear:0.0} m)");
                         Assert.That(p.H, Is.GreaterThan(InfiniteTerrain.SeaLevel));
                         if (!p.HasNext) continue;
                         double span = Math.Sqrt((p.NX - p.X) * (p.NX - p.X) + (p.NZ - p.Z) * (p.NZ - p.Z));
-                        Assert.That(span, Is.InRange(20.0, 2 * InfiniteTerrain.PoleSpacing + 1.0), "a span is one pole spacing, two where a pole was skipped at a crossing");
+                        Assert.That(span, Is.InRange(15.0, 2 * InfiniteRoads.PoleSpacing + 1.0), "a span is one pole spacing, two where a pole was skipped");
                         var nrc = RegionCoord.Containing(p.NX, p.NZ);
                         if (nrc.Equals(rc)) continue;
                         crossings++;
                         bool found = false;
-                        foreach (var q in Gen.PolesIn(nrc)) if (Math.Abs(q.X - p.NX) < 1e-6 && Math.Abs(q.Z - p.NZ) < 1e-6) { found = true; break; }
+                        foreach (var q in PolesOf(nrc)) if (Math.Abs(q.X - p.NX) < 1e-6 && Math.Abs(q.Z - p.NZ) < 1e-6) { found = true; break; }
                         Assert.That(found, $"the span from ({p.X:0},{p.Z:0}) ends at ({p.NX:0},{p.NZ:0}) in {nrc}, which places no pole there");
                     }
                 }
@@ -242,7 +426,7 @@ namespace UnturnedSim.Tests
                     Assert.That(f.Z, Is.InRange(0f, InfiniteTerrain.RegionSize));
                     var layer = (InfiniteTerrain.Layer)d.Layers[Math.Clamp((int)MathF.Round(f.Z / d.Spacing), 0, d.Cells) * v + Math.Clamp((int)MathF.Round(f.X / d.Spacing), 0, d.Cells)];
                     Assert.That(layer, Is.Not.EqualTo(InfiniteTerrain.Layer.Road), "the Road layer is car-park paving; the infinite world never paints it");
-                    Assert.That(Gen.RoadDistance(d.Coord.MinX + f.X, d.Coord.MinZ + f.Z), Is.GreaterThan(InfiniteTerrain.RoadHalfWidth), "nothing grows through the asphalt");
+                    Assert.That(Gen.RoadClearance(d.Coord.MinX + f.X, d.Coord.MinZ + f.Z), Is.GreaterThan(0f), "nothing grows through the asphalt");
                     switch ((InfiniteTerrain.FoliageKind)f.Kind)
                     {
                         case InfiniteTerrain.FoliageKind.Grass: grass++; Assert.That(layer, Is.AnyOf(InfiniteTerrain.Layer.Grass, InfiniteTerrain.Layer.Wheat, InfiniteTerrain.Layer.Dirt)); break;
