@@ -29,6 +29,7 @@ namespace UnturnedGodot
         public EditorFenceRoad FenceRoadEd;               // Shift+F: lay a run of roadside guardrail along a line
         public EditorRailSpline RailEd;                   // Shift+T: tile the modelled rail along a Tracks spline
         public EditorBridgeSpline BridgeEd;                // Shift+B: tile the cut bridge deck along a road spline, piers where it falls away
+        public EditorTunnelSpline TunnelEd;                // Shift+U: bore the tunnel along a road spline, portals at both ends
         public PowerLineField PowerLines;                 // the wires themselves (saved/loaded with the map)
         public EditorRoads RoadsEd;                       // Phase 6 roads sub-editor (Environment tab, LEGACY paving mode -- Shift+R)
         public EditorRoadDraw RoadDrawEd;                 // draw-a-road/rail tool (Environment tab, R) -- the primary one

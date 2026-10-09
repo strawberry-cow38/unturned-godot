@@ -6976,9 +6976,11 @@ namespace UnturnedGodot
             var fenceEd = new EditorFenceRoad(editor, cam, editor.Objects, terr, rf);   // Shift+F: roadside guardrail runs
             var railEd = new EditorRailSpline(editor, cam, editor.Objects, terr, rf);   // Shift+T: modelled rail along a Tracks spline
             var bridgeEd = new EditorBridgeSpline(editor, cam, editor.Objects, terr, rf);   // Shift+B: cut bridge deck along a road spline
+            var tunnelEd = new EditorTunnelSpline(editor, cam, editor.Objects, terr, rf);   // Shift+U: tunnel bore along a road spline
             editor.AddChild(fenceEd); editor.FenceRoadEd = fenceEd;
             editor.AddChild(railEd); editor.RailEd = railEd;
             editor.AddChild(bridgeEd); editor.BridgeEd = bridgeEd;
+            editor.AddChild(tunnelEd); editor.TunnelEd = tunnelEd;
             var roadsEd = new EditorRoads(editor, cam, rf); editor.AddChild(roadsEd); editor.RoadsEd = roadsEd;
             var roadDrawEd = new EditorRoadDraw(editor, cam, rf); editor.AddChild(roadDrawEd); editor.RoadDrawEd = roadDrawEd;   // R = draw, Shift+R = legacy nodes
             var riverEd = new EditorRiver(editor, cam, terr); editor.AddChild(riverEd); editor.RiverEd = riverEd;   // V = carve river (spline tool, sits with the road tools)
@@ -7738,9 +7740,11 @@ namespace UnturnedGodot
             var fenceEd = new EditorFenceRoad(editor, cam, editor.Objects, res.Terr, rf);   // Shift+F: roadside guardrail runs
             var railEd = new EditorRailSpline(editor, cam, editor.Objects, res.Terr, rf);   // Shift+T: modelled rail along a Tracks spline
             var bridgeEd = new EditorBridgeSpline(editor, cam, editor.Objects, res.Terr, rf);   // Shift+B: cut bridge deck along a road spline
+            var tunnelEd = new EditorTunnelSpline(editor, cam, editor.Objects, res.Terr, rf);   // Shift+U: tunnel bore along a road spline
             editor.AddChild(fenceEd); editor.FenceRoadEd = fenceEd;
             editor.AddChild(railEd); editor.RailEd = railEd;
             editor.AddChild(bridgeEd); editor.BridgeEd = bridgeEd;
+            editor.AddChild(tunnelEd); editor.TunnelEd = tunnelEd;
             // Seed the field with the map's poles and whatever wires were saved last time, so the lines are THERE
             // on load rather than only after you open the tool.
             plField.RefreshPoles(res.PowerLinePoles, out _);
