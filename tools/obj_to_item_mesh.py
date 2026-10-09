@@ -100,8 +100,16 @@ def winding_fraction(vs, vns, tris):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('obj'); ap.add_argument('--id', required=True)
-    ap.add_argument('--up', default='z', choices=list(AXES))
-    ap.add_argument('--forward', default='-y', choices=list(AXES))
+    # ⚠⚠ REQUIRED, AND IT USED TO DEFAULT TO 'z'. Blender's default export is Z-up, so that looked like the
+    # sensible default -- but every model this port has actually been handed is Y-up (astraclaw's stated export
+    # convention), so the default was wrong for 10 conversions out of 10 and silently rotated the mesh 90 deg
+    # about X. It is silent because --recentre then sits the tipped model's new base at Y=0, so it still looks
+    # placed; a pile of ice cubes merely stopped being a pile. Master caught it by eye -- "u got rotation
+    # right?" -- which is not a check. A default that is wrong every time is not a default.
+    ap.add_argument('--up', required=True, choices=list(AXES),
+                    help="which axis of the SOURCE points up. y for a Blender/glTF Y-up export (what we get); "
+                         "z for Blender's own Z-up scene convention. No default on purpose.")
+    ap.add_argument('--forward', default='-z', choices=list(AXES))
     ap.add_argument('--scale', type=float, default=1.0)
     ap.add_argument('--source-handedness', default='right', choices=['right','left'],
                     help='left for an OBJ out of Unity/Max -- mirrors X and reverses the winding')
