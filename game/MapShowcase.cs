@@ -65,14 +65,20 @@ namespace UnturnedGodot
                 //
                 // ⚠ A GENTLE bend (~300 m), matching the tightest radius tinyclaw measured across the 355
                 // real bridge stretches on the 19 km map -- so the demo is the worst real case, not an easy one.
+                // ⚠⚠ THE ROAD IS DRAWN ABOVE THE GROUND, ignoreTerrain:true. My first cut of this station let
+                // the polyline snap to the showcase's flat ground, which makes the drop under the deck ZERO --
+                // so the station would have demonstrated the one thing it exists to show by placing no piers
+                // at all, and looked like a broken tool. The L1 test fell into exactly the same hole an hour
+                // earlier (Terrain.CreateFlat sits at 30 m, so a road hardcoded "30 m up" was ON the dirt).
                 if (c.Roads == null || c.Objects == null || c.Terr == null) return;
+                float g = c.Terr.SampleHeight(c.Origin.X, c.Origin.Z);
                 var road = new List<Vector3>();
                 for (int i = 0; i <= 8; i++)
                 {
                     float t = i / 8f, x = -80f + t * 160f;
-                    road.Add(c.Origin + new Vector3(x, 0f, -x * x / 600f));
+                    road.Add(new Vector3(c.Origin.X + x, g + 22f, c.Origin.Z - x * x / 600f));
                 }
-                int rd = c.Roads.AddRoadFromPolyline(road, 0);
+                int rd = c.Roads.AddRoadFromPolyline(road, 0, false, true);
                 if (rd >= 0) EditorBridgeSpline.LayAlong(c.Objects, c.Terr, c.Roads, rd, null);
             }),
 
