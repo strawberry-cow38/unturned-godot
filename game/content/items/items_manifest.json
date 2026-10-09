@@ -35018,6 +35018,63 @@
 "tex": "931.png",
 "type": "Hat"
 },
+"9317": {
+"box": [
+0.026,
+0.0283,
+0.375
+],
+"center": [
+0.0,
+0.0141,
+0.0
+],
+"color": null,
+"name": "Black Pen",
+"obj": "9317.txt",
+"parts": 1,
+"tex": "9317.png",
+"translucent": true,
+"type": "Generic"
+},
+"9318": {
+"box": [
+0.026,
+0.0283,
+0.375
+],
+"center": [
+0.0,
+0.0141,
+0.0
+],
+"color": null,
+"name": "Blue Pen",
+"obj": "9318.txt",
+"parts": 1,
+"tex": "9318.png",
+"translucent": true,
+"type": "Generic"
+},
+"9319": {
+"box": [
+0.026,
+0.0283,
+0.375
+],
+"center": [
+0.0,
+0.0141,
+0.0
+],
+"color": null,
+"name": "Red Pen",
+"obj": "9319.txt",
+"parts": 1,
+"tex": "9319.png",
+"translucent": true,
+"type": "Generic"
+},
 "932": {
 "box": [
 0.9353,
@@ -35251,6 +35308,25 @@
 "parts": 1,
 "tex": "9342.png",
 "type": "Supply"
+},
+"9343": {
+"box": [
+0.026,
+0.0283,
+0.375
+],
+"center": [
+0.0,
+0.0141,
+0.0
+],
+"color": null,
+"name": "Green Pen",
+"obj": "9343.txt",
+"parts": 1,
+"tex": "9343.png",
+"translucent": true,
+"type": "Generic"
 },
 "9344": {
 "box": [

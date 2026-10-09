@@ -1972,9 +1972,9 @@
 9314	Stapler	Generic	Common	1	1	Office stapler, half loaded. Placeholder: no model yet.	4c23c0fd2818591eda8ec2aa06a0df97
 9315	Box of Paperclips	Generic	Common	1	1	More than anyone needs. Placeholder: no model yet.	7de01dd58f1bcb4b0fc08369e545822e
 9316	Hole Punch	Generic	Common	1	1	Two-hole, heavy for its size. Placeholder: no model yet.	9a48c82341d5e2883356555907ee06c6
-9317	Black Pen	Generic	Common	1	1	Black ballpoint. Placeholder: no model yet.	e6e1b2269ae774170f420fbe12a312ae
-9318	Blue Pen	Generic	Common	1	1	Blue ballpoint. Placeholder: no model yet.	7121f3a5e15433b4a567ee2fd11bff33
-9319	Red Pen	Generic	Common	1	1	Red ballpoint, mostly dry. Placeholder: no model yet.	e351cdc2becdc160d37a3cb3e3afd045
+9317	Black Pen	Generic	Common	1	1	Black ballpoint.	e6e1b2269ae774170f420fbe12a312ae
+9318	Blue Pen	Generic	Common	1	1	Blue ballpoint.	7121f3a5e15433b4a567ee2fd11bff33
+9319	Red Pen	Generic	Common	1	1	Red ballpoint, mostly dry.	e351cdc2becdc160d37a3cb3e3afd045
 9320	Pencil	Generic	Common	1	1	Chewed at one end.	9386f5a2dec1666ca5ddf0b31b2ea692
 9321	Eraser	Generic	Common	1	1	Grubby but usable.	f6e963ad7fced0ad4a7619c6e1bb3308
 9322	Food Wrapper	Generic	Common	1	1	Licked clean and thrown out. Placeholder: no model yet.	f3646595952791971c5b2808744f86fc
@@ -1998,7 +1998,7 @@
 9340	Asbestos	Supply	Uncommon	1	1	Fibrous, heat-proof, and best handled with gloves.	f7816a8cf107a2ec8779efefb4e6bd58
 9341	Glass	Supply	Common	1	1	Salvaged glass, edges and all.	7f26341dea32bb3738760f7216f0335d
 9342	Firewood	Supply	Common	2	1	Split and seasoned, so it burns hotter and longer than the wet log it came from -- and the chunks carry far easier than one. No species left on it, so it stacks with any other firewood. Nothing is made FROM it: splitting a log is a one-way bet on burning it.	4f3a1c05c6274bc3a6d3b1da19247a80
-9343	Green Pen	Generic	Common	1	1	A green ballpoint. Placeholder: no model yet.	78cbe7d92a7d406f8a0557b3a4df534c
+9343	Green Pen	Generic	Common	1	1	A green ballpoint.	78cbe7d92a7d406f8a0557b3a4df534c
 9344	Side Plate	Generic	Common	1	1	A small ceramic side plate.	85408e653380469fa61c4d54c965324e
 9345	Pot Lid	Generic	Common	1	1	The steel lid off a cooking pot.	685350ff77a74fd19e97ad4c2f63fa64
 9347	Ice	Supply	Common	1	1	A handful of ice cubes. Keeps only while it stays frozen -- out of the cold it is water, and then it is nothing.	322d7497bb934c23ae12b849783b6b88
