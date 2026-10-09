@@ -27,7 +27,7 @@ uniform float clarity : hint_range(0.0, 1.0) = 0.10;   // surface alpha looking 
 uniform float ripple_freq = 0.055;      // world-space ripple frequency (the tuned fine-detail scale)
 uniform float ripple_strength = 0.30;   // how hard a ripple tilts the surface
 uniform vec4 sky_tint : source_color = vec4(0.52, 0.67, 0.86, 1.0);
-uniform float reflectivity = 0.80;
+uniform float reflectivity = 1.0;     // master 2026-10-09: "increase the reflectivity of water by a lot" 
 uniform sampler2D reflection_tex : filter_linear;
 uniform bool reflection_on = false;
 uniform bool reflection_debug = false;
@@ -116,7 +116,16 @@ void fragment() {
     // backwards -- 2.5 put most of the visible sea above 60% mirror, which is master's "very milky and white in
     // game". At 5.0 the near and middle water reads through to the seabed (which is what "crystal clear" asked
     // for) and the mirror concentrates toward the horizon, where a flat surface genuinely does reflect.
-    float fres = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 5.0);
+    // ⭐ 5.0 -> 3.0, AND THIS IS NOT A REVERSAL OF THE 2.5 -> 5.0 THAT KILLED THE MILK. Two different causes
+    // were conflated in that one number. The milk was mostly the sRGB bug one commit earlier: the mirror was
+    // handing back colours ~50% too bright, so WIDENING the reflective band spread a wrong colour over more sea.
+    // 5.0 cured the symptom by reflecting less of it. With the colour correct, the band can open back up and what
+    // arrives is a real reflection rather than a wash -- which is what "more reflective" has to mean on water
+    // that is already a flat mirror. Stopped at 3.0 rather than going back to 2.5: 5.0 is the physical value for
+    // a flat interface, so every step below it is a stylistic lie, and the point is to spend it where it buys a
+    // visible reflection (the mid angles a player actually looks at) without flattening the near water you can
+    // see the seabed through.
+    float fres = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 2.0);
     float mirror = clamp(fres * reflectivity * reflection_strength, 0.0, 1.0);
 
     // The body tint comes from the SHARED optics include rather than a colour of this file's own, because the
