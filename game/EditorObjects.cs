@@ -1422,6 +1422,13 @@ namespace UnturnedGodot
         /// <summary>Rebuild the board children from the lane mask. ⭐ The TEXT of an unticked lane is kept in
         /// meta, per astraclaw's "prefer preserving text for temporarily unchecked lanes" -- unticking a lane
         /// to look at the road and ticking it back should not cost the mapper what they typed.</summary>
+        /// <summary>Place a lane sign with its lanes and legends already chosen. ⚠ The showcase and the
+        /// sidecar both need this: driving it through DebugSelect + the Selected* API instead would leave the
+        /// editor's SELECTION and gizmo sitting on the last sign placed, which is a side effect a demo scene
+        /// has no business having.</summary>
+        public Node3D PlaceConfiguredLaneSigns(Vector3 pos, Basis rot, int mask, string[] texts)
+            => PlaceLaneSigns(pos, rot, mask, texts, 0f);
+
         void RebuildLaneBoards(Node3D root)
         {
             if (root == null) return;

@@ -56,6 +56,54 @@ namespace UnturnedGodot
         /// one at the top of this list and that is handled.</summary>
         public static List<Station> Stations() => new()
         {
+            new Station("LANE SIGNS", "Place over a road \u2014 tick which lanes get a board, type each legend", c =>
+            {
+                // ⭐ OVER A REAL Highway_1, because the whole point is that the lanes come off the ROAD: the
+                // sign reads the painted dividers of whatever it is standing on, so a sign in open ground
+                // would demonstrate the fallback rather than the feature.
+                //
+                // Three signs, showing the chooser rather than one fixed arrangement: all four lanes, then
+                // the outer two, then a single lane. The middle one is master's own example ("choose which
+                // lanes get signs above them") and astraclaw's acceptance case.
+                if (c.Roads == null || c.Objects == null || c.Terr == null) return;
+                float g = c.Terr.SampleHeight(c.Origin.X, c.Origin.Z);
+                // ⚠ INSIDE THE STATION GRID. Stations sit 140 m apart, so a 180 m demo road ran straight
+                // into the tunnel next door and the two read as one scene.
+                var road = new List<Vector3>
+                {
+                    new Vector3(c.Origin.X - 58f, g, c.Origin.Z),
+                    new Vector3(c.Origin.X + 58f, g, c.Origin.Z),
+                };
+                int rd = c.Roads.AddRoadFromPolyline(road, 1, false, true);
+                if (rd < 0) return;
+                int[] masks = { 0b1111, 0b1001, 0b0010 };
+                string[][] texts =
+                {
+                    new[] { "LANE 1\\nCity Centre", "LANE 2\\nAirport", "LANE 3\\nHarbour", "LANE 4\\nFerry" },
+                    new[] { "EXIT ONLY", "", "", "THRU TRAFFIC" },
+                    new[] { "", "DIVERTED", "", "" },
+                };
+                int made = 0;
+                for (int i = 0; i < masks.Length; i++)
+                {
+                    var at = new Vector3(c.Origin.X - 38f + i * 38f, g, c.Origin.Z);
+                    if (c.Objects.PlaceConfiguredLaneSigns(at, EditorObjects.Upright(0f), masks[i], texts[i]) != null) made++;
+                }
+                // report the BOARD COUNT per sign, not just that a sign appeared: the whole feature is which
+                // lanes got one, and "3 of 3 placed" would read identically if every mask had been ignored.
+                var counts = new List<string>();
+                foreach (var sg in c.Objects.PlacedOfNodes(EditorObjects.LaneSignName))
+                {
+                    int b = 0;
+                    foreach (var ch in sg.GetChildren())
+                        if (ch is MeshInstance3D mi && mi.Name.ToString().StartsWith("Board")) b++;
+                    counts.Add(b.ToString());
+                }
+                Log.Print($"[showcase] lane signs: {made} of {masks.Length} over a "
+                        + $"{c.Roads.RoadHalfWidth(rd) * 2f:0.#} m Highway_1; boards per sign = "
+                        + string.Join("/", counts) + " (want 4/2/1)");
+            }),
+
             new Station("TUNNEL", "Draw a road, then U \u2014 the bore tiles along it and portals both ends \u00b7 Shift+U", c =>
             {
                 // ⚠ A GENTLE BEND, so the station shows the thing a straight demo cannot: this section is
