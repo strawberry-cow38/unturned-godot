@@ -694,13 +694,25 @@ namespace UnturnedGodot
             }
             return SplinePos(r, segs - 1, 1f);
         }
+        /// <summary>Nearest road of ANY material to a world point. The bridge tool needs this where the rail
+        /// tool needs NearestTrack: a bridge carries whatever road it was drawn on, and filtering to one
+        /// material would quietly refuse every highway.</summary>
+        public bool NearestRoad(Vector3 world, out int road, out float distanceAlong)
+            => NearestRoadOf(world, -1, out road, out distanceAlong);
+
         /// <summary>Nearest TRACK road (material 4) to a world point, + the distance-along of the closest sampled point.</summary>
         public bool NearestTrack(Vector3 world, out int road, out float distanceAlong)
+            => NearestRoadOf(world, TracksMaterial, out road, out distanceAlong);
+
+        /// <summary>`material` < 0 matches any. One search, so the track and the any-road lookups cannot drift
+        /// apart -- they differ only in the filter.</summary>
+        bool NearestRoadOf(Vector3 world, int material, out int road, out float distanceAlong)
         {
             road = -1; distanceAlong = 0f; float best = float.MaxValue;
             for (int ri = 0; ri < _roads.Count; ri++)
             {
-                var r = _roads[ri]; if (r.Material != TracksMaterial || r.Joints.Count < 2) continue;
+                var r = _roads[ri];
+                if ((material >= 0 && r.Material != material) || r.Joints.Count < 2) continue;
                 int segs = r.IsLoop ? r.Joints.Count : r.Joints.Count - 1; float acc = 0f;
                 for (int i = 0; i < segs; i++)
                 {

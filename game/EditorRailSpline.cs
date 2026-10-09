@@ -82,7 +82,7 @@ namespace UnturnedGodot
         ///
         /// ⚠ Clamped to half the pitch so the walk always advances. It only binds past turn ≈ 0.29 rad, i.e.
         /// a 7 m radius, which is far tighter than the tool warns about anyway.</summary>
-        public static float OverlapFor(float turn) => Mathf.Min(HalfWidth * Mathf.Abs(turn), Pitch * 0.5f);
+        public static float OverlapFor(float turn) => SplineTiling.OverlapFor(HalfWidth, Pitch, turn);
 
         /// <summary>⭐ THE CHORD POLICY astraclaw's handoff asks for, reported rather than refused. With the
         /// overlap above, the outer gap is closed at every radius, so this no longer measures daylight -- what

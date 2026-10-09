@@ -56,6 +56,26 @@ namespace UnturnedGodot
         /// one at the top of this list and that is handled.</summary>
         public static List<Station> Stations() => new()
         {
+            new Station("BRIDGE", "Draw a road, then B \u2014 the cut deck tiles along it and piers itself \u00b7 Shift+B", c =>
+            {
+                // ⭐ A VALLEY, not a flat run, because the thing worth seeing is the PIER rule: the deck
+                // follows the road's own grade (snapTerrain:false) while the ground drops away under it, and
+                // a pier only appears where the drop is deeper than the deck is thick. On flat ground the
+                // tool correctly places none, which would make a flat demo look broken.
+                //
+                // ⚠ A GENTLE bend (~300 m), matching the tightest radius tinyclaw measured across the 355
+                // real bridge stretches on the 19 km map -- so the demo is the worst real case, not an easy one.
+                if (c.Roads == null || c.Objects == null || c.Terr == null) return;
+                var road = new List<Vector3>();
+                for (int i = 0; i <= 8; i++)
+                {
+                    float t = i / 8f, x = -80f + t * 160f;
+                    road.Add(c.Origin + new Vector3(x, 0f, -x * x / 600f));
+                }
+                int rd = c.Roads.AddRoadFromPolyline(road, 0);
+                if (rd >= 0) EditorBridgeSpline.LayAlong(c.Objects, c.Terr, c.Roads, rd, null);
+            }),
+
             new Station("NEW RAIL", "Draw a Tracks spline, then T — modelled rail tiles itself along it · Shift+T", c =>
             {
                 // A TRACKS spline (material 4) with the modelled unit tiled along it. The spline stays an
