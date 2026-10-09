@@ -27,7 +27,23 @@ uniform float clarity : hint_range(0.0, 1.0) = 0.10;   // surface alpha looking 
 uniform float ripple_freq = 0.055;      // world-space ripple frequency (the tuned fine-detail scale)
 uniform float ripple_strength = 0.30;   // how hard a ripple tilts the surface
 uniform vec4 sky_tint : source_color = vec4(0.52, 0.67, 0.86, 1.0);
-uniform float reflectivity = 1.0;     // master 2026-10-09: "increase the reflectivity of water by a lot" 
+uniform float reflectivity = 1.0;     // master 2026-10-09: "increase the reflectivity of water by a lot"
+// ⭐⭐ HOW FAR A *BRIGHT* REFLECTION IS PULLED BACK TOWARD THE WATER'S OWN COLOUR. This is the whole answer to
+// "very reflective" AND "not milky", which sound contradictory and are not.
+//
+// PEI's retail Lighting.dat puts the midday horizon at (0.784,0.784,0.784) -- near WHITE -- and water at a
+// grazing angle mirrors the horizon band almost exclusively. So a strong mirror reflects a white sheet, and
+// that is not a bug: it is what a mirror of that sky IS. Reproduced on purpose once the harness was given the
+// real sky gradient; it went from blue to milk without the shader changing at all.
+//
+// Damping by BRIGHTNESS separates the two things master wants differently treated: reflected SCENERY (hills,
+// trees, buildings) is dark and passes through untouched, so the water stays very reflective of the world;
+// reflected SKY is bright and gets pulled toward the water colour, so it reads as blue water rather than a
+// white sheet. ⚠ This is the good version of the darkness heuristic I deleted two commits ago -- that one
+// SWAPPED to a hand-picked constant on a hard threshold and ran on inflated (un-linearised) values, which is
+// how it mistook sunlit trees for sky. This blends smoothly, toward the body colour the water already has,
+// on correct values.
+uniform float sky_damp : hint_range(0.0, 1.0) = 0.75;
 uniform sampler2D reflection_tex : filter_linear;
 uniform bool reflection_on = false;
 uniform bool reflection_debug = false;
@@ -107,6 +123,10 @@ void fragment() {
         // master's "the reflections are white in game", and it is why reflected trees read white before: the
         // brightness heuristic that used to guess sky-vs-geometry was being fed inflated values.
         refl_src = srgb_to_linear(clamp(texture(reflection_tex, refl_uv).rgb, 0.0, 1.0));
+        // Bright = sky, dark = scenery. Rec.709 luma, so a bright-but-coloured reflection (sunlit sand) is
+        // judged on how bright it actually reads rather than on one channel.
+        float rl = dot(refl_src, vec3(0.2126, 0.7152, 0.0722));
+        refl_src = mix(refl_src, water_shallow.rgb, smoothstep(0.25, 0.85, rl) * sky_damp);
     }
 
     // ⭐⭐ BACK TO SCHLICK'S 5.0, AND THE OLD COMMENT IS WHY. It had been lowered to 2.5 to widen reflection into
@@ -135,8 +155,17 @@ void fragment() {
     ALBEDO = mix(mix(body, refl_src, mirror), foam_color.rgb, foam);
     // Clear looking down, mirror looking across. Foam is opaque wherever it is.
     ALPHA = clamp(mix(mix(clarity, 1.0, mirror), 1.0, foam), 0.0, 1.0);
-    ROUGHNESS = mix(0.08, 0.9, foam);   // glassy, so the ripples catch a specular highlight
-    SPECULAR = 0.5 * clamp(reflectivity / 0.45, 0.0, 1.0);
+    // ⭐⭐ MATTE, AND NO SPECULAR -- BECAUSE THE MIRROR ALREADY REFLECTS THE SKY. A glossy surface makes Godot
+    // reflect the environment through its OWN specular/IBL path, and this shader is simultaneously reflecting
+    // that same sky explicitly through reflection_tex. With PEI's near-white midday horizon that double-count is
+    // most of the milk: ablating these two dropped the horizon band from srgb(175,194,223) to (119,143,182) in
+    // one step, far more than damping the reflection itself achieved.
+    // ⚠ It does NOT cost reflectivity -- the opposite. What the engine's lobe was adding was white GLARE spread
+    // over the ripples, not an image; the hills and shoreline are more legible in the water with it off. A
+    // planar-reflection shader should own its reflection outright rather than get a second, blurrier one for
+    // free from the environment.
+    ROUGHNESS = mix(1.0, 0.9, foam);
+    SPECULAR = 0.0;   // see ROUGHNESS above: reflection_tex is the reflection, the engine must not add a second
     METALLIC = 0.0;
     if (reflection_on && reflection_debug) { ALBEDO = srgb_to_linear(clamp(texture(reflection_tex, SCREEN_UV).rgb, 0.0, 1.0)); ALPHA = 1.0; ROUGHNESS = 1.0; }
 }

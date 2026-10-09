@@ -3591,9 +3591,24 @@ namespace UnturnedGodot
 
         void BuildTerrainTest()
         {
+            // ⭐⭐ THE GAME'S REAL SKY, NOT A FLAT COLOUR -- and for a WATER harness this is the whole ballgame.
+            // Water at a grazing angle mirrors the HORIZON band, and PEI's own Lighting.dat puts the midday
+            // horizon at (0.784,0.784,0.784), i.e. near WHITE, while this harness used one flat blue everywhere.
+            // So every water shot I took came back blue and master's game came back white, twice, and I went
+            // hunting the shader both times. The sky was the variable. Same class as the fog this harness was
+            // also missing: a harness that differs from the game in the ONE input the effect is mostly made of
+            // cannot be used to judge that effect.
+            var sky = new ProceduralSkyMaterial
+            {
+                SkyTopColor = new Color(0.400f, 0.627f, 0.808f),       // DayNightCycle SkyTop[noon]
+                SkyHorizonColor = new Color(0.784f, 0.784f, 0.784f),   // SkyHorizon[noon] -- the near-white the water reflects
+                GroundHorizonColor = new Color(0.784f, 0.784f, 0.784f),
+                GroundBottomColor = new Color(0.329f, 0.518f, 0.780f), // Ground[noon]
+            };
             var env = new Godot.Environment
             {
-                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundMode = Godot.Environment.BGMode.Sky,
+                Sky = new Sky { SkyMaterial = sky },
                 BackgroundColor = new Color(0.5f, 0.6f, 0.75f),
                 AmbientLightSource = Godot.Environment.AmbientSource.Color,
                 AmbientLightColor = new Color(0.6f, 0.6f, 0.62f),
