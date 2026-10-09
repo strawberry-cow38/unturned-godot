@@ -86,6 +86,9 @@ namespace UnturnedGodot
             public Node3D TreeBodies;       // trunk colliders, ring <= ColliderRing only
             public StaticBody3D Ground;
             public Dictionary<(int kind, int cell), List<Transform3D>> FoliageXf;   // from the LOD0 build, kept across LOD swaps
+            public List<(Transform3D Pole, bool HasNext, Transform3D Next)> PoleXf;   // from the LOD0/1 build
+            public Node3D Power;            // pole meshes + wires, ring <= TreeRing
+            public Node3D PoleBodies;       // pole colliders, ring <= ColliderRing
             public Node3D Foliage;          // grass / flowers / pebbles / bushes, ring <= FoliageRing only
             public int FoliageCount;
         }
@@ -100,6 +103,7 @@ namespace UnturnedGodot
             public Dictionary<string, List<Transform3D>> TreeXf;
             public Dictionary<(int kind, int cell), List<Transform3D>> FoliageXf;
             public Vector3[] RoadV, RoadN; public Vector2[] RoadUV; public int[] RoadI;
+            public List<(Transform3D Pole, bool HasNext, Transform3D Next)> Poles;
         }
 
         readonly Dictionary<RegionCoord, Region> _regions = new();
@@ -260,6 +264,11 @@ namespace UnturnedGodot
             if (ring <= ColliderRing && r.TreeBodies == null && r.TreeList != null) { r.TreeBodies = BuildTrunks(r.TreeList); r.Node.AddChild(r.TreeBodies); }
             else if (ring > ColliderRing + 1 && r.TreeBodies != null) { r.TreeBodies.QueueFree(); r.TreeBodies = null; }
 
+            if (ring <= TreeRing && r.Power == null && r.PoleXf != null && r.PoleXf.Count > 0) { r.Power = BuildPower(r, r.PoleXf); }
+            else if (ring > TreeRing + 1 && r.Power != null) { r.Power.QueueFree(); r.Power = null; }
+            if (ring <= ColliderRing && r.PoleBodies == null && r.PoleXf != null && r.PoleXf.Count > 0) { r.PoleBodies = BuildPoleBodies(r.PoleXf); r.Node.AddChild(r.PoleBodies); }
+            else if (ring > ColliderRing + 1 && r.PoleBodies != null) { r.PoleBodies.QueueFree(); r.PoleBodies = null; }
+
             if (ring <= FoliageRing && r.Foliage == null && r.FoliageXf != null)
             {
                 r.Foliage = BuildFoliage(r.FoliageXf, out r.FoliageCount);
@@ -298,6 +307,7 @@ namespace UnturnedGodot
                 if (b.D.Lod == 0) r.Lod0Heights = b.D.Heights;
                 if (b.D.Trees != null && r.TreeList == null) { r.TreeList = b.D.Trees; _pendingTrees[r.C] = b.TreeXf; }
                 if (b.FoliageXf != null && r.FoliageXf == null) r.FoliageXf = b.FoliageXf;
+                if (b.Poles != null && r.PoleXf == null) r.PoleXf = b.Poles;
                 if (useful) Apply(r, b);
                 UpdateExtras(r, ring);
                 n++;
@@ -409,7 +419,8 @@ namespace UnturnedGodot
         }
 
         // ---- roads: the paved-road look RoadField gives PEI's concrete splines (wet_surface: rain sheen, rings, puddles)
-        public const float RoadTexMetres = 24f;   // one repeat of the texture's dashes along the road
+        /// <summary>Highway_0's own UV rule (RoadField: the texture repeats every texture.height / mat.height = 128/4 m).</summary>
+        public const float RoadTexMetres = 32f;
         static Material _roadMat;
         static Material RoadMat()
         {
@@ -421,7 +432,7 @@ namespace UnturnedGodot
             m.SetShaderParameter("splash_scale", 1.0f);
             m.SetShaderParameter("puddle_amount", 1.0f);
             var img = new Image();
-            string p = ProjectSettings.GlobalizePath("res://content/roads/road_8.png");   // two lanes, dashed yellow centre line
+            string p = ProjectSettings.GlobalizePath("res://content/roads/road_0.png");   // Highway_0: four lanes, yellow centre, dashed white
             if (System.IO.File.Exists(p) && ContentProvider.LoadOk(img, p)) { img.GenerateMipmaps(); m.SetShaderParameter("albedo_tex", ImageTexture.CreateFromImage(img)); m.SetShaderParameter("use_tex", true); }
             else m.SetShaderParameter("dry_albedo", new Vector3(0.34f, 0.34f, 0.35f));
             return _roadMat = m;
@@ -497,6 +508,75 @@ namespace UnturnedGodot
                 count += kv.Value.Count;
             }
             return holder;
+        }
+
+        // ---- power lines: PEI's Power_Line_0 pole, wired by the editor's own PowerLineField (four wires, sag, sway)
+        static Mesh _poleMesh; static Material _poleMat;
+        static void PoleAssets()
+        {
+            if (_poleMesh != null) return;
+            string odir = ProjectSettings.GlobalizePath("res://content/objects/");
+            _poleMesh = ObjMesh.Load(odir + PowerLineField.PoleMesh + ".obj");
+            var mat = new StandardMaterial3D { Roughness = 0.95f };
+            var img = new Image();
+            if (ContentProvider.LoadOk(img, odir + PowerLineField.PoleMesh + "_tex.png"))
+            {
+                mat.AlbedoTexture = ImageTexture.CreateFromImage(img);
+                mat.TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest;   // a 2x2 palette (see BuildPowerLineTest)
+            }
+            _poleMat = mat;
+        }
+
+        Node3D BuildPower(Region r, List<(Transform3D Pole, bool HasNext, Transform3D Next)> poles)
+        {
+            PoleAssets();
+            var holder = new Node3D { Name = "Power" };
+            r.Node.AddChild(holder);
+            if (_poleMesh != null)
+            {
+                var mm = new MultiMesh { TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, Mesh = _poleMesh };
+                mm.InstanceCount = poles.Count;
+                for (int k = 0; k < poles.Count; k++) mm.SetInstanceTransform(k, poles[k].Pole);
+                var mmi = new MultiMeshInstance3D { Multimesh = mm, MaterialOverride = _poleMat, VisibilityRangeEnd = (TreeRing + 0.5f) * InfiniteTerrain.RegionSize };
+                mmi.AddToGroup(NearestFilter.KeepFilterGroup);
+                holder.AddChild(mmi);
+            }
+            // PowerLineField builds its wires in WORLD space and pins itself to the world origin -- so hand it world
+            // transforms now, and parent it under the region: a later floating-origin shift moves the region node and
+            // the wires go with it, since the field's local transform under it is fixed at build time.
+            var field = new PowerLineField { Name = "Wires" };
+            holder.AddChild(field);
+            var toWorld = r.Node.GlobalTransform;
+            foreach (var p in poles)
+            {
+                if (!p.HasNext) continue;
+                int a = field.AddPole(toWorld * p.Pole), b = field.AddPole(toWorld * p.Next);
+                field.Connect(a, b, out _);
+            }
+            field.Rebuild();
+            return holder;
+        }
+
+        static Node3D BuildPoleBodies(List<(Transform3D Pole, bool HasNext, Transform3D Next)> poles)
+        {
+            var holder = new Node3D { Name = "PoleBodies" };
+            foreach (var p in poles)
+            {
+                var body = new StaticBody3D { CollisionLayer = 1u << 0, Position = p.Pole.Origin };
+                body.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Wood);
+                body.AddChild(new CollisionShape3D { Shape = new CylinderShape3D { Radius = 0.18f, Height = 8f }, Position = new Vector3(0f, 4f, 0f) });
+                holder.AddChild(body);
+            }
+            return holder;
+        }
+
+        /// <summary>A pole's placement: stood up (the mesh is Z-up raw Unity geometry; PEI places it at ex=270) and
+        /// turned so the crossarm (local X) lies ACROSS the road and the wires run along it.</summary>
+        static Transform3D PoleXform(float lx, float y, float lz, float dirX, float dirZ)
+        {
+            float theta = Mathf.Atan2(-dirX, -dirZ);   // rotates local X onto the road's perpendicular (-dz, dx)
+            var basis = new Basis(Vector3.Up, theta) * new Basis(Vector3.Right, Mathf.DegToRad(270f));
+            return new Transform3D(basis, new Vector3(lx, y - 0.3f, lz));   // a little sunk, so a pole on a slope never floats
         }
 
         static Node3D BuildTrunks(List<TreeSpawn> trees)
@@ -605,6 +685,7 @@ namespace UnturnedGodot
                     r.Lod0Heights = b.D.Heights;
                     r.TreeList = b.D.Trees; _pendingTrees[c] = b.TreeXf;
                     r.FoliageXf ??= b.FoliageXf;
+                    r.PoleXf ??= b.Poles;
                     Apply(r, b);
                     UpdateExtras(r, c.RingTo(center));
                 }
@@ -740,23 +821,39 @@ namespace UnturnedGodot
                 RV = new List<Vector3>(); RN = new List<Vector3>(); RUV = new List<Vector2>(); RI = new List<int>();
                 float hw = InfiniteTerrain.RoadHalfWidth;
                 double ox = d.Coord.MinX, oz = d.Coord.MinZ;
+                // the profile itself (the ground under it is RoadBed lower), lifted only where this LOD's coarser mesh
+                // still rises above it
                 float Y(float lx, float lz, float h) =>
-                    Mathf.Max(h, InfiniteTerrain.MeshHeightAt(d, Mathf.Clamp(lx, 0f, InfiniteTerrain.RegionSize), Mathf.Clamp(lz, 0f, InfiniteTerrain.RegionSize))) + 0.07f;
+                    Mathf.Max(h + 0.03f, InfiniteTerrain.MeshHeightAt(d, Mathf.Clamp(lx, 0f, InfiniteTerrain.RegionSize), Mathf.Clamp(lz, 0f, InfiniteTerrain.RegionSize)) + 0.05f);
                 foreach (var rp in d.Roads)
                 {
                     float ax = (float)(rp.X0 - ox), az = (float)(rp.Z0 - oz), bx = (float)(rp.X1 - ox), bz = (float)(rp.Z1 - oz);
-                    var dir = new Vector2(bx - ax, bz - az).Normalized();
-                    var perp = new Vector2(-dir.Y, dir.X) * hw;
+                    // perpendicular from each END's own tangent, so the next piece builds the identical edge
+                    var pa = new Vector2(-rp.T0Z, rp.T0X) * hw;
+                    var pb = new Vector2(-rp.T1Z, rp.T1X) * hw;
                     int b0 = RV.Count;
-                    RV.Add(new Vector3(ax + perp.X, Y(ax + perp.X, az + perp.Y, rp.H0), az + perp.Y));
-                    RV.Add(new Vector3(ax - perp.X, Y(ax - perp.X, az - perp.Y, rp.H0), az - perp.Y));
-                    RV.Add(new Vector3(bx + perp.X, Y(bx + perp.X, bz + perp.Y, rp.H1), bz + perp.Y));
-                    RV.Add(new Vector3(bx - perp.X, Y(bx - perp.X, bz - perp.Y, rp.H1), bz - perp.Y));
+                    RV.Add(new Vector3(ax + pa.X, Y(ax + pa.X, az + pa.Y, rp.H0), az + pa.Y));
+                    RV.Add(new Vector3(ax - pa.X, Y(ax - pa.X, az - pa.Y, rp.H0), az - pa.Y));
+                    RV.Add(new Vector3(bx + pb.X, Y(bx + pb.X, bz + pb.Y, rp.H1), bz + pb.Y));
+                    RV.Add(new Vector3(bx - pb.X, Y(bx - pb.X, bz - pb.Y, rp.H1), bz - pb.Y));
                     for (int q = 0; q < 4; q++) RN.Add(Vector3.Up);
                     RUV.Add(new Vector2(0f, rp.S0 / RoadTexMetres)); RUV.Add(new Vector2(1f, rp.S0 / RoadTexMetres));
                     RUV.Add(new Vector2(0f, rp.S1 / RoadTexMetres)); RUV.Add(new Vector2(1f, rp.S1 / RoadTexMetres));
                     Tri(RV, RI, b0, b0 + 1, b0 + 2, Vector3.Up);
                     Tri(RV, RI, b0 + 1, b0 + 3, b0 + 2, Vector3.Up);
+                }
+            }
+
+            List<(Transform3D, bool, Transform3D)> poles = null;
+            if (d.Poles != null && d.Poles.Count > 0)
+            {
+                poles = new List<(Transform3D, bool, Transform3D)>();
+                double ox = d.Coord.MinX, oz = d.Coord.MinZ;
+                foreach (var pp in d.Poles)
+                {
+                    var a = PoleXform((float)(pp.X - ox), pp.H, (float)(pp.Z - oz), pp.DirX, pp.DirZ);
+                    var nb = pp.HasNext ? PoleXform((float)(pp.NX - ox), pp.NH, (float)(pp.NZ - oz), pp.NDirX, pp.NDirZ) : Transform3D.Identity;
+                    poles.Add((a, pp.HasNext, nb));
                 }
             }
 
@@ -776,7 +873,7 @@ namespace UnturnedGodot
                 }
             }
             return new Built { D = d, V = V.ToArray(), N = N.ToArray(), UV = UV.ToArray(), I = I.ToArray(), S0 = s0, S1 = s1, SplatSize = v, TreeXf = trees, FoliageXf = foliage,
-                               RoadV = RV?.ToArray(), RoadN = RN?.ToArray(), RoadUV = RUV?.ToArray(), RoadI = RI?.ToArray() };
+                               RoadV = RV?.ToArray(), RoadN = RN?.ToArray(), RoadUV = RUV?.ToArray(), RoadI = RI?.ToArray(), Poles = poles };
         }
 
         /// <summary>Add a triangle FRONT-FACING along `front` whichever way round it was written: Godot's front face

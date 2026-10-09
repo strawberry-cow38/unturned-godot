@@ -103,6 +103,9 @@ namespace UnturnedGodot.Testing
             int roadMeshes = 0;
             foreach (var n in S.FindChildren("Road", "MeshInstance3D", true, false)) roadMeshes++;
             T.Check($"...and the road is drawn: {roadMeshes} regions carry a road surface", roadMeshes > 0);
+            int spans = 0, fields = 0;
+            foreach (var n in S.FindChildren("Wires", "", true, false)) if (n is PowerLineField f) { fields++; spans += f.SpanCount; }
+            T.Check($"power lines strung beside it: {spans} spans in {fields} regions", spans > 10);
 
             // ---- 2. TRAVEL 3 km EAST at 50 m/s, across rebases, keeping to the ground
             double startAbsX = S.AbsX(P(p).X), startAbsZ = S.AbsZ(P(p).Z);

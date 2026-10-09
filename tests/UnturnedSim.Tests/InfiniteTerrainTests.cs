@@ -167,8 +167,8 @@ namespace UnturnedSim.Tests
                             // at a junction the NEAREST road wins, so only judge points that are on this road and no other
                             if (rd > 0.01f) continue;
                             points++;
-                            worstGap = Math.Max(worstGap, Math.Abs(ground - h));
-                            Assert.That(Gen.LayerAt(x, z, ground, 0f, rd), Is.EqualTo(InfiniteTerrain.Layer.Road), $"centreline ({x:0},{z:0}) is not painted road");
+                            worstGap = Math.Max(worstGap, Math.Abs(ground + InfiniteTerrain.RoadBed - h));   // the bed is RoadBed under the surface
+                            Assert.That(Gen.LayerAt(x, z, ground, 0f, rd), Is.EqualTo(InfiniteTerrain.Layer.Gravel), $"centreline ({x:0},{z:0}) is not on its gravel bed");
                             if (k > 0)
                             {
                                 var (px, pz, ph) = line[k - 1];
@@ -180,7 +180,7 @@ namespace UnturnedSim.Tests
             TestContext.WriteLine($"{edges} road links over 10.7 km, {points} centreline points, worst grade {worstGrade:P1}, worst ground-vs-road {worstGap * 1000f:0.###} mm");
             Assert.That(edges, Is.GreaterThan(20), "a 10 km square should be crossed by a road network, not a road or two");
             Assert.That(points, Is.GreaterThan(edges * 10));
-            Assert.That(worstGap, Is.LessThan(0.001f), "the ground on the centreline must BE the road profile");
+            Assert.That(worstGap, Is.LessThan(0.001f), "the ground on the centreline must be the road profile, less its bed");
             Assert.That(worstGrade, Is.LessThanOrEqualTo(0.16f));
         }
 
@@ -193,6 +193,39 @@ namespace UnturnedSim.Tests
             fresh.Generate(new RegionCoord(5, 5), 0);   // a different first question for the fresh instance's cache
             var b = fresh.RoadCentreline(1, 1, 0) ?? fresh.RoadCentreline(1, 1, 1) ?? fresh.RoadCentreline(0, 1, 0);
             Assert.That(b, Is.EqualTo(a));
+        }
+
+        // POWER LINES (strawberry 2026-10-09: "add power line wired splines along one side"). Every pole stands off the
+        // carriageway on the verge, the line is evenly spaced, and a span that leaves a region lands on a pole the NEXT
+        // region also places -- otherwise the wire would end in mid-air at the border.
+        [Test]
+        public void PolesLineTheRoadsAndMeetAcrossBorders()
+        {
+            int poles = 0, crossings = 0;
+            for (int rz = 0; rz < 8; rz++)
+                for (int rx = 0; rx < 8; rx++)
+                {
+                    var rc = new RegionCoord(rx, rz);
+                    foreach (var p in Gen.PolesIn(rc))
+                    {
+                        poles++;
+                        float d = Gen.RoadDistance(p.X, p.Z);
+                        Assert.That(d, Is.GreaterThan(InfiniteTerrain.RoadHalfWidth), $"pole at ({p.X:0},{p.Z:0}) stands ON the road ({d:0.0} m from a centreline)");
+                        Assert.That(p.H, Is.GreaterThan(InfiniteTerrain.SeaLevel));
+                        if (!p.HasNext) continue;
+                        double span = Math.Sqrt((p.NX - p.X) * (p.NX - p.X) + (p.NZ - p.Z) * (p.NZ - p.Z));
+                        Assert.That(span, Is.InRange(20.0, 2 * InfiniteTerrain.PoleSpacing + 1.0), "a span is one pole spacing, two where a pole was skipped at a crossing");
+                        var nrc = RegionCoord.Containing(p.NX, p.NZ);
+                        if (nrc.Equals(rc)) continue;
+                        crossings++;
+                        bool found = false;
+                        foreach (var q in Gen.PolesIn(nrc)) if (Math.Abs(q.X - p.NX) < 1e-6 && Math.Abs(q.Z - p.NZ) < 1e-6) { found = true; break; }
+                        Assert.That(found, $"the span from ({p.X:0},{p.Z:0}) ends at ({p.NX:0},{p.NZ:0}) in {nrc}, which places no pole there");
+                    }
+                }
+            TestContext.WriteLine($"{poles} poles over 2 km x 2 km, {crossings} spans crossing a region border");
+            Assert.That(poles, Is.GreaterThan(20));
+            Assert.That(crossings, Is.GreaterThan(0), "no span ever crossed a border -- the cross-border case went untested");
         }
 
         [Test]
@@ -208,7 +241,8 @@ namespace UnturnedSim.Tests
                     Assert.That(f.X, Is.InRange(0f, InfiniteTerrain.RegionSize));
                     Assert.That(f.Z, Is.InRange(0f, InfiniteTerrain.RegionSize));
                     var layer = (InfiniteTerrain.Layer)d.Layers[Math.Clamp((int)MathF.Round(f.Z / d.Spacing), 0, d.Cells) * v + Math.Clamp((int)MathF.Round(f.X / d.Spacing), 0, d.Cells)];
-                    Assert.That(layer, Is.Not.EqualTo(InfiniteTerrain.Layer.Road), "nothing grows on a road");
+                    Assert.That(layer, Is.Not.EqualTo(InfiniteTerrain.Layer.Road), "the Road layer is car-park paving; the infinite world never paints it");
+                    Assert.That(Gen.RoadDistance(d.Coord.MinX + f.X, d.Coord.MinZ + f.Z), Is.GreaterThan(InfiniteTerrain.RoadHalfWidth), "nothing grows through the asphalt");
                     switch ((InfiniteTerrain.FoliageKind)f.Kind)
                     {
                         case InfiniteTerrain.FoliageKind.Grass: grass++; Assert.That(layer, Is.AnyOf(InfiniteTerrain.Layer.Grass, InfiniteTerrain.Layer.Wheat, InfiniteTerrain.Layer.Dirt)); break;
