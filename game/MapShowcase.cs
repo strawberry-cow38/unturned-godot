@@ -56,6 +56,26 @@ namespace UnturnedGodot
         /// one at the top of this list and that is handled.</summary>
         public static List<Station> Stations() => new()
         {
+            new Station("NEW RAIL", "Draw a Tracks spline, then T — modelled rail tiles itself along it · Shift+T", c =>
+            {
+                // A TRACKS spline (material 4) with the modelled unit tiled along it. The spline stays an
+                // ordinary track, which is what keeps Train.cs able to find it -- NearestTrack filters on
+                // exactly that material.
+                //
+                // ⚠ A GENTLE bend (~200 m radius) on purpose: the tile is 6.9 m wide, so its outer corners
+                // part by about HalfWidth * Pitch / R at every joint, and under ~139 m that opens past 5 cm.
+                // Rail curves are large in reality, so this is the realistic case rather than a concession.
+                if (c.Roads == null || c.Objects == null) return;
+                var track = new List<Vector3>
+                {
+                    c.Origin + new Vector3(-62f, 0f, -4f),
+                    c.Origin + new Vector3(  0f, 0f,  0f),
+                    c.Origin + new Vector3( 62f, 0f, -4f),
+                };
+                int rd = c.Roads.AddRoadFromPolyline(track, RoadField.TracksMaterial);
+                if (rd >= 0) EditorRailSpline.LayAlong(c.Objects, c.Terr, c.Roads, rd, null);
+            }),
+
             new Station("FENCE ROAD", "Click a path — straight, or curved through 3+ points · Shift+F", c =>
             {
                 // A CURVE, because that is the thing the tool does that placing the prop by hand cannot. A

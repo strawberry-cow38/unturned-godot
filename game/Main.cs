@@ -6974,7 +6974,9 @@ namespace UnturnedGodot
             var plEd = new EditorPowerLines(editor, cam, plField, null, editor.Objects);   // a generated island ships no poles -- you place them
             editor.AddChild(plEd); editor.PowerLinesEd = plEd; editor.PowerLines = plField;
             var fenceEd = new EditorFenceRoad(editor, cam, editor.Objects, terr, rf);   // Shift+F: roadside guardrail runs
+            var railEd = new EditorRailSpline(editor, cam, editor.Objects, terr, rf);   // Shift+T: modelled rail along a Tracks spline
             editor.AddChild(fenceEd); editor.FenceRoadEd = fenceEd;
+            editor.AddChild(railEd); editor.RailEd = railEd;
             var roadsEd = new EditorRoads(editor, cam, rf); editor.AddChild(roadsEd); editor.RoadsEd = roadsEd;
             var roadDrawEd = new EditorRoadDraw(editor, cam, rf); editor.AddChild(roadDrawEd); editor.RoadDrawEd = roadDrawEd;   // R = draw, Shift+R = legacy nodes
             var riverEd = new EditorRiver(editor, cam, terr); editor.AddChild(riverEd); editor.RiverEd = riverEd;   // V = carve river (spline tool, sits with the road tools)
@@ -7732,7 +7734,9 @@ namespace UnturnedGodot
             var plEd = new EditorPowerLines(editor, cam, plField, res.PowerLinePoles, editor.Objects);
             editor.AddChild(plEd); editor.PowerLinesEd = plEd; editor.PowerLines = plField;
             var fenceEd = new EditorFenceRoad(editor, cam, editor.Objects, res.Terr, rf);   // Shift+F: roadside guardrail runs
+            var railEd = new EditorRailSpline(editor, cam, editor.Objects, res.Terr, rf);   // Shift+T: modelled rail along a Tracks spline
             editor.AddChild(fenceEd); editor.FenceRoadEd = fenceEd;
+            editor.AddChild(railEd); editor.RailEd = railEd;
             // Seed the field with the map's poles and whatever wires were saved last time, so the lines are THERE
             // on load rather than only after you open the tool.
             plField.RefreshPoles(res.PowerLinePoles, out _);
