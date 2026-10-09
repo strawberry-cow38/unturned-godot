@@ -75,6 +75,24 @@ namespace UnturnedGodot
                 // all-broken fence. Their own posts land on the run's rhythm, so the run places none across
                 // them -- there is no seam and no doubled post where a wreck starts or ends.
                 }, false, false, null, null, new[] { 10, 28 });
+
+                // ⭐ AND A ROAD OF ITS OWN TO BE PARENTED TO (G). Master, on the first attempt: "lol why did u
+                // demo it on the wriggliest crumpled up road ever" -- the ROADS station's road is a deliberate
+                // S-bend at a ~13 m radius, which exists to prove the spline tool works and is tighter than
+                // anything a rigid barrier belongs on. A guardrail wants the opposite: one long sweeping bend,
+                // the kind you would actually fly off. So this station carries its own.
+                if (c.Roads != null && c.Objects != null)
+                {
+                    var road = new List<Vector3>();
+                    const float R = 150f;   // a real highway curve, not a hairpin
+                    for (int d = -34; d <= 34; d += 4)
+                    {
+                        float a = Mathf.DegToRad(d);
+                        road.Add(c.Origin + new Vector3(R * Mathf.Sin(a), 0f, -62f + R * (1f - Mathf.Cos(a))));
+                    }
+                    int rd = c.Roads.AddRoadFromPolyline(road);
+                    if (rd >= 0) EditorFenceRoad.LayAlongRoad(c.Objects, c.Terr, c.Roads, rd, false, null, null);
+                }
             }),
 
             new Station("POWER LINES", "Pick a pole, pick the next — four wires string themselves · Shift+P", c =>
@@ -125,14 +143,7 @@ namespace UnturnedGodot
                     c.Origin + new Vector3( 16f, 0f, -16f),
                     c.Origin + new Vector3( 50f, 0f,  18f),
                 };
-                int rd = c.Roads?.AddRoadFromPolyline(pts) ?? -1;
-
-                // ⭐ ...AND GUARD ITS BENDS, which is the fence tool parented to this spline (G). Shown HERE
-                // rather than at the fence station because the thing being demonstrated is the relationship
-                // between the two: the barrier picks its own side from the road's curvature, so on an S-bend
-                // it swaps sides at the inflection and each half sits on the outside of its own curve.
-                if (rd >= 0 && c.Objects != null)
-                    EditorFenceRoad.LayAlongRoad(c.Objects, c.Terr, c.Roads, rd, false, null, null);
+                c.Roads?.AddRoadFromPolyline(pts);
             }),
 
             new Station("OBJECTS", "Place, gizmo-move, copy and delete props · Level tab", c =>
