@@ -157,6 +157,7 @@ namespace UnturnedGodot
             _catalog.Insert(3, GasPumpName);     // gas pump (station-id configurable) below that
             _catalog.Insert(4, HighwaySignName); // overhead highway sign (two editable legends)
             _catalog.Insert(5, HighwayGantryName); // full-width gantry (four editable legends)
+            _catalog.Insert(6, LaneSignName);      // lane-selectable gantry (a board per chosen lane)
             LoadBakedBuildings();
         }
 
@@ -288,6 +289,7 @@ namespace UnturnedGodot
             if (name == GasPumpName) return PlaceGasPump(pos, rot);
             if (name == HighwaySignName) return PlaceHighwaySign(HighwaySignMesh, pos, rot);
             if (name == HighwayGantryName) return PlaceHighwaySign(HighwayGantryMesh, pos, rot);
+            if (name == LaneSignName) return PlaceLaneSigns(pos, rot);
             var mesh = MeshFor(name);
             if (mesh == null) return null;
             var root = new Node3D { Transform = new Transform3D(rot, pos) };
@@ -1093,6 +1095,7 @@ namespace UnturnedGodot
             SaveGridPower();
             SaveGasPump();
             SaveSigns();
+            SaveLaneSigns();
             SaveTunnels();
             SaveBakeOmit();
             Log.Print($"[editor] saved {n} placed props -> {SavePath}");
@@ -1127,6 +1130,7 @@ namespace UnturnedGodot
             LoadGridPower();
             LoadGasPump();
             LoadSigns();
+            LoadLaneSigns();
             LoadTunnels();
         }
 
@@ -1308,6 +1312,225 @@ namespace UnturnedGodot
             }
             if (n > 0) Log.Print($"[editor] loaded {n} highway signs");
         }
+
+        // ---- LANE-SELECTABLE OVERHEAD SIGNS -----------------------------------------------------------------
+        //
+        // Master: "can u make it smart, where u can choose which lanes get signs above them". astraclaw split
+        // their gantry into a bare FRAME plus one reusable BOARD, so the composition is ours: place the frame
+        // once, add a board only for the lanes that are ticked, and keep a legend per lane.
+        public const string LaneSignName = "🛣 Lane Signs";
+        const string LaneFrameMesh = "Highway_Lane_Sign_Frame";
+        const string LaneBoardMesh = "Highway_Lane_Sign_Board";
+
+        /// <summary>The road half-width the FRAME is authored for (13.8 m carriageway), and the height of its
+        /// mast axis. Both from astraclaw's handoff, named rather than inlined because the width adaptation
+        /// below is a difference against the first.</summary>
+        public const float LaneFrameAuthoredHalf = 6.9f;
+        public const float LaneBoardHeight = 6.547797f;
+
+        /// <summary>⭐ WIDEN THE FRAME BY MOVING VERTICES, NOT BY SCALING IT. astraclaw's rule verbatim: for
+        /// every vertex with |nativeY| > 0, nativeY += sign(nativeY) * (half - authoredHalf); the centre-joint
+        /// vertices at Y = 0 stay put. That lengthens only the straight crossbar and carries the posts and
+        /// knees out with it. Scaling the whole frame instead would thicken the posts and raise the boards --
+        /// "Do NOT scale the whole frame/basis", and they are right: a 18.4 m road would get fat poles.</summary>
+        static ArrayMesh WidenLaneFrame(ArrayMesh src, float half)
+        {
+            float d = half - LaneFrameAuthoredHalf;
+            if (src == null || Mathf.Abs(d) < 1e-4f) return src;
+            var a0 = src.SurfaceGetArrays(0);
+            var V = a0[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+            for (int i = 0; i < V.Length; i++)
+                if (Mathf.Abs(V[i].Y) > 1e-7f) V[i] = new Vector3(V[i].X, V[i].Y + Mathf.Sign(V[i].Y) * d, V[i].Z);
+            a0[(int)Mesh.ArrayType.Vertex] = V;
+            var outp = new ArrayMesh();
+            outp.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, a0);
+            return outp;
+        }
+
+        /// <summary>The lanes this sign spans, and how wide the road under it is. Falls back to the material
+        /// the frame was authored against so a sign dropped in open ground is still a sensible object.</summary>
+        (float half, float[] lanes) LaneLayoutAt(Vector3 pos)
+        {
+            var rf = _editor?.Roads;
+            if (rf == null) return (LaneFrameAuthoredHalf, null);
+            if (rf.NearestRoad(pos, out int road, out _))
+            {
+                float h = rf.RoadHalfWidth(road);
+                if (h > 1f)
+                {
+                    var l = rf.PaintedLaneCentres(rf.RoadMaterialOf(road), h);
+                    if (l != null && l.Length > 0) return (h, l);
+                }
+            }
+            // ⚠ still READ, not typed: the fallback asks the same texture reader about Highway_1 rather than
+            // hardcoding the four offsets out of the handoff, so a retexture moves both paths together.
+            return (LaneFrameAuthoredHalf, rf.PaintedLaneCentres(1, LaneFrameAuthoredHalf));
+        }
+
+        public static string DefaultLaneText(int lane) => $"LANE {lane + 1}";
+
+        Node3D PlaceLaneSigns(Vector3 pos, Basis rot) => PlaceLaneSigns(pos, rot, -1, null, 0f);
+
+        Node3D PlaceLaneSigns(Vector3 pos, Basis rot, int mask, string[] texts, float halfOverride)
+        {
+            var frameSrc = MeshFor(LaneFrameMesh);
+            var boardSrc = MeshFor(LaneBoardMesh);
+            if (frameSrc == null || boardSrc == null) return null;
+            var (half, lanes) = LaneLayoutAt(pos);
+            if (halfOverride > 1f) half = halfOverride;
+            lanes ??= new float[0];
+
+            float yaw = Mathf.Atan2(-rot.X.Z, rot.X.X);
+            var stand = new Basis(Vector3.Right, Mathf.DegToRad(-90f));
+            var root = new Node3D { Transform = new Transform3D(new Basis(Vector3.Up, yaw), pos) };
+            root.SetMeta("obj_name", LaneSignName);
+            root.SetMeta("lane_sign_edit", true);
+            root.SetMeta("lane_half", half);
+            root.SetMeta("lane_count", lanes.Length);
+            var lv = new Vector3[lanes.Length];
+            for (int i = 0; i < lanes.Length; i++) lv[i] = new Vector3(lanes[i], 0f, 0f);
+            root.SetMeta("lane_centres", lv);
+            // ⭐ Every lane ticked by default: a sign that appears with nothing on it reads as broken, and
+            // master's ask was to CHOOSE lanes, which implies starting from the obvious choice.
+            root.SetMeta("lane_mask", mask < 0 ? (1 << lanes.Length) - 1 : mask);
+            for (int i = 0; i < lanes.Length; i++)
+                root.SetMeta($"lane_text_{i}", SanitiseSignText(texts != null && i < texts.Length && texts[i] != null
+                                                                ? texts[i] : DefaultLaneText(i)));
+
+            root.AddChild(new MeshInstance3D
+            {
+                Name = "Frame",
+                Mesh = WidenLaneFrame(frameSrc, half),
+                MaterialOverride = MatFor(LaneFrameMesh),
+                Basis = stand,
+            });
+            RebuildLaneBoards(root);
+
+            var shp = frameSrc.CreateTrimeshShape();
+            if (shp != null)
+            {
+                var body = new StaticBody3D { CollisionLayer = PickLayer, CollisionMask = 0, Basis = stand };
+                body.AddChild(new CollisionShape3D { Shape = shp });
+                root.AddChild(body);
+                _pickToObj[body.GetRid()] = root;
+            }
+            _world.AddChild(root);
+            _placed.Add(root);
+            return root;
+        }
+
+        /// <summary>Rebuild the board children from the lane mask. ⭐ The TEXT of an unticked lane is kept in
+        /// meta, per astraclaw's "prefer preserving text for temporarily unchecked lanes" -- unticking a lane
+        /// to look at the road and ticking it back should not cost the mapper what they typed.</summary>
+        void RebuildLaneBoards(Node3D root)
+        {
+            if (root == null) return;
+            // ⚠⚠ REMOVED FROM THE TREE, not just QueueFree'd. QueueFree is DEFERRED, so the old Board0 is
+            // still a sibling when the new one is added and Godot silently renames it to "@Board0@2" -- the
+            // boards exist and nothing that looks them up by name can find them. RemoveChild frees the name
+            // immediately; the QueueFree after it still reclaims the node.
+            foreach (var c in new System.Collections.Generic.List<Node>(root.GetChildren()))
+                if (c is Node3D n && (n.Name.ToString().StartsWith("Board") || n.Name.ToString().StartsWith("LaneText")))
+                { root.RemoveChild(n); n.QueueFree(); }
+            int count = root.HasMeta("lane_count") ? (int)root.GetMeta("lane_count") : 0;
+            int mask = root.HasMeta("lane_mask") ? (int)root.GetMeta("lane_mask") : 0;
+            var lv = root.HasMeta("lane_centres") ? (Vector3[])root.GetMeta("lane_centres") : new Vector3[0];
+            var boardSrc = MeshFor(LaneBoardMesh);
+            if (boardSrc == null) return;
+            var faces = SignFaceBounds(boardSrc);
+            var stand = new Basis(Vector3.Right, Mathf.DegToRad(-90f));
+            for (int i = 0; i < count && i < lv.Length; i++)
+            {
+                if ((mask & (1 << i)) == 0) continue;
+                // the board's own origin is its centre, so it is translated to the lane and nothing else --
+                // "Do NOT floor-align or recentre either asset".
+                var nat = new Vector3(0f, lv[i].X, LaneBoardHeight);
+                var atRoot = new Vector3(nat.X, nat.Z, -nat.Y);     // native -> root under the stand-up
+                root.AddChild(new MeshInstance3D
+                {
+                    Name = $"Board{i}", Mesh = boardSrc, MaterialOverride = MatFor(LaneBoardMesh),
+                    Transform = new Transform3D(stand, atRoot),
+                });
+                if (faces == null || faces.Count == 0) continue;
+                var c0 = faces[0].box.GetCenter();
+                var nRoot = new Vector3(faces[0].n.X, faces[0].n.Z, -faces[0].n.Y).Normalized();
+                var cRoot = atRoot + new Vector3(c0.X, c0.Z, -c0.Y) + nRoot * 0.01f;
+                var zc = nRoot; var yc = Vector3.Up; var xc = yc.Cross(zc).Normalized();
+                root.AddChild(new Label3D
+                {
+                    Name = $"LaneText{i}",
+                    Text = SignTextForDisplay(root.HasMeta($"lane_text_{i}") ? (string)root.GetMeta($"lane_text_{i}") : ""),
+                    Position = cRoot, Basis = new Basis(xc, yc, zc),
+                    Billboard = BaseMaterial3D.BillboardModeEnum.Disabled,
+                    FontSize = 64, PixelSize = 0.0075f, Width = 380f,
+                    AutowrapMode = TextServer.AutowrapMode.Word,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center,
+                });
+            }
+        }
+
+        public bool LaneSignSelected => Primary != null && Primary.HasMeta("lane_sign_edit");
+        public int SelectedLaneCount => LaneSignSelected && Primary.HasMeta("lane_count") ? (int)Primary.GetMeta("lane_count") : 0;
+        public int SelectedLaneMask => LaneSignSelected && Primary.HasMeta("lane_mask") ? (int)Primary.GetMeta("lane_mask") : 0;
+        public string SelectedLaneText(int lane) =>
+            LaneSignSelected && Primary.HasMeta($"lane_text_{lane}") ? (string)Primary.GetMeta($"lane_text_{lane}") : "";
+        public void SetSelectedLaneOn(int lane, bool on)
+        {
+            if (!LaneSignSelected || lane < 0 || lane >= SelectedLaneCount) return;
+            int m = SelectedLaneMask;
+            Primary.SetMeta("lane_mask", on ? (m | (1 << lane)) : (m & ~(1 << lane)));
+            RebuildLaneBoards(Primary);
+        }
+        public void SetSelectedLaneText(int lane, string text)
+        {
+            if (!LaneSignSelected || lane < 0 || lane >= SelectedLaneCount) return;
+            Primary.SetMeta($"lane_text_{lane}", SanitiseSignText(text));
+            RebuildLaneBoards(Primary);
+        }
+
+        string LaneSignPath => Dir + $"editor_{_editor.MapName}_lanesigns.txt";
+        void SaveLaneSigns()
+        {
+            var sg = _placed.FindAll(x => IsInstanceValid(x) && x.HasMeta("lane_sign_edit"));
+            using var w = new System.IO.StreamWriter(LaneSignPath, false);
+            foreach (var b in sg)
+            {
+                var gp = b.GlobalPosition;
+                float yawDeg = Mathf.RadToDeg(b.GlobalTransform.Basis.GetEuler().Y);
+                int count = (int)b.GetMeta("lane_count"), mask = (int)b.GetMeta("lane_mask");
+                float half = (float)b.GetMeta("lane_half");
+                var sb = new System.Text.StringBuilder(
+                    $"{gp.X:0.###} {gp.Y:0.###} {(-gp.Z):0.###} {yawDeg:0.###} {half:0.###} {count} {mask}");
+                for (int i = 0; i < count; i++)
+                    sb.Append('\t').Append(b.HasMeta($"lane_text_{i}") ? (string)b.GetMeta($"lane_text_{i}") : "");
+                w.WriteLine(sb.ToString());
+            }
+            if (sg.Count > 0) Log.Print($"[editor] saved {sg.Count} lane sign(s) -> {LaneSignPath}");
+        }
+        void LoadLaneSigns()
+        {
+            if (!System.IO.File.Exists(LaneSignPath)) return;
+            int n = 0;
+            foreach (var line in System.IO.File.ReadLines(LaneSignPath))
+            {
+                var cols = line.Split('\t');
+                var p = cols[0].Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                if (p.Length < 7 || !float.TryParse(p[0], out var px) || !float.TryParse(p[1], out var py)
+                    || !float.TryParse(p[2], out var pz) || !float.TryParse(p[3], out var yaw)
+                    || !float.TryParse(p[4], out var half) || !int.TryParse(p[5], out var count)
+                    || !int.TryParse(p[6], out var mask)) continue;
+                var texts = new string[count];
+                for (int i = 0; i < count; i++) texts[i] = cols.Length > i + 1 ? cols[i + 1] : DefaultLaneText(i);
+                if (PlaceLaneSigns(new Vector3(px, py, -pz), Upright(yaw), mask, texts, half) != null) n++;
+            }
+            if (n > 0) Log.Print($"[editor] loaded {n} lane sign(s)");
+        }
+
+        /// <summary>L1 seams for the lane-sign sidecar.</summary>
+        public void DebugSaveLaneSigns() => SaveLaneSigns();
+        public void DebugLoadLaneSigns() => LoadLaneSigns();
+        public string DebugLaneSignPath => LaneSignPath;
 
         // ---- GENERATED GEOMETRY (the swept tunnel) ---------------------------------------------------------
         //
