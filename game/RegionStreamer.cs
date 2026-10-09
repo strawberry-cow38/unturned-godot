@@ -105,6 +105,8 @@ namespace UnturnedGodot
             public List<Transform3D>[] BridgeXf;    // [deck, pier, cap], region-local, from the first build (LOD-independent)
             public Node3D Bridges;                  // the bridge MultiMeshes, every ring
             public Node3D BridgeBodies;             // deck colliders, ring <= ColliderRing
+            public Vector3[][] RoadCol;             // the road slabs' collision soup, from the latest LOD0 build
+            public Node3D RoadBodies;               // road colliders, ring <= ColliderRing
         }
 
         sealed class Job { public RegionCoord C; public int Lod; }
@@ -118,6 +120,7 @@ namespace UnturnedGodot
             public Dictionary<string, List<Transform3D>> TreeXf;
             public Dictionary<(int kind, int cell), List<Transform3D>> FoliageXf;
             public RoadMesh[] Road;   // per RoadKind, null where the region has none of that class
+            public Vector3[][] RoadCol;   // LOD0 only: the slabs as triangle soup, [paved, trail]
             public List<(Transform3D Pole, bool HasNext, Transform3D Next)> Poles;
             public (Vector3 P, float S, int Cell)[] ImpTrees;
             public List<Transform3D>[] BridgeXf;
@@ -284,6 +287,8 @@ namespace UnturnedGodot
                 TreeCount -= r.TreeList?.Count ?? 0;
             }
 
+            if (ring <= ColliderRing && r.RoadBodies == null && r.RoadCol != null) { r.RoadBodies = BuildRoadBodies(r.RoadCol); r.Node.AddChild(r.RoadBodies); }
+            else if (ring > ColliderRing + 1 && r.RoadBodies != null) { r.RoadBodies.QueueFree(); r.RoadBodies = null; }
             if (ring <= ColliderRing && r.BridgeBodies == null && r.BridgeXf != null && r.BridgeXf[0].Count > 0) { r.BridgeBodies = BuildDeckBodies(r.BridgeXf[0]); r.Node.AddChild(r.BridgeBodies); }
             else if (ring > ColliderRing + 1 && r.BridgeBodies != null) { r.BridgeBodies.QueueFree(); r.BridgeBodies = null; }
             if (ring <= ColliderRing && r.TreeBodies == null && r.TreeList != null) { r.TreeBodies = BuildTrunks(r.TreeList); r.Node.AddChild(r.TreeBodies); }
@@ -413,6 +418,13 @@ namespace UnturnedGodot
                     r.Road[k].Mesh = rm;
                 }
                 else if (r.Road[k] != null) { r.Road[k].QueueFree(); r.Road[k] = null; }
+            }
+            // the road colliders follow the LOD0 slabs (a coarser build keeps the last LOD0 soup: its bodies only exist
+            // in the ring LOD0 covers); a new soup drops the old bodies for UpdateExtras to rebuild
+            if (b.D.Lod == 0)
+            {
+                r.RoadCol = b.RoadCol;
+                if (r.RoadBodies != null) { r.RoadBodies.QueueFree(); r.RoadBodies = null; }
             }
         }
 
@@ -570,9 +582,6 @@ void fragment() {
         static readonly float[] RoadTexMetres = { 128f / 4f, 128f / 4f, 256f / 8f, 64f / 8f };
         /// <summary>Half-width of one drawn surface: a highway is TWO of these, one per carriageway.</summary>
         static float RibbonHalf(RoadKind k) => k == RoadKind.Highway ? InfiniteRoads.HighwayLaneHalf : InfiniteRoads.PavedHalf(k);
-        /// <summary>Lift over the profile: main roads and highways above the small roads and trails that start under
-        /// their edges, highways above the mains they cross, so no two surfaces z-fight.</summary>
-        static readonly float[] RoadLift = { 0.045f, 0.03f, 0.015f, 0.01f };
         /// <summary>UG_INF_MARKS=1: highway pieces on a raised stretch (bridge candidate) draw magenta and on a deep cut
         /// (tunnel candidate) cyan, each from its own slot, so the marking can be checked by eye. Off, they are
         /// ordinary highway.</summary>
@@ -760,6 +769,8 @@ void fragment() {
         // prop per region -- the deck unit repeats hundreds of times, which is exactly what a MultiMesh is for.
         static readonly string[] BridgeProps = { EditorBridgeSpline.DeckUnit, EditorBridgeSpline.PierUnit, EditorBridgeSpline.DeckCap };
         static readonly ArrayMesh[] _bridgeMesh = new ArrayMesh[3];
+        static ArrayMesh _deckRender;   // the deck unit minus its baked roadway, which the region's highway mesh draws instead
+        public static int DeckRoadwayTrisStripped;
         static readonly Material[] _bridgeMat = new Material[3];
         static Shape3D _deckShape;
 
@@ -774,6 +785,46 @@ void fragment() {
             if (System.IO.File.Exists(tp) && ContentProvider.LoadOk(img, tp)) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); }
             else mat.AlbedoColor = new Color(0.60f, 0.58f, 0.55f);
             _bridgeMat[i] = mat;
+        }
+
+        /// <summary>The deck unit without the faces of its roadway (every triangle lying in the roadway plane between the
+        /// parapets' feet), for DRAWING only -- its collider keeps them. Axes read off the mesh's own bounds (the
+        /// 17 m one is across, the 5.25 m one is up) rather than assumed, because ObjMesh's import convention flips one.</summary>
+        static ArrayMesh DeckRenderMesh()
+        {
+            if (_deckRender != null) return _deckRender;
+            var src = _bridgeMesh[0];
+            var size = src.GetAabb().Size;
+            int lat = size.X >= size.Y && size.X >= size.Z ? 0 : size.Y >= size.Z ? 1 : 2, up = -1;
+            for (int a = 0; a < 3; a++)
+                if (a != lat && Mathf.Abs(size[a] - EditorBridgeSpline.DeckThickness) < 0.05f) up = a;
+            if (up < 0) { Log.Print($"[infinite] deck unit bounds {size} have no {EditorBridgeSpline.DeckThickness} m axis: drawing its own roadway"); return _deckRender = src; }
+            var dst = new ArrayMesh();
+            for (int s = 0; s < src.GetSurfaceCount(); s++)
+            {
+                var arr = src.SurfaceGetArrays(s);
+                var v = arr[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+                var iv = arr[(int)Mesh.ArrayType.Index];
+                int[] idx;
+                if (iv.VariantType != Variant.Type.Nil) idx = iv.AsInt32Array();
+                else { idx = new int[v.Length]; for (int k = 0; k < idx.Length; k++) idx[k] = k; }
+                var keep = new List<int>(idx.Length);
+                for (int t = 0; t + 2 < idx.Length; t += 3)
+                {
+                    bool roadway = true;
+                    for (int q = 0; q < 3; q++)
+                    {
+                        var p = v[idx[t + q]];
+                        if (Mathf.Abs(p[up]) > 0.01f || Mathf.Abs(p[lat]) > InfiniteRoads.DeckRoadwayHalf + 0.01f) roadway = false;
+                    }
+                    if (roadway) DeckRoadwayTrisStripped++;
+                    else { keep.Add(idx[t]); keep.Add(idx[t + 1]); keep.Add(idx[t + 2]); }
+                }
+                arr[(int)Mesh.ArrayType.Index] = keep.ToArray();
+                dst.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arr);
+            }
+            Log.Print($"[infinite] deck unit: {DeckRoadwayTrisStripped} roadway triangles stripped (the highway mesh draws the deck's roadway)");
+            return _deckRender = dst;
         }
 
         /// <summary>Take a region's bridge pieces from its first build (they do not depend on LOD) and draw them. BOTH
@@ -794,7 +845,7 @@ void fragment() {
                 if (xf[i].Count == 0) continue;
                 LoadBridgeKit(i);
                 if (_bridgeMesh[i] == null) continue;
-                var mm = new MultiMesh { TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, Mesh = _bridgeMesh[i] };
+                var mm = new MultiMesh { TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, Mesh = i == 0 ? DeckRenderMesh() : _bridgeMesh[i] };
                 mm.InstanceCount = xf[i].Count;   // format BEFORE count
                 for (int k = 0; k < xf[i].Count; k++) mm.SetInstanceTransform(k, xf[i][k]);
                 var mmi = new MultiMeshInstance3D { Name = BridgeProps[i], Multimesh = mm, MaterialOverride = _bridgeMat[i] };
@@ -802,6 +853,23 @@ void fragment() {
                 holder.AddChild(mmi);
             }
             BridgeCount += xf[0].Count;
+            return holder;
+        }
+
+        /// <summary>The region's road slabs as colliders: one closed, double-sided trimesh per surface (RoadField's
+        /// BackfaceCollision rule -- nothing slips under an edge), asphalt and the dirt trail tagged apart for footsteps
+        /// and tyres. Before this a car drove on the ground 0.12 m under the drawn road.</summary>
+        static Node3D BuildRoadBodies(Vector3[][] soup)
+        {
+            var holder = new Node3D { Name = "RoadBodies" };
+            for (int i = 0; i < soup.Length; i++)
+            {
+                if (soup[i] == null || soup[i].Length < 3) continue;
+                var body = new StaticBody3D { Name = i == 0 ? "Paved" : "Trail", CollisionLayer = 1u << 0 };
+                body.SetMeta(PlayerController.SurfMeta, (int)(i == 0 ? PlayerController.Surf.Concrete : PlayerController.Surf.Dirt));
+                body.AddChild(new CollisionShape3D { Shape = new ConcavePolygonShape3D { Data = soup[i], BackfaceCollision = true } });
+                holder.AddChild(body);
+            }
             return holder;
         }
 
@@ -1075,41 +1143,124 @@ void fragment() {
                     list.Add(new Transform3D(basis, new Vector3(t.X, t.Y - ResourceField.TreeSink * t.Scale, t.Z)));
                 }
             }
-            // road surfaces: a ribbon per centreline piece, one mesh per class, sat on the profile (the ground under it
-            // is the bed, lower) and lifted only where this LOD's coarser mesh still rises above it
+            // road surfaces: a SLAB per centreline piece, RoadField's own cross-section -- a flat top at
+            // InfiniteRoads.SurfaceY and a bevel each side running out AND down 2 x Thickness, so the edge stands PEI's
+            // height and its foot is buried (strawberry 2026-10-09: "give the road splines actual collision and the
+            // proper thickness (vertical height)"). Lifted only where this LOD's coarser mesh still rises above it. One
+            // mesh per class; at LOD0 the same faces, closed underneath as RoadField closes its collider, are the
+            // region's road collision.
             RoadMesh[] roadMeshes = null;
-            if (d.Roads != null && d.Roads.Count > 0)
+            Vector3[][] roadCol = null;
+            bool decks = d.Bridges != null && d.Bridges.Exists(bp => bp.Kind == 0);
+            if (d.Roads != null && d.Roads.Count > 0 || decks)
             {
                 roadMeshes = new RoadMesh[RoadSlots];
                 var lists = new (List<Vector3> V, List<Vector3> N, List<Vector2> UV, List<int> I)[RoadSlots];
+                var soup = d.Lod == 0 ? new[] { new List<Vector3>(), new List<Vector3>() } : null;   // [paved, trail]
                 double ox = d.Coord.MinX, oz = d.Coord.MinZ;
-                foreach (var rp in d.Roads)
+                // THE DECKS' ROADWAY is the carriageway's own surface (strawberry 2026-10-09: "the bridge road is the
+                // highway 0 type. and the highway is highway 1"): the cut unit's baked two-way paint is stripped from
+                // its mesh (DeckRenderMesh) and each unit gets a Highway_1 strip lying exactly on its roadway plane, in
+                // this region's highway mesh -- no extra instances -- with v from the unit's S0..S1, the ribbon's own
+                // measure, so the dashes run on from the approach instead of restarting at the bridge. Across the
+                // 13.8 m carriageway u runs 0..1 as on the ribbon; the deck's extra 1.1 m each side wears the edge
+                // column (plain asphalt), as a ribbon bevel does.
+                if (decks)
                 {
-                    if (rp.Raised && InfiniteRoads.Bridges && !ShowMarks) continue;   // the bridge deck carries its own roadway
+                    int hs = (int)RoadKind.Highway;
+                    lists[hs].V ??= new List<Vector3>(); lists[hs].N ??= new List<Vector3>(); lists[hs].UV ??= new List<Vector2>(); lists[hs].I ??= new List<int>();
+                    var DV = lists[hs].V; var DN = lists[hs].N; var DUV = lists[hs].UV; var DI = lists[hs].I;
+                    float texM = RoadTexMetres[hs], lane = InfiniteRoads.HighwayLaneHalf, wide = InfiniteRoads.DeckRoadwayHalf;
+                    foreach (var bp in d.Bridges)
+                    {
+                        if (bp.Kind != 0) continue;
+                        var dir = new Vector3(bp.DX, bp.DY, bp.DZ).Normalized();
+                        var c = new Vector3((float)(bp.X - ox), (float)bp.Y, (float)(bp.Z - oz));
+                        var nrm = new Vector3(-dir.Z, 0f, dir.X).Normalized();       // the ribbon's u = 0 side
+                        var along = dir * (InfiniteRoads.BridgePitch * 0.5f);
+                        var up = nrm.Cross(dir).Normalized(); if (up.Y < 0f) up = -up;
+                        float v0 = bp.S0 / texM, v1 = bp.S1 / texM;
+                        // three bands across: shoulder (u 0), the carriageway (u 0..1), shoulder (u 1)
+                        float[] o = { wide, lane, -lane, -wide }; float[] u = { 0f, 0f, 1f, 1f };
+                        for (int band = 0; band < 3; band++)
+                        {
+                            int i0 = DV.Count;
+                            DV.Add(c - along + nrm * o[band]); DV.Add(c - along + nrm * o[band + 1]);
+                            DV.Add(c + along + nrm * o[band]); DV.Add(c + along + nrm * o[band + 1]);
+                            for (int q = 0; q < 4; q++) DN.Add(up);
+                            DUV.Add(new Vector2(u[band], v0)); DUV.Add(new Vector2(u[band + 1], v0));
+                            DUV.Add(new Vector2(u[band], v1)); DUV.Add(new Vector2(u[band + 1], v1));
+                            Tri(DV, DI, i0, i0 + 1, i0 + 2, up);
+                            Tri(DV, DI, i0 + 1, i0 + 3, i0 + 2, up);
+                            // and it is solid in its own right: the driven surface does not depend on the cut unit
+                            // keeping a roadway face its owner may strip from the asset
+                            if (soup != null) for (int q = 0; q < 6; q++) soup[0].Add(DV[DI[DI.Count - 6 + q]]);
+                        }
+                    }
+                }
+                foreach (var rp in d.Roads ?? new List<RoadPiece>())
+                {
                     int kind = rp.Kind, slot = !ShowMarks ? kind : rp.Raised ? RaisedSlot : rp.Cut ? CutSlot : kind;
                     lists[slot].V ??= new List<Vector3>(); lists[slot].N ??= new List<Vector3>(); lists[slot].UV ??= new List<Vector2>(); lists[slot].I ??= new List<int>();
                     var RV = lists[slot].V; var RN = lists[slot].N; var RUV = lists[slot].UV; var RI = lists[slot].I;
-                    float hw = RibbonHalf((RoadKind)kind), lift = RoadLift[kind], texM = RoadTexMetres[kind];
+                    var col = soup?[kind == (int)RoadKind.Trail ? 1 : 0];
+                    var rk = (RoadKind)kind;
+                    float hw = RibbonHalf(rk), lift = InfiniteRoads.Lift(rk), texM = RoadTexMetres[kind], bev = 2f * InfiniteRoads.Thickness(rk);
                     float Y(float lx, float lz, float h) =>
-                        Mathf.Max(h + lift, InfiniteTerrain.MeshHeightAt(d, Mathf.Clamp(lx, 0f, InfiniteTerrain.RegionSize), Mathf.Clamp(lz, 0f, InfiniteTerrain.RegionSize)) + 0.02f + lift);
-                    float ax = (float)(rp.X0 - ox), az = (float)(rp.Z0 - oz), bx = (float)(rp.X1 - ox), bz = (float)(rp.Z1 - oz);
+                        Mathf.Max(InfiniteRoads.SurfaceY(rk, h), InfiniteTerrain.MeshHeightAt(d, Mathf.Clamp(lx, 0f, InfiniteTerrain.RegionSize), Mathf.Clamp(lz, 0f, InfiniteTerrain.RegionSize)) + 0.02f + lift);
+                    var A = new Vector3((float)(rp.X0 - ox), 0f, (float)(rp.Z0 - oz));
+                    var B = new Vector3((float)(rp.X1 - ox), 0f, (float)(rp.Z1 - oz));
                     // perpendicular from each END's own tangent, so the next piece builds the identical edge
-                    var pa = new Vector2(-rp.T0Z, rp.T0X) * hw;
-                    var pb = new Vector2(-rp.T1Z, rp.T1X) * hw;
-                    int b0 = RV.Count;
-                    RV.Add(new Vector3(ax + pa.X, Y(ax + pa.X, az + pa.Y, rp.H0), az + pa.Y));
-                    RV.Add(new Vector3(ax - pa.X, Y(ax - pa.X, az - pa.Y, rp.H0), az - pa.Y));
-                    RV.Add(new Vector3(bx + pb.X, Y(bx + pb.X, bz + pb.Y, rp.H1), bz + pb.Y));
-                    RV.Add(new Vector3(bx - pb.X, Y(bx - pb.X, bz - pb.Y, rp.H1), bz - pb.Y));
-                    for (int q = 0; q < 4; q++) RN.Add(Vector3.Up);
-                    RUV.Add(new Vector2(0f, rp.S0 / texM)); RUV.Add(new Vector2(1f, rp.S0 / texM));
-                    RUV.Add(new Vector2(0f, rp.S1 / texM)); RUV.Add(new Vector2(1f, rp.S1 / texM));
-                    Tri(RV, RI, b0, b0 + 1, b0 + 2, Vector3.Up);
-                    Tri(RV, RI, b0 + 1, b0 + 3, b0 + 2, Vector3.Up);
+                    var na = new Vector3(-rp.T0Z, 0f, rp.T0X);
+                    var nb = new Vector3(-rp.T1Z, 0f, rp.T1X);
+                    Vector3 Edge(Vector3 c, Vector3 n, float h) { var p = c + n * hw; p.Y = Y(p.X, p.Z, h); return p; }
+                    var down = new Vector3(0f, -bev, 0f);
+                    Vector3 la = Edge(A, na, rp.H0), ra = Edge(A, -na, rp.H0), lb = Edge(B, nb, rp.H1), rb = Edge(B, -nb, rp.H1);
+                    Vector3 loa = la + na * bev + down, roa = ra - na * bev + down, lob = lb + nb * bev + down, rob = rb - nb * bev + down;
+                    float v0 = rp.S0 / texM, v1 = rp.S1 / texM;
+
+                    // a quad between an A-row (a0, a1) and a B-row (b0, b1): to the visual mesh if `nA` is given, and
+                    // always to the collision soup
+                    void Quad(Vector3 a0, Vector3 a1, Vector3 b0, Vector3 b1, Vector3? nA, Vector3 nB, float u0, float u1, float va, float vb)
+                    {
+                        if (nA is Vector3 n0)
+                        {
+                            int i0 = RV.Count;
+                            RV.Add(a0); RV.Add(a1); RV.Add(b0); RV.Add(b1);
+                            RN.Add(n0); RN.Add(n0); RN.Add(nB); RN.Add(nB);
+                            RUV.Add(new Vector2(u0, va)); RUV.Add(new Vector2(u1, va)); RUV.Add(new Vector2(u0, vb)); RUV.Add(new Vector2(u1, vb));
+                            var front = (n0 + nB).Normalized();
+                            Tri(RV, RI, i0, i0 + 1, i0 + 2, front);
+                            Tri(RV, RI, i0 + 1, i0 + 3, i0 + 2, front);
+                        }
+                        if (col == null) return;
+                        col.Add(a0); col.Add(a1); col.Add(b0);
+                        col.Add(a1); col.Add(b1); col.Add(b0);
+                    }
+                    Vector3 Lean(Vector3 n) => (n + Vector3.Up).Normalized();
+                    Quad(la, ra, lb, rb, Vector3.Up, Vector3.Up, 0f, 1f, v0, v1);                    // the driven top
+                    // the bevels wear the texture's edge column, as RoadField's do (u 0 left, 1 right)
+                    Quad(loa, la, lob, lb, Lean(na), Lean(nb), 0f, 0f, v0, v1);
+                    Quad(ra, roa, rb, rob, Lean(-na), Lean(-nb), 1f, 1f, v0, v1);
+                    Quad(loa, roa, lob, rob, null, Vector3.Down, 0f, 0f, 0f, 0f);                    // collider only: sealed underneath
+                    // the line's own ends ramp down, RoadField's end caps: the whole cross-section pushed out by the bevel
+                    // and dropped to its foot, so a road that stops in the open is a slope, not a step
+                    if (rp.OpenStart) EndRamp(A, la, ra, loa, roa, new Vector3(-rp.T0X, 0f, -rp.T0Z), v0);
+                    if (rp.OpenEnd) EndRamp(B, lb, rb, lob, rob, new Vector3(rp.T1X, 0f, rp.T1Z), v1);
+                    void EndRamp(Vector3 c, Vector3 l, Vector3 r, Vector3 lo, Vector3 ro, Vector3 outDir, float v)
+                    {
+                        var o = outDir * bev;
+                        Vector3 l2 = l + o + down, r2 = r + o + down, lo2 = lo + o, ro2 = ro + o;
+                        var nOut = Lean(outDir);
+                        Quad(l, r, l2, r2, nOut, nOut, 0f, 1f, v, v);
+                        Quad(lo, l, lo2, l2, nOut, nOut, 0f, 0f, v, v);
+                        Quad(r, ro, r2, ro2, nOut, nOut, 1f, 1f, v, v);
+                    }
                 }
                 for (int k = 0; k < RoadSlots; k++)
                     if (lists[k].V != null)
                         roadMeshes[k] = new RoadMesh { V = lists[k].V.ToArray(), N = lists[k].N.ToArray(), UV = lists[k].UV.ToArray(), I = lists[k].I.ToArray() };
+                if (soup != null) roadCol = new[] { soup[0].ToArray(), soup[1].ToArray() };
             }
 
             // bridges: the bridge TOOL's own bases (EditorBridgeSpline.DeckBasis / StandBasis) on the core's walk, so the
@@ -1161,7 +1312,7 @@ void fragment() {
                 }
             }
             return new Built { D = d, V = V.ToArray(), N = N.ToArray(), UV = UV.ToArray(), I = I.ToArray(), S0 = s0, S1 = s1, SplatSize = v, TreeXf = trees, ImpTrees = imp, BridgeXf = bridgeXf, FoliageXf = foliage,
-                               Road = roadMeshes, Poles = poles };
+                               Road = roadMeshes, RoadCol = roadCol, Poles = poles };
         }
 
         /// <summary>Add a triangle FRONT-FACING along `front` whichever way round it was written: Godot's front face

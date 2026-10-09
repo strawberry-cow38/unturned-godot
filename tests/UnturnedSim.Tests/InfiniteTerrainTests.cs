@@ -383,8 +383,10 @@ namespace UnturnedSim.Tests
         {
             // the kit numbers the core copies from the game's EditorBridgeSpline (asserted equal there, in L1)
             const float P = InfiniteRoads.BridgePitch, W = InfiniteRoads.BridgeHalfWidth;
+            // the carriageway fits between the parapets: a wider road class laid on this deck would run through them
+            Assert.That(InfiniteRoads.HighwayLaneHalf, Is.LessThanOrEqualTo(InfiniteRoads.DeckRoadwayHalf), "the carriageway is wider than the deck's roadway");
             int bridges = 0, decks = 0, piers = 0, joints = 0, raised = 0;
-            double worstGap = 0, worstPierFoot = 0, worstPierTop = 0, worstOff = 0, worstGround = 0, liftOff = 0; int liftN = 0;
+            double worstGap = 0, worstPierFoot = 0, worstPierTop = 0, worstOff = 0, worstGround = 0, liftOff = 0, worstDh = 0; int liftN = 0;
             string groundWhere = "", gapWhere = ""; int overpasses = 0, atGrade = 0;
             for (int axis = 0; axis < 2; axis++)
                 for (long band = -2; band <= 1; band++)
@@ -406,18 +408,31 @@ namespace UnturnedSim.Tests
                                 continue;
                             }
                             decks++;
-                            // ON a carriageway centreline, at its road height
-                            double off = double.MaxValue; float dh = 0;
+                            // ON a carriageway centreline; and both ENDS of the unit on its driven surface (the middle of a
+                            // straight unit is a chord of the profile, off it by the sagitta wherever it spans a profile vertex)
+                            double off = double.MaxValue;
                             foreach (var lane in lanes)
                                 for (int i = 0; i + 1 < lane.Length; i++)
                                 {
                                     double sx = lane[i + 1].x - lane[i].x, sz = lane[i + 1].z - lane[i].z, qx = p.X - lane[i].x, qz = p.Z - lane[i].z;
                                     double t = Math.Clamp((qx * sx + qz * sz) / (sx * sx + sz * sz), 0, 1);
-                                    double d = Math.Sqrt((qx - sx * t) * (qx - sx * t) + (qz - sz * t) * (qz - sz * t));
-                                    if (d < off) { off = d; dh = (float)(p.Y - (lane[i].h + (lane[i + 1].h - lane[i].h) * t)); }
+                                    off = Math.Min(off, Math.Sqrt((qx - sx * t) * (qx - sx * t) + (qz - sz * t) * (qz - sz * t)));
                                 }
                             worstOff = Math.Max(worstOff, off);
-                            Assert.That(Math.Abs(dh), Is.LessThan(0.25f), "a deck unit off its road's height");
+                            for (int end = -1; end <= 1; end += 2)
+                            {
+                                double ex = p.X + p.DX * P * 0.5 * end, ey = p.Y + p.DY * P * 0.5 * end, ez = p.Z + p.DZ * P * 0.5 * end;
+                                double eo = double.MaxValue, dh = 0;
+                                foreach (var lane in lanes)
+                                    for (int i = 0; i + 1 < lane.Length; i++)
+                                    {
+                                        double sx = lane[i + 1].x - lane[i].x, sz = lane[i + 1].z - lane[i].z, qx = ex - lane[i].x, qz = ez - lane[i].z;
+                                        double t = Math.Clamp((qx * sx + qz * sz) / (sx * sx + sz * sz), 0, 1);
+                                        double d = Math.Sqrt((qx - sx * t) * (qx - sx * t) + (qz - sz * t) * (qz - sz * t));
+                                        if (d < eo) { eo = d; dh = ey - InfiniteRoads.SurfaceY(RoadKind.Highway, lane[i].h + (lane[i + 1].h - lane[i].h) * (float)t); }
+                                    }
+                                worstDh = Math.Max(worstDh, Math.Abs(dh));
+                            }
                             // nothing under it was carved: the ground stays natural (and with bridges off it would not)
                             double moved = Math.Abs(Gen.HeightAt(p.X, p.Z) - Gen.NaturalHeight(p.X, p.Z));
                             // ...unless a DIFFERENT road shapes it. Measured: another highway 6.5 m below a deck at
@@ -454,15 +469,110 @@ namespace UnturnedSim.Tests
                         }
                     }
             TestContext.WriteLine($"{bridges} bridges over {raised} raised stretches: {decks} deck units, {piers} piers, {joints} joints; worst joint daylight {worstGap * 100:0.00} cm{gapWhere}; " +
-                                  $"decks within {worstOff:0.00} m of a carriageway; pier feet {worstPierFoot * 1000:0.0} mm off the ground, tops {worstPierTop * 1000:0.0} mm off the deck; " +
+                                  $"decks within {worstOff:0.00} m of a carriageway, unit ends {worstDh * 1000:0.0} mm off its driven surface; pier feet {worstPierFoot * 1000:0.0} mm off the ground, tops {worstPierTop * 1000:0.0} mm off the deck; " +
                                   $"ground under decks moved {worstGround:0.000} m{groundWhere}, {overpasses} decks over another highway, {atGrade} where a lesser road meets the deck at grade (with bridges off it would rise {liftOff / Math.Max(1, liftN):0.0} m on average)");
             Assert.That(bridges, Is.EqualTo(raised), "every raised stretch at least a unit long gets its bridge");
             Assert.That(decks, Is.GreaterThan(50)); Assert.That(piers, Is.GreaterThan(5)); Assert.That(joints, Is.GreaterThan(40));
             Assert.That(worstOff, Is.LessThan(0.5), "a deck unit off its carriageway");
+            Assert.That(worstDh, Is.LessThan(0.005), "a deck unit's end off its road's driven surface");
             Assert.That(worstGap, Is.LessThan(0.005), "daylight at a deck joint");
             Assert.That(worstPierFoot, Is.LessThan(0.01)); Assert.That(worstPierTop, Is.LessThan(0.01));
             Assert.That(worstGround, Is.LessThan(0.01), "the carve raised ground under a bridge");
             Assert.That(liftOff / Math.Max(1, liftN), Is.GreaterThan(2.0), "control: without bridges the same spots ARE embanked");
+        }
+
+        /// <summary>strawberry 2026-10-09: "fix the smoothness between highways and bridges, make sure they are aligned
+        /// properly and theres no big gap". At every bridge end, the carriageway's ribbon must END where the deck ends:
+        /// same point, same driven height, same heading -- and the embankment under the ribbon must run right up to it.
+        /// Before, the ribbon was dropped per whole 37 m profile segment while the deck stopped wherever its last 7.83 m
+        /// unit fitted, so a bridge end could have up to a deck-length of neither; and the deck sat on the profile while
+        /// the ribbon floated 4.5 cm over it.</summary>
+        [Test]
+        public void BridgeEndsMeetTheirRoad()
+        {
+            int ends = 0, embank = 0, deckJoints = 0;
+            double worstGap = 0, worstDy = 0, worstTurn = 0, worstBank = 0, worstPhase = 0, worstDeckPhase = 0;
+            string gapWhere = "", bankWhere = "";
+            for (int axis = 0; axis < 2; axis++)
+                for (long band = -2; band <= 1; band++)
+                    for (long k = -4; k <= 3; k++)
+                    {
+                        if (Gen.Roads.HighwayCentreline(axis, band, k) == null) continue;
+                        // BridgesOf lists each bridge's decks and piers, then its far cap, then its near cap
+                        BridgePiece? firstDeck = null, lastDeck = null; int capsSeen = 0;
+                        foreach (var cap in Gen.Roads.BridgesOf(axis, band, k))
+                        {
+                            if (cap.Kind == 0)
+                            {
+                                if (capsSeen > 0) { firstDeck = null; capsSeen = 0; }
+                                // the roadway drawn over consecutive units agrees on the texture distance where they meet
+                                if (lastDeck is BridgePiece a)
+                                {
+                                    double along = (cap.X - cap.DX * InfiniteRoads.BridgePitch * 0.5 - (a.X - a.DX * InfiniteRoads.BridgePitch * 0.5)) * a.DX
+                                                 + (cap.Y - cap.DY * InfiniteRoads.BridgePitch * 0.5 - (a.Y - a.DY * InfiniteRoads.BridgePitch * 0.5)) * a.DY
+                                                 + (cap.Z - cap.DZ * InfiniteRoads.BridgePitch * 0.5 - (a.Z - a.DZ * InfiniteRoads.BridgePitch * 0.5)) * a.DZ;
+                                    double predicted = a.S0 + (a.S1 - a.S0) * along / InfiniteRoads.BridgePitch;
+                                    worstDeckPhase = Math.Max(worstDeckPhase, Math.Abs(predicted - cap.S0)); deckJoints++;
+                                }
+                                firstDeck ??= cap; lastDeck = cap;
+                                continue;
+                            }
+                            if (cap.Kind != 2) continue;
+                            capsSeen++;
+                            // the far cap meets the LAST unit's front, the near cap the FIRST unit's back
+                            float deckS = capsSeen == 1 ? lastDeck.Value.S1 : firstDeck.Value.S0;
+                            if (capsSeen == 2) lastDeck = null;
+                            ends++;
+                            // the deck's end edge: the cap stands on it, facing out along the road
+                            double x0 = cap.X - 60, z0 = cap.Z - 60, x1 = cap.X + 60, z1 = cap.Z + 60;
+                            var pieces = Gen.Roads.PiecesIn(Gen.Roads.LinesIn(x0, z0, x1, z1), x0, z0, x1, z1, 4f);
+                            double best = double.MaxValue; float by = 0, btx = 0, btz = 0, bs = 0;
+                            foreach (var rp in pieces)
+                            {
+                                if (rp.Kind != (byte)RoadKind.Highway) continue;
+                                for (int e = 0; e < 2; e++)
+                                {
+                                    double ex = e == 0 ? rp.X0 : rp.X1, ez = e == 0 ? rp.Z0 : rp.Z1;
+                                    float ey = InfiniteRoads.SurfaceY(RoadKind.Highway, e == 0 ? rp.H0 : rp.H1);
+                                    double d = Math.Sqrt((ex - cap.X) * (ex - cap.X) + (ey - cap.Y) * (ey - cap.Y) + (ez - cap.Z) * (ez - cap.Z));
+                                    if (d < best) { best = d; by = ey; btx = e == 0 ? rp.T0X : rp.T1X; btz = e == 0 ? rp.T0Z : rp.T1Z; bs = e == 0 ? rp.S0 : rp.S1; }
+                                }
+                            }
+                            if (best > worstGap) { worstGap = best; gapWhere = $" at ({cap.X:0.0}, {cap.Z:0.0})"; }
+                            worstDy = Math.Max(worstDy, Math.Abs(by - cap.Y));
+                            // ...and the paint runs on: the deck's roadway starts at the texture distance the ribbon stopped at
+                            worstPhase = Math.Max(worstPhase, Math.Abs(bs - deckS));
+                            double ch = Math.Sqrt(cap.DX * cap.DX + cap.DZ * cap.DZ);
+                            double cos = Math.Abs(btx * cap.DX + btz * cap.DZ) / Math.Max(1e-9, ch);
+                            worstTurn = Math.Max(Degrees(cos), worstTurn);
+                            // the embankment under the approach: just outside the deck end the ground is the road's bed. The
+                            // bed is read with bridges OFF (what the carve would make there with no deck anywhere), so a
+                            // carve suspended too far reads as a miss here instead of quietly dropping out of the check
+                            double ox = cap.X + cap.DX / ch * 0.5, oz = cap.Z + cap.DZ / ch * 0.5;
+                            RoadHit bed;
+                            InfiniteRoads.Bridges = false;
+                            try { bed = Gen.Roads.Influence(ox, oz); } finally { InfiniteRoads.Bridges = true; }
+                            if (bed.Any && bed.Kind == RoadKind.Highway && bed.Weight > 0.999f)
+                            {
+                                embank++;
+                                double bank = Math.Abs(Gen.HeightAt(ox, oz) - (bed.Height - InfiniteRoads.Bed));
+                                if (bank > worstBank) { worstBank = bank; bankWhere = $" at ({ox:0.0}, {oz:0.0})"; }
+                            }
+                        }
+                    }
+            static double Degrees(double cos) => Math.Acos(Math.Clamp(cos, -1, 1)) * 180 / Math.PI;
+            TestContext.WriteLine($"{ends} bridge ends: ribbon end within {worstGap * 1000:0.0} mm of the deck end{gapWhere}, driven height {worstDy * 1000:0.0} mm, heading {worstTurn:0.000} deg, " +
+                                  $"paint phase {worstPhase * 1000:0.0} mm (and {worstDeckPhase * 1000:0.0} mm across {deckJoints} deck joints); " +
+                                  $"ground 0.5 m off the deck end at {embank} of them within {worstBank * 1000:0.0} mm of the bed{bankWhere}");
+            Assert.That(ends, Is.GreaterThan(40));
+            Assert.That(embank, Is.GreaterThan(ends / 2), "the embankment check ran at most ends");
+            Assert.That(worstGap, Is.LessThan(0.005), "a bridge end the ribbon does not reach (or overruns)");
+            Assert.That(worstDy, Is.LessThan(0.005), "a step between the ribbon and the deck");
+            Assert.That(worstTurn, Is.LessThan(0.5), "a kink between the ribbon and the deck");
+            Assert.That(deckJoints, Is.GreaterThan(1000));
+            Assert.That(worstPhase, Is.LessThan(0.01), "the dashes restart at a bridge end");
+            Assert.That(worstDeckPhase, Is.LessThan(0.01), "the dashes jump at a deck joint");
+            Assert.That(worstBank, Is.LessThan(0.01), "the embankment stops short of the deck");
         }
 
         [Test]

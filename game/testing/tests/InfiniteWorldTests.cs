@@ -64,7 +64,7 @@ namespace UnturnedGodot.Testing
             var top = S.ToLocal(ax, Mathf.Max(gy, InfiniteTerrain.SeaLevel) + 40.0, az);
             var hit = World.GetWorld3D().DirectSpaceState.IntersectRay(PhysicsRayQueryParameters3D.Create(top, top + Vector3.Down * 120f, 1u << 0));
             float y;
-            if (hit.Count > 0 && hit["collider"].As<Node>()?.Name == "GroundBody") y = ((Vector3)hit["position"]).Y;
+            if (hit.Count > 0 && hit["collider"].As<Node>()?.Name.ToString() is "GroundBody" or "Paved" or "Trail") y = ((Vector3)hit["position"]).Y;   // a road is ground too
             else { y = gy; if (hit.Count == 0) _offCollider++; }
             p.TeleportTo(S.ToLocal(ax, Mathf.Max(y, InfiniteTerrain.SeaLevel) + 0.05, az));
         }
@@ -110,6 +110,35 @@ namespace UnturnedGodot.Testing
             int roadMeshes = 0;
             foreach (var n in S.FindChildren("Road_*", "MeshInstance3D", true, false)) roadMeshes++;
             T.Check($"...and the road is drawn: {roadMeshes} regions carry a road surface", roadMeshes > 0);
+            {
+                // the road is SOLID, with its thickness: a ray onto a road's middle stops on the slab's top at the core's
+                // SurfaceY (strawberry 2026-10-09: "give the road splines actual collision and the proper thickness"),
+                // on a body tagged for its surface. Before, the drawn ribbon had no collider and a car drove on the
+                // ground 0.12 m under the asphalt it was shown on.
+                var space = World.GetWorld3D().DirectSpaceState;
+                var fc = S.FocusRegion();
+                int probes = 0, wrongBody = 0; float worstTop = 0f; var kinds = new int[4];
+                for (int dz = -1; dz <= 1; dz++)
+                    for (int dx = -1; dx <= 1; dx++)
+                        foreach (var rp in S.Gen.Generate(new RegionCoord(fc.X + dx, fc.Z + dz), 0).Roads)
+                        {
+                            var kind = (RoadKind)rp.Kind;
+                            if (kind == RoadKind.Highway || kinds[rp.Kind] >= 6) continue;   // highways: the bridge-end probe below
+                            double mx = (rp.X0 + rp.X1) * 0.5, mz = (rp.Z0 + rp.Z1) * 0.5;
+                            // only where THIS road is the one under the point (not a junction another road shapes)
+                            var under = S.Gen.Roads.Influence(mx, mz);
+                            if (!under.Any || under.Kind != kind || under.Dist > 0.5f) continue;
+                            float want = InfiniteRoads.SurfaceY(kind, (rp.H0 + rp.H1) * 0.5f);
+                            var top = S.ToLocal(mx, want + 5.0, mz);
+                            var rh = space.IntersectRay(PhysicsRayQueryParameters3D.Create(top, top + Vector3.Down * 15f, 1u << 0));
+                            probes++; kinds[rp.Kind]++;
+                            if (rh.Count == 0) { worstTop = float.MaxValue; continue; }
+                            if (rh["collider"].As<Node>()?.Name != (kind == RoadKind.Trail ? "Trail" : "Paved")) wrongBody++;
+                            worstTop = Mathf.Max(worstTop, Mathf.Abs(((Vector3)rh["position"]).Y - want));
+                        }
+                T.Check($"a ray onto a road stops ON it: {probes} probes (main {kinds[1]}, small {kinds[2]}, trail {kinds[3]}), top within {worstTop * 1000f:0.0} mm of the driven surface, {wrongBody} on the wrong body",
+                    probes >= 4 && worstTop < 0.01f && wrongBody == 0);
+            }
             int spans = 0, fields = 0;
             foreach (var n in S.FindChildren("Wires", "", true, false)) if (n is PowerLineField f) { fields++; spans += f.SpanCount; }
             T.Check($"power lines strung beside it: {spans} spans in {fields} regions", spans > 10);
@@ -218,7 +247,43 @@ namespace UnturnedGodot.Testing
                 float roadY = hit.Count > 0 ? ((Vector3)hit["position"]).Y : float.NaN;
                 float ground = S.Gen.NaturalHeight(dk.X, dk.Z);
                 T.Check($"a ray onto the deck stops on its roadway: y {roadY:0.00} vs deck {dk.Y:0.00} (natural ground {ground:0.0} below)",
-                    hit.Count > 0 && Mathf.Abs(roadY - (float)dk.Y) < 0.3f && dk.Y - ground > 2f);
+                    hit.Count > 0 && Mathf.Abs(roadY - (float)dk.Y) < 0.01f && dk.Y - ground > 2f);
+            }
+            // ---- 6. A BRIDGE END: the road slab carries straight on to the deck -- same height on both sides of the
+            // joint, both solid (strawberry 2026-10-09: "make sure they are aligned properly and theres no big gap")
+            BridgePiece? cap = null;
+            for (int axis = 0; axis < 2 && cap == null; axis++)
+                for (long band = -1; band <= 0 && cap == null; band++)
+                    for (long k = -2; k <= 1 && cap == null; k++)
+                        foreach (var bp in S.Gen.Roads.BridgesOf(axis, band, k))
+                            if (bp.Kind == 2) { cap = bp; break; }
+            T.Check("the generator has a bridge end to visit", cap != null);
+            if (cap is BridgePiece cp)
+            {
+                S.TeleportAbsolute(cp.X + 30.0, cp.Z + 30.0);
+                yield return Wait(Settled, 60);
+                yield return Ticks(5);
+                var space = World.GetWorld3D().DirectSpaceState;
+                double ch = Mathf.Sqrt(cp.DX * cp.DX + cp.DZ * cp.DZ);
+                // the cap faces OUT of the bridge: +D is the approach road, -D the deck
+                (float y, string body) Drop(double along)
+                {
+                    double x = cp.X + cp.DX / ch * along, z = cp.Z + cp.DZ / ch * along;
+                    var top = S.ToLocal(x, cp.Y + 5.0, z);
+                    var h = space.IntersectRay(PhysicsRayQueryParameters3D.Create(top, top + Vector3.Down * 30f, 1u << 0));
+                    return h.Count > 0 ? (((Vector3)h["position"]).Y, h["collider"].As<Node>()?.Name ?? "?") : (float.NaN, "nothing");
+                }
+                float grade = cp.DY / (float)ch;
+                var (roadIn, bodyIn) = Drop(-0.25); var (roadOut, bodyOut) = Drop(0.25);
+                var (roadFar, bodyFar) = Drop(3.0);
+                float stepAcross = roadOut - roadIn - grade * 0.5f;
+                T.Check($"across the deck end the surface is continuous: deck {roadIn:0.000} ({bodyIn}) -> road {roadOut:0.000} ({bodyOut}), step {stepAcross * 1000f:0.0} mm after the {grade * 100f:0.0}% grade",
+                    bodyOut == "Paved" && bodyIn != "nothing" && bodyIn != "GroundBody" && Mathf.Abs(stepAcross) < 0.01f);
+                // the deck's baked two-way paint is gone from what is DRAWN (the highway mesh lays Highway_1 over it)
+                T.Check($"the deck unit's own roadway is stripped from its render mesh ({RegionStreamer.DeckRoadwayTrisStripped} triangles)",
+                    RegionStreamer.DeckRoadwayTrisStripped > 0);
+                T.Check($"...and 3 m along the approach it is still the road slab at its surface ({roadFar:0.000} on {bodyFar}, cap at {cp.Y:0.000})",
+                    bodyFar == "Paved" && Mathf.Abs(roadFar - ((float)cp.Y + grade * 3f)) < 0.03f);
             }
             T.Check($"nobody was ever rescued from under the ground ({S.Rescues})", S.Rescues == 0);
         }

@@ -54,6 +54,24 @@ namespace SDG.Unturned
         public static float MaxGrade(RoadKind k) => k switch { RoadKind.Highway => 0.07f, RoadKind.Main => 0.16f, RoadKind.Small => 0.14f, _ => 0.22f };
         public const float Bed = 0.12f;   // the ground under a paved surface sits this far below it
 
+        /// <summary>The road slab's thickness, RoadField's halfVerticalSize: PEI's own Roads.dat depth x DepthScale 1.1
+        /// (strawberry 2026-10-09: "the proper thickness (vertical height)"). Highway_0/1 and Road_8 are depth 0.2 ->
+        /// 0.22 m, Trail 0.3 -> 0.33 m. As in RoadField, each edge is a bevel running out AND down twice this from the
+        /// top, so its foot is buried.</summary>
+        public static float Thickness(RoadKind k) => k == RoadKind.Trail ? 0.33f : 0.22f;
+        /// <summary>How far every road's top stands over the ground it is carved into: the paved classes' Thickness.
+        /// ⚠ ONE value for all classes, trails included, because a trail or small road STARTS on its main road at the
+        /// main's profile height -- given its own 0.33 it would stand 9 cm proud of the main's surface over the overlap,
+        /// a ridge across the asphalt. The order between classes is Lift's job alone.</summary>
+        public const float Proud = 0.22f;
+        /// <summary>Per-class lift so no two surfaces that overlap z-fight: highways over the mains they cross, mains
+        /// over the small roads and trails that start under their edges.</summary>
+        public static float Lift(RoadKind k) => k switch { RoadKind.Highway => 0.045f, RoadKind.Main => 0.03f, RoadKind.Small => 0.015f, _ => 0.01f };
+        /// <summary>The DRIVEN surface of a road whose profile is at `profileH`: the ground under it (profile - Bed),
+        /// plus the slab, plus the lift. Ribbons, their colliders AND bridge decks all stand on this one number, which
+        /// is what makes a deck meet its approach flush.</summary>
+        public static float SurfaceY(RoadKind k, float profileH) => profileH - Bed + Proud + Lift(k);
+
         public const double MainCell = 1536.0;
         public const double HighwayBand = 12000.0, HighwaySeg = 6000.0;
         const int MainCtrl = 24, Sub = 4;
@@ -82,6 +100,11 @@ namespace SDG.Unturned
             public List<Stretch> Cut;
             public bool[][] RaisedSeg, CutSeg;   // [carriageway: 0 = -offset side, 1 = +offset side][segment] (what PiecesIn copies onto pieces)
             public List<BridgePiece> BridgePieces;   // the bridges over this line's Raised stretches, walked once with the line
+            /// <summary>Per carriageway [0 = -offset, 1 = +offset], the spans its bridge decks ACTUALLY cover, as
+            /// fractional dense-point indices (k + t). The ribbon is cut and the carve suspended over exactly these --
+            /// not over whole raised SEGMENTS, which left up to a deck's length at each bridge end with neither road nor
+            /// deck (strawberry: "make sure they are aligned properly and theres no big gap").</summary>
+            public List<DeckSpan>[] DeckCover;
             public bool Exists => X != null;
             public int Segments => X.Length - 1;
         }
@@ -115,6 +138,8 @@ namespace SDG.Unturned
         public static bool Bridges = Environment.GetEnvironmentVariable("UG_INF_BRIDGES") != "0";
         public const float BridgePitch = 7.8349f;        // one lane-dash period of the deck's own paint
         public const float BridgeHalfWidth = 8.5f;       // the deck's half-width: sets how much a joint closes on a bend
+        /// <summary>Half the deck's ROADWAY, between the parapets' inner feet (the cut unit's local X +-8.0 at Z 0).</summary>
+        public const float DeckRoadwayHalf = 8.0f;
         public const float DeckSoffit = -4.00f, DeckParapetTop = 1.25f;
         public const float PierTop = -2.98f, PierBottom = -52.98f;
         public const float PierSpan = PierTop - PierBottom;
@@ -498,26 +523,47 @@ namespace SDG.Unturned
             }
             // only the stretch itself is bridged: start and end at its own first and last points
             double a0 = st.I0 > 0 ? arc[1] : 0, a1 = st.I1 < e.X.Length - 1 ? arc[n - 2] : arc[n - 1];
+            // the deck's roadway is its local Z=0, so it sits ON the driven surface -- the same SurfaceY the approach
+            // slab's top is at, which is what makes the two meet flush (EditorBridgeSpline lifts by RoadSurfaceOffset
+            // for the same reason)
+            double surf = SurfaceY(RoadKind.Highway, 0f);
             (double x, double y, double z) At(double s)
             {
                 s = Math.Clamp(s, 0, arc[n - 1]);
                 int k = 0; while (k < n - 2 && arc[k + 1] < s) k++;
                 double t = (s - arc[k]) / Math.Max(1e-9, arc[k + 1] - arc[k]);
-                return (pts[k].x + (pts[k + 1].x - pts[k].x) * t, pts[k].h + (pts[k + 1].h - pts[k].h) * t, pts[k].z + (pts[k + 1].z - pts[k].z) * t);
+                return (pts[k].x + (pts[k + 1].x - pts[k].x) * t, pts[k].h + (pts[k + 1].h - pts[k].h) * t + surf, pts[k].z + (pts[k + 1].z - pts[k].z) * t);
             }
             (double x, double y, double z) Dir((double x, double y, double z) p, (double x, double y, double z) q)
             {
                 double dx = q.x - p.x, dy = q.y - p.y, dz = q.z - p.z, l = Math.Sqrt(dx * dx + dy * dy + dz * dz);
                 return l < 1e-9 ? (1, 0, 0) : (dx / l, dy / l, dz / l);
             }
-            int units = 0;
+            int units = 0, jBase = Math.Max(0, st.I0 - 1);
+            double sLastEnd = a0;
+            // the ribbon's texture distance (horizontal arc along this carriageway from the line's start) at each point
+            var tex = new double[n];
+            {
+                var head = CarriagewayPts(e, st.Side, 0, jBase);
+                for (int i = 1; i < head.Length; i++) tex[0] += Math.Sqrt((head[i].x - head[i - 1].x) * (head[i].x - head[i - 1].x) + (head[i].z - head[i - 1].z) * (head[i].z - head[i - 1].z));
+                for (int i = 1; i < n; i++) tex[i] = tex[i - 1] + Math.Sqrt((pts[i].x - pts[i - 1].x) * (pts[i].x - pts[i - 1].x) + (pts[i].z - pts[i - 1].z) * (pts[i].z - pts[i - 1].z));
+            }
+            float TexAt(double s)
+            {
+                s = Math.Clamp(s, 0, arc[n - 1]);
+                int k = 0; while (k < n - 2 && arc[k + 1] < s) k++;
+                double t = (s - arc[k]) / Math.Max(1e-9, arc[k + 1] - arc[k]);
+                return (float)(tex[k] + (tex[k + 1] - tex[k]) * t);
+            }
             (double x, double y, double z) firstMid = default, lastMid = default, firstDir = default, lastDir = default;
             for (double s = a0; s + BridgePitch <= a1 + 1e-3;)
             {
                 var p0 = At(s); var p1 = At(s + BridgePitch);
+                sLastEnd = s + BridgePitch;
                 var dir = Dir(p0, p1);
                 var mid = ((p0.x + p1.x) * 0.5, (p0.y + p1.y) * 0.5, (p0.z + p1.z) * 0.5);
-                outp.Add(new BridgePiece { Kind = 0, X = mid.Item1, Y = mid.Item2, Z = mid.Item3, DX = (float)dir.x, DY = (float)dir.y, DZ = (float)dir.z, K = 1f });
+                outp.Add(new BridgePiece { Kind = 0, X = mid.Item1, Y = mid.Item2, Z = mid.Item3, DX = (float)dir.x, DY = (float)dir.y, DZ = (float)dir.z, K = 1f,
+                                           S0 = TexAt(s), S1 = TexAt(s + BridgePitch) });
                 if (units == 0) { firstMid = mid; firstDir = dir; }
                 lastMid = mid; lastDir = dir;
                 if (units % PierEveryUnits == 0)
@@ -538,11 +584,68 @@ namespace SDG.Unturned
                 s += BridgePitch - overlap;
             }
             if (units == 0) return;
+            // the span the decks cover, in the line's dense-index space, so ribbon and carve stop exactly where they do
+            double Frac(double s)
+            {
+                s = Math.Clamp(s, 0, arc[n - 1]);
+                int k = 0; while (k < n - 2 && arc[k + 1] < s) k++;
+                return jBase + k + (s - arc[k]) / Math.Max(1e-9, arc[k + 1] - arc[k]);
+            }
+            e.DeckCover ??= new[] { new List<DeckSpan>(), new List<DeckSpan>() };
+            e.DeckCover[st.Side < 0 ? 0 : 1].Add(new DeckSpan(Frac(a0), Frac(sLastEnd), Heading(firstDir), Heading(lastDir)));
+            static (float x, float z) Heading((double x, double y, double z) d)
+            {
+                double l = Math.Sqrt(d.x * d.x + d.z * d.z);
+                return l < 1e-9 ? (1f, 0f) : ((float)(d.x / l), (float)(d.z / l));
+            }
             // end caps, facing OUT: the far one along the run, the near one against it
             outp.Add(new BridgePiece { Kind = 2, X = lastMid.x + lastDir.x * BridgePitch * 0.5, Y = lastMid.y + lastDir.y * BridgePitch * 0.5, Z = lastMid.z + lastDir.z * BridgePitch * 0.5,
                                        DX = (float)lastDir.x, DY = (float)lastDir.y, DZ = (float)lastDir.z, K = 1f });
             outp.Add(new BridgePiece { Kind = 2, X = firstMid.x - firstDir.x * BridgePitch * 0.5, Y = firstMid.y - firstDir.y * BridgePitch * 0.5, Z = firstMid.z - firstDir.z * BridgePitch * 0.5,
                                        DX = -(float)firstDir.x, DY = -(float)firstDir.y, DZ = -(float)firstDir.z, K = 1f });
+        }
+
+        /// <summary>How far the embankment reaches in under a deck end -- more than one LOD0 ground cell, so the
+        /// cell the deck ends in is carved on its approach side.</summary>
+        public const float AbutmentTuck = 2f;
+
+        /// <summary>One bridge's span on one carriageway: from F0 to F1 in the line's dense-index space (k + t), and the
+        /// deck's horizontal heading at each end. The ribbon's cut edge is squared to THAT heading, not its own segment's:
+        /// a deck unit is a straight chord, so where one spans a profile vertex it points up to half the vertex's bend
+        /// off either segment -- 3.15 deg at worst, which at the deck's 8.5 m half-width is a 0.47 m wedge at its end.</summary>
+        public readonly record struct DeckSpan(double F0, double F1, (float x, float z) StartHeading, (float x, float z) EndHeading);
+
+        static bool Covered(List<DeckSpan> cover, double f, double inset = 0)
+        {
+            if (cover == null) return false;
+            foreach (var c in cover) if (f >= c.F0 + inset && f <= c.F1 - inset) return true;
+            return false;
+        }
+
+        /// <summary>The sub-intervals (in t, 0..1) of segment k that no deck covers, each with the heading its end must
+        /// be squared to where that end meets a deck (null where it is an ordinary piece joint).</summary>
+        static List<(double u0, double u1, (float x, float z)? t0, (float x, float z)? t1)> Uncovered(List<DeckSpan> cover, int k)
+        {
+            const double Eps = 1e-9;
+            var free = new List<(double u0, double u1, (float x, float z)? t0, (float x, float z)? t1)> { (0.0, 1.0, null, null) };
+            if (cover == null) return free;
+            foreach (var c in cover)
+            {
+                double c0 = c.F0 - k, c1 = c.F1 - k;
+                if (c1 < -Eps || c0 > 1 + Eps) continue;
+                var next = new List<(double, double, (float, float)?, (float, float)?)>();
+                foreach (var f in free)
+                {
+                    // the deck starts at or past this interval's end: untouched, but squared to the deck if they MEET
+                    if (c0 >= f.u1 - Eps) { next.Add(c0 <= f.u1 + Eps ? (f.u0, f.u1, f.t0, c.StartHeading) : f); continue; }
+                    if (c1 <= f.u0 + Eps) { next.Add(c1 >= f.u0 - Eps ? (f.u0, f.u1, c.EndHeading, f.t1) : f); continue; }
+                    if (c0 > f.u0) next.Add((f.u0, c0, f.t0, c.StartHeading));
+                    if (c1 < f.u1) next.Add((c1, f.u1, c.EndHeading, f.t1));
+                }
+                free = next;
+            }
+            free.RemoveAll(f => f.u1 - f.u0 < 1e-6);
+            return free;
         }
 
         /// <summary>The bridge pieces whose root lies in the rectangle (each piece belongs to exactly one region).</summary>
@@ -774,7 +877,7 @@ namespace SDG.Unturned
             foreach (var e in lines)
             {
                 if (x < e.MinX || x > e.MaxX || z < e.MinZ || z > e.MaxZ) continue;
-                float best = float.MaxValue, bh = 0f; int bestK = -1; bool bestRight = false;
+                float best = float.MaxValue, bh = 0f; int bestK = -1; double bestT = 0; bool bestRight = false;
                 for (int c = 0; c < e.CMinX.Length; c++)
                 {
                     if (x < e.CMinX[c] || x > e.CMaxX[c] || z < e.CMinZ[c] || z > e.CMaxZ[c]) continue;
@@ -786,7 +889,7 @@ namespace SDG.Unturned
                         double t = Math.Clamp((qx * sx + qz * sz) / (sx * sx + sz * sz), 0.0, 1.0);
                         double ex = qx - sx * t, ez = qz - sz * t;
                         float dist = (float)Math.Sqrt(ex * ex + ez * ez);
-                        if (dist < best) { best = dist; bh = e.H[k] + (e.H[k + 1] - e.H[k]) * (float)t; bestK = k; bestRight = -ex * sz + ez * sx >= 0; }
+                        if (dist < best) { best = dist; bh = e.H[k] + (e.H[k + 1] - e.H[k]) * (float)t; bestK = k; bestT = t; bestRight = -ex * sz + ez * sx >= 0; }
                     }
                 }
                 if (best == float.MaxValue) continue;
@@ -795,7 +898,13 @@ namespace SDG.Unturned
                 if (best >= half + sh) continue;
                 // UNDER A BRIDGE the carve leaves the ground alone: the deck spans it, piers stand on it. Per carriageway,
                 // so a road along a side slope keeps its embankment on the side that is not bridged.
-                if (Bridges && e.RaisedSeg != null && bestK >= 0 && e.RaisedSeg[bestRight ? 1 : 0][bestK]) continue;
+                // The embankment runs AbutmentTuck metres in under each deck end, so the ground grid's last carved vertex
+                // is never short of the deck and the approach slab never overhangs a dip.
+                if (Bridges && e.DeckCover != null && bestK >= 0)
+                {
+                    double sx = e.X[bestK + 1] - e.X[bestK], sz = e.Z[bestK + 1] - e.Z[bestK];
+                    if (Covered(e.DeckCover[bestRight ? 1 : 0], bestK + bestT, AbutmentTuck / Math.Max(1e-6, Math.Sqrt(sx * sx + sz * sz)))) continue;
+                }
                 float w = Smoothstep(half + sh, half, best);
                 // strongest carve wins; inside two corridors at once, the one you are deeper inside
                 if (!hit.Any || w > hit.Weight + 1e-6f || (w >= hit.Weight - 1e-6f && best - half < hit.Dist - PavedHalf(hit.Kind)))
@@ -831,12 +940,9 @@ namespace SDG.Unturned
                 var tgx = new float[n + 1]; var tgz = new float[n + 1];
                 for (int i = 0; i <= n; i++)
                 {
-                    int a = Math.Max(0, i - 1), b = Math.Min(n - 1, i);
-                    double ax = e.X[a + 1] - e.X[a], az = e.Z[a + 1] - e.Z[a], al = Math.Sqrt(ax * ax + az * az);
-                    double bx = e.X[b + 1] - e.X[b], bz = e.Z[b + 1] - e.Z[b], bl = Math.Sqrt(bx * bx + bz * bz);
-                    double mx = ax / al + bx / bl, mz = az / al + bz / bl, ml = Math.Sqrt(mx * mx + mz * mz);
-                    tgx[i] = (float)(mx / ml); tgz[i] = (float)(mz / ml);
-                    rx[i] = e.X[i] - tgz[i] * offset; rz[i] = e.Z[i] + tgx[i] * offset;
+                    var (tx, tz) = RibbonTangent(e, i);
+                    tgx[i] = (float)tx; tgz[i] = (float)tz;
+                    rx[i] = e.X[i] - tz * offset; rz[i] = e.Z[i] + tx * offset;
                 }
                 float s = 0f;
                 for (int k = 0; k < n; k++)
@@ -845,10 +951,14 @@ namespace SDG.Unturned
                     float segLen = (float)Math.Sqrt(sx * sx + sz * sz);
                     if (segLen < 1e-4f) continue;
                     float dX = (float)(sx / segLen), dZ = (float)(sz / segLen);
-                    int pcs = Math.Max(1, (int)Math.Ceiling(segLen / maxPiece));
+                    // the parts of this segment NOT under a bridge deck (all of it, almost always), each cut into pieces
+                    var cover = Bridges && offset != 0.0 && e.DeckCover != null ? e.DeckCover[offset > 0 ? 1 : 0] : null;
+                    foreach (var (u0, u1, sq0, sq1) in Uncovered(cover, k))
+                    {
+                    int pcs = Math.Max(1, (int)Math.Ceiling(segLen * (u1 - u0) / maxPiece));
                     for (int p = 0; p < pcs; p++)
                     {
-                        double ta = (double)p / pcs, tb = (double)(p + 1) / pcs;
+                        double ta = u0 + (u1 - u0) * p / pcs, tb = u0 + (u1 - u0) * (p + 1) / pcs;
                         double mx = rx[k] + sx * (ta + tb) * 0.5, mz = rz[k] + sz * (ta + tb) * 0.5;
                         if (mx < x0 || mx >= x1 || mz < z0 || mz >= z1) continue;
                         list.Add(new RoadPiece
@@ -857,11 +967,16 @@ namespace SDG.Unturned
                             X0 = rx[k] + sx * ta, Z0 = rz[k] + sz * ta, X1 = rx[k] + sx * tb, Z1 = rz[k] + sz * tb,
                             H0 = e.H[k] + (e.H[k + 1] - e.H[k]) * (float)ta, H1 = e.H[k] + (e.H[k + 1] - e.H[k]) * (float)tb,
                             S0 = s + segLen * (float)ta, S1 = s + segLen * (float)tb,
-                            T0X = p == 0 ? tgx[k] : dX, T0Z = p == 0 ? tgz[k] : dZ,
-                            T1X = p == pcs - 1 ? tgx[k + 1] : dX, T1Z = p == pcs - 1 ? tgz[k + 1] : dZ,
+                            // a piece end that meets a deck is squared to the DECK's heading (see DeckSpan); ends at a
+                            // profile point take the averaged tangent the neighbouring piece also takes; the rest, the
+                            // segment's own
+                            T0X = p == 0 && sq0.HasValue ? sq0.Value.x : ta == 0 ? tgx[k] : dX, T0Z = p == 0 && sq0.HasValue ? sq0.Value.z : ta == 0 ? tgz[k] : dZ,
+                            T1X = p == pcs - 1 && sq1.HasValue ? sq1.Value.x : tb == 1 ? tgx[k + 1] : dX, T1Z = p == pcs - 1 && sq1.HasValue ? sq1.Value.z : tb == 1 ? tgz[k + 1] : dZ,
                             Raised = offset != 0.0 && e.RaisedSeg != null && e.RaisedSeg[offset > 0 ? 1 : 0][k],
                             Cut = offset != 0.0 && e.CutSeg != null && e.CutSeg[offset > 0 ? 1 : 0][k],
+                            OpenStart = k == 0 && ta == 0, OpenEnd = k == n - 1 && tb == 1,
                         });
+                    }
                     }
                     s += segLen;
                 }
@@ -949,15 +1064,26 @@ namespace SDG.Unturned
         /// <summary>The centreline of one carriageway (side -1/+1) over dense points i0..i1, at the road's height.</summary>
         static (double x, double z, float h)[] CarriagewayPts(Line e, int side, int i0, int i1)
         {
-            int n = e.X.Length;
             var pts = new (double, double, float)[i1 - i0 + 1];
             for (int i = i0; i <= i1; i++)
             {
-                int a = Math.Max(0, i - 1), b = Math.Min(n - 1, i + 1);
-                double tx = e.X[b] - e.X[a], tz = e.Z[b] - e.Z[a], tl = Math.Sqrt(tx * tx + tz * tz);
-                pts[i - i0] = (e.X[i] - tz / tl * side * HighwayRibbonOffset, e.Z[i] + tx / tl * side * HighwayRibbonOffset, e.H[i]);
+                var (tx, tz) = RibbonTangent(e, i);
+                pts[i - i0] = (e.X[i] - tz * side * HighwayRibbonOffset, e.Z[i] + tx * side * HighwayRibbonOffset, e.H[i]);
             }
             return pts;
+        }
+
+        /// <summary>The heading at dense point i that a carriageway is offset along: the mean of the two adjoining
+        /// segments' UNIT directions. ⚠ ONE definition for the ribbon AND the bridge walk. They used to differ (the
+        /// walk took the central difference, which leans toward the longer neighbour), and a deck laid on one polyline
+        /// meeting a ribbon built on the other is a lateral step at every bridge end.</summary>
+        static (double tx, double tz) RibbonTangent(Line e, int i)
+        {
+            int n = e.Segments, a = Math.Max(0, i - 1), b = Math.Min(n - 1, i);
+            double ax = e.X[a + 1] - e.X[a], az = e.Z[a + 1] - e.Z[a], al = Math.Sqrt(ax * ax + az * az);
+            double bx = e.X[b + 1] - e.X[b], bz = e.Z[b + 1] - e.Z[b], bl = Math.Sqrt(bx * bx + bz * bz);
+            double mx = ax / al + bx / bl, mz = az / al + bz / bl, ml = Math.Sqrt(mx * mx + mz * mz);
+            return (mx / ml, mz / ml);
         }
         /// <summary>Test accessor: the bridge pieces of a highway segment (and of the far side of a water gap), in walk
         /// order -- each bridge's decks and piers, then its two caps.</summary>

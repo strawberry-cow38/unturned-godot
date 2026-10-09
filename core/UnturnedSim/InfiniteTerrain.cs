@@ -83,6 +83,9 @@ namespace SDG.Unturned
         public float T0X, T0Z, T1X, T1Z;
         /// <summary>A highway piece on a RAISED stretch (InfiniteRoads.Stretch): where a spline bridge will go.</summary>
         public bool Raised;
+        /// <summary>This piece is its line's first / last: the slab gets a ramp there, as RoadField's end caps do. NOT
+        /// set where a ribbon is cut for a bridge deck -- the deck carries on from that edge.</summary>
+        public bool OpenStart, OpenEnd;
         /// <summary>A highway piece on a deep CUT stretch: a tunnel candidate.</summary>
         public bool Cut;
     }
@@ -97,6 +100,10 @@ namespace SDG.Unturned
         public double X, Y, Z;
         public float DX, DY, DZ;
         public float K;
+        /// <summary>A deck unit's back and front ends as distance along its carriageway -- the SAME measure the
+        /// ribbon's RoadPiece.S uses, so the roadway drawn over the deck carries the approach's dashes straight on
+        /// instead of restarting them at the bridge.</summary>
+        public float S0, S1;
     }
 
     /// <summary>A power-line pole beside a road (absolute metres), the road's direction there, and the next pole along
