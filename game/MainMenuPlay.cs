@@ -34,6 +34,8 @@ namespace UnturnedGodot
         // whole point of a deterministic generator -- an island you liked is a number you can write down.
         bool _generateSelected;
         bool _playgroundSelected;   // Playground picked in the map list -> PLAY runs the gun range, not a survival map
+        bool _infiniteSelected;     // Infinite World picked -> PLAY streams an endless procgen world (seed from the generate row)
+        public System.Action<int> OnInfinite;
         // ⚠ ROLLED, NOT 1234 (strawberry 2026-09-16: "make the default seed NOT 1234, but a random one"). A
         // constant default means the island everybody sees first is the same island, and "procedurally
         // generated" is a claim the front door was quietly contradicting. The dice button beside the field
@@ -267,6 +269,11 @@ namespace UnturnedGodot
             pgBtn.AddThemeColorOverride("font_color", new Color(0.92f, 0.86f, 0.62f));
             pgBtn.Pressed += () => SelectPlayground();
             list.AddChild(pgBtn);
+            var infBtn = new Button { Text = "  \u221e  Infinite World (prototype)", CustomMinimumSize = new Vector2(400f, 46f), Alignment = HorizontalAlignment.Left };
+            infBtn.AddThemeFontSizeOverride("font_size", 16);
+            infBtn.AddThemeColorOverride("font_color", new Color(0.92f, 0.86f, 0.62f));
+            infBtn.Pressed += () => SelectInfinite();
+            list.AddChild(infBtn);
             list.AddChild(new HSeparator());
             foreach (var m in OfficialMaps) list.AddChild(MapRow(m.name, m.key, m.playable, m.desc));
             _officialList = list;
@@ -420,6 +427,8 @@ namespace UnturnedGodot
         {
             _generateSelected = true;
             _playgroundSelected = false;
+            _infiniteSelected = false;
+            if (_genLakes != null) _genLakes.Visible = true;
             _selectedMap = GenerateMapName;
             _selectedPlayable = true;
             if (_previewName != null) _previewName.Text = GenerateMapName;
@@ -429,10 +438,28 @@ namespace UnturnedGodot
             DisarmReset();
         }
 
+        // Infinite World (strawberry 2026-10-09) -- endless procgen terrain, streamed. Shares the generate row's seed
+        // field (the lakes box means nothing here, so it hides).
+        void SelectInfinite()
+        {
+            _infiniteSelected = true;
+            _playgroundSelected = false;
+            _generateSelected = false;
+            _selectedMap = "Infinite World";
+            _selectedPlayable = true;
+            if (_previewName != null) _previewName.Text = "Infinite World";
+            if (_descLabel != null) _descLabel.Text = "PROTOTYPE. An endless generated world -- continents, mountain belts, forests -- streamed in around you as you go. Same seed, same world. Singleplayer only, no zombies or loot yet.";
+            if (_previewImage != null) _previewImage.Texture = null;
+            if (_genRow != null) _genRow.Visible = true;
+            if (_genLakes != null) _genLakes.Visible = false;
+            DisarmReset();
+        }
+
         // Playground -- master moved it out of the Play submenu into its own map here (the gun range, not a survival map).
         void SelectPlayground()
         {
             _playgroundSelected = true;
+            _infiniteSelected = false;
             _generateSelected = false;
             _selectedMap = "Playground";
             _selectedPlayable = true;
@@ -447,6 +474,7 @@ namespace UnturnedGodot
         {
             _generateSelected = false;
             _playgroundSelected = false;
+            _infiniteSelected = false;
             if (_genRow != null) _genRow.Visible = false;
             _selectedMap = name;
             _selectedPlayable = playable;
@@ -569,6 +597,16 @@ namespace UnturnedGodot
             // so this has to be set before the build, not after.
             WorldBuilder.ZombiesOverride = _optZombies == 1;
             if (_playgroundSelected) { OnPlayground?.Invoke(); return; }   // the gun range, not a survival map
+            if (_infiniteSelected)
+            {
+                if (_genSeedEdit != null && !int.TryParse(_genSeedEdit.Text, out _genSeed))
+                {
+                    if (_descLabel != null) _descLabel.Text = "Seed must be a whole number.";
+                    return;
+                }
+                OnInfinite?.Invoke(_genSeedEdit != null ? _genSeed : InfiniteWorld.DefaultSeed);
+                return;
+            }
             if (_generateSelected)
             {
                 // Read the field rather than trusting _genSeed: TextChanged only fires on a parseable value, so

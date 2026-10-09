@@ -547,6 +547,18 @@ namespace UnturnedGodot
             }
         }
 
+        /// <summary>FLOATING ORIGIN (the infinite world, RegionStreamer): the world moved by `delta`, so move the player
+        /// with it -- and everything the player remembers about where it was. Unlike TeleportTo this KEEPS velocity:
+        /// a rebase happens mid-sprint or mid-fall and must be invisible. The render-interp snapshots shift too, or
+        /// the next 50 Hz tick lerps the camera across the whole kilometre.</summary>
+        public void ShiftOrigin(Vector3 delta)
+        {
+            GlobalPosition += delta;
+            _interpPrev += delta; _interpCurr += delta;
+            Spawn += delta;
+            ResetPhysicsInterpolation();
+        }
+
         // Map arrow (M map): radians for a 2D arrow that points up=north at 0, turning clockwise. Source sets
         // localPlayerImage.RotationAngle = player yaw; we take the look/camera forward on the XZ plane. Godot 2D
         // rotation is clockwise-positive, so an up-pointing arrow rotates by atan2(fx, -fz).

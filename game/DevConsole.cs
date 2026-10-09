@@ -79,7 +79,7 @@ namespace UnturnedGodot
         const float GoldenAngle = 2.39996323f;
         int _animalSpawnSeq;
 
-        static readonly string[] Verbs = { "wellshaft", "give", "throw", "vehicle", "spawnMagnetableContainer", "spawnheli", "sam", "spawntrain", "spawncrane", "spawncraneontrack", "spawncontainerflatbed", "spawnelevator", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "save", "wipe", "hurttest", "heal", "datacode", "sethp", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "kill", "profiler", "renderscale", "vertexlight", "weather", "credits", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys", "procisland", "temp", "tempset", "tempHold", "wetness", "thermal", "worldTemp", "startDate", "spawnAnimal", "npc", "trade", "tradestock", "tradepick", "quest", "gesture", "flag", "menu", "track", "say", "learn", "learnall", "forget", "blueprints" };
+        static readonly string[] Verbs = { "world", "wellshaft", "give", "throw", "vehicle", "spawnMagnetableContainer", "spawnheli", "sam", "spawntrain", "spawncrane", "spawncraneontrack", "spawncontainerflatbed", "spawnelevator", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "save", "wipe", "hurttest", "heal", "datacode", "sethp", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "infAmmo", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout", "hurtmain", "killmain", "hurttail", "killtail", "kill", "profiler", "renderscale", "vertexlight", "weather", "credits", "fridge", "fill", "empty", "units", "simspeed", "time", "timeset", "timeadd", "timespeed", "daylength", "hitbox", "heliphys", "procisland", "temp", "tempset", "tempHold", "wetness", "thermal", "worldTemp", "startDate", "spawnAnimal", "npc", "trade", "tradestock", "tradepick", "quest", "gesture", "flag", "menu", "track", "say", "learn", "learnall", "forget", "blueprints" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -181,6 +181,28 @@ namespace UnturnedGodot
             var parts = cmd.Split(' ', 2, System.StringSplitOptions.RemoveEmptyEntries);
             string verb = parts[0].ToLowerInvariant();
             string arg = parts.Length > 1 ? parts[1].Trim() : "";
+
+            // world [tp <x> <z>]  -- the infinite world (InfiniteWorld / RegionStreamer). Bare: where you are and what is
+            // loaded. tp: jump to an ABSOLUTE position in metres -- `world tp 10000000 -3000000` is the far-origin check
+            // in one line. Above the arg guard because the bare form is the common one.
+            if (verb == "world")
+            {
+                var s = RegionStreamer.Active;
+                if (s == null || !IsInstanceValid(s)) { Echo("not in the infinite world (Play -> Infinite World, or --infinite)"); return; }
+                var wa = arg.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                if (wa.Length == 3 && wa[0] == "tp"
+                    && double.TryParse(wa[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double tx)
+                    && double.TryParse(wa[2], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double tz))
+                {
+                    s.TeleportAbsolute(tx, tz);
+                    Echo($"teleported to {tx:N0}, {tz:N0} (region {RegionCoord.Containing(tx, tz)})");
+                    return;
+                }
+                if (wa.Length > 0) { Echo("usage: world | world tp <x> <z>   (absolute metres)"); return; }
+                var fp = s.Focus.GlobalPosition;
+                Echo($"seed {s.Gen.Seed}  abs {s.AbsX(fp.X):N0}, {s.AbsZ(fp.Z):N0}  region {s.FocusRegion()}  origin {s.OriginX:N0}, {s.OriginZ:N0}  rebases {s.Rebases}  ground {s.Gen.HeightAt(s.AbsX(fp.X), s.AbsZ(fp.Z)):0.0} m");
+                return;
+            }
 
             // report <text>  -- file a bug report with typed text instead of a held-key voice note. This is the
             // fallback path when a player has no working microphone, and the entry point an automated test can

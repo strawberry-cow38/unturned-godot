@@ -10,6 +10,7 @@ namespace UnturnedGodot
     //   -- --catalog=M : point ContentProvider at the full external manifest M.
     public partial class Main : Node
     {
+        int? _infiniteSeed;   // --infinite[=SEED]
         const string GateGuid = "fb9428c7b8df82e4eb9642dacfaf9567"; // Aprix_Mask_0, ripped from core.masterbundle
 
         int _bakeHullsFrames = -1;   // --bakehulls frame countdown (-1 = inactive)
@@ -399,6 +400,7 @@ namespace UnturnedGodot
                     ResourceField.MapDir = mn == "PEI" ? "resources" : "resources_" + key.ToLower();
                     Terrain.MapDir = mn == "PEI" ? "terrain" : "terrain_" + key.ToLower();
                 }
+                else if (arg == "--infinite" || arg.StartsWith("--infinite=")) _infiniteSeed = arg.Contains('=') && int.TryParse(arg.Substring(arg.IndexOf('=') + 1), out int _is) ? _is : InfiniteWorld.DefaultSeed;   // INFINITE WORLD prototype: endless procgen terrain streamed in 256 m regions, floating origin (UG_INF_AT / UG_INF_CAM, see InfiniteWorld)
                 else if (arg == "--playground") playground = true;   // GUN PLAYGROUND: flat lane + player-shaped dummies at 10/25/50/100/200/300 m, floating damage numbers
                 else if (arg == "--peiplay") peiplay = true;     // player standing/walking on real PEI terrain (with colliders)
                 else if (arg.StartsWith("--arenaspawns")) arenaSpawns = arg.Contains('=') ? arg.Split('=', 2)[1] : "";   // arena: debug-render the 8 spawns in a POI (=name, else default)
@@ -606,6 +608,13 @@ namespace UnturnedGodot
 
 
             if (playground) { WorldBuilder.BuildPlaygroundWorld(this); return; }
+            if (_infiniteSeed is int infSeed)
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                _shotPath = shot;   // captured after UG_SHOTTIME seconds (the regions stream in over the first few)
+                InfiniteWorld.Build(this, infSeed);
+                return;
+            }
             if (arenaSpawns != null)   // --arenaspawns[=POI]: debug-render the 8 arena spawns in a POI (master: eyeball placement)
             {
                 GetWindow().Size = new Vector2I(1280, 720);
@@ -1116,7 +1125,8 @@ namespace UnturnedGodot
                     // reload -- the node that knew why is gone. Show it once, on the rebuilt menu.
                     if (!string.IsNullOrEmpty(PendingJoinError)) { var err = PendingJoinError; PendingJoinError = null; menu.ShowJoinError(err); }
                     menu.OnEditor = () => { menu.QueueFree(); BuildEditor(); };   // Workshop -> the singleplayer map editor (PEI)
-                    menu.OnPlayground = () => { menu.QueueFree(); WorldBuilder.BuildPlaygroundWorld(this); };   // Playground -> the gun range (same entry as --playground)
+                    menu.OnPlayground = () => { menu.QueueFree(); WorldBuilder.BuildPlaygroundWorld(this); };
+                    menu.OnInfinite = seed => { menu.QueueFree(); InfiniteWorld.Build(this, seed); };   // Infinite World (prototype) -- same entry as --infinite=SEED   // Playground -> the gun range (same entry as --playground)
                     menu.OnOpenMap = name => { menu.QueueFree(); BuildEditorNew(name); };   // Workshop -> a custom map by name (creates or opens)
                     // Play a custom map: open it exactly as the editor does, then enter play immediately. NOT a
                     // second world-building path -- a "play build" that assembles the map its own way is how the
@@ -11396,7 +11406,8 @@ namespace UnturnedGodot
             else if (_itemTest) { if (++_frame < 90) return; }   // itemtest: let the dropped items FALL + settle onto the plane before the shot
             else if (_driveTest) { if (++_frame < 120) return; }   // drivetest: let the car spawn+enter+drive (+ --demo damage->explosion) play out before the shot
             else if (_fireTest) { if (System.Environment.GetEnvironmentVariable("UG_ADS") == "1") { if (_ftFrame < 70) return; } else if (System.Environment.GetEnvironmentVariable("UG_NOFIRE") == "1") { if (_ftFrame < 75) return; } else if (_ftPlayer == null || _ftPlayer.Ammo > 20 || _ftFrame < 75) return; }   // firetest: capture once ~10 shots fired (high-cap: Ammo<=20); the _ftFrame>=75 floor lets a low-cap gun (launcher = 1 rocket at frame 60) actually fire + impact before the quit. UG_ADS: capture the settled aim frame (70) instead
-            else if (_worldBuild) { if (!_worldReady || ++_frame < ShotSettleFrames) return; }   // objects/peidrive: WAIT for the async world (terrain..trees) to finish + settle before the shot
+            else if (_worldBuild) { if (!_worldReady || ++_frame < ShotSettleFrames) return; }
+            else if (_infiniteSeed != null) { if (!(RegionStreamer.Active?.Settled ?? false) || ++_frame < 8) return; }   // the infinite world: every ring streamed in, then a few frames for the uploads to draw   // objects/peidrive: WAIT for the async world (terrain..trees) to finish + settle before the shot
             else if (System.Environment.GetEnvironmentVariable("UG_DEPLOYDMG") != null) { if (++_frame < 45) return; }   // deploytest damage: let smoke/fire particles accumulate before the shot
             else if (System.Environment.GetEnvironmentVariable("UG_WIREWRECK") == "1") { if (++_frame < 20) return; }   // shatter: catch the debris collapsing toward the ground
             else if (System.Environment.GetEnvironmentVariable("UG_WIRETEST") == "1") { if (++_frame < 50) return; }   // wire test: let the lamp warmup envelope settle (past the flicker ramp) before capturing steady state

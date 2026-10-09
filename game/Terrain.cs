@@ -182,19 +182,55 @@ void fragment() {
 }
 ";
 
-        static ShaderMaterial BuildTerrainMaterial(Texture2D splat0, Texture2D splat1)
+        static Texture2DArray LoadAlbedoArray(string[] dirs = null)
         {
             var imgs = new Godot.Collections.Array<Image>();
             for (int l = 0; l < SLAYERS; l++)
             {
                 var img = new Image();
-                if (!ContentProvider.LoadOk(img, ProjectSettings.GlobalizePath($"res://content/{MapDir}/layer{l}.png"))) { Log.Print($"[TERRAIN] texture load FAILED: {MapDir}/layer{l}"); return null; }
+                string dir = dirs?[l] ?? MapDir;
+                if (!ContentProvider.LoadOk(img, ProjectSettings.GlobalizePath($"res://content/{dir}/layer{l}.png"))) { Log.Print($"[TERRAIN] texture load FAILED: {dir}/layer{l}"); return null; }
                 img.Convert(Image.Format.Rgba8);
                 img.GenerateMipmaps();
                 imgs.Add(img);
             }
             var arr = new Texture2DArray();
-            if (arr.CreateFromImages(imgs) != Error.Ok) return null;
+            return arr.CreateFromImages(imgs) == Error.Ok ? arr : null;
+        }
+
+        // The infinite world (RegionStreamer) builds a material PER REGION -- hundreds of them, coming and going --
+        // so the 8-layer albedo array and the compiled shader are made once and shared; only the splat pair differs.
+        static Texture2DArray _regionAlbedos; static string _regionAlbedoDir; static Shader _regionShader;
+
+        /// <summary>Per-layer texture set for streamed regions, or null for MapDir's eight. The infinite world mixes
+        /// sets: PEI's own dirt, gravel and stone are its famous RED soil (avg 139,84,58 / 126,81,64 / 142,79,47), which
+        /// reads as rust on every mountainside; Yukon's are grey. Same eight SLOTS either way, so the splat is unchanged.</summary>
+        public static string[] RegionLayerDirs;
+
+        /// <summary>The terrain material for one streamed region: the same shader and layer textures as a loaded map,
+        /// with that region's own splat pair. The splat is sampled by the mesh's UV, so the caller lays UVs out over
+        /// its own texture; albedo tiling is world-space (16 m), which stays continuous across a floating-origin
+        /// shift because every shift is a whole number of 256 m regions.</summary>
+        public static ShaderMaterial RegionMaterial(Texture2D splat0, Texture2D splat1)
+        {
+            string key = RegionLayerDirs != null ? string.Join(",", RegionLayerDirs) : MapDir;
+            if (_regionAlbedos == null || _regionAlbedoDir != key) { _regionAlbedos = LoadAlbedoArray(RegionLayerDirs); _regionAlbedoDir = key; }
+            if (_regionAlbedos == null) return null;
+            RainSystem3D.EnsureGlobals();
+            _regionShader ??= new Shader { Code = TERRAIN_SHADER };
+            var mat = new ShaderMaterial { Shader = _regionShader };
+            mat.SetShaderParameter("albedos", _regionAlbedos);
+            mat.SetShaderParameter("splat0", splat0);
+            mat.SetShaderParameter("splat1", splat1);
+            mat.SetShaderParameter("tileWorld", 16f);
+            mat.SetShaderParameter("sea_level", SeaLevelY);
+            return mat;
+        }
+
+        static ShaderMaterial BuildTerrainMaterial(Texture2D splat0, Texture2D splat1)
+        {
+            var arr = LoadAlbedoArray();
+            if (arr == null) return null;
 
             RainSystem3D.EnsureGlobals();   // the shader reads the rain_wetness/rain_intensity globals -- they MUST exist before it compiles
             var mat = new ShaderMaterial { Shader = new Shader { Code = TERRAIN_SHADER } };

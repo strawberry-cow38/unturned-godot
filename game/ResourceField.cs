@@ -819,7 +819,7 @@ namespace UnturnedGodot
             return list;
         }
 
-        static StandardMaterial3D MakeMat(string texPath, bool unshaded)
+        internal static StandardMaterial3D MakeMat(string texPath, bool unshaded)
         {
             var mat = new StandardMaterial3D
             {
