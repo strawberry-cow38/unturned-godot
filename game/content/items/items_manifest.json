@@ -34956,6 +34956,7 @@
 0.0204
 ],
 "color": null,
+"metal": true,
 "name": "Fork",
 "obj": "9304.txt",
 "parts": 1,
@@ -34974,6 +34975,7 @@
 0.0127
 ],
 "color": null,
+"metal": true,
 "name": "Spoon",
 "obj": "9305.txt",
 "parts": 1,

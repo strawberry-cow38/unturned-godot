@@ -170,11 +170,26 @@ namespace UnturnedGodot
                                 // White Smoke reads (212,212,212) and Black Smoke (53,53,53) straight off the asset.
                                 if (img.GetWidth() > 0 && img.GetHeight() > 0) m.Palette = img.GetPixel(0, 0);
                                 img.GenerateMipmaps();
+                                // ⭐ "metal": true IN THE MANIFEST MAKES AN ITEM ACTUALLY METAL. Master 2026-10-09,
+                                // on the ripped fork and spoon: "they are meant to be metal, both of em.
+                                // texture/material metal". A steel-grey ALBEDO on its own is grey plastic -- what
+                                // reads as metal is the Metallic/Roughness pair, because that is what decides
+                                // whether the surface reflects the sky or just takes a diffuse tint. There was no
+                                // way to say it before: every item got the same Roughness 0.8, non-metallic.
+                                bool metal = e.ContainsKey("metal") && e["metal"].AsBool();
                                 m.Mat = new StandardMaterial3D
                                 {
                                     AlbedoTexture = ImageTexture.CreateFromImage(img),
                                     TextureFilter = BaseMaterial3D.TextureFilterEnum.NearestWithMipmaps,   // blocky Unturned pixels, like the rest of the port
-                                    Roughness = 0.8f,
+                                    // ⚠ NOT Metallic = 1. Tried it, rendered it, and the fork and spoon came out
+                                    // nearly BLACK: a fully metallic surface has no diffuse term at all, so it
+                                    // shows only what it reflects, and a dropped item is usually looking at not
+                                    // much. The game's own metal cutlery already answers this -- Kitchen Knife
+                                    // (120) is Metallic 0 and reads as steel purely through its texture. So
+                                    // "metal" here means a steel albedo and a TIGHTER SPECULAR, which is this
+                                    // port's stylised-flat idiom rather than a PBR one it does not light for.
+                                    Metallic = 0f,
+                                    Roughness = metal ? 0.3f : 0.8f,
                                     CullMode = BaseMaterial3D.CullModeEnum.Disabled,   // double-sided like all the port's ripped meshes (their winding is authored for it)
                                 };
                             }
