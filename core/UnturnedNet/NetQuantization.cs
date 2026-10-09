@@ -7,18 +7,26 @@ namespace UnturnedGodot.Net
     /// golden byte tests (SnapshotFramingGoldenTests) -- changing any bit width here is a wire-format
     /// change: bump NetProtocol.Version and re-golden in the same commit.
     ///
-    /// Position bounds are baked in for the biggest plausible map now (§5 item 10 says choose once): PEI
-    /// fits +-1024 m on the XZ plane, so 11 int bits (+-2048 m range) leaves comfortable headroom; Y is
-    /// shallower terrain so 9 int bits (+-256 m) is ample. 8 fractional bits on every axis is ~1/256 m
-    /// (~4 mm) precision, matching MP_PLAN §2.4's "~55 bits per player position" napkin math:
-    /// (11+8)*2 [XZ] + (9+8) [Y] = 55.
+    /// ⚠ THE INT BITS INCLUDE THE SIGN. WriteClampedFloat's range is [-(1 << (intBits-1)), 1 << (intBits-1)),
+    /// so N int bits cover +-2^(N-1), not +-2^N. This used to read "PEI fits +-1024 m, so 11 int bits (+-2048 m
+    /// range) leaves comfortable headroom" -- 11 bits is +-1024, and BOTH halves were wrong: PEI's terrain runs to
+    /// +-2048 (66% of its above-sea ground lies past 1024, Bridge_Line_0 walks you out to x -1360), so every
+    /// player out there was recorded on the server pinned to the line while their own client walked on
+    /// (strawberry/cow tools 2026-10-09, net.position_clamp_covers_the_map). 13 bits = +-4096: PEI's +-2048 with
+    /// room for an 8 km map. Y stays 9 bits (+-256 m). 8 fractional bits on every axis is ~1/256 m (~4 mm).
+    /// (13+8)*2 [XZ] + (9+8) [Y] = 59 bits per position.
     /// </summary>
     public static class NetQuantization
     {
-        public const int PositionXZIntBits = 11;
+        public const int PositionXZIntBits = 13;
         public const int PositionXZFracBits = 8;
         public const int PositionYIntBits = 9;
         public const int PositionYFracBits = 8;
+
+        /// <summary>The XZ magnitude the wire can carry, from the writer's OWN rule (1 << (intBits-1)) rather than
+        /// restated -- the restated version is the one that was wrong. Positions are clamped to [-this, this).</summary>
+        public const float PositionXZRange = 1 << (PositionXZIntBits - 1);
+        public const float PositionYRange = 1 << (PositionYIntBits - 1);
 
         /// <summary>Yaw/pitch via WriteDegrees/ReadDegrees, wrapped into [0, 360) -- MP_PLAN §2.4: "yaw/pitch
         /// via WriteDegrees(11)".</summary>

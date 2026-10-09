@@ -426,8 +426,8 @@ namespace UnturnedNet.Tests
         // v57: + HeldItemId (u16) after Grounded. DERIVED, not pasted: the golden command holds nothing (0), so 16 ZERO
         // bits land between Grounded and a zero EventCount -- every earlier byte is unchanged and the tail grows by two
         // zero bytes. The round trip below pins a NON-zero id, which this all-zero insertion cannot.
-        const string GoldenStateHex = "1B0201030C040C08103E6000A91E043AF0040602000000";
-        const string GoldenRecovHex = "1F6404640844328011F840163800";
+        const string GoldenStateHex = "1B0201030C10302040F8030690EA41A0034F602000000000";
+        const string GoldenRecovHex = "1F6410902110C90318810F648103";
 
         static string ToHex(byte[] buffer)
         {

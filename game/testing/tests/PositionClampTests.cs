@@ -6,12 +6,14 @@ using UnturnedGodot.Net;
 
 namespace UnturnedGodot.Testing
 {
-    // REPRO (not for main): the wire clamps player XZ to [-1024, 1024) -- WriteClampedFloat's range is 1 << (intBits-1),
-    // and NetQuantization's comment says 11 bits is "+-2048". PEI's terrain runs to +-2048. Does a JOINED player standing
-    // past 1024 m get recorded on the server where they actually are? Control: the same teleport to -1000.
-    public sealed class WireClampRepro : GameTest
+    // POSITIONS PAST 1 KM (strawberry/cow tools 2026-10-09). The wire clamped player XZ to [-1024, 1024): the int bits
+    // include the sign, and NetQuantization's comment said 11 of them was +-2048. PEI's terrain runs to +-2048 and the
+    // bridge walks you out to x -1360, so a JOINED player standing out there was recorded on the server pinned to the
+    // line while their own client walked on -- everyone else watched them stand still. Through a real joined client,
+    // because the client's own position never showed it.
+    public sealed class PositionClampTests : GameTest
     {
-        public override string Name => "net.wire_clamp_repro";
+        public override string Name => "net.position_clamp_covers_the_map";
         public override double TimeoutSimSeconds => 60;
 
         Step Wait(System.Func<bool> c, double seconds) { int n = 0, max = (int)(seconds * 50); return Until(() => c() || ++n >= max, seconds + 1); }
@@ -34,18 +36,20 @@ namespace UnturnedGodot.Testing
             if (sess.Shell == null) yield break;
             ushort pid = sess.Client.PlayerId;
             // envelope OFF so a teleport claim adopts verbatim: nothing between the client's word and the server's record
-            // but the wire. (In real play you WALK there, in steps the envelope accepts -- same claims, same wire.)
+            // but the wire. (In play you WALK there, in steps the envelope accepts -- same claims, same wire.)
             ded.Server.PlayerHost.DisableEnvelope = true;
 
-            foreach (var x in new[] { -1000f, -1200f, 1500f, -1000f })
+            // -1000 is the CONTROL: inside the old clamp, so it must pass on both builds -- if it fails, the teleport or the
+            // envelope is what broke, not the range. -1200 / +1500 are the bridge and the far coast; +-2040 the map's edge.
+            foreach (var (x, z) in new[] { (-1000f, 0f), (-1200f, 0f), (1500f, 0f), (-2040f, 2040f), (2040f, -2040f) })
             {
-                sess.Shell.TeleportTo(new Vector3(x, 1f, 0f));
+                sess.Shell.TeleportTo(new Vector3(x, 1f, z));
                 yield return Ticks(100);
                 ded.Server.Players.TryGetByOwner(pid, out var e);
                 var cp = sess.Shell.GlobalPosition;
-                Log.Print($"[wireclamp] target x {x}: client stands at x {cp.X:0.00}, server records x {e?.Pos.x:0.00}");
-                T.Check($"target {x}: server records the client's x ({e?.Pos.x:0.00} vs client {cp.X:0.00})",
-                    e != null && Mathf.Abs(e.Pos.x - cp.X) < 0.5f);
+                // the server record is UNITY-space (z flipped): compare magnitudes per axis against the client's own
+                bool ok = e != null && Mathf.Abs(e.Pos.x - cp.X) < 0.5f && Mathf.Abs(Mathf.Abs(e.Pos.z) - Mathf.Abs(cp.Z)) < 0.5f;
+                T.Check($"standing at ({cp.X:0}, {cp.Z:0}), the server records ({e?.Pos.x:0.00}, {e?.Pos.z:0.00})", ok);
             }
         }
     }

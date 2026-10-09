@@ -533,7 +533,7 @@ namespace UnturnedNet.Tests
             //
             // If a future field pushes the content past 351 bits this WILL move, and the number to recompute
             // is the one above rather than whatever the code happens to emit.
-            Assert.That(ToHex(bytes), Is.EqualTo("E803000000000000092C00010009000000050200000C040C08103E6000E1E0F8260002130802200402ECB91B96A0FFBF00000000800000"));
+            Assert.That(ToHex(bytes), Is.EqualTo("E803000000000000092D00010009000000050200000C10302040F80306100E8E6F0220308120004220C09EBB6109FAFF0B00000000080000"));
         }
 
         static ushort Driver(Harness h, uint veh)
