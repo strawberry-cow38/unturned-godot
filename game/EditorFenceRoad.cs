@@ -24,6 +24,7 @@ namespace UnturnedGodot
         readonly Camera3D _cam;
         readonly EditorObjects _objects;
         readonly Terrain _terr;
+        readonly RoadField _roads;
 
         /// <summary>The pitch segments are laid at: 16.0 m, which is RETAIL'S, not the mesh's bbox.
         ///
@@ -94,14 +95,14 @@ namespace UnturnedGodot
 
         public bool Active => _on;
 
-        public EditorFenceRoad(Editor editor, Camera3D cam, EditorObjects objects, Terrain terr)
+        public EditorFenceRoad(Editor editor, Camera3D cam, EditorObjects objects, Terrain terr, RoadField roads = null)
         {
-            _editor = editor; _cam = cam; _objects = objects; _terr = terr;
+            _editor = editor; _cam = cam; _objects = objects; _terr = terr; _roads = roads;
         }
 
         public string ModeText => _on
             ? (_path.Count == 0
-                ? $"FENCE ROAD · {(_broken ? "all broken" : "intact")} · LMB to start a run · R = side · Del = strip the last rail · Shift+F = off"
+                ? $"FENCE ROAD · {(_broken ? "all broken" : "intact")} · LMB to start a run · R = side · G = guard a road's bends · Del = strip the last rail · Shift+F = off"
                 : $"FENCE ROAD · {_path.Count} point(s), 3+ curves · ENTER lays it · B = wreck here ({_wreckAt.Count}) · Backspace drops a point · R = rail faces {(_flip ? "left" : "right")} · Esc")
             : "Shift+F = fence road";
 
@@ -153,6 +154,25 @@ namespace UnturnedGodot
                 last.rail.Clear();
                 _editor.MarkDirty();
                 Log.Print($"[editor-fence] stripped {stripped.Count} rail section(s); the posts stay up");
+                return;
+            }
+
+            // ⭐ G GUARDS THE ROAD UNDER THE CURSOR -- the "parent it to a road spline" path. A separate key
+            // rather than a click on the road, because LMB is already how you place a free path point and a
+            // click that means two different things depending on what is underneath is a click you cannot aim.
+            if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.G } && _roads != null)
+            {
+                if (!RaycastTerrain(GetViewport().GetMousePosition(), out var at)) return;
+                if (!_roads.NearestPointOnSpline(at, 60f, out int rd, out _, out _, out _))
+                { Log.Print("[editor-fence] no road within 60 m of the cursor"); return; }
+                var gp = new List<Node3D>(); var gr = new List<Node3D>();
+                int got = LayAlongRoad(_objects, _terr, _roads, rd, _flip, gp, gr);
+                if (got == 0) return;
+                var all = new List<Node3D>(gp); all.AddRange(gr);
+                var run = (gp, gr);
+                _runs.Add(run);
+                _editor.PushUndo("guard road bends", () => { _objects.RemovePlaced(all); _runs.Remove(run); });
+                _editor.MarkDirty();
                 return;
             }
 
@@ -236,6 +256,104 @@ namespace UnturnedGodot
         /// middle: on a bend those differ, and the tangent version leaves each segment's ends lifted off the
         /// line it is supposed to be following. A bend tighter than MinBendRadiusFor(step) is reported, because at that
         /// point the chords visibly cut the corner and the mapper should know rather than wonder.</summary>
+        /// <summary>How far outside the asphalt's edge a guardrail sits. ProcIslandSpawn puts its roadside
+        /// fences 11 m from the centreline against a 9.2 m rendered half-width -- 1.8 m of clearance -- and
+        /// that is the number reused here, against each road's OWN half-width rather than a constant, so it
+        /// stays right on a road material of any width.</summary>
+        public const float RoadClearance = 1.8f;
+
+        /// <summary>A bend tighter than this is worth guarding; anything straighter is not. A guardrail down a
+        /// straight is not what the thing is for -- master: "the outer edge on a turn".</summary>
+        public const float GuardBendRadius = 160f;
+
+        /// <summary>The shortest stretch worth laying, in units. Below this a bend produces a 4 m stub that
+        /// reads as litter rather than as a barrier.</summary>
+        public const int MinGuardUnits = 3;
+
+        /// <summary>Lay guardrail along the OUTER edge of every bend in a road. Returns the units laid.
+        ///
+        /// Master 2026-10-09: "next is parenting this to a road spline's outer edge on a turn".
+        ///
+        /// ⭐ THE OUTER SIDE IS DERIVED, NOT ASKED FOR, and it is the whole point: a barrier belongs on the
+        /// side you would leave the road on. Walking the spline by arc length gives a signed turn per step
+        /// (the Y of the cross product of consecutive tangents); turning LEFT puts the outer edge on the
+        /// RIGHT, and vice versa. So the side follows the road rather than a flag somebody has to set per bend.
+        ///
+        /// ⚠ AND IT IS PER BEND, NOT PER ROAD. An S-bend's outer edge swaps sides at the inflection, and one
+        /// continuous run cannot be on both -- so the road is cut into stretches of constant turn direction and
+        /// each gets its own run. Laying one run for the whole road would put half of it on the inside of the
+        /// curve, which is exactly the wrong side.</summary>
+        public static int LayAlongRoad(EditorObjects objects, Terrain terr, RoadField roads, int road,
+                                       bool flip, List<Node3D> posts, List<Node3D> rail)
+        {
+            if (objects == null || roads == null) return 0;
+            float total = roads.RoadLength(road);
+            float half = roads.RoadHalfWidth(road);
+            if (total < PostSpacing * MinGuardUnits || half <= 0f) return 0;
+            float off = half + RoadClearance;
+
+            int n = Mathf.FloorToInt(total / PostSpacing);
+            var pos = new Vector3[n + 1];
+            var side = new Vector3[n + 1];      // unit vector pointing to the spline's RIGHT
+            for (int i = 0; i <= n; i++)
+            {
+                if (!roads.EvaluateAlong(road, i * PostSpacing, out var p, out var t)) return 0;
+                pos[i] = p;
+                var flat = new Vector3(t.X, 0f, t.Z);
+                side[i] = flat.LengthSquared() < 1e-8f ? Vector3.Right : flat.Normalized().Cross(Vector3.Up).Normalized();
+            }
+
+            // Signed turn at each interior sample: + is a LEFT turn, so the outer edge is to the RIGHT.
+            var turn = new float[n + 1];
+            for (int i = 1; i < n; i++)
+            {
+                var a = (pos[i] - pos[i - 1]); a.Y = 0f;
+                var b = (pos[i + 1] - pos[i]); b.Y = 0f;
+                if (a.LengthSquared() < 1e-8f || b.LengthSquared() < 1e-8f) continue;
+                a = a.Normalized(); b = b.Normalized();
+                turn[i] = a.Cross(b).Y;                       // radians, small-angle
+            }
+
+            float maxTurn = PostSpacing / GuardBendRadius;     // turn per step at the threshold radius
+            int laid = 0, stretches = 0;
+            int i0 = -1; float sign = 0f;
+
+            void Flush(int i1)
+            {
+                if (i0 >= 0 && i1 - i0 >= MinGuardUnits)
+                {
+                    // OUTER = right of the spline on a left turn, left on a right turn.
+                    float s = (sign > 0f ? 1f : -1f) * (flip ? -1f : 1f);
+                    var pts = new List<Vector3>();
+                    for (int k = i0; k <= i1; k++) pts.Add(pos[k] + side[k] * (off * s));
+                    if (pts.Count >= 2)
+                    {
+                        int got = LayPath(objects, terr, pts, false, s < 0f, posts, rail, null, smooth: false);
+                        if (got > 0) { laid += got; stretches++; }
+                    }
+                }
+                i0 = -1; sign = 0f;
+            }
+
+            for (int i = 1; i < n; i++)
+            {
+                bool bend = Mathf.Abs(turn[i]) >= maxTurn;
+                float sg = Mathf.Sign(turn[i]);
+                if (bend && (i0 < 0 || Mathf.IsEqualApprox(sg, sign)))
+                {
+                    if (i0 < 0) { i0 = i - 1; sign = sg; }     // start one step back, so the run leads into the bend
+                }
+                else { Flush(Mathf.Min(i, n)); if (bend) { i0 = i - 1; sign = sg; } }
+            }
+            Flush(n);
+
+            Log.Print($"[editor-fence] road {road}: {total:0.#} m, half-width {half:0.##} m -> guardrail "
+                    + $"{off:0.##} m off the centreline; {stretches} bend(s) guarded, {laid} unit(s)"
+                    + (stretches == 0 ? $" (nothing turns tighter than {GuardBendRadius:0} m)" : "")
+                    + $"; steepest ground met {DebugRawTiltMax:0.#} deg (clamped at {MaxSeatTiltDeg:0})");
+            return laid;
+        }
+
         /// <summary>Turn the dropped wreck markers into unit indices on THIS path. A marker is snapped to the
         /// nearest unit boundary, and one that would overhang the end is dropped by LayPath.
         ///
@@ -279,10 +397,10 @@ namespace UnturnedGodot
         /// <param name="brokenAt">Unit indices where a WRECKED section starts, each covering BrokenUnits.</param>
         public static int LayPath(EditorObjects objects, Terrain terr, IReadOnlyList<Vector3> pts,
                                   bool broken, bool flip, List<Node3D> posts, List<Node3D> rail,
-                                  IReadOnlyCollection<int> brokenAt)
+                                  IReadOnlyCollection<int> brokenAt, bool smooth = true)
         {
             if (objects == null || pts == null || pts.Count < 2) return 0;
-            var curve = BuildCurve(pts);
+            var curve = BuildCurve(pts, smooth);
             float total = curve.GetBakedLength();
 
             // ⚠ THE WRECK IS NOT A TILING UNIT. Fence_Road_Broken_0's posts lean and its rail is twisted --
@@ -437,19 +555,24 @@ namespace UnturnedGodot
             return tightest;
         }
 
-        /// <summary>A Curve3D through the clicked points. Two points stay a straight line; three or more get
+        /// <summary>A Curve3D through the given points. Two points stay a straight line; three or more get
         /// Catmull-Rom handles so the run bends smoothly THROUGH every click rather than being pulled off them.
+        ///
+        /// ⚠ `smooth: false` FOR AN ALREADY-SAMPLED PATH. Catmull-Rom is right for a handful of hand-placed
+        /// clicks and wrong for a curve someone has already sampled every 4 m: the handles round and OVERSHOOT
+        /// between dense points, which on the outside of a tight bend threw the end sections off the line
+        /// entirely. A road's offset edge is already the curve; it does not want re-interpolating.
         ///
         /// ⚠ Godot's Curve3D is straight between points until you give it handles -- "add the points and bake"
         /// silently produces a polyline, which looks like the curve maths is wrong when nothing was computed at
         /// all. The handle is the Catmull-Rom tangent, (next - prev) / 6.</summary>
-        static Curve3D BuildCurve(IReadOnlyList<Vector3> pts)
+        static Curve3D BuildCurve(IReadOnlyList<Vector3> pts, bool smooth = true)
         {
             var c = new Curve3D();
             for (int i = 0; i < pts.Count; i++)
             {
                 Vector3 inH = Vector3.Zero, outH = Vector3.Zero;
-                if (pts.Count > 2)
+                if (smooth && pts.Count > 2)
                 {
                     var prev = pts[Mathf.Max(i - 1, 0)];
                     var next = pts[Mathf.Min(i + 1, pts.Count - 1)];
@@ -466,13 +589,29 @@ namespace UnturnedGodot
         /// ⚠ ex=270 IS THE MESH CONVENTION, NOT A TILT: the prop OBJs are Z-up, and 3602 of PEI's ~3900
         /// placements carry it. Leaving it out lays every fence flat on the ground, which on a long thin prop
         /// still looks like a fence from above -- so it is the kind of mistake a screenshot does not catch.</summary>
+        /// <summary>The steepest the ground may tip a fence. Beyond this it stands up and lets the slope pass
+        /// under it, which is what a real barrier does.
+        ///
+        /// ⚠ WITHOUT A CLAMP A ROAD CUT LAYS THE FENCE FLAT. A guardrail sits just outside the carriageway,
+        /// and that is exactly where a road carved into a hillside leaves a near-vertical bank -- so the
+        /// terrain normal there is nowhere near up, and tilting by the full angle puts whole sections on their
+        /// side on the ground. Seen at both ends of every guarded bend in the showcase.</summary>
+        public const float MaxSeatTiltDeg = 20f;
+
+        /// <summary>Steepest ground any seat has met this session -- how hard the clamp is working.</summary>
+        public static float DebugRawTiltMax;
+
         static Basis SeatedBasis(Terrain terr, Vector3 at, float yawDeg)
         {
             var stand = EditorObjects.FromEuler(270f, yawDeg, 0f);
             if (terr == null) return stand;
             var nrm = terr.NormalAt(at.X, at.Z);
             var axis = Vector3.Up.Cross(nrm);
-            return axis.LengthSquared() < 1e-8f ? stand : new Basis(axis.Normalized(), Vector3.Up.AngleTo(nrm)) * stand;
+            if (axis.LengthSquared() < 1e-8f) return stand;
+            float raw = Vector3.Up.AngleTo(nrm);
+            float tilt = Mathf.Min(raw, Mathf.DegToRad(MaxSeatTiltDeg));
+            DebugRawTiltMax = Mathf.Max(DebugRawTiltMax, Mathf.RadToDeg(raw));
+            return new Basis(axis.Normalized(), tilt) * stand;
         }
 
         bool RaycastTerrain(Vector2 screen, out Vector3 point)

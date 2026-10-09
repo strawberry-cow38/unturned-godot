@@ -6973,7 +6973,7 @@ namespace UnturnedGodot
             var plField = new PowerLineField(); editor.AddChild(plField);
             var plEd = new EditorPowerLines(editor, cam, plField, null, editor.Objects);   // a generated island ships no poles -- you place them
             editor.AddChild(plEd); editor.PowerLinesEd = plEd; editor.PowerLines = plField;
-            var fenceEd = new EditorFenceRoad(editor, cam, editor.Objects, terr);   // Shift+F: roadside guardrail runs
+            var fenceEd = new EditorFenceRoad(editor, cam, editor.Objects, terr, rf);   // Shift+F: roadside guardrail runs
             editor.AddChild(fenceEd); editor.FenceRoadEd = fenceEd;
             var roadsEd = new EditorRoads(editor, cam, rf); editor.AddChild(roadsEd); editor.RoadsEd = roadsEd;
             var roadDrawEd = new EditorRoadDraw(editor, cam, rf); editor.AddChild(roadDrawEd); editor.RoadDrawEd = roadDrawEd;   // R = draw, Shift+R = legacy nodes
@@ -7731,7 +7731,7 @@ namespace UnturnedGodot
             var plField = new PowerLineField(); editor.AddChild(plField);
             var plEd = new EditorPowerLines(editor, cam, plField, res.PowerLinePoles, editor.Objects);
             editor.AddChild(plEd); editor.PowerLinesEd = plEd; editor.PowerLines = plField;
-            var fenceEd = new EditorFenceRoad(editor, cam, editor.Objects, res.Terr);   // Shift+F: roadside guardrail runs
+            var fenceEd = new EditorFenceRoad(editor, cam, editor.Objects, res.Terr, rf);   // Shift+F: roadside guardrail runs
             editor.AddChild(fenceEd); editor.FenceRoadEd = fenceEd;
             // Seed the field with the map's poles and whatever wires were saved last time, so the lines are THERE
             // on load rather than only after you open the tool.

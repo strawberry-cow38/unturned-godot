@@ -259,6 +259,60 @@ namespace UnturnedGodot.Testing
             T.Check($"control: with no wreck marker the run DOES post that stretch ({postsThere} posts)",
                     postsThere >= EditorFenceRoad.BrokenUnits);
 
+            // ---- 3d. PARENTED TO A ROAD: the guardrail follows a road spline's OUTER edge on a turn.
+            // Master: "next is parenting this to a road spline's outer edge on a turn".
+            var field = new RoadField();
+            World.AddChild(field);
+            // ⚠ A bare rig has no road materials -- they come from the Unturned install -- so every road would
+            // report a half-width of zero and the tool would (correctly) refuse. Give material 0 a width.
+            field.DebugSetMaterialWidth(0, 9.2f);   // PEI's rendered half-width, the number ProcIslandSpawn uses
+            yield return Ticks(1);
+            // A quarter-circle sweeping LEFT (radius 90 m), which bends tighter than GuardBendRadius so it is
+            // worth guarding, and gently enough that a 4 m unit follows it.
+            var arcPts = new List<Vector3>();
+            const float R = 90f;
+            for (int d = 0; d <= 90; d += 10)
+                arcPts.Add(new Vector3(R * Mathf.Sin(Mathf.DegToRad(d)), 0f, 1200f - R * (1f - Mathf.Cos(Mathf.DegToRad(d)))));
+            int rd = field.AddRoadFromPolyline(arcPts);
+            T.Check($"fixture: a road went down ({field.RoadCount} road(s), {field.RoadLength(rd):0.#} m, "
+                  + $"half-width {field.RoadHalfWidth(rd):0.##} m)",
+                    rd >= 0 && field.RoadLength(rd) > 50f && field.RoadHalfWidth(rd) > 0.5f);
+
+            int br = objs.PlacedCount;
+            int gn = EditorFenceRoad.LayAlongRoad(objs, null, field, rd, false, null, null);
+            T.Check($"guardrail laid along the road's bend ({gn} units, {objs.PlacedCount - br} props)", gn > 0);
+
+            // ⭐⭐ ON THE OUTER SIDE, AND THIS IS THE CLAIM. The arc curves LEFT, so its centre of curvature is
+            // to the left and the OUTER edge is to the RIGHT -- i.e. every post must sit FARTHER from the
+            // centre than the road's centreline does, not nearer. Measuring distance-from-centre is what makes
+            // "outer" checkable at all; a check on which side a flag said would just restate the code.
+            var centre = new Vector3(0f, 0f, 1200f - R);
+            // ⚠ MinValue, not 0: every post being OUTSIDE makes (R - d) negative throughout, and a max
+            // seeded at zero can never report that -- it just sits at 0 and the check fails on a
+            // correct tool. Seed an extremum with an extremum.
+            float worstInside = float.MinValue; int sampled = 0;
+            foreach (var x in objs.PlacedOf(EditorFenceRoad.PostUnit))
+            {
+                if (x.Origin.Z < 1100f) continue;           // only this fixture's run
+                sampled++;
+                float d = new Vector2(x.Origin.X - centre.X, x.Origin.Z - centre.Z).Length();
+                worstInside = Mathf.Max(worstInside, R - d);   // >0 means it landed INSIDE the curve
+            }
+            float wantOff = field.RoadHalfWidth(rd) + EditorFenceRoad.RoadClearance;
+            T.Check($"...on the OUTER side of the turn: {sampled} post(s), worst one {worstInside:0.##} m inside "
+                  + $"the centreline (expected all ~{wantOff:0.##} m OUTSIDE)",
+                    sampled > 0 && worstInside < -wantOff * 0.5f);
+
+            // ⭐ CONTROL: a STRAIGHT road gets nothing. "The outer edge on a turn" means a guardrail down a
+            // straight is wrong, and without this the check above passes on a tool that guards everything.
+            var straight = new List<Vector3>();
+            for (int k = 0; k <= 10; k++) straight.Add(new Vector3(k * 12f, 0f, 1400f));
+            int sr = field.AddRoadFromPolyline(straight);
+            int bs = objs.PlacedCount;
+            int sn = EditorFenceRoad.LayAlongRoad(objs, null, field, sr, false, null, null);
+            T.Check($"control: a straight road is not guarded ({sn} units, {objs.PlacedCount - bs} props)",
+                    sn == 0 && objs.PlacedCount == bs);
+
             // ---- 4. UNDO takes the whole run, not one post at a time -- the reason RemovePlaced exists.
             int b3 = objs.PlacedCount;
             int rn = tool.LayRun(new Vector3(0f, 0f, 200f), new Vector3(EditorFenceRoad.PostSpacing * 3f, 0f, 200f));

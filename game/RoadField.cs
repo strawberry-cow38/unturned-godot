@@ -564,6 +564,29 @@ namespace UnturnedGodot
         public const int TracksMaterial = 4;
         public int RoadMaterialOf(int road) => (road >= 0 && road < _roads.Count) ? _roads[road].Material : -1;
         public bool RoadLoops(int road) => road >= 0 && road < _roads.Count && _roads[road].IsLoop;
+        /// <summary>L1 seam: give the material table a width when no map has been loaded.
+        ///
+        /// ⚠ Road materials come out of the real Unturned install (LoadMaterialsOnly reads the map's
+        /// Environment dir), so a bare test rig has an EMPTY table and every road reports a half-width of
+        /// zero -- which is correct, and which makes anything that derives an offset from the width
+        /// untestable. This is the one thing a rig cannot supply for itself.</summary>
+        public void DebugSetMaterialWidth(int material, float halfWidthMetres)
+        {
+            while (_mats.Count <= material) _mats.Add(new RoadMat());
+            var m = _mats[material];
+            m.Width = halfWidthMetres / WidthScale;
+            _mats[material] = m;
+        }
+
+        /// <summary>Half the drawn carriageway width, in metres -- the same `Width * WidthScale` the mesh and
+        /// the collider are built from, so anything placed at this offset lands exactly at the asphalt's edge.
+        /// Exposed for EditorFenceRoad, which puts a guardrail a fixed clearance outside it: the alternative is
+        /// a magic constant in the tool that silently stops matching the day a road material's width changes.</summary>
+        public float RoadHalfWidth(int road) =>
+            road >= 0 && road < _roads.Count && _roads[road].Material < _mats.Count
+                ? _mats[_roads[road].Material].Width * WidthScale
+                : 0f;
+
         public float RoadLength(int road)
         {
             if (road < 0 || road >= _roads.Count) return 0f;

@@ -125,7 +125,14 @@ namespace UnturnedGodot
                     c.Origin + new Vector3( 16f, 0f, -16f),
                     c.Origin + new Vector3( 50f, 0f,  18f),
                 };
-                c.Roads?.AddRoadFromPolyline(pts);
+                int rd = c.Roads?.AddRoadFromPolyline(pts) ?? -1;
+
+                // ⭐ ...AND GUARD ITS BENDS, which is the fence tool parented to this spline (G). Shown HERE
+                // rather than at the fence station because the thing being demonstrated is the relationship
+                // between the two: the barrier picks its own side from the road's curvature, so on an S-bend
+                // it swaps sides at the inflection and each half sits on the outside of its own curve.
+                if (rd >= 0 && c.Objects != null)
+                    EditorFenceRoad.LayAlongRoad(c.Objects, c.Terr, c.Roads, rd, false, null, null);
             }),
 
             new Station("OBJECTS", "Place, gizmo-move, copy and delete props · Level tab", c =>
