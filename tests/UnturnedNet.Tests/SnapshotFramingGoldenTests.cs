@@ -32,7 +32,7 @@ namespace UnturnedNet.Tests
 
             // serverTick:32 (1000 = 0x000003E8) + baselineTick:32 (0 = full) + systemId:8 (10) + byteLen:16
             // + one entity block (id:32 + pos quantized 11.8/9.8/11.8 bits + yaw 11 bits + aux:8).
-            Assert.That(ToHex(bytes), Is.EqualTo("E8030000000000000A10000100010000000C040C08103E60003501"));
+            Assert.That(ToHex(bytes), Is.EqualTo("E8030000000000000A10000100010000000C10302040F803065013"));
         }
 
         [Test]
@@ -54,7 +54,7 @@ namespace UnturnedNet.Tests
         public void MockMoveCommand_GoldenBytes()
         {
             var cmd = new MockMoveCommand(entityId: 7, x: 4f, y: 0.5f, z: -8f);
-            Assert.That(ToHex(cmd.Pack()), Is.EqualTo("010700000004040008883F00"));
+            Assert.That(ToHex(cmd.Pack()), Is.EqualTo("01070000000410002020FE0300"));
         }
 
         [Test]

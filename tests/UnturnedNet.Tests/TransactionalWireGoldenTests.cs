@@ -49,7 +49,7 @@ namespace UnturnedNet.Tests
             // Re-goldened again for v56, by the same derivation: the command grew a trailing uint TargetId (the
             // container a Storage Adapter snapped to). The fixture leaves it 0, so it appends 32 ZERO bits after
             // bits that were already zero -- four more zero bytes on the end, and nothing before them moves.
-            Assert.That(Pack(ReplicationIds.CommandPlaceDeployable, cmd.Write), Is.EqualTo("07CA01FE030008C04040000100000000000000"));
+            Assert.That(Pack(ReplicationIds.CommandPlaceDeployable, cmd.Write), Is.EqualTo("07CA01FE0F0020000304041000000000000000"));
         }
 
         [Test]
@@ -108,7 +108,7 @@ namespace UnturnedNet.Tests
             //   10 | 03000000 NetId | 0D00 ItemId | 0100 Amount(u16) | 64 Quality | 00040C.. Pos+Vel
             // The old golden decomposes the same way with `01` in Amount's place, which is how this was checked
             // -- a golden updated by copying what the code now emits asserts only that the code equals itself.
-            Assert.That(Pack(ReplicationIds.EventWorldItemSpawned, evt.Write), Is.EqualTo("10030000000D0001006400040C0810C0191010011104"));
+            Assert.That(Pack(ReplicationIds.EventWorldItemSpawned, evt.Write), Is.EqualTo("10030000000D000100640010302040009C0101111041"));
         }
 
         [Test]

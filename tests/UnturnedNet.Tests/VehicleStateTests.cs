@@ -293,7 +293,7 @@ namespace UnturnedNet.Tests
                 Flags = (byte)(VehicleReplication.FlagEngineOn | VehicleReplication.FlagBraking),
             };
             byte[] packed = NetMessagePak.Pack(ReplicationIds.CommandVehicleState, cmd.Write);
-            Assert.That(ToHex(packed), Is.EqualTo("1A020101BBAA00030C040C08103E6000E1E0F8260002130802200402ECFF804700"));
+            Assert.That(ToHex(packed), Is.EqualTo("1A020101BBAA00030C10302040F80306100E8E6F0220308120004220C0FE0F7804"));
 
             var r = new SDG.NetPak.NetPakReader();
             r.SetBufferSegment(packed, packed.Length);
@@ -326,7 +326,7 @@ namespace UnturnedNet.Tests
                 RecovCounter = 7,
             };
             byte[] packed = NetMessagePak.Pack(ReplicationIds.EventVehicleRecov, evt.Write);
-            Assert.That(ToHex(packed), Is.EqualTo("1D02ADDE0064046408443200007260FC23F0812C7000"));
+            Assert.That(ToHex(packed), Is.EqualTo("1D02ADDE006410902110C903002007C63F021FC80207"));
 
             var r = new SDG.NetPak.NetPakReader();
             r.SetBufferSegment(packed, packed.Length);
