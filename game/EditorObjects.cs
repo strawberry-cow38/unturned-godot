@@ -156,6 +156,7 @@ namespace UnturnedGodot
             _catalog.Insert(2, GridPowerName);   // grid power box below that
             _catalog.Insert(3, GasPumpName);     // gas pump (station-id configurable) below that
             _catalog.Insert(4, HighwaySignName); // overhead highway sign (two editable legends)
+            _catalog.Insert(5, HighwayGantryName); // full-width gantry (four editable legends)
             LoadBakedBuildings();
         }
 
@@ -285,7 +286,8 @@ namespace UnturnedGodot
             if (name == StoreShelfName) return PlaceStoreShelf(pos, rot);
             if (name == GridPowerName) return PlaceGridPower(pos, rot);
             if (name == GasPumpName) return PlaceGasPump(pos, rot);
-            if (name == HighwaySignName) return PlaceHighwaySign(pos, rot);
+            if (name == HighwaySignName) return PlaceHighwaySign(HighwaySignMesh, pos, rot);
+            if (name == HighwayGantryName) return PlaceHighwaySign(HighwayGantryMesh, pos, rot);
             var mesh = MeshFor(name);
             if (mesh == null) return null;
             var root = new Node3D { Transform = new Transform3D(rot, pos) };
@@ -604,45 +606,78 @@ namespace UnturnedGodot
         // L1 test asserts the 4/74 split instead, so a re-export that breaks the invariant says so.
         public const string HighwaySignName = "🛣 Highway Sign";
         const string HighwaySignMesh = "Highway_Overhead_Signs";
+        /// <summary>astraclaw's two-post variant: 16.2 m over one 13.8 m carriageway, two boards facing the
+        /// same way. Same code path -- the board count and each board's facing come out of the mesh, so the
+        /// only thing that changed when master corrected this from a full-width four-board gantry ("oh i
+        /// meant just one of the directions") was which file it loads.</summary>
+        public const string HighwayGantryName = "🛣 Highway Gantry";
+        const string HighwayGantryMesh = "Highway_Overhead_Gantry_OneWay";
         const float SignFaceUvSplit = 0.5f;
 
-        /// <summary>Every blank board's bounds in MESH-NATIVE space, lowest first.
+        /// <summary>Every blank board's bounds AND OUTWARD NORMAL in MESH-NATIVE space, lowest first.
         ///
         /// ⭐ ANY COUNT, NOT EXACTLY TWO. The first cut hard-coded two and would have returned null -- no
         /// legends at all -- the moment master asked astraclaw for "a double-post (end to end) version to
         /// span a full highway", which is four boards. The asset says how many it has; this reads it.</summary>
-        static System.Collections.Generic.List<Aabb> SignFaceBounds(ArrayMesh m)
+        static System.Collections.Generic.List<(Aabb box, Vector3 n)> SignFaceBounds(ArrayMesh m)
         {
             if (m == null || m.GetSurfaceCount() < 1) return null;
             var a0 = m.SurfaceGetArrays(0);
             var V = a0[(int)Mesh.ArrayType.Vertex].AsVector3Array();
             var U = a0[(int)Mesh.ArrayType.TexUV].AsVector2Array();
+            var N = a0[(int)Mesh.ArrayType.Normal].AsVector3Array();
             if (U.Length != V.Length || V.Length < 3) return null;
-            var groups = new System.Collections.Generic.List<(float y, Aabb box)>();
+            var groups = new System.Collections.Generic.List<(float y, Aabb box, Vector3 n)>();
             for (int i = 0; i + 2 < V.Length; i += 3)
             {
                 if (U[i].Y >= SignFaceUvSplit || U[i + 1].Y >= SignFaceUvSplit || U[i + 2].Y >= SignFaceUvSplit) continue;
                 var b = new Aabb(V[i], Vector3.Zero).Expand(V[i + 1]).Expand(V[i + 2]);
+                // ⚠⚠ THE AUTHORED NORMAL, NOT A CROSS PRODUCT. ContentProvider.ParseObj decides winding PER
+                // TRIANGLE for Godot's convention, so the vertex order on the LOADED mesh no longer matches
+                // the OBJ's -- a cross product here comes out reversed and every legend faces into the post.
+                // The OBJ's own vn survives the load untouched, and on this asset it reads (-1,0,0), which is
+                // the direction the board is meant to be read from.
+                var nrm = N.Length == V.Length ? (N[i] + N[i + 1] + N[i + 2]) : Vector3.Zero;
+                if (nrm.LengthSquared() < 1e-12f) nrm = (V[i + 1] - V[i]).Cross(V[i + 2] - V[i]);
+                if (nrm.LengthSquared() < 1e-12f) continue;
+                nrm = nrm.Normalized();
                 float yc = (V[i].Y + V[i + 1].Y + V[i + 2].Y) / 3f;
+                // ⚠ GROUPED BY FACING AS WELL AS HEIGHT. The single mast's boards all look the same way, but
+                // astraclaw's gantry carries two per travel DIRECTION -- so two boards can share a height and
+                // differ only in which way they point, and a height-only bucket would fuse them into one.
                 int hit = -1;
-                for (int k = 0; k < groups.Count; k++) if (Mathf.Abs(groups[k].y - yc) < 2.0f) { hit = k; break; }
-                if (hit < 0) groups.Add((yc, b));
-                else groups[hit] = ((groups[hit].y + yc) * 0.5f, groups[hit].box.Merge(b));
+                for (int k = 0; k < groups.Count; k++)
+                    if (Mathf.Abs(groups[k].y - yc) < 2.0f && groups[k].n.Dot(nrm) > 0.9f) { hit = k; break; }
+                if (hit < 0) groups.Add((yc, b, nrm));
+                else groups[hit] = ((groups[hit].y + yc) * 0.5f, groups[hit].box.Merge(b), groups[hit].n);
             }
             if (groups.Count == 0) return null;
-            groups.Sort((x, y) => x.y.CompareTo(y.y));
-            var outp = new System.Collections.Generic.List<Aabb>();
-            foreach (var g in groups) outp.Add(g.box);
+            groups.Sort((x, y) => x.y != y.y ? x.y.CompareTo(y.y) : x.n.X.CompareTo(y.n.X));
+            var outp = new System.Collections.Generic.List<(Aabb, Vector3)>();
+            foreach (var g in groups) outp.Add((g.box, g.n));
             return outp;
         }
 
-        static readonly string[] SignDefaults = { "NORTH\nCity Centre", "WEST\nAirport", "SOUTH\nHarbour", "EAST\nFerry" };
+        // ⚠⚠ THE STORED FORM IS SINGLE-LINE, ALWAYS. A legend's line break is the two characters \n, never a
+        // real newline: the sidecar is line-per-sign, so one raw newline in a DEFAULT split a four-board
+        // gantry's row across four physical lines and the reload rebuilt it as garbage. The setter already
+        // escaped user input; the defaults went straight to meta and bypassed it, so the mast survived (the
+        // test overwrote both its legends) while the gantry did not. One rule now, at every write.
+        static readonly string[] SignDefaults = { @"NORTH\nCity Centre", @"WEST\nAirport", @"SOUTH\nHarbour", @"EAST\nFerry" };
+
+        /// <summary>Make a legend safe to store: no tab (the sidecar's column separator), no real newline
+        /// (its row separator). A typed "\n" survives as the line break the mapper meant.</summary>
+        public static string SanitiseSignText(string text) =>
+            (text ?? "").Replace("\t", " ").Replace("\r\n", @"\n").Replace("\n", @"\n").Replace("\r", "");
+
+        /// <summary>...and the display form, where that escape becomes the break the board actually shows.</summary>
+        public static string SignTextForDisplay(string stored) => (stored ?? "").Replace(@"\n", "\n");
         public static string DefaultSignText(int board) => SignDefaults[((board % SignDefaults.Length) + SignDefaults.Length) % SignDefaults.Length];
         public const int MaxSignBoards = 8;
 
-        Node3D PlaceHighwaySign(Vector3 pos, Basis rot)
+        Node3D PlaceHighwaySign(string meshName, Vector3 pos, Basis rot)
         {
-            var mesh = MeshFor(HighwaySignMesh);
+            var mesh = MeshFor(meshName);
             if (mesh == null) return null;
             float yaw = Mathf.Atan2(-rot.X.Z, rot.X.X);
             var stand = new Basis(Vector3.Right, Mathf.DegToRad(-90f));   // Z-up authoring -> stand it on its base
@@ -651,9 +686,10 @@ namespace UnturnedGodot
             // placeable here (crate, shelf, grid box, pump) goes without -- so PlacedOfNodes cannot find them.
             // The L1 round-trip failed on exactly this: the sidecar reloaded the sign and the lookup still
             // returned nothing.
-            root.SetMeta("obj_name", HighwaySignName);
+            root.SetMeta("obj_name", meshName == HighwayGantryMesh ? HighwayGantryName : HighwaySignName);
+            root.SetMeta("sign_mesh", meshName);
             root.SetMeta("sign_edit", true);
-            root.AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = MatFor(HighwaySignMesh), Basis = stand });
+            root.AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = MatFor(meshName), Basis = stand });
 
             // ⚠ THE LEGEND IS A Label3D ON THE FACE, not a generated texture. astraclaw's 0..1 remap keeps the
             // texture route open and it is the better finish, but it needs a SubViewport to rasterise glyphs,
@@ -663,22 +699,26 @@ namespace UnturnedGodot
             var faces = SignFaceBounds(mesh);
             int boards = faces == null ? 0 : Mathf.Min(faces.Count, MaxSignBoards);
             root.SetMeta("sign_boards", boards);
-            for (int i = 0; i < boards; i++) root.SetMeta($"sign_text_{i}", DefaultSignText(i));
+            for (int i = 0; i < boards; i++) root.SetMeta($"sign_text_{i}", SanitiseSignText(DefaultSignText(i)));
             if (faces != null)
                 for (int i = 0; i < boards; i++)
                 {
-                    var c = faces[i].GetCenter();
+                    var c = faces[i].box.GetCenter();
+                    // native (x,y,z) -> root (x, z, -y) under the stand-up, for points and directions alike.
+                    var nRoot = new Vector3(faces[i].n.X, faces[i].n.Z, -faces[i].n.Y).Normalized();
+                    var cRoot = new Vector3(c.X, c.Z, -c.Y) + nRoot * 0.01f;   // 1 cm proud, so glyphs cannot z-fight the board
+                    // ⚠ ORIENTED FROM THE FACE'S OWN NORMAL, not a fixed turn. The single mast's boards all
+                    // look one way; the gantry's look BOTH ways (two per travel direction), so a hardcoded
+                    // -90 would leave half of every gantry's legends written backwards on the inside.
+                    var zCol = nRoot;                       // a Label3D's front is its local +Z
+                    var yCol = Vector3.Up;
+                    var xCol = yCol.Cross(zCol).Normalized();
                     root.AddChild(new Label3D
                     {
                         Name = $"SignText{i}",
-                        Text = DefaultSignText(i),
-                        // native (x,y,z) -> root (x, z, -y) under the stand-up; nudged 1 cm off the face so the
-                        // glyphs cannot z-fight the board they sit on.
-                        Position = new Vector3(c.X - 0.01f, c.Z, -c.Y),
-                        // face normal is native -X, so the board looks down root -X; +Z of a Label3D is its
-                        // front, and a -90 degree turn about up sends that to -X with the text reading the way
-                        // a viewer standing there scans it.
-                        Basis = new Basis(Vector3.Up, Mathf.DegToRad(-90f)),
+                        Text = SignTextForDisplay(SanitiseSignText(DefaultSignText(i))),
+                        Position = cRoot,
+                        Basis = new Basis(xCol, yCol, zCol),
                         Billboard = BaseMaterial3D.BillboardModeEnum.Disabled,
                         FontSize = 64, PixelSize = 0.0075f,
                         Width = 400f, AutowrapMode = TextServer.AutowrapMode.Word,
@@ -709,7 +749,7 @@ namespace UnturnedGodot
             if (sign == null) return;
             for (int i = 0; i < SignBoardCount(sign); i++)
                 if (sign.GetNodeOrNull<Label3D>($"SignText{i}") is Label3D l)
-                    l.Text = sign.HasMeta($"sign_text_{i}") ? (string)sign.GetMeta($"sign_text_{i}") : "";
+                    l.Text = SignTextForDisplay(sign.HasMeta($"sign_text_{i}") ? (string)sign.GetMeta($"sign_text_{i}") : "");
         }
 
         public bool SignSelected => Primary != null && Primary.HasMeta("sign_edit");
@@ -719,10 +759,7 @@ namespace UnturnedGodot
         public void SetSelectedSignText(int board, string text)
         {
             if (!SignSelected || board < 0 || board >= SignBoardCount(Primary)) return;
-            // ⚠ TABS AND NEWLINES ARE THE RECORD SEPARATORS the save file uses, so a legend containing one
-            // would split a row and corrupt every sign after it on load. Literal "\n" stays as the line break
-            // the mapper types.
-            Primary.SetMeta($"sign_text_{board}", (text ?? "").Replace("\t", " ").Replace("\r", "").Replace("\n", "\\n"));
+            Primary.SetMeta($"sign_text_{board}", SanitiseSignText(text));
             UpdateSignLabels(Primary);
         }
 
@@ -1233,11 +1270,16 @@ namespace UnturnedGodot
             {
                 var gp = b.GlobalPosition;
                 float yawDeg = Mathf.RadToDeg(b.GlobalTransform.Basis.GetEuler().Y);
-                string t0 = b.HasMeta("sign_text_0") ? (string)b.GetMeta("sign_text_0") : "";
-                string t1 = b.HasMeta("sign_text_1") ? (string)b.GetMeta("sign_text_1") : "";
                 // \t separated: a legend is free text and WILL contain spaces, so the space-separated layout
-                // the other editables use would split "City Centre" into two fields.
-                w.WriteLine($"{gp.X:0.###} {gp.Y:0.###} {(-gp.Z):0.###} {yawDeg:0.###}\t{t0}\t{t1}");
+                // the other editables use would split "City Centre" into two fields. ONE COLUMN PER BOARD,
+                // so a four-board gantry round-trips on the same format as a two-board mast -- and the mesh
+                // rides along as a 5th positional token, because without it every gantry reloads as a mast.
+                string meshName = b.HasMeta("sign_mesh") ? (string)b.GetMeta("sign_mesh") : HighwaySignMesh;
+                var sb = new System.Text.StringBuilder(
+                    $"{gp.X:0.###} {gp.Y:0.###} {(-gp.Z):0.###} {yawDeg:0.###} {meshName}");
+                for (int i = 0; i < SignBoardCount(b); i++)
+                    sb.Append('\t').Append(b.HasMeta($"sign_text_{i}") ? (string)b.GetMeta($"sign_text_{i}") : "");
+                w.WriteLine(sb.ToString());
             }
             if (signs.Count > 0) Log.Print($"[editor] saved {signs.Count} highway signs -> {SignPath}");
         }
@@ -1252,10 +1294,13 @@ namespace UnturnedGodot
                 if (p.Length < 3 || !float.TryParse(p[0], out var px) || !float.TryParse(p[1], out var py)
                                  || !float.TryParse(p[2], out var pz)) continue;
                 float yawDeg = 0f; if (p.Length >= 4) float.TryParse(p[3], out yawDeg);
-                var root = PlaceHighwaySign(new Vector3(px, py, -pz), Upright(yawDeg));
+                // ⚠ The mesh is a 5th token rather than a new file: a map with both a mast and a gantry on it
+                // must reload each as what it was, and an older sidecar without the token is the mast.
+                string meshName = p.Length >= 5 ? p[4] : HighwaySignMesh;
+                var root = PlaceHighwaySign(meshName, new Vector3(px, py, -pz), Upright(yawDeg));
                 if (root == null) continue;
                 for (int i = 0; i < SignBoardCount(root); i++)
-                    root.SetMeta($"sign_text_{i}", cols.Length > i + 1 ? cols[i + 1] : DefaultSignText(i));
+                    root.SetMeta($"sign_text_{i}", SanitiseSignText(cols.Length > i + 1 ? cols[i + 1] : DefaultSignText(i)));
                 UpdateSignLabels(root);
                 n++;
             }

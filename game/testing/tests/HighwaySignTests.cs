@@ -68,8 +68,17 @@ namespace UnturnedGodot.Testing
             if (labels.Count != 2) yield break;
             T.Check($"...each carrying its default text (\"{labels[0].Text.Replace("\n", "/")}\", "
                   + $"\"{labels[1].Text.Replace("\n", "/")}\")",
-                    labels[0].Text == EditorObjects.DefaultSignText(0)
-                 && labels[1].Text == EditorObjects.DefaultSignText(1));
+                    labels[0].Text == EditorObjects.SignTextForDisplay(EditorObjects.DefaultSignText(0))
+                 && labels[1].Text == EditorObjects.SignTextForDisplay(EditorObjects.DefaultSignText(1)));
+            // ⚠⚠ THE STORED FORM IS SINGLE-LINE. The sidecar is one row per sign, so a real newline
+            // anywhere in a legend splits the row -- which is exactly what a four-board gantry did, its
+            // DEFAULTS going straight to meta and bypassing the setter's escaping. Asserted on the stored
+            // value, and separately that the BOARD still renders the break.
+            T.Check("the stored legend carries no raw newline",
+                    !((string)sign.GetMeta("sign_text_0")).Contains('\n')
+                 && !((string)sign.GetMeta("sign_text_1")).Contains('\n'));
+            T.Check($"...while the board still shows two lines ({labels[0].Text.Split('\n').Length})",
+                    labels[0].Text.Contains('\n'));
 
             // ⭐ AND SITTING ON THE BOARDS, which is the check that catches a wrong stand-up or a bad axis
             // mapping -- the legend would otherwise float beside the pole and still "exist".
@@ -121,9 +130,11 @@ namespace UnturnedGodot.Testing
             objs.SetSelectedSignText(0, "SOUTH\\nHarbour");
             objs.SetSelectedSignText(1, "EAST\\nFerry Terminal");
             T.Check($"board 1 takes new text (\"{objs.SelectedSignText(0)}\")",
-                    objs.SelectedSignText(0) == "SOUTH\\nHarbour" && labels[0].Text == "SOUTH\\nHarbour");
+                    objs.SelectedSignText(0) == "SOUTH\\nHarbour"
+                 && labels[0].Text == EditorObjects.SignTextForDisplay("SOUTH\\nHarbour"));
             T.Check($"board 2 takes its own, independently (\"{objs.SelectedSignText(1)}\")",
-                    objs.SelectedSignText(1) == "EAST\\nFerry Terminal" && labels[1].Text == "EAST\\nFerry Terminal");
+                    objs.SelectedSignText(1) == "EAST\\nFerry Terminal"
+                 && labels[1].Text == EditorObjects.SignTextForDisplay("EAST\\nFerry Terminal"));
 
             // ⚠ A TAB WOULD SPLIT THE SAVE ROW and corrupt every sign after it. Control for the sanitiser.
             objs.SetSelectedSignText(0, "A\tB");
@@ -162,8 +173,79 @@ namespace UnturnedGodot.Testing
                 var rl = new List<Label3D>();
                 foreach (var c in loaded[0].GetChildren()) if (c is Label3D l) rl.Add(l);
                 T.Check($"...and the boards show them, not the defaults",
-                        rl.Count == 2 && rl[0].Text == "SOUTH\\nHarbour" && rl[1].Text == "EAST\\nFerry Terminal");
+                        rl.Count == 2
+                     && rl[0].Text == EditorObjects.SignTextForDisplay("SOUTH\\nHarbour")
+                     && rl[1].Text == EditorObjects.SignTextForDisplay("EAST\\nFerry Terminal")
+                     && rl[0].Text.Contains('\n'));
             }
+            // ---- 4. ⭐ THE TWO-POST GANTRY, same code path, different asset. Master corrected this from a
+            // full-width four-board version ("oh i meant just one of the directions"), and the only thing
+            // that changed on this side was which file it loads -- the board count and each board's facing
+            // are read off the mesh, so neither the wiring nor this test had to learn the new shape.
+            var gantry = objs.Place(EditorObjects.HighwayGantryName, new Vector3(80f, 0f, -40f), EditorObjects.Upright(0f));
+            T.Check("a gantry places from the same catalog", gantry != null);
+            if (gantry != null)
+            {
+                yield return Ticks(1);
+                int gb = gantry.HasMeta("sign_boards") ? (int)gantry.GetMeta("sign_boards") : -1;
+                var gl = new List<Label3D>();
+                foreach (var c in gantry.GetChildren()) if (c is Label3D l) gl.Add(l);
+                T.Check($"...and reads its board count off the mesh ({gb} boards, {gl.Count} legends)",
+                        gb == 2 && gl.Count == 2);
+
+                // ⚠⚠ THE FACING COMES FROM THE AUTHORED NORMAL, and this is the check that proves it.
+                // ContentProvider.ParseObj reverses winding PER TRIANGLE for Godot's convention, so a normal
+                // computed by cross product on the loaded mesh points the wrong way and every legend ends up
+                // written on the inside of the board, facing the post. Both of these boards are authored
+                // (-1,0,0), so both legends must look down the prop's own -X.
+                if (gl.Count == 2)
+                {
+                    var want = -gantry.GlobalTransform.Basis.X.Normalized();
+                    float worst = 1f;
+                    foreach (var l in gl) worst = Mathf.Min(worst, l.GlobalTransform.Basis.Z.Normalized().Dot(want));
+                    T.Check($"both legends face the way the boards are authored to (worst dot {worst:0.000})",
+                            worst > 0.9f);
+                }
+
+                // ⭐ AND A MAP WITH BOTH SURVIVES A SAVE AS BOTH. The sidecar carries the mesh as a 5th
+                // token; without it every gantry would reload as a single-post mast.
+                objs.DebugSelect(gantry);
+                T.Check($"fixture: the gantry is the live selection ({objs.SelectedSignBoards} boards)",
+                        objs.SignSelected && objs.SelectedSignBoards == 2);
+                objs.SetSelectedSignText(1, "LANE 2 Exit Only");
+                objs.DebugSaveSigns();
+
+                // ⭐ ONE PHYSICAL ROW PER SIGN, one column per board. This is the check that caught the
+                // newline bug: a default legend held a real newline, so one sign's row was written across
+                // several lines and reloaded as garbage.
+                var rows = System.IO.File.ReadAllLines(objs.DebugSignPath);
+                T.Check($"the sidecar holds exactly one row per sign ({rows.Length} rows for 2 signs)",
+                        rows.Length == 2);
+                foreach (var raw in rows)
+                {
+                    if (!raw.Contains("Gantry")) continue;
+                    var cc = raw.Split('\t');
+                    T.Check($"...and the gantry's row one column per board ({cc.Length - 1} of 2)", cc.Length == 3);
+                }
+
+                var all = new List<Node3D>();
+                foreach (var nn in objs.PlacedOfNodes(EditorObjects.HighwaySignName)) all.Add(nn);
+                foreach (var nn in objs.PlacedOfNodes(EditorObjects.HighwayGantryName)) all.Add(nn);
+                objs.RemovePlaced(all);
+                yield return Ticks(1);
+                objs.DebugLoadSigns();
+                yield return Ticks(1);
+                int masts = 0, gantries = 0;
+                Node3D rg = null;
+                foreach (var _ in objs.PlacedOfNodes(EditorObjects.HighwaySignName)) masts++;
+                foreach (var nn in objs.PlacedOfNodes(EditorObjects.HighwayGantryName)) { gantries++; rg = nn; }
+                T.Check($"a map with one of each reloads as one of each ({masts} mast, {gantries} gantry)",
+                        masts == 1 && gantries == 1);
+                T.Check($"...the gantry keeping its own legend "
+                      + $"(\"{(rg != null && rg.HasMeta("sign_text_1") ? (string)rg.GetMeta("sign_text_1") : "")}\")",
+                        rg != null && (string)rg.GetMeta("sign_text_1") == "LANE 2 Exit Only");
+            }
+
             try { System.IO.File.Delete(objs.DebugSignPath); } catch { }
         }
     }
