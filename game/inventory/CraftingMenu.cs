@@ -130,6 +130,23 @@ void fragment() {
         /// they disagreed the first time this rule had two copies.</summary>
         static bool OffAll(string cat) => cat == "Dyes" || cat == "Salvage";
 
+        /// <summary>⭐ A SALVAGE RECIPE ONLY EXISTS WHILE YOU HOLD THE THING IT TEARS APART (strawberry
+        /// 2026-10-10: "we should hide salvage recipes in the crafting menu unless we have the item to
+        /// salvage"). OffAll already kept salvage out of All, but its own tab still listed one row per
+        /// salvageable item IN THE GAME -- hundreds of recipes for things you have never picked up, which is
+        /// the same burying problem one category over.
+        ///
+        /// ⚠ "The item to salvage" is the OWNER, not just any input: IsSalvage is keyed on the owner id, so
+        /// the owner IS the thing being consumed. Deliberately NOT CanCraft -- a salvage recipe whose TOOL you
+        /// are missing should still show, greyed, because you own the item and the menu's job is to tell you
+        /// why you cannot do it yet. Holding the item is the question; everything else is a blocker.</summary>
+        bool SalvageSourceHeld(BlueprintDef bp)
+        {
+            if (!BlueprintRegistry.IsSalvage(bp)) return true;
+            return Inv != null && ushort.TryParse(bp.OwnerItemId, out var id) && id != 0
+                && Inv.getItemCount(id) > 0;
+        }
+
         // group the output item's EItemType (by name, so a type this build doesn't know just falls to Other).
         static string CategoryOf(ItemAsset a)
         {
@@ -572,6 +589,7 @@ void fragment() {
             foreach (var bp in _all)
             {
                 if (!Known(bp)) continue;   // the category counts are what browsing would show, and browsing hides the unknown
+                if (!SalvageSourceHeld(bp)) continue;   // ...and browsing now hides salvage you have nothing to salvage
                 if (cat == "All") { if (!OffAll(_catOf[bp])) n++; }
                 else if (_catOf[bp] == cat) n++;
             }
@@ -589,7 +607,10 @@ void fragment() {
                 // An UNKNOWN recipe surfaces only for a search the player TYPED. Browsing a category, or the bag's U/R
                 // lookup, never reveals one -- the lookup answers "what can I do with this", and a recipe you do not
                 // know is not something you can do.
-                if (q.Length == 0 || _look != ItemLookup.None) { if (!Known(bp)) continue; }
+                // ⭐ Salvage rides the SAME rule as an unknown recipe, for the same reason: browsing and the bag
+                // lookup hide it, a search the player TYPED still finds it. That keeps nothing unreachable while
+                // the tab stops being a catalogue of items you do not own.
+                if (q.Length == 0 || _look != ItemLookup.None) { if (!Known(bp)) continue; if (!SalvageSourceHeld(bp)) continue; }
                 if (_look != ItemLookup.None) { if (!LookupMatches(bp, _look, _lookId)) continue; }
                 else if (q.Length > 0) { if (!Matches(bp, q)) continue; }
                 else if (_cat == "All") { if (OffAll(_catOf[bp])) continue; }
@@ -1144,6 +1165,8 @@ void fragment() {
         /// <summary>Test seam: type a search. Setting LineEdit.Text from code does not emit TextChanged, so this does
         /// what that handler does.</summary>
         public void DebugSetSearch(string q) { if (_search != null) _search.Text = q; _sel = null; _look = ItemLookup.None; Rebuild(); }
+        public void DebugSetCategory(string cat) { _cat = cat; _look = ItemLookup.None; if (_search != null) _search.Text = ""; _sel = null; Rebuild(); }
+        public int DebugCountFor(string cat) => CountFor(cat);   // the count and the grid must agree; a test asks both
         /// <summary>Test seam: how many tiles in the grid carry the padlock right now.</summary>
         public string DebugBlocker(BlueprintDef bp) => CraftBlocker(bp, new Crafting.PlayerInvAdapter(Inv), 1);
         /// <summary>Test seam: which category a recipe was filed under.</summary>

@@ -122,7 +122,12 @@ namespace UnturnedGodot
             if (firewood == null || string.IsNullOrEmpty(firewood.guid)) return;
 
             int made = 0;
-            foreach (ushort logId in new ushort[] { 37, 39, 41 })          // Birch / Maple / Pine Log
+            // ⭐ Redwood (9348) and Oak (9351) joined here rather than as hand-written TSV rows (strawberry
+            // 2026-10-10: "as well as the recipes for firewood etc"). I wrote those rows first and they were
+            // DUPLICATES -- this generator already existed and I had only grepped the data files for "firewood",
+            // never the code. Adding the id here is the whole change, and it picks up BOTH axes and the shared
+            // species-less output for free, which five hand-typed rows did not.
+            foreach (ushort logId in new ushort[] { 37, 39, 41, 9348, 9351 })   // Birch / Maple / Pine / Redwood / Oak Log
             {
                 var log = SDG.Unturned.Assets.find(logId);
                 if (log == null || string.IsNullOrEmpty(log.guid)) continue;

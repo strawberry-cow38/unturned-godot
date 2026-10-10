@@ -41,6 +41,10 @@ namespace UnturnedGodot
         /// PowerLineField needs to put the four wire anchors in the world, and it is known for free at the moment
         /// the prop is placed. A scene walk would have to re-derive it and would miss the editor's own copies.</summary>
         public System.Collections.Generic.List<Transform3D> PowerLinePoles = new();
+
+        /// <summary>⭐ The cull distance the POLE PROP itself was given, so the wires can use the very same
+        /// number instead of a parallel constant that drifts the first time the LOD table changes.</summary>
+        public float PowerLinePoleCull = LodTable.DefaultCullDistance;
     // trees/rocks -- MP Phase 8's alive-bitmap indexes into it (§3.7)
         public FoliageField Foliage;       // grass/flowers/pebbles -- the editor's paint tool authors into it
         public DestructibleField Destructibles;   // destructible props (rubble) -- the DestructibleReplication(16) alive-bitmap indexes into it
@@ -1071,7 +1075,10 @@ namespace UnturnedGodot
                 // POWER LINE POLES: remember where they are so wires can be strung between them (PowerLineField).
                 // Visual-only, so the dedicated server -- which has no visual layer at all -- does not collect them.
                 if (name == PowerLineField.PoleMesh && mode != WorldMode.Dedicated)
+                {
                     result.PowerLinePoles.Add(new Transform3D(basis, gpos));
+                    result.PowerLinePoleCull = cull;   // the pole's OWN cull, captured where it is computed
+                }
 
                 if ((name == "Street_Light_0" || name == "Traffic_Light_0") && mode != WorldMode.Dedicated)
                 {
@@ -1782,10 +1789,22 @@ namespace UnturnedGodot
                     var mns = mains;
                     var toast = placedToaster;
                     var indoorLamp = placedIndoorLamp;   // indoor ceiling/standing/desk light darkens on break like the streetlight above
+                    // ⭐ A SMASHED POLE DROPS ITS WIRES (strawberry 2026-10-10: "work on destruction for the
+                    // smaller power lines, wires should disconnect from broken poles"). The pole was already
+                    // destructible and already left logs; only the wires never noticed.
+                    //
+                    // ⚠ By POSITION, not by index. WorldBuilder records poles into result.PowerLinePoles but
+                    // never holds the field -- it is built later, and in the infinite world there is one PER
+                    // STREAMED REGION. So the break is announced to every live field and the one with a pole
+                    // there answers. Captured as a local because the closure must not re-read the loop var.
+                    bool isPole = name == PowerLineField.PoleMesh;
+                    var poleAt = gpos;
+
                     System.Action<bool> onAlive = null;
-                    if (lamp != null || sigs != null || tap != null || tv != null || mon != null || rad != null || mns != null || toast != null || indoorLamp != null || flagCloth != null)
+                    if (isPole || lamp != null || sigs != null || tap != null || tv != null || mon != null || rad != null || mns != null || toast != null || indoorLamp != null || flagCloth != null)
                         onAlive = alive =>
                         {
+                            if (isPole) PowerLineField.NotifyPoleBroken(poleAt, !alive);
                             if (flagCloth != null && GodotObject.IsInstanceValid(flagCloth)) flagCloth.SetBroken(!alive);   // kill the flapping cloth with the pole; restore on a rubble reset (master)
                             if (toast != null && GodotObject.IsInstanceValid(toast)) toast.SetBroken(!alive);
                             if (tap != null && GodotObject.IsInstanceValid(tap)) tap.SetBroken(!alive);

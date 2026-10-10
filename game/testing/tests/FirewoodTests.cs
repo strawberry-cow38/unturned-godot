@@ -44,7 +44,11 @@ namespace UnturnedGodot.Testing
             foreach (var bp in BlueprintRegistry.Index())
                 if (bp.Outputs.Count == 1 && Assets.findByGuid(bp.Outputs[0].Guid)?.id == Cooking.FirewoodId)
                     chops.Add(bp);
-            T.Check($"six firewood recipes are REACHABLE -- 3 species x 2 axes ({chops.Count})", chops.Count == 6);
+            // ⭐ One per (log, axe). 5 woods x 2 axes since redwood and oak joined the generator on 2026-10-10 --
+            // expressed as the product so the next wood moves this with it, instead of someone bumping a bare 6.
+            const int Woods = 5, Axes = 2;   // Birch/Maple/Pine/Redwood/Oak x Camp Axe/Fire Axe
+            T.Check($"every (log, axe) pair is REACHABLE -- {Woods} species x {Axes} axes ({chops.Count})",
+                    chops.Count == Woods * Axes);
 
             BlueprintDef Chop(ushort logId, ushort axeId)
             {

@@ -2004,3 +2004,9 @@
 9347	Ice	Supply	Common	1	1	A handful of ice cubes. Keeps only while it stays frozen -- out of the cold it is water, and then it is nothing.	322d7497bb934c23ae12b849783b6b88
 9346	Thermometer	Generic	Common	1	1	A glass thermometer. Carry one and your temperature bar shows the reading in degrees.	14e539a96db044248882224289d04660
 9400	Water Bottle Silencer	Barrel	Common	1	1	A plastic bottle taped over the muzzle. Swallows exactly one shot, then it is done.	56d6a5da2bbf4638bb313fa11a583399
+9348	Redwood Log	Supply	Epic	2	1	Recently cut, high quality redwood.	9ccae28514714a48a289144c94458b9e
+9349	Redwood Stick	Supply	Epic	1	1	Recently cut, high quality redwood.	5ca23e5640c24090a673ddb9caba4bb6
+9350	Redwood Plank	Supply	Epic	1	2	Recently cut, high quality redwood.	e2d82c5c7a1646baa701d13837188893
+9351	Oak Log	Supply	Uncommon	2	1	Recently cut, high quality oak.	ec593105ecab4548a0162c6752ca0447
+9352	Oak Stick	Supply	Uncommon	1	1	Recently cut, high quality oak.	b42ba61819724aa98cf912372f149d9d
+9353	Oak Plank	Supply	Uncommon	1	2	Recently cut, high quality oak.	dcfd0a7be5ca46c7ae7430e8efdbd53c

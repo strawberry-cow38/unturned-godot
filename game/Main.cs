@@ -4511,6 +4511,19 @@ namespace UnturnedGodot
             field.Rebuild();
             Log.Print($"[powerline] test: {field.PoleCount} poles, {field.SpanCount} spans");
 
+            // UG_BREAKPOLE=<index>: smash that pole, the way a destructible break does, so the rig can render
+            // the before/after of "wires disconnect from broken poles". The MESH is hidden too, because
+            // DestructibleField would have hidden it and a wire-less pole still standing is a misleading shot.
+            if (int.TryParse(System.Environment.GetEnvironmentVariable("UG_BREAKPOLE"), out int bp)
+                && bp >= 0 && bp < field.PoleCount)
+            {
+                PowerLineField.NotifyPoleBroken(field.PoleOrigin(bp), true);
+                int shown = 0;
+                foreach (Node ch in GetChildren())
+                    if (ch is MeshInstance3D mi2 && mi2.Mesh == mesh && shown++ == bp) mi2.Visible = false;
+                Log.Print($"[powerline] test: pole {bp} BROKEN -> {field.WireNodeCount} wire node(s) left");
+            }
+
             if (System.Environment.GetEnvironmentVariable("UG_PLANCHORS") == "1")
             {
                 var am = new StandardMaterial3D { AlbedoColor = new Color(1f, 0.1f, 0.1f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded };
@@ -7014,14 +7027,12 @@ namespace UnturnedGodot
             //
             // ⭐ Order matters: a custom map's poles ARE its placed objects, so the field has to be seeded from
             // EditorObjects AFTER those have loaded, and only then can the saved spans re-match by position.
-            plField.RefreshPoles(editor.Objects != null
-                                     ? editor.Objects.PlacedOf(PowerLineField.PoleMesh)
-                                     : System.Array.Empty<Transform3D>(),
-                                 out _);
+            plField.RefreshPoles(PowerLineField.PolesFrom(null, editor.Objects), out int wipedSpans);
             int loadedSpans = plField.Load(editor.MapName, out int orphanSpans);
             plField.Rebuild();
-            if (loadedSpans > 0 || orphanSpans > 0)
-                Log.Print($"[powerline] custom map '{editor.MapName}': {plField.PoleCount} poles, {loadedSpans} spans loaded, {orphanSpans} orphaned");
+            if (loadedSpans > 0 || orphanSpans > 0 || wipedSpans > 0)
+                Log.Print($"[powerline] custom map '{editor.MapName}': {plField.PoleCount} poles, {loadedSpans} spans loaded, "
+                        + $"{orphanSpans} orphaned, {wipedSpans} lost to re-seed");
             // Workshop's per-map Play opens the editor and goes straight in, so the map you play is the
             // map the editor built -- one world-building path, not two that can disagree.
             if (loading != null)
@@ -7734,7 +7745,7 @@ namespace UnturnedGodot
             }
             // POWER LINES (master 2026-10-06). The field holds the wires; the tool strings them. Fed the poles the
             // MAP placed, plus -- inside the tool -- any placed this session, so both kinds carry wires.
-            var plField = new PowerLineField(); editor.AddChild(plField);
+            var plField = new PowerLineField { PoleCullDistance = res.PowerLinePoleCull }; editor.AddChild(plField);
             var plEd = new EditorPowerLines(editor, cam, plField, res.PowerLinePoles, editor.Objects);
             editor.AddChild(plEd); editor.PowerLinesEd = plEd; editor.PowerLines = plField;
             var fenceEd = new EditorFenceRoad(editor, cam, editor.Objects, res.Terr, rf);   // Shift+F: roadside guardrail runs
@@ -7748,7 +7759,7 @@ namespace UnturnedGodot
             editor.Roads = rf;
             // Seed the field with the map's poles and whatever wires were saved last time, so the lines are THERE
             // on load rather than only after you open the tool.
-            plField.RefreshPoles(res.PowerLinePoles, out _);
+            plField.RefreshPoles(PowerLineField.PolesFrom(res.PowerLinePoles, editor.Objects), out _);
             plField.Load(editor.MapName, out _);
             plField.Rebuild();
             var roadsEd = new EditorRoads(editor, cam, rf);   // LEGACY node paving under the Environment tab (Shift+R)

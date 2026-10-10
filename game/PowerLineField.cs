@@ -37,6 +37,21 @@ namespace UnturnedGodot
         /// <summary>The prop these anchors were measured from. Anything else has no wire points.</summary>
         public const string PoleMesh = "Power_Line_0";
 
+        /// <summary>The LATTICE PYLON. Master: "get the pylon model and make it decently bigger and hook it
+        /// up with wires between them like the existing power lines." Retail files it under
+        /// objects/LARGE/utilities where the roadside pole is medium/traffic, and it ships a skybox.prefab --
+        /// the thing big landmarks get. 31 m and 1944 triangles against the pole's 9 m and 166.</summary>
+        public const string PylonMesh = "Power_Line_1";
+
+        /// <summary>⭐ "decently bigger": the pylon stands 31 m natively, which already dwarfs the 9 m pole.
+        /// x1.6 puts it near 50 m -- the height of a real large transmission tower, and unmistakably a
+        /// different class of structure from the roadside poles rather than just a taller one.
+        ///
+        /// ⚠ Applied as a basis SCALE at placement, not baked into the mesh: AnchorsWorld multiplies the
+        /// pole's own transform through the local anchors, so the wire attachment points scale with it for
+        /// free, and sx/sy/sz round-trip through the placements format.</summary>
+        public const float PylonScale = 1.6f;
+
         /// <summary>The four grey pads, in the loaded mesh's local frame (raw OBJ -- see the note above).
         /// Order is deliberate and load-bearing: a span joins anchor i to anchor i, so two poles facing OPPOSITE
         /// ways still pair outer-to-outer and inner-to-inner rather than crossing the wires over.</summary>
@@ -55,10 +70,74 @@ namespace UnturnedGodot
             new Vector3(-1.658f, -0.331f, 6.612f),   // lower crossarm, outer
         };
 
+        /// <summary>The PYLON's six conductor points, measured off its own mesh rather than guessed from the
+        /// pole's. Found the way the pole's were: the darkest palette grey is the conductor material, and
+        /// away from the mast it clusters at the three crossarms' tips -- lateral reach 4.85 m at Z 13.5,
+        /// 6.19 m at Z 19.3 (the widest arm) and 4.39 m at Z 25.1.
+        ///
+        /// ⚠ EACH CLUSTER COMES IN A PAIR, the insulator's top and bottom, and these are the BOTTOMS. Same
+        /// call master made on the pole ("the lower wire set should connect a lil lower"): a conductor sits
+        /// in the groove at the foot of a suspension insulator, not at its centroid.
+        ///
+        /// ⭐ ORDER IS MIRROR-SYMMETRIC, index i against n-1-i, exactly as the pole's four are -- so a pylon
+        /// placed facing the other way still pairs outer-to-outer rather than crossing its conductors over.</summary>
+        /// <summary>⭐ MEASURED OFF THE INSULATORS, not off the crossarm tips. Master: "should be connecting to
+        /// the insulators not floating between them". The prop paints its parts through a 2x2 PALETTE texture, so
+        /// the UV cell identifies them -- cell (1,1) is the six insulators and nothing else (576 verts, spanning
+        /// exactly the three arm levels). Each is a ~1.1 m string hanging off an arm tip, and a conductor clamps
+        /// at its BOTTOM, so every anchor is that cluster's bottom-face centroid. The old values were the
+        /// insulator's WIDEST point instead: up to 0.24 m outboard and 0.19 m high, which at the 1.6x placement
+        /// scale is 0.38 m -- the wire ended in mid-air just off each tip, exactly as master described.
+        ///
+        /// ⚠ Prop space is Z-UP with the line running along local Y, so Z here is HEIGHT and X is along the
+        /// crossarm. Upright() maps local +Z to world +Y.</summary>
+        public static readonly Vector3[] PylonAnchorsLocal =
+        {
+            new Vector3( 4.708f, 0f, 13.473f),   // lower crossarm, right
+            new Vector3( 5.952f, 0f, 19.209f),   // middle crossarm (widest), right
+            new Vector3( 4.227f, 0f, 24.941f),   // top crossarm, right
+            new Vector3(-4.227f, 0f, 24.941f),   // top crossarm, left
+            new Vector3(-5.952f, 0f, 19.209f),   // middle crossarm, left
+            new Vector3(-4.708f, 0f, 13.473f),   // lower crossarm, left
+        };
+
+        /// <summary>Which anchor set a pole of this mesh uses. ⚠ Keyed on the MESH, because a field can hold
+        /// both kinds at once and a pylon wired with the pole's four anchors would hang its conductors in
+        /// mid-air beside the lattice.</summary>
+        /// <summary>⭐⭐ A PYLON IS A DEAD-END TOWER: EVERY CONDUCTOR POINT IS A PAIR. Master, twice: "arent
+        /// connected to the insulators still, there needs to be a gap between where it connects and where the
+        /// other one comes out of. measure."
+        ///
+        /// I had measured the insulators in X and Z and never along Y -- the line axis -- so when I averaged a
+        /// cluster I silently collapsed a PAIR into the empty space between its two halves. There are TWELVE
+        /// insulators on this mesh, not six: each arm tip carries one at y=-s and one at y=+s, and the span
+        /// arriving terminates on the near one while the span leaving starts from the far one. My anchor sat at
+        /// the midpoint, touching neither, which is exactly the "floating between them" master kept reporting.
+        ///
+        /// Measured off palette cell (1,1), bottom-face centroid of each half: y = 1.178 at the low arm,
+        /// 1.131 at the middle, 1.139 at the top. So the gap across a tower is ~2.3 m before the 1.6x scale.
+        ///
+        /// ⚠ The ROADSIDE POLE is NOT like this -- its insulators all sit on one face (y -0.58..0.25, measured
+        /// the same way), because it is a SUSPENSION pole the conductor runs straight through. Zero here, so
+        /// the same code path leaves poles continuous and only pylons get the gap.</summary>
+        static readonly float[] PylonAnchorSplit = { 1.178f, 1.131f, 1.139f, 1.139f, 1.131f, 1.178f };
+
+        public static Vector3[] AnchorsFor(string mesh) => mesh == PylonMesh ? PylonAnchorsLocal : AnchorsLocal;
+
+        /// <summary>How far along the line conductor `k` of this mesh is offset from the tower's centre. 0 for
+        /// anything that is not a pylon.</summary>
+        public static float AnchorSplitFor(string mesh, int k) =>
+            mesh == PylonMesh && k >= 0 && k < PylonAnchorSplit.Length ? PylonAnchorSplit[k] : 0f;
+
         /// <summary>A pole that can carry wires: its placement transform, and where it is for picking.</summary>
         public struct Pole
         {
             public Transform3D Xform;
+            public string Mesh;                       // null = the roadside pole, for callers that predate pylons
+            /// <summary>Its prop has been destroyed. The pole STAYS in the list -- destructibles respawn on a
+            /// reset clock, so breaking has to be reversible, and dropping the entry would lose the spans with
+            /// it and leave nothing to restore. Rebuild just skips any span touching a broken end.</summary>
+            public bool Broken;
             public Vector3 Origin => Xform.Origin;
         }
 
@@ -72,7 +151,17 @@ namespace UnturnedGodot
 
         readonly List<Pole> _poles = new();
         readonly List<Span> _spans = new();
-        MeshInstance3D _wires;
+        Node3D _wires;                                  // holder; one MeshInstance3D child per span
+        readonly List<MeshInstance3D> _wireNodes = new();
+
+        /// <summary>⭐ THE SAME NUMBER THE POLES CULL AT. Master: "make sure the wires are actually culled
+        /// when both the parent poles are culled." Set by whoever placed the poles, from the very
+        /// LodTable.CullDistance it handed their MeshInstance3D, so the two cannot drift. Left at the table's
+        /// default when nobody says otherwise.</summary>
+        public float PoleCullDistance = LodTable.DefaultCullDistance;
+
+        public int WireNodeCount => _wireNodes.Count;
+        public MeshInstance3D WireNode(int i) => i >= 0 && i < _wireNodes.Count ? _wireNodes[i] : null;
         ShaderMaterial _mat;
 
         public int PoleCount => _poles.Count;
@@ -94,6 +183,59 @@ namespace UnturnedGodot
         /// like a wire and start looking like a rope bridge, and it is nearly always a misclick on a distant pole.</summary>
         public const float MaxSpan = 140f;
 
+        /// <summary>⭐ A LATTICE TOWER IS NOT A ROADSIDE POLE. Master: "the spacing between pylons needs to be
+        /// much longer". Real transmission towers of this height stand 300-400 m apart -- that span is the whole
+        /// reason the tower is 50 m tall and carries its conductors on insulator strings. Capping them at the
+        /// roadside pole's 140 m made a run of pylons read as a crowded fence.</summary>
+        public const float PylonMaxSpan = 400f;
+
+        public bool IsPylon(int pole) => pole >= 0 && pole < _poles.Count && _poles[pole].Mesh == PylonMesh;
+
+        /// <summary>How far apart two poles of this kind may be strung.</summary>
+        public static float MaxSpanFor(bool pylon) => pylon ? PylonMaxSpan : MaxSpan;
+
+        /// <summary>⚠⚠ EVERY LIVE FIELD, NOT ONE "Active". The obvious shape here is a Terrain.Active-style
+        /// singleton, and it is wrong: RegionStreamer builds a PowerLineField PER STREAMED REGION, so the
+        /// infinite world has several alive at once and a singleton would silently leave every region but the
+        /// last one with wires still hanging off broken poles.
+        ///
+        /// A break arrives as a WORLD POSITION (WorldBuilder knows where the prop stood, not which field owns
+        /// it), so each field is asked and the ones with no pole there no-op. Same position matching the span
+        /// re-seed uses, for the same reason: an index only means something against the list that made it.</summary>
+        static readonly List<PowerLineField> _live = new();
+
+        public override void _EnterTree() { if (!_live.Contains(this)) _live.Add(this); }
+        public override void _ExitTree() { _live.Remove(this); }
+
+        /// <summary>Mark the pole standing at `world` broken (or whole again) in whichever field owns it, and
+        /// restring. Returns how many poles matched -- 0 means nothing stood there, which a caller can log
+        /// rather than assume it worked.</summary>
+        public static int NotifyPoleBroken(Vector3 world, bool broken, float radius = 2f)
+        {
+            int hit = 0;
+            for (int i = _live.Count - 1; i >= 0; i--)
+            {
+                var f = _live[i];
+                if (!IsInstanceValid(f)) { _live.RemoveAt(i); continue; }
+                if (f.SetPoleBroken(f.PickPole(world, radius), broken)) hit++;
+            }
+            return hit;
+        }
+
+        /// <summary>Break or restore one pole. Returns false (and rebuilds nothing) when the index is not a
+        /// pole or the flag already read that way -- a no-op must not cost a full restring, because a grid
+        /// sweep touches every destructible on the map at once.</summary>
+        public bool SetPoleBroken(int pole, bool broken)
+        {
+            if (pole < 0 || pole >= _poles.Count) return false;
+            if (_poles[pole].Broken == broken) return false;
+            var p = _poles[pole]; p.Broken = broken; _poles[pole] = p;
+            Rebuild();
+            return true;
+        }
+
+        public bool IsPoleBroken(int pole) => pole >= 0 && pole < _poles.Count && _poles[pole].Broken;
+
         public override void _Ready()
         {
             // ⚠⚠ REGISTER THE GLOBAL BEFORE THE MATERIAL LINKS IT. A Godot material that binds a `global uniform`
@@ -103,12 +245,12 @@ namespace UnturnedGodot
             // sway test produced two BYTE-IDENTICAL frames six seconds apart.
             GrassDisplacers.EnsureGlobals();
             _mat = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/powerline_wire.gdshader") };
-            _wires = new MeshInstance3D
-            {
-                MaterialOverride = _mat,
-                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,   // a 9 cm wire casts a shadow nobody can see and every span would pay for it
-                Name = "Wires",
-            };
+            // ⚠⚠ ONE NODE PER SPAN, NOT ONE FOR THE WHOLE GRID. A single combined mesh can only be culled
+            // as a unit, so the wires either all drew or all vanished and in practice they drew forever --
+            // master: "make sure the wires are actually culled when both the parent poles are culled."
+            // Godot culls per MeshInstance3D, so the span is the granularity the question is asked at. This
+            // is the same shape FoliageField already uses for its cells.
+            _wires = new Node3D { Name = "Wires" };
             AddChild(_wires);
         }
 
@@ -122,11 +264,67 @@ namespace UnturnedGodot
             WindField.PushGlobalsIfIdle(cam != null ? cam.GlobalPosition : GlobalPosition, delta);
         }
 
+        /// <summary>How many spans meet at this pole. 1 = an end, 2 = a through pole, 3 = a tee, 4 = a cross.
+        /// There has never been a limit -- Connect only refuses self-wiring, duplicates and over-long spans --
+        /// so three- and four-way junctions already WIRED. What they did not do is face the right way.</summary>
+        public int Degree(int pole)
+        {
+            int n = 0;
+            foreach (var e in _spans) if (e.A == pole || e.B == pole) n++;
+            return n;
+        }
+
+        /// <summary>⭐⭐ THE YAW THIS POLE SHOULD STAND AT, given the wires it actually carries. Master: "add
+        /// support for 3 and 4 way connections too, the power pole rotating however appropriate."
+        ///
+        /// The crossarm is the prop's local X (its anchors sit at X +/-1.658 and +/-0.880), so it wants to be
+        /// PERPENDICULAR to the line through the pole. With one span that is simply the span; with several it
+        /// is the direction they most agree on.
+        ///
+        /// ⚠ SPAN DIRECTIONS ARE AXES, NOT ARROWS. A through pole has one wire leaving east and one leaving
+        /// west, and averaging those two unit vectors gives ZERO -- the pole would spin to whatever the noise
+        /// said. The standard handling for axial data is to double the angle before averaging and halve it
+        /// after, which maps east and west onto the same direction and makes a straight run come out exactly
+        /// along itself. A tee then resolves to its through-line, which is right: the main run gets the clean
+        /// crossarm and the branch leaves at an angle.
+        ///
+        /// ⚠ A SYMMETRIC CROSS IS GENUINELY UNDETERMINED. Four spans at 90 degrees cancel in pairs and there
+        /// is no best answer -- every orientation is equally wrong for half the wires. `determined` says so
+        /// rather than returning a confident number from a zero-length vector, and the caller leaves the pole
+        /// where the mapper put it.</summary>
+        public float SuggestedYawDeg(int pole, out bool determined)
+        {
+            determined = false;
+            if (pole < 0 || pole >= _poles.Count) return 0f;
+            float sx = 0f, sz = 0f;
+            int n = 0;
+            foreach (var e in _spans)
+            {
+                int other = e.A == pole ? e.B : e.B == pole ? e.A : -1;
+                if (other < 0) continue;
+                var d = _poles[other].Origin - _poles[pole].Origin;
+                d.Y = 0f;
+                if (d.LengthSquared() < 1e-6f) continue;
+                d = d.Normalized();
+                float th = Mathf.Atan2(d.X, d.Z);
+                sx += Mathf.Cos(2f * th);
+                sz += Mathf.Sin(2f * th);
+                n++;
+            }
+            if (n == 0) return 0f;
+            // the resultant's LENGTH is how much the directions agree; near zero means they cancel.
+            if (Mathf.Sqrt(sx * sx + sz * sz) < 0.05f * n) return 0f;
+            determined = true;
+            return Mathf.RadToDeg(Mathf.Atan2(sz, sx) * 0.5f);
+        }
+
         /// <summary>Register a pole. Called by WorldBuilder as it places props, and by the editor when one is
         /// placed or moved, so the two paths cannot disagree about which poles exist.</summary>
-        public int AddPole(Transform3D xform)
+        public int AddPole(Transform3D xform) => AddPole(xform, PoleMesh);
+
+        public int AddPole(Transform3D xform, string mesh)
         {
-            _poles.Add(new Pole { Xform = xform });
+            _poles.Add(new Pole { Xform = xform, Mesh = mesh });
             return _poles.Count - 1;
         }
 
@@ -140,13 +338,42 @@ namespace UnturnedGodot
         /// indices shift constantly. Re-matching keeps a line you strung earlier attached to the poles you strung
         /// it between. A span whose pole has since been deleted is dropped and counted, never silently kept
         /// pointing at whatever now occupies that index.</summary>
+        /// <summary>⚠⚠ THE ONE PLACE that answers "which placed objects are poles". Three callers each seeded the
+        /// field from their own hand-written subset, and the load-time one in Main knew only about Power_Line_0 --
+        /// so a PYLON was wiped off the map on every reload, taking its spans with it (master: "dont see any
+        /// wires"). The showcase authored them, this seed ran a moment later, PickPole could not find them, and
+        /// the spans were dropped into an `out _`. Same TWO PATHS, ONE FEATURE drift as the saved-wires bug
+        /// documented directly above its own call site. Add a third pole mesh HERE and every seed learns it.</summary>
+        public static readonly string[] PoleMeshes = { PoleMesh, PylonMesh };
+
+        /// <summary>Every pole the field should hold: the ones the MAP shipped with, plus every pole-or-pylon
+        /// object placed in the editor, each tagged with the mesh that decides its anchors.</summary>
+        public static IEnumerable<(Transform3D Xform, string Mesh)> PolesFrom(
+            IEnumerable<Transform3D> mapPoles, EditorObjects objects)
+        {
+            if (mapPoles != null)
+                foreach (var x in mapPoles) yield return (x, PoleMesh);
+            if (objects != null)
+                foreach (var m in PoleMeshes)
+                    foreach (var x in objects.PlacedOf(m)) yield return (x, m);
+        }
+
         public int RefreshPoles(IEnumerable<Transform3D> poles, out int dropped)
+        {
+            var tagged = new List<(Transform3D, string)>();
+            foreach (var x in poles) tagged.Add((x, PoleMesh));
+            return RefreshPoles(tagged, out dropped);
+        }
+
+        /// <summary>⭐ The MESH travels with the transform. A field can hold both kinds at once, and a pylon
+        /// rebuilt as a plain pole would string four conductors into thin air beside its lattice.</summary>
+        public int RefreshPoles(IEnumerable<(Transform3D Xform, string Mesh)> poles, out int dropped)
         {
             var keep = new List<(Vector3 A, Vector3 B)>(_spans.Count);
             foreach (var s in _spans) keep.Add((_poles[s.A].Origin, _poles[s.B].Origin));
 
             _poles.Clear(); _spans.Clear();
-            foreach (var x in poles) _poles.Add(new Pole { Xform = x });
+            foreach (var (x, m) in poles) _poles.Add(new Pole { Xform = x, Mesh = m });
 
             dropped = 0;
             foreach (var (a, b) in keep)
@@ -158,10 +385,39 @@ namespace UnturnedGodot
         }
 
         /// <summary>The four wire points of pole `i`, in WORLD space.</summary>
+        /// <summary>How many conductors this pole carries: four on a roadside pole, six on a pylon.</summary>
+        public int AnchorCount(int pole) =>
+            pole >= 0 && pole < _poles.Count ? AnchorsFor(_poles[pole].Mesh).Length : 0;
+
+        /// <summary>The conductor points of pole `i` in WORLD space, taking the insulator on the side FACING
+        /// `toward`. On a pylon that is what puts the gap across the tower: a span arriving from the west ends
+        /// on the west insulator, the span leaving east starts on the east one, and the two never meet.
+        ///
+        /// ⭐ The side is chosen by DISTANCE, not by the sign of the local offset, so it is correct whatever yaw
+        /// the tower was placed at -- including the axial yaw the O key derives, which has no inherent facing.</summary>
+        public void AnchorsWorld(int i, Vector3 toward, Vector3[] into)
+        {
+            var x = _poles[i].Xform;
+            var a = AnchorsFor(_poles[i].Mesh);
+            int n = Mathf.Min(into.Length, a.Length);
+            for (int k = 0; k < n; k++)
+            {
+                float s = AnchorSplitFor(_poles[i].Mesh, k);
+                if (s <= 0f) { into[k] = x * a[k]; continue; }
+                // ⚠ The split is along the prop's LOCAL Y (the line axis); Z is height. Transform both halves
+                // and keep whichever lands nearer the far tower.
+                var near = x * new Vector3(a[k].X, -s, a[k].Z);
+                var far  = x * new Vector3(a[k].X,  s, a[k].Z);
+                into[k] = near.DistanceSquaredTo(toward) <= far.DistanceSquaredTo(toward) ? near : far;
+            }
+        }
+
         public void AnchorsWorld(int i, Vector3[] into)
         {
             var x = _poles[i].Xform;
-            for (int k = 0; k < 4; k++) into[k] = x * AnchorsLocal[k];
+            var a = AnchorsFor(_poles[i].Mesh);
+            int n = Mathf.Min(into.Length, a.Length);
+            for (int k = 0; k < n; k++) into[k] = x * a[k];
         }
 
         /// <summary>Join two poles. Returns false (and changes nothing) if they are the same pole, already
@@ -173,8 +429,15 @@ namespace UnturnedGodot
             if (a < 0 || b < 0 || a >= _poles.Count || b >= _poles.Count) { why = "no such pole"; return false; }
             var s = new Span(a, b);
             foreach (var e in _spans) if (e.A == s.A && e.B == s.B) { why = "those poles are already wired"; return false; }
+            // ⭐ NO MIXED SPANS. Master: "they probably shouldn't connect to small ones". A pylon carries six
+            // conductors on a 50 m lattice and a roadside pole four at 8 m; wiring one to the other dropped two
+            // conductors on the floor and dragged a transmission line down to head height to do it. They are
+            // different circuits in the real world and the tool now says so instead of quietly stringing four.
+            bool pa = IsPylon(a), pb = IsPylon(b);
+            if (pa != pb) { why = "a pylon and a roadside pole carry different circuits"; return false; }
             float d = _poles[a].Origin.DistanceTo(_poles[b].Origin);
-            if (d > MaxSpan) { why = $"too far apart ({d:0} m, max {MaxSpan:0})"; return false; }
+            float max = MaxSpanFor(pa);
+            if (d > max) { why = $"too far apart ({d:0} m, max {max:0})"; return false; }
             _spans.Add(s);
             return true;
         }
@@ -234,22 +497,53 @@ namespace UnturnedGodot
         public void Rebuild()
         {
             if (_wires == null) return;
-            if (_spans.Count == 0) { _wires.Mesh = null; return; }
+            foreach (var n in _wireNodes) { if (IsInstanceValid(n)) { _wires.RemoveChild(n); n.QueueFree(); } }
+            _wireNodes.Clear();
+            if (_spans.Count == 0) return;
 
-            var st = new SurfaceTool();
-            st.Begin(Mesh.PrimitiveType.Triangles);
-            var an = new Vector3[4];
-            var bn = new Vector3[4];
-            foreach (var s in _spans)
+            // sized for the widest pole kind; each span strings only as many as BOTH its ends carry.
+            int widest = Mathf.Max(AnchorsLocal.Length, PylonAnchorsLocal.Length);
+            var an = new Vector3[widest];
+            var bn = new Vector3[widest];
+            for (int i = 0; i < _spans.Count; i++)
             {
-                AnchorsWorld(s.A, an);
-                AnchorsWorld(s.B, bn);
-                for (int w = 0; w < 4; w++) AddWire(st, an[w], bn[w]);
+                var sp = _spans[i];
+                // ⭐ THE DISCONNECT (strawberry 2026-10-10: "wires should disconnect from broken poles"). The
+                // span SURVIVES in _spans -- only its drawing is skipped -- so when the pole respawns the line
+                // comes back without anyone having to remember what was strung where.
+                if (_poles[sp.A].Broken || _poles[sp.B].Broken) continue;
+                AnchorsWorld(sp.A, _poles[sp.B].Origin, an);
+                AnchorsWorld(sp.B, _poles[sp.A].Origin, bn);
+                var st = new SurfaceTool();
+                st.Begin(Mesh.PrimitiveType.Triangles);
+                // ⚠ min of the two ENDS. A pylon carries six conductors and a roadside pole four, so a span
+                // between the two kinds strings four -- stringing six would run the pylon's outer pair to
+                // nothing at the pole end.
+                int wires = Mathf.Min(AnchorCount(sp.A), AnchorCount(sp.B));
+                for (int w = 0; w < wires; w++) AddWire(st, an[w], bn[w]);
+                st.GenerateNormals();
+
+                // ⭐ VISIBLE WHILE EITHER POLE IS. A node culls on its CENTRE, so a span whose range were
+                // just the pole distance would vanish while its far pole was still drawn -- half a span early.
+                // Adding the half-length makes the wire outlive whichever pole the camera is nearer to,
+                // which is what "culled when BOTH poles are culled" actually means.
+                float half = PoleOrigin(sp.A).DistanceTo(PoleOrigin(sp.B)) * 0.5f;
+                var mi = new MeshInstance3D
+                {
+                    Name = $"Span{i}",
+                    Mesh = st.Commit(),
+                    MaterialOverride = _mat,
+                    CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,   // a 9 cm wire casts a shadow nobody can see
+                    // ⚠ 0 would mean NO LIMIT in Godot, not "cull immediately" -- the trap FoliageField
+                    // already documents. Clamped so a misconfigured distance cannot silently disable culling.
+                    VisibilityRangeEnd = Mathf.Max(1f, PoleCullDistance + half),
+                    VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled,
+                };
+                _wires.AddChild(mi);
+                _wireNodes.Add(mi);
             }
-            st.GenerateNormals();
-            _wires.Mesh = st.Commit();
-            // The mesh is built in WORLD space (anchors come out of the poles' own transforms), so the holder must
-            // sit at the origin or every wire would be offset by it.
+            // The meshes are built in WORLD space (anchors come out of the poles' own transforms), so the
+            // holder must sit at the origin or every wire would be offset by it.
             _wires.Transform = Transform3D.Identity;
             GlobalTransform = Transform3D.Identity;
         }

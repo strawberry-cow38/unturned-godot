@@ -55,17 +55,18 @@ namespace UnturnedGodot
         /// <summary>The pole set as it stands right now: the map's, plus anything placed since. Rebuilt on every
         /// activation rather than cached, because the object editor can add and delete poles while this tool is
         /// closed and a stale list is indistinguishable from the tool not working.</summary>
-        IEnumerable<Transform3D> AllPoles()
+        /// <summary>⚠ The MESH travels with each transform now, because the field holds two kinds. A pylon
+        /// handed over as a plain pole would be wired on the roadside pole's four anchors and hang its
+        /// conductors in mid-air beside the lattice.</summary>
+        IEnumerable<(Transform3D Xform, string Mesh)> AllPoles()
         {
-            foreach (var x in _mapPoles) yield return x;
-            if (_objects != null)
-                foreach (var x in _objects.PlacedOf(PowerLineField.PoleMesh)) yield return x;
+            foreach (var p in PowerLineField.PolesFrom(_mapPoles, _objects)) yield return p;
         }
 
         public string ModeText => _on
             ? (_sel >= 0
                 ? $"POWER LINES · pole {_sel} selected · LMB another pole = string 4 wires · Del = cut this pole's wires · Esc"
-                : $"POWER LINES · {_field.SpanCount} span(s) · LMB a pole to start · Shift+P = off")
+                : $"POWER LINES · {_field.SpanCount} span(s) · LMB a pole to start · O = face poles at their wires · Shift+P = off")
             : "Shift+P = power lines";
 
         public void SetActive(bool on) { if (_on != on) Toggle(); }
@@ -140,6 +141,40 @@ namespace UnturnedGodot
                 _field.Rebuild();
                 _editor.MarkDirty();
                 Log.Print($"[editor-powerlines] cut {n} span(s) at pole {_sel}");
+                return;
+            }
+
+            // ⭐ O = FACE THE POLES AT THEIR WIRES. Master: "add support for 3 and 4 way connections too, the
+            // power pole rotating however appropriate." Three- and four-way junctions already wired -- Connect
+            // never had a degree limit -- but a junction pole kept whatever yaw it was dropped at, so its
+            // crossarms pointed wherever the mapper happened to be facing. This turns every pole onto the
+            // principal axis of the spans it actually carries; see PowerLineField.SuggestedYawDeg.
+            if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.O })
+            {
+                SnapUndo("face poles at their wires");
+                int turned = 0, left = 0;
+                // ⚠ BOTH KINDS, in the same order AllPoles yields them, or the yaws land on the wrong poles.
+                var nodes = new List<Node3D>(_objects.PlacedOfNodes(PowerLineField.PoleMesh));
+                nodes.AddRange(_objects.PlacedOfNodes(PowerLineField.PylonMesh));
+                for (int i = 0; i < nodes.Count && i < _field.PoleCount; i++)
+                {
+                    float yaw = _field.SuggestedYawDeg(i, out bool ok);
+                    if (!ok) { left++; continue; }   // a symmetric cross has no best answer -- leave it alone
+                    // ⚠ PRESERVE THE SCALE. A pylon is placed at PylonScale through its basis, so rebuilding
+                    // the transform from Upright alone would silently shrink it back to native on the first
+                    // alignment -- and take its conductor anchors in with it.
+                    float keep = nodes[i].Transform.Basis.Scale.X;
+                    var b = EditorObjects.Upright(yaw);
+                    nodes[i].Transform = new Transform3D(new Basis(b.X * keep, b.Y * keep, b.Z * keep), nodes[i].Position);
+                    turned++;
+                }
+                _field.RefreshPoles(AllPoles(), out _);
+                _field.Rebuild();
+                BuildMarkers();
+                Recolour();
+                _editor.MarkDirty();
+                Log.Print($"[editor-powerlines] faced {turned} pole(s) at their wires"
+                        + (left > 0 ? $", left {left} symmetric junction(s) as placed" : ""));
                 return;
             }
 
