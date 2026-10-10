@@ -30,7 +30,11 @@ namespace UnturnedGodot.Testing
         static (int drops, float worstDrop, int steps, int open, string where) MouthClosed(PhysicsDirectSpaceState3D space, RegionStreamer S, InfiniteRoads.TunnelSpan t)
         {
             var mouths = S.Gen.MouthGround(t);
-            int drops = 0, steps = 0, open = 0; float worst = 0f; string where = "";
+            int drops = 0, steps = 0, open = 0, onRock = 0; float worst = 0f; string where = "", dropWhere = "";
+            // a boulder banked at the headwall's end (InfiniteTerrain.TunnelRocks) is laid OVER the mouth's ground, and it
+            // closes the step it stands in: a drop onto one, or a level ray stopped by one before the wall, is that rock's
+            static bool IsRock(Godot.Collections.Dictionary h) => h.Count > 0 && h["collider"].As<Node>() is Node n && n.HasMeta(PlayerController.SurfMeta)
+                                                                  && (int)n.GetMeta(PlayerController.SurfMeta) == (int)PlayerController.Surf.Rock;
             for (int end = 0; end < 2; end++)
             {
                 var md = mouths[end];
@@ -71,8 +75,9 @@ namespace UnturnedGodot.Testing
                                 drops++;
                                 string body = h.Count == 0 ? "nothing" : h["collider"].As<Node>()?.Name.ToString();
                                 if (body == "Paved" || body == "Ballast") continue;   // the road or track laid over it
+                                if (IsRock(h)) { onRock++; continue; }
                                 float err = h.Count == 0 ? float.PositiveInfinity : System.Math.Abs(((Vector3)h["position"]).Y - want);
-                                if (err > worst) { worst = err; where = $" (end {end}: {body} {err:0.000} m off at {x:0.0},{z:0.0})"; }
+                                if (err > worst) { worst = err; dropWhere = $" (worst drop: end {end}, {body} {err:0.000} m off at {x:0.0},{z:0.0})"; }
                             }
                     }
                 // the steps along the facade
@@ -96,11 +101,11 @@ namespace UnturnedGodot.Testing
                         var o = S.ToLocal(ox, y, oz);
                         var w = space.IntersectRay(PhysicsRayQueryParameters3D.Create(o, o + new Vector3((float)(-fx * dir), 0f, (float)(-fz * dir)) * 0.6f, 1u << 0));
                         bool atFacade = w.Count > 0 && w["collider"].As<Node>()?.GetParent()?.Name.ToString() == "TunnelBodies"
-                                        && System.Math.Abs(((Vector3)w["position"] - o).Length() - 0.3f) < 0.03f;
+                                        && (System.Math.Abs(((Vector3)w["position"] - o).Length() - 0.3f) < 0.03f || IsRock(w) && ((Vector3)w["position"] - o).Length() < 0.33f);
                         if (!atFacade) { open++; where = $" (end {end}: step at {u:+0.0;-0.0} m across, {lo:0.0}..{hi:0.0}, ray hit {(w.Count == 0 ? "nothing" : w["collider"].As<Node>()?.Name + " at " + ((Vector3)w["position"] - o).Length().ToString("0.00") + " m")})"; }
                     }
             }
-            return (drops, worst, steps, open, where);
+            return (drops, worst, steps, open, $"{where}{dropWhere}{(onRock > 0 ? $" ({onRock} drops on its rocks)" : "")}");
         }
 
         public override string Name => "infinite.stream_rebase_far";
@@ -138,6 +143,44 @@ namespace UnturnedGodot.Testing
                 n++;
             }
             return (n, worst);
+        }
+
+        /// <summary>The ground collider BETWEEN the grid vertices: a quarter of the way into cells either side of their
+        /// diagonal, against the region's drawn mesh (InfiniteTerrain.MeshHeightAt, the split the mesh is built with) --
+        /// and, for the record, against the other diagonal's split. The vertex check above cannot see a collider that
+        /// splits each cell the other way: the two agree at every vertex and part by up to half a crease in between.</summary>
+        (int n, float worst, int otherSplit, string where) GroundMatchesMesh(int perRegion)
+        {
+            var space = World.GetWorld3D().DirectSpaceState;
+            var c = S.FocusRegion();
+            int n = 0, other = 0; float worst = 0f; string where = "";
+            for (int dz = -1; dz <= 1; dz++)
+                for (int dx = -1; dx <= 1; dx++)
+                {
+                    var rc = new RegionCoord(c.X + dx, c.Z + dz);
+                    var d = S.Gen.Generate(rc, 0);
+                    int v = d.Cells + 1;
+                    ulong h = 0xC0FFEEUL ^ (ulong)(rc.X * 31 + rc.Z);
+                    for (int k = 0; k < perRegion; k++)
+                    {
+                        h ^= h << 13; h ^= h >> 7; h ^= h << 17;
+                        int i = (int)(h % 63), j = (int)((h >> 16) % 63);
+                        if (d.Holes != null && (d.Holes[j * v + i] || d.Holes[j * v + i + 1] || d.Holes[(j + 1) * v + i] || d.Holes[(j + 1) * v + i + 1])) continue;
+                        float fx = (h >> 32 & 1) == 0 ? 0.25f : 0.75f, fz = (h >> 33 & 1) == 0 ? 0.25f : 0.75f;
+                        float lx = (i + fx) * d.Spacing, lz = (j + fz) * d.Spacing;
+                        float want = InfiniteTerrain.MeshHeightAt(d, lx, lz);
+                        float ha = d.Heights[j * v + i], hb = d.Heights[j * v + i + 1], hc = d.Heights[(j + 1) * v + i], he = d.Heights[(j + 1) * v + i + 1];
+                        float alt = fx >= fz ? ha + (hb - ha) * fx + (he - hb) * fz : ha + (hc - ha) * fz + (he - hc) * fx;   // split a-e
+                        var top = S.ToLocal(rc.MinX + lx, want + 60.0, rc.MinZ + lz);
+                        var hit = space.IntersectRay(PhysicsRayQueryParameters3D.Create(top, top + Vector3.Down * 120f, 1u << 0));
+                        if (hit.Count == 0 || hit["collider"].As<Node>()?.Name != "GroundBody") continue;
+                        float y = ((Vector3)hit["position"]).Y, err = Mathf.Abs(y - want);
+                        n++;
+                        if (Mathf.Abs(want - alt) > 0.05f && Mathf.Abs(y - alt) < err) other++;
+                        if (err > worst) { worst = err; where = $" at ({rc.MinX + lx:0.0}, {rc.MinZ + lz:0.0}): collider {y:0.000}, mesh {want:0.000}, other split {alt:0.000}"; }
+                    }
+                }
+            return (n, worst, other, where);
         }
 
         /// <summary>Put the player ON the collider at an absolute XZ (or on the sea surface), the way walking leaves you.
@@ -179,6 +222,11 @@ namespace UnturnedGodot.Testing
             T.Check($"ground colliders on exactly the 3x3 around the player ({S.Colliders})", S.Colliders == 9);
             var g0 = GroundMatchesGenerator(40, 1);
             T.Check($"the collider IS the generator's ground: {g0.n} grid vertices, worst error {g0.worst * 1000f:0.###} mm", g0.n >= 30 && g0.worst < 0.01f);
+            {
+                var gm = GroundMatchesMesh(40);
+                T.Check($"...and between the vertices it is the DRAWN mesh: {gm.n} points inside cells, worst {gm.worst * 1000f:0.#} mm off it, {gm.otherSplit} nearer the other diagonal's split{gm.where}",
+                    gm.n >= 200 && gm.worst < 0.01f);
+            }
             float ground0 = S.Gen.HeightAt(S.AbsX(P(p).X), S.AbsZ(P(p).Z));
             T.Check($"the player is standing on it (y {P(p).Y:0.00}, ground {ground0:0.00})",
                 P(p).Y > ground0 - 0.3f && P(p).Y < ground0 + 2.5f);
@@ -587,6 +635,51 @@ namespace UnturnedGodot.Testing
                     T.Check($"its mouths are closed: {drops} drops over the cells the terrain leaves out land at most {off:0.000} m off the mouths' ground, {steps} level rays at the facade's steps, {open} open{where}",
                         drops > 300 && off < 0.02f && steps > 20 && open == 0);
                 }
+                // BOULDERS (strawberry 2026-10-10: "have boulders fill gaps around tunnel entrances and around steep
+                // embankment faces"): the rocks banked at its headwalls are drawn with the tunnel and solid -- a drop onto
+                // one lands on a Rock body -- and the cut's faces round the player carry their own, drawn and solid too
+                {
+                    var owner = RegionCoord.Containing(tun.X[mid], tun.Z[mid]);
+                    // (the instances' transforms cannot be read back off a MultiMesh in a headless run: the generator's
+                    // rocks, placed as the streamer places them, are what the drops aim at)
+                    var holder = S.TunnelsOf(owner)?.GetNodeOrNull<Node3D>("PortalRocks");
+                    int portalRocks = 0; string rockHit = "no rock to drop on";
+                    if (holder != null)
+                        foreach (var c in holder.GetChildren()) if (c is MultiMeshInstance3D mmi && mmi.Multimesh != null) portalRocks += mmi.Multimesh.InstanceCount;
+                    int rocksHit = 0, rocksTried = 0;
+                    var gen = S.Gen.Generate(owner, 0);
+                    foreach (var b in gen.TunnelRocks ?? new List<BoulderSpawn>())
+                    {
+                        // SHOWING: a drop onto one of its six highest points lands on rock. (A rock banked against a wall's end
+                        // may lean into the hill behind it, its peak under the ground; it needs some of it out, not all. And
+                        // Boulder_13 is a cluster with nothing over its origin, so its origin is no place to drop.)
+                        rocksTried++;
+                        bool shows = false; string miss = "";
+                        foreach (var peak in RegionStreamer.RockPeaks(b, 6))
+                        {
+                            var above = S.ToLocal(owner.MinX + peak.X, peak.Y + 40.0, owner.MinZ + peak.Z);
+                            var h = space.IntersectRay(PhysicsRayQueryParameters3D.Create(above, above + Vector3.Down * 80f, 1u << 0));
+                            if (h.Count > 0 && h["collider"].As<Node>() is Node n && n.HasMeta(PlayerController.SurfMeta) && (int)n.GetMeta(PlayerController.SurfMeta) == (int)PlayerController.Surf.Rock
+                                && ((Vector3)h["position"]).Y > peak.Y - 0.3f) { shows = true; break; }
+                            if (miss == "") miss = h.Count == 0 ? "nothing" : $"{h["collider"].As<Node>()?.Name} {((Vector3)h["position"]).Y - peak.Y:+0.00;-0.00} m off its peak";
+                        }
+                        if (shows) rocksHit++;
+                        else if (rockHit == "no rock to drop on") rockHit = $"{miss} at ({owner.MinX + b.X:0.0}, {owner.MinZ + b.Z:0.0}), {InfiniteTerrain.BoulderKit[b.Kind].Name} r {b.Radius:0.0} -- buried whole";
+                    }
+                    if (rocksTried > 0 && rocksHit == rocksTried) rockHit = "Rock";
+                    rockHit = $"{rockHit} ({rocksHit} of {rocksTried} drops onto them land on a rock)";
+                    T.Check($"rocks banked at its headwalls: {portalRocks} drawn, drops onto them: {rockHit}", portalRocks >= 4 && portalRocks == rocksTried && rocksHit == rocksTried);
+                    int faceRocks = 0, solid = 0; string faceHit = "";
+                    var here = RegionCoord.Containing(S.AbsX(P(p).X), S.AbsZ(P(p).Z));
+                    for (int dz = -1; dz <= 1; dz++)
+                        for (int dx = -1; dx <= 1; dx++)
+                        {
+                            var (n, body) = S.BouldersOf(new RegionCoord(here.X + dx, here.Z + dz));
+                            faceRocks += n;
+                            if (n > 0 && body != null) solid++;
+                        }
+                    T.Check($"boulders on the cut's steep faces round it: {faceRocks} in the 3x3, {solid} regions' rocks solid", faceRocks > 0 && solid > 0);
+                }
                 // stand in it: the guard must not lift you onto the hill
                 int rescues0 = S.Rescues;
                 p.TeleportTo(lane + Vector3.Down * 4.7f);
@@ -699,6 +792,90 @@ namespace UnturnedGodot.Testing
                     float parY = par.Count > 0 ? ((Vector3)par["position"]).Y : float.NaN;
                     T.Check($"overpass: the main's deck is its full width, parapet 9.5 m out at y {parY - highY:+0.00;-0.00} m over the road on {Who(par)} (deck scale {InfiniteRoads.DeckScale(RoadKind.Main):0.000})",
                         Who(par) == "deck" && parY > highY + 0.5f);
+                }
+            }
+            // ---- 8b. HIGHWAY INTERCHANGES (strawberry 2026-10-10: "when highways cross over eachother, build on/off ramps
+            // too, chosing one as the high/low highway each crossing"): at the nearest one, the lower highway runs open under
+            // the upper (the control 7 m up hits the deck), the upper crosses on a deck at its surface, and its ramps are
+            // road you can drive
+            {
+                InfiniteRoads.Underpass hx = null; double hbest = double.MaxValue;
+                for (long band = -2; band <= 1; band++)
+                    for (long k = -4; k <= 3; k++)
+                        foreach (var u in S.Gen.Roads.HighwayCrossingsOf(band, k))
+                            if (!u.OverTunnel && !u.Existing && u.X * u.X + u.Z * u.Z < hbest) { hbest = u.X * u.X + u.Z * u.Z; hx = u; }
+                T.Check("the generator has a highway interchange to visit", hx != null);
+                if (hx != null)
+                {
+                    // each highway's heading at the crossing, off its own centreline
+                    (double tx, double tz) Heading(int axis)
+                    {
+                        (double, double) bestT = (1, 0); double bd = double.MaxValue;
+                        for (long band = -2; band <= 1; band++)
+                            for (long k = -4; k <= 3; k++)
+                            {
+                                var c = S.Gen.Roads.HighwayCentreline(axis, band, k);
+                                if (c == null) continue;
+                                for (int i = 0; i + 1 < c.Length; i++)
+                                {
+                                    double d = (c[i].x - hx.X) * (c[i].x - hx.X) + (c[i].z - hx.Z) * (c[i].z - hx.Z);
+                                    if (d >= bd) continue;
+                                    bd = d; double sx = c[i + 1].x - c[i].x, sz = c[i + 1].z - c[i].z, sl = System.Math.Sqrt(sx * sx + sz * sz); bestT = (sx / sl, sz / sl);
+                                }
+                            }
+                        return bestT;
+                    }
+                    var (hax, haz) = Heading(0); var (hbx, hbz) = Heading(1);
+                    S.TeleportAbsolute(hx.X + (hax + hbx) * 60.0, hx.Z + (haz + hbz) * 60.0);
+                    yield return Wait(Settled, 60);
+                    yield return Ticks(5);
+                    var space = World.GetWorld3D().DirectSpaceState;
+                    string Who(Godot.Collections.Dictionary h) => h.Count == 0 ? "nothing" : h["collider"].As<Node>() is Node n ? (n.GetParent()?.Name == "BridgeBodies" ? "deck" : n.Name.ToString()) : "?";
+                    Godot.Collections.Dictionary Ray(double x0, double y0, double z0, double x1, double y1, double z1)
+                        => space.IntersectRay(PhysicsRayQueryParameters3D.Create(S.ToLocal(x0, y0, z0), S.ToLocal(x1, y1, z1), 1u << 0));
+                    bool nsOver = hx.Over;
+                    double lx = nsOver ? hax : hbx, lz = nsOver ? haz : hbz, ux = nsOver ? hbx : hax, uz = nsOver ? hbz : haz;
+                    float lowY = nsOver ? hx.HwSurface : hx.MainSurface, highY = nsOver ? hx.MainSurface : hx.HwSurface;
+                    // along the LOWER road's carriageway (its median is open anyway), 2.5 m up, through the crossing
+                    double ox = -lz * InfiniteRoads.HighwayRibbonOffset, oz = lx * InfiniteRoads.HighwayRibbonOffset;
+                    var open = Ray(hx.X + ox - lx * 30, lowY + 2.5, hx.Z + oz - lz * 30, hx.X + ox + lx * 30, lowY + 2.5, hx.Z + oz + lz * 30);
+                    var ctl = Ray(hx.X + ox - lx * 30, lowY + 7.0, hx.Z + oz - lz * 30, hx.X + ox + lx * 30, lowY + 7.0, hx.Z + oz + lz * 30);
+                    T.Check($"interchange at ({hx.X:0}, {hx.Z:0}), the {(nsOver ? "north-south" : "east-west")} highway on top: the lower runs open under it, 2.5 m up through the crossing hits {Who(open)}" +
+                            $"{(open.Count > 0 ? $" at y {((Vector3)open["position"]).Y:0.00}" : "")} (control, 7 m up: {Who(ctl)})",
+                        open.Count == 0 && Who(ctl) == "deck");
+                    // the UPPER one crosses on a deck at its surface: a drop onto a carriageway at the crossing
+                    double cx = hx.X - uz * InfiniteRoads.HighwayRibbonOffset, cz = hx.Z + ux * InfiniteRoads.HighwayRibbonOffset;
+                    var top = Ray(cx, highY + 5, cz, cx, highY - 30, cz);
+                    var under = top;
+                    if (Who(top) == "Paved")
+                    {
+                        var q = PhysicsRayQueryParameters3D.Create(S.ToLocal(cx, highY + 5, cz), S.ToLocal(cx, highY - 30, cz), 1u << 0);
+                        q.Exclude = new Godot.Collections.Array<Rid> { (Rid)top["rid"] };
+                        under = space.IntersectRay(q);
+                    }
+                    float topY = top.Count > 0 ? ((Vector3)top["position"]).Y : float.NaN, deckY = under.Count > 0 ? ((Vector3)under["position"]).Y : float.NaN;
+                    T.Check($"...the upper crosses on a deck at its surface: y {topY:0.000} on {Who(top)}, the deck at {deckY:0.000} ({Who(under)}), road {highY:0.000}",
+                        Who(under) == "deck" && Mathf.Abs(topY - highY) < 0.03f && Mathf.Abs(deckY - highY) < 0.03f);
+                    // its ramps within collider range: a drop onto each's middle lands on the slab at its surface
+                    var here = S.FocusRegion();
+                    int rampsOn = 0, near = 0; float rampWorst = 0f; string rampBody = "";
+                    for (long band = -2; band <= 1; band++)
+                        for (long k = -4; k <= 3; k++)
+                        {
+                            if (!System.Linq.Enumerable.Contains(S.Gen.Roads.HighwayCrossingsOf(band, k), hx)) continue;
+                            foreach (var r in S.Gen.Roads.HighwayRampsOf(band, k))
+                            {
+                                var rm = r[r.Length / 2];
+                                if (RegionCoord.Containing(rm.x, rm.z).RingTo(here) > RegionStreamer.ColliderRing) continue;
+                                near++;
+                                var hit = Ray(rm.x, rm.h + 5, rm.z, rm.x, rm.h - 30, rm.z);
+                                float want = InfiniteRoads.SurfaceY(RoadKind.Small, rm.h);
+                                if (Who(hit) == "Paved") { rampsOn++; rampWorst = Mathf.Max(rampWorst, Mathf.Abs(((Vector3)hit["position"]).Y - want)); }
+                                else rampBody = $" (one hits {Who(hit)})";
+                            }
+                        }
+                    T.Check($"...its ramps are solid road: {rampsOn} of the {near} within collider range land on the slab within {rampWorst * 1000f:0.0} mm of the surface{rampBody}",
+                        near >= 2 && rampsOn == near && rampWorst < 0.03f);
                 }
             }
             // ---- 9. HIGH-VOLTAGE PYLONS (strawberry 2026-10-10: "implement the big pylon splines. cross country, their own

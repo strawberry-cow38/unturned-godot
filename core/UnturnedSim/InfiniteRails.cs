@@ -168,6 +168,12 @@ namespace SDG.Unturned
                     // never ON a highway: an anchor is where two segments meet, heading along the band, and a highway
                     // crossing needs the rail free to shape itself either side
                     if (cost < best && HighwayDistance(x, z, RailAnchorOffHighway + 50) < RailAnchorOffHighway) cost += 2e5;
+                    if (cost < best)
+                    {
+                        var ix = new List<(double x, double z)>();
+                        InterchangesIn(x - InterchangeClear, z - InterchangeClear, x + InterchangeClear, z + InterchangeClear, ix);
+                        foreach (var (jx, jz) in ix) if ((x - jx) * (x - jx) + (z - jz) * (z - jz) < InterchangeClear * InterchangeClear) { cost += 2e5; break; }
+                    }
                     if (cost < best && axis == 1)
                     {
                         var ew = new List<Line>();
@@ -272,6 +278,7 @@ namespace SDG.Unturned
             float wetBelow = InfiniteTerrain.SeaLevel + 2f;
             // the highways that run this rail's way: kept RailKeepOffHighway off (crossing ones are crossed)
             var par = new List<Line>();
+            var junctions = new List<(double x, double z)>();   // highway interchanges: their ramps fill a quadrant each
             {
                 double uMin = Math.Min(p.u, q.u), uMax = Math.Max(p.u, q.u), wMin = double.MaxValue, wMax = double.MinValue;
                 for (int i = 0; i <= N; i++) { double w = BaseAt(i); wMin = Math.Min(wMin, w); wMax = Math.Max(wMax, w); }
@@ -280,6 +287,7 @@ namespace SDG.Unturned
                 var hw = new List<Line>();
                 TakeHighways(Math.Min(x0, x1), Math.Min(z0, z1), Math.Max(x0, x1), Math.Max(z0, z1), hw);
                 foreach (var e in hw) if ((int)((e.Id >> 60) & 1) == axis) par.Add(e);
+                InterchangesIn(Math.Min(x0, x1), Math.Min(z0, z1), Math.Max(x0, x1), Math.Max(z0, z1), junctions);
             }
             var hgt = new float[N + 1, L];
             var node = new double[N + 1, L];
@@ -298,6 +306,11 @@ namespace SDG.Unturned
                         if (x < e.MinX - RailKeepOffHighway || x > e.MaxX + RailKeepOffHighway || z < e.MinZ - RailKeepOffHighway || z > e.MaxZ + RailKeepOffHighway) continue;
                         double d = NearestOn(e, x, z).d;
                         if (d < RailKeepOffHighway) { double f = 1 - d / RailKeepOffHighway; c += 1500 * f * f; }
+                    }
+                    foreach (var (jx, jz) in junctions)
+                    {
+                        double d = Math.Sqrt((x - jx) * (x - jx) + (z - jz) * (z - jz));
+                        if (d < InterchangeClear) { double f = 1 - d / InterchangeClear; c += 6000 * f + 1000; }
                     }
                     node[i, j] = c;
                 }
@@ -433,6 +446,10 @@ namespace SDG.Unturned
         {
             why = null;
             var others = RailOthers(e, axis);
+            foreach (var o in others)
+                if (o.Ramps != null)
+                    foreach (var rp in o.Ramps)
+                        if (Crossings(e.X, e.Z, e.X.Length, rp).Count > 0) { why = "crosses an interchange ramp"; return false; }
             var arc = Arc(e);
             double spacing = MaxSpacing(arc);
             var plan = new List<(Line o, double f, double g, double x, double z, double sin, double aX, float target, bool over, bool bridged, float oH, double half, bool deck)>();

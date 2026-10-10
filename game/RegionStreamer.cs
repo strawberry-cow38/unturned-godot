@@ -66,13 +66,13 @@ namespace UnturnedGodot
         public static bool DebugShiftLog;
 
         public static readonly int[] LodRing = { 2, 4, 7, 11 };
-        public const int ColliderRing = 1, TreeRing = 3, FoliageRing = 1;
+        public const int ColliderRing = 1, TreeRing = 3, FoliageRing = 1, BoulderRing = 2;
         /// <summary>Foliage is batched in 64 m cells (4x4 a region) so each MultiMesh can be distance-culled on its own.</summary>
         public const float FoliageCellSize = 64f;
         public static int MaxRing => LodRing[LodRing.Length - 1];
 
         // ---- diagnostics (the overlay and the tests read these) ----
-        public int Rebases, Rescues, Committed, TreeCount, FoliageCount, ImpostorCount, BridgeCount, TunnelCount, RailCount;
+        public int Rebases, Rescues, Committed, TreeCount, FoliageCount, ImpostorCount, BridgeCount, TunnelCount, RailCount, BoulderCount;
         public double GenMsTotal; public int GenCount;
         public readonly int[] LoadedByLod = new int[4];
         public int Colliders => _colliders;
@@ -118,6 +118,9 @@ namespace UnturnedGodot
             public List<Transform3D>[] RailXf;      // [unit, sleeper, crossbuck], region-local, from the first build (LOD-independent)
             public Node3D Rails;                    // the track MultiMeshes, every ring (culled at RailCull)
             public Node3D RailBodies;               // the ballast's collider, ring <= ColliderRing
+            public List<Transform3D>[] BoulderXf;   // [kit], region-local, from the LOD0 build (kept across LOD swaps)
+            public Node3D Boulders;                 // ring <= BoulderRing
+            public Node3D BoulderBodies;            // ring <= ColliderRing
         }
 
         sealed class Job { public RegionCoord C; public int Lod; }
@@ -138,6 +141,7 @@ namespace UnturnedGodot
             public List<Transform3D>[] BridgeXf;
             public List<InfiniteRoads.TunnelSpan> Tunnels;
             public List<Transform3D>[] RailXf;
+            public List<Transform3D>[] BoulderXf, TunnelRockXf;   // [kit]; BoulderXf at LOD0 only
         }
 
         readonly Dictionary<RegionCoord, Region> _regions = new();
@@ -280,6 +284,7 @@ namespace UnturnedGodot
             if (r.Pylons != null && _pylonMesh != null) PylonCount -= r.PylonXf.Count;
             if (r.Tunnels != null) TunnelCount -= r.TunnelSpans.Count;
             if (r.Rails != null) RailCount -= r.RailXf[0].Count;
+            if (r.Boulders != null) BoulderCount -= Count(r.BoulderXf);
             r.Node.QueueFree();
             _regions.Remove(c);
             _pendingTrees.Remove(c);
@@ -339,6 +344,16 @@ namespace UnturnedGodot
             if (ring <= ColliderRing && r.PylonBodies == null && r.PylonXf != null && r.PylonXf.Count > 0) { r.PylonBodies = BuildPylonBodies(r.PylonXf); r.Node.AddChild(r.PylonBodies); }
             else if (ring > ColliderRing + 1 && r.PylonBodies != null) { r.PylonBodies.QueueFree(); r.PylonBodies = null; }
 
+            if (ring <= BoulderRing && r.Boulders == null && r.BoulderXf != null && Count(r.BoulderXf) > 0)
+            {
+                r.Boulders = BuildRocks(r.BoulderXf, "Boulders", (BoulderRing + 0.5f) * InfiniteTerrain.RegionSize);
+                r.Node.AddChild(r.Boulders);
+                BoulderCount += Count(r.BoulderXf);
+            }
+            else if (ring > BoulderRing + 1 && r.Boulders != null) { r.Boulders.QueueFree(); r.Boulders = null; BoulderCount -= Count(r.BoulderXf); }
+            if (ring <= ColliderRing && r.BoulderBodies == null && r.BoulderXf != null && Count(r.BoulderXf) > 0) { r.BoulderBodies = RockBodies(r.BoulderXf, "BoulderBodies"); r.Node.AddChild(r.BoulderBodies); }
+            else if (ring > ColliderRing + 1 && r.BoulderBodies != null) { r.BoulderBodies.QueueFree(); r.BoulderBodies = null; }
+
             if (ring <= FoliageRing && r.Foliage == null && r.FoliageXf != null)
             {
                 r.Foliage = BuildFoliage(r.FoliageXf, out r.FoliageCount);
@@ -378,6 +393,7 @@ namespace UnturnedGodot
                 if (b.D.Trees != null && r.TreeList == null) { r.TreeList = b.D.Trees; _pendingTrees[r.C] = b.TreeXf; }
                 if (b.FoliageXf != null && r.FoliageXf == null) r.FoliageXf = b.FoliageXf;
                 if (b.Poles != null && r.PoleXf == null) r.PoleXf = b.Poles;
+                if (b.BoulderXf != null && r.BoulderXf == null) r.BoulderXf = b.BoulderXf;
                 AdoptBridges(r, b);
                 AdoptTunnels(r, b);
                 AdoptPylons(r, b);
@@ -1096,6 +1112,12 @@ void fragment() {
             r.Tunnels = new Node3D { Name = "Tunnels" };
             r.TunnelShapes = new List<(Shape3D, Transform3D, int)>();
             for (int i = 0; i < b.Tunnels.Count; i++) BuildTunnel(b.Tunnels[i], b.D.TunnelMouths?[i], b.D.Coord.MinX, b.D.Coord.MinZ, r.Tunnels, r.TunnelShapes);
+            // the rocks banked against the headwalls' ends go with the tunnel: drawn as far as it is, solid where it is
+            if (b.TunnelRockXf != null && Count(b.TunnelRockXf) > 0)
+            {
+                r.Tunnels.AddChild(BuildRocks(b.TunnelRockXf, "PortalRocks", 0f));
+                r.TunnelShapes.Add((RockSoup(b.TunnelRockXf), Transform3D.Identity, (int)PlayerController.Surf.Rock));
+            }
             r.Node.AddChild(r.Tunnels);
             TunnelCount += b.Tunnels.Count;
         }
@@ -1570,6 +1592,7 @@ void fragment() {
                     r.TreeList = b.D.Trees; _pendingTrees[c] = b.TreeXf;
                     r.FoliageXf ??= b.FoliageXf;
                     r.PoleXf ??= b.Poles;
+                    r.BoulderXf ??= b.BoulderXf;
                     AdoptBridges(r, b);   // ⚠ this path is how a teleport builds the 3x3 -- miss it and the bridges beside you never appear
                     AdoptTunnels(r, b);
                     AdoptPylons(r, b);
@@ -1963,7 +1986,143 @@ void fragment() {
                         railXf[2].Add(PoleXform((float)(cs.X - d.Coord.MinX), cs.Y + 0.2f, (float)(cs.Z - d.Coord.MinZ), cs.DX, cs.DZ));
             }
             return new Built { D = d, V = V.ToArray(), N = N.ToArray(), UV = UV.ToArray(), I = I.ToArray(), S0 = s0, S1 = s1, SplatSize = v, TreeXf = trees, ImpTrees = imp, BridgeXf = bridgeXf, Pylons = pylons, FoliageXf = foliage,
-                               Road = roadMeshes, RoadCol = roadCol, Poles = poles, Tunnels = d.Tunnels, RailXf = railXf };
+                               Road = roadMeshes, RoadCol = roadCol, Poles = poles, Tunnels = d.Tunnels, RailXf = railXf,
+                               BoulderXf = RockXfs(d.Boulders), TunnelRockXf = RockXfs(d.TunnelRocks) };
+        }
+
+        // ---- boulders (strawberry 2026-10-10: "have boulders fill gaps around tunnel entrances and around steep
+        // embankment faces"): PEI's rock props (InfiniteTerrain.BoulderKit), one MultiMesh per prop per region, seated
+        // the way the island's scatter seats them (ProcIslandSpawn.ScatterBoulders): stood up (the OBJs are Z-up, PEI's
+        // ex=270), turned, laid onto the ground's normal, scaled to the radius asked for, and sunk Bury of its height.
+        static readonly ArrayMesh[] _rockMesh = new ArrayMesh[InfiniteTerrain.BoulderKit.Length];
+        static readonly Material[] _rockMat = new Material[InfiniteTerrain.BoulderKit.Length];
+        static readonly Vector3[][] _rockFaces = new Vector3[InfiniteTerrain.BoulderKit.Length][];
+        static readonly object _rockLock = new();
+
+        static int Count(List<Transform3D>[] xf) { int n = 0; if (xf != null) foreach (var l in xf) n += l.Count; return n; }
+
+        /// <summary>A rock's placement, region-local.</summary>
+        public static Transform3D RockXform(BoulderSpawn b)
+        {
+            var kit = InfiniteTerrain.BoulderKit[b.Kind];
+            float sc = b.Radius / kit.Radius;
+            var normal = new Vector3(b.NX, b.NY, b.NZ).Normalized();
+            var stand = EditorObjects.FromEuler(270f, b.Yaw, 0f);
+            var axis = Vector3.Up.Cross(normal);
+            var basis = axis.LengthSquared() < 1e-8f ? stand : new Basis(axis.Normalized(), Vector3.Up.AngleTo(normal)) * stand;
+            // the origin where the rock's BOTTOM lands Bury of its height under the ground (its origin sits -Bottom above it)
+            var pos = new Vector3(b.X, b.Y - kit.Bottom * sc - kit.Height * sc * b.Bury, b.Z);
+            return new Transform3D(basis.Scaled(Vector3.One * sc), pos);
+        }
+
+        static List<Transform3D>[] RockXfs(List<BoulderSpawn> rocks)
+        {
+            if (rocks == null) return null;
+            var xf = new List<Transform3D>[InfiniteTerrain.BoulderKit.Length];
+            for (int i = 0; i < xf.Length; i++) xf[i] = new List<Transform3D>();
+            foreach (var b in rocks) xf[b.Kind].Add(RockXform(b));
+            return xf;
+        }
+
+        static void LoadRock(int i)
+        {
+            lock (_rockLock)
+            {
+                if (_rockMesh[i] != null) return;
+                string dir = ProjectSettings.GlobalizePath("res://content/objects/"), name = InfiniteTerrain.BoulderKit[i].Name;
+                var mesh = ObjMesh.Load(dir + name + ".obj");
+                // EditorObjects.MatFor's recipe, so a rock here is the rock the editor places
+                var mat = new StandardMaterial3D { Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled, VertexColorUseAsAlbedo = true };
+                var img = new Image();
+                string tp = dir + name + "_tex.png";
+                if (System.IO.File.Exists(tp) && ContentProvider.LoadOk(img, tp))
+                {
+                    bool palette = img.GetWidth() <= 16 && img.GetHeight() <= 16;
+                    if (!palette) img.GenerateMipmaps();
+                    mat.AlbedoTexture = ImageTexture.CreateFromImage(img);
+                    mat.TextureFilter = palette ? BaseMaterial3D.TextureFilterEnum.Nearest : BaseMaterial3D.TextureFilterEnum.NearestWithMipmaps;
+                }
+                else mat.AlbedoColor = new Color(0.60f, 0.55f, 0.47f);
+                _rockFaces[i] = mesh?.GetFaces();
+                _rockMat[i] = mat;
+                _rockMesh[i] = mesh;
+            }
+        }
+
+        /// <summary>The rocks as MultiMeshes, one per prop; drawn to `cull` metres (0: as far as their parent is).</summary>
+        static Node3D BuildRocks(List<Transform3D>[] xf, string name, float cull)
+        {
+            var holder = new Node3D { Name = name };
+            for (int i = 0; i < xf.Length; i++)
+            {
+                if (xf[i].Count == 0) continue;
+                LoadRock(i);
+                if (_rockMesh[i] == null) continue;
+                var mm = new MultiMesh { TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, Mesh = _rockMesh[i] };
+                mm.InstanceCount = xf[i].Count;   // format BEFORE count
+                for (int k = 0; k < xf[i].Count; k++) mm.SetInstanceTransform(k, xf[i][k]);
+                var mmi = new MultiMeshInstance3D { Name = InfiniteTerrain.BoulderKit[i].Name, Multimesh = mm, MaterialOverride = _rockMat[i] };
+                if (cull > 0f) mmi.VisibilityRangeEnd = cull;
+                mmi.AddToGroup(NearestFilter.KeepFilterGroup);
+                holder.AddChild(mmi);
+            }
+            return holder;
+        }
+
+        /// <summary>Every rock's faces, placed, as ONE double-sided soup (the ballast's way): you climb on them and drive
+        /// into them, and a region's rocks are one body.</summary>
+        static ConcavePolygonShape3D RockSoup(List<Transform3D>[] xf)
+        {
+            var faces = new List<Vector3>();
+            for (int i = 0; i < xf.Length; i++)
+            {
+                if (xf[i].Count == 0) continue;
+                LoadRock(i);
+                var f = _rockFaces[i];
+                if (f == null) continue;
+                foreach (var t in xf[i]) foreach (var p in f) faces.Add(t * p);
+            }
+            return new ConcavePolygonShape3D { Data = faces.ToArray(), BackfaceCollision = true };
+        }
+
+        static Node3D RockBodies(List<Transform3D>[] xf, string name)
+        {
+            var holder = new Node3D { Name = name };
+            var body = new StaticBody3D { Name = "Rocks", CollisionLayer = 1u << 0 };
+            body.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Rock);
+            body.AddChild(new CollisionShape3D { Shape = RockSoup(xf) });
+            holder.AddChild(body);
+            return holder;
+        }
+
+        /// <summary>For tests: a rock's n highest points as placed (at least 0.4 m apart), region-local -- somewhere to drop
+        /// onto it (Boulder_13 is a cluster with nothing over its origin; a drop there falls between the stones).</summary>
+        public static List<Vector3> RockPeaks(BoulderSpawn b, int n)
+        {
+            LoadRock(b.Kind);
+            var xf = RockXform(b);
+            var f = _rockFaces[b.Kind];
+            var all = new List<Vector3>();
+            if (f == null || f.Length == 0) { all.Add(xf.Origin); return all; }
+            foreach (var p in f) all.Add(xf * p);
+            all.Sort((p, q) => q.Y.CompareTo(p.Y));
+            var picked = new List<Vector3>();
+            foreach (var w in all)
+            {
+                bool near = false;
+                foreach (var q in picked) if (new Vector2(w.X - q.X, w.Z - q.Z).Length() < 0.4f) { near = true; break; }
+                if (near) continue;
+                picked.Add(w);
+                if (picked.Count == n) break;
+            }
+            return picked;
+        }
+
+        /// <summary>For tests: the loaded region's boulders (instances drawn) and their body, or (0, null).</summary>
+        public (int Rocks, StaticBody3D Body) BouldersOf(RegionCoord c)
+        {
+            if (!_regions.TryGetValue(c, out var r) || r.BoulderXf == null) return (0, null);
+            return (Count(r.BoulderXf), r.BoulderBodies?.GetNodeOrNull<StaticBody3D>("Rocks"));
         }
 
         /// <summary>Add a triangle FRONT-FACING along `front` whichever way round it was written: Godot's front face

@@ -147,6 +147,17 @@ namespace SDG.Unturned
         public double NX, NZ; public float NH, NDirX, NDirZ;
     }
 
+    /// <summary>A boulder (strawberry 2026-10-10: "have boulders fill gaps around tunnel entrances and around steep
+    /// embankment faces"): one of InfiniteTerrain.BoulderKit, Radius metres across its plan (the prop scaled by Radius /
+    /// its own), standing on the ground at (X, Y, Z) -- LOCAL to the region's min corner -- leaning onto the ground's
+    /// normal, sunk Bury of its height into it.</summary>
+    public struct BoulderSpawn
+    {
+        public float X, Y, Z, Yaw, Radius, Bury;
+        public float NX, NY, NZ;
+        public byte Kind;
+    }
+
     /// <summary>Ground cover the generator scattered over a LOD0 region. Position LOCAL to the region's min corner.</summary>
     public struct FoliageSpawn
     {
@@ -201,6 +212,11 @@ namespace SDG.Unturned
         public bool[] OverTunnel;
         /// <summary>Grass, flowers, pebbles, bushes -- LOD0 only (it is only ever drawn within ~160-300 m).</summary>
         public List<FoliageSpawn> Foliage;
+        /// <summary>Boulders down the steep faces of the roads' cuttings and embankments -- LOD0 only, placed on its mesh.</summary>
+        public List<BoulderSpawn> Boulders;
+        /// <summary>Boulders banked against the ends of this region's tunnels' headwalls (every LOD: they go with the
+        /// tunnel, which may reach a neighbour). Local to THIS region's min corner, as Boulders are.</summary>
+        public List<BoulderSpawn> TunnelRocks;
         public float MinHeight, MaxHeight;
         public double GenMs;      // wall time spent generating (the streamer reports it)
     }
@@ -430,6 +446,10 @@ namespace SDG.Unturned
         public const float PoleDirt = 2.5f;
         public static float PylonDirt => InfinitePylons.FootHalf * 1.42f + 2f;
 
+        /// <summary>Whose verge a point's clearance is measured to: the carving road's where one carves it, else the
+        /// nearest asphalt's (over a tunnel's run, near its portal, nothing carves and the asphalt is the tunnel's).</summary>
+        public static RoadKind VergeKind(in RoadHit h) => h.Any ? h.Kind : h.ClearKind;
+
         public Layer LayerAt(double x, double z, float h, float slope, float roadClear = float.MaxValue, RoadKind roadKind = RoadKind.Main)
         {
             // under and beside a road: its bed. NOT Layer.Road -- that is the parking-lot / car-park paving (strawberry
@@ -487,7 +507,7 @@ namespace SDG.Unturned
                     float dx = (hb[kb + 1] - hb[kb - 1]) / (2f * sp), dz = (hb[kb + b] - hb[kb - b]) / (2f * sp);
                     float inv = 1f / MathF.Sqrt(dx * dx + 1f + dz * dz);
                     d.Normals[k * 3] = -dx * inv; d.Normals[k * 3 + 1] = inv; d.Normals[k * 3 + 2] = -dz * inv;
-                    d.Layers[k] = (byte)LayerAt(ox + i * (double)sp, oz + j * (double)sp, h, MathF.Sqrt(dx * dx + dz * dz), rh[kb].Clear, rh[kb].Kind);
+                    d.Layers[k] = (byte)LayerAt(ox + i * (double)sp, oz + j * (double)sp, h, MathF.Sqrt(dx * dx + dz * dz), rh[kb].Clear, VergeKind(rh[kb]));
                 }
             // POWER LINES stand on dirt (strawberry 2026-10-10: "add it to the power lines, both big and small ones"): the
             // poles and pylons in and just round this region (so a footing on a region's edge paints both sides of it)
@@ -511,6 +531,7 @@ namespace SDG.Unturned
             foreach (var p in pylonsWide) Footing(p.X, p.Z, PylonDirt);
             d.Trees = PlaceTrees(rc, lines);   // every LOD: the far rings draw them as billboards (RegionStreamer impostors)
             d.Foliage = lod == 0 ? PlaceFoliage(d) : null;
+            d.Boulders = lod == 0 ? PlaceBoulders(d, rh, b, lines) : null;
             d.Roads = Roads.PiecesIn(lines, ox, oz, ox + RegionSize, oz + RegionSize, Math.Max(4f, sp));
             d.Poles = polesWide?.FindAll(p => p.X >= ox && p.X < ox + RegionSize && p.Z >= oz && p.Z < oz + RegionSize);
             d.Bridges = Roads.BridgesIn(lines, ox, oz, ox + RegionSize, oz + RegionSize);
@@ -520,6 +541,7 @@ namespace SDG.Unturned
             {
                 d.TunnelMouths = new List<MouthData[]>(d.Tunnels.Count);
                 foreach (var t in d.Tunnels) d.TunnelMouths.Add(MouthGround(t));
+                d.TunnelRocks = TunnelRocks(d.Tunnels, d.TunnelMouths, ox, oz);
             }
             d.Rails = Roads.RailsIn(lines, ox, oz, ox + RegionSize, oz + RegionSize);
             d.LevelCrossings = Roads.LevelCrossingsIn(lines, ox, oz, ox + RegionSize, oz + RegionSize);
@@ -692,7 +714,7 @@ namespace SDG.Unturned
                 if (!used[k]) continue;
                 var (gx, gy, gz) = Nrm(g, k);
                 float slope = MathF.Sqrt(gx * gx + gz * gz) / gy;
-                splat[k] = (byte)LayerAt(VX(k), VZ(k), g[k], slope, hits[k].Clear, hits[k].Kind);
+                splat[k] = (byte)LayerAt(VX(k), VZ(k), g[k], slope, hits[k].Clear, VergeKind(hits[k]));
             }
 
             var X = new List<double>(); var Z = new List<double>(); var Y = new List<float>();
@@ -788,6 +810,171 @@ namespace SDG.Unturned
             };
         }
         const float FullSpacing = RegionSize / FullCells;
+
+        // ---------------------------------------------------------------------------------------------------
+        // Boulders (strawberry 2026-10-10: "have boulders fill gaps around tunnel entrances and around steep embankment
+        // faces").
+
+        /// <summary>The rocks: PEI's own four (the island's scatter, ProcIslandSpawn.BoulderProps, says why only these --
+        /// the others are other maps' palettes), each with its plan radius and its vertical extent about its origin, in
+        /// mesh metres, measured off content/objects (the OBJs are Z-up: z is the height). L0 re-measures them.</summary>
+        public static readonly (string Name, float Radius, float Bottom, float Height)[] BoulderKit =
+        {
+            ("Boulder_11",  9.63f, -7.85f, 17.28f),
+            ("Boulder_12", 16.90f, -2.48f,  5.83f),
+            ("Boulder_13",  8.70f, -4.61f,  9.00f),
+            ("Boulder_22_PEI", 15.57f, -4.53f, 9.17f),
+        };
+        /// <summary>One candidate rock per BoulderCell square: kept on a carve's shoulder at least BoulderSlope steep.</summary>
+        public const float BoulderCell = 6.4f, BoulderSlope = 0.55f;
+        public const float BoulderMinR = 1.6f, BoulderMaxR = 3.4f, BoulderBury = 0.5f;   // fewer and bigger: under 1.5 m they read as confetti
+        /// <summary>A rock keeps this far (plus its radius) from any bridge piece: the deck's soffit is 4 m under the road it
+        /// carries, and its abutment's embankment is a carve's shoulder like any other.</summary>
+        public const float BoulderDeckClear = 6f;
+        const ulong SaltBoulder = 0xB01D;
+
+        /// <summary>The steep faces of the roads' cuttings and embankments, scattered over a LOD0 region's OWN vertices
+        /// (the carve each one reports, its slope off the mesh's normals) and seated on its mesh. Not where nothing carves
+        /// (natural ground is the trees' and the foliage's), never on or within its radius of any road's flat (a portal's
+        /// forecourt included), nor in a tunnel mouth's dropped cells, nor near a bridge.</summary>
+        List<BoulderSpawn> PlaceBoulders(RegionData d, RoadHit[] rh, int bw, List<InfiniteRoads.Line> lines)
+        {
+            var list = new List<BoulderSpawn>();
+            int n = d.Cells, v = n + 1, cells = (int)Math.Round(RegionSize / BoulderCell);
+            float sp = d.Spacing;
+            double ox = d.Coord.MinX, oz = d.Coord.MinZ;
+            var decks = Roads.BridgesIn(lines, ox - 20, oz - 20, ox + RegionSize + 20, oz + RegionSize + 20);
+            ulong s = _s ^ SaltBoulder;
+            for (int cj = 0; cj < cells; cj++)
+                for (int ci = 0; ci < cells; ci++)
+                {
+                    long gx = (long)d.Coord.X * cells + ci, gz = (long)d.Coord.Z * cells + cj;
+                    uint h1 = Hash(gx, gz, s), h2 = Hash(gx, gz, s + 1), h3 = Hash(gx, gz, s + 2);
+                    float lx = (ci + 0.15f + 0.7f * (h1 & 0xFFFF) / 65536f) * BoulderCell, lz = (cj + 0.15f + 0.7f * (h1 >> 16) / 65536f) * BoulderCell;
+                    int i = Math.Clamp((int)MathF.Round(lx / sp), 0, n), j = Math.Clamp((int)MathF.Round(lz / sp), 0, n);
+                    var hit = rh[(j + 1) * bw + (i + 1)];
+                    if (!hit.Any || hit.Tunnel || hit.Hole || hit.Weight < 0.03f || hit.Weight > 0.97f) continue;
+                    // the face's slope, from the cell's four normals (the mesh's own, bilinear)
+                    int ic = Math.Clamp((int)(lx / sp), 0, n - 1), jc = Math.Clamp((int)(lz / sp), 0, n - 1);
+                    float fx = lx / sp - ic, fz = lz / sp - jc;
+                    if (d.Holes != null && (d.Holes[jc * v + ic] || d.Holes[jc * v + ic + 1] || d.Holes[(jc + 1) * v + ic] || d.Holes[(jc + 1) * v + ic + 1])) continue;
+                    float N(int c) => (d.Normals[(jc * v + ic) * 3 + c] * (1 - fx) + d.Normals[(jc * v + ic + 1) * 3 + c] * fx) * (1 - fz)
+                                    + (d.Normals[((jc + 1) * v + ic) * 3 + c] * (1 - fx) + d.Normals[((jc + 1) * v + ic + 1) * 3 + c] * fx) * fz;
+                    float nx = N(0), ny = N(1), nz = N(2), nl = MathF.Sqrt(nx * nx + ny * ny + nz * nz);
+                    nx /= nl; ny /= nl; nz /= nl;
+                    float slope = MathF.Sqrt(nx * nx + nz * nz) / Math.Max(1e-3f, ny);
+                    if (slope < BoulderSlope) continue;
+                    // the steeper the face the more rocks, and the bigger: a gentle bank gets a few small ones
+                    float steep = Math.Clamp((slope - BoulderSlope) / BoulderSlope, 0f, 1f);
+                    if ((h2 & 0xFFFF) / 65536f >= 0.25f + 0.4f * steep) continue;
+                    float u = (h2 >> 16) / 65536f;
+                    float want = BoulderMinR + (BoulderMaxR - BoulderMinR) * (steep * u + (1f - steep) * u * 0.5f);
+                    if (want + 0.6f > hit.Past || want + 0.6f > hit.Clear) continue;   // (the vertex's: a cheap first cut)
+                    float y = MeshHeightAt(d, lx, lz);
+                    if (y < SeaLevel + 1f) continue;
+                    double ax = ox + lx, az = oz + lz;
+                    // ...and at the rock itself: on a carve's shoulder, off every road's flat by its own size
+                    var at = InfiniteRoads.Influence(lines, ax, az);
+                    if (!at.Any || at.Tunnel || at.Weight < 0.03f || at.Weight > 0.97f || want + 0.6f > at.Past || want + 0.6f > at.Clear) continue;
+                    bool nearDeck = false;
+                    foreach (var bp in decks)
+                    {
+                        double ddx = bp.X - ax, ddz = bp.Z - az, r = BoulderDeckClear + want;
+                        if (ddx * ddx + ddz * ddz < r * r) { nearDeck = true; break; }
+                    }
+                    if (nearDeck) continue;
+                    list.Add(new BoulderSpawn { X = lx, Y = y, Z = lz, Yaw = (h3 & 0xFFFF) / 65536f * 360f, Radius = want, Bury = BoulderBury,
+                                                NX = nx, NY = ny, NZ = nz, Kind = (byte)((h3 >> 16) % (uint)BoulderKit.Length) });
+                }
+            return list;
+        }
+
+        /// <summary>Rocks banked against both ends of each tunnel's headwalls -- where the wall stands out of the ground
+        /// (its two sides' grounds differ), at its outermost points either side, on the mouth's own ground in front and the
+        /// hill behind -- and never in front of a bore. Local to the region at (ox, oz).</summary>
+        List<BoulderSpawn> TunnelRocks(List<InfiniteRoads.TunnelSpan> tunnels, List<MouthData[]> mouths, double ox, double oz)
+        {
+            var list = new List<BoulderSpawn>();
+            if (tunnels == null || mouths == null) return list;
+            // (outward along the facade from the wall's end, in from the facade, radius)
+            var spots = new (float du, float aIn, float r)[] { (0.6f, -1.4f, 2.3f), (2.8f, 1.6f, 2.0f), (-0.4f, -3.8f, 1.5f), (4.4f, -1.0f, 1.6f), (1.2f, 3.6f, 1.4f) };
+            for (int ti = 0; ti < tunnels.Count; ti++)
+            {
+                var t = tunnels[ti];
+                float boreR = InfiniteRoads.BoreReachOf(t.Kind);
+                for (int end = 0; end < 2; end++)
+                {
+                    var md = mouths[ti]?[end];
+                    if (md == null || md.FaceU.Length < 2) continue;
+                    int m = t.X.Length, ia = end == 0 ? 0 : m - 1, ib = end == 0 ? 1 : m - 2;
+                    double px = t.X[ia], pz = t.Z[ia], fx = t.X[ib] - px, fz = t.Z[ib] - pz, fl = Math.Max(1e-9, Math.Sqrt(fx * fx + fz * fz));
+                    fx /= fl; fz /= fl;
+                    double sx = -fz, sz = fx;
+                    if (end == 1) { sx = -sx; sz = -sz; }
+                    // where the wall stands proud of the ground, its two ends
+                    float uL = float.MaxValue, uR = float.MinValue;
+                    for (int q = 0; q < md.FaceU.Length; q++)
+                        if (Math.Abs(md.FaceFront[q] - md.FaceBehind[q]) > 0.3f) { uL = Math.Min(uL, md.FaceU[q]); uR = Math.Max(uR, md.FaceU[q]); }
+                    if (uL > uR) continue;
+                    var lines = Roads.LinesIn(px - 40, pz - 40, px + 40, pz + 40);
+                    for (int side = -1; side <= 1; side += 2)
+                        for (int q = 0; q < spots.Length; q++)
+                        {
+                            var (du, aIn, r) = spots[q];
+                            double u = (side < 0 ? uL : uR) + side * du;
+                            if (Math.Abs(u) < boreR + 1.2 + r) continue;   // never in front of a bore
+                            double x = px + fx * aIn + sx * u, z = pz + fz * aIn + sz * u;
+                            // the ground as DRAWN: the mouth's own surface over its cells, else the LOD0 mesh's triangle (the
+                            // smooth function stands up to a metre off it on a cut's slope, and a small rock seated on that
+                            // was buried whole under the drawn ground)
+                            float Ground(double gx, double gz) => MouthSurface(md, gx, gz, out float my) ? my : DrawnHeight(lines, gx, gz);
+                            float y = Ground(x, z);
+                            float gxs = Ground(x + 1.0, z) - Ground(x - 1.0, z), gzs = Ground(x, z + 1.0) - Ground(x, z - 1.0);
+                            float nx = -gxs * 0.5f, nz = -gzs * 0.5f, inv = 1f / MathF.Sqrt(nx * nx + 1f + nz * nz);
+                            uint h = Hash((long)Math.Floor(x * 4), (long)Math.Floor(z * 4), _s ^ SaltBoulder ^ 0x7777);
+                            list.Add(new BoulderSpawn { X = (float)(x - ox), Y = y, Z = (float)(z - oz), Yaw = (h & 0xFFFF) / 65536f * 360f,
+                                                        Radius = r * (0.85f + 0.3f * (h >> 16 & 0xFF) / 255f), Bury = 0.45f,
+                                                        NX = nx * inv, NY = inv, NZ = nz * inv, Kind = (byte)((h >> 24) % (uint)BoulderKit.Length) });
+                        }
+                }
+            }
+            return list;
+        }
+
+        /// <summary>The LOD0 mesh's height at a world point: its cell's triangle (fx + fz <= 1: (a, b, c), else (b, e, c)) over
+        /// the generator's heights at the corners -- what MeshHeightAt gives on a region, without the region.</summary>
+        float DrawnHeight(List<InfiniteRoads.Line> lines, double x, double z)
+        {
+            const double sp = FullSpacing;
+            double gi = Math.Floor(x / sp), gj = Math.Floor(z / sp);
+            float fx = (float)(x / sp - gi), fz = (float)(z / sp - gj);
+            float H(double i, double j) => SampleWith(lines, i * sp, j * sp, out _);
+            if (fx + fz <= 1f)
+            {
+                float ha = H(gi, gj), hb = H(gi + 1, gj), hc = H(gi, gj + 1);
+                return ha + (hb - ha) * fx + (hc - ha) * fz;
+            }
+            float he = H(gi + 1, gj + 1), hc2 = H(gi, gj + 1), hb2 = H(gi + 1, gj);
+            return he + (hc2 - he) * (1f - fx) + (hb2 - he) * (1f - fz);
+        }
+
+        /// <summary>Height of a mouth's drawn ground at a world point, if one of its triangles covers it.</summary>
+        static bool MouthSurface(MouthData md, double x, double z, out float y)
+        {
+            int nt = md.Tris.Length / 3;
+            for (int q = 0; q < nt; q++)
+            {
+                int i0 = md.Tris[3 * q], i1 = md.Tris[3 * q + 1], i2 = md.Tris[3 * q + 2];
+                double x0 = md.X[i0], z0 = md.Z[i0], x1 = md.X[i1], z1 = md.Z[i1], x2 = md.X[i2], z2 = md.Z[i2];
+                double dd = (z1 - z2) * (x0 - x2) + (x2 - x1) * (z0 - z2);
+                if (Math.Abs(dd) < 1e-12) continue;
+                double l0 = ((z1 - z2) * (x - x2) + (x2 - x1) * (z - z2)) / dd, l1 = ((z2 - z0) * (x - x2) + (x0 - x2) * (z - z2)) / dd, l2 = 1 - l0 - l1;
+                if (l0 < -1e-7 || l1 < -1e-7 || l2 < -1e-7) continue;
+                y = (float)(l0 * md.Y[i0] + l1 * md.Y[i1] + l2 * md.Y[i2]);
+                return true;
+            }
+            y = 0f; return false;
+        }
 
         // ---------------------------------------------------------------------------------------------------
         // Ground cover, scattered over a LOD0 region's own arrays (no extra noise calls for the grass: 25k blades a
