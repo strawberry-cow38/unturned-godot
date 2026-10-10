@@ -652,6 +652,98 @@ namespace UnturnedGodot.Testing
                 string who = hit.Count == 0 ? "nothing" : hit["collider"].As<Node>()?.GetParent()?.Name.ToString() ?? "?";
                 T.Check($"its legs are solid: a ray at a foot hits {who}{(hit.Count > 0 ? $" {((Vector3)hit["position"]).DistanceTo(from):0.0} m in" : "")}", who == "PylonBodies");
             }
+            // ---- 10. RAILWAYS (strawberry 2026-10-10: "add railways."): core's copy of the rail kit is the kit's; at the
+            // nearest level crossing the track is drawn, its ballast is solid at its top, and the road over it is the road's
+            // slab, RailProud under the rail heads; in a rail tunnel the bore is ONE tube round the track
+            {
+                var unit = ObjMesh.Load(ProjectSettings.GlobalizePath("res://content/objects/" + EditorRailSpline.Unit + ".obj"));
+                var bb = unit?.GetAabb() ?? new Aabb();
+                bool topEdge = false;
+                if (unit != null)
+                    foreach (var v in unit.SurfaceGetArrays(0)[(int)Mesh.ArrayType.Vertex].AsVector3Array())
+                        if (Mathf.Abs(Mathf.Abs(v.X) - InfiniteRoads.RailBallastTopHalf) < 1e-3f && Mathf.Abs(v.Y - InfiniteRoads.RailBallastTop) < 1e-3f) topEdge = true;
+                T.Check($"the infinite world's rail kit is the rail tool's: pitch {InfiniteRoads.RailPitch} / {EditorRailSpline.Pitch}, half-width {InfiniteRoads.RailHalfWidth} / {EditorRailSpline.HalfWidth}; " +
+                        $"the unit spans x {bb.Position.X:0.0000}..{bb.End.X:0.0000}, y {bb.Position.Y:0.00}..{bb.End.Y:0.00} (ballast foot {InfiniteRoads.RailBallastFoot}, rail head {InfiniteRoads.RailHead}), ballast top edge at +-{InfiniteRoads.RailBallastTopHalf} / {InfiniteRoads.RailBallastTop}: {topEdge}",
+                    // (the tool keeps the half-width to the millimetre, 3.467; the mesh's own is 3.4675, which is what core uses)
+                    InfiniteRoads.RailPitch == EditorRailSpline.Pitch && Mathf.Abs(InfiniteRoads.RailHalfWidth - EditorRailSpline.HalfWidth) < 1e-3f && unit != null
+                    && Mathf.Abs(bb.End.X - InfiniteRoads.RailHalfWidth) < 1e-3f && Mathf.Abs(bb.Position.X + InfiniteRoads.RailHalfWidth) < 1e-3f
+                    && Mathf.Abs(bb.Position.Y - InfiniteRoads.RailBallastFoot) < 1e-3f && Mathf.Abs(bb.End.Y - InfiniteRoads.RailHead) < 1e-3f && topEdge);
+            }
+            LevelCrossing? lxc = null; double lBest = double.MaxValue;
+            for (long cx = -6; cx <= 6; cx++)
+                for (long cz = -6; cz <= 6; cz++)
+                    for (int dir = 0; dir < 2; dir++)
+                        foreach (var c in S.Gen.Roads.MainLevelCrossings(cx, cz, dir))
+                            if (c.X * c.X + c.Z * c.Z < lBest) { lBest = c.X * c.X + c.Z * c.Z; lxc = c; }
+            T.Check("the generator has a level crossing to visit", lxc != null);
+            if (lxc is LevelCrossing lc)
+            {
+                S.TeleportAbsolute(lc.X + lc.MX * 30.0, lc.Z + lc.MZ * 30.0);
+                yield return Wait(Settled, 60);
+                yield return Ticks(5);
+                var space = World.GetWorld3D().DirectSpaceState;
+                string Hit(Godot.Collections.Dictionary h) => h.Count == 0 ? "nothing" : h["collider"].As<Node>()?.Name.ToString() ?? "?";
+                Godot.Collections.Dictionary Drop(double x, double z, double y0)
+                    => space.IntersectRay(PhysicsRayQueryParameters3D.Create(S.ToLocal(x, y0 + 20, z), S.ToLocal(x, y0 - 20, z), 1u << 0));
+                var rc = RegionCoord.Containing(lc.X, lc.Z);
+                var (units, _, _) = S.RailsOf(rc);
+                int want = 0;
+                foreach (var rp in S.Gen.Roads.RailsIn(S.Gen.Roads.LinesIn(rc.MinX, rc.MinZ, rc.MinX + InfiniteTerrain.RegionSize, rc.MinZ + InfiniteTerrain.RegionSize),
+                                                       rc.MinX, rc.MinZ, rc.MinX + InfiniteTerrain.RegionSize, rc.MinZ + InfiniteTerrain.RegionSize))
+                    if (rp.Kind == 0) want++;
+                T.Check($"the level crossing at ({lc.X:0}, {lc.Z:0}) has its track drawn: region {rc} lays {units} tiles (the generator roots {want} there); {S.RailCount} in range", units == want && units > 0);
+                // on the track 25 m along the rail from the road (outside its slab): the ballast's top, the track's root + RailBallastTop
+                // the tile nearest 25 m along the track, at its middle: the root's height there along the tile's own grade
+                double tbx = lc.X + lc.RX * 25.0, tbz = lc.Z + lc.RZ * 25.0, tileBest = double.MaxValue;
+                RailPiece tile = default;
+                foreach (var rp in S.Gen.Roads.RailsIn(S.Gen.Roads.LinesIn(tbx - 10, tbz - 10, tbx + 10, tbz + 10), tbx - 10, tbz - 10, tbx + 10, tbz + 10))
+                    if (rp.Kind == 0 && (rp.X - tbx) * (rp.X - tbx) + (rp.Z - tbz) * (rp.Z - tbz) < tileBest) { tileBest = (rp.X - tbx) * (rp.X - tbx) + (rp.Z - tbz) * (rp.Z - tbz); tile = rp; }
+                double mx = tile.X + tile.DX * tile.K, mz = tile.Z + tile.DZ * tile.K;
+                float rootY = tile.Y + tile.DY * tile.K;
+                var onBallast = Drop(mx, mz, rootY);
+                float ballY = onBallast.Count > 0 ? ((Vector3)onBallast["position"]).Y : float.NaN;
+                T.Check($"the ballast is solid at its top: a drop on a tile 25 m along the track lands on {Hit(onBallast)} at {ballY - rootY:+0.000;-0.000} m over its root (want {InfiniteRoads.RailBallastTop})",
+                    Hit(onBallast) == "Ballast" && Mathf.Abs(ballY - rootY - InfiniteRoads.RailBallastTop) < 0.03f);
+                // on the crossing itself: the road's slab, just under the rail heads
+                var onRoad = Drop(lc.X + lc.MX * 3.0, lc.Z + lc.MZ * 3.0, lc.Y);
+                float roadY = onRoad.Count > 0 ? ((Vector3)onRoad["position"]).Y : float.NaN;
+                T.Check($"over the track the road is the road: a drop on the crossing lands on {Hit(onRoad)} at {(roadY - lc.Y) * 1000f:+0.0;-0.0} mm from the rail heads (want -{InfiniteRoads.RailProud * 1000f:0.0})",
+                    Hit(onRoad) == "Paved" && Mathf.Abs(roadY - (lc.Y - InfiniteRoads.RailProud)) < 0.01f);
+            }
+            InfiniteRoads.TunnelSpan rtun = null; double rtBest = double.MaxValue;
+            for (int axis = 0; axis < 2; axis++)
+                for (long band = -1; band <= 0; band++)
+                    for (long k = -1; k <= 1; k++)
+                        foreach (var t in S.Gen.Roads.RailTunnelsOf(axis, band, k))
+                        {
+                            int tmid = t.X.Length / 2;
+                            if (t.A1 - t.A0 >= 100 && t.X[tmid] * t.X[tmid] + t.Z[tmid] * t.Z[tmid] < rtBest) { rtBest = t.X[tmid] * t.X[tmid] + t.Z[tmid] * t.Z[tmid]; rtun = t; }
+                        }
+            T.Check("the generator has a rail tunnel to visit", rtun != null);
+            if (rtun != null)
+            {
+                int mid = rtun.X.Length / 2;
+                S.TeleportAbsolute(rtun.X[mid], rtun.Z[mid]);
+                yield return Wait(Settled, 60);
+                yield return Ticks(5);
+                var space = World.GetWorld3D().DirectSpaceState;
+                double ux = rtun.X[mid + 1] - rtun.X[mid - 1], uz = rtun.Z[mid + 1] - rtun.Z[mid - 1], ul = System.Math.Sqrt(ux * ux + uz * uz); ux /= ul; uz /= ul;
+                // from 2 m over the track's root on its centreline: the crown overhead, a wall either side
+                var eye = S.ToLocal(rtun.X[mid], rtun.Y[mid] + 2.0, rtun.Z[mid]);
+                var side = new Vector3(-(float)uz, 0f, (float)ux);
+                float Ray(Vector3 dir) { var h = space.IntersectRay(PhysicsRayQueryParameters3D.Create(eye, eye + dir * 40f, 1u << 0)); return h.Count > 0 ? ((Vector3)h["position"] - eye).Length() : float.NaN; }
+                float up = Ray(Vector3.Up) + 2f, wl = Ray(side), wr = Ray(-side);
+                float crown = InfiniteRoads.BoreTopOf(RoadKind.Rail, 0f), wall = InfiniteRoads.BoreReachOf(RoadKind.Rail);
+                var tubes = 0;
+                var holder = S.TunnelsOf(RegionCoord.Containing(rtun.X[mid], rtun.Z[mid]));
+                if (holder != null) foreach (var n in holder.GetChildren()) if (n.Name.ToString().StartsWith("Tube")) tubes++;
+                T.Check($"a rail tunnel ({rtun.A1 - rtun.A0:0} m) is one bore round the track: crown {up:0.00} m over the root (want {crown:0.00}), walls {wl:0.00} / {wr:0.00} m either side (want {wall:0.00}); {tubes} tube mesh(es) in its region",
+                    Mathf.Abs(up - crown) < 0.2f && Mathf.Abs(wl - wall) < 0.3f && Mathf.Abs(wr - wall) < 0.3f && tubes >= 1);
+                // and a train fits: the loading gauge's top corners are inside the bore
+                var corner = eye + Vector3.Up * (InfiniteRoads.RailHead + InfiniteRoads.RailLoadingHeight - 2f);
+                var hc = space.IntersectRay(PhysicsRayQueryParameters3D.Create(eye + Vector3.Up * 0.5f, corner + side * InfiniteRoads.RailLoadingHalf, 1u << 0));
+                T.Check($"...and a train fits in it: from the track to the loading gauge's top corner hits {(hc.Count == 0 ? "nothing" : hc["collider"].As<Node>()?.Name)}", hc.Count == 0);
+            }
             T.Check($"nobody was ever rescued from under the ground ({S.Rescues})", S.Rescues == 0);
         }
     }

@@ -9,7 +9,9 @@ namespace SDG.Unturned
     /// trying to stay somewhat straight, dont have power lines. then there are main roads, using the highway 1 road type,
     /// spread similarly to what we have now. then there are smaller roads. and then trails. both trails and small roads
     /// can branch off main roads".</summary>
-    public enum RoadKind : byte { Highway = 0, Main = 1, Small = 2, Trail = 3 }
+    /// Rail (strawberry 2026-10-10: "add railways.") is not a road you drive, but it is a line the ground is carved to
+    /// and every other class has to cross or keep clear of -- so it lives in the same network (InfiniteRails.cs).
+    public enum RoadKind : byte { Highway = 0, Main = 1, Small = 2, Trail = 3, Rail = 4 }
 
     /// <summary>What the strongest road at a point says about it. Clear is the MINIMUM over every road of (distance to
     /// its centreline - its paved half-width): negative on asphalt, the room ground cover and trees go by.</summary>
@@ -26,7 +28,8 @@ namespace SDG.Unturned
         public bool Tunnel;
         public float TunnelIn;    // metres in from the nearer facade
         public float TunnelLat;   // signed metres from the route's centreline (+ = the +offset carriageway's side)
-        public float TunnelRoad;  // the driven surface (SurfaceY) at the nearest point of the route
+        public float TunnelRoad;  // the driven surface (TunnelSurfaceY) at the nearest point of the route
+        public RoadKind TunnelKind;   // whose tunnel: a highway's twin bores, or a railway's one (TunnelShape)
         /// <summary>A ground vertex here is a HOLE: just inside a portal, across the bore -- the only place a heightfield
         /// would otherwise run straight across the tunnel mouth (it cannot overhang).</summary>
         public bool Hole;
@@ -47,7 +50,7 @@ namespace SDG.Unturned
     ///   SMALL / TRAIL -- branches off a main road: a wandering polyline leaving it at an angle, ending where the land
     ///               says stop (water, a climb too steep, high ground) or at its length.
     /// </summary>
-    public sealed class InfiniteRoads
+    public sealed partial class InfiniteRoads
     {
         // ---- specs. Widths are PEI's Roads.dat x RoadField.WidthScale 1.15 (Highway_1 6, Highway_0 8, White/Yellow 4, Trail 4).
         public const float HighwayLaneHalf = 6.9f;        // one Highway_1 carriageway
@@ -57,10 +60,13 @@ namespace SDG.Unturned
         {
             RoadKind.Highway => HighwayMedian * 0.5f + 2f * HighwayLaneHalf,   // the whole corridor, median included
             RoadKind.Main => 9.2f,
+            RoadKind.Rail => RailFormationHalf,
             _ => 4.6f,
         };
-        public static float Shoulder(RoadKind k) => k switch { RoadKind.Highway => 14f, RoadKind.Main => 10f, RoadKind.Small => 6f, _ => 4f };
-        public static float MaxGrade(RoadKind k) => k switch { RoadKind.Highway => 0.07f, RoadKind.Main => 0.16f, RoadKind.Small => 0.14f, _ => 0.22f };
+        /// <summary>The carve's blend from the road's level back to the land. A rail's is per point (Line.Shoulders: its
+        /// cuttings and embankments are deeper than any road's), this being the least of it.</summary>
+        public static float Shoulder(RoadKind k) => k switch { RoadKind.Highway => 14f, RoadKind.Main => 10f, RoadKind.Small => 6f, RoadKind.Rail => 10f, _ => 4f };
+        public static float MaxGrade(RoadKind k) => k switch { RoadKind.Highway => 0.07f, RoadKind.Main => 0.16f, RoadKind.Small => 0.14f, RoadKind.Rail => RailGrade, _ => 0.22f };
         public const float Bed = 0.12f;   // the ground under a paved surface sits this far below it
 
         /// <summary>The road slab's thickness, RoadField's halfVerticalSize: PEI's own Roads.dat depth x DepthScale 1.1
@@ -85,11 +91,11 @@ namespace SDG.Unturned
         public const float Proud = 0.22f;
         /// <summary>Per-class lift so no two surfaces that overlap z-fight: highways over the mains they cross, mains
         /// over the small roads and trails that start under their edges.</summary>
-        public static float Lift(RoadKind k) => k switch { RoadKind.Highway => 0.045f, RoadKind.Main => 0.03f, RoadKind.Small => 0.015f, _ => 0.01f };
+        public static float Lift(RoadKind k) => k switch { RoadKind.Highway => 0.045f, RoadKind.Main => 0.03f, RoadKind.Small => 0.015f, RoadKind.Rail => 0f, _ => 0.01f };
         /// <summary>The DRIVEN surface of a road whose profile is at `profileH`: the ground under it (profile - Bed),
         /// plus the slab, plus the lift. Ribbons, their colliders AND bridge decks all stand on this one number, which
-        /// is what makes a deck meet its approach flush.</summary>
-        public static float SurfaceY(RoadKind k, float profileH) => profileH - Bed + Proud + Lift(k);
+        /// is what makes a deck meet its approach flush. A rail's is the top of its rails (RailHeadY).</summary>
+        public static float SurfaceY(RoadKind k, float profileH) => k == RoadKind.Rail ? RailHeadY(profileH) : profileH - Bed + Proud + Lift(k);
 
         public const double MainCell = 1536.0;
         public const double HighwayBand = 12000.0, HighwaySeg = 6000.0;
@@ -135,6 +141,17 @@ namespace SDG.Unturned
             public List<Line> Ramps;
             public bool Ramp;   // this line IS a ramp: small-road surface, no power line
             public double[] HArc;   // horizontal arc length at each dense point (set where there are tunnels)
+            /// <summary>Rails: the carve's shoulder at each dense point (it widens with the cutting's or embankment's
+            /// depth); null on roads, which take Shoulder(Kind).</summary>
+            public float[] Shoulders;
+            /// <summary>Rails: where a main road may cross on the level (InfiniteRails.Sites).</summary>
+            public List<RailSite> Sites;
+            /// <summary>Rails: the track as laid -- New_Rail_Units and any terminal sleeper (built on first ask).</summary>
+            public List<RailPiece> Track;
+            /// <summary>Mains: where this main crosses a railway on the level.</summary>
+            public List<LevelCrossing> LevelCrossings;
+            /// <summary>Rails: the crossings stage 1 shaped (InfiniteRails.ShapeRail), for stage 2 to keep.</summary>
+            internal List<RailCross> Plan;
             public bool Exists => X != null;
             public int Segments => X.Length - 1;
         }
@@ -172,7 +189,7 @@ namespace SDG.Unturned
         public const float DeckRoadwayHalf = 8.0f;
         /// <summary>How much a deck is widened across for the road it carries: 1 for a highway carriageway (13.8 m on the
         /// 16 m roadway, a 1.1 m shoulder each side); a main's 18.4 m of asphalt needs the roadway at its full width.</summary>
-        public static float DeckScale(RoadKind k) => k == RoadKind.Highway ? 1f : PavedHalf(k) / DeckRoadwayHalf;
+        public static float DeckScale(RoadKind k) => k == RoadKind.Highway ? 1f : k == RoadKind.Rail ? RailDeckHalf / DeckRoadwayHalf : PavedHalf(k) / DeckRoadwayHalf;
         public const float DeckSoffit = -4.00f, DeckParapetTop = 1.25f;
         public const float PierTop = -2.98f, PierBottom = -52.98f;
         public const float PierSpan = PierTop - PierBottom;
@@ -252,6 +269,36 @@ namespace SDG.Unturned
                 if (x <= BoreX[i + 1]) return BoreY[i] + (BoreY[i + 1] - BoreY[i]) * (x - BoreX[i]) / (BoreX[i + 1] - BoreX[i]);
             return BoreY[3];
         }
+        // ---- per class. A RAILWAY's tunnel is ONE bore on the track's centreline, the same Tunnel_Line_0 section scaled
+        // to it: RailTunnelLateral across (4.8 m to the walls; the train is 1.7 m to its side) and RailTunnelVertical up
+        // (the crown 8.1 m over the track's root, where the highway's 12.4 m would be a cathedral over a 4 m train).
+        public const float RailTunnelLateral = 0.6f, RailTunnelVertical = 0.65f;
+        public static int TunnelTubes(RoadKind k) => k == RoadKind.Rail ? 1 : 2;
+        /// <summary>Tube i's centreline offset from the route's (highway: the two carriageways; rail: the track).</summary>
+        public static float TubeOffset(RoadKind k, int i) => k == RoadKind.Rail ? 0f : (i == 0 ? -1 : 1) * HighwayRibbonOffset;
+        public static float TunnelLateralOf(RoadKind k) => k == RoadKind.Rail ? RailTunnelLateral : TunnelLateral;
+        public static float TunnelVerticalOf(RoadKind k) => k == RoadKind.Rail ? RailTunnelVertical : 1f;
+        public static float BoreReachOf(RoadKind k) => k == RoadKind.Rail ? TunnelBoreHalf * RailTunnelLateral : TunnelBoreReach;
+        public static float ShellReachOf(RoadKind k) => k == RoadKind.Rail ? TunnelShellHalf * RailTunnelLateral : TunnelShellReach;
+        public static float TunnelFloorDropOf(RoadKind k) => TunnelFloorDrop * TunnelVerticalOf(k);
+        /// <summary>The tunnel's datum over its line's profile: the highway's driven surface, the track's root.</summary>
+        public static float TunnelSurfaceY(RoadKind k, float profileH) => k == RoadKind.Rail ? RailOriginY(profileH) : SurfaceY(RoadKind.Highway, profileH);
+        /// <summary>From that datum down to the bed (the floor): the slab and its lift, or the track's set.</summary>
+        public static float TunnelBedBelow(RoadKind k) => k == RoadKind.Rail ? RailSet : Proud + Lift(RoadKind.Highway);
+        /// <summary>The shells' top over the datum at lateral `lat` (negative infinity outside them).</summary>
+        public static float ShellTopOf(RoadKind k, float lat)
+        {
+            if (k != RoadKind.Rail) return TwinShellTop(lat);
+            float x = Math.Abs(lat) / RailTunnelLateral;
+            return x <= TunnelShellHalf + 1e-3f ? ShellTop(Math.Min(x, TunnelShellHalf)) * RailTunnelVertical : float.NegativeInfinity;
+        }
+        /// <summary>The bore's inner surface over the datum at lateral `lat`; NaN outside every bore.</summary>
+        public static float BoreTopOf(RoadKind k, float lat)
+        {
+            if (k != RoadKind.Rail) return TwinBoreTop(lat);
+            float x = lat / RailTunnelLateral;
+            return Math.Abs(x) <= TunnelBoreHalf ? BoreTop(x) * RailTunnelVertical : float.NaN;
+        }
         public const float TunnelCover = 1f;          // natural ground over the shell for a run to be bored, not cut
         public const float TunnelProbeStep = 4f;      // along-route sampling when looking for runs to bore
         public static float TunnelMinLength => 2f * TunnelSectionLength;   // two portals; any bore is extra
@@ -288,7 +335,8 @@ namespace SDG.Unturned
 
         // Only ever called on a cache MISS: ConcurrentDictionary.Count takes every bucket lock, and checking it on each
         // lookup (60 per height sample) serialised all the worker threads behind it
-        void Trim() { if (_main.Count > 20000) _main.Clear(); if (_hwy.Count > 4000) _hwy.Clear(); if (_anchor.Count > 8000) _anchor.Clear(); if (HighwayDrops.Count > 4000) HighwayDrops.Clear(); if (MainDrops.Count > 4000) MainDrops.Clear(); }
+        void Trim() { if (_main.Count > 20000) _main.Clear(); if (_hwy.Count > 4000) _hwy.Clear(); if (_anchor.Count > 8000) _anchor.Clear(); if (HighwayDrops.Count > 4000) HighwayDrops.Clear(); if (MainDrops.Count > 4000) MainDrops.Clear();
+                      if (_rail.Count > 2000) _rail.Clear(); if (_railAnchor.Count > 4000) _railAnchor.Clear(); if (RailDrops.Count > 4000) RailDrops.Clear(); }
 
         // =============================================================================================================
         // Main roads
@@ -302,6 +350,7 @@ namespace SDG.Unturned
             // room to leave it, turn, and meet a highway square-on (MainApproach) -- or to keep clear of it
             var hw = new List<Line>();
             TakeHighways(x - 2 * NodeClear, z - 2 * NodeClear, x + 2 * NodeClear, z + 2 * NodeClear, hw);
+            TakeRails(x - 2 * NodeClear, z - 2 * NodeClear, x + 2 * NodeClear, z + 2 * NodeClear, hw);   // nor on a railway
             foreach (var e in hw)
             {
                 var (d, px, pz, nx, nz) = NearestOn(e, x, z);
@@ -322,6 +371,10 @@ namespace SDG.Unturned
         public const float UnderDepth = 9.5f;      // main profile under the highway's: deck 4 m + 5 m headroom + slabs
         public const float OverRise = 9.5f;        // ...or over it, the same clearance the other way up
         public const float UnderMargin = 4f;       // a deck reaches this far past the asphalt it spans on each side
+        /// <summary>A main runs level this far either side of a level crossing: the rail's formation and a little.</summary>
+        public const float LevelFlat = RailFormationHalf + 3f;
+        /// <summary>How far along a railway a main will move its crossing to reach one of the rail's sites.</summary>
+        public const double MainSiteReach = 400;
         /// <summary>Either side of a crossing the main runs LEVEL for this far along itself: the highway's whole corridor
         /// and the margin, so the clearance holds under (or over) every lane, not only at the highway's centreline.</summary>
         public const float CrossFlat = 15.8f + UnderMargin;   // PavedHalf(Highway) + UnderMargin
@@ -337,6 +390,7 @@ namespace SDG.Unturned
             public DeckSpan?[] Cover = new DeckSpan?[2];           // per highway carriageway [-offset, +offset], dense-index space of the highway
             public List<BridgePiece> Pieces = new();                // the highway's decks and caps over the main
             public bool Existing;                                   // the highway was already a bridge here: no decks of our own
+            public bool OverTunnel;                                 // a rail over the hill a highway's tunnel bores: no decks at all
         }
 
         /// <summary>Nearest point on a line's centreline: distance, the point, and the unit normal from it toward (x, z).</summary>
@@ -387,9 +441,9 @@ namespace SDG.Unturned
         /// stretch exists only between points that are all level: to hold CrossFlat, `flat` must reach the first point
         /// past it (CrossFlat + the point spacing). Shaped to CrossFlat exactly, a 15 m spacing left the main level only
         /// to 15 m, falling 8 cm by the highway's edge -- and a deck unit spanning that kink sat 61 mm off it.</summary>
-        static void ShapeCrossing(float[] h, double[] arc, double aX, float target, bool over, double flat)
+        static void ShapeCrossing(float[] h, double[] arc, double aX, float target, bool over, double flat, float grade = -1f)
         {
-            float g = 0.92f * MaxGrade(RoadKind.Main);
+            float g = grade > 0f ? grade : 0.92f * MaxGrade(RoadKind.Main);
             for (int i = 0; i < h.Length; i++)
             {
                 float b = (float)Math.Max(0.0, Math.Abs(arc[i] - aX) - flat) * g;
@@ -475,17 +529,33 @@ namespace SDG.Unturned
             // the highways this link could meet, and where the straight line between its towns crosses them. An ODD count
             // means the towns are on opposite sides and the link must cross -- once. An EVEN count (a highway bowing out
             // between two towns on the same side) means it need not: it keeps to the towns' side, round the bow.
+            // RAILWAYS are in this list too: a main treats one exactly as it treats a highway -- once, square, or not at
+            // all -- except that it crosses on the level, at one of the rail's own Sites (InfiniteRails)
             var hws = new List<Line>();
             TakeHighways(Math.Min(ax, bx) - 400, Math.Min(az, bz) - 400, Math.Max(ax, bx) + 400, Math.Max(az, bz) + 400, hws);
+            TakeRails(Math.Min(ax, bx) - 400, Math.Min(az, bz) - 400, Math.Max(ax, bx) + 400, Math.Max(az, bz) + 400, hws);
             var straight = new[] { ax, bx }; var straightZ = new[] { az, bz };
             Line hwX = null; double hwF = 0, xX = 0, zX = 0;
             foreach (var e in hws)
             {
                 var cs = Crossings(straight, straightZ, 2, e);
                 if (cs.Count % 2 == 0) continue;
-                if (cs.Count > 1) return Gone("weaves across a highway");
-                if (hwX != null) return Gone("crosses two highways");   // (there are four more links round each town)
+                if (cs.Count > 1) return Gone(e.Kind == RoadKind.Rail ? "weaves across a railway" : "weaves across a highway");
+                if (hwX != null) return Gone(hwX.Kind == RoadKind.Rail || e.Kind == RoadKind.Rail ? "crosses a highway and a railway" : "crosses two highways");   // (there are four more links round each town)
                 hwX = e; hwF = cs[0].g; xX = cs[0].x; zX = cs[0].z;
+            }
+            bool railX = false;   // a LEVEL crossing
+            RailSite site = default;
+            if (hwX != null && hwX.Kind == RoadKind.Rail)
+            {
+                // the rail is crossed where IT is level and at the land's height: the nearest of its sites, within reach.
+                // With none, the main crosses it as it would a highway, grade-separated: over it on the main's own deck,
+                // or under a viaduct the rail already stands on
+                var arcR = Arc(hwX);
+                int gk = Math.Min((int)hwF, hwX.Segments - 1);
+                double aR = arcR[gk] + (arcR[gk + 1] - arcR[gk]) * (hwF - gk), bd = double.MaxValue;
+                if (hwX.Sites != null) foreach (var st in hwX.Sites) if (Math.Abs(st.A - aR) < bd) { bd = Math.Abs(st.A - aR); site = st; }
+                if (bd <= MainSiteReach) { railX = true; hwF = site.F; xX = site.X; zX = site.Z; }
             }
 
             // a wandering stretch from (x0,z0) to (x1,z1) into control points [k0, k0 + count]
@@ -560,7 +630,16 @@ namespace SDG.Unturned
             // and under one of the highway's own bridges the dip clears that deck and lays none of its own.
             Underpass up = null;
             float target = 0f; bool over = false;
-            if (hwX != null)
+            // A LEVEL CROSSING: the main comes to the rails' top (RailProud under it) and runs level over the formation
+            float level = site.H + (RailHeadY(0f) - SurfaceY(RoadKind.Main, 0f)) - RailProud;
+            if (railX)
+            {
+                var arcC = new double[MainCtrl + 1];
+                for (int k = 1; k <= MainCtrl; k++) arcC[k] = arcC[k - 1] + Math.Sqrt((cxs[k] - cxs[k - 1]) * (cxs[k] - cxs[k - 1]) + (czs[k] - czs[k - 1]) * (czs[k] - czs[k - 1]));
+                ShapeCrossing(ch, arcC, arcC[kX], level, true, LevelFlat);
+                ShapeCrossing(ch, arcC, arcC[kX], level, false, LevelFlat);
+            }
+            else if (hwX != null)
             {
                 int jk = Math.Min((int)hwF, hwX.Segments - 1);
                 float hwH = hwX.H[jk] + (hwX.H[jk + 1] - hwX.H[jk]) * (float)(hwF - jk);
@@ -593,7 +672,7 @@ namespace SDG.Unturned
                     ShapeCrossing(under, arcC, arcC[kX], hwLo - UnderDepth, false, CrossFlat);
                     bool floods = false;
                     foreach (var h in under) if (h < InfiniteTerrain.SeaLevel + 1.2f) floods = true;
-                    over = !bridged && (floods || ch[kX] > hwH);
+                    over = !bridged && (hwX.Kind == RoadKind.Rail || floods || ch[kX] > hwH);   // a rail has no decks to spare
                     if (floods && !over) return Gone("underpass below sea");   // under a highway bridge, by the sea
                     if (over) { target = hwHi + OverRise; ShapeCrossing(ch, arcC, arcC[kX], target, true, CrossFlat); }
                     else { target = hwLo - UnderDepth; Array.Copy(under, ch, ch.Length); }
@@ -616,6 +695,20 @@ namespace SDG.Unturned
                 if (e == hwX ? cs.Count != 1 : cs.Count > 0) return Gone(e == hwX ? "drawn line recrosses" : "drawn line crosses another");
                 foreach (var c in cs) { if (c.angle < 60) return Gone("drawn crossing skewed"); fMain = c.f; fHw = c.g; sinX = Math.Sin(c.angle * Math.PI / 180); }
             }
+            if (railX)
+            {
+                // level in the DENSE profile too (see below), and remembered: poles stop short of it, the crossing gets
+                // its signs
+                var arcD = Arc(line);
+                int fk = Math.Min((int)fMain, line.Segments - 1);
+                double aX = arcD[fk] + (arcD[fk + 1] - arcD[fk]) * (fMain - fk), spacing = 0;
+                for (int i = 0; i < line.Segments; i++)
+                    if (Math.Abs(arcD[i] - aX) < LevelFlat + 60) spacing = Math.Max(spacing, arcD[i + 1] - arcD[i]);
+                ShapeCrossing(line.H, arcD, aX, level, true, LevelFlat + spacing);
+                ShapeCrossing(line.H, arcD, aX, level, false, LevelFlat + spacing);
+                At(line, arcD, aX, out double lx, out double lz, out _, out double ltx, out double ltz);
+                line.LevelCrossings = new List<LevelCrossing> { new LevelCrossing { X = lx, Z = lz, Y = RailHeadY(site.H), RX = (float)site.TX, RZ = (float)site.TZ, MX = (float)ltx, MZ = (float)ltz } };
+            }
             if (up != null)
             {
                 // the drawn profile is linear between control points ~60 m apart, so the level stretch exists only in the
@@ -628,9 +721,9 @@ namespace SDG.Unturned
                     if (Math.Abs(arcD[i] - aX) < CrossFlat + 60) spacing = Math.Max(spacing, arcD[i + 1] - arcD[i]);
                 ShapeCrossing(line.H, arcD, aX, target, over, CrossFlat + spacing);
                 if (!over) foreach (var h in line.H) if (h < InfiniteTerrain.SeaLevel + 1.2f) return Gone("underpass below sea");
-                if (!up.Existing && !(over ? LayOverpass(line, fMain, sinX, up) : LayUnderpass(line, hwX, up))) return Gone(over ? "overpass decks" : "underpass decks");
+                if (!up.Existing && !(over ? LayOverpass(line, fMain, sinX, up, hwX.Kind) : LayUnderpass(line, hwX, up))) return Gone(over ? "overpass decks" : "underpass decks");
                 line.Underpasses = new List<Underpass> { up };
-                line.Ramps = BuildRamps(line, fMain, hwX, fHw);
+                if (hwX.Kind == RoadKind.Highway) line.Ramps = BuildRamps(line, fMain, hwX, fHw);
             }
             line.Branches = BuildBranches(line, cx, cz, dir);
             return line;
@@ -659,7 +752,7 @@ namespace SDG.Unturned
                         }
                 if (cr.Count != 1) return false;
                 double fc = cr[0].Item1, sin = Math.Max(0.5, Math.Sin(cr[0].Item2));
-                double need = 2.0 * (PavedHalf(RoadKind.Main) + UnderMargin) / sin;
+                double need = 2.0 * (PavedHalf(main.Kind) + UnderMargin) / sin;
                 double half = Math.Ceiling(need / BridgePitch) * BridgePitch * 0.5;
                 int i0 = Math.Max(0, (int)Math.Floor(fc) - 2), i1 = Math.Min(hw.X.Length - 1, (int)Math.Ceiling(fc) + 2);
                 var span = WalkDecks(hw, side, i0, i1, fc, half, false, up.Pieces);
@@ -672,13 +765,15 @@ namespace SDG.Unturned
         /// <summary>The main's own decks over a highway: whole units centred where it crosses, reaching UnderMargin past
         /// the highway's asphalt either side (longer for a skewed crossing), widened to the main (DeckScale), no piers --
         /// the gap is the highway's. The main's ribbon is cut and its embankment stopped under exactly that span.</summary>
-        bool LayOverpass(Line main, double fX, double sin, Underpass up)
+        bool LayOverpass(Line main, double fX, double sin, Underpass up, RoadKind under = RoadKind.Highway)
         {
-            double need = 2.0 * (PavedHalf(RoadKind.Highway) + UnderMargin) / Math.Max(0.5, sin);
+            double need = 2.0 * (PavedHalf(under) + UnderMargin) / Math.Max(0.5, sin);
             double half = Math.Ceiling(need / BridgePitch) * BridgePitch * 0.5;
-            int i0 = Math.Max(0, (int)Math.Floor(fX) - 4), i1 = Math.Min(main.X.Length - 1, (int)Math.Ceiling(fX) + 4);
+            int reach = main.Kind == RoadKind.Rail ? (int)Math.Ceiling(half / 8.0) + 2 : 4;   // a rail's dense points are closer
+            int i0 = Math.Max(0, (int)Math.Floor(fX) - reach), i1 = Math.Min(main.X.Length - 1, (int)Math.Ceiling(fX) + reach);
             if (WalkDecks(main, 0, i0, i1, fX, half, false, up.Pieces) is not DeckSpan d) return false;
-            main.DeckCover = new[] { new List<DeckSpan> { d }, new List<DeckSpan> { d } };   // one roadway: both "sides" of the centreline
+            main.DeckCover ??= new[] { new List<DeckSpan>(), new List<DeckSpan>() };   // one roadway: both "sides" of the centreline
+            main.DeckCover[0].Add(d); main.DeckCover[1].Add(d);
             return true;
         }
 
@@ -757,6 +852,11 @@ namespace SDG.Unturned
                     if (ramp == null) continue;   // too steep
                     // it meets no road on the way but the two it joins: not the main short of its end, not the highway
                     if (Crossings(ramp.X, ramp.Z, ramp.X.Length, main).Count > 0 || Crossings(ramp.X, ramp.Z, ramp.X.Length, hw).Count > 0) continue;
+                    var rails = new List<Line>();
+                    TakeRails(ramp.MinX, ramp.MinZ, ramp.MaxX, ramp.MaxZ, rails);
+                    bool railed = false;
+                    foreach (var rl in rails) if (Crossings(ramp.X, ramp.Z, ramp.X.Length, rl).Count > 0) railed = true;
+                    if (railed) continue;
                     ramp.Ramp = true;
                     list.Add(ramp);
                 }
@@ -773,6 +873,9 @@ namespace SDG.Unturned
         // =============================================================================================================
         // Branches: small roads and trails leaving a main road
 
+        /// <summary>A small road or trail ends this far (from the formation's edge) short of a railway.</summary>
+        public const float BranchRailClear = 30f;
+
         List<Line> BuildBranches(Line main, long cx, long cz, int dir)
         {
             var list = new List<Line>();
@@ -780,9 +883,15 @@ namespace SDG.Unturned
             int count = (int)(InfiniteTerrain.Hash(cx, cz, bs) % 4);   // 0..3 per link
             var arc = Arc(main);
             // small roads and trails do not cross a highway at grade: they end at its shoulder
-            List<Line> hw = null;
-            if (count > 0) { hw = new List<Line>(); TakeHighways(main.MinX - 1200, main.MinZ - 1200, main.MaxX + 1200, main.MaxZ + 1200, hw); }
-            bool NearHighway(double x, double z) => hw.Count > 0 && Influence(hw, x, z).Clear < Shoulder(RoadKind.Highway) + 6f;
+            List<Line> hw = null, rl = null;
+            if (count > 0)
+            {
+                hw = new List<Line>(); TakeHighways(main.MinX - 1200, main.MinZ - 1200, main.MaxX + 1200, main.MaxZ + 1200, hw);
+                rl = new List<Line>(); TakeRails(main.MinX - 1200, main.MinZ - 1200, main.MaxX + 1200, main.MaxZ + 1200, rl);
+            }
+            // ...nor a railway: they end clear of its cutting or embankment too
+            bool NearHighway(double x, double z) => hw.Count > 0 && Influence(hw, x, z).Clear < Shoulder(RoadKind.Highway) + 6f
+                                                 || rl.Count > 0 && Influence(rl, x, z).Clear < BranchRailClear;
             for (int b = 0; b < count; b++)
             {
                 uint h = InfiniteTerrain.Hash(b, 17, bs);
@@ -798,6 +907,13 @@ namespace SDG.Unturned
                         if (Math.Sqrt((bx0 - u.X) * (bx0 - u.X) + (bz0 - u.Z) * (bz0 - u.Z)) < RampMeet + 120) atCrossing = true;
                     }
                     if (atCrossing) continue;
+                }
+                if (main.LevelCrossings != null)
+                {
+                    At(main, arc, s, out double bx1, out double bz1, out _, out _, out _);
+                    bool atLevel = false;
+                    foreach (var c in main.LevelCrossings) if (Math.Sqrt((bx1 - c.X) * (bx1 - c.X) + (bz1 - c.Z) * (bz1 - c.Z)) < BranchRailClear + 60) atLevel = true;
+                    if (atLevel) continue;
                 }
                 int side = (h >> 24 & 1) == 0 ? 1 : -1;
                 double angle = ((h >> 25) / 127.0 - 0.5) * 1.2;   // +-0.6 rad off square
@@ -1091,56 +1207,83 @@ namespace SDG.Unturned
         /// centreline every TunnelStep between them at the driven surface -- what the game sweeps the section along.</summary>
         public sealed class TunnelSpan
         {
+            public RoadKind Kind;                     // a highway's (two tubes) or a railway's (one)
             public double A0, A1, F0, F1;
             public double[] X, Z; public float[] Y;   // the route's centreline (the median between the tubes)
-            public double[][] SX, SZ;                 // [0 = -offset, 1 = +offset carriageway][station]: each tube's centreline
+            public double[][] SX, SZ;                 // [tube][station]: each tube's centreline (TubeOffset: a highway's -offset, +offset carriageway; a rail's track)
         }
 
         /// <summary>Find the runs where the hill already buries the whole widened shell (nine samples across it, every
         /// TunnelProbeStep along) for at least two portals' length, and bore them. A run whose portal would hang past the
         /// segment's end is left to the open cut: the next segment's own run would put a second portal face to face.</summary>
-        void FindTunnels(Line e)
+        void FindTunnels(Line e, Func<double, bool> keepOpen = null)
         {
             e.HArc = Arc(e);
             double total = e.HArc[e.HArc.Length - 1];
-            float reach = TunnelShellReach;
+            var kind = e.Kind;
+            float reach = ShellReachOf(kind);
             var spans = new List<TunnelSpan>();
+            var runs = new List<(double a0, double a1)>();
             double runStart = -1;
-            for (double s = 0; s <= total; s += TunnelProbeStep)
+            // a rail's one shell is 14 m across where a highway's two are 41 m: seven samples across do what thirteen
+            // do there, and every 8 m along (its runs are kilometres of track; this is its single dearest step)
+            int across = kind == RoadKind.Rail ? 3 : 6;
+            double step = kind == RoadKind.Rail ? 2 * TunnelProbeStep : TunnelProbeStep;
+            for (double s = 0; s <= total; s += step)
             {
                 At(e, e.HArc, s, out double px, out double pz, out float h, out double tx, out double tz);
-                float road = SurfaceY(RoadKind.Highway, h);
-                bool covered = true;
-                for (int q = -6; q <= 6 && covered; q++)
+                float road = TunnelSurfaceY(kind, h);
+                bool covered = keepOpen == null || !keepOpen(s);
+                for (int q = -across; q <= across && covered; q++)
                 {
-                    float o = reach * 0.98f * q / 6f;   // thirteen across both shells, the edges and the median included
-                    if (_t.RawHeight(px - tz * o, pz + tx * o) < road + TwinShellTop(o) + TunnelCover) covered = false;
+                    float o = reach * 0.98f * q / across;   // across the shells, the edges (and a highway's median) included
+                    if (_t.RawHeight(px - tz * o, pz + tx * o) < road + ShellTopOf(kind, o) + TunnelCover) covered = false;
                 }
                 if (covered) { if (runStart < 0) runStart = s; }
-                else { if (runStart >= 0) Close(runStart, s - TunnelProbeStep); runStart = -1; }
+                else { if (runStart >= 0) Keep(runStart, s - step); runStart = -1; }
             }
-            if (runStart >= 0) Close(runStart, total);
+            if (runStart >= 0) Keep(runStart, total);
+            // A BORE IS STRAIGHT (strawberry 2026-10-10: "the tunnel tries to follow the terrain when it shouldnt?"). The
+            // profile was shaped to the smoothed land, so through a hill it humped up with the hill -- up to 2.6 m over a
+            // straight portal-to-portal grade on a highway, 6 m on a rail. Inside each run (dense point to dense point,
+            // so the line is exactly straight through both portals) it IS that grade -- no steeper than the grade it
+            // already climbed between them. Mostly that lowers it (the hump; the hill only covers the shell by more);
+            // where a crossing's approach dipped it near a portal it rises by up to ~0.4 m, inside the TunnelCover the
+            // run was chosen with.
+            foreach (var (a0, a1) in runs)
+            {
+                int i0 = Math.Max(0, (int)Math.Floor(Frac(a0))), i1 = Math.Min(e.Segments, (int)Math.Ceiling(Frac(a1)));
+                double span = Math.Max(1e-6, e.HArc[i1] - e.HArc[i0]);
+                for (int i = i0 + 1; i < i1; i++)
+                    e.H[i] = e.H[i0] + (e.H[i1] - e.H[i0]) * (float)((e.HArc[i] - e.HArc[i0]) / span);
+            }
+            foreach (var (a0, a1) in runs) Close(a0, a1);
             e.TunnelSpans = spans.Count > 0 ? spans : null;
 
-            void Close(double a0, double a1)
+            void Keep(double a0, double a1)
             {
                 if (a1 - a0 < TunnelMinLength) return;
                 if (a0 < TunnelSectionLength || a1 > total - TunnelSectionLength) return;
-                int m = (int)Math.Ceiling((a1 - a0) / TunnelStep);
-                var t = new TunnelSpan { A0 = a0, A1 = a1, F0 = Frac(a0), F1 = Frac(a1), X = new double[m + 1], Z = new double[m + 1], Y = new float[m + 1],
-                                         SX = new[] { new double[m + 1], new double[m + 1] }, SZ = new[] { new double[m + 1], new double[m + 1] } };
+                runs.Add((a0, a1));
+            }
+            void Close(double a0, double a1)
+            {
+                int m = (int)Math.Ceiling((a1 - a0) / TunnelStep), tubes = TunnelTubes(kind);
+                var t = new TunnelSpan { Kind = kind, A0 = a0, A1 = a1, F0 = Frac(a0), F1 = Frac(a1), X = new double[m + 1], Z = new double[m + 1], Y = new float[m + 1],
+                                         SX = new double[tubes][], SZ = new double[tubes][] };
+                for (int s = 0; s < tubes; s++) { t.SX[s] = new double[m + 1]; t.SZ[s] = new double[m + 1]; }
                 for (int i = 0; i <= m; i++)
                 {
                     double a = Math.Min(a0 + i * TunnelStep, a1);
                     At(e, e.HArc, a, out t.X[i], out t.Z[i], out float hh, out _, out _);
-                    t.Y[i] = SurfaceY(RoadKind.Highway, hh);
+                    t.Y[i] = TunnelSurfaceY(kind, hh);
                     // each carriageway's own centreline here, built exactly as its ribbon is (RibbonTangent offsets at the
                     // two dense points, joined straight), so the tube sits on the road it carries
                     double f = Frac(a); int k = Math.Min((int)f, e.Segments - 1); double ft = f - k;
                     var (t0x, t0z) = RibbonTangent(e, k); var (t1x, t1z) = RibbonTangent(e, k + 1);
-                    for (int s = 0; s < 2; s++)
+                    for (int s = 0; s < tubes; s++)
                     {
-                        double o = (s == 0 ? -1 : 1) * HighwayRibbonOffset;
+                        double o = TubeOffset(kind, s);
                         double ax = e.X[k] - t0z * o, az = e.Z[k] + t0x * o, bx = e.X[k + 1] - t1z * o, bz = e.Z[k + 1] + t1x * o;
                         t.SX[s][i] = ax + (bx - ax) * ft; t.SZ[s][i] = az + (bz - az) * ft;
                     }
@@ -1161,13 +1304,14 @@ namespace SDG.Unturned
         /// cannot overhang the mouth. Blended out beside the shell.</summary>
         public static float TunnelGround(in RoadHit hit, float g)
         {
-            float lat = hit.TunnelLat, reach = TunnelShellReach, alat = Math.Abs(lat);
-            if (alat <= reach) g = Math.Max(g, hit.TunnelRoad + TwinShellTop(lat) + 0.25f);
+            var k = hit.TunnelKind;
+            float lat = hit.TunnelLat, reach = ShellReachOf(k), alat = Math.Abs(lat);
+            if (alat <= reach) g = Math.Max(g, hit.TunnelRoad + ShellTopOf(k, lat) + 0.25f);
             // the cap sits just over the shells where the hole band ends -- the terrain's edge there is seen at a grazing
             // angle past the headwall's top, and every metre between it and the shell is a slot of open sky
-            float cap = hit.TunnelRoad + TwinShellTop(Math.Clamp(lat, -reach, reach)) + HeadwallCover + Math.Max(0f, hit.TunnelIn - TunnelHoleIn) * HeadwallSlope;
-            // out to where the tunnel stops being reported (the highway's carve reach), so there is no step at its edge
-            if (g > cap) g += (cap - g) * Smoothstep(PavedHalf(RoadKind.Highway) + Shoulder(RoadKind.Highway), reach, alat);
+            float cap = hit.TunnelRoad + ShellTopOf(k, Math.Clamp(lat, -reach, reach)) + HeadwallCover + Math.Max(0f, hit.TunnelIn - TunnelHoleIn) * HeadwallSlope;
+            // out to where the tunnel stops being reported (the line's carve reach), so there is no step at its edge
+            if (g > cap) g += (cap - g) * Smoothstep(PavedHalf(k) + Shoulder(k), reach, alat);
             return g;
         }
 
@@ -1193,16 +1337,21 @@ namespace SDG.Unturned
         /// half a pitch -- free on a straight), a pier pair every PierEveryUnits where the drop clears the deck's own
         /// thickness, and a cap at each end. Pier: top at deckY + PierTop (1.02 m up inside the deck, retail's own
         /// joint), foot on the NATURAL ground -- under a bridge the carve leaves the ground alone.</summary>
-        void WalkBridge(Line e, Stretch st, List<BridgePiece> outp)
+        void WalkBridge(Line e, Stretch st, List<BridgePiece> outp, Func<double, double, bool> pierOk = null)
         {
-            var span = WalkDecks(e, st.Side, st.I0, st.I1, null, 0, true, outp);
-            if (span is DeckSpan d) { e.DeckCover ??= new[] { new List<DeckSpan>(), new List<DeckSpan>() }; e.DeckCover[st.Side < 0 ? 0 : 1].Add(d); }
+            var span = WalkDecks(e, st.Side, st.I0, st.I1, null, 0, true, outp, pierOk);
+            if (span is DeckSpan d)
+            {
+                e.DeckCover ??= new[] { new List<DeckSpan>(), new List<DeckSpan>() };
+                if (st.Side == 0) { e.DeckCover[0].Add(d); e.DeckCover[1].Add(d); }   // a rail's one deck: both "sides" of the centreline
+                else e.DeckCover[st.Side < 0 ? 0 : 1].Add(d);
+            }
         }
 
         /// <summary>The deck walk itself: units over carriageway `side` between dense points i0..i1 -- the whole range
         /// (a raised stretch), or, given `centre` (a fractional dense index) and `half`, exactly that many metres of 3D arc
         /// either side of it (an underpass under a main road). Returns the span the decks cover, null if none fitted.</summary>
-        DeckSpan? WalkDecks(Line e, int side, int i0, int i1, double? centre, double half, bool piers, List<BridgePiece> outp)
+        DeckSpan? WalkDecks(Line e, int side, int i0, int i1, double? centre, double half, bool piers, List<BridgePiece> outp, Func<double, double, bool> pierOk = null)
         {
             var st = new Stretch { Side = side, I0 = i0, I1 = i1 };
             // the carriageway as a polyline, a little past each end so the deck reaches the stretch's ends
@@ -1229,7 +1378,7 @@ namespace SDG.Unturned
             // the deck's roadway is its local Z=0, so it sits ON the driven surface -- the same SurfaceY the approach
             // slab's top is at, which is what makes the two meet flush (EditorBridgeSpline lifts by RoadSurfaceOffset
             // for the same reason)
-            double surf = SurfaceY(e.Kind, 0f);
+            double surf = e.Kind == RoadKind.Rail ? RailOriginY(0f) : SurfaceY(e.Kind, 0f);   // a rail deck carries the track's root
             (double x, double y, double z) At(double s)
             {
                 s = Math.Clamp(s, 0, arc[n - 1]);
@@ -1269,14 +1418,14 @@ namespace SDG.Unturned
                                            S0 = TexAt(s), S1 = TexAt(s + BridgePitch), Road = (byte)e.Kind });
                 if (units == 0) { firstMid = mid; firstDir = dir; }
                 lastMid = mid; lastDir = dir;
-                if (piers && units % PierEveryUnits == 0)
+                if (piers && units % PierEveryUnits == 0 && (pierOk == null || pierOk(mid.Item1, mid.Item3)))
                 {
                     float ground = _t.RawHeight(mid.Item1, mid.Item3);
                     double drop = (mid.Item2 + DeckSoffit) - ground;
                     if (drop >= MinPierDrop)
                     {
                         double k = (mid.Item2 + PierTop - ground) / PierSpan;
-                        outp.Add(new BridgePiece { Kind = 1, X = mid.Item1, Y = ground - PierBottom * k, Z = mid.Item3, DX = (float)dir.x, DY = (float)dir.y, DZ = (float)dir.z, K = (float)k });
+                        outp.Add(new BridgePiece { Kind = 1, X = mid.Item1, Y = ground - PierBottom * k, Z = mid.Item3, DX = (float)dir.x, DY = (float)dir.y, DZ = (float)dir.z, K = (float)k, Road = (byte)e.Kind });
                     }
                 }
                 units++;
@@ -1467,9 +1616,9 @@ namespace SDG.Unturned
         /// <summary>Catmull-Rom the control points x4 for the drawn/carved centreline; the profile LINEAR IN ARC LENGTH
         /// between controls (linear in the spline parameter steepens where Catmull-Rom bunches samples -- the drivability
         /// test caught that at 20.7%). Returns null if the drawn geometry breaks the class's grade limit.</summary>
-        Line Finish(RoadKind kind, double[] cx, double[] cz, float[] ch, (double x, double z)? startTangent = null, (double x, double z)? endTangent = null)
+        Line Finish(RoadKind kind, double[] cx, double[] cz, float[] ch, (double x, double z)? startTangent = null, (double x, double z)? endTangent = null, int subdiv = Sub)
         {
-            int C = cx.Length - 1, P = C * Sub;
+            int C = cx.Length - 1, P = C * subdiv;
             var e = new Line { Kind = kind, X = new double[P + 1], Z = new double[P + 1], H = new float[P + 1] };
             // Catmull-Rom's tangent at P0 is (P1 - P[-1]) / 2. With no neighbour, P[-1] = P0 (the curve leaves along its
             // first chord). Given a heading T, P[-1] = P1 - 2|P1-P0| T makes the tangent exactly T, so two lines that are
@@ -1489,11 +1638,11 @@ namespace SDG.Unturned
             double PZ(int i) => i < 0 ? sz0 : i > C ? ez1 : cz[i];
             for (int k = 0; k < C; k++)
             {
-                for (int sub = 0; sub < Sub; sub++)
+                for (int sub = 0; sub < subdiv; sub++)
                 {
-                    double u = (double)sub / Sub, u2 = u * u, u3 = u2 * u;
+                    double u = (double)sub / subdiv, u2 = u * u, u3 = u2 * u;
                     double b0 = -0.5 * u3 + u2 - 0.5 * u, b1 = 1.5 * u3 - 2.5 * u2 + 1.0, b2 = -1.5 * u3 + 2.0 * u2 + 0.5 * u, b3 = 0.5 * u3 - 0.5 * u2;
-                    int i = k * Sub + sub;
+                    int i = k * subdiv + sub;
                     e.X[i] = b0 * PX(k - 1) + b1 * cx[k] + b2 * cx[k + 1] + b3 * PX(k + 2);
                     e.Z[i] = b0 * PZ(k - 1) + b1 * cz[k] + b2 * cz[k + 1] + b3 * PZ(k + 2);
                 }
@@ -1502,32 +1651,41 @@ namespace SDG.Unturned
             var arc = Arc(e);
             for (int k = 0; k < C; k++)
             {
-                double a0 = arc[k * Sub], a1 = arc[(k + 1) * Sub];
-                for (int sub = 0; sub < Sub; sub++)
+                double a0 = arc[k * subdiv], a1 = arc[(k + 1) * subdiv];
+                for (int sub = 0; sub < subdiv; sub++)
                 {
-                    int i = k * Sub + sub;
+                    int i = k * subdiv + sub;
                     e.H[i] = ch[k] + (ch[k + 1] - ch[k]) * (float)((arc[i] - a0) / Math.Max(1e-9, a1 - a0));
                 }
             }
             e.H[P] = ch[C];
             for (int i = 0; i < P; i++)
                 if (Math.Abs(e.H[i + 1] - e.H[i]) / Math.Max(1e-9, arc[i + 1] - arc[i]) > MaxGrade(kind) * 1.0001f) return null;
-            double m = PavedHalf(kind) + Shoulder(kind);
+            Rebox(e);
+            return e;
+        }
+
+        /// <summary>The line's influence boxes, whole and per Chunk segments: its points padded by the carve's reach
+        /// (paved half + shoulder -- per point where the line has its own Shoulders).</summary>
+        static void Rebox(Line e)
+        {
+            int P = e.Segments;
+            float Reach(int i) => PavedHalf(e.Kind) + (e.Shoulders != null ? e.Shoulders[i] : Shoulder(e.Kind));
             int chunks = (P + Chunk - 1) / Chunk;
             e.CMinX = new double[chunks]; e.CMaxX = new double[chunks]; e.CMinZ = new double[chunks]; e.CMaxZ = new double[chunks];
             e.MinX = e.MinZ = double.MaxValue; e.MaxX = e.MaxZ = double.MinValue;
             for (int c = 0; c < chunks; c++)
             {
-                double mnx = double.MaxValue, mxx = double.MinValue, mnz = double.MaxValue, mxz = double.MinValue;
+                double mnx = double.MaxValue, mxx = double.MinValue, mnz = double.MaxValue, mxz = double.MinValue, m = 0;
                 for (int i = c * Chunk; i <= Math.Min(P, (c + 1) * Chunk); i++)
                 {
                     mnx = Math.Min(mnx, e.X[i]); mxx = Math.Max(mxx, e.X[i]); mnz = Math.Min(mnz, e.Z[i]); mxz = Math.Max(mxz, e.Z[i]);
+                    m = Math.Max(m, Reach(i));
                 }
                 e.CMinX[c] = mnx - m; e.CMaxX[c] = mxx + m; e.CMinZ[c] = mnz - m; e.CMaxZ[c] = mxz + m;
                 e.MinX = Math.Min(e.MinX, e.CMinX[c]); e.MaxX = Math.Max(e.MaxX, e.CMaxX[c]);
                 e.MinZ = Math.Min(e.MinZ, e.CMinZ[c]); e.MaxZ = Math.Max(e.MaxZ, e.CMaxZ[c]);
             }
-            return e;
         }
 
         internal static double[] Arc(Line e)
@@ -1572,6 +1730,7 @@ namespace SDG.Unturned
                         if (e.Ramps != null) foreach (var rp in e.Ramps) Take(rp);
                     }
             TakeHighways(x0, z0, x1, z1, list);
+            TakeRails(x0, z0, x1, z1, list);
             return list;
         }
 
@@ -1579,20 +1738,26 @@ namespace SDG.Unturned
         void TakeHighways(double x0, double z0, double x1, double z1, List<Line> list)
         {
             void Take(Line e) { if (e.Exists && e.MaxX >= x0 && e.MinX <= x1 && e.MaxZ >= z0 && e.MinZ <= z1) list.Add(e); }
-            // the bands whose route could pass within reach (jitter + meander + anchor pick + DP lane)
-            const double reach = 0.25 * HighwayBand + 1500 + 2400 + 1200 + 40;
+            // the bands whose route could pass within reach (jitter + meander + anchor pick + DP lane) -- and then, from
+            // the band's ACTUAL centre (cheap: a hash), only those whose route can (meander + anchor pick + DP lane).
+            // The second test is what keeps a query from building highways two bands away: it cost a cold region 4 s.
+            const double reach = 0.25 * HighwayBand + 1500 + 2400 + 1200 + 40, fromCentre = 1500 + 2400 + 1200 + 40;
             for (int axis = 0; axis < 2; axis++)
             {
                 double w0 = axis == 0 ? z0 : x0, w1 = axis == 0 ? z1 : x1, u0 = axis == 0 ? x0 : z0, u1 = axis == 0 ? x1 : z1;
                 long b0 = (long)Math.Floor((w0 - reach) / HighwayBand), b1 = (long)Math.Floor((w1 + reach) / HighwayBand);
                 long k0 = (long)Math.Floor(u0 / HighwaySeg) - 1, k1 = (long)Math.Floor(u1 / HighwaySeg);
                 for (long band = b0; band <= b1; band++)
+                {
+                    double c = BandCentre(axis, band);
+                    if (c + fromCentre < w0 || c - fromCentre > w1) continue;
                     for (long k = k0; k <= k1; k++)
                     {
                         var e = Highway(axis, band, k);
                         Take(e);
                         if (e.Branches != null) foreach (var br in e.Branches) Take(br);   // the far side of a water gap
                     }
+                }
             }
         }
 
@@ -1637,7 +1802,7 @@ namespace SDG.Unturned
                     }
                 }
                 if (best == float.MaxValue) continue;
-                float half = PavedHalf(e.Kind), sh = Shoulder(e.Kind);
+                float half = PavedHalf(e.Kind), sh = e.Shoulders == null ? Shoulder(e.Kind) : e.Shoulders[bestK] + (e.Shoulders[bestK + 1] - e.Shoulders[bestK]) * (float)bestT;
                 hit.Clear = Math.Min(hit.Clear, best - half);
                 if (best >= half + sh) continue;
                 // INSIDE A TUNNEL'S RUN the hill stands: no carve from this road, and the tunnel's own shaping instead
@@ -1653,7 +1818,7 @@ namespace SDG.Unturned
                         double outside = along < tn.A0 ? tn.A0 - along : along - tn.A1;
                         if (outside > 0 && outside < TunnelForecourt)
                         {
-                            float wide = TunnelBoreReach + 1f;
+                            float wide = BoreReachOf(e.Kind) + 1f;
                             if (wide > half) half += (wide - half) * Smoothstep(TunnelForecourt, 0f, (float)outside);
                         }
                         if (along < tn.A0 || along > tn.A1) continue;
@@ -1663,8 +1828,9 @@ namespace SDG.Unturned
                             hit.Tunnel = true;
                             hit.TunnelIn = (float)Math.Min(along - tn.A0, tn.A1 - along);
                             hit.TunnelLat = bestRight ? best : -best;
-                            hit.TunnelRoad = SurfaceY(RoadKind.Highway, bh);
-                            hit.Hole = hit.TunnelIn <= TunnelHoleIn && best <= TunnelBoreReach + TunnelHoleBeside;
+                            hit.TunnelRoad = TunnelSurfaceY(e.Kind, bh);
+                            hit.TunnelKind = e.Kind;
+                            hit.Hole = hit.TunnelIn <= TunnelHoleIn && best <= BoreReachOf(e.Kind) + TunnelHoleBeside;
                         }
                         break;
                     }
@@ -1710,6 +1876,7 @@ namespace SDG.Unturned
             if (Bridges) foreach (var m in lines) if (m.Underpasses != null) foreach (var u in m.Underpasses) if (!u.Existing && !u.Over) (ups ??= new List<Underpass>()).Add(u);
             foreach (var e in lines)
             {
+                if (e.Kind == RoadKind.Rail) continue;   // track, not a ribbon: RailsIn
                 if (e.Kind == RoadKind.Highway) { Ribbon(e, +HighwayRibbonOffset); Ribbon(e, -HighwayRibbonOffset); }   // each carriageway carries its OWN marks
                 else Ribbon(e, 0.0);
             }
@@ -1830,6 +1997,18 @@ namespace SDG.Unturned
                         for (int i = 0; i < e.X.Length; i++)
                         {
                             double dd = (e.X[i] - u.X) * (e.X[i] - u.X) + (e.Z[i] - u.Z) * (e.Z[i] - u.Z);
+                            if (dd < bd) { bd = dd; ba = arc[i]; }
+                        }
+                        (gaps ??= new List<double>()).Add(ba);
+                    }
+                // ...nor across a railway: a level crossing is a gap like a grade separation
+                if (e.LevelCrossings != null)
+                    foreach (var c in e.LevelCrossings)
+                    {
+                        double bd = double.MaxValue, ba = 0;
+                        for (int i = 0; i < e.X.Length; i++)
+                        {
+                            double dd = (e.X[i] - c.X) * (e.X[i] - c.X) + (e.Z[i] - c.Z) * (e.Z[i] - c.Z);
                             if (dd < bd) { bd = dd; ba = arc[i]; }
                         }
                         (gaps ??= new List<double>()).Add(ba);

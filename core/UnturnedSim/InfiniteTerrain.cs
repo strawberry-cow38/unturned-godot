@@ -164,6 +164,12 @@ namespace SDG.Unturned
         /// <summary>High-voltage pylons standing in this region, with the spans each owns (all LODs).</summary>
         public List<PylonPlacement> Pylons;
         public List<BridgePiece> Bridges;   // highway bridge pieces rooted in this region (all LODs)
+        /// <summary>Railway track rooted in this region: New_Rail_Units and closing sleepers (all LODs).</summary>
+        public List<RailPiece> Rails;
+        /// <summary>Level crossings (a main over a railway) centred in this region.</summary>
+        public List<LevelCrossing> LevelCrossings;
+        /// <summary>The crossbucks at level crossings, by where they stand (all LODs, culled with the track).</summary>
+        public List<CrossingSign> CrossingSigns;
         /// <summary>Highway tunnels whose middle lies in this region (all LODs; the whole tunnel, which may reach a
         /// neighbour -- like a bridge, it is one structure).</summary>
         public List<InfiniteRoads.TunnelSpan> Tunnels;
@@ -330,8 +336,8 @@ namespace SDG.Unturned
         public float WalkableHeightAt(double x, double z)
         {
             float g = Sample(x, z, out var hit);
-            return hit.Tunnel && Math.Abs(hit.TunnelLat) <= InfiniteRoads.TunnelBoreReach
-                ? hit.TunnelRoad - InfiniteRoads.Proud - InfiniteRoads.Lift(RoadKind.Highway) : g;
+            return hit.Tunnel && Math.Abs(hit.TunnelLat) <= InfiniteRoads.BoreReachOf(hit.TunnelKind)
+                ? hit.TunnelRoad - InfiniteRoads.TunnelBedBelow(hit.TunnelKind) : g;
         }
 
         /// <summary>The land before any road touches it.</summary>
@@ -393,8 +399,11 @@ namespace SDG.Unturned
         }
 
         /// <summary>The splat layer for a point, from its height, slope (rise over run), climate -- and roads first.</summary>
-        /// <summary>How far past its asphalt a road's bed shows (it was 1.5 m for every class: one LOD0 vertex, at most).</summary>
-        public static float VergeWidth(RoadKind k) => k switch { RoadKind.Highway => 6f, RoadKind.Main => 5f, RoadKind.Small => 4f, _ => 3f };
+        /// <summary>How far past its asphalt a road's bed shows (it was 1.5 m for every class: one LOD0 vertex, at most).
+        /// A rail's is NEGATIVE: its formation is wide (InfiniteRoads.RailFormationHalf, for the ground mesh's sake) and
+        /// only the ballast and a 1.5 m cess beside it are worn to gravel.</summary>
+        public static float VergeWidth(RoadKind k) => k switch { RoadKind.Highway => 6f, RoadKind.Main => 5f, RoadKind.Small => 4f,
+            RoadKind.Rail => InfiniteRoads.RailHalfWidth + 1.5f - InfiniteRoads.RailFormationHalf, _ => 3f };
         /// <summary>The dirt worn round a power line's footing: a roadside pole's, and a pylon's -- its 7.9 m lattice base
         /// (InfinitePylons.FootHalf, half-diagonal 5.6 m) and a couple of metres of trampled ground round it.</summary>
         public const float PoleDirt = 2.5f;
@@ -450,7 +459,7 @@ namespace SDG.Unturned
                     d.Heights[k] = h;
                     d.RoadClear[k] = Math.Min(rh[kb].Clear, 64f);
                     if (lod == 0 && rh[kb].Hole) { (d.Holes ??= new bool[v * v])[k] = true; d.RoadClear[k] = -1f; }   // nothing grows in a hole
-                    if (rh[kb].Tunnel && Math.Abs(rh[kb].TunnelLat) <= InfiniteRoads.TunnelShellReach + 2f)
+                    if (rh[kb].Tunnel && Math.Abs(rh[kb].TunnelLat) <= InfiniteRoads.ShellReachOf(rh[kb].TunnelKind) + 2f)
                         (d.OverTunnel ??= new bool[v * v])[k] = true;
                     if (h < d.MinHeight) d.MinHeight = h;
                     if (h > d.MaxHeight) d.MaxHeight = h;
@@ -486,6 +495,9 @@ namespace SDG.Unturned
             d.Bridges = Roads.BridgesIn(lines, ox, oz, ox + RegionSize, oz + RegionSize);
             d.Pylons = pylonsWide.FindAll(p => p.X >= ox && p.X < ox + RegionSize && p.Z >= oz && p.Z < oz + RegionSize);   // every LOD: 50 m landmarks
             d.Tunnels = Roads.TunnelsIn(lines, ox, oz, ox + RegionSize, oz + RegionSize);
+            d.Rails = Roads.RailsIn(lines, ox, oz, ox + RegionSize, oz + RegionSize);
+            d.LevelCrossings = Roads.LevelCrossingsIn(lines, ox, oz, ox + RegionSize, oz + RegionSize);
+            d.CrossingSigns = Roads.CrossingSignsIn(lines, ox, oz, ox + RegionSize, oz + RegionSize);
             d.GenMs = (System.Diagnostics.Stopwatch.GetTimestamp() - t0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
             return d;
         }
@@ -520,7 +532,7 @@ namespace SDG.Unturned
                     if (treeRoad.Clear < 5f) continue;   // keep every road and its verge clear
                     if (pylonLines.Count > 0 && InfinitePylons.CorridorDistance(pylonLines, ax, az) < InfinitePylons.TreeKeep) continue;
                     if (treeRoad.Tunnel && treeRoad.TunnelIn < InfiniteRoads.TunnelHoleIn + 8f
-                        && Math.Abs(treeRoad.TunnelLat) < InfiniteRoads.TunnelShellReach) continue;   // nor over a portal's mouth
+                        && Math.Abs(treeRoad.TunnelLat) < InfiniteRoads.ShellReachOf(treeRoad.TunnelKind)) continue;   // nor over a portal's mouth
                     float sx = SampleWith(lines, ax + 2.0, az, out _) - SampleWith(lines, ax - 2.0, az, out _);
                     float sz = SampleWith(lines, ax, az + 2.0, out _) - SampleWith(lines, ax, az - 2.0, out _);
                     float slope = MathF.Sqrt(sx * sx + sz * sz) / 4f;

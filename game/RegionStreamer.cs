@@ -72,7 +72,7 @@ namespace UnturnedGodot
         public static int MaxRing => LodRing[LodRing.Length - 1];
 
         // ---- diagnostics (the overlay and the tests read these) ----
-        public int Rebases, Rescues, Committed, TreeCount, FoliageCount, ImpostorCount, BridgeCount, TunnelCount;
+        public int Rebases, Rescues, Committed, TreeCount, FoliageCount, ImpostorCount, BridgeCount, TunnelCount, RailCount;
         public double GenMsTotal; public int GenCount;
         public readonly int[] LoadedByLod = new int[4];
         public int Colliders => _colliders;
@@ -115,6 +115,9 @@ namespace UnturnedGodot
             public List<(Shape3D Shape, Transform3D Xf, int Surf)> TunnelShapes;
             public Node3D TunnelBodies;             // their colliders, ring <= ColliderRing
             public Node3D RoadBodies;               // road colliders, ring <= ColliderRing
+            public List<Transform3D>[] RailXf;      // [unit, sleeper, crossbuck], region-local, from the first build (LOD-independent)
+            public Node3D Rails;                    // the track MultiMeshes, every ring (culled at RailCull)
+            public Node3D RailBodies;               // the ballast's collider, ring <= ColliderRing
         }
 
         sealed class Job { public RegionCoord C; public int Lod; }
@@ -134,6 +137,7 @@ namespace UnturnedGodot
             public (Vector3 P, float S, int Cell)[] ImpTrees;
             public List<Transform3D>[] BridgeXf;
             public List<InfiniteRoads.TunnelSpan> Tunnels;
+            public List<Transform3D>[] RailXf;
         }
 
         readonly Dictionary<RegionCoord, Region> _regions = new();
@@ -275,6 +279,7 @@ namespace UnturnedGodot
             if (r.Bridges != null) BridgeCount -= r.BridgeXf[0].Count;
             if (r.Pylons != null && _pylonMesh != null) PylonCount -= r.PylonXf.Count;
             if (r.Tunnels != null) TunnelCount -= r.TunnelSpans.Count;
+            if (r.Rails != null) RailCount -= r.RailXf[0].Count;
             r.Node.QueueFree();
             _regions.Remove(c);
             _pendingTrees.Remove(c);
@@ -305,6 +310,8 @@ namespace UnturnedGodot
             else if (ring > ColliderRing + 1 && r.RoadBodies != null) { r.RoadBodies.QueueFree(); r.RoadBodies = null; }
             if (ring <= ColliderRing && r.BridgeBodies == null && r.BridgeXf != null && r.BridgeXf[0].Count > 0) { r.BridgeBodies = BuildDeckBodies(r.BridgeXf[0]); r.Node.AddChild(r.BridgeBodies); }
             else if (ring > ColliderRing + 1 && r.BridgeBodies != null) { r.BridgeBodies.QueueFree(); r.BridgeBodies = null; }
+            if (ring <= ColliderRing && r.RailBodies == null && r.RailXf != null && r.RailXf[0].Count + r.RailXf[2].Count > 0) { r.RailBodies = BuildRailBodies(r.RailXf[0], r.RailXf[2]); r.Node.AddChild(r.RailBodies); }
+            else if (ring > ColliderRing + 1 && r.RailBodies != null) { r.RailBodies.QueueFree(); r.RailBodies = null; }
             if (ring <= ColliderRing && r.TreeBodies == null && r.TreeList != null) { r.TreeBodies = BuildTrunks(r.TreeList); r.Node.AddChild(r.TreeBodies); }
             else if (ring > ColliderRing + 1 && r.TreeBodies != null) { r.TreeBodies.QueueFree(); r.TreeBodies = null; }
 
@@ -374,6 +381,7 @@ namespace UnturnedGodot
                 AdoptBridges(r, b);
                 AdoptTunnels(r, b);
                 AdoptPylons(r, b);
+                AdoptRails(r, b);
                 if (useful)
                 {
                     Apply(r, b);
@@ -430,7 +438,7 @@ namespace UnturnedGodot
                     rm.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, ra);
                     if (r.Road[k] == null)
                     {
-                        r.Road[k] = new MeshInstance3D { Name = k == RaisedSlot ? "Road_Raised" : k == CutSlot ? "Road_Cut" : k == RampSlot ? "Road_Ramp" : "Road_" + (RoadKind)k, MaterialOverride = RoadMat(k), CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
+                        r.Road[k] = new MeshInstance3D { Name = k == RaisedSlot ? "Road_Raised" : k == CutSlot ? "Road_Cut" : k == RampSlot ? "Road_Ramp" : k == RailBedSlot ? "Rail_Bed" : "Road_" + (RoadKind)k, MaterialOverride = RoadMat(k), CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
                         r.Node.AddChild(r.Road[k]);
                     }
                     r.Road[k].Mesh = rm;
@@ -617,11 +625,25 @@ void fragment() {
         /// (tunnel candidate) cyan, each from its own slot, so the marking can be checked by eye. Off, they are
         /// ordinary highway.</summary>
         public static bool ShowMarks = System.Environment.GetEnvironmentVariable("UG_INF_MARKS") == "1";
-        const int RoadSlots = 7, RaisedSlot = 4, CutSlot = 5, RampSlot = 6;
+        const int RoadSlots = 8, RaisedSlot = 4, CutSlot = 5, RampSlot = 6, RailBedSlot = 7;
+        /// <summary>A rail deck's bed is the ground's own gravel (terrain layer 3), tiled every RailBedMetres.</summary>
+        const float RailBedMetres = 4f;
         static readonly Material[] _roadMats = new Material[RoadSlots];
         static Material RoadMat(int slot)
         {
             if (_roadMats[slot] != null) return _roadMats[slot];
+            if (slot == RailBedSlot)
+            {
+                var gi = new Image();
+                string gp = ProjectSettings.GlobalizePath("res://content/terrain/layer3.png");
+                bool gok = System.IO.File.Exists(gp) && ContentProvider.LoadOk(gi, gp);
+                if (gok) gi.GenerateMipmaps();
+                return _roadMats[slot] = new StandardMaterial3D
+                {
+                    AlbedoTexture = gok ? ImageTexture.CreateFromImage(gi) : null, AlbedoColor = gok ? Colors.White : new Color(0.48f, 0.46f, 0.43f),
+                    TextureFilter = BaseMaterial3D.TextureFilterEnum.LinearWithMipmapsAnisotropic, Roughness = 1f,
+                };
+            }
             var k = slot == RampSlot ? RoadKind.Small : slot >= RaisedSlot ? RoadKind.Highway : (RoadKind)slot;
             var img = new Image();
             string p = ProjectSettings.GlobalizePath($"res://content/roads/{(slot == RampSlot ? RampTex : RoadTex[(int)k])}.png");
@@ -904,6 +926,104 @@ void fragment() {
             return new Transform3D(basis, new Vector3(lx, y - 0.3f, lz));   // a little sunk, so a pole on a slope never floats
         }
 
+        // ---- railways (strawberry 2026-10-10: "add railways."): cow tools' rail kit, the way EditorRailSpline lays it --
+        // New_Rail_Unit every RailPitch (the generator's TrackOf walk) and a New_Rail_Sleeper closing an open end, one
+        // MultiMesh each per region. The ballast is the unit's own, so the collider is ITS cross-section swept per unit.
+        // ...and a crossbuck (Crossing_0, a Z-up rip like the roadside pole) on each approach to a level crossing
+        static readonly string[] RailProps = { EditorRailSpline.Unit, EditorRailSpline.Sleeper, "Crossing_0" };
+        static readonly Mesh[] _railMesh = new Mesh[3];
+        static readonly Material[] _railMat = new Material[3];
+        /// <summary>Track is drawn out to here (a 2 m tile is a speck past it; the worn formation in the ground's own
+        /// splat carries the line on to the horizon).</summary>
+        public static float RailCull => (TreeRing + 0.5f) * InfiniteTerrain.RegionSize;
+        static void LoadRailKit(int i)
+        {
+            if (_railMesh[i] != null) return;
+            string dir = ProjectSettings.GlobalizePath("res://content/objects/");
+            _railMesh[i] = ObjMesh.Load(dir + RailProps[i] + ".obj");
+            var mat = new StandardMaterial3D { Roughness = 0.95f, TextureFilter = BaseMaterial3D.TextureFilterEnum.NearestWithMipmaps };
+            var img = new Image();
+            string tp = dir + RailProps[i] + "_tex.png";
+            if (System.IO.File.Exists(tp) && ContentProvider.LoadOk(img, tp)) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); }
+            else mat.AlbedoColor = new Color(0.45f, 0.42f, 0.38f);
+            _railMat[i] = mat;
+        }
+
+        /// <summary>A track piece's transform, region-local: EditorRailSpline's basis (Z along the track, grade
+        /// included; X = up x Z, level across; Y = Z x X), Z stretched by the piece's K.</summary>
+        static Transform3D RailXform(RailPiece p, double ox, double oz)
+        {
+            var z = new Vector3(p.DX, p.DY, p.DZ).Normalized();
+            var x = Vector3.Up.Cross(z).Normalized();
+            var y = z.Cross(x);
+            return new Transform3D(new Basis(x, y, z * p.K), new Vector3((float)(p.X - ox), p.Y, (float)(p.Z - oz)));
+        }
+
+        void AdoptRails(Region r, Built b)
+        {
+            if (b.RailXf == null || r.RailXf != null) return;
+            r.RailXf = b.RailXf;
+            if (r.RailXf[0].Count + r.RailXf[1].Count + r.RailXf[2].Count == 0) return;
+            r.Rails = new Node3D { Name = "Rails" };
+            for (int i = 0; i < 3; i++)
+            {
+                if (r.RailXf[i].Count == 0) continue;
+                LoadRailKit(i);
+                if (_railMesh[i] == null) continue;
+                var mm = new MultiMesh { TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, Mesh = _railMesh[i] };
+                mm.InstanceCount = r.RailXf[i].Count;   // format BEFORE count
+                for (int k = 0; k < r.RailXf[i].Count; k++) mm.SetInstanceTransform(k, r.RailXf[i][k]);
+                var mmi = new MultiMeshInstance3D { Name = RailProps[i], Multimesh = mm, MaterialOverride = _railMat[i], VisibilityRangeEnd = RailCull };
+                mmi.AddToGroup(NearestFilter.KeepFilterGroup);
+                r.Rails.AddChild(mmi);
+            }
+            r.Node.AddChild(r.Rails);
+            RailCount += r.RailXf[0].Count;
+        }
+
+        /// <summary>For tests: the tunnels a loaded region built (the holder of their tubes, headwalls, floors), or null.</summary>
+        public Node3D TunnelsOf(RegionCoord c) => _regions.TryGetValue(c, out var r) ? r.Tunnels : null;
+
+        /// <summary>For tests: the loaded region's track units (0 if none or not loaded) and its ballast body.</summary>
+        public (int Units, int Sleepers, StaticBody3D Ballast) RailsOf(RegionCoord c)
+        {
+            if (!_regions.TryGetValue(c, out var r) || r.RailXf == null) return (0, 0, null);
+            return (r.RailXf[0].Count, r.RailXf[1].Count, r.RailBodies?.GetNodeOrNull<StaticBody3D>("Ballast"));
+        }
+
+        /// <summary>The ballast as ONE double-sided trimesh for the region: each unit's top and both sides, from its
+        /// root to RailPitch on (times K). The rails (13 cm) are not in it -- you walk on the ballast, and a car crossing
+        /// the track bumps over the ballast's slope, which is the shape that matters.</summary>
+        static Node3D BuildRailBodies(List<Transform3D> units, List<Transform3D> signs)
+        {
+            var holder = new Node3D { Name = "RailBodies" };
+            // a crossbuck's post: 10 cm square in the mesh, 2.6 m to its top
+            foreach (var t in signs)
+            {
+                var post = new StaticBody3D { Name = "Crossbuck", CollisionLayer = 1u << 0, Position = t.Origin + Vector3.Up * 1.3f };
+                post.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Metal);
+                post.AddChild(new CollisionShape3D { Shape = new CylinderShape3D { Radius = 0.07f, Height = 2.6f } });
+                holder.AddChild(post);
+            }
+            if (units.Count == 0) return holder;
+            float ft = InfiniteRoads.RailBallastTopHalf, fb = InfiniteRoads.RailHalfWidth, yt = InfiniteRoads.RailBallastTop, yb = InfiniteRoads.RailBallastFoot;
+            var faces = new List<Vector3>(units.Count * 18);
+            var sec = new[] { new Vector2(-fb, yb), new Vector2(-ft, yt), new Vector2(ft, yt), new Vector2(fb, yb) };
+            foreach (var t in units)
+                for (int q = 0; q < 3; q++)
+                {
+                    var a0 = t * new Vector3(sec[q].X, sec[q].Y, 0f); var b0 = t * new Vector3(sec[q + 1].X, sec[q + 1].Y, 0f);
+                    var a1 = t * new Vector3(sec[q].X, sec[q].Y, InfiniteRoads.RailPitch); var b1 = t * new Vector3(sec[q + 1].X, sec[q + 1].Y, InfiniteRoads.RailPitch);
+                    faces.Add(a0); faces.Add(b0); faces.Add(a1);
+                    faces.Add(b0); faces.Add(b1); faces.Add(a1);
+                }
+            var body = new StaticBody3D { Name = "Ballast", CollisionLayer = 1u << 0 };
+            body.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Gravel);
+            body.AddChild(new CollisionShape3D { Shape = new ConcavePolygonShape3D { Data = faces.ToArray(), BackfaceCollision = true } });
+            holder.AddChild(body);
+            return holder;
+        }
+
         // ---- bridges (strawberry 2026-10-09: "implementing the bridges"): cow tools' Bridge_Line_1 kit, one MultiMesh per
         // prop per region -- the deck unit repeats hundreds of times, which is exactly what a MultiMesh is for.
         static readonly string[] BridgeProps = { EditorBridgeSpline.DeckUnit, EditorBridgeSpline.PierUnit, EditorBridgeSpline.DeckCap };
@@ -937,7 +1057,20 @@ void fragment() {
         static List<Vector2[]> _boreProfile;
         /// <summary>How far from the route the ground can be missing at a mouth: the hole vertices' reach plus the LOD0 cell
         /// every one of them takes with it, plus a margin.</summary>
-        static float TunnelHoleExtent => InfiniteRoads.TunnelBoreReach + InfiniteRoads.TunnelHoleBeside + InfiniteTerrain.RegionSize / InfiniteTerrain.FullCells + 0.5f;
+        static float TunnelHoleExtent => TunnelHoleExtentOf(RoadKind.Highway);
+        static float TunnelHoleExtentOf(RoadKind k) => InfiniteRoads.BoreReachOf(k) + InfiniteRoads.TunnelHoleBeside + InfiniteTerrain.RegionSize / InfiniteTerrain.FullCells + 0.5f;
+        /// <summary>The bore chain scaled up by the class's TunnelVerticalOf (a rail's bore is lower than a highway's);
+        /// across, the sweep's own lateral factor does it.</summary>
+        static readonly Dictionary<RoadKind, List<Vector2[]>> _boreFor = new();
+        static List<Vector2[]> BoreProfileFor(RoadKind k)
+        {
+            float v = InfiniteRoads.TunnelVerticalOf(k);
+            if (v == 1f) return _boreProfile;
+            if (_boreFor.TryGetValue(k, out var hit)) return hit;
+            var scaled = new List<Vector2[]>();
+            foreach (var ch in _boreProfile) { var c = new Vector2[ch.Length]; for (int i = 0; i < ch.Length; i++) c[i] = new Vector2(ch[i].X, ch[i].Y * v); scaled.Add(c); }
+            return _boreFor[k] = scaled;
+        }
         static Material _tunnelMat, _tunnelFloorMat;
         static void LoadTunnelKit()
         {
@@ -976,12 +1109,14 @@ void fragment() {
         static void BuildTunnel(InfiniteRoads.TunnelSpan t, double ox, double oz, Node3D holder, List<(Shape3D, Transform3D, int)> shapes)
         {
             int m = t.X.Length;
-            float lat = InfiniteRoads.TunnelLateral;
+            var kind = t.Kind;   // a highway's two tubes, or a railway's one (InfiniteRoads.TunnelTubes)
+            float lat = InfiniteRoads.TunnelLateralOf(kind), feet = InfiniteRoads.TunnelFloorDropOf(kind);
+            var boreProfile = BoreProfileFor(kind);
             Vector3 Loc(double x, float y, double z) => new Vector3((float)(x - ox), y, (float)(z - oz));
             var mat = (int)PlayerController.Surf.Concrete;
 
-            // THE TUBES, each on its own carriageway's centreline at the driven surface, facade to facade
-            for (int s = 0; s < 2; s++)
+            // THE TUBES, each on its own carriageway's (or the track's) centreline at the datum, facade to facade
+            for (int s = 0; s < t.SX.Length; s++)
             {
                 var run = new List<Vector3>(m);
                 for (int i = 0; i < m; i++)
@@ -989,9 +1124,9 @@ void fragment() {
                     var p = Loc(t.SX[s][i], t.Y[i], t.SZ[s][i]);
                     if (run.Count == 0 || p.DistanceSquaredTo(run[run.Count - 1]) > 1e-6f) run.Add(p);
                 }
-                var mesh = run.Count >= 2 ? TunnelMesh.Sweep(_boreProfile, run, lat) : null;
+                var mesh = run.Count >= 2 ? TunnelMesh.Sweep(boreProfile, run, lat) : null;
                 if (mesh == null) continue;
-                holder.AddChild(new MeshInstance3D { Name = s == 0 ? "TubeL" : "TubeR", Mesh = mesh, MaterialOverride = _tunnelMat,
+                holder.AddChild(new MeshInstance3D { Name = t.SX.Length == 1 ? "Tube" : s == 0 ? "TubeL" : "TubeR", Mesh = mesh, MaterialOverride = _tunnelMat,
                                                       CastShadow = GeometryInstance3D.ShadowCastingSetting.DoubleSided });
                 if (mesh.CreateTrimeshShape() is ConcavePolygonShape3D shp) { shp.BackfaceCollision = true; shapes.Add((shp, Transform3D.Identity, mat)); }
             }
@@ -999,22 +1134,22 @@ void fragment() {
             // THE HEADWALLS: in each mouth's vertical plane, the outline of both shells (their upper envelope, with the
             // outer feet) and, cut up out of its bottom edge, the two bores -- a simple polygon, no holes, because each
             // bore opening reaches the ground
-            float off = InfiniteRoads.HighwayRibbonOffset, reach = InfiniteRoads.TunnelShellReach;
+            float reach = InfiniteRoads.ShellReachOf(kind);
             // WINGS past the shells as far as the ground the mouth's holes take out: the hole vertices reach TunnelHoleBeside
             // past the bores, and every cell touching one goes, a further cell (4 m) out -- so the cut slope's missing cells
             // beside the portal are backed by a wall, not open to the sky
-            float wing = TunnelHoleExtent, wingTop = InfiniteRoads.TwinShellTop(reach) + InfiniteRoads.HeadwallCover;
-            var bore = _boreProfile[0];
+            float wing = TunnelHoleExtentOf(kind), wingTop = InfiniteRoads.ShellTopOf(kind, reach) + InfiniteRoads.HeadwallCover;
+            var bore = boreProfile[0];
             bool boreRightToLeft = bore[0].X > bore[bore.Length - 1].X;
             var outline = new List<Vector2>();
-            outline.Add(new Vector2(-wing, -InfiniteRoads.TunnelFloorDrop));
+            outline.Add(new Vector2(-wing, -feet));
             outline.Add(new Vector2(-wing, wingTop));
-            for (float u = -reach; u <= reach + 1e-3f; u += 0.25f) outline.Add(new Vector2(u, InfiniteRoads.TwinShellTop(Mathf.Clamp(u, -reach, reach))));
+            for (float u = -reach; u <= reach + 1e-3f; u += 0.25f) outline.Add(new Vector2(u, InfiniteRoads.ShellTopOf(kind, Mathf.Clamp(u, -reach, reach))));
             outline.Add(new Vector2(wing, wingTop));
-            outline.Add(new Vector2(wing, -InfiniteRoads.TunnelFloorDrop));
-            for (int s = 1; s >= 0; s--)   // right tube first: the path runs back along the bottom from right to left
+            outline.Add(new Vector2(wing, -feet));
+            for (int s = t.SX.Length - 1; s >= 0; s--)   // right tube first: the path runs back along the bottom from right to left
             {
-                float c = (s == 0 ? -1f : 1f) * off;
+                float c = InfiniteRoads.TubeOffset(kind, s);
                 for (int k = 0; k < bore.Length; k++)
                 {
                     var q = bore[boreRightToLeft ? k : bore.Length - 1 - k];
@@ -1063,7 +1198,7 @@ void fragment() {
                     for (int iu = 0; iu <= nu; iu++)
                     {
                         float aIn = (InfiniteRoads.TunnelHoleIn + 4.5f) * ia / na, u = -wing + 2f * wing * iu / nu;
-                        float top = Mathf.Max(InfiniteRoads.TwinShellTop(Mathf.Clamp(u, -reach, reach)), wingTop - InfiniteRoads.HeadwallCover)
+                        float top = Mathf.Max(InfiniteRoads.ShellTopOf(kind, Mathf.Clamp(u, -reach, reach)), wingTop - InfiniteRoads.HeadwallCover)
                                     + InfiniteRoads.HeadwallCover + Mathf.Max(0f, aIn - InfiniteRoads.TunnelHoleIn) * InfiniteRoads.HeadwallSlope;
                         LV.Add(pa + inward * aIn + side * u + Vector3.Up * top); LN.Add(Vector3.Up); LC.Add(Colors.White);
                     }
@@ -1099,8 +1234,8 @@ void fragment() {
                 return c3[k].Lerp(c3[k + 1], Mathf.Clamp((s - h[k]) / Mathf.Max(1e-6f, h[k + 1] - h[k]), 0f, 1f));
             }
             var FV = new List<Vector3>(); var FN = new List<Vector3>(); var FI = new List<int>();
-            float drop = InfiniteRoads.Proud + InfiniteRoads.Lift(RoadKind.Highway);
-            float boreR = InfiniteRoads.TunnelBoreReach, apronW = TunnelHoleExtent, apronOut = 6.5f;
+            float drop = InfiniteRoads.TunnelBedBelow(kind);
+            float boreR = InfiniteRoads.BoreReachOf(kind), apronW = TunnelHoleExtentOf(kind), apronOut = 6.5f;
             void Strip(float sA, float sB, float half, float below, int steps)
             {
                 for (int q = 0; q < steps; q++)
@@ -1389,6 +1524,7 @@ void fragment() {
                     AdoptBridges(r, b);   // ⚠ this path is how a teleport builds the 3x3 -- miss it and the bridges beside you never appear
                     AdoptTunnels(r, b);
                     AdoptPylons(r, b);
+                    AdoptRails(r, b);
                     Apply(r, b);
                     r.ImpTrees = b.ImpTrees;
                     UpdateExtras(r, c.RingTo(center));
@@ -1557,11 +1693,33 @@ void fragment() {
                 // column (plain asphalt), as a ribbon bevel does.
                 // A MAIN's overpass deck is the same unit widened (DeckScale) to the main's full asphalt, and wears the
                 // main's surface in the main's mesh the same way.
+                // A RAIL's deck is the unit narrowed to RailDeckHalf, and its roadway is a gravel bed (RailBedSlot) the
+                // track's own ballast stands on -- the same plane the track's root is at (InfiniteRoads.RailOriginY).
+                void RailBed(BridgePiece bp)
+                {
+                    var L = lists[RailBedSlot];
+                    L.V ??= new List<Vector3>(); L.N ??= new List<Vector3>(); L.UV ??= new List<Vector2>(); L.I ??= new List<int>();
+                    lists[RailBedSlot] = L;
+                    var dir = new Vector3(bp.DX, bp.DY, bp.DZ).Normalized();
+                    var c = new Vector3((float)(bp.X - ox), (float)bp.Y, (float)(bp.Z - oz));
+                    var nrm = new Vector3(-dir.Z, 0f, dir.X).Normalized();
+                    var along = dir * (InfiniteRoads.BridgePitch * 0.5f);
+                    var up = nrm.Cross(dir).Normalized(); if (up.Y < 0f) up = -up;
+                    float w = InfiniteRoads.RailDeckHalf, v0 = bp.S0 / RailBedMetres, v1 = bp.S1 / RailBedMetres, u1 = 2f * w / RailBedMetres;
+                    int i0 = L.V.Count;
+                    L.V.Add(c - along + nrm * w); L.V.Add(c - along - nrm * w); L.V.Add(c + along + nrm * w); L.V.Add(c + along - nrm * w);
+                    for (int q = 0; q < 4; q++) L.N.Add(up);
+                    L.UV.Add(new Vector2(0f, v0)); L.UV.Add(new Vector2(u1, v0)); L.UV.Add(new Vector2(0f, v1)); L.UV.Add(new Vector2(u1, v1));
+                    Tri(L.V, L.I, i0, i0 + 1, i0 + 2, up);
+                    Tri(L.V, L.I, i0 + 1, i0 + 3, i0 + 2, up);
+                    if (soup != null) for (int q = 0; q < 6; q++) soup[0].Add(L.V[L.I[L.I.Count - 6 + q]]);
+                }
                 if (decks)
                 {
                     foreach (var bp in d.Bridges)
                     {
                         if (bp.Kind != 0) continue;
+                        if (bp.Road == (byte)RoadKind.Rail) { RailBed(bp); continue; }
                         int hs = bp.Road;
                         lists[hs].V ??= new List<Vector3>(); lists[hs].N ??= new List<Vector3>(); lists[hs].UV ??= new List<Vector2>(); lists[hs].I ??= new List<int>();
                         var DV = lists[hs].V; var DN = lists[hs].N; var DUV = lists[hs].UV; var DI = lists[hs].I;
@@ -1686,7 +1844,8 @@ void fragment() {
                     if (bp.Kind == 1)
                     {
                         var up = EditorBridgeSpline.StandBasis(dir);
-                        bridgeXf[1].Add(new Transform3D(new Basis(up.X, up.Y, up.Z * bp.K), at));   // stretched on its OWN long axis
+                        float ps = InfiniteRoads.DeckScale((RoadKind)bp.Road);   // a rail viaduct's pier pair stands as narrow as its deck
+                        bridgeXf[1].Add(new Transform3D(new Basis(up.X * ps, up.Y, up.Z * bp.K), at));   // stretched on its OWN long axis
                     }
                     else
                     {
@@ -1744,8 +1903,18 @@ void fragment() {
                     list.Add(new Transform3D(basis, new Vector3(f.X, f.Y, f.Z)));
                 }
             }
+            List<Transform3D>[] railXf = null;
+            if (d.Rails != null)
+            {
+                railXf = new[] { new List<Transform3D>(), new List<Transform3D>(), new List<Transform3D>() };
+                foreach (var rp in d.Rails) railXf[rp.Kind].Add(RailXform(rp, d.Coord.MinX, d.Coord.MinZ));
+                // a crossbuck stands up like the roadside pole (Z-up rip, PEI's ex=270), its arms across the road
+                if (d.CrossingSigns != null)
+                    foreach (var cs in d.CrossingSigns)
+                        railXf[2].Add(PoleXform((float)(cs.X - d.Coord.MinX), cs.Y + 0.2f, (float)(cs.Z - d.Coord.MinZ), cs.DX, cs.DZ));
+            }
             return new Built { D = d, V = V.ToArray(), N = N.ToArray(), UV = UV.ToArray(), I = I.ToArray(), S0 = s0, S1 = s1, SplatSize = v, TreeXf = trees, ImpTrees = imp, BridgeXf = bridgeXf, Pylons = pylons, FoliageXf = foliage,
-                               Road = roadMeshes, RoadCol = roadCol, Poles = poles, Tunnels = d.Tunnels };
+                               Road = roadMeshes, RoadCol = roadCol, Poles = poles, Tunnels = d.Tunnels, RailXf = railXf };
         }
 
         /// <summary>Add a triangle FRONT-FACING along `front` whichever way round it was written: Godot's front face

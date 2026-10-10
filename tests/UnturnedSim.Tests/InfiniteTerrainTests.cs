@@ -169,6 +169,14 @@ namespace UnturnedSim.Tests
                         var h = Gen.Roads.HighwayCentreline(axis, band, k);
                         if (h != null) yield return (RoadKind.Highway, h);
                     }
+            // ...and the railways (InfiniteRails), which the ground is carved to the same way
+            for (int axis = 0; axis < 2; axis++)
+                for (long band = -1; band <= 0; band++)
+                    for (long k = -1; k <= 1; k++)
+                    {
+                        var r = Gen.Roads.RailCentreline(axis, band, k);
+                        if (r != null) yield return (RoadKind.Rail, r);
+                    }
         }
 
         [Test]
