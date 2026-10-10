@@ -446,7 +446,10 @@ namespace UnturnedGodot
             body.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Grass);
             // HeightMapShape3D: row-major in Z, 1 unit apart, CENTRED -- so scale X/Z by the spacing (Jolt wants them
             // equal, and they are) and sit it at the region's centre. Heights are absolute world Y; the body stays at 0.
-            // a tunnel mouth's holes: NaN, which Jolt (and GodotPhysics) read as no collision at that vertex
+            // a tunnel mouth's holes: NaN, which Jolt (and GodotPhysics) read as no collision at that vertex. (Verified: the
+            // mouth ray is blocked by GroundBody without them and clear with them, and the rest of the region still
+            // collides. A region that once lost its WHOLE collider here had -Infinity heights from a generator bug --
+            // see InfiniteRoads.TwinShellTop -- not NaN holes.)
             var data = r.Lod0Heights;
             if (r.Lod0Holes != null)
             {
@@ -804,22 +807,32 @@ void fragment() {
             _bridgeMat[i] = mat;
         }
 
-        // ---- tunnels (strawberry 2026-10-09: "wiring up tunnels to use the tool nyatools made"): cow tools' tunnel tool,
-        // driven from the core's spans -- TunnelMesh.Sweep for the bore, a Tunnel_Line_Cap_0 portal on each end's 24 m,
-        // widened across by InfiniteRoads.TunnelLateral (EditorTunnelSpline.WidenAcross, the X column). Plus what the
-        // editor tool does not need and this world does: a FLOOR at the road's bed between the slab and the walls (the
-        // section has none, and the ground here is the hill overhead) and an APRON over the hole cells in front of each
-        // mouth. Built on the main thread when a region first arrives; colliders ring <= ColliderRing.
-        static List<Vector2[]> _tunnelProfile;
-        static ArrayMesh _portalMesh;
+        // ---- tunnels (strawberry 2026-10-09: "wiring up tunnels to use the tool nyatools made"): cow tools' TunnelMesh
+        // sweep, ONE TUBE PER CARRIAGEWAY ("do the separate carriageways as separate tunnels"), each widened across by
+        // InfiniteRoads.TunnelLateral. Swept from the BORE chain alone: the carriageways are 17.8 m apart and a shell is
+        // 12.6 m from its centre, so each tube's shell would cut through the other's inner lane -- the hill is their
+        // outside. For the same reason the Tunnel_Line_Cap_0 portal (bore + shell + facade) cannot stand twice side by
+        // side; each mouth gets ONE twin-arch headwall: the two shells' outline with the two bores cut out of it. Plus a
+        // FLOOR at the road's bed wall to wall and an APRON over the hole cells at each mouth. Built on the main thread
+        // when a region first arrives; colliders ring <= ColliderRing.
+        static List<Vector2[]> _boreProfile;
+        /// <summary>How far from the route the ground can be missing at a mouth: the hole vertices' reach plus the LOD0 cell
+        /// every one of them takes with it, plus a margin.</summary>
+        static float TunnelHoleExtent => InfiniteRoads.TunnelBoreReach + InfiniteRoads.TunnelHoleBeside + InfiniteTerrain.RegionSize / InfiniteTerrain.FullCells + 0.5f;
         static Material _tunnelMat, _tunnelFloorMat;
         static void LoadTunnelKit()
         {
-            if (_tunnelProfile != null) return;
+            if (_boreProfile != null) return;
             string dir = ProjectSettings.GlobalizePath("res://content/objects/");
-            _tunnelProfile = TunnelMesh.ProfileFrom(ObjMesh.Load(dir + EditorTunnelSpline.BoreUnit + ".obj"));
-            _portalMesh = ObjMesh.Load(dir + EditorTunnelSpline.PortalUnit + ".obj");
-            // EditorObjects.MatFor's recipe for a prop with no texture (neither tunnel prop ships one): the mesh's white
+            var prof = TunnelMesh.ProfileFrom(ObjMesh.Load(dir + EditorTunnelSpline.BoreUnit + ".obj"));
+            float bore = TunnelMesh.BoreHalfWidth(prof);
+            _boreProfile = new List<Vector2[]>();
+            foreach (var ch in prof)
+            {
+                float w = 0f; foreach (var q in ch) w = Mathf.Max(w, Mathf.Abs(q.X));
+                if (Mathf.Abs(w - bore) < 0.01f) { _boreProfile.Add(ch); break; }
+            }
+            // EditorObjects.MatFor's recipe for a prop with no texture (the tunnel prop ships none): the mesh's white
             // vertex colours times tan, both faces drawn
             _tunnelMat = new StandardMaterial3D { Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled, VertexColorUseAsAlbedo = true,
                                                   AlbedoColor = new Color(0.60f, 0.55f, 0.47f) };
@@ -839,74 +852,136 @@ void fragment() {
             TunnelCount += b.Tunnels.Count;
         }
 
-        /// <summary>One tunnel, region-local. Stations are every TunnelStep of HORIZONTAL arc from the near facade.</summary>
+        /// <summary>One tunnel, region-local: two tubes, a headwall at each mouth, the floor. Stations are every
+        /// TunnelStep of HORIZONTAL arc from the near facade, on the route and on each carriageway.</summary>
         static void BuildTunnel(InfiniteRoads.TunnelSpan t, double ox, double oz, Node3D holder, List<(Shape3D, Transform3D, int)> shapes)
         {
             int m = t.X.Length;
-            var c = new Vector3[m];
-            var h = new float[m];   // horizontal arc
-            for (int i = 0; i < m; i++)
+            float lat = InfiniteRoads.TunnelLateral;
+            Vector3 Loc(double x, float y, double z) => new Vector3((float)(x - ox), y, (float)(z - oz));
+            var mat = (int)PlayerController.Surf.Concrete;
+
+            // THE TUBES, each on its own carriageway's centreline at the driven surface, facade to facade
+            for (int s = 0; s < 2; s++)
             {
-                c[i] = new Vector3((float)(t.X[i] - ox), t.Y[i], (float)(t.Z[i] - oz));
-                if (i > 0) h[i] = h[i - 1] + new Vector2(c[i].X - c[i - 1].X, c[i].Z - c[i - 1].Z).Length();
+                var run = new List<Vector3>(m);
+                for (int i = 0; i < m; i++)
+                {
+                    var p = Loc(t.SX[s][i], t.Y[i], t.SZ[s][i]);
+                    if (run.Count == 0 || p.DistanceSquaredTo(run[run.Count - 1]) > 1e-6f) run.Add(p);
+                }
+                var mesh = run.Count >= 2 ? TunnelMesh.Sweep(_boreProfile, run, lat) : null;
+                if (mesh == null) continue;
+                holder.AddChild(new MeshInstance3D { Name = s == 0 ? "TubeL" : "TubeR", Mesh = mesh, MaterialOverride = _tunnelMat,
+                                                      CastShadow = GeometryInstance3D.ShadowCastingSetting.DoubleSided });
+                if (mesh.CreateTrimeshShape() is ConcavePolygonShape3D shp) { shp.BackfaceCollision = true; shapes.Add((shp, Transform3D.Identity, mat)); }
             }
-            float len = h[m - 1], sec = InfiniteRoads.TunnelSectionLength, lat = InfiniteRoads.TunnelLateral;
+
+            // THE HEADWALLS: in each mouth's vertical plane, the outline of both shells (their upper envelope, with the
+            // outer feet) and, cut up out of its bottom edge, the two bores -- a simple polygon, no holes, because each
+            // bore opening reaches the ground
+            float off = InfiniteRoads.HighwayRibbonOffset, reach = InfiniteRoads.TunnelShellReach;
+            // WINGS past the shells as far as the ground the mouth's holes take out: the hole vertices reach TunnelHoleBeside
+            // past the bores, and every cell touching one goes, a further cell (4 m) out -- so the cut slope's missing cells
+            // beside the portal are backed by a wall, not open to the sky
+            float wing = TunnelHoleExtent, wingTop = InfiniteRoads.TwinShellTop(reach) + InfiniteRoads.HeadwallCover;
+            var bore = _boreProfile[0];
+            bool boreRightToLeft = bore[0].X > bore[bore.Length - 1].X;
+            var outline = new List<Vector2>();
+            outline.Add(new Vector2(-wing, -InfiniteRoads.TunnelFloorDrop));
+            outline.Add(new Vector2(-wing, wingTop));
+            for (float u = -reach; u <= reach + 1e-3f; u += 0.25f) outline.Add(new Vector2(u, InfiniteRoads.TwinShellTop(Mathf.Clamp(u, -reach, reach))));
+            outline.Add(new Vector2(wing, wingTop));
+            outline.Add(new Vector2(wing, -InfiniteRoads.TunnelFloorDrop));
+            for (int s = 1; s >= 0; s--)   // right tube first: the path runs back along the bottom from right to left
+            {
+                float c = (s == 0 ? -1f : 1f) * off;
+                for (int k = 0; k < bore.Length; k++)
+                {
+                    var q = bore[boreRightToLeft ? k : bore.Length - 1 - k];
+                    outline.Add(new Vector2(c + q.X * lat, q.Y));
+                }
+            }
+            var poly = outline.ToArray();
+            var tri = Geometry2D.TriangulatePolygon(poly);
+            if (tri.Length == 0) Log.Err($"[infinite] tunnel headwall did not triangulate ({poly.Length} points)");
+            for (int end = 0; end < 2 && tri.Length > 0; end++)
+            {
+                int a = end == 0 ? 0 : m - 1, b = end == 0 ? 1 : m - 2;
+                var pa = Loc(t.X[a], t.Y[a], t.Z[a]);
+                var fwd = Loc(t.X[b], t.Y[b], t.Z[b]) - pa; fwd.Y = 0f; fwd = fwd.Normalized();
+                // +u is the +offset carriageway's side whichever end: fwd points INTO the tunnel, so at the far end it runs
+                // against the route and its left-hand normal is the other side
+                var side = new Vector3(-fwd.Z, 0f, fwd.X);
+                if (end == 1) side = -side;
+                var WV = new Vector3[poly.Length]; var WN = new Vector3[poly.Length];
+                var outward = end == 0 ? -fwd : fwd;
+                for (int k = 0; k < poly.Length; k++) { WV[k] = pa + side * poly[k].X + Vector3.Up * poly[k].Y; WN[k] = outward; }
+                var WI = new List<int>(tri.Length);
+                var tmpV = new List<Vector3>(WV);
+                for (int k = 0; k + 2 < tri.Length; k += 3) Tri(tmpV, WI, tri[k], tri[k + 1], tri[k + 2], outward);
+                var wa = new Godot.Collections.Array();
+                wa.Resize((int)Mesh.ArrayType.Max);
+                var cols = new Color[WV.Length]; for (int k = 0; k < cols.Length; k++) cols[k] = Colors.White;
+                wa[(int)Mesh.ArrayType.Vertex] = WV; wa[(int)Mesh.ArrayType.Normal] = WN; wa[(int)Mesh.ArrayType.Color] = cols;
+                wa[(int)Mesh.ArrayType.Index] = WI.ToArray();
+                var wm = new ArrayMesh();
+                wm.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, wa);
+                holder.AddChild(new MeshInstance3D { Name = end == 0 ? "HeadwallIn" : "HeadwallOut", Mesh = wm, MaterialOverride = _tunnelMat,
+                                                      CastShadow = GeometryInstance3D.ShadowCastingSetting.DoubleSided });
+                var wsoup = new Vector3[WI.Count];
+                for (int k = 0; k < WI.Count; k++) wsoup[k] = WV[WI[k]];
+                shapes.Add((new ConcavePolygonShape3D { Data = wsoup, BackfaceCollision = true }, Transform3D.Identity, mat));
+
+                // THE COLLAR: a concrete lid over the hole band behind the headwall, at the height the hill's cap would have
+                // (InfiniteRoads.TunnelGround: the shells + HeadwallCover, rising HeadwallSlope past the holes) -- the ground
+                // there is gone so the mouth can be, and from above the gap reads as the portal's own top instead of a slot
+                // of sky. It is over the tubes, so it closes nothing you drive through.
+                var inward = fwd;
+                int nu = Mathf.CeilToInt(2f * wing / 1f), na = Mathf.CeilToInt((InfiniteRoads.TunnelHoleIn + 4.5f) / 1f);
+                var LV = new List<Vector3>(); var LN = new List<Vector3>(); var LC = new List<Color>(); var LI = new List<int>();
+                for (int ia = 0; ia <= na; ia++)
+                    for (int iu = 0; iu <= nu; iu++)
+                    {
+                        float aIn = (InfiniteRoads.TunnelHoleIn + 4.5f) * ia / na, u = -wing + 2f * wing * iu / nu;
+                        float top = Mathf.Max(InfiniteRoads.TwinShellTop(Mathf.Clamp(u, -reach, reach)), wingTop - InfiniteRoads.HeadwallCover)
+                                    + InfiniteRoads.HeadwallCover + Mathf.Max(0f, aIn - InfiniteRoads.TunnelHoleIn) * InfiniteRoads.HeadwallSlope;
+                        LV.Add(pa + inward * aIn + side * u + Vector3.Up * top); LN.Add(Vector3.Up); LC.Add(Colors.White);
+                    }
+                for (int ia = 0; ia < na; ia++)
+                    for (int iu = 0; iu < nu; iu++)
+                    {
+                        int q0 = ia * (nu + 1) + iu, q1 = q0 + 1, q2 = q0 + nu + 1, q3 = q2 + 1;
+                        Tri(LV, LI, q0, q1, q2, Vector3.Up);
+                        Tri(LV, LI, q1, q3, q2, Vector3.Up);
+                    }
+                var la = new Godot.Collections.Array();
+                la.Resize((int)Mesh.ArrayType.Max);
+                la[(int)Mesh.ArrayType.Vertex] = LV.ToArray(); la[(int)Mesh.ArrayType.Normal] = LN.ToArray(); la[(int)Mesh.ArrayType.Color] = LC.ToArray();
+                la[(int)Mesh.ArrayType.Index] = LI.ToArray();
+                var lm = new ArrayMesh();
+                lm.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, la);
+                holder.AddChild(new MeshInstance3D { Name = end == 0 ? "CollarIn" : "CollarOut", Mesh = lm, MaterialOverride = _tunnelMat });
+                var lsoup = new Vector3[LI.Count];
+                for (int k = 0; k < LI.Count; k++) lsoup[k] = LV[LI[k]];
+                shapes.Add((new ConcavePolygonShape3D { Data = lsoup, BackfaceCollision = true }, Transform3D.Identity, mat));
+            }
+
+            // THE FLOOR, at the road's bed (the approach ground's level beside the slab), wall to wall across both tubes;
+            // and an APRON at each mouth over the hole cells -- they reach a cell out in front of the facade and
+            // TunnelHoleBeside past the outer walls
+            var c3 = new Vector3[m]; var h = new float[m];
+            for (int i = 0; i < m; i++) { c3[i] = Loc(t.X[i], t.Y[i], t.Z[i]); if (i > 0) h[i] = h[i - 1] + new Vector2(c3[i].X - c3[i - 1].X, c3[i].Z - c3[i - 1].Z).Length(); }
+            float len = h[m - 1];
             Vector3 At(float s)
             {
                 s = Mathf.Clamp(s, 0f, len);
                 int k = 0; while (k < m - 2 && h[k + 1] < s) k++;
-                return c[k].Lerp(c[k + 1], Mathf.Clamp((s - h[k]) / Mathf.Max(1e-6f, h[k + 1] - h[k]), 0f, 1f));
+                return c3[k].Lerp(c3[k + 1], Mathf.Clamp((s - h[k]) / Mathf.Max(1e-6f, h[k + 1] - h[k]), 0f, 1f));
             }
-
-            // THE BORE: swept between the two portals (each occupies its 24 m; laid under them it would stack two shells)
-            if (len - 2f * sec > 0.5f)
-            {
-                var run = new List<Vector3> { At(sec) };
-                for (int i = 0; i < m; i++) if (h[i] > sec + 0.01f && h[i] < len - sec - 0.01f) run.Add(c[i]);
-                run.Add(At(len - sec));
-                var mesh = TunnelMesh.Sweep(_tunnelProfile, run, lat);
-                if (mesh != null)
-                {
-                    holder.AddChild(new MeshInstance3D { Name = "Bore", Mesh = mesh, MaterialOverride = _tunnelMat,
-                                                          CastShadow = GeometryInstance3D.ShadowCastingSetting.DoubleSided });
-                    // ⚠ BACKFACE collision: the sweep's faces point AWAY from the centreline, so from inside the bore every
-                    // wall is a back face -- one-sided, you would walk straight out through it
-                    var shp = mesh.CreateTrimeshShape() as ConcavePolygonShape3D;
-                    if (shp != null) { shp.BackfaceCollision = true; shapes.Add((shp, Transform3D.Identity, (int)PlayerController.Surf.Concrete)); }
-                }
-            }
-
-            // THE PORTALS, facade (local +Y) facing OUT. Sheared rather than tilted: the sweep's rings are VERTICAL slices
-            // (TunnelMesh puts the profile on world up), so a portal tilted to the grade would meet the bore's first ring
-            // at an angle -- 1.15 m apart at the crown on a 7% grade. Its length axis climbs with the road instead, and its
-            // section stays upright like every ring of the bore it opens into.
-            for (int end = 0; end < 2; end++)
-            {
-                float s0 = end == 0 ? 0f : len - sec, s1 = s0 + sec;
-                Vector3 a = At(s0), b = At(s1), mid = At((s0 + s1) * 0.5f);
-                var outDir = end == 0 ? a - b : b - a;   // along the road, out of the tunnel
-                var flat = new Vector3(outDir.X, 0f, outDir.Z);
-                if (flat.LengthSquared() < 1e-6f) continue;
-                float rise = outDir.Y / flat.Length();   // metres up per metre out
-                flat = flat.Normalized();
-                var basis = EditorTunnelSpline.StandBasis(flat);
-                // the column that carries the section's length is the one lying along the road: give it the grade
-                Vector3 c0 = basis.X, c1 = basis.Y, c2 = basis.Z;
-                if (Mathf.Abs(c1.Dot(flat)) > 0.9f) c1 += Vector3.Up * (rise * c1.Dot(flat));
-                else if (Mathf.Abs(c2.Dot(flat)) > 0.9f) c2 += Vector3.Up * (rise * c2.Dot(flat));
-                basis = EditorTunnelSpline.WidenAcross(new Basis(c0, c1, c2), lat);
-                var xf = new Transform3D(basis, mid);
-                holder.AddChild(new MeshInstance3D { Name = end == 0 ? "PortalIn" : "PortalOut", Mesh = _portalMesh, Transform = xf,
-                                                      MaterialOverride = _tunnelMat, CastShadow = GeometryInstance3D.ShadowCastingSetting.DoubleSided });
-                var pshp = _portalMesh.CreateTrimeshShape() as ConcavePolygonShape3D;
-                if (pshp != null) { pshp.BackfaceCollision = true; shapes.Add((pshp, xf, (int)PlayerController.Surf.Concrete)); }
-            }
-
-            // THE FLOOR, at the road's bed (the approach ground's level beside the slab), wall to wall; and an APRON at each
-            // mouth over the hole cells -- they reach a cell out in front of the facade and TunnelHoleBeside past the bore
             var FV = new List<Vector3>(); var FN = new List<Vector3>(); var FI = new List<int>();
             float drop = InfiniteRoads.Proud + InfiniteRoads.Lift(RoadKind.Highway);
-            float boreW = InfiniteRoads.TunnelBoreHalf * lat, apronW = boreW + InfiniteRoads.TunnelHoleBeside + 1f, apronOut = 6.5f;
+            float boreR = InfiniteRoads.TunnelBoreReach, apronW = TunnelHoleExtent, apronOut = 6.5f;
             void Strip(float sA, float sB, float half, float below, int steps)
             {
                 for (int q = 0; q < steps; q++)
@@ -930,7 +1005,7 @@ void fragment() {
                     Tri(FV, FI, i0 + 1, i0 + 3, i0 + 2, Vector3.Up);
                 }
             }
-            Strip(-apronOut, len + apronOut, boreW, 0.03f, Mathf.Max(1, Mathf.CeilToInt((len + 2f * apronOut) / InfiniteRoads.TunnelStep)));
+            Strip(-apronOut, len + apronOut, boreR, 0.03f, Mathf.Max(1, Mathf.CeilToInt((len + 2f * apronOut) / InfiniteRoads.TunnelStep)));
             Strip(-apronOut, 0.5f, apronW, 0.04f, 4);
             Strip(len - 0.5f, len + apronOut, apronW, 0.04f, 4);
             var fa = new Godot.Collections.Array();
@@ -941,7 +1016,7 @@ void fragment() {
             holder.AddChild(new MeshInstance3D { Name = "Floor", Mesh = fm, MaterialOverride = _tunnelFloorMat });
             var soup = new Vector3[FI.Count];
             for (int k = 0; k < FI.Count; k++) soup[k] = FV[FI[k]];
-            shapes.Add((new ConcavePolygonShape3D { Data = soup, BackfaceCollision = true }, Transform3D.Identity, (int)PlayerController.Surf.Concrete));
+            shapes.Add((new ConcavePolygonShape3D { Data = soup, BackfaceCollision = true }, Transform3D.Identity, mat));
         }
 
         static Node3D BuildTunnelBodies(List<(Shape3D Shape, Transform3D Xf, int Surf)> shapes)

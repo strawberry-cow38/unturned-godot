@@ -159,11 +159,14 @@ namespace SDG.Unturned
         public const int PierEveryUnits = 6;             // retail's one pair per 48 m span
 
         // ---- TUNNELS (strawberry 2026-10-09: "next is wiring up tunnels to use the tool nyatools made"). cow tools'
-        // EditorTunnelSpline: Tunnel_Line_0's section SWEPT along the road (TunnelMesh.Sweep), a Tunnel_Line_Cap_0 portal
-        // occupying the first and last 24 m. One tunnel carries BOTH carriageways, the section widened across only (the
-        // tool's rule: road half + 1.5 m border over the authored 8 m bore half) -- two side by side would put each one's
-        // 12 m shell through the other's bore. The section numbers are the prop's own, copied because core cannot see the
-        // game; L1 asserts they match TunnelMesh.ProfileFrom.
+        // TunnelMesh: Tunnel_Line_0's section SWEPT along the road. ONE TUBE PER CARRIAGEWAY (strawberry, on the first
+        // version's single bore over both: "really stretched and goofy looking... do the separate carriageways as
+        // separate tunnels"), each widened across by the tool's own rule (carriageway half + 1.5 m border over the
+        // authored 8 m bore half = x1.05). The two bores stand 1 m apart -- but each SHELL is 12.6 m from its centre and
+        // the carriageways only 17.8 m apart, so a shell would cut straight through the other tube's inner lane: the
+        // tubes are swept from the BORE alone (the hill is their outside), which is also why the Tunnel_Line_Cap_0 prop
+        // (bore + shell + facade) is not used; each mouth gets one twin-arch headwall instead. The section numbers are
+        // the prop's own, copied because core cannot see the game; L1 asserts they match TunnelMesh.ProfileFrom.
         //   A tunnel is bored only where the hill ALREADY buries the whole widened shell (plus TunnelCover) for at least
         // two portals' length; strawberry agreed the shallow cuts stay open rather than squash a 17.4 m section into a
         // 6 m cut (and cow tools: berming one would be "not a berm, a new hill"). Measured over the test window: 38 such
@@ -176,8 +179,38 @@ namespace SDG.Unturned
         public const float TunnelSectionLength = 24f;                    // one portal's run
         public const float TunnelBorder = 1.5f;                          // EditorTunnelSpline.BoreBorder
         public const float TunnelStep = 2f;                              // EditorTunnelSpline.Step: ring spacing
-        /// <summary>The section widened to carry the whole highway (median, both carriageways) plus the border.</summary>
-        public static float TunnelLateral => Math.Max(1f, (PavedHalf(RoadKind.Highway) + TunnelBorder) / TunnelBoreHalf);
+        /// <summary>The section widened to carry one carriageway plus the border.</summary>
+        public static float TunnelLateral => Math.Max(1f, (HighwayLaneHalf + TunnelBorder) / TunnelBoreHalf);
+        /// <summary>From the route's centreline: the outer bore walls, and the twin shells' outer edges (the footprint
+        /// the hill must bury).</summary>
+        public static float TunnelBoreReach => HighwayRibbonOffset + TunnelBoreHalf * TunnelLateral;
+        public static float TunnelShellReach => HighwayRibbonOffset + TunnelShellHalf * TunnelLateral;
+        /// <summary>The higher of the two tubes' shell surfaces over the road at lateral offset `lat` from the route's
+        /// centreline (negative infinity outside both) -- what the hill has to cover.</summary>
+        public static float TwinShellTop(float lat)
+        {
+            float best = float.NegativeInfinity, L = TunnelLateral;
+            for (int s = -1; s <= 1; s += 2)
+            {
+                // ⚠ a hair of slack: at exactly the reach, (reach - offset) / L comes out 12.00001, "outside both", and the
+                // -Infinity that returned went into the ground as a HEIGHT -- which took out every collider it touched
+                float x = (lat - s * HighwayRibbonOffset) / L;
+                if (Math.Abs(x) <= TunnelShellHalf + 1e-3f) best = Math.Max(best, ShellTop(Math.Min(Math.Abs(x), TunnelShellHalf)));
+            }
+            return best;
+        }
+        /// <summary>The bore's inner surface over the road at lateral `lat`, inside whichever tube holds it; NaN in
+        /// neither (between the tubes, or outside them).</summary>
+        public static float TwinBoreTop(float lat)
+        {
+            float L = TunnelLateral;
+            for (int s = -1; s <= 1; s += 2)
+            {
+                float x = (lat - s * HighwayRibbonOffset) / L;
+                if (Math.Abs(x) <= TunnelBoreHalf) return BoreTop(x);
+            }
+            return float.NaN;
+        }
         // the shell's outer arch over the road, from the prop: (X, height) along its upper chain
         static readonly float[] ShellX = { 0f, 6f, 10.45f, 12f }, ShellY = { 16.4f, 14.53f, 10.13f, 4.4f };
         /// <summary>Height of the shell's outer surface above the road at authored half-width x (0..12).</summary>
@@ -577,7 +610,8 @@ namespace SDG.Unturned
         public sealed class TunnelSpan
         {
             public double A0, A1, F0, F1;
-            public double[] X, Z; public float[] Y;
+            public double[] X, Z; public float[] Y;   // the route's centreline (the median between the tubes)
+            public double[][] SX, SZ;                 // [0 = -offset, 1 = +offset carriageway][station]: each tube's centreline
         }
 
         /// <summary>Find the runs where the hill already buries the whole widened shell (nine samples across it, every
@@ -587,7 +621,7 @@ namespace SDG.Unturned
         {
             e.HArc = Arc(e);
             double total = e.HArc[e.HArc.Length - 1];
-            float lat = TunnelLateral, shellW = TunnelShellHalf * lat;
+            float reach = TunnelShellReach;
             var spans = new List<TunnelSpan>();
             double runStart = -1;
             for (double s = 0; s <= total; s += TunnelProbeStep)
@@ -595,10 +629,10 @@ namespace SDG.Unturned
                 At(e, e.HArc, s, out double px, out double pz, out float h, out double tx, out double tz);
                 float road = SurfaceY(RoadKind.Highway, h);
                 bool covered = true;
-                for (int q = -4; q <= 4 && covered; q++)
+                for (int q = -6; q <= 6 && covered; q++)
                 {
-                    float o = shellW * 0.98f * q / 4f;
-                    if (_t.RawHeight(px - tz * o, pz + tx * o) < road + ShellTop(o / lat) + TunnelCover) covered = false;
+                    float o = reach * 0.98f * q / 6f;   // thirteen across both shells, the edges and the median included
+                    if (_t.RawHeight(px - tz * o, pz + tx * o) < road + TwinShellTop(o) + TunnelCover) covered = false;
                 }
                 if (covered) { if (runStart < 0) runStart = s; }
                 else { if (runStart >= 0) Close(runStart, s - TunnelProbeStep); runStart = -1; }
@@ -611,11 +645,23 @@ namespace SDG.Unturned
                 if (a1 - a0 < TunnelMinLength) return;
                 if (a0 < TunnelSectionLength || a1 > total - TunnelSectionLength) return;
                 int m = (int)Math.Ceiling((a1 - a0) / TunnelStep);
-                var t = new TunnelSpan { A0 = a0, A1 = a1, F0 = Frac(a0), F1 = Frac(a1), X = new double[m + 1], Z = new double[m + 1], Y = new float[m + 1] };
+                var t = new TunnelSpan { A0 = a0, A1 = a1, F0 = Frac(a0), F1 = Frac(a1), X = new double[m + 1], Z = new double[m + 1], Y = new float[m + 1],
+                                         SX = new[] { new double[m + 1], new double[m + 1] }, SZ = new[] { new double[m + 1], new double[m + 1] } };
                 for (int i = 0; i <= m; i++)
                 {
-                    At(e, e.HArc, Math.Min(a0 + i * TunnelStep, a1), out t.X[i], out t.Z[i], out float hh, out _, out _);
+                    double a = Math.Min(a0 + i * TunnelStep, a1);
+                    At(e, e.HArc, a, out t.X[i], out t.Z[i], out float hh, out _, out _);
                     t.Y[i] = SurfaceY(RoadKind.Highway, hh);
+                    // each carriageway's own centreline here, built exactly as its ribbon is (RibbonTangent offsets at the
+                    // two dense points, joined straight), so the tube sits on the road it carries
+                    double f = Frac(a); int k = Math.Min((int)f, e.Segments - 1); double ft = f - k;
+                    var (t0x, t0z) = RibbonTangent(e, k); var (t1x, t1z) = RibbonTangent(e, k + 1);
+                    for (int s = 0; s < 2; s++)
+                    {
+                        double o = (s == 0 ? -1 : 1) * HighwayRibbonOffset;
+                        double ax = e.X[k] - t0z * o, az = e.Z[k] + t0x * o, bx = e.X[k + 1] - t1z * o, bz = e.Z[k + 1] + t1x * o;
+                        t.SX[s][i] = ax + (bx - ax) * ft; t.SZ[s][i] = az + (bz - az) * ft;
+                    }
                 }
                 spans.Add(t);
             }
@@ -633,13 +679,13 @@ namespace SDG.Unturned
         /// cannot overhang the mouth. Blended out beside the shell.</summary>
         public static float TunnelGround(in RoadHit hit, float g)
         {
-            float L = TunnelLateral, lat = Math.Abs(hit.TunnelLat), shellW = TunnelShellHalf * L;
-            if (lat <= shellW) g = Math.Max(g, hit.TunnelRoad + ShellTop(lat / L) + 0.25f);
-            // the cap sits just over the shell where the hole band ends -- the terrain's edge there is seen at a grazing angle
-            // past the facade top, and every metre between it and the shell is a slot of open sky under the hill's surface
-            float cap = hit.TunnelRoad + ShellTop(Math.Min(lat, shellW) / L) + HeadwallCover + Math.Max(0f, hit.TunnelIn - TunnelHoleIn) * HeadwallSlope;
+            float lat = hit.TunnelLat, reach = TunnelShellReach, alat = Math.Abs(lat);
+            if (alat <= reach) g = Math.Max(g, hit.TunnelRoad + TwinShellTop(lat) + 0.25f);
+            // the cap sits just over the shells where the hole band ends -- the terrain's edge there is seen at a grazing
+            // angle past the headwall's top, and every metre between it and the shell is a slot of open sky
+            float cap = hit.TunnelRoad + TwinShellTop(Math.Clamp(lat, -reach, reach)) + HeadwallCover + Math.Max(0f, hit.TunnelIn - TunnelHoleIn) * HeadwallSlope;
             // out to where the tunnel stops being reported (the highway's carve reach), so there is no step at its edge
-            if (g > cap) g += (cap - g) * Smoothstep(PavedHalf(RoadKind.Highway) + Shoulder(RoadKind.Highway), shellW, lat);
+            if (g > cap) g += (cap - g) * Smoothstep(PavedHalf(RoadKind.Highway) + Shoulder(RoadKind.Highway), reach, alat);
             return g;
         }
 
@@ -1078,7 +1124,7 @@ namespace SDG.Unturned
                         double outside = along < tn.A0 ? tn.A0 - along : along - tn.A1;
                         if (outside > 0 && outside < TunnelForecourt)
                         {
-                            float wide = TunnelBoreHalf * TunnelLateral + 1f;
+                            float wide = TunnelBoreReach + 1f;
                             if (wide > half) half += (wide - half) * Smoothstep(TunnelForecourt, 0f, (float)outside);
                         }
                         if (along < tn.A0 || along > tn.A1) continue;
@@ -1089,7 +1135,7 @@ namespace SDG.Unturned
                             hit.TunnelIn = (float)Math.Min(along - tn.A0, tn.A1 - along);
                             hit.TunnelLat = bestRight ? best : -best;
                             hit.TunnelRoad = SurfaceY(RoadKind.Highway, bh);
-                            hit.Hole = hit.TunnelIn <= TunnelHoleIn && best <= TunnelBoreHalf * TunnelLateral + TunnelHoleBeside;
+                            hit.Hole = hit.TunnelIn <= TunnelHoleIn && best <= TunnelBoreReach + TunnelHoleBeside;
                         }
                         break;
                     }

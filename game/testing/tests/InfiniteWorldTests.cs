@@ -313,17 +313,24 @@ namespace UnturnedGodot.Testing
             {
                 int tm = tun.X.Length, mid = tm / 2;
                 double ux = tun.X[1] - tun.X[0], uz = tun.Z[1] - tun.Z[0], ul = System.Math.Sqrt(ux * ux + uz * uz); ux /= ul; uz /= ul;   // into the tunnel
-                S.TeleportAbsolute(tun.X[0] - ux * 25.0, tun.Z[0] - uz * 25.0);
+                // over its MIDDLE, so the whole tunnel (up to ~300 m) and both mouths are inside the collider ring
+                S.TeleportAbsolute(tun.X[mid], tun.Z[mid]);
                 yield return Wait(Settled, 60);
                 yield return Ticks(5);
                 var space = World.GetWorld3D().DirectSpaceState;
                 T.Check($"tunnels stream in round it: {S.TunnelCount} in range", S.TunnelCount > 0);
-                // into the mouth along the road, 3 m up: nothing between 15 m out and 15 m in
-                var from = S.ToLocal(tun.X[0] - ux * 15.0, tun.Y[0] + 3.0, tun.Z[0] - uz * 15.0);
-                var into = S.ToLocal(tun.X[0] + ux * 15.0, tun.Y[0] + 3.0 + (tun.Y[System.Math.Min(7, tm - 1)] - tun.Y[0]), tun.Z[0] + uz * 15.0);
+                // into a tube's mouth along its carriageway, 3 m up: nothing between 15 m out and 15 m in
+                var from = S.ToLocal(tun.SX[1][0] - ux * 15.0, tun.Y[0] + 3.0, tun.SZ[1][0] - uz * 15.0);
+                var into = S.ToLocal(tun.SX[1][0] + ux * 15.0, tun.Y[0] + 3.0 + (tun.Y[System.Math.Min(7, tm - 1)] - tun.Y[0]), tun.SZ[1][0] + uz * 15.0);
                 var mouth = space.IntersectRay(PhysicsRayQueryParameters3D.Create(from, into, 1u << 0));
-                T.Check($"the mouth is open: a ray along the road from 15 m out to 15 m in hits {(mouth.Count == 0 ? "nothing" : mouth["collider"].As<Node>()?.Name + " at " + ((Vector3)mouth["position"]).DistanceTo(from).ToString("0.0") + " m")}",
-                    mouth.Count == 0);
+                // CONTROL, so "nothing" means open and not "no ground loaded": just past the hole band, over the tubes, a ray
+                // from the sky must land on the ground -- the hill cut back over the portal, in the same cells' neighbourhood
+                var capAt = S.ToLocal(tun.X[0] + ux * (InfiniteRoads.TunnelHoleIn + 8.0), tun.Y[0] + 200.0, tun.Z[0] + uz * (InfiniteRoads.TunnelHoleIn + 8.0));
+                var hillRay = space.IntersectRay(PhysicsRayQueryParameters3D.Create(capAt, capAt + Vector3.Down * 260f, 1u << 0));
+                string hillName = hillRay.Count > 0 ? hillRay["collider"].As<Node>()?.Name : "nothing";
+                T.Check($"the mouth is open: a ray along the road from 15 m out to 15 m in hits {(mouth.Count == 0 ? "nothing" : mouth["collider"].As<Node>()?.Name + " at " + ((Vector3)mouth["position"]).DistanceTo(from).ToString("0.0") + " m")}" +
+                        $" (control: a drop onto the hill just behind the mouth hits {hillName})",
+                    mouth.Count == 0 && hillName == "GroundBody");
                 // the DRAWN road through the mouth and the forecourts lies at its driven surface: nothing lifts it onto the
                 // ground mesh, which there is the hill (or a cell across the facade interpolating it). The first render
                 // stood the approach's last pieces up as 6 m walls across the mouth
@@ -375,14 +382,27 @@ namespace UnturnedGodot.Testing
                 var onFloor = space.IntersectRay(PhysicsRayQueryParameters3D.Create(verge, verge + Vector3.Down * 10f, 1u << 0));
                 float floorY = onFloor.Count > 0 ? ((Vector3)onFloor["position"]).Y : float.NaN, bedY = tun.Y[mid] - InfiniteRoads.Proud - InfiniteRoads.Lift(RoadKind.Highway);
                 T.Check($"beside it, the floor: y {floorY:0.000} vs the bed {bedY:0.000}", onFloor.Count > 0 && Mathf.Abs(floorY - bedY) < 0.06f);
-                // the ceiling and a wall, from inside
-                var up = space.IntersectRay(PhysicsRayQueryParameters3D.Create(top, top + Vector3.Up * 30f, 1u << 0));
+                // the ceiling and both walls of the +offset tube, from its own carriageway
+                var up = space.IntersectRay(PhysicsRayQueryParameters3D.Create(lane, lane + Vector3.Up * 30f, 1u << 0));
                 float ceil = up.Count > 0 ? ((Vector3)up["position"]).Y - tun.Y[mid] : float.NaN;
-                var wall = space.IntersectRay(PhysicsRayQueryParameters3D.Create(top + Vector3.Down * 3f, top + Vector3.Down * 3f + side * 40f, 1u << 0));
-                float wallAt = wall.Count > 0 ? ((Vector3)wall["position"] - (top + Vector3.Down * 3f)).Length() : float.NaN;
+                var eye = lane + Vector3.Down * 3f;
+                float Wall(Vector3 dir)
+                {
+                    var w = space.IntersectRay(PhysicsRayQueryParameters3D.Create(eye, eye + dir * 40f, 1u << 0));
+                    return w.Count > 0 ? ((Vector3)w["position"] - eye).Length() : float.NaN;
+                }
+                float wallOut = Wall(side), wallIn = Wall(-side);
                 float boreW = InfiniteRoads.TunnelBoreHalf * InfiniteRoads.TunnelLateral;
-                T.Check($"the bore holds you in: ceiling {ceil:0.00} m over the road (crown {InfiniteRoads.TunnelBoreTop}), wall {wallAt:0.00} m out (bore {boreW:0.00})",
-                    Mathf.Abs(ceil - InfiniteRoads.TunnelBoreTop) < 0.2f && Mathf.Abs(wallAt - boreW) < 0.3f);
+                T.Check($"the bore holds you in: ceiling {ceil:0.00} m over the road (crown {InfiniteRoads.TunnelBoreTop}), walls {wallIn:0.00} / {wallOut:0.00} m either side (bore {boreW:0.00})",
+                    Mathf.Abs(ceil - InfiniteRoads.TunnelBoreTop) < 0.2f && Mathf.Abs(wallOut - boreW) < 0.3f && Mathf.Abs(wallIn - boreW) < 0.3f);
+                // two tubes, not one: from the median a wall stands within the gap either side
+                var mid3 = top + Vector3.Down * 3f;
+                var gapR = space.IntersectRay(PhysicsRayQueryParameters3D.Create(mid3, mid3 + side * 5f, 1u << 0));
+                var gapL = space.IntersectRay(PhysicsRayQueryParameters3D.Create(mid3, mid3 - side * 5f, 1u << 0));
+                float gr = gapR.Count > 0 ? ((Vector3)gapR["position"] - mid3).Length() : float.NaN, gl = gapL.Count > 0 ? ((Vector3)gapL["position"] - mid3).Length() : float.NaN;
+                float halfGap = InfiniteRoads.HighwayRibbonOffset - boreW;
+                T.Check($"one tube per carriageway: from the median, walls {gl:0.00} / {gr:0.00} m away (the tubes stand {2f * halfGap:0.00} m apart)",
+                    Mathf.Abs(gr - halfGap) < 0.2f && Mathf.Abs(gl - halfGap) < 0.2f);
                 // and the hill is over it all: from high above, the first thing hit is the ground, above the shell
                 var sky = S.ToLocal(tun.X[mid], tun.Y[mid] + 300.0, tun.Z[mid]);
                 var hill = space.IntersectRay(PhysicsRayQueryParameters3D.Create(sky, sky + Vector3.Down * 400f, 1u << 0));
@@ -391,7 +411,7 @@ namespace UnturnedGodot.Testing
                     hill.Count > 0 && hill["collider"].As<Node>()?.Name == "GroundBody" && hillY > InfiniteRoads.ShellTop(0f));
                 // stand in it: the guard must not lift you onto the hill
                 int rescues0 = S.Rescues;
-                p.TeleportTo(S.ToLocal(tun.X[mid], tun.Y[mid] + 0.3, tun.Z[mid]));
+                p.TeleportTo(lane + Vector3.Down * 4.7f);
                 yield return Ticks(90);
                 float standY = P(p).Y;
                 T.Check($"standing in the tunnel: y {standY:0.00} vs road {tun.Y[mid]:0.00}, rescues {S.Rescues - rescues0}",

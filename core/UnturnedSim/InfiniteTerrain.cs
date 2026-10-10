@@ -317,7 +317,7 @@ namespace SDG.Unturned
         public float WalkableHeightAt(double x, double z)
         {
             float g = Sample(x, z, out var hit);
-            return hit.Tunnel && Math.Abs(hit.TunnelLat) <= InfiniteRoads.TunnelBoreHalf * InfiniteRoads.TunnelLateral
+            return hit.Tunnel && Math.Abs(hit.TunnelLat) <= InfiniteRoads.TunnelBoreReach
                 ? hit.TunnelRoad - InfiniteRoads.Proud - InfiniteRoads.Lift(RoadKind.Highway) : g;
         }
 
@@ -415,7 +415,7 @@ namespace SDG.Unturned
                     d.Heights[k] = h;
                     d.RoadClear[k] = Math.Min(rh[kb].Clear, 64f);
                     if (lod == 0 && rh[kb].Hole) { (d.Holes ??= new bool[v * v])[k] = true; d.RoadClear[k] = -1f; }   // nothing grows in a hole
-                    if (rh[kb].Tunnel && Math.Abs(rh[kb].TunnelLat) <= InfiniteRoads.TunnelShellHalf * InfiniteRoads.TunnelLateral + 2f)
+                    if (rh[kb].Tunnel && Math.Abs(rh[kb].TunnelLat) <= InfiniteRoads.TunnelShellReach + 2f)
                         (d.OverTunnel ??= new bool[v * v])[k] = true;
                     if (h < d.MinHeight) d.MinHeight = h;
                     if (h > d.MaxHeight) d.MaxHeight = h;
@@ -461,7 +461,7 @@ namespace SDG.Unturned
                     if (y < SeaLevel + 2.5f) continue;
                     if (treeRoad.Clear < 5f) continue;   // keep every road and its verge clear
                     if (treeRoad.Tunnel && treeRoad.TunnelIn < InfiniteRoads.TunnelHoleIn + 8f
-                        && Math.Abs(treeRoad.TunnelLat) < InfiniteRoads.TunnelShellHalf * InfiniteRoads.TunnelLateral) continue;   // nor over a portal's mouth
+                        && Math.Abs(treeRoad.TunnelLat) < InfiniteRoads.TunnelShellReach) continue;   // nor over a portal's mouth
                     float sx = SampleWith(lines, ax + 2.0, az, out _) - SampleWith(lines, ax - 2.0, az, out _);
                     float sz = SampleWith(lines, ax, az + 2.0, out _) - SampleWith(lines, ax, az - 2.0, out _);
                     float slope = MathF.Sqrt(sx * sx + sz * sz) / 4f;

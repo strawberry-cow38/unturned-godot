@@ -585,6 +585,9 @@ namespace UnturnedSim.Tests
         public void TunnelsAreBoredAndOpen()
         {
             float L = InfiniteRoads.TunnelLateral, boreW = InfiniteRoads.TunnelBoreHalf * L;
+            // one tube per carriageway (strawberry: "do the separate carriageways as separate tunnels"): they must not meet
+            float between = 2f * (InfiniteRoads.HighwayRibbonOffset - boreW);
+            Assert.That(between, Is.GreaterThan(0.5f), "the two tubes' bores touch");
             int tunnels = 0, probes = 0, mouthProbes = 0, inBore = 0, mouthShut = 0;
             double shortest = double.MaxValue, longest = 0, worstApproach = 0, controlLift = 0; int controlN = 0;
             string inBoreWhere = "", shutWhere = "";
@@ -618,14 +621,15 @@ namespace UnturnedSim.Tests
                             double len = t.A1 - t.A0;
                             shortest = Math.Min(shortest, len); longest = Math.Max(longest, len);
                             int m = t.X.Length;
-                            // 1. NOTHING IN THE BORE: walk the stations, sample across the bore every metre
+                            // 1. NOTHING IN EITHER BORE: walk each tube's stations, sample across it every metre
+                            for (int s = 0; s < 2; s++)
                             for (int i = 0; i + 1 < m; i++)
                             {
-                                double dx = t.X[i + 1] - t.X[i], dz = t.Z[i + 1] - t.Z[i], sl = Math.Sqrt(dx * dx + dz * dz);
+                                double dx = t.SX[s][i + 1] - t.SX[s][i], dz = t.SZ[s][i + 1] - t.SZ[s][i], sl = Math.Sqrt(dx * dx + dz * dz);
                                 double nx = -dz / sl, nz = dx / sl;
                                 for (double o = -boreW + 0.5; o <= boreW - 0.5; o += 1.0)
                                 {
-                                    double px = t.X[i] + nx * o, pz = t.Z[i] + nz * o;
+                                    double px = t.SX[s][i] + nx * o, pz = t.SZ[s][i] + nz * o;
                                     var g = Mesh(px, pz);
                                     probes++;
                                     if (g is not float gy) continue;   // a hole: open, which is fine anywhere
@@ -638,16 +642,19 @@ namespace UnturnedSim.Tests
                                     }
                                 }
                             }
-                            // 2. THE MOUTHS ARE OPEN: on each facade line and a cell either side of it, across the bore
+                            // 2. THE MOUTHS ARE OPEN: on each facade line and a cell either side of it, across both bores
                             for (int end = 0; end < 2; end++)
                             {
                                 int a = end == 0 ? 0 : m - 1, b = end == 0 ? 1 : m - 2;
                                 double dx = t.X[b] - t.X[a], dz = t.Z[b] - t.Z[a], sl = Math.Sqrt(dx * dx + dz * dz);
-                                double ux = dx / sl, uz = dz / sl, nx = -uz, nz = ux;   // u points INTO the tunnel
+                                double ux = dx / sl, uz = dz / sl;   // u points INTO the tunnel
+                                for (int s = 0; s < 2; s++)
                                 for (double inward = -0.5; inward <= 4.0; inward += 0.5)
                                     for (double o = -boreW + 1.0; o <= boreW - 1.0; o += 1.0)
                                     {
-                                        double px = t.X[a] + ux * inward + nx * o, pz = t.Z[a] + uz * inward + nz * o;
+                                        double tx = t.SX[s][b] - t.SX[s][a], tz = t.SZ[s][b] - t.SZ[s][a], tl = Math.Sqrt(tx * tx + tz * tz);
+                                        double nx = -tz / tl, nz = tx / tl;
+                                        double px = t.SX[s][a] + ux * inward + nx * o, pz = t.SZ[s][a] + uz * inward + nz * o;
                                         var g = Mesh(px, pz);
                                         mouthProbes++;
                                         // the approach's own bed is a floor, not a blockage: anything half a metre over it and under the crown is
@@ -671,6 +678,11 @@ namespace UnturnedSim.Tests
                             finally { InfiniteRoads.Tunnels = true; }
                         }
                     }
+            // and every height round them is a NUMBER: one -Infinity from the shells' outer edge once took out the whole
+            // collider of every region it was in, and nothing above noticed (the mesh probes skip nothing for it)
+            int heights = 0, nonFinite = 0;
+            foreach (var d in regions.Values) foreach (var hgt in d.Heights) { heights++; if (!float.IsFinite(hgt)) nonFinite++; }
+            Assert.That(nonFinite, Is.EqualTo(0), $"{nonFinite} of {heights} ground heights round the tunnels are not finite");
             TestContext.WriteLine($"{tunnels} tunnels, {shortest:0}-{longest:0} m: ground inside the bore at {inBore} of {probes} probes{inBoreWhere}; " +
                                   $"mouth shut at {mouthShut} of {mouthProbes}{shutWhere}; approach 10 m out within {worstApproach * 1000:0} mm of the bed; " +
                                   $"control (tunnels off): mid-tunnel ground {controlLift / Math.Max(1, controlN):0.00} m off the bed");
