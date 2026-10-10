@@ -284,9 +284,13 @@ namespace SDG.Unturned
 
             Wood(9342, 12);  // Firewood -- master: "stacks to 12 per 2x1". Split logs have no species, so unlike the
                              // logs below there is only ONE of them and a stack never splits three ways.
-            foreach (ushort log in new ushort[] { 37, 39, 41 }) Wood(log, 4);      // Birch/Maple/Pine Log   (2x1)
-            foreach (ushort plank in new ushort[] { 61, 62, 63 }) Wood(plank, 6);  // Maple/Birch/Pine Plank (1x2)
-            foreach (ushort stick in new ushort[] { 38, 40, 42 }) Wood(stick, 8);  // Birch/Maple/Pine Stick (1x1)
+            // ⚠ REDWOOD (9348/9350/9349) AND OAK (9351/9353/9352) BELONG IN THESE LISTS. I added the six items
+            // on 2026-10-10 and missed this: a new wood that is not here keeps the DEFAULT stack size, so
+            // Redwood Log stacked to 1 beside Birch Log's 4 -- same item, same 2x1 slot, different rules, and
+            // nothing anywhere errors. Found by following what else knew about {37,39,41}.
+            foreach (ushort log in new ushort[] { 37, 39, 41, 9348, 9351 }) Wood(log, 4);        // Log   (2x1)
+            foreach (ushort plank in new ushort[] { 61, 62, 63, 9350, 9353 }) Wood(plank, 6);    // Plank (1x2)
+            foreach (ushort stick in new ushort[] { 38, 40, 42, 9349, 9352 }) Wood(stick, 8);    // Stick (1x1)
         }
 
         // Real Unturned shotgun shells as stackable loose ammo (master: new ammo types, stack to 32 per slot). These items

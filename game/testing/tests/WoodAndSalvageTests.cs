@@ -62,6 +62,19 @@ namespace UnturnedGodot.Testing
                         a != null && Crafting.Resolve(a.guid) == id);
             }
 
+            // ⚠ A NEW WOOD MUST STACK LIKE THE OLD ONES. Held against BIRCH rather than a typed 4/6/8: the
+            // question is "does redwood behave like the species that already shipped", and a literal would
+            // still pass if someone retuned birch and left the new woods behind.
+            foreach (var (newId, like, what) in new (ushort, ushort, string)[]
+                     { (RedLog, BirchLog, "redwood log"), (OakLog, BirchLog, "oak log"),
+                       (RedPlank, 62, "redwood plank"), (OakPlank, 62, "oak plank"),
+                       (RedStick, 38, "redwood stick"), (OakStick, 38, "oak stick") })
+            {
+                var a = Assets.find(newId); var b = Assets.find(like);
+                T.Check($"{what} stacks like its birch counterpart ({a?.stackSize} vs {b?.stackSize})",
+                        a != null && b != null && a.stackSize == b.stackSize && a.stackSize > 1);
+            }
+
             // ---- THE LUMBER CHAIN: log -> 2 planks -> 2 sticks, species preserved --------------------------
             foreach (var (species, log, plank, stick) in new (string, ushort, ushort, ushort)[]
                      { ("redwood", RedLog, RedPlank, RedStick), ("oak", OakLog, OakPlank, OakStick) })
