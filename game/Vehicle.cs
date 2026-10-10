@@ -6078,11 +6078,11 @@ namespace UnturnedGodot
             foreach (var g in _glassNodes)
             {
                 if (!GodotObject.IsInstanceValid(g)) continue;
-                g.SetInstanceShaderParameter("covered", covered ? 1f : 0f);   // the DROP pass reads it per instance...
-                // ...and the RUNNER pass (next_pass) reads a plain uniform, because instance parameters are addressed by
-                // slot per shader and a next_pass shader has its own table: aimed at the first pass, they land somewhere
-                // else in the second. Read there as "covered", every runner switches off and looks like a dead effect.
-                if (g.MaterialOverride is ShaderMaterial gm && gm.NextPass is ShaderMaterial gr) gr.SetShaderParameter("covered", covered ? 1f : 0f);
+                // Drops AND runners read this one instance parameter now. It used to need a second setter: the runners
+                // were a next_pass shader with its OWN slot table, so an instance parameter aimed at the first pass
+                // landed somewhere else in the second, read as "covered", and switched every runner off -- a dead
+                // effect that looked like a bug in the runners. One shader, one slot table (GlassPane.RainGlassMat).
+                g.SetInstanceShaderParameter("covered", covered ? 1f : 0f);
             }
         }
 
