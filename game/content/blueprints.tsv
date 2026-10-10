@@ -47,3 +47,12 @@
 # WATER BOTTLE SILENCER (strawberry 2026-10-07: "crafted w a water bottle + tape. attaches to any weapon w the bottle
 # model on the tip of the muzzle. breaks after the first shot"). Bottled Water (14) + Tape (69) -> item 9400.
 9400	Craft			0	f81d68ebb2a8490dbe1545d432b9c099:1:1|8c25cf28c76a4634855f404c8972c0ae:1:1	56d6a5da2bbf4638bb313fa11a583399:1		4
+
+# REDWOOD AND OAK LUMBER (strawberry 2026-10-10: "work on adding redwood and oak sticks, planks and logs,
+# as well as the recipes for firewood etc"). Same chain, same times and the same saw as the three species
+# that already shipped -- a new species should not quietly craft faster than birch. Species is preserved:
+# a redwood log yields redwood planks.
+9350	Craft			0	9ccae28514714a48a289144c94458b9e:1:1|fd6bee4579884ee9ad0b729baf423ab1:1:0	e2d82c5c7a1646baa701d13837188893:2		8
+9349	Craft			0	e2d82c5c7a1646baa701d13837188893:1:1|fd6bee4579884ee9ad0b729baf423ab1:1:0	5ca23e5640c24090a673ddb9caba4bb6:2		4
+9353	Craft			0	ec593105ecab4548a0162c6752ca0447:1:1|fd6bee4579884ee9ad0b729baf423ab1:1:0	dcfd0a7be5ca46c7ae7430e8efdbd53c:2		8
+9352	Craft			0	dcfd0a7be5ca46c7ae7430e8efdbd53c:1:1|fd6bee4579884ee9ad0b729baf423ab1:1:0	b42ba61819724aa98cf912372f149d9d:2		4

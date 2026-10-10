@@ -68,6 +68,9 @@ namespace UnturnedGodot.Testing
             // the wood recipes (2026-09-06), so the assertion follows the requirement rather than being deleted.
             var all = BlueprintRegistry.Index();
             const string SawGuid = "fd6bee4579884ee9ad0b729baf423ab1";
+            // Every wood the saw chain covers. ⚠ Matching below is Contains, so no entry may be a substring of
+            // another ("Wood" would shadow "Redwood"); these five are mutually distinct.
+            string[] WoodSpecies = { "Birch", "Maple", "Pine", "Redwood", "Oak" };
 
             // ⚠⚠ SCOPED TO THE WOOD RECIPES, NOT "everything shipped". This read `shipped.Count == 6` and then
             // asserted saw-and-yield rules over EVERY recipe in the catalog -- correct while wood was the only
@@ -82,7 +85,12 @@ namespace UnturnedGodot.Testing
                 foreach (var ing in bp.Inputs)
                     if (string.Equals(ing.Guid, SawGuid, System.StringComparison.OrdinalIgnoreCase)) { shipped.Add(bp); break; }
 
-            T.Check($"the shipped catalog holds the six wood recipes ({shipped.Count} of {all.Count} total)", shipped.Count == 6);
+            // TWO ROWS PER SPECIES (log->plank, plank->stick). Derived from WoodSpecies rather than typed, so
+            // adding a sixth wood updates the expectation and the species sweep below together -- strawberry
+            // added redwood and oak on 2026-10-10 and a bare "== 6" is the kind of expectation that then gets
+            // bumped to 10 without anyone re-reading what it stands for.
+            T.Check($"the shipped catalog holds two recipes per wood ({shipped.Count} of {all.Count} total, "
+                  + $"{WoodSpecies.Length} species)", shipped.Count == WoodSpecies.Length * 2);
             // ...and the catalog is not EMPTY of everything else either, which the old count check used to cover
             // by accident. An empty catalog is a real failure mode -- it has happened here before.
             T.Check($"the catalog carries the rest of its recipes too ({all.Count})", all.Count >= shipped.Count);
@@ -112,7 +120,7 @@ namespace UnturnedGodot.Testing
             {
                 var outAsset = Assets.findByGuid(bp.Outputs[0].Guid);
                 string species = null;
-                foreach (var w in new[] { "Birch", "Maple", "Pine" })
+                foreach (var w in WoodSpecies)
                     if (outAsset != null && outAsset.itemName != null && outAsset.itemName.Contains(w)) species = w;
                 if (species == null) { crossSpecies++; continue; }
                 foreach (var ing in bp.Inputs)
