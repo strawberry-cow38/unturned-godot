@@ -10490,7 +10490,14 @@ namespace UnturnedGodot
         // Mud and DirtLoose have banks too and are deliberately NOT here -- no terrain layer and no prop in
         // any of the three maps is either, so a value nothing can produce would be a bank that stays dark
         // while looking wired.
-        public enum Surf { Concrete, Grass, Dirt, Metal, Wood, Sand, Water, Gravel, Snow, Ice, Rock }
+        // ⚠ APPEND ONLY (see the note above this enum). `Rails` is the railway TRACK BED -- ballast, sleepers and
+        // steel -- as a thing a ROAD vehicle can drive along (strawberry 2026-10-10: "...onroad, on rails"). It is
+        // appended rather than folded into Gravel because master listed it as its OWN handling case, and because a
+        // track bed is not gravel: it is firm underneath but the sleepers make it judder, which is a different pair
+        // of numbers (see Vehicle.GripFor / Vehicle.RollDragFor). Every Surf switch outside Vehicle has a `_ =>`
+        // default arm -- checked, not assumed -- so audio, dust and impact FX treat it as the concrete-ish default
+        // until somebody gives it banks of its own.
+        public enum Surf { Concrete, Grass, Dirt, Metal, Wood, Sand, Water, Gravel, Snow, Ice, Rock, Rails }
         public const string SurfMeta = "surf";
 
         // WALLBANG (strawberry 2026-08-21: "projectile hits surface, loses x velocity and damage, hits behind").

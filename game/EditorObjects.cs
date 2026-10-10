@@ -320,6 +320,11 @@ namespace UnturnedGodot
             if (shp != null)
             {
                 var body = new StaticBody3D { CollisionLayer = PickLayer | WorldLayerFor(mesh, mat), CollisionMask = 0 };
+                // WHAT IS THIS PROP MADE OF. The world loader has tagged this all along and this path never did,
+                // so an editor-placed prop read as unlabelled concrete to footsteps, impacts and -- since
+                // 2026-10-10 -- vehicle handling. That is why a car on a laid rail spline drove like it was on a
+                // motorway. Shared rule, so the two paths cannot drift again.
+                body.SetMeta(PlayerController.SurfMeta, (int)PropSurfaces.SurfForProp(name));
                 body.AddChild(new CollisionShape3D { Shape = shp });
                 SmartProps.TagBody(body, smart);   // look-ray/bullet -> device, so F works on it in playtest
                 // ⚠ A CONTAINER IS FOUND BY ANCESTRY, NOT BY A TAG. Every other device above is reachable

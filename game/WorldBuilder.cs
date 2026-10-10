@@ -1627,6 +1627,16 @@ namespace UnturnedGodot
                 // Road/rail connection points, if this prop has any (see PropConnectors). Registered from the
                 // SAME basis+position the mesh is placed with, so a rotated tile's snap points rotate with it.
                 PropConnectors.Register(name, new Transform3D(basis, gpos));
+                // UNDERGROWTH -> BushField (strawberry 2026-10-10: bushes slow a vehicle down). Registered on the
+                // IsWalkThrough branch deliberately: "has no collider" is exactly the set a vehicle cannot detect
+                // physically, so the one condition answers both questions and the two cannot drift apart. Hedges
+                // are in it and HayBale_* is not, which is already the right split for driving through.
+                if (IsWalkThrough(name) && !name.StartsWith("Grass_") && !name.StartsWith("Mushroom_"))
+                {   // ankle-height things do not slow a car; a hedge does
+                    float br = name.StartsWith("Hedge_") ? 1.7f : name.StartsWith("Crop_") || name.StartsWith("Cane_") ? 0.8f : 1.1f;
+                    BushField.NoteRadius(br);
+                    BushField.Add(gpos, br);
+                }
                 StaticBody3D destBody = null;
                 if (colliders && !IsWalkThrough(name))   // walkable collision: trimesh of the VISUAL mesh (trees collide on the trunk only; the separate leaf mesh has no collider, so you walk through foliage)
                 {
@@ -1681,7 +1691,7 @@ namespace UnturnedGodot
                         // The ternary survives as the fallback because it is right for exactly the props the
                         // table has no row for: the resources, which live in a different bundle.
                         body.SetMeta(PlayerController.SurfMeta,
-                                     (int)(PropSurfaces.For(name) ?? (fmesh != null ? PlayerController.Surf.Wood : PlayerController.Surf.Concrete)));
+                                     (int)PropSurfaces.SurfForProp(name, fmesh != null));   // same rule the editor path uses -- see PropSurfaces.SurfForProp
                         // Climbable: the player's forward probe resolves a hit collider back to the prop through
                         // this meta, and reads the ladder's facing off the BODY's basis (retail keys off the
                         // collider's transform the same way). 76 of these are already placed across the map.

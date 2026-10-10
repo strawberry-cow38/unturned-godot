@@ -274,6 +274,28 @@ namespace UnturnedGodot
 
         public static bool IsForageable(string resourceName) => ForageReward(resourceName) != 0;
 
+        /// <summary>Is this resource something a vehicle PLOUGHS THROUGH rather than hits? Trees and ore rocks
+        /// are solid and already have colliders; shrubs, briars and the berry bushes do not, and should drag.
+        /// Name-matched for the same reason WorldBuilder.IsWalkThrough is: the retail asset data has no field
+        /// that discriminates this (checked there -- the one that looked like it is false on all 1164 objects).</summary>
+        public static bool IsUndergrowth(string resourceName)
+        {
+            string n = (resourceName ?? "").ToLowerInvariant();
+            if (n.StartsWith("birch") || n.StartsWith("maple") || n.StartsWith("pine") || n.StartsWith("metal")) return false;
+            return n.Contains("bush") || n.Contains("brier") || n.Contains("briar") || n.Contains("shrub")
+                || n.Contains("berry") || n.Contains("fern") || n.Contains("sapling");
+        }
+
+        /// <summary>Ground footprint of one undergrowth instance, metres. A hedge-ish brier spreads wider than a
+        /// berry bush; everything unmatched takes the shrub figure.</summary>
+        public static float BushFootprint(string resourceName)
+        {
+            string n = (resourceName ?? "").ToLowerInvariant();
+            if (n.Contains("brier") || n.Contains("briar")) return 1.6f;
+            if (n.Contains("sapling")) return 0.9f;
+            return 1.1f;
+        }
+
         /// <summary>The forage bodies built for this field, in index order -- the server reads this to seed
         /// its own reward/reach table, so both sides agree about which index is a bush without either of
         /// them re-parsing the resource list.</summary>
@@ -316,6 +338,17 @@ namespace UnturnedGodot
                     recs.Add(rec);
                     _instances.Add(rec);
                 }
+                // UNDERGROWTH -> BushField, so a vehicle ploughing through it is slowed (strawberry 2026-10-10).
+                // Resource bushes are MultiMesh instances with no collider of any kind -- the berry bushes get a
+                // body only on ForagePlant.HitLayer, which the look ray alone tests -- so there is nothing for a
+                // vehicle to detect physically. Registered here, where the names and the transforms both are.
+                if (IsUndergrowth(name))
+                    foreach (var t in xf)
+                    {
+                        float r = BushFootprint(name) * Mathf.Max(0.2f, t.Basis.Scale.X);
+                        BushField.NoteRadius(r);
+                        BushField.Add(t.Origin, r);
+                    }
                 if (isTree)   // MultiMesh has no colliders -> add a trunk cylinder per tree so trees BLOCK bullets/movement (master), tagged Wood
                 {
                     int baseIdx = _instances.Count - xf.Count;   // recs[k] lives at _instances[baseIdx + k] -> the trunk carries its own index for SetAlive
@@ -581,6 +614,10 @@ namespace UnturnedGodot
                 Log.Print($"[resources] {name}: {xf.Count} x {parts} part(s)");
             }
             Log.Print($"[resources] {total} instances across {types} types (MultiMesh), {treeCols} tree trunk colliders");
+            // ...and how much undergrowth a vehicle can be slowed by. Printed because an EMPTY BushField drags
+            // nothing and is indistinguishable from a broken multiplier: if bushes ever stop registering, this
+            // line reads 0 and says so, rather than the effect quietly not existing.
+            Log.Print($"[bushfield] {BushField.Count} undergrowth instances registered (max footprint {BushField.MaxBushRadius:0.00} m)");
         }
 
         // ---------------------------------------------------------------------------------------------------

@@ -1084,19 +1084,33 @@ namespace UnturnedGodot
         const float TorqueFallLo = 1.25f;    // quadratic falloff BELOW the peak (gentle)
         const float TorqueFallHi = 1.875f;   // ...and ABOVE it (steeper -- holding a gear past peak costs you)
         const float TorqueFloor  = 0.35f;    // an engine still pulls off-peak; it does not stop
-        // UG_BUFF overrides this so the scale-invariance ACCEPTANCE TEST can drive the rescale from
-        // outside the build. A constant nobody can vary is a constant nobody can prove scale-invariant --
-        // and measured 2026-08-28, the drivetrain suite only passes in a narrow band around 2.0: the tank's
-        // coastdown climbs 3.84 / 4.39 / 4.64 across buff 1.3 / 2.0 / 2.5 against a fixed 4.0 limit, while
-        // at 1.3 the jeep instead fails "top speed clears the old hard cap". Two absolute thresholds
-        // failing in OPPOSITE directions. Vary this to see it.
+        // UG_BUFF overrides this so the scale-invariance ACCEPTANCE TEST can drive the rescale from outside
+        // the build. A constant nobody can vary is a constant nobody can prove scale-invariant.
+        //
+        // ⚠ THIS NOTE USED TO SAY the suite "only passes in a narrow band around 2.0", and that is NO LONGER
+        // TRUE -- it described the state before 2026-08-28, when the two offending thresholds were both
+        // rewritten to be buff-independent on the same day. Leaving it standing would have told the next
+        // person raising this number that they were about to break the suite, which is why it is corrected
+        // here rather than deleted: the coastdown check moved to a speed-band metric with a 7.0 limit
+        // (worst case, the tank, measured 5.51/5.79/5.94 across buff 1.3/2.0/2.5), and the "clears the old
+        // hard cap" check moved from a buff-dependent 1.25x to 1.05x with the equilibrium check carrying the
+        // strength at high buff. Both now hold across the whole measured range.
         static readonly float TopSpeedBuff = ParseBuff();
         static float ParseBuff()
         {
             var e = System.Environment.GetEnvironmentVariable("UG_BUFF");
             return (e != null && float.TryParse(e, System.Globalization.NumberStyles.Float,
-                    System.Globalization.CultureInfo.InvariantCulture, out var f) && f > 0f) ? f : 2.0f;
-        }     // strawberry: "a big thing is buffing top speeds", then 2026-08-24 "increase the cap for vehicle top speeds across the board" -- 1.6 -> 2.0
+                    System.Globalization.CultureInfo.InvariantCulture, out var f) && f > 0f) ? f : 2.5f;
+        }     // strawberry: "a big thing is buffing top speeds", 2026-08-24 "increase the cap for vehicle top
+              // speeds across the board" (1.6 -> 2.0), then 2026-10-10 "also buff every vehicle's top speed"
+              // (2.0 -> 2.5). 2.5 is the top of the range the drivetrain suite has actually been MEASURED
+              // across, not a guess at where it stops working -- going higher is fine by the thresholds but
+              // nobody has run it, so it should be measured rather than assumed.
+              //
+              // ⚠ This raises on-road top speed ~25%. OFF-ROAD speed moves the other way in the same change,
+              // because RollDragFor now makes grass and sand genuinely slow -- so a car is faster than before
+              // on tarmac and slower than before across a field. That is the point, but it means "top speed"
+              // is no longer one number per hull.
         const float GearStep     = 1.35f;    // rpm drop per shift -> the gear COUNT falls out of the spread
         // FIRST-GEAR PEAK FORCE vs the old flat force. Raised 1.5 -> 4.0 alongside the top-speed cap
         // (strawberry 2026-08-24: "rebalance gears and engine power to fit"), and it is the ACCELERATION knob
@@ -1173,11 +1187,86 @@ namespace UnturnedGodot
         /// which is how tyres actually differ -- an all-terrain is marginally better on gravel and the
         /// difference between stuck and not on sand.</summary>
         public const float OffRoadRecovery = 0.65f;
+        // ---- ROLLING DRAG BY SURFACE -- the OTHER half of "handling on different surfaces", and the half that
+        // was missing (strawberry 2026-10-10: "wire up different vehicle handling on different surfaces, ie
+        // offroad (grass), offroad (dirt, better than grass), onroad, on rails").
+        //
+        // Grip (above) was already wired and already correct: it sets how hard you can accelerate, brake and
+        // CORNER. But grip does nothing to a car going in a straight line below its traction limit, so a car
+        // crossing a meadow reached exactly the same top speed as one on the motorway -- which is the thing a
+        // player actually notices and the reason this read as "not wired" from the driver's seat.
+        //
+        // Rolling resistance is what differs. These are the real Crr ratios for a pneumatic tyre, normalised to
+        // asphalt (Crr ~0.015 = RollingCrr above): hardpack dirt ~0.025, short grass/field ~0.055, loose sand
+        // ~0.16, fresh snow ~0.035, gravel ~0.022. Measured values for real tyres, like the grip table -- the
+        // design choice is OffRoadRecovery, not these.
+        //
+        // ⚠⚠ ROLLING RESISTANCE ALONE IS NOT ENOUGH, and this is MEASURED, not reasoned. Scaling only _rollK
+        // moved a sedan's top speed from 36.9 m/s on road to 36.5 on dirt and 36.7 on RAILS -- a 1% spread with
+        // the ordering inverted, i.e. nothing. The cause is not the table: at 37 m/s the rolling term is ~7% of
+        // total resistance because aero (v^2) dominates, so tripling 7% buys ~2%. The first version of the
+        // surface test caught exactly this and refused to pass, which is the only reason it is not shipped.
+        //
+        // The honest fix is that ROUGH GROUND COSTS MORE THE FASTER YOU CROSS IT. Crossing a field at 40 m/s
+        // does not merely roll harder than at 5 -- every bump becomes an impact the suspension has to eat, and
+        // those losses grow with speed, which is why real off-road speed is limited by roughness and not by Crr.
+        // So the surface scales a SPEED-DEPENDENT term as well (see RoughGain), and the same per-surface number
+        // drives both halves: one table, so the two can never disagree about which ground is worse.
+        //
+        // _dragK itself stays pure aero and is still solved at BUILD time so equilibrium lands at _speedMax, and
+        // road stays 1.0 in both halves -- so nothing on tarmac changes by construction.
+        public const float RollRoad = 1.0f, RollDirt = 1.7f, RollGrass = 3.7f, RollSand = 10.5f;
+        // A railway is FIRM BUT RIBBED: a sleeper every 0.6 m is a continuous series of small impacts, which
+        // costs far more than its compacted ballast alone would suggest. Placed between dirt and grass, so the
+        // ordering is road < dirt < rails < grass < sand: a track bed is a usable ROUTE -- better than striking
+        // out across a field, worse than any road -- which is what a railway is to a driver. Paired with a grip
+        // near tarmac's, that makes rails handle unlike anything else in the table rather than being a reskin
+        // of gravel: it holds the line well and simply will not let you go fast.
+        public const float RollRails = 2.6f;
+        /// <summary>How much of the surface's resistance figure applies as ROUGHNESS -- a loss that grows with
+        /// v^2, like aero, because it is impacts rather than friction. 0.37 is a tuning constant and the only
+        /// invented number here: it is set so grass roughly doubles a car's speed-squared resistance, which puts
+        /// a sedan across a field at about 70% of its road top speed. The ORDERING is not tuned -- it comes from
+        /// the same RollDragFor table as the rolling term.</summary>
+        public const float RoughGain = 0.37f;
+        /// <summary>Rolling-drag multiplier for a surface AND a set of tyres, 1.0 on road. Static and pure for
+        /// the same reason GripFor is: a test can assert the table without standing a vehicle on terrain.
+        ///
+        /// Knobby tyres take back the SAME FRACTION of the loose-ground penalty they take back of the grip loss
+        /// (OffRoadRecovery), because it is the same physical story -- a tread that floats on soft ground both
+        /// holds better and sinks less. Sharing the constant keeps the two halves from drifting apart.</summary>
+        public static float RollDragFor(PlayerController.Surf surf, bool offRoad)
+        {
+            float k = surf switch
+            {
+                PlayerController.Surf.Dirt => RollDirt,
+                PlayerController.Surf.Grass => RollGrass,
+                PlayerController.Surf.Sand => RollSand,
+                PlayerController.Surf.Gravel => 1.45f,
+                PlayerController.Surf.Snow => 2.3f,
+                PlayerController.Surf.Rails => RollRails,
+                PlayerController.Surf.Rock => RollRoad,    // hard ground, same as tarmac (it matches GripFor)
+                PlayerController.Surf.Ice => RollRoad,     // ⚠ ICE IS NOT SPECIAL HERE EITHER -- see GripFor
+                _ => RollRoad,                             // concrete/metal/wood/water: the reference
+            };
+            // Recover toward 1.0 (road), the same direction and fraction GripFor recovers toward full grip.
+            return offRoad ? Mathf.Lerp(k, RollRoad, OffRoadRecovery) : k;
+        }
         const float SurfSampleSec = 0.1f;   // 1 splat texel is 1 m; at top speed that is ~2 m between samples, and a raycast per car per tick is what the 88-parked-car perf note exists about
         bool _offRoad;                      // spec: knobby tyres (see Spec.OffRoad)
         float _surfaceGrip = 1f, _surfSampleT;
+        float _surfaceRoll = 1f, _bushDrag = 1f;
+        /// <summary>Extra rolling drag from undergrowth this vehicle is currently ploughing through, 1.0 in the
+        /// open (BushField). Read by L1.</summary>
+        public float BushDrag => _bushDrag;
         /// <summary>Grip multiplier of the ground under this vehicle right now, 1.0 on road. Read by L1.</summary>
         public float SurfaceGrip => _surfaceGrip;
+        /// <summary>Rolling-drag multiplier of the ground under this vehicle right now, 1.0 on road. Read by L1.</summary>
+        public float SurfaceRollDrag => _surfaceRoll;
+        /// <summary>What the ground under this vehicle was last read as. Test/HUD seam -- the grip and drag
+        /// numbers above are derived from it, so a test that disagrees with the handling can say WHICH.</summary>
+        public PlayerController.Surf SurfaceUnder => _surfaceUnder;
+        PlayerController.Surf _surfaceUnder = PlayerController.Surf.Concrete;
         /// <summary>The grip factor for a surface AND a set of tyres. Static and pure so a test can assert the
         /// table without standing a vehicle on terrain.</summary>
         public static float GripFor(PlayerController.Surf surf, bool offRoad)
@@ -1200,6 +1289,11 @@ namespace UnturnedGodot
                 // for, and no terrain layer on the three shipped maps is ice anyway -- it arrives with a map
                 // that paints one, and should be decided then rather than smuggled in with an audio fix.
                 PlayerController.Surf.Ice => GripConcrete,
+                // RAILWAY TRACK BED. Firm -- ballast is compacted and the sleepers are solid -- so it grips
+                // close to road, and NOT like the loose gravel its surface dressing resembles. What makes a
+                // railway bad to drive on is not slip, it is the sleepers, and that is rolling drag's job
+                // (RollDragFor) rather than grip's. Splitting it that way is the point of having both.
+                PlayerController.Surf.Rails => 0.90f,
                 _ => GripConcrete,   // concrete/metal/wood/water: a hard or unlabelled floor is the reference
             };
             return offRoad ? Mathf.Lerp(k, 1f, OffRoadRecovery) : k;
@@ -1265,7 +1359,16 @@ namespace UnturnedGodot
             // last surface instead of snapping to 1.0: a car mid-jump has no ground to grip, and re-reading it
             // as tarmac would hand it full traction exactly where it has none.
             if (!PlayerController.TryFootSurfaceAt(this, GlobalPosition, GetRid(), out var surf, 0.2f, 2.5f)) return;
+            _surfaceUnder = surf;
             _surfaceGrip = GripFor(surf, _offRoad);
+            _surfaceRoll = RollDragFor(surf, _offRoad);
+            // ...and what we are ploughing THROUGH, on the same throttle and in the same place, because both
+            // answer "what is resisting this vehicle right now" and splitting them across two timers is how the
+            // two end up disagreeing about where the car is.
+            // Half-width off the hull box that every other hull-shaped question already uses, rather than a new
+            // per-spec dial: a quad slips between bushes a bus ploughs through, and that should fall out of how
+            // wide they are. The 0.9 floor covers a hull whose BoxSize never got authored (it reads 0).
+            _bushDrag = BushField.DragAt(GlobalPosition, Mathf.Max(0.9f, _hullSizeLocal.X * 0.5f));
             // LATERAL grip moves with it, or a sedan that cannot accelerate on grass still corners on it as if
             // it were railed. Written THROUGH ApplyTirePhysics rather than onto the wheels: WheelFrictionSlip
             // already has three other owners (a popped tyre, a retracted undercarriage, a car on a tow rope), and
@@ -2702,18 +2805,20 @@ namespace UnturnedGodot
         /// <summary>Test seam: the anti-roll extension reading for wheel i (probes assert the bar is armed).</summary>
         public float WheelExtensionForTest(int i) => _wNodes != null && (uint)i < (uint)_wNodes.Length && _wNodes[i] != null ? WheelExtension(_wNodes[i]) : -1f;
 
-        // Ground material under a wheel (raycast down from the wheel to read the collider's "surf" tag). Drives the
-        // per-wheel dust tint + gate. Untagged ground defaults to grass (PEI terrain).
+        // Ground material under a wheel. Drives the per-wheel dust tint + gate -- this is the COSMETIC probe;
+        // handling reads the body-centre one in UpdateSurfaceGrip.
+        //
+        // ⚠ IT USED TO MISS THE TERRAIN. The ray read only a collider's "surf" tag and fell back to Grass, but
+        // the terrain's splatmap surface is not a tag on its body -- it is a per-XZ lookup -- so on PEI EVERY
+        // wheel reported Grass and a car threw green dust while crossing a dirt track or a beach. The grip path
+        // never had this bug because it goes through TryFootSurfaceAt, which special-cases the terrain group;
+        // this path duplicated the rule and dropped that branch. Now it asks the same authority, so the dust a
+        // wheel kicks up and the grip it finds cannot disagree about what is under it.
         PlayerController.Surf WheelSurf(VehicleWheel3D w)
         {
-            var from = w.GlobalPosition;
-            var to = from + Vector3.Down * (w.WheelRadius + w.SuspensionTravel + 0.4f);
-            var q = PhysicsRayQueryParameters3D.Create(from, to, 1u << 0);
-            q.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
-            var hit = GetWorld3D().DirectSpaceState.IntersectRay(q);
-            if (hit.Count > 0 && hit["collider"].AsGodotObject() is Node n && n.HasMeta(PlayerController.SurfMeta))
-                return (PlayerController.Surf)(int)n.GetMeta(PlayerController.SurfMeta);
-            return PlayerController.Surf.Grass;
+            float span = w.WheelRadius + w.SuspensionTravel + 0.4f;
+            return PlayerController.TryFootSurfaceAt(this, w.GlobalPosition, GetRid(), out var surf, 0.05f, span)
+                 ? surf : PlayerController.Surf.Grass;
         }
 
         // source Bumper.OnTriggerEnter: the front bumper roadkills a character it drives into. Damage scales with impact
@@ -9791,7 +9896,17 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             {
                 var hvel = new Vector3(LinearVelocity.X, 0f, LinearVelocity.Z);
                 float hsp = hvel.Length();
-                if (hsp > 0.15f) ApplyCentralForce(-hvel / hsp * (_dragK * hsp * hsp + _rollK));
+                // ...and ROLLING RESISTANCE now knows what it is rolling ON (_surfaceRoll, 1.0 on road) and what
+                // it is dragging THROUGH (_bushDrag, 1.0 in the open). Both multiply the rolling term rather than
+                // the aero term, because both are contact/obstruction losses: they bite hardest at low speed,
+                // where aero drag is nothing, which is why a field bogs you down from a standing start rather
+                // than only shaving the top end.
+                // AERO (ground-independent) + ROUGHNESS (grows with speed, the surface's doing) + ROLLING
+                // (speed-independent contact loss, scaled by both the surface and whatever we are ploughing
+                // through). Splitting roughness out of aero rather than just scaling _dragK keeps _dragK meaning
+                // what its name and its build-time solve say it means.
+                float rough = 1f + RoughGain * (_surfaceRoll - 1f);
+                if (hsp > 0.15f) ApplyCentralForce(-hvel / hsp * (_dragK * rough * hsp * hsp + _rollK * _surfaceRoll * _bushDrag));
             }
             if (unattended && !Freeze && !Sleeping && !towed) Brake = _brakeForce * HandbrakeScale;   // parking brake: hold a rolling unattended car down until it settles (never brake a towed trailer). Also on `unattended` rather than `_parked`, so a car that has been rammed keeps its brake instead of free-rolling away forever
             // CREEP-SLEEP (census 2026-09-03: both firetrucks, a sedan and a hatchback crept at 0.4-1.1 m/s "parked"
