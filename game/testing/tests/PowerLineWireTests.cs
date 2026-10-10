@@ -420,6 +420,76 @@ namespace UnturnedGodot.Testing
                 for (int i = 0; i < 3; i++)
                     T.Check($"arm {i} is symmetric about the mast",
                             Mathf.Abs(clamp[i].X + clamp[5 - i].X) < 0.001f && Mathf.Abs(clamp[i].Z - clamp[5 - i].Z) < 0.001f);
+                // ---- THE DEAD-END GAP ACROSS A TOWER ------------------------------------------------------
+                // Master, twice: "arent connected to the insulators still, there needs to be a gap between
+                // where it connects and where the other one comes out of. measure." Each arm tip carries TWO
+                // insulators, at y = -s and +s; a span must land on the one FACING it, so a through-tower shows
+                // a gap of 2*s (times the placement scale) rather than one continuous wire.
+                {
+                    // ⚠ A RUN ALONG Z, NOT X. Upright(0) -- which is what the showcase places pylons with, and
+                    // what the fixture above uses -- maps the prop's local Y (its line axis, and so the axis the
+                    // insulator pair is split along) to world Z. The fixture spaces its two towers along X
+                    // instead, so their arms lie ALONG their own span and both insulators are equidistant from
+                    // either neighbour: the facing pick is genuinely degenerate there and reads a zero gap. That
+                    // is the fixture being turned the wrong way, not the split failing, so this builds its own
+                    // correctly-oriented run rather than quietly probing the mis-oriented one.
+                    var run = new PowerLineField();
+                    World.AddChild(run);
+                    int mA = run.AddPole(new Transform3D(scaled, new Vector3(0f, 0f, -130f)), PowerLineField.PylonMesh);
+                    int mB = run.AddPole(new Transform3D(scaled, Vector3.Zero), PowerLineField.PylonMesh);
+                    int mC = run.AddPole(new Transform3D(scaled, new Vector3(0f, 0f,  130f)), PowerLineField.PylonMesh);
+                    T.Check("a straight Z run strings both spans",
+                            run.Connect(mA, mB, out _) && run.Connect(mB, mC, out _));
+
+                    var west = run.PoleOrigin(mA);   // the two neighbours of the MIDDLE tower
+                    var east = run.PoleOrigin(mC);
+                    var fromWest = new Vector3[6];
+                    var fromEast = new Vector3[6];
+                    run.AnchorsWorld(mB, west, fromWest);
+                    run.AnchorsWorld(mB, east, fromEast);
+
+                    float k2 = PowerLineField.PylonScale;
+                    int wrong = 0; float minGap = Mathf.Inf, maxGap = 0f;
+                    for (int i = 0; i < 6; i++)
+                    {
+                        float want = 2f * PowerLineField.AnchorSplitFor(PowerLineField.PylonMesh, i) * k2;
+                        float got = fromWest[i].DistanceTo(fromEast[i]);
+                        if (Mathf.Abs(got - want) > 0.05f) wrong++;
+                        minGap = Mathf.Min(minGap, got); maxGap = Mathf.Max(maxGap, got);
+                    }
+                    T.Check($"every conductor has a two-sided gap of 2*split ({minGap:0.00}..{maxGap:0.00} m, "
+                          + $"{wrong} wrong)", wrong == 0);
+                    // ⭐ AND IT IS A REAL GAP, not a rounding wobble. 1.13 m is the smallest half-split at 1.6x.
+                    T.Check($"...wide enough to read as a gap ({minGap:0.00} m)", minGap > 3.5f);
+
+                    // ⚠⚠ THE BUG ITSELF: the old anchor was the MIDPOINT of the pair, touching neither
+                    // insulator. Both sides must now sit clear of it, or this is the same wire in the same
+                    // empty space with extra arithmetic.
+                    int atMid = 0;
+                    var midPair = new Vector3[6];
+                    run.AnchorsWorld(mB, midPair);           // the un-toward overload = the old midpoint
+                    for (int i = 0; i < 6; i++)
+                        if (fromWest[i].DistanceTo(midPair[i]) < 0.5f) atMid++;
+                    T.Check($"no conductor still attaches at the midpoint between the pair ({atMid} do)",
+                            atMid == 0);
+
+                    // ⚠ CONTROL: a roadside POLE is a SUSPENSION pole -- its insulators are all on one face, so
+                    // the wire runs straight through and must NOT gain a gap. Without this, a split applied to
+                    // every mesh would pass every check above.
+                    var pf = new PowerLineField();
+                    World.AddChild(pf);
+                    int q = pf.AddPole(PoleAt(Vector3.Zero, 0f), PowerLineField.PoleMesh);
+                    var pw = new Vector3[4]; var pe = new Vector3[4];
+                    pf.AnchorsWorld(q, west, pw);
+                    pf.AnchorsWorld(q, east, pe);
+                    float poleMax = 0f;
+                    for (int i = 0; i < 4; i++) poleMax = Mathf.Max(poleMax, pw[i].DistanceTo(pe[i]));
+                    T.Check($"CONTROL: a roadside pole stays continuous ({poleMax:0.000} m of split)",
+                            poleMax < 0.001f);
+                    pf.QueueFree();
+                    run.QueueFree();
+                }
+
                 py.QueueFree();
             }
 

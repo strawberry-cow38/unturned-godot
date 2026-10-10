@@ -104,7 +104,30 @@ namespace UnturnedGodot
         /// <summary>Which anchor set a pole of this mesh uses. ⚠ Keyed on the MESH, because a field can hold
         /// both kinds at once and a pylon wired with the pole's four anchors would hang its conductors in
         /// mid-air beside the lattice.</summary>
+        /// <summary>⭐⭐ A PYLON IS A DEAD-END TOWER: EVERY CONDUCTOR POINT IS A PAIR. Master, twice: "arent
+        /// connected to the insulators still, there needs to be a gap between where it connects and where the
+        /// other one comes out of. measure."
+        ///
+        /// I had measured the insulators in X and Z and never along Y -- the line axis -- so when I averaged a
+        /// cluster I silently collapsed a PAIR into the empty space between its two halves. There are TWELVE
+        /// insulators on this mesh, not six: each arm tip carries one at y=-s and one at y=+s, and the span
+        /// arriving terminates on the near one while the span leaving starts from the far one. My anchor sat at
+        /// the midpoint, touching neither, which is exactly the "floating between them" master kept reporting.
+        ///
+        /// Measured off palette cell (1,1), bottom-face centroid of each half: y = 1.178 at the low arm,
+        /// 1.131 at the middle, 1.139 at the top. So the gap across a tower is ~2.3 m before the 1.6x scale.
+        ///
+        /// ⚠ The ROADSIDE POLE is NOT like this -- its insulators all sit on one face (y -0.58..0.25, measured
+        /// the same way), because it is a SUSPENSION pole the conductor runs straight through. Zero here, so
+        /// the same code path leaves poles continuous and only pylons get the gap.</summary>
+        static readonly float[] PylonAnchorSplit = { 1.178f, 1.131f, 1.139f, 1.139f, 1.131f, 1.178f };
+
         public static Vector3[] AnchorsFor(string mesh) => mesh == PylonMesh ? PylonAnchorsLocal : AnchorsLocal;
+
+        /// <summary>How far along the line conductor `k` of this mesh is offset from the tower's centre. 0 for
+        /// anything that is not a pylon.</summary>
+        public static float AnchorSplitFor(string mesh, int k) =>
+            mesh == PylonMesh && k >= 0 && k < PylonAnchorSplit.Length ? PylonAnchorSplit[k] : 0f;
 
         /// <summary>A pole that can carry wires: its placement transform, and where it is for picking.</summary>
         public struct Pole
@@ -320,6 +343,29 @@ namespace UnturnedGodot
         public int AnchorCount(int pole) =>
             pole >= 0 && pole < _poles.Count ? AnchorsFor(_poles[pole].Mesh).Length : 0;
 
+        /// <summary>The conductor points of pole `i` in WORLD space, taking the insulator on the side FACING
+        /// `toward`. On a pylon that is what puts the gap across the tower: a span arriving from the west ends
+        /// on the west insulator, the span leaving east starts on the east one, and the two never meet.
+        ///
+        /// ⭐ The side is chosen by DISTANCE, not by the sign of the local offset, so it is correct whatever yaw
+        /// the tower was placed at -- including the axial yaw the O key derives, which has no inherent facing.</summary>
+        public void AnchorsWorld(int i, Vector3 toward, Vector3[] into)
+        {
+            var x = _poles[i].Xform;
+            var a = AnchorsFor(_poles[i].Mesh);
+            int n = Mathf.Min(into.Length, a.Length);
+            for (int k = 0; k < n; k++)
+            {
+                float s = AnchorSplitFor(_poles[i].Mesh, k);
+                if (s <= 0f) { into[k] = x * a[k]; continue; }
+                // ⚠ The split is along the prop's LOCAL Y (the line axis); Z is height. Transform both halves
+                // and keep whichever lands nearer the far tower.
+                var near = x * new Vector3(a[k].X, -s, a[k].Z);
+                var far  = x * new Vector3(a[k].X,  s, a[k].Z);
+                into[k] = near.DistanceSquaredTo(toward) <= far.DistanceSquaredTo(toward) ? near : far;
+            }
+        }
+
         public void AnchorsWorld(int i, Vector3[] into)
         {
             var x = _poles[i].Xform;
@@ -416,8 +462,8 @@ namespace UnturnedGodot
             for (int i = 0; i < _spans.Count; i++)
             {
                 var sp = _spans[i];
-                AnchorsWorld(sp.A, an);
-                AnchorsWorld(sp.B, bn);
+                AnchorsWorld(sp.A, _poles[sp.B].Origin, an);
+                AnchorsWorld(sp.B, _poles[sp.A].Origin, bn);
                 var st = new SurfaceTool();
                 st.Begin(Mesh.PrimitiveType.Triangles);
                 // ⚠ min of the two ENDS. A pylon carries six conductors and a roadside pole four, so a span
