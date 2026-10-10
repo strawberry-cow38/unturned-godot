@@ -17,7 +17,13 @@
 // The one real difference between the two former copies is preserved as the `scale` argument: the road-prop shader
 // multiplies its cell size by a splash_scale uniform, the terrain passed a bare 1.0.
 
-float h21(vec2 p){ p = fract(p * vec2(127.32, 311.7)); p += dot(p, p + 34.53); return fract(p.x * p.y); }
+// ⚠ WRAPPED FIRST. p * 311.7 has to keep a fractional part in a 32-bit float, and it stops having one past ~50,000:
+// the infinite world feeds this world XZ + ug_origin (up to 32 km) times up to 4.4 cells per metre, so every cell
+// hashed to the same "random" value and the rings fell into straight rows (strawberry 2026-10-10: "the ripples ... are
+// all in a straight line"). Cell ids are integers, so mod 256 is exact for them and the field just repeats every 256
+// cells (58-160 m, with two octaves of different periods and a re-roll every cycle on top); anything under 256 hashes
+// exactly as it always did.
+float h21(vec2 p){ p = mod(p, 256.0); p = fract(p * vec2(127.32, 311.7)); p += dot(p, p + 34.53); return fract(p.x * p.y); }
 
 // HOW FAR THE RAIN LEANS, as ground-plane metres travelled per metre of fall (so length() is tan of the tilt
 // from vertical, and the direction is the way the wind is driving it). RainSystem3D.PushWindDrift sets this
