@@ -422,7 +422,7 @@ namespace UnturnedGodot
                     rm.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, ra);
                     if (r.Road[k] == null)
                     {
-                        r.Road[k] = new MeshInstance3D { Name = k == RaisedSlot ? "Road_Raised" : k == CutSlot ? "Road_Cut" : "Road_" + (RoadKind)k, MaterialOverride = RoadMat(k), CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
+                        r.Road[k] = new MeshInstance3D { Name = k == RaisedSlot ? "Road_Raised" : k == CutSlot ? "Road_Cut" : k == RampSlot ? "Road_Ramp" : "Road_" + (RoadKind)k, MaterialOverride = RoadMat(k), CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
                         r.Node.AddChild(r.Road[k]);
                     }
                     r.Road[k].Mesh = rm;
@@ -602,22 +602,25 @@ void fragment() {
         static readonly float[] RoadTexMetres = { 128f / 4f, 128f / 4f, 256f / 8f, 64f / 8f };
         /// <summary>Half-width of one drawn surface: a highway is TWO of these, one per carriageway.</summary>
         static float RibbonHalf(RoadKind k) => k == RoadKind.Highway ? InfiniteRoads.HighwayLaneHalf : InfiniteRoads.PavedHalf(k);
+        /// <summary>On/off ramps: road_6 (two lanes, dashed white -- road_8's layout, 256 px over Roads.dat's 8).</summary>
+        const string RampTex = "road_6";
+        const float RampTexMetres = 256f / 8f;
         /// <summary>UG_INF_MARKS=1: highway pieces on a raised stretch (bridge candidate) draw magenta and on a deep cut
         /// (tunnel candidate) cyan, each from its own slot, so the marking can be checked by eye. Off, they are
         /// ordinary highway.</summary>
         public static bool ShowMarks = System.Environment.GetEnvironmentVariable("UG_INF_MARKS") == "1";
-        const int RoadSlots = 6, RaisedSlot = 4, CutSlot = 5;
+        const int RoadSlots = 7, RaisedSlot = 4, CutSlot = 5, RampSlot = 6;
         static readonly Material[] _roadMats = new Material[RoadSlots];
         static Material RoadMat(int slot)
         {
             if (_roadMats[slot] != null) return _roadMats[slot];
-            var k = slot >= RaisedSlot ? RoadKind.Highway : (RoadKind)slot;
+            var k = slot == RampSlot ? RoadKind.Small : slot >= RaisedSlot ? RoadKind.Highway : (RoadKind)slot;
             var img = new Image();
-            string p = ProjectSettings.GlobalizePath($"res://content/roads/{RoadTex[(int)k]}.png");
+            string p = ProjectSettings.GlobalizePath($"res://content/roads/{(slot == RampSlot ? RampTex : RoadTex[(int)k])}.png");
             bool ok = System.IO.File.Exists(p) && ContentProvider.LoadOk(img, p);
             if (ok) img.GenerateMipmaps();
             Material mat;
-            if (slot >= RaisedSlot)
+            if (slot == RaisedSlot || slot == CutSlot)
                 mat = new StandardMaterial3D
                 {
                     AlbedoTexture = ok ? ImageTexture.CreateFromImage(img) : null, AlbedoColor = slot == RaisedSlot ? new Color(1f, 0.25f, 1f) : new Color(0.1f, 0.9f, 1f),
@@ -1473,12 +1476,14 @@ void fragment() {
                 }
                 foreach (var rp in d.Roads ?? new List<RoadPiece>())
                 {
-                    int kind = rp.Kind, slot = !ShowMarks ? kind : rp.Raised ? RaisedSlot : rp.Cut ? CutSlot : kind;
+                    // a RAMP wears road_6, the two-lane road with a dashed WHITE divider (strawberry 2026-10-10: "its a 2
+                    // lane white dotted one"); its slab is a small road's, which road_8 -- the same road, yellow -- dresses
+                    int kind = rp.Kind, slot = rp.Ramp ? RampSlot : !ShowMarks ? kind : rp.Raised ? RaisedSlot : rp.Cut ? CutSlot : kind;
                     lists[slot].V ??= new List<Vector3>(); lists[slot].N ??= new List<Vector3>(); lists[slot].UV ??= new List<Vector2>(); lists[slot].I ??= new List<int>();
                     var RV = lists[slot].V; var RN = lists[slot].N; var RUV = lists[slot].UV; var RI = lists[slot].I;
                     var col = soup?[kind == (int)RoadKind.Trail ? 1 : 0];
                     var rk = (RoadKind)kind;
-                    float hw = RibbonHalf(rk), lift = InfiniteRoads.Lift(rk), texM = RoadTexMetres[kind], bev = 2f * InfiniteRoads.Thickness(rk);
+                    float hw = RibbonHalf(rk), lift = InfiniteRoads.Lift(rk), texM = rp.Ramp ? RampTexMetres : RoadTexMetres[kind], bev = 2f * InfiniteRoads.Thickness(rk);
                     // under a tunnel the ground mesh is the HILL: never lift the slab onto it
                     bool inTunnel = rp.InTunnel;
                     float Y(float lx, float lz, float h) => inTunnel ? InfiniteRoads.SurfaceY(rk, h) :

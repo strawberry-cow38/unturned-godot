@@ -677,7 +677,8 @@ namespace SDG.Unturned
         // starts INSIDE its carriageway at the carriageway's profile, its outer edge on the carriageway's -- the way a
         // branch starts on its main -- RampReach along the highway from the crossing, leaves it along the highway,
         // swings out in a gentle S and meets the main square-on, RampMeet along the main from the crossing, at the
-        // main's profile there. Small-road surface (the road kit has no one-way ramp), no power line.
+        // main's profile there. A small road's slab drawn in road_6, two lanes with a dashed WHITE divider (strawberry:
+        // "use the road 1 (white dotted) for em", "its a 2 lane white dotted one") -- RoadPiece.Ramp; no power line.
         public const double RampReach = 260;   // along the highway, from the crossing to where a ramp leaves it
         public const double RampMeet = 90;     // along the main, from the crossing to where a ramp joins it
         const int RampCtrl = 12;
@@ -1748,6 +1749,7 @@ namespace SDG.Unturned
                             InTunnel = InTunnel(e, k, (ta + tb) * 0.5),
                             Cut = offset != 0.0 && e.CutSeg != null && e.CutSeg[offset > 0 ? 1 : 0][k],
                             OpenStart = k == 0 && ta == 0, OpenEnd = k == n - 1 && tb == 1,
+                            Ramp = e.Ramp,
                         });
                     }
                     }

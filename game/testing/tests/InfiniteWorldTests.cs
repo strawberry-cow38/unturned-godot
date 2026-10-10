@@ -553,6 +553,31 @@ namespace UnturnedGodot.Testing
                     ramps.Count >= 2 && rampsOn == ramps.Count && rampWorst < 0.03f);
                 if (wantOver)
                 {
+                    // ...drawn in road_6, two lanes with a dashed WHITE divider (strawberry: "its a 2 lane white dotted
+                    // one"): a ramp surface whose bounds hold each ramp's middle, wearing a texture whose divider column
+                    // (123 of 256) is white on a dash and plain asphalt off it -- road_8, the small roads', is YELLOW there
+                    int held = 0; string tex = "no Road_Ramp surface";
+                    var surfaces = new List<MeshInstance3D>();
+                    foreach (var rn in S.GetChildren())
+                        if (rn is Node3D r3 && r3.Name.ToString().StartsWith("Region_"))
+                            foreach (var c in r3.GetChildren()) if (c is MeshInstance3D mi && mi.Name == "Road_Ramp" && mi.Mesh != null) surfaces.Add(mi);
+                    foreach (var r in ramps)
+                    {
+                        var rm = r[r.Length / 2]; var at = S.ToLocal(rm.x, rm.h, rm.z);
+                        foreach (var mi in surfaces) if (mi.GlobalTransform * mi.GetAabb().Grow(1f) is Aabb box && box.HasPoint(at)) { held++; break; }
+                    }
+                    if (surfaces.Count > 0 && surfaces[0].MaterialOverride is ShaderMaterial sm && sm.GetShaderParameter("albedo_tex").As<Texture2D>() is Texture2D t2 && t2.GetImage() is Image img)
+                    {
+                        Color dash = img.GetPixel(123, 20), off = img.GetPixel(123, 250), lane = img.GetPixel(60, 20);
+                        tex = $"divider on a dash {dash.R:0.00}/{dash.G:0.00}/{dash.B:0.00}, off a dash {off.R:0.00}/{off.G:0.00}/{off.B:0.00}, lane {lane.R:0.00}/{lane.G:0.00}/{lane.B:0.00}";
+                        bool white = dash.B > 0.6f && dash.R > 0.6f && Mathf.Abs(dash.R - dash.B) < 0.15f, dashed = off.R < dash.R - 0.25f;
+                        if (!(white && dashed)) tex = "NOT white-dashed: " + tex;
+                    }
+                    T.Check($"{kind}: the ramps are drawn in road_6: {held} of {ramps.Count} ramp middles inside a Road_Ramp surface ({surfaces.Count} in range); {tex}",
+                        held == ramps.Count && surfaces.Count > 0 && tex.StartsWith("divider"));
+                }
+                if (wantOver)
+                {
                     // the main's deck is WIDENED to its asphalt (x DeckScale): its parapet stands 9.2-9.8 m out, where the
                     // unwidened deck's ends at 8.5 -- a drop there hits the parapet's top, not the highway 9.5 m below
                     double px = up.X + hx * 9.5, pz = up.Z + hz * 9.5;

@@ -93,6 +93,10 @@ namespace SDG.Unturned
         public bool InTunnel;
         /// <summary>A highway piece on a deep CUT stretch: a tunnel candidate.</summary>
         public bool Cut;
+        /// <summary>A piece of an on/off ramp (InfiniteRoads.Line.Ramp): a small road's slab in road_6, two lanes with a
+        /// dashed white divider (strawberry 2026-10-10: "use the road 1 (white dotted) for em", "its a 2 lane white
+        /// dotted one").</summary>
+        public bool Ramp;
     }
 
     /// <summary>One piece of a bridge (InfiniteRoads.BridgesIn), absolute metres. Kind 0 = a deck unit centred
