@@ -158,6 +158,7 @@ namespace UnturnedGodot
             _catalog.Insert(4, HighwaySignName); // overhead highway sign (two editable legends)
             _catalog.Insert(5, HighwayGantryName); // full-width gantry (four editable legends)
             _catalog.Insert(6, LaneSignName);      // lane-selectable gantry (a board per chosen lane)
+            _catalog.Insert(7, PylonName);         // lattice transmission pylon, placed oversized
             LoadBakedBuildings();
         }
 
@@ -290,6 +291,7 @@ namespace UnturnedGodot
             if (name == HighwaySignName) return PlaceHighwaySign(HighwaySignMesh, pos, rot);
             if (name == HighwayGantryName) return PlaceHighwaySign(HighwayGantryMesh, pos, rot);
             if (name == LaneSignName) return PlaceLaneSigns(pos, rot);
+            if (name == PylonName) return PlacePylon(pos, rot);
             var mesh = MeshFor(name);
             if (mesh == null) return null;
             var root = new Node3D { Transform = new Transform3D(rot, pos) };
@@ -1311,6 +1313,19 @@ namespace UnturnedGodot
                 n++;
             }
             if (n > 0) Log.Print($"[editor] loaded {n} highway signs");
+        }
+
+        /// <summary>The lattice pylon, placed at PowerLineField.PylonScale. ⚠ A catalog entry rather than a
+        /// baked-bigger mesh: the scale rides in the placement basis, so AnchorsWorld carries the pole's own
+        /// transform through the local anchors and the conductor points scale with it for free. The raw
+        /// Power_Line_1 stays in the palette at native size for anyone who wants it.</summary>
+        public const string PylonName = "⚡ Pylon";
+
+        Node3D PlacePylon(Vector3 pos, Basis rot)
+        {
+            float k = PowerLineField.PylonScale;
+            // uniform, and written as COLUMNS so it reads the same as every other local scale in this file
+            return Place(PowerLineField.PylonMesh, pos, new Basis(rot.X * k, rot.Y * k, rot.Z * k));
         }
 
         // ---- LANE-SELECTABLE OVERHEAD SIGNS -----------------------------------------------------------------

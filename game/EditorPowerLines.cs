@@ -55,11 +55,17 @@ namespace UnturnedGodot
         /// <summary>The pole set as it stands right now: the map's, plus anything placed since. Rebuilt on every
         /// activation rather than cached, because the object editor can add and delete poles while this tool is
         /// closed and a stale list is indistinguishable from the tool not working.</summary>
-        IEnumerable<Transform3D> AllPoles()
+        /// <summary>⚠ The MESH travels with each transform now, because the field holds two kinds. A pylon
+        /// handed over as a plain pole would be wired on the roadside pole's four anchors and hang its
+        /// conductors in mid-air beside the lattice.</summary>
+        IEnumerable<(Transform3D Xform, string Mesh)> AllPoles()
         {
-            foreach (var x in _mapPoles) yield return x;
+            foreach (var x in _mapPoles) yield return (x, PowerLineField.PoleMesh);
             if (_objects != null)
-                foreach (var x in _objects.PlacedOf(PowerLineField.PoleMesh)) yield return x;
+            {
+                foreach (var x in _objects.PlacedOf(PowerLineField.PoleMesh)) yield return (x, PowerLineField.PoleMesh);
+                foreach (var x in _objects.PlacedOf(PowerLineField.PylonMesh)) yield return (x, PowerLineField.PylonMesh);
+            }
         }
 
         public string ModeText => _on
@@ -152,12 +158,19 @@ namespace UnturnedGodot
             {
                 SnapUndo("face poles at their wires");
                 int turned = 0, left = 0;
+                // ⚠ BOTH KINDS, in the same order AllPoles yields them, or the yaws land on the wrong poles.
                 var nodes = new List<Node3D>(_objects.PlacedOfNodes(PowerLineField.PoleMesh));
+                nodes.AddRange(_objects.PlacedOfNodes(PowerLineField.PylonMesh));
                 for (int i = 0; i < nodes.Count && i < _field.PoleCount; i++)
                 {
                     float yaw = _field.SuggestedYawDeg(i, out bool ok);
                     if (!ok) { left++; continue; }   // a symmetric cross has no best answer -- leave it alone
-                    nodes[i].Transform = new Transform3D(EditorObjects.Upright(yaw), nodes[i].Position);
+                    // ⚠ PRESERVE THE SCALE. A pylon is placed at PylonScale through its basis, so rebuilding
+                    // the transform from Upright alone would silently shrink it back to native on the first
+                    // alignment -- and take its conductor anchors in with it.
+                    float keep = nodes[i].Transform.Basis.Scale.X;
+                    var b = EditorObjects.Upright(yaw);
+                    nodes[i].Transform = new Transform3D(new Basis(b.X * keep, b.Y * keep, b.Z * keep), nodes[i].Position);
                     turned++;
                 }
                 _field.RefreshPoles(AllPoles(), out _);

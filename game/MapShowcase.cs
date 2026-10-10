@@ -48,6 +48,15 @@ namespace UnturnedGodot
             public Node3D Root;
         }
 
+        /// <summary>Conductors actually strung per span -- six between pylons, four where a pylon meets a
+        /// roadside pole. Reported because "3 spans" would read the same if every one strung four.</summary>
+        static List<string> Conductors(PowerLineField f)
+        {
+            var o = new List<string>();
+            foreach (var sp in f.Spans) o.Add(Mathf.Min(f.AnchorCount(sp.A), f.AnchorCount(sp.B)).ToString());
+            return o;
+        }
+
         /// <summary>⭐ THE TABLE. One entry per mapmaker tool.
         ///
         /// ⭐ NEWEST TOOL FIRST. Station 1 is where both the opening camera and the player spawn land, so whatever
@@ -56,6 +65,38 @@ namespace UnturnedGodot
         /// one at the top of this list and that is handled.</summary>
         public static List<Station> Stations() => new()
         {
+            new Station("PYLONS", "Lattice transmission towers \u2014 Shift+P, click pole to pole to string them", c =>
+            {
+                // ⭐ A RUN OF PYLONS AND A POLE, so the two kinds are side by side at the same camera: the
+                // pylon is 31 m natively and placed at x1.6, the roadside pole is 9 m. Master asked for it
+                // "decently bigger", and the comparison is the only way to judge that.
+                //
+                // ⚠ The last span is pylon-to-POLE on purpose: a pylon carries six conductors and a pole
+                // four, so that span strings four. If it ever strings six, two of them run to nothing.
+                if (c.Objects == null || c.PowerLines == null) return;
+                float g = c.Terr != null ? c.Terr.SampleHeight(c.Origin.X, c.Origin.Z) : c.Origin.Y;
+                var placed = new List<Transform3D>();
+                for (int i = 0; i < 3; i++)
+                {
+                    var at = new Vector3(c.Origin.X - 55f + i * 46f, g, c.Origin.Z);
+                    if (c.Objects.Place(EditorObjects.PylonName, at, EditorObjects.Upright(90f)) == null) continue;
+                }
+                c.Objects.Place(PowerLineField.PoleMesh, new Vector3(c.Origin.X + 72f, g, c.Origin.Z),
+                                EditorObjects.Upright(90f));
+
+                var all = new List<(Transform3D, string)>();
+                foreach (var x in c.Objects.PlacedOf(PowerLineField.PylonMesh)) all.Add((x, PowerLineField.PylonMesh));
+                foreach (var x in c.Objects.PlacedOf(PowerLineField.PoleMesh)) all.Add((x, PowerLineField.PoleMesh));
+                c.PowerLines.RefreshPoles(all, out _);
+                int strung = 0;
+                for (int i = 1; i < c.PowerLines.PoleCount; i++)
+                    if (c.PowerLines.Connect(i - 1, i, out _)) strung++;
+                c.PowerLines.Rebuild();
+                Log.Print($"[showcase] pylons: {c.PowerLines.PoleCount} pole(s), {strung} span(s), "
+                        + $"{c.PowerLines.WireNodeCount} wire node(s); conductors per span = "
+                        + string.Join("/", Conductors(c.PowerLines)));
+            }),
+
             new Station("LANE SIGNS", "Place over a road \u2014 tick which lanes get a board, type each legend", c =>
             {
                 // ⭐ OVER A REAL Highway_1, because the whole point is that the lanes come off the ROAD: the

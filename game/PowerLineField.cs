@@ -37,6 +37,21 @@ namespace UnturnedGodot
         /// <summary>The prop these anchors were measured from. Anything else has no wire points.</summary>
         public const string PoleMesh = "Power_Line_0";
 
+        /// <summary>The LATTICE PYLON. Master: "get the pylon model and make it decently bigger and hook it
+        /// up with wires between them like the existing power lines." Retail files it under
+        /// objects/LARGE/utilities where the roadside pole is medium/traffic, and it ships a skybox.prefab --
+        /// the thing big landmarks get. 31 m and 1944 triangles against the pole's 9 m and 166.</summary>
+        public const string PylonMesh = "Power_Line_1";
+
+        /// <summary>⭐ "decently bigger": the pylon stands 31 m natively, which already dwarfs the 9 m pole.
+        /// x1.6 puts it near 50 m -- the height of a real large transmission tower, and unmistakably a
+        /// different class of structure from the roadside poles rather than just a taller one.
+        ///
+        /// ⚠ Applied as a basis SCALE at placement, not baked into the mesh: AnchorsWorld multiplies the
+        /// pole's own transform through the local anchors, so the wire attachment points scale with it for
+        /// free, and sx/sy/sz round-trip through the placements format.</summary>
+        public const float PylonScale = 1.6f;
+
         /// <summary>The four grey pads, in the loaded mesh's local frame (raw OBJ -- see the note above).
         /// Order is deliberate and load-bearing: a span joins anchor i to anchor i, so two poles facing OPPOSITE
         /// ways still pair outer-to-outer and inner-to-inner rather than crossing the wires over.</summary>
@@ -55,10 +70,37 @@ namespace UnturnedGodot
             new Vector3(-1.658f, -0.331f, 6.612f),   // lower crossarm, outer
         };
 
+        /// <summary>The PYLON's six conductor points, measured off its own mesh rather than guessed from the
+        /// pole's. Found the way the pole's were: the darkest palette grey is the conductor material, and
+        /// away from the mast it clusters at the three crossarms' tips -- lateral reach 4.85 m at Z 13.5,
+        /// 6.19 m at Z 19.3 (the widest arm) and 4.39 m at Z 25.1.
+        ///
+        /// ⚠ EACH CLUSTER COMES IN A PAIR, the insulator's top and bottom, and these are the BOTTOMS. Same
+        /// call master made on the pole ("the lower wire set should connect a lil lower"): a conductor sits
+        /// in the groove at the foot of a suspension insulator, not at its centroid.
+        ///
+        /// ⭐ ORDER IS MIRROR-SYMMETRIC, index i against n-1-i, exactly as the pole's four are -- so a pylon
+        /// placed facing the other way still pairs outer-to-outer rather than crossing its conductors over.</summary>
+        public static readonly Vector3[] PylonAnchorsLocal =
+        {
+            new Vector3( 4.85f, 0f, 13.47f),   // lower crossarm, right
+            new Vector3( 6.19f, 0f, 19.31f),   // middle crossarm (widest), right
+            new Vector3( 4.39f, 0f, 25.13f),   // top crossarm, right
+            new Vector3(-4.39f, 0f, 25.13f),   // top crossarm, left
+            new Vector3(-6.19f, 0f, 19.31f),   // middle crossarm, left
+            new Vector3(-4.85f, 0f, 13.47f),   // lower crossarm, left
+        };
+
+        /// <summary>Which anchor set a pole of this mesh uses. ⚠ Keyed on the MESH, because a field can hold
+        /// both kinds at once and a pylon wired with the pole's four anchors would hang its conductors in
+        /// mid-air beside the lattice.</summary>
+        public static Vector3[] AnchorsFor(string mesh) => mesh == PylonMesh ? PylonAnchorsLocal : AnchorsLocal;
+
         /// <summary>A pole that can carry wires: its placement transform, and where it is for picking.</summary>
         public struct Pole
         {
             public Transform3D Xform;
+            public string Mesh;                       // null = the roadside pole, for callers that predate pylons
             public Vector3 Origin => Xform.Origin;
         }
 
@@ -188,9 +230,11 @@ namespace UnturnedGodot
 
         /// <summary>Register a pole. Called by WorldBuilder as it places props, and by the editor when one is
         /// placed or moved, so the two paths cannot disagree about which poles exist.</summary>
-        public int AddPole(Transform3D xform)
+        public int AddPole(Transform3D xform) => AddPole(xform, PoleMesh);
+
+        public int AddPole(Transform3D xform, string mesh)
         {
-            _poles.Add(new Pole { Xform = xform });
+            _poles.Add(new Pole { Xform = xform, Mesh = mesh });
             return _poles.Count - 1;
         }
 
@@ -206,11 +250,20 @@ namespace UnturnedGodot
         /// pointing at whatever now occupies that index.</summary>
         public int RefreshPoles(IEnumerable<Transform3D> poles, out int dropped)
         {
+            var tagged = new List<(Transform3D, string)>();
+            foreach (var x in poles) tagged.Add((x, PoleMesh));
+            return RefreshPoles(tagged, out dropped);
+        }
+
+        /// <summary>⭐ The MESH travels with the transform. A field can hold both kinds at once, and a pylon
+        /// rebuilt as a plain pole would string four conductors into thin air beside its lattice.</summary>
+        public int RefreshPoles(IEnumerable<(Transform3D Xform, string Mesh)> poles, out int dropped)
+        {
             var keep = new List<(Vector3 A, Vector3 B)>(_spans.Count);
             foreach (var s in _spans) keep.Add((_poles[s.A].Origin, _poles[s.B].Origin));
 
             _poles.Clear(); _spans.Clear();
-            foreach (var x in poles) _poles.Add(new Pole { Xform = x });
+            foreach (var (x, m) in poles) _poles.Add(new Pole { Xform = x, Mesh = m });
 
             dropped = 0;
             foreach (var (a, b) in keep)
@@ -222,10 +275,16 @@ namespace UnturnedGodot
         }
 
         /// <summary>The four wire points of pole `i`, in WORLD space.</summary>
+        /// <summary>How many conductors this pole carries: four on a roadside pole, six on a pylon.</summary>
+        public int AnchorCount(int pole) =>
+            pole >= 0 && pole < _poles.Count ? AnchorsFor(_poles[pole].Mesh).Length : 0;
+
         public void AnchorsWorld(int i, Vector3[] into)
         {
             var x = _poles[i].Xform;
-            for (int k = 0; k < 4; k++) into[k] = x * AnchorsLocal[k];
+            var a = AnchorsFor(_poles[i].Mesh);
+            int n = Mathf.Min(into.Length, a.Length);
+            for (int k = 0; k < n; k++) into[k] = x * a[k];
         }
 
         /// <summary>Join two poles. Returns false (and changes nothing) if they are the same pole, already
@@ -302,8 +361,10 @@ namespace UnturnedGodot
             _wireNodes.Clear();
             if (_spans.Count == 0) return;
 
-            var an = new Vector3[4];
-            var bn = new Vector3[4];
+            // sized for the widest pole kind; each span strings only as many as BOTH its ends carry.
+            int widest = Mathf.Max(AnchorsLocal.Length, PylonAnchorsLocal.Length);
+            var an = new Vector3[widest];
+            var bn = new Vector3[widest];
             for (int i = 0; i < _spans.Count; i++)
             {
                 var sp = _spans[i];
@@ -311,7 +372,11 @@ namespace UnturnedGodot
                 AnchorsWorld(sp.B, bn);
                 var st = new SurfaceTool();
                 st.Begin(Mesh.PrimitiveType.Triangles);
-                for (int w = 0; w < 4; w++) AddWire(st, an[w], bn[w]);
+                // ⚠ min of the two ENDS. A pylon carries six conductors and a roadside pole four, so a span
+                // between the two kinds strings four -- stringing six would run the pylon's outer pair to
+                // nothing at the pole end.
+                int wires = Mathf.Min(AnchorCount(sp.A), AnchorCount(sp.B));
+                for (int w = 0; w < wires; w++) AddWire(st, an[w], bn[w]);
                 st.GenerateNormals();
 
                 // ⭐ VISIBLE WHILE EITHER POLE IS. A node culls on its CENTRE, so a span whose range were

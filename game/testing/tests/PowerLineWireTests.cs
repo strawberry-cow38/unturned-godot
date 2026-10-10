@@ -317,6 +317,80 @@ namespace UnturnedGodot.Testing
                 j.QueueFree(); j2.QueueFree();
             }
 
+
+            // ---- ⭐⭐ THE LATTICE PYLON. Master: "get the pylon model and make it decently bigger and hook
+            // it up with wires between them like the existing power lines."
+            {
+                var pm = ContentProvider.ParseObj($"res://content/objects/{PowerLineField.PylonMesh}.obj");
+                T.Check("the pylon mesh is in content", pm != null && pm.GetSurfaceCount() > 0);
+                if (pm != null)
+                {
+                    var box = pm.GetAabb();
+                    T.Check($"...and it is the BIG one: {box.Size.Z:0.#} m tall native against the pole's 9 m",
+                            box.Size.Z > 28f);
+                }
+
+                // ⚠ ITS OWN ANCHORS, measured off its own mesh. A pylon wired on the roadside pole's four
+                // would hang its conductors in mid-air beside the lattice.
+                var pa = PowerLineField.AnchorsFor(PowerLineField.PylonMesh);
+                var qa = PowerLineField.AnchorsFor(PowerLineField.PoleMesh);
+                T.Check($"the pylon carries SIX conductors to the pole's four ({pa.Length} / {qa.Length})",
+                        pa.Length == 6 && qa.Length == 4);
+                T.Check("control: the two kinds really do get different anchor sets", !ReferenceEquals(pa, qa));
+                // ⭐ mirror-symmetric i against n-1-i, so a pylon facing the other way still pairs
+                // outer-to-outer instead of crossing its conductors.
+                bool mirrored = true;
+                for (int i = 0; i < pa.Length / 2; i++)
+                {
+                    var l = pa[i]; var r = pa[pa.Length - 1 - i];
+                    if (Mathf.Abs(l.X + r.X) > 0.01f || Mathf.Abs(l.Z - r.Z) > 0.01f) mirrored = false;
+                }
+                T.Check("...ordered mirror-symmetric, like the pole's", mirrored);
+                // and every anchor sits ON a crossarm tip, not out in space
+                float reach = 0f;
+                foreach (var pv in pa) reach = Mathf.Max(reach, Mathf.Abs(pv.X));
+                T.Check($"...reaching the widest crossarm ({reach:0.00} m, mesh half-width 6.19)",
+                        Mathf.Abs(reach - 6.19f) < 0.05f);
+
+                var py = new PowerLineField();
+                World.AddChild(py);
+                yield return Ticks(1);
+                float k = PowerLineField.PylonScale;
+                var scaled = new Basis(Vector3.Up, 0f) * new Basis(Vector3.Right, Mathf.DegToRad(270f));
+                scaled = new Basis(scaled.X * k, scaled.Y * k, scaled.Z * k);
+                int py0 = py.AddPole(new Transform3D(scaled, Vector3.Zero), PowerLineField.PylonMesh);
+                int py1 = py.AddPole(new Transform3D(scaled, new Vector3(120f, 0f, 0f)), PowerLineField.PylonMesh);
+                T.Check("two pylons wire together", py.Connect(py0, py1, out _));
+                T.Check($"...with six conductors, not four ({py.AnchorCount(py0)})", py.AnchorCount(py0) == 6);
+
+                // ⭐ THE SCALE REACHES THE ANCHORS. The pylon is placed oversized through its basis, so the
+                // conductor points must come out scaled too -- otherwise the wires attach at native spacing
+                // inside a 1.6x lattice.
+                var aw = new Vector3[6];
+                py.AnchorsWorld(py0, aw);
+                float worldReach = 0f, worldTop = 0f;
+                foreach (var wv in aw) { worldReach = Mathf.Max(worldReach, Mathf.Abs(wv.X)); worldTop = Mathf.Max(worldTop, wv.Y); }
+                T.Check($"the anchors scale with the pylon (reach {worldReach:0.00} m = 6.19 x {k:0.0})",
+                        Mathf.Abs(worldReach - 6.19f * k) < 0.1f);
+                T.Check($"...and stand {worldTop:0.#} m up, well above the pole's 7.3", worldTop > 35f);
+
+                py.Rebuild();
+                yield return Ticks(1);
+                T.Check($"the span builds ({py.WireNodeCount} wire node(s))", py.WireNodeCount == 1);
+
+                // ⚠ MIXED SPAN: a pylon to a roadside pole strings the LESSER count, or the pylon's outer
+                // pair would run to nothing at the pole end.
+                int py2 = py.AddPole(PoleAt(new Vector3(240f, 0f, 0f), 0f), PowerLineField.PoleMesh);
+                py.Connect(py1, py2, out _);
+                T.Check($"a pylon-to-pole span strings the lesser four "
+                      + $"({Mathf.Min(py.AnchorCount(py1), py.AnchorCount(py2))})",
+                        Mathf.Min(py.AnchorCount(py1), py.AnchorCount(py2)) == 4);
+                py.Rebuild();
+                yield return Ticks(1);
+                T.Check($"...and both spans exist ({py.WireNodeCount})", py.WireNodeCount == 2);
+                py.QueueFree();
+            }
+
         }
     }
 }
