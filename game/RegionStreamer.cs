@@ -1183,6 +1183,7 @@ void fragment() {
                 n3.ResetPhysicsInterpolation();
             }
             foreach (var r in _regions.Values) r.Node.Position = RegionLocalOrigin(r.C);
+            RainRoofMap.Shift(d);   // its cache is filed by engine-space cell: re-file it, or the rain stops at roofs 2 km away
             // (Tried and measured: ResetPhysicsInterpolation() on the region subtree here changed NOTHING -- pixel-
             // identical frames across a forced shift with and without it. The visible jump was the shaders, below.)
             PublishOrigin();   // world-space shader patterns (swell, wind, ripples) follow the world, not the shift

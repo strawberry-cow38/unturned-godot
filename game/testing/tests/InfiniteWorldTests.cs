@@ -156,6 +156,12 @@ namespace UnturnedGodot.Testing
             int spans = 0, fields = 0;
             foreach (var n in S.FindChildren("Wires", "", true, false)) if (n is PowerLineField f) { fields++; spans += f.SpanCount; }
             T.Check($"power lines strung beside it: {spans} spans in {fields} regions", spans > 10);
+            // WEATHER (strawberry 2026-10-10: "work on getting the weather engine in the inf world mode"): the same
+            // WeatherManager as PEI, on this world's clock. Set to heavy rain now; the trip below carries it through rebases.
+            var wm = WeatherManager.Current;
+            T.Check($"the weather runs here: {(wm == null ? "no WeatherManager" : $"WeatherManager on the world's {wm.Cycle?.DayLength:0} s day")}",
+                wm != null && wm.Cycle != null && wm.Cycle == res.DayNight);
+            wm?.Sim.SetPerpetual(1);
 
             // ---- 2. TRAVEL 3 km EAST at 50 m/s, across rebases, keeping to the ground
             double startAbsX = S.AbsX(P(p).X), startAbsZ = S.AbsZ(P(p).Z);
@@ -194,6 +200,64 @@ namespace UnturnedGodot.Testing
                 groundChecks >= 100 && worstGround < 0.01f);
             T.Check($"there was always a collider under the player ({_offCollider} steps with none)", _offCollider == 0);
             T.Check($"the player made the whole trip alive ({p.Health:0} hp, dead {p.IsDead})", !p.IsDead);
+            if (wm != null)
+            {
+                T.Check($"and it rained the whole way: rain intensity {wm.Rain3DIntensity:0.00} ({wm.Sim.Active?.Name}, blend {wm.RainIntensity:0.00})", wm.Rain3DIntensity > 0.2f);
+                // THE RAIN'S ROOF MAP is filed by engine-space cell, and a rebase moves the world under it. Let it fill round
+                // the player, then FORCE a rebase and read it back the same frame -- before anything can re-cast: re-filed,
+                // the cells round the player are still known and still the ground here; un-re-filed, they are unknown (or
+                // somewhere else's).
+                var roof = RainRoofMap.Current;
+                var space2 = World.GetWorld3D().DirectSpaceState;
+                (int n, float worst, string where) RoofVsGround()
+                {
+                    int n = 0; float worst = 0f; string where = "";
+                    for (int dz = -12; dz <= 12 && roof != null; dz += 3)
+                        for (int dx = -12; dx <= 12; dx += 3)
+                        {
+                            var at = P(p) + new Vector3(dx, 0f, dz);
+                            // a fresh ray where the cache's own cast went: the 0.5 m cell's centre, onto the COLLIDER (the
+                            // 4 m grid it is drawn from sits up to ~15 cm off the smooth height function between vertices)
+                            var cc = new Vector3((Mathf.Floor(at.X / RainRoofMap.Cell) + 0.5f) * RainRoofMap.Cell, at.Y + RainRoofMap.Above, (Mathf.Floor(at.Z / RainRoofMap.Cell) + 0.5f) * RainRoofMap.Cell);
+                            var hit = space2.IntersectRay(PhysicsRayQueryParameters3D.Create(cc, cc + Vector3.Down * RainRoofMap.RayLen, RainRoofMap.SolidMask));
+                            if (hit.Count == 0 || hit["collider"].As<Node>()?.Name != "GroundBody") continue;   // open ground only
+                            n++;
+                            float cached = roof.RoofYAt(at), fresh = ((Vector3)hit["position"]).Y;
+                            float err = cached == float.MinValue ? float.PositiveInfinity : Mathf.Abs(cached - fresh);
+                            if (err > worst) { worst = err; where = $" worst at ({dx},{dz}): cached {(cached == float.MinValue ? "unknown" : cached.ToString("0.00"))} vs ground {fresh:0.00}"; }
+                        }
+                    return (n, worst, where);
+                }
+                yield return Ticks(240);   // the window fills at RaysPerFrame
+                var before = RoofVsGround();
+                T.Check($"the rain's roof map knows the ground round the player after the trip: {before.n} open cells within {before.worst * 100f:0.0} cm{before.where}",
+                    roof != null && before.n >= 20 && before.worst < 0.05f);
+                // the same WORLD spots, read back through the new origin the same frame (before anything can re-cast, and
+                // before the physics space has caught up with the moved bodies, so no fresh ray is trusted here)
+                var spots = new System.Collections.Generic.List<(double ax, double az, float y)>();
+                for (int dz = -12; dz <= 12 && roof != null; dz += 3)
+                    for (int dx = -12; dx <= 12; dx += 3)
+                    {
+                        var at = P(p) + new Vector3(dx, 0f, dz);
+                        float y = roof.RoofYAt(at);
+                        if (y != float.MinValue) spots.Add((S.AbsX(at.X), S.AbsZ(at.Z), y));
+                    }
+                S.DebugShift(1, 0);
+                int same = 0; string firstOff = "";
+                foreach (var (sax, saz, y) in spots)
+                {
+                    var now = S.ToLocal(sax, 0.0, saz);
+                    float y2 = roof.RoofYAt(now);
+                    if (y2 == y) same++;
+                    else if (firstOff == "") firstOff = $"; first miss at ({sax:0}, {saz:0}): {y:0.00} before, {(y2 == float.MinValue ? "unknown" : y2.ToString("0.00"))} after";
+                }
+                T.Check($"...and a rebase re-files it: {same} of {spots.Count} cells read the same through the new origin{firstOff}",
+                    spots.Count >= 40 && same == spots.Count);
+                // ...and it is not keeping the whole trip: a 64 m window swept 3 km, evicting past EvictRadius
+                int tileBound = (int)(2f * RainRoofMap.EvictRadius / (RainRoofMap.Cell * 32f) + 2) * (int)(2f * RainRoofMap.Half / (RainRoofMap.Cell * 32f) + 2);
+                T.Check($"its cache is bounded: {RainRoofMap.TileCount} tiles after the trip (a straight sweep keeps at most {tileBound})",
+                    RainRoofMap.TileCount <= tileBound);
+            }
 
             // ---- 3. A BODY MOVING THROUGH A REBASE keeps its velocity and its place relative to the player
             yield return Wait(Settled, 30);

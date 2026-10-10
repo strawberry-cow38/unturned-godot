@@ -67,6 +67,9 @@ namespace UnturnedGodot
         public static float MaskAt(float worldX, float worldZ, float level)
         {
             if (level <= 0.01f) return 0f;   // the include's early out, same threshold
+            // the shaders read the field at world XZ + ug_origin (WorldOrigin), so a floating-origin rebase moves nothing;
+            // this must read the SAME place, or every splash after the first rebase lands on the wrong puddles. 0 on PEI.
+            worldX += WorldOrigin.Offset.X; worldZ += WorldOrigin.Offset.Y;
             float depth = Noise(worldX * Octave0, worldZ * Octave0) * Weight0
                         + Noise(worldX * Octave1, worldZ * Octave1) * Weight1;
             float line = Mathf.Lerp(LineLow, LineHigh, Mathf.Clamp(level, 0f, 1f));

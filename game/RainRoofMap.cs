@@ -121,6 +121,52 @@ namespace UnturnedGodot
         /// <summary>Drop the whole cache (a different map loaded).</summary>
         public static void ClearCache() { _tiles.Clear(); lock (_pending) _pending.Clear(); }
 
+        /// <summary>THE INFINITE WORLD'S FLOATING ORIGIN moved everything by `delta` (RegionStreamer.ShiftWorld). The cache
+        /// is keyed by engine-space cell, so every tile now describes a place 1-2 km from where it is filed: re-key them
+        /// by the same shift. A rebase moves the world in whole regions (256 m = 16 tiles), so this is exact; anything
+        /// that is not a whole number of tiles is dropped and re-cast instead. The per-collider size verdicts are cleared
+        /// too -- they are keyed by instance id, and the streamer frees and makes bodies forever.</summary>
+        public static void Shift(Vector3 delta)
+        {
+            float tileM = TileRes * Cell;
+            float fx = delta.X / tileM, fz = delta.Z / tileM;
+            int dtx = Mathf.RoundToInt(fx), dtz = Mathf.RoundToInt(fz);
+            _small.Clear(); _tiny.Clear();
+            if (Mathf.Abs(fx - dtx) > 1e-4f || Mathf.Abs(fz - dtz) > 1e-4f) { ClearCache(); Log.Print($"[rainroof] shift ({delta.X:0.##}, {delta.Z:0.##}) is not whole tiles: cache dropped"); }
+            else
+            {
+                var moved = new Dictionary<long, float[]>(_tiles.Count);
+                foreach (var kv in _tiles)
+                {
+                    int tx = (int)(kv.Key >> 32), tz = unchecked((int)(uint)kv.Key);
+                    moved[Key(tx + dtx, tz + dtz)] = kv.Value;
+                }
+                _tiles.Clear();
+                foreach (var kv in moved) _tiles[kv.Key] = kv.Value;
+                lock (_pending) for (int i = 0; i < _pending.Count; i++) { var (c, r, t) = _pending[i]; _pending[i] = (c + delta, r, t); }
+            }
+            if (Current != null) { Current._ox = int.MinValue; Current._oz = int.MinValue; }   // re-place the window and re-upload
+        }
+
+        /// <summary>The tiles further than this from the camera are forgotten (re-cast if you come back). On a bounded map
+        /// the cache never reached it; in the infinite world it was ~15 MB per km² roamed, kept for the session (cow
+        /// tools spotted it: nothing outside this file ever cleared it).</summary>
+        public const float EvictRadius = 512f;
+        int _evictTick;
+        void Evict(Vector3 centre)
+        {
+            float tileM = TileRes * Cell, r2 = EvictRadius * EvictRadius;
+            List<long> gone = null;
+            foreach (var kv in _tiles)
+            {
+                int tx = (int)(kv.Key >> 32), tz = unchecked((int)(uint)kv.Key);
+                float dx = (tx + 0.5f) * tileM - centre.X, dz = (tz + 0.5f) * tileM - centre.Z;
+                if (dx * dx + dz * dz > r2) (gone ??= new List<long>()).Add(kv.Key);
+            }
+            if (gone != null) foreach (var k in gone) _tiles.Remove(k);
+        }
+        public static int TileCount => _tiles.Count;
+
         void ApplyPending()
         {
             lock (_pending)
@@ -289,6 +335,7 @@ namespace UnturnedGodot
             ApplyPending();
 
             var fp = Follow.GlobalPosition;
+            if (++_evictTick >= 120) { _evictTick = 0; Evict(fp); }
             int ox = Mathf.FloorToInt(fp.X / Cell) - Res / 2, oz = Mathf.FloorToInt(fp.Z / Cell) - Res / 2;
             if (ox != _ox || oz != _oz) { _ox = ox; _oz = oz; _dirty = true; }
 

@@ -95,6 +95,24 @@ namespace UnturnedGodot
             return w;
         }
 
+        /// <summary>UG_WEATHER forces a perpetual state for render-verifying (rain | heavy | lightning | drizzle | squall |
+        /// downpour | tempest). One place for every world that attaches weather -- the PEI path and the infinite world.</summary>
+        public void ApplyEnvOverride()
+        {
+            switch (System.Environment.GetEnvironmentVariable("UG_WEATHER"))
+            {
+                case "rain": Sim.SetPerpetual(0); break;
+                case "heavy": Sim.SetPerpetual(1); break;
+                case "lightning": Sim.SetPerpetual(1); Strike(); break;
+                // the extra variants (strawberry 2026-09-08). Addressed through VariantBase rather than by
+                // literal 2..5 so they follow if a retail type is ever inserted ahead of them.
+                case "drizzle": Sim.SetPerpetual(VariantBase); break;
+                case "squall": case "windy": Sim.SetPerpetual(VariantBase + 1); break;
+                case "downpour": case "torrential": Sim.SetPerpetual(VariantBase + 2); break;
+                case "tempest": case "gale": Sim.SetPerpetual(VariantBase + 3); break;
+            }
+        }
+
         public override void _Ready()
         {
             TickHub.AddProcess(this, HubProcess); SetProcess(false);   // PERF: hub-ticked (see TickHub.AddProcess)
