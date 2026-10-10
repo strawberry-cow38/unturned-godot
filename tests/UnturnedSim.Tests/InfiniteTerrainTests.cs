@@ -1118,7 +1118,8 @@ namespace UnturnedSim.Tests
             for (long cx = -3; cx < 3; cx++)
                 for (long cz = -3; cz < 3; cz++)
                     for (int dir = 0; dir < 2; dir++) { var tw = Gen.Pylons.TowersOf(cx, cz, dir); if (tw != null) lines.Add(tw); }
-            int towers = 0, spans = 0, onRoad = 0, wet = 0, floating = 0, badSpan = 0, low = 0;
+            int towers = 0, spans = 0, onRoad = 0, wet = 0, floating = 0, badSpan = 0, low = 0, onMountain = 0, overPass = 0;
+            double worstMountain = 0;
             double nearest = double.MaxValue, worstFloat = 0, shortest = double.MaxValue, longest = 0, worstGap = double.MaxValue;
             string nearWhere = "", gapWhere = "";
             // the prop's two lowest conductor pairs (lower arm, middle arm), local to a tower: x across the line, z up
@@ -1133,6 +1134,12 @@ namespace UnturnedSim.Tests
                     if (clear < nearest) { nearest = clear; nearWhere = $" at ({t.X:0},{t.Z:0})"; }
                     if (clear < InfinitePylons.RoadKeep) onRoad++;
                     if (Gen.NaturalHeight(t.X, t.Z) < InfiniteTerrain.SeaLevel + 2f) wet++;
+                    // OFF THE MOUNTAINS (strawberry 2026-10-10: "try to reroute them to not go over mountains, hills are
+                    // okay"): on more than MountainLimit of mountain only where a pass is the only way, never past PassLimit
+                    float mh = Gen.MountainHeight(t.X, t.Z);
+                    worstMountain = Math.Max(worstMountain, mh);
+                    if (mh > InfinitePylons.MountainLimit) onMountain++;
+                    if (mh > InfinitePylons.PassLimit) overPass++;
                     // the four feet of the base, square to the tower's own heading: none above the ground
                     double ax = -t.DirZ, az = t.DirX, f = InfinitePylons.FootHalf;
                     foreach (var (u, v) in new[] { (-1, -1), (1, -1), (1, 1), (-1, 1) })
@@ -1208,11 +1215,13 @@ namespace UnturnedSim.Tests
                 }
             }
             TestContext.WriteLine($"{lines.Count} lines, {towers} towers, {spans} spans ({shortest:0}..{longest:0} m; limit {InfinitePylons.MaxSpan}): nearest asphalt to a tower {nearest:0.0} m{nearWhere} (keep {InfinitePylons.RoadKeep}), " +
-                                  $"{onRoad} too near, {wet} wet; feet above the ground {floating} (worst {worstFloat * 1000:0.0} mm); lowest conductor {worstGap:0.0} m over the ground or a road{gapWhere}, {low} samples under 3 m; " +
+                                  $"{onRoad} too near, {wet} wet; {onMountain} on more than {InfinitePylons.MountainLimit} m of mountain (passes), {overPass} past {InfinitePylons.PassLimit}, worst {worstMountain:0} m; feet above the ground {floating} (worst {worstFloat * 1000:0.0} mm); lowest conductor {worstGap:0.0} m over the ground or a road{gapWhere}, {low} samples under 3 m; " +
                                   $"spans strung {spans - missing - twice} once, {missing} never, {twice} twice; {treesNear} of {treesSeen} trees in a corridor");
             Assert.That(lines.Count, Is.GreaterThan(10)); Assert.That(towers, Is.GreaterThan(200));
             Assert.That(onRoad, Is.EqualTo(0), "a pylon stands on (or at the edge of) a road");
             Assert.That(wet, Is.EqualTo(0), "a pylon stands in the sea");
+            Assert.That(overPass, Is.EqualTo(0), "a pylon stands on a mountain");
+            Assert.That(onMountain, Is.LessThanOrEqualTo(towers / 20), "lines run over mountain passes as a habit, not a last resort");
             Assert.That(floating, Is.EqualTo(0), "a pylon's foot hangs above the ground");
             Assert.That(badSpan, Is.EqualTo(0), "a span PowerLineField would refuse, or two towers on top of each other");
             Assert.That(worstGap, Is.GreaterThan(3.0), "a conductor runs into the ground or a road");
@@ -1227,8 +1236,8 @@ namespace UnturnedSim.Tests
         {
             var fresh = new InfiniteTerrain(1337);
             fresh.Pylons.PylonsIn(9000, 9000, 9256, 9256);
-            var a = Gen.Pylons.PylonsIn(-4000, -4000, 4000, 4000); var b = fresh.Pylons.PylonsIn(-4000, -4000, 4000, 4000);
-            TestContext.WriteLine($"{a.Count} towers from the shared generator, {b.Count} from a fresh one (an 8 km square)");
+            var a = Gen.Pylons.PylonsIn(-5000, -5000, 5000, 5000); var b = fresh.Pylons.PylonsIn(-5000, -5000, 5000, 5000);
+            TestContext.WriteLine($"{a.Count} towers from the shared generator, {b.Count} from a fresh one (a 10 km square)");
             Assert.That(a.Count, Is.GreaterThan(20));
             Assert.That(b.Select(p => (p.X, p.Z, p.H, p.Wired.Length)).OrderBy(p => p.X).ThenBy(p => p.Z),
                         Is.EqualTo(a.Select(p => (p.X, p.Z, p.H, p.Wired.Length)).OrderBy(p => p.X).ThenBy(p => p.Z)));

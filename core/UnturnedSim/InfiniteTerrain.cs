@@ -368,6 +368,19 @@ namespace SDG.Unturned
             return h;
         }
 
+        /// <summary>The MOUNTAIN part of the land's height at a point: the ridged belts RawHeight adds, without the hills
+        /// under them. Rolling hills stay within ~30 m of their base; this is what stands above that.</summary>
+        public float MountainHeight(double x, double z)
+        {
+            double wx = x + 220.0 * Fbm(x, z, 1100.0, 3, SaltWarpX);
+            double wz = z + 220.0 * Fbm(x, z, 1100.0, 3, SaltWarpZ);
+            float land = Smoothstep(-0.10f, 0.06f, Fbm(wx, wz, 11000.0, 5, SaltContinent) + 0.10f);
+            float mmask = Smoothstep(-0.05f, 0.35f, Fbm(wx, wz, 4200.0, 3, SaltMountainMask)) * land;
+            if (mmask <= 0f) return 0f;
+            float ridge = Ridged(wx, wz, 1700.0, 5, SaltRidge);
+            return ridge * ridge * 230f * mmask;
+        }
+
         /// <summary>The finest octave band on its own, exposed so a test can compare the noise's statistics at the
         /// origin against 10^7 m out -- the far-origin failure shows up there first, as grain or as lost variance.</summary>
         public float DetailNoise(double x, double z) => Fbm(x, z, 48.0, 3, SaltDetail);
