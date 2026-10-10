@@ -52,6 +52,10 @@ namespace SDG.Unturned
     /// same streaming, LOD, colliders and floating origin serve a GENERATED world (InfiniteTerrain) and a HAND-MADE
     /// one too big to load whole -- a source that reads each region from disk, written by an editor in the same
     /// region shape. Both calls must be thread-safe: Generate runs on the streamer's workers.</summary>
+    /// <summary>The ground under a tunnel's two collars, [end][ia * (CollarAcross + 1) + iu]: the LOD0 mesh's height
+    /// there, and the splat layer of the nearest mesh vertex (so the lid wears the ground's own texture).</summary>
+    public sealed class CollarData { public float[][] Height; public byte[][] Layer; }
+
     public interface IRegionSource
     {
         /// <summary>One region at one LOD (0 = 4 m grid). Pure: the same arguments return the same data.</summary>
@@ -173,6 +177,9 @@ namespace SDG.Unturned
         /// <summary>Highway tunnels whose middle lies in this region (all LODs; the whole tunnel, which may reach a
         /// neighbour -- like a bridge, it is one structure).</summary>
         public List<InfiniteRoads.TunnelSpan> Tunnels;
+        /// <summary>Parallel to Tunnels: the ground under each portal's collar grid (InfiniteRoads.CollarPoint) -- what the
+        /// lid is laid on, and what it wears.</summary>
+        public List<CollarData> TunnelCollars;
         /// <summary>LOD0 only, same order as Heights: vertices that are HOLES -- just inside a tunnel portal, across the
         /// bore. The collider gets NaN there and the mesh drops every cell touching one. Null where there are none.</summary>
         public bool[] Holes;
@@ -495,6 +502,11 @@ namespace SDG.Unturned
             d.Bridges = Roads.BridgesIn(lines, ox, oz, ox + RegionSize, oz + RegionSize);
             d.Pylons = pylonsWide.FindAll(p => p.X >= ox && p.X < ox + RegionSize && p.Z >= oz && p.Z < oz + RegionSize);   // every LOD: 50 m landmarks
             d.Tunnels = Roads.TunnelsIn(lines, ox, oz, ox + RegionSize, oz + RegionSize);
+            if (d.Tunnels.Count > 0)
+            {
+                d.TunnelCollars = new List<CollarData>(d.Tunnels.Count);
+                foreach (var t in d.Tunnels) d.TunnelCollars.Add(CollarGround(t));
+            }
             d.Rails = Roads.RailsIn(lines, ox, oz, ox + RegionSize, oz + RegionSize);
             d.LevelCrossings = Roads.LevelCrossingsIn(lines, ox, oz, ox + RegionSize, oz + RegionSize);
             d.CrossingSigns = Roads.CrossingSignsIn(lines, ox, oz, ox + RegionSize, oz + RegionSize);
@@ -561,6 +573,54 @@ namespace SDG.Unturned
 
         /// <summary>Clearance to the nearest asphalt of any road (negative on it). Public for the spawn search and tests.</summary>
         public float RoadClearance(double x, double z) => Roads.Influence(x, z).Clear;
+
+        /// <summary>The ground under a tunnel's two collars (see InfiniteRoads.CollarPoint): the heights the ground mesh
+        /// has there, holes included (a hole vertex has a height; it is only not drawn). The collar used to stand at the
+        /// hill's CAP -- the most it may be cut back to -- rising 1.5 m per metre behind the holes, and where the hill was
+        /// lower than its cap that stood a lid up to 6 m out of the ground behind every portal (strawberry: "the tunnel
+        /// is still humping?").</summary>
+        public CollarData CollarGround(InfiniteRoads.TunnelSpan t)
+        {
+            int nu = InfiniteRoads.CollarAcross(t.Kind), na = InfiniteRoads.CollarAlong;
+            var r = new float[2][]; var lay = new byte[2][];
+            for (int end = 0; end < 2; end++)
+            {
+                r[end] = new float[(na + 1) * (nu + 1)]; lay[end] = new byte[(na + 1) * (nu + 1)];
+                InfiniteRoads.CollarPoint(t, end, 0, 0, out double x0, out double z0, out _, out _);
+                InfiniteRoads.CollarPoint(t, end, na, nu, out double x1, out double z1, out _, out _);
+                double reach = InfiniteRoads.CollarDepth + 2 * InfiniteRoads.TunnelHoleExtentOf(t.Kind);
+                var lines = Roads.LinesIn(Math.Min(x0, x1) - reach, Math.Min(z0, z1) - reach, Math.Max(x0, x1) + reach, Math.Max(z0, z1) + reach);
+                // the LOD0 MESH's height, not the analytic ground's: the mesh is linear over its 4 m cells, and a lid laid
+                // on the analytic surface every metre wove in and out of it -- a jagged edge behind every portal. Same
+                // vertices (absolute multiples of the cell), same split (fx + fz <= 1: a, b, c; else b, e, c) as MeshHeight.
+                var vtx = new Dictionary<(long, long), float>();
+                var hits = new Dictionary<(long, long), RoadHit>();
+                float V(long i, long j)
+                {
+                    if (vtx.TryGetValue((i, j), out var h)) return h;
+                    h = SampleWith(lines, i * (double)FullSpacing, j * (double)FullSpacing, out var hit);
+                    hits[(i, j)] = hit;
+                    return vtx[(i, j)] = h;
+                }
+                for (int ia = 0; ia <= na; ia++)
+                    for (int iu = 0; iu <= nu; iu++)
+                    {
+                        InfiniteRoads.CollarPoint(t, end, ia, iu, out double x, out double z, out _, out _);
+                        double gx = x / FullSpacing, gz = z / FullSpacing;
+                        long i = (long)Math.Floor(gx), j = (long)Math.Floor(gz);
+                        float fx = (float)(gx - i), fz = (float)(gz - j);
+                        float ha = V(i, j), hb = V(i + 1, j), hc = V(i, j + 1), he = V(i + 1, j + 1);
+                        r[end][ia * (nu + 1) + iu] = fx + fz <= 1f ? ha + (hb - ha) * fx + (hc - ha) * fz : he + (hc - he) * (1f - fx) + (hb - he) * (1f - fz);
+                        // the nearest vertex's layer, exactly as Generate paints it (its slope from its neighbours)
+                        long ni = (long)Math.Round(gx), nj = (long)Math.Round(gz);
+                        float nh = V(ni, nj), sdx = (V(ni + 1, nj) - V(ni - 1, nj)) / (2f * FullSpacing), sdz = (V(ni, nj + 1) - V(ni, nj - 1)) / (2f * FullSpacing);
+                        var nhit = hits[(ni, nj)];
+                        lay[end][ia * (nu + 1) + iu] = (byte)LayerAt(ni * (double)FullSpacing, nj * (double)FullSpacing, nh, MathF.Sqrt(sdx * sdx + sdz * sdz), nhit.Clear, nhit.Kind);
+                    }
+            }
+            return new CollarData { Height = r, Layer = lay };
+        }
+        const float FullSpacing = RegionSize / FullCells;
 
         // ---------------------------------------------------------------------------------------------------
         // Ground cover, scattered over a LOD0 region's own arrays (no extra noise calls for the grass: 25k blades a

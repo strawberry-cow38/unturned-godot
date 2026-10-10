@@ -17,6 +17,39 @@ namespace UnturnedGodot.Testing
     //   - a body moving through a rebase keeps its velocity and its place relative to the player.
     public sealed class InfiniteWorldTests : GameTest
     {
+        /// <summary>strawberry 2026-10-10: "the tunnel is still humping?" -- the lid behind each portal stood at the hill's
+        /// CAP, up to 6 m out of a hill lower than it. A drop from above onto every other point of both collars' grids,
+        /// wherever the ground there is DRAWN (its LOD0 cell touches no hole): how far whatever it lands on stands over
+        /// the drawn ground (InfiniteTerrain.MeshHeightAt on that region's own data). Nothing may: the lid lies on the
+        /// mesh, sunk 5 cm where the mesh is back.</summary>
+        static (int hits, float worst, string where) CollarOverGround(PhysicsDirectSpaceState3D space, RegionStreamer S, InfiniteRoads.TunnelSpan t)
+        {
+            int hits = 0; float worst = float.NegativeInfinity; string where = "";
+            var regions = new Dictionary<RegionCoord, RegionData>();
+            for (int end = 0; end < 2; end++)
+                for (int ia = 1; ia <= InfiniteRoads.CollarAlong; ia++)
+                    for (int iu = 0; iu <= InfiniteRoads.CollarAcross(t.Kind); iu += 2)
+                    {
+                        InfiniteRoads.CollarPoint(t, end, ia, iu, out double cx, out double cz, out float aIn, out float u);
+                        var rc = RegionCoord.Containing(cx, cz);
+                        if (!regions.TryGetValue(rc, out var d)) regions[rc] = d = S.Gen.Generate(rc, 0);
+                        float lx = (float)(cx - rc.MinX), lz = (float)(cz - rc.MinZ);
+                        int v = d.Cells + 1, ci = System.Math.Clamp((int)(lx / d.Spacing), 0, d.Cells - 1), cj = System.Math.Clamp((int)(lz / d.Spacing), 0, d.Cells - 1);
+                        if (d.Holes != null && (d.Holes[cj * v + ci] || d.Holes[cj * v + ci + 1] || d.Holes[(cj + 1) * v + ci] || d.Holes[(cj + 1) * v + ci + 1])) continue;
+                        float g = InfiniteTerrain.MeshHeightAt(d, lx, lz);
+                        var from = S.ToLocal(cx, g + 30.0, cz);
+                        var h = space.IntersectRay(PhysicsRayQueryParameters3D.Create(from, from + Vector3.Down * 60f, 1u << 0));
+                        if (h.Count == 0) continue;
+                        hits++;
+                        // landing on the ground itself is the ground (its collider splits cells its own way); only the
+                        // tunnel's body -- the lid -- can stand over it
+                        bool lid = h["collider"].As<Node>()?.GetParent()?.Name.ToString() == "TunnelBodies";
+                        float over = lid ? ((Vector3)h["position"]).Y - g : 0f;
+                        if (over > worst) { worst = over; where = $" ({aIn:0} m in, {u:+0;-0} m across, on the lid)"; }
+                    }
+            return (hits, worst, where);
+        }
+
         public override string Name => "infinite.stream_rebase_far";
         public override double TimeoutSimSeconds => 300;
 
@@ -496,6 +529,10 @@ namespace UnturnedGodot.Testing
                 float hillY = hill.Count > 0 ? ((Vector3)hill["position"]).Y - tun.Y[mid] : float.NaN;
                 T.Check($"the hill stands over it: {hillY:0.0} m above the road on {(hill.Count > 0 ? hill["collider"].As<Node>()?.Name : "nothing")} (shell top {InfiniteRoads.ShellTop(0f)})",
                     hill.Count > 0 && hill["collider"].As<Node>()?.Name == "GroundBody" && hillY > InfiniteRoads.ShellTop(0f));
+                {
+                    var (hits, over, where) = CollarOverGround(space, S, tun);
+                    T.Check($"the collars behind its mouths lie on the ground: {hits} drops where the ground is drawn land at most {over:0.000} m over it{where}", hits > 30 && over < 0.02f);
+                }
                 // stand in it: the guard must not lift you onto the hill
                 int rescues0 = S.Rescues;
                 p.TeleportTo(lane + Vector3.Down * 4.7f);
@@ -743,6 +780,8 @@ namespace UnturnedGodot.Testing
                 var corner = eye + Vector3.Up * (InfiniteRoads.RailHead + InfiniteRoads.RailLoadingHeight - 2f);
                 var hc = space.IntersectRay(PhysicsRayQueryParameters3D.Create(eye + Vector3.Up * 0.5f, corner + side * InfiniteRoads.RailLoadingHalf, 1u << 0));
                 T.Check($"...and a train fits in it: from the track to the loading gauge's top corner hits {(hc.Count == 0 ? "nothing" : hc["collider"].As<Node>()?.Name)}", hc.Count == 0);
+                var (hits, over, where) = CollarOverGround(space, S, rtun);
+                T.Check($"...and the collars behind its mouths lie on the ground: {hits} drops where the ground is drawn land at most {over:0.000} m over it{where}", hits > 15 && over < 0.02f);
             }
             T.Check($"nobody was ever rescued from under the ground ({S.Rescues})", S.Rescues == 0);
         }
