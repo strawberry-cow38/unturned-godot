@@ -1052,13 +1052,9 @@ void fragment() {
         // 12.6 m from its centre, so each tube's shell would cut through the other's inner lane -- the hill is their
         // outside. For the same reason the Tunnel_Line_Cap_0 portal (bore + shell + facade) cannot stand twice side by
         // side; each mouth gets ONE twin-arch headwall: the two shells' outline with the two bores cut out of it. Plus a
-        // FLOOR at the road's bed wall to wall and an APRON over the hole cells at each mouth. Built on the main thread
+        // FLOOR at the road's bed wall to wall, and each mouth's GROUND (MouthData) where the terrain drops its cells. Built on the main thread
         // when a region first arrives; colliders ring <= ColliderRing.
         static List<Vector2[]> _boreProfile;
-        /// <summary>How far from the route the ground can be missing at a mouth: the hole vertices' reach plus the LOD0 cell
-        /// every one of them takes with it, plus a margin.</summary>
-        static float TunnelHoleExtent => TunnelHoleExtentOf(RoadKind.Highway);
-        static float TunnelHoleExtentOf(RoadKind k) => InfiniteRoads.TunnelHoleExtentOf(k);
         /// <summary>The bore chain scaled up by the class's TunnelVerticalOf (a rail's bore is lower than a highway's);
         /// across, the sweep's own lateral factor does it.</summary>
         static readonly Dictionary<RoadKind, List<Vector2[]>> _boreFor = new();
@@ -1099,14 +1095,14 @@ void fragment() {
             LoadTunnelKit();
             r.Tunnels = new Node3D { Name = "Tunnels" };
             r.TunnelShapes = new List<(Shape3D, Transform3D, int)>();
-            for (int i = 0; i < b.Tunnels.Count; i++) BuildTunnel(b.Tunnels[i], b.D.TunnelCollars?[i], b.D.Coord.MinX, b.D.Coord.MinZ, r.Tunnels, r.TunnelShapes);
+            for (int i = 0; i < b.Tunnels.Count; i++) BuildTunnel(b.Tunnels[i], b.D.TunnelMouths?[i], b.D.Coord.MinX, b.D.Coord.MinZ, r.Tunnels, r.TunnelShapes);
             r.Node.AddChild(r.Tunnels);
             TunnelCount += b.Tunnels.Count;
         }
 
         /// <summary>One tunnel, region-local: two tubes, a headwall at each mouth, the floor. Stations are every
         /// TunnelStep of HORIZONTAL arc from the near facade, on the route and on each carriageway.</summary>
-        static void BuildTunnel(InfiniteRoads.TunnelSpan t, CollarData collarGround, double ox, double oz, Node3D holder, List<(Shape3D, Transform3D, int)> shapes)
+        static void BuildTunnel(InfiniteRoads.TunnelSpan t, MouthData[] mouths, double ox, double oz, Node3D holder, List<(Shape3D, Transform3D, int)> shapes)
         {
             int m = t.X.Length;
             var kind = t.Kind;   // a highway's two tubes, or a railway's one (InfiniteRoads.TunnelTubes)
@@ -1131,35 +1127,22 @@ void fragment() {
                 if (mesh.CreateTrimeshShape() is ConcavePolygonShape3D shp) { shp.BackfaceCollision = true; shapes.Add((shp, Transform3D.Identity, mat)); }
             }
 
-            // THE HEADWALLS: in each mouth's vertical plane, the outline of both shells (their upper envelope, with the
-            // outer feet) and, cut up out of its bottom edge, the two bores -- a simple polygon, no holes, because each
-            // bore opening reaches the ground
-            float reach = InfiniteRoads.ShellReachOf(kind);
-            // WINGS past the shells as far as the ground the mouth's holes take out: the hole vertices reach TunnelHoleBeside
-            // past the bores, and every cell touching one goes, a further cell (4 m) out -- so the cut slope's missing cells
-            // beside the portal are backed by a wall, not open to the sky
-            float wing = TunnelHoleExtentOf(kind), wingTop = InfiniteRoads.ShellTopOf(kind, reach) + InfiniteRoads.HeadwallCover;
+            // THE MOUTHS. The terrain drops every LOD0 cell touching a hole (a heightfield cannot overhang the mouth), and
+            // the generator draws them again (MouthData): the terrain's own vertices and split, cut by the facade line --
+            // the approach's cut in front of it, the hill behind -- meeting the drawn cells exactly along every edge they
+            // share. What the heightfield cannot do, the HEADWALL does: in the facade's vertical plane, from under the
+            // lower of the two grounds meeting there up to the higher (and over the shells at least to their top), with
+            // the bores cut up out of its bottom edge. Where the grounds agree it is buried; where they part it is the step
+            // between them. Drawn both ways round: the cut can stand higher than the capped hill behind, and then its back
+            // is the face you see. (A rectangular lid and a flat apron stood in for the cells before, and on any diagonal
+            // heading, and everywhere beside the bores in front, the cut slope's edge hung open: strawberry 2026-10-10,
+            // "theres a bunch of holes/gaps in the terrain around the tunnels".)
+            float reach = InfiniteRoads.ShellReachOf(kind), wingTop = InfiniteRoads.ShellTopOf(kind, reach) + InfiniteRoads.HeadwallCover;
             var bore = boreProfile[0];
             bool boreRightToLeft = bore[0].X > bore[bore.Length - 1].X;
-            var outline = new List<Vector2>();
-            outline.Add(new Vector2(-wing, -feet));
-            outline.Add(new Vector2(-wing, wingTop));
-            for (float u = -reach; u <= reach + 1e-3f; u += 0.25f) outline.Add(new Vector2(u, InfiniteRoads.ShellTopOf(kind, Mathf.Clamp(u, -reach, reach))));
-            outline.Add(new Vector2(wing, wingTop));
-            outline.Add(new Vector2(wing, -feet));
-            for (int s = t.SX.Length - 1; s >= 0; s--)   // right tube first: the path runs back along the bottom from right to left
-            {
-                float c = InfiniteRoads.TubeOffset(kind, s);
-                for (int k = 0; k < bore.Length; k++)
-                {
-                    var q = bore[boreRightToLeft ? k : bore.Length - 1 - k];
-                    outline.Add(new Vector2(c + q.X * lat, q.Y));
-                }
-            }
-            var poly = outline.ToArray();
-            var tri = Geometry2D.TriangulatePolygon(poly);
-            if (tri.Length == 0) Log.Err($"[infinite] tunnel headwall did not triangulate ({poly.Length} points)");
-            for (int end = 0; end < 2 && tri.Length > 0; end++)
+            float boreHalf = 0f;
+            foreach (var q in bore) boreHalf = Mathf.Max(boreHalf, Mathf.Abs(q.X) * lat);
+            for (int end = 0; end < 2; end++)
             {
                 int a = end == 0 ? 0 : m - 1, b = end == 0 ? 1 : m - 2;
                 var pa = Loc(t.X[a], t.Y[a], t.Z[a]);
@@ -1168,99 +1151,130 @@ void fragment() {
                 // against the route and its left-hand normal is the other side
                 var side = new Vector3(-fwd.Z, 0f, fwd.X);
                 if (end == 1) side = -side;
-                var WV = new Vector3[poly.Length]; var WN = new Vector3[poly.Length];
                 var outward = end == 0 ? -fwd : fwd;
-                for (int k = 0; k < poly.Length; k++) { WV[k] = pa + side * poly[k].X + Vector3.Up * poly[k].Y; WN[k] = outward; }
-                var WI = new List<int>(tri.Length);
-                var tmpV = new List<Vector3>(WV);
-                for (int k = 0; k + 2 < tri.Length; k += 3) Tri(tmpV, WI, tri[k], tri[k + 1], tri[k + 2], outward);
-                var wa = new Godot.Collections.Array();
-                wa.Resize((int)Mesh.ArrayType.Max);
-                var cols = new Color[WV.Length]; for (int k = 0; k < cols.Length; k++) cols[k] = Colors.White;
-                wa[(int)Mesh.ArrayType.Vertex] = WV; wa[(int)Mesh.ArrayType.Normal] = WN; wa[(int)Mesh.ArrayType.Color] = cols;
-                wa[(int)Mesh.ArrayType.Index] = WI.ToArray();
-                var wm = new ArrayMesh();
-                wm.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, wa);
-                holder.AddChild(new MeshInstance3D { Name = end == 0 ? "HeadwallIn" : "HeadwallOut", Mesh = wm, MaterialOverride = _tunnelMat,
-                                                      CastShadow = GeometryInstance3D.ShadowCastingSetting.DoubleSided });
-                var wsoup = new Vector3[WI.Count];
-                for (int k = 0; k < WI.Count; k++) wsoup[k] = WV[WI[k]];
-                shapes.Add((new ConcavePolygonShape3D { Data = wsoup, BackfaceCollision = true }, Transform3D.Identity, mat));
+                var md = mouths?[end];
 
-                // THE COLLAR: a concrete lid over the hole band behind the headwall -- the ground there is gone so the mouth
-                // can be, and from above the gap reads as the portal's own top instead of a slot of sky. It is over the
-                // tubes, so it closes nothing you drive through. It lies ON THE GROUND the mesh would have there
-                // (collarGround, from the generator), never above the hill's cap (InfiniteRoads.TunnelGround: the shells +
-                // HeadwallCover, rising HeadwallSlope past the holes) -- the cap alone stood it up to 6 m out of a hill lower
-                // than the cap. Past the hole band, where the mesh is back, it sinks 5 cm under it rather than fight it.
-                var inward = fwd;
-                int nu = InfiniteRoads.CollarAcross(kind), na = InfiniteRoads.CollarAlong;
-                var cg = collarGround?.Height[end];
-                var LV = new List<Vector3>(); var LN = new List<Vector3>(); var LC = new List<Color>(); var LI = new List<int>(); var LUV = new List<Vector2>();
-                for (int ia = 0; ia <= na; ia++)
-                    for (int iu = 0; iu <= nu; iu++)
+                // the step along the facade, relative to the datum here: the higher ground and the lower, linear between
+                // points (the chord of the higher is never under it, of the lower never over it -- max is convex)
+                float[] pu, hi, lo;
+                if (md != null && md.FaceU.Length >= 2)
+                {
+                    int n = md.FaceU.Length;
+                    pu = md.FaceU; hi = new float[n]; lo = new float[n];
+                    for (int k = 0; k < n; k++)
                     {
-                        InfiniteRoads.CollarPoint(t, end, ia, iu, out double cx, out double cz, out float aIn, out float u);
-                        float top = Mathf.Max(InfiniteRoads.ShellTopOf(kind, Mathf.Clamp(u, -reach, reach)), wingTop - InfiniteRoads.HeadwallCover)
-                                    + InfiniteRoads.HeadwallCover + Mathf.Max(0f, aIn - InfiniteRoads.TunnelHoleIn) * InfiniteRoads.HeadwallSlope;
-                        // ...and over the bores never below the shells' top (+0.25, TunnelGround's own margin): at the facade
-                        // the "ground" is the cutting's floor in front of the mouth, and a lid laid on THAT closes the mouth
-                        if (cg != null)
-                        {
-                            top = Mathf.Min(top, cg[ia * (nu + 1) + iu] - pa.Y - (aIn > InfiniteRoads.TunnelHoleIn ? 0.05f : 0f));
-                            // (only across the hole band: behind it the mesh is back, the bore is metres under it, and the floor
-                            // there stood the lid 5.6 cm proud of a mesh dipping between its vertices)
-                            if (Mathf.Abs(u) <= reach && aIn <= InfiniteRoads.TunnelHoleIn) top = Mathf.Max(top, InfiniteRoads.ShellTopOf(kind, u) + 0.25f);
-                            // the front row IS the headwall's top edge (its outline: the shells, then the wings), so no sky
-                            // shows between the wall and the lid
-                            if (ia == 0) top = Mathf.Abs(u) <= reach ? InfiniteRoads.ShellTopOf(kind, u) : wingTop;
-                        }
-                        LV.Add(new Vector3((float)(cx - ox), pa.Y + top, (float)(cz - oz))); LN.Add(Vector3.Up); LC.Add(Colors.White);
-                        LUV.Add(new Vector2((iu + 0.5f) / (nu + 1), (ia + 0.5f) / (na + 1)));   // its texel in the collar's own splat
+                        hi[k] = Mathf.Max(md.FaceFront[k], md.FaceBehind[k]) - pa.Y;
+                        lo[k] = Mathf.Min(md.FaceFront[k], md.FaceBehind[k]) - pa.Y;
                     }
-                // normals off the lid's own surface, so it lights as the ground round it does
-                for (int ia = 0; ia <= na; ia++)
-                    for (int iu = 0; iu <= nu; iu++)
+                }
+                else
+                {
+                    // no mouth from the source: the shells' outline with wings a cell past the holes, as it always was
+                    float wing = InfiniteRoads.BoreReachOf(kind) + InfiniteRoads.TunnelHoleBeside + 4.5f;
+                    pu = new[] { -wing, wing }; hi = new[] { wingTop, wingTop }; lo = new[] { -feet, -feet };
+                }
+                float FaceAt(float[] ys, float u)
+                {
+                    if (u <= pu[0]) return ys[0];
+                    if (u >= pu[pu.Length - 1]) return ys[ys.Length - 1];
+                    int k = System.Array.BinarySearch(pu, u);
+                    if (k >= 0) return ys[k];
+                    k = ~k;
+                    float s = (u - pu[k - 1]) / Mathf.Max(1e-6f, pu[k] - pu[k - 1]);
+                    return ys[k - 1] + (ys[k] - ys[k - 1]) * s;
+                }
+                float uL = Mathf.Min(pu[0], -reach), uR = Mathf.Max(pu[pu.Length - 1], reach);
+                float Top(float u) => Mathf.Max(FaceAt(hi, u), Mathf.Abs(u) <= reach ? InfiniteRoads.ShellTopOf(kind, u) : float.MinValue);
+                float Bottom(float u) => Mathf.Min(FaceAt(lo, u) - 1f, -feet);
+                var us = new SortedSet<float>(pu) { uL, uR };
+                for (float u = -reach; u <= reach + 1e-3f; u += 0.25f) us.Add(Mathf.Clamp(u, -reach, reach));
+                var outline = new List<Vector2>();
+                outline.Add(new Vector2(uL, Bottom(uL)));
+                foreach (float u in us) outline.Add(new Vector2(u, Top(u)));
+                // back along the bottom, right to left, the bores cut up out of it (right tube first)
+                var cuts = new List<(float lo, float hi, float c)>();
+                for (int s = t.SX.Length - 1; s >= 0; s--) { float c = InfiniteRoads.TubeOffset(kind, s); cuts.Add((c - boreHalf, c + boreHalf, c)); }
+                var down = new List<float>(us); down.Reverse();
+                int ci = 0; float lastU = float.MaxValue;
+                void Cut()
+                {
+                    // the bottom comes down just outside the bore, round its arc, and back down the other side
+                    outline.Add(new Vector2(cuts[ci].hi + 0.01f, Bottom(cuts[ci].hi + 0.01f)));
+                    for (int k = 0; k < bore.Length; k++)
                     {
-                        var du = LV[ia * (nu + 1) + System.Math.Min(nu, iu + 1)] - LV[ia * (nu + 1) + System.Math.Max(0, iu - 1)];
-                        var da = LV[System.Math.Min(na, ia + 1) * (nu + 1) + iu] - LV[System.Math.Max(0, ia - 1) * (nu + 1) + iu];
-                        var nrm = du.Cross(da).Normalized(); if (nrm.Y < 0f) nrm = -nrm;
-                        LN[ia * (nu + 1) + iu] = nrm;
+                        var q = bore[boreRightToLeft ? k : bore.Length - 1 - k];
+                        outline.Add(new Vector2(cuts[ci].c + q.X * lat, q.Y));
                     }
-                for (int ia = 0; ia < na; ia++)
-                    for (int iu = 0; iu < nu; iu++)
+                    outline.Add(new Vector2(cuts[ci].lo - 0.01f, Bottom(cuts[ci].lo - 0.01f)));
+                    lastU = cuts[ci].lo - 0.01f;
+                    ci++;
+                }
+                foreach (float u in down)
+                {
+                    while (ci < cuts.Count && u < cuts[ci].lo) Cut();
+                    if (ci < cuts.Count && u <= cuts[ci].hi + 0.01f) continue;   // under a bore: its arc is the edge
+                    if (u >= lastU - 1e-4f || u <= uL) continue;                  // (uL's bottom corner is the outline's first point)
+                    outline.Add(new Vector2(u, Bottom(u))); lastU = u;
+                }
+                while (ci < cuts.Count) Cut();
+                var poly = outline.ToArray();
+                var tri = Geometry2D.TriangulatePolygon(poly);
+                if (tri.Length == 0) { Log.Err($"[infinite] tunnel headwall did not triangulate ({poly.Length} points)"); }
+                else
+                {
+                    var WV = new List<Vector3>(); var WN = new List<Vector3>(); var WI = new List<int>();
+                    foreach (var dir in new[] { outward, -outward })
                     {
-                        int q0 = ia * (nu + 1) + iu, q1 = q0 + 1, q2 = q0 + nu + 1, q3 = q2 + 1;
-                        Tri(LV, LI, q0, q1, q2, Vector3.Up);
-                        Tri(LV, LI, q1, q3, q2, Vector3.Up);
+                        int first = WV.Count;
+                        foreach (var q in poly) { WV.Add(pa + side * q.X + Vector3.Up * q.Y); WN.Add(dir); }
+                        for (int k = 0; k + 2 < tri.Length; k += 3) Tri(WV, WI, first + tri[k], first + tri[k + 1], first + tri[k + 2], dir);
                     }
+                    var wa = new Godot.Collections.Array();
+                    wa.Resize((int)Mesh.ArrayType.Max);
+                    var cols = new Color[WV.Count]; for (int k = 0; k < cols.Length; k++) cols[k] = Colors.White;
+                    wa[(int)Mesh.ArrayType.Vertex] = WV.ToArray(); wa[(int)Mesh.ArrayType.Normal] = WN.ToArray(); wa[(int)Mesh.ArrayType.Color] = cols;
+                    wa[(int)Mesh.ArrayType.Index] = WI.ToArray();
+                    var wm = new ArrayMesh();
+                    wm.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, wa);
+                    holder.AddChild(new MeshInstance3D { Name = end == 0 ? "HeadwallIn" : "HeadwallOut", Mesh = wm, MaterialOverride = _tunnelMat,
+                                                          CastShadow = GeometryInstance3D.ShadowCastingSetting.DoubleSided });
+                    var wsoup = new Vector3[WI.Count / 2];
+                    for (int k = 0; k < wsoup.Length; k++) wsoup[k] = WV[WI[k]];
+                    shapes.Add((new ConcavePolygonShape3D { Data = wsoup, BackfaceCollision = true }, Transform3D.Identity, mat));
+                }
+
+                // the ground the mouth's holes took out, drawn again, wearing the terrain's own material on its own splat
+                if (md == null || md.Tris.Length == 0) continue;
+                var LV = new List<Vector3>(md.X.Length); var LN = new Vector3[md.X.Length]; var LUV = new Vector2[md.X.Length];
+                for (int k = 0; k < md.X.Length; k++)
+                {
+                    LV.Add(Loc(md.X[k], md.Y[k], md.Z[k]));
+                    LN[k] = new Vector3(md.NX[k], md.NY[k], md.NZ[k]);
+                    LUV[k] = new Vector2(md.U[k], md.V[k]);
+                }
+                var LI = new List<int>(md.Tris.Length);
+                for (int k = 0; k + 2 < md.Tris.Length; k += 3) Tri(LV, LI, md.Tris[k], md.Tris[k + 1], md.Tris[k + 2], Vector3.Up);
+                var LC = new Color[LV.Count]; for (int k = 0; k < LC.Length; k++) LC[k] = Colors.White;
                 var la = new Godot.Collections.Array();
                 la.Resize((int)Mesh.ArrayType.Max);
-                la[(int)Mesh.ArrayType.Vertex] = LV.ToArray(); la[(int)Mesh.ArrayType.Normal] = LN.ToArray(); la[(int)Mesh.ArrayType.Color] = LC.ToArray();
-                la[(int)Mesh.ArrayType.TexUV] = LUV.ToArray();
+                la[(int)Mesh.ArrayType.Vertex] = LV.ToArray(); la[(int)Mesh.ArrayType.Normal] = LN; la[(int)Mesh.ArrayType.Color] = LC;
+                la[(int)Mesh.ArrayType.TexUV] = LUV;
                 la[(int)Mesh.ArrayType.Index] = LI.ToArray();
                 var lm = new ArrayMesh();
                 lm.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, la);
-                // it WEARS the ground: the terrain's own material on a splat of the nearest ground vertices' layers, so the
-                // ground cells the mouth takes out read as more hillside, not a concrete patch the shape of their outline
-                Material collarMat = _tunnelMat;
-                if (collarGround?.Layer?[end] is byte[] cl)
-                {
-                    var s0 = new byte[cl.Length * 4]; var s1 = new byte[cl.Length * 4];
-                    for (int k = 0; k < cl.Length; k++) { int l = cl[k]; if (l < 4) s0[k * 4 + l] = 255; else s1[k * 4 + l - 4] = 255; }
-                    var t0 = ImageTexture.CreateFromImage(Image.CreateFromData(nu + 1, na + 1, false, Image.Format.Rgba8, s0));
-                    var t1 = ImageTexture.CreateFromImage(Image.CreateFromData(nu + 1, na + 1, false, Image.Format.Rgba8, s1));
-                    collarMat = (Material)Terrain.RegionMaterial(t0, t1) ?? _tunnelMat;
-                }
-                holder.AddChild(new MeshInstance3D { Name = end == 0 ? "CollarIn" : "CollarOut", Mesh = lm, MaterialOverride = collarMat });
+                var s0 = new byte[md.Splat.Length * 4]; var s1 = new byte[md.Splat.Length * 4];
+                for (int k = 0; k < md.Splat.Length; k++) { int l = md.Splat[k]; if (l < 4) s0[k * 4 + l] = 255; else s1[k * 4 + l - 4] = 255; }
+                var t0 = ImageTexture.CreateFromImage(Image.CreateFromData(md.SplatW, md.SplatH, false, Image.Format.Rgba8, s0));
+                var t1 = ImageTexture.CreateFromImage(Image.CreateFromData(md.SplatW, md.SplatH, false, Image.Format.Rgba8, s1));
+                var groundMat = (Material)Terrain.RegionMaterial(t0, t1) ?? _tunnelMat;
+                holder.AddChild(new MeshInstance3D { Name = end == 0 ? "MouthIn" : "MouthOut", Mesh = lm, MaterialOverride = groundMat });
                 var lsoup = new Vector3[LI.Count];
                 for (int k = 0; k < LI.Count; k++) lsoup[k] = LV[LI[k]];
-                shapes.Add((new ConcavePolygonShape3D { Data = lsoup, BackfaceCollision = true }, Transform3D.Identity, mat));
+                shapes.Add((new ConcavePolygonShape3D { Data = lsoup, BackfaceCollision = true }, Transform3D.Identity, (int)PlayerController.Surf.Dirt));
             }
 
-            // THE FLOOR, at the road's bed (the approach ground's level beside the slab), wall to wall across both tubes;
-            // and an APRON at each mouth over the hole cells -- they reach a cell out in front of the facade and
-            // TunnelHoleBeside past the outer walls
+            // THE FLOOR, at the road's bed (the approach ground's level beside the slab), wall to wall across both tubes,
+            // and half a metre out under each mouth's own ground (no slit at the facade)
             var c3 = new Vector3[m]; var h = new float[m];
             for (int i = 0; i < m; i++) { c3[i] = Loc(t.X[i], t.Y[i], t.Z[i]); if (i > 0) h[i] = h[i - 1] + new Vector2(c3[i].X - c3[i - 1].X, c3[i].Z - c3[i - 1].Z).Length(); }
             float len = h[m - 1];
@@ -1272,7 +1286,7 @@ void fragment() {
             }
             var FV = new List<Vector3>(); var FN = new List<Vector3>(); var FI = new List<int>();
             float drop = InfiniteRoads.TunnelBedBelow(kind);
-            float boreR = InfiniteRoads.BoreReachOf(kind), apronW = TunnelHoleExtentOf(kind), apronOut = 6.5f;
+            float boreR = InfiniteRoads.BoreReachOf(kind), apronOut = 0.5f;
             void Strip(float sA, float sB, float half, float below, int steps)
             {
                 for (int q = 0; q < steps; q++)
@@ -1297,8 +1311,6 @@ void fragment() {
                 }
             }
             Strip(-apronOut, len + apronOut, boreR, 0.03f, Mathf.Max(1, Mathf.CeilToInt((len + 2f * apronOut) / InfiniteRoads.TunnelStep)));
-            Strip(-apronOut, 0.5f, apronW, 0.04f, 4);
-            Strip(len - 0.5f, len + apronOut, apronW, 0.04f, 4);
             var fa = new Godot.Collections.Array();
             fa.Resize((int)Mesh.ArrayType.Max);
             fa[(int)Mesh.ArrayType.Vertex] = FV.ToArray(); fa[(int)Mesh.ArrayType.Normal] = FN.ToArray(); fa[(int)Mesh.ArrayType.Index] = FI.ToArray();

@@ -729,6 +729,161 @@ namespace UnturnedSim.Tests
             Assert.That(Math.Abs(controlLift / Math.Max(1, controlN)), Is.LessThan(0.05), "control: with tunnels off the run is not dug out");
         }
 
+        /// <summary>strawberry 2026-10-10: "theres a bunch of holes/gaps in the terrain around the tunnels". The terrain
+        /// drops every LOD0 cell touching a mouth's holes; a rectangular lid and a flat apron stood in for them, and on any
+        /// diagonal heading they missed the cells' corners, and beside the bores in front they left the cut slope's edge
+        /// hanging open over a pit. Now each mouth draws those cells again (MouthGround), and at every highway and rail
+        /// mouth in the window:
+        ///   - the cells it draws ARE the cells the terrain drops (Generate's Holes, another path), and its triangles
+        ///     cover every one of them;
+        ///   - along every edge it shares with a drawn cell it is at the drawn mesh's height (MeshHeightAt, on the region);
+        ///   - in front of the facade, across each bore, it is down at the approach's bed: the mouth is not shut;
+        ///   - behind it, over each bore, it is over the bore's crown: nothing hangs into the tube;
+        ///   - along the facade its two sides agree at both ends of the profile (the headwall's ends are buried), and the
+        ///     profile reaches past the shells.</summary>
+        [Test]
+        public void TunnelMouthsAreClosed()
+        {
+            var spans = new List<InfiniteRoads.TunnelSpan>();
+            for (int axis = 0; axis < 2; axis++)
+                for (long band = -2; band <= 1; band++)
+                    for (long k = -4; k <= 3; k++) spans.AddRange(Gen.Roads.TunnelsOf(axis, band, k));
+            int highways = spans.Count;
+            for (int axis = 0; axis < 2; axis++)
+                for (long band = -1; band <= 0; band++)
+                    for (long k = -1; k <= 1; k++) spans.AddRange(Gen.Roads.RailTunnelsOf(axis, band, k));
+            var regions = new Dictionary<(long, long), RegionData>();
+            RegionData RegionAt(double x, double z)
+            {
+                var rc = RegionCoord.Containing(x, z);
+                if (!regions.TryGetValue((rc.X, rc.Z), out var d)) regions[(rc.X, rc.Z)] = d = Gen.Generate(rc, 0);
+                return d;
+            }
+            bool Dropped(long i, long j)
+            {
+                var d = RegionAt((i + 0.5) * 4.0, (j + 0.5) * 4.0);
+                if (d.Holes == null) return false;
+                int v = d.Cells + 1, ci = (int)(i - (long)Math.Round(d.Coord.MinX / 4.0)), cj = (int)(j - (long)Math.Round(d.Coord.MinZ / 4.0));
+                return d.Holes[cj * v + ci] || d.Holes[cj * v + ci + 1] || d.Holes[(cj + 1) * v + ci] || d.Holes[(cj + 1) * v + ci + 1];
+            }
+            int mouths = 0, cells = 0, mismatched = 0, uncovered = 0, seamProbes = 0, openProbes = 0, crownProbes = 0, badEnds = 0, short_ = 0;
+            double worstSeam = 0, worstShut = double.NegativeInfinity, worstCrown = double.NegativeInfinity;
+            string seamWhere = "", shutWhere = "", crownWhere = "", cellWhere = "";
+            // every cell any mouth draws (a short tunnel's two mouths share a window), and how often: once, never twice
+            var drawnBy = new Dictionary<(long, long), int>();
+            var all = spans.Select(t => (t, both: Gen.MouthGround(t))).ToList();
+            foreach (var (_, both) in all)
+                foreach (var md in both)
+                    for (int c = 0; c < md.Cells.Length; c++)
+                        if (md.Cells[c]) { var key = (md.I0 + c % (md.W - 1), md.J0 + c / (md.W - 1)); drawnBy[key] = drawnBy.GetValueOrDefault(key) + 1; }
+            int twice = drawnBy.Values.Count(n => n > 1);
+            foreach (var (t, both) in all)
+            {
+                for (int end = 0; end < 2; end++)
+                {
+                    var md = both[end];
+                    mouths++;
+                    int m = t.X.Length, ia = end == 0 ? 0 : m - 1, ib = end == 0 ? 1 : m - 2;
+                    double px = t.X[ia], pz = t.Z[ia], fx = t.X[ib] - px, fz = t.Z[ib] - pz, fl = Math.Sqrt(fx * fx + fz * fz);
+                    fx /= fl; fz /= fl;
+                    double sx = -fz, sz = fx;
+                    if (end == 1) { sx = -sx; sz = -sz; }
+                    int nt = md.Tris.Length / 3;
+                    bool Surface(double x, double z, out float y)
+                    {
+                        for (int q = 0; q < nt; q++)
+                        {
+                            int i0 = md.Tris[3 * q], i1 = md.Tris[3 * q + 1], i2 = md.Tris[3 * q + 2];
+                            double x0 = md.X[i0], z0 = md.Z[i0], x1 = md.X[i1], z1 = md.Z[i1], x2 = md.X[i2], z2 = md.Z[i2];
+                            double dd = (z1 - z2) * (x0 - x2) + (x2 - x1) * (z0 - z2);
+                            if (Math.Abs(dd) < 1e-12) continue;
+                            double l0 = ((z1 - z2) * (x - x2) + (x2 - x1) * (z - z2)) / dd, l1 = ((z2 - z0) * (x - x2) + (x0 - x2) * (z - z2)) / dd, l2 = 1 - l0 - l1;
+                            if (l0 < -1e-7 || l1 < -1e-7 || l2 < -1e-7) continue;
+                            y = (float)(l0 * md.Y[i0] + l1 * md.Y[i1] + l2 * md.Y[i2]);
+                            return true;
+                        }
+                        y = 0f; return false;
+                    }
+                    int cw = md.W - 1, ch = md.H - 1;
+                    bool Mine(int ci, int cj) => ci >= 0 && cj >= 0 && ci < cw && cj < ch && md.Cells[cj * cw + ci];
+                    for (int cj = 0; cj < ch; cj++)
+                        for (int ci = 0; ci < cw; ci++)
+                        {
+                            long gi = md.I0 + ci, gj = md.J0 + cj;
+                            bool mine = md.Cells[cj * cw + ci];
+                            // the terrain drops it if and only if a mouth draws it
+                            bool anyMouth = drawnBy.ContainsKey((gi, gj));
+                            if (anyMouth != Dropped(gi, gj)) { mismatched++; if (cellWhere == "") cellWhere = $" first cell ({gi}, {gj}): {(anyMouth ? "drawn by a mouth but not dropped" : "dropped but not drawn")}"; }
+                            if (!mine) continue;
+                            cells++;
+                            for (int a = 0; a < 4; a++)
+                                for (int b = 0; b < 4; b++)
+                                {
+                                    double x = (gi + (a + 0.5) / 4.0) * 4.0, z = (gj + (b + 0.5) / 4.0) * 4.0;
+                                    if (!Surface(x, z, out float y)) { uncovered++; continue; }
+                                    double aIn = (x - px) * fx + (z - pz) * fz, u = (x - px) * sx + (z - pz) * sz;
+                                    for (int s = 0; s < t.SX.Length; s++)
+                                    {
+                                        double c = InfiniteRoads.TubeOffset(t.Kind, s), half = InfiniteRoads.BoreReachOf(t.Kind) - (t.Kind == RoadKind.Rail ? 0 : InfiniteRoads.HighwayRibbonOffset);
+                                        if (Math.Abs(u - c) > half - 1.0) continue;
+                                        if (aIn < -0.05)
+                                        {
+                                            // in front: no higher than half a metre over the bed (TunnelsAreBoredAndOpen's own bar)
+                                            openProbes++;
+                                            double over = y - (t.Y[ia] - InfiniteRoads.TunnelBedBelow(t.Kind)) - 0.5;
+                                            if (over > worstShut) { worstShut = over; shutWhere = $" ({t.Kind} mouth at {px:0},{pz:0}: {-aIn:0.0} m out, {u:+0.0;-0.0} across)"; }
+                                        }
+                                        else if (aIn > 0.05)
+                                        {
+                                            crownProbes++;
+                                            double under = t.Y[ia] + InfiniteRoads.BoreTopOf(t.Kind, (float)u) + 0.1 - y;   // (the twin bores' top is measured from the route's centre)
+                                            if (under > worstCrown) { worstCrown = under; crownWhere = $" ({t.Kind} mouth at {px:0},{pz:0}: {aIn:0.0} m in, {u:+0.0;-0.0} across)"; }
+                                        }
+                                    }
+                                }
+                            // the edges it shares with drawn cells: the drawn mesh's own height, from the region
+                            void Seam(long i0, long j0, long i1, long j1)
+                            {
+                                for (double s = 0.05; s < 1; s += 0.1)
+                                {
+                                    double x = (i0 + (i1 - i0) * s) * 4.0, z = (j0 + (j1 - j0) * s) * 4.0;
+                                    // a hair into this cell, so the point is the mouth's
+                                    double nx = x + ((gi + 0.5) * 4.0 - x) * 1e-6, nz = z + ((gj + 0.5) * 4.0 - z) * 1e-6;
+                                    if (!Surface(nx, nz, out float y)) continue;
+                                    var d = RegionAt(x, z);
+                                    float want = InfiniteTerrain.MeshHeightAt(d, (float)(x - d.Coord.MinX), (float)(z - d.Coord.MinZ));
+                                    seamProbes++;
+                                    if (Math.Abs(y - want) > worstSeam) { worstSeam = Math.Abs(y - want); seamWhere = $" ({t.Kind} mouth at {px:0},{pz:0}: {y:0.000} against {want:0.000} at {x:0.0},{z:0.0})"; }
+                                }
+                            }
+                            if (!Mine(ci, cj - 1)) Seam(gi, gj, gi + 1, gj);
+                            if (!Mine(ci, cj + 1)) Seam(gi, gj + 1, gi + 1, gj + 1);
+                            if (!Mine(ci - 1, cj)) Seam(gi, gj, gi, gj + 1);
+                            if (!Mine(ci + 1, cj)) Seam(gi + 1, gj, gi + 1, gj + 1);
+                        }
+                    int nf = md.FaceU.Length;
+                    if (nf < 2 || Math.Abs(md.FaceFront[0] - md.FaceBehind[0]) > 1e-3 || Math.Abs(md.FaceFront[nf - 1] - md.FaceBehind[nf - 1]) > 1e-3) badEnds++;
+                    if (nf < 2 || md.FaceU[0] > -InfiniteRoads.ShellReachOf(t.Kind) || md.FaceU[nf - 1] < InfiniteRoads.ShellReachOf(t.Kind)) short_++;
+                }
+            }
+            TestContext.WriteLine($"{highways} highway and {spans.Count - highways} rail tunnels, {mouths} mouths: {cells} cells drawn again ({twice} by two mouths), {mismatched} disagreeing with the terrain's holes{cellWhere}, {uncovered} sample points uncovered;");
+            TestContext.WriteLine($"  seams: {seamProbes} probes, worst {worstSeam * 1000:0.000} mm off the drawn mesh{seamWhere}");
+            TestContext.WriteLine($"  in front, across the bores: {openProbes} probes, worst {worstShut:+0.00;-0.00} m against half a metre over the bed{shutWhere}");
+            TestContext.WriteLine($"  behind, over the bores: {crownProbes} probes, worst {worstCrown:+0.00;-0.00} m against 0.1 m over the crown{crownWhere}");
+            TestContext.WriteLine($"  facade profiles: {badEnds} with a step at an end, {short_} not reaching past the shells");
+            Assert.That(highways, Is.GreaterThanOrEqualTo(3)); Assert.That(spans.Count - highways, Is.GreaterThanOrEqualTo(3));
+            Assert.That(cells, Is.GreaterThan(mouths * 10), "the mouths draw (almost) nothing");
+            Assert.That(mismatched, Is.EqualTo(0), "a cell the terrain drops that no mouth draws, or the reverse");
+            Assert.That(twice, Is.EqualTo(0), "a cell two mouths draw (they fight)");
+            Assert.That(uncovered, Is.EqualTo(0), "a mouth's triangles leave part of its cells open");
+            Assert.That(seamProbes, Is.GreaterThan(mouths * 50));
+            Assert.That(worstSeam, Is.LessThan(0.001), "a mouth's ground steps off the drawn ground along a shared edge");
+            Assert.That(openProbes, Is.GreaterThan(mouths * 10)); Assert.That(worstShut, Is.LessThan(0.0), "ground across a mouth");
+            Assert.That(crownProbes, Is.GreaterThan(mouths * 10)); Assert.That(worstCrown, Is.LessThan(0.0), "the hill hangs into a bore behind its facade");
+            Assert.That(badEnds, Is.EqualTo(0), "the headwall would end on a step");
+            Assert.That(short_, Is.EqualTo(0), "the facade's profile stops short of the shells");
+        }
+
         /// <summary>strawberry 2026-10-10: "fixing up all of the road pathing etc. routing roads around eachother/over/under
         /// eachother with bridges". A main road meets a highway only to cross it -- once, square-on -- and never at grade.
         /// Over the WHOLE patch where the two asphalts overlap: one road is a deck's depth plus 5 m of headroom above the

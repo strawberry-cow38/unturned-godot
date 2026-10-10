@@ -48,14 +48,27 @@ namespace SDG.Unturned
         public override string ToString() => $"({X},{Z})";
     }
 
+    /// <summary>One tunnel mouth's GROUND (InfiniteTerrain.MouthGround): the LOD0 cells its holes take out, drawn again on
+    /// the terrain's own vertices and split as two surfaces either side of the facade -- the approach's cut in front of
+    /// it, the hill behind -- which the headwall joins along the Face profile. World coordinates.</summary>
+    public sealed class MouthData
+    {
+        public double[] X, Z; public float[] Y, NX, NY, NZ, U, V;   // the surface's vertices; U, V into Splat
+        public int[] Tris;                                         // three a triangle, any winding
+        public int SplatW, SplatH; public byte[] Splat;            // vertex (I0 + i, J0 + j)'s layer, texel (i, j)
+        /// <summary>The facade line across the mouth, left to right (across: + to the route's left at the near end, the
+        /// same side at the far end -- the headwall's sense): the ground in front of it and behind it there. Linear
+        /// between points; where the two differ the headwall must stand.</summary>
+        public float[] FaceU, FaceFront, FaceBehind;
+        // what it was made from, for the tests: the vertex window, its cells drawn here, and per vertex the ground the
+        // terrain draws, the holes, and the two sides' heights
+        public long I0, J0; public int W, H; public bool[] Cells, Hole; public float[] Ground, Front, Behind;
+    }
+
     /// <summary>Where a streamed region's data comes from. The streamer (game/RegionStreamer.cs) asks only this, so the
     /// same streaming, LOD, colliders and floating origin serve a GENERATED world (InfiniteTerrain) and a HAND-MADE
     /// one too big to load whole -- a source that reads each region from disk, written by an editor in the same
     /// region shape. Both calls must be thread-safe: Generate runs on the streamer's workers.</summary>
-    /// <summary>The ground under a tunnel's two collars, [end][ia * (CollarAcross + 1) + iu]: the LOD0 mesh's height
-    /// there, and the splat layer of the nearest mesh vertex (so the lid wears the ground's own texture).</summary>
-    public sealed class CollarData { public float[][] Height; public byte[][] Layer; }
-
     public interface IRegionSource
     {
         /// <summary>One region at one LOD (0 = 4 m grid). Pure: the same arguments return the same data.</summary>
@@ -177,9 +190,9 @@ namespace SDG.Unturned
         /// <summary>Highway tunnels whose middle lies in this region (all LODs; the whole tunnel, which may reach a
         /// neighbour -- like a bridge, it is one structure).</summary>
         public List<InfiniteRoads.TunnelSpan> Tunnels;
-        /// <summary>Parallel to Tunnels: the ground under each portal's collar grid (InfiniteRoads.CollarPoint) -- what the
-        /// lid is laid on, and what it wears.</summary>
-        public List<CollarData> TunnelCollars;
+        /// <summary>Parallel to Tunnels: each one's two mouths' ground [end] (MouthGround) -- the cells its holes take out,
+        /// drawn again either side of the facade.</summary>
+        public List<MouthData[]> TunnelMouths;
         /// <summary>LOD0 only, same order as Heights: vertices that are HOLES -- just inside a tunnel portal, across the
         /// bore. The collider gets NaN there and the mesh drops every cell touching one. Null where there are none.</summary>
         public bool[] Holes;
@@ -328,10 +341,11 @@ namespace SDG.Unturned
         public float Sample(double x, double z, out RoadHit hit) => SampleWith(Roads.LinesIn(x - 1, z - 1, x + 1, z + 1), x, z, out hit);
 
         /// <summary>Sample against a working set of road lines (a region's, gathered once).</summary>
-        public float SampleWith(List<InfiniteRoads.Line> lines, double x, double z, out RoadHit hit)
+        public float SampleWith(List<InfiniteRoads.Line> lines, double x, double z, out RoadHit hit,
+                                InfiniteRoads.TunnelSpan mouthOf = null, InfiniteRoads.MouthSide mouth = InfiniteRoads.MouthSide.None)
         {
             float raw = RawHeight(x, z);
-            hit = InfiniteRoads.Influence(lines, x, z);
+            hit = InfiniteRoads.Influence(lines, x, z, mouthOf, mouth);
             // the bed sits Bed under the paved surface: a ribbon laid at the profile then always covers the ground's own
             // triangles (the grid's vertices poked through as lines across the lanes when the bed WAS the surface)
             float g = hit.Any ? raw + (hit.Height - InfiniteRoads.Bed - raw) * hit.Weight : raw;
@@ -504,8 +518,8 @@ namespace SDG.Unturned
             d.Tunnels = Roads.TunnelsIn(lines, ox, oz, ox + RegionSize, oz + RegionSize);
             if (d.Tunnels.Count > 0)
             {
-                d.TunnelCollars = new List<CollarData>(d.Tunnels.Count);
-                foreach (var t in d.Tunnels) d.TunnelCollars.Add(CollarGround(t));
+                d.TunnelMouths = new List<MouthData[]>(d.Tunnels.Count);
+                foreach (var t in d.Tunnels) d.TunnelMouths.Add(MouthGround(t));
             }
             d.Rails = Roads.RailsIn(lines, ox, oz, ox + RegionSize, oz + RegionSize);
             d.LevelCrossings = Roads.LevelCrossingsIn(lines, ox, oz, ox + RegionSize, oz + RegionSize);
@@ -574,51 +588,204 @@ namespace SDG.Unturned
         /// <summary>Clearance to the nearest asphalt of any road (negative on it). Public for the spawn search and tests.</summary>
         public float RoadClearance(double x, double z) => Roads.Influence(x, z).Clear;
 
-        /// <summary>The ground under a tunnel's two collars (see InfiniteRoads.CollarPoint): the heights the ground mesh
-        /// has there, holes included (a hole vertex has a height; it is only not drawn). The collar used to stand at the
-        /// hill's CAP -- the most it may be cut back to -- rising 1.5 m per metre behind the holes, and where the hill was
-        /// lower than its cap that stood a lid up to 6 m out of the ground behind every portal (strawberry: "the tunnel
-        /// is still humping?").</summary>
-        public CollarData CollarGround(InfiniteRoads.TunnelSpan t)
+        /// <summary>A tunnel's two MOUTHS' ground [end]. Every LOD0 cell touching a hole is dropped from the terrain (a
+        /// heightfield cannot overhang the mouth), and something has to stand in for it: a concrete collar at the hill's
+        /// cap stood 6 m out of a lower hill ("the tunnel is still humping?"), and one laid on the ground covered only a
+        /// rectangle of the cells -- on any diagonal heading the corners it missed, and in front of the facade beside the
+        /// bores nothing but a flat apron at the road's bed, a pit with the cut slope's edge hanging open over it
+        /// (strawberry: "theres a bunch of holes/gaps in the terrain around the tunnels").
+        ///
+        /// So the cells are drawn again, exactly: the terrain's own vertices, its own split, cut by the facade line.
+        /// In front of it a vertex stands at the approach's CUT run on (MouthSide.Cut), behind it at the HILL run out
+        /// (MouthSide.Hill) -- except where the cell's edge is shared with a drawn cell on that side, where it is the
+        /// terrain's own height, so the edge meets its neighbour exactly. Along the facade the two sides' heights differ
+        /// only where a hole vertex weighs in, and the headwall closes that step (FaceU / FaceFront / FaceBehind).</summary>
+        public MouthData[] MouthGround(InfiniteRoads.TunnelSpan t) => new[] { MouthOf(t, 0), MouthOf(t, 1) };
+
+        MouthData MouthOf(InfiniteRoads.TunnelSpan t, int end)
         {
-            int nu = InfiniteRoads.CollarAcross(t.Kind), na = InfiniteRoads.CollarAlong;
-            var r = new float[2][]; var lay = new byte[2][];
-            for (int end = 0; end < 2; end++)
+            const double sp = FullSpacing;
+            int m = t.X.Length, ia = end == 0 ? 0 : m - 1, ib = end == 0 ? 1 : m - 2;
+            double px = t.X[ia], pz = t.Z[ia], fx = t.X[ib] - px, fz = t.Z[ib] - pz, fl = Math.Max(1e-9, Math.Sqrt(fx * fx + fz * fz));
+            fx /= fl; fz /= fl;
+            double sx = -fz, sz = fx;
+            if (end == 1) { sx = -sx; sz = -sz; }
+            double In(double x, double z) => (x - px) * fx + (z - pz) * fz;           // metres in from the facade
+            double Across(double x, double z) => (x - px) * sx + (z - pz) * sz;
+            // the window: every vertex this mouth's holes can be (TunnelHoleIn in, TunnelHoleBeside past the bores), the
+            // cells round them (a cell diagonal on any heading), and a vertex more for the normals
+            double diag = sp * Math.Sqrt(2.0), holeLat = InfiniteRoads.BoreReachOf(t.Kind) + InfiniteRoads.TunnelHoleBeside;
+            double aLo = -diag - 1, aHi = InfiniteRoads.TunnelHoleIn + diag + 1, lHi = holeLat + diag + 1;
+            double minX = double.MaxValue, maxX = double.MinValue, minZ = double.MaxValue, maxZ = double.MinValue;
+            foreach (var (a, l) in new[] { (aLo, -lHi), (aLo, lHi), (aHi, -lHi), (aHi, lHi) })
             {
-                r[end] = new float[(na + 1) * (nu + 1)]; lay[end] = new byte[(na + 1) * (nu + 1)];
-                InfiniteRoads.CollarPoint(t, end, 0, 0, out double x0, out double z0, out _, out _);
-                InfiniteRoads.CollarPoint(t, end, na, nu, out double x1, out double z1, out _, out _);
-                double reach = InfiniteRoads.CollarDepth + 2 * InfiniteRoads.TunnelHoleExtentOf(t.Kind);
-                var lines = Roads.LinesIn(Math.Min(x0, x1) - reach, Math.Min(z0, z1) - reach, Math.Max(x0, x1) + reach, Math.Max(z0, z1) + reach);
-                // the LOD0 MESH's height, not the analytic ground's: the mesh is linear over its 4 m cells, and a lid laid
-                // on the analytic surface every metre wove in and out of it -- a jagged edge behind every portal. Same
-                // vertices (absolute multiples of the cell), same split (fx + fz <= 1: a, b, c; else b, e, c) as MeshHeight.
-                var vtx = new Dictionary<(long, long), float>();
-                var hits = new Dictionary<(long, long), RoadHit>();
-                float V(long i, long j)
-                {
-                    if (vtx.TryGetValue((i, j), out var h)) return h;
-                    h = SampleWith(lines, i * (double)FullSpacing, j * (double)FullSpacing, out var hit);
-                    hits[(i, j)] = hit;
-                    return vtx[(i, j)] = h;
-                }
-                for (int ia = 0; ia <= na; ia++)
-                    for (int iu = 0; iu <= nu; iu++)
-                    {
-                        InfiniteRoads.CollarPoint(t, end, ia, iu, out double x, out double z, out _, out _);
-                        double gx = x / FullSpacing, gz = z / FullSpacing;
-                        long i = (long)Math.Floor(gx), j = (long)Math.Floor(gz);
-                        float fx = (float)(gx - i), fz = (float)(gz - j);
-                        float ha = V(i, j), hb = V(i + 1, j), hc = V(i, j + 1), he = V(i + 1, j + 1);
-                        r[end][ia * (nu + 1) + iu] = fx + fz <= 1f ? ha + (hb - ha) * fx + (hc - ha) * fz : he + (hc - he) * (1f - fx) + (hb - he) * (1f - fz);
-                        // the nearest vertex's layer, exactly as Generate paints it (its slope from its neighbours)
-                        long ni = (long)Math.Round(gx), nj = (long)Math.Round(gz);
-                        float nh = V(ni, nj), sdx = (V(ni + 1, nj) - V(ni - 1, nj)) / (2f * FullSpacing), sdz = (V(ni, nj + 1) - V(ni, nj - 1)) / (2f * FullSpacing);
-                        var nhit = hits[(ni, nj)];
-                        lay[end][ia * (nu + 1) + iu] = (byte)LayerAt(ni * (double)FullSpacing, nj * (double)FullSpacing, nh, MathF.Sqrt(sdx * sdx + sdz * sdz), nhit.Clear, nhit.Kind);
-                    }
+                double x = px + fx * a + sx * l, z = pz + fz * a + sz * l;
+                minX = Math.Min(minX, x); maxX = Math.Max(maxX, x); minZ = Math.Min(minZ, z); maxZ = Math.Max(maxZ, z);
             }
-            return new CollarData { Height = r, Layer = lay };
+            long I0 = (long)Math.Floor(minX / sp) - 1, J0 = (long)Math.Floor(minZ / sp) - 1;
+            int W = (int)((long)Math.Ceiling(maxX / sp) + 1 - I0 + 1), H = (int)((long)Math.Ceiling(maxZ / sp) + 1 - J0 + 1);
+            var lines = Roads.LinesIn(minX - 2 * sp, minZ - 2 * sp, maxX + 2 * sp, maxZ + 2 * sp);
+            int nv = W * H, cw = W - 1, ch = H - 1;
+            double VX(int k) => (I0 + k % W) * sp;
+            double VZ(int k) => (J0 + k / W) * sp;
+            var g = new float[nv]; var hits = new RoadHit[nv]; var hole = new bool[nv]; var aIn = new double[nv];
+            for (int k = 0; k < nv; k++)
+            {
+                double x = VX(k), z = VZ(k);
+                g[k] = SampleWith(lines, x, z, out hits[k]);
+                aIn[k] = In(x, z);
+                var h = hits[k];
+                // this mouth's own holes; another tunnel's are its own mouth's to draw
+                hole[k] = h.Hole && h.TunnelKind == t.Kind && Math.Abs(h.TunnelIn - aIn[k]) < 1.5
+                          && Math.Abs(Math.Abs(h.TunnelLat) - Math.Abs(Across(x, z))) < 1.5;
+            }
+            // the cells the terrain drops for them: every one with a hole corner (RegionStreamer.Build)
+            var cells = new bool[cw * ch];
+            var used = new bool[nv];
+            for (int cj = 0; cj < ch; cj++)
+                for (int ci = 0; ci < cw; ci++)
+                {
+                    int a = cj * W + ci, b = a + 1, c = a + W, e = c + 1;
+                    if (!(hole[a] || hole[b] || hole[c] || hole[e])) continue;
+                    cells[cj * cw + ci] = true;
+                    used[a] = used[b] = used[c] = used[e] = true;
+                }
+            bool Cell(int ci, int cj) => ci >= 0 && cj >= 0 && ci < cw && cj < ch && cells[cj * cw + ci];
+            // EDGES SHARED WITH A DRAWN CELL keep the terrain's heights on whichever side of the facade they reach, so the
+            // two meshes meet exactly along them
+            var pinF = new bool[nv]; var pinB = new bool[nv];
+            void Edge(int k0, int k1)
+            {
+                if (Math.Min(aIn[k0], aIn[k1]) <= 0) pinF[k0] = pinF[k1] = true;
+                if (Math.Max(aIn[k0], aIn[k1]) >= 0) pinB[k0] = pinB[k1] = true;
+            }
+            for (int cj = 0; cj < ch; cj++)
+                for (int ci = 0; ci < cw; ci++)
+                {
+                    if (!cells[cj * cw + ci]) continue;
+                    int a = cj * W + ci, b = a + 1, c = a + W, e = c + 1;
+                    if (!Cell(ci, cj - 1)) Edge(a, b);
+                    if (!Cell(ci, cj + 1)) Edge(c, e);
+                    if (!Cell(ci - 1, cj)) Edge(a, c);
+                    if (!Cell(ci + 1, cj)) Edge(b, e);
+                }
+            var F = (float[])g.Clone(); var B = (float[])g.Clone();
+            for (int k = 0; k < nv; k++)
+            {
+                if (!used[k]) continue;
+                if (!pinF[k]) F[k] = SampleWith(lines, VX(k), VZ(k), out _, t, InfiniteRoads.MouthSide.Cut);
+                if (!pinB[k]) B[k] = SampleWith(lines, VX(k), VZ(k), out _, t, InfiniteRoads.MouthSide.Hill);
+            }
+            // normals as Generate makes them (central differences): the terrain's own where a side is pinned, so the
+            // lighting runs on across the seam; off that side's own heights elsewhere
+            (float, float, float) Nrm(float[] f, int k)
+            {
+                int i = k % W, j = k / W;
+                if (i == 0 || j == 0 || i == W - 1 || j == H - 1) return (0f, 1f, 0f);
+                float dx = (f[k + 1] - f[k - 1]) / (2f * (float)sp), dz = (f[k + W] - f[k - W]) / (2f * (float)sp);
+                float inv = 1f / MathF.Sqrt(dx * dx + 1f + dz * dz);
+                return (-dx * inv, inv, -dz * inv);
+            }
+            var splat = new byte[nv];
+            for (int k = 0; k < nv; k++)
+            {
+                if (!used[k]) continue;
+                var (gx, gy, gz) = Nrm(g, k);
+                float slope = MathF.Sqrt(gx * gx + gz * gz) / gy;
+                splat[k] = (byte)LayerAt(VX(k), VZ(k), g[k], slope, hits[k].Clear, hits[k].Kind);
+            }
+
+            var X = new List<double>(); var Z = new List<double>(); var Y = new List<float>();
+            var NX = new List<float>(); var NY = new List<float>(); var NZ = new List<float>();
+            var U = new List<float>(); var V = new List<float>(); var T = new List<int>();
+            var face = new List<(double u, float f, float b)>();
+            // one triangle of the terrain's split, cut by the facade line: in front the cut, behind the hill
+            void Emit(int k0, int k1, int k2, bool drawn)
+            {
+                int[] ks = { k0, k1, k2 };
+                for (int side = 0; side < 2; side++)
+                {
+                    // side 0 keeps aIn <= 0 (front), side 1 aIn >= 0 (behind)
+                    float[] hs = drawn ? g : side == 0 ? F : B;
+                    bool[] pin = side == 0 ? pinF : pinB;
+                    var poly = new List<(double x, double z, float y, float nx, float ny, float nz)>(4);
+                    (double, double, float, float, float, float) Vtx(int k)
+                    {
+                        var (nx, ny, nz) = Nrm(drawn || pin[k] ? g : hs, k);
+                        return (VX(k), VZ(k), hs[k], nx, ny, nz);
+                    }
+                    for (int q = 0; q < 3; q++)
+                    {
+                        int ka = ks[q], kb = ks[(q + 1) % 3];
+                        double da = side == 0 ? -aIn[ka] : aIn[ka], db = side == 0 ? -aIn[kb] : aIn[kb];
+                        if (da >= 0) poly.Add(Vtx(ka));
+                        if (da >= 0 != db >= 0 && Math.Abs(da - db) > 1e-12)
+                        {
+                            double s = da / (da - db);
+                            var A = Vtx(ka); var Bv = Vtx(kb);
+                            float nx = (float)(A.Item4 + (Bv.Item4 - A.Item4) * s), ny = (float)(A.Item5 + (Bv.Item5 - A.Item5) * s), nz = (float)(A.Item6 + (Bv.Item6 - A.Item6) * s);
+                            float nl = MathF.Max(1e-6f, MathF.Sqrt(nx * nx + ny * ny + nz * nz));
+                            double cx = A.Item1 + (Bv.Item1 - A.Item1) * s, cz = A.Item2 + (Bv.Item2 - A.Item2) * s;
+                            poly.Add((cx, cz, (float)(A.Item3 + (Bv.Item3 - A.Item3) * s), nx / nl, ny / nl, nz / nl));
+                            if (side == 0)
+                            {
+                                float[] fh = drawn ? g : F, bh = drawn ? g : B;
+                                face.Add((Across(cx, cz), (float)(fh[ka] + (fh[kb] - fh[ka]) * s), (float)(bh[ka] + (bh[kb] - bh[ka]) * s)));
+                            }
+                        }
+                    }
+                    if (drawn || poly.Count < 3) continue;   // a drawn cell is only walked for the facade's profile
+                    int first = X.Count;
+                    foreach (var p in poly)
+                    {
+                        X.Add(p.x); Z.Add(p.z); Y.Add(p.y); NX.Add(p.nx); NY.Add(p.ny); NZ.Add(p.nz);
+                        U.Add((float)((p.x / sp - I0 + 0.5) / W)); V.Add((float)((p.z / sp - J0 + 0.5) / H));
+                    }
+                    for (int q = 1; q + 1 < poly.Count; q++) { T.Add(first); T.Add(first + q); T.Add(first + q + 1); }
+                }
+            }
+            for (int cj = 0; cj < ch; cj++)
+                for (int ci = 0; ci < cw; ci++)
+                {
+                    int a = cj * W + ci, b = a + 1, c = a + W, e = c + 1;
+                    bool drawn = !cells[cj * cw + ci];
+                    // the drawn cells are walked too, for the facade's profile where it runs across them between the mouth's
+                    if (drawn && (Math.Min(Math.Min(aIn[a], aIn[b]), Math.Min(aIn[c], aIn[e])) > 0 || Math.Max(Math.Max(aIn[a], aIn[b]), Math.Max(aIn[c], aIn[e])) < 0)) continue;
+                    Emit(a, b, c, drawn);   // the terrain's split: fx + fz <= 1 is (a, b, c), else (b, e, c)
+                    Emit(b, e, c, drawn);
+                }
+            // the facade's profile: only as wide as the mouth's own crossings of it (a drawn cell's crossing between two of
+            // them keeps it unbroken; past the outermost, the ground is whole and there is nothing to close)
+            double uLo = double.MaxValue, uHi = double.MinValue;
+            for (int cj = 0; cj < ch; cj++)
+                for (int ci = 0; ci < cw; ci++)
+                {
+                    if (!cells[cj * cw + ci]) continue;
+                    int a = cj * W + ci;
+                    foreach (int k in new[] { a, a + 1, a + W, a + W + 1 })
+                        foreach (int k2 in new[] { a, a + 1, a + W, a + W + 1 })
+                        {
+                            if (aIn[k] > 0 || aIn[k2] < 0 || aIn[k2] - aIn[k] < 1e-12) continue;
+                            double s = -aIn[k] / (aIn[k2] - aIn[k]);
+                            double u = Across(VX(k) + (VX(k2) - VX(k)) * s, VZ(k) + (VZ(k2) - VZ(k)) * s);
+                            uLo = Math.Min(uLo, u); uHi = Math.Max(uHi, u);
+                        }
+                }
+            face.Sort((p, q) => p.u.CompareTo(q.u));
+            var fu = new List<float>(); var ff = new List<float>(); var fb = new List<float>();
+            foreach (var p in face)
+            {
+                if (p.u < uLo - 1e-6 || p.u > uHi + 1e-6) continue;
+                if (fu.Count > 0 && p.u - fu[fu.Count - 1] < 1e-4) { ff[ff.Count - 1] = Math.Min(ff[ff.Count - 1], p.f); fb[fb.Count - 1] = Math.Max(fb[fb.Count - 1], p.b); continue; }
+                fu.Add((float)p.u); ff.Add(p.f); fb.Add(p.b);
+            }
+            return new MouthData
+            {
+                X = X.ToArray(), Z = Z.ToArray(), Y = Y.ToArray(), NX = NX.ToArray(), NY = NY.ToArray(), NZ = NZ.ToArray(),
+                U = U.ToArray(), V = V.ToArray(), Tris = T.ToArray(), SplatW = W, SplatH = H, Splat = splat,
+                FaceU = fu.ToArray(), FaceFront = ff.ToArray(), FaceBehind = fb.ToArray(),
+                I0 = I0, J0 = J0, W = W, H = H, Cells = cells, Hole = hole, Ground = g, Front = F, Behind = B,
+            };
         }
         const float FullSpacing = RegionSize / FullCells;
 

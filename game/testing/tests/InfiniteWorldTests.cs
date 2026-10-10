@@ -17,37 +17,90 @@ namespace UnturnedGodot.Testing
     //   - a body moving through a rebase keeps its velocity and its place relative to the player.
     public sealed class InfiniteWorldTests : GameTest
     {
-        /// <summary>strawberry 2026-10-10: "the tunnel is still humping?" -- the lid behind each portal stood at the hill's
-        /// CAP, up to 6 m out of a hill lower than it. A drop from above onto every other point of both collars' grids,
-        /// wherever the ground there is DRAWN (its LOD0 cell touches no hole): how far whatever it lands on stands over
-        /// the drawn ground (InfiniteTerrain.MeshHeightAt on that region's own data). Nothing may: the lid lies on the
-        /// mesh, sunk 5 cm where the mesh is back.</summary>
-        static (int hits, float worst, string where) CollarOverGround(PhysicsDirectSpaceState3D space, RegionStreamer S, InfiniteRoads.TunnelSpan t)
+        /// <summary>strawberry 2026-10-10: "theres a bunch of holes/gaps in the terrain around the tunnels". The terrain drops
+        /// every LOD0 cell touching a mouth's holes, and what stood in for them -- a rectangular lid and a flat apron --
+        /// missed the cells' corners on any diagonal heading and left the cut slope's edge hanging open over a pit beside the
+        /// bores. Two things must hold at both mouths:
+        ///   DROPS: on a 1 m grid over every cell the terrain leaves out, a drop lands on the mouth's own ground at the
+        ///   height the generator gave it (MouthData) -- or on the road or ballast laid over it -- never through to
+        ///   something under it, never on nothing;
+        ///   STEPS: wherever the ground in front of the facade and the ground behind it part, a level ray at the step's
+        ///   mid-height, from 0.3 m out on the lower side (where that is above the ground), meets the headwall AT the
+        ///   facade. (The wall stood only as wide as the old wings and as high as the shells.)</summary>
+        static (int drops, float worstDrop, int steps, int open, string where) MouthClosed(PhysicsDirectSpaceState3D space, RegionStreamer S, InfiniteRoads.TunnelSpan t)
         {
-            int hits = 0; float worst = float.NegativeInfinity; string where = "";
-            var regions = new Dictionary<RegionCoord, RegionData>();
+            var mouths = S.Gen.MouthGround(t);
+            int drops = 0, steps = 0, open = 0; float worst = 0f; string where = "";
             for (int end = 0; end < 2; end++)
-                for (int ia = 1; ia <= InfiniteRoads.CollarAlong; ia++)
-                    for (int iu = 0; iu <= InfiniteRoads.CollarAcross(t.Kind); iu += 2)
+            {
+                var md = mouths[end];
+                int m = t.X.Length, ia = end == 0 ? 0 : m - 1, ib = end == 0 ? 1 : m - 2;
+                double px = t.X[ia], pz = t.Z[ia], fx = t.X[ib] - px, fz = t.Z[ib] - pz, fl = System.Math.Sqrt(fx * fx + fz * fz);
+                fx /= fl; fz /= fl;
+                double sx = -fz, sz = fx;
+                if (end == 1) { sx = -sx; sz = -sz; }
+                int nt = md.Tris.Length / 3;
+                bool Surface(double x, double z, out float y)
+                {
+                    for (int q = 0; q < nt; q++)
                     {
-                        InfiniteRoads.CollarPoint(t, end, ia, iu, out double cx, out double cz, out float aIn, out float u);
-                        var rc = RegionCoord.Containing(cx, cz);
-                        if (!regions.TryGetValue(rc, out var d)) regions[rc] = d = S.Gen.Generate(rc, 0);
-                        float lx = (float)(cx - rc.MinX), lz = (float)(cz - rc.MinZ);
-                        int v = d.Cells + 1, ci = System.Math.Clamp((int)(lx / d.Spacing), 0, d.Cells - 1), cj = System.Math.Clamp((int)(lz / d.Spacing), 0, d.Cells - 1);
-                        if (d.Holes != null && (d.Holes[cj * v + ci] || d.Holes[cj * v + ci + 1] || d.Holes[(cj + 1) * v + ci] || d.Holes[(cj + 1) * v + ci + 1])) continue;
-                        float g = InfiniteTerrain.MeshHeightAt(d, lx, lz);
-                        var from = S.ToLocal(cx, g + 30.0, cz);
-                        var h = space.IntersectRay(PhysicsRayQueryParameters3D.Create(from, from + Vector3.Down * 60f, 1u << 0));
-                        if (h.Count == 0) continue;
-                        hits++;
-                        // landing on the ground itself is the ground (its collider splits cells its own way); only the
-                        // tunnel's body -- the lid -- can stand over it
-                        bool lid = h["collider"].As<Node>()?.GetParent()?.Name.ToString() == "TunnelBodies";
-                        float over = lid ? ((Vector3)h["position"]).Y - g : 0f;
-                        if (over > worst) { worst = over; where = $" ({aIn:0} m in, {u:+0;-0} m across, on the lid)"; }
+                        int i0 = md.Tris[3 * q], i1 = md.Tris[3 * q + 1], i2 = md.Tris[3 * q + 2];
+                        double x0 = md.X[i0], z0 = md.Z[i0], x1 = md.X[i1], z1 = md.Z[i1], x2 = md.X[i2], z2 = md.Z[i2];
+                        double d = (z1 - z2) * (x0 - x2) + (x2 - x1) * (z0 - z2);
+                        if (System.Math.Abs(d) < 1e-12) continue;
+                        double l0 = ((z1 - z2) * (x - x2) + (x2 - x1) * (z - z2)) / d, l1 = ((z2 - z0) * (x - x2) + (x0 - x2) * (z - z2)) / d, l2 = 1 - l0 - l1;
+                        if (l0 < -1e-7 || l1 < -1e-7 || l2 < -1e-7) continue;
+                        y = (float)(l0 * md.Y[i0] + l1 * md.Y[i1] + l2 * md.Y[i2]);
+                        return true;
                     }
-            return (hits, worst, where);
+                    y = 0f; return false;
+                }
+                int cw = md.W - 1, ch = md.H - 1;
+                for (int cj = 0; cj < ch; cj++)
+                    for (int ci = 0; ci < cw; ci++)
+                    {
+                        if (!md.Cells[cj * cw + ci]) continue;
+                        for (int a = 0; a < 4; a++)
+                            for (int b = 0; b < 4; b++)
+                            {
+                                double x = (md.I0 + ci + (a + 0.5) / 4.0) * 4.0, z = (md.J0 + cj + (b + 0.5) / 4.0) * 4.0;
+                                if (System.Math.Abs((x - px) * fx + (z - pz) * fz) < 0.1) continue;   // the facade line: the wall's top edge
+                                if (!Surface(x, z, out float want)) { open++; where = $" (no surface at {x:0.0},{z:0.0})"; continue; }
+                                var from = S.ToLocal(x, want + 40.0, z);
+                                var h = space.IntersectRay(PhysicsRayQueryParameters3D.Create(from, from + Vector3.Down * 80f, 1u << 0));
+                                drops++;
+                                string body = h.Count == 0 ? "nothing" : h["collider"].As<Node>()?.Name.ToString();
+                                if (body == "Paved" || body == "Ballast") continue;   // the road or track laid over it
+                                float err = h.Count == 0 ? float.PositiveInfinity : System.Math.Abs(((Vector3)h["position"]).Y - want);
+                                if (err > worst) { worst = err; where = $" (end {end}: {body} {err:0.000} m off at {x:0.0},{z:0.0})"; }
+                            }
+                    }
+                // the steps along the facade
+                float boreHalf = InfiniteRoads.BoreReachOf(t.Kind) - (t.Kind == RoadKind.Rail ? 0f : InfiniteRoads.TubeOffset(t.Kind, 1));
+                for (int q = 0; q + 1 < md.FaceU.Length; q++)
+                    for (int r = 0; r < 4; r++)
+                    {
+                        float s = (r + 0.5f) / 4f, u = md.FaceU[q] + (md.FaceU[q + 1] - md.FaceU[q]) * s;
+                        float F = md.FaceFront[q] + (md.FaceFront[q + 1] - md.FaceFront[q]) * s, B = md.FaceBehind[q] + (md.FaceBehind[q + 1] - md.FaceBehind[q]) * s;
+                        float lo = System.Math.Min(F, B), hi = System.Math.Max(F, B);
+                        // over a bore only the wall above its arch closes anything: below is the way in
+                        bool overBore = false;
+                        for (int tb = 0; tb < t.SX.Length; tb++) if (System.Math.Abs(u - InfiniteRoads.TubeOffset(t.Kind, tb)) <= boreHalf + 0.2f) overBore = true;
+                        if (overBore) lo = System.Math.Max(lo, t.Y[ia] + InfiniteRoads.ShellTopOf(t.Kind, u));
+                        if (hi - lo < 0.3f) continue;
+                        float y = (lo + hi) * 0.5f;
+                        double dir = F < B ? -1.0 : 1.0;   // the lower side: in front (-in) or behind (+in)
+                        double ox = px + sx * u + fx * 0.3 * dir, oz = pz + sz * u + fz * 0.3 * dir;
+                        if (!Surface(ox, oz, out float there) || there > y - 0.05f) continue;   // underground there: untestable from this side
+                        steps++;
+                        var o = S.ToLocal(ox, y, oz);
+                        var w = space.IntersectRay(PhysicsRayQueryParameters3D.Create(o, o + new Vector3((float)(-fx * dir), 0f, (float)(-fz * dir)) * 0.6f, 1u << 0));
+                        bool atFacade = w.Count > 0 && w["collider"].As<Node>()?.GetParent()?.Name.ToString() == "TunnelBodies"
+                                        && System.Math.Abs(((Vector3)w["position"] - o).Length() - 0.3f) < 0.03f;
+                        if (!atFacade) { open++; where = $" (end {end}: step at {u:+0.0;-0.0} m across, {lo:0.0}..{hi:0.0}, ray hit {(w.Count == 0 ? "nothing" : w["collider"].As<Node>()?.Name + " at " + ((Vector3)w["position"] - o).Length().ToString("0.00") + " m")})"; }
+                    }
+            }
+            return (drops, worst, steps, open, where);
         }
 
         public override string Name => "infinite.stream_rebase_far";
@@ -530,8 +583,9 @@ namespace UnturnedGodot.Testing
                 T.Check($"the hill stands over it: {hillY:0.0} m above the road on {(hill.Count > 0 ? hill["collider"].As<Node>()?.Name : "nothing")} (shell top {InfiniteRoads.ShellTop(0f)})",
                     hill.Count > 0 && hill["collider"].As<Node>()?.Name == "GroundBody" && hillY > InfiniteRoads.ShellTop(0f));
                 {
-                    var (hits, over, where) = CollarOverGround(space, S, tun);
-                    T.Check($"the collars behind its mouths lie on the ground: {hits} drops where the ground is drawn land at most {over:0.000} m over it{where}", hits > 30 && over < 0.02f);
+                    var (drops, off, steps, open, where) = MouthClosed(space, S, tun);
+                    T.Check($"its mouths are closed: {drops} drops over the cells the terrain leaves out land at most {off:0.000} m off the mouths' ground, {steps} level rays at the facade's steps, {open} open{where}",
+                        drops > 300 && off < 0.02f && steps > 20 && open == 0);
                 }
                 // stand in it: the guard must not lift you onto the hill
                 int rescues0 = S.Rescues;
@@ -780,8 +834,9 @@ namespace UnturnedGodot.Testing
                 var corner = eye + Vector3.Up * (InfiniteRoads.RailHead + InfiniteRoads.RailLoadingHeight - 2f);
                 var hc = space.IntersectRay(PhysicsRayQueryParameters3D.Create(eye + Vector3.Up * 0.5f, corner + side * InfiniteRoads.RailLoadingHalf, 1u << 0));
                 T.Check($"...and a train fits in it: from the track to the loading gauge's top corner hits {(hc.Count == 0 ? "nothing" : hc["collider"].As<Node>()?.Name)}", hc.Count == 0);
-                var (hits, over, where) = CollarOverGround(space, S, rtun);
-                T.Check($"...and the collars behind its mouths lie on the ground: {hits} drops where the ground is drawn land at most {over:0.000} m over it{where}", hits > 15 && over < 0.02f);
+                var (drops, off, steps, open, where) = MouthClosed(space, S, rtun);
+                T.Check($"...and its mouths are closed: {drops} drops over the cells the terrain leaves out land at most {off:0.000} m off the mouths' ground, {steps} level rays at the facade's steps, {open} open{where}",
+                    drops > 150 && off < 0.02f && steps > 10 && open == 0);
             }
             T.Check($"nobody was ever rescued from under the ground ({S.Rescues})", S.Rescues == 0);
         }

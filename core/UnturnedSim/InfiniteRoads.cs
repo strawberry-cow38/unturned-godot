@@ -299,30 +299,6 @@ namespace SDG.Unturned
             float x = lat / RailTunnelLateral;
             return Math.Abs(x) <= TunnelBoreHalf ? BoreTop(x) * RailTunnelVertical : float.NaN;
         }
-        // ---- THE COLLAR behind each portal (RegionStreamer.BuildTunnel): a lid over the ground the mouth's holes take out,
-        // CollarDepth in from the facade and TunnelHoleExtentOf to either side, on a CollarStep grid. Its points here, so
-        // the generator can find the ground under each (InfiniteTerrain.CollarGround) and the game lay the lid on it.
-        public const float CollarDepth = TunnelHoleIn + 4.5f, CollarStep = 1f;
-        /// <summary>How far from the route the ground can be missing at a mouth: the hole vertices' reach plus the LOD0
-        /// cell every one of them takes with it, plus a margin.</summary>
-        public static float TunnelHoleExtentOf(RoadKind k) => BoreReachOf(k) + TunnelHoleBeside + InfiniteTerrain.RegionSize / InfiniteTerrain.FullCells + 0.5f;
-        public static int CollarAcross(RoadKind k) => (int)Math.Ceiling(2f * TunnelHoleExtentOf(k) / CollarStep);
-        public static int CollarAlong => (int)Math.Ceiling(CollarDepth / CollarStep);
-        /// <summary>Collar grid point (ia along, from the facade inward; iu across) of the tunnel's end 0 (near) or 1 (far):
-        /// in from the facade along the route's first (last) step, across by its left-hand normal at the near end and its
-        /// right-hand one at the far end, so +across is the same side of the route at both.</summary>
-        public static void CollarPoint(TunnelSpan t, int end, int ia, int iu, out double x, out double z, out float aIn, out float across)
-        {
-            int m = t.X.Length, a = end == 0 ? 0 : m - 1, b = end == 0 ? 1 : m - 2;
-            double fx = t.X[b] - t.X[a], fz = t.Z[b] - t.Z[a], fl = Math.Max(1e-9, Math.Sqrt(fx * fx + fz * fz));
-            fx /= fl; fz /= fl;
-            double sx = -fz, sz = fx;
-            if (end == 1) { sx = -sx; sz = -sz; }
-            float wing = TunnelHoleExtentOf(t.Kind);
-            int nu = CollarAcross(t.Kind), na = CollarAlong;
-            aIn = CollarDepth * ia / na; across = -wing + 2f * wing * iu / nu;
-            x = t.X[a] + fx * aIn + sx * across; z = t.Z[a] + fz * aIn + sz * across;
-        }
         public const float TunnelCover = 1f;          // natural ground over the shell for a run to be bored, not cut
         public const float TunnelProbeStep = 4f;      // along-route sampling when looking for runs to bore
         public static float TunnelMinLength => 2f * TunnelSectionLength;   // two portals; any bore is extra
@@ -1800,8 +1776,15 @@ namespace SDG.Unturned
             return bh;
         }
 
-        /// <summary>The strongest road at a point among `lines`, and the clearance to the nearest asphalt of any.</summary>
-        public static RoadHit Influence(List<Line> lines, double x, double z)
+        /// <summary>Which ground a tunnel's MOUTH asks for past its facade (InfiniteTerrain.MouthGround). The heightfield
+        /// holds one height a vertex, and a mouth needs two either side of its facade: in front, the approach's CUT, here run
+        /// on into the hill at the forecourt's full width; behind, the HILL, here run out over the approach as though the
+        /// bore began further out (TunnelGround as at the facade).</summary>
+        public enum MouthSide : byte { None, Cut, Hill }
+
+        /// <summary>The strongest road at a point among `lines`, and the clearance to the nearest asphalt of any. With a
+        /// MouthSide, that one tunnel is taken as the cut or the hill continued (see MouthSide); nothing else changes.</summary>
+        public static RoadHit Influence(List<Line> lines, double x, double z, TunnelSpan mouthOf = null, MouthSide mouth = MouthSide.None)
         {
             var hit = new RoadHit { Clear = float.MaxValue };
             // the decks mains have laid over themselves on highways in this working set (their own decks, not a highway's)
@@ -1837,24 +1820,45 @@ namespace SDG.Unturned
                     bool bored = false;
                     foreach (var tn in e.TunnelSpans)
                     {
+                        bool asked = mouth != MouthSide.None && ReferenceEquals(tn, mouthOf);
                         // THE FORECOURT: approaching a portal, the cut's flat widens from the road to the bore (plus a
                         // metre), so the bore's lower corners open onto level ground rather than the cut's side slope
                         double outside = along < tn.A0 ? tn.A0 - along : along - tn.A1;
-                        if (outside > 0 && outside < TunnelForecourt)
+                        if (asked && mouth == MouthSide.Cut) outside = Math.Max(0.0, outside);   // the cut runs on at the facade's width
+                        if ((outside > 0 || asked && mouth == MouthSide.Cut) && outside < TunnelForecourt)
                         {
                             float wide = BoreReachOf(e.Kind) + 1f;
                             if (wide > half) half += (wide - half) * Smoothstep(TunnelForecourt, 0f, (float)outside);
                         }
-                        if (along < tn.A0 || along > tn.A1) continue;
+                        bool inRun = along >= tn.A0 && along <= tn.A1;
+                        // JUST OUTSIDE THE RUN, BUT BEHIND THE PLANE ITS HEADWALL STANDS IN: the run's ends are arc lengths,
+                        // and the line's dense kinks swing the arc's facade against that plane by up to a kink's angle --
+                        // 0.3 m at 12 m across, on a highway's curve. Such a vertex is a hole as well, or the cell it gives
+                        // the drawn ground puts the road's bed behind the wall and the mouth's hill slopes down into the bore.
+                        double rawOut = along < tn.A0 ? tn.A0 - along : along - tn.A1;
+                        if (!inRun && rawOut < TunnelHoleIn && !hit.Tunnel && best <= BoreReachOf(e.Kind) + TunnelHoleBeside)
+                        {
+                            int n = tn.X.Length; bool nearEnd = along < tn.A0;
+                            double ox = nearEnd ? tn.X[0] : tn.X[n - 1], oz = nearEnd ? tn.Z[0] : tn.Z[n - 1];
+                            double dx = (nearEnd ? tn.X[1] : tn.X[n - 2]) - ox, dz = (nearEnd ? tn.Z[1] : tn.Z[n - 2]) - oz, dl = Math.Max(1e-9, Math.Sqrt(dx * dx + dz * dz));
+                            double inPlane = ((x - ox) * dx + (z - oz) * dz) / dl;
+                            if (inPlane >= 0 && inPlane <= TunnelHoleIn)
+                            {
+                                hit.Hole = true; hit.TunnelKind = e.Kind; hit.TunnelIn = (float)inPlane;
+                                hit.TunnelLat = bestRight ? best : -best; hit.TunnelRoad = TunnelSurfaceY(e.Kind, bh);
+                            }
+                        }
+                        if (asked && mouth == MouthSide.Cut) continue;
+                        if (!inRun && !(asked && mouth == MouthSide.Hill)) continue;
                         bored = true;
                         if (!hit.Tunnel)
                         {
                             hit.Tunnel = true;
-                            hit.TunnelIn = (float)Math.Min(along - tn.A0, tn.A1 - along);
+                            hit.TunnelIn = inRun ? (float)Math.Min(along - tn.A0, tn.A1 - along) : 0f;   // the hill run out: as at the facade
                             hit.TunnelLat = bestRight ? best : -best;
                             hit.TunnelRoad = TunnelSurfaceY(e.Kind, bh);
                             hit.TunnelKind = e.Kind;
-                            hit.Hole = hit.TunnelIn <= TunnelHoleIn && best <= BoreReachOf(e.Kind) + TunnelHoleBeside;
+                            hit.Hole = inRun && hit.TunnelIn <= TunnelHoleIn && best <= BoreReachOf(e.Kind) + TunnelHoleBeside;
                         }
                         break;
                     }
