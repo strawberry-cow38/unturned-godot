@@ -2151,6 +2151,8 @@ namespace UnturnedGodot
         const float BumperAnimalDmg = 15f;
         const float CrashPropThreshold = 4f, CrashPropDmgPerSpeed = 18f, CrashPropMaxDmg = 500f;   // vehicle -> destructible prop: min impact speed to break, dmg per m/s, cap
         const float HornAlertRadius = 32f;   // source InteractableVehicle.tellHorn: AlertTool.alert(pos, 32) -> earshot-radius, unused (no listener wired up currently)
+        /// <summary>Test seam: where the tailpipe emitter actually sits, in body space.</summary>
+        public Vector3 DebugExhaustLocal => _exhaust?.Position ?? Vector3.Zero;
         public bool HeadlightsOn => _headlightsOn;
 
         // ---- HIGH BEAM (strawberry 2026-10-10: "make the headlights cycle throw off/low(current
@@ -2250,7 +2252,23 @@ namespace UnturnedGodot
         {
             public string Body, Wheel, WheelTex, Palette, GlassMesh, MissileMesh, SteerMesh;   // Palette = paintable palette; WheelTex = wheel albedo; GlassMesh = translucent canopy overlay (jet)
             public Color? GlassTint;   // GlassMesh albedo+alpha; null = the jet's golden canopy. Cars use GlassPane.DefaultHue so vehicle glass matches the building editor's windows.
-            public Vector3? ExhaustPos;   // authored outlet; null keeps the fleet's lower-shell formula
+            /// <summary>Authored tailpipe outlet in body space; null falls back to the lower-shell formula.
+            ///
+            /// ⭐ DERIVED FROM EACH VEHICLE'S OWN MESH, not eyeballed and not computed at runtime (strawberry
+            /// 2026-10-10: "fix the exhaust particles to emit from the rear face of the exhaust pipe on every
+            /// vehicle" + "author the positions"). The pipe is the geometry that PROTRUDES TO THE REARMOST Z
+            /// PLANE below the body's mid height: on these meshes the tail panel stops short and only the
+            /// outlet reaches the back, so the centroid of those verts IS the outlet face.
+            ///
+            /// ⭐⭐ The method was CALIBRATED before it was trusted: run against wagon_exhaust.txt -- the one
+            /// pipe that ships as its own part, and the source of the single value authored before today -- it
+            /// reproduces (0.7937, -0.1747, 2.8269) to four decimals. A detector that could not recover the
+            /// known answer would have had no business generating sixteen more.
+            ///
+            /// ⚠ Deliberately NOT authored: trailers (no engine), aircraft and boats, the SEMI and the TRACTOR
+            /// (both have VERTICAL stacks, which need an emitter direction too, not just a position) and the
+            /// TANK. Those keep the fallback and are listed here so the gap is a decision, not an oversight.</summary>
+            public Vector3? ExhaustPos;
             public bool RetractGear;   // JET: wheels tuck up into the fuselage when airborne (retract pivots + struts)
             public WaterMode Water;   // Car (default) = land only; Boat = floats+water-drives (no useful wheels); Amphibious = land wheels + float/water-drive when its hull is in the sea
             public Vector3[] Buoys;   // hull buoyancy points (local space, Godot); null = auto 4 bottom corners of BoxSize. Boats/amphibious float via a spring at each toward SeaLevelY
@@ -3198,6 +3216,7 @@ namespace UnturnedGodot
             DefaultPaints = new[] { "#475e83", "#a69884", "#437c44", "#495631" },   // src .dat DefaultPaintColors = the 4 faction paints (#475e83 Coalition / #a69884 Desert / #437c44 Forest / #495631 Russia), random pick per spawn
             WheelRadius = 0.6f, Engine = 600f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 12.5f, SpeedMin = -7f, Brake = 32f,
             BoxSize = new Vector3(2.5f, 1.046f, 4.522f), BoxCenter = new Vector3(0f, 0.612f, 0.029f),   // source BoxCollider
+            ExhaustPos = new Vector3(0.7937f, -0.1747f, 2.5932f),   // tailpipe outlet, centroid of the verts protruding to the rearmost Z plane of jeep_body.txt
             ForwardGears = new[] { 20f, 13.7f }, ReverseGear = 10f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,   // .dat EngineSound (prefab AudioSource = Engine_Medium)
             Fuel = 60_000f, Health = 600f, Name = "Jeep", Horn = "carhorn_04.ogg",   // 60 L tank (metric 1u=1mL; realistic, was the x2500 5,000,000)
@@ -3529,6 +3548,7 @@ namespace UnturnedGodot
             RandomHueGray = true,   // source RandomHueOrGrayscale -> our curated CarColors list
             WheelRadius = 0.45f, Engine = 520f, SteerMax = 32f, SteerMin = 16f, SpeedMax = 13.5f, SpeedMin = -5f, Brake = 24f,
             BoxSize = new Vector3(2.0f, 0.777f, 3.581f), BoxCenter = new Vector3(0f, 0.478f, 0.407f),   // source BoxCollider
+            ExhaustPos = new Vector3(0.2136f, 0.4033f, 1.9816f),   // tailpipe outlet, centroid of the verts protruding to the rearmost Z plane of quad_body.txt
             ForwardGears = new[] { 20f, 10f }, ReverseGear = 8f, ShiftUpRpm = 3000f,
             Sound = "engine_small.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,   // .dat EngineSound (prefab AudioSource = Engine_Small)
             Fuel = 15_000f, Health = 450f, Name = "Quad", Horn = "carhorn_01.ogg",   // 15 L tank (metric 1u=1mL; realistic ATV)
@@ -3553,6 +3573,7 @@ namespace UnturnedGodot
             DefaultPaints = new[] { "#d4d4d4" },   // source .dat: single near-white default
             WheelRadius = 0.6f, Engine = 780f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 12f, SpeedMin = -6f, Brake = 24f,
             BoxSize = new Vector3(3.0f, 1.018f, 7.964f), BoxCenter = new Vector3(0f, 0.361f, 0.281f),   // source BoxCollider
+            ExhaustPos = new Vector3(0.7937f, -0.3959f, 4.4549f),   // tailpipe outlet, centroid of the verts protruding to the rearmost Z plane of bus_body.txt
             ForwardGears = new[] { 20f, 14.6f }, ReverseGear = 12f, ShiftUpRpm = 4000f,
             Sound = "engine_large.ogg", IdlePitch = 1.0f, MaxPitch = 1.8f, IdleVolume = 0.75f, MaxVolume = 1.0f,   // .dat EngineSound (prefab AudioSource = Engine_Large; bus MaxPitch 1.8)
             Fuel = 200_000f, Health = 700f, Rarity = EItemRarity.UNCOMMON, Name = "Bus", Horn = "carhorn_04.ogg",
@@ -3598,6 +3619,7 @@ namespace UnturnedGodot
             RandomHueGray = true,   // source RandomHueOrGrayscale -> our curated CarColors
             WheelRadius = 0.6f, Engine = 700f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 16.5f, SpeedMin = -6f, Brake = 32f,
             BoxSize = new Vector3(2.5f, 0.916f, 5.656f), BoxCenter = new Vector3(0f, 0.548f, -0.063f),   // source BoxCollider (Z negated)
+            ExhaustPos = new Vector3(0.7937f, -0.1747f, 2.9424f),   // tailpipe outlet, centroid of the verts protruding to the rearmost Z plane of sedan_body.txt
             ForwardGears = new[] { 14f, 8.75f }, ReverseGear = 5f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
             Fuel = 50_000f, Health = 600f, Name = "Sedan", Horn = "carhorn_02.ogg",   // 50 L tank (metric 1u=1mL; realistic sedan)
@@ -3675,6 +3697,7 @@ namespace UnturnedGodot
             RandomHueGray = true,
             WheelRadius = 0.6f, Engine = 680f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 15f, SpeedMin = -5f, Brake = 24f,
             BoxSize = new Vector3(2.5f, 0.916f, 5.261f), BoxCenter = new Vector3(0f, 0.548f, -0.003f),
+            ExhaustPos = new Vector3(0.7937f, -0.1747f, 2.7939f),   // tailpipe outlet, centroid of the verts protruding to the rearmost Z plane of hatchback_body.txt
             ForwardGears = new[] { 14f, 8.75f }, ReverseGear = 5f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
             Fuel = 45_000f, Health = 650f, Name = "Hatchback", Horn = "carhorn_01.ogg",   // 45 L tank (metric 1u=1mL; realistic hatchback)
@@ -3702,6 +3725,7 @@ namespace UnturnedGodot
             DefaultPaints = new[] { "#475e83", "#a69884", "#437c44", "#495631" },   // src .dat DefaultPaintColors = the 4 faction paints (#475e83 Coalition / #a69884 Desert / #437c44 Forest / #495631 Russia), random pick per spawn
             WheelRadius = 0.6f, Engine = 680f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 14f, SpeedMin = -6f, Brake = 40f,
             BoxSize = new Vector3(2.5f, 1.032f, 5.029f), BoxCenter = new Vector3(0f, 0.605f, -0.018f),
+            ExhaustPos = new Vector3(0.7937f, -0.1747f, 2.7182f),   // tailpipe outlet, centroid of the verts protruding to the rearmost Z plane of humvee_body.txt
             ForwardGears = new[] { 20f, 12.56f }, ReverseGear = 8f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
             Fuel = 95_000f, Health = 550f, Name = "Humvee", Horn = "carhorn_03.ogg",   // 95 L tank (metric 1u=1mL; realistic military humvee)
@@ -3729,6 +3753,7 @@ namespace UnturnedGodot
             RandomHueGray = true,
             WheelRadius = 0.6f, Engine = 760f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 19f, SpeedMin = -5f, Brake = 32f,
             BoxSize = new Vector3(2.5f, 0.916f, 5.656f), BoxCenter = new Vector3(0f, 0.548f, -0.063f),
+            ExhaustPos = new Vector3(0.7937f, -0.1747f, 2.9424f),   // tailpipe outlet, centroid of the verts protruding to the rearmost Z plane of roadster_body.txt
             ForwardGears = new[] { 14f, 8f }, ReverseGear = 5f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
             Fuel = 50_000f, Health = 500f, Rarity = EItemRarity.RARE, Name = "Roadster", Horn = "roadster_horn.ogg",   // 50 L tank (metric 1u=1mL; realistic sports car)
@@ -3755,6 +3780,7 @@ namespace UnturnedGodot
             DefaultPaints = new[] { "#e8e8e8" },   // white ambulance
             WheelRadius = 0.6f, Engine = 700f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 15.5f, SpeedMin = -6.5f, Brake = 32f,
             BoxSize = new Vector3(2.5f, 2.0f, 5.0f), BoxCenter = new Vector3(0f, 1.0f, 0f),   // tall van (compound BoxCollider -> one encompassing box)
+            ExhaustPos = new Vector3(0.7937f, -0.1747f, 2.6997f),   // tailpipe outlet, centroid of the verts protruding to the rearmost Z plane of ambulance_body.txt
             ForwardGears = new[] { 14f, 8f }, ReverseGear = 8f, ShiftUpRpm = 4500f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
             Fuel = 80_000f, Health = 600f, Rarity = EItemRarity.UNCOMMON, Name = "Ambulance", Horn = "carhorn_03.ogg",   // 80 L (metric 1u=1mL)
@@ -3783,6 +3809,7 @@ namespace UnturnedGodot
             DefaultPaints = new[] { "#b81c1c" },   // red firetruck
             WheelRadius = 0.6f, Engine = 800f, SteerMax = 48f, SteerMin = 24f, SpeedMax = 14.5f, SpeedMin = -6f, Brake = 32f,
             BoxSize = new Vector3(2.5f, 2.0f, 7.0f), BoxCenter = new Vector3(0f, 1.0f, 0f),
+            ExhaustPos = new Vector3(0.7937f, -0.1747f, 3.6692f),   // tailpipe outlet, centroid of the verts protruding to the rearmost Z plane of firetruck_body.txt
             ForwardGears = new[] { 20f, 12f }, ReverseGear = 8f, ShiftUpRpm = 4000f,
             Sound = "engine_large.ogg", IdlePitch = 1.0f, MaxPitch = 1.8f, IdleVolume = 0.75f, MaxVolume = 1.0f,
             Fuel = 200_000f, Health = 700f, Rarity = EItemRarity.UNCOMMON, Name = "Firetruck", Horn = "carhorn_03.ogg",   // 200 L (metric 1u=1mL)
@@ -3842,6 +3869,7 @@ namespace UnturnedGodot
             DefaultPaints = new[] { "#475e83", "#a69884", "#437c44", "#495631" },   // src 4 faction paints (Coalition/Desert/Forest/Russia)
             WheelRadius = 0.6f, Engine = 800f, SteerMax = 48f, SteerMin = 24f, SpeedMax = 14.5f, SpeedMin = -6f, Brake = 32f,
             BoxSize = new Vector3(2.5f, 2.0f, 6.6f), BoxCenter = new Vector3(0f, 1.0f, 0f),
+            ExhaustPos = new Vector3(0.7937f, -0.1747f, 3.3432f),   // tailpipe outlet, centroid of the verts protruding to the rearmost Z plane of ural_body.txt
             ForwardGears = new[] { 20f, 12f }, ReverseGear = 8f, ShiftUpRpm = 4000f,
             Sound = "engine_large.ogg", IdlePitch = 1.0f, MaxPitch = 1.8f, IdleVolume = 0.75f, MaxVolume = 1.0f,
             Fuel = 300_000f, Health = 700f, Rarity = EItemRarity.RARE, Name = "Ural", Horn = "carhorn_03.ogg",   // 300 L (metric 1u=1mL)
@@ -3871,6 +3899,7 @@ namespace UnturnedGodot
             DefaultPaints = new[] { "#d4d4d4" },   // source Police.dat DefaultPaintColors = #d4d4d4 (white body; the palette's black livery = a black/white cruiser)
             WheelRadius = 0.6f, Engine = 720f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 17f, SpeedMin = -6f, Brake = 32f,
             BoxSize = new Vector3(2.5f, 0.916f, 5.656f), BoxCenter = new Vector3(0f, 0.548f, -0.063f),
+            ExhaustPos = new Vector3(0.7937f, -0.1747f, 2.9424f),   // tailpipe outlet, centroid of the verts protruding to the rearmost Z plane of police_body.txt
             ForwardGears = new[] { 14f, 8f }, ReverseGear = 5f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
             Fuel = 60_000f, Health = 600f, Rarity = EItemRarity.UNCOMMON, Name = "Police", Horn = "carhorn_02.ogg",   // 60 L (metric 1u=1mL)
@@ -3901,6 +3930,7 @@ namespace UnturnedGodot
             RandomHueGray = true,   // source DefaultPaintColor_Mode RandomHueOrGrayscale -> random civilian colour per spawn
             WheelRadius = 0.6f, Engine = 600f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 12.5f, SpeedMin = -7f, Brake = 32f,
             BoxSize = new Vector3(2.5f, 1.046f, 4.522f), BoxCenter = new Vector3(0f, 0.612f, 0.029f),   // jeep-chassis BoxCollider
+            ExhaustPos = new Vector3(0.7937f, -0.1747f, 2.5932f),   // tailpipe outlet, centroid of the verts protruding to the rearmost Z plane of offroad_body.txt
             ForwardGears = new[] { 20f, 13.7f }, ReverseGear = 10f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
             Fuel = 80_000f, Health = 600f, Name = "Off_Roader", Horn = "carhorn_04.ogg",   // 80 L (metric 1u=1mL)
@@ -3930,6 +3960,7 @@ namespace UnturnedGodot
             RandomHueGray = true,
             WheelRadius = 0.6f, Engine = 600f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 13.5f, SpeedMin = -6f, Brake = 40f,
             BoxSize = new Vector3(2.5f, 1.046f, 4.522f), BoxCenter = new Vector3(0f, 0.612f, 0.029f),
+            ExhaustPos = new Vector3(0.7937f, -0.1747f, 2.5932f),   // tailpipe outlet, centroid of the verts protruding to the rearmost Z plane of truck_body.txt
             ForwardGears = new[] { 20f, 14.2f }, ReverseGear = 10f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
             Fuel = 150_000f, Health = 550f, Name = "Truck", Horn = "carhorn_01.ogg",   // 150 L (metric 1u=1mL)
@@ -3958,6 +3989,7 @@ namespace UnturnedGodot
             RandomHueGray = true,
             WheelRadius = 0.6f, Engine = 600f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 14.5f, SpeedMin = -5f, Brake = 35f,
             BoxSize = new Vector3(2.5f, 1.046f, 4.522f), BoxCenter = new Vector3(0f, 0.612f, 0.029f),
+            ExhaustPos = new Vector3(0.7937f, -0.1747f, 2.5932f),   // tailpipe outlet, centroid of the verts protruding to the rearmost Z plane of van_body.txt
             ForwardGears = new[] { 20f, 14.4f }, ReverseGear = 10f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
             Fuel = 70_000f, Health = 600f, Name = "Van", Horn = "carhorn_01.ogg",   // 70 L (metric 1u=1mL)
@@ -3986,6 +4018,7 @@ namespace UnturnedGodot
             RandomHueGray = true,
             WheelRadius = 0.6f, Engine = 600f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 16.5f, SpeedMin = -6f, Brake = 32f,
             BoxSize = new Vector3(2.5f, 1.046f, 4.522f), BoxCenter = new Vector3(0f, 0.612f, 0.029f),
+            ExhaustPos = new Vector3(-0.8322f, -0.1747f, 2.5592f),   // tailpipe outlet, centroid of the verts protruding to the rearmost Z plane of golf_body.txt
             ForwardGears = new[] { 14f, 8.75f }, ReverseGear = 5f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
             Fuel = 50_000f, Health = 600f, Name = "VW_Golf", Horn = "carhorn_02.ogg",   // 50 L (metric 1u=1mL)
@@ -4181,6 +4214,7 @@ namespace UnturnedGodot
             Palette = "apc_palette.png", DefaultPaints = new[] { "#5a6650" },   // Texture_MilitaryPaintable: olive paintable hull. NO grille (strawberry) -- headlights/taillights are the real separate Parts meshes below, not palette texels
             Engine = 700f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 12f, SpeedMin = -6f, Brake = 35f,
             BoxSize = new Vector3(3.6f, 1.8f, 7.7f), BoxCenter = new Vector3(0f, 0.6f, 0f),   // hull (mesh x±1.83 y-0.27..2.31 z-4..3.72)
+            ExhaustPos = new Vector3(1.2937f, -0.1747f, 3.7182f),   // tailpipe outlet, centroid of the verts protruding to the rearmost Z plane of apc_body.txt
             ForwardGears = new[] { 18f, 10f }, ReverseGear = 8f, ShiftUpRpm = 4000f,
             Sound = "engine_medium.ogg", IdlePitch = 0.9f, MaxPitch = 1.8f, IdleVolume = 0.8f, MaxVolume = 1.0f,
             Fuel = 1500f, Health = 800f, Name = "APC",
