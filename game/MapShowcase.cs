@@ -72,6 +72,28 @@ namespace UnturnedGodot
         /// one at the top of this list and that is handled.</summary>
         public static List<Station> Stations() => new()
         {
+            new Station("BLOCK ROAD", "Concrete jersey barrier \u2014 Shift+K, click a path, ENTER lays it", c =>
+            {
+                // An S-BEND on purpose. A straight run of barrier proves nothing: the whole difficulty is the
+                // joint on a curve, where rigid tiles with flat ends splay apart -- and an S puts a left and a
+                // right hand bend in one run so the backoff has to work in both directions.
+                // ⚠ KEPT INSIDE THE TERRAIN. The station grid starts at the map's corner (terrain is X 0..3072,
+                // Z -3072..0) so a run centred on the origin walks straight off the edge -- the pylon run did
+                // exactly that before it was measured. Offset in, and march along -Z where there is room.
+                if (c.Objects == null) return;
+                var pts = new List<Vector3>();
+                for (int i = 0; i <= 12; i++)
+                {
+                    float t = i / 12f;
+                    float z = c.Origin.Z - 12f - t * 90f;
+                    float x = c.Origin.X + 40f + Mathf.Sin(t * Mathf.Tau) * 14f;
+                    pts.Add(new Vector3(x, c.Terr != null ? c.Terr.SampleHeight(x, z) : c.Origin.Y, z));
+                }
+                int laid = EditorBlockRoad.LayPath(c.Objects, c.Terr, pts, false, null);
+                Log.Print($"[showcase] block road: {laid} unit(s) of {EditorBlockRoad.Unit} "
+                        + $"at {EditorBlockRoad.Pitch:0.##} m over an S-bend");
+            }),
+
             new Station("PYLONS", "Lattice transmission towers \u2014 Shift+P, click pole to pole to string them", c =>
             {
                 // ⭐ A RUN OF PYLONS AND A POLE, so the two kinds are side by side at the same camera: the
