@@ -346,11 +346,13 @@ namespace UnturnedGodot.Testing
                     if (Mathf.Abs(l.X + r.X) > 0.01f || Mathf.Abs(l.Z - r.Z) > 0.01f) mirrored = false;
                 }
                 T.Check("...ordered mirror-symmetric, like the pole's", mirrored);
-                // and every anchor sits ON a crossarm tip, not out in space
+                // ⚠ ON THE INSULATOR CLAMP, which is INBOARD of the arm. The mesh's widest point is 6.195 and
+                // this must NOT equal it: that was the old bug, the anchor sitting at the insulator's widest
+                // point instead of the bottom it hangs a conductor from. 5.952 is the clamp.
                 float reach = 0f;
                 foreach (var pv in pa) reach = Mathf.Max(reach, Mathf.Abs(pv.X));
-                T.Check($"...reaching the widest crossarm ({reach:0.00} m, mesh half-width 6.19)",
-                        Mathf.Abs(reach - 6.19f) < 0.05f);
+                T.Check($"...reaching the middle insulator's clamp ({reach:0.000} m, inboard of the mesh's 6.195)",
+                        Mathf.Abs(reach - 5.952f) < 0.01f && reach < 6.19f);
 
                 var py = new PowerLineField();
                 World.AddChild(py);
@@ -370,24 +372,54 @@ namespace UnturnedGodot.Testing
                 py.AnchorsWorld(py0, aw);
                 float worldReach = 0f, worldTop = 0f;
                 foreach (var wv in aw) { worldReach = Mathf.Max(worldReach, Mathf.Abs(wv.X)); worldTop = Mathf.Max(worldTop, wv.Y); }
-                T.Check($"the anchors scale with the pylon (reach {worldReach:0.00} m = 6.19 x {k:0.0})",
-                        Mathf.Abs(worldReach - 6.19f * k) < 0.1f);
+                T.Check($"the anchors scale with the pylon (reach {worldReach:0.00} m = 5.952 x {k:0.0})",
+                        Mathf.Abs(worldReach - 5.952f * k) < 0.1f);
                 T.Check($"...and stand {worldTop:0.#} m up, well above the pole's 7.3", worldTop > 35f);
 
                 py.Rebuild();
                 yield return Ticks(1);
                 T.Check($"the span builds ({py.WireNodeCount} wire node(s))", py.WireNodeCount == 1);
 
-                // ⚠ MIXED SPAN: a pylon to a roadside pole strings the LESSER count, or the pylon's outer
-                // pair would run to nothing at the pole end.
-                int py2 = py.AddPole(PoleAt(new Vector3(240f, 0f, 0f), 0f), PowerLineField.PoleMesh);
-                py.Connect(py1, py2, out _);
-                T.Check($"a pylon-to-pole span strings the lesser four "
-                      + $"({Mathf.Min(py.AnchorCount(py1), py.AnchorCount(py2))})",
-                        Mathf.Min(py.AnchorCount(py1), py.AnchorCount(py2)) == 4);
+                // ⚠ MIXED SPAN IS REFUSED. Master: "they probably shouldn't connect to small ones". This used
+                // to string the lesser four conductors, which dragged a transmission line down to a 8 m pole and
+                // left the pylon's outer pair running to nothing. The refusal must come with a REASON, because
+                // the editor reports it to the user and a silent no-op reads as a broken tool.
+                int py2 = py.AddPole(PoleAt(new Vector3(60f, 0f, 0f), 0f), PowerLineField.PoleMesh);
+                bool mixed = py.Connect(py1, py2, out string mixedWhy);
+                T.Check($"a pylon refuses to wire to a roadside pole (\"{mixedWhy}\")",
+                        !mixed && !string.IsNullOrEmpty(mixedWhy));
                 py.Rebuild();
                 yield return Ticks(1);
-                T.Check($"...and both spans exist ({py.WireNodeCount})", py.WireNodeCount == 2);
+                T.Check($"...so only the pylon-to-pylon span exists ({py.WireNodeCount})", py.WireNodeCount == 1);
+
+                // ⭐ A PYLON SPANS MUCH FURTHER THAN A POLE. Master: "the spacing between pylons needs to be
+                // much longer". A control on the SAME distance proves the limit is kind-aware and not just
+                // raised for everyone -- without it, bumping MaxSpan globally would pass this too.
+                int farPylon = py.AddPole(PoleAt(new Vector3(340f, 0f, 0f), 0f), PowerLineField.PylonMesh);
+                T.Check($"a pylon strings 340 m (max {PowerLineField.PylonMaxSpan:0})",
+                        py.Connect(py1, farPylon, out _));
+                var poleField = new PowerLineField();
+                World.AddChild(poleField);
+                int q0 = poleField.AddPole(PoleAt(Vector3.Zero, 0f), PowerLineField.PoleMesh);
+                int q1 = poleField.AddPole(PoleAt(new Vector3(340f, 0f, 0f), 0f), PowerLineField.PoleMesh);
+                bool tooFar = poleField.Connect(q0, q1, out string farWhy);
+                T.Check($"CONTROL: a roadside pole still refuses 340 m (\"{farWhy}\")", !tooFar);
+                poleField.QueueFree();
+
+                // ⭐ THE ANCHORS ARE ON THE INSULATORS. Measured off the prop's palette cell (1,1): each
+                // conductor clamps at the BOTTOM of a ~1.1 m insulator string, not at the crossarm tip it hangs
+                // from. Asserting the exact clamp heights is what stops them drifting back up the arm.
+                var clamp = PowerLineField.PylonAnchorsLocal;
+                T.Check($"six conductors ({clamp.Length})", clamp.Length == 6);
+                T.Check($"lower arm clamps at z=13.473 ({clamp[0].Z:0.000}, reach {clamp[0].X:0.000})",
+                        Mathf.Abs(clamp[0].Z - 13.473f) < 0.01f && Mathf.Abs(clamp[0].X - 4.708f) < 0.01f);
+                T.Check($"middle arm clamps at z=19.209 ({clamp[1].Z:0.000}, reach {clamp[1].X:0.000})",
+                        Mathf.Abs(clamp[1].Z - 19.209f) < 0.01f && Mathf.Abs(clamp[1].X - 5.952f) < 0.01f);
+                T.Check($"top arm clamps at z=24.941 ({clamp[2].Z:0.000}, reach {clamp[2].X:0.000})",
+                        Mathf.Abs(clamp[2].Z - 24.941f) < 0.01f && Mathf.Abs(clamp[2].X - 4.227f) < 0.01f);
+                for (int i = 0; i < 3; i++)
+                    T.Check($"arm {i} is symmetric about the mast",
+                            Mathf.Abs(clamp[i].X + clamp[5 - i].X) < 0.001f && Mathf.Abs(clamp[i].Z - clamp[5 - i].Z) < 0.001f);
                 py.QueueFree();
             }
 
@@ -410,7 +442,7 @@ namespace UnturnedGodot.Testing
                 yield return Ticks(1);
 
                 float kk = PowerLineField.PylonScale;
-                for (int i = 0; i < 2; i++)
+                for (int i = 0; i < 3; i++)
                 {
                     var b = EditorObjects.Upright(90f);
                     objs.Place(PowerLineField.PylonMesh, new Vector3(i * 46f, 0f, 0f),
@@ -419,7 +451,7 @@ namespace UnturnedGodot.Testing
                 objs.Place(PowerLineField.PoleMesh, new Vector3(120f, 0f, 0f), EditorObjects.Upright(90f));
 
                 int seeded = rs.RefreshPoles(PowerLineField.PolesFrom(null, objs), out _);
-                T.Check($"the seed finds both kinds of pole ({seeded} of 3)", seeded == 3);
+                T.Check($"the seed finds both kinds of pole ({seeded} of 4)", seeded == 4);
                 T.Check("...and it is the mesh list that decides, not a hand-written pair",
                         PowerLineField.PoleMeshes.Length == 2);
 
@@ -427,7 +459,8 @@ namespace UnturnedGodot.Testing
                 for (int i = 1; i < rs.PoleCount; i++) if (rs.Connect(i - 1, i, out _)) strung++;
                 rs.Rebuild();
                 yield return Ticks(1);
-                T.Check($"two spans string across the run ({strung})", strung == 2);
+                // Two pylon-to-pylon spans; the roadside pole is refused, so three poles do NOT make three spans.
+                T.Check($"two spans string across the run, the pole refused ({strung})", strung == 2);
                 int before = rs.WireNodeCount;
 
                 // THE RE-SEED, exactly as Main does it on every map load.

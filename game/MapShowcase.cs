@@ -25,6 +25,13 @@ namespace UnturnedGodot
         /// <summary>Metres between station centres. Big enough that a tool's demo cannot be mistaken for its
         /// neighbour's, small enough to fly between them in a few seconds.</summary>
         public const float StationSpacing = 140f;
+        /// <summary>The pylon run: how many towers and how far apart. 130 m is the longest span that still fits
+        /// inside one station cell's worth of empty ground to the left of the grid.</summary>
+        public const int PylonCount = 3;
+        public const float PylonSpacing = 130f;
+        /// <summary>How far the nearest tower stands from the station sign, and how much terrain the run keeps
+        /// between itself and the map edge.</summary>
+        public const float PylonGap = 10f, PylonMargin = 40f;
         public const int StationsPerRow = 3;
 
         public sealed class Station
@@ -71,18 +78,49 @@ namespace UnturnedGodot
                 // pylon is 31 m natively and placed at x1.6, the roadside pole is 9 m. Master asked for it
                 // "decently bigger", and the comparison is the only way to judge that.
                 //
-                // ⚠ The last span is pylon-to-POLE on purpose: a pylon carries six conductors and a pole
-                // four, so that span strings four. If it ever strings six, two of them run to nothing.
+                // ⭐ PylonSpacing, not the 46 m this first shipped with. Master: "the spacing between pylons
+                // needs to be much longer" -- a transmission tower stands hundreds of metres from the next one,
+                // and at 46 m a run of them read as a crowded fence. The run goes into the EMPTY -X half-plane
+                // because the station grid is 140 m on a side and starts at x=0, so this is the only direction
+                // with room; the nearest tower still stands by the station sign.
+                //
+                // ⚠ The pole is placed but NOT wired. Master: "they probably shouldn't connect to small ones".
+                // It is here for scale only, and Connect now refuses the mixed span on its own.
                 if (c.Objects == null || c.PowerLines == null) return;
-                float g = c.Terr != null ? c.Terr.SampleHeight(c.Origin.X, c.Origin.Z) : c.Origin.Y;
-                var placed = new List<Transform3D>();
-                for (int i = 0; i < 3; i++)
+                // ⚠ ASK THE TERRAIN WHICH WAY IT GOES. A 260 m run does not fit in a 140 m station cell, so it
+                // has to leave the grid -- and the first version walked it straight off the edge of the map, so
+                // three towers stood in the void. Pick the side that is actually ON the terrain, and sample the
+                // ground PER TOWER rather than once at the station origin, which is only right on flat ground.
+                // ⭐ THE RUN GOES ALONG Z, not along the row. Measured, not assumed: the showcase terrain is
+                // X 0..3072, Z -3072..0, while the station grid marches +X per column and +Z per row. So -X is
+                // off the map (the first version put three towers in the void) and +X walks the run straight
+                // through the LANE SIGNS and TUNNEL stations. -Z is the only direction with 260 m of ground that
+                // is both ON the terrain and empty. Offset in X as well, because x=0 is the map edge itself.
+                float need = (PylonCount - 1) * PylonSpacing;
+                float dir = -1f;
+                float runX = c.Origin.X + PylonMargin;
+                if (c.Terr != null)
                 {
-                    var at = new Vector3(c.Origin.X - 55f + i * 46f, g, c.Origin.Z);
-                    if (c.Objects.Place(EditorObjects.PylonName, at, EditorObjects.Upright(90f)) == null) continue;
+                    var b = c.Terr.WorldBoundsXZ();
+                    if (c.Origin.Z - PylonGap - need < b.MinZ + PylonMargin
+                        && c.Origin.Z + PylonGap + need < b.MaxZ - PylonMargin) dir = 1f;
+                    runX = Mathf.Clamp(runX, b.MinX + PylonMargin, b.MaxX - PylonMargin);
+                    Log.Print($"[showcase] pylon run: terrain X {b.MinX:0}..{b.MaxX:0} Z {b.MinZ:0}..{b.MaxZ:0}, "
+                            + $"origin {c.Origin.X:0},{c.Origin.Z:0} -> x={runX:0}, going {(dir < 0 ? "-Z" : "+Z")}");
                 }
-                c.Objects.Place(PowerLineField.PoleMesh, new Vector3(c.Origin.X + 72f, g, c.Origin.Z),
-                                EditorObjects.Upright(90f));
+                // ⚠ Upright(0) puts the crossarms ACROSS a Z-running line. At yaw 90 (which an X-running line
+                // needs) the arms would lie along the wires and all six conductors would zigzag through them.
+                for (int i = 0; i < PylonCount; i++)
+                {
+                    float z = c.Origin.Z + dir * (PylonGap + (PylonCount - 1 - i) * PylonSpacing);
+                    float gy = c.Terr != null ? c.Terr.SampleHeight(runX, z) : c.Origin.Y;
+                    c.Objects.Place(EditorObjects.PylonName, new Vector3(runX, gy, z), EditorObjects.Upright(0f));
+                }
+                float pz = c.Origin.Z + dir * PylonGap;
+                c.Objects.Place(PowerLineField.PoleMesh,
+                                new Vector3(runX + 35f,
+                                            c.Terr != null ? c.Terr.SampleHeight(runX + 35f, pz) : c.Origin.Y, pz),
+                                EditorObjects.Upright(0f));
 
                 var all = new List<(Transform3D, string)>();
                 foreach (var x in c.Objects.PlacedOf(PowerLineField.PylonMesh)) all.Add((x, PowerLineField.PylonMesh));
@@ -92,8 +130,8 @@ namespace UnturnedGodot
                 for (int i = 1; i < c.PowerLines.PoleCount; i++)
                     if (c.PowerLines.Connect(i - 1, i, out _)) strung++;
                 c.PowerLines.Rebuild();
-                Log.Print($"[showcase] pylons: {c.PowerLines.PoleCount} pole(s), {strung} span(s), "
-                        + $"{c.PowerLines.WireNodeCount} wire node(s); conductors per span = "
+                Log.Print($"[showcase] pylons: {c.PowerLines.PoleCount} pole(s), {strung} span(s) at "
+                        + $"{PylonSpacing:0} m, {c.PowerLines.WireNodeCount} wire node(s); conductors per span = "
                         + string.Join("/", Conductors(c.PowerLines)));
             }),
 

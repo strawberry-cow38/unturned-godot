@@ -81,14 +81,24 @@ namespace UnturnedGodot
         ///
         /// ⭐ ORDER IS MIRROR-SYMMETRIC, index i against n-1-i, exactly as the pole's four are -- so a pylon
         /// placed facing the other way still pairs outer-to-outer rather than crossing its conductors over.</summary>
+        /// <summary>⭐ MEASURED OFF THE INSULATORS, not off the crossarm tips. Master: "should be connecting to
+        /// the insulators not floating between them". The prop paints its parts through a 2x2 PALETTE texture, so
+        /// the UV cell identifies them -- cell (1,1) is the six insulators and nothing else (576 verts, spanning
+        /// exactly the three arm levels). Each is a ~1.1 m string hanging off an arm tip, and a conductor clamps
+        /// at its BOTTOM, so every anchor is that cluster's bottom-face centroid. The old values were the
+        /// insulator's WIDEST point instead: up to 0.24 m outboard and 0.19 m high, which at the 1.6x placement
+        /// scale is 0.38 m -- the wire ended in mid-air just off each tip, exactly as master described.
+        ///
+        /// ⚠ Prop space is Z-UP with the line running along local Y, so Z here is HEIGHT and X is along the
+        /// crossarm. Upright() maps local +Z to world +Y.</summary>
         public static readonly Vector3[] PylonAnchorsLocal =
         {
-            new Vector3( 4.85f, 0f, 13.47f),   // lower crossarm, right
-            new Vector3( 6.19f, 0f, 19.31f),   // middle crossarm (widest), right
-            new Vector3( 4.39f, 0f, 25.13f),   // top crossarm, right
-            new Vector3(-4.39f, 0f, 25.13f),   // top crossarm, left
-            new Vector3(-6.19f, 0f, 19.31f),   // middle crossarm, left
-            new Vector3(-4.85f, 0f, 13.47f),   // lower crossarm, left
+            new Vector3( 4.708f, 0f, 13.473f),   // lower crossarm, right
+            new Vector3( 5.952f, 0f, 19.209f),   // middle crossarm (widest), right
+            new Vector3( 4.227f, 0f, 24.941f),   // top crossarm, right
+            new Vector3(-4.227f, 0f, 24.941f),   // top crossarm, left
+            new Vector3(-5.952f, 0f, 19.209f),   // middle crossarm, left
+            new Vector3(-4.708f, 0f, 13.473f),   // lower crossarm, left
         };
 
         /// <summary>Which anchor set a pole of this mesh uses. ⚠ Keyed on the MESH, because a field can hold
@@ -145,6 +155,17 @@ namespace UnturnedGodot
         /// <summary>Longest span the tool will let you make, metres. Beyond this the sag and the sway stop looking
         /// like a wire and start looking like a rope bridge, and it is nearly always a misclick on a distant pole.</summary>
         public const float MaxSpan = 140f;
+
+        /// <summary>⭐ A LATTICE TOWER IS NOT A ROADSIDE POLE. Master: "the spacing between pylons needs to be
+        /// much longer". Real transmission towers of this height stand 300-400 m apart -- that span is the whole
+        /// reason the tower is 50 m tall and carries its conductors on insulator strings. Capping them at the
+        /// roadside pole's 140 m made a run of pylons read as a crowded fence.</summary>
+        public const float PylonMaxSpan = 400f;
+
+        public bool IsPylon(int pole) => pole >= 0 && pole < _poles.Count && _poles[pole].Mesh == PylonMesh;
+
+        /// <summary>How far apart two poles of this kind may be strung.</summary>
+        public static float MaxSpanFor(bool pylon) => pylon ? PylonMaxSpan : MaxSpan;
 
         public override void _Ready()
         {
@@ -316,8 +337,15 @@ namespace UnturnedGodot
             if (a < 0 || b < 0 || a >= _poles.Count || b >= _poles.Count) { why = "no such pole"; return false; }
             var s = new Span(a, b);
             foreach (var e in _spans) if (e.A == s.A && e.B == s.B) { why = "those poles are already wired"; return false; }
+            // ⭐ NO MIXED SPANS. Master: "they probably shouldn't connect to small ones". A pylon carries six
+            // conductors on a 50 m lattice and a roadside pole four at 8 m; wiring one to the other dropped two
+            // conductors on the floor and dragged a transmission line down to head height to do it. They are
+            // different circuits in the real world and the tool now says so instead of quietly stringing four.
+            bool pa = IsPylon(a), pb = IsPylon(b);
+            if (pa != pb) { why = "a pylon and a roadside pole carry different circuits"; return false; }
             float d = _poles[a].Origin.DistanceTo(_poles[b].Origin);
-            if (d > MaxSpan) { why = $"too far apart ({d:0} m, max {MaxSpan:0})"; return false; }
+            float max = MaxSpanFor(pa);
+            if (d > max) { why = $"too far apart ({d:0} m, max {max:0})"; return false; }
             _spans.Add(s);
             return true;
         }
