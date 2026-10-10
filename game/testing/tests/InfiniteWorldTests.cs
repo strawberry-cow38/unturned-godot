@@ -488,12 +488,12 @@ namespace UnturnedGodot.Testing
             // open and not "no colliders here"
             foreach (bool wantOver in new[] { true, false })
             {
-                InfiniteRoads.Underpass up = null; (double x, double z, float h)[] mline = null; double best = double.MaxValue;
+                InfiniteRoads.Underpass up = null; (double x, double z, float h)[] mline = null; double best = double.MaxValue; (long cx, long cz, int d) mid = default;
                 for (long mcx = -4; mcx <= 3; mcx++)
                     for (long mcz = -4; mcz <= 3; mcz++)
                         for (int d = 0; d < 2; d++)
                             foreach (var u in S.Gen.Roads.MainUnderpasses(mcx, mcz, d))
-                                if (!u.Existing && u.Over == wantOver && u.X * u.X + u.Z * u.Z < best) { best = u.X * u.X + u.Z * u.Z; up = u; mline = S.Gen.Roads.MainCentreline(mcx, mcz, d); }
+                                if (!u.Existing && u.Over == wantOver && u.X * u.X + u.Z * u.Z < best) { best = u.X * u.X + u.Z * u.Z; up = u; mline = S.Gen.Roads.MainCentreline(mcx, mcz, d); mid = (mcx, mcz, d); }
                 string kind = wantOver ? "overpass" : "underpass";
                 T.Check($"the generator has an {kind} to visit", up != null);
                 if (up == null) continue;
@@ -537,6 +537,20 @@ namespace UnturnedGodot.Testing
                 float deckY = under.Count > 0 ? ((Vector3)under["position"]).Y : float.NaN;
                 T.Check($"{kind}: the {(wantOver ? "main" : "highway")} crosses on a deck at its surface: y {topY:0.000} on {Who(top)}, the deck under it at {deckY:0.000} ({Who(under)}), road {highY:0.000}",
                     Who(under) == "deck" && Mathf.Abs(topY - highY) < 0.03f && Mathf.Abs(deckY - highY) < 0.03f);
+                // ...and its RAMPS are roads you can drive: a drop onto the middle of each lands on its slab, at its surface
+                // (strawberry 2026-10-10: "a simple on/offramp for these areas")
+                var ramps = S.Gen.Roads.MainRamps(mid.cx, mid.cz, mid.d);
+                int rampsOn = 0; float rampWorst = 0f; string rampBody = "";
+                foreach (var r in ramps)
+                {
+                    var rm = r[r.Length / 2];
+                    var hit = Ray(rm.x, rm.h + 5, rm.z, rm.x, rm.h - 30, rm.z);
+                    float want = InfiniteRoads.SurfaceY(RoadKind.Small, rm.h);
+                    if (Who(hit) == "Paved") { rampsOn++; rampWorst = Mathf.Max(rampWorst, Mathf.Abs(((Vector3)hit["position"]).Y - want)); }
+                    else rampBody = $" (one hits {Who(hit)})";
+                }
+                T.Check($"{kind}: its {ramps.Count} ramps are solid road: {rampsOn} drops onto them land on the slab within {rampWorst * 1000f:0.0} mm of the surface{rampBody}",
+                    ramps.Count >= 2 && rampsOn == ramps.Count && rampWorst < 0.03f);
                 if (wantOver)
                 {
                     // the main's deck is WIDENED to its asphalt (x DeckScale): its parapet stands 9.2-9.8 m out, where the

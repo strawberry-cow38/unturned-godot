@@ -972,6 +972,112 @@ namespace UnturnedSim.Tests
             Assert.That(worst, Is.LessThan(0.002), "a deck joint stands open");
         }
 
+        /// <summary>strawberry 2026-10-10: "work on a simple on/offramp for these areas". A diamond at each grade
+        /// separation: every ramp starts INSIDE a highway carriageway at its surface, heading along it; ends just inside
+        /// the main's asphalt at the main's surface, square to it; keeps to its grade; crosses no road on the way; keeps
+        /// clear of the crossing's decks; and is carved into the ground like any road.</summary>
+        [Test]
+        public void RampsJoinTheirRoads()
+        {
+            var hw = new List<(double x, double z, float h)[]>();
+            for (int axis = 0; axis < 2; axis++)
+                for (long band = -2; band <= 1; band++)
+                    for (long k = -4; k <= 3; k++) { var h = Gen.Roads.HighwayCentreline(axis, band, k); if (h != null) hw.Add(h); }
+            static (double d, float h, double tx, double tz) Near((double x, double z, float h)[] p, double x, double z)
+            {
+                var r = (d: double.MaxValue, h: 0f, tx: 0.0, tz: 0.0);
+                for (int i = 0; i + 1 < p.Length; i++)
+                {
+                    double sx = p[i + 1].x - p[i].x, sz = p[i + 1].z - p[i].z, ss = sx * sx + sz * sz;
+                    if (ss < 1e-12) continue;
+                    double t = Math.Clamp(((x - p[i].x) * sx + (z - p[i].z) * sz) / ss, 0, 1), px = p[i].x + sx * t, pz = p[i].z + sz * t;
+                    double d = Math.Sqrt((x - px) * (x - px) + (z - pz) * (z - pz)), l = Math.Sqrt(ss);
+                    if (d < r.d) r = (d, p[i].h + (p[i + 1].h - p[i].h) * (float)t, sx / l, sz / l);
+                }
+                return r;
+            }
+            static int Cross((double x, double z, float h)[] a, (double x, double z, float h)[] b)
+            {
+                int n = 0;
+                for (int i = 0; i + 1 < a.Length; i++)
+                    for (int j = 0; j + 1 < b.Length; j++)
+                    {
+                        double rx = a[i + 1].x - a[i].x, rz = a[i + 1].z - a[i].z, sx = b[j + 1].x - b[j].x, sz = b[j + 1].z - b[j].z, den = rx * sz - rz * sx;
+                        if (Math.Abs(den) < 1e-12) continue;
+                        double t = ((b[j].x - a[i].x) * sz - (b[j].z - a[i].z) * sx) / den, u = ((b[j].x - a[i].x) * rz - (b[j].z - a[i].z) * rx) / den;
+                        if (t >= 0 && t < 1 && u >= 0 && u < 1) n++;
+                    }
+                return n;
+            }
+            double laneIn = InfiniteRoads.HighwayLaneHalf - InfiniteRoads.PavedHalf(RoadKind.Small);   // how far a ramp's centre may stray off its carriageway's
+            float bed = InfiniteRoads.PavedHalf(RoadKind.Main) - 1f;
+            int ramps = 0, full = 0, crossingsSeen = 0, carved = 0, crossed = 0;
+            double worstLat = 0, worstStartH = 0, worstStartTurn = 0, worstEndOff = 0, worstEndH = 0, worstEndSquare = 90, worstGrade = 0, nearestDeck = double.MaxValue, worstGround = 0;
+            string where = "";
+            for (long cx = -6; cx <= 5; cx++)
+                for (long cz = -6; cz <= 5; cz++)
+                    for (int dir = 0; dir < 2; dir++)
+                    {
+                        var m = Gen.Roads.MainCentreline(cx, cz, dir);
+                        var ups = Gen.Roads.MainUnderpasses(cx, cz, dir);
+                        if (m == null || ups.Count == 0 || ups[0].Existing) continue;
+                        crossingsSeen++;
+                        var rs = Gen.Roads.MainRamps(cx, cz, dir);
+                        if (rs.Count == 4) full++;
+                        foreach (var r in rs)
+                        {
+                            ramps++;
+                            // START: inside a carriageway, on its profile, heading along it
+                            var s0 = r[0];
+                            var nh = hw.Select(h => Near(h, s0.x, s0.z)).OrderBy(n => n.d).First();
+                            double lat = Math.Abs(nh.d - InfiniteRoads.HighwayRibbonOffset);
+                            if (lat > worstLat) { worstLat = lat; where = $" ramp from ({s0.x:0},{s0.z:0})"; }
+                            worstStartH = Math.Max(worstStartH, Math.Abs(s0.h - nh.h));
+                            double rx = r[1].x - r[0].x, rz = r[1].z - r[0].z, rl = Math.Sqrt(rx * rx + rz * rz);
+                            worstStartTurn = Math.Max(worstStartTurn, Math.Acos(Math.Min(1.0, Math.Abs(rx * nh.tx + rz * nh.tz) / rl)) * 180 / Math.PI);
+                            // END: just inside the main's asphalt, on its profile, square to it
+                            var e1 = r[r.Length - 1];
+                            var nm = Near(m, e1.x, e1.z);
+                            worstEndOff = Math.Max(worstEndOff, Math.Abs(nm.d - bed));
+                            worstEndH = Math.Max(worstEndH, Math.Abs(e1.h - nm.h));
+                            double ex = e1.x - r[r.Length - 2].x, ez = e1.z - r[r.Length - 2].z, el = Math.Sqrt(ex * ex + ez * ez);
+                            worstEndSquare = Math.Min(worstEndSquare, Math.Acos(Math.Min(1.0, Math.Abs(ex * nm.tx + ez * nm.tz) / el)) * 180 / Math.PI);
+                            // GRADE, and nothing crossed: the main, any highway, the other ramps
+                            for (int i = 0; i + 1 < r.Length; i++)
+                            {
+                                double l = Math.Sqrt((r[i + 1].x - r[i].x) * (r[i + 1].x - r[i].x) + (r[i + 1].z - r[i].z) * (r[i + 1].z - r[i].z));
+                                worstGrade = Math.Max(worstGrade, Math.Abs(r[i + 1].h - r[i].h) / Math.Max(1e-9, l));
+                            }
+                            crossed += Cross(r, m) + hw.Sum(h => Cross(r, h)) + rs.Where(o => o != r).Sum(o => Cross(r, o));
+                            // clear of the crossing's decks
+                            foreach (var p in r) nearestDeck = Math.Min(nearestDeck, Math.Sqrt((p.x - ups[0].X) * (p.x - ups[0].X) + (p.z - ups[0].Z) * (p.z - ups[0].Z)));
+                            // CARVED: along its middle third, where the ramp is the road there, the ground is its bed
+                            for (int i = r.Length / 3; i < 2 * r.Length / 3; i++)
+                            {
+                                var hit = Gen.Roads.Influence(r[i].x, r[i].z);
+                                if (!hit.Any || hit.Kind != RoadKind.Small || hit.Weight < 0.999f || Math.Abs(hit.Height - r[i].h) > 0.01f) continue;
+                                carved++;
+                                worstGround = Math.Max(worstGround, Math.Abs(Gen.HeightAt(r[i].x, r[i].z) - (r[i].h - InfiniteRoads.Bed)));
+                            }
+                        }
+                    }
+            TestContext.WriteLine($"{crossingsSeen} grade separations, {ramps} ramps ({full} with all four): start off its carriageway's centre {worstLat:0.00} m (room {laneIn:0.00}){where}, " +
+                                  $"{worstStartH * 1000:0.0} mm off its profile, {worstStartTurn:0.0} deg off its heading; end {worstEndOff * 1000:0.0} mm off {bed:0.0} m in, {worstEndH * 1000:0.0} mm off the main's profile, " +
+                                  $">= {worstEndSquare:0.0} deg to it; steepest {worstGrade * 100:0.0}% (limit {InfiniteRoads.MaxGrade(RoadKind.Small) * 100:0}); {crossed} crossings on the way; nearest the crossing {nearestDeck:0.0} m; " +
+                                  $"ground on {carved} mid-ramp points within {worstGround * 1000:0.0} mm of the bed");
+            Assert.That(ramps, Is.GreaterThan(40)); Assert.That(full, Is.GreaterThan(crossingsSeen / 2));
+            Assert.That(worstLat, Is.LessThanOrEqualTo(laneIn + 0.01), "a ramp starts outside its carriageway");
+            Assert.That(worstStartH, Is.LessThan(0.01), "a ramp starts off the carriageway's surface");
+            Assert.That(worstStartTurn, Is.LessThan(3.0), "a ramp leaves at an angle");
+            Assert.That(worstEndOff, Is.LessThan(0.05), "a ramp stops short of (or past) the main's edge");
+            Assert.That(worstEndH, Is.LessThan(0.01), "a ramp ends off the main's surface");
+            Assert.That(worstEndSquare, Is.GreaterThan(75), "a ramp meets the main askew");
+            Assert.That(worstGrade, Is.LessThanOrEqualTo(InfiniteRoads.MaxGrade(RoadKind.Small) + 1e-4));
+            Assert.That(crossed, Is.EqualTo(0), "a ramp crosses a road");
+            Assert.That(nearestDeck, Is.GreaterThan(InfiniteRoads.CrossFlat + 10), "a ramp runs into the crossing's decks");
+            Assert.That(carved, Is.GreaterThan(ramps * 2)); Assert.That(worstGround, Is.LessThan(0.02), "a ramp is not carved into the ground");
+        }
+
         [Test]
         public void HighwaysAreTwoCarriageways()
         {

@@ -121,6 +121,9 @@ namespace SDG.Unturned
             public long Id;
             /// <summary>Mains: where this main dips under a highway, and the highway decks it carries over itself.</summary>
             public List<Underpass> Underpasses;
+            /// <summary>Mains: the on/off ramps between this main and the highway it crosses (BuildRamps).</summary>
+            public List<Line> Ramps;
+            public bool Ramp;   // this line IS a ramp: small-road surface, no power line
             public double[] HArc;   // horizontal arc length at each dense point (set where there are tunnels)
             public bool Exists => X != null;
             public int Segments => X.Length - 1;
@@ -596,12 +599,12 @@ namespace SDG.Unturned
             var line = Finish(RoadKind.Main, cxs, czs, ch);
             if (line == null) return Gone("finish");
             // the drawn line must do what the controls promised: no highway crossed but the one, exactly once, square-on
-            double fMain = -1, sinX = 1;
+            double fMain = -1, fHw = -1, sinX = 1;
             foreach (var e in hws)
             {
                 var cs = Crossings(line.X, line.Z, line.X.Length, e);
                 if (e == hwX ? cs.Count != 1 : cs.Count > 0) return Gone(e == hwX ? "drawn line recrosses" : "drawn line crosses another");
-                foreach (var c in cs) { if (c.angle < 60) return Gone("drawn crossing skewed"); fMain = c.f; sinX = Math.Sin(c.angle * Math.PI / 180); }
+                foreach (var c in cs) { if (c.angle < 60) return Gone("drawn crossing skewed"); fMain = c.f; fHw = c.g; sinX = Math.Sin(c.angle * Math.PI / 180); }
             }
             if (up != null)
             {
@@ -617,6 +620,7 @@ namespace SDG.Unturned
                 if (!over) foreach (var h in line.H) if (h < InfiniteTerrain.SeaLevel + 1.2f) return Gone("underpass below sea");
                 if (!up.Existing && !(over ? LayOverpass(line, fMain, sinX, up) : LayUnderpass(line, hwX, up))) return Gone(over ? "overpass decks" : "underpass decks");
                 line.Underpasses = new List<Underpass> { up };
+                line.Ramps = BuildRamps(line, fMain, hwX, fHw);
             }
             line.Branches = BuildBranches(line, cx, cz, dir);
             return line;
@@ -668,6 +672,93 @@ namespace SDG.Unturned
             return true;
         }
 
+        // ---- RAMPS (strawberry 2026-10-10: "work on a simple on/offramp for these areas"). A diamond at each grade
+        // separation: per highway carriageway, one ramp each side of the main, on the carriageway's OUTER side. A ramp
+        // starts INSIDE its carriageway at the carriageway's profile, its outer edge on the carriageway's -- the way a
+        // branch starts on its main -- RampReach along the highway from the crossing, leaves it along the highway,
+        // swings out in a gentle S and meets the main square-on, RampMeet along the main from the crossing, at the
+        // main's profile there. Small-road surface (the road kit has no one-way ramp), no power line.
+        public const double RampReach = 260;   // along the highway, from the crossing to where a ramp leaves it
+        public const double RampMeet = 90;     // along the main, from the crossing to where a ramp joins it
+        const int RampCtrl = 12;
+
+        List<Line> BuildRamps(Line main, double fMain, Line hw, double fHw)
+        {
+            var list = new List<Line>();
+            var arcM = Arc(main); var arcH = Arc(hw);
+            int mk = Math.Min((int)fMain, main.Segments - 1), hk = Math.Min((int)fHw, hw.Segments - 1);
+            double aM = arcM[mk] + (arcM[mk + 1] - arcM[mk]) * (fMain - mk), aH = arcH[hk] + (arcH[hk + 1] - arcH[hk]) * (fHw - hk);
+            At(hw, arcH, aH, out double xX, out double zX, out _, out _, out _);
+            float rampHalf = PavedHalf(RoadKind.Small);
+            for (int side = -1; side <= 1; side += 2)          // the carriageway, by which side of the route it runs
+                for (int way = -1; way <= 1; way += 2)         // which side of the main, along the highway
+                {
+                    double sH = aH + way * RampReach;
+                    if (sH < 0 || sH > arcH[arcH.Length - 1]) continue;   // the highway's next segment: not this one's
+                    At(hw, arcH, sH, out double hx, out double hz, out float hh, out double htx, out double htz);
+                    // not where the carriageway is on a bridge or in a tunnel here
+                    double fS = FracAt(arcH, sH);
+                    if (Bridges && hw.DeckCover != null && Covered(hw.DeckCover[side < 0 ? 0 : 1], fS, -20.0 / Math.Max(1e-6, arcH[Math.Min(arcH.Length - 1, (int)fS + 1)] - arcH[(int)fS]))) continue;
+                    if (Tunnels && hw.TunnelSpans != null && hw.HArc != null)
+                    {
+                        bool bored = false;
+                        foreach (var tn in hw.TunnelSpans) if (sH > tn.A0 - TunnelForecourt - 30 && sH < tn.A1 + TunnelForecourt + 30) bored = true;
+                        if (bored) continue;
+                    }
+                    double nx = -htz * side, nz = htx * side;          // out from the route, on this carriageway's side
+                    double off = HighwayRibbonOffset + HighwayLaneHalf - rampHalf;
+                    double sx = hx + nx * off, sz = hz + nz * off;
+                    // the main's point RampMeet out on this carriageway's side of the highway
+                    double best = double.NaN;
+                    foreach (double sm in new[] { aM - RampMeet, aM + RampMeet })
+                    {
+                        if (sm < 0 || sm > arcM[arcM.Length - 1]) continue;
+                        At(main, arcM, sm, out double px, out double pz, out _, out _, out _);
+                        if ((px - xX) * nx + (pz - zX) * nz > 0) best = sm;
+                    }
+                    if (double.IsNaN(best)) continue;
+                    At(main, arcM, best, out double mx, out double mz, out _, out double mtx, out double mtz);
+                    // ...joined from the ramp's side of the main, just inside its asphalt
+                    double qx = -mtz, qz = mtx;
+                    if ((sx - mx) * qx + (sz - mz) * qz < 0) { qx = -qx; qz = -qz; }
+                    double ex = mx + qx * (PavedHalf(RoadKind.Main) - 1.0), ez = mz + qz * (PavedHalf(RoadKind.Main) - 1.0);
+                    float hS = hh, hE = ProfileNear(main, ex, ez);
+                    // the S: Hermite from the start (heading along the highway, toward the crossing) to the end (heading
+                    // into the main, square to it)
+                    double t0x = -way * htx, t0z = -way * htz, t1x = -qx, t1z = -qz;
+                    double chord = Math.Sqrt((ex - sx) * (ex - sx) + (ez - sz) * (ez - sz));
+                    var cxs = new double[RampCtrl + 1]; var czs = new double[RampCtrl + 1]; var chs = new float[RampCtrl + 1];
+                    bool wet = false;
+                    for (int k = 0; k <= RampCtrl; k++)
+                    {
+                        double t = (double)k / RampCtrl, t2 = t * t, t3 = t2 * t;
+                        double h00 = 2 * t3 - 3 * t2 + 1, h10 = t3 - 2 * t2 + t, h01 = -2 * t3 + 3 * t2, h11 = t3 - t2;
+                        cxs[k] = h00 * sx + h10 * chord * t0x + h01 * ex + h11 * chord * t1x;
+                        czs[k] = h00 * sz + h10 * chord * t0z + h01 * ez + h11 * chord * t1z;
+                        if (_t.RawHeight(cxs[k], czs[k]) < InfiniteTerrain.SeaLevel + 1.5f) wet = true;
+                    }
+                    if (wet) continue;
+                    // the profile: from the carriageway's to the main's, eased so it leaves and arrives level with them
+                    var arcR = new double[RampCtrl + 1];
+                    for (int k = 1; k <= RampCtrl; k++) arcR[k] = arcR[k - 1] + Math.Sqrt((cxs[k] - cxs[k - 1]) * (cxs[k] - cxs[k - 1]) + (czs[k] - czs[k - 1]) * (czs[k] - czs[k - 1]));
+                    for (int k = 0; k <= RampCtrl; k++) { float u = (float)(arcR[k] / arcR[RampCtrl]); chs[k] = hS + (hE - hS) * u * u * (3f - 2f * u); }
+                    var ramp = Finish(RoadKind.Small, cxs, czs, chs, (t0x, t0z), (t1x, t1z));
+                    if (ramp == null) continue;   // too steep
+                    // it meets no road on the way but the two it joins: not the main short of its end, not the highway
+                    if (Crossings(ramp.X, ramp.Z, ramp.X.Length, main).Count > 0 || Crossings(ramp.X, ramp.Z, ramp.X.Length, hw).Count > 0) continue;
+                    ramp.Ramp = true;
+                    list.Add(ramp);
+                }
+            return list.Count > 0 ? list : null;
+        }
+
+        static double FracAt(double[] arc, double s)
+        {
+            int k = 0;
+            while (k < arc.Length - 2 && arc[k + 1] < s) k++;
+            return k + Math.Clamp((s - arc[k]) / Math.Max(1e-9, arc[k + 1] - arc[k]), 0.0, 1.0);
+        }
+
         // =============================================================================================================
         // Branches: small roads and trails leaving a main road
 
@@ -686,6 +777,17 @@ namespace SDG.Unturned
                 uint h = InfiniteTerrain.Hash(b, 17, bs);
                 RoadKind kind = (h & 0xFF) < 140 ? RoadKind.Small : RoadKind.Trail;
                 double s = arc[arc.Length - 1] * (0.15 + 0.7 * ((h >> 8 & 0xFFFF) / 65536.0));
+                // not off the main where it crosses a highway: that stretch is the interchange's (its ramps join there)
+                if (main.Underpasses != null)
+                {
+                    bool atCrossing = false;
+                    foreach (var u in main.Underpasses)
+                    {
+                        At(main, arc, s, out double bx0, out double bz0, out _, out _, out _);
+                        if (Math.Sqrt((bx0 - u.X) * (bx0 - u.X) + (bz0 - u.Z) * (bz0 - u.Z)) < RampMeet + 120) atCrossing = true;
+                    }
+                    if (atCrossing) continue;
+                }
                 int side = (h >> 24 & 1) == 0 ? 1 : -1;
                 double angle = ((h >> 25) / 127.0 - 0.5) * 1.2;   // +-0.6 rad off square
                 At(main, arc, s, out double sx, out double sz, out _, out double tx, out double tz);
@@ -1456,6 +1558,7 @@ namespace SDG.Unturned
                         if (!e.Exists) continue;
                         Take(e);
                         if (e.Branches != null) foreach (var br in e.Branches) Take(br);
+                        if (e.Ramps != null) foreach (var rp in e.Ramps) Take(rp);
                     }
             TakeHighways(x0, z0, x1, z1, list);
             return list;
@@ -1670,7 +1773,7 @@ namespace SDG.Unturned
             var list = new List<PolePlacement>();
             foreach (var e in lines)
             {
-                if (!HasPowerLines(e.Kind)) continue;
+                if (!HasPowerLines(e.Kind) || e.Ramp) continue;
                 double off = PavedHalf(e.Kind) + PoleSetback;
                 var arc = Arc(e);
                 double total = arc[arc.Length - 1];
@@ -1739,6 +1842,13 @@ namespace SDG.Unturned
         public (double x, double z, float h)[] MainCentreline(long cx, long cz, int dir) => Pts(Main(cx, cz, dir));
         public void MainNodeAt(long cx, long cz, out double x, out double z) => MainNode(cx, cz, out x, out z);
         public IReadOnlyList<Underpass> MainUnderpasses(long cx, long cz, int dir) => Main(cx, cz, dir).Underpasses ?? (IReadOnlyList<Underpass>)Array.Empty<Underpass>();
+        public List<(double x, double z, float h)[]> MainRamps(long cx, long cz, int dir)
+        {
+            var r = new List<(double x, double z, float h)[]>();
+            var m = Main(cx, cz, dir);
+            if (m.Exists && m.Ramps != null) foreach (var rp in m.Ramps) r.Add(Pts(rp));
+            return r;
+        }
         public (double x, double z, float h)[] HighwayCentreline(int axis, long band, long k) => Pts(Highway(axis, band, k));
         /// <summary>Test/tool accessor: the raised stretches of a highway segment (and of the far side of a water gap).</summary>
         public List<(Stretch r, (double x, double z, float h)[] pts)> RaisedOf(int axis, long band, long k) => StretchesOf(axis, band, k, false);
