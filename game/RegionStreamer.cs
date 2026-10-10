@@ -98,6 +98,9 @@ namespace UnturnedGodot
             public List<(Transform3D Pole, bool HasNext, Transform3D Next)> PoleXf;   // from the LOD0/1 build
             public Node3D Power;            // pole meshes + wires, ring <= TreeRing
             public Node3D PoleBodies;       // pole colliders, ring <= ColliderRing
+            public List<(Transform3D Tower, Transform3D[] Wired)> PylonXf;   // from the first build (LOD-independent)
+            public Node3D Pylons;           // the towers and their wires, every ring
+            public Node3D PylonBodies;      // their legs, ring <= ColliderRing
             public Node3D Foliage;          // grass / flowers / pebbles / bushes, ring <= FoliageRing only
             public int FoliageCount;
             public (Vector3 P, float S, int Cell)[] ImpTrees;   // billboard placements on the DISPLAYED LOD's ground
@@ -127,6 +130,7 @@ namespace UnturnedGodot
             public RoadMesh[] Road;   // per RoadKind, null where the region has none of that class
             public Vector3[][] RoadCol;   // LOD0 only: the slabs as triangle soup, [paved, trail]
             public List<(Transform3D Pole, bool HasNext, Transform3D Next)> Poles;
+            public List<(Transform3D Tower, Transform3D[] Wired)> Pylons;
             public (Vector3 P, float S, int Cell)[] ImpTrees;
             public List<Transform3D>[] BridgeXf;
             public List<InfiniteRoads.TunnelSpan> Tunnels;
@@ -269,6 +273,7 @@ namespace UnturnedGodot
             if (r.Foliage != null) FoliageCount -= r.FoliageCount;
             if (r.Impostors != null) ImpostorCount -= r.Impostors.Multimesh.InstanceCount;
             if (r.Bridges != null) BridgeCount -= r.BridgeXf[0].Count;
+            if (r.Pylons != null && _pylonMesh != null) PylonCount -= r.PylonXf.Count;
             if (r.Tunnels != null) TunnelCount -= r.TunnelSpans.Count;
             r.Node.QueueFree();
             _regions.Remove(c);
@@ -324,6 +329,8 @@ namespace UnturnedGodot
             else if (ring > TreeRing + 1 && r.Power != null) { r.Power.QueueFree(); r.Power = null; }
             if (ring <= ColliderRing && r.PoleBodies == null && r.PoleXf != null && r.PoleXf.Count > 0) { r.PoleBodies = BuildPoleBodies(r.PoleXf); r.Node.AddChild(r.PoleBodies); }
             else if (ring > ColliderRing + 1 && r.PoleBodies != null) { r.PoleBodies.QueueFree(); r.PoleBodies = null; }
+            if (ring <= ColliderRing && r.PylonBodies == null && r.PylonXf != null && r.PylonXf.Count > 0) { r.PylonBodies = BuildPylonBodies(r.PylonXf); r.Node.AddChild(r.PylonBodies); }
+            else if (ring > ColliderRing + 1 && r.PylonBodies != null) { r.PylonBodies.QueueFree(); r.PylonBodies = null; }
 
             if (ring <= FoliageRing && r.Foliage == null && r.FoliageXf != null)
             {
@@ -366,6 +373,7 @@ namespace UnturnedGodot
                 if (b.Poles != null && r.PoleXf == null) r.PoleXf = b.Poles;
                 AdoptBridges(r, b);
                 AdoptTunnels(r, b);
+                AdoptPylons(r, b);
                 if (useful)
                 {
                     Apply(r, b);
@@ -784,6 +792,106 @@ void fragment() {
                 body.AddChild(new CollisionShape3D { Shape = new CylinderShape3D { Radius = 0.18f, Height = 8f }, Position = new Vector3(0f, 4f, 0f) });
                 holder.AddChild(body);
             }
+            return holder;
+        }
+
+        // ---- high-voltage pylons (strawberry 2026-10-10: "implement the big pylon splines. cross country, their own
+        // network"): cow tools' Power_Line_1 lattice tower, strung by the same PowerLineField as its pylon kind (six
+        // conductors, insulator pairs, 400 m spans). Towers and wires show at EVERY ring -- a 48 m tower is a landmark.
+        static Mesh _pylonMesh; static Material _pylonMat;
+        public static int PylonSpansRefused;   // spans PowerLineField would not string (it says why): must stay 0
+        public static int PylonCount;
+        static void PylonAssets()
+        {
+            if (_pylonMesh != null) return;
+            string odir = ProjectSettings.GlobalizePath("res://content/objects/");
+            _pylonMesh = ObjMesh.Load(odir + PowerLineField.PylonMesh + ".obj");
+            var mat = new StandardMaterial3D { Roughness = 0.9f };
+            var img = new Image();
+            if (ContentProvider.LoadOk(img, odir + PowerLineField.PylonMesh + "_tex.png"))
+            {
+                mat.AlbedoTexture = ImageTexture.CreateFromImage(img);
+                mat.TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest;   // a palette, like the pole's
+            }
+            _pylonMat = mat;
+        }
+
+        static Transform3D PylonXform(float lx, float y, float lz, float dirX, float dirZ)
+        {
+            float theta = Mathf.Atan2(-dirX, -dirZ);
+            var b = new Basis(Vector3.Up, theta) * new Basis(Vector3.Right, Mathf.DegToRad(270f));
+            float k = PowerLineField.PylonScale;
+            return new Transform3D(new Basis(b.X * k, b.Y * k, b.Z * k), new Vector3(lx, y, lz));
+        }
+
+        /// <summary>For tests: how many towers the loaded region at `c` draws, and its pylon wire field (null if it has none).</summary>
+        public (int Towers, PowerLineField Wires) PylonsOf(RegionCoord c)
+        {
+            if (!_regions.TryGetValue(c, out var r) || r.Pylons == null) return (0, null);
+            return (r.Pylons.GetNodeOrNull<MultiMeshInstance3D>("Towers")?.Multimesh?.InstanceCount ?? 0, r.Pylons.GetNodeOrNull<PowerLineField>("PylonWires"));
+        }
+
+        void AdoptPylons(Region r, Built b)
+        {
+            if (b.Pylons == null || r.PylonXf != null) return;
+            r.PylonXf = b.Pylons;
+            r.Pylons = BuildPylons(r, r.PylonXf);
+        }
+
+        Node3D BuildPylons(Region r, List<(Transform3D Tower, Transform3D[] Wired)> towers)
+        {
+            PylonAssets();
+            var holder = new Node3D { Name = "Pylons" };
+            r.Node.AddChild(holder);
+            float cull = (MaxRing + 0.5f) * InfiniteTerrain.RegionSize;
+            if (_pylonMesh != null)
+            {
+                var mm = new MultiMesh { TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, Mesh = _pylonMesh };
+                mm.InstanceCount = towers.Count;
+                for (int k = 0; k < towers.Count; k++) mm.SetInstanceTransform(k, towers[k].Tower);
+                var mmi = new MultiMeshInstance3D { Name = "Towers", Multimesh = mm, MaterialOverride = _pylonMat, VisibilityRangeEnd = cull };
+                mmi.AddToGroup(NearestFilter.KeepFilterGroup);
+                holder.AddChild(mmi);
+                PylonCount += towers.Count;
+            }
+            // the wires, in WORLD space as BuildPower does, culled where the towers are. A far tower in the next region
+            // is added here too, as a wire end only (its own region draws it); one pole per spot, so a span between two
+            // towers of this region does not end on a duplicate
+            var field = new PowerLineField { Name = "PylonWires", PoleCullDistance = cull };
+            holder.AddChild(field);
+            var toWorld = r.Node.GlobalTransform;
+            var at = new Dictionary<Vector3I, int>();
+            int Pole(Transform3D x)
+            {
+                var w = toWorld * x;
+                var key = new Vector3I(Mathf.RoundToInt(w.Origin.X * 10f), Mathf.RoundToInt(w.Origin.Y * 10f), Mathf.RoundToInt(w.Origin.Z * 10f));
+                if (!at.TryGetValue(key, out int i)) at[key] = i = field.AddPole(w, PowerLineField.PylonMesh);
+                return i;
+            }
+            foreach (var (tower, wired) in towers)
+            {
+                int a = Pole(tower);
+                foreach (var far in wired)
+                    if (!field.Connect(a, Pole(far), out string why)) { PylonSpansRefused++; GD.PushWarning($"[pylons] span refused: {why}"); }
+            }
+            field.Rebuild();
+            return holder;
+        }
+
+        /// <summary>The tower's four legs where they meet the ground (the lattice base, the mesh's +-2.46 m square),
+        /// each a post you walk into; you can walk between them, as under a real tower.</summary>
+        static Node3D BuildPylonBodies(List<(Transform3D Tower, Transform3D[] Wired)> towers)
+        {
+            var holder = new Node3D { Name = "PylonBodies" };
+            foreach (var (x, _) in towers)
+                foreach (var (cx, cy) in new[] { (-2.46f, -2.46f), (2.46f, -2.46f), (2.46f, 2.46f), (-2.46f, 2.46f) })
+                {
+                    var foot = x * new Vector3(cx, cy, 0f);
+                    var body = new StaticBody3D { CollisionLayer = 1u << 0, Position = foot + Vector3.Up * 5f };
+                    body.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Metal);
+                    body.AddChild(new CollisionShape3D { Shape = new CylinderShape3D { Radius = 0.45f, Height = 10f } });
+                    holder.AddChild(body);
+                }
             return holder;
         }
 
@@ -1280,6 +1388,7 @@ void fragment() {
                     r.PoleXf ??= b.Poles;
                     AdoptBridges(r, b);   // ⚠ this path is how a teleport builds the 3x3 -- miss it and the bridges beside you never appear
                     AdoptTunnels(r, b);
+                    AdoptPylons(r, b);
                     Apply(r, b);
                     r.ImpTrees = b.ImpTrees;
                     UpdateExtras(r, c.RingTo(center));
@@ -1591,6 +1700,23 @@ void fragment() {
                 }
             }
 
+            // high-voltage pylons (InfinitePylons): cow tools' lattice tower, stood up and turned like the roadside
+            // pole (arms -- its local X -- across the line) and scaled by PowerLineField.PylonScale through the basis,
+            // so the field's anchors scale with it. Base at the generator's height, the lowest ground under it.
+            List<(Transform3D, Transform3D[])> pylons = null;
+            if (d.Pylons != null && d.Pylons.Count > 0)
+            {
+                pylons = new List<(Transform3D, Transform3D[])>();
+                double ox = d.Coord.MinX, oz = d.Coord.MinZ;
+                foreach (var pp in d.Pylons)
+                {
+                    var wired = new Transform3D[pp.Wired.Length];
+                    for (int w = 0; w < wired.Length; w++)
+                        wired[w] = PylonXform((float)(pp.Wired[w].X - ox), pp.Wired[w].H, (float)(pp.Wired[w].Z - oz), pp.Wired[w].DirX, pp.Wired[w].DirZ);
+                    pylons.Add((PylonXform((float)(pp.X - ox), pp.H, (float)(pp.Z - oz), pp.DirX, pp.DirZ), wired));
+                }
+            }
+
             Dictionary<(int, int), List<Transform3D>> foliage = null;
             if (d.Foliage != null)
             {
@@ -1606,7 +1732,7 @@ void fragment() {
                     list.Add(new Transform3D(basis, new Vector3(f.X, f.Y, f.Z)));
                 }
             }
-            return new Built { D = d, V = V.ToArray(), N = N.ToArray(), UV = UV.ToArray(), I = I.ToArray(), S0 = s0, S1 = s1, SplatSize = v, TreeXf = trees, ImpTrees = imp, BridgeXf = bridgeXf, FoliageXf = foliage,
+            return new Built { D = d, V = V.ToArray(), N = N.ToArray(), UV = UV.ToArray(), I = I.ToArray(), S0 = s0, S1 = s1, SplatSize = v, TreeXf = trees, ImpTrees = imp, BridgeXf = bridgeXf, Pylons = pylons, FoliageXf = foliage,
                                Road = roadMeshes, RoadCol = roadCol, Poles = poles, Tunnels = d.Tunnels };
         }
 

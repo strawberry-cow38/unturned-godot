@@ -158,6 +158,8 @@ namespace SDG.Unturned
         public List<RoadPiece> Roads;
         /// <summary>Power-line poles standing in this region (LOD0/1 only).</summary>
         public List<PolePlacement> Poles;
+        /// <summary>High-voltage pylons standing in this region, with the spans each owns (all LODs).</summary>
+        public List<PylonPlacement> Pylons;
         public List<BridgePiece> Bridges;   // highway bridge pieces rooted in this region (all LODs)
         /// <summary>Highway tunnels whose middle lies in this region (all LODs; the whole tunnel, which may reach a
         /// neighbour -- like a bridge, it is one structure).</summary>
@@ -194,6 +196,7 @@ namespace SDG.Unturned
             Seed = seed;
             _s = Mix((ulong)(uint)seed * 0x9E3779B97F4A7C15UL + 0x632BE59BD9B4E019UL);
             Roads = new InfiniteRoads(this, _s);
+            Pylons = new InfinitePylons(this, _s);
         }
 
         // ---------------------------------------------------------------------------------------------------
@@ -436,6 +439,7 @@ namespace SDG.Unturned
             d.Roads = Roads.PiecesIn(lines, ox, oz, ox + RegionSize, oz + RegionSize, Math.Max(4f, sp));
             d.Poles = lod <= 1 ? Roads.PolesIn(lines, ox, oz, ox + RegionSize, oz + RegionSize) : null;
             d.Bridges = Roads.BridgesIn(lines, ox, oz, ox + RegionSize, oz + RegionSize);
+            d.Pylons = Pylons.PylonsIn(ox, oz, ox + RegionSize, oz + RegionSize);   // every LOD: 50 m landmarks
             d.Tunnels = Roads.TunnelsIn(lines, ox, oz, ox + RegionSize, oz + RegionSize);
             d.GenMs = (System.Diagnostics.Stopwatch.GetTimestamp() - t0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
             return d;
@@ -454,6 +458,8 @@ namespace SDG.Unturned
             var list = new List<TreeSpawn>();
             int cells = (int)(RegionSize / TreeCell);
             double ox = rc.MinX, oz = rc.MinZ;
+            // the high-voltage lines' corridors are kept clear: wires 9 m up at mid-span would run through a canopy
+            var pylonLines = Pylons.LinesIn(ox, oz, ox + RegionSize, oz + RegionSize, InfinitePylons.TreeKeep + 10);
             ulong s = _s ^ SaltTree;
             for (int cj = 0; cj < cells; cj++)
                 for (int ci = 0; ci < cells; ci++)
@@ -467,6 +473,7 @@ namespace SDG.Unturned
                     float y = SampleWith(lines, ax, az, out var treeRoad);
                     if (y < SeaLevel + 2.5f) continue;
                     if (treeRoad.Clear < 5f) continue;   // keep every road and its verge clear
+                    if (pylonLines.Count > 0 && InfinitePylons.CorridorDistance(pylonLines, ax, az) < InfinitePylons.TreeKeep) continue;
                     if (treeRoad.Tunnel && treeRoad.TunnelIn < InfiniteRoads.TunnelHoleIn + 8f
                         && Math.Abs(treeRoad.TunnelLat) < InfiniteRoads.TunnelShellReach) continue;   // nor over a portal's mouth
                     float sx = SampleWith(lines, ax + 2.0, az, out _) - SampleWith(lines, ax - 2.0, az, out _);
@@ -487,6 +494,8 @@ namespace SDG.Unturned
 
         /// <summary>The road network (highways, main roads, small roads, trails).</summary>
         public readonly InfiniteRoads Roads;
+        /// <summary>The high-voltage lines: their own network of lattice pylons, clear of the roads.</summary>
+        public readonly InfinitePylons Pylons;
 
         /// <summary>Height of a region's OWN mesh at a local point -- the two triangles each quad is drawn as. Anything
         /// laid on the ground (a road surface, a blade of grass) must sit on this, not on the smooth function, or it

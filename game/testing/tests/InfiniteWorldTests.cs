@@ -587,6 +587,48 @@ namespace UnturnedGodot.Testing
                         Who(par) == "deck" && parY > highY + 0.5f);
                 }
             }
+            // ---- 9. HIGH-VOLTAGE PYLONS (strawberry 2026-10-10: "implement the big pylon splines. cross country, their own
+            // network"): core's copy of the kit's numbers is the kit's; at the nearest tower that owns a span, the tower
+            // is drawn, its spans are strung (none refused), and its legs are solid
+            T.Check($"the pylon network's kit numbers are PowerLineField's: scale {InfinitePylons.Scale} / {PowerLineField.PylonScale}, sag {InfinitePylons.SagFraction} / {PowerLineField.SagFraction}, " +
+                    $"longest span {InfinitePylons.MaxSpan} under {PowerLineField.PylonMaxSpan}, lower arm {InfinitePylons.LowestConductor / InfinitePylons.Scale:0.000} / {PowerLineField.PylonAnchorsLocal[0].Z:0.000} at {InfinitePylons.LowerReach / InfinitePylons.Scale:0.000} / {PowerLineField.PylonAnchorsLocal[0].X:0.000}, " +
+                    $"middle {InfinitePylons.MiddleConductor / InfinitePylons.Scale:0.000} / {PowerLineField.PylonAnchorsLocal[1].Z:0.000}",
+                InfinitePylons.Scale == PowerLineField.PylonScale && InfinitePylons.SagFraction == PowerLineField.SagFraction && InfinitePylons.MaxSpan < PowerLineField.PylonMaxSpan
+                && Mathf.Abs(InfinitePylons.LowestConductor / InfinitePylons.Scale - PowerLineField.PylonAnchorsLocal[0].Z) < 1e-3f && Mathf.Abs(InfinitePylons.LowerReach / InfinitePylons.Scale - PowerLineField.PylonAnchorsLocal[0].X) < 1e-3f
+                && Mathf.Abs(InfinitePylons.MiddleConductor / InfinitePylons.Scale - PowerLineField.PylonAnchorsLocal[1].Z) < 1e-3f && Mathf.Abs(InfinitePylons.MiddleReach / InfinitePylons.Scale - PowerLineField.PylonAnchorsLocal[1].X) < 1e-3f);
+            PylonPlacement? tower = null; double tBest = double.MaxValue;
+            foreach (var pp in S.Gen.Pylons.PylonsIn(-6000, -6000, 6000, 6000))
+                if (pp.Wired.Length > 0 && pp.X * pp.X + pp.Z * pp.Z < tBest) { tBest = pp.X * pp.X + pp.Z * pp.Z; tower = pp; }
+            T.Check("the generator has a pylon to visit", tower != null);
+            if (tower is PylonPlacement tp)
+            {
+                int refused0 = RegionStreamer.PylonSpansRefused;
+                S.TeleportAbsolute(tp.X + tp.DirZ * 40.0, tp.Z - tp.DirX * 40.0);   // 40 m off the line, square to it
+                yield return Wait(Settled, 60);
+                yield return Ticks(5);
+                var space = World.GetWorld3D().DirectSpaceState;
+                // the tower's region: its Pylons holder, the tower drawn, its wires strung
+                var at = S.ToLocal(tp.X, tp.H, tp.Z);
+                // (by its REGION: a headless run's MultiMesh keeps no instance transforms to read back)
+                var rc = RegionCoord.Containing(tp.X, tp.Z);
+                var (drawn, plf) = S.PylonsOf(rc);
+                int strung = plf?.SpanCount ?? 0, wireEnds = 0;
+                // ...and its spans end AT this tower. The field holds its poles in the frame it was built in, and has
+                // moved with its region since
+                if (plf != null)
+                    for (int k = 0; k < plf.SpanCount; k++)
+                        if ((plf.GlobalTransform * plf.PoleOrigin(plf.Spans[k].A)).DistanceTo(at) < 0.5f || (plf.GlobalTransform * plf.PoleOrigin(plf.Spans[k].B)).DistanceTo(at) < 0.5f) wireEnds++;
+                string rname = rc.ToString();
+                T.Check($"the nearest pylon ({tp.X:0}, {tp.Z:0}) is drawn in region {rname} ({drawn} towers there), which strings {strung} spans, {wireEnds} of them at this tower (it owns {tp.Wired.Length}); spans refused anywhere: {RegionStreamer.PylonSpansRefused}",
+                    drawn >= 1 && wireEnds >= tp.Wired.Length && RegionStreamer.PylonSpansRefused == 0);
+                // a leg: 2 m up, from 6 m outside the base straight at the near foot -- stops on a pylon body before it
+                double ax = -tp.DirZ, az = tp.DirX, f = InfinitePylons.FootHalf;
+                double fx = tp.X + (tp.DirX + ax) * f, fz = tp.Z + (tp.DirZ + az) * f;   // the (+along, +across) foot
+                var from = S.ToLocal(fx + ax * 6, tp.H + 2, fz + az * 6);
+                var hit = space.IntersectRay(PhysicsRayQueryParameters3D.Create(from, S.ToLocal(fx - ax * 2, tp.H + 2, fz - az * 2), 1u << 0));
+                string who = hit.Count == 0 ? "nothing" : hit["collider"].As<Node>()?.GetParent()?.Name.ToString() ?? "?";
+                T.Check($"its legs are solid: a ray at a foot hits {who}{(hit.Count > 0 ? $" {((Vector3)hit["position"]).DistanceTo(from):0.0} m in" : "")}", who == "PylonBodies");
+            }
             T.Check($"nobody was ever rescued from under the ground ({S.Rescues})", S.Rescues == 0);
         }
     }

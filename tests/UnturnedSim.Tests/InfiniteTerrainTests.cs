@@ -1078,6 +1078,135 @@ namespace UnturnedSim.Tests
             Assert.That(carved, Is.GreaterThan(ramps * 2)); Assert.That(worstGround, Is.LessThan(0.02), "a ramp is not carved into the ground");
         }
 
+        /// <summary>strawberry 2026-10-10: "implement the big pylon splines. cross country, their own network. make sure
+        /// the pylons themselves dont overlap the roads". Over 36 node cells (31 km square): every tower's base is clear
+        /// of every road's asphalt, on land, and no leg hangs over the ground; every span is one PowerLineField will
+        /// string; every conductor -- measured here from the towers' own headings and the prop's anchors, not the
+        /// generator's shortcut -- stays clear of the ground and any road deck all the way along; no tree grows in a
+        /// line's corridor; and the regions together string every span exactly once.</summary>
+        [Test]
+        public void PylonsStandClearOfRoadsAndStringEverySpanOnce()
+        {
+            var lines = new List<List<InfinitePylons.Tower>>();
+            for (long cx = -3; cx < 3; cx++)
+                for (long cz = -3; cz < 3; cz++)
+                    for (int dir = 0; dir < 2; dir++) { var tw = Gen.Pylons.TowersOf(cx, cz, dir); if (tw != null) lines.Add(tw); }
+            int towers = 0, spans = 0, onRoad = 0, wet = 0, floating = 0, badSpan = 0, low = 0;
+            double nearest = double.MaxValue, worstFloat = 0, shortest = double.MaxValue, longest = 0, worstGap = double.MaxValue;
+            string nearWhere = "", gapWhere = "";
+            // the prop's two lowest conductor pairs (lower arm, middle arm), local to a tower: x across the line, z up
+            var anchors = new[] { (4.708f, 13.473f), (5.952f, 19.209f) };
+            foreach (var tw in lines)
+            {
+                for (int i = 0; i < tw.Count; i++)
+                {
+                    var t = tw[i];
+                    towers++;
+                    double clear = Gen.Roads.Influence(t.X, t.Z).Clear;
+                    if (clear < nearest) { nearest = clear; nearWhere = $" at ({t.X:0},{t.Z:0})"; }
+                    if (clear < InfinitePylons.RoadKeep) onRoad++;
+                    if (Gen.NaturalHeight(t.X, t.Z) < InfiniteTerrain.SeaLevel + 2f) wet++;
+                    // the four feet of the base, square to the tower's own heading: none above the ground
+                    double ax = -t.DirZ, az = t.DirX, f = InfinitePylons.FootHalf;
+                    foreach (var (u, v) in new[] { (-1, -1), (1, -1), (1, 1), (-1, 1) })
+                    {
+                        double fx = t.X + t.DirX * f * u + ax * f * v, fz = t.Z + t.DirZ * f * u + az * f * v;
+                        double air = t.H - Gen.HeightAt(fx, fz);
+                        worstFloat = Math.Max(worstFloat, air);
+                        if (air > 0.01) floating++;
+                    }
+                    if (i + 1 == tw.Count) continue;
+                    var n = tw[i + 1];
+                    spans++;
+                    double sl = Math.Sqrt((n.X - t.X) * (n.X - t.X) + (n.Z - t.Z) * (n.Z - t.Z));
+                    shortest = Math.Min(shortest, sl); longest = Math.Max(longest, sl);
+                    if (sl > InfinitePylons.MaxSpan || sl < InfinitePylons.MinClimbSpan) badSpan++;
+                    // each conductor of the lower two arms, both sides, from its anchor on this tower to the same anchor
+                    // on the next (each tower's arms square to ITS heading), sagging as PowerLineField.SpanPoint draws it
+                    double bx = -n.DirZ, bz = n.DirX;
+                    foreach (var (reach, up) in anchors)
+                        for (int sd = -1; sd <= 1; sd += 2)
+                        {
+                            // pair the sides by which way each tower's arm points, as the field pairs mirror-symmetric anchors
+                            double sa = sd, sb = (ax * bx + az * bz) >= 0 ? sd : -sd;
+                            double x0 = t.X + ax * reach * InfinitePylons.Scale * sa, z0 = t.Z + az * reach * InfinitePylons.Scale * sa, y0 = t.H + up * InfinitePylons.Scale;
+                            double x1 = n.X + bx * reach * InfinitePylons.Scale * sb, z1 = n.Z + bz * reach * InfinitePylons.Scale * sb, y1 = n.H + up * InfinitePylons.Scale;
+                            double len = Math.Sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0) + (z1 - z0) * (z1 - z0));
+                            for (int k = 1; k < 40; k++)
+                            {
+                                double s = k / 40.0, x = x0 + (x1 - x0) * s, z = z0 + (z1 - z0) * s;
+                                double y = y0 + (y1 - y0) * s - len * InfinitePylons.SagFraction * 4 * s * (1 - s);
+                                double under = Gen.HeightAt(x, z);
+                                var hit = Gen.Roads.Influence(x, z);
+                                if (hit.Any && hit.Clear < 0) under = Math.Max(under, InfiniteRoads.SurfaceY(hit.Kind, hit.Height) + InfiniteRoads.DeckParapetTop);
+                                double gap = y - under;
+                                if (gap < worstGap) { worstGap = gap; gapWhere = $" at ({x:0},{z:0})"; }
+                                if (gap < 3.0) low++;
+                            }
+                        }
+                }
+            }
+            // OWNERSHIP: the regions over every line, together, string each of its spans exactly once
+            var owned = new Dictionary<(long, long, long, long), int>();
+            static long Q(double v) => (long)Math.Round(v * 10);
+            var regions = new HashSet<(int, int)>();
+            foreach (var tw in lines) foreach (var t in tw) regions.Add(((int)Math.Floor(t.X / InfiniteTerrain.RegionSize), (int)Math.Floor(t.Z / InfiniteTerrain.RegionSize)));
+            foreach (var (rx, rz) in regions)
+                foreach (var p in Gen.Pylons.PylonsIn(rx * (double)InfiniteTerrain.RegionSize, rz * (double)InfiniteTerrain.RegionSize, (rx + 1) * (double)InfiniteTerrain.RegionSize, (rz + 1) * (double)InfiniteTerrain.RegionSize))
+                    foreach (var w in p.Wired)
+                    {
+                        var key = Q(p.X) < Q(w.X) || Q(p.X) == Q(w.X) && Q(p.Z) < Q(w.Z) ? (Q(p.X), Q(p.Z), Q(w.X), Q(w.Z)) : (Q(w.X), Q(w.Z), Q(p.X), Q(p.Z));
+                        owned[key] = owned.GetValueOrDefault(key) + 1;
+                    }
+            int missing = 0, twice = 0;
+            foreach (var tw in lines)
+                for (int i = 0; i + 1 < tw.Count; i++)
+                {
+                    var a = tw[i]; var b = tw[i + 1];
+                    var key = Q(a.X) < Q(b.X) || Q(a.X) == Q(b.X) && Q(a.Z) < Q(b.Z) ? (Q(a.X), Q(a.Z), Q(b.X), Q(b.Z)) : (Q(b.X), Q(b.Z), Q(a.X), Q(a.Z));
+                    int c = owned.GetValueOrDefault(key);
+                    if (c == 0) missing++; else if (c > 1) twice++;
+                }
+            // TREES: none in a corridor, over the regions a line crosses
+            int treesNear = 0, treesSeen = 0;
+            var pl = new List<InfinitePylons.Line>();
+            foreach (var (rx, rz) in regions.Take(40))
+            {
+                var rc = new RegionCoord(rx, rz);
+                var lin = Gen.Pylons.LinesIn(rc.MinX, rc.MinZ, rc.MinX + InfiniteTerrain.RegionSize, rc.MinZ + InfiniteTerrain.RegionSize, 50);
+                foreach (var tr in Gen.PlaceTrees(rc))
+                {
+                    treesSeen++;
+                    if (InfinitePylons.CorridorDistance(lin, rc.MinX + tr.X, rc.MinZ + tr.Z) < InfinitePylons.TreeKeep) treesNear++;
+                }
+            }
+            TestContext.WriteLine($"{lines.Count} lines, {towers} towers, {spans} spans ({shortest:0}..{longest:0} m; limit {InfinitePylons.MaxSpan}): nearest asphalt to a tower {nearest:0.0} m{nearWhere} (keep {InfinitePylons.RoadKeep}), " +
+                                  $"{onRoad} too near, {wet} wet; feet above the ground {floating} (worst {worstFloat * 1000:0.0} mm); lowest conductor {worstGap:0.0} m over the ground or a road{gapWhere}, {low} samples under 3 m; " +
+                                  $"spans strung {spans - missing - twice} once, {missing} never, {twice} twice; {treesNear} of {treesSeen} trees in a corridor");
+            Assert.That(lines.Count, Is.GreaterThan(10)); Assert.That(towers, Is.GreaterThan(200));
+            Assert.That(onRoad, Is.EqualTo(0), "a pylon stands on (or at the edge of) a road");
+            Assert.That(wet, Is.EqualTo(0), "a pylon stands in the sea");
+            Assert.That(floating, Is.EqualTo(0), "a pylon's foot hangs above the ground");
+            Assert.That(badSpan, Is.EqualTo(0), "a span PowerLineField would refuse, or two towers on top of each other");
+            Assert.That(worstGap, Is.GreaterThan(3.0), "a conductor runs into the ground or a road");
+            Assert.That(missing + twice, Is.EqualTo(0), "a span strung by no region, or by two");
+            Assert.That(treesSeen, Is.GreaterThan(1000)); Assert.That(treesNear, Is.EqualTo(0), "a tree in a line's corridor");
+        }
+
+        /// <summary>The network is a pure function of the seed: a fresh generator asked about a far corner first, then the
+        /// same region, places the same towers (streaming builds lines in whatever order regions arrive).</summary>
+        [Test]
+        public void PylonsAreTheSameWhoeverAsks()
+        {
+            var fresh = new InfiniteTerrain(1337);
+            fresh.Pylons.PylonsIn(9000, 9000, 9256, 9256);
+            var a = Gen.Pylons.PylonsIn(-4000, -4000, 4000, 4000); var b = fresh.Pylons.PylonsIn(-4000, -4000, 4000, 4000);
+            TestContext.WriteLine($"{a.Count} towers from the shared generator, {b.Count} from a fresh one (an 8 km square)");
+            Assert.That(a.Count, Is.GreaterThan(20));
+            Assert.That(b.Select(p => (p.X, p.Z, p.H, p.Wired.Length)).OrderBy(p => p.X).ThenBy(p => p.Z),
+                        Is.EqualTo(a.Select(p => (p.X, p.Z, p.H, p.Wired.Length)).OrderBy(p => p.X).ThenBy(p => p.Z)));
+        }
+
         [Test]
         public void HighwaysAreTwoCarriageways()
         {
@@ -1232,12 +1361,19 @@ namespace UnturnedSim.Tests
         [Test]
         public void HeightsStayInsideTheWiresYRange()
         {
-            for (int k = 0; k < 120; k++)   // scattered far apart, so every one builds its own roads cold
+            // the pylon network does not touch the ground, and a cold region pays for every 5 km line that could reach
+            // it (and the roads along it): off here, or this alone is two minutes
+            InfinitePylons.Enabled = false;
+            try
             {
-                var d = Gen.Generate(new RegionCoord(k * 23 - 1400, k * 43 - 2600), 3);
-                Assert.That(d.MaxHeight, Is.LessThanOrEqualTo(InfiniteTerrain.MaxHeight));
-                Assert.That(d.MinHeight, Is.GreaterThan(-256f));
+                for (int k = 0; k < 120; k++)   // scattered far apart, so every one builds its own roads cold
+                {
+                    var d = Gen.Generate(new RegionCoord(k * 23 - 1400, k * 43 - 2600), 3);
+                    Assert.That(d.MaxHeight, Is.LessThanOrEqualTo(InfiniteTerrain.MaxHeight));
+                    Assert.That(d.MinHeight, Is.GreaterThan(-256f));
+                }
             }
+            finally { InfinitePylons.Enabled = true; }
         }
     }
 }
