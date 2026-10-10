@@ -1,0 +1,1 @@
+<Project Sdk="Godot.NET.Sdk/4.6.0"><PropertyGroup><TargetFramework>net8.0</TargetFramework><EnableDynamicLoading>true</EnableDynamicLoading><Nullable>disable</Nullable><RootNamespace>TrafficMarkersVerify</RootNamespace></PropertyGroup><ItemGroup><Compile Include="../../game/ObjMesh.cs" Link="ObjMesh.cs" /></ItemGroup></Project>

@@ -1,0 +1,49 @@
+{
+  "approval_message_id": "1558578382403276883",
+  "original_delivery_message_id": "1558575761294627046",
+  "selected": "first-version cone and approved first-version barrel; cone revision excluded",
+  "native_coordinates": "PROP Z-up, metres, centred XY, pad bottom Z0; use EditorObjects.Upright for placement",
+  "integration": "art library only; no GUID/catalog, physics, destruction, AI or spawn registration",
+  "models": [
+    {
+      "key": "Traffic_Cone_0",
+      "height_m": 0.82,
+      "triangles": 192,
+      "lod_triangles": 136
+    },
+    {
+      "key": "Traffic_Barrel_0",
+      "height_m": 1.155,
+      "triangles": 312,
+      "lod_triangles": 216
+    }
+  ],
+  "files": [
+    {
+      "file": "game/content/objects/Traffic_Cone_0.obj",
+      "sha256": "d509d710a73ea4853b9756941e40db094f13e72dd0ea8fc14865f27b3078e804"
+    },
+    {
+      "file": "game/content/objects/Traffic_Cone_0_lod1.obj",
+      "sha256": "7c6370d7c3e61964b997d901162cbccf2ec46c024125aa6e5e94c2f2b8737276"
+    },
+    {
+      "file": "game/content/objects/Traffic_Cone_0_tex.png",
+      "sha256": "24b12ed00ee2c501ca4ea59163a1c8677b92f11cd051dabe20d2e28ac1903c5e"
+    },
+    {
+      "file": "game/content/objects/Traffic_Barrel_0.obj",
+      "sha256": "4cdda15be241c939bcd2f57b89485e1e4f2c3fd2da08b131a72d5dfda4c68b1c"
+    },
+    {
+      "file": "game/content/objects/Traffic_Barrel_0_lod1.obj",
+      "sha256": "4871c2dc6dc5dc9f303cb424da0d29152e634a8b723d708b971d51afbedb46bb"
+    },
+    {
+      "file": "game/content/objects/Traffic_Barrel_0_tex.png",
+      "sha256": "24b12ed00ee2c501ca4ea59163a1c8677b92f11cd051dabe20d2e28ac1903c5e"
+    }
+  ],
+  "editable_source_archive": "Traffic_Cone_and_Barrel_Models.zip",
+  "archive_sha256": "931833baa0100e21114a7e6e9815e3be189421af2114d88c62af2d49291eb9fa"
+}
