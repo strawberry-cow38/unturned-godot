@@ -268,9 +268,32 @@ namespace UnturnedGodot
                 "Bush_Amber" => 270, "Bush_Indigo" => 271, "Bush_Jade" => 272, "Bush_Mauve" => 115,
                 "Bush_Russet" => 273, "Bush_Teal" => 274, "Bush_Vermillion" => 275, "Bush_Hanu" => 571,
                 "Mushroom_Brown_0" => 1932, "Mushroom_Red_0" => 1934,
-                _ => (ushort)0,
+                _ => n.StartsWith("Cactus_") ? (ushort)9354 : (ushort)0,   // Cactus Flesh -- every cactus model drops it
             };
         }
+
+        /// <summary>Is this resource a TREE -- gets a trunk collider, casts a shadow, can be chopped for logs?
+        /// Named and public rather than inline in the loader because it is the single line that decides whether
+        /// a resource is a harvestable tree or inert scenery, and the difference is invisible: a species the
+        /// loader does not claim still renders perfectly, it just has no trunk, cannot be felled and drops
+        /// nothing. Public so a test can assert the classification without standing a world up.</summary>
+        public static bool IsTree(string resourceName)
+        {
+            string n = resourceName ?? "";
+            return n.StartsWith("Birch") || n.StartsWith("Maple") || n.StartsWith("Pine") || n.StartsWith("Redwood");
+        }
+
+        /// <summary>Trunk radius at chest height for one redwood model, metres. Interpolated from the mesh's own
+        /// radius profile at y=1.5 (Redwood_0 2.46, _1 1.70, _2 2.92) because the trunks carry no vertices in the
+        /// y 1..2 band the per-vertex method samples. Re-measure by interpolating max hypot(x,z) between the
+        /// rings either side of y=1.5 in &lt;Name&gt;_1.obj.</summary>
+        public static float RedwoodTrunkRadius(string name) => name switch
+        {
+            "Redwood_0" => 2.46f,
+            "Redwood_1" => 1.70f,
+            "Redwood_2" => 2.92f,
+            _ => 2.4f,   // an unlisted redwood takes the middle of the three rather than the 0.5 birch floor
+        };
 
         public static bool IsForageable(string resourceName) => ForageReward(resourceName) != 0;
 
@@ -281,7 +304,11 @@ namespace UnturnedGodot
         public static bool IsUndergrowth(string resourceName)
         {
             string n = (resourceName ?? "").ToLowerInvariant();
-            if (n.StartsWith("birch") || n.StartsWith("maple") || n.StartsWith("pine") || n.StartsWith("metal")) return false;
+            // ⚠ CACTI ARE NOT UNDERGROWTH. They are forageable like a berry bush, which is why they would other-
+            // wise be caught below, but a 2-4 m cactus is a solid thing you drive AROUND, not a shrub you plough
+            // through. Excluded here so it keeps its collider budget and does not become vehicle drag.
+            if (n.StartsWith("birch") || n.StartsWith("maple") || n.StartsWith("pine") || n.StartsWith("metal")
+                || n.StartsWith("redwood") || n.StartsWith("cactus")) return false;
             return n.Contains("bush") || n.Contains("brier") || n.Contains("briar") || n.Contains("shrub")
                 || n.Contains("berry") || n.Contains("fern") || n.Contains("sapling");
         }
@@ -318,7 +345,7 @@ namespace UnturnedGodot
                 string name = sp[0];
                 string holiday = sp.Length >= 3 ? sp[2] : "NONE";   // Cane_00(candy cane)/Snow_Pile_00/Ornament_XMAS are CHRISTMAS-only
                 if (holiday != "NONE" && holiday != activeHoliday) continue;   // out-of-season resource (same gate as the objects)
-                bool isTree = name.StartsWith("Birch") || name.StartsWith("Maple") || name.StartsWith("Pine");   // only trees cast shadows
+                bool isTree = IsTree(name);   // only trees cast shadows
                 bool isOre = name.StartsWith("Metal");   // metal ore rocks -> pickaxe-harvestable (master)
                 bool isForage = IsForageable(name);      // berry bushes + mushrooms -> look at it and press Interact
                 string binPath = dir + name + ".bin";
@@ -353,11 +380,19 @@ namespace UnturnedGodot
                 {
                     int baseIdx = _instances.Count - xf.Count;   // recs[k] lives at _instances[baseIdx + k] -> the trunk carries its own index for SetAlive
                     bool isMaple = name.StartsWith("Maple"), isPine = name.StartsWith("Pine");
-                    ushort logItem = isMaple ? (ushort)39 : isPine ? (ushort)41 : (ushort)37;   // wood-type log: Birch 37 / Maple 39 / Pine 41
+                    bool isRedwood = name.StartsWith("Redwood");
+                    ushort logItem = isRedwood ? (ushort)9348 : isMaple ? (ushort)39 : isPine ? (ushort)41 : (ushort)37;   // wood-type log: Birch 37 / Maple 39 / Pine 41 / Redwood 9348
                     // retail ResourceAsset values (unturned.gameinfo.io): Birch 800hp/450s/7-10, Maple 1000/600/6-9, Pine 1200/750/5-8
-                    float treeHp = isMaple ? 1000f : isPine ? 1200f : 800f;
-                    float treeReset = isMaple ? 600f : isPine ? 750f : 450f;
-                    int rMin = isMaple ? 6 : isPine ? 5 : 7, rMax = isMaple ? 9 : isPine ? 8 : 10;
+                    // ⚠ REDWOOD HAS NO RETAIL ROW -- there is no redwood resource in the rip at all (searched it
+                    // with Birch/Pine as controls: 278/431 hits against 0). The item exists (Redwood Log 9348, off
+                    // EconInfo.bin) and the TREE did not, so these four numbers are AUTHORED, not extracted, and
+                    // are marked as such rather than being passed off as retail. Scaled off the mesh: a redwood is
+                    // 45-78 m against a pine's 22, so it is the longest chop, the slowest regrow and the biggest
+                    // haul in the game -- which is what makes finding one worth the walk.
+                    float treeHp = isRedwood ? 2200f : isMaple ? 1000f : isPine ? 1200f : 800f;
+                    float treeReset = isRedwood ? 1200f : isMaple ? 600f : isPine ? 750f : 450f;
+                    int rMin = isRedwood ? 12 : isMaple ? 6 : isPine ? 5 : 7;
+                    int rMax = isRedwood ? 18 : isMaple ? 9 : isPine ? 8 : 10;
                     // WIDER TRUNKS (master 2026-09-07: "widen the hitboxes of tree trunks"). The old collider was a
                     // flat 0.5 for every species, which is birch-sized: MEASURED off the trunk meshes in the band a
                     // player actually shoots and walks through (y 1..2, chest height), the real radii are
@@ -371,7 +406,17 @@ namespace UnturnedGodot
                     //
                     // Floored at the old 0.5 so nothing gets NARROWER on a widen request; birch is within 2 cm of it
                     // either way. Re-measure with: max hypot(x,z) over verts with 1 <= y < 2 in <Species>_1.obj.
-                    float trunkR = Mathf.Max(0.5f, isMaple ? 0.83f : isPine ? 0.80f : 0.48f);
+                    // ⚠ REDWOODS ARE MEASURED PER MODEL, not per species. The other three are one radius each
+                    // because every Birch trunk is the same mesh scaled; astraclaw's three redwoods are three
+                    // DIFFERENT trunks (60/45/78 m) and a single figure would put a 2.9 m trunk in a 1.7 m
+                    // collider. Taken the same way as the others and cross-checked against them -- that method
+                    // reproduces Birch 0.48 / Pine 0.80 / Maple 0.83 exactly, so it is the same instrument.
+                    // ⚠⚠ Sampled by INTERPOLATION, not by vertex: these trunks are 48-56 verts over 60 m and have
+                    // no vertex at all in y 1..2, so the literal "max hypot over verts in the band" returns 0 and
+                    // would have given every redwood the 0.5 m floor -- a 6 m trunk you could shoot through.
+                    float trunkR = Mathf.Max(0.5f,
+                          isRedwood ? RedwoodTrunkRadius(name)
+                        : isMaple ? 0.83f : isPine ? 0.80f : 0.48f);
                     for (int k = 0; k < xf.Count; k++)
                     {
                         var t = xf[k];

@@ -46,6 +46,7 @@ namespace UnturnedGodot
         }
         int _frame;
         MainMenu _menuShotMenu; string _menuShotDir; int _menuShotIdx;   // --menushot=DIR: render the 3D barn menu + capture each camera anchor
+        bool _scatterRes;                            // --scatterres : plant the resource pools over the loaded map and write their .bin placements
         string _glassShotDir;                        // --glassshot=DIR : eyeline orbit of ONE parked vehicle, per-pane glass colours
         Camera3D _glassCam; float _glassRadius = 6.5f; float _glassEye = 1.70f;
         System.Collections.Generic.List<MeshInstance3D> _glassPanes;
@@ -355,6 +356,7 @@ namespace UnturnedGodot
                 else if (arg == "--firetest") firetest = true;   // player fires downrange: viewmodel / tracer / ADS / impact rig (+ --supp = suppressor)
                 else if (arg == "--supp") supp = true;           // with --firetest: attach the suppressor
                 else if (arg == "--terrain") terrain = true;     // load a real map's Landscape heightmap terrain (PEI Tile_0_0)
+                else if (arg == "--scatterres") { terrain = true; _scatterRes = true; }   // ...then PLANT the redwood/cactus pools over it and write their .bin placements (ResourceScatter)
                 else if (arg == "--craftmenu") craftmenu = true; // open the CraftingMenu (browsable recipe index) over a stocked bag
                 else if (arg == "--stationtest") { stationtest = true; _shotRequested = shot; }   // line up all 9 crafting-station deployables to eyeball the extracted models
                 else if (arg == "--objects")
@@ -3655,6 +3657,18 @@ namespace UnturnedGodot
             var _terr = Terrain.LoadMapMerged(_mapRoot + "/Landscape/Heightmaps", withCollider: false);   // --map= aware (defaults to PEI); any modern-Landscape map renders here
             if (_terr == null) { Log.Err($"[TERRAIN] no map data at {_mapRoot} -- nothing loaded"); return; }   // do NOT fall through to the success line below: it printed "loaded" over an empty scene and a profiling run measured nothing for it
             AddChild(_terr);
+            // --scatterres: PLANT the redwood/cactus pools over this map and write their .bin placements, then
+            // quit. A generator, not a runtime system -- see ResourceScatter. It hangs off this harness because
+            // this is the one that already loads an arbitrary map's real terrain (--map= aware), which is exactly
+            // and only what the scatter needs to ask about ground.
+            if (_scatterRes)
+            {
+                string resDir = ProjectSettings.GlobalizePath($"res://content/{ResourceField.MapDir}/");
+                int n = ResourceScatter.Run(_terr, resDir, halfExtent: 2048f);
+                Log.Print($"[scatter] wrote placements into {resDir} ({n} planted)");
+                GetTree().Quit(n > 0 ? 0 : 1);
+                return;
+            }
             // ⚠ THE SEA. This harness's own camera comment says UG_CAMPOS is "needed to look at the SEA at all"
             // and reasons about swell wavelengths -- but it only ever loaded TERRAIN, so there was no water plane
             // to look at and the comment was aspirational. One line, and the only harness with an aimable camera
