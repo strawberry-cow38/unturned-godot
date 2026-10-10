@@ -86,14 +86,67 @@ namespace UnturnedGodot
             var sched = new System.Collections.Generic.List<SDG.Unturned.WeatherSchedule>(WeatherSim.PeiSchedule());
             sched.AddRange(WeatherSim.VariantSchedule(firstVariant));
             VariantBase = firstVariant;
+            w._types = types.ToArray();
+            w._sched = sched.ToArray();
+            w._seed = seed != 0 ? seed : (int)GD.Randi();
             w.Sim = new WeatherSim(types.ToArray(), sched.ToArray(),
-                                   seed != 0 ? seed : (int)GD.Randi(),
+                                   w._seed,
                                    cycleSeconds: cycle != null && cycle.DayLength > 0f ? cycle.DayLength : WeatherSim.DefaultCycleSeconds,
                                    frequencyMultiplier: FrequencyMultiplier,
                                    durationMultiplier: DurationMultiplier);
             parent.AddChild(w);
             return w;
         }
+
+        // ---- SEASONAL DAY OUTLOOK (strawberry 2026-10-10) -----------------------------------------------
+        SDG.Unturned.WeatherType[] _types;
+        SDG.Unturned.WeatherSchedule[] _sched;
+        int _seed;
+        int _outlookDay = int.MinValue;
+
+        /// <summary>Weather decided per DAY from (seed, day) and the season, so it can be read BEFORE it
+        /// happens. The sim still chooses when in the day it arrives and how long it lasts -- this only
+        /// chooses WHAT. See WeatherOutlook: the forecast and the sim read the same function, which is what
+        /// stops the radio from lying.</summary>
+        public SDG.Unturned.WeatherOutlook.Day Today { get; private set; }
+        public SDG.Unturned.WeatherOutlook.Day Tomorrow { get; private set; }
+
+        /// <summary>⚠ OFF until a host turns it on. The infinite world and the sim tests keep the uniform
+        /// roll; the singleplayer game opts in, because it is the one with a day counter a player can see.</summary>
+        public bool SeasonalOutlook
+        {
+            get => Sim?.ScheduleChooser != null;
+            set
+            {
+                if (Sim == null) return;
+                if (value) { RefreshOutlook(force: true); Sim.ScheduleChooser = () => Today.ScheduleIndex; }
+                else Sim.ScheduleChooser = null;
+            }
+        }
+
+        public int DayNumber => Cycle?.Day ?? 0;
+
+        /// <summary>Today's and tomorrow's outlook, recomputed only when the day actually turns.</summary>
+        void RefreshOutlook(bool force = false)
+        {
+            int d = DayNumber;
+            if (!force && d == _outlookDay) return;
+            _outlookDay = d;
+            Today = OutlookFor(d);
+            Tomorrow = OutlookFor(d + 1);
+        }
+
+        public SDG.Unturned.WeatherOutlook.Day OutlookFor(int day)
+        {
+            int doy = SDG.Unturned.WorldTemperature.DayOfYear(SDG.Unturned.WorldTemperature.StartDayOfYear, day);
+            return SDG.Unturned.WeatherOutlook.ForDay(_seed, day, _types, _sched,
+                                                      SDG.Unturned.WorldTemperature.SeasonPhase(doy));
+        }
+
+        /// <summary>What the radio says. Deliberately the DAY's outlook rather than what is falling right
+        /// now -- a forecast that flipped to "Clear" the moment a shower stopped would be a nowcast.</summary>
+        public string ForecastLine =>
+            $"TODAY  {(Today.Wet ? Today.Name : "Clear")}\nTOMORROW  {(Tomorrow.Wet ? Tomorrow.Name : "Clear")}";
 
         public override void _Ready()
         {
@@ -211,6 +264,7 @@ namespace UnturnedGodot
         public void HubProcess(double delta)
         {
             if (Sim == null) return;
+            if (Sim.ScheduleChooser != null) RefreshOutlook();   // the day turning is what changes the forecast
             // weather rides the same clock as the day/night cycle, so `timeSpeed` speeds the sky AND the weather
             float dt = (float)delta * (Cycle != null ? Mathf.Max(0f, Cycle.Speed) : 1f);
             Sim.Step(dt);

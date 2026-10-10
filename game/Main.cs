@@ -2978,7 +2978,11 @@ namespace UnturnedGodot
             // same shader; WeatherManager just owns whether and how hard it rains.
             var rain = new RainOverlay { Cycle = dn, Raining = false };
             AddChild(rain);
-            WeatherManager.Attach(this, rain, dn);
+            // ⭐ SEASONAL DAY OUTLOOK ON, for the singleplayer game only (strawberry 2026-10-10: "consider time
+            // of year"). The day picks WHAT weather it gets, from (seed, day) and WorldTemperature's season
+            // curve; the sim still decides when it lands. Opt-in because the infinite world and the sim tests
+            // are written against the uniform roll.
+            WeatherManager.Attach(this, rain, dn).SeasonalOutlook = true;
 
             var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
             ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
@@ -4307,6 +4311,23 @@ namespace UnturnedGodot
             {
                 var ws = WellShaft.Make(propMi, WellShaft.WallColor(mat.AlbedoTexture));
                 Log.Print($"[PROPTEST] attached WellShaft ({(ws != null ? "ok" : "no shader")})");
+            }
+            // UG_LIVE=1 on a radio: build the REAL device plus a weather world behind it, so the forecast board
+            // can be rendered. UG_RADIOSEED / UG_RADIODAY pick which day's outlook you are looking at -- without
+            // them you get day 0 of a random year, which is clear more often than not and shows an empty board.
+            if (System.Environment.GetEnvironmentVariable("UG_LIVE") == "1" && RadioDevice.IsRadioProp(name))
+            {
+                int rseed = int.TryParse(System.Environment.GetEnvironmentVariable("UG_RADIOSEED"), out int rs) ? rs : 31337;
+                int rday = int.TryParse(System.Environment.GetEnvironmentVariable("UG_RADIODAY"), out int rdv) ? rdv : 0;
+                var dnp = new DayNightCycle { DayLength = 120f, Time = 0.45f, Speed = 1f, VisualsEnabled = false, Day = rday };
+                AddChild(dnp);
+                var wmp = WeatherManager.Attach(this, null, dnp, seed: rseed);
+                wmp.SeasonalOutlook = true;
+                PowerNet.SetGlobalPower(false); PowerNet.SetGlobalPower(true);   // force a real transition (the setter early-outs)
+                var rd = RadioDevice.Make(propMi, name);
+                AddChild(rd);
+                rd.Toggle();
+                Log.Print($"[PROPTEST] radio live: day {rday} seed {rseed} -> {wmp.ForecastLine.Replace("\n", " | ")}");
             }
             if (System.Environment.GetEnvironmentVariable("UG_LIVE") == "1" && HeartMonitor.IsMonitorProp(name))
             {

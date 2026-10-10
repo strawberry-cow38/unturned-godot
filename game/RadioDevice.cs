@@ -78,9 +78,70 @@ namespace UnturnedGodot
             AddChild(_outline);
 
             BuildAudio();
+            BuildForecastBoard(aabb);
             BuildPlug(aabb);
             AddToGroup("radiodevices");   // swept on a grid change, like "tvdevices"
             Refresh();
+        }
+
+        // ---- THE FORECAST BOARD (strawberry 2026-10-10) --------------------------------------------------
+        /// <summary>"the radio/stereo prop should get a billboard text that says the weather for today and
+        /// tomorrow". Floats just above the set, billboarded, and reads WeatherManager's per-day outlook.
+        ///
+        /// ⭐ IT ONLY SHOWS WHEN THE RADIO IS ON AND POWERED, which is the whole reason to hang it on this
+        /// prop rather than the HUD: a forecast is something you go and switch on, and a dead radio in a
+        /// looted house should tell you nothing.
+        ///
+        /// ⚠ TEXT IS SET FROM A POLL, NOT ON A SIGNAL. The outlook changes when the DAY turns, which is a
+        /// WeatherManager-internal event with no signal to subscribe to; a one-shot read at Build would be
+        /// frozen on day 0 forever. Cheap because it only rebuilds the string when the day actually changes.</summary>
+        Label3D _board;
+        int _boardDay = int.MinValue;
+        bool _boardShown;
+
+        /// <summary>⚠ SIZED AGAINST THE SET, not picked to look right in a close-up. The longest line is about
+        /// 24 characters, and at FontSize 44 a character is ~0.5 em wide, so this puts the board a little under
+        /// a metre across -- roughly the radio plus a margin. The first value was 0.0038 and rendered the text
+        /// three times the width of the prop: fine in a 900 px bake of just the radio, absurd in a room.</summary>
+        public const float BoardPixelSize = 0.0016f;
+        public string BoardTextForTest => _board?.Text ?? "";
+        public bool BoardVisibleForTest => _board != null && _board.Visible;
+        public string BoardStateForTest => $"on={_on} feed={HasFeed} mains={PowerNet.MainsLive} board={(_board != null)} shown={_boardShown} wm={(WeatherManager.Current != null)}";
+
+        void BuildForecastBoard(Aabb aabb)
+        {
+            _board = new Label3D
+            {
+                Text = "",
+                Billboard = BaseMaterial3D.BillboardModeEnum.Enabled,
+                PixelSize = BoardPixelSize,
+                Position = _bodyCenterLocal + new Vector3(0f, aabb.Size.Y * 0.5f + 0.22f, 0f),
+                Modulate = new Color(0.62f, 0.90f, 1f),
+                NoDepthTest = false,   // ⚠ unlike the loot labels: this is world furniture, not a pick affordance,
+                                       // and NoDepthTest would print it through the wall of the house it is in
+                FontSize = 44,
+                OutlineSize = 10,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Visible = false,
+            };
+            AddChild(_board);
+        }
+
+        /// <summary>Called from the device's own tick. Keeps the board in step with the radio's state and the
+        /// day, and does nothing at all on the frames where neither changed.</summary>
+        public void UpdateForecastBoard()
+        {
+            if (_board == null) return;
+            bool show = _on && HasFeed && !_broken;   // a smashed set shows nothing, same gate the audio uses
+            if (show != _boardShown) { _boardShown = show; _board.Visible = show; }
+            if (!show) return;
+
+            var wm = WeatherManager.Current;
+            if (wm == null) { if (_board.Text.Length > 0) _board.Text = ""; return; }
+            int day = wm.DayNumber;
+            if (day == _boardDay && _board.Text.Length > 0) return;
+            _boardDay = day;
+            _board.Text = wm.ForecastLine;
         }
 
         void BuildAudio()
@@ -145,6 +206,11 @@ namespace UnturnedGodot
         {
             bool eff = _on && HasFeed && !_broken;
             _plugWasPowered = HasFeed;   // stamped BEFORE the early-out, so the feed poll cannot re-fire forever
+            // ⚠ BOARD UPDATES HERE, BEFORE THE EARLY-OUT, and not only on the hub tick. Driving it from the
+            // 30 Hz poll alone meant switching the set on left the display blank until the hub got round to
+            // this node -- invisible on an idle machine, and a hard failure under load (caught by the test
+            // passing alone and failing in a batch). A switch should light its own display.
+            UpdateForecastBoard();
             if (eff == _playing) return;
             _playing = eff;
             if (_static == null) return;
@@ -185,6 +251,7 @@ namespace UnturnedGodot
         void HubTick(double dt)
         {
             if (HasFeed != _plugWasPowered) Refresh();
+            UpdateForecastBoard();   // 30 Hz hub tick; the body early-outs unless the day or the switch changed
         }
     }
 }
