@@ -694,6 +694,284 @@ namespace UnturnedSim.Tests
             Assert.That(Math.Abs(controlLift / Math.Max(1, controlN)), Is.LessThan(0.05), "control: with tunnels off the run is not dug out");
         }
 
+        /// <summary>strawberry 2026-10-10: "fixing up all of the road pathing etc. routing roads around eachother/over/under
+        /// eachother with bridges". A main road meets a highway only to cross it -- once, square-on -- and never at grade.
+        /// Over the WHOLE patch where the two asphalts overlap: one road is a deck's depth plus 5 m of headroom above the
+        /// other; the lower road is open (no embankment filled across it); and the upper road is carried by deck units,
+        /// at its own surface, not by a ribbon on nothing. Away from a crossing a main keeps clear of the highway.</summary>
+        [Test]
+        public void MainsCrossHighwaysGradeSeparated()
+        {
+            var hw = new List<((int axis, long band, long k) id, (double x, double z, float h)[] pts)>();
+            for (int axis = 0; axis < 2; axis++)
+                for (long band = -2; band <= 1; band++)
+                    for (long k = -4; k <= 3; k++) { var h = Gen.Roads.HighwayCentreline(axis, band, k); if (h != null) hw.Add(((axis, band, k), h)); }
+            // nearest point on a polyline: distance, profile there, the point
+            static (double d, float h, double x, double z) Near((double x, double z, float h)[] p, double x, double z)
+            {
+                var r = (d: double.MaxValue, h: 0f, x: 0.0, z: 0.0);
+                for (int i = 0; i + 1 < p.Length; i++)
+                {
+                    double sx = p[i + 1].x - p[i].x, sz = p[i + 1].z - p[i].z, ss = sx * sx + sz * sz;
+                    if (ss < 1e-12) continue;
+                    double t = Math.Clamp(((x - p[i].x) * sx + (z - p[i].z) * sz) / ss, 0, 1), px = p[i].x + sx * t, pz = p[i].z + sz * t;
+                    double d = Math.Sqrt((x - px) * (x - px) + (z - pz) * (z - pz));
+                    if (d < r.d) r = (d, p[i].h + (p[i + 1].h - p[i].h) * (float)t, px, pz);
+                }
+                return r;
+            }
+            float mainHalf = InfiniteRoads.PavedHalf(RoadKind.Main), hwHalf = InfiniteRoads.PavedHalf(RoadKind.Highway), depth = -InfiniteRoads.DeckSoffit;
+            int crossings = 0, overs = 0, unders = 0, onBridge = 0, tunnelled = 0, patchPts = 0, nearPts = 0, mains = 0, worstCount = 0;
+            double worstAngle = 90, worstHead = double.MaxValue, worstFill = double.MinValue, worstDeckY = 0, worstTunnelDh = double.MaxValue;
+            int uncarried = 0; string headWhere = "", fillWhere = "", deckWhere = "", nearWhere = "";
+            var bad = new List<string>();   // per crossing, the ones that fail anything (first few printed)
+            for (long cx = -6; cx <= 5; cx++)
+                for (long cz = -6; cz <= 5; cz++)
+                    for (int dir = 0; dir < 2; dir++)
+                    {
+                        var m = Gen.Roads.MainCentreline(cx, cz, dir);
+                        if (m == null) continue;
+                        mains++;
+                        var ups = Gen.Roads.MainUnderpasses(cx, cz, dir);
+                        foreach (var (id, h) in hw)
+                        {
+                            var xs = new List<(double x, double z, double angle)>();
+                            for (int i = 0; i + 1 < m.Length; i++)
+                                for (int j = 0; j + 1 < h.Length; j++)
+                                {
+                                    double rx = m[i + 1].x - m[i].x, rz = m[i + 1].z - m[i].z, sx = h[j + 1].x - h[j].x, sz = h[j + 1].z - h[j].z, den = rx * sz - rz * sx;
+                                    if (Math.Abs(den) < 1e-12) continue;
+                                    double t = ((h[j].x - m[i].x) * sz - (h[j].z - m[i].z) * sx) / den, u = ((h[j].x - m[i].x) * rz - (h[j].z - m[i].z) * rx) / den;
+                                    if (t < 0 || t >= 1 || u < 0 || u >= 1) continue;
+                                    double ang = Math.Abs(Math.Atan2(rx * sz - rz * sx, rx * sx + rz * sz)) * 180 / Math.PI;
+                                    xs.Add((m[i].x + rx * t, m[i].z + rz * t, ang > 90 ? 180 - ang : ang));
+                                }
+                            worstCount = Math.Max(worstCount, xs.Count);
+                            // AWAY from a crossing of this highway the main keeps clear of it
+                            foreach (var (x, z, _) in m)
+                            {
+                                var n = Near(h, x, z);
+                                if (n.d >= InfiniteRoads.MainClear - 10) continue;
+                                bool atCrossing = false;
+                                foreach (var c in xs) if (Math.Sqrt((x - c.x) * (x - c.x) + (z - c.z) * (z - c.z)) < InfiniteRoads.MainApproach + 30) atCrossing = true;
+                                if (!atCrossing) { nearPts++; nearWhere = $" ({x:0},{z:0}) {n.d:0.0} m off"; }
+                            }
+                            foreach (var c in xs)
+                            {
+                                crossings++;
+                                worstAngle = Math.Min(worstAngle, c.angle);
+                                var up = ups.FirstOrDefault(u => Math.Abs(u.X - c.x) < 1 && Math.Abs(u.Z - c.z) < 1);
+                                if (up == null)
+                                {
+                                    // no record: the highway is in a tunnel here, and the main goes over the hill
+                                    tunnelled++;
+                                    worstTunnelDh = Math.Min(worstTunnelDh, Near(m, c.x, c.z).h - Near(h, c.x, c.z).h);
+                                    continue;
+                                }
+                                if (up.Existing) onBridge++; else if (up.Over) overs++; else unders++;
+                                bool over = up.Over;
+                                // the deck units carrying the upper road here
+                                var decks = (up.Existing ? Gen.Roads.BridgesOf(id.axis, id.band, id.k) : up.Pieces.ToList()).Where(p => p.Kind == 0).ToList();
+                                int cUncarried = 0; double cFill = double.MinValue, cHead = double.MaxValue, cDeckY = 0;
+                                for (double gx = -40; gx <= 40; gx += 0.5)
+                                    for (double gz = -40; gz <= 40; gz += 0.5)
+                                    {
+                                        double px = c.x + gx, pz = c.z + gz;
+                                        var nm = Near(m, px, pz); var nh = Near(h, px, pz);
+                                        if (nm.d > mainHalf || nh.d > hwHalf) continue;   // the patch where the two asphalts overlap
+                                        patchPts++;
+                                        float sM = InfiniteRoads.SurfaceY(RoadKind.Main, nm.h), sH = InfiniteRoads.SurfaceY(RoadKind.Highway, nh.h);
+                                        double head = (over ? sM - sH : sH - sM) - depth;
+                                        cHead = Math.Min(cHead, head);
+                                        if (head < worstHead) { worstHead = head; headWhere = $" at ({px:0.0},{pz:0.0}) {(over ? "over" : up.Existing ? "under a bridge" : "under")}"; }
+                                        // the lower road is open: the ground there is at most its own surface
+                                        double fill = Gen.HeightAt(px, pz) - (over ? sH : sM);
+                                        cFill = Math.Max(cFill, fill);
+                                        if (fill > worstFill) { worstFill = fill; fillWhere = $" at ({px:0.0},{pz:0.0}) {(over ? "over" : "under")}"; }
+                                        // the upper road is on a deck here (the highway's median carries nothing)
+                                        if (!over && nh.d < InfiniteRoads.HighwayMedian * 0.5f + 0.5f) continue;
+                                        bool carried = false;
+                                        foreach (var dk in decks)
+                                        {
+                                            double hl = Math.Sqrt(dk.DX * dk.DX + dk.DZ * dk.DZ), ux = dk.DX / hl, uz = dk.DZ / hl;
+                                            double along = (px - dk.X) * ux + (pz - dk.Z) * uz, across = -(px - dk.X) * uz + (pz - dk.Z) * ux;
+                                            double halfLen = InfiniteRoads.BridgePitch * 0.5 * hl;   // the unit's horizontal half-length
+                                            if (Math.Abs(along) > halfLen + 0.05 || Math.Abs(across) > InfiniteRoads.DeckRoadwayHalf * InfiniteRoads.DeckScale((RoadKind)dk.Road) + 0.05) continue;
+                                            carried = true;
+                                            double deckY = dk.Y + along / hl * dk.DY;
+                                            double dy = Math.Abs(deckY - (over ? sM : sH));
+                                            cDeckY = Math.Max(cDeckY, dy);
+                                            if (dy > worstDeckY) { worstDeckY = dy; deckWhere = $" at ({px:0.0},{pz:0.0})"; }
+                                            break;
+                                        }
+                                        if (!carried) { uncarried++; cUncarried++; deckWhere = $" NOT CARRIED at ({px:0.0},{pz:0.0}) {(over ? "over" : "under")}"; }
+                                    }
+                                if (cUncarried > 0 || cFill > 0.01 || cHead < 5.0 || cDeckY > 0.05)
+                                    bad.Add($"({c.x:0},{c.z:0}) {(over ? "over" : up.Existing ? "under-bridge" : "under")} main ({cx},{cz},{dir}) hw {id}: angle {c.angle:0}, headroom {cHead:0.00}, fill {cFill:0.00}, uncarried {cUncarried}, decks {decks.Count}, deck off its road {cDeckY * 1000:0} mm");
+                            }
+                        }
+                    }
+            TestContext.WriteLine($"{mains} mains x {hw.Count} highway segments: {crossings} crossings (over {overs}, under {unders}, under a highway bridge {onBridge}, over a tunnel {tunnelled}); " +
+                                  $"most crossings of one highway by one main {worstCount}; squarest-worst {worstAngle:0.0} deg; across {patchPts} points where the asphalts overlap: " +
+                                  $"headroom under the deck >= {worstHead:0.00} m{headWhere}, ground over the lower road <= {worstFill * 1000:0} mm{fillWhere}, " +
+                                  $"{uncarried} points of the upper road on no deck, deck height off its road {worstDeckY * 1000:0.0} mm{deckWhere}; " +
+                                  $"over a tunnel the main stands >= {(tunnelled > 0 ? $"{worstTunnelDh:0.0} m" : "(none)")} up; {nearPts} main points near a highway away from a crossing{nearWhere}");
+            foreach (var b in bad.Take(12)) TestContext.WriteLine("  FAILS " + b);
+            // ...and every link the routing lays out comes out as laid: what is dropped is dropped for the land (sea,
+            // a pass, a grade), never because the drawn line crossed a highway the controls kept it clear of
+            var why = Gen.Roads.MainDrops.Where(kv => kv.Key.cx >= -6 && kv.Key.cx <= 5 && kv.Key.cz >= -6 && kv.Key.cz <= 5)
+                                          .GroupBy(kv => kv.Value).ToDictionary(g => g.Key, g => g.Count());
+            TestContext.WriteLine("links dropped: " + string.Join(", ", why.OrderByDescending(kv => kv.Value).Select(kv => $"{kv.Key} {kv.Value}")));
+            int misdrawn = why.Where(kv => kv.Key.StartsWith("drawn")).Sum(kv => kv.Value);
+            // the clearance the code designs for: a deck's depth under UnderDepth/OverRise, less the slabs' difference
+            double designed = Math.Min(InfiniteRoads.OverRise, InfiniteRoads.UnderDepth) - depth + (InfiniteRoads.SurfaceY(RoadKind.Main, 0f) - InfiniteRoads.SurfaceY(RoadKind.Highway, 0f));
+            Assert.That(crossings, Is.GreaterThan(20)); Assert.That(overs, Is.GreaterThan(5)); Assert.That(unders, Is.GreaterThan(3));
+            Assert.That(patchPts, Is.GreaterThan(crossings * 1000), "the overlap patch was sampled");
+            Assert.That(worstCount, Is.LessThanOrEqualTo(1), "a main crosses the same highway more than once");
+            Assert.That(worstAngle, Is.GreaterThanOrEqualTo(60), "a skewed crossing");
+            Assert.That(worstHead, Is.GreaterThanOrEqualTo(5.0), "less than 5 m under a deck");
+            Assert.That(worstHead, Is.GreaterThanOrEqualTo(designed - 0.01), "the designed clearance does not hold across the whole overlap");
+            Assert.That(misdrawn, Is.EqualTo(0), "a link whose drawn line crossed a highway its controls kept clear of");
+            Assert.That(worstFill, Is.LessThanOrEqualTo(0.01), "ground filled over the lower road");
+            Assert.That(uncarried, Is.EqualTo(0), "the upper road is not on a deck");
+            Assert.That(worstDeckY, Is.LessThan(0.05), "a deck off its road's surface");
+            Assert.That(nearPts, Is.EqualTo(0), "a main runs near a highway away from a crossing");
+            if (tunnelled > 0) Assert.That(worstTunnelDh, Is.GreaterThan(InfiniteRoads.TwinShellTop(InfiniteRoads.HighwayRibbonOffset)), "a main over a tunnel down in its shell");
+        }
+
+        /// <summary>A link between two towns on the SAME side of a highway that bows out between them: the straight line
+        /// crosses it twice, and the link used to be dropped (or braid across). It keeps to the towns' side, round the
+        /// bow, clear of the highway -- the place strawberry pointed at ("branching off the highway properly instead of in
+        /// a tangle", around (-20200, 16400)) is one; (-2,-13) is another. Checked over the cells around both.</summary>
+        [Test]
+        public void MainsKeepToTheirSideRoundAHighwaysBow()
+        {
+            var hw = new List<(double x, double z, float h)[]>();
+            for (int axis = 0; axis < 2; axis++)
+                for (long band = -3; band <= 2; band++)
+                    for (long k = -6; k <= 5; k++) { var h = Gen.Roads.HighwayCentreline(axis, band, k); if (h != null) hw.Add(h); }
+            static int Cross(double ax, double az, double bx, double bz, (double x, double z, float h)[] p)
+            {
+                int n = 0;
+                for (int j = 0; j + 1 < p.Length; j++)
+                {
+                    double rx = bx - ax, rz = bz - az, sx = p[j + 1].x - p[j].x, sz = p[j + 1].z - p[j].z, den = rx * sz - rz * sx;
+                    if (Math.Abs(den) < 1e-12) continue;
+                    double t = ((p[j].x - ax) * sz - (p[j].z - az) * sx) / den, u = ((p[j].x - ax) * rz - (p[j].z - az) * rx) / den;
+                    if (t >= 0 && t < 1 && u >= 0 && u < 1) n++;
+                }
+                return n;
+            }
+            int bows = 0, bowsBuilt = 0, links = 0, misdrawn = 0, wrongCross = 0; double closest = double.MaxValue;
+            var seen = new List<string>();
+            foreach (var (c0, c1, z0, z1) in new[] { (-15L, -13L, 9L, 11L), (-3L, -1L, -14L, -12L) })
+                for (long cx = c0; cx <= c1; cx++)
+                    for (long cz = z0; cz <= z1; cz++)
+                        for (int dir = 0; dir < 2; dir++)
+                        {
+                            Gen.Roads.MainNodeAt(cx, cz, out double ax, out double az);
+                            Gen.Roads.MainNodeAt(cx + (dir == 0 ? 1 : 0), cz + (dir == 1 ? 1 : 0), out double bx, out double bz);
+                            var straight = hw.Select(h => Cross(ax, az, bx, bz, h)).ToList();
+                            bool bow = straight.Any(n => n >= 2 && n % 2 == 0) && straight.All(n => n % 2 == 0);
+                            var m = Gen.Roads.MainCentreline(cx, cz, dir);
+                            if (bow) bows++;
+                            if (Gen.Roads.MainDrops.TryGetValue((cx, cz, dir), out var why) && why.StartsWith("drawn")) { misdrawn++; seen.Add($"({cx},{cz},{dir}) dropped: {why}"); }
+                            if (m == null) continue;
+                            links++;
+                            if (bow) { bowsBuilt++; seen.Add($"({cx},{cz},{dir}) bows and is built"); }
+                            // the drawn line crosses each highway exactly as often as it must: once where the towns are on
+                            // opposite sides, never where they are on the same side
+                            for (int q = 0; q < hw.Count; q++)
+                            {
+                                int drawn = 0;
+                                for (int i = 0; i + 1 < m.Length; i++) drawn += Cross(m[i].x, m[i].z, m[i + 1].x, m[i + 1].z, hw[q]);
+                                if (drawn != straight[q] % 2) { wrongCross++; seen.Add($"({cx},{cz},{dir}) crosses a highway {drawn}x, straight line {straight[q]}x"); }
+                            }
+                            // ...and away from a crossing it keeps clear (the towns are NodeClear off; the main MainClear)
+                            if (straight.All(n => n % 2 == 0))
+                                foreach (var (x, z, _) in m)
+                                    foreach (var h in hw)
+                                        for (int j = 0; j + 1 < h.Length; j++)
+                                        {
+                                            double sx = h[j + 1].x - h[j].x, sz = h[j + 1].z - h[j].z, qx = x - h[j].x, qz = z - h[j].z, ss = sx * sx + sz * sz;
+                                            if (ss < 1e-12) continue;
+                                            double t = Math.Clamp((qx * sx + qz * sz) / ss, 0, 1);
+                                            closest = Math.Min(closest, Math.Sqrt((qx - sx * t) * (qx - sx * t) + (qz - sz * t) * (qz - sz * t)));
+                                        }
+                        }
+            TestContext.WriteLine($"{links} links built round two bowing highways; {bows} whose towns' straight line crosses a highway twice, {bowsBuilt} of them built; " +
+                                  $"{wrongCross} wrong crossings, {misdrawn} dropped for a misdrawn line; links that need not cross come within {closest:0.0} m of a highway centreline");
+            foreach (var s in seen) TestContext.WriteLine("  " + s);
+            Assert.That(bows, Is.GreaterThanOrEqualTo(1), "the cells hold no bowing link: the check has nothing to test");
+            Assert.That(bowsBuilt, Is.EqualTo(bows), "a bowing link was not built");
+            Assert.That(wrongCross, Is.EqualTo(0));
+            Assert.That(misdrawn, Is.EqualTo(0));
+            Assert.That(closest, Is.GreaterThan(InfiniteRoads.MainClear - 10), "a main that need not cross runs up against a highway");
+        }
+
+        /// <summary>strawberry 2026-10-10: "fixing the gaps with vertical bends on bridges". Two rigid deck units meeting at
+        /// a bend splay about the roadway's centre line, opening the corners on the outside of the turn: the deck's edge
+        /// on a horizontal bend, the soffit at a sag, the parapet's top at a crest. At every joint of every deck run --
+        /// the highways' bridges and the decks of every grade separation -- each of the six outer corners (edge and
+        /// centre, soffit and parapet top) of the next unit starts no later along the run than the last one ends.</summary>
+        [Test]
+        public void DeckJointsCloseAtEveryCorner()
+        {
+            var runs = new List<List<BridgePiece>>();
+            void Split(IEnumerable<BridgePiece> pieces)
+            {
+                var cur = new List<BridgePiece>();
+                foreach (var bp in pieces)
+                {
+                    if (bp.Kind == 0) cur.Add(bp);
+                    else if (bp.Kind == 2 && cur.Count > 0) { runs.Add(cur); cur = new List<BridgePiece>(); }   // a run's far cap ends it
+                }
+            }
+            for (int axis = 0; axis < 2; axis++)
+                for (long band = -2; band <= 1; band++)
+                    for (long k = -4; k <= 3; k++) Split(Gen.Roads.BridgesOf(axis, band, k));
+            for (long cx = -6; cx <= 5; cx++)
+                for (long cz = -6; cz <= 5; cz++)
+                    for (int dir = 0; dir < 2; dir++)
+                        foreach (var u in Gen.Roads.MainUnderpasses(cx, cz, dir)) Split(u.Pieces);
+            static (double x, double y, double z) Unit((double x, double y, double z) v) { double l = Math.Sqrt(v.x * v.x + v.y * v.y + v.z * v.z); return (v.x / l, v.y / l, v.z / l); }
+            static (double x, double y, double z) Cross((double x, double y, double z) a, (double x, double y, double z) b) => (a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
+            double P = InfiniteRoads.BridgePitch, worst = 0, worstTurn = 0;
+            int joints = 0, sags = 0, crests = 0, open = 0; string where = "";
+            foreach (var run in runs)
+                for (int i = 0; i + 1 < run.Count; i++)
+                {
+                    var A = run[i]; var B = run[i + 1];
+                    joints++;
+                    // each unit's frame: along (with its grade), across, up (square to both)
+                    var da = Unit((A.DX, A.DY, A.DZ)); var db = Unit((B.DX, B.DY, B.DZ));
+                    var la = Unit(Cross((0, 1, 0), (da.x, 0, da.z))); var lb = Unit(Cross((0, 1, 0), (db.x, 0, db.z)));
+                    var ua = Unit(Cross(da, la)); var ub = Unit(Cross(db, lb));
+                    if (ua.y < 0) ua = (-ua.x, -ua.y, -ua.z);
+                    if (ub.y < 0) ub = (-ub.x, -ub.y, -ub.z);
+                    double rise = Math.Asin(db.y) - Math.Asin(da.y);
+                    worstTurn = Math.Max(worstTurn, Math.Abs(rise));
+                    if (rise > 0.002) sags++; else if (rise < -0.002) crests++;
+                    double hw = InfiniteRoads.BridgeHalfWidth * InfiniteRoads.DeckScale((RoadKind)A.Road);
+                    bool any = false;
+                    foreach (double up in new[] { (double)InfiniteRoads.DeckSoffit, InfiniteRoads.DeckParapetTop })
+                        foreach (double lat in new[] { -hw, 0.0, hw })
+                        {
+                            // A's end corner and B's start corner, and how far B's starts PAST A's end along A
+                            double ex = A.X + da.x * P / 2 + ua.x * up + la.x * lat, ey = A.Y + da.y * P / 2 + ua.y * up + la.y * lat, ez = A.Z + da.z * P / 2 + ua.z * up + la.z * lat;
+                            double sx = B.X - db.x * P / 2 + ub.x * up + lb.x * lat, sy = B.Y - db.y * P / 2 + ub.y * up + lb.y * lat, sz = B.Z - db.z * P / 2 + ub.z * up + lb.z * lat;
+                            double gap = (sx - ex) * da.x + (sy - ey) * da.y + (sz - ez) * da.z;
+                            if (gap > 0.002) any = true;
+                            if (gap > worst) { worst = gap; where = $" at ({A.X:0.0}, {A.Z:0.0}), {(up < 0 ? "soffit" : "parapet top")} {(lat == 0 ? "centre" : "edge")}, vertical turn {rise * 180 / Math.PI:+0.00;-0.00} deg"; }
+                        }
+                    if (any) open++;
+                }
+            TestContext.WriteLine($"{runs.Count} deck runs, {joints} joints ({sags} at a sag, {crests} at a crest; steepest vertical turn {worstTurn * 180 / Math.PI:0.00} deg): " +
+                                  $"{open} open by over 2 mm at a corner, worst {worst * 1000:0.0} mm{where}");
+            Assert.That(joints, Is.GreaterThan(5000)); Assert.That(sags, Is.GreaterThan(50)); Assert.That(crests, Is.GreaterThan(10));
+            Assert.That(worst, Is.LessThan(0.002), "a deck joint stands open");
+        }
+
         [Test]
         public void HighwaysAreTwoCarriageways()
         {

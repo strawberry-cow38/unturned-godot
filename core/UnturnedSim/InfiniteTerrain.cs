@@ -95,7 +95,7 @@ namespace SDG.Unturned
         public bool Cut;
     }
 
-    /// <summary>One piece of a highway bridge (InfiniteRoads.BridgesIn), absolute metres. Kind 0 = a deck unit centred
+    /// <summary>One piece of a bridge (InfiniteRoads.BridgesIn), absolute metres. Kind 0 = a deck unit centred
     /// here, 1 = a pier pair rooted here and stretched by K along its own long axis, 2 = an end cap. Dir is the run
     /// direction INCLUDING the grade (a cap points it out of the bridge); the game turns it into the prop's basis with
     /// the bridge tool's own convention, so the two placements cannot disagree.</summary>
@@ -109,6 +109,9 @@ namespace SDG.Unturned
         /// ribbon's RoadPiece.S uses, so the roadway drawn over the deck carries the approach's dashes straight on
         /// instead of restarting them at the bridge.</summary>
         public float S0, S1;
+        /// <summary>The road class the deck carries (RoadKind; Highway = 0). A main's overpass deck is widened across by
+        /// InfiniteRoads.DeckScale and wears the main's own surface.</summary>
+        public byte Road;
     }
 
     /// <summary>A power-line pole beside a road (absolute metres), the road's direction there, and the next pole along

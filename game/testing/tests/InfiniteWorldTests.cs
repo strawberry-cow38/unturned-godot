@@ -481,6 +481,73 @@ namespace UnturnedGodot.Testing
                 T.Check($"standing in the tunnel: y {standY:0.00} vs road {tun.Y[mid]:0.00}, rescues {S.Rescues - rescues0}",
                     S.Rescues == rescues0 && Mathf.Abs(standY - tun.Y[mid]) < 1.5f);
             }
+            // ---- 8. GRADE SEPARATIONS (strawberry 2026-10-10: "routing roads around eachother/over/under eachother with
+            // bridges"): at the nearest OVERPASS the main is carried on its own (widened) decks and the highway runs
+            // open underneath; at the nearest UNDERPASS the highway's decks carry it over the main's open cutting. Each
+            // "open" ray has a CONTROL 7 m up -- above the deck's soffit -- that must hit the deck, so "nothing" means
+            // open and not "no colliders here"
+            foreach (bool wantOver in new[] { true, false })
+            {
+                InfiniteRoads.Underpass up = null; (double x, double z, float h)[] mline = null; double best = double.MaxValue;
+                for (long mcx = -4; mcx <= 3; mcx++)
+                    for (long mcz = -4; mcz <= 3; mcz++)
+                        for (int d = 0; d < 2; d++)
+                            foreach (var u in S.Gen.Roads.MainUnderpasses(mcx, mcz, d))
+                                if (!u.Existing && u.Over == wantOver && u.X * u.X + u.Z * u.Z < best) { best = u.X * u.X + u.Z * u.Z; up = u; mline = S.Gen.Roads.MainCentreline(mcx, mcz, d); }
+                string kind = wantOver ? "overpass" : "underpass";
+                T.Check($"the generator has an {kind} to visit", up != null);
+                if (up == null) continue;
+                // the main's heading there, and the highway's (square to it: the crossing is laid square-on)
+                int bi = 0; double bd = double.MaxValue;
+                for (int i = 0; i < mline.Length; i++) { double dd = (mline[i].x - up.X) * (mline[i].x - up.X) + (mline[i].z - up.Z) * (mline[i].z - up.Z); if (dd < bd) { bd = dd; bi = i; } }
+                int i0 = System.Math.Max(0, bi - 1), i1 = System.Math.Min(mline.Length - 1, bi + 1);
+                double mx = mline[i1].x - mline[i0].x, mz = mline[i1].z - mline[i0].z, ml = System.Math.Sqrt(mx * mx + mz * mz); mx /= ml; mz /= ml;
+                double hx = -mz, hz = mx;
+                // stand in the quadrant between the two roads, off both their lines
+                S.TeleportAbsolute(up.X + (mx + hx) * 50.0, up.Z + (mz + hz) * 50.0);
+                yield return Wait(Settled, 60);
+                yield return Ticks(5);
+                var space = World.GetWorld3D().DirectSpaceState;
+                string Who(Godot.Collections.Dictionary h) => h.Count == 0 ? "nothing" : h["collider"].As<Node>() is Node n ? (n.GetParent()?.Name == "BridgeBodies" ? "deck" : n.Name.ToString()) : "?";
+                Godot.Collections.Dictionary Ray(double ax, double ay, double az, double bx, double by, double bz)
+                    => space.IntersectRay(PhysicsRayQueryParameters3D.Create(S.ToLocal(ax, ay, az), S.ToLocal(bx, by, bz), 1u << 0));
+                // the LOWER road runs open under the upper one, 2.5 m up, from 25 m before the crossing to 25 m after (a 7%
+                // highway climbs 1.75 m in that); the control 7 m up hits the upper road's deck
+                double lx = wantOver ? hx : mx, lz = wantOver ? hz : mz;
+                float lowY = wantOver ? up.HwSurface : up.MainSurface, highY = wantOver ? up.MainSurface : up.HwSurface;
+                var open = Ray(up.X - lx * 25, lowY + 2.5, up.Z - lz * 25, up.X + lx * 25, lowY + 2.5, up.Z + lz * 25);
+                var ctl = Ray(up.X - lx * 25, lowY + 7.0, up.Z - lz * 25, up.X + lx * 25, lowY + 7.0, up.Z + lz * 25);
+                T.Check($"{kind}: the {(wantOver ? "highway" : "main")} runs open under the {(wantOver ? "main" : "highway")}: 2.5 m up along it through the crossing hits {Who(open)}" +
+                        $"{(open.Count > 0 ? $" at y {((Vector3)open["position"]).Y:0.00}" : "")} (control, 7 m up: {Who(ctl)})",
+                    open.Count == 0 && Who(ctl) == "deck");
+                // the UPPER road is a deck at its surface: a drop onto it at the crossing (for the highway, onto a
+                // carriageway: its median is open)
+                double ux = wantOver ? 0 : mx * InfiniteRoads.HighwayRibbonOffset, uz = wantOver ? 0 : mz * InfiniteRoads.HighwayRibbonOffset;
+                var top = Ray(up.X + ux, highY + 5, up.Z + uz, up.X + ux, highY - 30, up.Z + uz);
+                float topY = top.Count > 0 ? ((Vector3)top["position"]).Y : float.NaN;
+                // the roadway strip drawn over a deck is in the road collider too ("Paved", flush with the deck's roadway,
+                // so a drop meets it first): look again THROUGH it -- the deck itself must be there, at the same height
+                var under = top;
+                if (Who(top) == "Paved")
+                {
+                    var q = PhysicsRayQueryParameters3D.Create(S.ToLocal(up.X + ux, highY + 5, up.Z + uz), S.ToLocal(up.X + ux, highY - 30, up.Z + uz), 1u << 0);
+                    q.Exclude = new Godot.Collections.Array<Rid> { (Rid)top["rid"] };
+                    under = space.IntersectRay(q);
+                }
+                float deckY = under.Count > 0 ? ((Vector3)under["position"]).Y : float.NaN;
+                T.Check($"{kind}: the {(wantOver ? "main" : "highway")} crosses on a deck at its surface: y {topY:0.000} on {Who(top)}, the deck under it at {deckY:0.000} ({Who(under)}), road {highY:0.000}",
+                    Who(under) == "deck" && Mathf.Abs(topY - highY) < 0.03f && Mathf.Abs(deckY - highY) < 0.03f);
+                if (wantOver)
+                {
+                    // the main's deck is WIDENED to its asphalt (x DeckScale): its parapet stands 9.2-9.8 m out, where the
+                    // unwidened deck's ends at 8.5 -- a drop there hits the parapet's top, not the highway 9.5 m below
+                    double px = up.X + hx * 9.5, pz = up.Z + hz * 9.5;
+                    var par = Ray(px, highY + 5, pz, px, highY - 30, pz);
+                    float parY = par.Count > 0 ? ((Vector3)par["position"]).Y : float.NaN;
+                    T.Check($"overpass: the main's deck is its full width, parapet 9.5 m out at y {parY - highY:+0.00;-0.00} m over the road on {Who(par)} (deck scale {InfiniteRoads.DeckScale(RoadKind.Main):0.000})",
+                        Who(par) == "deck" && parY > highY + 0.5f);
+                }
+            }
             T.Check($"nobody was ever rescued from under the ground ({S.Rescues})", S.Rescues == 0);
         }
     }

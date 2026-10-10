@@ -1118,6 +1118,19 @@ void fragment() {
             return holder;
         }
 
+        /// <summary>The deck's collision shape widened across (local X) by `ws`, for a main's overpass decks.</summary>
+        static readonly Dictionary<int, ConcavePolygonShape3D> _wideDeck = new();
+        static ConcavePolygonShape3D WideDeckShape(float ws)
+        {
+            int key = Mathf.RoundToInt(ws * 1000f);
+            if (_wideDeck.TryGetValue(key, out var hit)) return hit;
+            var faces = ((ConcavePolygonShape3D)_deckShape).Data;
+            for (int i = 0; i < faces.Length; i++) faces[i].X *= ws;
+            var shape = new ConcavePolygonShape3D { Data = faces, BackfaceCollision = ((ConcavePolygonShape3D)_deckShape).BackfaceCollision };
+            _wideDeck[key] = shape;
+            return shape;
+        }
+
         /// <summary>One trimesh body per deck unit, so a car drives across. Shared shape: every unit is the same prop.</summary>
         static Node3D BuildDeckBodies(List<Transform3D> decks)
         {
@@ -1127,9 +1140,13 @@ void fragment() {
             _deckShape ??= _bridgeMesh[0].CreateTrimeshShape();
             foreach (var t in decks)
             {
-                var body = new StaticBody3D { CollisionLayer = 1u << 0, Transform = t };
+                // a widened (main) deck: a body takes no scale, so the SHAPE is widened and the body keeps a pure rotation
+                float ws = t.Basis.X.Length();
+                bool wide = Mathf.Abs(ws - 1f) >= 1e-3f;
+                var shape = wide ? WideDeckShape(ws) : _deckShape;
+                var body = new StaticBody3D { CollisionLayer = 1u << 0, Transform = wide ? new Transform3D(new Basis(t.Basis.X / ws, t.Basis.Y, t.Basis.Z), t.Origin) : t };
                 body.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Concrete);
-                body.AddChild(new CollisionShape3D { Shape = _deckShape });
+                body.AddChild(new CollisionShape3D { Shape = shape });
                 holder.AddChild(body);
             }
             return holder;
@@ -1418,15 +1435,17 @@ void fragment() {
                 // measure, so the dashes run on from the approach instead of restarting at the bridge. Across the
                 // 13.8 m carriageway u runs 0..1 as on the ribbon; the deck's extra 1.1 m each side wears the edge
                 // column (plain asphalt), as a ribbon bevel does.
+                // A MAIN's overpass deck is the same unit widened (DeckScale) to the main's full asphalt, and wears the
+                // main's surface in the main's mesh the same way.
                 if (decks)
                 {
-                    int hs = (int)RoadKind.Highway;
-                    lists[hs].V ??= new List<Vector3>(); lists[hs].N ??= new List<Vector3>(); lists[hs].UV ??= new List<Vector2>(); lists[hs].I ??= new List<int>();
-                    var DV = lists[hs].V; var DN = lists[hs].N; var DUV = lists[hs].UV; var DI = lists[hs].I;
-                    float texM = RoadTexMetres[hs], lane = InfiniteRoads.HighwayLaneHalf, wide = InfiniteRoads.DeckRoadwayHalf;
                     foreach (var bp in d.Bridges)
                     {
                         if (bp.Kind != 0) continue;
+                        int hs = bp.Road;
+                        lists[hs].V ??= new List<Vector3>(); lists[hs].N ??= new List<Vector3>(); lists[hs].UV ??= new List<Vector2>(); lists[hs].I ??= new List<int>();
+                        var DV = lists[hs].V; var DN = lists[hs].N; var DUV = lists[hs].UV; var DI = lists[hs].I;
+                        float texM = RoadTexMetres[hs], lane = RibbonHalf((RoadKind)hs), wide = InfiniteRoads.DeckRoadwayHalf * InfiniteRoads.DeckScale((RoadKind)hs);
                         var dir = new Vector3(bp.DX, bp.DY, bp.DZ).Normalized();
                         var c = new Vector3((float)(bp.X - ox), (float)bp.Y, (float)(bp.Z - oz));
                         var nrm = new Vector3(-dir.Z, 0f, dir.X).Normalized();       // the ribbon's u = 0 side
@@ -1437,6 +1456,7 @@ void fragment() {
                         float[] o = { wide, lane, -lane, -wide }; float[] u = { 0f, 0f, 1f, 1f };
                         for (int band = 0; band < 3; band++)
                         {
+                            if (o[band] - o[band + 1] < 1e-3f) continue;   // a main's roadway is all carriageway: no shoulder bands
                             int i0 = DV.Count;
                             DV.Add(c - along + nrm * o[band]); DV.Add(c - along + nrm * o[band + 1]);
                             DV.Add(c + along + nrm * o[band]); DV.Add(c + along + nrm * o[band + 1]);
@@ -1534,7 +1554,14 @@ void fragment() {
                         var up = EditorBridgeSpline.StandBasis(dir);
                         bridgeXf[1].Add(new Transform3D(new Basis(up.X, up.Y, up.Z * bp.K), at));   // stretched on its OWN long axis
                     }
-                    else bridgeXf[bp.Kind == 0 ? 0 : 2].Add(new Transform3D(EditorBridgeSpline.DeckBasis(dir), at));
+                    else
+                    {
+                        // a main's deck and caps are widened across (local X) to its asphalt
+                        var db = EditorBridgeSpline.DeckBasis(dir);
+                        float ws = InfiniteRoads.DeckScale((RoadKind)bp.Road);
+                        if (ws != 1f) db = new Basis(db.X * ws, db.Y, db.Z);
+                        bridgeXf[bp.Kind == 0 ? 0 : 2].Add(new Transform3D(db, at));
+                    }
                 }
             }
 
