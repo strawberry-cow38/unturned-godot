@@ -331,6 +331,22 @@ namespace UnturnedGodot
         public bool DebugBodyHasGun => _bodyGunName != null && (_body?.GunLayerOn ?? false);
         /// <summary>Test seam: the looping seated clip the body is playing (driving mime vs plain sit).</summary>
         public string DebugBodyLoopClip => _body?.CurrentLoopClip ?? "";
+        /// <summary>Test seam: the 3P body rig, so a test can read the torso bases the modifier records.</summary>
+        public RiggedCharacter DebugBodyRig => _body;
+        /// <summary>Test seam: aim the look without a mouse. The seated-spine test has to ENTER a vehicle
+        /// while looking DOWN -- that stale angle was the bug -- and nothing else can pose the look here.</summary>
+        public void DebugSetLookPitch(float deg) => _pitchDeg = Mathf.Clamp(deg, -89f, 89f);
+        public bool DebugIsDriving => _driving != null;
+        /// <summary>Test seam: camera mode. The seated-lean bug is a THIRD-person one -- in first person the
+        /// body is trimmed and its spine is never posed from the look at all -- so a test of it has to be in
+        /// 3P, and nothing else here can get it there without a key press.</summary>
+        public void DebugSetThirdPerson(bool third) => _fp = !third;
+        public bool DebugThirdPerson => !_fp;
+        /// <summary>Test seam: run the 3P body update once. It normally rides a per-frame chain the headless
+        /// harness does not drive, so a test that only yields ticks reads an unposed body and cannot tell
+        /// "the pose is wrong" from "the pose never ran" -- which is exactly how the seated-lean test first
+        /// read zero everywhere. Calls the PRODUCTION method, not a copy of it.</summary>
+        public void DebugUpdateBody(double delta) => UpdateBody(delta);
         /// <summary>World Y of the LOWEST posed foot bone, or NaN if there is no visible body. The seated body's
         /// feet are placed by the ANIMATION, not by the seat anchor: the body root is the feet only in the rest
         /// pose, and Idle_Drive rotates the leg bones away from it. So a seat rise derived from root-to-hip
@@ -11240,11 +11256,22 @@ namespace UnturnedGodot
                 _body.PlayLoop(_seatIndex == 0
                     ? (_body.ClipLength("Idle_Drive") > 0f ? "Idle_Drive" : "Idle_Sit")
                     : (_body.ClipLength("Idle_Sit") > 0f ? "Idle_Sit" : "Idle_Drive"));
+                // ⚠⚠ THE SEATED LEAN (strawberry 2026-10-10: "in 3p in vehicle seats it looks like my model is
+                // leaning forward where they sit"). This branch set NEITHER of these, so both kept whatever the
+                // ON-FOOT branch last wrote -- the look pitch you happened to hold as you climbed in, which is
+                // almost always DOWNWARD because you were looking at the door prompt. That stale angle then sat
+                // on the spine for the whole drive: a permanent forward lean that never tracked anything.
+                // The bed path hit the same thing and zeroed PitchDeg; here the head should still turn, so only
+                // the SPINE's share is taken out and the skull keeps following the look.
+                _body.LeanDeg = 0f;
+                _body.SpinePitchScale = 0f;
+                _body.PitchDeg = _pitchDeg;
             }
             else if (_riding != null && IsInstanceValid(_riding))   // C6: same seated pose on the replicated puppet's seat
             {
                 _body.GlobalTransform = _riding.GlobalTransform * new Transform3D(Basis.Identity, _riding.SeatOffset);
                 _body.PlayLoop(_body.ClipLength("Idle_Drive") > 0f ? "Idle_Drive" : "Idle_Sit");
+                _body.LeanDeg = 0f; _body.SpinePitchScale = 0f; _body.PitchDeg = _pitchDeg;   // same seat, same rule
             }
             else if (IsSeatedOnProp && _sitting.Recline)   // LYING on a bed: the standing pose, pitched flat
             {
@@ -11283,6 +11310,8 @@ namespace UnturnedGodot
                 _body.Rotation = new Vector3(0f, Rotation.Y, 0f);   // yaw only -- the LEAN goes on the spine, not here
                 // The character leans too, or the muzzle every 3P effect is sourced from stays bolt upright while the
                 // camera tilts away from it. Fed the same smoothed angle the camera rides, so body and view agree.
+                _body.SpinePitchScale = 1f;   // ⚠ RESTORE on foot, or the torso stays locked after stepping out -- the
+                                              // same stale-state shape as the bug above, just pointing the other way
                 _body.LeanDeg = _leanAngle;
                 // ...and pitches with the look, or a character aiming at the sky stands there level (master: "can we
                 // get pitch tilt for the spine when aiming up/down in 3p"). Retail feeds the raw look pitch and lets
