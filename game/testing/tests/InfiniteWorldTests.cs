@@ -132,6 +132,7 @@ namespace UnturnedGodot.Testing
                 var space = World.GetWorld3D().DirectSpaceState;
                 var fc = S.FocusRegion();
                 int probes = 0, wrongBody = 0; float worstTop = 0f; var kinds = new int[4];
+                int edges = 0, edgeOff = 0; float worstEdge = 0f; string edgeWhat = "";
                 for (int dz = -1; dz <= 1; dz++)
                     for (int dx = -1; dx <= 1; dx++)
                         foreach (var rp in S.Gen.Generate(new RegionCoord(fc.X + dx, fc.Z + dz), 0).Roads)
@@ -149,9 +150,27 @@ namespace UnturnedGodot.Testing
                             if (rh.Count == 0) { worstTop = float.MaxValue; continue; }
                             if (rh["collider"].As<Node>()?.Name != (kind == RoadKind.Trail ? "Trail" : "Paved")) wrongBody++;
                             worstTop = Mathf.Max(worstTop, Mathf.Abs(((Vector3)rh["position"]).Y - want));
+                            // ...and its EDGE is a gentle bevel (strawberry 2026-10-10: "make the ramps (at the sides of each
+                            // road spline) a lot more gentle"): half a metre past the asphalt the slab is still there, only
+                            // 0.5 x drop/run lower. RoadField's 45-degree bevel had ended by then, and this ray hit the ground
+                            double ux = rp.X1 - rp.X0, uz = rp.Z1 - rp.Z0, ul = System.Math.Sqrt(ux * ux + uz * uz);
+                            float half = kind == RoadKind.Highway ? InfiniteRoads.HighwayLaneHalf : InfiniteRoads.PavedHalf(kind);
+                            double ex = mx - uz / ul * (half + 0.5), ez = mz + ux / ul * (half + 0.5);
+                            var at = S.Gen.Roads.Influence(ex, ez);
+                            if (at.Kind != kind || S.Gen.Roads.Influence(ex, ez).Clear < -0.5f) continue;   // another road's asphalt there
+                            float slope = 2f * InfiniteRoads.Thickness(kind) / InfiniteRoads.BevelRun(kind), wantEdge = want - 0.5f * slope;
+                            var et = S.ToLocal(ex, want + 5.0, ez);
+                            var eh = space.IntersectRay(PhysicsRayQueryParameters3D.Create(et, et + Vector3.Down * 15f, 1u << 0));
+                            edges++;
+                            string eb = eh.Count == 0 ? "nothing" : eh["collider"].As<Node>()?.Name.ToString();
+                            float ey = eh.Count == 0 ? float.NaN : ((Vector3)eh["position"]).Y;
+                            if (eb != (kind == RoadKind.Trail ? "Trail" : "Paved") || !(Mathf.Abs(ey - wantEdge) < 0.02f)) { edgeOff++; edgeWhat = $" (one: {eb} at {ey - want:+0.00;-0.00} m vs {wantEdge - want:+0.00;-0.00})"; }
+                            else worstEdge = Mathf.Max(worstEdge, Mathf.Abs(ey - wantEdge));
                         }
                 T.Check($"a ray onto a road stops ON it: {probes} probes (main {kinds[1]}, small {kinds[2]}, trail {kinds[3]}), top within {worstTop * 1000f:0.0} mm of the driven surface, {wrongBody} on the wrong body",
                     probes >= 4 && worstTop < 0.01f && wrongBody == 0);
+                T.Check($"...and its edge is a 1:5 bevel: {edges} rays half a metre past the asphalt land on the slab within {worstEdge * 1000f:0.0} mm of where the bevel is, {edgeOff} do not{edgeWhat}",
+                    edges >= 4 && edgeOff == 0);
             }
             int spans = 0, fields = 0;
             foreach (var n in S.FindChildren("Wires", "", true, false)) if (n is PowerLineField f) { fields++; spans += f.SpanCount; }
@@ -445,7 +464,11 @@ namespace UnturnedGodot.Testing
                 var verge = top + side * (InfiniteRoads.PavedHalf(RoadKind.Highway) + 0.8f);
                 var onFloor = space.IntersectRay(PhysicsRayQueryParameters3D.Create(verge, verge + Vector3.Down * 10f, 1u << 0));
                 float floorY = onFloor.Count > 0 ? ((Vector3)onFloor["position"]).Y : float.NaN, bedY = tun.Y[mid] - InfiniteRoads.Proud - InfiniteRoads.Lift(RoadKind.Highway);
-                T.Check($"beside it, the floor: y {floorY:0.000} vs the bed {bedY:0.000}", onFloor.Count > 0 && Mathf.Abs(floorY - bedY) < 0.06f);
+                // (the slab's edge bevel runs 1:5 now, so 0.8 m out it is still 0.16 m over the road's top less 0.8 x
+                // drop/run: the surface there is whichever is higher, the bevel or the floor at the bed)
+                float bevelY = tun.Y[mid] - 0.8f * 2f * InfiniteRoads.Thickness(RoadKind.Highway) / InfiniteRoads.BevelRun(RoadKind.Highway);
+                float wantFloor = Mathf.Max(bedY, bevelY);
+                T.Check($"beside it, the floor: y {floorY:0.000} vs the bed {bedY:0.000} / the slab's bevel {bevelY:0.000}", onFloor.Count > 0 && Mathf.Abs(floorY - wantFloor) < 0.06f);
                 // the ceiling and both walls of the +offset tube, from its own carriageway
                 var up = space.IntersectRay(PhysicsRayQueryParameters3D.Create(lane, lane + Vector3.Up * 30f, 1u << 0));
                 float ceil = up.Count > 0 ? ((Vector3)up["position"]).Y - tun.Y[mid] : float.NaN;

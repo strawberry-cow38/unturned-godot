@@ -492,7 +492,8 @@ namespace UnturnedSim.Tests
         public void BridgeEndsMeetTheirRoad()
         {
             int ends = 0, embank = 0, deckJoints = 0;
-            double worstGap = 0, worstDy = 0, worstTurn = 0, worstBank = 0, worstPhase = 0, worstDeckPhase = 0;
+            double worstGap = 0, worstDy = 0, worstTurn = 0, worstBank = 0, worstPhase = 0, worstDeckPhase = 0, worstMouth = 0, worstAway = 0;
+            int awayProbes = 0;
             string gapWhere = "", bankWhere = "";
             for (int axis = 0; axis < 2; axis++)
                 for (long band = -2; band <= 1; band++)
@@ -527,7 +528,7 @@ namespace UnturnedSim.Tests
                             // the deck's end edge: the cap stands on it, facing out along the road
                             double x0 = cap.X - 60, z0 = cap.Z - 60, x1 = cap.X + 60, z1 = cap.Z + 60;
                             var pieces = Gen.Roads.PiecesIn(Gen.Roads.LinesIn(x0, z0, x1, z1), x0, z0, x1, z1, 4f);
-                            double best = double.MaxValue; float by = 0, btx = 0, btz = 0, bs = 0;
+                            double best = double.MaxValue; float by = 0, btx = 0, btz = 0, bs = 0, bw = 0;
                             foreach (var rp in pieces)
                             {
                                 if (rp.Kind != (byte)RoadKind.Highway) continue;
@@ -536,11 +537,35 @@ namespace UnturnedSim.Tests
                                     double ex = e == 0 ? rp.X0 : rp.X1, ez = e == 0 ? rp.Z0 : rp.Z1;
                                     float ey = InfiniteRoads.SurfaceY(RoadKind.Highway, e == 0 ? rp.H0 : rp.H1);
                                     double d = Math.Sqrt((ex - cap.X) * (ex - cap.X) + (ey - cap.Y) * (ey - cap.Y) + (ez - cap.Z) * (ez - cap.Z));
-                                    if (d < best) { best = d; by = ey; btx = e == 0 ? rp.T0X : rp.T1X; btz = e == 0 ? rp.T0Z : rp.T1Z; bs = e == 0 ? rp.S0 : rp.S1; }
+                                    if (d < best) { best = d; by = ey; btx = e == 0 ? rp.T0X : rp.T1X; btz = e == 0 ? rp.T0Z : rp.T1Z; bs = e == 0 ? rp.S0 : rp.S1; bw = e == 0 ? rp.W0 : rp.W1; }
                                 }
                             }
                             if (best > worstGap) { worstGap = best; gapWhere = $" at ({cap.X:0.0}, {cap.Z:0.0})"; }
                             worstDy = Math.Max(worstDy, Math.Abs(by - cap.Y));
+                            // ...and is as WIDE as the deck's roadway there (strawberry 2026-10-10: "widen the width of the
+                            // actual highway road splines at the mouths of bridges to match up with the bridge's road width")
+                            worstMouth = Math.Max(worstMouth, Math.Abs(InfiniteRoads.HighwayLaneHalf + bw - InfiniteRoads.DeckRoadwayHalf * InfiniteRoads.DeckScale(RoadKind.Highway)));
+                            // ...and only THERE: well past the taper, back along the approach, it is its own width again
+                            {
+                                double chh = Math.Sqrt(cap.DX * cap.DX + cap.DZ * cap.DZ);
+                                double ax = cap.X + cap.DX / chh * (InfiniteRoads.MouthTaper + 20), az = cap.Z + cap.DZ / chh * (InfiniteRoads.MouthTaper + 20);
+                                // (another deck's mouth near the probe -- a raised stretch's, or the highway's own decks over a
+                                // main road -- rightly widens it there: not a probe of "away")
+                                double pr = InfiniteRoads.MouthTaper + 20;
+                                bool otherMouth = Gen.Roads.BridgesIn(Gen.Roads.LinesIn(ax - pr, az - pr, ax + pr, az + pr), ax - pr, az - pr, ax + pr, az + pr)
+                                                     .Any(o => o.Kind == 2 && o.Road == (byte)RoadKind.Highway && Math.Sqrt((o.X - ax) * (o.X - ax) + (o.Z - az) * (o.Z - az)) < InfiniteRoads.MouthTaper + 10);
+                                if (!otherMouth)
+                                {
+                                    double bd = double.MaxValue; float aw = 0;
+                                    foreach (var rp in Gen.Roads.PiecesIn(Gen.Roads.LinesIn(ax - 30, az - 30, ax + 30, az + 30), ax - 30, az - 30, ax + 30, az + 30, 4f))
+                                    {
+                                        if (rp.Kind != (byte)RoadKind.Highway) continue;
+                                        double dd = Math.Min((rp.X0 - ax) * (rp.X0 - ax) + (rp.Z0 - az) * (rp.Z0 - az), (rp.X1 - ax) * (rp.X1 - ax) + (rp.Z1 - az) * (rp.Z1 - az));
+                                        if (dd < bd) { bd = dd; aw = Math.Max(rp.W0, rp.W1); }
+                                    }
+                                    if (bd < 100) { awayProbes++; worstAway = Math.Max(worstAway, aw); }
+                                }
+                            }
                             // ...and the paint runs on: the deck's roadway starts at the texture distance the ribbon stopped at
                             worstPhase = Math.Max(worstPhase, Math.Abs(bs - deckS));
                             double ch = Math.Sqrt(cap.DX * cap.DX + cap.DZ * cap.DZ);
@@ -563,12 +588,14 @@ namespace UnturnedSim.Tests
                     }
             static double Degrees(double cos) => Math.Acos(Math.Clamp(cos, -1, 1)) * 180 / Math.PI;
             TestContext.WriteLine($"{ends} bridge ends: ribbon end within {worstGap * 1000:0.0} mm of the deck end{gapWhere}, driven height {worstDy * 1000:0.0} mm, heading {worstTurn:0.000} deg, " +
-                                  $"paint phase {worstPhase * 1000:0.0} mm (and {worstDeckPhase * 1000:0.0} mm across {deckJoints} deck joints); " +
+                                  $"half-width {worstMouth * 1000:0.0} mm off the deck roadway's (and {worstAway * 1000:0.0} mm wider than its lanes {InfiniteRoads.MouthTaper + 20} m back, at {awayProbes}), paint phase {worstPhase * 1000:0.0} mm (and {worstDeckPhase * 1000:0.0} mm across {deckJoints} deck joints); " +
                                   $"ground 0.5 m off the deck end at {embank} of them within {worstBank * 1000:0.0} mm of the bed{bankWhere}");
             Assert.That(ends, Is.GreaterThan(40));
             Assert.That(embank, Is.GreaterThan(ends / 2), "the embankment check ran at most ends");
             Assert.That(worstGap, Is.LessThan(0.005), "a bridge end the ribbon does not reach (or overruns)");
             Assert.That(worstDy, Is.LessThan(0.005), "a step between the ribbon and the deck");
+            Assert.That(worstMouth, Is.LessThan(0.005), "the ribbon is narrower (or wider) than the deck it runs onto");
+            Assert.That(awayProbes, Is.GreaterThan(100)); Assert.That(worstAway, Is.LessThan(0.001), "the ribbon is still widened well away from any bridge");
             Assert.That(worstTurn, Is.LessThan(0.5), "a kink between the ribbon and the deck");
             Assert.That(deckJoints, Is.GreaterThan(1000));
             Assert.That(worstPhase, Is.LessThan(0.01), "the dashes restart at a bridge end");
@@ -1205,6 +1232,48 @@ namespace UnturnedSim.Tests
             Assert.That(a.Count, Is.GreaterThan(20));
             Assert.That(b.Select(p => (p.X, p.Z, p.H, p.Wired.Length)).OrderBy(p => p.X).ThenBy(p => p.Z),
                         Is.EqualTo(a.Select(p => (p.X, p.Z, p.H, p.Wired.Length)).OrderBy(p => p.X).ThenBy(p => p.Z)));
+        }
+
+        /// <summary>strawberry 2026-10-10: "increase the dirt painted footprint of all roads, add it to the power lines,
+        /// both big and small ones". Over LOD0 regions round a pylon and along roads: every ground vertex nearer a road's
+        /// asphalt than its verge (less the edge noise) wears the road's bed; every vertex inside a pole's or a pylon's
+        /// footing (on land) wears it too.</summary>
+        [Test]
+        public void RoadVergesAndPowerFootingsAreWorn()
+        {
+            int vergeVerts = 0, vergeBare = 0, poleVerts = 0, poleBare = 0, pylonVerts = 0, pylonBare = 0, poles = 0, pylons = 0;
+            var tower = Gen.Pylons.PylonsIn(-6000, -6000, 6000, 6000).OrderBy(p => p.X * p.X + p.Z * p.Z).First();
+            var home = RegionCoord.Containing(tower.X, tower.Z);
+            for (int dz = -2; dz <= 2; dz++)
+                for (int dx = -2; dx <= 2; dx++)
+                {
+                    var rc = new RegionCoord(home.X + dx, home.Z + dz);
+                    var d = Gen.Generate(rc, 0);
+                    int v = d.Cells + 1;
+                    var near = d.Pylons.Select(p => (p.X, p.Z, r: InfiniteTerrain.PylonDirt)).Concat(d.Poles.Select(p => (p.X, p.Z, r: InfiniteTerrain.PoleDirt))).ToList();
+                    poles += d.Poles.Count; pylons += d.Pylons.Count;
+                    for (int j = 0; j < v; j++)
+                        for (int i = 0; i < v; i++)
+                        {
+                            int k = j * v + i;
+                            if (d.Heights[k] < InfiniteTerrain.SeaLevel + 1.6f || d.RoadClear[k] < 0) continue;
+                            double x = rc.MinX + i * (double)d.Spacing, z = rc.MinZ + j * (double)d.Spacing;
+                            var l = (InfiniteTerrain.Layer)d.Layers[k];
+                            bool worn = l == InfiniteTerrain.Layer.Gravel || l == InfiniteTerrain.Layer.Dirt;
+                            var hit = Gen.Roads.Influence(x, z);
+                            if (hit.Any && d.RoadClear[k] < InfiniteTerrain.VergeWidth(hit.Kind) - 1.2f) { vergeVerts++; if (!worn) vergeBare++; }
+                            foreach (var (fx, fz, r) in near)
+                                if ((x - fx) * (x - fx) + (z - fz) * (z - fz) <= r * r)
+                                {
+                                    if (r == InfiniteTerrain.PylonDirt) { pylonVerts++; if (!worn) pylonBare++; } else { poleVerts++; if (!worn) poleBare++; }
+                                    break;
+                                }
+                        }
+                }
+            TestContext.WriteLine($"25 regions: {vergeVerts} verge vertices ({vergeBare} bare); {poles} poles' footings {poleVerts} vertices ({poleBare} bare); {pylons} pylons' {pylonVerts} ({pylonBare} bare)");
+            Assert.That(vergeVerts, Is.GreaterThan(500)); Assert.That(poleVerts, Is.GreaterThan(20)); Assert.That(pylonVerts, Is.GreaterThan(5));
+            Assert.That(vergeBare, Is.EqualTo(0), "a road's verge vertex is not worn");
+            Assert.That(poleBare + pylonBare, Is.EqualTo(0), "a power line's footing is not worn");
         }
 
         [Test]

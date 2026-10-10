@@ -93,6 +93,9 @@ namespace SDG.Unturned
         public bool InTunnel;
         /// <summary>A highway piece on a deep CUT stretch: a tunnel candidate.</summary>
         public bool Cut;
+        /// <summary>Extra half-width at each end, metres: a highway carriageway widens to its bridge deck's roadway as
+        /// it comes into a bridge's mouth (InfiniteRoads.MouthWiden over MouthTaper), with a plain-asphalt shoulder.</summary>
+        public float W0, W1;
         /// <summary>A piece of an on/off ramp (InfiniteRoads.Line.Ramp): a small road's slab in road_6, two lanes with a
         /// dashed white divider (strawberry 2026-10-10: "use the road 1 (white dotted) for em", "its a 2 lane white
         /// dotted one").</summary>
@@ -299,7 +302,7 @@ namespace SDG.Unturned
 
         const ulong SaltWarpX = 0x1111, SaltWarpZ = 0x2222, SaltContinent = 0x3333, SaltMountainMask = 0x4444,
                     SaltRidge = 0x5555, SaltHills = 0x6666, SaltDetail = 0x7777, SaltTemp = 0x8888,
-                    SaltMoist = 0x9999, SaltForest = 0xAAAA, SaltPatch = 0xBBBB, SaltTree = 0xCCCC,
+                    SaltMoist = 0x9999, SaltForest = 0xAAAA, SaltPatch = 0xBBBB, SaltTree = 0xCCCC, SaltVerge = 0xBEE5,
                     SaltRoad = 0xDDDD, SaltFoliage = 0xEEEE, SaltMeadow = 0xF0F0;
 
         /// <summary>Ground height (world Y, metres) at an absolute position, roads cut in.</summary>
@@ -377,11 +380,20 @@ namespace SDG.Unturned
         }
 
         /// <summary>The splat layer for a point, from its height, slope (rise over run), climate -- and roads first.</summary>
+        /// <summary>How far past its asphalt a road's bed shows (it was 1.5 m for every class: one LOD0 vertex, at most).</summary>
+        public static float VergeWidth(RoadKind k) => k switch { RoadKind.Highway => 6f, RoadKind.Main => 5f, RoadKind.Small => 4f, _ => 3f };
+        /// <summary>The dirt worn round a power line's footing: a roadside pole's, and a pylon's -- its 7.9 m lattice base
+        /// (InfinitePylons.FootHalf, half-diagonal 5.6 m) and a couple of metres of trampled ground round it.</summary>
+        public const float PoleDirt = 2.5f;
+        public static float PylonDirt => InfinitePylons.FootHalf * 1.42f + 2f;
+
         public Layer LayerAt(double x, double z, float h, float slope, float roadClear = float.MaxValue, RoadKind roadKind = RoadKind.Main)
         {
             // under and beside a road: its bed. NOT Layer.Road -- that is the parking-lot / car-park paving (strawberry
             // 2026-10-09); the carriageway itself is the ribbon drawn on top. A trail's bed is dirt, a paved road's gravel.
-            if (roadClear < 1.5f) return roadKind == RoadKind.Trail ? Layer.Dirt : Layer.Gravel;
+            // The VERGE that wears it (strawberry 2026-10-10: "increase the dirt painted footprint of all roads") is
+            // VergeWidth past the asphalt, its edge broken up by a metre or so of noise so it is not a ruled line.
+            if (roadClear < VergeWidth(roadKind) + 1.2f * Fbm(x, z, 11.0, 1, SaltVerge)) return roadKind == RoadKind.Trail ? Layer.Dirt : Layer.Gravel;
             Climate(x, z, h, out float temp, out float moist);
             if (h < SeaLevel + 1.6f) return slope > 0.6f ? Layer.Gravel : Layer.Sand;   // beaches and the seabed
             if (slope > 0.85f) return Layer.Stone;                                          // cliffs
@@ -434,12 +446,32 @@ namespace SDG.Unturned
                     d.Normals[k * 3] = -dx * inv; d.Normals[k * 3 + 1] = inv; d.Normals[k * 3 + 2] = -dz * inv;
                     d.Layers[k] = (byte)LayerAt(ox + i * (double)sp, oz + j * (double)sp, h, MathF.Sqrt(dx * dx + dz * dz), rh[kb].Clear, rh[kb].Kind);
                 }
+            // POWER LINES stand on dirt (strawberry 2026-10-10: "add it to the power lines, both big and small ones"): the
+            // poles and pylons in and just round this region (so a footing on a region's edge paints both sides of it)
+            double pm = PylonDirt + sp;
+            var polesWide = lod <= 1 ? Roads.PolesIn(lines, ox - PoleDirt - sp, oz - PoleDirt - sp, ox + RegionSize + PoleDirt + sp, oz + RegionSize + PoleDirt + sp) : null;
+            var pylonsWide = Pylons.PylonsIn(ox - pm, oz - pm, ox + RegionSize + pm, oz + RegionSize + pm);
+            void Footing(double fx, double fz, float r)
+            {
+                int i0 = Math.Max(0, (int)Math.Floor((fx - r - ox) / sp)), i1 = Math.Min(n, (int)Math.Ceiling((fx + r - ox) / sp));
+                int j0 = Math.Max(0, (int)Math.Floor((fz - r - oz) / sp)), j1 = Math.Min(n, (int)Math.Ceiling((fz + r - oz) / sp));
+                for (int j = j0; j <= j1; j++)
+                    for (int i = i0; i <= i1; i++)
+                    {
+                        double ex = ox + i * (double)sp - fx, ez = oz + j * (double)sp - fz;
+                        int k = j * v + i;
+                        // the paved roads' verge layer: it reads as worn dirt, and no grass or bush grows on it
+                        if (ex * ex + ez * ez <= r * r && d.Heights[k] >= SeaLevel + 1.6f) d.Layers[k] = (byte)Layer.Gravel;
+                    }
+            }
+            if (polesWide != null) foreach (var p in polesWide) Footing(p.X, p.Z, PoleDirt);
+            foreach (var p in pylonsWide) Footing(p.X, p.Z, PylonDirt);
             d.Trees = PlaceTrees(rc, lines);   // every LOD: the far rings draw them as billboards (RegionStreamer impostors)
             d.Foliage = lod == 0 ? PlaceFoliage(d) : null;
             d.Roads = Roads.PiecesIn(lines, ox, oz, ox + RegionSize, oz + RegionSize, Math.Max(4f, sp));
-            d.Poles = lod <= 1 ? Roads.PolesIn(lines, ox, oz, ox + RegionSize, oz + RegionSize) : null;
+            d.Poles = polesWide?.FindAll(p => p.X >= ox && p.X < ox + RegionSize && p.Z >= oz && p.Z < oz + RegionSize);
             d.Bridges = Roads.BridgesIn(lines, ox, oz, ox + RegionSize, oz + RegionSize);
-            d.Pylons = Pylons.PylonsIn(ox, oz, ox + RegionSize, oz + RegionSize);   // every LOD: 50 m landmarks
+            d.Pylons = pylonsWide.FindAll(p => p.X >= ox && p.X < ox + RegionSize && p.Z >= oz && p.Z < oz + RegionSize);   // every LOD: 50 m landmarks
             d.Tunnels = Roads.TunnelsIn(lines, ox, oz, ox + RegionSize, oz + RegionSize);
             d.GenMs = (System.Diagnostics.Stopwatch.GetTimestamp() - t0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
             return d;

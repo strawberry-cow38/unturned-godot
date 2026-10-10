@@ -68,6 +68,14 @@ namespace SDG.Unturned
         /// 0.22 m, Trail 0.3 -> 0.33 m. As in RoadField, each edge is a bevel running out AND down twice this from the
         /// top, so its foot is buried.</summary>
         public static float Thickness(RoadKind k) => k == RoadKind.Trail ? 0.33f : 0.22f;
+        /// <summary>How far OUT a slab's edge bevel (and a line end's ramp) runs while it drops its 2 x Thickness: five
+        /// times the drop, a 1:5 slope (strawberry 2026-10-10: "make the ramps (at the sides of each road spline) a lot
+        /// more gentle"). RoadField's is 1:1, 45 degrees -- a kerb a car bumps off.</summary>
+        public static float BevelRun(RoadKind k) => 5f * 2f * Thickness(k);
+        /// <summary>How much wider each side a highway carriageway's deck roadway is than its ribbon (8.0 vs 6.9 m), and
+        /// how far before a deck end the ribbon starts widening to it.</summary>
+        public const float MouthWiden = DeckRoadwayHalf - HighwayLaneHalf;
+        public const float MouthTaper = 40f;
         /// <summary>How far every road's top stands over the ground it is carved into: the paved classes' Thickness.
         /// ⚠ ONE value for all classes, trails included, because a trail or small road STARTS on its main road at the
         /// main's profile height -- given its own 0.33 it would stand 9 cm proud of the main's surface over the overlap,
@@ -1717,6 +1725,27 @@ namespace SDG.Unturned
                     tgx[i] = (float)tx; tgz[i] = (float)tz;
                     rx[i] = e.X[i] - tz * offset; rz[i] = e.Z[i] + tx * offset;
                 }
+                // THE BRIDGE MOUTHS (strawberry 2026-10-10: "widen the width of the actual highway road splines at the mouths
+                // of bridges to match up with the bridge's road width"): a carriageway's deck roadway is 1.1 m wider each
+                // side than its ribbon, so coming into a deck the ribbon widens to it over MouthTaper -- its arc distance to
+                // the nearest deck end along this ribbon, measured where each piece ends
+                var mouthCover = !Bridges || offset == 0.0 ? null : CoverWith(e, offset > 0 ? 1 : 0, ups);
+                List<double> mouths = null;
+                if (mouthCover != null && mouthCover.Count > 0)
+                {
+                    var ar = new double[n + 1];
+                    for (int i = 1; i <= n; i++) ar[i] = ar[i - 1] + Math.Sqrt((rx[i] - rx[i - 1]) * (rx[i] - rx[i - 1]) + (rz[i] - rz[i - 1]) * (rz[i] - rz[i - 1]));
+                    double ArcAt(double f) { int fk = Math.Clamp((int)f, 0, n - 1); return ar[fk] + (ar[fk + 1] - ar[fk]) * Math.Clamp(f - fk, 0, 1); }
+                    mouths = new List<double>();
+                    foreach (var c in mouthCover) { mouths.Add(ArcAt(c.F0)); mouths.Add(ArcAt(c.F1)); }
+                }
+                float Widen(double at)
+                {
+                    if (mouths == null) return 0f;
+                    double best = double.MaxValue;
+                    foreach (var m in mouths) best = Math.Min(best, Math.Abs(at - m));
+                    return MouthWiden * Smoothstep(MouthTaper, 0f, (float)best);
+                }
                 float s = 0f;
                 for (int k = 0; k < n; k++)
                 {
@@ -1750,6 +1779,7 @@ namespace SDG.Unturned
                             Cut = offset != 0.0 && e.CutSeg != null && e.CutSeg[offset > 0 ? 1 : 0][k],
                             OpenStart = k == 0 && ta == 0, OpenEnd = k == n - 1 && tb == 1,
                             Ramp = e.Ramp,
+                            W0 = Widen(s + segLen * ta), W1 = Widen(s + segLen * tb),
                         });
                     }
                     }

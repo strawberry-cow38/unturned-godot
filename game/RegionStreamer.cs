@@ -1534,8 +1534,8 @@ void fragment() {
                 }
             }
             // road surfaces: a SLAB per centreline piece, RoadField's own cross-section -- a flat top at
-            // InfiniteRoads.SurfaceY and a bevel each side running out AND down 2 x Thickness, so the edge stands PEI's
-            // height and its foot is buried (strawberry 2026-10-09: "give the road splines actual collision and the
+            // InfiniteRoads.SurfaceY and a bevel each side running down 2 x Thickness, so the edge stands PEI's height
+            // and its foot is buried -- but out over BevelRun, a 1:5 slope rather than RoadField's 45-degree kerb (strawberry 2026-10-09: "give the road splines actual collision and the
             // proper thickness (vertical height)"). Lifted only where this LOD's coarser mesh still rises above it. One
             // mesh per class; at LOD0 the same faces, closed underneath as RoadField closes its collider, are the
             // region's road collision.
@@ -1600,7 +1600,7 @@ void fragment() {
                     var RV = lists[slot].V; var RN = lists[slot].N; var RUV = lists[slot].UV; var RI = lists[slot].I;
                     var col = soup?[kind == (int)RoadKind.Trail ? 1 : 0];
                     var rk = (RoadKind)kind;
-                    float hw = RibbonHalf(rk), lift = InfiniteRoads.Lift(rk), texM = rp.Ramp ? RampTexMetres : RoadTexMetres[kind], bev = 2f * InfiniteRoads.Thickness(rk);
+                    float hw = RibbonHalf(rk), lift = InfiniteRoads.Lift(rk), texM = rp.Ramp ? RampTexMetres : RoadTexMetres[kind], bev = 2f * InfiniteRoads.Thickness(rk), run = InfiniteRoads.BevelRun(rk);
                     // under a tunnel the ground mesh is the HILL: never lift the slab onto it
                     bool inTunnel = rp.InTunnel;
                     float Y(float lx, float lz, float h) => inTunnel ? InfiniteRoads.SurfaceY(rk, h) :
@@ -1610,10 +1610,16 @@ void fragment() {
                     // perpendicular from each END's own tangent, so the next piece builds the identical edge
                     var na = new Vector3(-rp.T0Z, 0f, rp.T0X);
                     var nb = new Vector3(-rp.T1Z, 0f, rp.T1X);
-                    Vector3 Edge(Vector3 c, Vector3 n, float h) { var p = c + n * hw; p.Y = Y(p.X, p.Z, h); return p; }
+                    Vector3 Edge(Vector3 c, Vector3 n, float w, float h) { var p = c + n * w; p.Y = Y(p.X, p.Z, h); return p; }
                     var down = new Vector3(0f, -bev, 0f);
-                    Vector3 la = Edge(A, na, rp.H0), ra = Edge(A, -na, rp.H0), lb = Edge(B, nb, rp.H1), rb = Edge(B, -nb, rp.H1);
-                    Vector3 loa = la + na * bev + down, roa = ra - na * bev + down, lob = lb + nb * bev + down, rob = rb - nb * bev + down;
+                    // the lane edges, and the OUTER edges -- wider than the lanes only at a bridge's mouth, where the
+                    // ribbon widens to its deck's roadway (RoadPiece.W0/W1) with a plain-asphalt shoulder
+                    Vector3 la = Edge(A, na, hw, rp.H0), ra = Edge(A, -na, hw, rp.H0), lb = Edge(B, nb, hw, rp.H1), rb = Edge(B, -nb, hw, rp.H1);
+                    bool widened = rp.W0 > 1e-3f || rp.W1 > 1e-3f;
+                    Vector3 laW = widened ? Edge(A, na, hw + rp.W0, rp.H0) : la, raW = widened ? Edge(A, -na, hw + rp.W0, rp.H0) : ra;
+                    Vector3 lbW = widened ? Edge(B, nb, hw + rp.W1, rp.H1) : lb, rbW = widened ? Edge(B, -nb, hw + rp.W1, rp.H1) : rb;
+                    // the edge bevels: down the slab's depth over BevelRun outward (1:5; RoadField's 1:1 was a kerb)
+                    Vector3 loa = laW + na * run + down, roa = raW - na * run + down, lob = lbW + nb * run + down, rob = rbW - nb * run + down;
                     float v0 = rp.S0 / texM, v1 = rp.S1 / texM;
 
                     // a quad between an A-row (a0, a1) and a B-row (b0, b1): to the visual mesh if `nA` is given, and
@@ -1634,19 +1640,25 @@ void fragment() {
                         col.Add(a0); col.Add(a1); col.Add(b0);
                         col.Add(a1); col.Add(b1); col.Add(b0);
                     }
-                    Vector3 Lean(Vector3 n) => (n + Vector3.Up).Normalized();
+                    Vector3 Lean(Vector3 n) => (n * (bev / run) + Vector3.Up).Normalized();   // the bevel's own slope
                     Quad(la, ra, lb, rb, Vector3.Up, Vector3.Up, 0f, 1f, v0, v1);                    // the driven top
+                    if (widened)
+                    {
+                        // the mouth's shoulders wear the edge column, as the deck's own shoulder bands do
+                        Quad(laW, la, lbW, lb, Vector3.Up, Vector3.Up, 0f, 0f, v0, v1);
+                        Quad(ra, raW, rb, rbW, Vector3.Up, Vector3.Up, 1f, 1f, v0, v1);
+                    }
                     // the bevels wear the texture's edge column, as RoadField's do (u 0 left, 1 right)
-                    Quad(loa, la, lob, lb, Lean(na), Lean(nb), 0f, 0f, v0, v1);
-                    Quad(ra, roa, rb, rob, Lean(-na), Lean(-nb), 1f, 1f, v0, v1);
+                    Quad(loa, laW, lob, lbW, Lean(na), Lean(nb), 0f, 0f, v0, v1);
+                    Quad(raW, roa, rbW, rob, Lean(-na), Lean(-nb), 1f, 1f, v0, v1);
                     Quad(loa, roa, lob, rob, null, Vector3.Down, 0f, 0f, 0f, 0f);                    // collider only: sealed underneath
                     // the line's own ends ramp down, RoadField's end caps: the whole cross-section pushed out by the bevel
                     // and dropped to its foot, so a road that stops in the open is a slope, not a step
-                    if (rp.OpenStart) EndRamp(A, la, ra, loa, roa, new Vector3(-rp.T0X, 0f, -rp.T0Z), v0);
-                    if (rp.OpenEnd) EndRamp(B, lb, rb, lob, rob, new Vector3(rp.T1X, 0f, rp.T1Z), v1);
+                    if (rp.OpenStart) EndRamp(A, laW, raW, loa, roa, new Vector3(-rp.T0X, 0f, -rp.T0Z), v0);
+                    if (rp.OpenEnd) EndRamp(B, lbW, rbW, lob, rob, new Vector3(rp.T1X, 0f, rp.T1Z), v1);
                     void EndRamp(Vector3 c, Vector3 l, Vector3 r, Vector3 lo, Vector3 ro, Vector3 outDir, float v)
                     {
-                        var o = outDir * bev;
+                        var o = outDir * run;
                         Vector3 l2 = l + o + down, r2 = r + o + down, lo2 = lo + o, ro2 = ro + o;
                         var nOut = Lean(outDir);
                         Quad(l, r, l2, r2, nOut, nOut, 0f, 1f, v, v);
