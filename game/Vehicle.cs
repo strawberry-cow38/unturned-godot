@@ -2152,6 +2152,43 @@ namespace UnturnedGodot
         const float CrashPropThreshold = 4f, CrashPropDmgPerSpeed = 18f, CrashPropMaxDmg = 500f;   // vehicle -> destructible prop: min impact speed to break, dmg per m/s, cap
         const float HornAlertRadius = 32f;   // source InteractableVehicle.tellHorn: AlertTool.alert(pos, 32) -> earshot-radius, unused (no listener wired up currently)
         public bool HeadlightsOn => _headlightsOn;
+
+        // ---- HIGH BEAM (strawberry 2026-10-10: "make the headlights cycle throw off/low(current
+        // brightness)/high(new more powerful, longer reach) make the headlights cast shadows") ----
+        /// <summary>⭐ A SECOND FLAG BESIDE THE EXISTING BOOL, not a refactor of it into an enum. `_headlightsOn`
+        /// is read by MP replication (VehicleReplication.FlagHeadlights), the wreck tests and the alarm, and
+        /// turning it into a three-state would have touched every one of them to express something they do not
+        /// care about: all of them only ask "are the lights on".</summary>
+        bool _highBeam;
+        public bool HighBeam => _highBeam && _headlightsOn;
+
+        /// <summary>LOW is exactly what shipped, so the first click of the cycle is unchanged. HIGH is the new
+        /// one: more than twice the reach, nearly twice the energy, and a slightly TIGHTER cone -- a main beam
+        /// throws further by concentrating, not by flooding wider.</summary>
+        public const float LowRange = 45f, LowEnergy = 9f, LowAngle = 25f, LowAtten = 1.3f;
+        public const float HighRange = 98f, HighEnergy = 17f, HighAngle = 21f, HighAtten = 0.85f;
+
+        /// <summary>Main beam costs more battery. Not a rule from the source -- a main beam draws more current
+        /// and the battery model already exists, so leaving them identical would have been the odd choice.</summary>
+        public const float HighBeamBurn = 1.8f;
+
+        /// <summary>Push the current beam onto the spots. Separate from SetHeadlights because the beam can
+        /// change WITHOUT the lights going off and on again.</summary>
+        void ApplyBeam()
+        {
+            if (_headlights == null) return;
+            bool hi = _highBeam;
+            foreach (var c in _headlights.GetChildren())
+            {
+                if (c is not SpotLight3D sl) continue;   // ⚠ the omni FILL is deliberately skipped -- see below
+                sl.SpotRange = hi ? HighRange : LowRange;
+                sl.SpotAngle = hi ? HighAngle : LowAngle;
+                sl.SpotAngleAttenuation = hi ? HighAtten : LowAtten;
+                sl.LightEnergy = hi ? HighEnergy : LowEnergy;
+            }
+            if (_headlightMat != null && _headlightsOn)
+                _headlightMat.EmissionEnergyMultiplier = hi ? 3.2f : 2f;   // the lens reads brighter on main beam
+        }
         public bool TaillightsOn => _taillightsOn;          // MP §3.6: replicated light/brake flags (read-only views of the SP state)
         public bool SirenOn => _sirenOn;
         /// <summary>L1 only: whether this car is an "alarmed" one. Spawn rolls it at 5%, so a test that needs
@@ -7515,7 +7552,14 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 v._headlights = new Node3D { Visible = false };
                 foreach (var p in spotPos)
                 {
-                    var hs = new SpotLight3D { Position = p, SpotRange = 45f, SpotAngle = 25f, SpotAngleAttenuation = 1.3f, LightColor = warm, LightEnergy = 9f };
+                    // ⭐ SHADOWS ON THE SPOTS ONLY (strawberry 2026-10-10: "make the headlights cast shadows").
+                    // ⚠ NOT on the omni fill below: an OmniLight3D shadow is a six-face cube map, where a spot
+                    // is one. The fill exists to lift the ground right in front of the bumper and casts nothing
+                    // anyone would look for, so it would be six shadow passes per car for no picture.
+                    var hs = new SpotLight3D { Position = p, SpotRange = LowRange, SpotAngle = LowAngle,
+                                               SpotAngleAttenuation = LowAtten, LightColor = warm, LightEnergy = LowEnergy,
+                                               ShadowEnabled = true, ShadowBias = 0.03f, DistanceFadeEnabled = true,
+                                               DistanceFadeBegin = 60f, DistanceFadeLength = 25f };
                     hs.AddToGroup("dynlight");   // spills onto the FP gun (light-scan)
                     v._headlights.AddChild(hs);
                     // Bind the emitter to the lens half on the same side, so shooting that lens kills THIS beam.
@@ -9234,11 +9278,23 @@ if (s.Wheels != null && s.Wheels.Length > 1)
         }
         void TriggerAlarm() { if (_alarmed && !_exploded && _alarmTimer <= 0f) { _alarmTimer = 30f; _alarmBlip = 0f; } }   // start the ~30s honk+lights alarm loop (master); a wreck never alarms -- damage still lands on corpses
 
-        public void ToggleHeadlights() { if (_alarmTimer > 0f) return; SetHeadlights(!_headlightsOn); }   // source tellHeadlights; blocked while the alarm owns the lights (master)
+        /// <summary>L cycles OFF -> LOW -> HIGH -> OFF (strawberry 2026-10-10). Still called ToggleHeadlights
+        /// because every caller -- the key bind, the net path, the tests -- means "the player pressed the light
+        /// switch", and that is what it now does.
+        /// ⚠ The alarm still blocks it, and a flat battery still refuses: SetHeadlights owns both rules.</summary>
+        public void ToggleHeadlights()
+        {
+            if (_alarmTimer > 0f) return;   // source tellHeadlights; blocked while the alarm owns the lights (master)
+            if (!_headlightsOn) { _highBeam = false; SetHeadlights(true); }
+            else if (!_highBeam) { _highBeam = true; ApplyBeam(); }
+            else { _highBeam = false; SetHeadlights(false); }
+        }
         void SetHeadlights(bool on)
         {
             _headlightsOn = on && Battery > 0f;   // a dead battery can't power the lights
+            if (!_headlightsOn) _highBeam = false;   // coming back on starts at LOW, never silently on main beam
             if (_headlights != null) _headlights.Visible = _headlightsOn;
+            ApplyBeam();
             if (_lampNodes.Count > 0) { ApplyLampState(); return; }   // per-side lamps own the emission
             if (_headlightMat != null)   // source: lamp emission = colour*2 when lit, off otherwise
             {
@@ -9835,7 +9891,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             }
             else
             {
-                if (_headlightsOn) Battery = Mathf.Max(0f, Battery - BatteryBurnRate * (float)delta);   // source: headlights burn the battery (EBatteryMode.Burn)
+                if (_headlightsOn) Battery = Mathf.Max(0f, Battery - BatteryBurnRate * (_highBeam ? HighBeamBurn : 1f) * (float)delta);   // source: headlights burn the battery (EBatteryMode.Burn); main beam draws more
                 if (_sirenOn) Battery = Mathf.Max(0f, Battery - SirenBurnRate * (float)delta);
             }
             if (Battery <= 0f)
