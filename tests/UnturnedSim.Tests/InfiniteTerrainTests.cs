@@ -305,9 +305,10 @@ namespace UnturnedSim.Tests
         {
             // the marking is judged against the carve that WOULD lift a raised stretch: with bridges on, the ground
             // under one is left natural on purpose (BridgesLeaveTheGroundAndJoinUp), so measure with them off
-            bool bridges = InfiniteRoads.Bridges;
-            InfiniteRoads.Bridges = false;
-            try { CheckStretchesWith(cut); } finally { InfiniteRoads.Bridges = bridges; }
+            // ...and tunnels off too: a bored run keeps its hill, so it is not where the carve digs
+            bool bridges = InfiniteRoads.Bridges, tunnels = InfiniteRoads.Tunnels;
+            InfiniteRoads.Bridges = false; InfiniteRoads.Tunnels = false;
+            try { CheckStretchesWith(cut); } finally { InfiniteRoads.Bridges = bridges; InfiniteRoads.Tunnels = tunnels; }
         }
 
         void CheckStretchesWith(bool cut)
@@ -573,6 +574,112 @@ namespace UnturnedSim.Tests
             Assert.That(worstPhase, Is.LessThan(0.01), "the dashes restart at a bridge end");
             Assert.That(worstDeckPhase, Is.LessThan(0.01), "the dashes jump at a deck joint");
             Assert.That(worstBank, Is.LessThan(0.01), "the embankment stops short of the deck");
+        }
+
+        /// <summary>strawberry 2026-10-09: "next is wiring up tunnels to use the tool nyatools made". A tunnel is bored
+        /// where the hill already buries the whole widened shell; the requirement it has to meet is that you can DRIVE
+        /// THROUGH IT: the ground mesh that is actually drawn and collided with (LOD0, holes dropped) is never inside the
+        /// bore anywhere along the run, and the mouth at each facade is open -- a heightfield cannot overhang, so without
+        /// holes the hill's surface runs straight across the portal. And the approach is the open cut, down at the bed.</summary>
+        [Test]
+        public void TunnelsAreBoredAndOpen()
+        {
+            float L = InfiniteRoads.TunnelLateral, boreW = InfiniteRoads.TunnelBoreHalf * L;
+            int tunnels = 0, probes = 0, mouthProbes = 0, inBore = 0, mouthShut = 0;
+            double shortest = double.MaxValue, longest = 0, worstApproach = 0, controlLift = 0; int controlN = 0;
+            string inBoreWhere = "", shutWhere = "";
+            var regions = new Dictionary<(long, long), RegionData>();
+            RegionData RegionAt(double x, double z)
+            {
+                var rc = RegionCoord.Containing(x, z);
+                if (!regions.TryGetValue((rc.X, rc.Z), out var d)) regions[(rc.X, rc.Z)] = d = Gen.Generate(rc, 0);
+                return d;
+            }
+            // the drawn ground at a point: null where the LOD0 cell is dropped for a hole
+            float? Mesh(double x, double z)
+            {
+                var d = RegionAt(x, z);
+                float lx = (float)(x - d.Coord.MinX), lz = (float)(z - d.Coord.MinZ);
+                if (d.Holes != null)
+                {
+                    int v = d.Cells + 1, i = Math.Clamp((int)(lx / d.Spacing), 0, d.Cells - 1), j = Math.Clamp((int)(lz / d.Spacing), 0, d.Cells - 1);
+                    if (d.Holes[j * v + i] || d.Holes[j * v + i + 1] || d.Holes[(j + 1) * v + i] || d.Holes[(j + 1) * v + i + 1]) return null;
+                }
+                return InfiniteTerrain.MeshHeightAt(d, lx, lz);
+            }
+            for (int axis = 0; axis < 2; axis++)
+                for (long band = -2; band <= 1; band++)
+                    for (long k = -4; k <= 3; k++)
+                    {
+                        if (Gen.Roads.HighwayCentreline(axis, band, k) == null) continue;
+                        foreach (var t in Gen.Roads.TunnelsOf(axis, band, k))
+                        {
+                            tunnels++;
+                            double len = t.A1 - t.A0;
+                            shortest = Math.Min(shortest, len); longest = Math.Max(longest, len);
+                            int m = t.X.Length;
+                            // 1. NOTHING IN THE BORE: walk the stations, sample across the bore every metre
+                            for (int i = 0; i + 1 < m; i++)
+                            {
+                                double dx = t.X[i + 1] - t.X[i], dz = t.Z[i + 1] - t.Z[i], sl = Math.Sqrt(dx * dx + dz * dz);
+                                double nx = -dz / sl, nz = dx / sl;
+                                for (double o = -boreW + 0.5; o <= boreW - 0.5; o += 1.0)
+                                {
+                                    double px = t.X[i] + nx * o, pz = t.Z[i] + nz * o;
+                                    var g = Mesh(px, pz);
+                                    probes++;
+                                    if (g is not float gy) continue;   // a hole: open, which is fine anywhere
+                                    // the floor is the road's bed: ground AT it is a floor, ground above it and under the crown is in the way
+                                    float bed = t.Y[i] - InfiniteRoads.Proud - InfiniteRoads.Lift(RoadKind.Highway), crown = t.Y[i] + InfiniteRoads.BoreTop((float)(o / L));
+                                    if (gy > bed + 0.05f && gy < crown)
+                                    {
+                                        inBore++;
+                                        if (inBoreWhere == "") inBoreWhere = $" first at ({px:0.0}, {pz:0.0}): ground {gy:0.00} between the bed {bed:0.00} and the bore {crown:0.00}";
+                                    }
+                                }
+                            }
+                            // 2. THE MOUTHS ARE OPEN: on each facade line and a cell either side of it, across the bore
+                            for (int end = 0; end < 2; end++)
+                            {
+                                int a = end == 0 ? 0 : m - 1, b = end == 0 ? 1 : m - 2;
+                                double dx = t.X[b] - t.X[a], dz = t.Z[b] - t.Z[a], sl = Math.Sqrt(dx * dx + dz * dz);
+                                double ux = dx / sl, uz = dz / sl, nx = -uz, nz = ux;   // u points INTO the tunnel
+                                for (double inward = -0.5; inward <= 4.0; inward += 0.5)
+                                    for (double o = -boreW + 1.0; o <= boreW - 1.0; o += 1.0)
+                                    {
+                                        double px = t.X[a] + ux * inward + nx * o, pz = t.Z[a] + uz * inward + nz * o;
+                                        var g = Mesh(px, pz);
+                                        mouthProbes++;
+                                        // the approach's own bed is a floor, not a blockage: anything half a metre over it and under the crown is
+                                        float bed = t.Y[a] - InfiniteRoads.Proud - InfiniteRoads.Lift(RoadKind.Highway), crown = t.Y[a] + InfiniteRoads.BoreTop((float)(o / L));
+                                        if (g is float gy && gy > bed + 0.5f && gy < crown - 0.5f)
+                                        {
+                                            mouthShut++;
+                                            if (shutWhere == "") shutWhere = $" first at ({px:0.0}, {pz:0.0}) {inward:0.0} m in: ground {gy:0.00} across a mouth from {bed:0.00} to {crown:0.00}";
+                                        }
+                                    }
+                                // 3. THE APPROACH IS THE OPEN CUT: 10 m out, the ground under the road is its carved bed (the profile
+                                // there less Bed), untouched by the tunnel's shaping
+                                double ax = t.X[a] - ux * 10, az = t.Z[a] - uz * 10;
+                                var near = Gen.Roads.Influence(ax, az);
+                                worstApproach = Math.Max(worstApproach, near.Tunnel ? double.MaxValue : Math.Abs(Gen.HeightAt(ax, az) - (near.Height - InfiniteRoads.Bed)));
+                            }
+                            // 4. CONTROL: with tunnels off the same run is dug out to the bed -- the tunnel is what keeps the hill
+                            int mid = m / 2;
+                            InfiniteRoads.Tunnels = false;
+                            try { controlLift += Gen.HeightAt(t.X[mid], t.Z[mid]) - (t.Y[mid] - InfiniteRoads.Proud - InfiniteRoads.Lift(RoadKind.Highway)); controlN++; }
+                            finally { InfiniteRoads.Tunnels = true; }
+                        }
+                    }
+            TestContext.WriteLine($"{tunnels} tunnels, {shortest:0}-{longest:0} m: ground inside the bore at {inBore} of {probes} probes{inBoreWhere}; " +
+                                  $"mouth shut at {mouthShut} of {mouthProbes}{shutWhere}; approach 10 m out within {worstApproach * 1000:0} mm of the bed; " +
+                                  $"control (tunnels off): mid-tunnel ground {controlLift / Math.Max(1, controlN):0.00} m off the bed");
+            Assert.That(tunnels, Is.GreaterThan(20));
+            Assert.That(shortest, Is.GreaterThanOrEqualTo(InfiniteRoads.TunnelMinLength));
+            Assert.That(inBore, Is.EqualTo(0), "ground inside a tunnel bore");
+            Assert.That(mouthShut, Is.EqualTo(0), "ground across a tunnel mouth");
+            Assert.That(worstApproach, Is.LessThan(0.05), "the approach is not the open cut");
+            Assert.That(Math.Abs(controlLift / Math.Max(1, controlN)), Is.LessThan(0.05), "control: with tunnels off the run is not dug out");
         }
 
         [Test]

@@ -21,6 +21,15 @@ namespace SDG.Unturned
         public float Height;      // that road's profile height at the closest point
         public float Weight;      // 1 on the road, falling to 0 across its shoulder
         public float Clear;       // min over ALL roads of (dist - paved half-width)
+        /// <summary>Inside a highway tunnel's run (facade to facade, any distance across): the hill stands here, the
+        /// carve does not apply, and TunnelGround shapes the ground round the bore.</summary>
+        public bool Tunnel;
+        public float TunnelIn;    // metres in from the nearer facade
+        public float TunnelLat;   // signed metres from the route's centreline (+ = the +offset carriageway's side)
+        public float TunnelRoad;  // the driven surface (SurfaceY) at the nearest point of the route
+        /// <summary>A ground vertex here is a HOLE: just inside a portal, across the bore -- the only place a heightfield
+        /// would otherwise run straight across the tunnel mouth (it cannot overhang).</summary>
+        public bool Hole;
     }
 
     /// <summary>
@@ -105,6 +114,9 @@ namespace SDG.Unturned
             /// not over whole raised SEGMENTS, which left up to a deck's length at each bridge end with neither road nor
             /// deck (strawberry: "make sure they are aligned properly and theres no big gap").</summary>
             public List<DeckSpan>[] DeckCover;
+            /// <summary>Highways: the tunnels bored along this line, facade to facade (null where none).</summary>
+            public List<TunnelSpan> TunnelSpans;
+            public double[] HArc;   // horizontal arc length at each dense point (set where there are tunnels)
             public bool Exists => X != null;
             public int Segments => X.Length - 1;
         }
@@ -145,6 +157,63 @@ namespace SDG.Unturned
         public const float PierSpan = PierTop - PierBottom;
         public const float MinPierDrop = DeckParapetTop - DeckSoffit;   // the deck's own thickness
         public const int PierEveryUnits = 6;             // retail's one pair per 48 m span
+
+        // ---- TUNNELS (strawberry 2026-10-09: "next is wiring up tunnels to use the tool nyatools made"). cow tools'
+        // EditorTunnelSpline: Tunnel_Line_0's section SWEPT along the road (TunnelMesh.Sweep), a Tunnel_Line_Cap_0 portal
+        // occupying the first and last 24 m. One tunnel carries BOTH carriageways, the section widened across only (the
+        // tool's rule: road half + 1.5 m border over the authored 8 m bore half) -- two side by side would put each one's
+        // 12 m shell through the other's bore. The section numbers are the prop's own, copied because core cannot see the
+        // game; L1 asserts they match TunnelMesh.ProfileFrom.
+        //   A tunnel is bored only where the hill ALREADY buries the whole widened shell (plus TunnelCover) for at least
+        // two portals' length; strawberry agreed the shallow cuts stay open rather than squash a 17.4 m section into a
+        // 6 m cut (and cow tools: berming one would be "not a berm, a new hill"). Measured over the test window: 38 such
+        // runs, 48-332 m.
+        /// <summary>UG_INF_TUNNELS=0: no tunnels -- deep cuts stay open trenches, as before.</summary>
+        public static bool Tunnels = Environment.GetEnvironmentVariable("UG_INF_TUNNELS") != "0";
+        public const float TunnelBoreHalf = 8f, TunnelShellHalf = 12f;   // Tunnel_Line_0, X at the bore and the shell
+        public const float TunnelBoreTop = 12.4f;                        // the bore's crown over the road
+        public const float TunnelFloorDrop = 1f;                         // the section's feet, under the road surface
+        public const float TunnelSectionLength = 24f;                    // one portal's run
+        public const float TunnelBorder = 1.5f;                          // EditorTunnelSpline.BoreBorder
+        public const float TunnelStep = 2f;                              // EditorTunnelSpline.Step: ring spacing
+        /// <summary>The section widened to carry the whole highway (median, both carriageways) plus the border.</summary>
+        public static float TunnelLateral => Math.Max(1f, (PavedHalf(RoadKind.Highway) + TunnelBorder) / TunnelBoreHalf);
+        // the shell's outer arch over the road, from the prop: (X, height) along its upper chain
+        static readonly float[] ShellX = { 0f, 6f, 10.45f, 12f }, ShellY = { 16.4f, 14.53f, 10.13f, 4.4f };
+        /// <summary>Height of the shell's outer surface above the road at authored half-width x (0..12).</summary>
+        public static float ShellTop(float x)
+        {
+            x = Math.Abs(x);
+            for (int i = 0; i < 3; i++)
+                if (x <= ShellX[i + 1]) return ShellY[i] + (ShellY[i + 1] - ShellY[i]) * (x - ShellX[i]) / (ShellX[i + 1] - ShellX[i]);
+            return ShellY[3];
+        }
+        static readonly float[] BoreX = { 0f, 4f, 6.93f, 8f }, BoreY = { 12.4f, 11.33f, 8.4f, 4.4f };
+        /// <summary>Height of the bore's inner surface (the ceiling and, below 4.4 m, the wall) above the road at authored
+        /// half-width x (0..8) -- the space nothing else may enter.</summary>
+        public static float BoreTop(float x)
+        {
+            x = Math.Abs(x);
+            for (int i = 0; i < 3; i++)
+                if (x <= BoreX[i + 1]) return BoreY[i] + (BoreY[i + 1] - BoreY[i]) * (x - BoreX[i]) / (BoreX[i + 1] - BoreX[i]);
+            return BoreY[3];
+        }
+        public const float TunnelCover = 1f;          // natural ground over the shell for a run to be bored, not cut
+        public const float TunnelProbeStep = 4f;      // along-route sampling when looking for runs to bore
+        public static float TunnelMinLength => 2f * TunnelSectionLength;   // two portals; any bore is extra
+        /// <summary>Ground vertices this far in behind a facade, across the bore, are holes. More than a LOD0 cell's
+        /// DIAGONAL (4 m grid -> 5.66 m), so every cell the facade line crosses loses a vertex whatever the tunnel's heading.</summary>
+        public const float TunnelHoleIn = 6f;
+        /// <summary>How far out from a portal the approach cut widens to the bore's width.</summary>
+        public const float TunnelForecourt = 20f;
+        /// <summary>...and this far out beside the bore, for the same reason: a cell whose corners straddle the bore's
+        /// edge on a diagonal heading still pulls the hill across the mouth's corner unless it loses one -- so the cell
+        /// diagonal again, not a tuned number (3 m happens to pass the test window's probes; it is not a guarantee).</summary>
+        public const float TunnelHoleBeside = 6f;
+        /// <summary>The hill over a portal is cut back: no higher than the shell + TunnelCover at the facade, rising this
+        /// many metres per metre behind the hole band -- so no ground hangs over the mouth or the gap behind it.</summary>
+        public const float HeadwallSlope = 1.5f;
+        public const float HeadwallCover = 0.35f;     // over the shell at the hole band's edge (TunnelGround keeps >= 0.25)
 
         static float EnvF(string name, float fallback) =>
             float.TryParse(Environment.GetEnvironmentVariable(name), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float v) && v > 0f ? v : fallback;
@@ -500,6 +569,95 @@ namespace SDG.Unturned
             }
             e.BridgePieces = new List<BridgePiece>();
             foreach (var s in e.Raised) WalkBridge(e, s, e.BridgePieces);
+            FindTunnels(e);
+        }
+
+        /// <summary>One tunnel: its facades at horizontal route arc A0..A1 (F0..F1 in dense-index space), and the
+        /// centreline every TunnelStep between them at the driven surface -- what the game sweeps the section along.</summary>
+        public sealed class TunnelSpan
+        {
+            public double A0, A1, F0, F1;
+            public double[] X, Z; public float[] Y;
+        }
+
+        /// <summary>Find the runs where the hill already buries the whole widened shell (nine samples across it, every
+        /// TunnelProbeStep along) for at least two portals' length, and bore them. A run whose portal would hang past the
+        /// segment's end is left to the open cut: the next segment's own run would put a second portal face to face.</summary>
+        void FindTunnels(Line e)
+        {
+            e.HArc = Arc(e);
+            double total = e.HArc[e.HArc.Length - 1];
+            float lat = TunnelLateral, shellW = TunnelShellHalf * lat;
+            var spans = new List<TunnelSpan>();
+            double runStart = -1;
+            for (double s = 0; s <= total; s += TunnelProbeStep)
+            {
+                At(e, e.HArc, s, out double px, out double pz, out float h, out double tx, out double tz);
+                float road = SurfaceY(RoadKind.Highway, h);
+                bool covered = true;
+                for (int q = -4; q <= 4 && covered; q++)
+                {
+                    float o = shellW * 0.98f * q / 4f;
+                    if (_t.RawHeight(px - tz * o, pz + tx * o) < road + ShellTop(o / lat) + TunnelCover) covered = false;
+                }
+                if (covered) { if (runStart < 0) runStart = s; }
+                else { if (runStart >= 0) Close(runStart, s - TunnelProbeStep); runStart = -1; }
+            }
+            if (runStart >= 0) Close(runStart, total);
+            e.TunnelSpans = spans.Count > 0 ? spans : null;
+
+            void Close(double a0, double a1)
+            {
+                if (a1 - a0 < TunnelMinLength) return;
+                if (a0 < TunnelSectionLength || a1 > total - TunnelSectionLength) return;
+                int m = (int)Math.Ceiling((a1 - a0) / TunnelStep);
+                var t = new TunnelSpan { A0 = a0, A1 = a1, F0 = Frac(a0), F1 = Frac(a1), X = new double[m + 1], Z = new double[m + 1], Y = new float[m + 1] };
+                for (int i = 0; i <= m; i++)
+                {
+                    At(e, e.HArc, Math.Min(a0 + i * TunnelStep, a1), out t.X[i], out t.Z[i], out float hh, out _, out _);
+                    t.Y[i] = SurfaceY(RoadKind.Highway, hh);
+                }
+                spans.Add(t);
+            }
+            double Frac(double a)
+            {
+                int k = 0; while (k < e.Segments - 1 && e.HArc[k + 1] < a) k++;
+                return k + Math.Clamp((a - e.HArc[k]) / Math.Max(1e-9, e.HArc[k + 1] - e.HArc[k]), 0, 1);
+            }
+        }
+
+        /// <summary>The ground round a tunnel, given the ground the rest of the world made there (`g`: natural, since a
+        /// tunnel suspends its own road's carve). Over the shell it is never lower than the shell (a gully between the
+        /// samples that chose the run would otherwise open a window into it), and over each portal the hill is cut back
+        /// to the facade's height plus TunnelCover, rising HeadwallSlope per metre behind the hole band -- a heightfield
+        /// cannot overhang the mouth. Blended out beside the shell.</summary>
+        public static float TunnelGround(in RoadHit hit, float g)
+        {
+            float L = TunnelLateral, lat = Math.Abs(hit.TunnelLat), shellW = TunnelShellHalf * L;
+            if (lat <= shellW) g = Math.Max(g, hit.TunnelRoad + ShellTop(lat / L) + 0.25f);
+            // the cap sits just over the shell where the hole band ends -- the terrain's edge there is seen at a grazing angle
+            // past the facade top, and every metre between it and the shell is a slot of open sky under the hill's surface
+            float cap = hit.TunnelRoad + ShellTop(Math.Min(lat, shellW) / L) + HeadwallCover + Math.Max(0f, hit.TunnelIn - TunnelHoleIn) * HeadwallSlope;
+            // out to where the tunnel stops being reported (the highway's carve reach), so there is no step at its edge
+            if (g > cap) g += (cap - g) * Smoothstep(PavedHalf(RoadKind.Highway) + Shoulder(RoadKind.Highway), shellW, lat);
+            return g;
+        }
+
+        /// <summary>The tunnels whose middle station lies in the rectangle (each tunnel belongs to exactly one region).</summary>
+        public List<TunnelSpan> TunnelsIn(List<Line> lines, double x0, double z0, double x1, double z1)
+        {
+            var list = new List<TunnelSpan>();
+            if (!Tunnels) return list;
+            foreach (var e in lines)
+            {
+                if (e.TunnelSpans == null || e.MaxX < x0 || e.MinX > x1 || e.MaxZ < z0 || e.MinZ > z1) continue;
+                foreach (var t in e.TunnelSpans)
+                {
+                    int m = t.X.Length / 2;
+                    if (t.X[m] >= x0 && t.X[m] < x1 && t.Z[m] >= z0 && t.Z[m] < z1) list.Add(t);
+                }
+            }
+            return list;
         }
 
         /// <summary>Lay one carriageway's bridge over a raised stretch: deck units at BridgePitch along the carriageway,
@@ -614,6 +772,17 @@ namespace SDG.Unturned
         /// a deck unit is a straight chord, so where one spans a profile vertex it points up to half the vertex's bend
         /// off either segment -- 3.15 deg at worst, which at the deck's 8.5 m half-width is a 0.47 m wedge at its end.</summary>
         public readonly record struct DeckSpan(double F0, double F1, (float x, float z) StartHeading, (float x, float z) EndHeading);
+
+        /// <summary>Is the route at dense index k + t inside one of the line's tunnels -- or in a portal's forecourt? There
+        /// the ground mesh must never lift the slab: inside it is the hill, and a cell straddling a facade interpolates
+        /// the hill too (the first render stood the approach's last pieces up as 6 m walls across the mouth).</summary>
+        static bool InTunnel(Line e, int k, double t)
+        {
+            if (!Tunnels || e.TunnelSpans == null) return false;
+            double a = e.HArc[k] + (e.HArc[k + 1] - e.HArc[k]) * t;
+            foreach (var tn in e.TunnelSpans) if (a >= tn.A0 - TunnelForecourt && a <= tn.A1 + TunnelForecourt) return true;
+            return false;
+        }
 
         static bool Covered(List<DeckSpan> cover, double f, double inset = 0)
         {
@@ -896,6 +1065,36 @@ namespace SDG.Unturned
                 float half = PavedHalf(e.Kind), sh = Shoulder(e.Kind);
                 hit.Clear = Math.Min(hit.Clear, best - half);
                 if (best >= half + sh) continue;
+                // INSIDE A TUNNEL'S RUN the hill stands: no carve from this road, and the tunnel's own shaping instead
+                if (Tunnels && e.TunnelSpans != null && bestK >= 0)
+                {
+                    double tsx = e.X[bestK + 1] - e.X[bestK], tsz = e.Z[bestK + 1] - e.Z[bestK];
+                    double along = e.HArc[bestK] + bestT * Math.Sqrt(tsx * tsx + tsz * tsz);
+                    bool bored = false;
+                    foreach (var tn in e.TunnelSpans)
+                    {
+                        // THE FORECOURT: approaching a portal, the cut's flat widens from the road to the bore (plus a
+                        // metre), so the bore's lower corners open onto level ground rather than the cut's side slope
+                        double outside = along < tn.A0 ? tn.A0 - along : along - tn.A1;
+                        if (outside > 0 && outside < TunnelForecourt)
+                        {
+                            float wide = TunnelBoreHalf * TunnelLateral + 1f;
+                            if (wide > half) half += (wide - half) * Smoothstep(TunnelForecourt, 0f, (float)outside);
+                        }
+                        if (along < tn.A0 || along > tn.A1) continue;
+                        bored = true;
+                        if (!hit.Tunnel)
+                        {
+                            hit.Tunnel = true;
+                            hit.TunnelIn = (float)Math.Min(along - tn.A0, tn.A1 - along);
+                            hit.TunnelLat = bestRight ? best : -best;
+                            hit.TunnelRoad = SurfaceY(RoadKind.Highway, bh);
+                            hit.Hole = hit.TunnelIn <= TunnelHoleIn && best <= TunnelBoreHalf * TunnelLateral + TunnelHoleBeside;
+                        }
+                        break;
+                    }
+                    if (bored) continue;
+                }
                 // UNDER A BRIDGE the carve leaves the ground alone: the deck spans it, piers stand on it. Per carriageway,
                 // so a road along a side slope keeps its embankment on the side that is not bridged.
                 // The embankment runs AbutmentTuck metres in under each deck end, so the ground grid's last carved vertex
@@ -973,6 +1172,7 @@ namespace SDG.Unturned
                             T0X = p == 0 && sq0.HasValue ? sq0.Value.x : ta == 0 ? tgx[k] : dX, T0Z = p == 0 && sq0.HasValue ? sq0.Value.z : ta == 0 ? tgz[k] : dZ,
                             T1X = p == pcs - 1 && sq1.HasValue ? sq1.Value.x : tb == 1 ? tgx[k + 1] : dX, T1Z = p == pcs - 1 && sq1.HasValue ? sq1.Value.z : tb == 1 ? tgz[k + 1] : dZ,
                             Raised = offset != 0.0 && e.RaisedSeg != null && e.RaisedSeg[offset > 0 ? 1 : 0][k],
+                            InTunnel = InTunnel(e, k, (ta + tb) * 0.5),
                             Cut = offset != 0.0 && e.CutSeg != null && e.CutSeg[offset > 0 ? 1 : 0][k],
                             OpenStart = k == 0 && ta == 0, OpenEnd = k == n - 1 && tb == 1,
                         });
@@ -1093,6 +1293,15 @@ namespace SDG.Unturned
             var r = new List<BridgePiece>();
             if (e.Exists && e.BridgePieces != null) r.AddRange(e.BridgePieces);
             if (e.Branches != null) foreach (var b in e.Branches) if (b.BridgePieces != null) r.AddRange(b.BridgePieces);
+            return r;
+        }
+        /// <summary>Test accessor: the tunnels of a highway segment (and of its shore spurs).</summary>
+        public List<TunnelSpan> TunnelsOf(int axis, long band, long k)
+        {
+            var e = Highway(axis, band, k);
+            var r = new List<TunnelSpan>();
+            if (e.Exists && e.TunnelSpans != null) r.AddRange(e.TunnelSpans);
+            if (e.Branches != null) foreach (var b in e.Branches) if (b.TunnelSpans != null) r.AddRange(b.TunnelSpans);
             return r;
         }
         /// <summary>Test accessor: one carriageway of a highway segment, as a centreline.</summary>

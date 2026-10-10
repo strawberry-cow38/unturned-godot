@@ -58,6 +58,8 @@ namespace SDG.Unturned
         RegionData Generate(RegionCoord c, int lod);
         /// <summary>Ground height at an absolute position -- the spawn search and the never-under-the-ground guard.</summary>
         float HeightAt(double x, double z);
+        /// <summary>What someone standing here stands on: the ground, or a tunnel's floor where the ground is overhead.</summary>
+        float WalkableHeightAt(double x, double z) => HeightAt(x, z);
     }
 
     /// <summary>A tree the generator decided on. Position is LOCAL to the region's min corner.</summary>
@@ -86,6 +88,9 @@ namespace SDG.Unturned
         /// <summary>This piece is its line's first / last: the slab gets a ramp there, as RoadField's end caps do. NOT
         /// set where a ribbon is cut for a bridge deck -- the deck carries on from that edge.</summary>
         public bool OpenStart, OpenEnd;
+        /// <summary>Under a tunnel or in its forecourt: the slab is laid at its own height, never lifted onto this LOD's
+        /// ground mesh (the hill above it, or a cell across the facade that interpolates the hill).</summary>
+        public bool InTunnel;
         /// <summary>A highway piece on a deep CUT stretch: a tunnel candidate.</summary>
         public bool Cut;
     }
@@ -147,6 +152,15 @@ namespace SDG.Unturned
         /// <summary>Power-line poles standing in this region (LOD0/1 only).</summary>
         public List<PolePlacement> Poles;
         public List<BridgePiece> Bridges;   // highway bridge pieces rooted in this region (all LODs)
+        /// <summary>Highway tunnels whose middle lies in this region (all LODs; the whole tunnel, which may reach a
+        /// neighbour -- like a bridge, it is one structure).</summary>
+        public List<InfiniteRoads.TunnelSpan> Tunnels;
+        /// <summary>LOD0 only, same order as Heights: vertices that are HOLES -- just inside a tunnel portal, across the
+        /// bore. The collider gets NaN there and the mesh drops every cell touching one. Null where there are none.</summary>
+        public bool[] Holes;
+        /// <summary>Any LOD, same order: vertices over a tunnel's run, across its shell. The mesh hangs no skirt from
+        /// these -- a region-edge skirt is the hill's height dropped 6-8 m, straight into the bore. Null where none.</summary>
+        public bool[] OverTunnel;
         /// <summary>Grass, flowers, pebbles, bushes -- LOD0 only (it is only ever drawn within ~160-300 m).</summary>
         public List<FoliageSpawn> Foliage;
         public float MinHeight, MaxHeight;
@@ -292,10 +306,19 @@ namespace SDG.Unturned
         {
             float raw = RawHeight(x, z);
             hit = InfiniteRoads.Influence(lines, x, z);
-            if (!hit.Any) return raw;
             // the bed sits Bed under the paved surface: a ribbon laid at the profile then always covers the ground's own
             // triangles (the grid's vertices poked through as lines across the lanes when the bed WAS the surface)
-            return raw + (hit.Height - InfiniteRoads.Bed - raw) * hit.Weight;
+            float g = hit.Any ? raw + (hit.Height - InfiniteRoads.Bed - raw) * hit.Weight : raw;
+            return hit.Tunnel ? InfiniteRoads.TunnelGround(hit, g) : g;
+        }
+
+        /// <summary>What someone standing here stands on: the ground -- or, inside a tunnel's bore, its floor (the hill
+        /// is overhead). The fall-through guard and anything else asking "where is the floor" use this, not HeightAt.</summary>
+        public float WalkableHeightAt(double x, double z)
+        {
+            float g = Sample(x, z, out var hit);
+            return hit.Tunnel && Math.Abs(hit.TunnelLat) <= InfiniteRoads.TunnelBoreHalf * InfiniteRoads.TunnelLateral
+                ? hit.TunnelRoad - InfiniteRoads.Proud - InfiniteRoads.Lift(RoadKind.Highway) : g;
         }
 
         /// <summary>The land before any road touches it.</summary>
@@ -391,6 +414,9 @@ namespace SDG.Unturned
                     float h = hb[kb];
                     d.Heights[k] = h;
                     d.RoadClear[k] = Math.Min(rh[kb].Clear, 64f);
+                    if (lod == 0 && rh[kb].Hole) { (d.Holes ??= new bool[v * v])[k] = true; d.RoadClear[k] = -1f; }   // nothing grows in a hole
+                    if (rh[kb].Tunnel && Math.Abs(rh[kb].TunnelLat) <= InfiniteRoads.TunnelShellHalf * InfiniteRoads.TunnelLateral + 2f)
+                        (d.OverTunnel ??= new bool[v * v])[k] = true;
                     if (h < d.MinHeight) d.MinHeight = h;
                     if (h > d.MaxHeight) d.MaxHeight = h;
                     float dx = (hb[kb + 1] - hb[kb - 1]) / (2f * sp), dz = (hb[kb + b] - hb[kb - b]) / (2f * sp);
@@ -403,6 +429,7 @@ namespace SDG.Unturned
             d.Roads = Roads.PiecesIn(lines, ox, oz, ox + RegionSize, oz + RegionSize, Math.Max(4f, sp));
             d.Poles = lod <= 1 ? Roads.PolesIn(lines, ox, oz, ox + RegionSize, oz + RegionSize) : null;
             d.Bridges = Roads.BridgesIn(lines, ox, oz, ox + RegionSize, oz + RegionSize);
+            d.Tunnels = Roads.TunnelsIn(lines, ox, oz, ox + RegionSize, oz + RegionSize);
             d.GenMs = (System.Diagnostics.Stopwatch.GetTimestamp() - t0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
             return d;
         }
@@ -433,6 +460,8 @@ namespace SDG.Unturned
                     float y = SampleWith(lines, ax, az, out var treeRoad);
                     if (y < SeaLevel + 2.5f) continue;
                     if (treeRoad.Clear < 5f) continue;   // keep every road and its verge clear
+                    if (treeRoad.Tunnel && treeRoad.TunnelIn < InfiniteRoads.TunnelHoleIn + 8f
+                        && Math.Abs(treeRoad.TunnelLat) < InfiniteRoads.TunnelShellHalf * InfiniteRoads.TunnelLateral) continue;   // nor over a portal's mouth
                     float sx = SampleWith(lines, ax + 2.0, az, out _) - SampleWith(lines, ax - 2.0, az, out _);
                     float sz = SampleWith(lines, ax, az + 2.0, out _) - SampleWith(lines, ax, az - 2.0, out _);
                     float slope = MathF.Sqrt(sx * sx + sz * sz) / 4f;

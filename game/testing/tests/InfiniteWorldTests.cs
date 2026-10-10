@@ -103,6 +103,20 @@ namespace UnturnedGodot.Testing
                 && InfiniteRoads.DeckSoffit == EditorBridgeSpline.DeckSoffit && InfiniteRoads.DeckParapetTop == EditorBridgeSpline.DeckParapetTop
                 && InfiniteRoads.PierTop == EditorBridgeSpline.PierTop && InfiniteRoads.PierBottom == EditorBridgeSpline.PierBottom
                 && InfiniteRoads.PierEveryUnits == EditorBridgeSpline.PierEveryUnits && InfiniteRoads.MinPierDrop == EditorBridgeSpline.MinPierDrop);
+            {
+                // ...and the tunnel section's numbers are the prop's own, read off it the way the tunnel tool reads them
+                var prof = TunnelMesh.ProfileFrom(ObjMesh.Load(ProjectSettings.GlobalizePath("res://content/objects/") + EditorTunnelSpline.BoreUnit + ".obj"));
+                float shellHalf = 0f, top = 0f, crown = 0f, feet = float.MaxValue;
+                foreach (var ch in prof) foreach (var q in ch) { shellHalf = Mathf.Max(shellHalf, Mathf.Abs(q.X)); top = Mathf.Max(top, q.Y); feet = Mathf.Min(feet, q.Y); }
+                float boreHalf = TunnelMesh.BoreHalfWidth(prof);
+                foreach (var ch in prof) { float w = 0f, hi = 0f; foreach (var q in ch) { w = Mathf.Max(w, Mathf.Abs(q.X)); hi = Mathf.Max(hi, q.Y); } if (Mathf.Abs(w - boreHalf) < 0.01f) crown = hi; }
+                T.Check($"the infinite world's tunnel section is the tunnel prop's (bore half {InfiniteRoads.TunnelBoreHalf} / {boreHalf:0.00}, shell half {InfiniteRoads.TunnelShellHalf} / {shellHalf:0.00}, " +
+                        $"crown {InfiniteRoads.TunnelBoreTop} / {crown:0.00}, shell top {InfiniteRoads.ShellTop(0f)} / {top:0.00}, feet -{InfiniteRoads.TunnelFloorDrop} / {feet:0.00}; section {InfiniteRoads.TunnelSectionLength} / {EditorTunnelSpline.PortalLength})",
+                    Mathf.Abs(boreHalf - InfiniteRoads.TunnelBoreHalf) < 0.01f && Mathf.Abs(shellHalf - InfiniteRoads.TunnelShellHalf) < 0.01f
+                    && Mathf.Abs(crown - InfiniteRoads.TunnelBoreTop) < 0.01f && Mathf.Abs(top - InfiniteRoads.ShellTop(0f)) < 0.01f
+                    && Mathf.Abs(feet + InfiniteRoads.TunnelFloorDrop) < 0.01f && InfiniteRoads.TunnelSectionLength == EditorTunnelSpline.PortalLength
+                    && InfiniteRoads.TunnelBorder == EditorTunnelSpline.BoreBorder && InfiniteRoads.TunnelStep == EditorTunnelSpline.Step);
+            }
 
             T.Check($"ground cover grew round the player: {S.FoliageCount:N0} grass/flowers/pebbles/bushes", S.FoliageCount > 50000);
             float spawnRoad = S.Gen.RoadClearance(S.AbsX(P(p).X), S.AbsZ(P(p).Z));
@@ -284,6 +298,104 @@ namespace UnturnedGodot.Testing
                     RegionStreamer.DeckRoadwayTrisStripped > 0);
                 T.Check($"...and 3 m along the approach it is still the road slab at its surface ({roadFar:0.000} on {bodyFar}, cap at {cp.Y:0.000})",
                     bodyFar == "Paved" && Mathf.Abs(roadFar - ((float)cp.Y + grade * 3f)) < 0.03f);
+            }
+            // ---- 7. A TUNNEL (strawberry 2026-10-09: "wiring up tunnels to use the tool nyatools made"): drive into the
+            // mouth -- the ground's heightfield has HOLES there or the hill's surface runs straight across it -- stand on
+            // the road under the hill without being "rescued" onto the hilltop, and hit the bore's walls and ceiling from
+            // INSIDE (the sweep's faces point out; one-sided, you would walk through them)
+            InfiniteRoads.TunnelSpan tun = null;
+            for (int axis = 0; axis < 2 && tun == null; axis++)
+                for (long band = -2; band <= 1 && tun == null; band++)
+                    for (long k = -4; k <= 3 && tun == null; k++)
+                        foreach (var t in S.Gen.Roads.TunnelsOf(axis, band, k)) { tun = t; break; }
+            T.Check("the generator has a tunnel to visit", tun != null);
+            if (tun != null)
+            {
+                int tm = tun.X.Length, mid = tm / 2;
+                double ux = tun.X[1] - tun.X[0], uz = tun.Z[1] - tun.Z[0], ul = System.Math.Sqrt(ux * ux + uz * uz); ux /= ul; uz /= ul;   // into the tunnel
+                S.TeleportAbsolute(tun.X[0] - ux * 25.0, tun.Z[0] - uz * 25.0);
+                yield return Wait(Settled, 60);
+                yield return Ticks(5);
+                var space = World.GetWorld3D().DirectSpaceState;
+                T.Check($"tunnels stream in round it: {S.TunnelCount} in range", S.TunnelCount > 0);
+                // into the mouth along the road, 3 m up: nothing between 15 m out and 15 m in
+                var from = S.ToLocal(tun.X[0] - ux * 15.0, tun.Y[0] + 3.0, tun.Z[0] - uz * 15.0);
+                var into = S.ToLocal(tun.X[0] + ux * 15.0, tun.Y[0] + 3.0 + (tun.Y[System.Math.Min(7, tm - 1)] - tun.Y[0]), tun.Z[0] + uz * 15.0);
+                var mouth = space.IntersectRay(PhysicsRayQueryParameters3D.Create(from, into, 1u << 0));
+                T.Check($"the mouth is open: a ray along the road from 15 m out to 15 m in hits {(mouth.Count == 0 ? "nothing" : mouth["collider"].As<Node>()?.Name + " at " + ((Vector3)mouth["position"]).DistanceTo(from).ToString("0.0") + " m")}",
+                    mouth.Count == 0);
+                // the DRAWN road through the mouth and the forecourts lies at its driven surface: nothing lifts it onto the
+                // ground mesh, which there is the hill (or a cell across the facade interpolating it). The first render
+                // stood the approach's last pieces up as 6 m walls across the mouth
+                {
+                    double alongMax = 0; var stH = new double[tm];
+                    for (int i = 1; i < tm; i++) stH[i] = stH[i - 1] + System.Math.Sqrt((tun.X[i] - tun.X[i - 1]) * (tun.X[i] - tun.X[i - 1]) + (tun.Z[i] - tun.Z[i - 1]) * (tun.Z[i] - tun.Z[i - 1]));
+                    alongMax = stH[tm - 1];
+                    float worstLift = 0f; int verts = 0;
+                    foreach (var n in S.FindChildren("Road_Highway", "MeshInstance3D", true, false))
+                    {
+                        var mi = (MeshInstance3D)n;
+                        if (mi.Mesh == null) continue;
+                        var vs = mi.Mesh.SurfaceGetArrays(0)[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+                        var xf = mi.GlobalTransform;
+                        foreach (var lv in vs)
+                        {
+                            var gv = xf * lv;
+                            double ax = S.AbsX(gv.X), az = S.AbsZ(gv.Z);
+                            // nearest station segment: along and across
+                            double bestD = double.MaxValue, along = 0; float ry = 0;
+                            for (int i = 0; i + 1 < tm; i++)
+                            {
+                                double sx = tun.X[i + 1] - tun.X[i], sz = tun.Z[i + 1] - tun.Z[i], qx = ax - tun.X[i], qz = az - tun.Z[i];
+                                double ss = sx * sx + sz * sz, tt = (qx * sx + qz * sz) / ss;
+                                double tc = System.Math.Clamp(tt, 0, 1), dd = System.Math.Sqrt((qx - sx * tc) * (qx - sx * tc) + (qz - sz * tc) * (qz - sz * tc));
+                                if (dd < bestD) { bestD = dd; along = stH[i] + tt * System.Math.Sqrt(ss); ry = tun.Y[i] + (tun.Y[i + 1] - tun.Y[i]) * (float)tc; }
+                            }
+                            if (bestD > InfiniteRoads.PavedHalf(RoadKind.Highway) + 1.0 || along < -InfiniteRoads.TunnelForecourt || along > alongMax + InfiniteRoads.TunnelForecourt) continue;
+                            // beyond the facades the profile runs on at the end's grade: allow it, and the road's own surface
+                            double past = along < 0 ? -along : along > alongMax ? along - alongMax : 0;
+                            verts++;
+                            worstLift = Mathf.Max(worstLift, gv.Y - ry - (float)(past * InfiniteRoads.MaxGrade(RoadKind.Highway)));
+                        }
+                    }
+                    T.Check($"the drawn road through the tunnel and its forecourts stays on its surface: {verts} vertices, worst {worstLift:0.00} m above it",
+                        verts > 100 && worstLift < 0.05f);
+                }
+                // the road under the hill: a drop from 5 m over a CARRIAGEWAY (the stations run down the median) lands on
+                // the slab at its driven surface
+                var side = new Vector3((float)-uz, 0f, (float)ux);
+                var top = S.ToLocal(tun.X[mid], tun.Y[mid] + 5.0, tun.Z[mid]);
+                var lane = top + side * InfiniteRoads.HighwayRibbonOffset;
+                var onRoad = space.IntersectRay(PhysicsRayQueryParameters3D.Create(lane, lane + Vector3.Down * 10f, 1u << 0));
+                float roadY = onRoad.Count > 0 ? ((Vector3)onRoad["position"]).Y : float.NaN;
+                T.Check($"under the hill the road is solid: y {roadY:0.000} vs {tun.Y[mid]:0.000} on {(onRoad.Count > 0 ? onRoad["collider"].As<Node>()?.Name : "nothing")}",
+                    onRoad.Count > 0 && Mathf.Abs(roadY - tun.Y[mid]) < 0.02f && onRoad["collider"].As<Node>()?.Name == "Paved");
+                // ...and between the slab and the wall, the floor at the road's bed
+                var verge = top + side * (InfiniteRoads.PavedHalf(RoadKind.Highway) + 0.8f);
+                var onFloor = space.IntersectRay(PhysicsRayQueryParameters3D.Create(verge, verge + Vector3.Down * 10f, 1u << 0));
+                float floorY = onFloor.Count > 0 ? ((Vector3)onFloor["position"]).Y : float.NaN, bedY = tun.Y[mid] - InfiniteRoads.Proud - InfiniteRoads.Lift(RoadKind.Highway);
+                T.Check($"beside it, the floor: y {floorY:0.000} vs the bed {bedY:0.000}", onFloor.Count > 0 && Mathf.Abs(floorY - bedY) < 0.06f);
+                // the ceiling and a wall, from inside
+                var up = space.IntersectRay(PhysicsRayQueryParameters3D.Create(top, top + Vector3.Up * 30f, 1u << 0));
+                float ceil = up.Count > 0 ? ((Vector3)up["position"]).Y - tun.Y[mid] : float.NaN;
+                var wall = space.IntersectRay(PhysicsRayQueryParameters3D.Create(top + Vector3.Down * 3f, top + Vector3.Down * 3f + side * 40f, 1u << 0));
+                float wallAt = wall.Count > 0 ? ((Vector3)wall["position"] - (top + Vector3.Down * 3f)).Length() : float.NaN;
+                float boreW = InfiniteRoads.TunnelBoreHalf * InfiniteRoads.TunnelLateral;
+                T.Check($"the bore holds you in: ceiling {ceil:0.00} m over the road (crown {InfiniteRoads.TunnelBoreTop}), wall {wallAt:0.00} m out (bore {boreW:0.00})",
+                    Mathf.Abs(ceil - InfiniteRoads.TunnelBoreTop) < 0.2f && Mathf.Abs(wallAt - boreW) < 0.3f);
+                // and the hill is over it all: from high above, the first thing hit is the ground, above the shell
+                var sky = S.ToLocal(tun.X[mid], tun.Y[mid] + 300.0, tun.Z[mid]);
+                var hill = space.IntersectRay(PhysicsRayQueryParameters3D.Create(sky, sky + Vector3.Down * 400f, 1u << 0));
+                float hillY = hill.Count > 0 ? ((Vector3)hill["position"]).Y - tun.Y[mid] : float.NaN;
+                T.Check($"the hill stands over it: {hillY:0.0} m above the road on {(hill.Count > 0 ? hill["collider"].As<Node>()?.Name : "nothing")} (shell top {InfiniteRoads.ShellTop(0f)})",
+                    hill.Count > 0 && hill["collider"].As<Node>()?.Name == "GroundBody" && hillY > InfiniteRoads.ShellTop(0f));
+                // stand in it: the guard must not lift you onto the hill
+                int rescues0 = S.Rescues;
+                p.TeleportTo(S.ToLocal(tun.X[mid], tun.Y[mid] + 0.3, tun.Z[mid]));
+                yield return Ticks(90);
+                float standY = P(p).Y;
+                T.Check($"standing in the tunnel: y {standY:0.00} vs road {tun.Y[mid]:0.00}, rescues {S.Rescues - rescues0}",
+                    S.Rescues == rescues0 && Mathf.Abs(standY - tun.Y[mid]) < 1.5f);
             }
             T.Check($"nobody was ever rescued from under the ground ({S.Rescues})", S.Rescues == 0);
         }

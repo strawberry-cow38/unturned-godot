@@ -72,7 +72,7 @@ namespace UnturnedGodot
         public static int MaxRing => LodRing[LodRing.Length - 1];
 
         // ---- diagnostics (the overlay and the tests read these) ----
-        public int Rebases, Rescues, Committed, TreeCount, FoliageCount, ImpostorCount, BridgeCount;
+        public int Rebases, Rescues, Committed, TreeCount, FoliageCount, ImpostorCount, BridgeCount, TunnelCount;
         public double GenMsTotal; public int GenCount;
         public readonly int[] LoadedByLod = new int[4];
         public int Colliders => _colliders;
@@ -106,6 +106,11 @@ namespace UnturnedGodot
             public Node3D Bridges;                  // the bridge MultiMeshes, every ring
             public Node3D BridgeBodies;             // deck colliders, ring <= ColliderRing
             public Vector3[][] RoadCol;             // the road slabs' collision soup, from the latest LOD0 build
+            public bool[] Lod0Holes;                // tunnel-mouth holes in the LOD0 ground (NaN in its collider)
+            public List<InfiniteRoads.TunnelSpan> TunnelSpans;   // from the first build (LOD-independent)
+            public Node3D Tunnels;                  // bores, portals, floors -- every ring
+            public List<(Shape3D Shape, Transform3D Xf, int Surf)> TunnelShapes;
+            public Node3D TunnelBodies;             // their colliders, ring <= ColliderRing
             public Node3D RoadBodies;               // road colliders, ring <= ColliderRing
         }
 
@@ -124,6 +129,7 @@ namespace UnturnedGodot
             public List<(Transform3D Pole, bool HasNext, Transform3D Next)> Poles;
             public (Vector3 P, float S, int Cell)[] ImpTrees;
             public List<Transform3D>[] BridgeXf;
+            public List<InfiniteRoads.TunnelSpan> Tunnels;
         }
 
         readonly Dictionary<RegionCoord, Region> _regions = new();
@@ -263,6 +269,7 @@ namespace UnturnedGodot
             if (r.Foliage != null) FoliageCount -= r.FoliageCount;
             if (r.Impostors != null) ImpostorCount -= r.Impostors.Multimesh.InstanceCount;
             if (r.Bridges != null) BridgeCount -= r.BridgeXf[0].Count;
+            if (r.Tunnels != null) TunnelCount -= r.TunnelSpans.Count;
             r.Node.QueueFree();
             _regions.Remove(c);
             _pendingTrees.Remove(c);
@@ -287,6 +294,8 @@ namespace UnturnedGodot
                 TreeCount -= r.TreeList?.Count ?? 0;
             }
 
+            if (ring <= ColliderRing && r.TunnelBodies == null && r.TunnelShapes != null) { r.TunnelBodies = BuildTunnelBodies(r.TunnelShapes); r.Node.AddChild(r.TunnelBodies); }
+            else if (ring > ColliderRing + 1 && r.TunnelBodies != null) { r.TunnelBodies.QueueFree(); r.TunnelBodies = null; }
             if (ring <= ColliderRing && r.RoadBodies == null && r.RoadCol != null) { r.RoadBodies = BuildRoadBodies(r.RoadCol); r.Node.AddChild(r.RoadBodies); }
             else if (ring > ColliderRing + 1 && r.RoadBodies != null) { r.RoadBodies.QueueFree(); r.RoadBodies = null; }
             if (ring <= ColliderRing && r.BridgeBodies == null && r.BridgeXf != null && r.BridgeXf[0].Count > 0) { r.BridgeBodies = BuildDeckBodies(r.BridgeXf[0]); r.Node.AddChild(r.BridgeBodies); }
@@ -351,11 +360,12 @@ namespace UnturnedGodot
                 int ring = r.C.RingTo(center), want = LodForRing(ring);
                 bool useful = b.D.Lod == want || r.Lod < 0;                   // a stale LOD is still better than a hole
                 if (b.D.Lod == r.PendingLod) r.PendingLod = -1;
-                if (b.D.Lod == 0) r.Lod0Heights = b.D.Heights;
+                if (b.D.Lod == 0) { r.Lod0Heights = b.D.Heights; r.Lod0Holes = b.D.Holes; }
                 if (b.D.Trees != null && r.TreeList == null) { r.TreeList = b.D.Trees; _pendingTrees[r.C] = b.TreeXf; }
                 if (b.FoliageXf != null && r.FoliageXf == null) r.FoliageXf = b.FoliageXf;
                 if (b.Poles != null && r.PoleXf == null) r.PoleXf = b.Poles;
                 AdoptBridges(r, b);
+                AdoptTunnels(r, b);
                 if (useful)
                 {
                     Apply(r, b);
@@ -436,9 +446,16 @@ namespace UnturnedGodot
             body.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Grass);
             // HeightMapShape3D: row-major in Z, 1 unit apart, CENTRED -- so scale X/Z by the spacing (Jolt wants them
             // equal, and they are) and sit it at the region's centre. Heights are absolute world Y; the body stays at 0.
+            // a tunnel mouth's holes: NaN, which Jolt (and GodotPhysics) read as no collision at that vertex
+            var data = r.Lod0Heights;
+            if (r.Lod0Holes != null)
+            {
+                data = (float[])data.Clone();
+                for (int k = 0; k < data.Length; k++) if (r.Lod0Holes[k]) data[k] = float.NaN;
+            }
             var cs = new CollisionShape3D
             {
-                Shape = new HeightMapShape3D { MapWidth = v, MapDepth = v, MapData = r.Lod0Heights },
+                Shape = new HeightMapShape3D { MapWidth = v, MapDepth = v, MapData = data },
                 Scale = new Vector3(sp, 1f, sp),
                 Position = new Vector3(InfiniteTerrain.RegionSize * 0.5f, 0f, InfiniteTerrain.RegionSize * 0.5f),
             };
@@ -787,6 +804,159 @@ void fragment() {
             _bridgeMat[i] = mat;
         }
 
+        // ---- tunnels (strawberry 2026-10-09: "wiring up tunnels to use the tool nyatools made"): cow tools' tunnel tool,
+        // driven from the core's spans -- TunnelMesh.Sweep for the bore, a Tunnel_Line_Cap_0 portal on each end's 24 m,
+        // widened across by InfiniteRoads.TunnelLateral (EditorTunnelSpline.WidenAcross, the X column). Plus what the
+        // editor tool does not need and this world does: a FLOOR at the road's bed between the slab and the walls (the
+        // section has none, and the ground here is the hill overhead) and an APRON over the hole cells in front of each
+        // mouth. Built on the main thread when a region first arrives; colliders ring <= ColliderRing.
+        static List<Vector2[]> _tunnelProfile;
+        static ArrayMesh _portalMesh;
+        static Material _tunnelMat, _tunnelFloorMat;
+        static void LoadTunnelKit()
+        {
+            if (_tunnelProfile != null) return;
+            string dir = ProjectSettings.GlobalizePath("res://content/objects/");
+            _tunnelProfile = TunnelMesh.ProfileFrom(ObjMesh.Load(dir + EditorTunnelSpline.BoreUnit + ".obj"));
+            _portalMesh = ObjMesh.Load(dir + EditorTunnelSpline.PortalUnit + ".obj");
+            // EditorObjects.MatFor's recipe for a prop with no texture (neither tunnel prop ships one): the mesh's white
+            // vertex colours times tan, both faces drawn
+            _tunnelMat = new StandardMaterial3D { Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled, VertexColorUseAsAlbedo = true,
+                                                  AlbedoColor = new Color(0.60f, 0.55f, 0.47f) };
+            _tunnelFloorMat = new StandardMaterial3D { Roughness = 1f, AlbedoColor = new Color(0.40f, 0.39f, 0.37f) };
+        }
+
+        void AdoptTunnels(Region r, Built b)
+        {
+            if (b.Tunnels == null || r.TunnelSpans != null) return;
+            r.TunnelSpans = b.Tunnels;
+            if (b.Tunnels.Count == 0) return;
+            LoadTunnelKit();
+            r.Tunnels = new Node3D { Name = "Tunnels" };
+            r.TunnelShapes = new List<(Shape3D, Transform3D, int)>();
+            foreach (var t in b.Tunnels) BuildTunnel(t, b.D.Coord.MinX, b.D.Coord.MinZ, r.Tunnels, r.TunnelShapes);
+            r.Node.AddChild(r.Tunnels);
+            TunnelCount += b.Tunnels.Count;
+        }
+
+        /// <summary>One tunnel, region-local. Stations are every TunnelStep of HORIZONTAL arc from the near facade.</summary>
+        static void BuildTunnel(InfiniteRoads.TunnelSpan t, double ox, double oz, Node3D holder, List<(Shape3D, Transform3D, int)> shapes)
+        {
+            int m = t.X.Length;
+            var c = new Vector3[m];
+            var h = new float[m];   // horizontal arc
+            for (int i = 0; i < m; i++)
+            {
+                c[i] = new Vector3((float)(t.X[i] - ox), t.Y[i], (float)(t.Z[i] - oz));
+                if (i > 0) h[i] = h[i - 1] + new Vector2(c[i].X - c[i - 1].X, c[i].Z - c[i - 1].Z).Length();
+            }
+            float len = h[m - 1], sec = InfiniteRoads.TunnelSectionLength, lat = InfiniteRoads.TunnelLateral;
+            Vector3 At(float s)
+            {
+                s = Mathf.Clamp(s, 0f, len);
+                int k = 0; while (k < m - 2 && h[k + 1] < s) k++;
+                return c[k].Lerp(c[k + 1], Mathf.Clamp((s - h[k]) / Mathf.Max(1e-6f, h[k + 1] - h[k]), 0f, 1f));
+            }
+
+            // THE BORE: swept between the two portals (each occupies its 24 m; laid under them it would stack two shells)
+            if (len - 2f * sec > 0.5f)
+            {
+                var run = new List<Vector3> { At(sec) };
+                for (int i = 0; i < m; i++) if (h[i] > sec + 0.01f && h[i] < len - sec - 0.01f) run.Add(c[i]);
+                run.Add(At(len - sec));
+                var mesh = TunnelMesh.Sweep(_tunnelProfile, run, lat);
+                if (mesh != null)
+                {
+                    holder.AddChild(new MeshInstance3D { Name = "Bore", Mesh = mesh, MaterialOverride = _tunnelMat,
+                                                          CastShadow = GeometryInstance3D.ShadowCastingSetting.DoubleSided });
+                    // ⚠ BACKFACE collision: the sweep's faces point AWAY from the centreline, so from inside the bore every
+                    // wall is a back face -- one-sided, you would walk straight out through it
+                    var shp = mesh.CreateTrimeshShape() as ConcavePolygonShape3D;
+                    if (shp != null) { shp.BackfaceCollision = true; shapes.Add((shp, Transform3D.Identity, (int)PlayerController.Surf.Concrete)); }
+                }
+            }
+
+            // THE PORTALS, facade (local +Y) facing OUT. Sheared rather than tilted: the sweep's rings are VERTICAL slices
+            // (TunnelMesh puts the profile on world up), so a portal tilted to the grade would meet the bore's first ring
+            // at an angle -- 1.15 m apart at the crown on a 7% grade. Its length axis climbs with the road instead, and its
+            // section stays upright like every ring of the bore it opens into.
+            for (int end = 0; end < 2; end++)
+            {
+                float s0 = end == 0 ? 0f : len - sec, s1 = s0 + sec;
+                Vector3 a = At(s0), b = At(s1), mid = At((s0 + s1) * 0.5f);
+                var outDir = end == 0 ? a - b : b - a;   // along the road, out of the tunnel
+                var flat = new Vector3(outDir.X, 0f, outDir.Z);
+                if (flat.LengthSquared() < 1e-6f) continue;
+                float rise = outDir.Y / flat.Length();   // metres up per metre out
+                flat = flat.Normalized();
+                var basis = EditorTunnelSpline.StandBasis(flat);
+                // the column that carries the section's length is the one lying along the road: give it the grade
+                Vector3 c0 = basis.X, c1 = basis.Y, c2 = basis.Z;
+                if (Mathf.Abs(c1.Dot(flat)) > 0.9f) c1 += Vector3.Up * (rise * c1.Dot(flat));
+                else if (Mathf.Abs(c2.Dot(flat)) > 0.9f) c2 += Vector3.Up * (rise * c2.Dot(flat));
+                basis = EditorTunnelSpline.WidenAcross(new Basis(c0, c1, c2), lat);
+                var xf = new Transform3D(basis, mid);
+                holder.AddChild(new MeshInstance3D { Name = end == 0 ? "PortalIn" : "PortalOut", Mesh = _portalMesh, Transform = xf,
+                                                      MaterialOverride = _tunnelMat, CastShadow = GeometryInstance3D.ShadowCastingSetting.DoubleSided });
+                var pshp = _portalMesh.CreateTrimeshShape() as ConcavePolygonShape3D;
+                if (pshp != null) { pshp.BackfaceCollision = true; shapes.Add((pshp, xf, (int)PlayerController.Surf.Concrete)); }
+            }
+
+            // THE FLOOR, at the road's bed (the approach ground's level beside the slab), wall to wall; and an APRON at each
+            // mouth over the hole cells -- they reach a cell out in front of the facade and TunnelHoleBeside past the bore
+            var FV = new List<Vector3>(); var FN = new List<Vector3>(); var FI = new List<int>();
+            float drop = InfiniteRoads.Proud + InfiniteRoads.Lift(RoadKind.Highway);
+            float boreW = InfiniteRoads.TunnelBoreHalf * lat, apronW = boreW + InfiniteRoads.TunnelHoleBeside + 1f, apronOut = 6.5f;
+            void Strip(float sA, float sB, float half, float below, int steps)
+            {
+                for (int q = 0; q < steps; q++)
+                {
+                    float u0 = sA + (sB - sA) * q / steps, u1 = sA + (sB - sA) * (q + 1) / steps;
+                    Vector3 P(float s)
+                    {
+                        // beyond either facade the line runs straight on at the end's grade
+                        if (s < 0f) { var d0 = At(Mathf.Min(2f, len)) - At(0f); return At(0f) + d0 / Mathf.Max(1e-6f, new Vector2(d0.X, d0.Z).Length()) * s; }
+                        if (s > len) { var d1 = At(len) - At(Mathf.Max(0f, len - 2f)); return At(len) + d1 / Mathf.Max(1e-6f, new Vector2(d1.X, d1.Z).Length()) * (s - len); }
+                        return At(s);
+                    }
+                    Vector3 pa = P(u0), pb = P(u1);
+                    var dir = new Vector3(pb.X - pa.X, 0f, pb.Z - pa.Z).Normalized();
+                    var nrm = new Vector3(-dir.Z, 0f, dir.X) * half;
+                    var down = Vector3.Down * (drop + below);
+                    int i0 = FV.Count;
+                    FV.Add(pa + nrm + down); FV.Add(pa - nrm + down); FV.Add(pb + nrm + down); FV.Add(pb - nrm + down);
+                    for (int k = 0; k < 4; k++) FN.Add(Vector3.Up);
+                    Tri(FV, FI, i0, i0 + 1, i0 + 2, Vector3.Up);
+                    Tri(FV, FI, i0 + 1, i0 + 3, i0 + 2, Vector3.Up);
+                }
+            }
+            Strip(-apronOut, len + apronOut, boreW, 0.03f, Mathf.Max(1, Mathf.CeilToInt((len + 2f * apronOut) / InfiniteRoads.TunnelStep)));
+            Strip(-apronOut, 0.5f, apronW, 0.04f, 4);
+            Strip(len - 0.5f, len + apronOut, apronW, 0.04f, 4);
+            var fa = new Godot.Collections.Array();
+            fa.Resize((int)Mesh.ArrayType.Max);
+            fa[(int)Mesh.ArrayType.Vertex] = FV.ToArray(); fa[(int)Mesh.ArrayType.Normal] = FN.ToArray(); fa[(int)Mesh.ArrayType.Index] = FI.ToArray();
+            var fm = new ArrayMesh();
+            fm.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, fa);
+            holder.AddChild(new MeshInstance3D { Name = "Floor", Mesh = fm, MaterialOverride = _tunnelFloorMat });
+            var soup = new Vector3[FI.Count];
+            for (int k = 0; k < FI.Count; k++) soup[k] = FV[FI[k]];
+            shapes.Add((new ConcavePolygonShape3D { Data = soup, BackfaceCollision = true }, Transform3D.Identity, (int)PlayerController.Surf.Concrete));
+        }
+
+        static Node3D BuildTunnelBodies(List<(Shape3D Shape, Transform3D Xf, int Surf)> shapes)
+        {
+            var holder = new Node3D { Name = "TunnelBodies" };
+            foreach (var (shape, xf, surf) in shapes)
+            {
+                var body = new StaticBody3D { CollisionLayer = 1u << 0, Transform = xf };
+                body.SetMeta(PlayerController.SurfMeta, surf);
+                body.AddChild(new CollisionShape3D { Shape = shape });
+                holder.AddChild(body);
+            }
+            return holder;
+        }
+
         /// <summary>The deck unit without the faces of its roadway (every triangle lying in the roadway plane between the
         /// parapets' feet), for DRAWING only -- its collider keeps them. Axes read off the mesh's own bounds (the
         /// 17 m one is across, the 5.25 m one is up) rather than assumed, because ObjMesh's import convention flips one.</summary>
@@ -952,7 +1122,8 @@ void fragment() {
         {
             if (Player == null || !IsInstanceValid(Player)) return;
             var p = Player.GlobalPosition;
-            float g = Src.HeightAt(AbsX(p.X), AbsZ(p.Z));
+            // what they should be standing ON: inside a tunnel the hill is overhead and the floor is the tunnel's
+            float g = Src.WalkableHeightAt(AbsX(p.X), AbsZ(p.Z));
             if (p.Y < g - 2f)
             {
                 Rescues++;
@@ -999,11 +1170,12 @@ void fragment() {
                     if (r.Lod == 0) continue;
                     var b = Build(Src.Generate(c, 0));
                     GenMsTotal += b.D.GenMs; GenCount++;
-                    r.Lod0Heights = b.D.Heights;
+                    r.Lod0Heights = b.D.Heights; r.Lod0Holes = b.D.Holes;
                     r.TreeList = b.D.Trees; _pendingTrees[c] = b.TreeXf;
                     r.FoliageXf ??= b.FoliageXf;
                     r.PoleXf ??= b.Poles;
                     AdoptBridges(r, b);   // ⚠ this path is how a teleport builds the 3x3 -- miss it and the bridges beside you never appear
+                    AdoptTunnels(r, b);
                     Apply(r, b);
                     r.ImpTrees = b.ImpTrees;
                     UpdateExtras(r, c.RingTo(center));
@@ -1089,6 +1261,7 @@ void fragment() {
                 for (int i = 0; i < n; i++)
                 {
                     int a = j * v + i, b = a + 1, c = a + v, e = c + 1;
+                    if (d.Holes != null && (d.Holes[a] || d.Holes[b] || d.Holes[c] || d.Holes[e])) continue;   // a tunnel mouth
                     Tri(V, I, a, b, c, Vector3.Up);
                     Tri(V, I, b, e, c, Vector3.Up);
                 }
@@ -1104,6 +1277,10 @@ void fragment() {
                 for (int t = 0; t < n; t++)
                 {
                     int a = edgeVert(t), b = edgeVert(t + 1), al = start + t, bl = start + t + 1;
+                    // not over a tunnel: the hill's height hung skirt-deep is a wall straight across the bore (and from a
+                    // mouth's hole, across the mouth)
+                    if (d.OverTunnel != null && (d.OverTunnel[a] || d.OverTunnel[b])) continue;
+                    if (d.Holes != null && (d.Holes[a] || d.Holes[b])) continue;
                     Tri(V, I, a, b, al, outward);
                     Tri(V, I, b, bl, al, outward);
                 }
@@ -1206,7 +1383,9 @@ void fragment() {
                     var col = soup?[kind == (int)RoadKind.Trail ? 1 : 0];
                     var rk = (RoadKind)kind;
                     float hw = RibbonHalf(rk), lift = InfiniteRoads.Lift(rk), texM = RoadTexMetres[kind], bev = 2f * InfiniteRoads.Thickness(rk);
-                    float Y(float lx, float lz, float h) =>
+                    // under a tunnel the ground mesh is the HILL: never lift the slab onto it
+                    bool inTunnel = rp.InTunnel;
+                    float Y(float lx, float lz, float h) => inTunnel ? InfiniteRoads.SurfaceY(rk, h) :
                         Mathf.Max(InfiniteRoads.SurfaceY(rk, h), InfiniteTerrain.MeshHeightAt(d, Mathf.Clamp(lx, 0f, InfiniteTerrain.RegionSize), Mathf.Clamp(lz, 0f, InfiniteTerrain.RegionSize)) + 0.02f + lift);
                     var A = new Vector3((float)(rp.X0 - ox), 0f, (float)(rp.Z0 - oz));
                     var B = new Vector3((float)(rp.X1 - ox), 0f, (float)(rp.Z1 - oz));
@@ -1312,7 +1491,7 @@ void fragment() {
                 }
             }
             return new Built { D = d, V = V.ToArray(), N = N.ToArray(), UV = UV.ToArray(), I = I.ToArray(), S0 = s0, S1 = s1, SplatSize = v, TreeXf = trees, ImpTrees = imp, BridgeXf = bridgeXf, FoliageXf = foliage,
-                               Road = roadMeshes, RoadCol = roadCol, Poles = poles };
+                               Road = roadMeshes, RoadCol = roadCol, Poles = poles, Tunnels = d.Tunnels };
         }
 
         /// <summary>Add a triangle FRONT-FACING along `front` whichever way round it was written: Godot's front face
