@@ -169,7 +169,7 @@ namespace UnturnedGodot.Testing
                         }
                 T.Check($"a ray onto a road stops ON it: {probes} probes (main {kinds[1]}, small {kinds[2]}, trail {kinds[3]}), top within {worstTop * 1000f:0.0} mm of the driven surface, {wrongBody} on the wrong body",
                     probes >= 4 && worstTop < 0.01f && wrongBody == 0);
-                T.Check($"...and its edge is a 1:5 bevel: {edges} rays half a metre past the asphalt land on the slab within {worstEdge * 1000f:0.0} mm of where the bevel is, {edgeOff} do not{edgeWhat}",
+                T.Check($"...and its edge is a 1:{InfiniteRoads.BevelSlope:0} bevel: {edges} rays half a metre past the asphalt land on the slab within {worstEdge * 1000f:0.0} mm of where the bevel is, {edgeOff} do not{edgeWhat}",
                     edges >= 4 && edgeOff == 0);
             }
             int spans = 0, fields = 0;
@@ -464,8 +464,8 @@ namespace UnturnedGodot.Testing
                 var verge = top + side * (InfiniteRoads.PavedHalf(RoadKind.Highway) + 0.8f);
                 var onFloor = space.IntersectRay(PhysicsRayQueryParameters3D.Create(verge, verge + Vector3.Down * 10f, 1u << 0));
                 float floorY = onFloor.Count > 0 ? ((Vector3)onFloor["position"]).Y : float.NaN, bedY = tun.Y[mid] - InfiniteRoads.Proud - InfiniteRoads.Lift(RoadKind.Highway);
-                // (the slab's edge bevel runs 1:5 now, so 0.8 m out it is still 0.16 m over the road's top less 0.8 x
-                // drop/run: the surface there is whichever is higher, the bevel or the floor at the bed)
+                // (the slab's edge bevel runs 1:3 now (BevelSlope), so 0.8 m out it is 0.8 x drop/run under the road's top:
+                // the surface there is whichever is higher, the bevel or the floor at the bed)
                 float bevelY = tun.Y[mid] - 0.8f * 2f * InfiniteRoads.Thickness(RoadKind.Highway) / InfiniteRoads.BevelRun(RoadKind.Highway);
                 float wantFloor = Mathf.Max(bedY, bevelY);
                 T.Check($"beside it, the floor: y {floorY:0.000} vs the bed {bedY:0.000} / the slab's bevel {bevelY:0.000}", onFloor.Count > 0 && Mathf.Abs(floorY - wantFloor) < 0.06f);

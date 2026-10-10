@@ -68,10 +68,12 @@ namespace SDG.Unturned
         /// 0.22 m, Trail 0.3 -> 0.33 m. As in RoadField, each edge is a bevel running out AND down twice this from the
         /// top, so its foot is buried.</summary>
         public static float Thickness(RoadKind k) => k == RoadKind.Trail ? 0.33f : 0.22f;
-        /// <summary>How far OUT a slab's edge bevel (and a line end's ramp) runs while it drops its 2 x Thickness: five
-        /// times the drop, a 1:5 slope (strawberry 2026-10-10: "make the ramps (at the sides of each road spline) a lot
-        /// more gentle"). RoadField's is 1:1, 45 degrees -- a kerb a car bumps off.</summary>
-        public static float BevelRun(RoadKind k) => 5f * 2f * Thickness(k);
+        /// <summary>How far OUT a slab's edge bevel (and a line end's ramp) runs while it drops its 2 x Thickness: three
+        /// times the drop, a 1:3 slope (strawberry 2026-10-10: "make the ramps (at the sides of each road spline) a lot
+        /// more gentle", then of 1:5: "a bit less ramp at the edges"). RoadField's is 1:1, 45 degrees -- a kerb a car
+        /// bumps off.</summary>
+        public const float BevelSlope = 3f;
+        public static float BevelRun(RoadKind k) => BevelSlope * 2f * Thickness(k);
         /// <summary>How much wider each side a highway carriageway's deck roadway is than its ribbon (8.0 vs 6.9 m), and
         /// how far before a deck end the ribbon starts widening to it.</summary>
         public const float MouthWiden = DeckRoadwayHalf - HighwayLaneHalf;

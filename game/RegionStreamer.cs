@@ -1535,7 +1535,7 @@ void fragment() {
             }
             // road surfaces: a SLAB per centreline piece, RoadField's own cross-section -- a flat top at
             // InfiniteRoads.SurfaceY and a bevel each side running down 2 x Thickness, so the edge stands PEI's height
-            // and its foot is buried -- but out over BevelRun, a 1:5 slope rather than RoadField's 45-degree kerb (strawberry 2026-10-09: "give the road splines actual collision and the
+            // and its foot is buried -- but out over BevelRun, a 1:3 slope (InfiniteRoads.BevelSlope) rather than RoadField's 45-degree kerb (strawberry 2026-10-09: "give the road splines actual collision and the
             // proper thickness (vertical height)"). Lifted only where this LOD's coarser mesh still rises above it. One
             // mesh per class; at LOD0 the same faces, closed underneath as RoadField closes its collider, are the
             // region's road collision.
@@ -1618,7 +1618,7 @@ void fragment() {
                     bool widened = rp.W0 > 1e-3f || rp.W1 > 1e-3f;
                     Vector3 laW = widened ? Edge(A, na, hw + rp.W0, rp.H0) : la, raW = widened ? Edge(A, -na, hw + rp.W0, rp.H0) : ra;
                     Vector3 lbW = widened ? Edge(B, nb, hw + rp.W1, rp.H1) : lb, rbW = widened ? Edge(B, -nb, hw + rp.W1, rp.H1) : rb;
-                    // the edge bevels: down the slab's depth over BevelRun outward (1:5; RoadField's 1:1 was a kerb)
+                    // the edge bevels: down the slab's depth over BevelRun outward (1:3; RoadField's 1:1 was a kerb)
                     Vector3 loa = laW + na * run + down, roa = raW - na * run + down, lob = lbW + nb * run + down, rob = rbW - nb * run + down;
                     float v0 = rp.S0 / texM, v1 = rp.S1 / texM;
 
