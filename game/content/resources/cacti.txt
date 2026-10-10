@@ -1,0 +1,16 @@
+# Approved cactus MODEL inventory, not a spawn manifest.
+# Single-part resource naming; deliberately NOT appended to resources.txt.
+Cactus_Column_0 1 NONE
+Cactus_Column_1 1 NONE
+Cactus_Column_2 1 NONE
+Cactus_Branched_0 1 NONE
+Cactus_Branched_1 1 NONE
+Cactus_Branched_2 1 NONE
+Cactus_Barrel_0 1 NONE
+Cactus_Barrel_2 1 NONE
+Cactus_Paddles_0 1 NONE
+Cactus_Paddles_1 1 NONE
+Cactus_Paddles_2 1 NONE
+Cactus_Cluster_0 1 NONE
+Cactus_Cluster_1 1 NONE
+Cactus_Cluster_2 1 NONE

@@ -1,0 +1,366 @@
+{
+  "schema": "unturned-godot.cactus-model-library.v1",
+  "models": 14,
+  "excluded": [
+    "Cactus_Barrel_1"
+  ],
+  "native_up": "+Y",
+  "metres_scale": 1,
+  "ground_datum_y": 0,
+  "no_recentre": true,
+  "spikes": 0,
+  "spawning": "none; inventory only; no bin files or gameplay IDs",
+  "resource_manifest_unchanged_sha256": "056dba137b851eec3acf974d861599935ce26f9fca0be2f9feaf0deeddfa64c0",
+  "entries": [
+    {
+      "name": "Cactus_Column_0",
+      "family": "Column",
+      "variant": 0,
+      "label": "Straight",
+      "part_count": 1,
+      "obj": "Cactus_Column_0_0.obj",
+      "texture": "Cactus_Column_0_0_tex.png",
+      "triangles": 120,
+      "height_above_ground_m": 2.24,
+      "bounds": {
+        "min": [
+          -0.319984001,
+          -0.05,
+          -0.2912
+        ],
+        "max": [
+          0.324870199,
+          2.24,
+          0.2912
+        ]
+      },
+      "obj_sha256": "25c23da896e730c10aad9d05931cce6eae8899b3ed9aa759b270dbc36ae74c36",
+      "texture_sha256": "159adad058f8304bba77af4bfe6403267499013601c858acadeaaad0ac94f646"
+    },
+    {
+      "name": "Cactus_Column_1",
+      "family": "Column",
+      "variant": 1,
+      "label": "Stout",
+      "part_count": 1,
+      "obj": "Cactus_Column_1_0.obj",
+      "texture": "Cactus_Column_1_0_tex.png",
+      "triangles": 120,
+      "height_above_ground_m": 1.66,
+      "bounds": {
+        "min": [
+          -0.4547303208707004,
+          -0.05,
+          -0.40040000000000003
+        ],
+        "max": [
+          0.4398376371726061,
+          1.66,
+          0.40040000000000003
+        ]
+      },
+      "obj_sha256": "eba888215b12d893952356698a4797b4da17d5d22d5dd4fffaa8325382664871",
+      "texture_sha256": "159adad058f8304bba77af4bfe6403267499013601c858acadeaaad0ac94f646"
+    },
+    {
+      "name": "Cactus_Column_2",
+      "family": "Column",
+      "variant": 2,
+      "label": "Leaning",
+      "part_count": 1,
+      "obj": "Cactus_Column_2_0.obj",
+      "texture": "Cactus_Column_2_0_tex.png",
+      "triangles": 120,
+      "height_above_ground_m": 2.54,
+      "bounds": {
+        "min": [
+          -0.27901930914357437,
+          -0.05,
+          -0.2547010725514762
+        ],
+        "max": [
+          0.5243325663996219,
+          2.54,
+          0.28990740484526223
+        ]
+      },
+      "obj_sha256": "2e734ebb3be5ad35af121091d013c0c449752f1e5e121150300212f8bd50510b",
+      "texture_sha256": "159adad058f8304bba77af4bfe6403267499013601c858acadeaaad0ac94f646"
+    },
+    {
+      "name": "Cactus_Branched_0",
+      "family": "Branched",
+      "variant": 0,
+      "label": "Two arms",
+      "part_count": 1,
+      "obj": "Cactus_Branched_0_0.obj",
+      "texture": "Cactus_Branched_0_0_tex.png",
+      "triangles": 280,
+      "height_above_ground_m": 4.43,
+      "bounds": {
+        "min": [
+          -1.415765075,
+          -0.08,
+          -0.4095
+        ],
+        "max": [
+          1.542797997,
+          4.43,
+          0.4095
+        ]
+      },
+      "obj_sha256": "7b8b5d2a83631178accf214286faaabd293b407a3c7da386abcddb0d1d7767d0",
+      "texture_sha256": "159adad058f8304bba77af4bfe6403267499013601c858acadeaaad0ac94f646"
+    },
+    {
+      "name": "Cactus_Branched_1",
+      "family": "Branched",
+      "variant": 1,
+      "label": "Single high arm",
+      "part_count": 1,
+      "obj": "Cactus_Branched_1_0.obj",
+      "texture": "Cactus_Branched_1_0_tex.png",
+      "triangles": 200,
+      "height_above_ground_m": 4.98,
+      "bounds": {
+        "min": [
+          -0.4994856158484775,
+          -0.08,
+          -0.3822
+        ],
+        "max": [
+          1.4598892245649808,
+          4.98,
+          0.3822
+        ]
+      },
+      "obj_sha256": "cd90394d88e294ebfb13260d6c52348ba454cdcc43875024cd65621a483b1f3e",
+      "texture_sha256": "159adad058f8304bba77af4bfe6403267499013601c858acadeaaad0ac94f646"
+    },
+    {
+      "name": "Cactus_Branched_2",
+      "family": "Branched",
+      "variant": 2,
+      "label": "Three unequal arms",
+      "part_count": 1,
+      "obj": "Cactus_Branched_2_0.obj",
+      "texture": "Cactus_Branched_2_0_tex.png",
+      "triangles": 360,
+      "height_above_ground_m": 4.01,
+      "bounds": {
+        "min": [
+          -1.4445712729809665,
+          -0.08,
+          -0.4641
+        ],
+        "max": [
+          1.656935823098208,
+          4.01,
+          1.3398921509799262
+        ]
+      },
+      "obj_sha256": "5e0803323c3078ea2a2f11d88724fb525364e7cc77df327d04fa7f16e7afa1eb",
+      "texture_sha256": "159adad058f8304bba77af4bfe6403267499013601c858acadeaaad0ac94f646"
+    },
+    {
+      "name": "Cactus_Barrel_0",
+      "family": "Barrel",
+      "variant": 0,
+      "label": "Round",
+      "part_count": 1,
+      "obj": "Cactus_Barrel_0_0.obj",
+      "texture": "Cactus_Barrel_0_0_tex.png",
+      "triangles": 120,
+      "height_above_ground_m": 1.29,
+      "bounds": {
+        "min": [
+          -0.71,
+          -0.04,
+          -0.6461
+        ],
+        "max": [
+          0.71,
+          1.29,
+          0.6461
+        ]
+      },
+      "obj_sha256": "aea3a52126d82f6900332f9b01d364bfe34483e026123791992c7c250eb71f96",
+      "texture_sha256": "159adad058f8304bba77af4bfe6403267499013601c858acadeaaad0ac94f646"
+    },
+    {
+      "name": "Cactus_Barrel_2",
+      "family": "Barrel",
+      "variant": 2,
+      "label": "Tall offset crown",
+      "part_count": 1,
+      "obj": "Cactus_Barrel_2_0.obj",
+      "texture": "Cactus_Barrel_2_0_tex.png",
+      "triangles": 120,
+      "height_above_ground_m": 1.67,
+      "bounds": {
+        "min": [
+          -0.5537272947774106,
+          -0.04,
+          -0.5467715003021169
+        ],
+        "max": [
+          0.6237272947774106,
+          1.67,
+          0.5267715003021168
+        ]
+      },
+      "obj_sha256": "2bfefaf6a272ef2b30590aa0b72a1f5f4bf6b164d4f12236cf2734f19521504b",
+      "texture_sha256": "159adad058f8304bba77af4bfe6403267499013601c858acadeaaad0ac94f646"
+    },
+    {
+      "name": "Cactus_Paddles_0",
+      "family": "Paddles",
+      "variant": 0,
+      "label": "Five-pad fan",
+      "part_count": 1,
+      "obj": "Cactus_Paddles_0_0.obj",
+      "texture": "Cactus_Paddles_0_0_tex.png",
+      "triangles": 192,
+      "height_above_ground_m": 2.797175993,
+      "bounds": {
+        "min": [
+          -1.066513106,
+          -0.04,
+          -0.125
+        ],
+        "max": [
+          1.179141786,
+          2.797175993,
+          0.125
+        ]
+      },
+      "obj_sha256": "a003214cfd61f0ce573efd6827c95f01cd16f6281c113fd32fdce87a0f1aeab2",
+      "texture_sha256": "159adad058f8304bba77af4bfe6403267499013601c858acadeaaad0ac94f646"
+    },
+    {
+      "name": "Cactus_Paddles_1",
+      "family": "Paddles",
+      "variant": 1,
+      "label": "Low spreading fan",
+      "part_count": 1,
+      "obj": "Cactus_Paddles_1_0.obj",
+      "texture": "Cactus_Paddles_1_0_tex.png",
+      "triangles": 224,
+      "height_above_ground_m": 1.6299880554019088,
+      "bounds": {
+        "min": [
+          -1.5007046780636206,
+          -0.04,
+          -0.125
+        ],
+        "max": [
+          1.5444405760517532,
+          1.6299880554019088,
+          0.125
+        ]
+      },
+      "obj_sha256": "c65646c747a261de76f6ee4efe7ff411bda8f44573f193e334256813b0d18eba",
+      "texture_sha256": "159adad058f8304bba77af4bfe6403267499013601c858acadeaaad0ac94f646"
+    },
+    {
+      "name": "Cactus_Paddles_2",
+      "family": "Paddles",
+      "variant": 2,
+      "label": "Narrow upright fan",
+      "part_count": 1,
+      "obj": "Cactus_Paddles_2_0.obj",
+      "texture": "Cactus_Paddles_2_0_tex.png",
+      "triangles": 160,
+      "height_above_ground_m": 2.9677976792481555,
+      "bounds": {
+        "min": [
+          -0.3735730117844046,
+          -0.04,
+          -0.12
+        ],
+        "max": [
+          0.9778943016566612,
+          2.9677976792481555,
+          0.12
+        ]
+      },
+      "obj_sha256": "e587435dae510c8026e9b4f7b5b4dab1529cee65ea5f2451bcdf40aca127462a",
+      "texture_sha256": "159adad058f8304bba77af4bfe6403267499013601c858acadeaaad0ac94f646"
+    },
+    {
+      "name": "Cactus_Cluster_0",
+      "family": "Cluster",
+      "variant": 0,
+      "label": "Three stems",
+      "part_count": 1,
+      "obj": "Cactus_Cluster_0_0.obj",
+      "texture": "Cactus_Cluster_0_0_tex.png",
+      "triangles": 192,
+      "height_above_ground_m": 1.87,
+      "bounds": {
+        "min": [
+          -0.709825202,
+          -0.05,
+          -0.29
+        ],
+        "max": [
+          0.627741746,
+          1.87,
+          0.39
+        ]
+      },
+      "obj_sha256": "946cf25452cdbb699102ebb89c86f6dcfee43c83464d8dc8f6047e9b3c387c4d",
+      "texture_sha256": "159adad058f8304bba77af4bfe6403267499013601c858acadeaaad0ac94f646"
+    },
+    {
+      "name": "Cactus_Cluster_1",
+      "family": "Cluster",
+      "variant": 1,
+      "label": "Twin stems",
+      "part_count": 1,
+      "obj": "Cactus_Cluster_1_0.obj",
+      "texture": "Cactus_Cluster_1_0_tex.png",
+      "triangles": 128,
+      "height_above_ground_m": 1.58,
+      "bounds": {
+        "min": [
+          -0.5410804419027501,
+          -0.05,
+          -0.31
+        ],
+        "max": [
+          0.5750895007176141,
+          1.58,
+          0.39
+        ]
+      },
+      "obj_sha256": "3eb6e570da764a4a95f3744c97df004a6ac4d1cf01e0c062ccc691a6a95a5cb2",
+      "texture_sha256": "159adad058f8304bba77af4bfe6403267499013601c858acadeaaad0ac94f646"
+    },
+    {
+      "name": "Cactus_Cluster_2",
+      "family": "Cluster",
+      "variant": 2,
+      "label": "Four stems",
+      "part_count": 1,
+      "obj": "Cactus_Cluster_2_0.obj",
+      "texture": "Cactus_Cluster_2_0_tex.png",
+      "triangles": 256,
+      "height_above_ground_m": 2.1,
+      "bounds": {
+        "min": [
+          -0.7667055148015918,
+          -0.05,
+          -0.61
+        ],
+        "max": [
+          0.6558357969527363,
+          2.1,
+          0.38
+        ]
+      },
+      "obj_sha256": "992fb65c1dd387c1cd2583552e20b75e19286b63f4e0a91d1eb26046e3b0e360",
+      "texture_sha256": "159adad058f8304bba77af4bfe6403267499013601c858acadeaaad0ac94f646"
+    }
+  ]
+}

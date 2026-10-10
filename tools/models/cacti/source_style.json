@@ -1,0 +1,69 @@
+{
+  "coordinates": {
+    "up": "+Y",
+    "forward": "+Z",
+    "ground_datum_y": 0,
+    "root_skirt_min_y": -0.08,
+    "scale": "metres, scale 1",
+    "no_recentre": true
+  },
+  "palette": [
+    [
+      54,
+      109,
+      55
+    ],
+    [
+      47,
+      90,
+      48
+    ],
+    [
+      60,
+      114,
+      61
+    ],
+    [
+      79,
+      130,
+      70
+    ],
+    [
+      105,
+      147,
+      82
+    ],
+    [
+      186,
+      171,
+      152
+    ],
+    [
+      92,
+      70,
+      44
+    ],
+    [
+      111,
+      140,
+      76
+    ]
+  ],
+  "reference_hashes": [
+    {
+      "name": "Bush_0_0",
+      "source_obj_sha256": "9c2024d08944b55763f9740e85d058b467141fb3f92363fff3adb0f9de463b02",
+      "source_texture_sha256": "852798fadcb6b3556fae6f2659e9ca4847d0e0f1953dd5d78115739695efbabc"
+    },
+    {
+      "name": "grass_00",
+      "source_obj_sha256": "0da05ea95781e5f1ef28c662fbaa4136ae7244b2484949f1d94197f8f009ade4",
+      "source_texture_sha256": "d4e49b26b5a92b2bacbd9aa63ecfcdc28f633e06bcbda095e0ac713ef26c9cbb"
+    },
+    {
+      "name": "flowers_00",
+      "source_obj_sha256": "277daf019b70e64981ff79217bd131aa447ce2cef2dc3b91ff8b5fb3171bedd8",
+      "source_texture_sha256": "6a85644cfb98297dbcdc815e358627f3297e43d11165fee2d93753a3f1e6ea45"
+    }
+  ]
+}
