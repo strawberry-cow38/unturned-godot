@@ -4511,6 +4511,19 @@ namespace UnturnedGodot
             field.Rebuild();
             Log.Print($"[powerline] test: {field.PoleCount} poles, {field.SpanCount} spans");
 
+            // UG_BREAKPOLE=<index>: smash that pole, the way a destructible break does, so the rig can render
+            // the before/after of "wires disconnect from broken poles". The MESH is hidden too, because
+            // DestructibleField would have hidden it and a wire-less pole still standing is a misleading shot.
+            if (int.TryParse(System.Environment.GetEnvironmentVariable("UG_BREAKPOLE"), out int bp)
+                && bp >= 0 && bp < field.PoleCount)
+            {
+                PowerLineField.NotifyPoleBroken(field.PoleOrigin(bp), true);
+                int shown = 0;
+                foreach (Node ch in GetChildren())
+                    if (ch is MeshInstance3D mi2 && mi2.Mesh == mesh && shown++ == bp) mi2.Visible = false;
+                Log.Print($"[powerline] test: pole {bp} BROKEN -> {field.WireNodeCount} wire node(s) left");
+            }
+
             if (System.Environment.GetEnvironmentVariable("UG_PLANCHORS") == "1")
             {
                 var am = new StandardMaterial3D { AlbedoColor = new Color(1f, 0.1f, 0.1f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded };

@@ -134,6 +134,10 @@ namespace UnturnedGodot
         {
             public Transform3D Xform;
             public string Mesh;                       // null = the roadside pole, for callers that predate pylons
+            /// <summary>Its prop has been destroyed. The pole STAYS in the list -- destructibles respawn on a
+            /// reset clock, so breaking has to be reversible, and dropping the entry would lose the spans with
+            /// it and leave nothing to restore. Rebuild just skips any span touching a broken end.</summary>
+            public bool Broken;
             public Vector3 Origin => Xform.Origin;
         }
 
@@ -189,6 +193,48 @@ namespace UnturnedGodot
 
         /// <summary>How far apart two poles of this kind may be strung.</summary>
         public static float MaxSpanFor(bool pylon) => pylon ? PylonMaxSpan : MaxSpan;
+
+        /// <summary>⚠⚠ EVERY LIVE FIELD, NOT ONE "Active". The obvious shape here is a Terrain.Active-style
+        /// singleton, and it is wrong: RegionStreamer builds a PowerLineField PER STREAMED REGION, so the
+        /// infinite world has several alive at once and a singleton would silently leave every region but the
+        /// last one with wires still hanging off broken poles.
+        ///
+        /// A break arrives as a WORLD POSITION (WorldBuilder knows where the prop stood, not which field owns
+        /// it), so each field is asked and the ones with no pole there no-op. Same position matching the span
+        /// re-seed uses, for the same reason: an index only means something against the list that made it.</summary>
+        static readonly List<PowerLineField> _live = new();
+
+        public override void _EnterTree() { if (!_live.Contains(this)) _live.Add(this); }
+        public override void _ExitTree() { _live.Remove(this); }
+
+        /// <summary>Mark the pole standing at `world` broken (or whole again) in whichever field owns it, and
+        /// restring. Returns how many poles matched -- 0 means nothing stood there, which a caller can log
+        /// rather than assume it worked.</summary>
+        public static int NotifyPoleBroken(Vector3 world, bool broken, float radius = 2f)
+        {
+            int hit = 0;
+            for (int i = _live.Count - 1; i >= 0; i--)
+            {
+                var f = _live[i];
+                if (!IsInstanceValid(f)) { _live.RemoveAt(i); continue; }
+                if (f.SetPoleBroken(f.PickPole(world, radius), broken)) hit++;
+            }
+            return hit;
+        }
+
+        /// <summary>Break or restore one pole. Returns false (and rebuilds nothing) when the index is not a
+        /// pole or the flag already read that way -- a no-op must not cost a full restring, because a grid
+        /// sweep touches every destructible on the map at once.</summary>
+        public bool SetPoleBroken(int pole, bool broken)
+        {
+            if (pole < 0 || pole >= _poles.Count) return false;
+            if (_poles[pole].Broken == broken) return false;
+            var p = _poles[pole]; p.Broken = broken; _poles[pole] = p;
+            Rebuild();
+            return true;
+        }
+
+        public bool IsPoleBroken(int pole) => pole >= 0 && pole < _poles.Count && _poles[pole].Broken;
 
         public override void _Ready()
         {
@@ -462,6 +508,10 @@ namespace UnturnedGodot
             for (int i = 0; i < _spans.Count; i++)
             {
                 var sp = _spans[i];
+                // ⭐ THE DISCONNECT (strawberry 2026-10-10: "wires should disconnect from broken poles"). The
+                // span SURVIVES in _spans -- only its drawing is skipped -- so when the pole respawns the line
+                // comes back without anyone having to remember what was strung where.
+                if (_poles[sp.A].Broken || _poles[sp.B].Broken) continue;
                 AnchorsWorld(sp.A, _poles[sp.B].Origin, an);
                 AnchorsWorld(sp.B, _poles[sp.A].Origin, bn);
                 var st = new SurfaceTool();

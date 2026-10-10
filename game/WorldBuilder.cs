@@ -1789,10 +1789,22 @@ namespace UnturnedGodot
                     var mns = mains;
                     var toast = placedToaster;
                     var indoorLamp = placedIndoorLamp;   // indoor ceiling/standing/desk light darkens on break like the streetlight above
+                    // ⭐ A SMASHED POLE DROPS ITS WIRES (strawberry 2026-10-10: "work on destruction for the
+                    // smaller power lines, wires should disconnect from broken poles"). The pole was already
+                    // destructible and already left logs; only the wires never noticed.
+                    //
+                    // ⚠ By POSITION, not by index. WorldBuilder records poles into result.PowerLinePoles but
+                    // never holds the field -- it is built later, and in the infinite world there is one PER
+                    // STREAMED REGION. So the break is announced to every live field and the one with a pole
+                    // there answers. Captured as a local because the closure must not re-read the loop var.
+                    bool isPole = name == PowerLineField.PoleMesh;
+                    var poleAt = gpos;
+
                     System.Action<bool> onAlive = null;
-                    if (lamp != null || sigs != null || tap != null || tv != null || mon != null || rad != null || mns != null || toast != null || indoorLamp != null || flagCloth != null)
+                    if (isPole || lamp != null || sigs != null || tap != null || tv != null || mon != null || rad != null || mns != null || toast != null || indoorLamp != null || flagCloth != null)
                         onAlive = alive =>
                         {
+                            if (isPole) PowerLineField.NotifyPoleBroken(poleAt, !alive);
                             if (flagCloth != null && GodotObject.IsInstanceValid(flagCloth)) flagCloth.SetBroken(!alive);   // kill the flapping cloth with the pole; restore on a rubble reset (master)
                             if (toast != null && GodotObject.IsInstanceValid(toast)) toast.SetBroken(!alive);
                             if (tap != null && GodotObject.IsInstanceValid(tap)) tap.SetBroken(!alive);
