@@ -2325,6 +2325,15 @@ namespace UnturnedGodot
                                              c.Z + Mathf.Cos(yaw) * r * (_belly ? 0.7f : 1f));
             if (_aimPoint == Vector3.Zero) _aimPoint = _belly ? VehicleBounds().GetCenter() : GlassAim();
             _glassCam.LookAt(_aimPoint, Vector3.Up);
+            // UG_GLASSFOV=<degrees>: a TELEPHOTO orbit. Rain beads are millimetres -- which is correct, they are
+            // modelled at 1-3 mm -- so at any distance that frames a whole car they are about one pixel, and no
+            // orbit radius fixes that: closing in far enough to resolve a bead puts the camera inside the bodywork.
+            // Narrowing the lens magnifies without moving the eye, which is the only way to photograph the drop
+            // SHAPE (bead vs. bead-with-a-trail) rather than a speckle. 10 deg off the default 75 is ~7.5x.
+            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_GLASSFOV"),
+                               System.Globalization.NumberStyles.Float,
+                               System.Globalization.CultureInfo.InvariantCulture, out float gfov) && gfov > 0.5f)
+                _glassCam.Fov = Mathf.Clamp(gfov, 1f, 120f);
             if (System.Environment.GetEnvironmentVariable("UG_GLASSDIAG") == "1")
             {
                 var aabb = new Aabb(); bool first = true;

@@ -99,6 +99,11 @@ namespace UnturnedGodot
 
         public static ShaderMaterial RainGlassMat(Color tint, float metallic, float roughness)
         {
+            // The shader links rain_wetness / rain_intensity as GLOBALS, and a material that compiles before its
+            // globals are registered links them invalid and silently renders with none of them (the GrassDisplacers
+            // lesson -- FoliageField and RoadField both call this for the same reason). The glass harnesses do not
+            // all go through a map load, so this cannot be left to the caller.
+            RainSystem3D.EnsureGlobals();
             _rainGlass ??= GD.Load<Shader>("res://content/rain_glass.gdshader");
             var m = new ShaderMaterial { Shader = _rainGlass };
             m.SetShaderParameter("tint", tint);

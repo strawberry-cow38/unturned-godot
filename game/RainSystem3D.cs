@@ -17,9 +17,28 @@ namespace UnturnedGodot
         float _lastAlphaI = -1f;   // last intensity written to the material alpha -- skip the per-frame AlbedoColor churn when unchanged
 
         static bool _globalsRegistered;
+        /// <summary>Has the globals funnel run yet? A test seam, because the thing it guards cannot be observed
+        /// directly: HEADLESS GODOT REGISTERS NO GLOBAL SHADER PARAMETERS AT ALL -- GlobalShaderParameterGet comes
+        /// back Nil for every one of them, registered or not -- so "is rain_wetness there" is a question about the
+        /// renderer, not about our wiring, and it answers the same whether or not anybody called EnsureGlobals.
+        /// This flag answers the question that is actually ours: did the funnel run before the material was built.</summary>
+        public static bool GlobalsRegistered => _globalsRegistered;
         /// <summary>Register the rain_wetness + rain_intensity global shader uniforms ONCE, process-wide. MUST run
         /// before any material that reads them compiles, or that material dies (the GrassDisplacers lesson) -- so
         /// BuildTerrainMaterial, WeatherManager, and the --raintest / --terrain harnesses all funnel through here.</summary>
+        /// <summary>Set a 0..1 global shader parameter from an env var, if it is set to a parsable number.
+        /// ⚠ TryParse, not Parse: a shell's `set VAR= ` leaves a SPACE, and Parse threw out of _Ready -- the scene
+        /// was never built and the harness still wrote a PNG of an empty viewport, which reads as a broken shader.</summary>
+        static void ForceGlobal01(string env, string global)
+        {
+            if (!float.TryParse(System.Environment.GetEnvironmentVariable(env),
+                                System.Globalization.NumberStyles.Float,
+                                System.Globalization.CultureInfo.InvariantCulture, out float v)) return;
+            v = Mathf.Clamp(v, 0f, 1f);
+            RenderingServer.GlobalShaderParameterSet(global, v);
+            Log.Print($"[weather] forced {global} = {v:0.00} ({env})");
+        }
+
         public static void EnsureGlobals()
         {
             if (_globalsRegistered) return;
@@ -27,6 +46,13 @@ namespace UnturnedGodot
             WorldOrigin.EnsureGlobal();   // swell.gdshaderinc reads it, and the sea compiles behind this funnel
             RenderingServer.GlobalShaderParameterAdd("rain_wetness", RenderingServer.GlobalShaderParameterType.Float, 0f);
             RenderingServer.GlobalShaderParameterAdd("rain_intensity", RenderingServer.GlobalShaderParameterType.Float, 0f);
+            // UG_RAINWET / UG_RAININT, HERE IN THE FUNNEL for the same reason UG_SNOWCOVER is below: they were read
+            // only on the --terrain path, so every OTHER showcase (--glassshot, --raintest, the prop harnesses) ran
+            // with both globals at 0 and rendered bone-dry glass -- which looks exactly like a broken water shader.
+            // A live WeatherManager overwrites these every frame, and should: the knobs exist for the scenes that
+            // have no weather sim to ask.
+            ForceGlobal01("UG_RAINWET", "rain_wetness");
+            ForceGlobal01("UG_RAININT", "rain_intensity");
             // SNOW LYING ON THE GROUND, 0..1 (strawberry 2026-10-10: "after snowfall, the grass should fade
             // into snow material. after it warms up, show melt back into grass"). ⭐ A GLOBAL rather than a
             // splatmap edit, and that is the whole design: repainting layer 2 to layer 6 would destroy the
@@ -40,14 +66,7 @@ namespace UnturnedGodot
             // ⚠ SET HERE, IN THE FUNNEL, and not beside a WeatherManager.Attach -- there are four attach sites
             // on different map paths and the showcase does not use the one I first put this on, so the knob
             // silently did nothing and three "different" renders came back identical. Every path reaches here.
-            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_SNOWCOVER"),
-                               System.Globalization.NumberStyles.Float,
-                               System.Globalization.CultureInfo.InvariantCulture, out float forced))
-            {
-                forced = Mathf.Clamp(forced, 0f, 1f);
-                RenderingServer.GlobalShaderParameterSet("snow_cover", forced);
-                Log.Print($"[snow] forced snow_cover = {forced:0.00}");
-            }
+            ForceGlobal01("UG_SNOWCOVER", "snow_cover");
             RenderingServer.GlobalShaderParameterAdd("swell_scale", RenderingServer.GlobalShaderParameterType.Float, 1f);   // weather wave-height scale; 1 = calm (see swell.gdshaderinc)
             // SWELL ANISOTROPY (fu/fw): how stretched the crests are. Registered HERE beside swell_scale because
             // it has the same problem -- the GPU draws the sea and WaveField floats boats on it, so the number has
