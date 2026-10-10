@@ -391,6 +391,81 @@ namespace UnturnedGodot.Testing
                 py.QueueFree();
             }
 
+            // ---- THE LOAD-TIME RE-SEED: the bug master actually saw ----------------------------------------
+            // ⚠⚠ "dont see any wires". The pylons were authored, strung, verified in-tree with a correct world
+            // AABB -- and then Main's own load-time seed re-filled the field from PlacedOf(Power_Line_0) ALONE,
+            // a moment later. PickPole could not find a pylon that was no longer in the list, so every pylon
+            // span was dropped into an `out _` and the render was right: there were no wires.
+            //
+            // ⭐ So this asserts the SEED MAIN USES, not a hand-built list. Every earlier check in this file
+            // passed throughout the bug because they all drove RefreshPoles directly with both kinds -- the test
+            // rig knew what the shipped path did not. The control below is what makes this one able to fail.
+            {
+                var ed = new Editor();
+                World.AddChild(ed);
+                var objs = new EditorObjects(ed, World, null);
+                World.AddChild(objs);
+                var rs = new PowerLineField();
+                World.AddChild(rs);
+                yield return Ticks(1);
+
+                float kk = PowerLineField.PylonScale;
+                for (int i = 0; i < 2; i++)
+                {
+                    var b = EditorObjects.Upright(90f);
+                    objs.Place(PowerLineField.PylonMesh, new Vector3(i * 46f, 0f, 0f),
+                               new Basis(b.X * kk, b.Y * kk, b.Z * kk));
+                }
+                objs.Place(PowerLineField.PoleMesh, new Vector3(120f, 0f, 0f), EditorObjects.Upright(90f));
+
+                int seeded = rs.RefreshPoles(PowerLineField.PolesFrom(null, objs), out _);
+                T.Check($"the seed finds both kinds of pole ({seeded} of 3)", seeded == 3);
+                T.Check("...and it is the mesh list that decides, not a hand-written pair",
+                        PowerLineField.PoleMeshes.Length == 2);
+
+                int strung = 0;
+                for (int i = 1; i < rs.PoleCount; i++) if (rs.Connect(i - 1, i, out _)) strung++;
+                rs.Rebuild();
+                yield return Ticks(1);
+                T.Check($"two spans string across the run ({strung})", strung == 2);
+                int before = rs.WireNodeCount;
+
+                // THE RE-SEED, exactly as Main does it on every map load.
+                rs.RefreshPoles(PowerLineField.PolesFrom(null, objs), out int lost);
+                rs.Rebuild();
+                yield return Ticks(1);
+                T.Check($"a reload keeps every span ({rs.WireNodeCount} node(s), {lost} lost)",
+                        lost == 0 && rs.WireNodeCount == before && before == 2);
+                // ⭐ And each pole keeps its KIND, not just its place in the list. A pylon re-seeded as a plain
+                // pole keeps its span and silently drops two conductors, which a node count alone never notices.
+                //
+                // ⚠ Looked up BY POSITION, never by index: the seed enumerates poles before pylons, so an index
+                // means nothing except against the list that produced it -- which is exactly why spans are
+                // re-matched by position too. An index-based assertion here would encode an ordering the shipped
+                // code is free to change, and my first attempt did precisely that and failed on the ordering
+                // rather than on the thing it was checking.
+                int atPylonA = rs.PickPole(new Vector3(0f, 0f, 0f), 2f);
+                int atPylonB = rs.PickPole(new Vector3(46f, 0f, 0f), 2f);
+                int atPole = rs.PickPole(new Vector3(120f, 0f, 0f), 2f);
+                T.Check("every pole is findable where it was placed",
+                        atPylonA >= 0 && atPylonB >= 0 && atPole >= 0);
+                T.Check($"the pylons still carry six conductors ({rs.AnchorCount(atPylonA)}/"
+                      + $"{rs.AnchorCount(atPylonB)}) and the pole four ({rs.AnchorCount(atPole)})",
+                        rs.AnchorCount(atPylonA) == 6 && rs.AnchorCount(atPylonB) == 6
+                        && rs.AnchorCount(atPole) == 4);
+
+                // ⚠ THE CONTROL. This is the seed Main shipped: poles only. It MUST lose the pylons and their
+                // spans -- if it does not, this whole section is vacuous and proves nothing about the fix.
+                var only = new List<Transform3D>(objs.PlacedOf(PowerLineField.PoleMesh));
+                rs.RefreshPoles(only, out int lostByBug);
+                rs.Rebuild();
+                yield return Ticks(1);
+                T.Check($"CONTROL: the old poles-only seed does lose them ({only.Count} pole(s) kept, "
+                      + $"{lostByBug} span(s) lost, {rs.WireNodeCount} node(s))",
+                        only.Count == 1 && lostByBug == 2 && rs.WireNodeCount == 0);
+
+                objs.QueueFree(); rs.QueueFree(); ed.QueueFree();
+            }
         }
     }
 }

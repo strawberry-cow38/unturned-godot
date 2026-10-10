@@ -248,6 +248,26 @@ namespace UnturnedGodot
         /// indices shift constantly. Re-matching keeps a line you strung earlier attached to the poles you strung
         /// it between. A span whose pole has since been deleted is dropped and counted, never silently kept
         /// pointing at whatever now occupies that index.</summary>
+        /// <summary>⚠⚠ THE ONE PLACE that answers "which placed objects are poles". Three callers each seeded the
+        /// field from their own hand-written subset, and the load-time one in Main knew only about Power_Line_0 --
+        /// so a PYLON was wiped off the map on every reload, taking its spans with it (master: "dont see any
+        /// wires"). The showcase authored them, this seed ran a moment later, PickPole could not find them, and
+        /// the spans were dropped into an `out _`. Same TWO PATHS, ONE FEATURE drift as the saved-wires bug
+        /// documented directly above its own call site. Add a third pole mesh HERE and every seed learns it.</summary>
+        public static readonly string[] PoleMeshes = { PoleMesh, PylonMesh };
+
+        /// <summary>Every pole the field should hold: the ones the MAP shipped with, plus every pole-or-pylon
+        /// object placed in the editor, each tagged with the mesh that decides its anchors.</summary>
+        public static IEnumerable<(Transform3D Xform, string Mesh)> PolesFrom(
+            IEnumerable<Transform3D> mapPoles, EditorObjects objects)
+        {
+            if (mapPoles != null)
+                foreach (var x in mapPoles) yield return (x, PoleMesh);
+            if (objects != null)
+                foreach (var m in PoleMeshes)
+                    foreach (var x in objects.PlacedOf(m)) yield return (x, m);
+        }
+
         public int RefreshPoles(IEnumerable<Transform3D> poles, out int dropped)
         {
             var tagged = new List<(Transform3D, string)>();

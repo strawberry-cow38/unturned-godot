@@ -7025,14 +7025,12 @@ namespace UnturnedGodot
             //
             // ⭐ Order matters: a custom map's poles ARE its placed objects, so the field has to be seeded from
             // EditorObjects AFTER those have loaded, and only then can the saved spans re-match by position.
-            plField.RefreshPoles(editor.Objects != null
-                                     ? editor.Objects.PlacedOf(PowerLineField.PoleMesh)
-                                     : System.Array.Empty<Transform3D>(),
-                                 out _);
+            plField.RefreshPoles(PowerLineField.PolesFrom(null, editor.Objects), out int wipedSpans);
             int loadedSpans = plField.Load(editor.MapName, out int orphanSpans);
             plField.Rebuild();
-            if (loadedSpans > 0 || orphanSpans > 0)
-                Log.Print($"[powerline] custom map '{editor.MapName}': {plField.PoleCount} poles, {loadedSpans} spans loaded, {orphanSpans} orphaned");
+            if (loadedSpans > 0 || orphanSpans > 0 || wipedSpans > 0)
+                Log.Print($"[powerline] custom map '{editor.MapName}': {plField.PoleCount} poles, {loadedSpans} spans loaded, "
+                        + $"{orphanSpans} orphaned, {wipedSpans} lost to re-seed");
             // Workshop's per-map Play opens the editor and goes straight in, so the map you play is the
             // map the editor built -- one world-building path, not two that can disagree.
             if (loading != null)
@@ -7759,7 +7757,7 @@ namespace UnturnedGodot
             editor.Roads = rf;
             // Seed the field with the map's poles and whatever wires were saved last time, so the lines are THERE
             // on load rather than only after you open the tool.
-            plField.RefreshPoles(res.PowerLinePoles, out _);
+            plField.RefreshPoles(PowerLineField.PolesFrom(res.PowerLinePoles, editor.Objects), out _);
             plField.Load(editor.MapName, out _);
             plField.Rebuild();
             var roadsEd = new EditorRoads(editor, cam, rf);   // LEGACY node paving under the Environment tab (Shift+R)

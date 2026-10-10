@@ -60,12 +60,7 @@ namespace UnturnedGodot
         /// conductors in mid-air beside the lattice.</summary>
         IEnumerable<(Transform3D Xform, string Mesh)> AllPoles()
         {
-            foreach (var x in _mapPoles) yield return (x, PowerLineField.PoleMesh);
-            if (_objects != null)
-            {
-                foreach (var x in _objects.PlacedOf(PowerLineField.PoleMesh)) yield return (x, PowerLineField.PoleMesh);
-                foreach (var x in _objects.PlacedOf(PowerLineField.PylonMesh)) yield return (x, PowerLineField.PylonMesh);
-            }
+            foreach (var p in PowerLineField.PolesFrom(_mapPoles, _objects)) yield return p;
         }
 
         public string ModeText => _on
