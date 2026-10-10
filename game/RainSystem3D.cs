@@ -27,6 +27,27 @@ namespace UnturnedGodot
             WorldOrigin.EnsureGlobal();   // swell.gdshaderinc reads it, and the sea compiles behind this funnel
             RenderingServer.GlobalShaderParameterAdd("rain_wetness", RenderingServer.GlobalShaderParameterType.Float, 0f);
             RenderingServer.GlobalShaderParameterAdd("rain_intensity", RenderingServer.GlobalShaderParameterType.Float, 0f);
+            // SNOW LYING ON THE GROUND, 0..1 (strawberry 2026-10-10: "after snowfall, the grass should fade
+            // into snow material. after it warms up, show melt back into grass"). ⭐ A GLOBAL rather than a
+            // splatmap edit, and that is the whole design: repainting layer 2 to layer 6 would destroy the
+            // map's authored grass and could never melt BACK, because the original is gone. A coverage value
+            // the shader blends with leaves the splatmap untouched and makes melt the same code running
+            // downwards. WeatherManager drives it. ⚠ Registered HERE, in the funnel, for the GrassDisplacers
+            // reason this method exists: a material that compiles before its global is registered dies.
+            RenderingServer.GlobalShaderParameterAdd("snow_cover", RenderingServer.GlobalShaderParameterType.Float, 0f);
+            // UG_SNOWCOVER=<0..1>: start with snow already ON THE GROUND, rather than standing in a blizzard
+            // for a third of a game-day waiting for it to settle; a part-covered value renders the melt too.
+            // ⚠ SET HERE, IN THE FUNNEL, and not beside a WeatherManager.Attach -- there are four attach sites
+            // on different map paths and the showcase does not use the one I first put this on, so the knob
+            // silently did nothing and three "different" renders came back identical. Every path reaches here.
+            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_SNOWCOVER"),
+                               System.Globalization.NumberStyles.Float,
+                               System.Globalization.CultureInfo.InvariantCulture, out float forced))
+            {
+                forced = Mathf.Clamp(forced, 0f, 1f);
+                RenderingServer.GlobalShaderParameterSet("snow_cover", forced);
+                Log.Print($"[snow] forced snow_cover = {forced:0.00}");
+            }
             RenderingServer.GlobalShaderParameterAdd("swell_scale", RenderingServer.GlobalShaderParameterType.Float, 1f);   // weather wave-height scale; 1 = calm (see swell.gdshaderinc)
             // SWELL ANISOTROPY (fu/fw): how stretched the crests are. Registered HERE beside swell_scale because
             // it has the same problem -- the GPU draws the sea and WaveField floats boats on it, so the number has
@@ -108,6 +129,7 @@ namespace UnturnedGodot
         /// catch). Called from ResourceCaches.ClearAll (the scene-transition hook) + WeatherManager._ExitTree.</summary>
         public static void ResetGlobals()
         {
+            if (_globalsRegistered) RenderingServer.GlobalShaderParameterSet("snow_cover", 0f);   // a departing winter must not leave the next scene white
             if (!_globalsRegistered) return;   // never registered -> nothing to reset (and Set on a missing global warns)
             RenderingServer.GlobalShaderParameterSet("rain_wetness", 0f);
             RenderingServer.GlobalShaderParameterSet("rain_intensity", 0f);
@@ -226,6 +248,79 @@ namespace UnturnedGodot
                 Emitting = true,
             };
             AddChild(_p);
+            BuildSnow();
+        }
+
+        // ---- SNOWFALL (strawberry 2026-10-10) -------------------------------------------------------------
+        /// <summary>⭐ A SECOND EMITTER, not a reconfigured one. Rain's own comment explains why you cannot
+        /// retune this pool at runtime -- resizing restarts the emitter and pops -- and snow wants a different
+        /// mesh, a tenth of the fall speed and no velocity alignment. Two emitters, one of which is idle, is
+        /// cheaper than the pop and far cheaper than the alternative of flakes drawn as fast thin streaks.
+        ///
+        /// ⚠ Far fewer particles than rain: a flake is ~30x the screen area of a raindrop and falls ~1/15th as
+        /// fast, so it lingers in view much longer. 6500 of these is a whiteout you cannot see through.</summary>
+        CpuParticles3D _snow;
+        StandardMaterial3D _snowMat;
+        float _lastSnowAlpha = -1f;
+
+        /// <summary>Falling snow rather than falling rain. Switches which emitter is live.</summary>
+        public bool Snowing
+        {
+            get => _snow != null && _snow.Emitting;
+            set
+            {
+                if (_snow == null || _p == null || _snow.Emitting == value) return;
+                _snow.Emitting = value;
+                _p.Emitting = !value;
+            }
+        }
+
+        void BuildSnow()
+        {
+            var flake = new QuadMesh { Size = new Vector2(0.055f, 0.055f) };
+            _snowMat = new StandardMaterial3D
+            {
+                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                AlbedoColor = new Color(1f, 1f, 1f, 0f),
+                BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles,
+                // ⚠⚠ WITHOUT THIS THE FLAKES ALL COME OUT ONE SIZE. BillboardMode.Particles silently discards
+                // ScaleAmountMin/Max unless KeepScale is set -- a trap already written up once in this port.
+                BillboardKeepScale = true,
+                DisableReceiveShadows = true,
+                NoDepthTest = false,
+            };
+            flake.Material = _snowMat;
+            _snow = new CpuParticles3D
+            {
+                Mesh = flake,
+                Amount = 900,
+                Lifetime = 9f,              // slow fall from 10 m up needs a long life or flakes vanish mid-air
+                LocalCoords = false,
+                Preprocess = 8f,            // already snowing on frame 0
+                Explosiveness = 0f,
+                Randomness = 0.9f,
+                EmissionShape = CpuParticles3D.EmissionShapeEnum.Box,
+                EmissionBoxExtents = new Vector3(16f, 2f, 16f),
+                Direction = new Vector3(0f, -1f, 0f),
+                Spread = 25f,               // flakes wander; rain does not
+                Gravity = new Vector3(0f, -1.1f, 0f),
+                InitialVelocityMin = 0.3f, InitialVelocityMax = 0.9f,
+                ScaleAmountMin = 0.6f, ScaleAmountMax = 1.8f,
+                AngularVelocityMin = -40f, AngularVelocityMax = 40f,
+                ParticleFlagAlignY = false,   // a flake has no "down" to align to
+                Emitting = false,
+            };
+            AddChild(_snow);
+        }
+
+        void PushSnowAlpha(float i)
+        {
+            if (_snowMat == null) return;
+            float a = Mathf.Clamp(i, 0f, 1f) * 0.85f;
+            if (Mathf.IsEqualApprox(a, _lastSnowAlpha)) return;
+            _lastSnowAlpha = a;
+            _snowMat.AlbedoColor = new Color(1f, 1f, 1f, a);
         }
 
         public override void _Process(double delta) => HubProcess(delta);   // forwarder for direct callers; the engine's callback is off (SetProcess(false) in _Ready) -- TickHub ticks HubProcess
@@ -300,6 +395,7 @@ namespace UnturnedGodot
                 { _p.Restart(); _restartCd = RestartCooldown; }   // Preprocess (1.6 s) refills the volume where the camera now is
             }
             float i = Mathf.Clamp(Intensity, 0f, 1f);
+            PushSnowAlpha(i);
             if (_mat != null && i != _lastAlphaI) { _lastAlphaI = i; _mat.SetShaderParameter("alpha_base", 0.14f * i); }   // fade the streaks with the rain intensity (only rewrite on change)
             if (_p != null) { bool on = i > 0.02f; if (_p.Emitting != on) _p.Emitting = on; }   // stop simulating when clear
         }

@@ -152,6 +152,88 @@ namespace UnturnedSim.Tests
             }
         }
 
+        // ---- SNOW (strawberry 2026-10-10: "add snowfall") --------------------------------------------------
+        static WeatherType[] TypesWithSnow()
+        {
+            var t = new System.Collections.Generic.List<WeatherType>(Types());
+            t.AddRange(WeatherSim.SnowTypes());
+            return t.ToArray();
+        }
+
+        static WeatherSchedule[] SchedWithSnow(out int snowIdx)
+        {
+            var s = new System.Collections.Generic.List<WeatherSchedule>(Sched());
+            snowIdx = s.Count;
+            s.AddRange(WeatherSim.SnowSchedule(Types().Length));
+            return s.ToArray();
+        }
+
+        [Test]
+        public void AFreezingWetDayFallsAsSnow()
+        {
+            var types = TypesWithSnow();
+            var sched = SchedWithSnow(out int snowIdx);
+            int wet = 0, snow = 0;
+            for (int d = 0; d < 400; d++)
+            {
+                var o = WeatherOutlook.ForDay(21, d, types, sched, -1f, dayMeanC: -6f, snowScheduleIndex: snowIdx);
+                if (!o.Wet) continue;
+                wet++;
+                if (o.Snow) snow++;
+            }
+            Assert.That(wet, Is.GreaterThan(50), "no wet days to judge");
+            Assert.That(snow, Is.EqualTo(wet), $"only {snow} of {wet} freezing wet days fell as snow");
+        }
+
+        [Test]
+        public void AWARMWetDayNeverFallsAsSnow()
+        {
+            // ⚠ THE CONTROL. Without it "every wet day is snow" passes a function that ignores temperature
+            // entirely -- which is exactly the bug worth catching, since the whole claim is that the
+            // TEMPERATURE decides the form.
+            var types = TypesWithSnow();
+            var sched = SchedWithSnow(out int snowIdx);
+            int wet = 0, snow = 0;
+            for (int d = 0; d < 400; d++)
+            {
+                var o = WeatherOutlook.ForDay(21, d, types, sched, -1f, dayMeanC: 14f, snowScheduleIndex: snowIdx);
+                if (!o.Wet) continue;
+                wet++;
+                if (o.Snow) snow++;
+            }
+            Assert.That(wet, Is.GreaterThan(50));
+            Assert.That(snow, Is.Zero, $"{snow} warm days fell as snow");
+        }
+
+        [Test]
+        public void SnowNamesTheSnowTypeAndStaysInTheSchedule()
+        {
+            var types = TypesWithSnow();
+            var sched = SchedWithSnow(out int snowIdx);
+            var o = WeatherOutlook.ForDay(21, 3, types, sched, -1f, dayMeanC: -6f, snowScheduleIndex: snowIdx);
+            Assert.That(o.Wet, Is.True);
+            Assert.That(o.Snow, Is.True);
+            Assert.That(o.ScheduleIndex, Is.EqualTo(snowIdx));
+            Assert.That(o.TypeIndex, Is.EqualTo(sched[snowIdx].TypeIndex));
+            Assert.That(o.Name, Is.EqualTo("Snowfall"));
+            Assert.That(types[o.TypeIndex].HasLightning, Is.False, "thundersnow is not the default");
+        }
+
+        [Test]
+        public void AWorldWithNoSnowTypeIsUnAFFECTEDByTheCold()
+        {
+            // ⚠ The second control: pass no snow index (the default) and a freezing day must behave exactly as
+            // it did before snow existed, so the infinite world and any map without the type are untouched.
+            for (int d = 0; d < 120; d++)
+            {
+                var warm = WeatherOutlook.ForDay(33, d, Types(), Sched(), -1f);
+                var cold = WeatherOutlook.ForDay(33, d, Types(), Sched(), -1f, dayMeanC: -20f);
+                Assert.That(cold.Wet, Is.EqualTo(warm.Wet), $"day {d} changed wetness with no snow type available");
+                Assert.That(cold.TypeIndex, Is.EqualTo(warm.TypeIndex), $"day {d} changed type with no snow type");
+                Assert.That(cold.Snow, Is.False);
+            }
+        }
+
         [Test]
         public void AnEmptyScheduleIsClearRatherThanACrash()
         {

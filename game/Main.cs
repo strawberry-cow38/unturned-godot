@@ -6543,6 +6543,7 @@ namespace UnturnedGodot
                     case "squall": case "windy": wm.Sim.SetPerpetual(WeatherManager.VariantBase + 1); break;
                     case "downpour": case "torrential": wm.Sim.SetPerpetual(WeatherManager.VariantBase + 2); break;
                     case "tempest": case "gale": wm.Sim.SetPerpetual(WeatherManager.VariantBase + 3); break;
+                    case "snow": if (WeatherManager.SnowTypeIndex >= 0) wm.Sim.SetPerpetual(WeatherManager.SnowTypeIndex); break;
                 }
             }
             // UG_MAPSHOT=<half-extent-metres>: a top-down ORTHOGRAPHIC map capture. Orthographic and axis-aligned on

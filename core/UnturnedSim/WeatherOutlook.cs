@@ -35,6 +35,7 @@ namespace SDG.Unturned
             public int TypeIndex;         // index into the types array; -1 when clear
             public string Name;           // the weather's own name, or "Clear"
             public float Severity;        // 0..1 across the types on offer, 0 when clear
+            public bool Snow;             // it falls as snow rather than rain
         }
 
         /// <summary>⚠ FNV-1a over the two values, NOT `new Random(seed + day)`. Seeds that differ by one give
@@ -62,9 +63,17 @@ namespace SDG.Unturned
             return Math.Clamp((w + f) * 0.5f, 0f, 1f);
         }
 
-        /// <summary>The outlook for `day`. `seasonPhase` is WorldTemperature.SeasonPhase(dayOfYear).</summary>
+        /// <summary>Below this day-mean temperature a wet day falls as SNOW rather than rain.</summary>
+        public const float FreezingC = 0.5f;
+
+        /// <summary>The outlook for `day`. `seasonPhase` is WorldTemperature.SeasonPhase(dayOfYear).
+        ///
+        /// ⭐ `dayMeanC` + `snowScheduleIndex` make a cold wet day fall as snow. The TEMPERATURE decides the
+        /// FORM, which is the one thing the season model was already able to answer and nothing asked it:
+        /// WorldTemperature has driven ambient warmth since it was written, and precipitation never consulted
+        /// it. Pass snowScheduleIndex < 0 (the default) for a world with no snow type and nothing changes.</summary>
         public static Day ForDay(int seed, int day, WeatherType[] types, WeatherSchedule[] schedule,
-                                 float seasonPhase)
+                                 float seasonPhase, float dayMeanC = 99f, int snowScheduleIndex = -1)
         {
             var clear = new Day { Wet = false, ScheduleIndex = -1, TypeIndex = -1, Name = "Clear", Severity = 0f };
             if (types == null || schedule == null || types.Length == 0 || schedule.Length == 0) return clear;
@@ -72,6 +81,23 @@ namespace SDG.Unturned
             // winter (phase -1) -> WinterWetChance, summer (+1) -> SummerWetChance
             float wetChance = SummerWetChance + (WinterWetChance - SummerWetChance) * (1f - seasonPhase) * 0.5f;
             if (Unit(seed, day, 0x9E3779B9u) >= wetChance) return clear;
+
+            // ⚠ FORM BEFORE FLAVOUR. A freezing wet day is snow, full stop -- it does NOT roll among the rain
+            // variants first and then get converted, because that would make the weighting below decide
+            // something it never sees the result of, and a "Tempest Rain" at -8 C would still be a lie.
+            if (dayMeanC <= FreezingC && snowScheduleIndex >= 0 && snowScheduleIndex < schedule.Length)
+            {
+                int sti = schedule[snowScheduleIndex].TypeIndex;
+                return new Day
+                {
+                    Wet = true,
+                    ScheduleIndex = snowScheduleIndex,
+                    TypeIndex = sti,
+                    Name = sti >= 0 && sti < types.Length ? types[sti].Name : "Snowfall",
+                    Severity = 0.6f,
+                    Snow = true,
+                };
+            }
 
             float windMax = 0f, fogMax = 0f;
             foreach (var t in types) { windMax = MathF.Max(windMax, t.WindMain); fogMax = MathF.Max(fogMax, t.FogDensity); }
