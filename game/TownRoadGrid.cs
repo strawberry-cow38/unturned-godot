@@ -36,8 +36,14 @@ namespace UnturnedGodot
         public float Extent = 240f;
         /// <summary>Nominal block size. The node spacing before jitter.</summary>
         public float Spacing = 64f;
-        /// <summary>How far a node may wander from its lattice position, as a fraction of Spacing. A real town
-        /// is a grid that has been pushed around by the ground it grew on, not graph paper.</summary>
+        /// <summary>How far a LINE may wander from its lattice position, as a fraction of Spacing.
+        ///
+        /// ⚠⚠ PER LINE, NOT PER NODE, and that is the whole difference between an irregular grid and a wiggly
+        /// one (strawberry 2026-10-11: "why are they so wiggly"). Jittering each node independently moves it
+        /// off BOTH the lines it belongs to, so a street kinks at every junction it passes through -- the
+        /// streets were never straight, they were polylines through 7 randomly nudged points. Offsetting the
+        /// whole LINE instead keeps u a function of i alone and v of j alone, so every street is dead straight
+        /// and the blocks are different sizes, which is what an irregular town actually looks like.</summary>
         public float Jitter = 0.16f;
         /// <summary>The grid's bearing, radians. Towns are rarely axis-aligned, and an axis-aligned one here
         /// would also hide any frame bug by lining up with the world axes.</summary>
@@ -50,8 +56,13 @@ namespace UnturnedGodot
         /// 0:9.2 (Highway_0) 1:6.9 (Highway_1) 2:18.4 (Racetrack) 3:18.4 (Road) 4:2.6 (Tracks) 5:4.6 (Trail).
         /// A main street is Highway_0 at 18 m across and a side street Highway_1 at 14 m, which keeps an
         /// intersection the size of an intersection.</summary>
+        /// <summary>⚠ BOTH ARE Highway_0 (0), THE YELLOW-LINE ROAD (strawberry: "should be the yellow line
+        /// highway"). Checked against the textures rather than the names: road_0 is dashes plus a solid yellow
+        /// centre line, road_1 is dashes only (a one-way carriageway), road_3 "Road" is 18.4 m of HALF width --
+        /// the same as the Racetrack -- which is where a 40 m blob of asphalt at every junction came from.
+        /// Half-widths measured off the live field: 0:9.2 1:6.9 2:18.4 3:18.4 4:2.6 5:4.6.</summary>
         public int MainMaterial = 0;
-        public int StreetMaterial = 1;
+        public int StreetMaterial = 0;
         /// <summary>Steepest a span may be before it is left unbuilt, rise over run.</summary>
         public float MaxGrade = 0.16f;
         /// <summary>Steepest ground a NODE may sit on. A junction is flat ground by definition -- four roads
@@ -99,6 +110,8 @@ namespace UnturnedGodot
             return z ^ (z >> 31);
         }
         ulong NodeHash(int i, int j) => Mix(((ulong)(uint)Seed << 32) ^ Mix(((ulong)(uint)i << 20) ^ (uint)j ^ 0x5151UL));
+        /// <summary>One offset per LINE, so every node on that line shares it and the line stays straight.</summary>
+        ulong LineHash(int axis, int line) => Mix(((ulong)(uint)Seed << 32) ^ Mix(((ulong)(uint)axis << 40) ^ (uint)line ^ 0x7A3BUL));
         static float Unit(ulong h, int shift) => ((h >> shift) & 0xFFFF) / 65535f;    // 0..1
 
         // The grid's own frame. Local (u, v) -> world, with the town's bearing applied.
@@ -172,9 +185,9 @@ namespace UnturnedGodot
                 for (int gj = 0; gj < w; gj++)
                 {
                     int i = gi - n, j = gj - n;
-                    ulong h = NodeHash(i, j);
-                    float u = i * Spacing + (Unit(h, 0) - 0.5f) * Jitter * Spacing;
-                    float v = j * Spacing + (Unit(h, 16) - 0.5f) * Jitter * Spacing;
+                    // u depends on i ONLY and v on j ONLY -- that is what keeps every line straight.
+                    float u = i * Spacing + (Unit(LineHash(1, i), 0) - 0.5f) * Jitter * Spacing;
+                    float v = j * Spacing + (Unit(LineHash(0, j), 0) - 0.5f) * Jitter * Spacing;
                     var flat = ToWorld(u, v, 0f);
                     float y = heightAt(flat.X, flat.Z);
                     var node = new Node { P = new Vector3(flat.X, y, flat.Z), Junction = -1 };

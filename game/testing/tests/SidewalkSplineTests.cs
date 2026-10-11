@@ -77,6 +77,38 @@ namespace UnturnedGodot.Testing
             T.Check($"rising ground never lifts the skirt above the fixed bite ({rising.Mesh.GetAabb().Position.Y:0.00} m)",
                     rising.Mesh.GetAabb().Position.Y <= -0.55f);
 
+            // ---- 2c. BOTH SIDES ARE ACTUALLY VISIBLE. ⚠⚠ THE GAP THAT LET A HALF-MISSING PAVEMENT SHIP:
+            // every check above measures the ribbon's SHAPE, and a back-facing ribbon has exactly the right
+            // shape. strawberry saw it immediately -- "the left side of the road's sidewalk is upside down
+            // inside out or whatever. its invisible" -- because the two sides are mirrors of each other and
+            // one fixed vertex order can only be right for one of them. So: the walking surface must face UP,
+            // on BOTH sides, which is a claim about the normals and not about the bounding box.
+            // ⚠ "FACES UP" IS A CW-FRONT CLAIM HERE. This project winds CW for front faces, so the walking
+            // surface a player sees has a CCW-computed cross product pointing DOWN. Writing the check the
+            // intuitive way round failed on the side that has always rendered correctly -- which is the test
+            // being wrong about the convention, not the mesh. The RIGHT ribbon is the reference: it is the one
+            // that shipped visible, so whatever it does is front-facing, and the mirrored side must match it.
+            float FrontFraction(MeshInstance3D m)
+            {
+                var f = m.Mesh.GetFaces(); int front = 0, n = 0;
+                for (int i = 0; i + 2 < f.Length; i += 3)
+                {
+                    var nrm = (f[i + 1] - f[i]).Cross(f[i + 2] - f[i]);
+                    if (nrm.LengthSquared() < 1e-9f) continue;
+                    var u = nrm.Normalized();
+                    if (Mathf.Abs(u.Y) > 0.5f) { n++; if (u.Y < 0f) front++; }   // CW-front: level faces read -Y
+                }
+                return n == 0 ? 0f : (float)front / n;
+            }
+            var rightO2 = new List<Vector3>(); var leftO2 = new List<Vector3>();
+            for (int i = 0; i < pts.Count; i++) { rightO2.Add(Vector3.Forward); leftO2.Add(Vector3.Back); }
+            var rib = EditorSidewalk.BuildRibbon(pts, rightO2, 2f, 0.4f, 0.6f, "R");
+            var lib = EditorSidewalk.BuildRibbon(pts, leftO2, 2f, 0.4f, 0.6f, "L");
+            float ru = FrontFraction(rib), lu2 = FrontFraction(lib);
+            T.Check($"the right ribbon's walking surface is front-facing ({ru * 100f:0}% of its level faces)", ru > 0.9f);
+            T.Check($"...and so is the MIRRORED one, the side that went invisible ({lu2 * 100f:0}%)", lu2 > 0.9f);
+            T.Check($"...the two sides agree with each other ({ru * 100f:0}% vs {lu2 * 100f:0}%)", Mathf.Abs(ru - lu2) < 0.05f);
+
             // ---- 3. IT IS ONE CONTINUOUS RIBBON. ⭐ This is why a generated strip was chosen over tiled props:
             // a tiled spline has to back every unit off by SplineTiling.OverlapFor to stop rigid tiles splaying
             // at a bend, and a ribbon simply shares its vertices. A CURVED path must therefore produce the same

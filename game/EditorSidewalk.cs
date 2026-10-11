@@ -81,8 +81,18 @@ namespace UnturnedGodot
             // Four rails: kerb bottom (at road level), kerb top, back edge top, back edge bottom (skirt).
             // ⚠ WINDING IS CW-FRONT in this project (see the Godot traps note): a counter-clockwise quad here
             // renders inside-out and reads as a hole in the pavement rather than as a flipped face.
+            // ⚠⚠ THE WINDING DEPENDS ON WHICH SIDE OF THE ROAD THIS IS (strawberry 2026-10-11: "the left side
+            // of the road's sidewalk is upside down inside out or whatever. its invisible"). The two sides are
+            // mirror images -- the left one's outward normal points the opposite way -- so one fixed vertex
+            // order produces a front-facing ribbon on one side and a back-facing one on the other, and under
+            // cull_back the back-facing one simply is not there. Nothing errors; half the pavement is missing.
+            // So the order is decided PER SEGMENT from the geometry itself: with the walking surface's normal
+            // required to point UP, (along x outward) says which way round the quad has to go. Self-correcting,
+            // so a caller handing this a ribbon in any orientation still gets a visible one.
+            bool flip = false;
             void Quad(Vector3 a, Vector3 b, Vector3 c, Vector3 d)
             {
+                if (flip) { (a, b, c, d) = (d, c, b, a); }
                 st.AddVertex(a); st.AddVertex(b); st.AddVertex(c);
                 st.AddVertex(a); st.AddVertex(c); st.AddVertex(d);
             }
@@ -92,6 +102,9 @@ namespace UnturnedGodot
                 Vector3 p0 = pts[i], p1 = pts[i + 1];
                 Vector3 o0 = outward[i].Normalized(), o1 = outward[i + 1].Normalized();
                 Vector3 up = Vector3.Up * kerbH;
+                // Which way round this segment's quads must go, measured rather than assumed.
+                var along = p1 - p0;
+                flip = along.Cross(o0).Y < 0f;
 
                 Vector3 k0 = p0, k1 = p1;                               // kerb foot, at road level
                 Vector3 t0 = p0 + up, t1 = p1 + up;                     // kerb top (front of the walking surface)
