@@ -33,6 +33,17 @@ uniform sampler2D bg_tex : source_color, filter_linear, repeat_disable;     // a
 // than borrowing bg_tex, because the two are live at the same time on a flatscreen and sharing one would make
 // the map preview and the camera fight over a slot.
 uniform sampler2D feed_tex : source_color, filter_linear, repeat_disable;
+// ---- COMPUTER PORT PANEL (strawberry 2026-10-11) --------------------------------------------------------
+// The eight sockets of the tower this monitor is plugged into, 0 idle / 1 receiving / 2 sending. Two vec4s
+// rather than an array: eight is the whole fleet and a pair of vectors needs no array-uniform support, no
+// per-frame loop on the C# side, and reads the same on every Godot backend.
+uniform vec4 ports_lo = vec4(0.0);   // sockets 1-4
+uniform vec4 ports_hi = vec4(0.0);   // sockets 5-8
+// The virtual cursor, in screen UV. ⚠ cursor_live is separate from position ON PURPOSE: when the player looks
+// away the cursor must STOP where it was rather than snap to an edge or to 0,0 -- master asked for it to stop,
+// and a parked cursor at its last position is the difference between "idle" and "broken".
+uniform vec2 cursor_uv = vec2(0.5);
+uniform float cursor_live = 0.0;
 // The screen face's width / height IN THE WORLD (TVDevice.ScreenAspect: a CRT 1.07, the flatscreen TV 1.97). UV runs
 // 0..1 on both axes whatever the glass is, so anything that must keep its SHAPE -- square snow grains, the input OSD --
 // has to be laid out against this, not against raw UV.
@@ -263,6 +274,46 @@ vec3 prog_bars(vec2 uv) {
     return col;
 }
 
+// THE PORT PANEL: the tower's eight sockets, laid out the way they physically are on the case -- two columns
+// of four -- so the thing on screen maps onto the thing you are looking at, rather than being an abstract list
+// you have to count along.
+vec3 prog_ports(vec2 uv) {
+    vec3 col = vec3(0.02, 0.04, 0.06);
+    // A dim grid, so an all-idle panel still reads as a working display rather than a dead screen.
+    vec2 g = fract(uv * vec2(16.0, 12.0));
+    col += vec3(0.015) * step(0.94, max(g.x, g.y));
+
+    for (int i = 0; i < 8; i++) {
+        float st = (i < 4) ? ports_lo[i] : ports_hi[i - 4];
+        int cl = i % 2, rw = i / 2;
+        vec2 c = vec2(0.30 + float(cl) * 0.40, 0.18 + float(rw) * 0.21);
+        vec2 half_sz = vec2(0.135, 0.072);
+        vec2 d = abs(uv - c) - half_sz;
+        float outside = length(max(d, 0.0)) + min(max(d.x, d.y), 0.0);
+        if (outside > 0.012) continue;
+
+        // idle = slate, receiving = green (a stream arriving), sending = amber (one leaving).
+        vec3 body = st > 1.5 ? vec3(0.85, 0.55, 0.10)
+                  : st > 0.5 ? vec3(0.15, 0.80, 0.35)
+                             : vec3(0.16, 0.19, 0.23);
+        // An ACTIVE socket pulses; an idle one is flat. Movement is what makes the panel readable at a glance
+        // from across a room, where eight small colour patches are not.
+        float pulse = st > 0.5 ? 0.78 + 0.22 * sin(time_s * 3.0 + float(i) * 0.7) : 1.0;
+        col = outside > -0.006 ? mix(col, body * 1.5, 0.9)      // bright border
+                               : mix(col, body * pulse, 0.95);  // filled face
+    }
+
+    // The cursor rides on top of everything and is drawn even when parked -- see cursor_live.
+    vec2 cd = (uv - cursor_uv) * vec2(1.0, 0.75);
+    float r = length(cd);
+    float dot_a = 1.0 - smoothstep(0.004, 0.009, r);
+    float ring = (1.0 - smoothstep(0.020, 0.026, r)) * smoothstep(0.014, 0.019, r);
+    float cur = max(dot_a, ring * 0.7);
+    // Parked (you looked away) reads dimmer, so the display tells you whether it is tracking you.
+    col = mix(col, vec3(1.0, 1.0, 0.92), cur * (cursor_live > 0.5 ? 0.95 : 0.35));
+    return col;
+}
+
 void fragment() {
     vec2 uv = UV;
     vec3 c;
@@ -290,6 +341,7 @@ void fragment() {
     // arrives the right way up and this inverted it again. Two independent flips, each correct on its own, each
     // written without the other in view -- the same shape as every other double-transform in this port.
     else if (program == 8) c = texture(feed_tex, uv).rgb;
+    else if (program == 9) c = prog_ports(uv);
     else c = vec3(1.0);                      // 3 Colour: the flat colour rides `tint`
 
     // THE BLACK IS THE GLASS (strawberry: "change the black color for all screen types on all channels to not be

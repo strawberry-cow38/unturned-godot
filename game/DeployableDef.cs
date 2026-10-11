@@ -114,10 +114,21 @@ namespace UnturnedGodot
         /// ⚠ APPEND-ONLY. The value crosses the wire as a byte in DeployablePortSpec and is written into saves,
         /// so inserting a kind in the middle silently reassigns every port on every placed deployable in every
         /// existing world.</summary>
-        public enum PortKind { Output, Consumer, Passthrough, DataOut, DataIn }
+        // ⚠ APPEND ONLY -- a PortKind is written into saved deployable defs by ordinal.
+        // DataIo (strawberry 2026-10-11: "8 data ports, which act as data i/o depending on whats connected"):
+        // a socket with NO fixed direction. Every data port before it was one-way by declaration -- a camera
+        // only ever sources, a television only ever sinks -- which is right for a camera and wrong for a
+        // computer, where the same socket should take a feed in from one machine and push one out to another.
+        // The direction is resolved per WIRE at solve time; see PowerNet.ResolveDataLink.
+        public enum PortKind { Output, Consumer, Passthrough, DataOut, DataIn, DataIo }
 
         /// <summary>Signal rather than power: never enters the power solve.</summary>
-        public static bool IsDataPort(PortKind k) => k == PortKind.DataOut || k == PortKind.DataIn;
+        public static bool IsDataPort(PortKind k) => k == PortKind.DataOut || k == PortKind.DataIn || k == PortKind.DataIo;
+
+        /// <summary>Can this port kind SOURCE a stream? DataIo can do either, which is the whole point of it.</summary>
+        public static bool CanSourceData(PortKind k) => k == PortKind.DataOut || k == PortKind.DataIo;
+        /// <summary>...and can it SINK one?</summary>
+        public static bool CanSinkData(PortKind k) => k == PortKind.DataIn || k == PortKind.DataIo;
 
         /// <summary>Does this def relay a data stream over the air rather than down a wire? The transmitter takes
         /// a signal in and broadcasts it on its code; the receiver picks up whatever is broadcast on the same

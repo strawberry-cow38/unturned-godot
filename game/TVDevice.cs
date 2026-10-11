@@ -110,7 +110,7 @@ namespace UnturnedGodot
         // So one enum decides both, and Sound() is derived from it rather than stored alongside it.
         // ⚠ APPEND-ONLY: the shader switches on this as a raw int (screen.gdshader `program`), so CameraFeed
         // must stay 8 and nothing may be inserted above it.
-        public enum ScreenProgram { TestCard, Static, Dvd, Colour, TerminalCursor, TerminalScroll, BarGraph, StaticMono, CameraFeed }
+        public enum ScreenProgram { TestCard, Static, Dvd, Colour, TerminalCursor, TerminalScroll, BarGraph, StaticMono, CameraFeed, PortPanel }
 
         public enum ScreenSound { None, Tone, Noise }
 
@@ -926,6 +926,73 @@ namespace UnturnedGodot
             return _dataIn.DataSource is SecurityCamera cam && IsInstanceValid(cam) ? cam : null;
         }
 
+        /// <summary>The computer tower feeding this screen, if the thing on the aerial is one.</summary>
+        public ComputerDevice ComputerSource()
+        {
+            if (_dataIn == null || !IsInstanceValid(_dataIn) || !_dataIn.DataLive) return null;
+            return _dataIn.DataSource is ComputerDevice pc && IsInstanceValid(pc) ? pc : null;
+        }
+
+        /// <summary>Push the tower's eight socket states at the shader. ⚠ Read fresh every call, never cached:
+        /// a port's direction is a property of what it is wired to THIS frame, so a stored copy is how the
+        /// panel ends up showing a link somebody already unplugged.</summary>
+        public void PushPortPanel()
+        {
+            var pc = ComputerSource();
+            if (pc == null || _screenMat == null) return;
+            var lo = new Vector4(); var hi = new Vector4();
+            for (int i = 0; i < ComputerDevice.PortCount; i++)
+            {
+                float v = (float)(int)pc.StateOf(i);
+                if (i < 4) lo[i] = v; else hi[i - 4] = v;
+            }
+            _screenMat.SetShaderParameter("ports_lo", lo);
+            _screenMat.SetShaderParameter("ports_hi", hi);
+        }
+
+        // ---- THE VIRTUAL CURSOR ------------------------------------------------------------------------------
+        // strawberry: "looking at the screen with nothing in ur hands, the cursor on the virtual display follows
+        // where ur crosshair is looking, stops when u look away from the screen".
+        //
+        // ⭐ The screen plane was already solved for other reasons -- Reproject caches the panel's centre, its two
+        // in-plane axes and its half-extents in PROP-LOCAL space -- so a world hit point becomes screen UV with two
+        // dot products and no raycast of its own. That is why this is cheap enough to run every frame.
+        Vector2 _cursorUv = new Vector2(0.5f, 0.5f);
+        bool _cursorLive;
+        /// <summary>Where the cursor is sitting, 0..1 across the panel. Test seam.</summary>
+        public Vector2 CursorUv => _cursorUv;
+        /// <summary>Is it tracking a player right now, as opposed to parked where they left it?</summary>
+        public bool CursorLive => _cursorLive;
+
+        /// <summary>Point the cursor at a world position on the panel. Returns false if the point is off the
+        /// screen, in which case the cursor is PARKED rather than moved -- master asked for it to stop when you
+        /// look away, and a cursor that snapped to an edge (or to 0,0) would read as broken rather than idle.</summary>
+        public bool AimCursorAt(Vector3 world)
+        {
+            if (_screenMat == null) return false;
+            var local = ToLocal(world) - _screenCenterLocal - _screenOffset;
+            float u = _screenHalfW > 1e-5f ? local.Dot(_screenRightLocal) / _screenHalfW : 0f;
+            float v = _screenHalfH > 1e-5f ? local.Dot(_screenUpLocal) / _screenHalfH : 0f;
+            // A small margin of grace: the look ray lands on the glass, and demanding the exact rectangle makes
+            // the cursor flicker off at the very edge the player is trying to reach.
+            if (Mathf.Abs(u) > 1.08f || Mathf.Abs(v) > 1.08f) { ParkCursor(); return false; }
+            _cursorUv = new Vector2(Mathf.Clamp(u * 0.5f + 0.5f, 0f, 1f),
+                                    Mathf.Clamp(0.5f - v * 0.5f, 0f, 1f));   // screen V runs down
+            _cursorLive = true;
+            _screenMat.SetShaderParameter("cursor_uv", _cursorUv);
+            _screenMat.SetShaderParameter("cursor_live", 1f);
+            return true;
+        }
+
+        /// <summary>Stop tracking. The POSITION is deliberately kept -- "stops when u look away" means stops,
+        /// not resets.</summary>
+        public void ParkCursor()
+        {
+            if (!_cursorLive) return;
+            _cursorLive = false;
+            _screenMat?.SetShaderParameter("cursor_live", 0f);
+        }
+
         void FreePlug()
         {
             if (_plug == null) return;
@@ -1661,6 +1728,19 @@ namespace UnturnedGodot
             _onFeed = feed;
             if (feed)
             {
+                // A COMPUTER ON THE AERIAL shows its port panel instead of a picture (strawberry 2026-10-11:
+                // "give the monitor a new ui on its screen ... a display of the 8 i/o ports and their state").
+                // Checked before the camera because a tower is not a camera and would otherwise fall into the
+                // "not filming yet" bail below and silently show nothing.
+                if (ComputerSource() != null)
+                {
+                    _preFeedProgram = _program;
+                    _program = ScreenProgram.PortPanel;
+                    _screenMat?.SetShaderParameter("program", (int)ScreenProgram.PortPanel);
+                    PushPortPanel();
+                    BuildLoopSound();
+                    return;
+                }
                 var cam = FeedSource();
                 var tex = cam?.FeedTexture;
                 if (tex == null) { _onFeed = false; return; }   // wired to something that is not a camera, or not filming yet
@@ -1751,6 +1831,11 @@ namespace UnturnedGodot
                 _screenMat?.SetShaderParameter("time_s", _clock);
                 if (_program == ScreenProgram.Colour) TickColour((float)delta);   // re-applies only on an actual change
                 if (_program == ScreenProgram.TerminalScroll) TickScroll((float)delta);
+                // ⚠ THE PANEL HAS TO BE RE-PUSHED, not pushed once on connect. A socket's state is whatever it
+                // is wired to RIGHT NOW -- plug a camera into the tower while watching and the panel must light
+                // that port. Pushing only in SetFeed would freeze the display at whatever was true when the
+                // monitor was first plugged in, which looks exactly like a working screen showing stale data.
+                if (_program == ScreenProgram.PortPanel) PushPortPanel();
                 if (_program == ScreenProgram.Dvd) { _blob = BlobPos(_clock, _seed, _blobHalf); _screenMat?.SetShaderParameter("blob_pos", _blob); }
                 PlaceEmitter();
                 if (IsTube(_kind))

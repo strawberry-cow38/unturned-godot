@@ -33,6 +33,7 @@ namespace UnturnedGodot
         Clock       = 1 << 4,   // ClockDevice: hands carved off the dial and spun to game time
         Monitor     = 1 << 5,   // HeartMonitor: the ward's patient monitors
         Screen      = 1 << 6,   // TVDevice: televisions, CRT + flat monitors, the laptop
+        Computer    = 1 << 7,   // ComputerDevice: a tower -- power in, 8 bidirectional data sockets
         Signal      = 1 << 7,   // TrafficLight: two independently-timed heads per mast
         Doors       = 1 << 8,   // ObjectDoor: one openable leaf per doors.txt row
         Water       = 1 << 9,   // FluidContainer: tower / hydrant / well / kitchen sink
@@ -56,6 +57,7 @@ namespace UnturnedGodot
             if (name == "Clock_0") k |= SmartKind.Clock;
             if (LampLight.KindFor(name) != LampLight.Kind.Generic) k |= SmartKind.IndoorLamp;
             if (TVDevice.IsDeviceProp(name)) k |= SmartKind.Screen;
+            if (ComputerDevice.IsDeviceProp(name)) k |= SmartKind.Computer;
             if (HeartMonitor.IsMonitorProp(name)) k |= SmartKind.Monitor;
             if (RadioDevice.IsRadioProp(name)) k |= SmartKind.Radio;
             if (WaterSourceFor(name) != WaterSource.None) k |= SmartKind.Water;
@@ -105,6 +107,7 @@ namespace UnturnedGodot
             if (k.HasFlag(SmartKind.Clock)) parts.Add("clock");
             if (k.HasFlag(SmartKind.Monitor)) parts.Add("patient monitor");
             if (k.HasFlag(SmartKind.Screen)) parts.Add($"{TVDevice.KindFor(name)} (F toggles)");
+            if (k.HasFlag(SmartKind.Computer)) parts.Add($"computer ({ComputerDevice.PortCount} data ports)");
             if (k.HasFlag(SmartKind.Radio)) parts.Add("radio (F toggles)");
             if (k.HasFlag(SmartKind.Signal)) parts.Add("traffic signal");
             if (k.HasFlag(SmartKind.Doors)) parts.Add("openable (F)");
@@ -123,6 +126,7 @@ namespace UnturnedGodot
             public ClockDevice Clock;
             public HeartMonitor Monitor;
             public TVDevice Screen;
+            public ComputerDevice Computer;
             public RadioDevice Radio;
             public FluidContainer Water;
             public StoreShelf Container;
@@ -145,6 +149,7 @@ namespace UnturnedGodot
                     if (Clock != null) k |= SmartKind.Clock;
                     if (Monitor != null) k |= SmartKind.Monitor;
                     if (Screen != null) k |= SmartKind.Screen;
+                    if (Computer != null) k |= SmartKind.Computer;
                     if (Radio != null) k |= SmartKind.Radio;
                     if (Signals.Count > 0) k |= SmartKind.Signal;
                     if (Doors.Count > 0) k |= SmartKind.Doors;
@@ -242,6 +247,7 @@ namespace UnturnedGodot
             if (name == "Clock_0") { a.Clock = ClockDevice.Make(mainMi, mat, 0f); if (a.Clock != null) root.AddChild(a.Clock); }
             if (HeartMonitor.IsMonitorProp(name)) { a.Monitor = HeartMonitor.Make(mainMi, GD.Randf() < HeartMonitor.AliveChance); root.AddChild(a.Monitor); }
             if (TVDevice.IsDeviceProp(name)) { a.Screen = TVDevice.Make(mainMi, name); root.AddChild(a.Screen); }
+            if (ComputerDevice.IsDeviceProp(name)) { a.Computer = ComputerDevice.Make(mainMi, name); if (a.Computer != null) root.AddChild(a.Computer); }
             if (name == "Well_0") WellShaft.Make(mainMi, WellShaft.WallColor((mat as StandardMaterial3D)?.AlbedoTexture));   // the bottomless shaft disc, a child of the ring's node
             if (RadioDevice.IsRadioProp(name)) { a.Radio = RadioDevice.Make(mainMi, name); root.AddChild(a.Radio); }
 

@@ -1019,10 +1019,21 @@ namespace UnturnedGodot
             _focusCarLift = hitLift;
             if (hitTV != _focusTV)   // TV look-focus: whole-prop white outline (SetLookFocused claims WorldItem.FocusColor=white on gain)
             {
-                if (IsInstanceValid(_focusTV)) _focusTV.SetLookFocused(false);
+                if (IsInstanceValid(_focusTV)) { _focusTV.SetLookFocused(false); _focusTV.ParkCursor(); }   // look away -> the cursor STOPS where it was
                 _focusTV = hitTV;
                 _focusTV?.SetLookFocused(true);
             }
+            // THE VIRTUAL CURSOR on a computer's port panel (strawberry 2026-10-11: "looking at the screen with
+            // nothing in ur hands, the cursor on the virtual display follows where ur crosshair is looking,
+            // stops when u look away from the screen").
+            //
+            // ⚠ EMPTY HANDS IS THE GATE, and it is the right one rather than a mode: a player holding a gun is
+            // aiming it, and a crosshair that silently doubles as a mouse would fight every other thing the
+            // crosshair does. Put the gun away and the screen becomes interactive.
+            // ⚠ _lookEnd is the ray's own hit position -- already solved above for the look sphere -- so this
+            // costs two dot products and no second raycast.
+            if (IsInstanceValid(_focusTV) && !HasSomethingHeld) _focusTV.AimCursorAt(_lookEnd);
+            else if (IsInstanceValid(_focusTV)) _focusTV.ParkCursor();   // something in hand: stop tracking, hold position
             if (hitSeat != _focusSeat)   // seat look-focus: whole-prop white outline, the same affordance a doored prop gets
             {
                 if (IsInstanceValid(_focusSeat)) _focusSeat.SetLookFocused(false);

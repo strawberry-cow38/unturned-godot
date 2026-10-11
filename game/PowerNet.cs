@@ -15,6 +15,34 @@ namespace UnturnedGodot
         static int _lastWires = -1, _lastDeployables = -1;
         public static void MarkDirty() => _dirty = true;
 
+        /// <summary>Which end of a data wire is the source and which the sink.
+        ///
+        /// ⚠ DIRECTION IS NOT THE WIRE'S. The tool records which end was clicked FIRST, and either end of a data
+        /// link is a legitimate place to start, so the wire's own source/consumer roles say nothing here.
+        ///
+        /// ⭐ With DataIo (strawberry 2026-10-11) a port can be either, so the pairing is resolved from what the
+        /// two ends are CAPABLE of: a one-way port pins the direction, and only when BOTH ends are bidirectional
+        /// is there a genuine ambiguity. That tie is broken by LIVENESS -- the end already carrying a stream is
+        /// the one sending it. Two idle DataIo ports stay idle, which is correct: a cable between two computers
+        /// that are both silent should not invent a direction, and the moment either starts sourcing it resolves
+        /// on the next hop.</summary>
+        internal static bool ResolveDataLink(ConnectionPort a, ConnectionPort b, out ConnectionPort outp, out ConnectionPort inp)
+        {
+            outp = null; inp = null;
+            bool aSrc = DeployableDef.CanSourceData(a.Kind), aSink = DeployableDef.CanSinkData(a.Kind);
+            bool bSrc = DeployableDef.CanSourceData(b.Kind), bSink = DeployableDef.CanSinkData(b.Kind);
+            bool aToB = aSrc && bSink, bToA = bSrc && aSink;
+            if (!aToB && !bToA) return false;            // data<->power, or two sinks: the tool refuses the first
+            if (aToB && bToA)                            // both bidirectional -- the live end sends
+            {
+                if (a.DataLive == b.DataLive) return false;   // both idle (or both already fed): no direction yet
+                if (a.DataLive) { outp = a; inp = b; } else { outp = b; inp = a; }
+                return true;
+            }
+            if (aToB) { outp = a; inp = b; } else { outp = b; inp = a; }
+            return true;
+        }
+
         // Global grid-power flag (SP): while ON, every GridPowerSource (a Circuit_0 breaker box) feeds its 10kW into
         // the wire graph; while OFF the mains are dead. Default ON (master 2026-07-20 -- grid power just works out of
         // the box); the F1 console `toggleGlobalPower` flips it. A flag flip is NOT a structural change (the wire/
@@ -180,17 +208,14 @@ namespace UnturnedGodot
 
             for (int hop = 0; hop < MaxDataHops; hop++)
             {
+                // (see ResolveDataLink below for how a wire's direction is decided)
                 bool changed = false;
 
                 // WIRES. Direction is not taken from the wire's own source/consumer roles: the tool records
                 // which end was clicked FIRST, and either end of a data link is a legitimate place to start.
                 foreach (var (from, to) in dataWires)
                 {
-                    var outp = from.Kind == DeployableDef.PortKind.DataOut ? from
-                             : to.Kind == DeployableDef.PortKind.DataOut ? to : null;
-                    var inp = from.Kind == DeployableDef.PortKind.DataIn ? from
-                            : to.Kind == DeployableDef.PortKind.DataIn ? to : null;
-                    if (outp == null || inp == null) continue;   // data<->power is refused at the tool
+                    if (!ResolveDataLink(from, to, out var outp, out var inp)) continue;
                     if (outp.DataLive && !inp.DataLive)
                     {
                         inp.DataLive = true; inp.DataSource = outp.DataSource; changed = true;
