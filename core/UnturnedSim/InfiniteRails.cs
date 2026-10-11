@@ -82,8 +82,10 @@ namespace SDG.Unturned
         public const float RailGrade = 0.025f;             // a main line's ruling grade, generously
         public const float RailDeckHalf = 4f;              // a rail deck's roadway: the bridge unit narrowed (DeckScale 0.5)
         /// <summary>Fill under the track (at its centre and the ballast's feet) past which an embankment becomes a
-        /// viaduct. A highway's is 3 m; a railway is MADE of embankments, and bridges only what an embankment cannot.</summary>
-        public const float RailRaise = 10f;
+        /// viaduct. A highway's is 3 m; a railway is made of embankments, but at 10 m its 1:2 sides made a mound 40 m
+        /// wide under it (strawberry 2026-10-11: "prevent railways making super-mounds beneath them"): 9.4 km of 129
+        /// stood 4 m or more, 3.1 km of it 8-10 m.</summary>
+        public static readonly float RailRaise = EnvF("UG_INF_RAIL_RAISE", 4f);   // UG_INF_RAIL_RAISE overrides it, for A/B
         public const float RailDeckAboveWater = 6f;        // the deck's 4 m soffit clear of the water
         // ---- the network
         public const double RailBand = 16000.0, RailSeg = 8000.0;

@@ -348,6 +348,37 @@ namespace UnturnedSim.Tests
         /// formation by 60 mm before it covers more than a sliver of the ballast's 0.52 m side. (At a 5 m formation the
         /// mesh sagged 158 mm under the feet on embankments.) The ballast and its cess wear gravel; no tree stands on
         /// the formation.</summary>
+        /// <summary>NO MOUNDS (strawberry 2026-10-11: "prevent railways making super-mounds beneath them"): wherever the
+        /// track is not on a viaduct, the fill under it (its bed over the natural ground at the centre and both ballast
+        /// feet, the least of the three, as the stretches are marked) is at most 5 m, its 1:2 sides 10 m out each side --
+        /// RailRaise and the most a stretch shorter than RaiseMinLength (left an embankment) adds. NOT a multiple of
+        /// RailRaise: a bar that moves with the constant cannot catch it raised back. It was 10 m: a mound 40 m across.</summary>
+        [Test]
+        public void RailEmbankmentsStayLow()
+        {
+            double total = 0, banked = 0, worst = 0; string where = "";
+            foreach (var e in Window())
+            {
+                var onDeck = new bool[e.X.Length];
+                if (e.Raised != null) foreach (var st in e.Raised) for (int i = Math.Max(0, st.I0); i <= Math.Min(e.X.Length - 1, st.I1); i++) onDeck[i] = true;
+                for (int i = 1; i + 1 < e.X.Length; i++)
+                {
+                    double sl = Math.Sqrt((e.X[i + 1] - e.X[i]) * (e.X[i + 1] - e.X[i]) + (e.Z[i + 1] - e.Z[i]) * (e.Z[i + 1] - e.Z[i]));
+                    total += sl;
+                    if (onDeck[i] || e.TunnelSpans != null && e.TunnelSpans.Any(t => i >= t.F0 - 1 && i <= t.F1 + 1)) continue;
+                    double tx = e.X[i + 1] - e.X[i - 1], tz = e.Z[i + 1] - e.Z[i - 1], tl = Math.Sqrt(tx * tx + tz * tz);
+                    double fill = double.MaxValue;
+                    foreach (int s2 in new[] { -1, 0, 1 })
+                        fill = Math.Min(fill, e.H[i] - InfiniteRoads.Bed - Gen.NaturalHeight(e.X[i] - tz / tl * s2 * InfiniteRoads.RailHalfWidth, e.Z[i] + tx / tl * s2 * InfiniteRoads.RailHalfWidth));
+                    if (fill > 2) banked += sl;
+                    if (fill > worst) { worst = fill; where = $" at ({e.X[i]:0}, {e.Z[i]:0})"; }
+                }
+            }
+            TestContext.WriteLine($"{total / 1000:0.0} km of track: {banked / 1000:0.00} km on an embankment over 2 m, the tallest {worst:0.00} m{where} (viaducts from {InfiniteRoads.RailRaise} m)");
+            Assert.That(total, Is.GreaterThan(20000), "too little track to mean anything");
+            Assert.That(worst, Is.LessThanOrEqualTo(5.0), $"an embankment {worst:0.0} m tall{where}");
+        }
+
         [Test]
         public void TheTrackLiesOnItsFormation()
         {
