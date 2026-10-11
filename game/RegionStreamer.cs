@@ -1107,8 +1107,11 @@ void fragment() {
                     faces.Add(a0); faces.Add(b0); faces.Add(a1);
                     faces.Add(b0); faces.Add(b1); faces.Add(a1);
                 }
+            // Surf.Rails, the track bed as a road vehicle drives it (strawberry 2026-10-10: "...onroad, on rails"): firm and
+            // juddering. It was Gravel -- loose and slippery -- while the editor's rail splines already had Rails through
+            // PropSurfaces (cow tools caught it, 2026-10-11)
             var body = new StaticBody3D { Name = "Ballast", CollisionLayer = 1u << 0 };
-            body.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Gravel);
+            body.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Rails);
             body.AddChild(new CollisionShape3D { Shape = new ConcavePolygonShape3D { Data = faces.ToArray(), BackfaceCollision = true } });
             holder.AddChild(body);
             return holder;
