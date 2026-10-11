@@ -180,6 +180,18 @@ namespace UnturnedSim.Tests
                     }
         }
 
+        /// <summary>Has the railway through (x, z) parted its tracks there (Line.TrackOffset past RailTrackOffset)?</summary>
+        static bool RailParted(double x, double z)
+        {
+            foreach (var e in Gen.Roads.LinesIn(x - 1, z - 1, x + 1, z + 1))
+            {
+                if (e.Kind != RoadKind.Rail || e.TrackOffset == null) continue;
+                for (int i = 0; i < e.X.Length; i++)
+                    if (Math.Abs(e.X[i] - x) < 0.01 && Math.Abs(e.Z[i] - z) < 0.01) return e.TrackOffset[i] > InfiniteRoads.RailTrackOffset + 0.01f;
+            }
+            return false;
+        }
+
         [Test]
         public void RoadsAreDrivable()
         {
@@ -225,6 +237,9 @@ namespace UnturnedSim.Tests
                             }
                     }
                     var bed = kind == RoadKind.Trail ? InfiniteTerrain.Layer.Dirt : InfiniteTerrain.Layer.Gravel;
+                    // (a railway's centreline is its bed only where its two tracks run together: where they have parted it is
+                    // the grass between them, and the tracks' own beds are RailsSplitAndRejoin's)
+                    if (kind == RoadKind.Rail && RailParted(x, z)) continue;
                     Assert.That(Gen.LayerAt(x, z, ground, 0f, hit.Clear, hit.Kind), Is.EqualTo(bed), $"{kind} centreline ({x:0},{z:0}) is not on its bed");
                 }
             }

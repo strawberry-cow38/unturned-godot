@@ -42,6 +42,14 @@ namespace UnturnedSim.Tests
             return (best, bf, bh);
         }
 
+        /// <summary>Horizontal arc length at each dense point.</summary>
+        static double[] ArcOf(InfiniteRoads.Line e)
+        {
+            var a = new double[e.X.Length];
+            for (int i = 1; i < a.Length; i++) a[i] = a[i - 1] + Math.Sqrt((e.X[i] - e.X[i - 1]) * (e.X[i] - e.X[i - 1]) + (e.Z[i] - e.Z[i - 1]) * (e.Z[i] - e.Z[i - 1]));
+            return a;
+        }
+
         static bool SegCross(double ax, double az, double bx, double bz, double cx, double cz, double dx, double dz)
         {
             double rx = bx - ax, rz = bz - az, sx = dx - cx, sz = dz - cz, den = rx * sz - rz * sx;
@@ -107,12 +115,15 @@ namespace UnturnedSim.Tests
                         double g = Gap(u[i], u[i + 1]);
                         if (g > worstGap) { worstGap = g; where = $"({u[i].X:0.0}, {u[i].Z:0.0})"; }
                     }
-                    // every root on its own side of the line, RailTrackOffset off it (track 0 on the left of its way)
+                    // every root on its own side of the line, RailTrackOffset off it (track 0 on the left of its way) --
+                    // the offset only outside a split (RailsSplitAndRejoin's)
+                    var arcs = ArcOf(e);
                     foreach (var p in u)
                     {
                         var (d, f, _) = Nearest(e, p.X, p.Z);
-                        worstOff = Math.Max(worstOff, Math.Abs(d - InfiniteRoads.RailTrackOffset));
                         int a = Math.Clamp((int)Math.Floor(f), 0, n - 1);
+                        double along = arcs[a] + (arcs[a + 1] - arcs[a]) * (f - a);
+                        if (e.Splits == null || !e.Splits.Any(sp => along >= sp.A0 - 1 && along <= sp.A1 + 1)) worstOff = Math.Max(worstOff, Math.Abs(d - InfiniteRoads.RailTrackOffset));
                         double sx = e.X[a + 1] - e.X[a], sz = e.Z[a + 1] - e.Z[a];
                         bool left = (p.X - e.X[a]) * sz - (p.Z - e.Z[a]) * sx > 0;   // (tz, -tx) is the left of (tx, tz)
                         if (left != (t == 0)) wrongSide++;
@@ -178,6 +189,103 @@ namespace UnturnedSim.Tests
             Assert.That(moved, Is.GreaterThanOrEqualTo(1), "no join in the window at a crossing-set height: the step case is untested");
             Assert.That(worstJoinTurn, Is.LessThan(0.5), "the track kinks across an anchor");
             Assert.That(sleepers, Is.EqualTo(openEnds), "a closing sleeper at every open track end and nowhere else");
+        }
+
+        /// <summary>SPLITS (strawberry 2026-10-11: "...split parallel lines"): somewhere on a fair share of the lines the two
+        /// tracks part, run on parallel 22-30 m apart, and come back. Over the window: each split's tracks stand at least
+        /// 22 m apart through its middle and bend no tighter than a main line may (250 m, the line's own bend included)
+        /// as they part; none crosses a level
+        /// crossing, sits on a deck or goes into a tunnel; the ground between the tracks at the middle is the land's own
+        /// grass (clear of the formation, not worn to gravel) while the tracks' own roots stand on gravel; and the ballast's
+        /// outer feet lie on the drawn ground as everywhere else.</summary>
+        [Test]
+        public void RailsSplitAndRejoin()
+        {
+            var lines = Window();
+            int splits = 0, narrow = 0, tight = 0, crossed = 0, decked = 0, bored = 0, middleWorn = 0, middleIn = 0, rootsBare = 0, roots = 0, feet = 0;
+            double minApart = double.MaxValue, minR = double.MaxValue, hang = 0, bury = 0; string first = null, buryAt = "", minRAt = "";
+            var regions = new Dictionary<(int, int), RegionData>();
+            RegionData Region(double x, double z) { var rc = RegionCoord.Containing(x, z); if (!regions.TryGetValue((rc.X, rc.Z), out var d)) regions[(rc.X, rc.Z)] = d = Gen.Generate(rc, 0); return d; }
+            InfiniteTerrain.Layer LayerAt(double x, double z)
+            {
+                var d = Region(x, z); int sp = (int)(InfiniteTerrain.RegionSize / d.Cells), v = d.Cells + 1;
+                int gi = (int)Math.Round((x - d.Coord.MinX) / sp), gj = (int)Math.Round((z - d.Coord.MinZ) / sp);
+                return (InfiniteTerrain.Layer)d.Layers[Math.Clamp(gj, 0, v - 1) * v + Math.Clamp(gi, 0, v - 1)];
+            }
+            foreach (var e in lines)
+            {
+                if (e.Splits == null) continue;
+                var arcs = ArcOf(e);
+                var tr = Gen.Roads.TrackOf(e);
+                var lcs = Gen.Roads.LinesIn(e.MinX, e.MinZ, e.MaxX, e.MaxZ).Where(l => l.LevelCrossings != null).SelectMany(l => l.LevelCrossings).ToList();
+                foreach (var sp in e.Splits)
+                {
+                    splits++;
+                    double Along(double x, double z) { var (_, f, _) = Nearest(e, x, z); int a = Math.Clamp((int)Math.Floor(f), 0, e.X.Length - 2); return arcs[a] + (arcs[a + 1] - arcs[a]) * (f - a); }
+                    double mid = (sp.A0 + sp.A1) / 2;
+                    // the two tracks' roots nearest the middle
+                    var t0 = tr.Where(p => p.Kind == 0 && p.Track == 0).OrderBy(p => Math.Abs(Along(p.X, p.Z) - mid)).First();
+                    var t1 = tr.Where(p => p.Kind == 0 && p.Track == 1).OrderBy(p => Math.Abs((p.X - t0.X) * t0.DX + (p.Z - t0.Z) * t0.DZ)).First();
+                    double apart = Math.Sqrt((t0.X - t1.X) * (t0.X - t1.X) + (t0.Z - t1.Z) * (t0.Z - t1.Z));
+                    minApart = Math.Min(minApart, apart);
+                    if (apart < 22) { narrow++; first ??= $"tracks {apart:0.0} m apart mid-split at ({t0.X:0}, {t0.Z:0})"; }
+                    // each track's own bend through the split: the heading's change over 25 tiles (50 m) against the
+                    // ground between -- tile to tile it is the dense line's vertex kinks (12.5 m apart), not the curve
+                    const int W = 25;
+                    foreach (int t in new[] { 0, 1 })
+                    {
+                        var u = tr.Where(p => p.Kind == 0 && p.Track == t).ToList();
+                        for (int i = 0; i + W < u.Count; i++)
+                        {
+                            double al = Along(u[i].X, u[i].Z);
+                            if (al < sp.A0 - 50 || al > sp.A1 + 50) continue;
+                            var v = u[i + W];
+                            double hl = Math.Sqrt(u[i].DX * u[i].DX + u[i].DZ * u[i].DZ), nl = Math.Sqrt(v.DX * v.DX + v.DZ * v.DZ);
+                            double turn = Math.Acos(Math.Clamp((u[i].DX * v.DX + u[i].DZ * v.DZ) / (hl * nl), -1, 1));
+                            double run = Math.Sqrt((v.X - u[i].X) * (v.X - u[i].X) + (v.Z - u[i].Z) * (v.Z - u[i].Z));
+                            if (turn > 1e-6 && run / turn < minR) { minR = run / turn; minRAt = $" at ({u[i].X:0.0}, {u[i].Z:0.0}), track {t}, {al - sp.A0:0} m into a split of {sp.A1 - sp.A0:0} m"; }
+                        }
+                    }
+                    // nothing that needs the tracks together inside it
+                    foreach (var c in lcs) { double al = Along(c.X, c.Z); if (al >= sp.A0 && al <= sp.A1 && Nearest(e, c.X, c.Z).d < 40) { crossed++; first ??= $"a level crossing in a split at ({c.X:0}, {c.Z:0})"; } }
+                    if (e.Raised != null && e.Raised.Any(st => arcs[Math.Min(arcs.Length - 1, st.I1)] >= sp.A0 && arcs[Math.Max(0, st.I0)] <= sp.A1)) { decked++; first ??= "a deck in a split"; }
+                    if (e.TunnelSpans != null && e.TunnelSpans.Any(tn => tn.A1 >= sp.A0 && tn.A0 <= sp.A1)) { bored++; first ??= "a tunnel in a split"; }
+                    // between the tracks at the middle: grass, clear of the formation
+                    double cx = (t0.X + t1.X) / 2, cz = (t0.Z + t1.Z) / 2;
+                    var hit = Gen.Roads.Influence(cx, cz);
+                    if (hit.Clear <= 0) { middleIn++; first ??= $"the ground between the tracks counts as formation ({hit.Clear:0.0} m) at ({cx:0}, {cz:0})"; }
+                    if (LayerAt(cx, cz) == InfiniteTerrain.Layer.Gravel) { middleWorn++; first ??= $"the ground between the tracks is worn to gravel at ({cx:0}, {cz:0})"; }
+                    // the tracks themselves: roots on gravel, outer feet on the drawn ground
+                    foreach (var p in tr.Where(p => p.Kind == 0))
+                    {
+                        double al = Along(p.X, p.Z);
+                        if (al < sp.A0 || al > sp.A1) continue;
+                        roots++;
+                        if (LayerAt(p.X, p.Z) != InfiniteTerrain.Layer.Gravel) rootsBare++;
+                        double lx = p.DZ, lz = -p.DX, ll = Math.Sqrt(lx * lx + lz * lz); lx /= ll; lz /= ll;
+                        foreach (double o in new[] { -InfiniteRoads.RailHalfWidth, InfiniteRoads.RailHalfWidth })
+                        {
+                            double fx = p.X + lx * o, fz = p.Z + lz * o;
+                            var d = Region(fx, fz);
+                            float mesh = InfiniteTerrain.MeshHeightAt(d, (float)(fx - d.Coord.MinX), (float)(fz - d.Coord.MinZ));
+                            float bed = p.Y - InfiniteRoads.RailSet;
+                            feet++; hang = Math.Max(hang, bed - mesh);
+                            if (mesh - bed > bury) { bury = mesh - bed; buryAt = $" at ({fx:0.0}, {fz:0.0}), track {p.Track}, {al - sp.A0:0} m into a split of {sp.A1 - sp.A0:0} m, {sp.W:0.0} m out"; }
+                        }
+                    }
+                }
+            }
+            TestContext.WriteLine($"{splits} splits in {lines.Count} lines: tracks at least {minApart:0.0} m apart mid-split ({narrow} under 22), each track's bend {minR:0} m at the tightest{minRAt}; " +
+                                  $"{crossed} level crossings, {decked} decks, {bored} tunnels inside one; between the tracks {middleIn} on the formation, {middleWorn} worn to gravel; " +
+                                  $"{roots} roots, {rootsBare} not on gravel; {feet} outer feet hang {hang * 1000:0.0} mm, buried {bury * 1000:0.0} mm{buryAt}{(first == null ? "" : $"; first: {first}")}");
+            Assert.That(splits, Is.GreaterThanOrEqualTo(5), "too few splits to mean anything");
+            Assert.That(narrow, Is.Zero, first);
+            Assert.That(minR, Is.GreaterThan(250), "a track bends tighter than a main line may as it parts");
+            Assert.That(crossed + decked + bored, Is.Zero, first);
+            Assert.That(middleIn + middleWorn, Is.Zero, first);
+            Assert.That(rootsBare, Is.LessThan(roots / 100 + 1), "the parted tracks' bed is not worn to gravel");
+            Assert.That(hang, Is.LessThan(-InfiniteRoads.RailBallastFoot - InfiniteRoads.RailSet - 0.01), "daylight under a parted track's ballast");
+            Assert.That(bury, Is.LessThan(0.06), "the ground buries a parted track's ballast");
         }
 
         /// <summary>The widest a joint between two tiles opens at any corner of the unit's cross-section (the ballast's

@@ -641,10 +641,108 @@ namespace SDG.Unturned
                 }
                 FindTunnels(e, KeepOpen);
             }
+            MarkRailSplits(e, arc, axis, band, k);
             RailShoulders(e);
             Rebox(e);
             return e;
         }
+
+        // ---- SPLITS (strawberry 2026-10-11: "...split parallel lines etc."): the two tracks part, run on parallel with
+        // grass between them, and come back together. One line, one bench under both: its formation widens with them.
+        /// <summary>Each track's offset from the centreline while split: RailSplitMin..RailSplitMax (so 22-30 m apart). Not
+        /// under ~10: each track keeps RailFormationHalf - RailTrackOffset (9.2 m) of formation to its side, and at 9 m out
+        /// the two met in the middle with no grass between.</summary>
+        public const float RailSplitMin = 11f, RailSplitMax = 15f;
+        /// <summary>How long the tracks take to part (and to come back), on half a cosine: at the widest split's 12.4 m
+        /// change over 300 m, each track's own bend is 1470 m in radius at the tightest (on top of the line's).</summary>
+        public const double RailSplitEase = 300.0;
+        public const double RailSplitHoldMin = 400.0, RailSplitHoldMax = 1100.0;
+        /// <summary>Kept this far off a deck, a tunnel, a grade separation and the segment's ends (and the level-crossing
+        /// sites this near it are struck off).</summary>
+        public const double RailSplitClear = 200.0, RailSplitEnd = 400.0;
+        /// <summary>The land across the widened bench (natural ground, at the centre and out past each track's ballast)
+        /// within this of the formation: a split is for open, level country, where the bench between is the land's own.</summary>
+        public const float RailSplitRelief = 3.5f;
+        /// <summary>...and the line no tighter than this there.</summary>
+        public const double RailSplitMinRadius = 800.0;
+        /// <summary>Chance a segment is offered a split (it gets one if it has room for it anywhere).</summary>
+        public const double RailSplitChance = 0.85;
+
+        /// <summary>Where the line's two tracks part and rejoin (at most once a segment): its width and length hashed, then
+        /// every place along the line where that fits -- RailSplitClear off everything that needs the tracks where they
+        /// are, on a straight or a gentle curve, and where the land is level across the whole widened bench -- and one of
+        /// those, hashed. Sets TrackOffset and Splits, and strikes off the level-crossing sites it covers.</summary>
+        void MarkRailSplits(Line e, double[] arc, int axis, long band, long k)
+        {
+            double total = arc[arc.Length - 1];
+            uint h = InfiniteTerrain.Hash(band * 7919 + k, axis, _s ^ 0x5E11);
+            if ((h & 0xFFFF) / 65536.0 >= RailSplitChance) { RailSplitMisses[(axis, band, k)] = "not chosen"; return; }
+            uint h2 = InfiniteTerrain.Hash(band * 7919 + k, axis, _s ^ 0x5E12);
+            double hold = RailSplitHoldMin + (RailSplitHoldMax - RailSplitHoldMin) * ((h2 & 0xFF) / 255.0);
+            float w = RailSplitMin + (RailSplitMax - RailSplitMin) * (float)(((h2 >> 8) & 0xFF) / 255.0);
+            double len = 2 * RailSplitEase + hold;
+            int n = e.X.Length;
+            // each dense point: may it be inside a split (with its 50 m of run-in)?
+            var ok = new bool[n];
+            float across = w + RailHalfWidth + 4f;
+            for (int i = 0; i < n; i++)
+            {
+                ok[i] = true;
+                if (i > 0 && i + 1 < n)
+                {
+                    // (the ease's own bend adds to the line's: at RailSplitMinRadius the tighter track is ~530 m)
+                    double ax = e.X[i] - e.X[i - 1], az = e.Z[i] - e.Z[i - 1], bx = e.X[i + 1] - e.X[i], bz = e.Z[i + 1] - e.Z[i];
+                    double la = Math.Sqrt(ax * ax + az * az), lb = Math.Sqrt(bx * bx + bz * bz);
+                    double turn = Math.Acos(Math.Clamp((ax * bx + az * bz) / (la * lb), -1.0, 1.0));
+                    if (turn > 1e-9 && 0.5 * (la + lb) / turn < RailSplitMinRadius) { ok[i] = false; continue; }
+                }
+                var (tx, tz) = RibbonTangent(e, i);
+                float bed = e.H[i] - Bed;
+                foreach (float o in new[] { -across, -across * 0.5f, 0f, across * 0.5f, across })
+                {
+                    float g = _t.RawHeight(e.X[i] - tz * o, e.Z[i] + tx * o);
+                    if (g < InfiniteTerrain.SeaLevel + 1f || Math.Abs(g - bed) > RailSplitRelief) { ok[i] = false; break; }
+                }
+            }
+            // ...and the arc ranges structures keep clear
+            var keepOff = new List<(double lo, double hi)>();
+            if (e.Plan != null) foreach (var pl in e.Plan) keepOff.Add((pl.AX - pl.Half, pl.AX + pl.Half));
+            if (e.TunnelSpans != null) foreach (var tn in e.TunnelSpans) keepOff.Add((tn.A0, tn.A1));
+            if (e.Raised != null) foreach (var st in e.Raised) keepOff.Add((arc[Math.Max(0, st.I0)], arc[Math.Min(n - 1, st.I1)]));
+            // every start (on a dense point) whose whole run fits
+            var starts = new List<double>();
+            int structure = 0, ground = 0;
+            for (int i0 = 0; i0 < n; i0++)
+            {
+                double a0 = arc[i0], a1 = a0 + len;
+                if (a0 < RailSplitEnd || a1 > total - RailSplitEnd) continue;
+                bool near = false;
+                foreach (var (lo, hi) in keepOff) if (lo <= a1 + RailSplitClear && hi >= a0 - RailSplitClear) { near = true; break; }
+                if (near) { structure++; continue; }
+                bool fits = true;
+                for (int i = i0; i < n && arc[i] <= a1 + 50; i++) if (arc[i] >= a0 - 50 && !ok[i]) { fits = false; break; }
+                for (int i = i0 - 1; i >= 0 && arc[i] >= a0 - 50; i--) if (!ok[i]) { fits = false; break; }
+                if (!fits) { ground++; continue; }
+                starts.Add(a0);
+            }
+            if (starts.Count == 0) { RailSplitMisses[(axis, band, k)] = structure + ground == 0 ? "too short" : $"no room: {structure} starts by a structure, {ground} on uneven ground or a curve"; return; }
+            {
+                double a0 = starts[(int)((h2 >> 16) % (uint)starts.Count)], a1 = a0 + len;
+                var off = new float[n];
+                for (int i = 0; i < n; i++)
+                {
+                    double a = arc[i], t = a <= a0 || a >= a1 ? 0 : a < a0 + RailSplitEase ? (a - a0) / RailSplitEase : a > a1 - RailSplitEase ? (a1 - a) / RailSplitEase : 1;
+                    off[i] = RailTrackOffset + (w - RailTrackOffset) * (float)(0.5 - 0.5 * Math.Cos(Math.PI * t));
+                }
+                e.TrackOffset = off;
+                e.Splits = new List<(double, double, float)> { (a0, a1, w) };
+                // a level-crossing SITE is only a place a main may choose (mains are built after rails): those in and near
+                // the split are struck off, so no road crosses the tracks while they are parted
+                e.Sites?.RemoveAll(st => st.A >= a0 - RailSplitClear && st.A <= a1 + RailSplitClear);
+            }
+        }
+        /// <summary>Why each rail segment that was offered a split has none (diagnostics).</summary>
+        public readonly ConcurrentDictionary<(int axis, long band, long k), string> RailSplitMisses = new();
 
         public const double RailTunnelClearOfSeparation = 150.0;
 
@@ -854,7 +952,12 @@ namespace SDG.Unturned
             {
                 double o = t == 0 ? -RailTrackOffset : RailTrackOffset;
                 var xs = new double[n]; var zs = new double[n];
-                for (int i = 0; i < n; i++) { var (tx, tz) = tan[i]; xs[i] = e.X[i] - tz * o; zs[i] = e.Z[i] + tx * o; }
+                for (int i = 0; i < n; i++)
+                {
+                    var (tx, tz) = tan[i];
+                    double oi = e.TrackOffset == null ? o : Math.Sign(o) * e.TrackOffset[i];   // parted, where the line splits
+                    xs[i] = e.X[i] - tz * oi; zs[i] = e.Z[i] + tx * oi;
+                }
                 foreach (var p in TrackAlong(xs, zs, e.H, closeEnd)) { var q = p; q.Track = t; all.Add(q); }
             }
             e.Track = all;
