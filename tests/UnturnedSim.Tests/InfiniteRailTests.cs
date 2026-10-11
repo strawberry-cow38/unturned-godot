@@ -288,6 +288,107 @@ namespace UnturnedSim.Tests
             Assert.That(bury, Is.LessThan(0.06), "the ground buries a parted track's ballast");
         }
 
+        /// <summary>CHORDS (strawberry 2026-10-11: "rail branching, merging"): where a north-south line crosses an east-west
+        /// one, single-track curves in some quadrants leave one line's near track and run onto the other's. Each one: both
+        /// ends ON a track of the line it joins (RailTrackOffset off that line's centreline, heading along it, at its
+        /// height less the sink), its two ends on two different lines; no bend tighter than ChordMinRadius, no grade over
+        /// the ruling one; one unbroken track; crossing no highway and no rail between its ends; and off its decks, its
+        /// ballast lies on the drawn ground all the way, through its turnouts (where it takes the other line's profile,
+        /// let down ChordSink so its ballast is under the other's).</summary>
+        [Test]
+        public void ChordsJoinTheLines()
+        {
+            var chords = new List<InfiniteRoads.Line>();
+            for (long band = -2; band <= 1; band++)
+                for (long k = -3; k <= 2; k++) chords.AddRange(Gen.Roads.ChordsOf(1, band, k));
+            int ends = 0, offTrack = 0, sameLine = 0, steep = 0, tightN = 0, crossing = 0, feet = 0, level = 0; double worstOff = 0, worstTurn = 0, worstH = 0, minR = double.MaxValue, worstGap = 0, hang = 0, bury = 0;
+            string first = null, hangAt = "";
+            var regions = new Dictionary<(int, int), RegionData>();
+            RegionData Region(double x, double z) { var rc = RegionCoord.Containing(x, z); if (!regions.TryGetValue((rc.X, rc.Z), out var d)) regions[(rc.X, rc.Z)] = d = Gen.Generate(rc, 0); return d; }
+            foreach (var c in chords)
+            {
+                int n = c.X.Length - 1;
+                var arcs = ArcOf(c);
+                // the lines at its two ends: the nearest DOUBLE-track rail centreline to each
+                InfiniteRoads.Line[] joined = new InfiniteRoads.Line[2];
+                for (int end = 0; end < 2; end++)
+                {
+                    int i = end == 0 ? 0 : n, j = end == 0 ? 1 : n - 1;
+                    double ex = c.X[i], ez = c.Z[i];
+                    InfiniteRoads.Line best = null; double bd = double.MaxValue, bf = 0; float bh = 0;
+                    foreach (var o in Gen.Roads.LinesIn(ex - 20, ez - 20, ex + 20, ez + 20))
+                    {
+                        if (o.Kind != RoadKind.Rail || o.SingleTrack) continue;
+                        var (d, f, h) = Nearest(o, ex, ez);
+                        if (d < bd) { bd = d; best = o; bf = f; bh = h; }
+                    }
+                    ends++;
+                    if (best == null) { offTrack++; first ??= $"a chord end at ({ex:0}, {ez:0}) is on no line"; continue; }
+                    joined[end] = best;
+                    worstOff = Math.Max(worstOff, Math.Abs(bd - InfiniteRoads.RailTrackOffset));
+                    int a = Math.Clamp((int)Math.Floor(bf), 0, best.X.Length - 2);
+                    double lx = best.X[a + 1] - best.X[a], lz = best.Z[a + 1] - best.Z[a], cx = c.X[j] - c.X[i], cz = c.Z[j] - c.Z[i];
+                    double turn = Math.Acos(Math.Abs(lx * cx + lz * cz) / Math.Sqrt((lx * lx + lz * lz) * (cx * cx + cz * cz))) * 180 / Math.PI;
+                    worstTurn = Math.Max(worstTurn, turn);
+                    worstH = Math.Max(worstH, Math.Abs(c.H[i] - bh));
+                    // (at least half the sink UNDER the line's own: two ballast tops in one plane flicker)
+                    if (bh - c.H[i] < InfiniteRoads.ChordSink * 0.5f) { level++; first ??= $"a chord end at ({ex:0}, {ez:0}) is {c.H[i] - bh:+0.000;-0.000} m off the line's height: its ballast is not under the other's"; }
+                    if (Math.Abs(bd - InfiniteRoads.RailTrackOffset) > 0.05 || turn > 1.0 || Math.Abs(c.H[i] - bh) > InfiniteRoads.ChordSink + 0.01f) { offTrack++; first ??= $"a chord end at ({ex:0}, {ez:0}) is {bd:0.00} m off the line, {turn:0.00} deg off its heading, {c.H[i] - bh:+0.000;-0.000} m off its height"; }
+                }
+                if (joined[0] != null && joined[0] == joined[1]) { sameLine++; first ??= "a chord joins a line to itself"; }
+                // the curve and the profile
+                for (int i = 1; i < n; i++)
+                {
+                    double ux = c.X[i] - c.X[i - 1], uz = c.Z[i] - c.Z[i - 1], vx = c.X[i + 1] - c.X[i], vz = c.Z[i + 1] - c.Z[i];
+                    double lu = Math.Sqrt(ux * ux + uz * uz), lv = Math.Sqrt(vx * vx + vz * vz);
+                    double t = Math.Acos(Math.Clamp((ux * vx + uz * vz) / (lu * lv), -1.0, 1.0));
+                    if (t > 1e-9) { double r = 0.5 * (lu + lv) / t; minR = Math.Min(minR, r); if (r < InfiniteRoads.ChordMinRadius) tightN++; }
+                }
+                for (int i = 0; i < n; i++) if (Math.Abs(c.H[i + 1] - c.H[i]) / (arcs[i + 1] - arcs[i]) > InfiniteRoads.RailGrade * 1.0001) steep++;
+                // its track
+                var u = Gen.Roads.TrackOf(c).Where(p => p.Kind == 0).ToList();
+                for (int i = 0; i + 1 < u.Count; i++) worstGap = Math.Max(worstGap, Gap(u[i], u[i + 1]));
+                // nothing crossed between its ends
+                foreach (var o in Gen.Roads.LinesIn(c.MinX, c.MinZ, c.MaxX, c.MaxZ))
+                {
+                    if (o == c || o == joined[0] || o == joined[1] || o.Kind == RoadKind.Main || o.Kind == RoadKind.Small || o.Kind == RoadKind.Trail) continue;
+                    for (int i = 0; i < n; i++)
+                        for (int q = 0; q + 1 < o.X.Length; q++)
+                            if (SegCross(c.X[i], c.Z[i], c.X[i + 1], c.Z[i + 1], o.X[q], o.Z[q], o.X[q + 1], o.Z[q + 1])) { crossing++; first ??= $"a chord crosses a {o.Kind} at ({c.X[i]:0}, {c.Z[i]:0})"; }
+                }
+                // its ballast on the drawn ground, away from its turnouts and decks
+                foreach (var p in u)
+                {
+                    var (_, f, _) = Nearest(c, p.X, p.Z);
+                    int a = Math.Clamp((int)Math.Floor(f), 0, n - 1);
+                    double al = arcs[a] + (arcs[a + 1] - arcs[a]) * (f - a);
+                    if (Covered(c.DeckCover?[0], f - 1) || Covered(c.DeckCover?[0], f + 1)) continue;
+                    double lx = p.DZ, lz = -p.DX, ll = Math.Sqrt(lx * lx + lz * lz); lx /= ll; lz /= ll;
+                    foreach (double o in new[] { -InfiniteRoads.RailHalfWidth, 0, InfiniteRoads.RailHalfWidth })
+                    {
+                        double fx = p.X + lx * o, fz = p.Z + lz * o;
+                        var d = Region(fx, fz);
+                        float mesh = InfiniteTerrain.MeshHeightAt(d, (float)(fx - d.Coord.MinX), (float)(fz - d.Coord.MinZ));
+                        float bed = p.Y - InfiniteRoads.RailSet;
+                        feet++; bury = Math.Max(bury, mesh - bed);
+                        if (bed - mesh > hang) { hang = bed - mesh; hangAt = $" at ({fx:0.0}, {fz:0.0}), {al:0} m along a chord of {arcs[n]:0} m"; }
+                    }
+                }
+            }
+            TestContext.WriteLine($"{chords.Count} chords: {ends} ends, {offTrack} off a track (worst {worstOff * 1000:0.0} mm off the offset, {worstTurn:0.000} deg off the heading, {worstH * 1000:0.0} mm off the height), {sameLine} joining a line to itself; " +
+                                  $"tightest {minR:0} m ({tightN} points under {InfiniteRoads.ChordMinRadius}), {steep} segments over the grade; joints {worstGap * 1000:0.00} mm; {crossing} crossings; {feet} ballast points hang {hang * 1000:0.0} mm{hangAt}, buried {bury * 1000:0.0} mm" +
+                                  $"{(first == null ? "" : $"; first: {first}")}");
+            TestContext.WriteLine("not laid: " + string.Join(", ", Gen.Roads.ChordMisses.Values.GroupBy(v => v.Split(' ')[0] + " " + (v.Split(' ').Length > 1 ? v.Split(' ')[1] : "")).Select(g => $"{g.Key} x{g.Count()}")));
+            Assert.That(chords.Count, Is.GreaterThanOrEqualTo(4), "too few chords to mean anything");
+            Assert.That(offTrack + sameLine + level, Is.Zero, first);
+            Assert.That(tightN + steep, Is.Zero, "a chord too tight or too steep");
+            Assert.That(worstGap, Is.LessThan(0.001), "a chord's track joint stands open");
+            Assert.That(crossing, Is.Zero, first);
+            Assert.That(feet, Is.GreaterThan(500));
+            Assert.That(hang, Is.LessThan(-InfiniteRoads.RailBallastFoot - InfiniteRoads.RailSet - 0.01), "daylight under a chord's ballast");
+            Assert.That(bury, Is.LessThan(0.06), "the ground buries a chord's ballast");
+        }
+
         /// <summary>The widest a joint between two tiles opens at any corner of the unit's cross-section (the ballast's
         /// feet and top edge, the rail heads): how far the end of one falls short of the next one's start plane, and the
         /// next one's start of the first one's end plane.</summary>

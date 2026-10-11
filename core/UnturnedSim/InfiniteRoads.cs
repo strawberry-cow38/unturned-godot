@@ -167,6 +167,11 @@ namespace SDG.Unturned
             /// <summary>Rails: the splits, by horizontal arc (where the tracks start to part, where they are back) and the
             /// offset each track holds between.</summary>
             public List<(double A0, double A1, float W)> Splits;
+            /// <summary>Rails: ONE track on the centreline, not two (a chord: InfiniteRails.BuildChords); its formation is
+            /// a single track's. Its ends run onto another line's track (a turnout), so it closes neither.</summary>
+            public bool SingleTrack;
+            /// <summary>North-south rails: the single-track chords laid from this line onto the east-west lines it crosses.</summary>
+            public List<Line> Chords;
             /// <summary>Mains: where this main crosses a railway on the level.</summary>
             public List<LevelCrossing> LevelCrossings;
             /// <summary>Rails: the crossings stage 1 shaped (InfiniteRails.ShapeRail), for stage 2 to keep.</summary>
@@ -2008,7 +2013,9 @@ namespace SDG.Unturned
         static void Rebox(Line e)
         {
             int P = e.Segments;
-            float Reach(int i) => PavedHalf(e.Kind) + Flat(e.Kind) + (e.Shoulders != null ? e.Shoulders[i] : Shoulder(e.Kind));
+            // (a split rail's formation is wider by its tracks' extra offset: Influence widens it, and the boxes must too)
+            float Reach(int i) => PavedHalf(e.Kind) + Flat(e.Kind) + (e.Shoulders != null ? e.Shoulders[i] : Shoulder(e.Kind))
+                                + (e.TrackOffset != null ? Math.Max(0f, e.TrackOffset[i] - RailTrackOffset) : 0f);
             int chunks = (P + Chunk - 1) / Chunk;
             e.CMinX = new double[chunks]; e.CMaxX = new double[chunks]; e.CMinZ = new double[chunks]; e.CMaxZ = new double[chunks];
             e.MinX = e.MinZ = double.MaxValue; e.MaxX = e.MaxZ = double.MinValue;
@@ -2161,6 +2168,7 @@ namespace SDG.Unturned
                 // A SPLIT RAIL: its formation widens with its tracks' offset (one flat bench under both), but what is
                 // CLEAR of it is measured from the nearer track -- the ground between them is grass, not ballast
                 float trackO = float.NaN;
+                if (e.SingleTrack) half -= RailTrackOffset;   // one track: its formation reaches a track's offset less far
                 if (e.TrackOffset != null)
                 {
                     trackO = e.TrackOffset[bestK] + (e.TrackOffset[bestK + 1] - e.TrackOffset[bestK]) * (float)bestT;
