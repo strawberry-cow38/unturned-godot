@@ -68,6 +68,13 @@ namespace SDG.Unturned
         /// <summary>The carve's blend from the road's level back to the land. A rail's is per point (Line.Shoulders: its
         /// cuttings and embankments are deeper than any road's), this being the least of it.</summary>
         public static float Shoulder(RoadKind k) => k switch { RoadKind.Highway => 14f, RoadKind.Main => 10f, RoadKind.Small => 6f, RoadKind.Rail => 10f, _ => 4f };
+        /// <summary>How far past its asphalt a road keeps the ground flat at its bed before the shoulder starts to blend
+        /// back to the land (strawberry 2026-10-11: "allow all roads to apply a little more of a flattened area around
+        /// them"). It was 0: the cut's side or the embankment's fall began at the asphalt's edge. A rail's formation is
+        /// already its flat.</summary>
+        public static float Flat(RoadKind k) => !FlatVerge ? 0f : k switch { RoadKind.Highway => 3f, RoadKind.Main => 2.5f, RoadKind.Small => 2f, RoadKind.Rail => 0f, _ => 1.5f };
+        /// <summary>UG_INF_FLAT=0: no flat band (the shoulder starts at the asphalt's edge, as before).</summary>
+        public static bool FlatVerge = Environment.GetEnvironmentVariable("UG_INF_FLAT") != "0";
         public static float MaxGrade(RoadKind k) => k switch { RoadKind.Highway => 0.07f, RoadKind.Main => 0.16f, RoadKind.Small => 0.14f, RoadKind.Rail => RailGrade, _ => 0.22f };
         public const float Bed = 0.12f;   // the ground under a paved surface sits this far below it
 
@@ -1480,13 +1487,13 @@ namespace SDG.Unturned
             else
             {
                 float berm = hit.TunnelRoad + ShellTopOf(k, reach) + 0.25f - (alat - reach) * BermSlope;
-                if (berm > g) g += (berm - g) * Smoothstep(PavedHalf(k) + Shoulder(k), reach, alat);
+                if (berm > g) g += (berm - g) * Smoothstep(PavedHalf(k) + Flat(k) + Shoulder(k), reach, alat);
             }
             // the cap sits just over the shells where the hole band ends -- the terrain's edge there is seen at a grazing
             // angle past the headwall's top, and every metre between it and the shell is a slot of open sky
             float cap = hit.TunnelRoad + ShellTopOf(k, Math.Clamp(lat, -reach, reach)) + HeadwallCover + Math.Max(0f, hit.TunnelIn - TunnelHoleIn) * HeadwallSlope;
             // out to where the tunnel stops being reported (the line's carve reach), so there is no step at its edge
-            if (g > cap) g += (cap - g) * Smoothstep(PavedHalf(k) + Shoulder(k), reach, alat);
+            if (g > cap) g += (cap - g) * Smoothstep(PavedHalf(k) + Flat(k) + Shoulder(k), reach, alat);
             return g;
         }
 
@@ -1675,9 +1682,9 @@ namespace SDG.Unturned
             return false;
         }
 
-        /// <summary>THE FLOOR under a road for a ground mesh `reach` metres coarse: the bed of the road whose asphalt is
-        /// nearest (x, z), if it is within `reach` of it; +infinity otherwise. Not where the road is in a tunnel or on a
-        /// deck (the hill or the valley is the ground there).
+        /// <summary>THE FLOOR under a road for a ground mesh `reach` metres coarse: under a road's asphalt that road's bed
+        /// (the lowest, under two), beside them the lowest bed of every road within `reach`; +infinity with none in reach.
+        /// Not where a road is in a bore or on a deck (the hill or the valley is the ground there).
         /// A region drew its road slab no lower than its own ground mesh, and a mesh's triangle reaching from the
         /// asphalt up a cutting's slope stands over the road between its vertices -- so the slab was lifted onto it: a
         /// bumpy road through every deep cut, and where two regions of different detail meet, the same joint lifted by
@@ -1686,13 +1693,18 @@ namespace SDG.Unturned
         /// this, the ground near a road never rises over it, and nothing is lifted.</summary>
         public float FloorAt(List<Line> lines, double x, double z, double reach)
         {
-            float floor = float.PositiveInfinity; double bestIn = double.MaxValue;
+            // each road at its nearest point: under the asphalt of one (or of a joiner run on under its host), the lowest
+            // of those; beside them all, the lowest of every road in reach -- at a tee the joiner climbs away from its
+            // host, and a vertex nearer the joiner's edge than the host's held to the JOINER's bed stood the ground over
+            // the host's edge (the verge's flat band carved it there)
+            float under = float.PositiveInfinity, around = float.PositiveInfinity;
             foreach (var e in lines)
             {
                 if (e.Kind == RoadKind.Rail || !e.Exists) continue;
                 double hw = PavedHalf(e.Kind), m = hw + reach;
                 if (x < e.MinX - m || x > e.MaxX + m || z < e.MinZ - m || z > e.MaxZ + m) continue;
                 int n = e.X.Length - 1, chunks = e.CMinX?.Length ?? 0;
+                double bestIn = double.MaxValue; float bed = float.PositiveInfinity;
                 for (int c = 0; c < Math.Max(1, chunks); c++)
                 {
                     if (chunks > 0 && (x < e.CMinX[c] - m || x > e.CMaxX[c] + m || z < e.CMinZ[c] - m || z > e.CMaxZ[c] + m)) continue;
@@ -1712,11 +1724,14 @@ namespace SDG.Unturned
                             if (decked) continue;
                         }
                         bestIn = inside;
-                        floor = e.H[k] + (e.H[k + 1] - e.H[k]) * (float)t - Bed - 0.02f;
+                        bed = e.H[k] + (e.H[k + 1] - e.H[k]) * (float)t - Bed - 0.02f;
                     }
                 }
+                if (float.IsPositiveInfinity(bed)) continue;
+                if (bestIn < 0) under = Math.Min(under, bed);
+                around = Math.Min(around, bed);
             }
-            return floor;
+            return float.IsPositiveInfinity(under) ? around : under;
         }
 
         static bool Covered(List<DeckSpan> cover, double f, double inset = 0)
@@ -1910,11 +1925,11 @@ namespace SDG.Unturned
         }
 
         /// <summary>The line's influence boxes, whole and per Chunk segments: its points padded by the carve's reach
-        /// (paved half + shoulder -- per point where the line has its own Shoulders).</summary>
+        /// (paved half + flat + shoulder -- per point where the line has its own Shoulders).</summary>
         static void Rebox(Line e)
         {
             int P = e.Segments;
-            float Reach(int i) => PavedHalf(e.Kind) + (e.Shoulders != null ? e.Shoulders[i] : Shoulder(e.Kind));
+            float Reach(int i) => PavedHalf(e.Kind) + Flat(e.Kind) + (e.Shoulders != null ? e.Shoulders[i] : Shoulder(e.Kind));
             int chunks = (P + Chunk - 1) / Chunk;
             e.CMinX = new double[chunks]; e.CMaxX = new double[chunks]; e.CMinZ = new double[chunks]; e.CMaxZ = new double[chunks];
             e.MinX = e.MinZ = double.MaxValue; e.MaxX = e.MaxZ = double.MinValue;
@@ -2078,7 +2093,8 @@ namespace SDG.Unturned
                         if (along >= tn.A0 && along <= tn.A1) { clear += PortalWear((float)Math.Min(along - tn.A0, tn.A1 - along)); break; }
                 }
                 if (clear < hit.Clear) { hit.Clear = clear; hit.ClearKind = e.Kind; }
-                if (best >= half + sh) continue;
+                float flat = Flat(e.Kind);
+                if (best >= half + flat + sh) continue;
                 // INSIDE A TUNNEL'S RUN the hill stands: no carve from this road, and the tunnel's own shaping instead
                 if (Tunnels && e.TunnelSpans != null && bestK >= 0)
                 {
@@ -2147,7 +2163,7 @@ namespace SDG.Unturned
                             if (u.HwId == e.Id && u.Cover[si] is DeckSpan d && bestK + bestT >= d.F0 + tuck && bestK + bestT <= d.F1 - tuck) { under = true; break; }
                     if (under) continue;
                 }
-                float w = Smoothstep(half + sh, half, best);
+                float w = Smoothstep(half + flat + sh, half + flat, best);
                 // strongest carve wins; inside two corridors at once, the one you are deeper inside
                 if (!hit.Any || w > hit.Weight + 1e-6f || (w >= hit.Weight - 1e-6f && best - half < hit.Dist - PavedHalf(hit.Kind)))
                 {

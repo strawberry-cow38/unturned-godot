@@ -185,6 +185,7 @@ namespace UnturnedSim.Tests
         {
             var lines = new Dictionary<RoadKind, int>(); var points = new Dictionary<RoadKind, int>();
             var worstGrade = new Dictionary<RoadKind, float>(); float worstGap = 0f;
+            var flatPts = new Dictionary<RoadKind, int>(); float worstFlat = 0f;
             foreach (var (kind, pts) in AllRoads(-3, 3))
             {
                 lines[kind] = lines.GetValueOrDefault(kind) + 1;
@@ -205,6 +206,24 @@ namespace UnturnedSim.Tests
                     if (!hit.Any || hit.Kind != kind || hit.Dist > 0.01f || hit.Weight < 0.999f) continue;
                     points[kind] = points.GetValueOrDefault(kind) + 1;
                     worstGap = Math.Max(worstGap, Math.Abs(ground + InfiniteRoads.Bed - h));
+                    // ...and FLAT out past the asphalt (strawberry 2026-10-11: "allow all roads to apply a little more of a
+                    // flattened area around them"): at 90% of the flat band either side, where this road alone carves, the
+                    // ground is still its bed
+                    if (k + 1 < pts.Length && InfiniteRoads.Flat(kind) > 0f)
+                    {
+                        var (nx2, nz2, _) = pts[k + 1];
+                        double tx = nx2 - x, tz = nz2 - z, tl = Math.Sqrt(tx * tx + tz * tz);
+                        if (tl > 1e-6)
+                            foreach (int side in new[] { -1, 1 })
+                            {
+                                double off = InfiniteRoads.PavedHalf(kind) + 0.9 * InfiniteRoads.Flat(kind);
+                                double px = x - tz / tl * off * side, pz = z + tx / tl * off * side;
+                                float g2 = Gen.Sample(px, pz, out var h2);
+                                if (!h2.Any || h2.Kind != kind || Math.Abs(h2.Height - h) > 0.05f) continue;   // another road's, or a bend
+                                flatPts[kind] = flatPts.GetValueOrDefault(kind) + 1;
+                                worstFlat = Math.Max(worstFlat, Math.Abs(g2 + InfiniteRoads.Bed - h2.Height));
+                            }
+                    }
                     var bed = kind == RoadKind.Trail ? InfiniteTerrain.Layer.Dirt : InfiniteTerrain.Layer.Gravel;
                     Assert.That(Gen.LayerAt(x, z, ground, 0f, hit.Clear, hit.Kind), Is.EqualTo(bed), $"{kind} centreline ({x:0},{z:0}) is not on its bed");
                 }
@@ -219,6 +238,10 @@ namespace UnturnedSim.Tests
                 Assert.That(worstGrade.GetValueOrDefault(k), Is.LessThanOrEqualTo(InfiniteRoads.MaxGrade(k) * 1.0001f), $"{k} too steep");
             }
             Assert.That(worstGap, Is.LessThan(0.001f), "the ground on a centreline must be the road profile, less its bed");
+            TestContext.WriteLine($"flat band: {string.Join(", ", flatPts.Select(kv => $"{kv.Key} {kv.Value}"))} points at 90% of it, worst {worstFlat * 1000f:0.###} mm off the bed");
+            foreach (var kk in new[] { RoadKind.Highway, RoadKind.Main, RoadKind.Small, RoadKind.Trail })
+                Assert.That(flatPts.GetValueOrDefault(kk), Is.GreaterThan(20), $"{kk}: too few flat-band points checked");
+            Assert.That(worstFlat, Is.LessThan(0.001f), "the ground across the flat band past the asphalt must be the road's bed");
         }
 
         /// <summary>THE FLOOR (strawberry 2026-10-11: "there are some gaps around elevation changes with roads", "theres often
@@ -241,7 +264,7 @@ namespace UnturnedSim.Tests
             for (int lod = 0; lod <= 1; lod++)
             {
                 int verts = 0, lifted = 0, atJunction = 0, inEdgeCell = 0, poles = 0, polesOff = 0; double worst = 0, worstJ = 0, worstE = 0, worstPole = 0;
-                string where = "", poleWhere = "";
+                string where = "", poleWhere = "", whereJ = "";
                 double reach = InfiniteTerrain.FloorReach(InfiniteTerrain.RegionSize / InfiniteTerrain.CellsFor(lod));
                 for (int rx = -R; rx < R; rx++)
                     for (int rz = -R; rz < R; rz++)
@@ -260,7 +283,7 @@ namespace UnturnedSim.Tests
                             if (up <= 0.001) return;
                             // at a junction: another road's floor governs here
                             bool junction = own == null || !float.IsPositiveInfinity(Gen.Roads.FloorAt(lines.FindAll(e => e != own), x, z, reach + 2 * d.Spacing));
-                            if (junction) { atJunction++; worstJ = Math.Max(worstJ, up); return; }
+                            if (junction) { atJunction++; if (up > worstJ) { worstJ = up; whereJ = $" worst at ({x:0.0}, {z:0.0}){(own == null ? " on a patch" : "")}"; } return; }
                             float sp = d.Spacing, rs = InfiniteTerrain.RegionSize;
                             if (lod > 0 && (lx < sp || lz < sp || lx > rs - sp || lz > rs - sp)) { inEdgeCell++; worstE = Math.Max(worstE, up); return; }
                             lifted++;
@@ -305,7 +328,7 @@ namespace UnturnedSim.Tests
                                 if (off > worstPole) { worstPole = off; poleWhere = $" worst at ({pp.X:0}, {pp.Z:0})"; }
                             }
                     }
-                TestContext.WriteLine($"LOD{lod}: {verts} road vertices, {lifted} lifted onto the mesh{where} ({worst * 1000:0} mm); at junctions {atJunction}, worst {worstJ * 1000:0} mm"
+                TestContext.WriteLine($"LOD{lod}: {verts} road vertices, {lifted} lifted onto the mesh{where} ({worst * 1000:0} mm); at junctions {atJunction}{whereJ}, worst {worstJ * 1000:0} mm"
                                       + (lod > 0 ? $"; in the region's last cell {inEdgeCell}, worst {worstE * 1000:0} mm" : "")
                                       + (lod == 0 ? $"; {poles} poles, {polesOff} off the drawn ground{poleWhere} ({worstPole * 1000:0} mm)" : ""));
                 Assert.That(verts, Is.GreaterThan(3000), $"LOD{lod}: too few road vertices to mean anything");
