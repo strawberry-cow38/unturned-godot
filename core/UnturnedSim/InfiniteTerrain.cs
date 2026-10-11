@@ -451,7 +451,7 @@ namespace SDG.Unturned
         /// A rail's is NEGATIVE: its formation is wide (InfiniteRoads.RailFormationHalf, for the ground mesh's sake) and
         /// only the ballast and a 1.5 m cess beside it are worn to gravel.</summary>
         public static float VergeWidth(RoadKind k) => k switch { RoadKind.Highway => 6f, RoadKind.Main => 5f, RoadKind.Small => 4f,
-            RoadKind.Rail => InfiniteRoads.RailHalfWidth + 1.5f - InfiniteRoads.RailFormationHalf, _ => 3f };
+            RoadKind.Rail => InfiniteRoads.RailOuterHalf + 1.5f - InfiniteRoads.RailFormationHalf, _ => 3f };
         /// <summary>The dirt worn round a power line's footing: a roadside pole's, and a pylon's -- its 7.9 m lattice base
         /// (InfinitePylons.FootHalf, half-diagonal 5.6 m) and a couple of metres of trampled ground round it.</summary>
         public const float PoleDirt = 2.5f;

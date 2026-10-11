@@ -1144,8 +1144,9 @@ namespace UnturnedSim.Tests
                         if (!double.IsNaN(pg) && (g > raw + 0.05 || pg > pr + 0.05))
                         {
                             // ...by more than the shells' CROWNS fall: cover built up over a crown follows it, by design, and a
-                            // crown falls at most 1.07 in 1 (a railway's, scaled 0.6 across and 0.65 up). Their FLANKS fall 3.5
-                            // in 1, and cover built up against one is the ridge this is about (BermAllowed keeps it off them)
+                            // crown falls at most 1.07 in 1 (a railway's, as it was scaled 0.6 across and 0.65 up; double track
+                            // widened it to 0.8 across, 0.80 in 1, and a highway's is 0.99). Their FLANKS fall 3.5 in 1, and cover
+                            // built up against one is the ridge this is about (BermAllowed keeps it off them)
                             double steeper = (Math.Abs(g - pg) - Math.Abs(raw - pr)) / 0.25 - CrownSlope;
                             if (steeper > worstSteeper) { worstSteeper = steeper; steepWhere = $" ({kind} at {x:0},{z:0}, {o:+0.0;-0.0} across, ground {g - t.Y[i]:+0.0;-0.0} over the road)"; }
                         }

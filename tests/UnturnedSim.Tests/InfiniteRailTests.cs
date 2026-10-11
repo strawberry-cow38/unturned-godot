@@ -19,7 +19,11 @@ namespace UnturnedSim.Tests
             var w = new List<InfiniteRoads.Line>();
             for (int axis = 0; axis < 2; axis++)
                 for (long band = -2; band <= 1; band++)
-                    for (long k = -3; k <= 2; k++) w.AddRange(Gen.Roads.RailLines(axis, band, k));   // (k -3: 0/-1/-3 meets 0/-1/-2 at a crossing-set height)
+                    for (long k = -3; k <= 2; k++) w.AddRange(Gen.Roads.RailLines(axis, band, k));
+            // ...and a pair that meets at a height a crossing set (the case a per-segment build left as a 2.4 m step). It
+            // was 0/-1/-3 meeting 0/-1/-2, in the window; double track's wider formation moved that crossing's approach off
+            // the anchor, and the nearest such join is now 0/-1/-5 meeting 0/-1/-4, at (-31600, -6778), 69.2 m vs 47.4.
+            foreach (long k in new[] { -5L, -4L }) w.AddRange(Gen.Roads.RailLines(0, -1, k));
             return _window = w;
         }
 
@@ -62,16 +66,18 @@ namespace UnturnedSim.Tests
         static bool Covered(List<InfiniteRoads.DeckSpan> c, double f) => c != null && c.Any(s => f >= s.F0 && f <= s.F1);
 
         /// <summary>A railway is a straight, gentle thing: every segment keeps to RailGrade and curves no tighter than
-        /// 250 m; and its track is ONE continuous run of tiles -- every joint closed at the ballast's feet, its top and
-        /// the rail heads (the turn, both ways, is what opens a joint), and each segment's last tile ending exactly
-        /// where the next segment's first begins, heading the same way. A closing sleeper only at a true end.</summary>
+        /// 250 m; it carries TWO tracks (strawberry 2026-10-11: "double rail lines"), each unit's root RailTrackOffset off the
+        /// line's centreline on its own side; and each track is ONE continuous run of tiles -- every joint closed at the
+        /// ballast's feet, its top and the rail heads (the turn, both ways, is what opens a joint), and each segment's last
+        /// tile ending exactly at its track's end, where the next segment's first tile on the same track begins, heading
+        /// the same way. A closing sleeper on each track only at a true end.</summary>
         [Test]
         public void RailsAreGentleAndTheirTrackIsUnbroken()
         {
             var lines = Window();
-            double km = 0, worstGrade = 0, minR = double.MaxValue, worstGap = 0, worstJoin = 0, worstJoinTurn = 0, worstEnd = 0;
-            int units = 0, joints = 0, joins = 0, moved = 0, sleepers = 0, openEnds = 0; string where = "";
-            var starts = new List<(double x, double z, RailPiece first, InfiniteRoads.Line e)>();
+            double km = 0, worstGrade = 0, minR = double.MaxValue, worstGap = 0, worstJoin = 0, worstJoinTurn = 0, worstEnd = 0, worstOff = 0;
+            int units = 0, joints = 0, joins = 0, moved = 0, sleepers = 0, openEnds = 0, wrongSide = 0, single = 0, openChecked = 0; string where = "", joinAt = "";
+            var starts = new List<(double x, double z, int track, RailPiece first, InfiniteRoads.Line e)>();
             foreach (var e in lines)
             {
                 for (int i = 0; i + 1 < e.X.Length; i++)
@@ -87,61 +93,91 @@ namespace UnturnedSim.Tests
                     }
                 }
                 var tr = Gen.Roads.TrackOf(e);
-                var u = tr.Where(p => p.Kind == 0).ToList();
-                units += u.Count;
-                for (int i = 0; i + 1 < u.Count; i++)
-                {
-                    joints++;
-                    double g = Gap(u[i], u[i + 1]);
-                    if (g > worstGap) { worstGap = g; where = $"({u[i].X:0.0}, {u[i].Z:0.0})"; }
-                }
-                // the last tile ends at the line's end
-                var last = u[^1];
-                double endX = last.X + last.DX * InfiniteRoads.RailPitch * last.K, endZ = last.Z + last.DZ * InfiniteRoads.RailPitch * last.K;
-                double endY = last.Y + last.DY * InfiniteRoads.RailPitch * last.K;
                 int n = e.X.Length - 1;
-                worstEnd = Math.Max(worstEnd, Math.Sqrt((endX - e.X[n]) * (endX - e.X[n]) + (endZ - e.Z[n]) * (endZ - e.Z[n]) + Math.Pow(endY - InfiniteRoads.RailOriginY(e.H[n]), 2)));
+                // the line's end heading: its last segment's, the track's offset normal there
+                double lx = e.X[n] - e.X[n - 1], lz = e.Z[n] - e.Z[n - 1], ll = Math.Sqrt(lx * lx + lz * lz); lx /= ll; lz /= ll;
+                for (int t = 0; t < 2; t++)
+                {
+                    var u = tr.Where(p => p.Kind == 0 && p.Track == t).ToList();
+                    if (u.Count == 0) { single++; continue; }
+                    units += u.Count;
+                    for (int i = 0; i + 1 < u.Count; i++)
+                    {
+                        joints++;
+                        double g = Gap(u[i], u[i + 1]);
+                        if (g > worstGap) { worstGap = g; where = $"({u[i].X:0.0}, {u[i].Z:0.0})"; }
+                    }
+                    // every root on its own side of the line, RailTrackOffset off it (track 0 on the left of its way)
+                    foreach (var p in u)
+                    {
+                        var (d, f, _) = Nearest(e, p.X, p.Z);
+                        worstOff = Math.Max(worstOff, Math.Abs(d - InfiniteRoads.RailTrackOffset));
+                        int a = Math.Clamp((int)Math.Floor(f), 0, n - 1);
+                        double sx = e.X[a + 1] - e.X[a], sz = e.Z[a + 1] - e.Z[a];
+                        bool left = (p.X - e.X[a]) * sz - (p.Z - e.Z[a]) * sx > 0;   // (tz, -tx) is the left of (tx, tz)
+                        if (left != (t == 0)) wrongSide++;
+                    }
+                    // the last tile ends at the track's end -- at an OPEN end, where the line's own last segment sets the
+                    // offset's normal (where another line carries on, the two share a heading; the join below checks that)
+                    bool carriesOn = Gen.Roads.LinesIn(e.X[n] - 1, e.Z[n] - 1, e.X[n] + 1, e.Z[n] + 1).Any(o2 => o2.Kind == RoadKind.Rail && o2 != e
+                        && (Math.Abs(o2.X[0] - e.X[n]) < 0.5 && Math.Abs(o2.Z[0] - e.Z[n]) < 0.5 || Math.Abs(o2.X[^1] - e.X[n]) < 0.5 && Math.Abs(o2.Z[^1] - e.Z[n]) < 0.5));
+                    starts.Add((e.X[0], e.Z[0], t, u[0], e));
+                    if (carriesOn) continue;
+                    openChecked++;
+                    double o = t == 0 ? -InfiniteRoads.RailTrackOffset : InfiniteRoads.RailTrackOffset;
+                    double tx = e.X[n] - lz * o, tz = e.Z[n] + lx * o;
+                    var last = u[^1];
+                    double endX = last.X + last.DX * InfiniteRoads.RailPitch * last.K, endZ = last.Z + last.DZ * InfiniteRoads.RailPitch * last.K;
+                    double endY = last.Y + last.DY * InfiniteRoads.RailPitch * last.K;
+                    worstEnd = Math.Max(worstEnd, Math.Sqrt((endX - tx) * (endX - tx) + (endZ - tz) * (endZ - tz) + Math.Pow(endY - InfiniteRoads.RailOriginY(e.H[n]), 2)));
+                }
                 sleepers += tr.Count(p => p.Kind == 1);
-                starts.Add((e.X[0], e.Z[0], u[0], e));
             }
-            // across every anchor: one segment's last tile ends where the next one's first starts, on the same heading
+            // across every anchor: on each track, one segment's last tile ends where the next one's first starts, on the
+            // same heading
             foreach (var e in lines)
             {
-                var u = Gen.Roads.TrackOf(e).Where(p => p.Kind == 0).ToList();
-                var last = u[^1];
+                var tr = Gen.Roads.TrackOf(e);
                 int n = e.X.Length - 1;
-                var nx = starts.Where(s => s.e != e && Math.Abs(s.x - e.X[n]) < 0.5 && Math.Abs(s.z - e.Z[n]) < 0.5).ToList();
                 // open: no other rail line -- in the window or past it -- starts or ends here
                 bool met = Gen.Roads.LinesIn(e.X[n] - 1, e.Z[n] - 1, e.X[n] + 1, e.Z[n] + 1).Any(o => o.Kind == RoadKind.Rail && o != e
                     && (Math.Abs(o.X[0] - e.X[n]) < 0.5 && Math.Abs(o.Z[0] - e.Z[n]) < 0.5 || Math.Abs(o.X[^1] - e.X[n]) < 0.5 && Math.Abs(o.Z[^1] - e.Z[n]) < 0.5));
-                if (!met) openEnds++;
+                if (!met) openEnds += 2;   // both tracks end there
+                var nx = starts.Where(s => s.e != e && Math.Abs(s.x - e.X[n]) < 0.5 && Math.Abs(s.z - e.Z[n]) < 0.5).ToList();
                 if (nx.Count == 0) continue;
                 // a join the anchor's own height did not set: a crossing's approach reached it, and the two sides met
                 // at that height instead (the case a per-segment build left as a 2.4 m step)
                 float anchorH = Math.Max(Gen.NaturalHeight(e.X[n], e.Z[n]), InfiniteTerrain.SeaLevel + InfiniteRoads.RailDeckAboveWater);
-                if (nx.Count > 0 && (Math.Abs(e.H[n] - anchorH) > 0.01 || nx.Any(s => Math.Abs(s.e.H[0] - anchorH) > 0.01))) moved++;
+                if (Math.Abs(e.H[n] - anchorH) > 0.01 || nx.Any(s => Math.Abs(s.e.H[0] - anchorH) > 0.01)) moved++;
                 foreach (var s in nx)
                 {
+                    var last = tr.Where(p => p.Kind == 0 && p.Track == s.track).Last();
                     joins++;
                     double endX = last.X + last.DX * InfiniteRoads.RailPitch * last.K, endZ = last.Z + last.DZ * InfiniteRoads.RailPitch * last.K, endY = last.Y + last.DY * InfiniteRoads.RailPitch * last.K;
-                    worstJoin = Math.Max(worstJoin, Math.Sqrt((endX - s.first.X) * (endX - s.first.X) + (endY - s.first.Y) * (endY - s.first.Y) + (endZ - s.first.Z) * (endZ - s.first.Z)));
+                    double j = Math.Sqrt((endX - s.first.X) * (endX - s.first.X) + (endY - s.first.Y) * (endY - s.first.Y) + (endZ - s.first.Z) * (endZ - s.first.Z));
+                    if (j > worstJoin) { worstJoin = j; joinAt = $"({e.X[n]:0.0}, {e.Z[n]:0.0}) track {s.track}"; }
                     double hl = Math.Sqrt(last.DX * last.DX + last.DZ * last.DZ), sl = Math.Sqrt(s.first.DX * s.first.DX + s.first.DZ * s.first.DZ);
                     worstJoinTurn = Math.Max(worstJoinTurn, Math.Acos(Math.Clamp((last.DX * s.first.DX + last.DZ * s.first.DZ) / (hl * sl), -1, 1)) * 180 / Math.PI);
                 }
             }
-            TestContext.WriteLine($"{lines.Count} rail lines, {km:0.0} km: steepest {worstGrade * 100:0.000}%, tightest radius {minR:0} m; {units} tiles, {joints} joints, " +
-                                  $"widest {worstGap * 1000:0.00} mm {where}; last tile to line end {worstEnd * 1000:0.00} mm; {joins} joins across anchors, " +
-                                  $"worst {worstJoin * 1000:0.00} mm / {worstJoinTurn:0.000} deg ({moved} at a height a crossing set); {sleepers} closing sleepers, {openEnds} open ends");
+            TestContext.WriteLine($"{lines.Count} rail lines, {km:0.0} km: steepest {worstGrade * 100:0.000}%, tightest radius {minR:0} m; {units} tiles on two tracks ({single} tracks with none), " +
+                                  $"every root {worstOff * 1000:0.00} mm off its {InfiniteRoads.RailTrackOffset} m offset, {wrongSide} on the wrong side; {joints} joints, " +
+                                  $"widest {worstGap * 1000:0.00} mm {where}; last tile to an open track end {worstEnd * 1000:0.00} mm ({openChecked} ends); {joins} joins across anchors, " +
+                                  $"worst {worstJoin * 1000:0.00} mm {joinAt} / {worstJoinTurn:0.000} deg ({moved} at a height a crossing set); {sleepers} closing sleepers, {openEnds} open track ends");
             Assert.That(lines.Count, Is.GreaterThanOrEqualTo(35)); Assert.That(km, Is.GreaterThan(250));
             Assert.That(worstGrade, Is.LessThanOrEqualTo(InfiniteRoads.RailGrade * 1.0001));
             Assert.That(minR, Is.GreaterThan(250), "a curve too tight for a main line");
+            Assert.That(single, Is.Zero, "a line with one track");
+            Assert.That(wrongSide, Is.Zero, "a track on the other side than its index says");
+            Assert.That(worstOff, Is.LessThan(0.01), "a track's root off its offset from the line");
             Assert.That(worstGap, Is.LessThan(0.001), "a track joint stands open");
-            Assert.That(worstEnd, Is.LessThan(0.001), "the track stops short of (or runs past) its line's end");
-            Assert.That(joins, Is.GreaterThan(20));
+            Assert.That(openChecked, Is.GreaterThan(4), "too few open ends to check the last tile against");
+            Assert.That(worstEnd, Is.LessThan(0.001), "the track stops short of (or runs past) its end");
+            Assert.That(joins, Is.GreaterThan(40));
             Assert.That(worstJoin, Is.LessThan(0.001), "the track steps across an anchor");
             Assert.That(moved, Is.GreaterThanOrEqualTo(1), "no join in the window at a crossing-set height: the step case is untested");
             Assert.That(worstJoinTurn, Is.LessThan(0.5), "the track kinks across an anchor");
-            Assert.That(sleepers, Is.EqualTo(openEnds), "a closing sleeper at every open end and nowhere else");
+            Assert.That(sleepers, Is.EqualTo(openEnds), "a closing sleeper at every open track end and nowhere else");
         }
 
         /// <summary>The widest a joint between two tiles opens at any corner of the unit's cross-section (the ballast's
@@ -349,7 +385,7 @@ namespace UnturnedSim.Tests
         /// mesh sagged 158 mm under the feet on embankments.) The ballast and its cess wear gravel; no tree stands on
         /// the formation.</summary>
         /// <summary>NO MOUNDS (strawberry 2026-10-11: "prevent railways making super-mounds beneath them"): wherever the
-        /// track is not on a viaduct, the fill under it (its bed over the natural ground at the centre and both ballast
+        /// track is not on a viaduct, the fill under it (its bed over the natural ground at the centre and both OUTER ballast
         /// feet, the least of the three, as the stretches are marked) is at most 5 m, its 1:2 sides 10 m out each side --
         /// RailRaise and the most a stretch shorter than RaiseMinLength (left an embankment) adds. NOT a multiple of
         /// RailRaise: a bar that moves with the constant cannot catch it raised back. It was 10 m: a mound 40 m across.</summary>
@@ -369,7 +405,7 @@ namespace UnturnedSim.Tests
                     double tx = e.X[i + 1] - e.X[i - 1], tz = e.Z[i + 1] - e.Z[i - 1], tl = Math.Sqrt(tx * tx + tz * tz);
                     double fill = double.MaxValue;
                     foreach (int s2 in new[] { -1, 0, 1 })
-                        fill = Math.Min(fill, e.H[i] - InfiniteRoads.Bed - Gen.NaturalHeight(e.X[i] - tz / tl * s2 * InfiniteRoads.RailHalfWidth, e.Z[i] + tx / tl * s2 * InfiniteRoads.RailHalfWidth));
+                        fill = Math.Min(fill, e.H[i] - InfiniteRoads.Bed - Gen.NaturalHeight(e.X[i] - tz / tl * s2 * InfiniteRoads.RailOuterHalf, e.Z[i] + tx / tl * s2 * InfiniteRoads.RailOuterHalf));
                     if (fill > 2) banked += sl;
                     if (fill > worst) { worst = fill; where = $" at ({e.X[i]:0}, {e.Z[i]:0})"; }
                 }
@@ -437,8 +473,10 @@ namespace UnturnedSim.Tests
         public void RailTunnelsAreBoredThroughTheHills()
         {
             // the train's corners in the bore, from the section alone
-            float side = InfiniteRoads.BoreTopOf(RoadKind.Rail, InfiniteRoads.RailLoadingHalf), mid = InfiniteRoads.BoreTopOf(RoadKind.Rail, 0f);
+            // (the outer shoulder of a train on either track: double track, 2026-10-11)
+            float side = InfiniteRoads.BoreTopOf(RoadKind.Rail, InfiniteRoads.RailTrackOffset + InfiniteRoads.RailLoadingHalf), mid = InfiniteRoads.BoreTopOf(RoadKind.Rail, 0f);
             Assert.That(side - InfiniteRoads.RailHead, Is.GreaterThanOrEqualTo(InfiniteRoads.RailLoadingHeight), "a train's shoulder hits the bore");
+            Assert.That(InfiniteRoads.BoreReachOf(RoadKind.Rail), Is.GreaterThan(InfiniteRoads.RailOuterHalf), "the outer ballast runs into the wall");
             Assert.That(float.IsNaN(InfiniteRoads.BoreTopOf(RoadKind.Rail, InfiniteRoads.BoreReachOf(RoadKind.Rail) + 0.1f)));
             int tunnels = 0, probes = 0, shallow = 0, floorOff = 0; double longest = 0, worstCover = double.MaxValue;
             foreach (var e in Window())

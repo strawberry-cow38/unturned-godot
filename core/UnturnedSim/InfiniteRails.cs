@@ -4,12 +4,13 @@ using System.Collections.Generic;
 
 namespace SDG.Unturned
 {
-    /// <summary>One tile of track (InfiniteRoads.TrackOf), absolute metres. Kind 0 = a New_Rail_Unit: its root on the
-    /// centreline at RailOriginY, the unit's +Z along (DX, DY, DZ) -- grade included -- stretched by K along it, owning
-    /// the sleeper at its root. Kind 1 = a New_Rail_Sleeper closing a line's open end.</summary>
+    /// <summary>One tile of track (InfiniteRoads.TrackOf), absolute metres. Kind 0 = a New_Rail_Unit: its root on its
+    /// track's centreline at RailOriginY, the unit's +Z along (DX, DY, DZ) -- grade included -- stretched by K along it,
+    /// owning the sleeper at its root. Kind 1 = a New_Rail_Sleeper closing a track's open end. Track: which of the line's
+    /// two (0 on the left of its way, 1 on the right; RailTrackOffset either side of the line).</summary>
     public struct RailPiece
     {
-        public byte Kind;
+        public byte Kind, Track;
         public double X, Z; public float Y;
         public float DX, DY, DZ;
         public float K;
@@ -56,7 +57,15 @@ namespace SDG.Unturned
     {
         // ---- the kit: New_Rail_Unit, measured (+Y up, +Z along, root on the centreline; EditorRailSpline)
         public const float RailPitch = 2.0f;               // EditorRailSpline.Pitch
-        public const float RailHalfWidth = 3.4675f;        // EditorRailSpline.HalfWidth: the ballast's foot
+        public const float RailHalfWidth = 3.4675f;        // EditorRailSpline.HalfWidth: one track's ballast foot
+        /// <summary>DOUBLE TRACK (strawberry 2026-10-11: "work on double rail lines, rail branching, merging, split parallel
+        /// lines etc."): every line carries two tracks, their centrelines this far either side of its own -- 5.2 m apart.
+        /// Not a main line's 4-4.5 m: the unit's ballast top is 2.59 m either side of its root, and two tops overlapping
+        /// at one height are a strip of z-fighting down the middle. At 5.2 m the tops part by 2.5 cm and the two inner
+        /// slopes meet in a shallow V.</summary>
+        public const float RailTrackOffset = 2.6f;
+        /// <summary>The outer track's ballast foot, from the line's centreline.</summary>
+        public const float RailOuterHalf = RailTrackOffset + RailHalfWidth;
         public const float RailBallastFoot = -0.44f, RailBallastTop = 0.08f, RailBallastTopHalf = 2.5875f;
         public const float RailHead = 0.31f;               // the rails' top over the root
         /// <summary>The room a train needs over the rails' top and either side of the centreline: Train_Engine_0 stands
@@ -72,15 +81,15 @@ namespace SDG.Unturned
         public const float RailProud = 0.005f;
 
         // ---- the formation and the line
-        /// <summary>Flat ground either side of the centreline: the ballast's foot plus one LOD0 cell's DIAGONAL (4 m grid),
+        /// <summary>Flat ground either side of the centreline: the outer ballast's foot plus one LOD0 cell's DIAGONAL (4 m grid),
         /// so every ground triangle any part of the ballast stands on has all three corners on the formation. At 5 m, a
         /// triangle under the foot reached a corner already in the shoulder's blend: 260 of 7594 feet hung over the
         /// mesh by more than 10 mm on embankments (worst 158 mm), and cuttings buried them by up to 495 mm.</summary>
-        public const float RailFormationHalf = RailHalfWidth + 4f * 1.41422f + 0.1f;
+        public const float RailFormationHalf = RailOuterHalf + 4f * 1.41422f + 0.1f;
         public const float RailBank = 2f;                  // a cutting's or embankment's side: 1 up in 2 across
         public const float RailMaxShoulder = 60f;
         public const float RailGrade = 0.025f;             // a main line's ruling grade, generously
-        public const float RailDeckHalf = 4f;              // a rail deck's roadway: the bridge unit narrowed (DeckScale 0.5)
+        public const float RailDeckHalf = 6.5f;            // a rail deck's roadway: the bridge unit narrowed (DeckScale 0.81) to both tracks' ballast
         /// <summary>Fill under the track (at its centre and the ballast's feet) past which an embankment becomes a
         /// viaduct. A highway's is 3 m; a railway is made of embankments, but at 10 m its 1:2 sides made a mound 40 m
         /// wide under it (strawberry 2026-10-11: "prevent railways making super-mounds beneath them"): 9.4 km of 129
@@ -652,7 +661,7 @@ namespace SDG.Unturned
                 float ground = e.H[i] - Bed, f = float.MaxValue; bool w = false;
                 for (int s = -1; s <= 1; s++)
                 {
-                    float r = _t.RawHeight(e.X[i] - tz * s * RailHalfWidth, e.Z[i] + tx * s * RailHalfWidth);
+                    float r = _t.RawHeight(e.X[i] - tz * s * RailOuterHalf, e.Z[i] + tx * s * RailOuterHalf);
                     f = Math.Min(f, ground - r);
                     if (r < InfiniteTerrain.SeaLevel) w = true;
                 }
@@ -831,11 +840,63 @@ namespace SDG.Unturned
             var have = e.Track;
             if (have != null) return have;
             int n = e.X.Length;
+            bool closeEnd = !RailMeetsAnother(e, e.X[n - 1], e.Z[n - 1]);
+            var all = new List<RailPiece>();
+            // each track's centreline: the line's, offset along RibbonTangent's normal -- the definition the ribbon and
+            // the bridge walk use, so a deck and a tunnel see the tracks where the track is. At an end another line
+            // carries on from, BOTH take the mean of their two end headings: each one's own last segment differs from
+            // the other's first by up to a tenth of a degree, and 2.6 m out that was a 5 mm step in the track.
+            var tan = new (double x, double z)[n];
+            for (int i = 0; i < n; i++) tan[i] = RibbonTangent(e, i);
+            tan[0] = SharedEndTangent(e, false, tan[0]);
+            tan[n - 1] = SharedEndTangent(e, true, tan[n - 1]);
+            for (byte t = 0; t < 2; t++)
+            {
+                double o = t == 0 ? -RailTrackOffset : RailTrackOffset;
+                var xs = new double[n]; var zs = new double[n];
+                for (int i = 0; i < n; i++) { var (tx, tz) = tan[i]; xs[i] = e.X[i] - tz * o; zs[i] = e.Z[i] + tx * o; }
+                foreach (var p in TrackAlong(xs, zs, e.H, closeEnd)) { var q = p; q.Track = t; all.Add(q); }
+            }
+            e.Track = all;
+            return all;
+        }
+
+        /// <summary>The heading at one end of e (its last point if atEnd, else its first), as the line carrying on from there
+        /// sees it too: the mean of e's own end segment's and that line's adjoining one's, both taken along e's way. Its
+        /// own (`own`) where nothing carries on.</summary>
+        (double x, double z) SharedEndTangent(Line e, bool atEnd, (double x, double z) own)
+        {
+            int n = e.X.Length;
+            double x = atEnd ? e.X[n - 1] : e.X[0], z = atEnd ? e.Z[n - 1] : e.Z[0];
+            var near = new List<Line>();
+            TakeRails(x - 1, z - 1, x + 1, z + 1, near);
+            foreach (var o in near)
+            {
+                if (o == e || !o.Exists || o.X.Length < 2) continue;
+                int m = o.X.Length - 1;
+                double ox, oz;   // o's segment at the shared point, either way round (aligned with e's way below)
+                if ((o.X[0] - x) * (o.X[0] - x) + (o.Z[0] - z) * (o.Z[0] - z) < 0.25) { ox = o.X[1] - o.X[0]; oz = o.Z[1] - o.Z[0]; }
+                else if ((o.X[m] - x) * (o.X[m] - x) + (o.Z[m] - z) * (o.Z[m] - z) < 0.25) { ox = o.X[m] - o.X[m - 1]; oz = o.Z[m] - o.Z[m - 1]; }
+                else continue;
+                double ol = Math.Sqrt(ox * ox + oz * oz);
+                if (ol < 1e-9) continue;
+                ox /= ol; oz /= ol;
+                if (ox * own.x + oz * own.z < 0) { ox = -ox; oz = -oz; }   // a line meeting this one head-on runs the other way
+                double mx = own.x + ox, mz = own.z + oz, ml = Math.Sqrt(mx * mx + mz * mz);
+                return ml < 1e-9 ? own : (mx / ml, mz / ml);
+            }
+            return own;
+        }
+
+        /// <summary>One track's tiles along the centreline (xs, zs) at the line's profile hs (see TrackOf).</summary>
+        static List<RailPiece> TrackAlong(double[] xs, double[] zs, float[] hs, bool closeEnd)
+        {
+            int n = xs.Length;
             var ys = new double[n]; var a3 = new double[n];
-            for (int i = 0; i < n; i++) ys[i] = RailOriginY(e.H[i]);
+            for (int i = 0; i < n; i++) ys[i] = RailOriginY(hs[i]);
             for (int i = 1; i < n; i++)
             {
-                double dx = e.X[i] - e.X[i - 1], dy = ys[i] - ys[i - 1], dz = e.Z[i] - e.Z[i - 1];
+                double dx = xs[i] - xs[i - 1], dy = ys[i] - ys[i - 1], dz = zs[i] - zs[i - 1];
                 a3[i] = a3[i - 1] + Math.Sqrt(dx * dx + dy * dy + dz * dz);
             }
             double total = a3[n - 1];
@@ -847,7 +908,7 @@ namespace SDG.Unturned
                 else if (s >= total) { lo = n - 2; hi = n - 1; }
                 else { lo = 0; hi = n - 1; while (hi - lo > 1) { int m = (lo + hi) >> 1; if (a3[m] <= s) lo = m; else hi = m; } }
                 double t = (s - a3[lo]) / Math.Max(1e-9, a3[hi] - a3[lo]);
-                return (e.X[lo] + (e.X[hi] - e.X[lo]) * t, ys[lo] + (ys[hi] - ys[lo]) * t, e.Z[lo] + (e.Z[hi] - e.Z[lo]) * t);
+                return (xs[lo] + (xs[hi] - xs[lo]) * t, ys[lo] + (ys[hi] - ys[lo]) * t, zs[lo] + (zs[hi] - zs[lo]) * t);
             }
             static (double x, double y, double z) Dir((double x, double y, double z) p, (double x, double y, double z) q)
             {
@@ -897,15 +958,12 @@ namespace SDG.Unturned
                     }
                 }
             }
-            if (list.Count > 0)
+            if (list.Count > 0 && closeEnd)
             {
                 var lastU = list[list.Count - 1];
-                double ex = e.X[n - 1], ez = e.Z[n - 1];
-                if (!RailMeetsAnother(e, ex, ez))
-                    list.Add(new RailPiece { Kind = 1, X = lastU.X + lastU.DX * RailPitch * lastU.K, Y = lastU.Y + lastU.DY * RailPitch * lastU.K, Z = lastU.Z + lastU.DZ * RailPitch * lastU.K,
-                                             DX = lastU.DX, DY = lastU.DY, DZ = lastU.DZ, K = 1f });
+                list.Add(new RailPiece { Kind = 1, X = lastU.X + lastU.DX * RailPitch * lastU.K, Y = lastU.Y + lastU.DY * RailPitch * lastU.K, Z = lastU.Z + lastU.DZ * RailPitch * lastU.K,
+                                         DX = lastU.DX, DY = lastU.DY, DZ = lastU.DZ, K = 1f });
             }
-            e.Track = list;
             return list;
         }
 

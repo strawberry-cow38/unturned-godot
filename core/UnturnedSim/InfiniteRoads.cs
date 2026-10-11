@@ -291,10 +291,12 @@ namespace SDG.Unturned
                 if (x <= BoreX[i + 1]) return BoreY[i] + (BoreY[i + 1] - BoreY[i]) * (x - BoreX[i]) / (BoreX[i + 1] - BoreX[i]);
             return BoreY[3];
         }
-        // ---- per class. A RAILWAY's tunnel is ONE bore on the track's centreline, the same Tunnel_Line_0 section scaled
-        // to it: RailTunnelLateral across (4.8 m to the walls; the train is 1.7 m to its side) and RailTunnelVertical up
+        // ---- per class. A RAILWAY's tunnel is ONE bore on the line's centreline, the same Tunnel_Line_0 section scaled
+        // to it: RailTunnelLateral across (it was 0.6, 4.8 m to the walls, for one track; the train is 1.7 m to its side) and RailTunnelVertical up
         // (the crown 8.1 m over the track's root, where the highway's 12.4 m would be a cathedral over a 4 m train).
-        public const float RailTunnelLateral = 0.6f, RailTunnelVertical = 0.65f;
+        // Double track (2026-10-11) widened it to 0.8: 6.4 m to the walls, the outer ballast's foot at 6.07 m and the outer
+        // train's shoulder (4.6 m out) with 6.2 m over the rails there.
+        public const float RailTunnelLateral = 0.8f, RailTunnelVertical = 0.65f;
         public static int TunnelTubes(RoadKind k) => k == RoadKind.Rail ? 1 : 2;
         /// <summary>Tube i's centreline offset from the route's (highway: the two carriageways; rail: the track).</summary>
         public static float TubeOffset(RoadKind k, int i) => k == RoadKind.Rail ? 0f : (i == 0 ? -1 : 1) * HighwayRibbonOffset;
@@ -328,13 +330,15 @@ namespace SDG.Unturned
         public static float TunnelBerm = EnvF("UG_INF_BERM", 4f);   // settable: a test runs its control with it off
         public const float BermSlope = 0.6f;          // the built-up cover's fall beside the shell, m per m
         /// <summary>How far short of the shell + TunnelCover the hill may be at lateral `lat`: the whole TunnelBerm over the
-        /// crown, nothing at the shell's foot -- in proportion to how high the shell stands there. The shell's FLANK drops
-        /// 5.7 m over its last 1.6 m, and cover built up against it was a near-vertical ridge down each side of the run; held
-        /// to the hill there, the built-up cover is only ever over the crown, where the shell slopes under 1 in 1.</summary>
+        /// crown, nothing where the shell's FLANK begins -- in proportion to how high the shell stands over that edge. The
+        /// flank drops 5.7 m over its last 1.6 m, and cover built up against it was a near-vertical ridge down each side of
+        /// the run; held to the hill there, the built-up cover is only ever over the crown, where the shell slopes under 1 in
+        /// 1. ⚠ It was in proportion to the height over the shell's FOOT, which still allowed 48% of the berm at the flank's
+        /// top edge: a rail bore widened for double track (2026-10-11) had cover built 2.1 in 1 up the start of a flank.</summary>
         public static float BermAllowed(RoadKind k, float lat)
         {
-            float foot = ShellTopOf(k, ShellReachOf(k)), crown = ShellTop(0f) * TunnelVerticalOf(k), top = ShellTopOf(k, lat);
-            return float.IsFinite(top) ? TunnelBerm * Math.Clamp((top - foot) / (crown - foot), 0f, 1f) : 0f;
+            float edge = ShellTop(ShellX[2]) * TunnelVerticalOf(k), crown = ShellTop(0f) * TunnelVerticalOf(k), top = ShellTopOf(k, lat);
+            return float.IsFinite(top) ? TunnelBerm * Math.Clamp((top - edge) / (crown - edge), 0f, 1f) : 0f;
         }
         public const float TunnelProbeStep = 4f;      // along-route sampling when looking for runs to bore
         public static float TunnelMinLength => 2f * TunnelSectionLength;   // two portals; any bore is extra

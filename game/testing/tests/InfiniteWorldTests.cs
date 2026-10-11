@@ -1150,10 +1150,16 @@ namespace UnturnedGodot.Testing
                 if (holder != null) foreach (var n in holder.GetChildren()) if (n.Name.ToString().StartsWith("Tube")) tubes++;
                 T.Check($"a rail tunnel ({rtun.A1 - rtun.A0:0} m) is one bore round the track: crown {up:0.00} m over the root (want {crown:0.00}), walls {wl:0.00} / {wr:0.00} m either side (want {wall:0.00}); {tubes} tube mesh(es) in its region",
                     Mathf.Abs(up - crown) < 0.2f && Mathf.Abs(wl - wall) < 0.3f && Mathf.Abs(wr - wall) < 0.3f && tubes >= 1);
-                // and a train fits: the loading gauge's top corners are inside the bore
+                // and a train fits on either track (double track, 2026-10-11): each loading gauge's outer top corner is
+                // inside the bore
                 var corner = eye + Vector3.Up * (InfiniteRoads.RailHead + InfiniteRoads.RailLoadingHeight - 2f);
-                var hc = space.IntersectRay(PhysicsRayQueryParameters3D.Create(eye + Vector3.Up * 0.5f, corner + side * InfiniteRoads.RailLoadingHalf, 1u << 0));
-                T.Check($"...and a train fits in it: from the track to the loading gauge's top corner hits {(hc.Count == 0 ? "nothing" : hc["collider"].As<Node>()?.Name)}", hc.Count == 0);
+                string hits = "";
+                foreach (float sd in new[] { -1f, 1f })
+                {
+                    var hc = space.IntersectRay(PhysicsRayQueryParameters3D.Create(eye + Vector3.Up * 0.5f, corner + side * sd * (InfiniteRoads.RailTrackOffset + InfiniteRoads.RailLoadingHalf), 1u << 0));
+                    if (hc.Count > 0) hits += $" {hc["collider"].As<Node>()?.Name}";
+                }
+                T.Check($"...and a train fits in it on either track: from the centre to each loading gauge's outer top corner hits {(hits == "" ? "nothing" : hits)}", hits == "");
                 var (drops, off, steps, open, where) = MouthClosed(space, S, rtun);
                 T.Check($"...and its mouths are closed: {drops} drops over the cells the terrain leaves out land at most {off:0.000} m off the mouths' ground, {steps} level rays at the facade's steps, {open} open{where}",
                     drops > 150 && off < 0.02f && steps > 10 && open == 0);
