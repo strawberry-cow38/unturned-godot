@@ -1,0 +1,19 @@
+{
+  "owner_approval_message_id": "1558688527003422721",
+  "prop_key": "Street_Mailbox_Blue_0",
+  "full_triangles": 110,
+  "lod_triangles": 80,
+  "height_m": 1.5064998865,
+  "native_coordinates": "PROP Z-up metres, XYcentred, footZ0, facade+Y",
+  "filename_contract": "flat content/objects names; NOT resource part-indexed",
+  "registration": "Cow tools owns GUID/catalog/collider/surface/LOD integration; not done by this art commit",
+  "scrapped": [
+    "Newspaper_Box_Yellow_0",
+    "Newspaper_Box_Red_0"
+  ],
+  "files": {
+    "Street_Mailbox_Blue_0.obj": "4cc2cdd91521b6f837b2241c26600fddcfc5cd2ca391f5828b51ef1f3db21ce8",
+    "Street_Mailbox_Blue_0_lod1.obj": "0b8955d1d719efb518993f08b55718f97b13ccb60e6f2203e4ad148a5f9f26bc",
+    "Street_Mailbox_Blue_0_tex.png": "54dc9f5ac9e92b0ac1d94e4d647adb8a596c8e498ff17a2cea70bee1525cec42"
+  }
+}
