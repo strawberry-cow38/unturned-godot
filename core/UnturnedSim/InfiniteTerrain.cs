@@ -86,6 +86,7 @@ namespace SDG.Unturned
         public float Yaw;         // degrees
         public float Scale;
         public byte Kind;         // InfiniteTerrain.TreeKind
+        public byte Variant;      // which of the kind's models (InfiniteTerrain.TreeModel)
     }
 
     /// <summary>A short straight piece of road centreline (absolute metres) with its profile height and its distance
@@ -241,7 +242,22 @@ namespace SDG.Unturned
         public const float MaxHeight = 240f;
 
         public enum Layer : byte { Dirt = 0, Wheat = 1, Grass = 2, Gravel = 3, Road = 4, Sand = 5, Snow = 6, Stone = 7 }
-        public enum TreeKind : byte { Pine = 0, Birch = 1, Maple = 2 }
+        public enum TreeKind : byte { Pine = 0, Birch = 1, Maple = 2, Redwood = 3, Cactus = 4 }
+        /// <summary>The cacti cow tools shipped (content/resources; there is no Cactus_Barrel_1 -- the low barrel was left out).</summary>
+        public static readonly string[] CactusModels =
+        {
+            "Cactus_Column_0", "Cactus_Column_1", "Cactus_Column_2", "Cactus_Branched_0", "Cactus_Branched_1", "Cactus_Branched_2",
+            "Cactus_Barrel_0", "Cactus_Barrel_2", "Cactus_Cluster_0", "Cactus_Cluster_1", "Cactus_Cluster_2",
+            "Cactus_Paddles_0", "Cactus_Paddles_1", "Cactus_Paddles_2",
+        };
+        /// <summary>How many models each TreeKind has.</summary>
+        public static int TreeVariants(TreeKind k) => k switch { TreeKind.Redwood => 3, TreeKind.Cactus => CactusModels.Length, _ => 2 };
+        /// <summary>The resource model a tree draws (content/resources/&lt;name&gt;_&lt;part&gt;.obj).</summary>
+        public static string TreeModel(TreeKind k, int variant) => k switch
+        {
+            TreeKind.Cactus => CactusModels[variant],
+            _ => $"{k}_{variant}",
+        };
         public enum FoliageKind : byte { Grass = 0, Flower0 = 1, Flower1 = 2, Flower2 = 3, Flower3 = 4, Pebble = 5, PebbleSand = 6, Bush0 = 7, Bush1 = 8 }
 
         public readonly int Seed;
@@ -446,6 +462,22 @@ namespace SDG.Unturned
             moist = Math.Clamp(0.5f + 0.75f * Fbm(x, z, 5200.0, 3, SaltMoist), 0f, 1f);
         }
 
+        /// <summary>THE DESERT (strawberry 2026-10-11: "kill grass foliage on 'desert' biome sand. add the cacti to the desert
+        /// biomes"): the hot, dry country LayerAt paints Wheat and Dirt. No grass, flowers, bushes or forest grows there;
+        /// cacti do.</summary>
+        public static bool IsDesert(float temp, float moist) => moist < 0.32f && temp > 0.45f;
+        public bool DesertAt(double x, double z, float height) { Climate(x, z, height, out float t, out float m); return IsDesert(t, m); }
+        /// <summary>REDWOOD FORESTS (strawberry 2026-10-11: "add redwood forest biomes"): the wet, mild forest. Its trees are
+        /// redwoods instead of birch and maple -- fewer of them (RedwoodKeep of the cells a forest would plant), each up to
+        /// 78 m tall with a 12 m crown.</summary>
+        public static bool IsRedwood(float temp, float moist, float height) => moist > 0.62f && temp >= 0.42f && height <= 95f;
+        public const float RedwoodKeep = 0.3f;
+        /// <summary>A region whose corners' climate is this far from the desert's thresholds, or nearer, checks its ground
+        /// cover's spots one by one (the climate fields are 5-9 km across: a region's corners bound it to well under this).</summary>
+        public const float DesertMargin = 0.08f;
+        /// <summary>A desert cell's chance of a cactus (one candidate per TreeCell).</summary>
+        public const float CactusChance = 0.05f;
+
         /// <summary>The splat layer for a point, from its height, slope (rise over run), climate -- and roads first.</summary>
         /// <summary>How far past its asphalt a road's bed shows (it was 1.5 m for every class: one LOD0 vertex, at most).
         /// A rail's is NEGATIVE: its formation is wide (InfiniteRoads.RailFormationHalf, for the ground mesh's sake) and
@@ -625,7 +657,10 @@ namespace SDG.Unturned
                     float lx = (ci + (h1 & 0xFFFF) / 65536f) * TreeCell, lz = (cj + (h1 >> 16) / 65536f) * TreeCell;
                     double ax = ox + lx, az = oz + lz;
                     float forest = Smoothstep(-0.05f, 0.45f, Fbm(ax, az, 1300.0, 3, SaltForest));
-                    if ((h2 & 0xFFFF) / 65536f >= forest * 0.55f) continue;
+                    float roll = (h2 & 0xFFFF) / 65536f;
+                    bool forestCell = roll < forest * 0.55f;
+                    // (a cell no forest takes may still hold a desert's cactus: the climate is only read for those)
+                    if (!forestCell && roll >= forest * 0.55f + CactusChance) continue;
                     float y = SampleWith(lines, ax, az, out var treeRoad);
                     if (y < SeaLevel + 2.5f) continue;
                     if (treeRoad.Clear < 5f) continue;   // keep every road and its verge clear
@@ -638,9 +673,28 @@ namespace SDG.Unturned
                     if (slope > 0.55f) continue;
                     Climate(ax, az, y, out float temp, out float moist);
                     if (y > 140f + 70f * temp) continue;   // below the snow line only
-                    TreeKind kind = temp < 0.42f || y > 95f ? TreeKind.Pine : ((h3 & 1) == 0 ? TreeKind.Birch : TreeKind.Maple);
+                    TreeKind kind;
+                    if (IsDesert(temp, moist))
+                    {
+                        // a desert: no forest -- a cactus in CactusChance of its cells, on gentler ground than a tree
+                        if (forestCell ? roll >= CactusChance : false) continue;
+                        if (slope > 0.4f || treeRoad.Clear < 3f) continue;
+                        kind = TreeKind.Cactus;
+                    }
+                    else if (!forestCell) continue;
+                    else if (temp < 0.42f || y > 95f) kind = TreeKind.Pine;
+                    else if (IsRedwood(temp, moist, y))
+                    {
+                        if (((h3 >> 4) & 0xFF) / 255f >= RedwoodKeep) continue;   // a redwood's crown is 24 m across
+                        kind = TreeKind.Redwood;
+                    }
+                    else kind = (h3 & 1) == 0 ? TreeKind.Birch : TreeKind.Maple;
+                    // the model: Pine/Birch/Maple keep the position parity the streamer always chose by
+                    int variant = kind == TreeKind.Redwood ? (int)((h3 >> 12) % 3u) : kind == TreeKind.Cactus ? (int)((h3 >> 12) % (uint)CactusModels.Length)
+                                : (((int)(lx * 7f) + (int)(lz * 13f)) & 1);
+                    float scale = kind == TreeKind.Cactus ? 0.8f + (h3 >> 24) / 255f * 0.5f : 0.8f + (h3 >> 24) / 255f * 0.45f;
                     list.Add(new TreeSpawn { X = lx, Y = y, Z = lz, Yaw = (h3 >> 8 & 0xFFFF) / 65536f * 360f,
-                                             Scale = 0.8f + (h3 >> 24) / 255f * 0.45f, Kind = (byte)kind });
+                                             Scale = scale, Kind = (byte)kind, Variant = (byte)variant });
                 }
             return list;
         }
@@ -1102,18 +1156,30 @@ namespace SDG.Unturned
                                                     Scale = 0.8f + ((h2 >> 8) & 0xFF) / 255f * 0.5f, Kind = k });
                     }
             }
-            // grass: thick on Grass, thin on Wheat (dry) and Dirt
+            // THE DESERT grows none of it -- judged at each spot, not by the layer: the layer is the nearest vertex's, and
+            // along the desert's edge a blade a metre in stood by a vertex still out (38 of 2655 in one region). Only a
+            // region that may reach the desert pays for it: its corners and middle at the warmest a height can make them
+            bool nearDesert = false;
+            foreach (var (cx, cz) in new[] { (0.0, 0.0), (RegionSize, 0.0), (0.0, RegionSize), (RegionSize, RegionSize), (RegionSize / 2, RegionSize / 2) })
+            {
+                Climate(d.Coord.MinX + cx, d.Coord.MinZ + cz, 0f, out float t0, out float m0);
+                if (m0 < 0.32f + DesertMargin && t0 > 0.45f - DesertMargin) nearDesert = true;
+            }
+            bool InDesert(float x, float z, float y) => nearDesert && DesertAt(d.Coord.MinX + x, d.Coord.MinZ + z, y);
+            // grass: thick on Grass, thin on Dirt
             Scatter(GrassCell, 1, (x, z, h, l, y) =>
             {
-                float p = l == Layer.Grass ? 0.92f : l == Layer.Wheat ? 0.35f : l == Layer.Dirt ? 0.08f : 0f;
-                return (h & 0xFFFF) / 65536f < p ? (byte)FoliageKind.Grass : (byte)255;
+                float p = l == Layer.Grass ? 0.92f : l == Layer.Dirt ? 0.08f : 0f;
+                if (p <= 0f || (h & 0xFFFF) / 65536f >= p) return 255;
+                return InDesert(x, z, y) ? (byte)255 : (byte)FoliageKind.Grass;
             });
             // flowers: in meadows, a slow noise field, so they come in drifts instead of a sprinkle
             Scatter(FlowerCell, 2, (x, z, h, l, y) =>
             {
                 if (l != Layer.Grass) return 255;
                 float meadow = Smoothstep(0.1f, 0.5f, Fbm(d.Coord.MinX + x, d.Coord.MinZ + z, 260.0, 2, SaltMeadow));
-                return (h & 0xFFFF) / 65536f < meadow * 0.55f ? (byte)((int)FoliageKind.Flower0 + (int)(h % 4)) : (byte)255;
+                if ((h & 0xFFFF) / 65536f >= meadow * 0.55f || InDesert(x, z, y)) return 255;
+                return (byte)((int)FoliageKind.Flower0 + (int)(h % 4));
             });
             // pebbles: on bare ground and sand
             Scatter(PebbleCell, 3, (x, z, h, l, y) =>
@@ -1127,6 +1193,7 @@ namespace SDG.Unturned
             Scatter(BushCell, 4, (x, z, h, l, y) =>
             {
                 if (l != Layer.Grass && l != Layer.Dirt) return 255;
+                if (InDesert(x, z, y)) return 255;   // no bush in the desert
                 float f = Fbm(d.Coord.MinX + x, d.Coord.MinZ + z, 1300.0, 3, SaltForest);
                 float edge = 1f - Math.Abs(f - 0.15f) / 0.35f;   // peaks where the forest field crosses into woodland
                 return (h & 0xFFFF) / 65536f < 0.03f + 0.22f * Math.Max(0f, edge) ? (byte)((int)FoliageKind.Bush0 + (int)(h % 2)) : (byte)255;

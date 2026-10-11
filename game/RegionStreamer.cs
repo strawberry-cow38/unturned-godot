@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using Godot;
 using SDG.Unturned;
@@ -506,7 +507,9 @@ namespace UnturnedGodot
             string key = name + "_" + part;
             if (_treeMats.TryGetValue(key, out var m)) return m;
             string dir = ProjectSettings.GlobalizePath("res://content/resources/");
-            m = part == 0 ? ResourceField.MakeSwayMat($"{dir}{name}_{part}_tex.png") : ResourceField.MakeMat($"{dir}{name}_{part}_tex.png", false);
+            // a tree's part 0 is its crown, which sways; a cactus's only part is the whole plant, which does not
+            bool crown = part == 0 && !name.StartsWith("Cactus");
+            m = crown ? ResourceField.MakeSwayMat($"{dir}{name}_{part}_tex.png") : ResourceField.MakeMat($"{dir}{name}_{part}_tex.png", false);
             _treeMats[key] = m;
             return m;
         }
@@ -520,8 +523,11 @@ namespace UnturnedGodot
         public static bool TreeImpostors = System.Environment.GetEnvironmentVariable("UG_INF_TREEIMP") != "0";
         public const int ImpostorRing = 2;              // built from here out (cards only DRAW past the handover distance)
         const int ImpostorBuildsPerSweep = 48;          // MultiMeshes built per sweep, so the first fill is not one frame
-        static readonly string[] ImpNames = { "Pine_0", "Pine_1", "Birch_0", "Birch_1", "Maple_0", "Maple_1" };   // cell = kind * 2 + variant
-        readonly Vector2[] _impSize = new Vector2[6];   // world size each card was framed at (W from the bake's aspect)
+        // the species with far cards, one atlas cell each (a cactus has none). The cell is looked up BY MODEL: it was
+        // kind * 2 + variant, which a third redwood (cow tools: Redwood_0/1/2) would have walked off the end of
+        static readonly string[] ImpNames = { "Pine_0", "Pine_1", "Birch_0", "Birch_1", "Maple_0", "Maple_1", "Redwood_0", "Redwood_1", "Redwood_2" };
+        static readonly Dictionary<string, int> _impCell = ImpNames.Select((n, i) => (n, i)).ToDictionary(p => p.n, p => p.i);
+        readonly Vector2[] _impSize = new Vector2[ImpNames.Length];   // world size each card was framed at (W from the bake's aspect)
         ShaderMaterial _impMat;
         static QuadMesh _impQuad;
         int _impBudget, _impMissing;
@@ -609,7 +615,11 @@ void fragment() {
             foreach (var kv in byName)
                 for (int part = 0; part < 2; part++)
                 {
-                    var mesh = ObjMesh.Load($"{dir}{kv.Key}_{part}.obj");
+                    // a cactus is ONE part: ObjMesh.Load THROWS on a missing file (it does not return null), and the
+                    // first desert region's throw stopped the streamer's sweep dead -- the render waited 900 s for a frame
+                    string path = $"{dir}{kv.Key}_{part}.obj";
+                    if (!System.IO.File.Exists(path)) continue;
+                    var mesh = ObjMesh.Load(path);
                     if (mesh == null) continue;
                     var mm = new MultiMesh { TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, UseCustomData = part == 0, Mesh = mesh };
                     mm.InstanceCount = kv.Value.Count;   // format BEFORE count
@@ -1554,15 +1564,35 @@ void fragment() {
             return holder;
         }
 
+        /// <summary>How far a model is let into the ground (per unit scale): a tree's root flare, ResourceField.TreeSink; a
+        /// cactus barely -- half a metre would bury a 1.3 m barrel to its middle.</summary>
+        static float SinkOf(TreeSpawn t) => t.Kind == (byte)InfiniteTerrain.TreeKind.Cactus ? 0.05f : ResourceField.TreeSink;
+
+        /// <summary>A cactus's collider radius, from its model's family (measured off the OBJs: a column is 0.3 m across
+        /// the stem, a barrel 0.7, a paddle's pads span 1.5 but are a hand thick, so 0.6 covers what you hit).</summary>
+        static float CactusRadius(string model) => model.Contains("Barrel") ? 0.7f : model.Contains("Cluster") ? 0.8f
+                                                 : model.Contains("Paddles") ? 0.6f : model.Contains("Branched") ? 0.5f : 0.35f;
+
         static Node3D BuildTrunks(List<TreeSpawn> trees)
         {
             var holder = new Node3D { Name = "TreeTrunks" };
             foreach (var t in trees)
             {
-                float r = t.Kind == (byte)InfiniteTerrain.TreeKind.Maple ? 0.83f : t.Kind == (byte)InfiniteTerrain.TreeKind.Pine ? 0.80f : 0.5f;
-                var body = new StaticBody3D { CollisionLayer = 1u << 0, Position = new Vector3(t.X, t.Y - ResourceField.TreeSink * t.Scale, t.Z) };
-                body.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Wood);
-                body.AddChild(new CollisionShape3D { Shape = new CylinderShape3D { Radius = r * t.Scale, Height = 8f * t.Scale }, Position = new Vector3(0f, 2.5f * t.Scale, 0f) });
+                var kind = (InfiniteTerrain.TreeKind)t.Kind;
+                string model = InfiniteTerrain.TreeModel(kind, t.Variant);
+                // (a redwood's trunk is metres thick -- ResourceField's measured radius at chest height -- and a cactus is
+                // a solid plant you drive round, not undergrowth you plough through: cow tools, IsUndergrowth)
+                var (r, h) = kind switch
+                {
+                    InfiniteTerrain.TreeKind.Redwood => (ResourceField.RedwoodTrunkRadius(model), 14f),
+                    InfiniteTerrain.TreeKind.Cactus => (CactusRadius(model), 4f),   // (sunk 1.5 m like a trunk: to 2.5 m up)
+                    InfiniteTerrain.TreeKind.Maple => (0.83f, 8f),
+                    InfiniteTerrain.TreeKind.Pine => (0.80f, 8f),
+                    _ => (0.5f, 8f),
+                };
+                var body = new StaticBody3D { CollisionLayer = 1u << 0, Position = new Vector3(t.X, t.Y - SinkOf(t) * t.Scale, t.Z) };
+                body.SetMeta(PlayerController.SurfMeta, (int)(kind == InfiniteTerrain.TreeKind.Cactus ? PlayerController.Surf.Grass : PlayerController.Surf.Wood));
+                body.AddChild(new CollisionShape3D { Shape = new CylinderShape3D { Radius = r * t.Scale, Height = h * t.Scale }, Position = new Vector3(0f, (h * 0.5f - 1.5f) * t.Scale, 0f) });
                 holder.AddChild(body);
             }
             return holder;
@@ -1736,7 +1766,6 @@ void fragment() {
             }
         }
 
-        static readonly string[] TreeNames = { "Pine", "Birch", "Maple" };
 
         /// <summary>Turn generated data into upload-ready arrays. Runs on a worker: plain C# and Godot value types only.</summary>
         static Built Build(RegionData d)
@@ -1800,22 +1829,22 @@ void fragment() {
             if (d.Trees != null)
             {
                 trees = new Dictionary<string, List<Transform3D>>();
-                imp = new (Vector3, float, int)[d.Trees.Count];
-                for (int ti = 0; ti < d.Trees.Count; ti++)
-                {
-                    var t = d.Trees[ti];
-                    int v2 = ((int)(t.X * 7f) + (int)(t.Z * 13f)) & 1;
-                    // on the mesh this LOD draws, not the smooth function: a coarse far LOD sits metres off it
-                    float gy = InfiniteTerrain.MeshHeightAt(d, t.X, t.Z);
-                    imp[ti] = (new Vector3(t.X, gy - ResourceField.TreeSink * t.Scale, t.Z), t.Scale, t.Kind * 2 + v2);
-                }
+                // far cards for the trees (not the cacti: a 2 m cactus is gone long before the cards begin)
+                var cards = new List<(Vector3, float, int)>(d.Trees.Count);
                 foreach (var t in d.Trees)
                 {
-                    int variant = ((int)(t.X * 7f) + (int)(t.Z * 13f)) & 1;
-                    string name = TreeNames[t.Kind] + "_" + variant;
+                    if (!_impCell.TryGetValue(InfiniteTerrain.TreeModel((InfiniteTerrain.TreeKind)t.Kind, t.Variant), out int cell)) continue;
+                    // on the mesh this LOD draws, not the smooth function: a coarse far LOD sits metres off it
+                    float gy = InfiniteTerrain.MeshHeightAt(d, t.X, t.Z);
+                    cards.Add((new Vector3(t.X, gy - ResourceField.TreeSink * t.Scale, t.Z), t.Scale, cell));
+                }
+                imp = cards.ToArray();
+                foreach (var t in d.Trees)
+                {
+                    string name = InfiniteTerrain.TreeModel((InfiniteTerrain.TreeKind)t.Kind, t.Variant);
                     if (!trees.TryGetValue(name, out var list)) trees[name] = list = new List<Transform3D>();
                     var basis = new Basis(Vector3.Up, Mathf.DegToRad(t.Yaw)).Scaled(new Vector3(t.Scale, t.Scale, t.Scale));
-                    list.Add(new Transform3D(basis, new Vector3(t.X, t.Y - ResourceField.TreeSink * t.Scale, t.Z)));
+                    list.Add(new Transform3D(basis, new Vector3(t.X, t.Y - SinkOf(t) * t.Scale, t.Z)));
                 }
             }
             // road surfaces: a SLAB per centreline piece, RoadField's own cross-section -- a flat top at

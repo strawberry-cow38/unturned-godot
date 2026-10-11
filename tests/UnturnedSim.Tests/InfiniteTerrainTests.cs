@@ -1806,6 +1806,70 @@ namespace UnturnedSim.Tests
             Assert.That(worst, Is.LessThan(0.002), "a deck joint stands open");
         }
 
+        /// <summary>strawberry 2026-10-11: "kill grass foliage on 'desert' biome sand. add the cacti to the desert biomes. add
+        /// redwood forest biomes". Over 30 x 30 regions' trees (every fourth region each way): every cactus stands in the
+        /// desert and nothing else does -- no pine, birch, maple or redwood there; every redwood stands in its wet, mild
+        /// climate; all three redwoods and all fourteen cacti are planted. And in desert regions' LOD0 ground cover no
+        /// grass, flower or bush stands where it is desert, while a region of ordinary country is still grassed (the
+        /// control: the scan is not just finding nothing).</summary>
+        [Test]
+        public void DesertsHaveCactiAndRedwoodsGrowInTheirForests()
+        {
+            var kinds = new Dictionary<InfiniteTerrain.TreeKind, int>();
+            var models = new HashSet<string>();
+            int forestInDesert = 0, cactusOutside = 0, redwoodOutside = 0; string first = null;
+            (int x, int z)? desertRegion = null, grassRegion = null;
+            for (int rx = -60; rx < 60; rx += 4)
+                for (int rz = -60; rz < 60; rz += 4)
+                {
+                    var rc = new RegionCoord(rx, rz);
+                    int des = 0;
+                    foreach (var t in Gen.PlaceTrees(rc))
+                    {
+                        var k = (InfiniteTerrain.TreeKind)t.Kind;
+                        kinds[k] = kinds.GetValueOrDefault(k) + 1;
+                        models.Add(InfiniteTerrain.TreeModel(k, t.Variant));
+                        double ax = rc.MinX + t.X, az = rc.MinZ + t.Z;
+                        Gen.Climate(ax, az, t.Y, out float temp, out float moist);
+                        bool desert = InfiniteTerrain.IsDesert(temp, moist);
+                        if (desert) des++;
+                        if (desert && k != InfiniteTerrain.TreeKind.Cactus) { forestInDesert++; first ??= $"a {k} in the desert at ({ax:0}, {az:0})"; }
+                        if (!desert && k == InfiniteTerrain.TreeKind.Cactus) { cactusOutside++; first ??= $"a cactus out of the desert at ({ax:0}, {az:0})"; }
+                        if (k == InfiniteTerrain.TreeKind.Redwood && !InfiniteTerrain.IsRedwood(temp, moist, t.Y)) { redwoodOutside++; first ??= $"a redwood out of its climate at ({ax:0}, {az:0})"; }
+                    }
+                    if (des > 20 && desertRegion == null) desertRegion = (rx, rz);
+                    Gen.Climate(rc.MinX + 128, rc.MinZ + 128, 40f, out float tc, out float mc);
+                    if (grassRegion == null && !InfiniteTerrain.IsDesert(tc, mc) && tc > 0.45f && mc > 0.4f && mc < 0.6f) grassRegion = (rx, rz);
+                }
+            // the ground cover, LOD0, in one desert region and one ordinary one
+            int desertCover = 0, coverChecked = 0, controlGrass = 0;
+            Assert.That(desertRegion, Is.Not.Null, "no desert region in the window");
+            Assert.That(grassRegion, Is.Not.Null, "no ordinary region in the window");
+            {
+                var d = Gen.Generate(new RegionCoord(desertRegion.Value.x, desertRegion.Value.z), 0);
+                foreach (var f in d.Foliage)
+                {
+                    var fk = (InfiniteTerrain.FoliageKind)f.Kind;
+                    if (fk == InfiniteTerrain.FoliageKind.Pebble || fk == InfiniteTerrain.FoliageKind.PebbleSand) continue;
+                    coverChecked++;
+                    if (Gen.DesertAt(d.Coord.MinX + f.X, d.Coord.MinZ + f.Z, f.Y)) { desertCover++; first ??= $"a {fk} in the desert at ({d.Coord.MinX + f.X:0}, {d.Coord.MinZ + f.Z:0})"; }
+                }
+                var g = Gen.Generate(new RegionCoord(grassRegion.Value.x, grassRegion.Value.z), 0);
+                controlGrass = g.Foliage.Count(f => f.Kind == (byte)InfiniteTerrain.FoliageKind.Grass);
+            }
+            TestContext.WriteLine($"trees: {string.Join(", ", kinds.Select(kv => $"{kv.Key} {kv.Value}"))}; {models.Count(m => m.StartsWith("Redwood"))} redwood and {models.Count(m => m.StartsWith("Cactus"))} cactus models; " +
+                                  $"{forestInDesert} forest trees in the desert, {cactusOutside} cacti out of it, {redwoodOutside} redwoods out of their climate; " +
+                                  $"desert region {desertRegion}: {desertCover} of {coverChecked} grass/flower/bush in the desert; control {grassRegion}: {controlGrass} grass" +
+                                  $"{(first == null ? "" : $"; first: {first}")}");
+            Assert.That(kinds.GetValueOrDefault(InfiniteTerrain.TreeKind.Cactus), Is.GreaterThan(50), "too few cacti to mean anything");
+            Assert.That(kinds.GetValueOrDefault(InfiniteTerrain.TreeKind.Redwood), Is.GreaterThan(50), "too few redwoods to mean anything");
+            Assert.That(models.Count(m => m.StartsWith("Redwood")), Is.EqualTo(3), "a redwood model is never planted");
+            Assert.That(models.Count(m => m.StartsWith("Cactus")), Is.EqualTo(InfiniteTerrain.CactusModels.Length), "a cactus model is never planted");
+            Assert.That(forestInDesert + cactusOutside + redwoodOutside, Is.Zero, first);
+            Assert.That(desertCover, Is.Zero, first);
+            Assert.That(controlGrass, Is.GreaterThan(1000), "the control region has no grass: the cover scan proves nothing");
+        }
+
         /// <summary>VoX 2026-10-11, of the crossing split's render: "missing the stop signs in the intersection image". Over
         /// 4 x 4 main cells, region by region as the streamer asks: EVERY stop line has a sign; each stands on the right of
         /// the traffic coming up to it, facing that traffic (away from its junction's anchor); none stands on a junction's
