@@ -80,7 +80,17 @@ namespace UnturnedGodot.Testing
                         && Mathf.Abs(green.B * 255f - 55f) < .5f && green.A > .99f;
                 }
                 T.Check(spec.Name + ": real texture decoder reads the foliage palette, not a fallback", palette);
-                T.Check(spec.Name + ": model shipping did not add world placement bins", !File.Exists(Path.Combine(dir, spec.Name + ".bin")));
+                // ⚠ THIS CHECK USED TO BE ITS OPPOSITE: "model shipping did not add world placement bins",
+                // guarding the art-only boundary while the cacti were a model library and nothing more. That
+                // premise expired on 2026-10-11, when master asked for them to be planted ("wire up redwood and
+                // cacti foliage like existing trees as spawns from the pools of model") -- so the guard fired
+                // correctly and is now obsolete. Inverted rather than deleted: a planted pool whose .bin
+                // vanishes is exactly as broken as an art-only one that grows placements by accident, and that
+                // is the failure this line still has to catch.
+                // ⚠ A row with ZERO instances is legitimate and must not fail: PEI has 0.62 km2 of sand, nearly
+                // all of it beach below the waterline gate, so most cactus models land 0 there. The file must
+                // EXIST (the pool was scattered); its count is the map's business.
+                T.Check(spec.Name + ": planted -- a world placement bin exists", File.Exists(Path.Combine(dir, spec.Name + ".bin")));
                 image.Dispose();
             }
             yield return Ticks(1);
