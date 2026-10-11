@@ -641,10 +641,32 @@ void fragment() {
         /// (tunnel candidate) cyan, each from its own slot, so the marking can be checked by eye. Off, they are
         /// ordinary highway.</summary>
         public static bool ShowMarks = System.Environment.GetEnvironmentVariable("UG_INF_MARKS") == "1";
-        const int RoadSlots = 10, RaisedSlot = 4, CutSlot = 5, RampSlot = 6, RailBedSlot = 7, MarkWhiteSlot = 8, MarkYellowSlot = 9;
+        const int RoadSlots = 15, RaisedSlot = 4, CutSlot = 5, RampSlot = 6, RailBedSlot = 7, MarkWhiteSlot = 8, MarkYellowSlot = 9, PatchSlot0 = 10;
+        /// <summary>A junction's patch draws in its own slot per class (and one for ramps), in a plain tile of that class's
+        /// texture laid flat in world metres (strawberry 2026-10-11: "map uvs on the road merge meshes properly so they dont
+        /// get stretched (applies to trails)"). It wore ONE column of the road texture (PatchU) along the joiner, so every
+        /// texel was a streak across the whole patch.</summary>
+        static int PatchSlot(int kind, bool ramp) => PatchSlot0 + (ramp ? 4 : kind);
+        static bool IsPatchSlot(int slot) => slot >= PatchSlot0 && slot < PatchSlot0 + 5;
+        /// <summary>The band of a road texture (u from, to) with no markings in it: road_0 / road_1's outer lane, road_8 /
+        /// road_6's left lane (measured off the PNGs: no column in it is saturated or brighter than the asphalt), road_5
+        /// all of it. A paved band is mirrored onto itself, so it wraps without a seam.</summary>
+        static (float u0, float u1, bool mirror) PatchBand(int slot)
+        {
+            int k = slot - PatchSlot0;
+            return k == (int)RoadKind.Trail ? (0f, 1f, false) : k == (int)RoadKind.Highway || k == (int)RoadKind.Main ? (4f / 256f, 56f / 256f, true) : (8f / 256f, 112f / 256f, true);
+        }
+        /// <summary>Metres across one patch tile (the band at its slab's own scale: the texture spans the ribbon), and along.</summary>
+        static (float across, float along) PatchTileMetres(int slot)
+        {
+            int k = slot - PatchSlot0; var rk = k == 4 ? RoadKind.Small : (RoadKind)k;
+            var (u0, u1, mirror) = PatchBand(slot);
+            return ((u1 - u0) * (mirror ? 2f : 1f) * 2f * RibbonHalf(rk), k == 4 ? RampTexMetres : RoadTexMetres[k]);
+        }
         /// <summary>How far paint (InfiniteRoads' RoadMark) stands over the road it is laid on: enough not to fight it.</summary>
         const float MarkLift = 0.015f;
-        static string RoadName(int k) => k == RaisedSlot ? "Road_Raised" : k == CutSlot ? "Road_Cut" : k == RampSlot ? "Road_Ramp" : k == RailBedSlot ? "Rail_Bed"
+        static string RoadName(int k) => IsPatchSlot(k) ? (k == PatchSlot0 + 4 ? "Road_Patch_Ramp" : "Road_Patch_" + (RoadKind)(k - PatchSlot0))
+                                       : k == RaisedSlot ? "Road_Raised" : k == CutSlot ? "Road_Cut" : k == RampSlot ? "Road_Ramp" : k == RailBedSlot ? "Rail_Bed"
                                        : k == MarkWhiteSlot ? "Road_Paint_White" : k == MarkYellowSlot ? "Road_Paint_Yellow" : "Road_" + (RoadKind)k;
         /// <summary>A rail deck's bed is the ground's own gravel (terrain layer 3), tiled every RailBedMetres.</summary>
         const float RailBedMetres = 4f;
@@ -676,10 +698,27 @@ void fragment() {
                     TextureFilter = BaseMaterial3D.TextureFilterEnum.LinearWithMipmapsAnisotropic, Roughness = 1f,
                 };
             }
-            var k = slot == RampSlot ? RoadKind.Small : slot >= RaisedSlot ? RoadKind.Highway : (RoadKind)slot;
+            bool patch = IsPatchSlot(slot), ramp = slot == RampSlot || slot == PatchSlot0 + 4;
+            var k = patch ? (ramp ? RoadKind.Small : (RoadKind)(slot - PatchSlot0)) : slot == RampSlot ? RoadKind.Small : slot >= RaisedSlot ? RoadKind.Highway : (RoadKind)slot;
             var img = new Image();
-            string p = ProjectSettings.GlobalizePath($"res://content/roads/{(slot == RampSlot ? RampTex : RoadTex[(int)k])}.png");
+            string p = ProjectSettings.GlobalizePath($"res://content/roads/{(ramp ? RampTex : RoadTex[(int)k])}.png");
             bool ok = System.IO.File.Exists(p) && ContentProvider.LoadOk(img, p);
+            if (ok && patch)
+            {
+                // the plain band, full height (it tiles along as the texture does), mirrored onto itself so it wraps across
+                var (u0, u1, mirror) = PatchBand(slot);
+                int x0 = Mathf.RoundToInt(u0 * img.GetWidth()), w = Mathf.Max(1, Mathf.RoundToInt(u1 * img.GetWidth()) - x0), h = img.GetHeight();
+                var band = img.GetRegion(new Rect2I(x0, 0, w, h));
+                if (mirror)
+                {
+                    var flip = (Image)band.Duplicate(); flip.FlipX();
+                    var tile = Image.CreateEmpty(2 * w, h, false, band.GetFormat());
+                    tile.BlitRect(band, new Rect2I(0, 0, w, h), Vector2I.Zero);
+                    tile.BlitRect(flip, new Rect2I(0, 0, w, h), new Vector2I(w, 0));
+                    band = tile;
+                }
+                img = band;
+            }
             if (ok) img.GenerateMipmaps();
             Material mat;
             if (slot == RaisedSlot || slot == CutSlot)
@@ -1918,12 +1957,15 @@ void fragment() {
                 // same bevel
                 foreach (var pt in d.RoadPatches ?? new List<RoadPatch>())
                 {
-                    int kind = pt.Kind, slot = pt.Ramp ? RampSlot : kind;
+                    int kind = pt.Kind, slot = PatchSlot(kind, pt.Ramp);
+                    var (tileU, tileV) = PatchTileMetres(slot);
+                    // flat in world metres from the patch's anchor (a patch is drawn whole by one region)
+                    Vector2 PatchUV(int i) => new((float)((pt.X[i] - pt.AnchorX) / tileU), (float)((pt.Z[i] - pt.AnchorZ) / tileV));
                     lists[slot].V ??= new List<Vector3>(); lists[slot].N ??= new List<Vector3>(); lists[slot].UV ??= new List<Vector2>(); lists[slot].I ??= new List<int>();
                     var RV = lists[slot].V; var RN = lists[slot].N; var RUV = lists[slot].UV; var RI = lists[slot].I;
                     var col = soup?[kind == (int)RoadKind.Trail ? 1 : 0];
                     var rk = (RoadKind)kind;
-                    float texM = pt.Ramp ? RampTexMetres : RoadTexMetres[kind], bev = 2f * InfiniteRoads.Thickness(rk), run = InfiniteRoads.BevelRun(rk);
+                    float bev = 2f * InfiniteRoads.Thickness(rk), run = InfiniteRoads.BevelRun(rk);
                     var P = new Vector3[pt.X.Length];
                     for (int i = 0; i < P.Length; i++)
                     {
@@ -1932,7 +1974,7 @@ void fragment() {
                         P[i] = new Vector3(lx, y, lz);
                     }
                     int b0 = RV.Count;
-                    for (int i = 0; i < P.Length; i++) { RV.Add(P[i]); RN.Add(Vector3.Up); RUV.Add(new Vector2(pt.U[i], pt.V[i] / texM)); }
+                    for (int i = 0; i < P.Length; i++) { RV.Add(P[i]); RN.Add(Vector3.Up); RUV.Add(PatchUV(i)); }
                     for (int t = 0; t + 2 < pt.Tris.Length; t += 3)
                     {
                         Tri(RV, RI, b0 + pt.Tris[t], b0 + pt.Tris[t + 1], b0 + pt.Tris[t + 2], Vector3.Up);
@@ -1948,11 +1990,14 @@ void fragment() {
                             var nb = new Vector3(pt.SkirtNX[sk][q + 1], 0f, pt.SkirtNZ[sk][q + 1]);
                             Vector3 a = P[ids[q]], b = P[ids[q + 1]], fa = a + na * run + down, fb = b + nb * run + down;
                             Vector3 la = (na * (bev / run) + Vector3.Up).Normalized(), lb = (nb * (bev / run) + Vector3.Up).Normalized();
-                            float va = pt.V[ids[q]] / texM, vb = pt.V[ids[q + 1]] / texM;
+                            // the bevel goes on in the same flat tile, out to its foot (a 1:3 face: 5% short of its true
+                            // length in the projection, everywhere alike)
+                            Vector2 ua = PatchUV(ids[q]), ub = PatchUV(ids[q + 1]);
+                            Vector2 fua = ua + new Vector2(na.X * run / tileU, na.Z * run / tileV), fub = ub + new Vector2(nb.X * run / tileU, nb.Z * run / tileV);
                             int i0 = RV.Count;
                             RV.Add(fa); RV.Add(a); RV.Add(fb); RV.Add(b);
                             RN.Add(la); RN.Add(la); RN.Add(lb); RN.Add(lb);
-                            RUV.Add(new Vector2(0f, va)); RUV.Add(new Vector2(0f, va)); RUV.Add(new Vector2(0f, vb)); RUV.Add(new Vector2(0f, vb));
+                            RUV.Add(fua); RUV.Add(ua); RUV.Add(fub); RUV.Add(ub);
                             var front = (la + lb).Normalized();
                             Tri(RV, RI, i0, i0 + 1, i0 + 2, front);
                             Tri(RV, RI, i0 + 1, i0 + 3, i0 + 2, front);

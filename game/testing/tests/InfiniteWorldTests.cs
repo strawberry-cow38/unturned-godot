@@ -946,6 +946,44 @@ namespace UnturnedGodot.Testing
                         void Count(Node n) { if (n is MeshInstance3D mi && n.Name.ToString().StartsWith("Road_Paint_") && mi.Mesh != null) paint += mi.Mesh.GetFaces().Length / 3; foreach (var c in n.GetChildren()) Count(c); }
                         Count(S);
                         T.Check($"...and painted: {paint} paint triangles drawn in the streamed regions", paint > 50);
+                        // ...and its asphalt is not stretched (strawberry 2026-10-11: "map uvs on the road merge meshes properly so
+                        // they dont get stretched (applies to trails)"): every patch triangle maps texels at its own surface's
+                        // density, give or take a half. They wore one texture column (PatchU), UV area 0, a streak per texel row.
+                        int uvTris = 0, flat = 0, meshes = 0, steepTris = 0; string uvOff = "";
+                        void Uv(Node n)
+                        {
+                            if (n is MeshInstance3D mi && n.Name.ToString().StartsWith("Road_Patch_") && mi.Mesh is ArrayMesh am && am.GetSurfaceCount() > 0)
+                            {
+                                meshes++;
+                                var arr = am.SurfaceGetArrays(0);
+                                var vv = arr[(int)Mesh.ArrayType.Vertex].AsVector3Array(); var uu = arr[(int)Mesh.ArrayType.TexUV].AsVector2Array(); var ii = arr[(int)Mesh.ArrayType.Index].AsInt32Array();
+                                var dens = new List<float>(); var nys = new List<float>();
+                                for (int q = 0; q + 2 < ii.Length; q += 3)
+                                {
+                                    float wa = (vv[ii[q + 1]] - vv[ii[q]]).Cross(vv[ii[q + 2]] - vv[ii[q]]).Length() * 0.5f;
+                                    if (wa < 0.05f) continue;
+                                    var a = uu[ii[q + 1]] - uu[ii[q]]; var b = uu[ii[q + 2]] - uu[ii[q]];
+                                    dens.Add(Mathf.Abs(a.X * b.Y - a.Y * b.X) * 0.5f / wa);
+                                    nys.Add(Mathf.Abs((vv[ii[q + 1]] - vv[ii[q]]).Cross(vv[ii[q + 2]] - vv[ii[q]]).Normalized().Y));
+                                }
+                                if (dens.Count == 0) return;
+                                var sorted = new List<float>(dens); sorted.Sort(); float med = sorted[sorted.Count / 2];
+                                // (a face steeper than 45 degrees cannot wear a flat projection, and it is the GEOMETRY that is
+                                // wrong there -- a joiner standing off its host's height in a few slivers at a fillet's end --
+                                // so it is counted apart, not as stretched texture)
+                                for (int q = 0; q < dens.Count; q++)
+                                {
+                                    float dd = dens[q];
+                                    if (nys[q] < 0.7f) { steepTris++; continue; }
+                                    uvTris++;
+                                    if (med <= 0f || dd < 0.5f * med || dd > 2f * med) { flat++; if (uvOff.Length < 300) uvOff += $" {mi.Name} {dd / Mathf.Max(1e-9f, med):0.00}x ny {nys[q]:0.00};"; }
+                                }
+                            }
+                            foreach (var c in n.GetChildren()) Uv(c);
+                        }
+                        Uv(S);
+                        T.Check($"...its patches' texture is laid flat, not stretched: {flat} of {uvTris} triangles in {meshes} Road_Patch_ surfaces off their surface's texel density{uvOff} ({steepTris} steeper than 45 deg, counted apart)",
+                            meshes > 0 && uvTris > 100 && flat == 0);
                     }
                 }
                 if (gore is RoadPiece g)

@@ -85,6 +85,48 @@ namespace UnturnedGodot.Testing
                   + "rail top should be +0.31, buried ballast -0.44)",
                     box.Position.Y < -0.4f && Mathf.Abs(box.End.Y - 0.31f) < 0.02f);
 
+            // ---- 0a. THE BALLAST'S SLOPES WEAR ITS GRAVEL (strawberry 2026-10-11: "change the side ramps of the gravel
+            // ballast to have proper uvs to not be ultra stretched-keeping the gravel texture"). Every face of the
+            // ballast group maps as many texels per square metre as its top does, give or take a half: the side ramps
+            // and end caps mapped every vertex to the top's edge column, UV area 0, one texel row over a metre of slope.
+            {
+                var vs = new List<Vector3>(); var vts = new List<Vector2>(); string grp = null;
+                var faces = new List<(Vector3[] p, Vector2[] t)>();
+                foreach (var ln in System.IO.File.ReadAllLines(ProjectSettings.GlobalizePath("res://content/objects/New_Rail_Unit.obj")))
+                {
+                    var tk = ln.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                    if (tk.Length == 0) continue;
+                    var ci = System.Globalization.CultureInfo.InvariantCulture;
+                    if (tk[0] == "v") vs.Add(new Vector3(float.Parse(tk[1], ci), float.Parse(tk[2], ci), float.Parse(tk[3], ci)));
+                    else if (tk[0] == "vt") vts.Add(new Vector2(float.Parse(tk[1], ci), float.Parse(tk[2], ci)));
+                    else if (tk[0] == "g" || tk[0] == "o") grp = tk[1];
+                    else if (tk[0] == "f" && grp == "ballast")
+                    {
+                        var ix = new List<(int v, int t)>();
+                        for (int q = 1; q < tk.Length; q++) { var pp = tk[q].Split('/'); ix.Add((int.Parse(pp[0]) - 1, int.Parse(pp[1]) - 1)); }
+                        for (int q = 1; q + 1 < ix.Count; q++)
+                            faces.Add((new[] { vs[ix[0].v], vs[ix[q].v], vs[ix[q + 1].v] }, new[] { vts[ix[0].t], vts[ix[q].t], vts[ix[q + 1].t] }));
+                    }
+                }
+                float Density((Vector3[] p, Vector2[] t) f)
+                {
+                    float wa = (f.p[1] - f.p[0]).Cross(f.p[2] - f.p[0]).Length() * 0.5f;
+                    var a = f.t[1] - f.t[0]; var b = f.t[2] - f.t[0];
+                    return Mathf.Abs(a.X * b.Y - a.Y * b.X) * 0.5f / Mathf.Max(1e-9f, wa);
+                }
+                var top = faces.FindAll(f => (f.p[1] - f.p[0]).Cross(f.p[2] - f.p[0]).Normalized().Y > 0.99f);
+                float topD = top.Count > 0 ? Density(top[0]) : 0f;
+                int off = 0; float worstD = 1f;
+                foreach (var f in faces)
+                {
+                    float r = Density(f) / Mathf.Max(1e-9f, topD);
+                    if (r < 0.5f || r > 1.5f) off++;
+                    if (Mathf.Abs(r - 1f) > Mathf.Abs(worstD - 1f)) worstD = r;
+                }
+                T.Check($"the ballast's {faces.Count} triangles all map its gravel at the top's density, give or take half ({off} off, worstD {worstD:0.00} x the top's)",
+                        faces.Count >= 12 && topD > 0f && off == 0);
+            }
+
             // ---- 0b. ⭐⭐ THE RAIL'S GAUGE MATCHES THE TRAIN THAT RUNS ON IT.
             //
             // ⚠⚠ AND THAT TRAIN IS Train.cs, NOT Train_Engine_0.obj. This check used to measure the
