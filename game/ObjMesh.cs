@@ -198,6 +198,69 @@ namespace UnturnedGodot
         static bool LensUv(Vector2 a, Vector2 b, Vector2 c)
             => a.X > 0.5f && a.Y > 0.5f && b.X > 0.5f && b.Y > 0.5f && c.X > 0.5f && c.Y > 0.5f;
 
+        // ---- ROAD / SIDEWALK (strawberry 2026-10-11: "split the road lines, road tees, quads, turns into
+        // separate road and sidewalk pieces") -------------------------------------------------------------
+        //
+        // ⭐ THE SAME PALETTE-TEXEL TRICK AS THE LENS ABOVE, and it holds here just as cleanly. MEASURED across
+        // the whole kit before writing a line of this:
+        //      Road_Line_0  14 faces -> 12 palette + 2 mapped      Road_Tee_0   36 -> 24 + 12
+        //      Road_Quad_0  54 faces -> 36 palette + 18 mapped     Road_Turn_0  31 -> 27 + 4
+        // The MAPPED faces (real atlas UVs, the lane markings) are at z = 0.0 EXACTLY on every piece -- a flat
+        // carriageway. The PALETTE faces span z -1.0 .. +0.4: the kerb standing proud of the road and its skirt
+        // dropping below. Props are Z-up, so that is literally "the flat bit you drive on" versus "the raised
+        // bit you walk on", and no bounding box or hand-listed face range was needed to find it.
+        static readonly Dictionary<ArrayMesh, (ArrayMesh Road, ArrayMesh Walk)> _kerbCache = new();
+
+        /// <summary>Is this triangle the KERB/SIDEWALK rather than the carriageway? Flat-palette texel = kerb.
+        /// ⚠ Load() V-flips UVs, so the raw (0.993, 0.022) corner arrives here as v ≈ 0.978 -- the same trap the
+        /// lens note above records. Testing the raw coordinate would select nothing.</summary>
+        static bool KerbUv(Vector2 a, Vector2 b, Vector2 c)
+            => a.X > 0.9f && a.Y > 0.9f && b.X > 0.9f && b.Y > 0.9f && c.X > 0.9f && c.Y > 0.9f;
+
+        /// <summary>Split a road kit piece into its carriageway and its sidewalk. Returns (src, null) unchanged
+        /// if the piece has no kerb geometry, so a caller can run it over the whole kit blindly.</summary>
+        public static (ArrayMesh Road, ArrayMesh Walk) SplitKerb(ArrayMesh src)
+        {
+            if (src == null) return (null, null);
+            if (_kerbCache.TryGetValue(src, out var hit)) return hit;
+            var (road, walk) = SplitByUv(src, KerbUv, capHoles: false);
+            // ⚠ NO HOLE CAPPING, unlike the lens. A lens is carved OUT of a solid and leaves a hole that has to
+            // be closed; the kerb and the carriageway are separate surfaces that merely touch, so capping would
+            // weld a lid across the join and show through the road.
+            return _kerbCache[src] = walk == null ? (src, null) : (road, walk);
+        }
+
+        /// <summary>The shared half of SplitLens/SplitKerb: partition triangles by a UV predicate.
+        /// `second` is the group the predicate selects; null when it selects nothing.</summary>
+        static (ArrayMesh First, ArrayMesh Second) SplitByUv(ArrayMesh src, System.Func<Vector2, Vector2, Vector2, bool> pick, bool capHoles)
+        {
+            if (src.GetSurfaceCount() < 1) return (src, null);
+            var a0 = src.SurfaceGetArrays(0);
+            var V = a0[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+            var N = a0[(int)Mesh.ArrayType.Normal].AsVector3Array();
+            var U = a0[(int)Mesh.ArrayType.TexUV].AsVector2Array();
+            var C = a0[(int)Mesh.ArrayType.Color].AsColorArray();
+            if (V.Length < 3 || U.Length != V.Length) return (src, null);
+
+            var bv = new List<Vector3>(); var bn = new List<Vector3>(); var bu = new List<Vector2>(); var bc = new List<Color>();
+            var lv = new List<Vector3>(); var ln = new List<Vector3>(); var lu = new List<Vector2>(); var lc = new List<Color>();
+            for (int i = 0; i + 2 < V.Length; i += 3)
+            {
+                bool sel = pick(U[i], U[i + 1], U[i + 2]);
+                var dv = sel ? lv : bv; var dn = sel ? ln : bn; var du = sel ? lu : bu; var dc = sel ? lc : bc;
+                for (int k = 0; k < 3; k++)
+                {
+                    dv.Add(V[i + k]);
+                    dn.Add(i + k < N.Length ? N[i + k] : Vector3.Up);
+                    du.Add(U[i + k]);
+                    dc.Add(i + k < C.Length ? C[i + k] : Colors.White);
+                }
+            }
+            if (lv.Count == 0) return (src, null);
+            if (capHoles) CapHoles(lv, ln, lu, lc);
+            return (Build(bv, bn, bu, bc), Build(lv, ln, lu, lc));
+        }
+
         public static (ArrayMesh Body, ArrayMesh Lens) SplitLens(ArrayMesh src)
         {
             if (src == null) return (null, null);
