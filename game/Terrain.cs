@@ -293,6 +293,15 @@ void fragment() {
         public float BaseZ => _bz;
         public static float QuadSize => UNIT;
 
+        /// <summary>The terrain's world extent. ⚠ A HEIGHTMAP IS NOT CENTRED ON THE ORIGIN and SampleHeight
+        /// CLAMPS outside it, so a generator scanning for somewhere to build reads plausible heights off the
+        /// map and happily sites a town there. A flat 3x3 runs x 0..3072 and z -3072..0, and a town placed at
+        /// (0,0) -- which looked like the middle -- had three quarters of itself hanging over the void.</summary>
+        public float WorldMinX => _bx;
+        public float WorldMaxX => _bx + (_gw - 1) * UNIT;
+        public float WorldMinZ => -(_bz + (_gh - 1) * UNIT);
+        public float WorldMaxZ => -_bz;
+
         public bool IsHole(int gx, int gy) =>
             _anyHoles && _holes != null && gx >= 0 && gy >= 0 && gx < _gw - 1 && gy < _gh - 1 && _holes[gx, gy];
 

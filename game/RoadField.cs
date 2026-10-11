@@ -464,6 +464,25 @@ namespace UnturnedGodot
             RebuildRoad(road);
         }
 
+        /// <summary>Bind a road end to a junction but leave its geometry SHORT OF the node.
+        ///
+        /// ⭐ THE GRAPH NODE AND THE KERB LINE ARE NOT THE SAME POINT (strawberry, on the island junctions:
+        /// "when roads intersect (for junctions) dont meet all the way in the middle, meet at the edges").
+        /// A side street running all the way to the centreline lays its last half-carriageway of tarmac ON
+        /// TOP of the road it is joining -- two surfaces in the same place, which is the merged blob at every
+        /// junction. The street it joins already paves that ground. So the BINDING stays at the node, because
+        /// that is what a router reads, and the SURFACE stops at the kerb, because that is what you see.</summary>
+        public void BindRoadEndAt(int road, bool atEnd, int junction, Vector3 pos)
+        {
+            if (road < 0 || road >= _roads.Count || junction < 0 || junction >= _junctions.Count) return;
+            var r = _roads[road];
+            if (r.Joints.Count == 0) return;
+            if (atEnd) r.EndJunction = junction; else r.StartJunction = junction;
+            r.Joints[atEnd ? r.Joints.Count - 1 : 0].Vertex = pos;
+            RetangentRoad(r);
+            RebuildRoad(road);
+        }
+
         public void UnbindRoadEnd(int road, bool atEnd)
         {
             if (road < 0 || road >= _roads.Count) return;

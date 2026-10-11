@@ -50,18 +50,34 @@ namespace UnturnedGodot.Testing
             T.Check($"...and RoadField agrees they are joined ({rfA.Junctions().Count} nodes with 2+ roads)",
                     rfA.Junctions().Count >= repA.Crossroads);
 
-            // ⭐ JOINED MEANS COINCIDENT. A junction whose roads end a metre apart still counts as "bound":
-            // the binding is bookkeeping, the geometry is the claim. Measure the worst gap.
-            float worst = 0f;
+            // ⭐ JOINED, BUT MEETING AT THE KERB (strawberry 2026-10-11: "use tiny's road-merging mechanic
+            // instead of overlapping roads", pointing at the island junctions' rule -- "when roads intersect
+            // (for junctions) dont meet all the way in the middle, meet at the edges").
+            //
+            // ⚠ THIS REPLACES AN EARLIER CHECK THAT EVERY BOUND END SAT EXACTLY ON ITS NODE. That invariant
+            // was right for roads that overlap and is WRONG now, on purpose: the binding stays at the node
+            // because a router reads it, while the surface stops short because that is what you see. So the
+            // two cases are measured separately -- the through street reaches the middle, the arms do not --
+            // and an implementation that pulled BOTH back, or neither, fails one of them.
+            float worstThrough = 0f, leastArm = float.MaxValue; int through = 0, arms = 0;
             foreach (var (pos, ends) in rfA.Junctions())
                 foreach (var (road, atEnd) in ends)
                 {
-                    int jn = rfA.JointCount(road);
-                    if (jn < 2) continue;
                     if (!rfA.EvaluateAlong(road, atEnd ? rfA.RoadLength(road) : 0f, out var p, out _, snapTerrain: false)) continue;
-                    worst = Mathf.Max(worst, new Vector2(p.X - pos.X, p.Z - pos.Z).Length());
+                    float d = new Vector2(p.X - pos.X, p.Z - pos.Z).Length();
+                    if (d < 0.5f) { through++; worstThrough = Mathf.Max(worstThrough, d); }
+                    else { arms++; leastArm = Mathf.Min(leastArm, d); }
                 }
-            T.Check($"every bound road end sits ON its junction node (worst {worst:0.000} m)", worst < 0.05f);
+            T.Check($"the through street still reaches the node ({through} ends, worst {worstThrough:0.000} m off)",
+                    through > 0 && worstThrough < 0.05f);
+            T.Check($"...and the arms stop at its kerb instead of crossing it ({arms} ends, nearest {leastArm:0.0} m back)",
+                    arms > 0 && leastArm >= 6.0f);
+            // ⚠ AND THE GRAPH SURVIVED THE SETBACK. An arm that stops short must still be BOUND, or the town
+            // looks right and routes as a pile of disconnected stubs.
+            int bound = 0;
+            for (int r = 0; r < rfA.RoadCount; r++)
+                if (rfA.RoadEndJunction(r, false) >= 0 && rfA.RoadEndJunction(r, true) >= 0) bound++;
+            T.Check($"every street is still bound at both ends ({bound} of {rfA.RoadCount})", bound == rfA.RoadCount);
 
             // ---- 2. DETERMINISM. ⚠ THE REASON THIS TEST EXISTS: the editor roads harness re-rolls its roads
             // every launch, which was only noticed after it wrecked an A/B. A generated town has to be

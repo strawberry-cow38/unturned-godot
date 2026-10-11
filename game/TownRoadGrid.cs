@@ -110,6 +110,23 @@ namespace UnturnedGodot
 
         struct Node { public Vector3 P; public bool Ok; public int Junction; }
 
+        // ⚠ ALL THREE TAKE LATTICE-CENTRED INDICES (i, j already offset by -n, so the middle line is 0).
+        // The first cut passed raw grid indices to one and centred ones to another, which is the sort of
+        // mismatch that silently makes every third street a main one in the wrong place.
+        bool MainLine(int line) => (line % Mathf.Max(1, MainEvery)) == 0;
+
+        /// <summary>Which axis OWNS a node: 0 = the row runs through it, 1 = the column does. The through
+        /// street keeps its centreline to the node; every other arm stops at that street's kerb.
+        /// ⚠ A tie goes to the row, always. Any rule works as long as it is the SAME rule for both spans
+        /// arriving on an axis -- a dominance that disagreed with itself would pull one arm back and leave
+        /// its opposite number running across the intersection.</summary>
+        int DominantAxis(int i, int j)
+        {
+            bool rowMain = MainLine(j), colMain = MainLine(i);
+            if (rowMain != colMain) return rowMain ? 0 : 1;
+            return 0;
+        }
+
         /// <summary>The road indices THIS grid created, in order. ⚠ Without it LaySidewalks paves every road
         /// in the field: the first run of the harness laid 80 ribbons for 17 streets, because the field also
         /// held the map's own 23 roads and a loop over RoadCount cannot tell whose they are.</summary>
@@ -175,17 +192,17 @@ namespace UnturnedGodot
 
             // ---- 2. SPANS. Rows first, then columns; identical treatment, so the grid has no favoured axis.
             var endsAt = new Dictionary<int, int>();   // junction -> bound ends, for the topology census
-            void Bind(ref Node nd, int road, bool atEnd)
+            void Bind(ref Node nd, int road, bool atEnd, Vector3 geomAt)
             {
                 if (nd.Junction < 0) nd.Junction = roads.AddJunction(nd.P);
-                roads.BindRoadEnd(road, atEnd, nd.Junction);
+                roads.BindRoadEndAt(road, atEnd, nd.Junction, geomAt);   // bound at the NODE, drawn to the KERB
                 endsAt[nd.Junction] = endsAt.TryGetValue(nd.Junction, out int c) ? c + 1 : 1;
             }
 
             for (int axis = 0; axis < 2; axis++)
                 for (int line = 0; line < w; line++)
                 {
-                    bool main = ((line - n) % Mathf.Max(1, MainEvery)) == 0;
+                    bool main = MainLine(line - n);
                     for (int k = 0; k + 1 < w; k++)
                     {
                         int ai = axis == 0 ? k : line, aj = axis == 0 ? line : k;
@@ -194,14 +211,27 @@ namespace UnturnedGodot
                         ref Node b = ref grid[bi, bj];
                         if (!a.Ok || !b.Ok) { rep.SpansRejected++; continue; }
 
-                        var pts = SpanPoints(a.P, b.P, heightAt, out float len);
+                        // ⭐ MEET AT THE EDGE, NOT THE MIDDLE. The arm that does NOT own a node stops at the
+                        // kerb of the street that does; only the through street keeps its centreline to the
+                        // node. Running every arm to the centre lays each one's last half-carriageway on top
+                        // of the others, which is the merged blob of tarmac at every junction.
+                        // ⚠ AND IT TAKES THE NODE'S HEIGHT, not the ground's at the pulled-back point: the
+                        // through street's surface is what the arm has to meet, so sampling raw terrain there
+                        // would put a step in the road exactly where the two join.
+                        var dir = new Vector3(b.P.X - a.P.X, 0f, b.P.Z - a.P.Z).Normalized();
+                        float backA = DominantAxis(ai - n, aj - n) == axis ? 0f : HalfAt(roads, ai - n, aj - n);
+                        float backB = DominantAxis(bi - n, bj - n) == axis ? 0f : HalfAt(roads, bi - n, bj - n);
+                        var startAt = new Vector3(a.P.X + dir.X * backA, a.P.Y, a.P.Z + dir.Z * backA);
+                        var endAt = new Vector3(b.P.X - dir.X * backB, b.P.Y, b.P.Z - dir.Z * backB);
+
+                        var pts = SpanPoints(startAt, endAt, heightAt, out float len);
                         if (pts == null) { rep.SpansRejected++; continue; }
 
                         int road = roads.AddRoadFromPolyline(pts, main ? MainMaterial : StreetMaterial,
                                                             loop: false, ignoreTerrain: !FollowTerrain);
                         if (road < 0) { rep.SpansRejected++; continue; }
-                        Bind(ref a, road, false);
-                        Bind(ref b, road, true);
+                        Bind(ref a, road, false, startAt);
+                        Bind(ref b, road, true, endAt);
                         Built.Add(road); _profiles.Add(pts);
                         rep.Roads++; rep.Metres += len;
                         foreach (var p in pts) rep.Checksum = Mix(rep.Checksum ^ (ulong)BitConverter.SingleToInt32Bits(p.X)
@@ -225,6 +255,15 @@ namespace UnturnedGodot
                 }
             }
             return rep;
+        }
+
+        /// <summary>Half the carriageway of the street that OWNS this node -- how far back the other arms
+        /// have to stop.</summary>
+        float HalfAt(RoadField roads, int i, int j)
+        {
+            int ax = DominantAxis(i, j);
+            bool mainHere = ax == 0 ? MainLine(j) : MainLine(i);
+            return roads.RoadHalfWidthOfMaterial(mainHere ? MainMaterial : StreetMaterial);
         }
 
         /// <summary>One span's spline points: terrain-following, graded, ends pinned to the node positions.
@@ -313,10 +352,19 @@ namespace UnturnedGodot
         {
             int j = roads.RoadEndJunction(road, atEnd);
             if (j < 0) return 0f;                      // a loose end runs to the tip, as it should
-            float widest = roads.RoadHalfWidth(road);
+            float widest = 0f;
             foreach (var (other, _) in roads.JunctionEdges(j))
                 if (other != road) widest = Mathf.Max(widest, roads.RoadHalfWidth(other));
-            return widest + cornerRadius;
+            // ⚠ SUBTRACT THE SETBACK THE ROAD ALREADY HAS. An arm that stops at the kerb is already clear of
+            // the intersection, and trimming it by the full clearance again would strand its pavement a whole
+            // carriageway short of the corner.
+            float have = 0f;
+            if (roads.EvaluateAlong(road, atEnd ? roads.RoadLength(road) : 0f, out var tip, out _, snapTerrain: false))
+            {
+                var jp = roads.JunctionPos(j);
+                have = new Vector2(tip.X - jp.X, tip.Z - jp.Z).Length();
+            }
+            return Mathf.Max(0f, widest + cornerRadius - have);
         }
     }
 }

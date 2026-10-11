@@ -7161,6 +7161,13 @@ namespace UnturnedGodot
                 var g = terr.GroundFingerprint();
                 Log.Print($"[world-fingerprint] roads {roadN} props {propN} roadhash {h:x16} heights {g.H:x16} splat {g.S:x16}");
             }
+            // UG_TOWNGRID=1 on a CUSTOM map lays the town here instead of on PEI (strawberry 2026-10-11:
+            // "dont slap it on top of pei, give it a flat map"). ⚠ And it is the better rig for it: a flat
+            // 3x3 plain has no gates firing, so what the render shows is the GRID -- on PEI the flattest
+            // 400 m box still has 34 m of relief and half the spans were refused, so the picture was mostly
+            // of the terrain gates working.
+            if (System.Environment.GetEnvironmentVariable("UG_TOWNGRID") == "1" && rf != null)
+                BuildTownGrid(rf, terr, editor);
             DiscordPresence.SetEditor(mapName);
             if (autoPlay) play.CallDeferred(nameof(EditorPlayMode.EnterPlay));
             _worldReady = true;
@@ -8099,111 +8106,8 @@ namespace UnturnedGodot
                     Log.Print($"[sidewalk-demo] camera on the kerb at {eye}");
                 }
             }
-            // UG_TOWNGRID=1: lay a whole town's street grid (strawberry 2026-10-11, "work on making a proper
-            // road grid system with ur new splines"). UG_TOWNSEED / UG_TOWNEXTENT / UG_TOWNSPACING are the dials.
             if (System.Environment.GetEnvironmentVariable("UG_TOWNGRID") == "1" && rf != null && Terrain.Active != null)
-            {
-                var terrain = Terrain.Active;
-                float HeightAt(float x, float z) => terrain.SampleHeight(x, z);
-                // ⚠ SITE THE TOWN ON THE FLATTEST DRY GROUND, by scanning -- not at the origin, and not at
-                // "wherever road 0 happens to be". A town dropped on a hillside is mostly refused nodes, and
-                // the render would then be of the gates working rather than of a grid. The scan is over the
-                // heightmap, which IS reproduced between launches (measured today: the ground checksum is
-                // identical run to run while the editor's roads are not), so the site is stable.
-                // ⚠ SCORE THE FOOTPRINT, NOT THE CENTRE POINT. The first version measured relief across 80 m
-                // at the centre and reported a perfect 0.0 m -- then the grid, which reaches 192 m out, had 26
-                // of its 49 nodes refused and built no crossroads at all. The number was true and answered a
-                // different question than the one that decides whether a town fits.
-                float reach = 200f;
-                if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNEXTENT"),
-                        System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float wantEx) && wantEx > 50f) reach = wantEx;
-                Vector3 site = Vector3.Zero; float flattest = float.MaxValue;
-                for (float sx = -900f; sx <= 900f; sx += 60f)
-                    for (float sz = -900f; sz <= 900f; sz += 60f)
-                    {
-                        float lo = float.MaxValue, hi = float.MinValue; bool dry = true;
-                        for (int a = -2; a <= 2 && dry; a++)
-                            for (int b = -2; b <= 2 && dry; b++)
-                            {
-                                float y = HeightAt(sx + a * reach * 0.5f, sz + b * reach * 0.5f);
-                                if (y < Terrain.SeaLevelY + 3f) { dry = false; break; }   // the grid's own SeaMargin, not an invented +8: at +8 nothing on PEI qualifies (measured: land runs 8..99 m against a 25.6 m sea, so most of the island is "wet" by that rule)
-                                lo = Mathf.Min(lo, y); hi = Mathf.Max(hi, y);
-                            }
-                        if (!dry) continue;
-                        if (hi - lo < flattest) { flattest = hi - lo; site = new Vector3(sx, HeightAt(sx, sz), sz); }
-                    }
-                if (flattest == float.MaxValue)
-                {
-                    // ⚠ SAY WHAT THE MAP ACTUALLY LOOKS LIKE rather than failing silently and building at the
-                    // origin -- "no dry site" could mean the map is wet, or that the scan is off its edge, and
-                    // those want opposite fixes.
-                    float lo2 = float.MaxValue, hi2 = float.MinValue; int dryN = 0, n2 = 0;
-                    for (float sx = -900f; sx <= 900f; sx += 60f)
-                        for (float sz = -900f; sz <= 900f; sz += 60f)
-                        { float y = HeightAt(sx, sz); lo2 = Mathf.Min(lo2, y); hi2 = Mathf.Max(hi2, y); if (y >= Terrain.SeaLevelY + 3f) dryN++; n2++; }
-                    Log.Err($"[towngrid] no site with a dry {reach * 2f:0} m footprint. Scan: height {lo2:0.0}..{hi2:0.0}, "
-                          + $"{dryN}/{n2} probes dry (sea {Terrain.SeaLevelY:0.0} + 3).");
-                }
-                if (flattest == float.MaxValue) goto noTown;    // ⚠ no site means NO TOWN, not a town at (0,0)
-                // GRADE THE SITE by default: a town cuts and fills its streets, and a grid draped over raw PEI
-                // (the flattest 400 m box on this map still has 34 m of relief) bucks over every hummock.
-                // UG_TOWNDRAPE=1 turns it off and lets the streets follow the ground instead.
-                bool drape = System.Environment.GetEnvironmentVariable("UG_TOWNDRAPE") == "1";
-                var town = new TownRoadGrid { Centre = site, Seed = 1337, Bearing = 0.35f,
-                                              GradeSite = !drape, FollowTerrain = drape };
-                if (int.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNSEED"), out int tseed)) town.Seed = tseed;
-                if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNEXTENT"),
-                        System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float tex) && tex > 50f) town.Extent = tex;
-                if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNSPACING"),
-                        System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float tsp) && tsp > 10f) town.Spacing = tsp;
-                {   // ⚠ READ THE TABLE, DO NOT ASSUME IT. "Road" sounded like the town-street material and is
-                    // 18.4 m of HALF width -- a 37 m carriageway, which is where the 40 m asphalt blob at
-                    // every junction came from.
-                    var wsb = new System.Text.StringBuilder();
-                    for (int m = 0; m < 10; m++) wsb.Append($" {m}:{rf.RoadHalfWidthOfMaterial(m):0.0}");
-                    Log.Print($"[towngrid] material half-widths (m):{wsb}");
-                }
-                int before = rf.RoadCount;
-                var rep = town.Generate(rf, HeightAt);
-                Log.Print($"[towngrid] site ({site.X:0},{site.Y:0.0},{site.Z:0}) relief {flattest:0.0} m ACROSS THE FOOTPRINT -- {rep}");
-                bool graded = town.GradeTerrain(terrain, rf);     // ⚠ BEFORE the pavement: its skirt is cut to the ground it finds
-                int walks = town.LaySidewalks(editor, rf);
-                Log.Print($"[towngrid] {rf.RoadCount - before} streets added, {walks} pavement ribbons, site {(graded ? "GRADED" : "draped")}");
-                // ⚠ IS THERE ACTUALLY ASPHALT? The first graded render showed the flattened pads and no road
-                // surface on them, and from 250 m up "I cannot see it" and "it is not there" look identical.
-                // So: does a mesh exist per street, and where is its surface relative to the ground?
-                {
-                    int meshes = 0;
-                    foreach (var ch in rf.GetChildren()) if (ch is MeshInstance3D) meshes++;
-                    var sb = new System.Text.StringBuilder();
-                    for (int k = 0; k < Mathf.Min(3, town.Built.Count); k++)
-                    {
-                        int r = town.Built[k];
-                        float L = rf.RoadLength(r);
-                        if (!rf.EvaluateAlong(r, L * 0.5f, out var mp, out _, snapTerrain: false)) continue;
-                        sb.Append($" road{r}: spline Y {mp.Y:0.00} vs ground {terrain.SampleHeight(mp.X, mp.Z):0.00};");
-                    }
-                    Log.Print($"[towngrid] {meshes} mesh children under the road field;{sb}");
-                }
-                // A GRID READS FROM THE AIR. Unlike the kerb, whose whole subject is 0.4 m tall, the claim here
-                // is the LAYOUT -- junctions, blocks, where the gates refused to build -- and none of that is
-                // legible at eye height.
-                var tcam = new Camera3D { Current = true, Fov = 58f };
-                AddChild(tcam);
-                // UG_TOWNCLOSE=1 drops onto the busiest junction instead. ⚠ At 420 m a 16 m carriageway is 40
-                // px and "the asphalt is not drawing" is indistinguishable from "the asphalt is small": the
-                // overview could not tell those apart, so there has to be a shot that can.
-                var busiest = Vector3.Zero; int bestDeg = 0;
-                foreach (var (jp, ends) in rf.Junctions()) if (ends.Count > bestDeg) { bestDeg = ends.Count; busiest = jp; }
-                if (System.Environment.GetEnvironmentVariable("UG_TOWNCLOSE") == "1" && bestDeg > 0)
-                {
-                    tcam.GlobalPosition = busiest + new Vector3(0f, 26f, 40f);
-                    tcam.LookAt(busiest, Vector3.Up);
-                    Log.Print($"[towngrid] close camera on a {bestDeg}-way junction at {busiest}");
-                }
-                else { tcam.GlobalPosition = site + new Vector3(0f, town.Extent * 1.25f, town.Extent * 1.25f); tcam.LookAt(site, Vector3.Up); }
-                noTown: ;
-            }
+                BuildTownGrid(rf, Terrain.Active, editor);
             if (System.Environment.GetEnvironmentVariable("UG_EDITORROADS") == "1" && roadsEd.HasRoads)
             {   // synchronous (no timer): set before the first frame so the frame-45 --shot reliably captures the demoed state
                 editor.Mode = EEditorMode.Environment;
@@ -10619,6 +10523,127 @@ namespace UnturnedGodot
                 }
             }
             if (_walkAbFrame >= 80) GetTree().Quit();
+        }
+
+
+        /// <summary>UG_TOWNGRID: lay a town's street grid and frame it. Shared by the PEI editor path and the
+        /// flat custom-map path -- the same code must build both, or "it looks right on the flat map" would
+        /// say nothing about the one the game ships.</summary>
+        void BuildTownGrid(RoadField rf, Terrain terrain, Node3D editor)
+        {
+            if (rf == null || terrain == null) return;
+            float HeightAt(float x, float z) => terrain.SampleHeight(x, z);
+            // ⚠ SITE THE TOWN ON THE FLATTEST DRY GROUND, by scanning -- not at the origin, and not at
+            // "wherever road 0 happens to be". A town dropped on a hillside is mostly refused nodes, and
+            // the render would then be of the gates working rather than of a grid. The scan is over the
+            // heightmap, which IS reproduced between launches (measured today: the ground checksum is
+            // identical run to run while the editor's roads are not), so the site is stable.
+            // ⚠ SCORE THE FOOTPRINT, NOT THE CENTRE POINT. The first version measured relief across 80 m
+            // at the centre and reported a perfect 0.0 m -- then the grid, which reaches 192 m out, had 26
+            // of its 49 nodes refused and built no crossroads at all. The number was true and answered a
+            // different question than the one that decides whether a town fits.
+            float reach = 200f;
+            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNEXTENT"),
+                    System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float wantEx) && wantEx > 50f) reach = wantEx;
+            // ⚠ SCAN INSIDE THE MAP, and keep the whole FOOTPRINT inside it. SampleHeight CLAMPS past the
+            // edge, so an off-map probe reads a perfectly plausible height: the flat map's "best" site came
+            // out at (0,0), which is that map's own CORNER (it runs x 0..3072, z -3072..0), with three
+            // quarters of the town hanging over the void.
+            Vector3 site = Vector3.Zero; float flattest = float.MaxValue, bestD2 = float.MaxValue;
+            float x0 = terrain.WorldMinX + reach, x1 = terrain.WorldMaxX - reach;
+            float z0 = terrain.WorldMinZ + reach, z1 = terrain.WorldMaxZ - reach;
+            float mx = (x0 + x1) * 0.5f, mz = (z0 + z1) * 0.5f;
+            for (float sx = x0; sx <= x1; sx += 60f)
+                for (float sz = z0; sz <= z1; sz += 60f)
+                {
+                    float lo = float.MaxValue, hi = float.MinValue; bool dry = true;
+                    for (int a = -2; a <= 2 && dry; a++)
+                        for (int b = -2; b <= 2 && dry; b++)
+                        {
+                            float y = HeightAt(sx + a * reach * 0.5f, sz + b * reach * 0.5f);
+                            if (y < Terrain.SeaLevelY + 3f) { dry = false; break; }   // the grid's own SeaMargin, not an invented +8: at +8 nothing on PEI qualifies (measured: land runs 8..99 m against a 25.6 m sea, so most of the island is "wet" by that rule)
+                            lo = Mathf.Min(lo, y); hi = Mathf.Max(hi, y);
+                        }
+                    if (!dry) continue;
+                    // ⚠ TIE-BREAK TOWARD THE MIDDLE OF THE MAP. On a FLAT map every candidate scores an
+                    // identical 0.0 m of relief, so a plain `<` keeps whichever was scanned first -- which put
+                    // the town at (-900, -900), outside a 768 m terrain, on ground that existed only because
+                    // SampleHeight clamps past its edge. A tie is not a reason to build off the map.
+                    float relief = hi - lo, d2 = (sx - mx) * (sx - mx) + (sz - mz) * (sz - mz);
+                    if (relief < flattest - 0.01f || (relief < flattest + 0.01f && d2 < bestD2))
+                    { flattest = relief; bestD2 = d2; site = new Vector3(sx, HeightAt(sx, sz), sz); }
+                }
+            if (flattest == float.MaxValue)
+            {
+                // ⚠ SAY WHAT THE MAP ACTUALLY LOOKS LIKE rather than failing silently and building at the
+                // origin -- "no dry site" could mean the map is wet, or that the scan is off its edge, and
+                // those want opposite fixes.
+                float lo2 = float.MaxValue, hi2 = float.MinValue; int dryN = 0, n2 = 0;
+                for (float sx = x0; sx <= x1; sx += 60f)
+                    for (float sz = z0; sz <= z1; sz += 60f)
+                    { float y = HeightAt(sx, sz); lo2 = Mathf.Min(lo2, y); hi2 = Mathf.Max(hi2, y); if (y >= Terrain.SeaLevelY + 3f) dryN++; n2++; }
+                Log.Err($"[towngrid] no site with a dry {reach * 2f:0} m footprint. Scan: height {lo2:0.0}..{hi2:0.0}, "
+                      + $"{dryN}/{n2} probes dry (sea {Terrain.SeaLevelY:0.0} + 3).");
+            }
+            if (flattest == float.MaxValue) goto noTown;    // ⚠ no site means NO TOWN, not a town at (0,0)
+            // GRADE THE SITE by default: a town cuts and fills its streets, and a grid draped over raw PEI
+            // (the flattest 400 m box on this map still has 34 m of relief) bucks over every hummock.
+            // UG_TOWNDRAPE=1 turns it off and lets the streets follow the ground instead.
+            bool drape = System.Environment.GetEnvironmentVariable("UG_TOWNDRAPE") == "1";
+            var town = new TownRoadGrid { Centre = site, Seed = 1337, Bearing = 0.35f,
+                                          GradeSite = !drape, FollowTerrain = drape };
+            if (int.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNSEED"), out int tseed)) town.Seed = tseed;
+            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNEXTENT"),
+                    System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float tex) && tex > 50f) town.Extent = tex;
+            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNSPACING"),
+                    System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float tsp) && tsp > 10f) town.Spacing = tsp;
+            {   // ⚠ READ THE TABLE, DO NOT ASSUME IT. "Road" sounded like the town-street material and is
+                // 18.4 m of HALF width -- a 37 m carriageway, which is where the 40 m asphalt blob at
+                // every junction came from.
+                var wsb = new System.Text.StringBuilder();
+                for (int m = 0; m < 10; m++) wsb.Append($" {m}:{rf.RoadHalfWidthOfMaterial(m):0.0}");
+                Log.Print($"[towngrid] material half-widths (m):{wsb}");
+            }
+            int before = rf.RoadCount;
+            var rep = town.Generate(rf, HeightAt);
+            Log.Print($"[towngrid] site ({site.X:0},{site.Y:0.0},{site.Z:0}) relief {flattest:0.0} m ACROSS THE FOOTPRINT -- {rep}");
+            bool graded = town.GradeTerrain(terrain, rf);     // ⚠ BEFORE the pavement: its skirt is cut to the ground it finds
+            int walks = town.LaySidewalks(editor, rf);
+            Log.Print($"[towngrid] {rf.RoadCount - before} streets added, {walks} pavement ribbons, site {(graded ? "GRADED" : "draped")}");
+            // ⚠ IS THERE ACTUALLY ASPHALT? The first graded render showed the flattened pads and no road
+            // surface on them, and from 250 m up "I cannot see it" and "it is not there" look identical.
+            // So: does a mesh exist per street, and where is its surface relative to the ground?
+            {
+                int meshes = 0;
+                foreach (var ch in rf.GetChildren()) if (ch is MeshInstance3D) meshes++;
+                var sb = new System.Text.StringBuilder();
+                for (int k = 0; k < Mathf.Min(3, town.Built.Count); k++)
+                {
+                    int r = town.Built[k];
+                    float L = rf.RoadLength(r);
+                    if (!rf.EvaluateAlong(r, L * 0.5f, out var mp, out _, snapTerrain: false)) continue;
+                    sb.Append($" road{r}: spline Y {mp.Y:0.00} vs ground {terrain.SampleHeight(mp.X, mp.Z):0.00};");
+                }
+                Log.Print($"[towngrid] {meshes} mesh children under the road field;{sb}");
+            }
+            // A GRID READS FROM THE AIR. Unlike the kerb, whose whole subject is 0.4 m tall, the claim here
+            // is the LAYOUT -- junctions, blocks, where the gates refused to build -- and none of that is
+            // legible at eye height.
+            var tcam = new Camera3D { Current = true, Fov = 58f };
+            AddChild(tcam);
+            // UG_TOWNCLOSE=1 drops onto the busiest junction instead. ⚠ At 420 m a 16 m carriageway is 40
+            // px and "the asphalt is not drawing" is indistinguishable from "the asphalt is small": the
+            // overview could not tell those apart, so there has to be a shot that can.
+            var busiest = Vector3.Zero; int bestDeg = 0;
+            foreach (var (jp, ends) in rf.Junctions()) if (ends.Count > bestDeg) { bestDeg = ends.Count; busiest = jp; }
+            if (System.Environment.GetEnvironmentVariable("UG_TOWNCLOSE") == "1" && bestDeg > 0)
+            {
+                tcam.GlobalPosition = busiest + new Vector3(0f, 26f, 40f);
+                tcam.LookAt(busiest, Vector3.Up);
+                Log.Print($"[towngrid] close camera on a {bestDeg}-way junction at {busiest}");
+            }
+            else { tcam.GlobalPosition = site + new Vector3(0f, town.Extent * 1.25f, town.Extent * 1.25f); tcam.LookAt(site, Vector3.Up); }
+            noTown: ;
         }
 
         public void HubProcess(double delta)
