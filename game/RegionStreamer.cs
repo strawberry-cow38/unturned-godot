@@ -66,13 +66,13 @@ namespace UnturnedGodot
         public static bool DebugShiftLog;
 
         public static readonly int[] LodRing = { 2, 4, 7, 11 };
-        public const int ColliderRing = 1, TreeRing = 3, FoliageRing = 1;
+        public const int ColliderRing = 1, TreeRing = 3, FoliageRing = 1, BoulderRing = 2;
         /// <summary>Foliage is batched in 64 m cells (4x4 a region) so each MultiMesh can be distance-culled on its own.</summary>
         public const float FoliageCellSize = 64f;
         public static int MaxRing => LodRing[LodRing.Length - 1];
 
         // ---- diagnostics (the overlay and the tests read these) ----
-        public int Rebases, Rescues, Committed, TreeCount, FoliageCount, ImpostorCount;
+        public int Rebases, Rescues, Committed, TreeCount, FoliageCount, ImpostorCount, BridgeCount, TunnelCount, RailCount, BoulderCount;
         public double GenMsTotal; public int GenCount;
         public readonly int[] LoadedByLod = new int[4];
         public int Colliders => _colliders;
@@ -98,10 +98,29 @@ namespace UnturnedGodot
             public List<(Transform3D Pole, bool HasNext, Transform3D Next)> PoleXf;   // from the LOD0/1 build
             public Node3D Power;            // pole meshes + wires, ring <= TreeRing
             public Node3D PoleBodies;       // pole colliders, ring <= ColliderRing
+            public List<(Transform3D Tower, Transform3D[] Wired)> PylonXf;   // from the first build (LOD-independent)
+            public Node3D Pylons;           // the towers and their wires, every ring
+            public Node3D PylonBodies;      // their legs, ring <= ColliderRing
             public Node3D Foliage;          // grass / flowers / pebbles / bushes, ring <= FoliageRing only
             public int FoliageCount;
             public (Vector3 P, float S, int Cell)[] ImpTrees;   // billboard placements on the DISPLAYED LOD's ground
             public MultiMeshInstance3D Impostors;   // ring >= ImpostorRing
+            public List<Transform3D>[] BridgeXf;    // [deck, pier, cap], region-local, from the first build (LOD-independent)
+            public Node3D Bridges;                  // the bridge MultiMeshes, every ring
+            public Node3D BridgeBodies;             // deck colliders, ring <= ColliderRing
+            public Vector3[][] RoadCol;             // the road slabs' collision soup, from the latest LOD0 build
+            public bool[] Lod0Holes;                // tunnel-mouth holes in the LOD0 ground (NaN in its collider)
+            public List<InfiniteRoads.TunnelSpan> TunnelSpans;   // from the first build (LOD-independent)
+            public Node3D Tunnels;                  // bores, portals, floors -- every ring
+            public List<(Shape3D Shape, Transform3D Xf, int Surf)> TunnelShapes;
+            public Node3D TunnelBodies;             // their colliders, ring <= ColliderRing
+            public Node3D RoadBodies;               // road colliders, ring <= ColliderRing
+            public List<Transform3D>[] RailXf;      // [unit, sleeper, crossbuck], region-local, from the first build (LOD-independent)
+            public Node3D Rails;                    // the track MultiMeshes, every ring (culled at RailCull)
+            public Node3D RailBodies;               // the ballast's collider, ring <= ColliderRing
+            public List<Transform3D>[] BoulderXf;   // [kit], region-local, from the LOD0 build (kept across LOD swaps)
+            public Node3D Boulders;                 // ring <= BoulderRing
+            public Node3D BoulderBodies;            // ring <= ColliderRing
         }
 
         sealed class Job { public RegionCoord C; public int Lod; }
@@ -115,8 +134,14 @@ namespace UnturnedGodot
             public Dictionary<string, List<Transform3D>> TreeXf;
             public Dictionary<(int kind, int cell), List<Transform3D>> FoliageXf;
             public RoadMesh[] Road;   // per RoadKind, null where the region has none of that class
+            public Vector3[][] RoadCol;   // LOD0 only: the slabs as triangle soup, [paved, trail]
             public List<(Transform3D Pole, bool HasNext, Transform3D Next)> Poles;
+            public List<(Transform3D Tower, Transform3D[] Wired)> Pylons;
             public (Vector3 P, float S, int Cell)[] ImpTrees;
+            public List<Transform3D>[] BridgeXf;
+            public List<InfiniteRoads.TunnelSpan> Tunnels;
+            public List<Transform3D>[] RailXf;
+            public List<Transform3D>[] BoulderXf, TunnelRockXf;   // [kit]; BoulderXf at LOD0 only
         }
 
         readonly Dictionary<RegionCoord, Region> _regions = new();
@@ -255,6 +280,11 @@ namespace UnturnedGodot
             if (r.Trees != null) TreeCount -= r.TreeList?.Count ?? 0;
             if (r.Foliage != null) FoliageCount -= r.FoliageCount;
             if (r.Impostors != null) ImpostorCount -= r.Impostors.Multimesh.InstanceCount;
+            if (r.Bridges != null) BridgeCount -= r.BridgeXf[0].Count;
+            if (r.Pylons != null && _pylonMesh != null) PylonCount -= r.PylonXf.Count;
+            if (r.Tunnels != null) TunnelCount -= r.TunnelSpans.Count;
+            if (r.Rails != null) RailCount -= r.RailXf[0].Count;
+            if (r.Boulders != null) BoulderCount -= Count(r.BoulderXf);
             r.Node.QueueFree();
             _regions.Remove(c);
             _pendingTrees.Remove(c);
@@ -279,6 +309,14 @@ namespace UnturnedGodot
                 TreeCount -= r.TreeList?.Count ?? 0;
             }
 
+            if (ring <= ColliderRing && r.TunnelBodies == null && r.TunnelShapes != null) { r.TunnelBodies = BuildTunnelBodies(r.TunnelShapes); r.Node.AddChild(r.TunnelBodies); }
+            else if (ring > ColliderRing + 1 && r.TunnelBodies != null) { r.TunnelBodies.QueueFree(); r.TunnelBodies = null; }
+            if (ring <= ColliderRing && r.RoadBodies == null && r.RoadCol != null) { r.RoadBodies = BuildRoadBodies(r.RoadCol); r.Node.AddChild(r.RoadBodies); }
+            else if (ring > ColliderRing + 1 && r.RoadBodies != null) { r.RoadBodies.QueueFree(); r.RoadBodies = null; }
+            if (ring <= ColliderRing && r.BridgeBodies == null && r.BridgeXf != null && r.BridgeXf[0].Count > 0) { r.BridgeBodies = BuildDeckBodies(r.BridgeXf[0]); r.Node.AddChild(r.BridgeBodies); }
+            else if (ring > ColliderRing + 1 && r.BridgeBodies != null) { r.BridgeBodies.QueueFree(); r.BridgeBodies = null; }
+            if (ring <= ColliderRing && r.RailBodies == null && r.RailXf != null && r.RailXf[0].Count + r.RailXf[2].Count > 0) { r.RailBodies = BuildRailBodies(r.RailXf[0], r.RailXf[2]); r.Node.AddChild(r.RailBodies); }
+            else if (ring > ColliderRing + 1 && r.RailBodies != null) { r.RailBodies.QueueFree(); r.RailBodies = null; }
             if (ring <= ColliderRing && r.TreeBodies == null && r.TreeList != null) { r.TreeBodies = BuildTrunks(r.TreeList); r.Node.AddChild(r.TreeBodies); }
             else if (ring > ColliderRing + 1 && r.TreeBodies != null) { r.TreeBodies.QueueFree(); r.TreeBodies = null; }
 
@@ -303,6 +341,18 @@ namespace UnturnedGodot
             else if (ring > TreeRing + 1 && r.Power != null) { r.Power.QueueFree(); r.Power = null; }
             if (ring <= ColliderRing && r.PoleBodies == null && r.PoleXf != null && r.PoleXf.Count > 0) { r.PoleBodies = BuildPoleBodies(r.PoleXf); r.Node.AddChild(r.PoleBodies); }
             else if (ring > ColliderRing + 1 && r.PoleBodies != null) { r.PoleBodies.QueueFree(); r.PoleBodies = null; }
+            if (ring <= ColliderRing && r.PylonBodies == null && r.PylonXf != null && r.PylonXf.Count > 0) { r.PylonBodies = BuildPylonBodies(r.PylonXf); r.Node.AddChild(r.PylonBodies); }
+            else if (ring > ColliderRing + 1 && r.PylonBodies != null) { r.PylonBodies.QueueFree(); r.PylonBodies = null; }
+
+            if (ring <= BoulderRing && r.Boulders == null && r.BoulderXf != null && Count(r.BoulderXf) > 0)
+            {
+                r.Boulders = BuildRocks(r.BoulderXf, "Boulders", (BoulderRing + 0.5f) * InfiniteTerrain.RegionSize);
+                r.Node.AddChild(r.Boulders);
+                BoulderCount += Count(r.BoulderXf);
+            }
+            else if (ring > BoulderRing + 1 && r.Boulders != null) { r.Boulders.QueueFree(); r.Boulders = null; BoulderCount -= Count(r.BoulderXf); }
+            if (ring <= ColliderRing && r.BoulderBodies == null && r.BoulderXf != null && Count(r.BoulderXf) > 0) { r.BoulderBodies = RockBodies(r.BoulderXf, "BoulderBodies"); r.Node.AddChild(r.BoulderBodies); }
+            else if (ring > ColliderRing + 1 && r.BoulderBodies != null) { r.BoulderBodies.QueueFree(); r.BoulderBodies = null; }
 
             if (ring <= FoliageRing && r.Foliage == null && r.FoliageXf != null)
             {
@@ -339,10 +389,15 @@ namespace UnturnedGodot
                 int ring = r.C.RingTo(center), want = LodForRing(ring);
                 bool useful = b.D.Lod == want || r.Lod < 0;                   // a stale LOD is still better than a hole
                 if (b.D.Lod == r.PendingLod) r.PendingLod = -1;
-                if (b.D.Lod == 0) r.Lod0Heights = b.D.Heights;
+                if (b.D.Lod == 0) { r.Lod0Heights = b.D.Heights; r.Lod0Holes = b.D.Holes; }
                 if (b.D.Trees != null && r.TreeList == null) { r.TreeList = b.D.Trees; _pendingTrees[r.C] = b.TreeXf; }
                 if (b.FoliageXf != null && r.FoliageXf == null) r.FoliageXf = b.FoliageXf;
                 if (b.Poles != null && r.PoleXf == null) r.PoleXf = b.Poles;
+                if (b.BoulderXf != null && r.BoulderXf == null) r.BoulderXf = b.BoulderXf;
+                AdoptBridges(r, b);
+                AdoptTunnels(r, b);
+                AdoptPylons(r, b);
+                AdoptRails(r, b);
                 if (useful)
                 {
                     Apply(r, b);
@@ -399,12 +454,19 @@ namespace UnturnedGodot
                     rm.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, ra);
                     if (r.Road[k] == null)
                     {
-                        r.Road[k] = new MeshInstance3D { Name = k == RaisedSlot ? "Road_Raised" : k == CutSlot ? "Road_Cut" : "Road_" + (RoadKind)k, MaterialOverride = RoadMat(k), CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
+                        r.Road[k] = new MeshInstance3D { Name = RoadName(k), MaterialOverride = RoadMat(k), CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
                         r.Node.AddChild(r.Road[k]);
                     }
                     r.Road[k].Mesh = rm;
                 }
                 else if (r.Road[k] != null) { r.Road[k].QueueFree(); r.Road[k] = null; }
+            }
+            // the road colliders follow the LOD0 slabs (a coarser build keeps the last LOD0 soup: its bodies only exist
+            // in the ring LOD0 covers); a new soup drops the old bodies for UpdateExtras to rebuild
+            if (b.D.Lod == 0)
+            {
+                r.RoadCol = b.RoadCol;
+                if (r.RoadBodies != null) { r.RoadBodies.QueueFree(); r.RoadBodies = null; }
             }
         }
 
@@ -416,9 +478,19 @@ namespace UnturnedGodot
             body.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Grass);
             // HeightMapShape3D: row-major in Z, 1 unit apart, CENTRED -- so scale X/Z by the spacing (Jolt wants them
             // equal, and they are) and sit it at the region's centre. Heights are absolute world Y; the body stays at 0.
+            // a tunnel mouth's holes: NaN, which Jolt (and GodotPhysics) read as no collision at that vertex. (Verified: the
+            // mouth ray is blocked by GroundBody without them and clear with them, and the rest of the region still
+            // collides. A region that once lost its WHOLE collider here had -Infinity heights from a generator bug --
+            // see InfiniteRoads.TwinShellTop -- not NaN holes.)
+            var data = r.Lod0Heights;
+            if (r.Lod0Holes != null)
+            {
+                data = (float[])data.Clone();
+                for (int k = 0; k < data.Length; k++) if (r.Lod0Holes[k]) data[k] = float.NaN;
+            }
             var cs = new CollisionShape3D
             {
-                Shape = new HeightMapShape3D { MapWidth = v, MapDepth = v, MapData = r.Lod0Heights },
+                Shape = new HeightMapShape3D { MapWidth = v, MapDepth = v, MapData = data },
                 Scale = new Vector3(sp, 1f, sp),
                 Position = new Vector3(InfiniteTerrain.RegionSize * 0.5f, 0f, InfiniteTerrain.RegionSize * 0.5f),
             };
@@ -562,25 +634,94 @@ void fragment() {
         static readonly float[] RoadTexMetres = { 128f / 4f, 128f / 4f, 256f / 8f, 64f / 8f };
         /// <summary>Half-width of one drawn surface: a highway is TWO of these, one per carriageway.</summary>
         static float RibbonHalf(RoadKind k) => k == RoadKind.Highway ? InfiniteRoads.HighwayLaneHalf : InfiniteRoads.PavedHalf(k);
-        /// <summary>Lift over the profile: main roads and highways above the small roads and trails that start under
-        /// their edges, highways above the mains they cross, so no two surfaces z-fight.</summary>
-        static readonly float[] RoadLift = { 0.045f, 0.03f, 0.015f, 0.01f };
+        /// <summary>On/off ramps: road_6 (two lanes, dashed white -- road_8's layout, 256 px over Roads.dat's 8).</summary>
+        const string RampTex = "road_6";
+        const float RampTexMetres = 256f / 8f;
         /// <summary>UG_INF_MARKS=1: highway pieces on a raised stretch (bridge candidate) draw magenta and on a deep cut
         /// (tunnel candidate) cyan, each from its own slot, so the marking can be checked by eye. Off, they are
         /// ordinary highway.</summary>
         public static bool ShowMarks = System.Environment.GetEnvironmentVariable("UG_INF_MARKS") == "1";
-        const int RoadSlots = 6, RaisedSlot = 4, CutSlot = 5;
+        const int RoadSlots = 15, RaisedSlot = 4, CutSlot = 5, RampSlot = 6, RailBedSlot = 7, MarkWhiteSlot = 8, MarkYellowSlot = 9, PatchSlot0 = 10;
+        /// <summary>A junction's patch draws in its own slot per class (and one for ramps), in a plain tile of that class's
+        /// texture laid flat in world metres (strawberry 2026-10-11: "map uvs on the road merge meshes properly so they dont
+        /// get stretched (applies to trails)"). It wore ONE column of the road texture (PatchU) along the joiner, so every
+        /// texel was a streak across the whole patch.</summary>
+        static int PatchSlot(int kind, bool ramp) => PatchSlot0 + (ramp ? 4 : kind);
+        static bool IsPatchSlot(int slot) => slot >= PatchSlot0 && slot < PatchSlot0 + 5;
+        /// <summary>The band of a road texture (u from, to) with no markings in it: road_0 / road_1's outer lane, road_8 /
+        /// road_6's left lane (measured off the PNGs: no column in it is saturated or brighter than the asphalt), road_5
+        /// all of it. A paved band is mirrored onto itself, so it wraps without a seam.</summary>
+        static (float u0, float u1, bool mirror) PatchBand(int slot)
+        {
+            int k = slot - PatchSlot0;
+            return k == (int)RoadKind.Trail ? (0f, 1f, false) : k == (int)RoadKind.Highway || k == (int)RoadKind.Main ? (4f / 256f, 56f / 256f, true) : (8f / 256f, 112f / 256f, true);
+        }
+        /// <summary>Metres across one patch tile (the band at its slab's own scale: the texture spans the ribbon), and along.</summary>
+        static (float across, float along) PatchTileMetres(int slot)
+        {
+            int k = slot - PatchSlot0; var rk = k == 4 ? RoadKind.Small : (RoadKind)k;
+            var (u0, u1, mirror) = PatchBand(slot);
+            return ((u1 - u0) * (mirror ? 2f : 1f) * 2f * RibbonHalf(rk), k == 4 ? RampTexMetres : RoadTexMetres[k]);
+        }
+        /// <summary>How far paint (InfiniteRoads' RoadMark) stands over the road it is laid on: enough not to fight it.</summary>
+        const float MarkLift = 0.015f;
+        static string RoadName(int k) => IsPatchSlot(k) ? (k == PatchSlot0 + 4 ? "Road_Patch_Ramp" : "Road_Patch_" + (RoadKind)(k - PatchSlot0))
+                                       : k == RaisedSlot ? "Road_Raised" : k == CutSlot ? "Road_Cut" : k == RampSlot ? "Road_Ramp" : k == RailBedSlot ? "Rail_Bed"
+                                       : k == MarkWhiteSlot ? "Road_Paint_White" : k == MarkYellowSlot ? "Road_Paint_Yellow" : "Road_" + (RoadKind)k;
+        /// <summary>A rail deck's bed is the ground's own gravel (terrain layer 3), tiled every RailBedMetres.</summary>
+        const float RailBedMetres = 4f;
         static readonly Material[] _roadMats = new Material[RoadSlots];
         static Material RoadMat(int slot)
         {
             if (_roadMats[slot] != null) return _roadMats[slot];
-            var k = slot >= RaisedSlot ? RoadKind.Highway : (RoadKind)slot;
+            if (slot == MarkWhiteSlot || slot == MarkYellowSlot)
+            {
+                // the road textures' own paint, flat, on the same wet surface so rain lands on it like the road
+                RainSystem3D.EnsureGlobals();
+                var pm = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/wet_surface.gdshader") };
+                pm.SetShaderParameter("dry_roughness", 1.0f);
+                pm.SetShaderParameter("impact_amount", 1.0f);
+                pm.SetShaderParameter("splash_scale", 1.0f);
+                pm.SetShaderParameter("puddle_amount", 1.0f);
+                pm.SetShaderParameter("dry_albedo", slot == MarkYellowSlot ? new Vector3(210f / 255f, 191f / 255f, 34f / 255f) : new Vector3(200f / 255f, 200f / 255f, 200f / 255f));
+                return _roadMats[slot] = pm;
+            }
+            if (slot == RailBedSlot)
+            {
+                var gi = new Image();
+                string gp = ProjectSettings.GlobalizePath("res://content/terrain/layer3.png");
+                bool gok = System.IO.File.Exists(gp) && ContentProvider.LoadOk(gi, gp);
+                if (gok) gi.GenerateMipmaps();
+                return _roadMats[slot] = new StandardMaterial3D
+                {
+                    AlbedoTexture = gok ? ImageTexture.CreateFromImage(gi) : null, AlbedoColor = gok ? Colors.White : new Color(0.48f, 0.46f, 0.43f),
+                    TextureFilter = BaseMaterial3D.TextureFilterEnum.LinearWithMipmapsAnisotropic, Roughness = 1f,
+                };
+            }
+            bool patch = IsPatchSlot(slot), ramp = slot == RampSlot || slot == PatchSlot0 + 4;
+            var k = patch ? (ramp ? RoadKind.Small : (RoadKind)(slot - PatchSlot0)) : slot == RampSlot ? RoadKind.Small : slot >= RaisedSlot ? RoadKind.Highway : (RoadKind)slot;
             var img = new Image();
-            string p = ProjectSettings.GlobalizePath($"res://content/roads/{RoadTex[(int)k]}.png");
+            string p = ProjectSettings.GlobalizePath($"res://content/roads/{(ramp ? RampTex : RoadTex[(int)k])}.png");
             bool ok = System.IO.File.Exists(p) && ContentProvider.LoadOk(img, p);
+            if (ok && patch)
+            {
+                // the plain band, full height (it tiles along as the texture does), mirrored onto itself so it wraps across
+                var (u0, u1, mirror) = PatchBand(slot);
+                int x0 = Mathf.RoundToInt(u0 * img.GetWidth()), w = Mathf.Max(1, Mathf.RoundToInt(u1 * img.GetWidth()) - x0), h = img.GetHeight();
+                var band = img.GetRegion(new Rect2I(x0, 0, w, h));
+                if (mirror)
+                {
+                    var flip = (Image)band.Duplicate(); flip.FlipX();
+                    var tile = Image.CreateEmpty(2 * w, h, false, band.GetFormat());
+                    tile.BlitRect(band, new Rect2I(0, 0, w, h), Vector2I.Zero);
+                    tile.BlitRect(flip, new Rect2I(0, 0, w, h), new Vector2I(w, 0));
+                    band = tile;
+                }
+                img = band;
+            }
             if (ok) img.GenerateMipmaps();
             Material mat;
-            if (slot >= RaisedSlot)
+            if (slot == RaisedSlot || slot == CutSlot)
                 mat = new StandardMaterial3D
                 {
                     AlbedoTexture = ok ? ImageTexture.CreateFromImage(img) : null, AlbedoColor = slot == RaisedSlot ? new Color(1f, 0.25f, 1f) : new Color(0.1f, 0.9f, 1f),
@@ -747,6 +888,106 @@ void fragment() {
             return holder;
         }
 
+        // ---- high-voltage pylons (strawberry 2026-10-10: "implement the big pylon splines. cross country, their own
+        // network"): cow tools' Power_Line_1 lattice tower, strung by the same PowerLineField as its pylon kind (six
+        // conductors, insulator pairs, 400 m spans). Towers and wires show at EVERY ring -- a 48 m tower is a landmark.
+        static Mesh _pylonMesh; static Material _pylonMat;
+        public static int PylonSpansRefused;   // spans PowerLineField would not string (it says why): must stay 0
+        public static int PylonCount;
+        static void PylonAssets()
+        {
+            if (_pylonMesh != null) return;
+            string odir = ProjectSettings.GlobalizePath("res://content/objects/");
+            _pylonMesh = ObjMesh.Load(odir + PowerLineField.PylonMesh + ".obj");
+            var mat = new StandardMaterial3D { Roughness = 0.9f };
+            var img = new Image();
+            if (ContentProvider.LoadOk(img, odir + PowerLineField.PylonMesh + "_tex.png"))
+            {
+                mat.AlbedoTexture = ImageTexture.CreateFromImage(img);
+                mat.TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest;   // a palette, like the pole's
+            }
+            _pylonMat = mat;
+        }
+
+        static Transform3D PylonXform(float lx, float y, float lz, float dirX, float dirZ)
+        {
+            float theta = Mathf.Atan2(-dirX, -dirZ);
+            var b = new Basis(Vector3.Up, theta) * new Basis(Vector3.Right, Mathf.DegToRad(270f));
+            float k = PowerLineField.PylonScale;
+            return new Transform3D(new Basis(b.X * k, b.Y * k, b.Z * k), new Vector3(lx, y, lz));
+        }
+
+        /// <summary>For tests: how many towers the loaded region at `c` draws, and its pylon wire field (null if it has none).</summary>
+        public (int Towers, PowerLineField Wires) PylonsOf(RegionCoord c)
+        {
+            if (!_regions.TryGetValue(c, out var r) || r.Pylons == null) return (0, null);
+            return (r.Pylons.GetNodeOrNull<MultiMeshInstance3D>("Towers")?.Multimesh?.InstanceCount ?? 0, r.Pylons.GetNodeOrNull<PowerLineField>("PylonWires"));
+        }
+
+        void AdoptPylons(Region r, Built b)
+        {
+            if (b.Pylons == null || r.PylonXf != null) return;
+            r.PylonXf = b.Pylons;
+            r.Pylons = BuildPylons(r, r.PylonXf);
+        }
+
+        Node3D BuildPylons(Region r, List<(Transform3D Tower, Transform3D[] Wired)> towers)
+        {
+            PylonAssets();
+            var holder = new Node3D { Name = "Pylons" };
+            r.Node.AddChild(holder);
+            float cull = (MaxRing + 0.5f) * InfiniteTerrain.RegionSize;
+            if (_pylonMesh != null)
+            {
+                var mm = new MultiMesh { TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, Mesh = _pylonMesh };
+                mm.InstanceCount = towers.Count;
+                for (int k = 0; k < towers.Count; k++) mm.SetInstanceTransform(k, towers[k].Tower);
+                var mmi = new MultiMeshInstance3D { Name = "Towers", Multimesh = mm, MaterialOverride = _pylonMat, VisibilityRangeEnd = cull };
+                mmi.AddToGroup(NearestFilter.KeepFilterGroup);
+                holder.AddChild(mmi);
+                PylonCount += towers.Count;
+            }
+            // the wires, in WORLD space as BuildPower does, culled where the towers are. A far tower in the next region
+            // is added here too, as a wire end only (its own region draws it); one pole per spot, so a span between two
+            // towers of this region does not end on a duplicate
+            var field = new PowerLineField { Name = "PylonWires", PoleCullDistance = cull };
+            holder.AddChild(field);
+            var toWorld = r.Node.GlobalTransform;
+            var at = new Dictionary<Vector3I, int>();
+            int Pole(Transform3D x)
+            {
+                var w = toWorld * x;
+                var key = new Vector3I(Mathf.RoundToInt(w.Origin.X * 10f), Mathf.RoundToInt(w.Origin.Y * 10f), Mathf.RoundToInt(w.Origin.Z * 10f));
+                if (!at.TryGetValue(key, out int i)) at[key] = i = field.AddPole(w, PowerLineField.PylonMesh);
+                return i;
+            }
+            foreach (var (tower, wired) in towers)
+            {
+                int a = Pole(tower);
+                foreach (var far in wired)
+                    if (!field.Connect(a, Pole(far), out string why)) { PylonSpansRefused++; GD.PushWarning($"[pylons] span refused: {why}"); }
+            }
+            field.Rebuild();
+            return holder;
+        }
+
+        /// <summary>The tower's four legs where they meet the ground (the lattice base, the mesh's +-2.46 m square),
+        /// each a post you walk into; you can walk between them, as under a real tower.</summary>
+        static Node3D BuildPylonBodies(List<(Transform3D Tower, Transform3D[] Wired)> towers)
+        {
+            var holder = new Node3D { Name = "PylonBodies" };
+            foreach (var (x, _) in towers)
+                foreach (var (cx, cy) in new[] { (-2.46f, -2.46f), (2.46f, -2.46f), (2.46f, 2.46f), (-2.46f, 2.46f) })
+                {
+                    var foot = x * new Vector3(cx, cy, 0f);
+                    var body = new StaticBody3D { CollisionLayer = 1u << 0, Position = foot + Vector3.Up * 5f };
+                    body.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Metal);
+                    body.AddChild(new CollisionShape3D { Shape = new CylinderShape3D { Radius = 0.45f, Height = 10f } });
+                    holder.AddChild(body);
+                }
+            return holder;
+        }
+
         /// <summary>A pole's placement: stood up (the mesh is Z-up raw Unity geometry; PEI places it at ex=270) and
         /// turned so the crossarm (local X) lies ACROSS the road and the wires run along it.</summary>
         static Transform3D PoleXform(float lx, float y, float lz, float dirX, float dirZ)
@@ -754,6 +995,541 @@ void fragment() {
             float theta = Mathf.Atan2(-dirX, -dirZ);   // rotates local X onto the road's perpendicular (-dz, dx)
             var basis = new Basis(Vector3.Up, theta) * new Basis(Vector3.Right, Mathf.DegToRad(270f));
             return new Transform3D(basis, new Vector3(lx, y - 0.3f, lz));   // a little sunk, so a pole on a slope never floats
+        }
+
+        // ---- railways (strawberry 2026-10-10: "add railways."): cow tools' rail kit, the way EditorRailSpline lays it --
+        // New_Rail_Unit every RailPitch (the generator's TrackOf walk) and a New_Rail_Sleeper closing an open end, one
+        // MultiMesh each per region. The ballast is the unit's own, so the collider is ITS cross-section swept per unit.
+        // ...and a crossbuck (Crossing_0, a Z-up rip like the roadside pole) on each approach to a level crossing
+        static readonly string[] RailProps = { EditorRailSpline.Unit, EditorRailSpline.Sleeper, "Crossing_0" };
+        static readonly Mesh[] _railMesh = new Mesh[3];
+        static readonly Material[] _railMat = new Material[3];
+        /// <summary>Track is drawn out to here (a 2 m tile is a speck past it; the worn formation in the ground's own
+        /// splat carries the line on to the horizon).</summary>
+        public static float RailCull => (TreeRing + 0.5f) * InfiniteTerrain.RegionSize;
+        static void LoadRailKit(int i)
+        {
+            if (_railMesh[i] != null) return;
+            string dir = ProjectSettings.GlobalizePath("res://content/objects/");
+            _railMesh[i] = ObjMesh.Load(dir + RailProps[i] + ".obj");
+            var mat = new StandardMaterial3D { Roughness = 0.95f, TextureFilter = BaseMaterial3D.TextureFilterEnum.NearestWithMipmaps };
+            var img = new Image();
+            string tp = dir + RailProps[i] + "_tex.png";
+            if (System.IO.File.Exists(tp) && ContentProvider.LoadOk(img, tp)) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); }
+            else mat.AlbedoColor = new Color(0.45f, 0.42f, 0.38f);
+            _railMat[i] = mat;
+        }
+
+        /// <summary>A track piece's transform, region-local: EditorRailSpline's basis (Z along the track, grade
+        /// included; X = up x Z, level across; Y = Z x X), Z stretched by the piece's K.</summary>
+        static Transform3D RailXform(RailPiece p, double ox, double oz)
+        {
+            var z = new Vector3(p.DX, p.DY, p.DZ).Normalized();
+            var x = Vector3.Up.Cross(z).Normalized();
+            var y = z.Cross(x);
+            return new Transform3D(new Basis(x, y, z * p.K), new Vector3((float)(p.X - ox), p.Y, (float)(p.Z - oz)));
+        }
+
+        void AdoptRails(Region r, Built b)
+        {
+            if (b.RailXf == null || r.RailXf != null) return;
+            r.RailXf = b.RailXf;
+            if (r.RailXf[0].Count + r.RailXf[1].Count + r.RailXf[2].Count == 0) return;
+            r.Rails = new Node3D { Name = "Rails" };
+            for (int i = 0; i < 3; i++)
+            {
+                if (r.RailXf[i].Count == 0) continue;
+                LoadRailKit(i);
+                if (_railMesh[i] == null) continue;
+                var mm = new MultiMesh { TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, Mesh = _railMesh[i] };
+                mm.InstanceCount = r.RailXf[i].Count;   // format BEFORE count
+                for (int k = 0; k < r.RailXf[i].Count; k++) mm.SetInstanceTransform(k, r.RailXf[i][k]);
+                var mmi = new MultiMeshInstance3D { Name = RailProps[i], Multimesh = mm, MaterialOverride = _railMat[i], VisibilityRangeEnd = RailCull };
+                mmi.AddToGroup(NearestFilter.KeepFilterGroup);
+                r.Rails.AddChild(mmi);
+            }
+            r.Node.AddChild(r.Rails);
+            RailCount += r.RailXf[0].Count;
+        }
+
+        /// <summary>For tests: the tunnels a loaded region built (the holder of their tubes, headwalls, floors), or null.</summary>
+        public Node3D TunnelsOf(RegionCoord c) => _regions.TryGetValue(c, out var r) ? r.Tunnels : null;
+
+        /// <summary>For tests: the loaded region's track units (0 if none or not loaded) and its ballast body.</summary>
+        public (int Units, int Sleepers, StaticBody3D Ballast) RailsOf(RegionCoord c)
+        {
+            if (!_regions.TryGetValue(c, out var r) || r.RailXf == null) return (0, 0, null);
+            return (r.RailXf[0].Count, r.RailXf[1].Count, r.RailBodies?.GetNodeOrNull<StaticBody3D>("Ballast"));
+        }
+
+        /// <summary>The ballast as ONE double-sided trimesh for the region: each unit's top and both sides, from its
+        /// root to RailPitch on (times K). The rails (13 cm) are not in it -- you walk on the ballast, and a car crossing
+        /// the track bumps over the ballast's slope, which is the shape that matters.</summary>
+        static Node3D BuildRailBodies(List<Transform3D> units, List<Transform3D> signs)
+        {
+            var holder = new Node3D { Name = "RailBodies" };
+            // a crossbuck's post: 10 cm square in the mesh, 2.6 m to its top
+            foreach (var t in signs)
+            {
+                var post = new StaticBody3D { Name = "Crossbuck", CollisionLayer = 1u << 0, Position = t.Origin + Vector3.Up * 1.3f };
+                post.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Metal);
+                post.AddChild(new CollisionShape3D { Shape = new CylinderShape3D { Radius = 0.07f, Height = 2.6f } });
+                holder.AddChild(post);
+            }
+            if (units.Count == 0) return holder;
+            float ft = InfiniteRoads.RailBallastTopHalf, fb = InfiniteRoads.RailHalfWidth, yt = InfiniteRoads.RailBallastTop, yb = InfiniteRoads.RailBallastFoot;
+            var faces = new List<Vector3>(units.Count * 18);
+            var sec = new[] { new Vector2(-fb, yb), new Vector2(-ft, yt), new Vector2(ft, yt), new Vector2(fb, yb) };
+            foreach (var t in units)
+                for (int q = 0; q < 3; q++)
+                {
+                    var a0 = t * new Vector3(sec[q].X, sec[q].Y, 0f); var b0 = t * new Vector3(sec[q + 1].X, sec[q + 1].Y, 0f);
+                    var a1 = t * new Vector3(sec[q].X, sec[q].Y, InfiniteRoads.RailPitch); var b1 = t * new Vector3(sec[q + 1].X, sec[q + 1].Y, InfiniteRoads.RailPitch);
+                    faces.Add(a0); faces.Add(b0); faces.Add(a1);
+                    faces.Add(b0); faces.Add(b1); faces.Add(a1);
+                }
+            var body = new StaticBody3D { Name = "Ballast", CollisionLayer = 1u << 0 };
+            body.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Gravel);
+            body.AddChild(new CollisionShape3D { Shape = new ConcavePolygonShape3D { Data = faces.ToArray(), BackfaceCollision = true } });
+            holder.AddChild(body);
+            return holder;
+        }
+
+        // ---- bridges (strawberry 2026-10-09: "implementing the bridges"): cow tools' Bridge_Line_1 kit, one MultiMesh per
+        // prop per region -- the deck unit repeats hundreds of times, which is exactly what a MultiMesh is for.
+        static readonly string[] BridgeProps = { EditorBridgeSpline.DeckUnit, EditorBridgeSpline.PierUnit, EditorBridgeSpline.DeckCap };
+        static readonly ArrayMesh[] _bridgeMesh = new ArrayMesh[3];
+        static ArrayMesh _deckRender;   // the deck unit minus its baked roadway, which the region's highway mesh draws instead
+        public static int DeckRoadwayTrisStripped;
+        static readonly Material[] _bridgeMat = new Material[3];
+        static Shape3D _deckShape;
+
+        static void LoadBridgeKit(int i)
+        {
+            if (_bridgeMesh[i] != null) return;
+            string dir = ProjectSettings.GlobalizePath("res://content/objects/");
+            _bridgeMesh[i] = ObjMesh.Load(dir + BridgeProps[i] + ".obj");
+            var mat = new StandardMaterial3D { Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled, TextureFilter = BaseMaterial3D.TextureFilterEnum.NearestWithMipmaps };
+            var img = new Image();
+            string tp = dir + BridgeProps[i] + "_tex.png";
+            if (System.IO.File.Exists(tp) && ContentProvider.LoadOk(img, tp)) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); }
+            else mat.AlbedoColor = new Color(0.60f, 0.58f, 0.55f);
+            _bridgeMat[i] = mat;
+        }
+
+        // ---- tunnels (strawberry 2026-10-09: "wiring up tunnels to use the tool nyatools made"): cow tools' TunnelMesh
+        // sweep, ONE TUBE PER CARRIAGEWAY ("do the separate carriageways as separate tunnels"), each widened across by
+        // InfiniteRoads.TunnelLateral. Swept from the BORE chain alone: the carriageways are 17.8 m apart and a shell is
+        // 12.6 m from its centre, so each tube's shell would cut through the other's inner lane -- the hill is their
+        // outside. For the same reason the Tunnel_Line_Cap_0 portal (bore + shell + facade) cannot stand twice side by
+        // side; each mouth gets ONE twin-arch headwall: the two shells' outline with the two bores cut out of it. Plus a
+        // FLOOR at the road's bed wall to wall, and each mouth's GROUND (MouthData) where the terrain drops its cells. Built on the main thread
+        // when a region first arrives; colliders ring <= ColliderRing.
+        static List<Vector2[]> _boreProfile;
+        /// <summary>The bore chain scaled up by the class's TunnelVerticalOf (a rail's bore is lower than a highway's);
+        /// across, the sweep's own lateral factor does it.</summary>
+        static readonly Dictionary<RoadKind, List<Vector2[]>> _boreFor = new();
+        static List<Vector2[]> BoreProfileFor(RoadKind k)
+        {
+            float v = InfiniteRoads.TunnelVerticalOf(k);
+            if (v == 1f) return _boreProfile;
+            if (_boreFor.TryGetValue(k, out var hit)) return hit;
+            var scaled = new List<Vector2[]>();
+            foreach (var ch in _boreProfile) { var c = new Vector2[ch.Length]; for (int i = 0; i < ch.Length; i++) c[i] = new Vector2(ch[i].X, ch[i].Y * v); scaled.Add(c); }
+            return _boreFor[k] = scaled;
+        }
+        static Material _tunnelMat, _tunnelFloorMat;
+        static void LoadTunnelKit()
+        {
+            if (_boreProfile != null) return;
+            string dir = ProjectSettings.GlobalizePath("res://content/objects/");
+            var prof = TunnelMesh.ProfileFrom(ObjMesh.Load(dir + EditorTunnelSpline.BoreUnit + ".obj"));
+            float bore = TunnelMesh.BoreHalfWidth(prof);
+            _boreProfile = new List<Vector2[]>();
+            foreach (var ch in prof)
+            {
+                float w = 0f; foreach (var q in ch) w = Mathf.Max(w, Mathf.Abs(q.X));
+                if (Mathf.Abs(w - bore) < 0.01f) { _boreProfile.Add(ch); break; }
+            }
+            // EditorObjects.MatFor's recipe for a prop with no texture (the tunnel prop ships none): the mesh's white
+            // vertex colours times tan, both faces drawn
+            _tunnelMat = new StandardMaterial3D { Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled, VertexColorUseAsAlbedo = true,
+                                                  AlbedoColor = new Color(0.60f, 0.55f, 0.47f) };
+            _tunnelFloorMat = new StandardMaterial3D { Roughness = 1f, AlbedoColor = new Color(0.40f, 0.39f, 0.37f) };
+        }
+
+        void AdoptTunnels(Region r, Built b)
+        {
+            if (b.Tunnels == null || r.TunnelSpans != null) return;
+            r.TunnelSpans = b.Tunnels;
+            if (b.Tunnels.Count == 0) return;
+            LoadTunnelKit();
+            r.Tunnels = new Node3D { Name = "Tunnels" };
+            r.TunnelShapes = new List<(Shape3D, Transform3D, int)>();
+            for (int i = 0; i < b.Tunnels.Count; i++) BuildTunnel(b.Tunnels[i], b.D.TunnelMouths?[i], b.D.Coord.MinX, b.D.Coord.MinZ, r.Tunnels, r.TunnelShapes);
+            // the rocks banked against the headwalls' ends go with the tunnel: drawn as far as it is, solid where it is
+            if (b.TunnelRockXf != null && Count(b.TunnelRockXf) > 0)
+            {
+                r.Tunnels.AddChild(BuildRocks(b.TunnelRockXf, "PortalRocks", 0f));
+                r.TunnelShapes.Add((RockSoup(b.TunnelRockXf), Transform3D.Identity, (int)PlayerController.Surf.Rock));
+            }
+            r.Node.AddChild(r.Tunnels);
+            TunnelCount += b.Tunnels.Count;
+        }
+
+        /// <summary>One tunnel, region-local: two tubes, a headwall at each mouth, the floor. Stations are every
+        /// TunnelStep of HORIZONTAL arc from the near facade, on the route and on each carriageway.</summary>
+        static void BuildTunnel(InfiniteRoads.TunnelSpan t, MouthData[] mouths, double ox, double oz, Node3D holder, List<(Shape3D, Transform3D, int)> shapes)
+        {
+            int m = t.X.Length;
+            var kind = t.Kind;   // a highway's two tubes, or a railway's one (InfiniteRoads.TunnelTubes)
+            float lat = InfiniteRoads.TunnelLateralOf(kind), feet = InfiniteRoads.TunnelFloorDropOf(kind);
+            var boreProfile = BoreProfileFor(kind);
+            Vector3 Loc(double x, float y, double z) => new Vector3((float)(x - ox), y, (float)(z - oz));
+            var mat = (int)PlayerController.Surf.Concrete;
+
+            // THE TUBES, each on its own carriageway's (or the track's) centreline at the datum, facade to facade
+            for (int s = 0; s < t.SX.Length; s++)
+            {
+                var run = new List<Vector3>(m);
+                for (int i = 0; i < m; i++)
+                {
+                    var p = Loc(t.SX[s][i], t.Y[i], t.SZ[s][i]);
+                    if (run.Count == 0 || p.DistanceSquaredTo(run[run.Count - 1]) > 1e-6f) run.Add(p);
+                }
+                var mesh = run.Count >= 2 ? TunnelMesh.Sweep(boreProfile, run, lat) : null;
+                if (mesh == null) continue;
+                holder.AddChild(new MeshInstance3D { Name = t.SX.Length == 1 ? "Tube" : s == 0 ? "TubeL" : "TubeR", Mesh = mesh, MaterialOverride = _tunnelMat,
+                                                      CastShadow = GeometryInstance3D.ShadowCastingSetting.DoubleSided });
+                if (mesh.CreateTrimeshShape() is ConcavePolygonShape3D shp) { shp.BackfaceCollision = true; shapes.Add((shp, Transform3D.Identity, mat)); }
+            }
+
+            // THE MOUTHS. The terrain drops every LOD0 cell touching a hole (a heightfield cannot overhang the mouth), and
+            // the generator draws them again (MouthData): the terrain's own vertices and split, cut by the facade line --
+            // the approach's cut in front of it, the hill behind -- meeting the drawn cells exactly along every edge they
+            // share. What the heightfield cannot do, the HEADWALL does: in the facade's vertical plane, from under the
+            // lower of the two grounds meeting there up to the higher (and over the shells at least to their top), with
+            // the bores cut up out of its bottom edge. Where the grounds agree it is buried; where they part it is the step
+            // between them. Drawn both ways round: the cut can stand higher than the capped hill behind, and then its back
+            // is the face you see. (A rectangular lid and a flat apron stood in for the cells before, and on any diagonal
+            // heading, and everywhere beside the bores in front, the cut slope's edge hung open: strawberry 2026-10-10,
+            // "theres a bunch of holes/gaps in the terrain around the tunnels".)
+            float reach = InfiniteRoads.ShellReachOf(kind), wingTop = InfiniteRoads.ShellTopOf(kind, reach) + InfiniteRoads.HeadwallCover;
+            var bore = boreProfile[0];
+            bool boreRightToLeft = bore[0].X > bore[bore.Length - 1].X;
+            float boreHalf = 0f;
+            foreach (var q in bore) boreHalf = Mathf.Max(boreHalf, Mathf.Abs(q.X) * lat);
+            for (int end = 0; end < 2; end++)
+            {
+                int a = end == 0 ? 0 : m - 1, b = end == 0 ? 1 : m - 2;
+                var pa = Loc(t.X[a], t.Y[a], t.Z[a]);
+                var fwd = Loc(t.X[b], t.Y[b], t.Z[b]) - pa; fwd.Y = 0f; fwd = fwd.Normalized();
+                // +u is the +offset carriageway's side whichever end: fwd points INTO the tunnel, so at the far end it runs
+                // against the route and its left-hand normal is the other side
+                var side = new Vector3(-fwd.Z, 0f, fwd.X);
+                if (end == 1) side = -side;
+                var outward = end == 0 ? -fwd : fwd;
+                var md = mouths?[end];
+
+                // the step along the facade, relative to the datum here: the higher ground and the lower, linear between
+                // points (the chord of the higher is never under it, of the lower never over it -- max is convex)
+                float[] pu, hi, lo;
+                if (md != null && md.FaceU.Length >= 2)
+                {
+                    int n = md.FaceU.Length;
+                    pu = md.FaceU; hi = new float[n]; lo = new float[n];
+                    for (int k = 0; k < n; k++)
+                    {
+                        hi[k] = Mathf.Max(md.FaceFront[k], md.FaceBehind[k]) - pa.Y;
+                        lo[k] = Mathf.Min(md.FaceFront[k], md.FaceBehind[k]) - pa.Y;
+                    }
+                }
+                else
+                {
+                    // no mouth from the source: the shells' outline with wings a cell past the holes, as it always was
+                    float wing = InfiniteRoads.BoreReachOf(kind) + InfiniteRoads.TunnelHoleBeside + 4.5f;
+                    pu = new[] { -wing, wing }; hi = new[] { wingTop, wingTop }; lo = new[] { -feet, -feet };
+                }
+                float FaceAt(float[] ys, float u)
+                {
+                    if (u <= pu[0]) return ys[0];
+                    if (u >= pu[pu.Length - 1]) return ys[ys.Length - 1];
+                    int k = System.Array.BinarySearch(pu, u);
+                    if (k >= 0) return ys[k];
+                    k = ~k;
+                    float s = (u - pu[k - 1]) / Mathf.Max(1e-6f, pu[k] - pu[k - 1]);
+                    return ys[k - 1] + (ys[k] - ys[k - 1]) * s;
+                }
+                float uL = Mathf.Min(pu[0], -reach), uR = Mathf.Max(pu[pu.Length - 1], reach);
+                float Top(float u) => Mathf.Max(FaceAt(hi, u), Mathf.Abs(u) <= reach ? InfiniteRoads.ShellTopOf(kind, u) : float.MinValue);
+                float Bottom(float u) => Mathf.Min(FaceAt(lo, u) - 1f, -feet);
+                var us = new SortedSet<float>(pu) { uL, uR };
+                for (float u = -reach; u <= reach + 1e-3f; u += 0.25f) us.Add(Mathf.Clamp(u, -reach, reach));
+                var outline = new List<Vector2>();
+                outline.Add(new Vector2(uL, Bottom(uL)));
+                foreach (float u in us) outline.Add(new Vector2(u, Top(u)));
+                // back along the bottom, right to left, the bores cut up out of it (right tube first)
+                var cuts = new List<(float lo, float hi, float c)>();
+                for (int s = t.SX.Length - 1; s >= 0; s--) { float c = InfiniteRoads.TubeOffset(kind, s); cuts.Add((c - boreHalf, c + boreHalf, c)); }
+                var down = new List<float>(us); down.Reverse();
+                int ci = 0; float lastU = float.MaxValue;
+                void Cut()
+                {
+                    // the bottom comes down just outside the bore, round its arc, and back down the other side
+                    outline.Add(new Vector2(cuts[ci].hi + 0.01f, Bottom(cuts[ci].hi + 0.01f)));
+                    for (int k = 0; k < bore.Length; k++)
+                    {
+                        var q = bore[boreRightToLeft ? k : bore.Length - 1 - k];
+                        outline.Add(new Vector2(cuts[ci].c + q.X * lat, q.Y));
+                    }
+                    outline.Add(new Vector2(cuts[ci].lo - 0.01f, Bottom(cuts[ci].lo - 0.01f)));
+                    lastU = cuts[ci].lo - 0.01f;
+                    ci++;
+                }
+                foreach (float u in down)
+                {
+                    while (ci < cuts.Count && u < cuts[ci].lo) Cut();
+                    if (ci < cuts.Count && u <= cuts[ci].hi + 0.01f) continue;   // under a bore: its arc is the edge
+                    if (u >= lastU - 1e-4f || u <= uL) continue;                  // (uL's bottom corner is the outline's first point)
+                    outline.Add(new Vector2(u, Bottom(u))); lastU = u;
+                }
+                while (ci < cuts.Count) Cut();
+                var poly = outline.ToArray();
+                var tri = Geometry2D.TriangulatePolygon(poly);
+                if (tri.Length == 0) { Log.Err($"[infinite] tunnel headwall did not triangulate ({poly.Length} points)"); }
+                else
+                {
+                    var WV = new List<Vector3>(); var WN = new List<Vector3>(); var WI = new List<int>();
+                    foreach (var dir in new[] { outward, -outward })
+                    {
+                        int first = WV.Count;
+                        foreach (var q in poly) { WV.Add(pa + side * q.X + Vector3.Up * q.Y); WN.Add(dir); }
+                        for (int k = 0; k + 2 < tri.Length; k += 3) Tri(WV, WI, first + tri[k], first + tri[k + 1], first + tri[k + 2], dir);
+                    }
+                    var wa = new Godot.Collections.Array();
+                    wa.Resize((int)Mesh.ArrayType.Max);
+                    var cols = new Color[WV.Count]; for (int k = 0; k < cols.Length; k++) cols[k] = Colors.White;
+                    wa[(int)Mesh.ArrayType.Vertex] = WV.ToArray(); wa[(int)Mesh.ArrayType.Normal] = WN.ToArray(); wa[(int)Mesh.ArrayType.Color] = cols;
+                    wa[(int)Mesh.ArrayType.Index] = WI.ToArray();
+                    var wm = new ArrayMesh();
+                    wm.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, wa);
+                    holder.AddChild(new MeshInstance3D { Name = end == 0 ? "HeadwallIn" : "HeadwallOut", Mesh = wm, MaterialOverride = _tunnelMat,
+                                                          CastShadow = GeometryInstance3D.ShadowCastingSetting.DoubleSided });
+                    var wsoup = new Vector3[WI.Count / 2];
+                    for (int k = 0; k < wsoup.Length; k++) wsoup[k] = WV[WI[k]];
+                    shapes.Add((new ConcavePolygonShape3D { Data = wsoup, BackfaceCollision = true }, Transform3D.Identity, mat));
+                }
+
+                // the ground the mouth's holes took out, drawn again, wearing the terrain's own material on its own splat
+                if (md == null || md.Tris.Length == 0) continue;
+                var LV = new List<Vector3>(md.X.Length); var LN = new Vector3[md.X.Length]; var LUV = new Vector2[md.X.Length];
+                for (int k = 0; k < md.X.Length; k++)
+                {
+                    LV.Add(Loc(md.X[k], md.Y[k], md.Z[k]));
+                    LN[k] = new Vector3(md.NX[k], md.NY[k], md.NZ[k]);
+                    LUV[k] = new Vector2(md.U[k], md.V[k]);
+                }
+                var LI = new List<int>(md.Tris.Length);
+                for (int k = 0; k + 2 < md.Tris.Length; k += 3) Tri(LV, LI, md.Tris[k], md.Tris[k + 1], md.Tris[k + 2], Vector3.Up);
+                var LC = new Color[LV.Count]; for (int k = 0; k < LC.Length; k++) LC[k] = Colors.White;
+                var la = new Godot.Collections.Array();
+                la.Resize((int)Mesh.ArrayType.Max);
+                la[(int)Mesh.ArrayType.Vertex] = LV.ToArray(); la[(int)Mesh.ArrayType.Normal] = LN; la[(int)Mesh.ArrayType.Color] = LC;
+                la[(int)Mesh.ArrayType.TexUV] = LUV;
+                la[(int)Mesh.ArrayType.Index] = LI.ToArray();
+                var lm = new ArrayMesh();
+                lm.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, la);
+                var s0 = new byte[md.Splat.Length * 4]; var s1 = new byte[md.Splat.Length * 4];
+                for (int k = 0; k < md.Splat.Length; k++) { int l = md.Splat[k]; if (l < 4) s0[k * 4 + l] = 255; else s1[k * 4 + l - 4] = 255; }
+                var t0 = ImageTexture.CreateFromImage(Image.CreateFromData(md.SplatW, md.SplatH, false, Image.Format.Rgba8, s0));
+                var t1 = ImageTexture.CreateFromImage(Image.CreateFromData(md.SplatW, md.SplatH, false, Image.Format.Rgba8, s1));
+                var groundMat = (Material)Terrain.RegionMaterial(t0, t1) ?? _tunnelMat;
+                holder.AddChild(new MeshInstance3D { Name = end == 0 ? "MouthIn" : "MouthOut", Mesh = lm, MaterialOverride = groundMat });
+                var lsoup = new Vector3[LI.Count];
+                for (int k = 0; k < LI.Count; k++) lsoup[k] = LV[LI[k]];
+                shapes.Add((new ConcavePolygonShape3D { Data = lsoup, BackfaceCollision = true }, Transform3D.Identity, (int)PlayerController.Surf.Dirt));
+            }
+
+            // THE FLOOR, at the road's bed (the approach ground's level beside the slab), wall to wall across both tubes,
+            // and half a metre out under each mouth's own ground (no slit at the facade)
+            var c3 = new Vector3[m]; var h = new float[m];
+            for (int i = 0; i < m; i++) { c3[i] = Loc(t.X[i], t.Y[i], t.Z[i]); if (i > 0) h[i] = h[i - 1] + new Vector2(c3[i].X - c3[i - 1].X, c3[i].Z - c3[i - 1].Z).Length(); }
+            float len = h[m - 1];
+            Vector3 At(float s)
+            {
+                s = Mathf.Clamp(s, 0f, len);
+                int k = 0; while (k < m - 2 && h[k + 1] < s) k++;
+                return c3[k].Lerp(c3[k + 1], Mathf.Clamp((s - h[k]) / Mathf.Max(1e-6f, h[k + 1] - h[k]), 0f, 1f));
+            }
+            var FV = new List<Vector3>(); var FN = new List<Vector3>(); var FI = new List<int>();
+            float drop = InfiniteRoads.TunnelBedBelow(kind);
+            float boreR = InfiniteRoads.BoreReachOf(kind), apronOut = 0.5f;
+            void Strip(float sA, float sB, float half, float below, int steps)
+            {
+                for (int q = 0; q < steps; q++)
+                {
+                    float u0 = sA + (sB - sA) * q / steps, u1 = sA + (sB - sA) * (q + 1) / steps;
+                    Vector3 P(float s)
+                    {
+                        // beyond either facade the line runs straight on at the end's grade
+                        if (s < 0f) { var d0 = At(Mathf.Min(2f, len)) - At(0f); return At(0f) + d0 / Mathf.Max(1e-6f, new Vector2(d0.X, d0.Z).Length()) * s; }
+                        if (s > len) { var d1 = At(len) - At(Mathf.Max(0f, len - 2f)); return At(len) + d1 / Mathf.Max(1e-6f, new Vector2(d1.X, d1.Z).Length()) * (s - len); }
+                        return At(s);
+                    }
+                    Vector3 pa = P(u0), pb = P(u1);
+                    var dir = new Vector3(pb.X - pa.X, 0f, pb.Z - pa.Z).Normalized();
+                    var nrm = new Vector3(-dir.Z, 0f, dir.X) * half;
+                    var down = Vector3.Down * (drop + below);
+                    int i0 = FV.Count;
+                    FV.Add(pa + nrm + down); FV.Add(pa - nrm + down); FV.Add(pb + nrm + down); FV.Add(pb - nrm + down);
+                    for (int k = 0; k < 4; k++) FN.Add(Vector3.Up);
+                    Tri(FV, FI, i0, i0 + 1, i0 + 2, Vector3.Up);
+                    Tri(FV, FI, i0 + 1, i0 + 3, i0 + 2, Vector3.Up);
+                }
+            }
+            Strip(-apronOut, len + apronOut, boreR, 0.03f, Mathf.Max(1, Mathf.CeilToInt((len + 2f * apronOut) / InfiniteRoads.TunnelStep)));
+            var fa = new Godot.Collections.Array();
+            fa.Resize((int)Mesh.ArrayType.Max);
+            fa[(int)Mesh.ArrayType.Vertex] = FV.ToArray(); fa[(int)Mesh.ArrayType.Normal] = FN.ToArray(); fa[(int)Mesh.ArrayType.Index] = FI.ToArray();
+            var fm = new ArrayMesh();
+            fm.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, fa);
+            holder.AddChild(new MeshInstance3D { Name = "Floor", Mesh = fm, MaterialOverride = _tunnelFloorMat });
+            var soup = new Vector3[FI.Count];
+            for (int k = 0; k < FI.Count; k++) soup[k] = FV[FI[k]];
+            shapes.Add((new ConcavePolygonShape3D { Data = soup, BackfaceCollision = true }, Transform3D.Identity, mat));
+        }
+
+        static Node3D BuildTunnelBodies(List<(Shape3D Shape, Transform3D Xf, int Surf)> shapes)
+        {
+            var holder = new Node3D { Name = "TunnelBodies" };
+            foreach (var (shape, xf, surf) in shapes)
+            {
+                var body = new StaticBody3D { CollisionLayer = 1u << 0, Transform = xf };
+                body.SetMeta(PlayerController.SurfMeta, surf);
+                body.AddChild(new CollisionShape3D { Shape = shape });
+                holder.AddChild(body);
+            }
+            return holder;
+        }
+
+        /// <summary>The deck unit without the faces of its roadway (every triangle lying in the roadway plane between the
+        /// parapets' feet), for DRAWING only -- its collider keeps them. Axes read off the mesh's own bounds (the
+        /// 17 m one is across, the 5.25 m one is up) rather than assumed, because ObjMesh's import convention flips one.</summary>
+        static ArrayMesh DeckRenderMesh()
+        {
+            if (_deckRender != null) return _deckRender;
+            var src = _bridgeMesh[0];
+            var size = src.GetAabb().Size;
+            int lat = size.X >= size.Y && size.X >= size.Z ? 0 : size.Y >= size.Z ? 1 : 2, up = -1;
+            for (int a = 0; a < 3; a++)
+                if (a != lat && Mathf.Abs(size[a] - EditorBridgeSpline.DeckThickness) < 0.05f) up = a;
+            if (up < 0) { Log.Print($"[infinite] deck unit bounds {size} have no {EditorBridgeSpline.DeckThickness} m axis: drawing its own roadway"); return _deckRender = src; }
+            var dst = new ArrayMesh();
+            for (int s = 0; s < src.GetSurfaceCount(); s++)
+            {
+                var arr = src.SurfaceGetArrays(s);
+                var v = arr[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+                var iv = arr[(int)Mesh.ArrayType.Index];
+                int[] idx;
+                if (iv.VariantType != Variant.Type.Nil) idx = iv.AsInt32Array();
+                else { idx = new int[v.Length]; for (int k = 0; k < idx.Length; k++) idx[k] = k; }
+                var keep = new List<int>(idx.Length);
+                for (int t = 0; t + 2 < idx.Length; t += 3)
+                {
+                    bool roadway = true;
+                    for (int q = 0; q < 3; q++)
+                    {
+                        var p = v[idx[t + q]];
+                        if (Mathf.Abs(p[up]) > 0.01f || Mathf.Abs(p[lat]) > InfiniteRoads.DeckRoadwayHalf + 0.01f) roadway = false;
+                    }
+                    if (roadway) DeckRoadwayTrisStripped++;
+                    else { keep.Add(idx[t]); keep.Add(idx[t + 1]); keep.Add(idx[t + 2]); }
+                }
+                arr[(int)Mesh.ArrayType.Index] = keep.ToArray();
+                dst.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arr);
+            }
+            Log.Print($"[infinite] deck unit: {DeckRoadwayTrisStripped} roadway triangles stripped (the highway mesh draws the deck's roadway)");
+            return _deckRender = dst;
+        }
+
+        /// <summary>Take a region's bridge pieces from its first build (they do not depend on LOD) and draw them. BOTH
+        /// paths that commit a build call this -- the streaming commit and SyncGround -- because SyncGround is what a
+        /// spawn or teleport uses for the 3x3 under the player, and it never re-commits those regions afterwards.</summary>
+        void AdoptBridges(Region r, Built b)
+        {
+            if (b.BridgeXf == null || r.BridgeXf != null) return;
+            r.BridgeXf = b.BridgeXf;
+            if (r.BridgeXf[0].Count + r.BridgeXf[1].Count + r.BridgeXf[2].Count > 0) { r.Bridges = BuildBridges(r.BridgeXf); r.Node.AddChild(r.Bridges); }
+        }
+
+        Node3D BuildBridges(List<Transform3D>[] xf)
+        {
+            var holder = new Node3D { Name = "Bridges" };
+            for (int i = 0; i < 3; i++)
+            {
+                if (xf[i].Count == 0) continue;
+                LoadBridgeKit(i);
+                if (_bridgeMesh[i] == null) continue;
+                var mm = new MultiMesh { TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, Mesh = i == 0 ? DeckRenderMesh() : _bridgeMesh[i] };
+                mm.InstanceCount = xf[i].Count;   // format BEFORE count
+                for (int k = 0; k < xf[i].Count; k++) mm.SetInstanceTransform(k, xf[i][k]);
+                var mmi = new MultiMeshInstance3D { Name = BridgeProps[i], Multimesh = mm, MaterialOverride = _bridgeMat[i] };
+                mmi.AddToGroup(NearestFilter.KeepFilterGroup);
+                holder.AddChild(mmi);
+            }
+            BridgeCount += xf[0].Count;
+            return holder;
+        }
+
+        /// <summary>The region's road slabs as colliders: one closed, double-sided trimesh per surface (RoadField's
+        /// BackfaceCollision rule -- nothing slips under an edge), asphalt and the dirt trail tagged apart for footsteps
+        /// and tyres. Before this a car drove on the ground 0.12 m under the drawn road.</summary>
+        static Node3D BuildRoadBodies(Vector3[][] soup)
+        {
+            var holder = new Node3D { Name = "RoadBodies" };
+            for (int i = 0; i < soup.Length; i++)
+            {
+                if (soup[i] == null || soup[i].Length < 3) continue;
+                var body = new StaticBody3D { Name = i == 0 ? "Paved" : "Trail", CollisionLayer = 1u << 0 };
+                body.SetMeta(PlayerController.SurfMeta, (int)(i == 0 ? PlayerController.Surf.Concrete : PlayerController.Surf.Dirt));
+                body.AddChild(new CollisionShape3D { Shape = new ConcavePolygonShape3D { Data = soup[i], BackfaceCollision = true } });
+                holder.AddChild(body);
+            }
+            return holder;
+        }
+
+        /// <summary>The deck's collision shape widened across (local X) by `ws`, for a main's overpass decks.</summary>
+        static readonly Dictionary<int, ConcavePolygonShape3D> _wideDeck = new();
+        static ConcavePolygonShape3D WideDeckShape(float ws)
+        {
+            int key = Mathf.RoundToInt(ws * 1000f);
+            if (_wideDeck.TryGetValue(key, out var hit)) return hit;
+            var faces = ((ConcavePolygonShape3D)_deckShape).Data;
+            for (int i = 0; i < faces.Length; i++) faces[i].X *= ws;
+            var shape = new ConcavePolygonShape3D { Data = faces, BackfaceCollision = ((ConcavePolygonShape3D)_deckShape).BackfaceCollision };
+            _wideDeck[key] = shape;
+            return shape;
+        }
+
+        /// <summary>One trimesh body per deck unit, so a car drives across. Shared shape: every unit is the same prop.</summary>
+        static Node3D BuildDeckBodies(List<Transform3D> decks)
+        {
+            LoadBridgeKit(0);
+            var holder = new Node3D { Name = "BridgeBodies" };
+            if (_bridgeMesh[0] == null) return holder;
+            _deckShape ??= _bridgeMesh[0].CreateTrimeshShape();
+            foreach (var t in decks)
+            {
+                // a widened (main) deck: a body takes no scale, so the SHAPE is widened and the body keeps a pure rotation
+                float ws = t.Basis.X.Length();
+                bool wide = Mathf.Abs(ws - 1f) >= 1e-3f;
+                var shape = wide ? WideDeckShape(ws) : _deckShape;
+                var body = new StaticBody3D { CollisionLayer = 1u << 0, Transform = wide ? new Transform3D(new Basis(t.Basis.X / ws, t.Basis.Y, t.Basis.Z), t.Origin) : t };
+                body.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Concrete);
+                body.AddChild(new CollisionShape3D { Shape = shape });
+                holder.AddChild(body);
+            }
+            return holder;
         }
 
         static Node3D BuildTrunks(List<TreeSpawn> trees)
@@ -804,6 +1580,7 @@ void fragment() {
                 n3.ResetPhysicsInterpolation();
             }
             foreach (var r in _regions.Values) r.Node.Position = RegionLocalOrigin(r.C);
+            RainRoofMap.Shift(d);   // its cache is filed by engine-space cell: re-file it, or the rain stops at roofs 2 km away
             // (Tried and measured: ResetPhysicsInterpolation() on the region subtree here changed NOTHING -- pixel-
             // identical frames across a forced shift with and without it. The visible jump was the shaders, below.)
             PublishOrigin();   // world-space shader patterns (swell, wind, ripples) follow the world, not the shift
@@ -818,7 +1595,8 @@ void fragment() {
         {
             if (Player == null || !IsInstanceValid(Player)) return;
             var p = Player.GlobalPosition;
-            float g = Src.HeightAt(AbsX(p.X), AbsZ(p.Z));
+            // what they should be standing ON: inside a tunnel the hill is overhead and the floor is the tunnel's
+            float g = Src.WalkableHeightAt(AbsX(p.X), AbsZ(p.Z));
             if (p.Y < g - 2f)
             {
                 Rescues++;
@@ -865,11 +1643,17 @@ void fragment() {
                     if (r.Lod == 0) continue;
                     var b = Build(Src.Generate(c, 0));
                     GenMsTotal += b.D.GenMs; GenCount++;
-                    r.Lod0Heights = b.D.Heights;
+                    r.Lod0Heights = b.D.Heights; r.Lod0Holes = b.D.Holes;
                     r.TreeList = b.D.Trees; _pendingTrees[c] = b.TreeXf;
                     r.FoliageXf ??= b.FoliageXf;
                     r.PoleXf ??= b.Poles;
+                    r.BoulderXf ??= b.BoulderXf;
+                    AdoptBridges(r, b);   // ⚠ this path is how a teleport builds the 3x3 -- miss it and the bridges beside you never appear
+                    AdoptTunnels(r, b);
+                    AdoptPylons(r, b);
+                    AdoptRails(r, b);
                     Apply(r, b);
+                    r.ImpTrees = b.ImpTrees;
                     UpdateExtras(r, c.RingTo(center));
                 }
         }
@@ -953,6 +1737,7 @@ void fragment() {
                 for (int i = 0; i < n; i++)
                 {
                     int a = j * v + i, b = a + 1, c = a + v, e = c + 1;
+                    if (d.Holes != null && (d.Holes[a] || d.Holes[b] || d.Holes[c] || d.Holes[e])) continue;   // a tunnel mouth
                     Tri(V, I, a, b, c, Vector3.Up);
                     Tri(V, I, b, e, c, Vector3.Up);
                 }
@@ -968,6 +1753,10 @@ void fragment() {
                 for (int t = 0; t < n; t++)
                 {
                     int a = edgeVert(t), b = edgeVert(t + 1), al = start + t, bl = start + t + 1;
+                    // not over a tunnel: the hill's height hung skirt-deep is a wall straight across the bore (and from a
+                    // mouth's hole, across the mouth)
+                    if (d.OverTunnel != null && (d.OverTunnel[a] || d.OverTunnel[b])) continue;
+                    if (d.Holes != null && (d.Holes[a] || d.Holes[b])) continue;
                     Tri(V, I, a, b, al, outward);
                     Tri(V, I, b, bl, al, outward);
                 }
@@ -1007,40 +1796,266 @@ void fragment() {
                     list.Add(new Transform3D(basis, new Vector3(t.X, t.Y - ResourceField.TreeSink * t.Scale, t.Z)));
                 }
             }
-            // road surfaces: a ribbon per centreline piece, one mesh per class, sat on the profile (the ground under it
-            // is the bed, lower) and lifted only where this LOD's coarser mesh still rises above it
+            // road surfaces: a SLAB per centreline piece, RoadField's own cross-section -- a flat top at
+            // InfiniteRoads.SurfaceY and a bevel each side running down 2 x Thickness, so the edge stands PEI's height
+            // and its foot is buried -- but out over BevelRun, a 1:3 slope (InfiniteRoads.BevelSlope) rather than RoadField's 45-degree kerb (strawberry 2026-10-09: "give the road splines actual collision and the
+            // proper thickness (vertical height)"). Lifted only where this LOD's coarser mesh still rises above it. One
+            // mesh per class; at LOD0 the same faces, closed underneath as RoadField closes its collider, are the
+            // region's road collision.
             RoadMesh[] roadMeshes = null;
-            if (d.Roads != null && d.Roads.Count > 0)
+            Vector3[][] roadCol = null;
+            bool decks = d.Bridges != null && d.Bridges.Exists(bp => bp.Kind == 0);
+            if (d.Roads != null && d.Roads.Count > 0 || decks || d.RoadPatches != null && d.RoadPatches.Count > 0 || d.RoadMarks != null && d.RoadMarks.Count > 0)
             {
                 roadMeshes = new RoadMesh[RoadSlots];
                 var lists = new (List<Vector3> V, List<Vector3> N, List<Vector2> UV, List<int> I)[RoadSlots];
+                var soup = d.Lod == 0 ? new[] { new List<Vector3>(), new List<Vector3>() } : null;   // [paved, trail]
                 double ox = d.Coord.MinX, oz = d.Coord.MinZ;
-                foreach (var rp in d.Roads)
+                // THE DECKS' ROADWAY is the carriageway's own surface (strawberry 2026-10-09: "the bridge road is the
+                // highway 0 type. and the highway is highway 1"): the cut unit's baked two-way paint is stripped from
+                // its mesh (DeckRenderMesh) and each unit gets a Highway_1 strip lying exactly on its roadway plane, in
+                // this region's highway mesh -- no extra instances -- with v from the unit's S0..S1, the ribbon's own
+                // measure, so the dashes run on from the approach instead of restarting at the bridge. Across the
+                // 13.8 m carriageway u runs 0..1 as on the ribbon; the deck's extra 1.1 m each side wears the edge
+                // column (plain asphalt), as a ribbon bevel does.
+                // A MAIN's overpass deck is the same unit widened (DeckScale) to the main's full asphalt, and wears the
+                // main's surface in the main's mesh the same way.
+                // A RAIL's deck is the unit narrowed to RailDeckHalf, and its roadway is a gravel bed (RailBedSlot) the
+                // track's own ballast stands on -- the same plane the track's root is at (InfiniteRoads.RailOriginY).
+                void RailBed(BridgePiece bp)
                 {
-                    int kind = rp.Kind, slot = !ShowMarks ? kind : rp.Raised ? RaisedSlot : rp.Cut ? CutSlot : kind;
+                    var L = lists[RailBedSlot];
+                    L.V ??= new List<Vector3>(); L.N ??= new List<Vector3>(); L.UV ??= new List<Vector2>(); L.I ??= new List<int>();
+                    lists[RailBedSlot] = L;
+                    var dir = new Vector3(bp.DX, bp.DY, bp.DZ).Normalized();
+                    var c = new Vector3((float)(bp.X - ox), (float)bp.Y, (float)(bp.Z - oz));
+                    var nrm = new Vector3(-dir.Z, 0f, dir.X).Normalized();
+                    var along = dir * (InfiniteRoads.BridgePitch * 0.5f);
+                    var up = nrm.Cross(dir).Normalized(); if (up.Y < 0f) up = -up;
+                    float w = InfiniteRoads.RailDeckHalf, v0 = bp.S0 / RailBedMetres, v1 = bp.S1 / RailBedMetres, u1 = 2f * w / RailBedMetres;
+                    int i0 = L.V.Count;
+                    L.V.Add(c - along + nrm * w); L.V.Add(c - along - nrm * w); L.V.Add(c + along + nrm * w); L.V.Add(c + along - nrm * w);
+                    for (int q = 0; q < 4; q++) L.N.Add(up);
+                    L.UV.Add(new Vector2(0f, v0)); L.UV.Add(new Vector2(u1, v0)); L.UV.Add(new Vector2(0f, v1)); L.UV.Add(new Vector2(u1, v1));
+                    Tri(L.V, L.I, i0, i0 + 1, i0 + 2, up);
+                    Tri(L.V, L.I, i0 + 1, i0 + 3, i0 + 2, up);
+                    if (soup != null) for (int q = 0; q < 6; q++) soup[0].Add(L.V[L.I[L.I.Count - 6 + q]]);
+                }
+                if (decks)
+                {
+                    foreach (var bp in d.Bridges)
+                    {
+                        if (bp.Kind != 0) continue;
+                        if (bp.Road == (byte)RoadKind.Rail) { RailBed(bp); continue; }
+                        int hs = bp.Road;
+                        lists[hs].V ??= new List<Vector3>(); lists[hs].N ??= new List<Vector3>(); lists[hs].UV ??= new List<Vector2>(); lists[hs].I ??= new List<int>();
+                        var DV = lists[hs].V; var DN = lists[hs].N; var DUV = lists[hs].UV; var DI = lists[hs].I;
+                        float texM = RoadTexMetres[hs], lane = RibbonHalf((RoadKind)hs), wide = InfiniteRoads.DeckRoadwayHalf * InfiniteRoads.DeckScale((RoadKind)hs);
+                        var dir = new Vector3(bp.DX, bp.DY, bp.DZ).Normalized();
+                        var c = new Vector3((float)(bp.X - ox), (float)bp.Y, (float)(bp.Z - oz));
+                        var nrm = new Vector3(-dir.Z, 0f, dir.X).Normalized();       // the ribbon's u = 0 side
+                        var along = dir * (InfiniteRoads.BridgePitch * 0.5f);
+                        var up = nrm.Cross(dir).Normalized(); if (up.Y < 0f) up = -up;
+                        float v0 = bp.S0 / texM, v1 = bp.S1 / texM;
+                        // three bands across: shoulder (u 0), the carriageway (u 0..1), shoulder (u 1)
+                        float[] o = { wide, lane, -lane, -wide }; float[] u = { 0f, 0f, 1f, 1f };
+                        for (int band = 0; band < 3; band++)
+                        {
+                            if (o[band] - o[band + 1] < 1e-3f) continue;   // a main's roadway is all carriageway: no shoulder bands
+                            int i0 = DV.Count;
+                            DV.Add(c - along + nrm * o[band]); DV.Add(c - along + nrm * o[band + 1]);
+                            DV.Add(c + along + nrm * o[band]); DV.Add(c + along + nrm * o[band + 1]);
+                            for (int q = 0; q < 4; q++) DN.Add(up);
+                            DUV.Add(new Vector2(u[band], v0)); DUV.Add(new Vector2(u[band + 1], v0));
+                            DUV.Add(new Vector2(u[band], v1)); DUV.Add(new Vector2(u[band + 1], v1));
+                            Tri(DV, DI, i0, i0 + 1, i0 + 2, up);
+                            Tri(DV, DI, i0 + 1, i0 + 3, i0 + 2, up);
+                            // and it is solid in its own right: the driven surface does not depend on the cut unit
+                            // keeping a roadway face its owner may strip from the asset
+                            if (soup != null) for (int q = 0; q < 6; q++) soup[0].Add(DV[DI[DI.Count - 6 + q]]);
+                        }
+                    }
+                }
+                foreach (var rp in d.Roads ?? new List<RoadPiece>())
+                {
+                    // a RAMP wears road_6, the two-lane road with a dashed WHITE divider (strawberry 2026-10-10: "its a 2
+                    // lane white dotted one"); its slab is a small road's, which road_8 -- the same road, yellow -- dresses
+                    int kind = rp.Kind, slot = rp.Ramp ? RampSlot : !ShowMarks ? kind : rp.Raised ? RaisedSlot : rp.Cut ? CutSlot : kind;
                     lists[slot].V ??= new List<Vector3>(); lists[slot].N ??= new List<Vector3>(); lists[slot].UV ??= new List<Vector2>(); lists[slot].I ??= new List<int>();
                     var RV = lists[slot].V; var RN = lists[slot].N; var RUV = lists[slot].UV; var RI = lists[slot].I;
-                    float hw = RibbonHalf((RoadKind)kind), lift = RoadLift[kind], texM = RoadTexMetres[kind];
-                    float Y(float lx, float lz, float h) =>
-                        Mathf.Max(h + lift, InfiniteTerrain.MeshHeightAt(d, Mathf.Clamp(lx, 0f, InfiniteTerrain.RegionSize), Mathf.Clamp(lz, 0f, InfiniteTerrain.RegionSize)) + 0.02f + lift);
-                    float ax = (float)(rp.X0 - ox), az = (float)(rp.Z0 - oz), bx = (float)(rp.X1 - ox), bz = (float)(rp.Z1 - oz);
+                    var col = soup?[kind == (int)RoadKind.Trail ? 1 : 0];
+                    var rk = (RoadKind)kind;
+                    float hw = RibbonHalf(rk), lift = InfiniteRoads.Lift(rk), texM = rp.Ramp ? RampTexMetres : RoadTexMetres[kind], bev = 2f * InfiniteRoads.Thickness(rk), run = InfiniteRoads.BevelRun(rk);
+                    // under a tunnel the ground mesh is the HILL: never lift the slab onto it
+                    bool inTunnel = rp.InTunnel;
+                    float Y(float lx, float lz, float h) => inTunnel ? InfiniteRoads.SurfaceY(rk, h) :
+                        Mathf.Max(InfiniteRoads.SurfaceY(rk, h), InfiniteTerrain.MeshHeightAt(d, Mathf.Clamp(lx, 0f, InfiniteTerrain.RegionSize), Mathf.Clamp(lz, 0f, InfiniteTerrain.RegionSize)) + 0.02f + lift);
+                    var A = new Vector3((float)(rp.X0 - ox), 0f, (float)(rp.Z0 - oz));
+                    var B = new Vector3((float)(rp.X1 - ox), 0f, (float)(rp.Z1 - oz));
                     // perpendicular from each END's own tangent, so the next piece builds the identical edge
-                    var pa = new Vector2(-rp.T0Z, rp.T0X) * hw;
-                    var pb = new Vector2(-rp.T1Z, rp.T1X) * hw;
+                    var na = new Vector3(-rp.T0Z, 0f, rp.T0X);
+                    var nb = new Vector3(-rp.T1Z, 0f, rp.T1X);
+                    Vector3 Edge(Vector3 c, Vector3 n, float w, float h) { var p = c + n * w; p.Y = Y(p.X, p.Z, h); return p; }
+                    var down = new Vector3(0f, -bev, 0f);
+                    // the lane edges, and the OUTER edges -- wider than the lanes only at a bridge's mouth, where the
+                    // ribbon widens to its deck's roadway (RoadPiece.W0/W1), or on one side where a carriageway carries a
+                    // ramp to its gore (WL/WR), each with a plain-asphalt shoulder
+                    Vector3 la = Edge(A, na, hw, rp.H0), ra = Edge(A, -na, hw, rp.H0), lb = Edge(B, nb, hw, rp.H1), rb = Edge(B, -nb, hw, rp.H1);
+                    float wla = rp.W0 + rp.WL0, wra = rp.W0 + rp.WR0, wlb = rp.W1 + rp.WL1, wrb = rp.W1 + rp.WR1;
+                    bool wideL = wla > 1e-3f || wlb > 1e-3f, wideR = wra > 1e-3f || wrb > 1e-3f;
+                    Vector3 laW = wideL ? Edge(A, na, hw + wla, rp.H0) : la, raW = wideR ? Edge(A, -na, hw + wra, rp.H0) : ra;
+                    Vector3 lbW = wideL ? Edge(B, nb, hw + wlb, rp.H1) : lb, rbW = wideR ? Edge(B, -nb, hw + wrb, rp.H1) : rb;
+                    // the edge bevels: down the slab's depth over BevelRun outward (1:3; RoadField's 1:1 was a kerb). None
+                    // where a junction's patch carries on from the top edge (RoadPiece.NoBevelL/R): straight down, unseen
+                    Vector3 loa = laW + (rp.NoBevelL ? Vector3.Zero : na * run) + down, roa = raW - (rp.NoBevelR ? Vector3.Zero : na * run) + down;
+                    Vector3 lob = lbW + (rp.NoBevelL ? Vector3.Zero : nb * run) + down, rob = rbW - (rp.NoBevelR ? Vector3.Zero : nb * run) + down;
+                    float v0 = rp.S0 / texM, v1 = rp.S1 / texM;
+
+                    // a quad between an A-row (a0, a1) and a B-row (b0, b1): to the visual mesh if `nA` is given, and
+                    // always to the collision soup
+                    void Quad(Vector3 a0, Vector3 a1, Vector3 b0, Vector3 b1, Vector3? nA, Vector3 nB, float u0, float u1, float va, float vb)
+                    {
+                        if (nA is Vector3 n0)
+                        {
+                            int i0 = RV.Count;
+                            RV.Add(a0); RV.Add(a1); RV.Add(b0); RV.Add(b1);
+                            RN.Add(n0); RN.Add(n0); RN.Add(nB); RN.Add(nB);
+                            RUV.Add(new Vector2(u0, va)); RUV.Add(new Vector2(u1, va)); RUV.Add(new Vector2(u0, vb)); RUV.Add(new Vector2(u1, vb));
+                            var front = (n0 + nB).Normalized();
+                            Tri(RV, RI, i0, i0 + 1, i0 + 2, front);
+                            Tri(RV, RI, i0 + 1, i0 + 3, i0 + 2, front);
+                        }
+                        if (col == null) return;
+                        col.Add(a0); col.Add(a1); col.Add(b0);
+                        col.Add(a1); col.Add(b1); col.Add(b0);
+                    }
+                    Vector3 Lean(Vector3 n) => (n * (bev / run) + Vector3.Up).Normalized();   // the bevel's own slope
+                    Quad(la, ra, lb, rb, Vector3.Up, Vector3.Up, 0f, 1f, v0, v1);                    // the driven top
+                    // the widened shoulders wear the edge column, as the deck's own shoulder bands do
+                    if (wideL) Quad(laW, la, lbW, lb, Vector3.Up, Vector3.Up, 0f, 0f, v0, v1);
+                    if (wideR) Quad(ra, raW, rb, rbW, Vector3.Up, Vector3.Up, 1f, 1f, v0, v1);
+                    // the bevels wear the texture's edge column, as RoadField's do (u 0 left, 1 right)
+                    Quad(loa, laW, lob, lbW, rp.NoBevelL ? null : Lean(na), Lean(nb), 0f, 0f, v0, v1);
+                    Quad(raW, roa, rbW, rob, rp.NoBevelR ? null : Lean(-na), Lean(-nb), 1f, 1f, v0, v1);
+                    Quad(loa, roa, lob, rob, null, Vector3.Down, 0f, 0f, 0f, 0f);                    // collider only: sealed underneath
+                    // the line's own ends ramp down, RoadField's end caps: the whole cross-section pushed out by the bevel
+                    // and dropped to its foot, so a road that stops in the open is a slope, not a step
+                    if (rp.OpenStart) EndRamp(A, laW, raW, loa, roa, new Vector3(-rp.T0X, 0f, -rp.T0Z), v0);
+                    if (rp.OpenEnd) EndRamp(B, lbW, rbW, lob, rob, new Vector3(rp.T1X, 0f, rp.T1Z), v1);
+                    void EndRamp(Vector3 c, Vector3 l, Vector3 r, Vector3 lo, Vector3 ro, Vector3 outDir, float v)
+                    {
+                        var o = outDir * run;
+                        Vector3 l2 = l + o + down, r2 = r + o + down, lo2 = lo + o, ro2 = ro + o;
+                        var nOut = Lean(outDir);
+                        Quad(l, r, l2, r2, nOut, nOut, 0f, 1f, v, v);
+                        Quad(lo, l, lo2, l2, nOut, nOut, 0f, 0f, v, v);
+                        Quad(r, ro, r2, ro2, nOut, nOut, 1f, 1f, v, v);
+                    }
+                }
+                // JUNCTIONS (InfiniteJunctions): the ground paved where roads meet -- a tee's mouth and fillets, a town's
+                // middle -- in the slot of the road it continues, lifted as the slabs are, its open edges hung with the
+                // same bevel
+                foreach (var pt in d.RoadPatches ?? new List<RoadPatch>())
+                {
+                    int kind = pt.Kind, slot = PatchSlot(kind, pt.Ramp);
+                    var (tileU, tileV) = PatchTileMetres(slot);
+                    // flat in world metres from the patch's anchor (a patch is drawn whole by one region)
+                    Vector2 PatchUV(int i) => new((float)((pt.X[i] - pt.AnchorX) / tileU), (float)((pt.Z[i] - pt.AnchorZ) / tileV));
+                    lists[slot].V ??= new List<Vector3>(); lists[slot].N ??= new List<Vector3>(); lists[slot].UV ??= new List<Vector2>(); lists[slot].I ??= new List<int>();
+                    var RV = lists[slot].V; var RN = lists[slot].N; var RUV = lists[slot].UV; var RI = lists[slot].I;
+                    var col = soup?[kind == (int)RoadKind.Trail ? 1 : 0];
+                    var rk = (RoadKind)kind;
+                    float bev = 2f * InfiniteRoads.Thickness(rk), run = InfiniteRoads.BevelRun(rk);
+                    var P = new Vector3[pt.X.Length];
+                    for (int i = 0; i < P.Length; i++)
+                    {
+                        float lx = (float)(pt.X[i] - ox), lz = (float)(pt.Z[i] - oz);
+                        float y = Mathf.Max(pt.Y[i], InfiniteTerrain.MeshHeightAt(d, Mathf.Clamp(lx, 0f, InfiniteTerrain.RegionSize), Mathf.Clamp(lz, 0f, InfiniteTerrain.RegionSize)) + 0.02f + pt.Lift[i]);
+                        P[i] = new Vector3(lx, y, lz);
+                    }
                     int b0 = RV.Count;
-                    RV.Add(new Vector3(ax + pa.X, Y(ax + pa.X, az + pa.Y, rp.H0), az + pa.Y));
-                    RV.Add(new Vector3(ax - pa.X, Y(ax - pa.X, az - pa.Y, rp.H0), az - pa.Y));
-                    RV.Add(new Vector3(bx + pb.X, Y(bx + pb.X, bz + pb.Y, rp.H1), bz + pb.Y));
-                    RV.Add(new Vector3(bx - pb.X, Y(bx - pb.X, bz - pb.Y, rp.H1), bz - pb.Y));
-                    for (int q = 0; q < 4; q++) RN.Add(Vector3.Up);
-                    RUV.Add(new Vector2(0f, rp.S0 / texM)); RUV.Add(new Vector2(1f, rp.S0 / texM));
-                    RUV.Add(new Vector2(0f, rp.S1 / texM)); RUV.Add(new Vector2(1f, rp.S1 / texM));
-                    Tri(RV, RI, b0, b0 + 1, b0 + 2, Vector3.Up);
-                    Tri(RV, RI, b0 + 1, b0 + 3, b0 + 2, Vector3.Up);
+                    for (int i = 0; i < P.Length; i++) { RV.Add(P[i]); RN.Add(Vector3.Up); RUV.Add(PatchUV(i)); }
+                    for (int t = 0; t + 2 < pt.Tris.Length; t += 3)
+                    {
+                        Tri(RV, RI, b0 + pt.Tris[t], b0 + pt.Tris[t + 1], b0 + pt.Tris[t + 2], Vector3.Up);
+                        col?.Add(P[pt.Tris[t]]); col?.Add(P[pt.Tris[t + 1]]); col?.Add(P[pt.Tris[t + 2]]);
+                    }
+                    var down = new Vector3(0f, -bev, 0f);
+                    for (int sk = 0; sk < pt.Skirts.Length; sk++)
+                    {
+                        var ids = pt.Skirts[sk];
+                        for (int q = 0; q + 1 < ids.Length; q++)
+                        {
+                            var na = new Vector3(pt.SkirtNX[sk][q], 0f, pt.SkirtNZ[sk][q]);
+                            var nb = new Vector3(pt.SkirtNX[sk][q + 1], 0f, pt.SkirtNZ[sk][q + 1]);
+                            Vector3 a = P[ids[q]], b = P[ids[q + 1]], fa = a + na * run + down, fb = b + nb * run + down;
+                            Vector3 la = (na * (bev / run) + Vector3.Up).Normalized(), lb = (nb * (bev / run) + Vector3.Up).Normalized();
+                            // the bevel goes on in the same flat tile, out to its foot (a 1:3 face: 5% short of its true
+                            // length in the projection, everywhere alike)
+                            Vector2 ua = PatchUV(ids[q]), ub = PatchUV(ids[q + 1]);
+                            Vector2 fua = ua + new Vector2(na.X * run / tileU, na.Z * run / tileV), fub = ub + new Vector2(nb.X * run / tileU, nb.Z * run / tileV);
+                            int i0 = RV.Count;
+                            RV.Add(fa); RV.Add(a); RV.Add(fb); RV.Add(b);
+                            RN.Add(la); RN.Add(la); RN.Add(lb); RN.Add(lb);
+                            RUV.Add(fua); RUV.Add(ua); RUV.Add(fub); RUV.Add(ub);
+                            var front = (la + lb).Normalized();
+                            Tri(RV, RI, i0, i0 + 1, i0 + 2, front);
+                            Tri(RV, RI, i0 + 1, i0 + 3, i0 + 2, front);
+                            if (col != null) { col.Add(fa); col.Add(a); col.Add(fb); col.Add(a); col.Add(b); col.Add(fb); }
+                        }
+                    }
+                }
+                // PAINT (InfiniteRoads' RoadMark): flat quads a hair over the road, lifted as the road under them is
+                foreach (var mk in d.RoadMarks ?? new List<RoadMark>())
+                {
+                    int slot = mk.Colour == 1 ? MarkYellowSlot : MarkWhiteSlot;
+                    lists[slot].V ??= new List<Vector3>(); lists[slot].N ??= new List<Vector3>(); lists[slot].UV ??= new List<Vector2>(); lists[slot].I ??= new List<int>();
+                    var RV = lists[slot].V; var RN = lists[slot].N; var RUV = lists[slot].UV; var RI = lists[slot].I;
+                    for (int q = 0; q + 3 < mk.X.Count; q += 4)
+                    {
+                        int i0 = RV.Count;
+                        for (int c = 0; c < 4; c++)
+                        {
+                            float lx = (float)(mk.X[q + c] - ox), lz = (float)(mk.Z[q + c] - oz);
+                            float y = Mathf.Max(mk.Y[q + c], InfiniteTerrain.MeshHeightAt(d, Mathf.Clamp(lx, 0f, InfiniteTerrain.RegionSize), Mathf.Clamp(lz, 0f, InfiniteTerrain.RegionSize)) + 0.02f + mk.Lift[q + c]) + MarkLift;
+                            RV.Add(new Vector3(lx, y, lz)); RN.Add(Vector3.Up); RUV.Add(Vector2.Zero);
+                        }
+                        Tri(RV, RI, i0, i0 + 1, i0 + 2, Vector3.Up);
+                        Tri(RV, RI, i0 + 1, i0 + 3, i0 + 2, Vector3.Up);
+                    }
                 }
                 for (int k = 0; k < RoadSlots; k++)
                     if (lists[k].V != null)
                         roadMeshes[k] = new RoadMesh { V = lists[k].V.ToArray(), N = lists[k].N.ToArray(), UV = lists[k].UV.ToArray(), I = lists[k].I.ToArray() };
+                if (soup != null) roadCol = new[] { soup[0].ToArray(), soup[1].ToArray() };
+            }
+
+            // bridges: the bridge TOOL's own bases (EditorBridgeSpline.DeckBasis / StandBasis) on the core's walk, so the
+            // infinite world lays the kit exactly the way the editor does -- ripped props, Z-up, length on local +Y
+            List<Transform3D>[] bridgeXf = null;
+            if (d.Bridges != null)
+            {
+                bridgeXf = new[] { new List<Transform3D>(), new List<Transform3D>(), new List<Transform3D>() };
+                double bx0 = d.Coord.MinX, bz0 = d.Coord.MinZ;
+                foreach (var bp in d.Bridges)
+                {
+                    var dir = new Vector3(bp.DX, bp.DY, bp.DZ);
+                    var at = new Vector3((float)(bp.X - bx0), (float)bp.Y, (float)(bp.Z - bz0));
+                    if (bp.Kind == 1)
+                    {
+                        var up = EditorBridgeSpline.StandBasis(dir);
+                        float ps = InfiniteRoads.DeckScale((RoadKind)bp.Road);   // a rail viaduct's pier pair stands as narrow as its deck
+                        bridgeXf[1].Add(new Transform3D(new Basis(up.X * ps, up.Y, up.Z * bp.K), at));   // stretched on its OWN long axis
+                    }
+                    else
+                    {
+                        // a main's deck and caps are widened across (local X) to its asphalt
+                        var db = EditorBridgeSpline.DeckBasis(dir);
+                        float ws = InfiniteRoads.DeckScale((RoadKind)bp.Road);
+                        if (ws != 1f) db = new Basis(db.X * ws, db.Y, db.Z);
+                        bridgeXf[bp.Kind == 0 ? 0 : 2].Add(new Transform3D(db, at));
+                    }
+                }
             }
 
             List<(Transform3D, bool, Transform3D)> poles = null;
@@ -1053,6 +2068,23 @@ void fragment() {
                     var a = PoleXform((float)(pp.X - ox), pp.H, (float)(pp.Z - oz), pp.DirX, pp.DirZ);
                     var nb = pp.HasNext ? PoleXform((float)(pp.NX - ox), pp.NH, (float)(pp.NZ - oz), pp.NDirX, pp.NDirZ) : Transform3D.Identity;
                     poles.Add((a, pp.HasNext, nb));
+                }
+            }
+
+            // high-voltage pylons (InfinitePylons): cow tools' lattice tower, stood up and turned like the roadside
+            // pole (arms -- its local X -- across the line) and scaled by PowerLineField.PylonScale through the basis,
+            // so the field's anchors scale with it. Base at the generator's height, the lowest ground under it.
+            List<(Transform3D, Transform3D[])> pylons = null;
+            if (d.Pylons != null && d.Pylons.Count > 0)
+            {
+                pylons = new List<(Transform3D, Transform3D[])>();
+                double ox = d.Coord.MinX, oz = d.Coord.MinZ;
+                foreach (var pp in d.Pylons)
+                {
+                    var wired = new Transform3D[pp.Wired.Length];
+                    for (int w = 0; w < wired.Length; w++)
+                        wired[w] = PylonXform((float)(pp.Wired[w].X - ox), pp.Wired[w].H, (float)(pp.Wired[w].Z - oz), pp.Wired[w].DirX, pp.Wired[w].DirZ);
+                    pylons.Add((PylonXform((float)(pp.X - ox), pp.H, (float)(pp.Z - oz), pp.DirX, pp.DirZ), wired));
                 }
             }
 
@@ -1071,8 +2103,154 @@ void fragment() {
                     list.Add(new Transform3D(basis, new Vector3(f.X, f.Y, f.Z)));
                 }
             }
-            return new Built { D = d, V = V.ToArray(), N = N.ToArray(), UV = UV.ToArray(), I = I.ToArray(), S0 = s0, S1 = s1, SplatSize = v, TreeXf = trees, ImpTrees = imp, FoliageXf = foliage,
-                               Road = roadMeshes, Poles = poles };
+            List<Transform3D>[] railXf = null;
+            if (d.Rails != null)
+            {
+                railXf = new[] { new List<Transform3D>(), new List<Transform3D>(), new List<Transform3D>() };
+                foreach (var rp in d.Rails) railXf[rp.Kind].Add(RailXform(rp, d.Coord.MinX, d.Coord.MinZ));
+                // a crossbuck stands up like the roadside pole (Z-up rip, PEI's ex=270), its arms across the road
+                if (d.CrossingSigns != null)
+                    foreach (var cs in d.CrossingSigns)
+                        railXf[2].Add(PoleXform((float)(cs.X - d.Coord.MinX), cs.Y + 0.2f, (float)(cs.Z - d.Coord.MinZ), cs.DX, cs.DZ));
+            }
+            return new Built { D = d, V = V.ToArray(), N = N.ToArray(), UV = UV.ToArray(), I = I.ToArray(), S0 = s0, S1 = s1, SplatSize = v, TreeXf = trees, ImpTrees = imp, BridgeXf = bridgeXf, Pylons = pylons, FoliageXf = foliage,
+                               Road = roadMeshes, RoadCol = roadCol, Poles = poles, Tunnels = d.Tunnels, RailXf = railXf,
+                               BoulderXf = RockXfs(d.Boulders), TunnelRockXf = RockXfs(d.TunnelRocks) };
+        }
+
+        // ---- boulders (strawberry 2026-10-10: "have boulders fill gaps around tunnel entrances and around steep
+        // embankment faces"): the kit's grey rock props (InfiniteTerrain.BoulderKit), one MultiMesh per prop per region, seated
+        // the way the island's scatter seats them (ProcIslandSpawn.ScatterBoulders): stood up (the OBJs are Z-up, PEI's
+        // ex=270), turned, laid onto the ground's normal, scaled to the radius asked for, and sunk Bury of its height.
+        static readonly ArrayMesh[] _rockMesh = new ArrayMesh[InfiniteTerrain.BoulderKit.Length];
+        static readonly Material[] _rockMat = new Material[InfiniteTerrain.BoulderKit.Length];
+        static readonly Vector3[][] _rockFaces = new Vector3[InfiniteTerrain.BoulderKit.Length][];
+        static readonly object _rockLock = new();
+
+        static int Count(List<Transform3D>[] xf) { int n = 0; if (xf != null) foreach (var l in xf) n += l.Count; return n; }
+
+        /// <summary>A rock's placement, region-local.</summary>
+        public static Transform3D RockXform(BoulderSpawn b)
+        {
+            var kit = InfiniteTerrain.BoulderKit[b.Kind];
+            float sc = b.Radius / kit.Radius;
+            var normal = new Vector3(b.NX, b.NY, b.NZ).Normalized();
+            var stand = EditorObjects.FromEuler(270f, b.Yaw, 0f);
+            var axis = Vector3.Up.Cross(normal);
+            var basis = axis.LengthSquared() < 1e-8f ? stand : new Basis(axis.Normalized(), Vector3.Up.AngleTo(normal)) * stand;
+            // the origin where the rock's BOTTOM lands Bury of its height under the ground (its origin sits -Bottom above it)
+            var pos = new Vector3(b.X, b.Y - kit.Bottom * sc - kit.Height * sc * b.Bury, b.Z);
+            return new Transform3D(basis.Scaled(Vector3.One * sc), pos);
+        }
+
+        static List<Transform3D>[] RockXfs(List<BoulderSpawn> rocks)
+        {
+            if (rocks == null) return null;
+            var xf = new List<Transform3D>[InfiniteTerrain.BoulderKit.Length];
+            for (int i = 0; i < xf.Length; i++) xf[i] = new List<Transform3D>();
+            foreach (var b in rocks) xf[b.Kind].Add(RockXform(b));
+            return xf;
+        }
+
+        static void LoadRock(int i)
+        {
+            lock (_rockLock)
+            {
+                if (_rockMesh[i] != null) return;
+                string dir = ProjectSettings.GlobalizePath("res://content/objects/"), name = InfiniteTerrain.BoulderKit[i].Name;
+                var mesh = ObjMesh.Load(dir + name + ".obj");
+                // EditorObjects.MatFor's recipe, so a rock here is the rock the editor places
+                var mat = new StandardMaterial3D { Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled, VertexColorUseAsAlbedo = true };
+                var img = new Image();
+                string tp = dir + name + "_tex.png";
+                if (System.IO.File.Exists(tp) && ContentProvider.LoadOk(img, tp))
+                {
+                    bool palette = img.GetWidth() <= 16 && img.GetHeight() <= 16;
+                    if (!palette) img.GenerateMipmaps();
+                    mat.AlbedoTexture = ImageTexture.CreateFromImage(img);
+                    mat.TextureFilter = palette ? BaseMaterial3D.TextureFilterEnum.Nearest : BaseMaterial3D.TextureFilterEnum.NearestWithMipmaps;
+                }
+                else mat.AlbedoColor = new Color(0.60f, 0.55f, 0.47f);
+                _rockFaces[i] = mesh?.GetFaces();
+                _rockMat[i] = mat;
+                _rockMesh[i] = mesh;
+            }
+        }
+
+        /// <summary>The rocks as MultiMeshes, one per prop; drawn to `cull` metres (0: as far as their parent is).</summary>
+        static Node3D BuildRocks(List<Transform3D>[] xf, string name, float cull)
+        {
+            var holder = new Node3D { Name = name };
+            for (int i = 0; i < xf.Length; i++)
+            {
+                if (xf[i].Count == 0) continue;
+                LoadRock(i);
+                if (_rockMesh[i] == null) continue;
+                var mm = new MultiMesh { TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, Mesh = _rockMesh[i] };
+                mm.InstanceCount = xf[i].Count;   // format BEFORE count
+                for (int k = 0; k < xf[i].Count; k++) mm.SetInstanceTransform(k, xf[i][k]);
+                var mmi = new MultiMeshInstance3D { Name = InfiniteTerrain.BoulderKit[i].Name, Multimesh = mm, MaterialOverride = _rockMat[i] };
+                if (cull > 0f) mmi.VisibilityRangeEnd = cull;
+                mmi.AddToGroup(NearestFilter.KeepFilterGroup);
+                holder.AddChild(mmi);
+            }
+            return holder;
+        }
+
+        /// <summary>Every rock's faces, placed, as ONE double-sided soup (the ballast's way): you climb on them and drive
+        /// into them, and a region's rocks are one body.</summary>
+        static ConcavePolygonShape3D RockSoup(List<Transform3D>[] xf)
+        {
+            var faces = new List<Vector3>();
+            for (int i = 0; i < xf.Length; i++)
+            {
+                if (xf[i].Count == 0) continue;
+                LoadRock(i);
+                var f = _rockFaces[i];
+                if (f == null) continue;
+                foreach (var t in xf[i]) foreach (var p in f) faces.Add(t * p);
+            }
+            return new ConcavePolygonShape3D { Data = faces.ToArray(), BackfaceCollision = true };
+        }
+
+        static Node3D RockBodies(List<Transform3D>[] xf, string name)
+        {
+            var holder = new Node3D { Name = name };
+            var body = new StaticBody3D { Name = "Rocks", CollisionLayer = 1u << 0 };
+            body.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Rock);
+            body.AddChild(new CollisionShape3D { Shape = RockSoup(xf) });
+            holder.AddChild(body);
+            return holder;
+        }
+
+        /// <summary>For tests: a rock's n highest points as placed (at least 0.4 m apart), region-local -- somewhere to drop
+        /// onto it (Boulder_13 is a cluster with nothing over its origin; a drop there falls between the stones).</summary>
+        public static List<Vector3> RockPeaks(BoulderSpawn b, int n)
+        {
+            LoadRock(b.Kind);
+            var xf = RockXform(b);
+            var f = _rockFaces[b.Kind];
+            var all = new List<Vector3>();
+            if (f == null || f.Length == 0) { all.Add(xf.Origin); return all; }
+            foreach (var p in f) all.Add(xf * p);
+            all.Sort((p, q) => q.Y.CompareTo(p.Y));
+            var picked = new List<Vector3>();
+            foreach (var w in all)
+            {
+                bool near = false;
+                foreach (var q in picked) if (new Vector2(w.X - q.X, w.Z - q.Z).Length() < 0.4f) { near = true; break; }
+                if (near) continue;
+                picked.Add(w);
+                if (picked.Count == n) break;
+            }
+            return picked;
+        }
+
+        /// <summary>For tests: the loaded region's boulders (instances drawn) and their body, or (0, null).</summary>
+        public (int Rocks, StaticBody3D Body) BouldersOf(RegionCoord c)
+        {
+            if (!_regions.TryGetValue(c, out var r) || r.BoulderXf == null) return (0, null);
+            return (Count(r.BoulderXf), r.BoulderBodies?.GetNodeOrNull<StaticBody3D>("Rocks"));
         }
 
         /// <summary>Add a triangle FRONT-FACING along `front` whichever way round it was written: Godot's front face

@@ -102,6 +102,16 @@ namespace UnturnedGodot
             { var ammo = new AmmoRadial(); root.AddChild(ammo); player.AmmoRadial = ammo; }
             { var l = new CanvasLayer { Layer = 90 }; l.AddChild(new InfiniteOverlay { Streamer = streamer }); root.AddChild(l); }
 
+            // WEATHER (strawberry 2026-10-10: "work on getting the weather engine in the inf world mode"): the same
+            // WeatherManager as PEI -- the scheduled WeatherSim, 3D rain, wetness and puddles, thunder, the storm sky, wind.
+            // What it needed from this world: RainRoofMap's tile cache re-keyed on every rebase (RegionStreamer.ShiftWorld)
+            // and evicted far behind you, and PuddleField reading the world through WorldOrigin like the shaders do.
+            if (WeatherManager.Current == null)
+            {
+                var wm = WeatherManager.Attach(root, null, dayNight);
+                wm.ApplyEnvOverride();
+            }
+
             Log.Print($"[infinite] seed {seed}: spawn ({sx:0}, {sz:0}) ground {sy:0.0} m, region {startRegion}, origin ({streamer.OriginX:0}, {streamer.OriginZ:0})");
             if (System.Environment.GetEnvironmentVariable("UG_INF_NOWARM") != "1") ShaderWarm.Begin(root);
             result.Ready = true;
