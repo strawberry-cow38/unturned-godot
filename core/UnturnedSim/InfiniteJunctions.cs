@@ -89,6 +89,15 @@ namespace SDG.Unturned
         public int Quads => X.Count / 4;
     }
 
+    /// <summary>A stop sign standing at a stop line (VoX 2026-10-11: "missing the stop signs in the intersection image"):
+    /// retail Stop_0 at absolute X/Z on the ground Y, its face turned along (DX, DZ) -- toward the traffic coming up to it.</summary>
+    public struct StopSign
+    {
+        public double X, Z; public float Y, DX, DZ;
+        /// <summary>Stood on the approach's LEFT: its right was paved for as far as a sign may go (a narrow fork's wedge).</summary>
+        public bool Left;
+    }
+
     public sealed partial class InfiniteRoads
     {
         // =============================================================================================================
@@ -279,6 +288,11 @@ namespace SDG.Unturned
             public readonly Dictionary<(LineKey, double), List<HostMod>> Mods = new();
             public readonly List<RoadPatch> Patches = new();
             public readonly List<RoadMark> Marks = new();
+            /// <summary>Every stop line painted, as (ribbon, the junction end's arc, the way out from it, the line's distance out,
+            /// the approach's side, half-width, class): PlaceStopSigns stands a sign at each once every patch is laid.</summary>
+            public readonly List<(Rib R, double A0, int Dir, double S, int Side, double Hw, RoadKind Kind)> Stops = new();
+            public readonly List<StopSign> Signs = new();
+            public readonly List<string> SignMissed = new();   // why a stop line got none (the last place tried)
             public LineTrim TrimOf(Line e) { var k = KeyOf(e); if (!Trims.TryGetValue(k, out var t)) Trims[k] = t = new LineTrim(); return t; }
             public List<HostMod> ModsOf(Line e, double off)
             {
@@ -546,7 +560,88 @@ namespace SDG.Unturned
                 else if (g.Dir < 0) { tr.R1 = g.J.Total - g.Trim; tr.J1 = true; } else { tr.R0 = g.Trim; tr.J0 = true; }
                 plan.ModsOf(g.HostLine, 0.0).Add(new HostMod { Side = g.HSide, A0 = g.ALo, A1 = g.AHi, NoBevel = true });
             }
+            PlaceStopSigns(plan);
             return plan;
+        }
+
+        /// <summary>Test accessor: the stop lines planned for the rectangle's junctions, and the signs stood at them.</summary>
+        public (int Stops, int Signs, List<string> Missed) StopCensus(double x0, double z0, double x1, double z1, float maxPiece)
+        {
+            var plan = PlanJunctions(x0, z0, x1, z1, maxPiece);
+            return (plan.Stops.Count, plan.Signs.Count, plan.SignMissed);
+        }
+
+        /// <summary>Where a stop sign stands: SignOut past the slab's edge bevel and SignBehind back from its stop line, or the
+        /// nearest clear spot to that within SignBehindMax back and SignOutMax further out.</summary>
+        public const double SignOut = 0.6, SignBehind = 1.0, SignBehindMax = 12.0, SignOutMax = 8.0;
+
+        /// <summary>The spots tried, nearest the ideal one first: (further back, further out), a metre apart.</summary>
+        static readonly (double back, double extra)[] SignTries = BuildSignTries();
+        static (double, double)[] BuildSignTries()
+        {
+            var l = new List<(double back, double extra)>();
+            for (double b = 0; b <= SignBehindMax - SignBehind + 1e-9; b += 1.0)
+                for (double e = 0; e <= SignOutMax + 1e-9; e += 1.0) l.Add((b, e));
+            l.Sort((p, q) => (p.back * p.back + p.extra * p.extra).CompareTo(q.back * q.back + q.extra * q.extra));
+            return l.ToArray();
+        }
+
+        /// <summary>A sign at every stop line, on the approach's right (where a driver looks), SignOut past the slab's edge
+        /// bevel and SignBehind back from the line, its face turned to the traffic coming up to it. Where that spot is paved
+        /// or within a bevel of any road's asphalt -- a town's fillet sweeps out past its arm's edge for twenty metres and
+        /// more, and a skewed tee's host comes close -- it takes the nearest spot that is clear, further back or further
+        /// out (behind the fillet's kerb, where a real one stands). Where two of a town's mains leave at a narrow angle there
+        /// is no ground on that side at all -- the wedge between them is paved -- so it stands on the LEFT (StopSign.Left),
+        /// as a real one does at a fork. None if neither side has a spot.</summary>
+        void PlaceStopSigns(JunctionPlan plan)
+        {
+            var boxes = new List<(RoadPatch p, double x0, double z0, double x1, double z1)>(plan.Patches.Count);
+            foreach (var p in plan.Patches)
+            {
+                double bx0 = double.MaxValue, bz0 = double.MaxValue, bx1 = double.MinValue, bz1 = double.MinValue;
+                for (int i = 0; i < p.X.Length; i++) { bx0 = Math.Min(bx0, p.X[i]); bx1 = Math.Max(bx1, p.X[i]); bz0 = Math.Min(bz0, p.Z[i]); bz1 = Math.Max(bz1, p.Z[i]); }
+                boxes.Add((p, bx0, bz0, bx1, bz1));
+            }
+            foreach (var (r, a0, dir, s, side, hw, kind) in plan.Stops)
+            {
+                double off = hw + BevelRun(kind) + SignOut, keep = BevelRun(kind) + 0.3;   // ...and off any paving by a bevel
+                string why = null; bool placed = false;
+                foreach (int sd in new[] { side, -side })
+                {
+                    foreach (var (back, extra) in SignTries)
+                    {
+                        double a = a0 + dir * (s + StopWidth * 0.5 + SignBehind + back);
+                        if (a < 0 || a > r.Total) { why ??= $"ran off its ribbon {SignBehind + back:0.0} m back"; continue; }
+                        r.Edge(a, sd, off + extra, out double x, out double z);
+                        if (Paved(boxes, x, z, keep)) { why = $"on a junction's paving at ({x:0.0}, {z:0.0})"; continue; }
+                        var hit = Influence(x, z);
+                        if (hit.Clear < BevelRun(hit.ClearKind) + 0.3f) { why = $"{hit.Clear:0.00} m from {hit.ClearKind} asphalt at ({x:0.0}, {z:0.0})"; continue; }
+                        var (k, _) = r.Find(a);
+                        r.Dir(k, out double dx, out double dz);   // the ribbon's way; x dir = away from the junction, toward the traffic
+                        plan.Signs.Add(new StopSign { X = x, Z = z, DX = (float)(dir * dx), DZ = (float)(dir * dz), Left = sd != side });
+                        placed = true;
+                        break;
+                    }
+                    if (placed) break;
+                }
+                if (!placed) plan.SignMissed.Add($"{kind}, {s:0.0} m out: {why}");
+            }
+        }
+
+        /// <summary>Is (x, z), or anywhere within `keep` of it, on a junction's paving?</summary>
+        static bool Paved(List<(RoadPatch p, double x0, double z0, double x1, double z1)> boxes, double x, double z, double keep)
+        {
+            foreach (var (p, x0, z0, x1, z1) in boxes)
+            {
+                if (x < x0 - keep || x > x1 + keep || z < z0 - keep || z > z1 + keep) continue;
+                if (!float.IsNaN(p.HeightAt(x, z))) return true;
+                for (int i = 0; i < 8; i++)
+                {
+                    double t = i * Math.PI / 4;
+                    if (!float.IsNaN(p.HeightAt(x + keep * Math.Cos(t), z + keep * Math.Sin(t)))) return true;
+                }
+            }
+            return false;
         }
 
         /// <summary>Does a deck carry the host anywhere over [a0, a1] of its ribbon? A tee's mouth is not cut into a bridge.</summary>
@@ -686,6 +781,7 @@ namespace SDG.Unturned
             foreach (var (lat, width, colour, dashed) in LinesOf(e))
                 Stripe(colour == 1 ? yellow : white, J, Arc(stop + StopWidth * 0.5), Arc(g.Trim), lat, width, dashed, e.Kind);
             StopLine(white, J, Arc(stop), approach, g.hwJ, e.Kind);
+            plan.Stops.Add((J, g.A0, g.Dir, stop, approach, g.hwJ, e.Kind));
             if (white.Quads > 0) plan.Marks.Add(white);
             if (yellow.Quads > 0) plan.Marks.Add(yellow);
         }
@@ -1266,7 +1362,11 @@ namespace SDG.Unturned
                     foreach (var (lat, width, colour, dashed) in LinesOf(arm.E))
                         Stripe(colour == 1 ? yellow : white, arm.R, arm.Arc(from), arm.Arc(g.Trim[i]), lat, width, dashed, arm.E.Kind);
                 // the approach is on the right driving in: the arm's clockwise side
-                if (!through && stop > 0) StopLine(white, arm.R, arm.Arc(stop), arm.Side(-1), arm.Hw, arm.E.Kind);
+                if (!through && stop > 0)
+                {
+                    StopLine(white, arm.R, arm.Arc(stop), arm.Side(-1), arm.Hw, arm.E.Kind);
+                    plan.Stops.Add((arm.R, arm.A0, arm.Dir, stop, arm.Side(-1), arm.Hw, arm.E.Kind));
+                }
             }
             if (white.Quads > 0) plan.Marks.Add(white);
             if (yellow.Quads > 0) plan.Marks.Add(yellow);

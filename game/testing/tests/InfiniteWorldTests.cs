@@ -123,6 +123,16 @@ namespace UnturnedGodot.Testing
         /// generator. Returns (vertices checked, worst error in metres). Hits on a tree trunk are skipped, not counted.</summary>
         (int n, float worst) GroundMatchesGenerator(int samples, ulong salt)
         {
+            var g = GroundMatchesGeneratorAt(samples, salt);
+            return (g.n, g.worst);
+        }
+
+        /// <summary>...and, for a ray that met NOTHING, where it was and whether that region's ground collider had been
+        /// built yet (2026-10-11: one ray in 144 met nothing in a full L1 run, never alone, and the bare "Infinity mm"
+        /// could not say whether that was a hole in built ground or a neighbour still waiting for its heights).</summary>
+        (int n, float worst, string miss) GroundMatchesGeneratorAt(int samples, ulong salt)
+        {
+            string miss = null;
             var space = World.GetWorld3D().DirectSpaceState;
             var c = S.FocusRegion();
             int n = 0; float worst = 0f;
@@ -137,12 +147,17 @@ namespace UnturnedGodot.Testing
                 var top = S.ToLocal(ax, want + 60.0, az);
                 var q = PhysicsRayQueryParameters3D.Create(top, top + Vector3.Down * 120f, 1u << 0);
                 var hit = space.IntersectRay(q);
-                if (hit.Count == 0) { worst = float.MaxValue; n++; continue; }   // NO ground at all: the worst possible answer
+                if (hit.Count == 0)   // NO ground at all: the worst possible answer
+                {
+                    worst = float.MaxValue; n++;
+                    miss ??= $"; no ground under ({ax:0}, {az:0}), region ({rc.X}, {rc.Z}) {(rc.X == c.X && rc.Z == c.Z ? "the player's own" : "a neighbour")}, its collider {(S.GroundBuilt(rc) ? "BUILT -- a hole" : "not built yet")}";
+                    continue;
+                }
                 if (hit["collider"].As<Node>()?.Name != "GroundBody") continue;  // a tree trunk; not what this measures
                 worst = Mathf.Max(worst, Mathf.Abs(((Vector3)hit["position"]).Y - want));
                 n++;
             }
-            return (n, worst);
+            return (n, worst, miss);
         }
 
         /// <summary>The ground collider BETWEEN the grid vertices: a quarter of the way into cells either side of their
@@ -319,6 +334,7 @@ namespace UnturnedGodot.Testing
             // ---- 2. TRAVEL 3 km EAST at 50 m/s, across rebases, keeping to the ground
             double startAbsX = S.AbsX(P(p).X), startAbsZ = S.AbsZ(P(p).Z);
             int rebases0 = S.Rebases, worstRegions = 0, groundChecks = 0; float maxLocal = 0f, worstGround = 0f;
+            string groundMiss = null;
             double patMin = double.MaxValue, patMax = double.MinValue;   // where the SHADERS see the start spot (WorldOrigin)
             for (int step = 0; step < 3000; step++)
             {
@@ -332,9 +348,10 @@ namespace UnturnedGodot.Testing
                 worstRegions = System.Math.Max(worstRegions, total);
                 if (step % 250 == 249)
                 {
-                    var g = GroundMatchesGenerator(12, (ulong)step);
+                    var g = GroundMatchesGeneratorAt(12, (ulong)step);
                     groundChecks += g.n;
                     worstGround = Mathf.Max(worstGround, g.worst);
+                    groundMiss ??= g.miss == null ? null : g.miss + $" at step {step}";
                 }
             }
             double travelled = S.AbsX(P(p).X) - startAbsX;
@@ -349,7 +366,7 @@ namespace UnturnedGodot.Testing
                 maxLocal < RegionStreamer.RebaseDistance + InfiniteTerrain.RegionSize);
             T.Check($"memory bounded: at most {worstRegions} regions resident at once (cap {(2 * RegionStreamer.MaxRing + 3) * (2 * RegionStreamer.MaxRing + 3)})",
                 worstRegions <= (2 * RegionStreamer.MaxRing + 3) * (2 * RegionStreamer.MaxRing + 3));
-            T.Check($"ground under the player matched the generator all the way ({groundChecks} vertices, worst {worstGround * 1000f:0.###} mm)",
+            T.Check($"ground under the player matched the generator all the way ({groundChecks} vertices, worst {worstGround * 1000f:0.###} mm{groundMiss})",
                 groundChecks >= 100 && worstGround < 0.01f);
             T.Check($"there was always a collider under the player ({_offCollider} steps with none)", _offCollider == 0);
             T.Check($"the player made the whole trip alive ({p.Health:0} hp, dead {p.IsDead})", !p.IsDead);

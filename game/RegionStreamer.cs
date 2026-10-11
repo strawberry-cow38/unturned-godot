@@ -115,7 +115,7 @@ namespace UnturnedGodot
             public List<(Shape3D Shape, Transform3D Xf, int Surf)> TunnelShapes;
             public Node3D TunnelBodies;             // their colliders, ring <= ColliderRing
             public Node3D RoadBodies;               // road colliders, ring <= ColliderRing
-            public List<Transform3D>[] RailXf;      // [unit, sleeper, crossbuck], region-local, from the first build (LOD-independent)
+            public List<Transform3D>[] RailXf;      // [unit, sleeper, crossbuck, stop sign], region-local, from the first build (LOD-independent)
             public Node3D Rails;                    // the track MultiMeshes, every ring (culled at RailCull)
             public Node3D RailBodies;               // the ballast's collider, ring <= ColliderRing
             public List<Transform3D>[] BoulderXf;   // [kit], region-local, from the LOD0 build (kept across LOD swaps)
@@ -315,7 +315,7 @@ namespace UnturnedGodot
             else if (ring > ColliderRing + 1 && r.RoadBodies != null) { r.RoadBodies.QueueFree(); r.RoadBodies = null; }
             if (ring <= ColliderRing && r.BridgeBodies == null && r.BridgeXf != null && r.BridgeXf[0].Count > 0) { r.BridgeBodies = BuildDeckBodies(r.BridgeXf[0]); r.Node.AddChild(r.BridgeBodies); }
             else if (ring > ColliderRing + 1 && r.BridgeBodies != null) { r.BridgeBodies.QueueFree(); r.BridgeBodies = null; }
-            if (ring <= ColliderRing && r.RailBodies == null && r.RailXf != null && r.RailXf[0].Count + r.RailXf[2].Count > 0) { r.RailBodies = BuildRailBodies(r.RailXf[0], r.RailXf[2]); r.Node.AddChild(r.RailBodies); }
+            if (ring <= ColliderRing && r.RailBodies == null && r.RailXf != null && r.RailXf[0].Count + r.RailXf[2].Count + r.RailXf[3].Count > 0) { r.RailBodies = BuildRailBodies(r.RailXf[0], r.RailXf[2], r.RailXf[3]); r.Node.AddChild(r.RailBodies); }
             else if (ring > ColliderRing + 1 && r.RailBodies != null) { r.RailBodies.QueueFree(); r.RailBodies = null; }
             if (ring <= ColliderRing && r.TreeBodies == null && r.TreeList != null) { r.TreeBodies = BuildTrunks(r.TreeList); r.Node.AddChild(r.TreeBodies); }
             else if (ring > ColliderRing + 1 && r.TreeBodies != null) { r.TreeBodies.QueueFree(); r.TreeBodies = null; }
@@ -1000,10 +1000,11 @@ void fragment() {
         // ---- railways (strawberry 2026-10-10: "add railways."): cow tools' rail kit, the way EditorRailSpline lays it --
         // New_Rail_Unit every RailPitch (the generator's TrackOf walk) and a New_Rail_Sleeper closing an open end, one
         // MultiMesh each per region. The ballast is the unit's own, so the collider is ITS cross-section swept per unit.
-        // ...and a crossbuck (Crossing_0, a Z-up rip like the roadside pole) on each approach to a level crossing
-        static readonly string[] RailProps = { EditorRailSpline.Unit, EditorRailSpline.Sleeper, "Crossing_0" };
-        static readonly Mesh[] _railMesh = new Mesh[3];
-        static readonly Material[] _railMat = new Material[3];
+        // ...and a crossbuck (Crossing_0, a Z-up rip like the roadside pole) on each approach to a level crossing, and the
+        // same kind of post for the roads: a stop sign (Stop_0, VoX 2026-10-11) at each junction's stop line
+        static readonly string[] RailProps = { EditorRailSpline.Unit, EditorRailSpline.Sleeper, "Crossing_0", "Stop_0" };
+        static readonly Mesh[] _railMesh = new Mesh[RailProps.Length];
+        static readonly Material[] _railMat = new Material[RailProps.Length];
         /// <summary>Track is drawn out to here (a 2 m tile is a speck past it; the worn formation in the ground's own
         /// splat carries the line on to the horizon).</summary>
         public static float RailCull => (TreeRing + 0.5f) * InfiniteTerrain.RegionSize;
@@ -1034,9 +1035,9 @@ void fragment() {
         {
             if (b.RailXf == null || r.RailXf != null) return;
             r.RailXf = b.RailXf;
-            if (r.RailXf[0].Count + r.RailXf[1].Count + r.RailXf[2].Count == 0) return;
+            if (Count(r.RailXf) == 0) return;
             r.Rails = new Node3D { Name = "Rails" };
-            for (int i = 0; i < 3; i++)
+            for (int i = 0; i < RailProps.Length; i++)
             {
                 if (r.RailXf[i].Count == 0) continue;
                 LoadRailKit(i);
@@ -1052,6 +1053,9 @@ void fragment() {
             RailCount += r.RailXf[0].Count;
         }
 
+        /// <summary>For tests: has this region's ground collider been built (it waits for the LOD0 heights a worker makes)?</summary>
+        public bool GroundBuilt(RegionCoord c) => _regions.TryGetValue(c, out var r) && r.Ground != null;
+
         /// <summary>For tests: the tunnels a loaded region built (the holder of their tubes, headwalls, floors), or null.</summary>
         public Node3D TunnelsOf(RegionCoord c) => _regions.TryGetValue(c, out var r) ? r.Tunnels : null;
 
@@ -1065,9 +1069,24 @@ void fragment() {
         /// <summary>The ballast as ONE double-sided trimesh for the region: each unit's top and both sides, from its
         /// root to RailPitch on (times K). The rails (13 cm) are not in it -- you walk on the ballast, and a car crossing
         /// the track bumps over the ballast's slope, which is the shape that matters.</summary>
-        static Node3D BuildRailBodies(List<Transform3D> units, List<Transform3D> signs)
+        static Node3D BuildRailBodies(List<Transform3D> units, List<Transform3D> signs, List<Transform3D> stops)
         {
             var holder = new Node3D { Name = "RailBodies" };
+            // a stop sign: its post (10 cm square, Stop_0's own) and its plate (1.2 x 0.8 m, 2.05-2.85 m up, 5 cm thick),
+            // the plate turned with the sign -- a car that clips it stops on it rather than passing through
+            foreach (var t in stops)
+            {
+                var post = new StaticBody3D { Name = "StopSign", CollisionLayer = 1u << 0, Position = t.Origin + Vector3.Up * 1.25f };
+                post.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Metal);
+                post.AddChild(new CollisionShape3D { Shape = new CylinderShape3D { Radius = 0.05f, Height = 2.5f } });
+                var face = (t.Basis * Vector3.Up).Normalized();   // the mesh's +Y (the plate's front) after the rip and the turn
+                post.AddChild(new CollisionShape3D
+                {
+                    Shape = new BoxShape3D { Size = new Vector3(1.2f, 0.8f, 0.05f) },
+                    Transform = new Transform3D(Basis.LookingAt(face, Vector3.Up), Vector3.Up * 1.2f + face * 0.1f),
+                });
+                holder.AddChild(post);
+            }
             // a crossbuck's post: 10 cm square in the mesh, 2.6 m to its top
             foreach (var t in signs)
             {
@@ -2104,14 +2123,19 @@ void fragment() {
                 }
             }
             List<Transform3D>[] railXf = null;
-            if (d.Rails != null)
+            if (d.Rails != null || d.StopSigns != null)
             {
-                railXf = new[] { new List<Transform3D>(), new List<Transform3D>(), new List<Transform3D>() };
-                foreach (var rp in d.Rails) railXf[rp.Kind].Add(RailXform(rp, d.Coord.MinX, d.Coord.MinZ));
+                railXf = new[] { new List<Transform3D>(), new List<Transform3D>(), new List<Transform3D>(), new List<Transform3D>() };
+                if (d.Rails != null) foreach (var rp in d.Rails) railXf[rp.Kind].Add(RailXform(rp, d.Coord.MinX, d.Coord.MinZ));
                 // a crossbuck stands up like the roadside pole (Z-up rip, PEI's ex=270), its arms across the road
                 if (d.CrossingSigns != null)
                     foreach (var cs in d.CrossingSigns)
                         railXf[2].Add(PoleXform((float)(cs.X - d.Coord.MinX), cs.Y + 0.2f, (float)(cs.Z - d.Coord.MinZ), cs.DX, cs.DZ));
+                // ...and so does a stop sign. PoleXform turns the mesh's +Y onto (DX, DZ) -- Stop_0's plate faces +Y, so
+                // passing the way TO the traffic turns its face to them
+                if (d.StopSigns != null)
+                    foreach (var ss in d.StopSigns)
+                        railXf[3].Add(PoleXform((float)(ss.X - d.Coord.MinX), ss.Y + 0.2f, (float)(ss.Z - d.Coord.MinZ), ss.DX, ss.DZ));
             }
             return new Built { D = d, V = V.ToArray(), N = N.ToArray(), UV = UV.ToArray(), I = I.ToArray(), S0 = s0, S1 = s1, SplatSize = v, TreeXf = trees, ImpTrees = imp, BridgeXf = bridgeXf, Pylons = pylons, FoliageXf = foliage,
                                Road = roadMeshes, RoadCol = roadCol, Poles = poles, Tunnels = d.Tunnels, RailXf = railXf,

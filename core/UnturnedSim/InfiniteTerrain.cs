@@ -196,6 +196,8 @@ namespace SDG.Unturned
         public List<RoadPatch> RoadPatches;
         /// <summary>The paint laid at those junctions: stop lines, lines carried on into them, merge lines.</summary>
         public List<RoadMark> RoadMarks;
+        /// <summary>A stop sign at each of those stop lines whose foot is in this region (all LODs).</summary>
+        public List<StopSign> StopSigns;
         /// <summary>Power-line poles standing in this region (LOD0/1 only).</summary>
         public List<PolePlacement> Poles;
         /// <summary>High-voltage pylons standing in this region, with the spans each owns (all LODs).</summary>
@@ -581,7 +583,7 @@ namespace SDG.Unturned
             d.Trees = PlaceTrees(rc, lines);   // every LOD: the far rings draw them as billboards (RegionStreamer impostors)
             d.Foliage = lod == 0 ? PlaceFoliage(d) : null;
             d.Boulders = lod == 0 ? PlaceBoulders(d, rh, b, lines) : null;
-            d.Roads = Roads.PiecesIn(lines, ox, oz, ox + RegionSize, oz + RegionSize, Math.Max(4f, sp), out d.RoadPatches, out d.RoadMarks);
+            d.Roads = Roads.PiecesIn(lines, ox, oz, ox + RegionSize, oz + RegionSize, Math.Max(4f, sp), out d.RoadPatches, out d.RoadMarks, out d.StopSigns);
             d.Poles = polesWide?.FindAll(p => p.X >= ox && p.X < ox + RegionSize && p.Z >= oz && p.Z < oz + RegionSize);
             d.Bridges = Roads.BridgesIn(lines, ox, oz, ox + RegionSize, oz + RegionSize);
             d.Pylons = pylonsWide.FindAll(p => p.X >= ox && p.X < ox + RegionSize && p.Z >= oz && p.Z < oz + RegionSize);   // every LOD: 50 m landmarks

@@ -2241,18 +2241,22 @@ namespace SDG.Unturned
         /// pieces are cut back to the junction, widened (a taper) or left without their edge bevel (a tee's mouth), and no
         /// end ramp is built at a joined end.</summary>
         public List<RoadPiece> PiecesIn(List<Line> lines, double x0, double z0, double x1, double z1, float maxPiece, out List<RoadPatch> patches) =>
-            PiecesIn(lines, x0, z0, x1, z1, maxPiece, Junctions, out patches, out _);
+            PiecesIn(lines, x0, z0, x1, z1, maxPiece, Junctions, out patches, out _, out _);
 
         /// <summary>...and the paint laid at those junctions (RoadMark), anchored in the rectangle.</summary>
         public List<RoadPiece> PiecesIn(List<Line> lines, double x0, double z0, double x1, double z1, float maxPiece, out List<RoadPatch> patches, out List<RoadMark> marks) =>
-            PiecesIn(lines, x0, z0, x1, z1, maxPiece, Junctions, out patches, out marks);
+            PiecesIn(lines, x0, z0, x1, z1, maxPiece, Junctions, out patches, out marks, out _);
+
+        /// <summary>...and the stop signs standing at their stop lines (StopSign), whose feet are in the rectangle.</summary>
+        public List<RoadPiece> PiecesIn(List<Line> lines, double x0, double z0, double x1, double z1, float maxPiece, out List<RoadPatch> patches, out List<RoadMark> marks, out List<StopSign> signs) =>
+            PiecesIn(lines, x0, z0, x1, z1, maxPiece, Junctions, out patches, out marks, out signs);
 
         /// <summary>Test accessor: the ribbons as they would be laid with no junction cut into them -- the ground a junction
         /// must keep paved.</summary>
         public List<RoadPiece> PiecesInUnjoined(List<Line> lines, double x0, double z0, double x1, double z1, float maxPiece) =>
-            PiecesIn(lines, x0, z0, x1, z1, maxPiece, false, out _, out _);
+            PiecesIn(lines, x0, z0, x1, z1, maxPiece, false, out _, out _, out _);
 
-        List<RoadPiece> PiecesIn(List<Line> lines, double x0, double z0, double x1, double z1, float maxPiece, bool junctions, out List<RoadPatch> patches, out List<RoadMark> marks)
+        List<RoadPiece> PiecesIn(List<Line> lines, double x0, double z0, double x1, double z1, float maxPiece, bool junctions, out List<RoadPatch> patches, out List<RoadMark> marks, out List<StopSign> signs)
         {
             var list = new List<RoadPiece>();
             var plan = junctions ? PlanJunctions(x0, z0, x1, z1, maxPiece) : null;
@@ -2267,6 +2271,11 @@ namespace SDG.Unturned
             foreach (var m in marks)
                 if (m.On != null)
                     for (int i = 0; i < m.X.Count; i++) { float y = m.On.HeightAt(m.X[i], m.Z[i]); if (!float.IsNaN(y)) m.Y[i] = y; }
+            // a sign stands on the drawn ground, as a roadside pole and a crossbuck do
+            signs = new List<StopSign>();
+            if (plan != null)
+                foreach (var sg in plan.Signs)
+                    if (sg.X >= x0 && sg.X < x1 && sg.Z >= z0 && sg.Z < z1) { var t = sg; t.Y = _t.GroundAt(t.X, t.Z); signs.Add(t); }
             List<Underpass> ups = null;
             if (Bridges) foreach (var m in lines) if (m.Underpasses != null) foreach (var u in m.Underpasses) if (!u.Existing && !u.Over) (ups ??= new List<Underpass>()).Add(u);
             foreach (var e in lines)

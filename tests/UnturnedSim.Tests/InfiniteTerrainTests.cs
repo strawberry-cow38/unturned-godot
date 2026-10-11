@@ -1790,6 +1790,95 @@ namespace UnturnedSim.Tests
             Assert.That(worst, Is.LessThan(0.002), "a deck joint stands open");
         }
 
+        /// <summary>VoX 2026-10-11, of the crossing split's render: "missing the stop signs in the intersection image". Over
+        /// 4 x 4 main cells, region by region as the streamer asks: EVERY stop line has a sign; each stands on the right of
+        /// the traffic coming up to it, facing that traffic (away from its junction's anchor); none stands on a junction's
+        /// paving or within a bevel of any road's asphalt; and the region split is exact -- a sign is the same sign
+        /// whichever region boundary its junction straddles (asked again with the regions offset by half a region).</summary>
+        [Test]
+        public void StopSignsAtEveryStopLine()
+        {
+            const int C = 4;
+            double M = InfiniteRoads.MainCell, Lo = -C * M, Hi = C * M, R = InfiniteTerrain.RegionSize;
+            var all = Gen.Roads.LinesIn(Lo - 200, Lo - 200, Hi + 200, Hi + 200).Where(e => e.Kind != RoadKind.Rail).ToList();
+            var (stops, planned, missed) = Gen.Roads.StopCensus(Lo, Lo, Hi, Hi, 4f);
+            var allPts = new List<RoadPatch>();   // every junction's paving over the window: a sign's own may be anchored next door
+            List<(StopSign s, List<RoadPatch> pts, List<RoadPiece> pcs)> Tile(double off)
+            {
+                var res = new List<(StopSign, List<RoadPatch>, List<RoadPiece>)>();
+                var gate = new object();
+                int n = (int)Math.Round((Hi - Lo) / R);
+                System.Threading.Tasks.Parallel.For(0, n * n, t =>
+                {
+                    double x0 = Lo + off + (t % n) * R, z0 = Lo + off + (t / n) * R;
+                    var lines = Gen.Roads.LinesIn(x0 - 1, z0 - 1, x0 + R + 1, z0 + R + 1);
+                    var pcs = Gen.Roads.PiecesIn(lines, x0, z0, x0 + R, z0 + R, 4f, out var pts, out _, out var signs);
+                    lock (gate) { foreach (var sg in signs) res.Add((sg, pts, pcs)); if (off == 0) allPts.AddRange(pts); }
+                });
+                return res;
+            }
+            var signs = Tile(0);
+            var shifted = Tile(R * 0.5);
+            Console.WriteLine($"[stops] {stops} stop lines planned over the window's junctions, {planned} signs stood at them; {signs.Count} signs region by region");
+            Assert.That(stops, Is.GreaterThan(20), "too few stop lines for this to test anything");
+            foreach (var m in missed.Take(20)) Console.WriteLine($"[stops]   none: {m}");
+            Assert.That(planned, Is.EqualTo(stops), $"{stops - planned} stop line(s) have no sign; first: {missed.FirstOrDefault()}");
+
+            int wrongSide = 0, wrongFace = 0, onRoad = 0, onPatch = 0, unmatched = 0, compared = 0; double worstBack = 0; string first = null;
+            int lefts = 0, leftFree = 0; string leftAt = null;   // stood on the left: the right paved as far as a sign may go (a narrow fork)
+            foreach (var (sg, _, _) in signs)
+            {
+                double fx = sg.DX, fz = sg.DZ, fl = Math.Sqrt(fx * fx + fz * fz); fx /= fl; fz /= fl;
+                // the junction it belongs to: the nearest patch anchor
+                RoadPatch near = null; double nd = double.MaxValue;
+                foreach (var p in allPts) { double d = (p.AnchorX - sg.X) * (p.AnchorX - sg.X) + (p.AnchorZ - sg.Z) * (p.AnchorZ - sg.Z); if (d < nd) { nd = d; near = p; } }
+                if (near == null || (sg.X - near.AnchorX) * fx + (sg.Z - near.AnchorZ) * fz <= 0) { wrongFace++; first ??= $"faces its junction at ({sg.X:0.0}, {sg.Z:0.0})"; }
+                // the road it stands beside: the nearest centreline running its way -- its face is that road's own heading, so
+                // within ~18 degrees: not the road it stops for (across it), nor a town's next arm out at 40 degrees, whose
+                // centreline can be the nearer one when a sign stands in the wedge between them. The traffic heads -face,
+                // its right is (fz, -fx)
+                double best = double.MaxValue, bx = 0, bz = 0; RoadKind bk = RoadKind.Trail;
+                foreach (var e in all)
+                    for (int i = 0; i + 1 < e.X.Length; i++)
+                    {
+                        double sx = e.X[i + 1] - e.X[i], sz = e.Z[i + 1] - e.Z[i], ss = sx * sx + sz * sz;
+                        if (ss < 1e-12 || Math.Abs(sx * fx + sz * fz) < 0.95 * Math.Sqrt(ss)) continue;
+                        double t = Math.Clamp(((sg.X - e.X[i]) * sx + (sg.Z - e.Z[i]) * sz) / ss, 0, 1);
+                        double px = e.X[i] + sx * t, pz = e.Z[i] + sz * t, d = (sg.X - px) * (sg.X - px) + (sg.Z - pz) * (sg.Z - pz);
+                        if (d < best) { best = d; bx = px; bz = pz; bk = e.Kind; }
+                    }
+                bool onRight = (sg.X - bx) * fz + (sg.Z - bz) * -fx > 0;
+                if (sg.Left)
+                {
+                    lefts++; leftAt ??= $" (one at ({sg.X:0.0}, {sg.Z:0.0}))";
+                    // ...only where its right was taken: the same spot mirrored across its road is paved, or within a bevel
+                    // (and the 0.3 m the sign keeps) of asphalt or of a junction's paving
+                    double mx = 2 * bx - sg.X, mz = 2 * bz - sg.Z;
+                    var mh = Gen.Roads.Influence(mx, mz);
+                    double keep = InfiniteRoads.BevelRun(bk) + 0.3;
+                    bool taken = mh.Clear < InfiniteRoads.BevelRun(mh.ClearKind) + 0.3f
+                              || allPts.Any(p => Enumerable.Range(0, 9).Any(i => !float.IsNaN(i == 8 ? p.HeightAt(mx, mz) : p.HeightAt(mx + keep * Math.Cos(i * Math.PI / 4), mz + keep * Math.Sin(i * Math.PI / 4)))));
+                    if (!taken) { leftFree++; first ??= $"stood on the left at ({sg.X:0.0}, {sg.Z:0.0}) with its right ({mx:0.0}, {mz:0.0}) clear"; }
+                }
+                if (onRight == sg.Left) { wrongSide++; first ??= $"on the traffic's {(onRight ? "right" : "left")}, said {(sg.Left ? "left" : "right")}, at ({sg.X:0.0}, {sg.Z:0.0}), {Math.Sqrt(best):0.0} m from a {bk}'s centreline, {Math.Sqrt(nd):0.0} m from its junction's anchor"; }
+                var hit = Gen.Roads.Influence(sg.X, sg.Z);
+                if (hit.Clear < InfiniteRoads.BevelRun(hit.ClearKind)) { onRoad++; first ??= $"{hit.Clear:0.00} m from {hit.ClearKind} asphalt at ({sg.X:0.0}, {sg.Z:0.0})"; }
+                foreach (var p in allPts) if (!float.IsNaN(p.HeightAt(sg.X, sg.Z))) { onPatch++; first ??= $"on a junction's paving at ({sg.X:0.0}, {sg.Z:0.0})"; break; }
+                worstBack = Math.Max(worstBack, Math.Sqrt(nd));
+            }
+            foreach (var (sg, _, _) in signs)
+            {
+                if (sg.X < Lo + R || sg.X >= Hi - R || sg.Z < Lo + R || sg.Z >= Hi - R) continue;   // the shifted grid's ragged edge
+                compared++;
+                if (!shifted.Any(o => Math.Abs(o.s.X - sg.X) < 1e-3 && Math.Abs(o.s.Z - sg.Z) < 1e-3 && Math.Abs(o.s.Y - sg.Y) < 1e-3)) { unmatched++; first ??= $"not the same sign from the offset regions at ({sg.X:0.0}, {sg.Z:0.0})"; }
+            }
+            Console.WriteLine($"[stops] {wrongFace} facing their junction, {wrongSide} on the other side than they say, {lefts} on the left{leftAt} ({leftFree} of them with their right clear), {onRoad} within a bevel of asphalt, {onPatch} on a junction's paving; " +
+                              $"farthest from its junction's anchor {worstBack:0.0} m; {compared} compared against regions offset by half a region, {unmatched} differ{(first == null ? "" : $"; first: {first}")}");
+            Assert.That(signs.Count, Is.GreaterThan(20), "too few signs region by region");
+            Assert.That(wrongFace + wrongSide + leftFree + onRoad + onPatch + unmatched, Is.EqualTo(0), first);
+            Assert.That(compared, Is.GreaterThan(10), "too few signs compared across the offset regions");
+        }
+
         /// <summary>strawberry 2026-10-10: "can we do some magic with the highway on/offramp merges to actually merge them
         /// properly with the highway mesh. and with any other road branch/connection too i suppose, since right now its just
         /// overlapping, what if they actually CONNECTED to the mesh of the road". Every junction in 8 x 8 main cells, sampled
