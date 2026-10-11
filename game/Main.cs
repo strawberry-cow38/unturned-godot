@@ -7999,6 +7999,47 @@ namespace UnturnedGodot
                     }
                     terrainEd.Save();   // verify the heightmap round-trip
                 }
+            // UG_SIDEWALK=1: lay the new sidewalk spline down BOTH sides of every road in the scene and frame
+            // one (strawberry 2026-10-11, "render?"). Hung off the roads harness deliberately rather than a rig
+            // of its own -- the whole claim is "attaches to any road surface", so it has to be shown attaching
+            // to the REAL RoadField roads this harness already builds, not to a line I drew to suit myself.
+            if (System.Environment.GetEnvironmentVariable("UG_SIDEWALK") == "1" && rf != null && rf.RoadCount > 0)
+            {
+                var walk = new EditorSidewalk();
+                if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_WALKWIDTH"),
+                        System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float ww) && ww > 0.1f)
+                    walk.Width = ww;
+                if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_WALKKERB"),
+                        System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float wk) && wk > 0.01f)
+                    walk.KerbHeight = wk;
+                editor.AddChild(walk);
+                int made = 0;
+                for (int r = 0; r < rf.RoadCount; r++) made += walk.LayAlongRoad(walk, rf, r, EditorSidewalk.Side.Both);
+                Log.Print($"[sidewalk-demo] {made} ribbon(s) over {rf.RoadCount} road(s), width {walk.Width:0.00} kerb {walk.KerbHeight:0.00}");
+                // ...and stand the camera ON the pavement at eye height, because the editor's default overview
+                // is 200 m up and a 0.4 m kerb is sub-pixel from there -- the first render of this proved the
+                // ribbons existed and showed nothing about whether the PROFILE was right.
+                // ⚠ A CAMERA OF ITS OWN, not the editor's. Setting editor.cam once at build time does nothing:
+                // the editor drives that camera every frame and overwrote it -- the first attempt at this came
+                // back as the same 200 m overview, where a 0.4 m kerb is sub-pixel. Same fix the glass harness
+                // uses: add a camera and claim Current, so the editor's controller is driving a camera nobody
+                // is looking through.
+                // ⚠ THE LONGEST ROAD, not road 0. Road 0 here runs through the airport, and a camera stood at
+                // kerb height beside it ends up inside a hangar -- the second attempt at this came back as the
+                // inside of a wall. The longest road is the one most likely to have open ground beside it.
+                int demoRoad = 0;
+                for (int r = 1; r < rf.RoadCount; r++) if (rf.RoadLength(r) > rf.RoadLength(demoRoad)) demoRoad = r;
+                if (rf.EvaluateAlong(demoRoad, rf.RoadLength(demoRoad) * 0.5f, out var fp, out var ft))
+                {
+                    var sideV = new Vector3(ft.Z, 0f, -ft.X).Normalized();
+                    var eye = fp + sideV * (rf.RoadHalfWidth(demoRoad) + 3.0f) + Vector3.Up * 1.7f;
+                    var shotCam = new Camera3D { Current = true, Fov = 62f };
+                    AddChild(shotCam);
+                    shotCam.GlobalPosition = eye;
+                    shotCam.LookAt(fp + ft * 12f + Vector3.Up * 0.2f, Vector3.Up);
+                    Log.Print($"[sidewalk-demo] camera on the kerb at {eye}");
+                }
+            }
             if (System.Environment.GetEnvironmentVariable("UG_EDITORROADS") == "1" && roadsEd.HasRoads)
             {   // synchronous (no timer): set before the first frame so the frame-45 --shot reliably captures the demoed state
                 editor.Mode = EEditorMode.Environment;
