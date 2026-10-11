@@ -2852,6 +2852,37 @@ namespace UnturnedGodot
                         }
                     AddChild(new MultiMeshInstance3D { Multimesh = gmm, MaterialOverride = gsMat, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off });
                 }
+                // ROTOR WASH (strawberry 2026-10-11: "add rotor wash for helis on foliage and trees"). The lawn
+                // alone cannot show it: the whole point of the rebuild is that the field now reaches wind_sway
+                // too, so the scene needs BUSHES as well as grass, and a helicopter with its rotor actually
+                // turning. UG_WASHTEST=1 adds both on top of the lawn; plain UG_GRASSTEST stays as it was, so
+                // the grass regression check is unchanged.
+                if (System.Environment.GetEnvironmentVariable("UG_WASHTEST") == "1")
+                {
+                    string rdir = ProjectSettings.GlobalizePath($"res://content/{ResourceField.MapDir}/");
+                    for (int bi = 0; bi < 24; bi++)
+                    {
+                        var bmesh = ObjMesh.Load(rdir + (bi % 2 == 0 ? "Bush_0_0.obj" : "Bush_1_0.obj"));
+                        if (bmesh == null) continue;
+                        // MakeSwayMat is the REAL tree/bush material -- the one that could not be disturbed at
+                        // all until today. Using anything else here would prove nothing.
+                        var bmi = new MeshInstance3D { Mesh = bmesh, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                                                       MaterialOverride = ResourceField.MakeSwayMat(rdir + (bi % 2 == 0 ? "Bush_0_0_tex.png" : "Bush_1_0_tex.png")) };
+                        AddChild(bmi);
+                        float ang = bi / 24f * Mathf.Tau;
+                        bmi.GlobalPosition = new Vector3(14f + Mathf.Cos(ang) * (5f + (bi % 3) * 2.5f), 0f, Mathf.Sin(ang) * (5f + (bi % 3) * 2.5f));
+                    }
+                    var wheli = Vehicle.BuildByName("huey") ?? Vehicle.BuildByName("hummingbird");   // the big rotor shows the wash best
+                    if (wheli != null)
+                    {
+                        AddChild(wheli);
+                        wheli.GlobalPosition = new Vector3(14f, 5.5f, 0f);   // hovering over the middle of the bush ring
+                        wheli.Freeze = true;                                  // hold the hover: this is a wash test, not a flight test
+                        wheli.SpawnRotorRunning();                            // spool to 1 so the wash is at full strength
+                        Log.Print($"[washtest] {wheli.Name} hovering at {wheli.GlobalPosition}, rotor spool {wheli.RotorSpool:0.00}");
+                    }
+                    else Log.Err("[washtest] no helicopter spec found");
+                }
             }
 
             var jeep = Vehicle.BuildByName("jeep");

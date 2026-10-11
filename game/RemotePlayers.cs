@@ -143,7 +143,7 @@ namespace UnturnedGodot
                     av.Hull = new AnimatableBody3D { Name = "Hull", CollisionLayer = RemotePlayerLayer, CollisionMask = 0, SyncToPhysics = false };
                     av.Hull.AddChild(av.HullShape);
                     av.Body.AddChild(av.Hull);   // rides the puppet's transform
-                    GrassDisplacers.Register(av.Body, GrassDisplacers.PlayerRadius);   // master: remote players flatten grass just like the local one (retail's point covers only self)
+                    DisturbanceField.Register(av.Body, DisturbanceField.PlayerRadius);   // master: remote players flatten grass just like the local one (retail's point covers only self)
                     av.Body.Position = target;
                     _avatars[e.OwnerPlayerId] = av;
                 }

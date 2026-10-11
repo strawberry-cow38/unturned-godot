@@ -745,7 +745,6 @@ namespace UnturnedGodot
         }
 
         double _lookFocusT, _grassT;   // PERF: rate limiters (see ProcessTick)
-        System.Collections.Generic.List<(float d2, Vector3 pos, float r)> _dispPrev;   // last uploaded displacer texels (see UpdateGrassDisplacement)
         void UpdateLookFocus()
         {
             WorldItem hitItem = null; Vehicle hitVeh = null; Deployable hitDeploy = null; GasPump hitGasPump = null; GridPowerSource hitGrid = null; FluidContainer hitFluid = null;
@@ -10779,7 +10778,6 @@ namespace UnturnedGodot
         // The grass-shader globals + their data texture live in GrassDisplacers (registered there BEFORE any grass
         // material is built -- see GrassDisplacers.EnsureGlobals; registering them AFTER a material links them invalid
         // ("removed at some point"), which silently kills ALL grass displacement). This just keeps the gather buffer.
-        static System.Collections.Generic.List<(float d2, Vector3 pos, float r)> _dispScratch;
         static Vector3 _grassSmooth; static bool _grassSmoothInit;   // the grass point's OWN smoothing (master): lerp toward the player each frame so the flatten glides instead of stepping
 
         /// <summary>Drive the grass-displacement shader each frame: retail's local-player point at (x, y+0.5, z) exactly
@@ -10788,7 +10786,7 @@ namespace UnturnedGodot
         /// pushing through the blades, not the ground shoving them from below).</summary>
         void UpdateGrassDisplacement(double delta)
         {
-            GrassDisplacers.EnsureGlobals();   // idempotent; grass materials already did this at build -- belt-and-suspenders (+ owns DispImg/DispTex)
+            GrassDisplacers.EnsureGlobals();   // idempotent; foliage materials already did this at build. Still called: it is the funnel that also registers the disturbance field's globals.
             // TARGET = the player's interpolated visual position when the render-interp is active, else GlobalPosition.
             var pTarget = (_interpReady && !_dead && _driving == null && _ridingTrain == null && _ridingCrane == null && !IsSeatedOnProp)
                 ? _interpPrev.Lerp(_interpCurr, (float)Engine.GetPhysicsInterpolationFraction())
@@ -10800,8 +10798,6 @@ namespace UnturnedGodot
             if (!_grassSmoothInit || _grassSmooth.DistanceSquaredTo(pTarget) > 100f) { _grassSmooth = pTarget; _grassSmoothInit = true; }
             else _grassSmooth = _grassSmooth.Lerp(pTarget, 1f - Mathf.Exp(-25f * (float)delta));
             var p = _grassSmooth;
-            // RETAIL: the local player, one point at (x, y+0.5, z), w unused -- exactly GrassDisplacement.cs.
-            RenderingServer.GlobalShaderParameterSet(GrassDisplacers.PointParam, new Vector4(p.X, p.Y + 0.5f, p.Z, 0f));
             var wd = WindField.WindXZ(p);   // FOLIAGE WIND SWAY: xy = direction, z = strength at the player (a representative gust for the whole view)
             // ...and W is the SWAY PHASE (strawberry 2026-09-08: "vary the wind speed for grass, trees when bad
             // weather"). All three sway shaders used a fixed `TIME * rate`, so a gale bent the foliage further but
@@ -10816,54 +10812,24 @@ namespace UnturnedGodot
             // behaviour is unchanged; the owner is now the thing the value is actually about.
             WindField.PushGlobals(p, delta);
 
-            // WAKE (master): the local player + moving vehicles leave a fading flattened trail. Age the trail + drop the
-            // player's breadcrumb here; the gather below drops vehicle breadcrumbs + adds the whole fading trail as texels.
+            // ⭐ THE FIELD IS NOT THE PLAYER'S ANY MORE. Gathering every source in the world, sorting them and
+            // uploading the texture used to happen right here, in the player's own _Process -- so a harness that
+            // rendered foliage without a player got no displacement at all, and a helicopter's downwash would
+            // have had to ask the player to publish it. The player now does what it alone knows (its smoothed,
+            // interpolated point and its own wake) and hands that to DisturbanceField, which owns the rest.
             ulong nowMs = Time.GetTicksMsec();
-            GrassDisplacers.AgeWake(nowMs);
-            GrassDisplacers.DropWake(GetInstanceId(), p, GrassDisplacers.PlayerWakeRadius, nowMs);
-
-            // EXTENDED DISPLACERS (master): gather the grass_displacer group (vehicles, dropped items, remote players)
-            // within grass render range, keep the nearest Max to the camera, and pack (world pos + radius) into the
-            // data texture. Grass renders only within ~160m (FoliageField CullRange), so anything past it is skipped.
-            _dispScratch ??= new System.Collections.Generic.List<(float, Vector3, float)>();
-            _dispScratch.Clear();
-            const float range = 5f * 32f;                 // = FoliageField CullRange (retail's ULTRA foliage draw distance)
-            float range2 = range * range;
-            var live = GrassDisplacers.Live;   // PERF: C#-side registry (see GrassDisplacers) -- one GlobalPosition read per displacer, no group marshalling
-            for (int li = live.Count - 1; li >= 0; li--)
+            DisturbanceField.DropWake(GetInstanceId(), p, DisturbanceField.PlayerWakeRadius, nowMs);
+            // Vehicles leave a wake too; items and remote players (small radius) deliberately do not -- a
+            // stationary source would drop one breadcrumb and then linger in the table forever.
+            foreach (var e in DisturbanceField.Live)
             {
-                var e = live[li];
-                if (!GodotObject.IsInstanceValid(e.Node)) { live.RemoveAt(li); continue; }   // freed (picked-up item, despawned car, left player)
-                if (!e.Node.IsInsideTree()) continue;
-                var gp = e.Node.GlobalPosition;
-                float dx = gp.X - p.X, dz = gp.Z - p.Z;
-                float d2 = dx * dx + dz * dz;
-                if (d2 > range2) continue;                // out of grass render range -> displaces nothing visible
-                float r = e.Radius;
-                _dispScratch.Add((d2, gp, r));
-                if (r > 1.0f) GrassDisplacers.DropWake(e.Id, gp, r, nowMs);   // vehicles (big r) leave a wake; items + remote players (small r) don't
+                if (e.Radius <= 1.0f || e.Node == null || !GodotObject.IsInstanceValid(e.Node)) continue;
+                DisturbanceField.DropWake(e.Id, e.Node.GlobalPosition, e.Radius, nowMs);
             }
-            GrassDisplacers.GatherWake(_dispScratch, p, range2, nowMs);   // add the fading wake breadcrumbs as extra (weaker, shrinking) texels behind the movers
-            _dispScratch.Sort(static (a, b) => a.d2.CompareTo(b.d2));   // nearest first -> the Max that survive are the ones the player can actually see
-            int cnt = System.Math.Min(_dispScratch.Count, GrassDisplacers.Max);
-            // Upload ONLY when the packed texel set changed (idle = nothing moves = no upload). Uploading every frame was
-            // both a per-frame GPU update for nothing and, under the separate render thread, a texture update racing the
-            // renderer (4 "empty image" errors per load).
-            bool dispChanged = _dispPrev == null || _dispPrev.Count != cnt;
-            if (!dispChanged) for (int i = 0; i < cnt; i++) if (_dispPrev[i] != _dispScratch[i]) { dispChanged = true; break; }
-            if (dispChanged)
-            {
-                _dispPrev ??= new System.Collections.Generic.List<(float d2, Vector3 pos, float r)>();
-                _dispPrev.Clear();
-                for (int i = 0; i < cnt; i++)
-                {
-                    var e = _dispScratch[i];
-                    _dispPrev.Add(e);
-                    GrassDisplacers.DispImg.SetPixel(i, 0, new Color(e.pos.X, e.pos.Y, e.pos.Z, e.r));   // stale tail texels beyond cnt are never read (loop is count-bounded)
-                }
-                if (GrassDisplacers.DispImg != null && !GrassDisplacers.DispImg.IsEmpty()) GrassDisplacers.DispTex.Update(GrassDisplacers.DispImg);   // re-upload the mutated texels; the global sampler still points at this same RID
-            }
-            RenderingServer.GlobalShaderParameterSet(GrassDisplacers.CountParam, GraphicsOptions.GrassDisplacement ? cnt : 0);   // retail IsGrassDisplacementEnabled
+            // Retail puts the point half a metre ABOVE the transform origin (GrassDisplacement.cs), which is what
+            // makes the bend read as a shin pushing through rather than the ground shoving blades aside.
+            const float range = 5f * 32f;   // = FoliageField CullRange (retail's ULTRA foliage draw distance)
+            DisturbanceField.Pack(p, range, nowMs, new Vector3(p.X, p.Y + 0.5f, p.Z));
         }
 
         // Kept as real overrides so direct calls keep working (NetTests: `p._Process(0.016)` steps the ride cam synchronously);

@@ -33,15 +33,9 @@ namespace UnturnedGodot
 
         static readonly StringName RadiusMeta = "grass_disp_radius";
 
-        // The four grass-shader globals this owns. Public so PlayerController sets them without redeclaring the names.
-        public static readonly StringName PointParam = "grass_displacement_point";   // retail: the LOCAL player point (x, y+0.5, z)
-        public static readonly StringName WindParam = "wind_vec";                    // xy = wind dir, z = 0..1 strength (foliage sway shaders)
-        public static readonly StringName TexParam = "grass_displacers";             // data texture: nearest extended displacers (xyz pos, w radius)
-        public static readonly StringName CountParam = "grass_displacer_count";      // how many texels are live this frame
+        public static readonly StringName WindParam = "wind_vec";   // xy = wind dir, z = 0..1 strength, w = integrated sway phase
 
         static bool _globalsReady;
-        public static Image DispImg { get; private set; }       // the packed displacer texels, updated each frame by PlayerController
-        public static ImageTexture DispTex { get; private set; } // ...bound once to the TexParam global; Update re-uploads in place
 
         /// <summary>Register the grass-shader globals ONCE, and crucially BEFORE any grass_displace material is created.
         /// Call it at every grass-material creation site. Idempotent + static-guarded, so it runs once per process.</summary>
@@ -52,12 +46,12 @@ namespace UnturnedGodot
             WorldOrigin.EnsureGlobal();   // the foliage sway shaders read it alongside wind_vec
             // Registered at runtime rather than in project settings so the shader works from a fresh clone with no editor
             // step. Order matters relative to material creation (see the class note), NOT relative to each other.
-            RenderingServer.GlobalShaderParameterAdd(PointParam, RenderingServer.GlobalShaderParameterType.Vec4, Variant.From(Vector4.Zero));
             RenderingServer.GlobalShaderParameterAdd(WindParam, RenderingServer.GlobalShaderParameterType.Vec4, Variant.From(Vector4.Zero));
-            RenderingServer.GlobalShaderParameterAdd(CountParam, RenderingServer.GlobalShaderParameterType.Int, Variant.From(0));
-            DispImg = Image.CreateEmpty(Max, 1, false, Image.Format.Rgbaf);   // one texel per displacer; RGBAF holds raw world coords + radius UNCLAMPED
-            DispTex = ImageTexture.CreateFromImage(DispImg);
-            RenderingServer.GlobalShaderParameterAdd(TexParam, RenderingServer.GlobalShaderParameterType.Sampler2D, Variant.From(DispTex));
+            // ⭐ THE DISPLACEMENT HALF LIVES IN DisturbanceField NOW, but it is registered from HERE, inside the
+            // one funnel every foliage material already calls. Splitting the funnel is exactly how the
+            // "registered one global but not the other" bug comes back, and that bug is invisible: the foliage
+            // still renders, it just stops moving. One call site, both sets.
+            DisturbanceField.EnsureGlobals();
             // ⚠ DISTANCE EROSION RANGE, registered here with the rest and defaulted to 0 = NO FADE. 0 is the safe
             // default and not an arbitrary one: an unregistered global reads 0, and the shader treats 0 as "do not
             // fade" rather than "fade to nothing immediately" -- which would have erased every blade at any

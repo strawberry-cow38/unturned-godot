@@ -10,6 +10,10 @@ render_mode cull_disabled, depth_prepass_alpha;
 
 global uniform vec2 ug_origin;   // WorldOrigin: the floating origin, so the gust pattern stays put through a rebase
 global uniform vec4 wind_vec;   // xy = direction, z = 0..1 strength, w = SWAY PHASE (integrated CPU-side: the gust rate rises with the wind, and a running clock scaled by a changing factor would jump)
+// ROTOR WASH AND EVERYTHING ELSE THAT SHOVES PLANTS (strawberry 2026-10-11). Until now this shader read only the
+// wind, which is why a helicopter could flatten a lawn and leave the hedge beside it perfectly still: the
+// displacement field was private to the grass shader. It is shared now -- same texture, same curve.
+#include "res://content/disturbance.gdshaderinc"
 
 uniform sampler2D albedo_tex : source_color, filter_linear_mipmap;
 uniform float alpha_scissor : hint_range(0.0, 1.0) = 0.4;
@@ -50,6 +54,18 @@ void vertex() {
                       cos(VERTEX.x * 2.9 + VERTEX.z * 3.3));
         world_off += j * (hit * h * SHAKE_AMP);
     }
+    // ⚠ A BRANCH BENDS, IT DOES NOT SQUASH. flat_mul is 0.18 rather than grass's 1.0: pressing a canopy down into
+    // its own trunk reads as the tree SHRINKING, not as wind hitting it. Almost all of a tree's response should be
+    // lateral, with just enough droop to stop the bend looking like a slide.
+    //
+    // ⚠⚠ THE WEIGHT IS LOCAL HEIGHT, NOT A UV. Grass weights by UV because a blade is a billboard hinging at the
+    // ground; a canopy's vertices carry no such convention, and `h` here is already the local height above the
+    // instance base that the wind sway itself uses. Reusing it keeps the trunk still and the crown moving, which
+    // is the same hinge in a different coordinate system.
+    //
+    // wp is this vertex in world space (built above for the gust phase) -- the field is world-space, and the
+    // result rotates back into local alongside the wind offset, so an instance's own Y rotation is respected.
+    world_off += disturb_offset(wp - vec3(ug_origin.x, 0.0, ug_origin.y), min(h, 1.0), 0.18);
     VERTEX += inverse(mat3(MODEL_MATRIX)) * world_off;
 }
 

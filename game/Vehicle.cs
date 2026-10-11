@@ -10376,7 +10376,26 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             if (_glassNodes.Count > 0) TickHub.Add(this, RainCoverTick, 2f);   // rain-on-glass cover poll (2 Hz, rays only while it rains)
             SetProcess(false); if (_water != WaterMode.Car) TickHub.AddProcess(this, HubProcess);   // PERF: boat-only wake tick, through the hub (3 boats x 500 fps of chain-walk was 15% of the bridge)
             base._Ready();
-            GrassDisplacers.Register(this, GrassDisplacers.VehicleRadius);   // master: a driven vehicle flattens grass in a wide swath under + around it
+            DisturbanceField.Register(this, DisturbanceField.VehicleRadius);   // master: a driven vehicle flattens grass in a wide swath under + around it
+            // ROTOR WASH (strawberry 2026-10-11: "add rotor wash for helis on foliage and trees"). A helicopter
+            // registers a SECOND, very different source: not the hull resting on the ground, but the column of
+            // air under the disc. It is placed on the GROUND beneath the aircraft rather than at the hub, scales
+            // with the rotor's own spool state, and reaches trees as well as grass because the field is shared.
+            //
+            // ⚠ Keyed on the ROTOR NODE, not on `this`, precisely because a heli needs BOTH: the hull still
+            // presses grass where it sits, and the wash blows a much wider ring. Registering both against the
+            // same node would silently replace one with the other (Register is idempotent per node).
+            if (_heli && _rotorNode != null)
+                DisturbanceField.Register(_rotorNode,
+                    Mathf.Max(3f, _rotorRadius) * DisturbanceField.WashRadiusPerBlade,
+                    DisturbanceField.Kind.Wash,
+                    // ⚠ A LAMBDA, not a value: spool changes every frame and a captured float would freeze the
+                    // wash at whatever it was the instant the heli spawned (see feedback on constructor capture).
+                    // Squared so a spooling-up rotor's wash arrives late and hard rather than fading in linearly.
+                    intensity: () => { float k = RotorSpool; return k * k * (_exploded ? 0f : 1f); },
+                    // The wash acts on the GROUND, not at hub height. Dropping the source by the rotor's height
+                    // above the hull puts it roughly at the skids, and the field's vertical gate does the rest.
+                    groundDrop: 2.2f);
             if (_decomposeMesh == null || ForceBoxHull) return;
             if (!_decomposeCache.TryGetValue(_decomposeKey, out var shapes) && (shapes = LoadBakedHulls(_decomposeKey)) != null)
                 _decomposeCache[_decomposeKey] = shapes;   // BAKED (shipped in content/vehicle_hulls or the machine's user:// cache): no VHACD on load
