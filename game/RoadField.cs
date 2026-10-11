@@ -595,6 +595,11 @@ namespace UnturnedGodot
         /// the collider are built from, so anything placed at this offset lands exactly at the asphalt's edge.
         /// Exposed for EditorFenceRoad, which puts a guardrail a fixed clearance outside it: the alternative is
         /// a magic constant in the tool that silently stops matching the day a road material's width changes.</summary>
+        /// <summary>The same half-width for a MATERIAL rather than a placed road -- a generator picking a
+        /// material needs to know how wide it will be before it has a road to ask about.</summary>
+        public float RoadHalfWidthOfMaterial(int material) =>
+            material >= 0 && material < _mats.Count ? _mats[material].Width * WidthScale : 0f;
+
         public float RoadHalfWidth(int road) =>
             road >= 0 && road < _roads.Count && _roads[road].Material < _mats.Count
                 ? _mats[_roads[road].Material].Width * WidthScale

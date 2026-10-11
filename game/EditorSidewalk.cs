@@ -36,9 +36,6 @@ namespace UnturnedGodot
 
         public enum Side { Left, Right, Both }
 
-        /// <summary>Where the pavement stands highest above the real ground, and by how much. The harness aims
-        /// its camera here: a fix for floating geometry has to be photographed where it floated, and the first
-        /// re-render after this fix looked unchanged purely because the camera sat on a flat stretch.</summary>
         /// <summary>The fixed-depth control, as a FIELD rather than a bare env read, so a single process can
         /// render both treatments over ONE road layout. ⚠ It has to be: this harness's roads are not reproduced
         /// between launches (measured -- the road checksum moves while the ground checksum does not), so a
@@ -55,6 +52,9 @@ namespace UnturnedGodot
         /// edge (where the daylight is) rather than at its centreline.</summary>
         public static float DemoWidth = 2f;
 
+        /// <summary>Where the pavement stands highest above the real ground, and by how much. The harness aims
+        /// its camera here: a fix for floating geometry has to be photographed where it floated, and the first
+        /// re-render after this fix looked unchanged purely because the camera sat on a flat stretch.</summary>
         public static float WorstFloat; public static Vector3 WorstAt;
 
         /// <summary>Metres between evaluated points. Short enough that a bend reads as a curve rather than a
@@ -123,20 +123,28 @@ namespace UnturnedGodot
         /// <summary>Lay pavement along an existing road, which is the "attach to any road surface" half.
         /// ⚠ EACH SIDE IS EVALUATED SEPARATELY, never one centreline offset twice: the two edges of a bend are
         /// different lengths, and reusing one list crowds the inside kerb. Block_Road learned this the same way.</summary>
-        public int LayAlongRoad(Node parent, RoadField roads, int road, Side side, List<Node3D> into = null)
+        public int LayAlongRoad(Node parent, RoadField roads, int road, Side side, List<Node3D> into = null,
+                                float trimStart = 0f, float trimEnd = 0f)
         {
             if (parent == null || roads == null) return 0;
             float total = roads.RoadLength(road);
             float half = roads.RoadHalfWidth(road);
             if (total < Step * 2f || half <= 0f) return 0;
             float off = Mathf.Max(0.1f, half + RoadGap);
+            // ⚠ THE TRIM EXISTS FOR JUNCTIONS. Four ribbons running to the ends of four roads that meet at one
+            // crossroads all arrive in the middle of the intersection and intersect each other. Held back by
+            // the widest road meeting that end plus a corner radius, they stop at the kerb line instead -- and
+            // the gap left behind IS the corner. A span shorter than the two trims is all intersection and
+            // gets no pavement at all, which is correct: there is no pavement there to walk on.
+            float from = Mathf.Max(0f, trimStart), to = total - Mathf.Max(0f, trimEnd);
+            if (to - from < Step * 2f) return 0;
 
-            int n = Mathf.FloorToInt(total / Step);
+            int n = Mathf.FloorToInt((to - from) / Step);
             var leftP = new List<Vector3>(n + 1); var leftO = new List<Vector3>(n + 1);
             var rightP = new List<Vector3>(n + 1); var rightO = new List<Vector3>(n + 1);
             for (int i = 0; i <= n; i++)
             {
-                if (!roads.EvaluateAlong(road, i * Step, out var p, out var t)) return 0;
+                if (!roads.EvaluateAlong(road, from + i * Step, out var p, out var t)) return 0;
                 var r = new Vector3(t.Z, 0f, -t.X).Normalized();   // the spline's RIGHT, same convention as Block_Road
                 rightP.Add(p + r * off); rightO.Add(r);            // kerb faces the road, surface runs outward
                 leftP.Add(p - r * off); leftO.Add(-r);
@@ -145,7 +153,8 @@ namespace UnturnedGodot
             int made = 0;
             if (side != Side.Left) made += Emit(parent, rightP, rightO, $"Sidewalk_R{road}", into);
             if (side != Side.Right) made += Emit(parent, leftP, leftO, $"Sidewalk_L{road}", into);
-            Log.Print($"[sidewalk] road {road}: {made} ribbon(s) over {total:0.#} m, {Width:0.00} m wide, kerb {KerbHeight:0.00} m");
+            Log.Print($"[sidewalk] road {road}: {made} ribbon(s) over {to - from:0.#} m of {total:0.#}"
+                    + $" (trim {from:0.#}/{total - to:0.#}), {Width:0.00} m wide, kerb {KerbHeight:0.00} m");
             return made;
         }
 
