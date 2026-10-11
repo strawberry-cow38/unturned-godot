@@ -526,7 +526,7 @@ namespace UnturnedGodot
             // GRASS DISPLACEMENT (master): a dropped item resting in grass presses a small dimple. Only the VISIBLE
             // copy enlists -- a --spconsume-suppressed node hands that off to its WorldItemReplicaView puppet, so the
             // same item isn't counted twice at one spot.
-            if (!_suppressed) GrassDisplacers.Register(this, GrassDisplacers.ItemRadius);
+            if (!_suppressed) DisturbanceField.Register(this, DisturbanceField.ItemRadius);
             // Off the engine's per-node callback and onto the hub (see the _live block below). Last, so nothing
             // above can be skipped by an early return, and _tickReady is only set once _Ready has fully built the
             // state the body reads.

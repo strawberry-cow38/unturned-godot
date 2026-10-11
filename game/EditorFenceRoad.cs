@@ -574,22 +574,7 @@ namespace UnturnedGodot
         /// silently produces a polyline, which looks like the curve maths is wrong when nothing was computed at
         /// all. The handle is the Catmull-Rom tangent, (next - prev) / 6.</summary>
         static Curve3D BuildCurve(IReadOnlyList<Vector3> pts, bool smooth = true)
-        {
-            var c = new Curve3D();
-            for (int i = 0; i < pts.Count; i++)
-            {
-                Vector3 inH = Vector3.Zero, outH = Vector3.Zero;
-                if (smooth && pts.Count > 2)
-                {
-                    var prev = pts[Mathf.Max(i - 1, 0)];
-                    var next = pts[Mathf.Min(i + 1, pts.Count - 1)];
-                    var t = (next - prev) / 6f;
-                    inH = -t; outH = t;
-                }
-                c.AddPoint(pts[i], inH, outH);
-            }
-            return c;
-        }
+            => SplineTiling.CurveThrough(pts, smooth);   // shared with the block-barrier tool
 
         /// <summary>Stand the prop up, turn it along the run, and lie it on the slope.
         ///
@@ -610,15 +595,9 @@ namespace UnturnedGodot
 
         static Basis SeatedBasis(Terrain terr, Vector3 at, float yawDeg)
         {
-            var stand = EditorObjects.FromEuler(270f, yawDeg, 0f);
-            if (terr == null) return stand;
-            var nrm = terr.NormalAt(at.X, at.Z);
-            var axis = Vector3.Up.Cross(nrm);
-            if (axis.LengthSquared() < 1e-8f) return stand;
-            float raw = Vector3.Up.AngleTo(nrm);
-            float tilt = Mathf.Min(raw, Mathf.DegToRad(MaxSeatTiltDeg));
-            DebugRawTiltMax = Mathf.Max(DebugRawTiltMax, Mathf.RadToDeg(raw));
-            return new Basis(axis.Normalized(), tilt) * stand;
+            var b = SplineTiling.SeatedBasis(terr, at, yawDeg, MaxSeatTiltDeg, out float raw);
+            DebugRawTiltMax = Mathf.Max(DebugRawTiltMax, raw);
+            return b;
         }
 
         bool RaycastTerrain(Vector2 screen, out Vector3 point)

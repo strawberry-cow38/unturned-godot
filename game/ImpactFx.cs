@@ -52,7 +52,12 @@ namespace UnturnedGodot
             // The rip ships impact sprites for concrete/flesh/foliage/gravel/metal/water/wood and no more, so
             // loose ground takes the gravel chips and everything hard takes concrete. Snow and ice have no
             // debris sprite at all -- flagged rather than dressed up: they throw grey chips until one exists.
-            Surf.Gravel => "gravel", Surf.Rock => "concrete", Surf.Snow => "concrete", Surf.Ice => "concrete",
+            // ⭐ SNOW TAKES THE CHIP SHEET AND IS TINTED WHITE (strawberry 2026-10-10: "add snowfall plus the
+            // snow impact fx"). Still no snow sprite in the rip, but grey concrete chips were the wrong
+            // SHAPE as well as the wrong colour -- the gravel sheet is loose granular debris, which is what
+            // kicked-up snow actually looks like, and the tint below finishes it. Ice keeps concrete: it
+            // shatters in hard shards, which is what that sprite already is.
+            Surf.Gravel => "gravel", Surf.Rock => "concrete", Surf.Snow => "gravel", Surf.Ice => "concrete",
             _ => "concrete",
         };
         static ImageTexture DebrisTex(Surf s)
@@ -105,6 +110,10 @@ namespace UnturnedGodot
                 CullMode = BaseMaterial3D.CullModeEnum.Disabled,
             };
             if (itex != null) mat.AlbedoTexture = itex;
+            // ⚠ A MATERIAL TINT, not VertexColorUseAsAlbedo -- the note above records that vertex colours are
+            // fragile on these emitters. AlbedoColor multiplies the sprite, which is all this needs.
+            bool snowy = surf == Surf.Snow;
+            if (snowy) mat.AlbedoColor = new Color(0.96f, 0.975f, 1f);
             if (sheet) { mat.ParticlesAnimHFrames = 4; mat.ParticlesAnimVFrames = 1; mat.ParticlesAnimLoop = true; }   // LOOP (not clamp): a chip's anim value can drift past the last frame -> with Loop=false it clamped onto the blank past-the-end frame instead of a chip
 
             // GPU, via ParticleFx.Emitter -- CpuParticles3D simulated this cone on the MAIN THREAD for a
@@ -114,8 +123,10 @@ namespace UnturnedGodot
                 Emitting = false, OneShot = true, Explosiveness = 1f,   // fired below AFTER AddChild+position. Set true here, the one-shot arms at construction; spawned inside a 50Hz physics tick the cycle can burn before the first _process -> fires empty -> no chips (decal still lands).
                 Amount = ParticleFx.Amount(metal ? 28 : 20), Lifetime = 1.0f,   // a DENSE cone (master wants a visible cone of chips, not a brief flash)
                 Direction = up, Spread = 50f,   // cone spraying off the surface, back toward the shooter
-                InitialVelocityMin = metal ? 5f : 3f, InitialVelocityMax = metal ? 9f : 6f,
-                Gravity = new Vector3(0f, -9.8f, 0f),
+                // Snow throws SOFTER and SLOWER than chips of stone, and hangs a moment before it drops.
+                InitialVelocityMin = metal ? 5f : snowy ? 1.6f : 3f,
+                InitialVelocityMax = metal ? 9f : snowy ? 3.4f : 6f,
+                Gravity = new Vector3(0f, snowy ? -4.2f : -9.8f, 0f),
                 ScaleAmountMin = (metal ? 0.3f : 0.5f) * ParticleFx.SizeScale, ScaleAmountMax = (metal ? 0.6f : 1.0f) * ParticleFx.SizeScale,   // reasonable chip size (bigger than source 0.25-0.5m for a readable cone, not huge)
                 Mesh = new QuadMesh { Size = Vector2.One, Material = mat },
                 VisibilityAabb = Guard,   // fast chips would otherwise be frustum-culled (no auto-AABB) -- a GPU emitter has the SAME auto-AABB behaviour, so this is still load-bearing

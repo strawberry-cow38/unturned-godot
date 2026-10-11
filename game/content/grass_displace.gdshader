@@ -16,18 +16,13 @@
 shader_type spatial;
 render_mode world_vertex_coords, cull_disabled, depth_prepass_alpha, diffuse_lambert, specular_disabled;
 
-// Set by PlayerController via RenderingServer.GlobalShaderParameterSet. xyz = the point, w unused (matches retail's
-// Vector4, whose w is likewise 0).
-global uniform vec4 grass_displacement_point;
 // FOLIAGE WIND (master 2026-08-24): set per-frame by PlayerController from WindField. xy = wind direction, z = 0..1 strength.
 global uniform vec4 wind_vec;
 global uniform vec2 ug_origin;   // WorldOrigin: the gust phase is a WORLD pattern; the displacers above stay local
-// EXTENDED DISPLACERS (master 2026-08-24: vehicles, dropped items, remote players -- BEYOND retail's local-player-only
-// point above). PlayerController packs the nearest few into this data texture: one texel each, xyz = world point,
-// w = footprint radius in metres (w <= 0 = an empty slot). grass_displacer_count = how many are live this frame, so
-// the per-blade loop only touches active slots. texelFetch (not texture()) so the packed floats read back exact.
-global uniform sampler2D grass_displacers : filter_nearest;
-global uniform int grass_displacer_count;
+// EVERY SOURCE comes from the shared DISTURBANCE FIELD now -- including the local player, who used to be a
+// special-cased global point of his own. One field, one curve, read by this shader and by wind_sway (so a
+// helicopter's downwash reaches the trees as well as the lawn). See disturbance.gdshaderinc.
+#include "res://content/disturbance.gdshaderinc"
 
 uniform sampler2D albedo_tex : source_color, filter_linear_mipmap;
 // ⭐⭐ DISTANCE EROSION -- why the grass no longer pops in 96 m squares.
@@ -53,55 +48,18 @@ uniform sampler2D albedo_tex : source_color, filter_linear_mipmap;
 #include "res://content/foliage_fade.gdshaderinc"
 
 uniform float alpha_scissor : hint_range(0.0, 1.0) = 0.4;
-uniform float radius : hint_range(0.1, 8.0) = 3.3;        // how far out blades feel you (master: slightly bigger; matches GrassDisplacers.PlayerWakeRadius so the wake trail is the same width)
-uniform float strength : hint_range(0.0, 5.0) = 1.4;     // how far the tip is pushed aside, in metres
-uniform float vertical_reach : hint_range(0.1, 8.0) = 3.5; // ...and how far up/down, so a roof overhead flattens nothing
-
-// One displacer's offset on this blade: bend the tip away in XZ + press it down, scaled by INFLUENCE (radial +
-// vertical falloff, squared for a soft edge) and the HEIGHT WEIGHT h (base fixed, tip bends most -- a blade hinging
-// at the ground). Factored out so retail's player point and every extended displacer share ONE curve, each sizing
-// its own footprint (pradius) / push (pstrength) / vertical gate (pvert) / flatten (downf).
-vec3 grass_push(vec3 v, float uvy, vec3 point, float pradius, float pstrength, float pvert, float downf) {
-	vec2 away = v.xz - point.xz;
-	float dist = length(away);
-	float infl = clamp(1.0 - dist / pradius, 0.0, 1.0);
-	// Gate vertically too: the point is a position, not a capsule, so this is what stops a car on a bridge (or a
-	// player on a roof) from mowing the lawn underneath.
-	infl *= clamp(1.0 - abs(v.y - point.y) / pvert, 0.0, 1.0);
-	infl *= infl;   // ease in, so the radius edge is a soft boundary, not a visible circle in the grass
-	// HEIGHT WEIGHT. ObjMesh.Load V-flips UVs on import (Unity V-up -> Godot V-down) and grass_00.obj has v=1 at the
-	// blade TOP, so in Godot uvy = 0 is the top. Weighting the wrong end anchors the tips + swings the roots.
-	float h = 1.0 - uvy;
-	h *= h;
-	float push = infl * h * pstrength;
-	if (dist < 0.0001) return vec3(0.0);
-	vec3 o = vec3(0.0);
-	o.xz = (away / dist) * push;   // bent aside...
-	o.y = -push * downf;           // ...and pressed down -- a bent blade is shorter
-	return o;
-}
 
 void vertex() {
 	// world_vertex_coords: VERTEX arrives in WORLD space, so pushes compute directly. UV is a vertex attribute,
 	// unaffected by that mode, so the height weight stays available. Accumulate every displacer's offset from the
 	// REST position (each measured against the unmodified VERTEX, so they add rather than compound), apply once.
-	vec3 off = vec3(0.0);
-	// LOCAL PLAYER -- retail's single point at (x, y+0.5, z); radius/strength/vertical_reach + the 0.35 flatten
-	// exactly as before, so this path is behaviourally unchanged.
-	off += grass_push(VERTEX, UV.y, grass_displacement_point.xyz, radius, strength, vertical_reach, 1.4);   // strong flatten -- mats the grass DOWN so the trampled patch is unmistakable, not a subtle sideways shuffle
-	// EXTENDED DISPLACERS (master): vehicles, dropped items, remote players. Each texel's w is its footprint radius;
-	// strength / vertical gate / flatten scale UP with radius, so a truck presses a wide hard swath while a dropped
-	// can only dimples. The loop is bounded by the live count, so quiet frames cost nothing.
-	for (int i = 0; i < grass_displacer_count; i++) {
-		vec4 d = texelFetch(grass_displacers, ivec2(i, 0), 0);
-		float pr = d.w;
-		if (pr <= 0.0) continue;
-		float ps = clamp(pr * 0.5, 0.6, 2.4);         // bigger footprint -> stronger bend
-		float pv = max(pr, 3.0);                        // ...reaches higher up/down
-		float pd = clamp(1.0 + pr * 0.2, 1.0, 2.2);    // ...and flattens HARD (a car mats the grass flat, not just parts it)
-		off += grass_push(VERTEX, UV.y, d.xyz, pr, ps, pv, pd);
-	}
-	VERTEX += off;
+	// HEIGHT WEIGHT. ObjMesh.Load V-flips UVs on import (Unity V-up -> Godot V-down) and grass_00.obj has v=1 at
+	// the blade TOP, so in Godot uvy = 0 is the top. Weighting the wrong end anchors the tips and swings the roots.
+	float h = 1.0 - UV.y;
+	h *= h;
+	// Grass takes the FULL flatten: the hard-won lesson from three rounds of this is that dense short billboards
+	// shuffling sideways is invisible, so the down-press has to dominate or the trampled patch cannot be seen.
+	VERTEX += disturb_offset(VERTEX, h, 1.0);
 	// WIND SWAY (master 2026-08-24): bend the tips in the wind direction with a gust wave crawling over the map.
 	float wh = 1.0 - UV.y;   // 1 at the tip, 0 at the root (same weight as the player push)
 	float gust = sin(wind_vec.w * 1.5 + (VERTEX.x + ug_origin.x) * 0.25 + (VERTEX.z + ug_origin.y) * 0.2);

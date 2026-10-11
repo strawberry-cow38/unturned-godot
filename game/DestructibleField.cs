@@ -110,6 +110,8 @@ namespace UnturnedGodot
         public static readonly System.Collections.Generic.Dictionary<string, (ushort Item, byte Min, byte Max)> Drops = new()
         {
             ["bc4b9a034fe04c669285becc489d01a0"] = (41, 0, 2),   // Power_Line_0  -> 0-2 Pine Log
+            // The transformer variant is the same pole with hardware bolted on, so it leaves the same timber.
+            ["97c42484eae24952b149462387a2ec27"] = (41, 0, 2),   // Power_Line_0_Transformer -> 0-2 Pine Log
             ["40921a1a3cd742f69cc25cc25b856572"] = (63, 0, 2),   // Fence_Wood_0  -> 0-2 Pine Plank
             ["6123b0bb5c3a409bb38ad2c2abab8dbb"] = (63, 0, 2),   // Fence_Wood_1
             ["113bcf43c0f0470b8fe47217bbbe55ad"] = (63, 0, 2),   // Fence_Wood_Broken_0

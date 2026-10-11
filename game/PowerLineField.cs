@@ -122,6 +122,8 @@ namespace UnturnedGodot
         /// the same code path leaves poles continuous and only pylons get the gap.</summary>
         static readonly float[] PylonAnchorSplit = { 1.178f, 1.131f, 1.139f, 1.139f, 1.131f, 1.178f };
 
+        /// <summary>⚠ Anything that is NOT the pylon falls through to the roadside pole's four anchors, which
+        /// is correct for the transformer variant precisely because its pole half is unmodified.</summary>
         public static Vector3[] AnchorsFor(string mesh) => mesh == PylonMesh ? PylonAnchorsLocal : AnchorsLocal;
 
         /// <summary>How far along the line conductor `k` of this mesh is offset from the tower's centre. 0 for
@@ -344,7 +346,13 @@ namespace UnturnedGodot
         /// wires"). The showcase authored them, this seed ran a moment later, PickPole could not find them, and
         /// the spans were dropped into an `out _`. Same TWO PATHS, ONE FEATURE drift as the saved-wires bug
         /// documented directly above its own call site. Add a third pole mesh HERE and every seed learns it.</summary>
-        public static readonly string[] PoleMeshes = { PoleMesh, PylonMesh };
+        /// <summary>The pole-with-a-transformer variant (astraclaw, 2026-10-10). ⭐ It carries the SAME four
+        /// anchors as the plain pole and needs no entry in AnchorsFor: verified, not assumed -- its OBJ
+        /// contains Power_Line_0's vertex list as an exact byte PREFIX, and that reference file is itself
+        /// md5-identical to the one we ship. The transformer is appended geometry; nothing moved.</summary>
+        public const string TransformerMesh = "Power_Line_0_Transformer";
+
+        public static readonly string[] PoleMeshes = { PoleMesh, PylonMesh, TransformerMesh };
 
         /// <summary>Every pole the field should hold: the ones the MAP shipped with, plus every pole-or-pylon
         /// object placed in the editor, each tagged with the mesh that decides its anchors.</summary>

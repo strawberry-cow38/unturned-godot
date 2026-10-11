@@ -9,6 +9,10 @@ namespace UnturnedGodot
     {
         float _engineForce = 600f;                  // acceleration feel (calibrated: Unity WheelCollider torque doesn't map 1:1)
         float _steerMax = 28f, _steerMin = 14f;      // Steer_Max (at rest) .. Steer_Min (at full speed), degrees -- source .dat
+        /// <summary>A floor under the rollover-derived steering cap, in degrees. Without it the cap tends to
+        /// zero as speed rises and the car becomes unsteerable at top speed -- which is not "spins out", it is
+        /// "does not turn". 2 deg still curves a fast car; it just cannot snap it over.</summary>
+        const float SteerFloorDeg = 2.0f;
         float _speedMax = 12.5f, _speedMin = -7f;    // Speed_Max fwd / Speed_Min reverse, m/s -- source .dat (directly usable)
         float _brakeForce = 32f;                     // Brake -- source .dat value
         float _steerTarget, _steerAngle, _steerTurnSpeed = 70f;   // steering smoothing: MoveTowards target at deg/s. LOWERED for a weighty/laggy feel -- the wheels float behind the input, slow to turn AND slow to re-center (master)
@@ -115,6 +119,70 @@ namespace UnturnedGodot
         const float RollSsfFloor = 1.0f;
         /// <summary>Test seam: this hull's measured static rollover threshold, in g (0 if not a wheeled hull).</summary>
         public float RolloverThresholdForTest;
+
+        // ---- SLIDE, DO NOT FLIP (strawberry 2026-10-11: "rework handling to not flip you on sharp turns,
+        // rather spin you out horizontally") ------------------------------------------------------------------
+        //
+        // ⭐ THE MECHANISM, because the obvious one is wrong and the file already says so. A previous pass
+        // capped grip by the rollover threshold and was reverted: "it changed handling on the roadster, sedan
+        // and van, whose feel was signed off ... and it did not fix the quad anyway, because grip was never the
+        // mechanism." Both halves of that objection are now resolved rather than ignored:
+        //   * the quad is fixed SEPARATELY, by the RollSsfFloor CoM drop above, and is not what this is for;
+        //   * master is now ASKING for the feel to change, in the one situation this engages in.
+        //
+        // The physics: a hull's static rollover threshold is half-track over CoM height, in gravities -- 1.37
+        // to 1.41 across the fleet. MEASURED in this file, a car at 14 deg of lock at 15 m/s "asks for a 2 g
+        // corner and the tyres took it". Cornering force exceeds the tipping threshold, so the inside wheels
+        // leave the ground and the car goes over. That is the whole bug, and it is why reducing WheelFrictionSlip
+        // barely helped: 6.0 -> 1.5 moved cornering only 2.08 g -> 1.39 g, still at the limit.
+        //
+        // So the tyres are given an explicit ceiling at the hull's OWN tipping point. Demand more lateral
+        // acceleration than the car can physically survive and the tyres let go instead -- which is a slide.
+        // ⚠ INERT BELOW THE THRESHOLD: ordinary cornering never reaches 1.4 g, so this changes nothing about
+        // the handling that was signed off. It exists only in the corner that used to end on the roof.
+        /// <summary>Fraction of its rollover threshold a hull is allowed to pull before the tyres start giving
+        /// up grip. Below 1 so the slide begins slightly BEFORE the inside wheels unload -- at exactly 1.0 the
+        /// car would be balanced on the edge of tipping every time, which is where it gets flicked over by a
+        /// bump rather than sliding predictably.</summary>
+        const float RollSlideSafety = 0.82f;
+        /// <summary>...and the tyres start letting go a bit BEFORE that, so the limit is reached as a SLIDE and
+        /// not as a wall. ⭐ This gap is the whole difference between master's two outcomes: with the grip bleed
+        /// at the same threshold as the steer cap, the car simply corners wide and nothing ever breaks away --
+        /// it does not flip, but it does not spin either. Bleeding first, and rear-biased, is what makes the
+        /// back step out when you ask for the most the hull can give.</summary>
+        const float RollGripSafety = 0.62f;
+        /// <summary>How much grip is left at the floor of the bleed. Not 0: a car with no lateral grip at all
+        /// does not spin, it translates sideways like it is on ice, which is not what was asked for.</summary>
+        const float RollSlideFloor = 0.35f;
+        /// <summary>⭐ WHY IT SPINS RATHER THAN PLOUGHS. The front tyres keep more of their grip than the rear,
+        /// so the BACK breaks away first -- that is oversteer, and oversteer is what "spin you out
+        /// horizontally" means. Giving up grip evenly would understeer instead: the car would wash wide, nose
+        /// first, still pointing where it was going.</summary>
+        const float RollSlideFrontKeep = 0.55f;
+        /// <summary>Torque per unit of roll RATE per kg, applied about the hull's own nose once it is cornering
+        /// past its tipping point. This is the part that actually keeps the car down -- the grip bleed above
+        /// decides how it slides, this decides that it slides instead of rolling.</summary>
+        const float RollDampTorque = 2.6f;
+        /// <summary>...and a righting term per kg scaled by how far it has already tipped, so a car up on two
+        /// wheels comes back down instead of merely being stopped from going further over.</summary>
+        const float RollRightTorque = 9f;
+        float _rollGrip = 1f;
+        static int _rollSlideEnv = -1;
+        /// <summary>UG_ROLLSLIDE=0 disables the anti-flip bleed. Exists so a test can run the SAME manoeuvre
+        /// with it off: "the car no longer flips" is worth nothing unless the control shows it used to.</summary>
+        public static bool RollSlideEnabled
+        {
+            get
+            {
+                if (_rollSlideEnv < 0) _rollSlideEnv = System.Environment.GetEnvironmentVariable("UG_ROLLSLIDE") == "0" ? 0 : 1;
+                return _rollSlideEnv == 1;
+            }
+            set { _rollSlideEnv = value ? 1 : 0; }
+        }
+        /// <summary>Lateral acceleration the hull is currently pulling, in gravities. Test/HUD seam.</summary>
+        public float LateralG { get; private set; }
+        /// <summary>Grip multiplier the anti-flip bleed is applying, 1 = untouched. Test seam.</summary>
+        public float RollSlideGrip => _rollGrip;
         const float TankTrackDiff = 0.3f;   // TANK: how much steer biases the two tracks' SPEED (both still drive -- fully stopping a track halves the power = crawl, master). The yaw torque does the turning; this is just feel. Tunable.
         static float MaxLatAccel => float.TryParse(System.Environment.GetEnvironmentVariable("UG_LATG"), out var _g) ? _g * 9.8f : 8.3f;   // ~0.85 g of cornering a car may ASK for; the steer angle is capped to it
         const float MinSteerDeg = 3.5f;   // never fade lock away entirely, however fast it is going
@@ -1084,19 +1152,33 @@ namespace UnturnedGodot
         const float TorqueFallLo = 1.25f;    // quadratic falloff BELOW the peak (gentle)
         const float TorqueFallHi = 1.875f;   // ...and ABOVE it (steeper -- holding a gear past peak costs you)
         const float TorqueFloor  = 0.35f;    // an engine still pulls off-peak; it does not stop
-        // UG_BUFF overrides this so the scale-invariance ACCEPTANCE TEST can drive the rescale from
-        // outside the build. A constant nobody can vary is a constant nobody can prove scale-invariant --
-        // and measured 2026-08-28, the drivetrain suite only passes in a narrow band around 2.0: the tank's
-        // coastdown climbs 3.84 / 4.39 / 4.64 across buff 1.3 / 2.0 / 2.5 against a fixed 4.0 limit, while
-        // at 1.3 the jeep instead fails "top speed clears the old hard cap". Two absolute thresholds
-        // failing in OPPOSITE directions. Vary this to see it.
+        // UG_BUFF overrides this so the scale-invariance ACCEPTANCE TEST can drive the rescale from outside
+        // the build. A constant nobody can vary is a constant nobody can prove scale-invariant.
+        //
+        // ⚠ THIS NOTE USED TO SAY the suite "only passes in a narrow band around 2.0", and that is NO LONGER
+        // TRUE -- it described the state before 2026-08-28, when the two offending thresholds were both
+        // rewritten to be buff-independent on the same day. Leaving it standing would have told the next
+        // person raising this number that they were about to break the suite, which is why it is corrected
+        // here rather than deleted: the coastdown check moved to a speed-band metric with a 7.0 limit
+        // (worst case, the tank, measured 5.51/5.79/5.94 across buff 1.3/2.0/2.5), and the "clears the old
+        // hard cap" check moved from a buff-dependent 1.25x to 1.05x with the equilibrium check carrying the
+        // strength at high buff. Both now hold across the whole measured range.
         static readonly float TopSpeedBuff = ParseBuff();
         static float ParseBuff()
         {
             var e = System.Environment.GetEnvironmentVariable("UG_BUFF");
             return (e != null && float.TryParse(e, System.Globalization.NumberStyles.Float,
-                    System.Globalization.CultureInfo.InvariantCulture, out var f) && f > 0f) ? f : 2.0f;
-        }     // strawberry: "a big thing is buffing top speeds", then 2026-08-24 "increase the cap for vehicle top speeds across the board" -- 1.6 -> 2.0
+                    System.Globalization.CultureInfo.InvariantCulture, out var f) && f > 0f) ? f : 2.5f;
+        }     // strawberry: "a big thing is buffing top speeds", 2026-08-24 "increase the cap for vehicle top
+              // speeds across the board" (1.6 -> 2.0), then 2026-10-10 "also buff every vehicle's top speed"
+              // (2.0 -> 2.5). 2.5 is the top of the range the drivetrain suite has actually been MEASURED
+              // across, not a guess at where it stops working -- going higher is fine by the thresholds but
+              // nobody has run it, so it should be measured rather than assumed.
+              //
+              // ⚠ This raises on-road top speed ~25%. OFF-ROAD speed moves the other way in the same change,
+              // because RollDragFor now makes grass and sand genuinely slow -- so a car is faster than before
+              // on tarmac and slower than before across a field. That is the point, but it means "top speed"
+              // is no longer one number per hull.
         const float GearStep     = 1.35f;    // rpm drop per shift -> the gear COUNT falls out of the spread
         // FIRST-GEAR PEAK FORCE vs the old flat force. Raised 1.5 -> 4.0 alongside the top-speed cap
         // (strawberry 2026-08-24: "rebalance gears and engine power to fit"), and it is the ACCELERATION knob
@@ -1173,11 +1255,86 @@ namespace UnturnedGodot
         /// which is how tyres actually differ -- an all-terrain is marginally better on gravel and the
         /// difference between stuck and not on sand.</summary>
         public const float OffRoadRecovery = 0.65f;
+        // ---- ROLLING DRAG BY SURFACE -- the OTHER half of "handling on different surfaces", and the half that
+        // was missing (strawberry 2026-10-10: "wire up different vehicle handling on different surfaces, ie
+        // offroad (grass), offroad (dirt, better than grass), onroad, on rails").
+        //
+        // Grip (above) was already wired and already correct: it sets how hard you can accelerate, brake and
+        // CORNER. But grip does nothing to a car going in a straight line below its traction limit, so a car
+        // crossing a meadow reached exactly the same top speed as one on the motorway -- which is the thing a
+        // player actually notices and the reason this read as "not wired" from the driver's seat.
+        //
+        // Rolling resistance is what differs. These are the real Crr ratios for a pneumatic tyre, normalised to
+        // asphalt (Crr ~0.015 = RollingCrr above): hardpack dirt ~0.025, short grass/field ~0.055, loose sand
+        // ~0.16, fresh snow ~0.035, gravel ~0.022. Measured values for real tyres, like the grip table -- the
+        // design choice is OffRoadRecovery, not these.
+        //
+        // ⚠⚠ ROLLING RESISTANCE ALONE IS NOT ENOUGH, and this is MEASURED, not reasoned. Scaling only _rollK
+        // moved a sedan's top speed from 36.9 m/s on road to 36.5 on dirt and 36.7 on RAILS -- a 1% spread with
+        // the ordering inverted, i.e. nothing. The cause is not the table: at 37 m/s the rolling term is ~7% of
+        // total resistance because aero (v^2) dominates, so tripling 7% buys ~2%. The first version of the
+        // surface test caught exactly this and refused to pass, which is the only reason it is not shipped.
+        //
+        // The honest fix is that ROUGH GROUND COSTS MORE THE FASTER YOU CROSS IT. Crossing a field at 40 m/s
+        // does not merely roll harder than at 5 -- every bump becomes an impact the suspension has to eat, and
+        // those losses grow with speed, which is why real off-road speed is limited by roughness and not by Crr.
+        // So the surface scales a SPEED-DEPENDENT term as well (see RoughGain), and the same per-surface number
+        // drives both halves: one table, so the two can never disagree about which ground is worse.
+        //
+        // _dragK itself stays pure aero and is still solved at BUILD time so equilibrium lands at _speedMax, and
+        // road stays 1.0 in both halves -- so nothing on tarmac changes by construction.
+        public const float RollRoad = 1.0f, RollDirt = 1.7f, RollGrass = 3.7f, RollSand = 10.5f;
+        // A railway is FIRM BUT RIBBED: a sleeper every 0.6 m is a continuous series of small impacts, which
+        // costs far more than its compacted ballast alone would suggest. Placed between dirt and grass, so the
+        // ordering is road < dirt < rails < grass < sand: a track bed is a usable ROUTE -- better than striking
+        // out across a field, worse than any road -- which is what a railway is to a driver. Paired with a grip
+        // near tarmac's, that makes rails handle unlike anything else in the table rather than being a reskin
+        // of gravel: it holds the line well and simply will not let you go fast.
+        public const float RollRails = 2.6f;
+        /// <summary>How much of the surface's resistance figure applies as ROUGHNESS -- a loss that grows with
+        /// v^2, like aero, because it is impacts rather than friction. 0.37 is a tuning constant and the only
+        /// invented number here: it is set so grass roughly doubles a car's speed-squared resistance, which puts
+        /// a sedan across a field at about 70% of its road top speed. The ORDERING is not tuned -- it comes from
+        /// the same RollDragFor table as the rolling term.</summary>
+        public const float RoughGain = 0.37f;
+        /// <summary>Rolling-drag multiplier for a surface AND a set of tyres, 1.0 on road. Static and pure for
+        /// the same reason GripFor is: a test can assert the table without standing a vehicle on terrain.
+        ///
+        /// Knobby tyres take back the SAME FRACTION of the loose-ground penalty they take back of the grip loss
+        /// (OffRoadRecovery), because it is the same physical story -- a tread that floats on soft ground both
+        /// holds better and sinks less. Sharing the constant keeps the two halves from drifting apart.</summary>
+        public static float RollDragFor(PlayerController.Surf surf, bool offRoad)
+        {
+            float k = surf switch
+            {
+                PlayerController.Surf.Dirt => RollDirt,
+                PlayerController.Surf.Grass => RollGrass,
+                PlayerController.Surf.Sand => RollSand,
+                PlayerController.Surf.Gravel => 1.45f,
+                PlayerController.Surf.Snow => 2.3f,
+                PlayerController.Surf.Rails => RollRails,
+                PlayerController.Surf.Rock => RollRoad,    // hard ground, same as tarmac (it matches GripFor)
+                PlayerController.Surf.Ice => RollRoad,     // ⚠ ICE IS NOT SPECIAL HERE EITHER -- see GripFor
+                _ => RollRoad,                             // concrete/metal/wood/water: the reference
+            };
+            // Recover toward 1.0 (road), the same direction and fraction GripFor recovers toward full grip.
+            return offRoad ? Mathf.Lerp(k, RollRoad, OffRoadRecovery) : k;
+        }
         const float SurfSampleSec = 0.1f;   // 1 splat texel is 1 m; at top speed that is ~2 m between samples, and a raycast per car per tick is what the 88-parked-car perf note exists about
         bool _offRoad;                      // spec: knobby tyres (see Spec.OffRoad)
         float _surfaceGrip = 1f, _surfSampleT;
+        float _surfaceRoll = 1f, _bushDrag = 1f;
+        /// <summary>Extra rolling drag from undergrowth this vehicle is currently ploughing through, 1.0 in the
+        /// open (BushField). Read by L1.</summary>
+        public float BushDrag => _bushDrag;
         /// <summary>Grip multiplier of the ground under this vehicle right now, 1.0 on road. Read by L1.</summary>
         public float SurfaceGrip => _surfaceGrip;
+        /// <summary>Rolling-drag multiplier of the ground under this vehicle right now, 1.0 on road. Read by L1.</summary>
+        public float SurfaceRollDrag => _surfaceRoll;
+        /// <summary>What the ground under this vehicle was last read as. Test/HUD seam -- the grip and drag
+        /// numbers above are derived from it, so a test that disagrees with the handling can say WHICH.</summary>
+        public PlayerController.Surf SurfaceUnder => _surfaceUnder;
+        PlayerController.Surf _surfaceUnder = PlayerController.Surf.Concrete;
         /// <summary>The grip factor for a surface AND a set of tyres. Static and pure so a test can assert the
         /// table without standing a vehicle on terrain.</summary>
         public static float GripFor(PlayerController.Surf surf, bool offRoad)
@@ -1200,6 +1357,11 @@ namespace UnturnedGodot
                 // for, and no terrain layer on the three shipped maps is ice anyway -- it arrives with a map
                 // that paints one, and should be decided then rather than smuggled in with an audio fix.
                 PlayerController.Surf.Ice => GripConcrete,
+                // RAILWAY TRACK BED. Firm -- ballast is compacted and the sleepers are solid -- so it grips
+                // close to road, and NOT like the loose gravel its surface dressing resembles. What makes a
+                // railway bad to drive on is not slip, it is the sleepers, and that is rolling drag's job
+                // (RollDragFor) rather than grip's. Splitting it that way is the point of having both.
+                PlayerController.Surf.Rails => 0.90f,
                 _ => GripConcrete,   // concrete/metal/wood/water: a hard or unlabelled floor is the reference
             };
             return offRoad ? Mathf.Lerp(k, 1f, OffRoadRecovery) : k;
@@ -1248,6 +1410,59 @@ namespace UnturnedGodot
             return n;
         }
 
+        /// <summary>Bleed lateral grip when the hull is pulling more than it can survive, so a sharp turn ends
+        /// in a slide instead of a roll (strawberry 2026-10-11). See the constants above for the mechanism.
+        ///
+        /// Lateral acceleration in a turn is yaw rate x forward speed -- no differentiation, no frame-to-frame
+        /// noise, and it is exactly the quantity the rollover threshold is expressed in.
+        ///
+        /// ⚠ THE BLEED IS SMOOTHED, and it has to be: cutting grip reduces the yaw rate, which reduces the
+        /// lateral g, which restores the grip. Applied raw that is an oscillator, and the car would judder
+        /// between gripping and sliding at the physics rate instead of breaking away cleanly.</summary>
+        void UpdateRollSlide(float delta)
+        {
+            if (!RollSlideEnabled || _tracked || _plane || _heli || _water0Boat || _wNodes == null || RolloverThresholdForTest <= 0.01f)
+            { if (_rollGrip < 1f) { _rollGrip = 1f; for (int i = 0; i < (_wNodes?.Length ?? 0); i++) ApplyTirePhysics(i); } LateralG = 0f; return; }
+            float fwd = Mathf.Abs(LinearVelocity.Dot(-GlobalTransform.Basis.Z));
+            LateralG = Mathf.Abs(AngularVelocity.Y) * fwd / Mathf.Max(0.01f, _gravityMag);
+            float limit = RolloverThresholdForTest * RollGripSafety;
+            float want = LateralG > limit ? Mathf.Clamp(limit / Mathf.Max(0.001f, LateralG), RollSlideFloor, 1f) : 1f;
+            // Let go fast, recover slowly: a tyre breaks away in an instant and takes a moment to bite again,
+            // and the asymmetry is also what stops the smoothing from becoming the oscillator it exists to kill.
+            float rate = want < _rollGrip ? 12f : 3f;
+            float prev = _rollGrip;
+            _rollGrip = Mathf.Lerp(_rollGrip, want, 1f - Mathf.Exp(-rate * delta));
+
+            // ⚠⚠ GRIP ALONE DOES NOT STOP THE FLIP, and this file said so before I tried it: "grip was never
+            // the mechanism". MEASURED here too -- bleeding WheelFrictionSlip to its floor moved the roadster's
+            // full-lock roll from 156.0 deg to 155.7. Both are upside down. VehicleWheel3D's lateral friction
+            // is stiff enough that the hull is already past the tipping point before the tyres give up, so the
+            // bleed above shapes HOW it slides but cannot by itself keep it on its wheels.
+            //
+            // ⭐ SO THE ROLL IS OPPOSED DIRECTLY. Once the hull is pulling more than it can survive, a torque
+            // about its own FORWARD axis fights the roll rate -- the car is held down on its outside wheels
+            // while the rear, already low on grip from the bleed, swings. That is the brief: not flipped,
+            // spun. Scaled by the overshoot, so it is nothing at all until the corner is genuinely past the
+            // threshold and grows with how far past.
+            float over = LateralG / Mathf.Max(0.001f, limit) - 1f;
+            if (over > 0f)
+            {
+                var fwdAxis = -GlobalTransform.Basis.Z;
+                float rollRate = AngularVelocity.Dot(fwdAxis);           // + = rolling one way about its own nose
+                // How far it has ALREADY tipped, so a car on two wheels gets pushed back down rather than
+                // merely being stopped from tipping further.
+                float tipped = GlobalTransform.Basis.Y.Dot(Vector3.Up);  // 1 upright, 0 on its side
+                float assist = Mathf.Clamp(over, 0f, 2f) * Mathf.Clamp(1f - tipped, 0f, 1f);
+                ApplyTorque(-fwdAxis * (rollRate * RollDampTorque + assist * RollRightTorque) * Mass);
+            }
+            // ⚠⚠ PUSH IT AT THE WHEELS NOW, not on the next surface sample. ApplyTirePhysics is otherwise only
+            // called from UpdateSurfaceGrip, which is throttled to 0.1 s AND early-returns for a parked car --
+            // so without this the bleed would reach the tyres at 10 Hz, by which time a car that is going over
+            // has already gone. Gated on an actual change so a car driving straight does no extra work at all.
+            if (Mathf.Abs(_rollGrip - prev) > 0.002f)
+                for (int i = 0; i < _wNodes.Length; i++) ApplyTirePhysics(i);
+        }
+
         /// <summary>Resample the ground and push the grip factor at the wheels. Wheeled hulls only -- a TANK's
         /// tracks are already a 1.6 mu over a contact patch the length of the hull, and teaching them to care
         /// about grass would be undoing the thing that makes them tracks. Planes and helicopters have their own
@@ -1265,7 +1480,16 @@ namespace UnturnedGodot
             // last surface instead of snapping to 1.0: a car mid-jump has no ground to grip, and re-reading it
             // as tarmac would hand it full traction exactly where it has none.
             if (!PlayerController.TryFootSurfaceAt(this, GlobalPosition, GetRid(), out var surf, 0.2f, 2.5f)) return;
+            _surfaceUnder = surf;
             _surfaceGrip = GripFor(surf, _offRoad);
+            _surfaceRoll = RollDragFor(surf, _offRoad);
+            // ...and what we are ploughing THROUGH, on the same throttle and in the same place, because both
+            // answer "what is resisting this vehicle right now" and splitting them across two timers is how the
+            // two end up disagreeing about where the car is.
+            // Half-width off the hull box that every other hull-shaped question already uses, rather than a new
+            // per-spec dial: a quad slips between bushes a bus ploughs through, and that should fall out of how
+            // wide they are. The 0.9 floor covers a hull whose BoxSize never got authored (it reads 0).
+            _bushDrag = BushField.DragAt(GlobalPosition, Mathf.Max(0.9f, _hullSizeLocal.X * 0.5f));
             // LATERAL grip moves with it, or a sedan that cannot accelerate on grass still corners on it as if
             // it were railed. Written THROUGH ApplyTirePhysics rather than onto the wheels: WheelFrictionSlip
             // already has three other owners (a popped tyre, a retracted undercarriage, a car on a tow rope), and
@@ -2151,7 +2375,46 @@ namespace UnturnedGodot
         const float BumperAnimalDmg = 15f;
         const float CrashPropThreshold = 4f, CrashPropDmgPerSpeed = 18f, CrashPropMaxDmg = 500f;   // vehicle -> destructible prop: min impact speed to break, dmg per m/s, cap
         const float HornAlertRadius = 32f;   // source InteractableVehicle.tellHorn: AlertTool.alert(pos, 32) -> earshot-radius, unused (no listener wired up currently)
+        /// <summary>Test seam: where the tailpipe emitter actually sits, in body space.</summary>
+        public Vector3 DebugExhaustLocal => _exhaust?.Position ?? Vector3.Zero;
         public bool HeadlightsOn => _headlightsOn;
+
+        // ---- HIGH BEAM (strawberry 2026-10-10: "make the headlights cycle throw off/low(current
+        // brightness)/high(new more powerful, longer reach) make the headlights cast shadows") ----
+        /// <summary>⭐ A SECOND FLAG BESIDE THE EXISTING BOOL, not a refactor of it into an enum. `_headlightsOn`
+        /// is read by MP replication (VehicleReplication.FlagHeadlights), the wreck tests and the alarm, and
+        /// turning it into a three-state would have touched every one of them to express something they do not
+        /// care about: all of them only ask "are the lights on".</summary>
+        bool _highBeam;
+        public bool HighBeam => _highBeam && _headlightsOn;
+
+        /// <summary>LOW is exactly what shipped, so the first click of the cycle is unchanged. HIGH is the new
+        /// one: more than twice the reach, nearly twice the energy, and a slightly TIGHTER cone -- a main beam
+        /// throws further by concentrating, not by flooding wider.</summary>
+        public const float LowRange = 45f, LowEnergy = 9f, LowAngle = 25f, LowAtten = 1.3f;
+        public const float HighRange = 98f, HighEnergy = 17f, HighAngle = 21f, HighAtten = 0.85f;
+
+        /// <summary>Main beam costs more battery. Not a rule from the source -- a main beam draws more current
+        /// and the battery model already exists, so leaving them identical would have been the odd choice.</summary>
+        public const float HighBeamBurn = 1.8f;
+
+        /// <summary>Push the current beam onto the spots. Separate from SetHeadlights because the beam can
+        /// change WITHOUT the lights going off and on again.</summary>
+        void ApplyBeam()
+        {
+            if (_headlights == null) return;
+            bool hi = _highBeam;
+            foreach (var c in _headlights.GetChildren())
+            {
+                if (c is not SpotLight3D sl) continue;   // ⚠ the omni FILL is deliberately skipped -- see below
+                sl.SpotRange = hi ? HighRange : LowRange;
+                sl.SpotAngle = hi ? HighAngle : LowAngle;
+                sl.SpotAngleAttenuation = hi ? HighAtten : LowAtten;
+                sl.LightEnergy = hi ? HighEnergy : LowEnergy;
+            }
+            if (_headlightMat != null && _headlightsOn)
+                _headlightMat.EmissionEnergyMultiplier = hi ? 3.2f : 2f;   // the lens reads brighter on main beam
+        }
         public bool TaillightsOn => _taillightsOn;          // MP §3.6: replicated light/brake flags (read-only views of the SP state)
         public bool SirenOn => _sirenOn;
         /// <summary>L1 only: whether this car is an "alarmed" one. Spawn rolls it at 5%, so a test that needs
@@ -2213,7 +2476,23 @@ namespace UnturnedGodot
         {
             public string Body, Wheel, WheelTex, Palette, GlassMesh, MissileMesh, SteerMesh;   // Palette = paintable palette; WheelTex = wheel albedo; GlassMesh = translucent canopy overlay (jet)
             public Color? GlassTint;   // GlassMesh albedo+alpha; null = the jet's golden canopy. Cars use GlassPane.DefaultHue so vehicle glass matches the building editor's windows.
-            public Vector3? ExhaustPos;   // authored outlet; null keeps the fleet's lower-shell formula
+            /// <summary>Authored tailpipe outlet in body space; null falls back to the lower-shell formula.
+            ///
+            /// ⭐ DERIVED FROM EACH VEHICLE'S OWN MESH, not eyeballed and not computed at runtime (strawberry
+            /// 2026-10-10: "fix the exhaust particles to emit from the rear face of the exhaust pipe on every
+            /// vehicle" + "author the positions"). The pipe is the geometry that PROTRUDES TO THE REARMOST Z
+            /// PLANE below the body's mid height: on these meshes the tail panel stops short and only the
+            /// outlet reaches the back, so the centroid of those verts IS the outlet face.
+            ///
+            /// ⭐⭐ The method was CALIBRATED before it was trusted: run against wagon_exhaust.txt -- the one
+            /// pipe that ships as its own part, and the source of the single value authored before today -- it
+            /// reproduces (0.7937, -0.1747, 2.8269) to four decimals. A detector that could not recover the
+            /// known answer would have had no business generating sixteen more.
+            ///
+            /// ⚠ Deliberately NOT authored: trailers (no engine), aircraft and boats, the SEMI and the TRACTOR
+            /// (both have VERTICAL stacks, which need an emitter direction too, not just a position) and the
+            /// TANK. Those keep the fallback and are listed here so the gap is a decision, not an oversight.</summary>
+            public Vector3? ExhaustPos;
             public bool RetractGear;   // JET: wheels tuck up into the fuselage when airborne (retract pivots + struts)
             public WaterMode Water;   // Car (default) = land only; Boat = floats+water-drives (no useful wheels); Amphibious = land wheels + float/water-drive when its hull is in the sea
             public Vector3[] Buoys;   // hull buoyancy points (local space, Godot); null = auto 4 bottom corners of BoxSize. Boats/amphibious float via a spring at each toward SeaLevelY
@@ -2647,18 +2926,20 @@ namespace UnturnedGodot
         /// <summary>Test seam: the anti-roll extension reading for wheel i (probes assert the bar is armed).</summary>
         public float WheelExtensionForTest(int i) => _wNodes != null && (uint)i < (uint)_wNodes.Length && _wNodes[i] != null ? WheelExtension(_wNodes[i]) : -1f;
 
-        // Ground material under a wheel (raycast down from the wheel to read the collider's "surf" tag). Drives the
-        // per-wheel dust tint + gate. Untagged ground defaults to grass (PEI terrain).
+        // Ground material under a wheel. Drives the per-wheel dust tint + gate -- this is the COSMETIC probe;
+        // handling reads the body-centre one in UpdateSurfaceGrip.
+        //
+        // ⚠ IT USED TO MISS THE TERRAIN. The ray read only a collider's "surf" tag and fell back to Grass, but
+        // the terrain's splatmap surface is not a tag on its body -- it is a per-XZ lookup -- so on PEI EVERY
+        // wheel reported Grass and a car threw green dust while crossing a dirt track or a beach. The grip path
+        // never had this bug because it goes through TryFootSurfaceAt, which special-cases the terrain group;
+        // this path duplicated the rule and dropped that branch. Now it asks the same authority, so the dust a
+        // wheel kicks up and the grip it finds cannot disagree about what is under it.
         PlayerController.Surf WheelSurf(VehicleWheel3D w)
         {
-            var from = w.GlobalPosition;
-            var to = from + Vector3.Down * (w.WheelRadius + w.SuspensionTravel + 0.4f);
-            var q = PhysicsRayQueryParameters3D.Create(from, to, 1u << 0);
-            q.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
-            var hit = GetWorld3D().DirectSpaceState.IntersectRay(q);
-            if (hit.Count > 0 && hit["collider"].AsGodotObject() is Node n && n.HasMeta(PlayerController.SurfMeta))
-                return (PlayerController.Surf)(int)n.GetMeta(PlayerController.SurfMeta);
-            return PlayerController.Surf.Grass;
+            float span = w.WheelRadius + w.SuspensionTravel + 0.4f;
+            return PlayerController.TryFootSurfaceAt(this, w.GlobalPosition, GetRid(), out var surf, 0.05f, span)
+                 ? surf : PlayerController.Surf.Grass;
         }
 
         // source Bumper.OnTriggerEnter: the front bumper roadkills a character it drives into. Damage scales with impact
@@ -3161,6 +3442,7 @@ namespace UnturnedGodot
             DefaultPaints = new[] { "#475e83", "#a69884", "#437c44", "#495631" },   // src .dat DefaultPaintColors = the 4 faction paints (#475e83 Coalition / #a69884 Desert / #437c44 Forest / #495631 Russia), random pick per spawn
             WheelRadius = 0.6f, Engine = 600f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 12.5f, SpeedMin = -7f, Brake = 32f,
             BoxSize = new Vector3(2.5f, 1.046f, 4.522f), BoxCenter = new Vector3(0f, 0.612f, 0.029f),   // source BoxCollider
+            ExhaustPos = new Vector3(0.7937f, -0.1747f, 2.5932f),   // tailpipe outlet, centroid of the verts protruding to the rearmost Z plane of jeep_body.txt
             ForwardGears = new[] { 20f, 13.7f }, ReverseGear = 10f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,   // .dat EngineSound (prefab AudioSource = Engine_Medium)
             Fuel = 60_000f, Health = 600f, Name = "Jeep", Horn = "carhorn_04.ogg",   // 60 L tank (metric 1u=1mL; realistic, was the x2500 5,000,000)
@@ -3492,6 +3774,7 @@ namespace UnturnedGodot
             RandomHueGray = true,   // source RandomHueOrGrayscale -> our curated CarColors list
             WheelRadius = 0.45f, Engine = 520f, SteerMax = 32f, SteerMin = 16f, SpeedMax = 13.5f, SpeedMin = -5f, Brake = 24f,
             BoxSize = new Vector3(2.0f, 0.777f, 3.581f), BoxCenter = new Vector3(0f, 0.478f, 0.407f),   // source BoxCollider
+            ExhaustPos = new Vector3(0.2136f, 0.4033f, 1.9816f),   // tailpipe outlet, centroid of the verts protruding to the rearmost Z plane of quad_body.txt
             ForwardGears = new[] { 20f, 10f }, ReverseGear = 8f, ShiftUpRpm = 3000f,
             Sound = "engine_small.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,   // .dat EngineSound (prefab AudioSource = Engine_Small)
             Fuel = 15_000f, Health = 450f, Name = "Quad", Horn = "carhorn_01.ogg",   // 15 L tank (metric 1u=1mL; realistic ATV)
@@ -3516,6 +3799,7 @@ namespace UnturnedGodot
             DefaultPaints = new[] { "#d4d4d4" },   // source .dat: single near-white default
             WheelRadius = 0.6f, Engine = 780f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 12f, SpeedMin = -6f, Brake = 24f,
             BoxSize = new Vector3(3.0f, 1.018f, 7.964f), BoxCenter = new Vector3(0f, 0.361f, 0.281f),   // source BoxCollider
+            ExhaustPos = new Vector3(0.7937f, -0.3959f, 4.4549f),   // tailpipe outlet, centroid of the verts protruding to the rearmost Z plane of bus_body.txt
             ForwardGears = new[] { 20f, 14.6f }, ReverseGear = 12f, ShiftUpRpm = 4000f,
             Sound = "engine_large.ogg", IdlePitch = 1.0f, MaxPitch = 1.8f, IdleVolume = 0.75f, MaxVolume = 1.0f,   // .dat EngineSound (prefab AudioSource = Engine_Large; bus MaxPitch 1.8)
             Fuel = 200_000f, Health = 700f, Rarity = EItemRarity.UNCOMMON, Name = "Bus", Horn = "carhorn_04.ogg",
@@ -3561,6 +3845,7 @@ namespace UnturnedGodot
             RandomHueGray = true,   // source RandomHueOrGrayscale -> our curated CarColors
             WheelRadius = 0.6f, Engine = 700f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 16.5f, SpeedMin = -6f, Brake = 32f,
             BoxSize = new Vector3(2.5f, 0.916f, 5.656f), BoxCenter = new Vector3(0f, 0.548f, -0.063f),   // source BoxCollider (Z negated)
+            ExhaustPos = new Vector3(0.7937f, -0.1747f, 2.9424f),   // tailpipe outlet, centroid of the verts protruding to the rearmost Z plane of sedan_body.txt
             ForwardGears = new[] { 14f, 8.75f }, ReverseGear = 5f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
             Fuel = 50_000f, Health = 600f, Name = "Sedan", Horn = "carhorn_02.ogg",   // 50 L tank (metric 1u=1mL; realistic sedan)
@@ -3638,6 +3923,7 @@ namespace UnturnedGodot
             RandomHueGray = true,
             WheelRadius = 0.6f, Engine = 680f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 15f, SpeedMin = -5f, Brake = 24f,
             BoxSize = new Vector3(2.5f, 0.916f, 5.261f), BoxCenter = new Vector3(0f, 0.548f, -0.003f),
+            ExhaustPos = new Vector3(0.7937f, -0.1747f, 2.7939f),   // tailpipe outlet, centroid of the verts protruding to the rearmost Z plane of hatchback_body.txt
             ForwardGears = new[] { 14f, 8.75f }, ReverseGear = 5f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
             Fuel = 45_000f, Health = 650f, Name = "Hatchback", Horn = "carhorn_01.ogg",   // 45 L tank (metric 1u=1mL; realistic hatchback)
@@ -3665,6 +3951,7 @@ namespace UnturnedGodot
             DefaultPaints = new[] { "#475e83", "#a69884", "#437c44", "#495631" },   // src .dat DefaultPaintColors = the 4 faction paints (#475e83 Coalition / #a69884 Desert / #437c44 Forest / #495631 Russia), random pick per spawn
             WheelRadius = 0.6f, Engine = 680f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 14f, SpeedMin = -6f, Brake = 40f,
             BoxSize = new Vector3(2.5f, 1.032f, 5.029f), BoxCenter = new Vector3(0f, 0.605f, -0.018f),
+            ExhaustPos = new Vector3(0.7937f, -0.1747f, 2.7182f),   // tailpipe outlet, centroid of the verts protruding to the rearmost Z plane of humvee_body.txt
             ForwardGears = new[] { 20f, 12.56f }, ReverseGear = 8f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
             Fuel = 95_000f, Health = 550f, Name = "Humvee", Horn = "carhorn_03.ogg",   // 95 L tank (metric 1u=1mL; realistic military humvee)
@@ -3692,6 +3979,7 @@ namespace UnturnedGodot
             RandomHueGray = true,
             WheelRadius = 0.6f, Engine = 760f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 19f, SpeedMin = -5f, Brake = 32f,
             BoxSize = new Vector3(2.5f, 0.916f, 5.656f), BoxCenter = new Vector3(0f, 0.548f, -0.063f),
+            ExhaustPos = new Vector3(0.7937f, -0.1747f, 2.9424f),   // tailpipe outlet, centroid of the verts protruding to the rearmost Z plane of roadster_body.txt
             ForwardGears = new[] { 14f, 8f }, ReverseGear = 5f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
             Fuel = 50_000f, Health = 500f, Rarity = EItemRarity.RARE, Name = "Roadster", Horn = "roadster_horn.ogg",   // 50 L tank (metric 1u=1mL; realistic sports car)
@@ -3718,6 +4006,7 @@ namespace UnturnedGodot
             DefaultPaints = new[] { "#e8e8e8" },   // white ambulance
             WheelRadius = 0.6f, Engine = 700f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 15.5f, SpeedMin = -6.5f, Brake = 32f,
             BoxSize = new Vector3(2.5f, 2.0f, 5.0f), BoxCenter = new Vector3(0f, 1.0f, 0f),   // tall van (compound BoxCollider -> one encompassing box)
+            ExhaustPos = new Vector3(0.7937f, -0.1747f, 2.6997f),   // tailpipe outlet, centroid of the verts protruding to the rearmost Z plane of ambulance_body.txt
             ForwardGears = new[] { 14f, 8f }, ReverseGear = 8f, ShiftUpRpm = 4500f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
             Fuel = 80_000f, Health = 600f, Rarity = EItemRarity.UNCOMMON, Name = "Ambulance", Horn = "carhorn_03.ogg",   // 80 L (metric 1u=1mL)
@@ -3746,6 +4035,7 @@ namespace UnturnedGodot
             DefaultPaints = new[] { "#b81c1c" },   // red firetruck
             WheelRadius = 0.6f, Engine = 800f, SteerMax = 48f, SteerMin = 24f, SpeedMax = 14.5f, SpeedMin = -6f, Brake = 32f,
             BoxSize = new Vector3(2.5f, 2.0f, 7.0f), BoxCenter = new Vector3(0f, 1.0f, 0f),
+            ExhaustPos = new Vector3(0.7937f, -0.1747f, 3.6692f),   // tailpipe outlet, centroid of the verts protruding to the rearmost Z plane of firetruck_body.txt
             ForwardGears = new[] { 20f, 12f }, ReverseGear = 8f, ShiftUpRpm = 4000f,
             Sound = "engine_large.ogg", IdlePitch = 1.0f, MaxPitch = 1.8f, IdleVolume = 0.75f, MaxVolume = 1.0f,
             Fuel = 200_000f, Health = 700f, Rarity = EItemRarity.UNCOMMON, Name = "Firetruck", Horn = "carhorn_03.ogg",   // 200 L (metric 1u=1mL)
@@ -3805,6 +4095,7 @@ namespace UnturnedGodot
             DefaultPaints = new[] { "#475e83", "#a69884", "#437c44", "#495631" },   // src 4 faction paints (Coalition/Desert/Forest/Russia)
             WheelRadius = 0.6f, Engine = 800f, SteerMax = 48f, SteerMin = 24f, SpeedMax = 14.5f, SpeedMin = -6f, Brake = 32f,
             BoxSize = new Vector3(2.5f, 2.0f, 6.6f), BoxCenter = new Vector3(0f, 1.0f, 0f),
+            ExhaustPos = new Vector3(0.7937f, -0.1747f, 3.3432f),   // tailpipe outlet, centroid of the verts protruding to the rearmost Z plane of ural_body.txt
             ForwardGears = new[] { 20f, 12f }, ReverseGear = 8f, ShiftUpRpm = 4000f,
             Sound = "engine_large.ogg", IdlePitch = 1.0f, MaxPitch = 1.8f, IdleVolume = 0.75f, MaxVolume = 1.0f,
             Fuel = 300_000f, Health = 700f, Rarity = EItemRarity.RARE, Name = "Ural", Horn = "carhorn_03.ogg",   // 300 L (metric 1u=1mL)
@@ -3834,6 +4125,7 @@ namespace UnturnedGodot
             DefaultPaints = new[] { "#d4d4d4" },   // source Police.dat DefaultPaintColors = #d4d4d4 (white body; the palette's black livery = a black/white cruiser)
             WheelRadius = 0.6f, Engine = 720f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 17f, SpeedMin = -6f, Brake = 32f,
             BoxSize = new Vector3(2.5f, 0.916f, 5.656f), BoxCenter = new Vector3(0f, 0.548f, -0.063f),
+            ExhaustPos = new Vector3(0.7937f, -0.1747f, 2.9424f),   // tailpipe outlet, centroid of the verts protruding to the rearmost Z plane of police_body.txt
             ForwardGears = new[] { 14f, 8f }, ReverseGear = 5f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
             Fuel = 60_000f, Health = 600f, Rarity = EItemRarity.UNCOMMON, Name = "Police", Horn = "carhorn_02.ogg",   // 60 L (metric 1u=1mL)
@@ -3864,6 +4156,7 @@ namespace UnturnedGodot
             RandomHueGray = true,   // source DefaultPaintColor_Mode RandomHueOrGrayscale -> random civilian colour per spawn
             WheelRadius = 0.6f, Engine = 600f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 12.5f, SpeedMin = -7f, Brake = 32f,
             BoxSize = new Vector3(2.5f, 1.046f, 4.522f), BoxCenter = new Vector3(0f, 0.612f, 0.029f),   // jeep-chassis BoxCollider
+            ExhaustPos = new Vector3(0.7937f, -0.1747f, 2.5932f),   // tailpipe outlet, centroid of the verts protruding to the rearmost Z plane of offroad_body.txt
             ForwardGears = new[] { 20f, 13.7f }, ReverseGear = 10f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
             Fuel = 80_000f, Health = 600f, Name = "Off_Roader", Horn = "carhorn_04.ogg",   // 80 L (metric 1u=1mL)
@@ -3893,6 +4186,7 @@ namespace UnturnedGodot
             RandomHueGray = true,
             WheelRadius = 0.6f, Engine = 600f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 13.5f, SpeedMin = -6f, Brake = 40f,
             BoxSize = new Vector3(2.5f, 1.046f, 4.522f), BoxCenter = new Vector3(0f, 0.612f, 0.029f),
+            ExhaustPos = new Vector3(0.7937f, -0.1747f, 2.5932f),   // tailpipe outlet, centroid of the verts protruding to the rearmost Z plane of truck_body.txt
             ForwardGears = new[] { 20f, 14.2f }, ReverseGear = 10f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
             Fuel = 150_000f, Health = 550f, Name = "Truck", Horn = "carhorn_01.ogg",   // 150 L (metric 1u=1mL)
@@ -3921,6 +4215,7 @@ namespace UnturnedGodot
             RandomHueGray = true,
             WheelRadius = 0.6f, Engine = 600f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 14.5f, SpeedMin = -5f, Brake = 35f,
             BoxSize = new Vector3(2.5f, 1.046f, 4.522f), BoxCenter = new Vector3(0f, 0.612f, 0.029f),
+            ExhaustPos = new Vector3(0.7937f, -0.1747f, 2.5932f),   // tailpipe outlet, centroid of the verts protruding to the rearmost Z plane of van_body.txt
             ForwardGears = new[] { 20f, 14.4f }, ReverseGear = 10f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
             Fuel = 70_000f, Health = 600f, Name = "Van", Horn = "carhorn_01.ogg",   // 70 L (metric 1u=1mL)
@@ -3949,6 +4244,7 @@ namespace UnturnedGodot
             RandomHueGray = true,
             WheelRadius = 0.6f, Engine = 600f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 16.5f, SpeedMin = -6f, Brake = 32f,
             BoxSize = new Vector3(2.5f, 1.046f, 4.522f), BoxCenter = new Vector3(0f, 0.612f, 0.029f),
+            ExhaustPos = new Vector3(-0.8322f, -0.1747f, 2.5592f),   // tailpipe outlet, centroid of the verts protruding to the rearmost Z plane of golf_body.txt
             ForwardGears = new[] { 14f, 8.75f }, ReverseGear = 5f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
             Fuel = 50_000f, Health = 600f, Name = "VW_Golf", Horn = "carhorn_02.ogg",   // 50 L (metric 1u=1mL)
@@ -4144,6 +4440,7 @@ namespace UnturnedGodot
             Palette = "apc_palette.png", DefaultPaints = new[] { "#5a6650" },   // Texture_MilitaryPaintable: olive paintable hull. NO grille (strawberry) -- headlights/taillights are the real separate Parts meshes below, not palette texels
             Engine = 700f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 12f, SpeedMin = -6f, Brake = 35f,
             BoxSize = new Vector3(3.6f, 1.8f, 7.7f), BoxCenter = new Vector3(0f, 0.6f, 0f),   // hull (mesh x±1.83 y-0.27..2.31 z-4..3.72)
+            ExhaustPos = new Vector3(1.2937f, -0.1747f, 3.7182f),   // tailpipe outlet, centroid of the verts protruding to the rearmost Z plane of apc_body.txt
             ForwardGears = new[] { 18f, 10f }, ReverseGear = 8f, ShiftUpRpm = 4000f,
             Sound = "engine_medium.ogg", IdlePitch = 0.9f, MaxPitch = 1.8f, IdleVolume = 0.8f, MaxVolume = 1.0f,
             Fuel = 1500f, Health = 800f, Name = "APC",
@@ -5518,7 +5815,9 @@ namespace UnturnedGodot
             }
             else
             {
-                w.WheelFrictionSlip = _tireFricRef[i] * _surfaceGrip;
+                // ...and the anti-flip bleed, rear-biased so the back lets go first (see RollSlideFrontKeep).
+                float rg = w.UseAsSteering ? Mathf.Lerp(_rollGrip, 1f, RollSlideFrontKeep) : _rollGrip;
+                w.WheelFrictionSlip = _tireFricRef[i] * _surfaceGrip * rg;
                 w.WheelRadius = _tireRadRef[i];
             }
         }
@@ -6007,11 +6306,11 @@ namespace UnturnedGodot
             foreach (var g in _glassNodes)
             {
                 if (!GodotObject.IsInstanceValid(g)) continue;
-                g.SetInstanceShaderParameter("covered", covered ? 1f : 0f);   // the DROP pass reads it per instance...
-                // ...and the RUNNER pass (next_pass) reads a plain uniform, because instance parameters are addressed by
-                // slot per shader and a next_pass shader has its own table: aimed at the first pass, they land somewhere
-                // else in the second. Read there as "covered", every runner switches off and looks like a dead effect.
-                if (g.MaterialOverride is ShaderMaterial gm && gm.NextPass is ShaderMaterial gr) gr.SetShaderParameter("covered", covered ? 1f : 0f);
+                // Drops AND runners read this one instance parameter now. It used to need a second setter: the runners
+                // were a next_pass shader with its OWN slot table, so an instance parameter aimed at the first pass
+                // landed somewhere else in the second, read as "covered", and switched every runner off -- a dead
+                // effect that looked like a bug in the runners. One shader, one slot table (GlassPane.RainGlassMat).
+                g.SetInstanceShaderParameter("covered", covered ? 1f : 0f);
             }
         }
 
@@ -7515,7 +7814,14 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 v._headlights = new Node3D { Visible = false };
                 foreach (var p in spotPos)
                 {
-                    var hs = new SpotLight3D { Position = p, SpotRange = 45f, SpotAngle = 25f, SpotAngleAttenuation = 1.3f, LightColor = warm, LightEnergy = 9f };
+                    // ⭐ SHADOWS ON THE SPOTS ONLY (strawberry 2026-10-10: "make the headlights cast shadows").
+                    // ⚠ NOT on the omni fill below: an OmniLight3D shadow is a six-face cube map, where a spot
+                    // is one. The fill exists to lift the ground right in front of the bumper and casts nothing
+                    // anyone would look for, so it would be six shadow passes per car for no picture.
+                    var hs = new SpotLight3D { Position = p, SpotRange = LowRange, SpotAngle = LowAngle,
+                                               SpotAngleAttenuation = LowAtten, LightColor = warm, LightEnergy = LowEnergy,
+                                               ShadowEnabled = true, ShadowBias = 0.03f, DistanceFadeEnabled = true,
+                                               DistanceFadeBegin = 60f, DistanceFadeLength = 25f };
                     hs.AddToGroup("dynlight");   // spills onto the FP gun (light-scan)
                     v._headlights.AddChild(hs);
                     // Bind the emitter to the lens half on the same side, so shooting that lens kills THIS beam.
@@ -8696,6 +9002,50 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             // back -- but the way to buy it is tyres that run out of grip, not a limiter on the input, and that
             // is what was asked for twice. Steer_Max/Steer_Min stay exactly retail's (Jeep.dat: 28 and 14).
             float angle = Mathf.Lerp(_steerMax, _steerMin, t);
+            // ⚠⚠ AND KEEP FADING ABOVE THE OLD TOP SPEED. The curve above saturates at _specSpeedMax -- the
+            // PRE-buff spec speed -- so from ~12.5 m/s upward every car held a CONSTANT _steerMin however fast
+            // it went. That was harmless while the buff was 2.0 and the jeep topped out near 25 m/s. At 2.5 it
+            // reaches 31, and _steerMin at 31 m/s asks for more lateral g than the tyres have: MEASURED, the
+            // jeep stopped taking a set in a full-lock turn at all (vehicle.car_handling, 3/3 fail at buff 2.5
+            // against 3/3 pass at 2.0, steady yaw going from a repeatable 1.551 to a chaotic 2.24-2.55).
+            //
+            // ⚠ IT IS NOT "ONLY THE NEW REGIME", and the first version of this comment claimed it was. Nothing
+            // at or below _specSpeedMax moves -- the hand-tuned part of the curve really is untouched -- but
+            // every car has exceeded _specSpeedMax since the buff went to 2.0 in August, so this DOES change
+            // the 12.5-25 m/s band that has been shipping for weeks. MEASURED: the jeep's steady full-lock yaw
+            // at buff 2.0 goes 1.551 -> 1.334 rad/s, i.e. ~14% less bite at high speed. That is a real feel
+            // change and master's to accept, not a free fix.
+            //
+            // What it buys: at buff 2.5 the jeep's steady yaw goes from a CHAOTIC 2.24-2.55 (3/3 failing, the
+            // car never settling) back to a repeatable 1.666 across three runs. The saturation at _specSpeedMax
+            // was always a simplification -- lock should keep shrinking with speed -- and it only became
+            // visible when the buff pushed cars past the range the simplification was safe in.
+            // ⭐⭐ ...AND NEVER COMMAND A CORNER THAT MUST FLIP THE CAR (strawberry 2026-10-11: "rework handling
+            // to not flip you on sharp turns, rather spin you out horizontally").
+            //
+            // DERIVED, not dialled. A steer angle IS a demanded lateral acceleration: the Ackermann radius is
+            // wheelbase/tan(delta), so a_lat = v^2 * tan(delta) / wheelbase. The hull's static rollover
+            // threshold is already known per vehicle (RolloverThresholdForTest, half-track over CoM height, in
+            // gravities -- 1.37-1.41 across the fleet). Inverting one for the other gives the largest angle the
+            // car can ask for and still stay on its wheels.
+            //
+            // ⚠⚠ THIS IS THE THIRD MECHANISM I TRIED AND THE FIRST THAT CAN WORK, because the first two were
+            // aimed at the wrong thing. Bleeding tyre grip moved the roadster's full-lock roll from 156.0 deg to
+            // 155.7; adding a direct anti-roll torque got it to 150.7. Both still upside down, and the
+            // instrumentation says why: entering at 40.4 m/s, even _steerMin asks for about 7.8 g against a
+            // 1.38 g threshold. Nothing downstream of the steering can absorb a demand five times what the hull
+            // can survive -- the demand itself has to be capped.
+            //
+            // ⚠ IT BINDS AT ORDINARY SPEEDS TOO and that is not avoidable: at 15 m/s this allows ~9.8 deg where
+            // _steerMin is 14. A car that cannot exceed its own rollover threshold simply does corner wider.
+            // That is the trade master asked for, and it is theirs to accept.
+            if (RollSlideEnabled && RolloverThresholdForTest > 0.01f && speed > 1f && _wheelbase > 0.1f)
+            {
+                float maxLatA = RolloverThresholdForTest * RollSlideSafety * _gravityMag;
+                float maxTan = maxLatA * _wheelbase / (speed * speed);
+                float maxDeg = Mathf.RadToDeg(Mathf.Atan(maxTan));
+                angle = Mathf.Min(angle, Mathf.Max(maxDeg, SteerFloorDeg));
+            }
             _steerTarget = -steer * angle;   // smoothed toward in _PhysicsProcess (not snapped) via the AnimatedSteeringAngle-style ramp
             // SPACE = handbrake (locks hard); S-into-forward-motion = foot brake. Both far stronger than the old raw .dat Brake.
             _handbraking = handbrake;   // remembered so the car freezes (no jitter) when stopped with the handbrake held
@@ -9234,11 +9584,23 @@ if (s.Wheels != null && s.Wheels.Length > 1)
         }
         void TriggerAlarm() { if (_alarmed && !_exploded && _alarmTimer <= 0f) { _alarmTimer = 30f; _alarmBlip = 0f; } }   // start the ~30s honk+lights alarm loop (master); a wreck never alarms -- damage still lands on corpses
 
-        public void ToggleHeadlights() { if (_alarmTimer > 0f) return; SetHeadlights(!_headlightsOn); }   // source tellHeadlights; blocked while the alarm owns the lights (master)
+        /// <summary>L cycles OFF -> LOW -> HIGH -> OFF (strawberry 2026-10-10). Still called ToggleHeadlights
+        /// because every caller -- the key bind, the net path, the tests -- means "the player pressed the light
+        /// switch", and that is what it now does.
+        /// ⚠ The alarm still blocks it, and a flat battery still refuses: SetHeadlights owns both rules.</summary>
+        public void ToggleHeadlights()
+        {
+            if (_alarmTimer > 0f) return;   // source tellHeadlights; blocked while the alarm owns the lights (master)
+            if (!_headlightsOn) { _highBeam = false; SetHeadlights(true); }
+            else if (!_highBeam) { _highBeam = true; ApplyBeam(); }
+            else { _highBeam = false; SetHeadlights(false); }
+        }
         void SetHeadlights(bool on)
         {
             _headlightsOn = on && Battery > 0f;   // a dead battery can't power the lights
+            if (!_headlightsOn) _highBeam = false;   // coming back on starts at LOW, never silently on main beam
             if (_headlights != null) _headlights.Visible = _headlightsOn;
+            ApplyBeam();
             if (_lampNodes.Count > 0) { ApplyLampState(); return; }   // per-side lamps own the emission
             if (_headlightMat != null)   // source: lamp emission = colour*2 when lit, off otherwise
             {
@@ -9584,6 +9946,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 return;
             }
             UpdateSurfaceGrip((float)delta);   // what is under the tyres right now -> the traction clamp + lateral grip (bails for tracks/wings/tow)
+            UpdateRollSlide((float)delta);     // ...and whether this corner is about to put the car on its roof
             if (_plane) { StepPlane((float)delta); return; }   // fixed wing: prop thrust + airspeed lift replace the wheel/tow/settle sim (buoyancy still runs for a floatplane)
             if (_heli) { if (_slingHook) UpdateSling((float)delta); StepHeli((float)delta); return; }   // rotary wing: rotor thrust replaces the wheel/tow/settle sim entirely
             if (_tracked && !_exploded && !_parked && EngineOn && !Freeze && !Sleeping)   // TANK skid-steer turn authority: a REAL yaw torque (integrated -> owned momentum, survives slopes/walls + the MP transform-adopt path). FADED by forward speed -- a tight pivot at rest but a WIDE arc at speed, so a full-rate yaw while driving doesn't fight the wheels' grip and crawl (master). The per-track EngineForces carry the fwd/back drive.
@@ -9701,7 +10064,17 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             {
                 var hvel = new Vector3(LinearVelocity.X, 0f, LinearVelocity.Z);
                 float hsp = hvel.Length();
-                if (hsp > 0.15f) ApplyCentralForce(-hvel / hsp * (_dragK * hsp * hsp + _rollK));
+                // ...and ROLLING RESISTANCE now knows what it is rolling ON (_surfaceRoll, 1.0 on road) and what
+                // it is dragging THROUGH (_bushDrag, 1.0 in the open). Both multiply the rolling term rather than
+                // the aero term, because both are contact/obstruction losses: they bite hardest at low speed,
+                // where aero drag is nothing, which is why a field bogs you down from a standing start rather
+                // than only shaving the top end.
+                // AERO (ground-independent) + ROUGHNESS (grows with speed, the surface's doing) + ROLLING
+                // (speed-independent contact loss, scaled by both the surface and whatever we are ploughing
+                // through). Splitting roughness out of aero rather than just scaling _dragK keeps _dragK meaning
+                // what its name and its build-time solve say it means.
+                float rough = 1f + RoughGain * (_surfaceRoll - 1f);
+                if (hsp > 0.15f) ApplyCentralForce(-hvel / hsp * (_dragK * rough * hsp * hsp + _rollK * _surfaceRoll * _bushDrag));
             }
             if (unattended && !Freeze && !Sleeping && !towed) Brake = _brakeForce * HandbrakeScale;   // parking brake: hold a rolling unattended car down until it settles (never brake a towed trailer). Also on `unattended` rather than `_parked`, so a car that has been rammed keeps its brake instead of free-rolling away forever
             // CREEP-SLEEP (census 2026-09-03: both firetrucks, a sedan and a hatchback crept at 0.4-1.1 m/s "parked"
@@ -9835,7 +10208,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             }
             else
             {
-                if (_headlightsOn) Battery = Mathf.Max(0f, Battery - BatteryBurnRate * (float)delta);   // source: headlights burn the battery (EBatteryMode.Burn)
+                if (_headlightsOn) Battery = Mathf.Max(0f, Battery - BatteryBurnRate * (_highBeam ? HighBeamBurn : 1f) * (float)delta);   // source: headlights burn the battery (EBatteryMode.Burn); main beam draws more
                 if (_sirenOn) Battery = Mathf.Max(0f, Battery - SirenBurnRate * (float)delta);
             }
             if (Battery <= 0f)
@@ -10171,7 +10544,26 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             if (_glassNodes.Count > 0) TickHub.Add(this, RainCoverTick, 2f);   // rain-on-glass cover poll (2 Hz, rays only while it rains)
             SetProcess(false); if (_water != WaterMode.Car) TickHub.AddProcess(this, HubProcess);   // PERF: boat-only wake tick, through the hub (3 boats x 500 fps of chain-walk was 15% of the bridge)
             base._Ready();
-            GrassDisplacers.Register(this, GrassDisplacers.VehicleRadius);   // master: a driven vehicle flattens grass in a wide swath under + around it
+            DisturbanceField.Register(this, DisturbanceField.VehicleRadius);   // master: a driven vehicle flattens grass in a wide swath under + around it
+            // ROTOR WASH (strawberry 2026-10-11: "add rotor wash for helis on foliage and trees"). A helicopter
+            // registers a SECOND, very different source: not the hull resting on the ground, but the column of
+            // air under the disc. It is placed on the GROUND beneath the aircraft rather than at the hub, scales
+            // with the rotor's own spool state, and reaches trees as well as grass because the field is shared.
+            //
+            // ⚠ Keyed on the ROTOR NODE, not on `this`, precisely because a heli needs BOTH: the hull still
+            // presses grass where it sits, and the wash blows a much wider ring. Registering both against the
+            // same node would silently replace one with the other (Register is idempotent per node).
+            if (_heli && _rotorNode != null)
+                DisturbanceField.Register(_rotorNode,
+                    Mathf.Max(3f, _rotorRadius) * DisturbanceField.WashRadiusPerBlade,
+                    DisturbanceField.Kind.Wash,
+                    // ⚠ A LAMBDA, not a value: spool changes every frame and a captured float would freeze the
+                    // wash at whatever it was the instant the heli spawned (see feedback on constructor capture).
+                    // Squared so a spooling-up rotor's wash arrives late and hard rather than fading in linearly.
+                    intensity: () => { float k = RotorSpool; return k * k * (_exploded ? 0f : 1f); },
+                    // The wash acts on the GROUND, not at hub height. Dropping the source by the rotor's height
+                    // above the hull puts it roughly at the skids, and the field's vertical gate does the rest.
+                    groundDrop: 2.2f);
             if (_decomposeMesh == null || ForceBoxHull) return;
             if (!_decomposeCache.TryGetValue(_decomposeKey, out var shapes) && (shapes = LoadBakedHulls(_decomposeKey)) != null)
                 _decomposeCache[_decomposeKey] = shapes;   // BAKED (shipped in content/vehicle_hulls or the machine's user:// cache): no VHACD on load

@@ -96,10 +96,23 @@ namespace SDG.Unturned
             => Range(s.MinDuration, s.MaxDuration) * _durationMultiplier * _cycleSeconds;
 
         // src: Random.Range(index) over the schedulable list, then forecast + active timers off that entry.
+        /// <summary>⭐ OPTIONAL OVERRIDE for WHICH schedule entry comes next: return an index, or -1 to stay
+        /// clear. Null (the default) leaves the uniform roll below exactly as it was, so the infinite world
+        /// and the existing sim tests keep the path they were written against -- the day-outlook behaviour is
+        /// opted INTO by the host that knows what day it is, not imposed from in here.
+        ///
+        /// ⚠ Consulted on every Step that finds Stage.None, which on a clear day is every tick. It is a
+        /// delegate call and a compare; keep it cheap and keep it PURE, because it is also what the forecast
+        /// is read from and the two must not be able to disagree.</summary>
+        public System.Func<int> ScheduleChooser;
+
         void ScheduleNext()
         {
             if (_schedule.Length == 0) { Stage = WeatherStage.None; return; }
-            var s = _schedule[_rng.Next(0, _schedule.Length)];
+            int pick = ScheduleChooser != null ? ScheduleChooser() : _rng.Next(0, _schedule.Length);
+            if (pick < 0) { Stage = WeatherStage.None; ActiveTypeIndex = -1; return; }   // a clear day
+            if (pick >= _schedule.Length) pick = _schedule.Length - 1;
+            var s = _schedule[pick];
             ActiveTypeIndex = s.TypeIndex;
             ForecastTimer = NextForecastSeconds(in s);
             ActiveTimer = NextActiveSeconds(in s);
@@ -282,6 +295,34 @@ namespace SDG.Unturned
         /// concatenated after the retail types. Rarer than the two retail rains (which keep PEI's own 2.3-5.6
         /// band) so the island still mostly does what it always did, and the Tempest is the rarest of all --
         /// a weather you see occasionally is an event, one you see constantly is just the climate.</summary>
+        /// <summary>SNOW (strawberry 2026-10-10: "add snowfall ... after snowfall, the grass should fade into
+        /// snow material"). Its own table beside the rain ones, for the same reason the variants are: PeiTypes
+        /// is the ripped asset and things index into it.
+        ///
+        /// ⭐ It is ONE type, not a family. The rain variants exist because master asked for degrees of wind
+        /// and intensity; nobody asked for four snows, and a second one would only dilute the day outlook.
+        /// ⚠ No lightning: a thundersnow is a real thing and a wrong default.</summary>
+        public static WeatherType[] SnowTypes() => new[]
+        {
+            new WeatherType
+            {
+                Name = "Snowfall",
+                FadeInDuration = 30f, FadeOutDuration = 30f,   // arrives and leaves more gently than rain does
+                WindMain = 0.25f,
+                FogDensity = 0.75f,                            // drives Severity -> flake density, like rain's
+                ShadowStrengthMultiplier = 0.35f,
+                FishBiteIntervalMultiplier = 1f,
+                HasLightning = false,
+            },
+        };
+
+        public static WeatherSchedule[] SnowSchedule(int firstIndex) => new[]
+        {
+            // Lingers longer than any rain: snow that stopped after four minutes would never lie on the ground.
+            new WeatherSchedule { TypeIndex = firstIndex, MinFrequency = 2.5f, MaxFrequency = 6.0f,
+                                  MinDuration = 0.12f, MaxDuration = 0.35f },
+        };
+
         public static WeatherSchedule[] VariantSchedule(int firstIndex) => new[]
         {
             new WeatherSchedule { TypeIndex = firstIndex,     MinFrequency = 3.0f, MaxFrequency = 7.0f,  MinDuration = 0.08f, MaxDuration = 0.22f },   // drizzle: common-ish, lingers

@@ -46,6 +46,7 @@ namespace UnturnedGodot
         }
         int _frame;
         MainMenu _menuShotMenu; string _menuShotDir; int _menuShotIdx;   // --menushot=DIR: render the 3D barn menu + capture each camera anchor
+        bool _scatterRes;                            // --scatterres : plant the resource pools over the loaded map and write their .bin placements
         string _glassShotDir;                        // --glassshot=DIR : eyeline orbit of ONE parked vehicle, per-pane glass colours
         Camera3D _glassCam; float _glassRadius = 6.5f; float _glassEye = 1.70f;
         System.Collections.Generic.List<MeshInstance3D> _glassPanes;
@@ -355,6 +356,7 @@ namespace UnturnedGodot
                 else if (arg == "--firetest") firetest = true;   // player fires downrange: viewmodel / tracer / ADS / impact rig (+ --supp = suppressor)
                 else if (arg == "--supp") supp = true;           // with --firetest: attach the suppressor
                 else if (arg == "--terrain") terrain = true;     // load a real map's Landscape heightmap terrain (PEI Tile_0_0)
+                else if (arg == "--scatterres") { terrain = true; _scatterRes = true; }   // ...then PLANT the redwood/cactus pools over it and write their .bin placements (ResourceScatter)
                 else if (arg == "--craftmenu") craftmenu = true; // open the CraftingMenu (browsable recipe index) over a stocked bag
                 else if (arg == "--stationtest") { stationtest = true; _shotRequested = shot; }   // line up all 9 crafting-station deployables to eyeball the extracted models
                 else if (arg == "--objects")
@@ -2325,6 +2327,15 @@ namespace UnturnedGodot
                                              c.Z + Mathf.Cos(yaw) * r * (_belly ? 0.7f : 1f));
             if (_aimPoint == Vector3.Zero) _aimPoint = _belly ? VehicleBounds().GetCenter() : GlassAim();
             _glassCam.LookAt(_aimPoint, Vector3.Up);
+            // UG_GLASSFOV=<degrees>: a TELEPHOTO orbit. Rain beads are millimetres -- which is correct, they are
+            // modelled at 1-3 mm -- so at any distance that frames a whole car they are about one pixel, and no
+            // orbit radius fixes that: closing in far enough to resolve a bead puts the camera inside the bodywork.
+            // Narrowing the lens magnifies without moving the eye, which is the only way to photograph the drop
+            // SHAPE (bead vs. bead-with-a-trail) rather than a speckle. 10 deg off the default 75 is ~7.5x.
+            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_GLASSFOV"),
+                               System.Globalization.NumberStyles.Float,
+                               System.Globalization.CultureInfo.InvariantCulture, out float gfov) && gfov > 0.5f)
+                _glassCam.Fov = Mathf.Clamp(gfov, 1f, 120f);
             if (System.Environment.GetEnvironmentVariable("UG_GLASSDIAG") == "1")
             {
                 var aabb = new Aabb(); bool first = true;
@@ -2841,6 +2852,37 @@ namespace UnturnedGodot
                         }
                     AddChild(new MultiMeshInstance3D { Multimesh = gmm, MaterialOverride = gsMat, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off });
                 }
+                // ROTOR WASH (strawberry 2026-10-11: "add rotor wash for helis on foliage and trees"). The lawn
+                // alone cannot show it: the whole point of the rebuild is that the field now reaches wind_sway
+                // too, so the scene needs BUSHES as well as grass, and a helicopter with its rotor actually
+                // turning. UG_WASHTEST=1 adds both on top of the lawn; plain UG_GRASSTEST stays as it was, so
+                // the grass regression check is unchanged.
+                if (System.Environment.GetEnvironmentVariable("UG_WASHTEST") == "1")
+                {
+                    string rdir = ProjectSettings.GlobalizePath($"res://content/{ResourceField.MapDir}/");
+                    for (int bi = 0; bi < 24; bi++)
+                    {
+                        var bmesh = ObjMesh.Load(rdir + (bi % 2 == 0 ? "Bush_0_0.obj" : "Bush_1_0.obj"));
+                        if (bmesh == null) continue;
+                        // MakeSwayMat is the REAL tree/bush material -- the one that could not be disturbed at
+                        // all until today. Using anything else here would prove nothing.
+                        var bmi = new MeshInstance3D { Mesh = bmesh, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                                                       MaterialOverride = ResourceField.MakeSwayMat(rdir + (bi % 2 == 0 ? "Bush_0_0_tex.png" : "Bush_1_0_tex.png")) };
+                        AddChild(bmi);
+                        float ang = bi / 24f * Mathf.Tau;
+                        bmi.GlobalPosition = new Vector3(14f + Mathf.Cos(ang) * (5f + (bi % 3) * 2.5f), 0f, Mathf.Sin(ang) * (5f + (bi % 3) * 2.5f));
+                    }
+                    var wheli = Vehicle.BuildByName("huey") ?? Vehicle.BuildByName("hummingbird");   // the big rotor shows the wash best
+                    if (wheli != null)
+                    {
+                        AddChild(wheli);
+                        wheli.GlobalPosition = new Vector3(14f, 5.5f, 0f);   // hovering over the middle of the bush ring
+                        wheli.Freeze = true;                                  // hold the hover: this is a wash test, not a flight test
+                        wheli.SpawnRotorRunning();                            // spool to 1 so the wash is at full strength
+                        Log.Print($"[washtest] {wheli.Name} hovering at {wheli.GlobalPosition}, rotor spool {wheli.RotorSpool:0.00}");
+                    }
+                    else Log.Err("[washtest] no helicopter spec found");
+                }
             }
 
             var jeep = Vehicle.BuildByName("jeep");
@@ -2978,7 +3020,11 @@ namespace UnturnedGodot
             // same shader; WeatherManager just owns whether and how hard it rains.
             var rain = new RainOverlay { Cycle = dn, Raining = false };
             AddChild(rain);
-            WeatherManager.Attach(this, rain, dn);
+            // ⭐ SEASONAL DAY OUTLOOK ON, for the singleplayer game only (strawberry 2026-10-10: "consider time
+            // of year"). The day picks WHAT weather it gets, from (seed, day) and WorldTemperature's season
+            // curve; the sim still decides when it lands. Opt-in because the infinite world and the sim tests
+            // are written against the uniform roll.
+            WeatherManager.Attach(this, rain, dn).SeasonalOutlook = true;
 
             var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
             ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
@@ -3642,6 +3688,18 @@ namespace UnturnedGodot
             var _terr = Terrain.LoadMapMerged(_mapRoot + "/Landscape/Heightmaps", withCollider: false);   // --map= aware (defaults to PEI); any modern-Landscape map renders here
             if (_terr == null) { Log.Err($"[TERRAIN] no map data at {_mapRoot} -- nothing loaded"); return; }   // do NOT fall through to the success line below: it printed "loaded" over an empty scene and a profiling run measured nothing for it
             AddChild(_terr);
+            // --scatterres: PLANT the redwood/cactus pools over this map and write their .bin placements, then
+            // quit. A generator, not a runtime system -- see ResourceScatter. It hangs off this harness because
+            // this is the one that already loads an arbitrary map's real terrain (--map= aware), which is exactly
+            // and only what the scatter needs to ask about ground.
+            if (_scatterRes)
+            {
+                string resDir = ProjectSettings.GlobalizePath($"res://content/{ResourceField.MapDir}/");
+                int n = ResourceScatter.Run(_terr, resDir, halfExtent: 2048f);
+                Log.Print($"[scatter] wrote placements into {resDir} ({n} planted)");
+                GetTree().Quit(n > 0 ? 0 : 1);
+                return;
+            }
             // ⚠ THE SEA. This harness's own camera comment says UG_CAMPOS is "needed to look at the SEA at all"
             // and reasons about swell wavelengths -- but it only ever loaded TERRAIN, so there was no water plane
             // to look at and the comment was aspirational. One line, and the only harness with an aimable camera
@@ -4307,6 +4365,23 @@ namespace UnturnedGodot
             {
                 var ws = WellShaft.Make(propMi, WellShaft.WallColor(mat.AlbedoTexture));
                 Log.Print($"[PROPTEST] attached WellShaft ({(ws != null ? "ok" : "no shader")})");
+            }
+            // UG_LIVE=1 on a radio: build the REAL device plus a weather world behind it, so the forecast board
+            // can be rendered. UG_RADIOSEED / UG_RADIODAY pick which day's outlook you are looking at -- without
+            // them you get day 0 of a random year, which is clear more often than not and shows an empty board.
+            if (System.Environment.GetEnvironmentVariable("UG_LIVE") == "1" && RadioDevice.IsRadioProp(name))
+            {
+                int rseed = int.TryParse(System.Environment.GetEnvironmentVariable("UG_RADIOSEED"), out int rs) ? rs : 31337;
+                int rday = int.TryParse(System.Environment.GetEnvironmentVariable("UG_RADIODAY"), out int rdv) ? rdv : 0;
+                var dnp = new DayNightCycle { DayLength = 120f, Time = 0.45f, Speed = 1f, VisualsEnabled = false, Day = rday };
+                AddChild(dnp);
+                var wmp = WeatherManager.Attach(this, null, dnp, seed: rseed);
+                wmp.SeasonalOutlook = true;
+                PowerNet.SetGlobalPower(false); PowerNet.SetGlobalPower(true);   // force a real transition (the setter early-outs)
+                var rd = RadioDevice.Make(propMi, name);
+                AddChild(rd);
+                rd.Toggle();
+                Log.Print($"[PROPTEST] radio live: day {rday} seed {rseed} -> {wmp.ForecastLine.Replace("\n", " | ")}");
             }
             if (System.Environment.GetEnvironmentVariable("UG_LIVE") == "1" && HeartMonitor.IsMonitorProp(name))
             {
@@ -6989,10 +7064,12 @@ namespace UnturnedGodot
             var railEd = new EditorRailSpline(editor, cam, editor.Objects, terr, rf);   // Shift+T: modelled rail along a Tracks spline
             var bridgeEd = new EditorBridgeSpline(editor, cam, editor.Objects, terr, rf);   // Shift+B: cut bridge deck along a road spline
             var tunnelEd = new EditorTunnelSpline(editor, cam, editor.Objects, terr, rf);   // Shift+U: tunnel bore along a road spline
+            var blockEd = new EditorBlockRoad(editor, cam, editor.Objects, terr, rf);      // Shift+K: concrete barrier along a spline
             editor.AddChild(fenceEd); editor.FenceRoadEd = fenceEd;
             editor.AddChild(railEd); editor.RailEd = railEd;
             editor.AddChild(bridgeEd); editor.BridgeEd = bridgeEd;
             editor.AddChild(tunnelEd); editor.TunnelEd = tunnelEd;
+            editor.AddChild(blockEd); editor.BlockRoadEd = blockEd;
             editor.Roads = rf;
             var roadsEd = new EditorRoads(editor, cam, rf); editor.AddChild(roadsEd); editor.RoadsEd = roadsEd;
             var roadDrawEd = new EditorRoadDraw(editor, cam, rf); editor.AddChild(roadDrawEd); editor.RoadDrawEd = roadDrawEd;   // R = draw, Shift+R = legacy nodes
@@ -7752,10 +7829,12 @@ namespace UnturnedGodot
             var railEd = new EditorRailSpline(editor, cam, editor.Objects, res.Terr, rf);   // Shift+T: modelled rail along a Tracks spline
             var bridgeEd = new EditorBridgeSpline(editor, cam, editor.Objects, res.Terr, rf);   // Shift+B: cut bridge deck along a road spline
             var tunnelEd = new EditorTunnelSpline(editor, cam, editor.Objects, res.Terr, rf);   // Shift+U: tunnel bore along a road spline
+            var blockEd = new EditorBlockRoad(editor, cam, editor.Objects, res.Terr, rf);      // Shift+K: concrete barrier along a spline
             editor.AddChild(fenceEd); editor.FenceRoadEd = fenceEd;
             editor.AddChild(railEd); editor.RailEd = railEd;
             editor.AddChild(bridgeEd); editor.BridgeEd = bridgeEd;
             editor.AddChild(tunnelEd); editor.TunnelEd = tunnelEd;
+            editor.AddChild(blockEd); editor.BlockRoadEd = blockEd;
             editor.Roads = rf;
             // Seed the field with the map's poles and whatever wires were saved last time, so the lines are THERE
             // on load rather than only after you open the tool.

@@ -493,6 +493,40 @@ namespace UnturnedGodot.Testing
                 py.QueueFree();
             }
 
+            // ---- THE TRANSFORMER VARIANT (astraclaw 2026-10-10) --------------------------------------------
+            // A pole with a transformer bolted on. It must behave as a pole in every respect, and the one way
+            // that could silently fail is its anchors moving -- so they are held against a PLAIN pole at the
+            // SAME transform rather than against typed-in numbers.
+            {
+                var tf = new PowerLineField();
+                World.AddChild(tf);
+                yield return Ticks(1);
+                var at = PoleAt(new Vector3(0f, 0f, 0f), 332f);
+                int plain = tf.AddPole(at, PowerLineField.PoleMesh);
+                int xfmr = tf.AddPole(at, PowerLineField.TransformerMesh);
+
+                T.Check("the transformer is one of the pole meshes",
+                        System.Array.IndexOf(PowerLineField.PoleMeshes, PowerLineField.TransformerMesh) >= 0);
+                T.Check($"it carries the roadside pole's FOUR anchors, not the pylon's six "
+                      + $"({tf.AnchorCount(xfmr)})", tf.AnchorCount(xfmr) == tf.AnchorCount(plain));
+
+                // ⭐⭐ THE CLAIM THAT MATTERS: identical placement -> identical conductor points. astraclaw's
+                // OBJ contains Power_Line_0's vertex list as a byte prefix, so this SHOULD hold exactly; if a
+                // future revision nudges the pole half, this is what catches it.
+                var pa = new Vector3[4]; var xa = new Vector3[4];
+                tf.AnchorsWorld(plain, pa); tf.AnchorsWorld(xfmr, xa);
+                float worst = 0f;
+                for (int i = 0; i < 4; i++) worst = Mathf.Max(worst, pa[i].DistanceTo(xa[i]));
+                T.Check($"its wire anchors are exactly the plain pole's (worst {worst:0.0000} m)", worst < 0.0005f);
+
+                // ⚠ And it is NOT a pylon: the mixed-span refusal must let these two wire together, or a
+                // transformer pole could never join the line it exists to sit on.
+                T.Check("a transformer pole wires to a plain pole", !tf.IsPylon(xfmr)
+                        && tf.Connect(plain, tf.AddPole(PoleAt(new Vector3(0f, 0f, 30f), 332f),
+                                                        PowerLineField.TransformerMesh), out _));
+                tf.QueueFree();
+            }
+
             // ---- THE LOAD-TIME RE-SEED: the bug master actually saw ----------------------------------------
             // ⚠⚠ "dont see any wires". The pylons were authored, strung, verified in-tree with a correct world
             // AABB -- and then Main's own load-time seed re-filled the field from PlacedOf(Power_Line_0) ALONE,
@@ -522,8 +556,12 @@ namespace UnturnedGodot.Testing
 
                 int seeded = rs.RefreshPoles(PowerLineField.PolesFrom(null, objs), out _);
                 T.Check($"the seed finds both kinds of pole ({seeded} of 4)", seeded == 4);
-                T.Check("...and it is the mesh list that decides, not a hand-written pair",
-                        PowerLineField.PoleMeshes.Length == 2);
+                // ⚠ MEMBERSHIP, NOT A COUNT. This read `Length == 2` and broke the moment a third pole mesh
+                // was added -- the brittle shape I had just criticised one test file over. What it means to
+                // assert is that the LIST is what decides, so it checks the list contains the kinds in play.
+                T.Check($"...and it is the mesh list that decides ({PowerLineField.PoleMeshes.Length} kinds)",
+                        System.Array.IndexOf(PowerLineField.PoleMeshes, PowerLineField.PoleMesh) >= 0
+                        && System.Array.IndexOf(PowerLineField.PoleMeshes, PowerLineField.PylonMesh) >= 0);
 
                 int strung = 0;
                 for (int i = 1; i < rs.PoleCount; i++) if (rs.Connect(i - 1, i, out _)) strung++;

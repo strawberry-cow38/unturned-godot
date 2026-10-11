@@ -139,9 +139,17 @@ namespace UnturnedGodot.Testing
                 && wagon.GetChildren().OfType<CpuParticles3D>().Any(p => p.Direction == new Vector3(0f, 0.35f, 1f)
                         && p.Position.DistanceTo(tip) < 0.002f)
                 && actual != null && tip.Z > actual.GetAabb().End.Z);
-            var defaultTip = new Vector3(sedanSize.X / 2f - 0.3f, Mathf.Max(0.22f, sedanCenter.Y - sedanSize.Y / 2f + 0.18f), sedanCenter.Z + sedanSize.Z / 2f - 0.05f);
-            T.Check("CONTROL: sedan exhaust retains fleet formula", sedan.GetChildren().OfType<CpuParticles3D>()
-                .Any(p => p.Direction == new Vector3(0f, 0.35f, 1f) && p.Position.IsEqualApprox(defaultTip)));
+            // CONTROL: the wagon's outlet is AUTHORED, not an accident of the box formula. ⚠ This used to
+            // assert the sedan still took the fleet formula, as the contrast -- and that premise expired on
+            // 2026-10-10 (a6cb2db9), when every hull in the fleet got its tailpipe measured off its own mesh
+            // at master's request. There is no formula-driven vehicle left to contrast against, so the control
+            // now says the thing that is still true and still worth guarding: the two hulls put their smoke in
+            // DIFFERENT places, each at its own spec'd outlet, rather than both falling back to one rule.
+            var sedanTip = sedan.GetChildren().OfType<CpuParticles3D>().FirstOrDefault(p => p.Direction == new Vector3(0f, 0.35f, 1f));
+            T.Check("CONTROL: the sedan has its own authored outlet, not the wagon's",
+                sedanTip != null && sedanTip.Position.DistanceTo(tip) > 0.05f);
+            T.Check($"CONTROL: ...and it sits at the sedan's own spec value ({sedanTip?.Position})",
+                sedanTip != null && sedanTip.Position.IsEqualApprox(sedan.DebugExhaustLocal));
             // Health still tracks the sedan; FUEL deliberately no longer does -- it is balanced with the
             // off-road block now, which runs 60-95 kL against the cars' 45-50.
             T.Check($"health retained from the sedan, fuel raised to the off-road block ({wagon.FuelMax:0} vs {sedan.FuelMax:0})",

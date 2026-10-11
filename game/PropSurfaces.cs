@@ -21,6 +21,22 @@ namespace UnturnedGodot
     {
         static Dictionary<string, PlayerController.Surf> _byName;
 
+        /// <summary>What a placed prop's collider should be tagged as. ONE rule for both placement paths -- the
+        /// world loader (WorldBuilder) and the editor (EditorObjects.Place) -- because they had drifted: the
+        /// editor path set no surface at all, so an editor-placed rail, road or metal walkway read as unlabelled
+        /// concrete while the same prop loaded from a map read correctly.
+        ///
+        /// <paramref name="woodFallback"/> is the loader's existing rule for a prop with a separate foliage mesh.
+        /// Everything unmatched stays Concrete, which is what BOTH paths already produced -- so this changes a
+        /// prop's surface only where the retail table or the rail rule below actually knows better.</summary>
+        public static PlayerController.Surf SurfForProp(string name, bool woodFallback = false)
+        {
+            // OUR OWN props are not in the retail physic-material table -- it has no row for something retail
+            // never shipped -- so they are named here or they fall through to concrete.
+            if (name != null && name.StartsWith("New_Rail_")) return PlayerController.Surf.Rails;
+            return For(name) ?? (woodFallback ? PlayerController.Surf.Wood : PlayerController.Surf.Concrete);
+        }
+
         public static int Count => _byName?.Count ?? 0;
 
         /// <summary>A retail physic material name -> the port's Surf. `_Static`/`_Dynamic` is whether the

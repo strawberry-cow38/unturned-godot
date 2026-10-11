@@ -69,7 +69,7 @@ namespace UnturnedGodot
                     node.GlobalPosition = target;
                     node.ResetPhysicsInterpolation();   // don't smear from (0,0,0) to the spawn point (the WorldItem.Spawn lesson)
                     _nodes[e.NetIdValue] = node;
-                    GrassDisplacers.Register(node, GrassDisplacers.ItemRadius);   // master: a dropped item dimples the grass it rests in (this puppet is the visible copy on a client/host)
+                    DisturbanceField.Register(node, DisturbanceField.ItemRadius);   // master: a dropped item dimples the grass it rests in (this puppet is the visible copy on a client/host)
                 }
                 // follow the published position: in-flight moves arrive every snapshot, the settle event is the last one
                 var pos = node.GlobalPosition;

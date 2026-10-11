@@ -50,6 +50,7 @@ namespace UnturnedGodot
             GlassPane.ClearCaches();
             GlassShards.ClearCaches();
             PropSurfaces.Clear();          // the retail physic-material table is per-MAP content, so a map change re-reads it
+            BushField.Clear();             // undergrowth positions are per-MAP: keep them and the next map's cars drag on the last map's hedges
             RainSystem3D.ResetGlobals();   // rain_wetness/rain_intensity are process-wide + outlive the scene -> zero them so the next scene/menu isn't stuck wet (tinyclaw)
             Log.Print("[caches] cleared all static resource caches (editor/map transition)");
         }

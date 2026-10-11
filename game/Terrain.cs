@@ -63,6 +63,7 @@ global uniform float rain_puddle;                              // 0..1 standing 
 global uniform sampler2D rain_roof;                             // RainRoofMap (rain_streak.gdshader): roofed ground stays dry
 global uniform vec4 rain_roof_rect;
 global uniform vec2 ug_origin;                                  // WorldOrigin: local + this = the world position PATTERNS use
+global uniform float snow_cover;                                // 0..1 snow LYING on the ground (WeatherManager accumulates + melts it)
 varying vec3 wpos;
 void vertex() { wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz; }
 // --- caustics: gradient (Perlin) noise so the web is smooth, not blocky; projected in world XZ onto underwater terrain ---
@@ -110,6 +111,23 @@ void fragment() {
     for (int i = 1; i < 8; i++) { if (ws[i] > bw) { bw = ws[i]; best = i; } }
     ALBEDO = texture(albedos, vec3(tuv, float(best))).rgb;
     ROUGHNESS = 1.0;
+    // SNOW LIES ON THE GRASS AND NOTHING ELSE (strawberry 2026-10-10: ""only the grass, dirt etc stays"").
+    // Layer 2 is Grass, layer 6 is Yukon_Snow_00; the splatmap is NOT touched, so this melts back by the
+    // coverage simply falling again -- repainting would have thrown the authored grass away for good.
+    //
+    // ⭐ PATCHY, NOT A WASH. A straight mix() over the whole map reads as someone turning up a brightness
+    // slider. Snow actually arrives in patches that join up, so the coverage is compared against world noise:
+    // low cover whitens only the noise-low ground, high cover takes everything, and melt runs the same film
+    // backwards with the last patches lingering where the first ones formed.
+    float snowAmt = 0.0;
+    if (snow_cover > 0.0 && best == 2) {
+        float sn = cnoise(pxz * 0.07);                                  // large patches, metres across
+        snowAmt = clamp(smoothstep(0.35, 0.95, snow_cover * 1.45 - sn * 0.45), 0.0, 1.0);
+        if (snowAmt > 0.0) {
+            ALBEDO = mix(ALBEDO, texture(albedos, vec3(tuv, 6.0)).rgb, snowAmt);
+            ROUGHNESS = mix(ROUGHNESS, 0.82, snowAmt);                  // lying snow is slightly less matte than grass
+        }
+    }
     // Layer 4 is Russia_Road_00, the PAVED road (layer 3 is gravel). With a hard pick the road weight is 0 or 1: the wet
     // block below keeps treating a road pixel like the road PROPS do (reflections + ripples, strawberry 2026-09-05); the
     // road/dirt boundary is now the same hard line the albedo has.
@@ -130,7 +148,9 @@ void fragment() {
     // GATED on the globals, like the caustics above -- rsplash is ~800 ALU/px and would run on every terrain fragment
     // every frame in clear weather otherwise, for a result that's multiplied by zero (tinyclaw). Both globals sit at 0
     // in fair weather, so the whole block skips and clear weather costs nothing.
-    if (rain_intensity > 0.0 || rain_wetness > 0.0) {
+    // ⚠ SNOW-COVERED GROUND IS NOT WET GROUND. Without this the wet block darkens and glosses the snow and
+    // puts raindrop rings on it, which is what a white surface shows up worst.
+    if ((rain_intensity > 0.0 || rain_wetness > 0.0) && snowAmt < 0.98) {
         vec3 wn = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);   // world normal -> upness is camera-independent
         float r_up = smoothstep(0.35, 0.75, wn.y);
         if (best == 2 || best == 0 || best == 7) r_up = 0.0;   // GRASS (+ forest floor) never takes the wet look or the rings (strawberry 2026-09-04) -- only sand/road/rock/dirt soak

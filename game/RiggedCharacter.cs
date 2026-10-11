@@ -789,6 +789,7 @@ namespace UnturnedGodot
         {
             public float LeanDeg;
             public float PitchDeg;        // the FULL look pitch; spine and skull take half each (see below)
+            public float SpinePitchScale = 1f;   // scales the SPINE's half only; see RiggedCharacter.SpinePitchScale
             public int SpineBone = -1;
             public int SkullBone = -1;
             // The resulting Spine->Skull direction in skeleton space, recorded EVERY pass (leaning or not). This is
@@ -868,7 +869,7 @@ namespace UnturnedGodot
                     // backwards -- so the angle keeps the pitch's sign rather than inverting it.
                     var pa = (parentBasis.Inverse() * Vector3.Right).Normalized();
                     if (pa.IsFinite() && pa.LengthSquared() > 1e-6f)
-                        d = new Quaternion(pa, Mathf.DegToRad(PitchDeg * SpinePitchShare)) * d;
+                        d = new Quaternion(pa, Mathf.DegToRad(PitchDeg * SpinePitchShare * SpinePitchScale)) * d;
                 }
                 if (!d.IsEqualApprox(Quaternion.Identity))
                     sk.SetBonePoseRotation(SpineBone, d * sk.GetBonePoseRotation(SpineBone));
@@ -906,6 +907,8 @@ namespace UnturnedGodot
         /// therefore the gun) only get half of it. That asymmetry is deliberate and load-bearing, not a rounding of
         /// "the torso pitches": a 3P character aiming at the sky raises the gun halfway and looks the rest.</summary>
         internal const float SpinePitchShare = 0.5f, SkullPitchShare = 0.5f;
+
+
         /// <summary>Signed lean in degrees; + leans left, matching PlayerController's _leanAngle.
         ///
         /// Backed by a FIELD rather than forwarded straight at the modifier. The first version was
@@ -917,6 +920,24 @@ namespace UnturnedGodot
         {
             get => _leanDeg;
             set { _leanDeg = value; if (_leanMod != null) _leanMod.LeanDeg = value; }
+        }
+
+        /// <summary>Scales the SPINE's half of the look pitch, leaving the skull's half alone. 1 = standing
+        /// behaviour, unchanged. 0 = the torso holds whatever pose its clip gave it while the head still turns.
+        ///
+        /// ⭐ For SEATED poses (strawberry 2026-10-10: "in 3p in vehicle seats it looks like my model is
+        /// leaning forward where they sit"). Idle_Drive already decides where a driver's chest is; half the
+        /// look pitch added on top bends it through the wheel. The bed path solved the same problem by zeroing
+        /// PitchDeg outright, which also freezes the head -- right lying down, wrong in a car.
+        ///
+        /// ⚠ BACKED BY A FIELD, like LeanDeg above and for the reason written there: forwarding straight at
+        /// the modifier drops every assignment made before the modifier exists, and reports success by saying
+        /// nothing.</summary>
+        float _spinePitchScale = 1f;
+        public float SpinePitchScale
+        {
+            get => _spinePitchScale;
+            set { _spinePitchScale = value; if (_leanMod != null) _leanMod.SpinePitchScale = value; }
         }
 
         /// <summary>Look pitch in degrees, + looking up, matching PlayerController._pitchDeg. Backed by a field for
@@ -1097,7 +1118,7 @@ namespace UnturnedGodot
             _leanMod = new TorsoPoseModifier
             {
                 SpineBone = spine, SkullBone = Skeleton.FindBone("Skull"),
-                LeanDeg = _leanDeg, PitchDeg = _pitchDeg, Name = "LeanModifier",
+                LeanDeg = _leanDeg, PitchDeg = _pitchDeg, SpinePitchScale = _spinePitchScale, Name = "LeanModifier",
             };
             Skeleton.AddChild(_leanMod);
         }

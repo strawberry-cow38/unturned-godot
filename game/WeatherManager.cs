@@ -70,6 +70,7 @@ namespace UnturnedGodot
         public float RainIntensity => Sim?.BlendAlpha ?? 0f;
         /// <summary>rint (0..1): the value the rain density, wetness, splashes and storm sky all scale off --
         /// BlendAlpha x Severity. This is what the retired 2D overlay's Intensity used to carry.</summary>
+        public RainSystem3D DebugRain3D => _rain3d;   // the snow-mode check reads it; null in rigs with no 3D rain
         public float Rain3DIntensity => _rain3d?.Intensity ?? 0f;   // the ACTUAL 3D-rain input (rint x shelter) RainSystem3D fades the rain off. Tests assert THIS, not a parallel re-derivation of rint (tinyclaw finding 3).
         /// <summary>Multiplier other systems apply to a fishing bite interval (< 1 = bites sooner).</summary>
         public static float FishBiteInterval => Current?.Sim?.FishBiteIntervalMultiplier ?? 1f;
@@ -83,11 +84,19 @@ namespace UnturnedGodot
             var types = new System.Collections.Generic.List<SDG.Unturned.WeatherType>(WeatherSim.PeiTypes());
             int firstVariant = types.Count;
             types.AddRange(WeatherSim.VariantTypes());
+            int firstSnow = types.Count;
+            types.AddRange(WeatherSim.SnowTypes());
             var sched = new System.Collections.Generic.List<SDG.Unturned.WeatherSchedule>(WeatherSim.PeiSchedule());
             sched.AddRange(WeatherSim.VariantSchedule(firstVariant));
+            w._snowScheduleIndex = sched.Count;          // the snow entry is appended LAST, after the rain ones
+            sched.AddRange(WeatherSim.SnowSchedule(firstSnow));
+            SnowTypeIndex = firstSnow;
             VariantBase = firstVariant;
+            w._types = types.ToArray();
+            w._sched = sched.ToArray();
+            w._seed = seed != 0 ? seed : (int)GD.Randi();
             w.Sim = new WeatherSim(types.ToArray(), sched.ToArray(),
-                                   seed != 0 ? seed : (int)GD.Randi(),
+                                   w._seed,
                                    cycleSeconds: cycle != null && cycle.DayLength > 0f ? cycle.DayLength : WeatherSim.DefaultCycleSeconds,
                                    frequencyMultiplier: FrequencyMultiplier,
                                    durationMultiplier: DurationMultiplier);
@@ -96,7 +105,7 @@ namespace UnturnedGodot
         }
 
         /// <summary>UG_WEATHER forces a perpetual state for render-verifying (rain | heavy | lightning | drizzle | squall |
-        /// downpour | tempest). One place for every world that attaches weather -- the PEI path and the infinite world.</summary>
+        /// downpour | tempest | snow). One place for every world that attaches weather -- the PEI path and the infinite world.</summary>
         public void ApplyEnvOverride()
         {
             switch (System.Environment.GetEnvironmentVariable("UG_WEATHER"))
@@ -110,8 +119,102 @@ namespace UnturnedGodot
                 case "squall": case "windy": Sim.SetPerpetual(VariantBase + 1); break;
                 case "downpour": case "torrential": Sim.SetPerpetual(VariantBase + 2); break;
                 case "tempest": case "gale": Sim.SetPerpetual(VariantBase + 3); break;
+                case "snow": if (SnowTypeIndex >= 0) Sim.SetPerpetual(SnowTypeIndex); break;
             }
         }
+
+        // ---- SEASONAL DAY OUTLOOK (strawberry 2026-10-10) -----------------------------------------------
+        SDG.Unturned.WeatherType[] _types;
+        SDG.Unturned.WeatherSchedule[] _sched;
+        int _seed;
+        int _outlookDay = int.MinValue;
+        int _snowScheduleIndex = -1;
+
+        // ---- SNOW LYING ON THE GROUND --------------------------------------------------------------------
+        /// <summary>How much snow is lying, 0..1. Published to the terrain shader as `snow_cover`.</summary>
+        public float SnowCover { get; private set; }
+
+        /// <summary>Fractions of a DAY, not absolute seconds, so the rates read the same whatever DayLength
+        /// a map runs at -- a 2-minute test day and a 20-minute play day both lay snow at the same pace
+        /// relative to the weather that is making it.</summary>
+        public const float SnowLayDays = 0.35f;     // full cover after this much solid snowfall
+        public const float SnowMeltDays = 0.8f;     // full melt after this much of a day at MeltRefC
+        public const float MeltRefC = 8f;           // the warmth that melts at the quoted rate
+
+        /// <summary>Is the weather currently falling as snow?</summary>
+        public bool IsSnowing => Sim != null && SnowTypeIndex >= 0
+                              && Sim.ActiveTypeIndex == SnowTypeIndex && Sim.BlendAlpha > 0.001f;
+
+        /// <summary>Today's mean outdoor temperature, which is what decides snow vs rain and melt vs lie.</summary>
+        public float DayMeanC(int day)
+            => SDG.Unturned.WorldTemperature.BaseMeanC
+             + SDG.Unturned.WorldTemperature.SeasonAmplitude
+               * SDG.Unturned.WorldTemperature.SeasonPhase(
+                   SDG.Unturned.WorldTemperature.DayOfYear(SDG.Unturned.WorldTemperature.StartDayOfYear, day));
+
+        void StepSnowCover(float dt)
+        {
+            if (dt <= 0f) return;
+            float dayLen = Cycle != null && Cycle.DayLength > 0f ? Cycle.DayLength : WeatherSim.DefaultCycleSeconds;
+            float before = SnowCover;
+            if (IsSnowing)
+                SnowCover = Mathf.Min(1f, SnowCover + dt / (SnowLayDays * dayLen) * Sim.BlendAlpha);
+            else
+            {
+                // ⚠ MELT IS DRIVEN BY TEMPERATURE, NOT BY "it stopped snowing" (master: "after it warms up,
+                // show melt back into grass"). Snow that stopped falling at -10 C stays exactly where it is.
+                float warmth = DayMeanC(DayNumber) - SDG.Unturned.WeatherOutlook.FreezingC;
+                if (warmth > 0f)
+                    SnowCover = Mathf.Max(0f, SnowCover - dt / (SnowMeltDays * dayLen) * (warmth / MeltRefC));
+            }
+            if (!Mathf.IsEqualApprox(SnowCover, before))
+                RenderingServer.GlobalShaderParameterSet("snow_cover", SnowCover);
+        }
+
+        /// <summary>Weather decided per DAY from (seed, day) and the season, so it can be read BEFORE it
+        /// happens. The sim still chooses when in the day it arrives and how long it lasts -- this only
+        /// chooses WHAT. See WeatherOutlook: the forecast and the sim read the same function, which is what
+        /// stops the radio from lying.</summary>
+        public SDG.Unturned.WeatherOutlook.Day Today { get; private set; }
+        public SDG.Unturned.WeatherOutlook.Day Tomorrow { get; private set; }
+
+        /// <summary>⚠ OFF until a host turns it on. The infinite world and the sim tests keep the uniform
+        /// roll; the singleplayer game opts in, because it is the one with a day counter a player can see.</summary>
+        public bool SeasonalOutlook
+        {
+            get => Sim?.ScheduleChooser != null;
+            set
+            {
+                if (Sim == null) return;
+                if (value) { RefreshOutlook(force: true); Sim.ScheduleChooser = () => Today.ScheduleIndex; }
+                else Sim.ScheduleChooser = null;
+            }
+        }
+
+        public int DayNumber => Cycle?.Day ?? 0;
+
+        /// <summary>Today's and tomorrow's outlook, recomputed only when the day actually turns.</summary>
+        void RefreshOutlook(bool force = false)
+        {
+            int d = DayNumber;
+            if (!force && d == _outlookDay) return;
+            _outlookDay = d;
+            Today = OutlookFor(d);
+            Tomorrow = OutlookFor(d + 1);
+        }
+
+        public SDG.Unturned.WeatherOutlook.Day OutlookFor(int day)
+        {
+            int doy = SDG.Unturned.WorldTemperature.DayOfYear(SDG.Unturned.WorldTemperature.StartDayOfYear, day);
+            return SDG.Unturned.WeatherOutlook.ForDay(_seed, day, _types, _sched,
+                                                      SDG.Unturned.WorldTemperature.SeasonPhase(doy),
+                                                      DayMeanC(day), _snowScheduleIndex);
+        }
+
+        /// <summary>What the radio says. Deliberately the DAY's outlook rather than what is falling right
+        /// now -- a forecast that flipped to "Clear" the moment a shower stopped would be a nowcast.</summary>
+        public string ForecastLine =>
+            $"TODAY  {(Today.Wet ? Today.Name : "Clear")}\nTOMORROW  {(Tomorrow.Wet ? Tomorrow.Name : "Clear")}";
 
         public override void _Ready()
         {
@@ -229,9 +332,11 @@ namespace UnturnedGodot
         public void HubProcess(double delta)
         {
             if (Sim == null) return;
+            if (Sim.ScheduleChooser != null) RefreshOutlook();   // the day turning is what changes the forecast
             // weather rides the same clock as the day/night cycle, so `timeSpeed` speeds the sky AND the weather
             float dt = (float)delta * (Cycle != null ? Mathf.Max(0f, Cycle.Speed) : 1f);
             Sim.Step(dt);
+            StepSnowCover(dt);
 
             float a = Sim.BlendAlpha;
             // WORLDSPACE 3D rain (supersedes the 2D overlay streaks): drive its intensity + the wetness/splash globals
@@ -244,7 +349,7 @@ namespace UnturnedGodot
             float shelter = ShelterFactor((float)delta);   // still drives the audio muffle; the FALLING rain no longer switches off under cover --
             // the roof map kills each drop under whatever is above it (strawberry 2026-09-04: "each building's roof should kill rain that reaches it")
             var wcam = GetViewport()?.GetCamera3D();
-            if (_rain3d != null) { _rain3d.Cam = wcam; _rain3d.Intensity = rint; }
+            if (_rain3d != null) { _rain3d.Cam = wcam; _rain3d.Intensity = rint; _rain3d.Snowing = IsSnowing; }
             if (_roofMap == null && wcam != null) { _roofMap = new RainRoofMap { Follow = wcam }; AddChild(_roofMap); }
             else if (_roofMap != null) _roofMap.Follow = wcam;
             if (_roofMap != null && System.Environment.GetEnvironmentVariable("UG_ROOFCHECK") == "1" && ++_roofCheckTicks % 90 == 80)   // self-check against fresh rays (harness only)
@@ -408,6 +513,8 @@ namespace UnturnedGodot
         /// names below resolve through this rather than hardcoding 2..5, so inserting a retail type later moves
         /// the variants instead of silently forecasting the wrong weather.</summary>
         public static int VariantBase { get; private set; } = 2;
+        /// <summary>Index of the Snowfall type in the assembled table, so callers can ask "is this snow".</summary>
+        public static int SnowTypeIndex { get; private set; } = -1;
 
         // --- console surface (src CommandWeather) ---
         public bool ApplyCommand(string arg)

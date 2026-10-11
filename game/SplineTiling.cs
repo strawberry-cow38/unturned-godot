@@ -1,4 +1,5 @@
 using Godot;
+using System.Collections.Generic;
 
 namespace UnturnedGodot
 {
@@ -32,6 +33,46 @@ namespace UnturnedGodot
         ///
         /// ⚠ Clamped to half the pitch so a walk using it always advances. It only binds past
         /// turn ≈ pitch/(2*halfWidth), far tighter than either tool warns about.</summary>
+        /// <summary>A smooth curve through clicked points -- Catmull-Rom-ish handles at a sixth of the
+        /// neighbour span, or dead-straight segments when `smooth` is false. Lifted out of EditorFenceRoad so
+        /// the block-barrier tool walks the SAME curve the guardrail does: two tools that lay props along a
+        /// clicked path and disagree about what curve the path describes is a bug waiting for a map that uses
+        /// both along one road.</summary>
+        public static Curve3D CurveThrough(IReadOnlyList<Vector3> pts, bool smooth = true)
+        {
+            var c = new Curve3D();
+            for (int i = 0; i < pts.Count; i++)
+            {
+                Vector3 inH = Vector3.Zero, outH = Vector3.Zero;
+                if (smooth && pts.Count > 2)
+                {
+                    var prev = pts[Mathf.Max(i - 1, 0)];
+                    var next = pts[Mathf.Min(i + 1, pts.Count - 1)];
+                    var t = (next - prev) / 6f;
+                    inH = -t; outH = t;
+                }
+                c.AddPoint(pts[i], inH, outH);
+            }
+            return c;
+        }
+
+        /// <summary>Stand a prop at `at` facing `yawDeg`, tilted onto the ground's slope but no further than
+        /// `maxTiltDeg`. `rawTiltDeg` reports the slope it actually found, before the clamp, so a caller can
+        /// tell "flat ground" from "a cliff we refused to follow".</summary>
+        public static Basis SeatedBasis(Terrain terr, Vector3 at, float yawDeg, float maxTiltDeg,
+                                        out float rawTiltDeg)
+        {
+            rawTiltDeg = 0f;
+            var stand = EditorObjects.FromEuler(270f, yawDeg, 0f);
+            if (terr == null) return stand;
+            var nrm = terr.NormalAt(at.X, at.Z);
+            var axis = Vector3.Up.Cross(nrm);
+            if (axis.LengthSquared() < 1e-8f) return stand;
+            float raw = Vector3.Up.AngleTo(nrm);
+            rawTiltDeg = Mathf.RadToDeg(raw);
+            return new Basis(axis.Normalized(), Mathf.Min(raw, Mathf.DegToRad(maxTiltDeg))) * stand;
+        }
+
         public static float OverlapFor(float halfWidth, float pitch, float turn)
             => Mathf.Min(halfWidth * Mathf.Abs(turn), pitch * 0.5f);
     }

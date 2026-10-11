@@ -52,7 +52,7 @@ namespace UnturnedGodot
         /// material never links a missing one.</summary>
         public static void EnsureAllGlobals()
         {
-            GrassDisplacers.EnsureGlobals();   // grass_displacement_point / wind_vec / grass_displacer_count / the displacer texture
+            GrassDisplacers.EnsureGlobals();   // wind_vec + the foliage fade range, and (through it) the disturbance field's disturb_tex / disturb_count
             RainSystem3D.EnsureGlobals();      // rain_wetness / rain_intensity / rain_canopy
             WellShaft.EnsureGlobals();         // well_daylight
         }

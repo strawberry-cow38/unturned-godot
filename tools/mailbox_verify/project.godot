@@ -1,0 +1,9 @@
+config_version=5
+[application]
+config/name="Mailbox Focused Verifier"
+run/main_scene="res://VerifyMarkers.tscn"
+config/features=PackedStringArray("4.6", "C#", "GL Compatibility")
+[dotnet]
+project/assembly_name="MailboxVerify"
+[rendering]
+renderer/rendering_method="gl_compatibility"
