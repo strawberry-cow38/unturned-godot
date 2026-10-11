@@ -34,6 +34,35 @@ namespace SDG.Unturned
         /// <summary>Vertices from here on are inside the patch, off its edges (a town's rings): free to be lifted onto
         /// the ground under them, where nothing carves it flat (InfiniteRoads.PiecesIn).</summary>
         public int Interior = int.MaxValue;
+
+        /// <summary>The patch's surface at (x, z), or NaN off it.</summary>
+        public float HeightAt(double x, double z)
+        {
+            for (int t = 0; t + 2 < Tris.Length; t += 3)
+            {
+                int a = Tris[t], b = Tris[t + 1], c = Tris[t + 2];
+                double den = (Z[b] - Z[c]) * (X[a] - X[c]) + (X[c] - X[b]) * (Z[a] - Z[c]);
+                if (Math.Abs(den) < 1e-6) continue;   // (a sliver: its barycentrics are noise, and "inside" anywhere along its line)
+                double w1 = ((Z[b] - Z[c]) * (x - X[c]) + (X[c] - X[b]) * (z - Z[c])) / den, w2 = ((Z[c] - Z[a]) * (x - X[c]) + (X[a] - X[c]) * (z - Z[c])) / den, w3 = 1 - w1 - w2;
+                if (w1 >= -1e-9 && w2 >= -1e-9 && w3 >= -1e-9) return (float)(w1 * Y[a] + w2 * Y[b] + w3 * Y[c]);
+            }
+            return float.NaN;
+        }
+    }
+
+    /// <summary>Paint laid on the road where a road's own texture cannot reach (strawberry 2026-10-11: "why do the
+    /// markings disappear near the connection? also add new road markings for stop lines, merge lines etc"): a joined
+    /// road's lines carried on into its junction, stop lines, a ramp's merge line. Quads, four corners each (start
+    /// left, start right, end left, end right), absolute X/Z, Y the surface under them; drawn by the region holding the
+    /// anchor, a hair over the road.</summary>
+    public sealed class RoadMark
+    {
+        public byte Colour;   // 0 white, 1 yellow (the road textures' own: 200,200,200 and 210,191,34)
+        public double AnchorX, AnchorZ;
+        public List<double> X = new(), Z = new(); public List<float> Y = new(), Lift = new();
+        /// <summary>The junction patch it is painted over, if any: its surface there is the floor.</summary>
+        public RoadPatch On;
+        public int Quads => X.Count / 4;
     }
 
     public sealed partial class InfiniteRoads
@@ -225,6 +254,7 @@ namespace SDG.Unturned
             public readonly Dictionary<LineKey, LineTrim> Trims = new();
             public readonly Dictionary<(LineKey, double), List<HostMod>> Mods = new();
             public readonly List<RoadPatch> Patches = new();
+            public readonly List<RoadMark> Marks = new();
             public LineTrim TrimOf(Line e) { var k = KeyOf(e); if (!Trims.TryGetValue(k, out var t)) Trims[k] = t = new LineTrim(); return t; }
             public List<HostMod> ModsOf(Line e, double off)
             {
@@ -323,6 +353,7 @@ namespace SDG.Unturned
                     var tr = plan.TrimOf(r);
                     if (atEnd) { tr.R1 = g.R.Total - g.Gore; tr.J1 = true; tr.T1 = g.Tangent; tr.X1 = g.Widen; tr.H1 = g.H; } else { tr.R0 = g.Gore; tr.J0 = true; tr.T0 = g.Tangent; tr.X0 = g.Widen; tr.H0 = g.H; }
                     plan.ModsOf(host, cw * HighwayRibbonOffset).Add(new HostMod { Side = cw, A0 = g.A0, A1 = g.A1, WArc = g.WArc, W = g.W });
+                    PaintTaper(plan, g, host, cw);
                 }
             // TOWNS: each main cut back past its fillets -- only where the middle could be paved
             foreach (var kv in ends)
@@ -348,6 +379,7 @@ namespace SDG.Unturned
                 if (NodeShape(arms, nx, nz) is not NodeGeo g) return;
                 if (NodePatch(g) is not RoadPatch p) return;
                 plan.Patches.Add(p);
+                PaintNode(plan, g, p);
                 for (int i = 0; i < g.Arms.Count; i++)
                 {
                     var arm = g.Arms[i];
@@ -418,6 +450,7 @@ namespace SDG.Unturned
             foreach (var (g, p) in made)
             {
                 plan.Patches.Add(p);
+                PaintTee(plan, g, p);
                 var tr = plan.TrimOf(g.JLine);
                 if (g.AtEnd) { tr.R1 = g.J.Total - g.Trim; tr.J1 = true; } else { tr.R0 = g.Trim; tr.J0 = true; }
                 plan.ModsOf(g.HostLine, 0.0).Add(new HostMod { Side = g.HSide, A0 = g.ALo, A1 = g.AHi, NoBevel = true });
@@ -538,6 +571,91 @@ namespace SDG.Unturned
             return cuts;
         }
 
+        // ---- PAINT (the road textures' own: dashes 4 m in every 8, on while the arc's eighth-metre phase is in [0.25, 0.75))
+
+        const double DashPeriod = 8.0, StopWidth = 0.5;
+        /// <summary>Where a class's lines lie across it (ribbon normal units from its centre), how wide, which colour, and
+        /// dashed or solid -- read off its texture: a main's solid yellow centre 0.575 m wide and white lane dashes 4.82 m
+        /// out; a small road's dashed yellow centre, a ramp's dashed white one, 0.29 m; a trail none.</summary>
+        static IEnumerable<(double lat, double width, byte colour, bool dashed)> LinesOf(Line e)
+        {
+            if (e.Kind == RoadKind.Main) { yield return (0, 0.575, 1, false); yield return (4.82, 0.29, 0, true); yield return (-4.82, 0.29, 0, true); }
+            else if (e.Kind == RoadKind.Small) yield return (0, 0.29, (byte)(e.Ramp ? 0 : 1), true);
+        }
+
+        /// <summary>One stripe along a ribbon from arc a0 to a1 at lateral `lat`, `width` wide; dashed in phase with the
+        /// road's own texture so a line carried on from it keeps its rhythm.</summary>
+        static void Stripe(RoadMark m, Rib r, double a0, double a1, double lat, double width, bool dashed, RoadKind kind)
+        {
+            if (a1 < a0) (a0, a1) = (a1, a0);
+            a0 = Math.Max(0, a0); a1 = Math.Min(r.Total, a1);
+            var spans = new List<(double, double)>();
+            if (!dashed) spans.Add((a0, a1));
+            else
+                for (double c = Math.Floor(a0 / DashPeriod) * DashPeriod; c < a1; c += DashPeriod)
+                {
+                    double s0 = Math.Max(a0, c + 0.25 * DashPeriod), s1 = Math.Min(a1, c + 0.75 * DashPeriod);
+                    if (s1 - s0 > 0.05) spans.Add((s0, s1));
+                }
+            float lift = Lift(kind);
+            foreach (var (s0, s1) in spans)
+            {
+                int steps = Math.Max(1, (int)Math.Ceiling((s1 - s0) / 2.0));
+                for (int q = 0; q < steps; q++)
+                {
+                    double sa = s0 + (s1 - s0) * q / steps, sb = s0 + (s1 - s0) * (q + 1) / steps;
+                    foreach (double a in new[] { sa, sb })
+                    {
+                        var (k, t) = r.Find(a);
+                        r.Point(k, t, out double x, out double z);
+                        r.Dir(k, out double dx, out double dz);   // the segment's own normal: a stripe is not a piece row
+                        double nx = -dz, nz = dx;
+                        float y = SurfaceY(kind, r.H(k, t));
+                        foreach (double l in new[] { lat + width * 0.5, lat - width * 0.5 })
+                        { m.X.Add(x + nx * l); m.Z.Add(z + nz * l); m.Y.Add(y); m.Lift.Add(lift); }
+                    }
+                }
+            }
+        }
+
+        /// <summary>A stop line across one approach, centred on arc `a`, from the centre line to the edge on `side`.</summary>
+        static void StopLine(RoadMark m, Rib r, double a, int side, double hw, RoadKind kind) =>
+            Stripe(m, r, a - StopWidth * 0.5, a + StopWidth * 0.5, side * (hw - 0.3) * 0.5, hw - 0.3, false, kind);
+
+        /// <summary>A tee's paint: the joiner's lines carried on into the mouth, and a stop line across its approach just
+        /// short of the host's edge.</summary>
+        static void PaintTee(JunctionPlan plan, TeeGeo g, RoadPatch p)
+        {
+            var J = g.J; var e = g.JLine;
+            if (e.Kind == RoadKind.Trail) return;
+            double total = J.Total;
+            double Arc(double s) => g.AtEnd ? total - s : s;
+            // the stop line as near the host as it clears the host's asphalt across the joiner's whole width (a skewed
+            // tee's first metre beyond the edge is still the host's on one side: paint there stood on the host, at the
+            // joiner's height)
+            double stop = g.Trim - StopWidth;
+            for (double s = g.SX + 1.2; s < g.Trim - StopWidth; s += 0.25)
+            {
+                bool clear = true;
+                foreach (int side in new[] { 1, -1 })
+                    foreach (double ds in new[] { -StopWidth * 0.5, StopWidth * 0.5 })
+                    {
+                        J.Edge(Arc(s + ds), side, g.hwJ, out double ex, out double ez);
+                        if (Math.Abs(g.H.Project(ex, ez).lat) < g.hwH + 0.3) clear = false;
+                    }
+                if (clear) { stop = s; break; }
+            }
+            // the approach is the side on the right driving toward the host: -normal on a ribbon that starts at the host
+            int approach = g.AtEnd ? 1 : -1;
+            var white = new RoadMark { Colour = 0, AnchorX = p.AnchorX, AnchorZ = p.AnchorZ, On = p };
+            var yellow = new RoadMark { Colour = 1, AnchorX = p.AnchorX, AnchorZ = p.AnchorZ, On = p };
+            foreach (var (lat, width, colour, dashed) in LinesOf(e))
+                Stripe(colour == 1 ? yellow : white, J, Arc(stop + StopWidth * 0.5), Arc(g.Trim), lat, width, dashed, e.Kind);
+            StopLine(white, J, Arc(stop), approach, g.hwJ, e.Kind);
+            if (white.Quads > 0) plan.Marks.Add(white);
+            if (yellow.Quads > 0) plan.Marks.Add(yellow);
+        }
+
         // ---- TEE
 
         sealed class TeeGeo
@@ -548,6 +666,7 @@ namespace SDG.Unturned
             // per side σ = +1 / -1 (the joiner's left / right, looking away from the host): the corner, the tangent points
             public double[] CX = new double[2], CZ = new double[2], BpX = new double[2], BpZ = new double[2], TA = new double[2], SBp = new double[2];
             public double DX, DZ;   // the joiner's heading away from the host
+            public double SX;       // where the joiner's centreline leaves the host's asphalt (out from its joined end)
         }
 
         TeeGeo TeeShape(Line j, bool atEnd, Line host)
@@ -577,7 +696,7 @@ namespace SDG.Unturned
             H.Point(hk, ht, out double ex, out double ez);
             ex += nHx * hSide * hwH; ez += nHz * hSide * hwH;
             double nJx = -dz, nJz = dx;
-            var g = new TeeGeo { JLine = j, HostLine = host, J = J, H = H, AtEnd = atEnd, HSide = hSide, hwJ = hwJ, hwH = hwH, DX = dx, DZ = dz };
+            var g = new TeeGeo { JLine = j, HostLine = host, J = J, H = H, AtEnd = atEnd, HSide = hSide, hwJ = hwJ, hwH = hwH, DX = dx, DZ = dz, SX = sX };
             double R = FilletRadius(j.Kind, j.Ramp), trim = sX + 1.0;
             for (int si = 0; si < 2; si++)
             {
@@ -883,6 +1002,27 @@ namespace SDG.Unturned
             return g;
         }
 
+        /// <summary>A taper's paint: the carriageway's edge, where it has widened by a lane's worth, as the short dashes
+        /// of a merge/diverge line, up to the gore.</summary>
+        static void PaintTaper(JunctionPlan plan, TaperGeo g, Line host, int cw)
+        {
+            var H = new Rib(host, cw * HighwayRibbonOffset);
+            double lo = double.MaxValue, hi = double.MinValue;
+            for (int i = 0; i < g.WArc.Length; i++) if (g.W[i] >= 1.5f) { lo = Math.Min(lo, g.WArc[i]); hi = Math.Max(hi, g.WArc[i]); }
+            if (hi - lo < 4) return;
+            var (k, t) = H.Find((g.A0 + g.A1) * 0.5);
+            H.Point(k, t, out double ax, out double az);
+            var m = new RoadMark { Colour = 0, AnchorX = ax, AnchorZ = az };
+            // (dashes 2 m in every 4: the short, close dashes of a lane that leaves or joins, not a lane line's 4-in-8)
+            double phase = Math.Floor(lo / 4.0) * 4.0;
+            for (double c = phase; c < hi; c += 4.0)
+            {
+                double s0 = Math.Max(lo, c), s1 = Math.Min(hi, c + 2.0);
+                if (s1 - s0 > 0.1) Stripe(m, H, s0, s1, cw * HighwayLaneHalf, 0.3, false, RoadKind.Highway);
+            }
+            if (m.Quads > 0) plan.Marks.Add(m);
+        }
+
         /// <summary>A ramp's profile, given its joined ends: at each taper it runs at the carriageway's surface until its gore
         /// (so the carriageway's widened strip and the ramp's first edge meet flush), and climbs between them -- eased off
         /// the gores (RampEase) -- to the other end's. False if the climb left is too steep for a small road.</summary>
@@ -985,6 +1125,8 @@ namespace SDG.Unturned
             /// <summary>Per adjacent pair (i, i+1 counter-clockwise): a fillet -- its control point and its tangent points'
             /// distances out along each arm -- or, past a straight angle between them, none (the outside of the bend).</summary>
             public List<(bool fillet, double cx, double cz, double ti, double tj)> Pair = new();
+            /// <summary>How far out each arm runs before it meets its neighbours' asphalt: where its paint stops.</summary>
+            public List<double> Inner = new();
         }
 
         /// <summary>The fillet between two arms: the smaller road's (a town's mains 12 m).</summary>
@@ -1008,7 +1150,7 @@ namespace SDG.Unturned
             }
             items.Sort((p, q) => p.ang.CompareTo(q.ang));
             int n = items.Count;
-            var need = new double[n];
+            var need = new double[n]; var inner = new double[n];
             for (int i = 0; i < n; i++) need[i] = items[i].arm.Hw + 4;
             for (int i = 0; i < n; i++)
             {
@@ -1024,6 +1166,8 @@ namespace SDG.Unturned
                 if (Math.Abs(cr) < 1e-6) return null;
                 double t = (px * b.dz - pz * b.dx) / cr;
                 double c0x = g.NX + a.dx * t + nix * hi, c0z = g.NZ + a.dz * t + niz * hi;
+                inner[i] = Math.Max(inner[i], (c0x - g.NX) * a.dx + (c0z - g.NZ) * a.dz);
+                inner[j] = Math.Max(inner[j], (c0x - g.NX) * b.dx + (c0z - g.NZ) * b.dz);
                 double L = Math.Clamp(NodeFilletOf(a.arm, b.arm) / Math.Tan(beta * 0.5), 2.0, 45.0);
                 double ti = (c0x - g.NX) * a.dx + (c0z - g.NZ) * a.dz + L, tj = (c0x - g.NX) * b.dx + (c0z - g.NZ) * b.dz + L;
                 if (ti > 70 || tj > 70) return null;
@@ -1051,6 +1195,7 @@ namespace SDG.Unturned
                 need[i] = Math.Max(need[i], ti + 1.0); need[j] = Math.Max(need[j], tj + 1.0);
             }
             foreach (var it in items) { g.Arms.Add(it.arm); g.D.Add((it.dx, it.dz)); }
+            for (int i = 0; i < n; i++) g.Inner.Add(inner[i]);
             for (int i = 0; i < n; i++)
             {
                 var arm = g.Arms[i];
@@ -1061,6 +1206,36 @@ namespace SDG.Unturned
             }
             return g;
         }
+
+        /// <summary>A node's paint. Each arm's lines run on in from its cut to where it meets its neighbours, and a stop
+        /// line crosses its approach there. A town of three or more arms is an all-way stop; two roads crossing stop the
+        /// smaller one, whose crossing the bigger one's lines run straight through; two arms only (a town on a bend) are
+        /// one road, painted through.</summary>
+        static void PaintNode(JunctionPlan plan, NodeGeo g, RoadPatch p)
+        {
+            int n = g.Arms.Count;
+            int top = 0;
+            foreach (var arm in g.Arms) top = Math.Max(top, Rank(arm.E));
+            bool crossing = n == 4 && !g.Arms[0].IsEnd;
+            var white = new RoadMark { Colour = 0, AnchorX = p.AnchorX, AnchorZ = p.AnchorZ, On = p };
+            var yellow = new RoadMark { Colour = 1, AnchorX = p.AnchorX, AnchorZ = p.AnchorZ, On = p };
+            for (int i = 0; i < n; i++)
+            {
+                var arm = g.Arms[i];
+                if (arm.E.Kind == RoadKind.Trail) continue;
+                bool through = n == 2 || (crossing && Rank(arm.E) == top && g.Arms.FindAll(o => Rank(o.E) == top).Count == 2);
+                double stop = Math.Min(g.Inner[i] + 1.5, g.Trim[i] - StopWidth);
+                double from = through ? 0 : stop + StopWidth * 0.5;
+                if (from < g.Trim[i])
+                    foreach (var (lat, width, colour, dashed) in LinesOf(arm.E))
+                        Stripe(colour == 1 ? yellow : white, arm.R, arm.Arc(from), arm.Arc(g.Trim[i]), lat, width, dashed, arm.E.Kind);
+                // the approach is on the right driving in: the arm's clockwise side
+                if (!through && stop > 0) StopLine(white, arm.R, arm.Arc(stop), arm.Side(-1), arm.Hw, arm.E.Kind);
+            }
+            if (white.Quads > 0) plan.Marks.Add(white);
+            if (yellow.Quads > 0) plan.Marks.Add(yellow);
+        }
+        static int Rank(Line e) => e.Kind == RoadKind.Main ? 2 : e.Kind == RoadKind.Small ? 1 : 0;
 
         RoadPatch NodePatch(NodeGeo g)
         {

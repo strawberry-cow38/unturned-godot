@@ -939,6 +939,14 @@ namespace UnturnedGodot.Testing
                     }
                     T.Check($"the {what} at ({jp.AnchorX:0}, {jp.AnchorZ:0}) is solid road: {on} of {tried} drops into its middle land on the road collider within {worst * 1000f:0} mm of its surface{other}",
                         tried >= 3 && on == tried);
+                    if (what == "town")
+                    {
+                        // ...and painted: its stop lines and the lines carried in are drawn, white and yellow, in its region
+                        int paint = 0;
+                        void Count(Node n) { if (n is MeshInstance3D mi && n.Name.ToString().StartsWith("Road_Paint_") && mi.Mesh != null) paint += mi.Mesh.GetFaces().Length / 3; foreach (var c in n.GetChildren()) Count(c); }
+                        Count(S);
+                        T.Check($"...and painted: {paint} paint triangles drawn in the streamed regions", paint > 50);
+                    }
                 }
                 if (gore is RoadPiece g)
                 {

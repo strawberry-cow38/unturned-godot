@@ -454,7 +454,7 @@ namespace UnturnedGodot
                     rm.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, ra);
                     if (r.Road[k] == null)
                     {
-                        r.Road[k] = new MeshInstance3D { Name = k == RaisedSlot ? "Road_Raised" : k == CutSlot ? "Road_Cut" : k == RampSlot ? "Road_Ramp" : k == RailBedSlot ? "Rail_Bed" : "Road_" + (RoadKind)k, MaterialOverride = RoadMat(k), CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
+                        r.Road[k] = new MeshInstance3D { Name = RoadName(k), MaterialOverride = RoadMat(k), CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
                         r.Node.AddChild(r.Road[k]);
                     }
                     r.Road[k].Mesh = rm;
@@ -641,13 +641,29 @@ void fragment() {
         /// (tunnel candidate) cyan, each from its own slot, so the marking can be checked by eye. Off, they are
         /// ordinary highway.</summary>
         public static bool ShowMarks = System.Environment.GetEnvironmentVariable("UG_INF_MARKS") == "1";
-        const int RoadSlots = 8, RaisedSlot = 4, CutSlot = 5, RampSlot = 6, RailBedSlot = 7;
+        const int RoadSlots = 10, RaisedSlot = 4, CutSlot = 5, RampSlot = 6, RailBedSlot = 7, MarkWhiteSlot = 8, MarkYellowSlot = 9;
+        /// <summary>How far paint (InfiniteRoads' RoadMark) stands over the road it is laid on: enough not to fight it.</summary>
+        const float MarkLift = 0.015f;
+        static string RoadName(int k) => k == RaisedSlot ? "Road_Raised" : k == CutSlot ? "Road_Cut" : k == RampSlot ? "Road_Ramp" : k == RailBedSlot ? "Rail_Bed"
+                                       : k == MarkWhiteSlot ? "Road_Paint_White" : k == MarkYellowSlot ? "Road_Paint_Yellow" : "Road_" + (RoadKind)k;
         /// <summary>A rail deck's bed is the ground's own gravel (terrain layer 3), tiled every RailBedMetres.</summary>
         const float RailBedMetres = 4f;
         static readonly Material[] _roadMats = new Material[RoadSlots];
         static Material RoadMat(int slot)
         {
             if (_roadMats[slot] != null) return _roadMats[slot];
+            if (slot == MarkWhiteSlot || slot == MarkYellowSlot)
+            {
+                // the road textures' own paint, flat, on the same wet surface so rain lands on it like the road
+                RainSystem3D.EnsureGlobals();
+                var pm = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/wet_surface.gdshader") };
+                pm.SetShaderParameter("dry_roughness", 1.0f);
+                pm.SetShaderParameter("impact_amount", 1.0f);
+                pm.SetShaderParameter("splash_scale", 1.0f);
+                pm.SetShaderParameter("puddle_amount", 1.0f);
+                pm.SetShaderParameter("dry_albedo", slot == MarkYellowSlot ? new Vector3(210f / 255f, 191f / 255f, 34f / 255f) : new Vector3(200f / 255f, 200f / 255f, 200f / 255f));
+                return _roadMats[slot] = pm;
+            }
             if (slot == RailBedSlot)
             {
                 var gi = new Image();
@@ -1750,7 +1766,7 @@ void fragment() {
             RoadMesh[] roadMeshes = null;
             Vector3[][] roadCol = null;
             bool decks = d.Bridges != null && d.Bridges.Exists(bp => bp.Kind == 0);
-            if (d.Roads != null && d.Roads.Count > 0 || decks || d.RoadPatches != null && d.RoadPatches.Count > 0)
+            if (d.Roads != null && d.Roads.Count > 0 || decks || d.RoadPatches != null && d.RoadPatches.Count > 0 || d.RoadMarks != null && d.RoadMarks.Count > 0)
             {
                 roadMeshes = new RoadMesh[RoadSlots];
                 var lists = new (List<Vector3> V, List<Vector3> N, List<Vector2> UV, List<int> I)[RoadSlots];
@@ -1942,6 +1958,25 @@ void fragment() {
                             Tri(RV, RI, i0 + 1, i0 + 3, i0 + 2, front);
                             if (col != null) { col.Add(fa); col.Add(a); col.Add(fb); col.Add(a); col.Add(b); col.Add(fb); }
                         }
+                    }
+                }
+                // PAINT (InfiniteRoads' RoadMark): flat quads a hair over the road, lifted as the road under them is
+                foreach (var mk in d.RoadMarks ?? new List<RoadMark>())
+                {
+                    int slot = mk.Colour == 1 ? MarkYellowSlot : MarkWhiteSlot;
+                    lists[slot].V ??= new List<Vector3>(); lists[slot].N ??= new List<Vector3>(); lists[slot].UV ??= new List<Vector2>(); lists[slot].I ??= new List<int>();
+                    var RV = lists[slot].V; var RN = lists[slot].N; var RUV = lists[slot].UV; var RI = lists[slot].I;
+                    for (int q = 0; q + 3 < mk.X.Count; q += 4)
+                    {
+                        int i0 = RV.Count;
+                        for (int c = 0; c < 4; c++)
+                        {
+                            float lx = (float)(mk.X[q + c] - ox), lz = (float)(mk.Z[q + c] - oz);
+                            float y = Mathf.Max(mk.Y[q + c], InfiniteTerrain.MeshHeightAt(d, Mathf.Clamp(lx, 0f, InfiniteTerrain.RegionSize), Mathf.Clamp(lz, 0f, InfiniteTerrain.RegionSize)) + 0.02f + mk.Lift[q + c]) + MarkLift;
+                            RV.Add(new Vector3(lx, y, lz)); RN.Add(Vector3.Up); RUV.Add(Vector2.Zero);
+                        }
+                        Tri(RV, RI, i0, i0 + 1, i0 + 2, Vector3.Up);
+                        Tri(RV, RI, i0 + 1, i0 + 3, i0 + 2, Vector3.Up);
                     }
                 }
                 for (int k = 0; k < RoadSlots; k++)

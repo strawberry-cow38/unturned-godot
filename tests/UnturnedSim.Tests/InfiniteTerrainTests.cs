@@ -1752,14 +1752,14 @@ namespace UnturnedSim.Tests
                 sites.Add((c.apart || crowded ? "cross/apart" : "cross", c.x, c.z, c.lines));
             }
             var stat = new Dictionary<string, (int n, int patched, long over, long holes, long paved, int open, int seams, double worstSeam, int badBevel)>();
-            long anchorSliver = 0, folds = 0, refFolds = 0, byApart = 0; var firstBad = new Dictionary<string, List<string>>();
+            long anchorSliver = 0, folds = 0, refFolds = 0, byApart = 0, paintAll = 0, paintOffAll = 0; double paintWorstAll = 0; int unpainted = 0; var firstBad = new Dictionary<string, List<string>>();
             object gate = new object();
             System.Threading.Tasks.Parallel.ForEach(sites, s =>
             {
                 double B = s.kind == "node" || s.kind.StartsWith("cross") ? 75 : s.kind == "taper" ? 70 : 45;
                 double x0 = s.x - B, z0 = s.z - B;
                 var lines = Gen.Roads.LinesIn(s.x - B - 20, s.z - B - 20, s.x + B + 20, s.z + B + 20);
-                var pcs = Gen.Roads.PiecesIn(lines, s.x - B - 60, s.z - B - 60, s.x + B + 60, s.z + B + 60, 4f, out var pts);
+                var pcs = Gen.Roads.PiecesIn(lines, s.x - B - 60, s.z - B - 60, s.x + B + 60, s.z + B + 60, 4f, out var pts, out var marks);
                 // the tops, as RegionStreamer lays them: each piece's top and widened strips (two triangles), each patch's
                 var tris = new List<(double ax, double az, double ay, double bx, double bz, double by, double cx, double cz, double cy, int src, bool hw)>();
                 var segs = new List<(double ax, double az, double ay, double bx, double bz, double by, int src)>();   // every top's outer edges
@@ -1976,6 +1976,31 @@ namespace UnturnedSim.Tests
                     bool On(double x, double z) => pts.Any(q => Enumerable.Range(0, q.X.Length).Any(i => Math.Abs(q.X[i] - x) < 0.002 && Math.Abs(q.Z[i] - z) < 0.002));
                     if (!On(ax, az) || !On(bx, bz)) { badBevel++; bad ??= $"{s.kind} at ({s.x:0},{s.z:0}): bevel off at ({ax:0.0},{az:0.0}) with no patch"; }
                 }
+                // PAINT: every corner of every mark round the junction lies on a road top, at its height (the region adds
+                // its hair of lift); and the junction has its paint -- a stop line on a tee's or an arm's approach, a
+                // merge line along a taper
+                int paintCorners = 0, paintOff = 0; double paintWorst = 0;
+                foreach (var m in marks)
+                    for (int i = 0; i < m.X.Count; i++)
+                    {
+                        double x = m.X[i], z = m.Z[i];
+                        if (Math.Abs(x - s.x) > B || Math.Abs(z - s.z) > B) continue;
+                        paintCorners++;
+                        var ids = cell[(int)(z - z0) * N + (int)(x - x0)];
+                        // (the top nearest in height: a road passing over or under is another layer)
+                        double best = double.NaN;
+                        if (ids != null) foreach (int t in ids) { double y = At(t, x, z, -0.01); if (!double.IsNaN(y) && (double.IsNaN(best) || Math.Abs(y - m.Y[i]) < Math.Abs(best - m.Y[i]))) best = y; }
+                        if (double.IsNaN(best)) { paintOff++; bad ??= $"{s.kind} at ({s.x:0},{s.z:0}): paint off the road at ({x:0.00},{z:0.00})"; }
+                        else if (Math.Abs(m.Y[i] - best) > paintWorst) { paintWorst = Math.Abs(m.Y[i] - best); if (paintWorst > 0.01) bad = $"{s.kind} at ({s.x:0},{s.z:0}): paint {(m.Y[i] - best) * 1000:+0;-0} mm off the top at ({x:0.00},{z:0.00}), colour {m.Colour}, on a patch {m.On != null}"; }
+                    }
+                bool painted = s.kind switch
+                {
+                    "taper" => marks.Any(m => m.Colour == 0 && Math.Abs(m.AnchorX - s.x) < 300 && Math.Abs(m.AnchorZ - s.z) < 300),
+                    "node" => s.joined.Length < 3 || marks.Any(m => m.On != null && Math.Abs(m.On.AnchorX - s.x) < 0.01 && Math.Abs(m.On.AnchorZ - s.z) < 0.01 && m.Colour == 0),
+                    "cross" => s.joined.All(e => e.Kind == RoadKind.Trail) || marks.Any(m => m.On != null && Math.Abs(m.On.AnchorX - s.x) < 0.01 && Math.Abs(m.On.AnchorZ - s.z) < 0.01),
+                    _ when s.kind.StartsWith("tee") => s.joined[0].Kind == RoadKind.Trail || marks.Any(m => m.On != null && m.Colour == 0 && Math.Abs(m.On.AnchorX - s.x) < B && Math.Abs(m.On.AnchorZ - s.z) < B),
+                    _ => true,
+                };
                 bool patched = s.kind == "taper" ? open == 0 : s.kind.StartsWith("cross") ? pts.Any(q => Math.Abs(q.AnchorX - s.x) < 0.01 && Math.Abs(q.AnchorZ - s.z) < 0.01)
                                                          : pts.Any(q => Math.Abs(q.AnchorX - s.x) < B && Math.Abs(q.AnchorZ - s.z) < B);
                 if (!patched && s.kind.StartsWith("cross")) open = 1;   // a crossing left to overlap: its fallback
@@ -1987,6 +2012,8 @@ namespace UnturnedSim.Tests
                     // (an end ramp counts against a junction only where it was joined: a fallback keeps its own by design)
                     stat[s.kind] = (st.n + 1, st.patched + (patched ? 1 : 0), st.over + over, st.holes + holes, st.paved + paved, st.open + (patched && s.kind != "taper" ? open : 0), st.seams + seams, Math.Max(st.worstSeam, worstSeam), st.badBevel + badBevel);
                     anchorSliver += sliver; folds += fold; refFolds += refFold; byApart += nearApart;
+                    paintAll += paintCorners; paintOffAll += paintOff; paintWorstAll = Math.Max(paintWorstAll, paintWorst);
+                    if (patched && !painted && s.kind != "cross/apart") { unpainted++; if (!firstBad.TryGetValue("paint", out var pl)) firstBad["paint"] = pl = new List<string>(); pl.Add($"{s.kind} at ({s.x:0},{s.z:0}) has no paint"); }
                     if (bad != null) { if (!firstBad.TryGetValue(s.kind, out var fl)) firstBad[s.kind] = fl = new List<string>(); fl.Add(bad); }
                 }
             });
@@ -1995,6 +2022,8 @@ namespace UnturnedSim.Tests
                                       $"{kv.Value.open} end ramps at a joined end ({kv.Value.n - kv.Value.patched} fell back); {kv.Value.seams} seam points, worst step {kv.Value.worstSeam * 1000:0.00} mm; {kv.Value.badBevel} bevels off with no patch" +
                                       (firstBad.TryGetValue(kv.Key, out var fb) ? $" -- {fb.Count} with faults: " + string.Join(" | ", fb.OrderBy(f => f).Take(6)) : ""));
             TestContext.WriteLine($"highway segments meeting at an anchor: {anchorSliver} samples of sliver; ribbons folding at a sharp bend: {folds} samples (unjoined: {refFolds}); beside a crossing left unpaved: {byApart}");
+            TestContext.WriteLine($"paint: {paintAll} corners round the junctions, {paintOffAll} off the road, worst {paintWorstAll * 1000:0.0} mm off the top under it; {unpainted} joined junctions with none" +
+                                  (firstBad.TryGetValue("paint", out var pb) ? " -- " + string.Join(" | ", pb.Take(5)) : ""));
             int Get(string k, Func<(int n, int patched, long over, long holes, long paved, int open, int seams, double worstSeam, int badBevel), int> f) => stat.TryGetValue(k, out var v) ? f(v) : 0;
             Assert.That(Get("tee", v => v.patched), Is.GreaterThan(80)); Assert.That(Get("tee/ramp", v => v.patched), Is.GreaterThan(20));
             Assert.That(Get("taper", v => v.patched), Is.GreaterThan(30)); Assert.That(Get("node", v => v.patched), Is.GreaterThan(30));
@@ -2010,6 +2039,10 @@ namespace UnturnedSim.Tests
                 Assert.That(kv.Value.patched, Is.GreaterThanOrEqualTo(kv.Value.n * 0.95), $"{kv.Key}: junctions falling back to overlapping");
             }
             Assert.That(anchorSliver, Is.LessThan(200), "highway segments overlap at their anchors");
+            Assert.That(paintAll, Is.GreaterThan(10000)); Assert.That(paintOffAll, Is.EqualTo(0), "paint off the road");
+            // (paint is drawn 15 mm over its road: within 12 of it, it can neither sink under it nor float off it)
+            Assert.That(paintWorstAll, Is.LessThan(0.012), "paint off the road's surface");
+            Assert.That(unpainted, Is.EqualTo(0), "a joined junction with no paint");
             // where one highway segment carries on from another, neither has an end ramp: the slope would stand in the road
             var hwPieces = Gen.Roads.PiecesIn(all.Where(e => e.Kind == RoadKind.Highway).ToList(), Lo, Lo, Hi, Hi, 8f);
             var hwStarts = new Dictionary<(long, long), List<int>>(); var hwEnds = new Dictionary<(long, long), List<int>>();

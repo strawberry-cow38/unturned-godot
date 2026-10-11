@@ -2117,14 +2117,18 @@ namespace SDG.Unturned
         /// pieces are cut back to the junction, widened (a taper) or left without their edge bevel (a tee's mouth), and no
         /// end ramp is built at a joined end.</summary>
         public List<RoadPiece> PiecesIn(List<Line> lines, double x0, double z0, double x1, double z1, float maxPiece, out List<RoadPatch> patches) =>
-            PiecesIn(lines, x0, z0, x1, z1, maxPiece, Junctions, out patches);
+            PiecesIn(lines, x0, z0, x1, z1, maxPiece, Junctions, out patches, out _);
+
+        /// <summary>...and the paint laid at those junctions (RoadMark), anchored in the rectangle.</summary>
+        public List<RoadPiece> PiecesIn(List<Line> lines, double x0, double z0, double x1, double z1, float maxPiece, out List<RoadPatch> patches, out List<RoadMark> marks) =>
+            PiecesIn(lines, x0, z0, x1, z1, maxPiece, Junctions, out patches, out marks);
 
         /// <summary>Test accessor: the ribbons as they would be laid with no junction cut into them -- the ground a junction
         /// must keep paved.</summary>
         public List<RoadPiece> PiecesInUnjoined(List<Line> lines, double x0, double z0, double x1, double z1, float maxPiece) =>
-            PiecesIn(lines, x0, z0, x1, z1, maxPiece, false, out _);
+            PiecesIn(lines, x0, z0, x1, z1, maxPiece, false, out _, out _);
 
-        List<RoadPiece> PiecesIn(List<Line> lines, double x0, double z0, double x1, double z1, float maxPiece, bool junctions, out List<RoadPatch> patches)
+        List<RoadPiece> PiecesIn(List<Line> lines, double x0, double z0, double x1, double z1, float maxPiece, bool junctions, out List<RoadPatch> patches, out List<RoadMark> marks)
         {
             var list = new List<RoadPiece>();
             var plan = junctions ? PlanJunctions(x0, z0, x1, z1, maxPiece) : null;
@@ -2133,6 +2137,12 @@ namespace SDG.Unturned
             // 0.15-0.2 m through it between vertices: its inside rides the ground at a slab's height, its edges stay exact
             foreach (var p in patches)
                 for (int i = p.Interior; i < p.X.Length; i++) p.Y[i] = Math.Max(p.Y[i], _t.HeightAt(p.X[i], p.Z[i]) + Proud + p.Lift[i]);
+            // paint stands on whatever is under it: a patch's surface where it is painted over one (which slopes from its
+            // host's height to its joiner's, so neither road's profile is the surface there)
+            marks = plan == null ? new List<RoadMark>() : plan.Marks.FindAll(m => m.AnchorX >= x0 && m.AnchorX < x1 && m.AnchorZ >= z0 && m.AnchorZ < z1);
+            foreach (var m in marks)
+                if (m.On != null)
+                    for (int i = 0; i < m.X.Count; i++) { float y = m.On.HeightAt(m.X[i], m.Z[i]); if (!float.IsNaN(y)) m.Y[i] = y; }
             List<Underpass> ups = null;
             if (Bridges) foreach (var m in lines) if (m.Underpasses != null) foreach (var u in m.Underpasses) if (!u.Existing && !u.Over) (ups ??= new List<Underpass>()).Add(u);
             foreach (var e in lines)
