@@ -9,6 +9,10 @@ namespace UnturnedGodot
     {
         float _engineForce = 600f;                  // acceleration feel (calibrated: Unity WheelCollider torque doesn't map 1:1)
         float _steerMax = 28f, _steerMin = 14f;      // Steer_Max (at rest) .. Steer_Min (at full speed), degrees -- source .dat
+        /// <summary>A floor under the rollover-derived steering cap, in degrees. Without it the cap tends to
+        /// zero as speed rises and the car becomes unsteerable at top speed -- which is not "spins out", it is
+        /// "does not turn". 2 deg still curves a fast car; it just cannot snap it over.</summary>
+        const float SteerFloorDeg = 2.0f;
         float _speedMax = 12.5f, _speedMin = -7f;    // Speed_Max fwd / Speed_Min reverse, m/s -- source .dat (directly usable)
         float _brakeForce = 32f;                     // Brake -- source .dat value
         float _steerTarget, _steerAngle, _steerTurnSpeed = 70f;   // steering smoothing: MoveTowards target at deg/s. LOWERED for a weighty/laggy feel -- the wheels float behind the input, slow to turn AND slow to re-center (master)
@@ -115,6 +119,70 @@ namespace UnturnedGodot
         const float RollSsfFloor = 1.0f;
         /// <summary>Test seam: this hull's measured static rollover threshold, in g (0 if not a wheeled hull).</summary>
         public float RolloverThresholdForTest;
+
+        // ---- SLIDE, DO NOT FLIP (strawberry 2026-10-11: "rework handling to not flip you on sharp turns,
+        // rather spin you out horizontally") ------------------------------------------------------------------
+        //
+        // ⭐ THE MECHANISM, because the obvious one is wrong and the file already says so. A previous pass
+        // capped grip by the rollover threshold and was reverted: "it changed handling on the roadster, sedan
+        // and van, whose feel was signed off ... and it did not fix the quad anyway, because grip was never the
+        // mechanism." Both halves of that objection are now resolved rather than ignored:
+        //   * the quad is fixed SEPARATELY, by the RollSsfFloor CoM drop above, and is not what this is for;
+        //   * master is now ASKING for the feel to change, in the one situation this engages in.
+        //
+        // The physics: a hull's static rollover threshold is half-track over CoM height, in gravities -- 1.37
+        // to 1.41 across the fleet. MEASURED in this file, a car at 14 deg of lock at 15 m/s "asks for a 2 g
+        // corner and the tyres took it". Cornering force exceeds the tipping threshold, so the inside wheels
+        // leave the ground and the car goes over. That is the whole bug, and it is why reducing WheelFrictionSlip
+        // barely helped: 6.0 -> 1.5 moved cornering only 2.08 g -> 1.39 g, still at the limit.
+        //
+        // So the tyres are given an explicit ceiling at the hull's OWN tipping point. Demand more lateral
+        // acceleration than the car can physically survive and the tyres let go instead -- which is a slide.
+        // ⚠ INERT BELOW THE THRESHOLD: ordinary cornering never reaches 1.4 g, so this changes nothing about
+        // the handling that was signed off. It exists only in the corner that used to end on the roof.
+        /// <summary>Fraction of its rollover threshold a hull is allowed to pull before the tyres start giving
+        /// up grip. Below 1 so the slide begins slightly BEFORE the inside wheels unload -- at exactly 1.0 the
+        /// car would be balanced on the edge of tipping every time, which is where it gets flicked over by a
+        /// bump rather than sliding predictably.</summary>
+        const float RollSlideSafety = 0.82f;
+        /// <summary>...and the tyres start letting go a bit BEFORE that, so the limit is reached as a SLIDE and
+        /// not as a wall. ⭐ This gap is the whole difference between master's two outcomes: with the grip bleed
+        /// at the same threshold as the steer cap, the car simply corners wide and nothing ever breaks away --
+        /// it does not flip, but it does not spin either. Bleeding first, and rear-biased, is what makes the
+        /// back step out when you ask for the most the hull can give.</summary>
+        const float RollGripSafety = 0.62f;
+        /// <summary>How much grip is left at the floor of the bleed. Not 0: a car with no lateral grip at all
+        /// does not spin, it translates sideways like it is on ice, which is not what was asked for.</summary>
+        const float RollSlideFloor = 0.35f;
+        /// <summary>⭐ WHY IT SPINS RATHER THAN PLOUGHS. The front tyres keep more of their grip than the rear,
+        /// so the BACK breaks away first -- that is oversteer, and oversteer is what "spin you out
+        /// horizontally" means. Giving up grip evenly would understeer instead: the car would wash wide, nose
+        /// first, still pointing where it was going.</summary>
+        const float RollSlideFrontKeep = 0.55f;
+        /// <summary>Torque per unit of roll RATE per kg, applied about the hull's own nose once it is cornering
+        /// past its tipping point. This is the part that actually keeps the car down -- the grip bleed above
+        /// decides how it slides, this decides that it slides instead of rolling.</summary>
+        const float RollDampTorque = 2.6f;
+        /// <summary>...and a righting term per kg scaled by how far it has already tipped, so a car up on two
+        /// wheels comes back down instead of merely being stopped from going further over.</summary>
+        const float RollRightTorque = 9f;
+        float _rollGrip = 1f;
+        static int _rollSlideEnv = -1;
+        /// <summary>UG_ROLLSLIDE=0 disables the anti-flip bleed. Exists so a test can run the SAME manoeuvre
+        /// with it off: "the car no longer flips" is worth nothing unless the control shows it used to.</summary>
+        public static bool RollSlideEnabled
+        {
+            get
+            {
+                if (_rollSlideEnv < 0) _rollSlideEnv = System.Environment.GetEnvironmentVariable("UG_ROLLSLIDE") == "0" ? 0 : 1;
+                return _rollSlideEnv == 1;
+            }
+            set { _rollSlideEnv = value ? 1 : 0; }
+        }
+        /// <summary>Lateral acceleration the hull is currently pulling, in gravities. Test/HUD seam.</summary>
+        public float LateralG { get; private set; }
+        /// <summary>Grip multiplier the anti-flip bleed is applying, 1 = untouched. Test seam.</summary>
+        public float RollSlideGrip => _rollGrip;
         const float TankTrackDiff = 0.3f;   // TANK: how much steer biases the two tracks' SPEED (both still drive -- fully stopping a track halves the power = crawl, master). The yaw torque does the turning; this is just feel. Tunable.
         static float MaxLatAccel => float.TryParse(System.Environment.GetEnvironmentVariable("UG_LATG"), out var _g) ? _g * 9.8f : 8.3f;   // ~0.85 g of cornering a car may ASK for; the steer angle is capped to it
         const float MinSteerDeg = 3.5f;   // never fade lock away entirely, however fast it is going
@@ -1340,6 +1408,59 @@ namespace UnturnedGodot
             int n = 0;
             for (int i = 0; i < s.Wheels.Length; i++) if (DrivesWheel(s, i)) n++;
             return n;
+        }
+
+        /// <summary>Bleed lateral grip when the hull is pulling more than it can survive, so a sharp turn ends
+        /// in a slide instead of a roll (strawberry 2026-10-11). See the constants above for the mechanism.
+        ///
+        /// Lateral acceleration in a turn is yaw rate x forward speed -- no differentiation, no frame-to-frame
+        /// noise, and it is exactly the quantity the rollover threshold is expressed in.
+        ///
+        /// ⚠ THE BLEED IS SMOOTHED, and it has to be: cutting grip reduces the yaw rate, which reduces the
+        /// lateral g, which restores the grip. Applied raw that is an oscillator, and the car would judder
+        /// between gripping and sliding at the physics rate instead of breaking away cleanly.</summary>
+        void UpdateRollSlide(float delta)
+        {
+            if (!RollSlideEnabled || _tracked || _plane || _heli || _water0Boat || _wNodes == null || RolloverThresholdForTest <= 0.01f)
+            { if (_rollGrip < 1f) { _rollGrip = 1f; for (int i = 0; i < (_wNodes?.Length ?? 0); i++) ApplyTirePhysics(i); } LateralG = 0f; return; }
+            float fwd = Mathf.Abs(LinearVelocity.Dot(-GlobalTransform.Basis.Z));
+            LateralG = Mathf.Abs(AngularVelocity.Y) * fwd / Mathf.Max(0.01f, _gravityMag);
+            float limit = RolloverThresholdForTest * RollGripSafety;
+            float want = LateralG > limit ? Mathf.Clamp(limit / Mathf.Max(0.001f, LateralG), RollSlideFloor, 1f) : 1f;
+            // Let go fast, recover slowly: a tyre breaks away in an instant and takes a moment to bite again,
+            // and the asymmetry is also what stops the smoothing from becoming the oscillator it exists to kill.
+            float rate = want < _rollGrip ? 12f : 3f;
+            float prev = _rollGrip;
+            _rollGrip = Mathf.Lerp(_rollGrip, want, 1f - Mathf.Exp(-rate * delta));
+
+            // ⚠⚠ GRIP ALONE DOES NOT STOP THE FLIP, and this file said so before I tried it: "grip was never
+            // the mechanism". MEASURED here too -- bleeding WheelFrictionSlip to its floor moved the roadster's
+            // full-lock roll from 156.0 deg to 155.7. Both are upside down. VehicleWheel3D's lateral friction
+            // is stiff enough that the hull is already past the tipping point before the tyres give up, so the
+            // bleed above shapes HOW it slides but cannot by itself keep it on its wheels.
+            //
+            // ⭐ SO THE ROLL IS OPPOSED DIRECTLY. Once the hull is pulling more than it can survive, a torque
+            // about its own FORWARD axis fights the roll rate -- the car is held down on its outside wheels
+            // while the rear, already low on grip from the bleed, swings. That is the brief: not flipped,
+            // spun. Scaled by the overshoot, so it is nothing at all until the corner is genuinely past the
+            // threshold and grows with how far past.
+            float over = LateralG / Mathf.Max(0.001f, limit) - 1f;
+            if (over > 0f)
+            {
+                var fwdAxis = -GlobalTransform.Basis.Z;
+                float rollRate = AngularVelocity.Dot(fwdAxis);           // + = rolling one way about its own nose
+                // How far it has ALREADY tipped, so a car on two wheels gets pushed back down rather than
+                // merely being stopped from tipping further.
+                float tipped = GlobalTransform.Basis.Y.Dot(Vector3.Up);  // 1 upright, 0 on its side
+                float assist = Mathf.Clamp(over, 0f, 2f) * Mathf.Clamp(1f - tipped, 0f, 1f);
+                ApplyTorque(-fwdAxis * (rollRate * RollDampTorque + assist * RollRightTorque) * Mass);
+            }
+            // ⚠⚠ PUSH IT AT THE WHEELS NOW, not on the next surface sample. ApplyTirePhysics is otherwise only
+            // called from UpdateSurfaceGrip, which is throttled to 0.1 s AND early-returns for a parked car --
+            // so without this the bleed would reach the tyres at 10 Hz, by which time a car that is going over
+            // has already gone. Gated on an actual change so a car driving straight does no extra work at all.
+            if (Mathf.Abs(_rollGrip - prev) > 0.002f)
+                for (int i = 0; i < _wNodes.Length; i++) ApplyTirePhysics(i);
         }
 
         /// <summary>Resample the ground and push the grip factor at the wheels. Wheeled hulls only -- a TANK's
@@ -5694,7 +5815,9 @@ namespace UnturnedGodot
             }
             else
             {
-                w.WheelFrictionSlip = _tireFricRef[i] * _surfaceGrip;
+                // ...and the anti-flip bleed, rear-biased so the back lets go first (see RollSlideFrontKeep).
+                float rg = w.UseAsSteering ? Mathf.Lerp(_rollGrip, 1f, RollSlideFrontKeep) : _rollGrip;
+                w.WheelFrictionSlip = _tireFricRef[i] * _surfaceGrip * rg;
                 w.WheelRadius = _tireRadRef[i];
             }
         }
@@ -8879,6 +9002,50 @@ if (s.Wheels != null && s.Wheels.Length > 1)
             // back -- but the way to buy it is tyres that run out of grip, not a limiter on the input, and that
             // is what was asked for twice. Steer_Max/Steer_Min stay exactly retail's (Jeep.dat: 28 and 14).
             float angle = Mathf.Lerp(_steerMax, _steerMin, t);
+            // ⚠⚠ AND KEEP FADING ABOVE THE OLD TOP SPEED. The curve above saturates at _specSpeedMax -- the
+            // PRE-buff spec speed -- so from ~12.5 m/s upward every car held a CONSTANT _steerMin however fast
+            // it went. That was harmless while the buff was 2.0 and the jeep topped out near 25 m/s. At 2.5 it
+            // reaches 31, and _steerMin at 31 m/s asks for more lateral g than the tyres have: MEASURED, the
+            // jeep stopped taking a set in a full-lock turn at all (vehicle.car_handling, 3/3 fail at buff 2.5
+            // against 3/3 pass at 2.0, steady yaw going from a repeatable 1.551 to a chaotic 2.24-2.55).
+            //
+            // ⚠ IT IS NOT "ONLY THE NEW REGIME", and the first version of this comment claimed it was. Nothing
+            // at or below _specSpeedMax moves -- the hand-tuned part of the curve really is untouched -- but
+            // every car has exceeded _specSpeedMax since the buff went to 2.0 in August, so this DOES change
+            // the 12.5-25 m/s band that has been shipping for weeks. MEASURED: the jeep's steady full-lock yaw
+            // at buff 2.0 goes 1.551 -> 1.334 rad/s, i.e. ~14% less bite at high speed. That is a real feel
+            // change and master's to accept, not a free fix.
+            //
+            // What it buys: at buff 2.5 the jeep's steady yaw goes from a CHAOTIC 2.24-2.55 (3/3 failing, the
+            // car never settling) back to a repeatable 1.666 across three runs. The saturation at _specSpeedMax
+            // was always a simplification -- lock should keep shrinking with speed -- and it only became
+            // visible when the buff pushed cars past the range the simplification was safe in.
+            // ⭐⭐ ...AND NEVER COMMAND A CORNER THAT MUST FLIP THE CAR (strawberry 2026-10-11: "rework handling
+            // to not flip you on sharp turns, rather spin you out horizontally").
+            //
+            // DERIVED, not dialled. A steer angle IS a demanded lateral acceleration: the Ackermann radius is
+            // wheelbase/tan(delta), so a_lat = v^2 * tan(delta) / wheelbase. The hull's static rollover
+            // threshold is already known per vehicle (RolloverThresholdForTest, half-track over CoM height, in
+            // gravities -- 1.37-1.41 across the fleet). Inverting one for the other gives the largest angle the
+            // car can ask for and still stay on its wheels.
+            //
+            // ⚠⚠ THIS IS THE THIRD MECHANISM I TRIED AND THE FIRST THAT CAN WORK, because the first two were
+            // aimed at the wrong thing. Bleeding tyre grip moved the roadster's full-lock roll from 156.0 deg to
+            // 155.7; adding a direct anti-roll torque got it to 150.7. Both still upside down, and the
+            // instrumentation says why: entering at 40.4 m/s, even _steerMin asks for about 7.8 g against a
+            // 1.38 g threshold. Nothing downstream of the steering can absorb a demand five times what the hull
+            // can survive -- the demand itself has to be capped.
+            //
+            // ⚠ IT BINDS AT ORDINARY SPEEDS TOO and that is not avoidable: at 15 m/s this allows ~9.8 deg where
+            // _steerMin is 14. A car that cannot exceed its own rollover threshold simply does corner wider.
+            // That is the trade master asked for, and it is theirs to accept.
+            if (RollSlideEnabled && RolloverThresholdForTest > 0.01f && speed > 1f && _wheelbase > 0.1f)
+            {
+                float maxLatA = RolloverThresholdForTest * RollSlideSafety * _gravityMag;
+                float maxTan = maxLatA * _wheelbase / (speed * speed);
+                float maxDeg = Mathf.RadToDeg(Mathf.Atan(maxTan));
+                angle = Mathf.Min(angle, Mathf.Max(maxDeg, SteerFloorDeg));
+            }
             _steerTarget = -steer * angle;   // smoothed toward in _PhysicsProcess (not snapped) via the AnimatedSteeringAngle-style ramp
             // SPACE = handbrake (locks hard); S-into-forward-motion = foot brake. Both far stronger than the old raw .dat Brake.
             _handbraking = handbrake;   // remembered so the car freezes (no jitter) when stopped with the handbrake held
@@ -9779,6 +9946,7 @@ if (s.Wheels != null && s.Wheels.Length > 1)
                 return;
             }
             UpdateSurfaceGrip((float)delta);   // what is under the tyres right now -> the traction clamp + lateral grip (bails for tracks/wings/tow)
+            UpdateRollSlide((float)delta);     // ...and whether this corner is about to put the car on its roof
             if (_plane) { StepPlane((float)delta); return; }   // fixed wing: prop thrust + airspeed lift replace the wheel/tow/settle sim (buoyancy still runs for a floatplane)
             if (_heli) { if (_slingHook) UpdateSling((float)delta); StepHeli((float)delta); return; }   // rotary wing: rotor thrust replaces the wheel/tow/settle sim entirely
             if (_tracked && !_exploded && !_parked && EngineOn && !Freeze && !Sleeping)   // TANK skid-steer turn authority: a REAL yaw torque (integrated -> owned momentum, survives slopes/walls + the MP transform-adopt path). FADED by forward speed -- a tight pivot at rest but a WIDE arc at speed, so a full-rate yaw while driving doesn't fight the wheels' grip and crawl (master). The per-track EngineForces carry the fwd/back drive.
