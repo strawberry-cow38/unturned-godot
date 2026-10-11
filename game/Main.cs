@@ -8029,7 +8029,19 @@ namespace UnturnedGodot
                 // inside of a wall. The longest road is the one most likely to have open ground beside it.
                 int demoRoad = 0;
                 for (int r = 1; r < rf.RoadCount; r++) if (rf.RoadLength(r) > rf.RoadLength(demoRoad)) demoRoad = r;
-                if (rf.EvaluateAlong(demoRoad, rf.RoadLength(demoRoad) * 0.5f, out var fp, out var ft))
+                if (EditorSidewalk.WorstFloat > 0.3f)
+                {
+                    // Aim at the WORST float rather than the midpoint. A fix for floating geometry has to be
+                    // photographed where it floated -- the first re-render after the fix looked identical only
+                    // because the camera happened to sit on a flat stretch.
+                    var wp = EditorSidewalk.WorstAt;
+                    var shotCam2 = new Camera3D { Current = true, Fov = 60f };
+                    AddChild(shotCam2);
+                    shotCam2.GlobalPosition = wp + new Vector3(6f, 2.2f, 6f);
+                    shotCam2.LookAt(wp + Vector3.Down * 0.6f, Vector3.Up);
+                    Log.Print($"[sidewalk-demo] camera at the worst float ({EditorSidewalk.WorstFloat:0.00} m) at {wp}");
+                }
+                else if (rf.EvaluateAlong(demoRoad, rf.RoadLength(demoRoad) * 0.5f, out var fp, out var ft))
                 {
                     var sideV = new Vector3(ft.Z, 0f, -ft.X).Normalized();
                     var eye = fp + sideV * (rf.RoadHalfWidth(demoRoad) + 3.0f) + Vector3.Up * 1.7f;

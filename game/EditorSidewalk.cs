@@ -36,6 +36,11 @@ namespace UnturnedGodot
 
         public enum Side { Left, Right, Both }
 
+        /// <summary>Where the pavement stands highest above the real ground, and by how much. The harness aims
+        /// its camera here: a fix for floating geometry has to be photographed where it floated, and the first
+        /// re-render after this fix looked unchanged purely because the camera sat on a flat stretch.</summary>
+        public static float WorstFloat; public static Vector3 WorstAt;
+
         /// <summary>Metres between evaluated points. Short enough that a bend reads as a curve rather than a
         /// polygon; it costs vertices, not draw calls, because the whole run is one mesh.</summary>
         public const float Step = 1.5f;
@@ -43,8 +48,15 @@ namespace UnturnedGodot
         /// <summary>Build one pavement ribbon along a point list and return the node, or null if the path is
         /// too short to be a pavement. `pts` is the line the KERB FACE runs along; the walking surface is built
         /// outward from it on `outward`.</summary>
+        /// <param name="groundY">Optional: the real ground height under a world XZ. ⚠⚠ WITHOUT THIS THE KERB
+        /// FLOATS, and that is exactly what shipped first. The kerb foot sits at ROAD height -- it has to, it
+        /// meets the asphalt -- and the outer edge was then dropped a FIXED 0.6 m. Roads sit on embankments and
+        /// the ground falls away beside them, so anywhere the drop exceeded 0.6 m the pavement hung in the air
+        /// with daylight under it (master, on the first render: "the kerb is floating"). The skirt now reaches
+        /// the actual ground at each point instead of guessing a depth.</param>
         public static MeshInstance3D BuildRibbon(IReadOnlyList<Vector3> pts, IReadOnlyList<Vector3> outward,
-                                                 float width, float kerbH, float skirt, string name = "Sidewalk")
+                                                 float width, float kerbH, float skirt, string name = "Sidewalk",
+                                                 System.Func<float, float, float> groundY = null)
         {
             if (pts == null || pts.Count < 2 || outward == null || outward.Count != pts.Count) return null;
             var st = new SurfaceTool();
@@ -68,7 +80,16 @@ namespace UnturnedGodot
                 Vector3 k0 = p0, k1 = p1;                               // kerb foot, at road level
                 Vector3 t0 = p0 + up, t1 = p1 + up;                     // kerb top (front of the walking surface)
                 Vector3 b0 = p0 + o0 * width + up, b1 = p1 + o1 * width + up;   // back of the walking surface
-                Vector3 s0 = b0 - Vector3.Up * (kerbH + skirt), s1 = b1 - Vector3.Up * (kerbH + skirt);
+                // The skirt's FLOOR: the lower of "a fixed bite below the surface" and "the real ground here",
+                // so it buries into a rising bank and still reaches down a falling one. Minus a few cm so it
+                // ends INSIDE the ground rather than coplanar with it, which would z-fight along the whole run.
+                float f0 = b0.Y - skirt, f1 = b1.Y - skirt;
+                if (groundY != null)
+                {
+                    f0 = Mathf.Min(f0, groundY(b0.X, b0.Z) - 0.05f);
+                    f1 = Mathf.Min(f1, groundY(b1.X, b1.Z) - 0.05f);
+                }
+                Vector3 s0 = new Vector3(b0.X, f0, b0.Z), s1 = new Vector3(b1.X, f1, b1.Z);
 
                 Quad(k0, t0, t1, k1);     // the kerb face, standing against the road
                 Quad(t0, b0, b1, t1);     // the surface you walk on
@@ -111,7 +132,30 @@ namespace UnturnedGodot
 
         int Emit(Node parent, List<Vector3> pts, List<Vector3> outward, string name, List<Node3D> into)
         {
-            var mi = BuildRibbon(pts, outward, Width, KerbHeight, Skirt, name);
+            // The live terrain, so the skirt buries instead of floating. Null in a bare harness, which is why
+            // BuildRibbon still takes a fixed fallback depth rather than requiring one.
+            // UG_WALKNOGROUND=1 restores the old fixed-depth skirt, so the fix can be photographed against
+            // itself at one camera. A visual bug wants a visual control.
+            bool noGround = System.Environment.GetEnvironmentVariable("UG_WALKNOGROUND") == "1";
+            System.Func<float, float, float> ground =
+                (!noGround && Terrain.Active != null) ? (x, z) => Terrain.Active.SampleHeight(x, z) : null;
+            // ⚠ INSTRUMENTED after master said "the kerb is floating" and the re-render looked identical --
+            // which could mean the fix worked and this stretch is flat, or that it never fired. Reporting the
+            // actual drop distinguishes those two, where another look at the picture cannot.
+            float worst = 0f; int sampled = 0; var worstPt = Vector3.Zero;
+            var probe = Terrain.Active != null ? (System.Func<float, float, float>)((x, z) => Terrain.Active.SampleHeight(x, z)) : null;
+            if (probe != null)
+                for (int i = 0; i < pts.Count; i++)
+                {
+                    var outer = pts[i] + outward[i].Normalized() * Width;
+                    float gap = (pts[i].Y + KerbHeight) - probe(outer.X, outer.Z);   // surface height above real ground
+                    if (gap > worst) { worst = gap; worstPt = pts[i]; }
+                    sampled++;
+                }
+            var mi = BuildRibbon(pts, outward, Width, KerbHeight, Skirt, name, ground);
+            Log.Print($"[sidewalk] {name}: worst surface-above-ground {worst:0.00} m over {sampled} pts "
+                    + $"(fixed skirt was {Skirt:0.00} -- anything beyond that WOULD have floated)");
+            if (worst > WorstFloat) { WorstFloat = worst; WorstAt = worstPt; }
             if (mi == null) return 0;
             parent.AddChild(mi);
             // A pavement is something you STAND ON, so it needs a collider and a surface -- without the tag it
