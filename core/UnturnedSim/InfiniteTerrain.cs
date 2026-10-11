@@ -383,7 +383,7 @@ namespace SDG.Unturned
         {
             float g = Sample(x, z, out var hit);
             return hit.Tunnel && Math.Abs(hit.TunnelLat) <= InfiniteRoads.BoreReachOf(hit.TunnelKind)
-                ? hit.TunnelRoad - InfiniteRoads.TunnelBedBelow(hit.TunnelKind) : g;
+                ? hit.TunnelRoad - InfiniteRoads.TunnelBedBelow(hit.TunnelKind) : Math.Min(g, GroundAt(x, z));   // the drawn ground, held under the roads, may be the lower
         }
 
         /// <summary>The land before any road touches it.</summary>
@@ -482,6 +482,36 @@ namespace SDG.Unturned
         // Regions.
 
         public static int CellsFor(int lod) => FullCells >> lod;
+        /// <summary>How far past a road's asphalt the ground mesh is held to its bed, at most (Generate, THE FLOOR).</summary>
+        public const double FloorReachMax = 24.0;
+        /// <summary>UG_INF_FLOOR=0: the ground mesh is not held under the roads (they are lifted onto it, as before).</summary>
+        public static bool Floor = Environment.GetEnvironmentVariable("UG_INF_FLOOR") != "0";
+
+        /// <summary>How far past a road's asphalt a mesh of this spacing has its vertices held to the road's bed.</summary>
+        public static double FloorReach(float sp) => Math.Min(sp * 1.5, FloorReachMax);
+
+        /// <summary>The roads whose floor can reach into a box.</summary>
+        List<InfiniteRoads.Line> FloorLines(double x0, double z0, double x1, double z1, double reach) =>
+            Roads.LinesIn(x0 - reach - 20, z0 - reach - 20, x1 + reach + 20, z1 + reach + 20);
+
+        /// <summary>One vertex of the ground mesh: the ground, held under the roads by the floor. A region's mesh, a
+        /// tunnel mouth's cells and DrawnHeight all take their vertices from here, so they agree on every one.</summary>
+        float VertexHeight(List<InfiniteRoads.Line> lines, List<InfiniteRoads.Line> floorLines, double x, double z, double reach, out RoadHit hit)
+        {
+            float h = SampleWith(lines, x, z, out hit);
+            return Floor && !hit.Tunnel ? Math.Min(h, Roads.FloorAt(floorLines, x, z, reach)) : h;
+        }
+
+        /// <summary>The ground as LOD0 draws it at an absolute position, without generating the region. Beside a road in a
+        /// cut it stands up to a couple of metres under HeightAt (the floor holds the mesh's vertices down within a cell and
+        /// a half of the asphalt), and the smooth function there is in the air. What stands on the drawn ground stands on
+        /// this: a roadside pole, a crossing sign, a pylon's feet, and the fall-through guard's floor.</summary>
+        public float GroundAt(double x, double z)
+        {
+            const double sp = FullSpacing;
+            double x0 = Math.Floor(x / sp) * sp, z0 = Math.Floor(z / sp) * sp;
+            return DrawnHeight(Roads.LinesIn(x0 - 1, z0 - 1, x0 + sp + 1, z0 + sp + 1), FloorLines(x0, z0, x0 + sp, z0 + sp, FloorReach((float)sp)), x, z);
+        }
 
         /// <summary>Generate one region. Pure: same (seed, coord, lod) -> the same arrays, every time, on any thread.</summary>
         public RegionData Generate(RegionCoord rc, int lod)
@@ -494,9 +524,19 @@ namespace SDG.Unturned
             var lines = Roads.LinesIn(ox - sp - 1, oz - sp - 1, ox + RegionSize + sp + 1, oz + RegionSize + sp + 1);
             var hb = new float[b * b];
             var rh = new RoadHit[b * b];
+            // THE FLOOR (InfiniteRoads.FloorAt): this mesh's vertices within a cell and a half of any road's asphalt held
+            // to its bed, so no triangle of it stands over the road (capped: a far ring's cell is 32 m, and a band that
+            // wide flattened by every road would be a trench; there the slab is still lifted, out of sight)
+            // ...except on the region's own edge, where it is LOD0's at every LOD: a coarse neighbour's edge vertices are
+            // the fine one's, and they must agree exactly (the skirts cover only the vertices in between)
+            double reach = FloorReach(sp), edgeReach = FloorReach(FullSpacing);
+            var floorLines = FloorLines(ox - sp, oz - sp, ox + RegionSize + sp, oz + RegionSize + sp, Math.Max(reach, edgeReach));
             for (int j = 0; j < b; j++)
                 for (int i = 0; i < b; i++)
-                    hb[j * b + i] = SampleWith(lines, ox + (i - 1) * (double)sp, oz + (j - 1) * (double)sp, out rh[j * b + i]);
+                {
+                    bool edge = i == 1 || j == 1 || i == b - 2 || j == b - 2;
+                    hb[j * b + i] = VertexHeight(lines, floorLines, ox + (i - 1) * (double)sp, oz + (j - 1) * (double)sp, edge ? edgeReach : reach, out rh[j * b + i]);
+                }
 
             var d = new RegionData { Coord = rc, Lod = lod, Cells = n, Spacing = sp,
                                      Heights = new float[v * v], Normals = new float[v * v * 3], Layers = new byte[v * v], RoadClear = new float[v * v],
@@ -659,11 +699,13 @@ namespace SDG.Unturned
             int nv = W * H, cw = W - 1, ch = H - 1;
             double VX(int k) => (I0 + k % W) * sp;
             double VZ(int k) => (J0 + k / W) * sp;
+            double reach = FloorReach((float)sp);
+            var floorLines = FloorLines(minX - 2 * sp, minZ - 2 * sp, maxX + 2 * sp, maxZ + 2 * sp, reach);
             var g = new float[nv]; var hits = new RoadHit[nv]; var hole = new bool[nv]; var aIn = new double[nv];
             for (int k = 0; k < nv; k++)
             {
                 double x = VX(k), z = VZ(k);
-                g[k] = SampleWith(lines, x, z, out hits[k]);
+                g[k] = VertexHeight(lines, floorLines, x, z, reach, out hits[k]);
                 aIn[k] = In(x, z);
                 var h = hits[k];
                 // this mouth's own holes; another tunnel's are its own mouth's to draw
@@ -704,7 +746,12 @@ namespace SDG.Unturned
             for (int k = 0; k < nv; k++)
             {
                 if (!used[k]) continue;
-                if (!pinF[k]) F[k] = SampleWith(lines, VX(k), VZ(k), out _, t, InfiniteRoads.MouthSide.Cut);
+                // the approach's cut is held under its road like any other ground
+                if (!pinF[k])
+                {
+                    F[k] = SampleWith(lines, VX(k), VZ(k), out _, t, InfiniteRoads.MouthSide.Cut);
+                    if (Floor && !hits[k].Tunnel) F[k] = Math.Min(F[k], Roads.FloorAt(floorLines, VX(k), VZ(k), reach));
+                }
                 if (!pinB[k]) B[k] = SampleWith(lines, VX(k), VZ(k), out _, t, InfiniteRoads.MouthSide.Hill);
             }
             // normals as Generate makes them (central differences): the terrain's own where a side is pinned, so the
@@ -936,6 +983,7 @@ namespace SDG.Unturned
                         if (Math.Abs(md.FaceFront[q] - md.FaceBehind[q]) > 0.3f) { uL = Math.Min(uL, md.FaceU[q]); uR = Math.Max(uR, md.FaceU[q]); }
                     if (uL > uR) continue;
                     var lines = Roads.LinesIn(px - 40, pz - 40, px + 40, pz + 40);
+                    var floorLines = FloorLines(px - 40, pz - 40, px + 40, pz + 40, FloorReach((float)FullSpacing));
                     for (int side = -1; side <= 1; side += 2)
                         for (int q = 0; q < spots.Length; q++)
                         {
@@ -946,7 +994,7 @@ namespace SDG.Unturned
                             // the ground as DRAWN: the mouth's own surface over its cells, else the LOD0 mesh's triangle (the
                             // smooth function stands up to a metre off it on a cut's slope, and a small rock seated on that
                             // was buried whole under the drawn ground)
-                            float Ground(double gx, double gz) => MouthSurface(md, gx, gz, out float my) ? my : DrawnHeight(lines, gx, gz);
+                            float Ground(double gx, double gz) => MouthSurface(md, gx, gz, out float my) ? my : DrawnHeight(lines, floorLines, gx, gz);
                             float y = Ground(x, z);
                             float gxs = Ground(x + 1.0, z) - Ground(x - 1.0, z), gzs = Ground(x, z + 1.0) - Ground(x, z - 1.0);
                             float nx = -gxs * 0.5f, nz = -gzs * 0.5f, inv = 1f / MathF.Sqrt(nx * nx + 1f + nz * nz);
@@ -962,12 +1010,12 @@ namespace SDG.Unturned
 
         /// <summary>The LOD0 mesh's height at a world point: its cell's triangle (fx + fz <= 1: (a, b, c), else (b, e, c)) over
         /// the generator's heights at the corners -- what MeshHeightAt gives on a region, without the region.</summary>
-        float DrawnHeight(List<InfiniteRoads.Line> lines, double x, double z)
+        float DrawnHeight(List<InfiniteRoads.Line> lines, List<InfiniteRoads.Line> floorLines, double x, double z)
         {
             const double sp = FullSpacing;
-            double gi = Math.Floor(x / sp), gj = Math.Floor(z / sp);
+            double gi = Math.Floor(x / sp), gj = Math.Floor(z / sp), reach = FloorReach((float)sp);
             float fx = (float)(x / sp - gi), fz = (float)(z / sp - gj);
-            float H(double i, double j) => SampleWith(lines, i * sp, j * sp, out _);
+            float H(double i, double j) => VertexHeight(lines, floorLines, i * sp, j * sp, reach, out _);
             if (fx + fz <= 1f)
             {
                 float ha = H(gi, gj), hb = H(gi + 1, gj), hc = H(gi, gj + 1);

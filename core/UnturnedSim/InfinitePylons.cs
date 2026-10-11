@@ -107,12 +107,14 @@ namespace SDG.Unturned
         }
 
         /// <summary>Where a tower's base sits: the lowest ground under its footprint (centre and eight points round
-        /// it), so no leg hangs in the air on a slope -- the uphill legs bury instead.</summary>
+        /// it), so no leg hangs in the air on a slope -- the uphill legs bury instead. The ground there is the lower of the
+        /// smooth function and the drawn mesh (InfiniteTerrain.GroundAt), which is held under a nearby road's edge.</summary>
         public float BaseHeight(double x, double z)
         {
-            float h = _t.HeightAt(x, z);
+            float Ground(double gx, double gz) => Math.Min(_t.HeightAt(gx, gz), _t.GroundAt(gx, gz));
+            float h = Ground(x, z);
             double r = FootHalf * 1.42;
-            for (int a = 0; a < 8; a++) h = Math.Min(h, _t.HeightAt(x + r * Math.Cos(a * Math.PI / 4), z + r * Math.Sin(a * Math.PI / 4)));
+            for (int a = 0; a < 8; a++) h = Math.Min(h, Ground(x + r * Math.Cos(a * Math.PI / 4), z + r * Math.Sin(a * Math.PI / 4)));
             return h;
         }
 

@@ -1666,6 +1666,59 @@ namespace SDG.Unturned
             return false;
         }
 
+        /// <summary>Is the route at k + t inside one of the line's bores (its forecourts are open cut, held like any road)?</summary>
+        static bool InBore(Line e, int k, double t)
+        {
+            if (!Tunnels || e.TunnelSpans == null) return false;
+            double a = e.HArc[k] + (e.HArc[k + 1] - e.HArc[k]) * t;
+            foreach (var tn in e.TunnelSpans) if (a >= tn.A0 && a <= tn.A1) return true;
+            return false;
+        }
+
+        /// <summary>THE FLOOR under a road for a ground mesh `reach` metres coarse: the bed of the road whose asphalt is
+        /// nearest (x, z), if it is within `reach` of it; +infinity otherwise. Not where the road is in a tunnel or on a
+        /// deck (the hill or the valley is the ground there).
+        /// A region drew its road slab no lower than its own ground mesh, and a mesh's triangle reaching from the
+        /// asphalt up a cutting's slope stands over the road between its vertices -- so the slab was lifted onto it: a
+        /// bumpy road through every deep cut, and where two regions of different detail meet, the same joint lifted by
+        /// each to its own mesh, a step (strawberry 2026-10-11: "there are some gaps around elevation changes with roads",
+        /// "really bumpy sections when passing through deep terrain cuts", "the steps need to be smoothed"). Held down to
+        /// this, the ground near a road never rises over it, and nothing is lifted.</summary>
+        public float FloorAt(List<Line> lines, double x, double z, double reach)
+        {
+            float floor = float.PositiveInfinity; double bestIn = double.MaxValue;
+            foreach (var e in lines)
+            {
+                if (e.Kind == RoadKind.Rail || !e.Exists) continue;
+                double hw = PavedHalf(e.Kind), m = hw + reach;
+                if (x < e.MinX - m || x > e.MaxX + m || z < e.MinZ - m || z > e.MaxZ + m) continue;
+                int n = e.X.Length - 1, chunks = e.CMinX?.Length ?? 0;
+                for (int c = 0; c < Math.Max(1, chunks); c++)
+                {
+                    if (chunks > 0 && (x < e.CMinX[c] - m || x > e.CMaxX[c] + m || z < e.CMinZ[c] - m || z > e.CMaxZ[c] + m)) continue;
+                    int k0 = chunks > 0 ? c * 8 : 0, k1 = chunks > 0 ? Math.Min(n, k0 + 8) : n;
+                    for (int k = k0; k < k1; k++)
+                    {
+                        double sx = e.X[k + 1] - e.X[k], sz = e.Z[k + 1] - e.Z[k], ss = sx * sx + sz * sz;
+                        if (ss < 1e-12) continue;
+                        double t = Math.Clamp(((x - e.X[k]) * sx + (z - e.Z[k]) * sz) / ss, 0, 1);
+                        double dx = x - e.X[k] - sx * t, dz = z - e.Z[k] - sz * t, inside = Math.Sqrt(dx * dx + dz * dz) - hw;
+                        if (inside > reach || inside >= bestIn) continue;
+                        if (InBore(e, k, t)) continue;
+                        if (Bridges && e.DeckCover != null)
+                        {
+                            bool decked = false;
+                            foreach (var cov in e.DeckCover) if (cov != null && Covered(cov, k + t, -2.0 / Math.Max(1.0, Math.Sqrt(ss)))) decked = true;
+                            if (decked) continue;
+                        }
+                        bestIn = inside;
+                        floor = e.H[k] + (e.H[k + 1] - e.H[k]) * (float)t - Bed - 0.02f;
+                    }
+                }
+            }
+            return floor;
+        }
+
         static bool Covered(List<DeckSpan> cover, double f, double inset = 0)
         {
             if (cover == null) return false;
@@ -2332,13 +2385,13 @@ namespace SDG.Unturned
                     Spot(q, out double px, out double pz, out float dx, out float dz);
                     if (px < x0 || px >= x1 || pz < z0 || pz >= z1) continue;
                     if (!Stands(q)) continue;
-                    var pp = new PolePlacement { X = px, Z = pz, H = _t.HeightAt(px, pz), DirX = dx, DirZ = dz };
+                    var pp = new PolePlacement { X = px, Z = pz, H = _t.GroundAt(px, pz), DirX = dx, DirZ = dz };   // on the drawn ground: it is held under the road's edge
                     for (int nq = q + 1; nq < count && nq <= q + 2; nq++)
                     {
                         if (InGap(PoleEndClear + q * PoleSpacing, PoleEndClear + nq * PoleSpacing)) break;   // no wire across it
                         if (!Stands(nq)) continue;
                         Spot(nq, out double nx, out double nz, out float ndx, out float ndz);
-                        pp.HasNext = true; pp.NX = nx; pp.NZ = nz; pp.NH = _t.HeightAt(nx, nz); pp.NDirX = ndx; pp.NDirZ = ndz;
+                        pp.HasNext = true; pp.NX = nx; pp.NZ = nz; pp.NH = _t.GroundAt(nx, nz); pp.NDirX = ndx; pp.NDirZ = ndz;
                         break;
                     }
                     list.Add(pp);

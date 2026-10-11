@@ -221,6 +221,105 @@ namespace UnturnedSim.Tests
             Assert.That(worstGap, Is.LessThan(0.001f), "the ground on a centreline must be the road profile, less its bed");
         }
 
+        /// <summary>THE FLOOR (strawberry 2026-10-11: "there are some gaps around elevation changes with roads", "theres often
+        /// also really bumpy sections when passing through deep terrain cuts", "no, the steps need to be smoothed, adding a
+        /// skirt is bandaid"). A region stands each road vertex no lower than its own ground mesh (RegionStreamer's slab and
+        /// patch builders), and a mesh triangle reaching from the asphalt up a cut's slope stood over the road between its
+        /// vertices: the slab was lifted onto it, a bumpy road through every deep cut, and where two regions of different
+        /// detail meet the same joint lifted by each to its own mesh, a step. So every vertex the builders stand -- each piece
+        /// end's centre, lane edges and widened edges, and every junction patch vertex -- must already be over the drawn
+        /// ground at LOD0 and LOD1, the clamp a no-op. Two places are counted apart at LOD1, and only printed: a vertex near
+        /// ANOTHER road's asphalt takes that road's floor, so at a junction of two heights a joiner can still be lifted a
+        /// little; and a coarse region's own edge vertices are floored as LOD0 floors them (they ARE its fine neighbour's,
+        /// and must agree with them exactly), which is not enough for an 8 m cell, so its last cell can still lift.
+        /// And what stands on the drawn ground stands ON it: every roadside pole at LOD0 (they stood at the smooth height,
+        /// up to 2.3 m over the floored mesh, the first time this ran).</summary>
+        [Test]
+        public void RoadsAreNeverLiftedOntoTheGround()
+        {
+            int R = 6;
+            for (int lod = 0; lod <= 1; lod++)
+            {
+                int verts = 0, lifted = 0, atJunction = 0, inEdgeCell = 0, poles = 0, polesOff = 0; double worst = 0, worstJ = 0, worstE = 0, worstPole = 0;
+                string where = "", poleWhere = "";
+                double reach = InfiniteTerrain.FloorReach(InfiniteTerrain.RegionSize / InfiniteTerrain.CellsFor(lod));
+                for (int rx = -R; rx < R; rx++)
+                    for (int rz = -R; rz < R; rz++)
+                    {
+                        var rc = new RegionCoord(rx * 3, rz * 3);   // spread over 18 km, not a block
+                        var d = Gen.Generate(rc, lod);
+                        double ox = rc.MinX, oz = rc.MinZ;
+                        var lines = Gen.Roads.LinesIn(ox - 60, oz - 60, ox + InfiniteTerrain.RegionSize + 60, oz + InfiniteTerrain.RegionSize + 60);
+                        // the builder's clamp at (x, z) for a top of height `top` and class lift `lift`: how far it would raise it
+                        void Check(double x, double z, float top, float lift, InfiniteRoads.Line own)
+                        {
+                            float lx = (float)(x - ox), lz = (float)(z - oz);
+                            if (lx < 0 || lz < 0 || lx > InfiniteTerrain.RegionSize || lz > InfiniteTerrain.RegionSize) return;
+                            verts++;
+                            double up = InfiniteTerrain.MeshHeightAt(d, lx, lz) + 0.02f + lift - top;
+                            if (up <= 0.001) return;
+                            // at a junction: another road's floor governs here
+                            bool junction = own == null || !float.IsPositiveInfinity(Gen.Roads.FloorAt(lines.FindAll(e => e != own), x, z, reach + 2 * d.Spacing));
+                            if (junction) { atJunction++; worstJ = Math.Max(worstJ, up); return; }
+                            float sp = d.Spacing, rs = InfiniteTerrain.RegionSize;
+                            if (lod > 0 && (lx < sp || lz < sp || lx > rs - sp || lz > rs - sp)) { inEdgeCell++; worstE = Math.Max(worstE, up); return; }
+                            lifted++;
+                            if (up > worst) { worst = up; where = $" worst at ({x:0.0}, {z:0.0})"; }
+                        }
+                        InfiniteRoads.Line Owner(double x, double z, RoadKind k)
+                        {
+                            InfiniteRoads.Line best = null; double bd = double.MaxValue;
+                            foreach (var e in lines)
+                            {
+                                if (e.Kind != k) continue;
+                                for (int i = 0; i + 1 < e.X.Length; i++)
+                                {
+                                    double sx = e.X[i + 1] - e.X[i], sz = e.Z[i + 1] - e.Z[i], ss = sx * sx + sz * sz;
+                                    if (ss < 1e-12) continue;
+                                    double t = Math.Clamp(((x - e.X[i]) * sx + (z - e.Z[i]) * sz) / ss, 0, 1);
+                                    double dx = x - e.X[i] - sx * t, dz = z - e.Z[i] - sz * t, dd = dx * dx + dz * dz;
+                                    if (dd < bd) { bd = dd; best = e; }
+                                }
+                            }
+                            return best;
+                        }
+                        foreach (var p in d.Roads ?? new List<RoadPiece>())
+                        {
+                            if (p.InTunnel) continue;   // under the hill the builder never lifts
+                            var k = (RoadKind)p.Kind;
+                            float hw = k == RoadKind.Highway ? InfiniteRoads.HighwayLaneHalf : InfiniteRoads.PavedHalf(k), lift = InfiniteRoads.Lift(k);
+                            var own = Owner(0.5 * (p.X0 + p.X1), 0.5 * (p.Z0 + p.Z1), k == RoadKind.Highway ? RoadKind.Highway : k);
+                            foreach (var (x, z, tx, tz, h, wl, wr) in new[] { (p.X0, p.Z0, p.T0X, p.T0Z, p.H0, p.W0 + p.WL0, p.W0 + p.WR0),
+                                                                             (p.X1, p.Z1, p.T1X, p.T1Z, p.H1, p.W1 + p.WL1, p.W1 + p.WR1) })
+                                foreach (double off in new[] { hw + wl, hw, 0.0, -hw, -hw - wr })
+                                    Check(x - tz * off, z + tx * off, InfiniteRoads.SurfaceY(k, h), lift, own);
+                        }
+                        foreach (var pt in d.RoadPatches ?? new List<RoadPatch>())
+                            for (int i = 0; i < pt.X.Length; i++) Check(pt.X[i], pt.Z[i], pt.Y[i], pt.Lift[i], null);
+                        if (lod == 0 && d.Poles != null)
+                            foreach (var pp in d.Poles)
+                            {
+                                poles++;
+                                double off = Math.Abs(pp.H - InfiniteTerrain.MeshHeightAt(d, (float)(pp.X - ox), (float)(pp.Z - oz)));
+                                if (off > 0.01) polesOff++;
+                                if (off > worstPole) { worstPole = off; poleWhere = $" worst at ({pp.X:0}, {pp.Z:0})"; }
+                            }
+                    }
+                TestContext.WriteLine($"LOD{lod}: {verts} road vertices, {lifted} lifted onto the mesh{where} ({worst * 1000:0} mm); at junctions {atJunction}, worst {worstJ * 1000:0} mm"
+                                      + (lod > 0 ? $"; in the region's last cell {inEdgeCell}, worst {worstE * 1000:0} mm" : "")
+                                      + (lod == 0 ? $"; {poles} poles, {polesOff} off the drawn ground{poleWhere} ({worstPole * 1000:0} mm)" : ""));
+                Assert.That(verts, Is.GreaterThan(3000), $"LOD{lod}: too few road vertices to mean anything");
+                Assert.That(lifted, Is.EqualTo(0), $"LOD{lod}: road vertices the ground mesh lifts{where}, {worst:0.00} m");
+                // LOD0 is where you drive: nothing lifted there, junction or not
+                if (lod == 0) Assert.That(atJunction, Is.EqualTo(0), $"LOD0: junction vertices the ground mesh lifts, worst {worstJ:0.00} m");
+                if (lod == 0)
+                {
+                    Assert.That(poles, Is.GreaterThan(100), "too few poles to mean anything");
+                    Assert.That(polesOff, Is.EqualTo(0), $"poles off the drawn ground{poleWhere}, {worstPole:0.00} m");
+                }
+            }
+        }
+
         // "stay on a pretty set course, avoiding elevation shifts and obstacles while trying to stay somewhat straight"
         [Test]
         public void HighwaysRunStraightLevelAndDry()

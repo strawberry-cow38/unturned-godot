@@ -951,7 +951,7 @@ namespace SDG.Unturned
                             double back = (RailFormationHalf + CrossbuckBack) / Math.Max(0.5, Math.Sqrt(Math.Max(0, 1 - Math.Pow(c.RX * c.MX + c.RZ * c.MZ, 2)))), out_ = PavedHalf(RoadKind.Main) + CrossbuckOut;
                             double x = c.X - vx * back - vz * out_, z = c.Z - vz * back + vx * out_;
                             if (x < x0 || x >= x1 || z < z0 || z >= z1) continue;
-                            list.Add(new CrossingSign { X = x, Z = z, Y = _t.HeightAt(x, z), DX = (float)vx, DZ = (float)vz });
+                            list.Add(new CrossingSign { X = x, Z = z, Y = _t.GroundAt(x, z), DX = (float)vx, DZ = (float)vz });
                         }
             return list;
         }
