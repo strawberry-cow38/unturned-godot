@@ -2552,13 +2552,15 @@ namespace UnturnedSim.Tests
         }
 
         // POWER LINES: main and small roads only (not highways, not dirt trails -- strawberry 2026-10-09). Every pole stands
-        // off the asphalt, and a span that leaves a region lands on a pole the NEXT region also places.
+        // off the asphalt and PolePatchClear off every junction's patch ("prevent power lines spawning on roads or on the
+        // merge mesh", 2026-10-11), and a span that leaves a region lands on a pole the NEXT region also places.
         [Test]
         public void PolesLineTheRoadsAndMeetAcrossBorders()
         {
             Assert.That(InfiniteRoads.HasPowerLines(RoadKind.Main) && InfiniteRoads.HasPowerLines(RoadKind.Small));
             Assert.That(!InfiniteRoads.HasPowerLines(RoadKind.Highway) && !InfiniteRoads.HasPowerLines(RoadKind.Trail));
-            int poles = 0, crossings = 0;
+            int poles = 0, crossings = 0; double nearestPatch = double.MaxValue;
+            var patches = Gen.Roads.PatchesIn(-300, -300, 8 * InfiniteTerrain.RegionSize + 300, 8 * InfiniteTerrain.RegionSize + 300, 4f);
             var byRegion = new Dictionary<RegionCoord, List<PolePlacement>>();
             List<PolePlacement> PolesOf(RegionCoord rc)
             {
@@ -2575,6 +2577,12 @@ namespace UnturnedSim.Tests
                         float clear = Gen.RoadClearance(p.X, p.Z);
                         Assert.That(clear, Is.GreaterThan(0f), $"pole at ({p.X:0},{p.Z:0}) stands ON asphalt ({clear:0.0} m)");
                         Assert.That(p.H, Is.GreaterThan(InfiniteTerrain.SeaLevel));
+                        foreach (var q in patches)
+                        {
+                            double off = q.DistanceTo(p.X, p.Z);
+                            nearestPatch = Math.Min(nearestPatch, off);
+                            Assert.That(off, Is.GreaterThanOrEqualTo(InfiniteRoads.PolePatchClear), $"pole at ({p.X:0.0},{p.Z:0.0}) stands {off:0.0} m from a junction's patch");
+                        }
                         if (!p.HasNext) continue;
                         double span = Math.Sqrt((p.NX - p.X) * (p.NX - p.X) + (p.NZ - p.Z) * (p.NZ - p.Z));
                         Assert.That(span, Is.InRange(15.0, 2 * InfiniteRoads.PoleSpacing + 1.0), "a span is one pole spacing, two where a pole was skipped");
@@ -2586,8 +2594,10 @@ namespace UnturnedSim.Tests
                         Assert.That(found, $"the span from ({p.X:0},{p.Z:0}) ends at ({p.NX:0},{p.NZ:0}) in {nrc}, which places no pole there");
                     }
                 }
-            TestContext.WriteLine($"{poles} poles over 2 km x 2 km, {crossings} spans crossing a region border");
+            TestContext.WriteLine($"{poles} poles over 2 km x 2 km, {crossings} spans crossing a region border; {patches.Count} junction patches, nearest pole {nearestPatch:0.0} m off one");
             Assert.That(poles, Is.GreaterThan(20));
+            // ...and the clearance is exercised: some line passes a junction (without it, a pole stood 3.0 m off one here)
+            Assert.That(nearestPatch, Is.LessThan(15.0), "no pole came near a junction: the patch clearance went untested");
             Assert.That(crossings, Is.GreaterThan(0), "no span ever crossed a border -- the cross-border case went untested");
         }
 

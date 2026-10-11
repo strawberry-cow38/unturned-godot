@@ -2314,6 +2314,10 @@ namespace SDG.Unturned
         }
 
         public const float PoleSpacing = 40f, PoleSetback = 3f, PoleEndClear = 24f;
+        /// <summary>How far a roadside pole stands from any junction's patch (strawberry 2026-10-11: "prevent power lines
+        /// spawning on roads or on the merge mesh"): its worn footing (InfiniteTerrain.PoleDirt) and a metre and a half
+        /// more. A line beside a tee or crossing stood a pole in the corner between the two roads, 1.9 m off the paving.</summary>
+        public const double PolePatchClear = 4.0;
         /// <summary>How far short of a grade separation (measured along the main from where it crosses) a power line
         /// stops: past the longest deck either way (a skewed overpass, ~31 m) and the abutment's slope.</summary>
         public const double PoleCrossingGap = 45.0;
@@ -2328,6 +2332,22 @@ namespace SDG.Unturned
         public List<PolePlacement> PolesIn(List<Line> lines, double x0, double z0, double x1, double z1)
         {
             var list = new List<PolePlacement>();
+            // the junctions round the window, wide enough for a pole's next two (each carries the next for its wire), so
+            // the pole a region keeps and the one its neighbour's wire runs to are decided alike
+            List<RoadPatch> patches = null;
+            double pw = 2 * PoleSpacing + PolePatchClear + 60;
+            if (Junctions) foreach (var p in PlanJunctions(x0 - pw, z0 - pw, x1 + pw, z1 + pw, 4.0).Patches)
+                {
+                    double mnx = double.MaxValue, mxx = double.MinValue, mnz = double.MaxValue, mxz = double.MinValue;
+                    for (int i = 0; i < p.X.Length; i++) { mnx = Math.Min(mnx, p.X[i]); mxx = Math.Max(mxx, p.X[i]); mnz = Math.Min(mnz, p.Z[i]); mxz = Math.Max(mxz, p.Z[i]); }
+                    if (mxx < x0 - pw || mnx > x1 + pw || mxz < z0 - pw || mnz > z1 + pw) continue;
+                    (patches ??= new List<RoadPatch>()).Add(p);
+                }
+            bool OffPatches(double px, double pz)
+            {
+                if (patches != null) foreach (var p in patches) if (p.DistanceTo(px, pz) < PolePatchClear) return false;
+                return true;
+            }
             foreach (var e in lines)
             {
                 if (!HasPowerLines(e.Kind) || e.Ramp) continue;
@@ -2378,7 +2398,7 @@ namespace SDG.Unturned
                 {
                     if (InGap(PoleEndClear + q * PoleSpacing, PoleEndClear + q * PoleSpacing)) return false;
                     Spot(q, out double sx, out double sz, out _, out _);
-                    return Influence(sx, sz).Clear > 1.5f;
+                    return Influence(sx, sz).Clear > 1.5f && OffPatches(sx, sz);
                 }
                 for (int q = 0; q < count; q++)
                 {

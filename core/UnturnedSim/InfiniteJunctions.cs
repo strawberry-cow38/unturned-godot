@@ -35,6 +35,30 @@ namespace SDG.Unturned
         /// the ground under them, where nothing carves it flat (InfiniteRoads.PiecesIn).</summary>
         public int Interior = int.MaxValue;
 
+        /// <summary>How far (x, z) is from the patch's surface in plan: 0 on it, else to its nearest edge.</summary>
+        public double DistanceTo(double x, double z)
+        {
+            double best = double.MaxValue;
+            for (int t = 0; t + 2 < Tris.Length; t += 3)
+            {
+                int a = Tris[t], b = Tris[t + 1], c = Tris[t + 2];
+                double den = (Z[b] - Z[c]) * (X[a] - X[c]) + (X[c] - X[b]) * (Z[a] - Z[c]);
+                if (Math.Abs(den) > 1e-9)
+                {
+                    double w1 = ((Z[b] - Z[c]) * (x - X[c]) + (X[c] - X[b]) * (z - Z[c])) / den, w2 = ((Z[c] - Z[a]) * (x - X[c]) + (X[a] - X[c]) * (z - Z[c])) / den;
+                    if (w1 >= 0 && w2 >= 0 && 1 - w1 - w2 >= 0) return 0;
+                }
+                foreach (var (u, v) in new[] { (a, b), (b, c), (c, a) })
+                {
+                    double sx = X[v] - X[u], sz = Z[v] - Z[u], ss = sx * sx + sz * sz;
+                    double f = ss < 1e-12 ? 0 : Math.Clamp(((x - X[u]) * sx + (z - Z[u]) * sz) / ss, 0, 1);
+                    double dx = x - X[u] - sx * f, dz = z - Z[u] - sz * f;
+                    best = Math.Min(best, Math.Sqrt(dx * dx + dz * dz));
+                }
+            }
+            return best;
+        }
+
         /// <summary>The patch's surface at (x, z), or NaN off it.</summary>
         public float HeightAt(double x, double z)
         {
