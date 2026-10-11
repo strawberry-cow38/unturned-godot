@@ -315,53 +315,78 @@ namespace SDG.Unturned
                     // RampMinRadius (a circle tangent to both rays at distance r from their meeting has radius r tan(angle/2))
                     double cosQ = Math.Clamp(wayA * wayB * (tAx * tBx + tAz * tBz), -1.0, 1.0), half = Math.Acos(cosQ) * 0.5;
                     double rMin = Math.Max(InterchangeRampMin, RampMinRadius / Math.Max(0.2, Math.Tan(half)) + off);
-                    double? sA = RampSpot(A, arcA, aA, wayA, sa, rMin), sB = RampSpot(B, arcB, aB, wayB, sb, rMin);
-                    if (sA is not double spotA) { Drop("no spot on the east-west highway"); continue; }
-                    if (sB is not double spotB) { Drop("no spot on the north-south highway"); continue; }
-                    At(A, arcA, spotA, out double hx, out double hz, out float hh, out double htx, out double htz);
-                    At(B, arcB, spotB, out double gx, out double gz, out float gh, out double gtx, out double gtz);
-                    double sx = hx - htz * sa * off, sz = hz + htx * sa * off;
-                    double ex = gx - gtz * sb * off, ez = gz + gtx * sb * off;
-                    double t0x = -wayA * htx, t0z = -wayA * htz, t1x = wayB * gtx, t1z = wayB * gtz;
-                    // the end tangents' length: a circular arc's for the turn between them (2 tan(turn/4) / sin(turn/2) of
-                    // the chord, 1.17 at a right angle). The chord alone bends the curve 2.24/chord at its ends -- a 34 m
-                    // radius on a short ramp, its first piece 3 deg off the highway it leaves
-                    double turn = Math.Acos(Math.Clamp(t0x * t1x + t0z * t1z, -1.0, 1.0));
-                    double chord = Math.Sqrt((ex - sx) * (ex - sx) + (ez - sz) * (ez - sz)) * (turn < 1e-3 ? 1.0 : 2 * Math.Tan(turn / 4) / Math.Sin(turn / 2));
-                    var cxs = new double[RampCtrl + 1]; var czs = new double[RampCtrl + 1]; var chs = new float[RampCtrl + 1];
-                    bool wet = false;
-                    for (int q = 0; q <= RampCtrl; q++)
+                    string why = null;
+                    // (a taper that would run onto a deck or toward a tunnel moves that end of the ramp further out and tries again)
+                    double extraA = 0, extraB = 0;
+                    for (int attempt = 0; attempt < (Junctions ? 8 : 1); attempt++)
                     {
-                        double t = (double)q / RampCtrl, t2 = t * t, t3 = t2 * t;
-                        double h00 = 2 * t3 - 3 * t2 + 1, h10 = t3 - 2 * t2 + t, h01 = -2 * t3 + 3 * t2, h11 = t3 - t2;
-                        cxs[q] = h00 * sx + h10 * chord * t0x + h01 * ex + h11 * chord * t1x;
-                        czs[q] = h00 * sz + h10 * chord * t0z + h01 * ez + h11 * chord * t1z;
-                        if (_t.RawHeight(cxs[q], czs[q]) < InfiniteTerrain.SeaLevel + 1.5f) wet = true;
+                        why = null;
+                        double? sA = RampSpot(A, arcA, aA, wayA, sa, rMin + extraA), sB = RampSpot(B, arcB, aB, wayB, sb, rMin + extraB);
+                        if (sA is not double spotA) { why = "no spot on the east-west highway"; break; }
+                        if (sB is not double spotB) { why = "no spot on the north-south highway"; break; }
+                        At(A, arcA, spotA, out double hx, out double hz, out float hh, out double htx, out double htz);
+                        At(B, arcB, spotB, out double gx, out double gz, out float gh, out double gtx, out double gtz);
+                        double sx = hx - htz * sa * off, sz = hz + htx * sa * off;
+                        double ex = gx - gtz * sb * off, ez = gz + gtx * sb * off;
+                        double t0x = -wayA * htx, t0z = -wayA * htz, t1x = wayB * gtx, t1z = wayB * gtz;
+                        // the end tangents' length: a circular arc's for the turn between them (2 tan(turn/4) / sin(turn/2) of
+                        // the chord, 1.17 at a right angle). The chord alone bends the curve 2.24/chord at its ends -- a 34 m
+                        // radius on a short ramp, its first piece 3 deg off the highway it leaves
+                        double turn = Math.Acos(Math.Clamp(t0x * t1x + t0z * t1z, -1.0, 1.0));
+                        double chord = Math.Sqrt((ex - sx) * (ex - sx) + (ez - sz) * (ez - sz)) * (turn < 1e-3 ? 1.0 : 2 * Math.Tan(turn / 4) / Math.Sin(turn / 2));
+                        var cxs = new double[RampCtrl + 1]; var czs = new double[RampCtrl + 1]; var chs = new float[RampCtrl + 1];
+                        bool wet = false;
+                        for (int q = 0; q <= RampCtrl; q++)
+                        {
+                            double t = (double)q / RampCtrl, t2 = t * t, t3 = t2 * t;
+                            double h00 = 2 * t3 - 3 * t2 + 1, h10 = t3 - 2 * t2 + t, h01 = -2 * t3 + 3 * t2, h11 = t3 - t2;
+                            cxs[q] = h00 * sx + h10 * chord * t0x + h01 * ex + h11 * chord * t1x;
+                            czs[q] = h00 * sz + h10 * chord * t0z + h01 * ez + h11 * chord * t1z;
+                            if (_t.RawHeight(cxs[q], czs[q]) < InfiniteTerrain.SeaLevel + 1.5f) wet = true;
+                        }
+                        if (wet) { why = "over water"; break; }
+                        var arcR = new double[RampCtrl + 1];
+                        for (int q = 1; q <= RampCtrl; q++) arcR[q] = arcR[q - 1] + Math.Sqrt((cxs[q] - cxs[q - 1]) * (cxs[q] - cxs[q - 1]) + (czs[q] - czs[q - 1]) * (czs[q] - czs[q - 1]));
+                        for (int q = 0; q <= RampCtrl; q++) chs[q] = hh + (gh - hh) * RampEase((float)(arcR[q] / arcR[RampCtrl]));
+                        // dense enough that its first and last pieces leave along the highway (a chord across a long ramp's
+                        // curve leans off it by half the turn over the piece): pieces of at most ~8 m
+                        int subdiv = Math.Max(Sub, (int)Math.Ceiling(arcR[RampCtrl] / (RampCtrl * 8.0)));
+                        var ramp = Finish(RoadKind.Small, cxs, czs, chs, (t0x, t0z), (t1x, t1z), subdiv);
+                        if (ramp == null) { why = $"too steep ({gh - hh:+0.0;-0.0} m over {arcR[RampCtrl]:0} m)"; break; }
+                        if (Crossings(ramp.X, ramp.Z, ramp.X.Length, A).Count > 0 || Crossings(ramp.X, ramp.Z, ramp.X.Length, B).Count > 0) { why = "crosses a highway"; break; }
+                        bool crossesAnother = false;
+                        foreach (var o in list) if (Crossings(ramp.X, ramp.Z, ramp.X.Length, o).Count > 0) crossesAnother = true;
+                        if (crossesAnother) { why = "crosses another ramp"; break; }
+                        // ...nor over a tunnel's hill (either highway's run beside the interchange): its carve would dig into
+                        // the cover over the shell. ⚠ Only the east-west lines and this one: asking for the north-south lines
+                        // (or the railways, which ask for them) from here builds this very segment again -- a recursion
+                        // GetOrAdd does not catch. Railways are kept off the ramps from their side (ShapeRail).
+                        var near = new List<Line> { B };
+                        TakeHighways(ramp.MinX, ramp.MinZ, ramp.MaxX, ramp.MaxZ, near, 0);
+                        bool overHill = false;
+                        for (int q = 0; q < ramp.X.Length && !overHill; q++) if (Influence(near, ramp.X[q], ramp.Z[q]).Tunnel) overHill = true;
+                        if (overHill) { why = "over a tunnel"; break; }
+                        ramp.Ramp = true;
+                        if (Junctions)
+                        {
+                            // the outer lane of one carriageway, its own road between the gores, the outer lane of the other
+                            // (A's decks over B are B's records; B has no Id yet, so nothing can name it)
+                            if (FollowHosts(ramp, A, sa, B, sb, B.Underpasses, null) is string bad)
+                            {
+                                why = bad;
+                                // the end whose taper is blocked moves out; a ramp that then cannot leave cleanly, both
+                                if (bad.StartsWith("its first taper")) extraA += 40; else if (bad.StartsWith("its last taper")) extraB += 40;
+                                else if (bad.StartsWith("no gore")) { extraA += 40; extraB += 40; } else break;
+                                continue;
+                            }
+                            ramp.StartJoin = new Join { Type = JoinType.Taper, HostId = A.Id, Side = sa };
+                            // (B by reference: it owns the ramp, and has no Id yet -- Highway() names it after this returns)
+                            ramp.EndJoin = new Join { Type = JoinType.Taper, Host = B, Side = sb };
+                        }
+                        list.Add(ramp);
+                        break;
                     }
-                    if (wet) { Drop("over water"); continue; }
-                    var arcR = new double[RampCtrl + 1];
-                    for (int q = 1; q <= RampCtrl; q++) arcR[q] = arcR[q - 1] + Math.Sqrt((cxs[q] - cxs[q - 1]) * (cxs[q] - cxs[q - 1]) + (czs[q] - czs[q - 1]) * (czs[q] - czs[q - 1]));
-                    for (int q = 0; q <= RampCtrl; q++) chs[q] = hh + (gh - hh) * RampEase((float)(arcR[q] / arcR[RampCtrl]));
-                    // dense enough that its first and last pieces leave along the highway (a chord across a long ramp's
-                    // curve leans off it by half the turn over the piece): pieces of at most ~8 m
-                    int subdiv = Math.Max(Sub, (int)Math.Ceiling(arcR[RampCtrl] / (RampCtrl * 8.0)));
-                    var ramp = Finish(RoadKind.Small, cxs, czs, chs, (t0x, t0z), (t1x, t1z), subdiv);
-                    if (ramp == null) { Drop($"too steep ({gh - hh:+0.0;-0.0} m over {arcR[RampCtrl]:0} m)"); continue; }
-                    if (Crossings(ramp.X, ramp.Z, ramp.X.Length, A).Count > 0 || Crossings(ramp.X, ramp.Z, ramp.X.Length, B).Count > 0) { Drop("crosses a highway"); continue; }
-                    bool crossesAnother = false;
-                    foreach (var o in list) if (Crossings(ramp.X, ramp.Z, ramp.X.Length, o).Count > 0) crossesAnother = true;
-                    if (crossesAnother) { Drop("crosses another ramp"); continue; }
-                    // ...nor over a tunnel's hill (either highway's run beside the interchange): its carve would dig into
-                    // the cover over the shell. ⚠ Only the east-west lines and this one: asking for the north-south lines
-                    // (or the railways, which ask for them) from here builds this very segment again -- a recursion
-                    // GetOrAdd does not catch. Railways are kept off the ramps from their side (ShapeRail).
-                    var near = new List<Line> { B };
-                    TakeHighways(ramp.MinX, ramp.MinZ, ramp.MaxX, ramp.MaxZ, near, 0);
-                    bool overHill = false;
-                    for (int q = 0; q < ramp.X.Length && !overHill; q++) if (Influence(near, ramp.X[q], ramp.Z[q]).Tunnel) overHill = true;
-                    if (overHill) { Drop("over a tunnel"); continue; }
-                    ramp.Ramp = true;
-                    list.Add(ramp);
+                    if (why != null) Drop(why);
                 }
             return list;
         }

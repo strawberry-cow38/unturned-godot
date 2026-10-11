@@ -1055,7 +1055,7 @@ namespace UnturnedSim.Tests
         }
 
         /// <summary>strawberry 2026-10-10: "have boulders fill gaps around tunnel entrances and around steep embankment
-        /// faces". The kit is PEI's four rocks, measured here off their OBJs. Every embankment rock stands on a road's
+        /// faces". The kit is the non-PEI rocks, measured here off their OBJs. Every embankment rock stands on a road's
         /// shoulder (its carve, not natural ground and not the road) at least BoulderSlope steep, on its region's own mesh,
         /// clear of every road's flat (a portal's forecourt widened) and every road's asphalt by its own radius, and of
         /// every bridge; generating twice gives the same rocks. Every mouth whose headwall stands proud gets rocks at its
@@ -1294,7 +1294,8 @@ namespace UnturnedSim.Tests
                         var nh = lines.Select(h => Near(h, end.x, end.z)).OrderBy(n => n.d).First();
                         double lat = Math.Abs(nh.d - InfiniteRoads.HighwayRibbonOffset);
                         if (lat > worstLat) { worstLat = lat; rampWhere = $" ramp end ({end.x:0},{end.z:0})"; }
-                        worstH = Math.Max(worstH, Math.Abs(end.h - nh.h));
+                        // (the DRIVEN surfaces: a ramp's profile rides the lift between the classes above its carriageway's)
+                        worstH = Math.Max(worstH, Math.Abs(InfiniteRoads.SurfaceY(RoadKind.Small, end.h) - InfiniteRoads.SurfaceY(RoadKind.Highway, nh.h)));
                         double rx = next.x - end.x, rz = next.z - end.z, rl = Math.Sqrt(rx * rx + rz * rz);
                         worstTurn = Math.Max(worstTurn, Math.Acos(Math.Min(1.0, Math.Abs(rx * nh.tx + rz * nh.tz) / rl)) * 180 / Math.PI);
                     }
@@ -1326,7 +1327,7 @@ namespace UnturnedSim.Tests
             TestContext.WriteLine($"{crossings} highway crossings ({missing} without a record{missWhere}): over {overs}, under {unders}, under a bridge {onBridge}, over a tunnel's hill {hills}; " +
                                   $"{patchPts} points where the asphalts overlap: headroom >= {worstHead:0.00} m{headWhere}, ground over the lower road <= {worstFill * 1000:0} mm{fillWhere}, " +
                                   $"{uncarried} of the upper road on no deck{carryWhere} (deck {worstDeckY * 1000:0.0} mm off), {piersIn} piers in the lower road{pierWhere}");
-            TestContext.WriteLine($"{ramps} ramps at {withRamps} interchanges: ends {worstLat:0.00} m off a carriageway's centre (room {laneIn:0.00}){rampWhere}, {worstH * 1000:0.0} mm off its profile, " +
+            TestContext.WriteLine($"{ramps} ramps at {withRamps} interchanges: ends {worstLat:0.00} m off a carriageway's centre (room {laneIn:0.00}){rampWhere}, {worstH * 1000:0.0} mm off its surface, " +
                                   $"{worstTurn:0.0} deg off its heading; steepest {worstGrade * 100:0.0}%; {crossed} crossings on the way; {carved} mid-ramp points carved, within {worstGround * 1000:0.0} mm of the bed; " +
                                   $"anchor joins within {worstJoin * 1000:0.0} mm; nearest main {nearestMain:0} m");
             Assert.That(crossings, Is.GreaterThanOrEqualTo(8), "the window holds (almost) no highway crossings");
@@ -1667,6 +1668,386 @@ namespace UnturnedSim.Tests
             Assert.That(worst, Is.LessThan(0.002), "a deck joint stands open");
         }
 
+        /// <summary>strawberry 2026-10-10: "can we do some magic with the highway on/offramp merges to actually merge them
+        /// properly with the highway mesh. and with any other road branch/connection too i suppose, since right now its just
+        /// overlapping, what if they actually CONNECTED to the mesh of the road". Every junction in 8 x 8 main cells, sampled
+        /// every 0.5 m over its ground against the road tops exactly as the region builds them (less the LOD lift):
+        /// NOTHING OVERLAPS -- no point is under two tops within half a metre of each other (the old junctions were all
+        /// overlap: a joiner's slab a metre into its host, its end ramp under it, a ramp under a carriageway for a hundred
+        /// metres, four mains' end ramps in a heap at every town); NOTHING IS MISSING -- every point within a non-highway
+        /// road's half-width of its centreline is under a top, the junction's patch or the widened carriageway now covering
+        /// what the joiner's own slab did; NO STEP -- where a patch vertex or a piece corner lies on another top's edge, it
+        /// lies there at that top's height; no end ramp at a joined end; and a host's bevel is left off exactly where a patch
+        /// carries on from its edge. (Two highway segments meeting at an anchor are allowed their sliver; reported.)</summary>
+        [Test]
+        public void RoadsMeetInJunctions()
+        {
+            int C = int.TryParse(Environment.GetEnvironmentVariable("UG_TEST_JUNCTION_CELLS"), out int cells) ? cells : 4;   // wider by hand
+            double M = InfiniteRoads.MainCell, Lo = -C * M, Hi = C * M;
+            var all = Gen.Roads.LinesIn(Lo, Lo, Hi, Hi);
+            static float Half(RoadKind k) => k == RoadKind.Highway ? InfiniteRoads.HighwayLaneHalf : InfiniteRoads.PavedHalf(k);
+            var sites = new List<(string kind, double x, double z, InfiniteRoads.Line[] joined)>();
+            foreach (var e in all)
+            {
+                if (e.X[0] < Lo || e.X[0] > Hi || e.Z[0] < Lo || e.Z[0] > Hi) continue;
+                if (e.StartJoin != null) sites.Add((e.StartJoin.Type == JoinType.Tee ? (e.Ramp ? "tee/ramp" : "tee") : "taper", e.X[0], e.Z[0], new[] { e }));
+                if (e.EndJoin != null) sites.Add((e.EndJoin.Type == JoinType.Tee ? (e.Ramp ? "tee/ramp" : "tee") : "taper", e.X[^1], e.Z[^1], new[] { e }));
+            }
+            for (long cx = -C; cx < C; cx++)
+                for (long cz = -C; cz < C; cz++)
+                {
+                    Gen.Roads.MainNodeAt(cx, cz, out double x, out double z);
+                    var ends = all.Where(e => e.Kind == RoadKind.Main && !e.Ramp && (Math.Abs(e.X[0] - x) + Math.Abs(e.Z[0] - z) < 0.5 || Math.Abs(e.X[^1] - x) + Math.Abs(e.Z[^1] - z) < 0.5)).ToArray();
+                    if (ends.Length >= 2) sites.Add(("node", x, z, ends));
+                }
+            // ...and every branch that stops on another road (it tees in there too)
+            foreach (var e in all)
+            {
+                if (e.Kind == RoadKind.Main || e.Kind == RoadKind.Highway || e.Kind == RoadKind.Rail || e.Ramp || e.EndJoin != null) continue;
+                double x = e.X[^1], z = e.Z[^1];
+                if (x < Lo || x > Hi || z < Lo || z > Hi) continue;
+                foreach (var h in all)
+                {
+                    if (ReferenceEquals(h, e) || h.Kind == RoadKind.Highway || h.Kind == RoadKind.Rail) continue;
+                    double best = double.MaxValue;
+                    for (int i = 0; i + 1 < h.X.Length; i++)
+                    {
+                        double sx = h.X[i + 1] - h.X[i], sz = h.Z[i + 1] - h.Z[i], ss = sx * sx + sz * sz;
+                        double t = ss < 1e-12 ? 0 : Math.Clamp(((x - h.X[i]) * sx + (z - h.Z[i]) * sz) / ss, 0, 1);
+                        best = Math.Min(best, Math.Sqrt((x - h.X[i] - sx * t) * (x - h.X[i] - sx * t) + (z - h.Z[i] - sz * t) * (z - h.Z[i] - sz * t)));
+                    }
+                    if (best < InfiniteRoads.PavedHalf(h.Kind) + 0.5) { sites.Add(("tee/loose", x, z, new[] { e })); break; }
+                }
+            }
+            // ...and every place two of them cross on the level, away from both their ends
+            var flat = all.Where(e => e.Kind != RoadKind.Rail && e.Kind != RoadKind.Highway).ToList();
+            var crossings = new List<(double x, double z, bool apart, InfiniteRoads.Line[] lines)>();
+            for (int p = 0; p < flat.Count; p++)
+                for (int q = p + 1; q < flat.Count; q++)
+                {
+                    var A = flat[p]; var Bl = flat[q];
+                    if (A.MaxX < Bl.MinX || Bl.MaxX < A.MinX || A.MaxZ < Bl.MinZ || Bl.MaxZ < A.MinZ) continue;
+                    for (int sa = 0; sa + 1 < A.X.Length; sa++)
+                        for (int sb = 0; sb + 1 < Bl.X.Length; sb++)
+                        {
+                            double rx = A.X[sa + 1] - A.X[sa], rz = A.Z[sa + 1] - A.Z[sa], sx = Bl.X[sb + 1] - Bl.X[sb], sz = Bl.Z[sb + 1] - Bl.Z[sb], den = rx * sz - rz * sx;
+                            if (Math.Abs(den) < 1e-12) continue;
+                            double u = ((Bl.X[sb] - A.X[sa]) * sz - (Bl.Z[sb] - A.Z[sa]) * sx) / den, v = ((Bl.X[sb] - A.X[sa]) * rz - (Bl.Z[sb] - A.Z[sa]) * rx) / den;
+                            if (u < 0 || u >= 1 || v < 0 || v >= 1) continue;
+                            double x = A.X[sa] + rx * u, z = A.Z[sa] + rz * u;
+                            if (x < Lo || x > Hi || z < Lo || z > Hi) continue;
+                            // (two roads bundled side by side, crossing at a shallow angle, or crossing a metre apart in height,
+                            // are not paved as one: reported, not required)
+                            double sin = Math.Abs(den) / Math.Sqrt((rx * rx + rz * rz) * (sx * sx + sz * sz));
+                            double dh = Math.Abs(InfiniteRoads.SurfaceY(A.Kind, A.H[sa] + (A.H[sa + 1] - A.H[sa]) * (float)u) - InfiniteRoads.SurfaceY(Bl.Kind, Bl.H[sb] + (Bl.H[sb + 1] - Bl.H[sb]) * (float)v));
+                            crossings.Add((x, z, sin < Math.Sin(25 * Math.PI / 180) || dh > 1.0, new[] { A, Bl }));
+                        }
+                }
+            // (nor one within CrossingClear of another crossing or of any road's end: two junctions would overlap there)
+            foreach (var c in crossings)
+            {
+                double cc = InfiniteRoads.CrossingClear;
+                bool crowded = crossings.Any(o => !ReferenceEquals(o.lines, c.lines) && (o.x - c.x) * (o.x - c.x) + (o.z - c.z) * (o.z - c.z) < cc * cc)
+                            || flat.Any(e => (e.X[0] - c.x) * (e.X[0] - c.x) + (e.Z[0] - c.z) * (e.Z[0] - c.z) < cc * cc || (e.X[^1] - c.x) * (e.X[^1] - c.x) + (e.Z[^1] - c.z) * (e.Z[^1] - c.z) < cc * cc);
+                sites.Add((c.apart || crowded ? "cross/apart" : "cross", c.x, c.z, c.lines));
+            }
+            var stat = new Dictionary<string, (int n, int patched, long over, long holes, long paved, int open, int seams, double worstSeam, int badBevel)>();
+            long anchorSliver = 0, folds = 0, refFolds = 0, byApart = 0; var firstBad = new Dictionary<string, List<string>>();
+            object gate = new object();
+            System.Threading.Tasks.Parallel.ForEach(sites, s =>
+            {
+                double B = s.kind == "node" || s.kind.StartsWith("cross") ? 75 : s.kind == "taper" ? 70 : 45;
+                double x0 = s.x - B, z0 = s.z - B;
+                var lines = Gen.Roads.LinesIn(s.x - B - 20, s.z - B - 20, s.x + B + 20, s.z + B + 20);
+                var pcs = Gen.Roads.PiecesIn(lines, s.x - B - 60, s.z - B - 60, s.x + B + 60, s.z + B + 60, 4f, out var pts);
+                // the tops, as RegionStreamer lays them: each piece's top and widened strips (two triangles), each patch's
+                var tris = new List<(double ax, double az, double ay, double bx, double bz, double by, double cx, double cz, double cy, int src, bool hw)>();
+                var segs = new List<(double ax, double az, double ay, double bx, double bz, double by, int src)>();   // every top's outer edges
+                var corners = new List<(double x, double z, double y, int src)>();
+                var bevelOff = new List<(double ax, double az, double bx, double bz)>();
+                for (int i = 0; i < pcs.Count; i++)
+                {
+                    var p = pcs[i]; var k = (RoadKind)p.Kind; double hw = Half(k);
+                    double ya = InfiniteRoads.SurfaceY(k, p.H0), yb = InfiniteRoads.SurfaceY(k, p.H1);
+                    double nax = -p.T0Z, naz = p.T0X, nbx = -p.T1Z, nbz = p.T1X;
+                    double wla = hw + p.W0 + p.WL0, wra = hw + p.W0 + p.WR0, wlb = hw + p.W1 + p.WL1, wrb = hw + p.W1 + p.WR1;
+                    double lax = p.X0 + nax * wla, laz = p.Z0 + naz * wla, rax = p.X0 - nax * wra, raz = p.Z0 - naz * wra;
+                    double lbx = p.X1 + nbx * wlb, lbz = p.Z1 + nbz * wlb, rbx = p.X1 - nbx * wrb, rbz = p.Z1 - nbz * wrb;
+                    bool h = k == RoadKind.Highway;
+                    tris.Add((lax, laz, ya, rax, raz, ya, lbx, lbz, yb, i, h));
+                    tris.Add((rax, raz, ya, rbx, rbz, yb, lbx, lbz, yb, i, h));
+                    segs.Add((lax, laz, ya, lbx, lbz, yb, i)); segs.Add((rax, raz, ya, rbx, rbz, yb, i));
+                    segs.Add((lax, laz, ya, rax, raz, ya, i)); segs.Add((lbx, lbz, yb, rbx, rbz, yb, i));
+                    corners.Add((lax, laz, ya, i)); corners.Add((rax, raz, ya, i)); corners.Add((lbx, lbz, yb, i)); corners.Add((rbx, rbz, yb, i));
+                    if (p.NoBevelL) bevelOff.Add((lax, laz, lbx, lbz));
+                    if (p.NoBevelR) bevelOff.Add((rax, raz, rbx, rbz));
+                }
+                for (int j = 0; j < pts.Count; j++)
+                {
+                    var q = pts[j];
+                    for (int t = 0; t + 2 < q.Tris.Length; t += 3)
+                    {
+                        int a = q.Tris[t], b = q.Tris[t + 1], c = q.Tris[t + 2];
+                        tris.Add((q.X[a], q.Z[a], q.Y[a], q.X[b], q.Z[b], q.Y[b], q.X[c], q.Z[c], q.Y[c], 100000 + j, false));
+                    }
+                    for (int i = 0; i < q.X.Length; i++) corners.Add((q.X[i], q.Z[i], q.Y[i], 100000 + j));
+                }
+                // bucketed by the metre over the box
+                int N = (int)Math.Ceiling(2 * B) + 2;
+                var cell = new List<int>[N * N];
+                void Bucket(double mnx, double mxx, double mnz, double mxz, int id)
+                {
+                    int i0 = Math.Max(0, (int)Math.Floor(mnx - x0)), i1 = Math.Min(N - 1, (int)Math.Floor(mxx - x0)), k0 = Math.Max(0, (int)Math.Floor(mnz - z0)), k1 = Math.Min(N - 1, (int)Math.Floor(mxz - z0));
+                    for (int i = i0; i <= i1; i++) for (int k = k0; k <= k1; k++) (cell[k * N + i] ??= new List<int>()).Add(id);
+                }
+                for (int t = 0; t < tris.Count; t++)
+                {
+                    var r = tris[t];
+                    Bucket(Math.Min(r.ax, Math.Min(r.bx, r.cx)) - 0.05, Math.Max(r.ax, Math.Max(r.bx, r.cx)) + 0.05, Math.Min(r.az, Math.Min(r.bz, r.cz)) - 0.05, Math.Max(r.az, Math.Max(r.bz, r.cz)) + 0.05, t);
+                }
+                double At(int t, double x, double z, double m)
+                {
+                    var r = tris[t];
+                    double E(double ax, double az, double bx, double bz) { double ex = bx - ax, ez = bz - az, l = Math.Sqrt(ex * ex + ez * ez); return l < 1e-9 ? -1 : ((x - ax) * ez - (z - az) * ex) / l; }
+                    double d1 = E(r.ax, r.az, r.bx, r.bz), d2 = E(r.bx, r.bz, r.cx, r.cz), d3 = E(r.cx, r.cz, r.ax, r.az);
+                    if (!(d1 > m && d2 > m && d3 > m) && !(d1 < -m && d2 < -m && d3 < -m)) return double.NaN;
+                    double den = (r.bz - r.cz) * (r.ax - r.cx) + (r.cx - r.bx) * (r.az - r.cz);
+                    double w1 = ((r.bz - r.cz) * (x - r.cx) + (r.cx - r.bx) * (z - r.cz)) / den, w2 = ((r.cz - r.az) * (x - r.cx) + (r.ax - r.cx) * (z - r.cz)) / den;
+                    return w1 * r.ay + w2 * r.by + (1 - w1 - w2) * r.cy;
+                }
+                // one ribbon's pieces within three of each other: a chain of shared ends
+                static Dictionary<(byte, bool, long, long, long), int> Starts(List<RoadPiece> l)
+                {
+                    var d = new Dictionary<(byte, bool, long, long, long), int>();
+                    for (int i = 0; i < l.Count; i++) d[(l[i].Kind, l[i].Ramp, (long)Math.Round(l[i].X0 * 1e4), (long)Math.Round(l[i].Z0 * 1e4), (long)Math.Round(l[i].S0 * 100))] = i;
+                    return d;
+                }
+                var pcsStart = Starts(pcs);
+                static bool Follows(List<RoadPiece> l, Dictionary<(byte, bool, long, long, long), int> st, int a, int b)
+                {
+                    int at = a;
+                    for (int step = 0; step < 3; step++)
+                    {
+                        if (!st.TryGetValue((l[at].Kind, l[at].Ramp, (long)Math.Round(l[at].X1 * 1e4), (long)Math.Round(l[at].Z1 * 1e4), (long)Math.Round(l[at].S1 * 100)), out int nx)) return false;
+                        if (nx == b) return true;
+                        at = nx;
+                    }
+                    return false;
+                }
+                bool Near3(List<RoadPiece> l, Dictionary<(byte, bool, long, long, long), int> st, int a, int b) =>
+                    l[a].Kind == l[b].Kind && l[a].Ramp == l[b].Ramp && (Follows(l, st, a, b) || Follows(l, st, b, a));
+                // the ground that should be paved: under the ribbons as they would be laid with no junction cut into them (a
+                // band round each centreline is not it: a ribbon's inner edge at a sharp bend falls short of its half-width)
+                var refPcs = Gen.Roads.PiecesInUnjoined(lines, s.x - B - 60, s.z - B - 60, s.x + B + 60, s.z + B + 60, 4f);
+                var refTris = new List<(double ax, double az, double bx, double bz, double cx, double cz, int src)>();
+                for (int ri = 0; ri < refPcs.Count; ri++)
+                {
+                    var p = refPcs[ri];
+                    var k = (RoadKind)p.Kind; double hw = Half(k);
+                    double nax = -p.T0Z, naz = p.T0X, nbx = -p.T1Z, nbz = p.T1X;
+                    double la = hw + p.W0, lb = hw + p.W1;
+                    double lax = p.X0 + nax * la, laz = p.Z0 + naz * la, rax = p.X0 - nax * la, raz = p.Z0 - naz * la;
+                    double lbx = p.X1 + nbx * lb, lbz = p.Z1 + nbz * lb, rbx = p.X1 - nbx * lb, rbz = p.Z1 - nbz * lb;
+                    refTris.Add((lax, laz, rax, raz, lbx, lbz, ri)); refTris.Add((rax, raz, rbx, rbz, lbx, lbz, ri));
+                }
+                var refStart = Starts(refPcs);
+                var refCell = new List<int>[N * N];
+                for (int t = 0; t < refTris.Count; t++)
+                {
+                    var r = refTris[t];
+                    int i0 = Math.Max(0, (int)Math.Floor(Math.Min(r.ax, Math.Min(r.bx, r.cx)) - x0)), i1 = Math.Min(N - 1, (int)Math.Floor(Math.Max(r.ax, Math.Max(r.bx, r.cx)) - x0));
+                    int k0 = Math.Max(0, (int)Math.Floor(Math.Min(r.az, Math.Min(r.bz, r.cz)) - z0)), k1 = Math.Min(N - 1, (int)Math.Floor(Math.Max(r.az, Math.Max(r.bz, r.cz)) - z0));
+                    for (int i = i0; i <= i1; i++) for (int k = k0; k <= k1; k++) (refCell[k * N + i] ??= new List<int>()).Add(t);
+                }
+                // ...and, for the folds, whether the unjoined ribbons fold there too
+                bool Paved(double x, double z, out bool refFold)
+                {
+                    refFold = false;
+                    var ids = refCell[(int)(z - z0) * N + (int)(x - x0)];
+                    if (ids == null) return false;
+                    bool paved = false; var inside = new List<int>();
+                    foreach (int t in ids)
+                    {
+                        var r = refTris[t];
+                        double E(double ax, double az, double bx, double bz) { double ex = bx - ax, ez = bz - az, l = Math.Sqrt(ex * ex + ez * ez); return l < 1e-9 ? -1 : ((x - ax) * ez - (z - az) * ex) / l; }
+                        double d1 = E(r.ax, r.az, r.bx, r.bz), d2 = E(r.bx, r.bz, r.cx, r.cz), d3 = E(r.cx, r.cz, r.ax, r.az);
+                        if ((d1 > 0.06 && d2 > 0.06 && d3 > 0.06) || (d1 < -0.06 && d2 < -0.06 && d3 < -0.06)) paved = true;
+                        if ((d1 > 0.005 && d2 > 0.005 && d3 > 0.005) || (d1 < -0.005 && d2 < -0.005 && d3 < -0.005)) inside.Add(r.src);
+                    }
+                    foreach (int a in inside) foreach (int b in inside) if (a < b && Near3(refPcs, refStart, a, b)) refFold = true;
+                    return paved;
+                }
+                long over = 0, holes = 0, paved = 0, sliver = 0, fold = 0, refFold = 0, nearApart = 0;
+                // (an overlap within 40 m of a crossing that is not paved -- too near another junction, too shallow, a step --
+                // is that crossing's, reported with it, not this junction's)
+                var apartNear = s.kind.StartsWith("cross") ? new List<(double x, double z)>() : sites.Where(o => o.kind == "cross/apart" && Math.Abs(o.x - s.x) < B + 40 && Math.Abs(o.z - s.z) < B + 40).Select(o => (o.x, o.z)).ToList(); string bad = null, badOver = null, badHole = null;
+                for (double x = x0 + 0.25; x < x0 + 2 * B; x += 0.5)
+                    for (double z = z0 + 0.25; z < z0 + 2 * B; z += 0.5)
+                    {
+                        var ids = cell[(int)(z - z0) * N + (int)(x - x0)];
+                        var hit = new List<(double y, int src, bool hw)>();
+                        bool covered = false;
+                        if (ids != null)
+                            foreach (int t in ids)
+                            {
+                                double y = At(t, x, z, 0.005);
+                                if (!double.IsNaN(y)) hit.Add((y, tris[t].src, tris[t].hw));
+                                if (!covered && !double.IsNaN(At(t, x, z, -0.003))) covered = true;
+                            }
+                        bool ov = false, onlyHw = true, onlyFold = true;
+                        // (a FOLD: one ribbon's neighbouring pieces overlapping on the inside of a sharp bend -- the ribbon's
+                        // own, junction or no junction; counted apart and held to the unjoined ribbons' count below)
+                        bool Fold(int a, int b) => a < 100000 && b < 100000 && Near3(pcs, pcsStart, a, b);
+                        for (int u = 0; u < hit.Count; u++)
+                            for (int v = u + 1; v < hit.Count; v++)
+                                if (hit[u].src != hit[v].src && Math.Abs(hit[u].y - hit[v].y) < 0.5)
+                                {
+                                    ov = true;
+                                    if (!(hit[u].hw && hit[v].hw)) onlyHw = false;
+                                    if (!Fold(hit[u].src, hit[v].src)) onlyFold = false;
+                                }
+                        if (ov && onlyFold) fold++;
+                        else if (ov && onlyHw) sliver++;
+                        else if (ov && apartNear.Any(c => (c.x - x) * (c.x - x) + (c.z - z) * (c.z - z) < 40 * 40)) nearApart++;
+                        else if (ov)
+                        {
+                            over++;
+                            string Src(int src) => src >= 100000 ? "patch" : $"{(RoadKind)pcs[src].Kind}{(pcs[src].Ramp ? " ramp" : "")} piece S {pcs[src].S0:0.0}-{pcs[src].S1:0.0}";
+                            badOver ??= $"overlap at ({x:0.0},{z:0.0}) of {string.Join(" and ", hit.Select(h => Src(h.src)).Distinct())}";
+                        }
+                        if (Paved(x, z, out bool rf)) { paved++; if (!covered) { holes++; badHole ??= $"hole at ({x:0.0},{z:0.0})"; } }
+                        if (rf) refFold++;
+                    }
+                if (badOver != null || badHole != null) bad = $"{s.kind} at ({s.x:0},{s.z:0}): " + string.Join(", ", new[] { badOver, badHole }.Where(b => b != null));
+                // no end ramp at the joined end (a junction that fell back keeps its own): a piece end with one, near the
+                // junction, on a joined line's centreline
+                bool OnJoined(double x, double z) => s.joined.Any(e => Enumerable.Range(0, e.X.Length - 1).Any(i =>
+                {
+                    double sx = e.X[i + 1] - e.X[i], sz = e.Z[i + 1] - e.Z[i], ss = sx * sx + sz * sz;
+                    double t = ss < 1e-12 ? 0 : Math.Clamp(((x - e.X[i]) * sx + (z - e.Z[i]) * sz) / ss, 0, 1);
+                    double dx = x - e.X[i] - sx * t, dz = z - e.Z[i] - sz * t;
+                    return dx * dx + dz * dz < 0.25;
+                }));
+                int open = 0;
+                foreach (var p in pcs)
+                {
+                    if (p.OpenStart && Math.Abs(p.X0 - s.x) < 30 && Math.Abs(p.Z0 - s.z) < 30 && OnJoined(p.X0, p.Z0)) open++;
+                    if (p.OpenEnd && Math.Abs(p.X1 - s.x) < 30 && Math.Abs(p.Z1 - s.z) < 30 && OnJoined(p.X1, p.Z1)) open++;
+                }
+                // NO STEP: a patch vertex or piece corner on another top's edge is at that top's height there
+                int seams = 0; double worstSeam = 0;
+                foreach (var c in corners)
+                {
+                    if (Math.Abs(c.x - s.x) > B || Math.Abs(c.z - s.z) > B) continue;
+                    foreach (var g in segs)
+                    {
+                        if (g.src == c.src) continue;
+                        double sx = g.bx - g.ax, sz = g.bz - g.az, ss = sx * sx + sz * sz;
+                        if (ss < 1e-10) continue;
+                        double t = ((c.x - g.ax) * sx + (c.z - g.az) * sz) / ss;
+                        if (t < -1e-6 || t > 1 + 1e-6) continue;
+                        double dx = c.x - g.ax - sx * t, dz = c.z - g.az - sz * t;
+                        if (dx * dx + dz * dz > 0.001 * 0.001) continue;   // (a fillet stands 3 mm off its host's edge: not ON it)
+                        double dy = Math.Abs(c.y - (g.ay + (g.by - g.ay) * t));
+                        if (dy > 0.3) continue;   // another road passing over or under, not a seam
+                        seams++; worstSeam = Math.Max(worstSeam, dy);
+                        if (dy > 0.002) bad ??= $"{s.kind} at ({s.x:0},{s.z:0}): step {dy * 1000:0.0} mm at ({c.x:0.00},{c.z:0.00})";
+                    }
+                }
+                // a bevel is left off exactly along a patch: both ends of every such edge are patch vertices -- and every
+                // piece edge with both ends on a patch's vertices has its bevel off (else it slopes down under the patch)
+                int badBevel = 0;
+                for (int i = 0; i < pcs.Count; i++)
+                {
+                    var p = pcs[i]; double hw = Half((RoadKind)p.Kind);
+                    if (Math.Abs(p.X0 - s.x) > B || Math.Abs(p.Z0 - s.z) > B) continue;
+                    foreach (int side in new[] { 1, -1 })
+                    {
+                        double wa = hw + p.W0 + (side > 0 ? p.WL0 : p.WR0), wb = hw + p.W1 + (side > 0 ? p.WL1 : p.WR1);
+                        double ax = p.X0 - p.T0Z * side * wa, az = p.Z0 + p.T0X * side * wa, bx = p.X1 - p.T1Z * side * wb, bz = p.Z1 + p.T1X * side * wb;
+                        bool OnPatch(double x, double z) => pts.Any(q => Enumerable.Range(0, q.X.Length).Any(k => Math.Abs(q.X[k] - x) < 0.002 && Math.Abs(q.Z[k] - z) < 0.002));
+                        bool off = side > 0 ? p.NoBevelL : p.NoBevelR;
+                        if (!off && OnPatch(ax, az) && OnPatch(bx, bz)) { badBevel++; bad ??= $"{s.kind} at ({s.x:0},{s.z:0}): a bevel under a patch at ({ax:0.0},{az:0.0})"; }
+                    }
+                }
+                foreach (var (ax, az, bx, bz) in bevelOff)
+                {
+                    if (Math.Abs(ax - s.x) > B || Math.Abs(az - s.z) > B) continue;
+                    bool On(double x, double z) => pts.Any(q => Enumerable.Range(0, q.X.Length).Any(i => Math.Abs(q.X[i] - x) < 0.002 && Math.Abs(q.Z[i] - z) < 0.002));
+                    if (!On(ax, az) || !On(bx, bz)) { badBevel++; bad ??= $"{s.kind} at ({s.x:0},{s.z:0}): bevel off at ({ax:0.0},{az:0.0}) with no patch"; }
+                }
+                bool patched = s.kind == "taper" ? open == 0 : s.kind.StartsWith("cross") ? pts.Any(q => Math.Abs(q.AnchorX - s.x) < 0.01 && Math.Abs(q.AnchorZ - s.z) < 0.01)
+                                                         : pts.Any(q => Math.Abs(q.AnchorX - s.x) < B && Math.Abs(q.AnchorZ - s.z) < B);
+                if (!patched && s.kind.StartsWith("cross")) open = 1;   // a crossing left to overlap: its fallback
+                // a junction that fell back overlaps as every junction used to: counted as a fallback, not as an overlap
+                if (open > 0) { bad = $"{s.kind} at ({s.x:0},{s.z:0}): fell back to its end ramp ({over} samples overlapping)"; over = 0; seams = 0; worstSeam = 0; }
+                lock (gate)
+                {
+                    stat.TryGetValue(s.kind, out var st);
+                    // (an end ramp counts against a junction only where it was joined: a fallback keeps its own by design)
+                    stat[s.kind] = (st.n + 1, st.patched + (patched ? 1 : 0), st.over + over, st.holes + holes, st.paved + paved, st.open + (patched && s.kind != "taper" ? open : 0), st.seams + seams, Math.Max(st.worstSeam, worstSeam), st.badBevel + badBevel);
+                    anchorSliver += sliver; folds += fold; refFolds += refFold; byApart += nearApart;
+                    if (bad != null) { if (!firstBad.TryGetValue(s.kind, out var fl)) firstBad[s.kind] = fl = new List<string>(); fl.Add(bad); }
+                }
+            });
+            foreach (var kv in stat.OrderBy(k => k.Key))
+                TestContext.WriteLine($"{kv.Key}: {kv.Value.n} junctions, {kv.Value.patched} joined; {kv.Value.over} samples under two tops, {kv.Value.holes} of {kv.Value.paved} paved samples uncovered; " +
+                                      $"{kv.Value.open} end ramps at a joined end ({kv.Value.n - kv.Value.patched} fell back); {kv.Value.seams} seam points, worst step {kv.Value.worstSeam * 1000:0.00} mm; {kv.Value.badBevel} bevels off with no patch" +
+                                      (firstBad.TryGetValue(kv.Key, out var fb) ? $" -- {fb.Count} with faults: " + string.Join(" | ", fb.OrderBy(f => f).Take(6)) : ""));
+            TestContext.WriteLine($"highway segments meeting at an anchor: {anchorSliver} samples of sliver; ribbons folding at a sharp bend: {folds} samples (unjoined: {refFolds}); beside a crossing left unpaved: {byApart}");
+            int Get(string k, Func<(int n, int patched, long over, long holes, long paved, int open, int seams, double worstSeam, int badBevel), int> f) => stat.TryGetValue(k, out var v) ? f(v) : 0;
+            Assert.That(Get("tee", v => v.patched), Is.GreaterThan(80)); Assert.That(Get("tee/ramp", v => v.patched), Is.GreaterThan(20));
+            Assert.That(Get("taper", v => v.patched), Is.GreaterThan(30)); Assert.That(Get("node", v => v.patched), Is.GreaterThan(30));
+            Assert.That(Get("cross", v => v.patched), Is.GreaterThanOrEqualTo(4));
+            foreach (var kv in stat)
+            {
+                if (kv.Key == "cross/apart") continue;
+                Assert.That(kv.Value.over, Is.EqualTo(0), $"{kv.Key}: two road tops overlap");
+                Assert.That(kv.Value.holes, Is.EqualTo(0), $"{kv.Key}: road ground left unpaved");
+                Assert.That(kv.Value.worstSeam, Is.LessThan(0.002), $"{kv.Key}: a step where two tops meet");
+                Assert.That(kv.Value.badBevel, Is.EqualTo(0), $"{kv.Key}: a bevel left off with no patch beside it");
+                Assert.That(kv.Value.open, Is.EqualTo(0), $"{kv.Key}: an end ramp at a joined end");
+                Assert.That(kv.Value.patched, Is.GreaterThanOrEqualTo(kv.Value.n * 0.95), $"{kv.Key}: junctions falling back to overlapping");
+            }
+            Assert.That(anchorSliver, Is.LessThan(200), "highway segments overlap at their anchors");
+            // where one highway segment carries on from another, neither has an end ramp: the slope would stand in the road
+            var hwPieces = Gen.Roads.PiecesIn(all.Where(e => e.Kind == RoadKind.Highway).ToList(), Lo, Lo, Hi, Hi, 8f);
+            var hwStarts = new Dictionary<(long, long), List<int>>(); var hwEnds = new Dictionary<(long, long), List<int>>();
+            static (long, long) Cell(double x, double z) => ((long)Math.Floor(x), (long)Math.Floor(z));
+            for (int i = 0; i < hwPieces.Count; i++)
+            {
+                var p = hwPieces[i];
+                if (!hwStarts.TryGetValue(Cell(p.X0, p.Z0), out var sl)) hwStarts[Cell(p.X0, p.Z0)] = sl = new List<int>(); sl.Add(i);
+                if (!hwEnds.TryGetValue(Cell(p.X1, p.Z1), out var el)) hwEnds[Cell(p.X1, p.Z1)] = el = new List<int>(); el.Add(i);
+            }
+            // another segment's piece with an end (of the given map) within half a metre: not this piece itself
+            bool Other(Dictionary<(long, long), List<int>> map, int self, double x, double z, bool atStart)
+            {
+                var (cx, cz) = Cell(x, z);
+                for (long i = cx - 1; i <= cx + 1; i++)
+                    for (long k = cz - 1; k <= cz + 1; k++)
+                        if (map.TryGetValue((i, k), out var l))
+                            foreach (int q in l)
+                            {
+                                if (q == self) continue;
+                                var o = hwPieces[q]; double ox = atStart ? o.X0 : o.X1, oz = atStart ? o.Z0 : o.Z1;
+                                // (a piece of the same ribbon shares its row exactly; another segment's lies apart along it, or is the first/last)
+                                if ((ox - x) * (ox - x) + (oz - z) * (oz - z) < 0.25 && (atStart ? o.S0 < 1e-3 : o.OpenEnd || o.S1 > 1)) return true;
+                            }
+                return false;
+            }
+            int anchorRamps = 0, carriedOn = 0;
+            for (int i = 0; i < hwPieces.Count; i++)
+            {
+                var p = hwPieces[i];
+                if (p.S0 < 1e-3 && Other(hwEnds, i, p.X0, p.Z0, false)) { carriedOn++; if (p.OpenStart) anchorRamps++; }
+                if (p.OpenEnd && Other(hwStarts, i, p.X1, p.Z1, true)) anchorRamps++;
+            }
+            TestContext.WriteLine($"highway segments carried on at {carriedOn} anchor ends; {anchorRamps} end ramps standing where one carries on from another");
+            Assert.That(carriedOn, Is.GreaterThan(5)); Assert.That(anchorRamps, Is.EqualTo(0), "an end ramp where a highway segment carries on");
+            Assert.That(folds, Is.LessThanOrEqualTo(refFolds * 1.1 + 10), "a junction folds a ribbon the ribbon itself does not");
+        }
+
         /// <summary>strawberry 2026-10-10: "work on a simple on/offramp for these areas". A diamond at each grade
         /// separation: every ramp starts INSIDE a highway carriageway at its surface, heading along it; ends just inside
         /// the main's asphalt at the main's surface, square to it; keeps to its grade; crosses no road on the way; keeps
@@ -1727,7 +2108,7 @@ namespace UnturnedSim.Tests
                             var nh = hw.Select(h => Near(h, s0.x, s0.z)).OrderBy(n => n.d).First();
                             double lat = Math.Abs(nh.d - InfiniteRoads.HighwayRibbonOffset);
                             if (lat > worstLat) { worstLat = lat; where = $" ramp from ({s0.x:0},{s0.z:0})"; }
-                            worstStartH = Math.Max(worstStartH, Math.Abs(s0.h - nh.h));
+                            worstStartH = Math.Max(worstStartH, Math.Abs(InfiniteRoads.SurfaceY(RoadKind.Small, s0.h) - InfiniteRoads.SurfaceY(RoadKind.Highway, nh.h)));   // driven surfaces
                             double rx = r[1].x - r[0].x, rz = r[1].z - r[0].z, rl = Math.Sqrt(rx * rx + rz * rz);
                             worstStartTurn = Math.Max(worstStartTurn, Math.Acos(Math.Min(1.0, Math.Abs(rx * nh.tx + rz * nh.tz) / rl)) * 180 / Math.PI);
                             // END: just inside the main's asphalt, on its profile, square to it
@@ -1757,7 +2138,7 @@ namespace UnturnedSim.Tests
                         }
                     }
             TestContext.WriteLine($"{crossingsSeen} grade separations, {ramps} ramps ({full} with all four): start off its carriageway's centre {worstLat:0.00} m (room {laneIn:0.00}){where}, " +
-                                  $"{worstStartH * 1000:0.0} mm off its profile, {worstStartTurn:0.0} deg off its heading; end {worstEndOff * 1000:0.0} mm off {bed:0.0} m in, {worstEndH * 1000:0.0} mm off the main's profile, " +
+                                  $"{worstStartH * 1000:0.0} mm off its surface, {worstStartTurn:0.0} deg off its heading; end {worstEndOff * 1000:0.0} mm off {bed:0.0} m in, {worstEndH * 1000:0.0} mm off the main's profile, " +
                                   $">= {worstEndSquare:0.0} deg to it; steepest {worstGrade * 100:0.0}% (limit {InfiniteRoads.MaxGrade(RoadKind.Small) * 100:0}); {crossed} crossings on the way; nearest the crossing {nearestDeck:0.0} m; " +
                                   $"ground on {carved} mid-ramp points within {worstGround * 1000:0.0} mm of the bed");
             Assert.That(ramps, Is.GreaterThan(40)); Assert.That(full, Is.GreaterThan(crossingsSeen / 2));

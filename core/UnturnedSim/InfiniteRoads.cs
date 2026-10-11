@@ -142,6 +142,9 @@ namespace SDG.Unturned
             /// <summary>Mains: the on/off ramps between this main and the highway it crosses (BuildRamps).</summary>
             public List<Line> Ramps;
             public bool Ramp;   // this line IS a ramp: small-road surface, no power line
+            /// <summary>Where this line's start / end meets another road instead of stopping in the open (InfiniteJunctions):
+            /// a branch's start and a main's ramp's end tee into the main, a ramp's highway end tapers into its carriageway.</summary>
+            public Join StartJoin, EndJoin;
             public double[] HArc;   // horizontal arc length at each dense point (set where there are tunnels)
             /// <summary>Rails: the carve's shoulder at each dense point (it widens with the cutting's or embankment's
             /// depth); null on roads, which take Shoulder(Kind).</summary>
@@ -213,6 +216,8 @@ namespace SDG.Unturned
         // runs, 48-332 m.
         /// <summary>UG_INF_TUNNELS=0: no tunnels -- deep cuts stay open trenches, as before.</summary>
         public static bool Tunnels = Environment.GetEnvironmentVariable("UG_INF_TUNNELS") != "0";
+        /// <summary>UG_INF_JUNCTIONS=0: roads that meet overlap, as before (InfiniteJunctions).</summary>
+        public static bool Junctions = Environment.GetEnvironmentVariable("UG_INF_JUNCTIONS") != "0";
         public const float TunnelBoreHalf = 8f, TunnelShellHalf = 12f;   // Tunnel_Line_0, X at the bore and the shell
         public const float TunnelBoreTop = 12.4f;                        // the bore's crown over the road
         public const float TunnelFloorDrop = 1f;                         // the section's feet, under the road surface
@@ -933,6 +938,14 @@ namespace SDG.Unturned
                     foreach (var rl in rails) if (Crossings(ramp.X, ramp.Z, ramp.X.Length, rl).Count > 0) railed = true;
                     if (railed) continue;
                     ramp.Ramp = true;
+                    if (Junctions)
+                    {
+                        // it leaves the carriageway as its widened outer lane and runs at its level until the gore, then
+                        // climbs to the main, which it meets in a tee
+                        if (FollowHosts(ramp, hw, side, null, 0, main.Underpasses, null) != null) continue;
+                        ramp.StartJoin = new Join { Type = JoinType.Taper, HostId = hw.Id, Side = side };
+                        ramp.EndJoin = new Join { Type = JoinType.Tee, Host = main };
+                    }
                     list.Add(ramp);
                 }
             return list.Count > 0 ? list : null;
@@ -950,10 +963,13 @@ namespace SDG.Unturned
 
         /// <summary>A small road or trail ends this far (from the formation's edge) short of a railway.</summary>
         public const float BranchRailClear = 30f;
+        /// <summary>Two branches leave one side of a main at least this far apart, so their tees' mouths stay apart.</summary>
+        public const double BranchSpacing = 70.0;
 
         List<Line> BuildBranches(Line main, long cx, long cz, int dir)
         {
             var list = new List<Line>();
+            var starts = new List<(double s, int side)>();
             ulong bs = InfiniteTerrain.Mix(_s ^ 0xB4A1 ^ (ulong)cx * 7919UL ^ (ulong)cz * 104729UL ^ (ulong)dir);
             int count = (int)(InfiniteTerrain.Hash(cx, cz, bs) % 4);   // 0..3 per link
             var arc = Arc(main);
@@ -997,6 +1013,13 @@ namespace SDG.Unturned
                     if (atLevel) continue;
                 }
                 int side = (h >> 24 & 1) == 0 ? 1 : -1;
+                // two tees' mouths on one side of the main must not overlap
+                if (Junctions)
+                {
+                    bool crowded = false;
+                    foreach (var (s2, side2) in starts) if (side2 == side && Math.Abs(s2 - s) < BranchSpacing) crowded = true;
+                    if (crowded) continue;
+                }
                 double angle = ((h >> 25) / 127.0 - 0.5) * 1.2;   // +-0.6 rad off square
                 At(main, arc, s, out double sx, out double sz, out _, out double tx, out double tz);
                 double hx = -tz * side, hz = tx * side;   // perpendicular, this side
@@ -1024,6 +1047,13 @@ namespace SDG.Unturned
                     // could straddle it
                     if (NearHighway(x + headX * step / 3, z + headZ * step / 3) || NearHighway(x + headX * step * 2 / 3, z + headZ * step * 2 / 3)
                         || NearHighway(x + headX * step, z + headZ * step)) break;
+                    // ...nor wander back to run beside the main it left: alongside it at a shallow angle the two lie over
+                    // each other, with nothing a crossing could pave between them (InfiniteJunctions)
+                    if (Junctions && k >= 3)
+                    {
+                        double back = PavedHalf(RoadKind.Main) + PavedHalf(kind) + 20;
+                        if (NearestOn(main, x + headX * step / 2, z + headZ * step / 2).d < back || NearestOn(main, x + headX * step, z + headZ * step).d < back) break;
+                    }
                     x += headX * step; z += headZ * step;
                     float rh = _t.RawHeight(x, z);
                     if (rh < InfiniteTerrain.SeaLevel + 1.5f || rh > hiLimit) break;
@@ -1040,7 +1070,10 @@ namespace SDG.Unturned
                     if (Math.Abs(ch[k] - ch[k - 1]) / step > MaxGrade(kind)) { keep = k; break; }
                 if (keep < 4) continue;
                 var line = Finish(kind, xs.GetRange(0, keep).ToArray(), zs.GetRange(0, keep).ToArray(), ch[..keep]);
-                if (line != null) list.Add(line);
+                if (line == null) continue;
+                if (Junctions) line.StartJoin = new Join { Type = JoinType.Tee, Host = main };
+                starts.Add((s, side));
+                list.Add(line);
             }
             return list;
         }
@@ -2078,9 +2111,28 @@ namespace SDG.Unturned
 
         /// <summary>Road surface pieces whose midpoint lies in the rectangle, at most `maxPiece` long, with tangents
         /// averaged across bends (so neighbouring pieces close). A highway gives TWO ribbons, one per carriageway.</summary>
-        public List<RoadPiece> PiecesIn(List<Line> lines, double x0, double z0, double x1, double z1, float maxPiece)
+        public List<RoadPiece> PiecesIn(List<Line> lines, double x0, double z0, double x1, double z1, float maxPiece) => PiecesIn(lines, x0, z0, x1, z1, maxPiece, out _);
+
+        /// <summary>...and the junction patches (InfiniteJunctions) anchored in the rectangle. Where roads meet, the
+        /// pieces are cut back to the junction, widened (a taper) or left without their edge bevel (a tee's mouth), and no
+        /// end ramp is built at a joined end.</summary>
+        public List<RoadPiece> PiecesIn(List<Line> lines, double x0, double z0, double x1, double z1, float maxPiece, out List<RoadPatch> patches) =>
+            PiecesIn(lines, x0, z0, x1, z1, maxPiece, Junctions, out patches);
+
+        /// <summary>Test accessor: the ribbons as they would be laid with no junction cut into them -- the ground a junction
+        /// must keep paved.</summary>
+        public List<RoadPiece> PiecesInUnjoined(List<Line> lines, double x0, double z0, double x1, double z1, float maxPiece) =>
+            PiecesIn(lines, x0, z0, x1, z1, maxPiece, false, out _);
+
+        List<RoadPiece> PiecesIn(List<Line> lines, double x0, double z0, double x1, double z1, float maxPiece, bool junctions, out List<RoadPatch> patches)
         {
             var list = new List<RoadPiece>();
+            var plan = junctions ? PlanJunctions(x0, z0, x1, z1, maxPiece) : null;
+            patches = plan == null ? new List<RoadPatch>() : plan.Patches.FindAll(p => p.AnchorX >= x0 && p.AnchorX < x1 && p.AnchorZ >= z0 && p.AnchorZ < z1);
+            // a town's middle paved over ground no road carves -- the wedge between two mains leaving at 40 degrees rose
+            // 0.15-0.2 m through it between vertices: its inside rides the ground at a slab's height, its edges stay exact
+            foreach (var p in patches)
+                for (int i = p.Interior; i < p.X.Length; i++) p.Y[i] = Math.Max(p.Y[i], _t.HeightAt(p.X[i], p.Z[i]) + Proud + p.Lift[i]);
             List<Underpass> ups = null;
             if (Bridges) foreach (var m in lines) if (m.Underpasses != null) foreach (var u in m.Underpasses) if (!u.Existing && !u.Over) (ups ??= new List<Underpass>()).Add(u);
             foreach (var e in lines)
@@ -2103,6 +2155,16 @@ namespace SDG.Unturned
                     tgx[i] = (float)tx; tgz[i] = (float)tz;
                     rx[i] = e.X[i] - tz * offset; rz[i] = e.Z[i] + tx * offset;
                 }
+                // JUNCTIONS: where this ribbon is cut back to one (and squared to what), and what its hosts' junctions do to it
+                LineTrim trim = null; List<HostMod> mods = null; Dictionary<int, List<double>> cuts = null;
+                if (plan != null)
+                {
+                    var key = KeyOf(e);
+                    plan.Trims.TryGetValue(key, out trim);
+                    plan.Mods.TryGetValue((key, offset), out mods);
+                    if ((trim != null && (trim.R0 > 0 || trim.R1 < double.MaxValue || trim.Gaps != null)) || (mods != null && mods.Count > 0))
+                        cuts = CutsOf(new Rib(e, offset), mods, trim);
+                }
                 // THE BRIDGE MOUTHS (strawberry 2026-10-10: "widen the width of the actual highway road splines at the mouths
                 // of bridges to match up with the bridge's road width"): a carriageway's deck roadway is 1.1 m wider each
                 // side than its ribbon, so coming into a deck the ribbon widens to it over MouthTaper -- its arc distance to
@@ -2124,41 +2186,63 @@ namespace SDG.Unturned
                     foreach (var m in mouths) best = Math.Min(best, Math.Abs(at - m));
                     return MouthWiden * Smoothstep(MouthTaper, 0f, (float)best);
                 }
-                float s = 0f;
+                double r0 = trim?.R0 ?? 0, r1 = trim?.R1 ?? double.MaxValue;
+                double s = 0;
                 for (int k = 0; k < n; k++)
                 {
                     double sx = rx[k + 1] - rx[k], sz = rz[k + 1] - rz[k];
-                    float segLen = (float)Math.Sqrt(sx * sx + sz * sz);
-                    if (segLen < 1e-4f) continue;
+                    double segLen = Math.Sqrt(sx * sx + sz * sz);
+                    if ((float)segLen < 1e-4f) continue;
                     float dX = (float)(sx / segLen), dZ = (float)(sz / segLen);
+                    List<double> segCuts = null;
+                    cuts?.TryGetValue(k, out segCuts);
                     // the parts of this segment NOT under a bridge deck (all of it, almost always), each cut into pieces
                     var cover = !Bridges ? null : offset != 0.0 ? CoverWith(e, offset > 0 ? 1 : 0, ups) : e.DeckCover?[0];
                     foreach (var (u0, u1, sq0, sq1) in Uncovered(cover, k))
                     {
-                    int pcs = Math.Max(1, (int)Math.Ceiling(segLen * (u1 - u0) / maxPiece));
-                    for (int p = 0; p < pcs; p++)
+                    var br = SegmentBreaks(u0, u1, segCuts, segLen, maxPiece);
+                    for (int p = 0; p + 1 < br.Count; p++)
                     {
-                        double ta = u0 + (u1 - u0) * p / pcs, tb = u0 + (u1 - u0) * (p + 1) / pcs;
+                        double ta = br[p], tb = br[p + 1];
+                        double aa = s + segLen * ta, ab = s + segLen * tb, am = (aa + ab) * 0.5;
+                        if (am < r0 || am > r1) continue;   // cut back to a junction
+                        if (trim?.Gaps != null && trim.Gaps.Exists(gp => am > gp.a0 && am < gp.a1)) continue;   // ...or out at a crossing
                         double mx = rx[k] + sx * (ta + tb) * 0.5, mz = rz[k] + sz * (ta + tb) * 0.5;
                         if (mx < x0 || mx >= x1 || mz < z0 || mz >= z1) continue;
-                        list.Add(new RoadPiece
+                        int ea = RowEnd(ta, segLen), eb = RowEnd(tb, segLen);
+                        var rp = new RoadPiece
                         {
                             Kind = (byte)e.Kind,
                             X0 = rx[k] + sx * ta, Z0 = rz[k] + sz * ta, X1 = rx[k] + sx * tb, Z1 = rz[k] + sz * tb,
                             H0 = e.H[k] + (e.H[k + 1] - e.H[k]) * (float)ta, H1 = e.H[k] + (e.H[k + 1] - e.H[k]) * (float)tb,
-                            S0 = s + segLen * (float)ta, S1 = s + segLen * (float)tb,
+                            S0 = (float)aa, S1 = (float)ab,
                             // a piece end that meets a deck is squared to the DECK's heading (see DeckSpan); ends at a
                             // profile point take the averaged tangent the neighbouring piece also takes; the rest, the
                             // segment's own
-                            T0X = p == 0 && sq0.HasValue ? sq0.Value.x : ta == 0 ? tgx[k] : dX, T0Z = p == 0 && sq0.HasValue ? sq0.Value.z : ta == 0 ? tgz[k] : dZ,
-                            T1X = p == pcs - 1 && sq1.HasValue ? sq1.Value.x : tb == 1 ? tgx[k + 1] : dX, T1Z = p == pcs - 1 && sq1.HasValue ? sq1.Value.z : tb == 1 ? tgz[k + 1] : dZ,
+                            T0X = p == 0 && sq0.HasValue ? sq0.Value.x : ea == 0 ? tgx[k] : ea == 1 ? tgx[k + 1] : dX, T0Z = p == 0 && sq0.HasValue ? sq0.Value.z : ea == 0 ? tgz[k] : ea == 1 ? tgz[k + 1] : dZ,
+                            T1X = p == br.Count - 2 && sq1.HasValue ? sq1.Value.x : eb == 0 ? tgx[k] : eb == 1 ? tgx[k + 1] : dX, T1Z = p == br.Count - 2 && sq1.HasValue ? sq1.Value.z : eb == 0 ? tgz[k] : eb == 1 ? tgz[k + 1] : dZ,
                             Raised = offset != 0.0 && e.RaisedSeg != null && e.RaisedSeg[offset > 0 ? 1 : 0][k],
                             InTunnel = InTunnel(e, k, (ta + tb) * 0.5),
                             Cut = offset != 0.0 && e.CutSeg != null && e.CutSeg[offset > 0 ? 1 : 0][k],
-                            OpenStart = k == 0 && ta == 0, OpenEnd = k == n - 1 && tb == 1,
+                            OpenStart = k == 0 && ta == 0 && !(trim?.J0 ?? false), OpenEnd = k == n - 1 && tb == 1 && !(trim?.J1 ?? false),
                             Ramp = e.Ramp,
-                            W0 = Widen(s + segLen * ta), W1 = Widen(s + segLen * tb),
-                        });
+                            W0 = Widen(aa), W1 = Widen(ab),
+                        };
+                        // a taper's cut end is squared to the carriageway it leaves
+                        if (trim != null && trim.T0 is (double, double) q0 && Math.Abs(aa - r0) < 1e-6) { rp.T0X = (float)q0.Item1; rp.T0Z = (float)q0.Item2; rp.W0 += trim.X0; rp.H0 = trim.H0; }
+                        if (trim != null && trim.T1 is (double, double) q1 && Math.Abs(ab - r1) < 1e-6) { rp.T1X = (float)q1.Item1; rp.T1Z = (float)q1.Item2; rp.W1 += trim.X1; rp.H1 = trim.H1; }
+                        if (mods != null)
+                            foreach (var m in mods)
+                            {
+                                if (am < m.A0 || am > m.A1) continue;
+                                if (m.NoBevel) { if (m.Side > 0) rp.NoBevelL = true; else rp.NoBevelR = true; }
+                                if (m.W != null)
+                                {
+                                    float w0 = m.WidenAt(aa), w1 = m.WidenAt(ab);
+                                    if (m.Side > 0) { rp.WL0 += w0; rp.WL1 += w1; } else { rp.WR0 += w0; rp.WR1 += w1; }
+                                }
+                            }
+                        list.Add(rp);
                     }
                     }
                     s += segLen;

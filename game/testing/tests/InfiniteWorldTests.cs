@@ -878,6 +878,86 @@ namespace UnturnedGodot.Testing
                         near >= 2 && rampsOn == near && rampWorst < 0.03f);
                 }
             }
+            // ---- 8c. JUNCTIONS (strawberry 2026-10-10: "can we do some magic with the highway on/offramp merges to actually
+            // merge them properly with the highway mesh. and with any other road branch/connection too i suppose, since
+            // right now its just overlapping, what if they actually CONNECTED to the mesh of the road"): the ground a junction
+            // paves is solid road at its surface -- drops into the middle of the nearest town, the mouth of the nearest tee,
+            // and onto a carriageway's widened strip short of the nearest gore
+            {
+                var patches = S.Gen.Roads.PatchesIn(-6000, -6000, 6000, 6000, 4f);
+                RoadPatch town = null, mouth = null; double townD = double.MaxValue, mouthD = double.MaxValue;
+                foreach (var jp in patches)
+                {
+                    double d = jp.AnchorX * jp.AnchorX + jp.AnchorZ * jp.AnchorZ;
+                    if (jp.Skirts.Length >= 3 && d < townD) { townD = d; town = jp; }
+                    if (jp.Skirts.Length == 2 && d < mouthD) { mouthD = d; mouth = jp; }
+                }
+                T.Check($"the generator paves junctions: {patches.Count} patches within 6 km, a town's and a tee's among them", town != null && mouth != null);
+                RoadPiece? gore = null; double goreD = double.MaxValue;
+                {
+                    // the widened strips round the nearest interchange or main crossing
+                    var ws = S.Gen.Roads.PiecesIn(S.Gen.Roads.LinesIn(-6000, -6000, 6000, 6000), -6000, -6000, 6000, 6000, 4f);
+                    foreach (var rp in ws)
+                        if ((rp.WL0 > 3f && rp.WL1 > 3f) || (rp.WR0 > 3f && rp.WR1 > 3f))
+                        {
+                            double d = rp.X0 * rp.X0 + rp.Z0 * rp.Z0;
+                            if (d < goreD) { goreD = d; gore = rp; }
+                        }
+                }
+                T.Check("the generator widens a carriageway to a ramp's gore", gore != null);
+                var space = World.GetWorld3D().DirectSpaceState;
+                string Who(Godot.Collections.Dictionary h) => h.Count == 0 ? "nothing" : h["collider"].As<Node>() is Node n ? (n.GetParent()?.Name == "BridgeBodies" ? "deck" : n.Name.ToString()) : "?";
+                Godot.Collections.Dictionary Drop(double x, double y, double z) =>
+                    space.IntersectRay(PhysicsRayQueryParameters3D.Create(S.ToLocal(x, y + 5, z), S.ToLocal(x, y - 30, z), 1u << 0));
+                foreach (var (jp, what) in new[] { (town, "town"), (mouth, "tee") })
+                {
+                    if (jp == null) continue;
+                    S.TeleportAbsolute(jp.AnchorX + 30.0, jp.AnchorZ + 30.0);
+                    yield return Wait(Settled, 60);
+                    yield return Ticks(5);
+                    space = World.GetWorld3D().DirectSpaceState;
+                    // the middles of its five biggest triangles
+                    var tris = new List<(double area, double x, double z, double y)>();
+                    for (int t = 0; t + 2 < jp.Tris.Length; t += 3)
+                    {
+                        int a = jp.Tris[t], b = jp.Tris[t + 1], c = jp.Tris[t + 2];
+                        double area = System.Math.Abs((jp.X[b] - jp.X[a]) * (jp.Z[c] - jp.Z[a]) - (jp.Z[b] - jp.Z[a]) * (jp.X[c] - jp.X[a])) * 0.5;
+                        tris.Add((area, (jp.X[a] + jp.X[b] + jp.X[c]) / 3, (jp.Z[a] + jp.Z[b] + jp.Z[c]) / 3, (jp.Y[a] + jp.Y[b] + jp.Y[c]) / 3));
+                    }
+                    tris.Sort((u, v) => v.area.CompareTo(u.area));
+                    int on = 0, tried = 0; float worst = 0f; string other = "";
+                    foreach (var tr in tris.GetRange(0, System.Math.Min(5, tris.Count)))
+                    {
+                        tried++;
+                        var hit = Drop(tr.x, tr.y, tr.z);
+                        // (the patch is lifted no lower than this LOD's ground, as a slab is: up to a few cm over its surface)
+                        float dy = hit.Count > 0 ? ((Vector3)hit["position"]).Y - (float)tr.y : float.NaN;
+                        // (a trail's junction is in the trail's own collider, as its slab is)
+                        string body = jp.Kind == (byte)RoadKind.Trail ? "Trail" : "Paved";
+                        if (Who(hit) == body && dy > -0.01f && dy < 0.06f) { on++; worst = Mathf.Max(worst, Mathf.Abs(dy)); }
+                        else other = $" (one hits {Who(hit)}{(float.IsNaN(dy) ? "" : $" {dy:+0.000;-0.000} m off")})";
+                    }
+                    T.Check($"the {what} at ({jp.AnchorX:0}, {jp.AnchorZ:0}) is solid road: {on} of {tried} drops into its middle land on the road collider within {worst * 1000f:0} mm of its surface{other}",
+                        tried >= 3 && on == tried);
+                }
+                if (gore is RoadPiece g)
+                {
+                    S.TeleportAbsolute(g.X0 + 30.0, g.Z0 + 30.0);
+                    yield return Wait(Settled, 60);
+                    yield return Ticks(5);
+                    space = World.GetWorld3D().DirectSpaceState;
+                    // the middle of the widened strip, half way along the piece
+                    double mx = (g.X0 + g.X1) * 0.5, mz = (g.Z0 + g.Z1) * 0.5, tx = (g.T0X + g.T1X) * 0.5, tz = (g.T0Z + g.T1Z) * 0.5, tl = System.Math.Sqrt(tx * tx + tz * tz);
+                    bool left = g.WL0 > 3f;
+                    double w = InfiniteRoads.HighwayLaneHalf + (left ? (g.WL0 + g.WL1) : (g.WR0 + g.WR1)) * 0.25;
+                    double sx = mx + (left ? -tz : tz) / tl * w, sz = mz + (left ? tx : -tx) / tl * w;
+                    float want = InfiniteRoads.SurfaceY(RoadKind.Highway, (g.H0 + g.H1) * 0.5f);
+                    var hit = Drop(sx, want, sz);
+                    float dy = hit.Count > 0 ? ((Vector3)hit["position"]).Y - want : float.NaN;
+                    T.Check($"a carriageway widened toward a gore at ({mx:0}, {mz:0}) is solid road on its widened strip: {Who(hit)} at {dy:+0.000;-0.000} m",
+                        Who(hit) == "Paved" && dy > -0.01f && dy < 0.06f);
+                }
+            }
             // ---- 9. HIGH-VOLTAGE PYLONS (strawberry 2026-10-10: "implement the big pylon splines. cross country, their own
             // network"): core's copy of the kit's numbers is the kit's; at the nearest tower that owns a span, the tower
             // is drawn, its spans are strung (none refused), and its legs are solid

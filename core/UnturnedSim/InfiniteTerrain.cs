@@ -117,6 +117,11 @@ namespace SDG.Unturned
         /// dashed white divider (strawberry 2026-10-10: "use the road 1 (white dotted) for em", "its a 2 lane white
         /// dotted one").</summary>
         public bool Ramp;
+        /// <summary>Extra half-width on ONE side at each end (L = +normal, the left looking along the piece): a highway
+        /// carriageway widening to carry a ramp up to its gore (InfiniteJunctions' taper), with a plain-asphalt shoulder.</summary>
+        public float WL0, WL1, WR0, WR1;
+        /// <summary>No edge bevel on this side: a tee's mouth (a RoadPatch) carries on from the top edge there.</summary>
+        public bool NoBevelL, NoBevelR;
     }
 
     /// <summary>One piece of a bridge (InfiniteRoads.BridgesIn), absolute metres. Kind 0 = a deck unit centred
@@ -187,6 +192,8 @@ namespace SDG.Unturned
         public List<TreeSpawn> Trees;
         /// <summary>The road surface through this region, cut into pieces no longer than its grid spacing.</summary>
         public List<RoadPiece> Roads;
+        /// <summary>The junctions anchored in this region: the ground paved where roads meet (InfiniteJunctions).</summary>
+        public List<RoadPatch> RoadPatches;
         /// <summary>Power-line poles standing in this region (LOD0/1 only).</summary>
         public List<PolePlacement> Poles;
         /// <summary>High-voltage pylons standing in this region, with the spans each owns (all LODs).</summary>
@@ -532,7 +539,7 @@ namespace SDG.Unturned
             d.Trees = PlaceTrees(rc, lines);   // every LOD: the far rings draw them as billboards (RegionStreamer impostors)
             d.Foliage = lod == 0 ? PlaceFoliage(d) : null;
             d.Boulders = lod == 0 ? PlaceBoulders(d, rh, b, lines) : null;
-            d.Roads = Roads.PiecesIn(lines, ox, oz, ox + RegionSize, oz + RegionSize, Math.Max(4f, sp));
+            d.Roads = Roads.PiecesIn(lines, ox, oz, ox + RegionSize, oz + RegionSize, Math.Max(4f, sp), out d.RoadPatches);
             d.Poles = polesWide?.FindAll(p => p.X >= ox && p.X < ox + RegionSize && p.Z >= oz && p.Z < oz + RegionSize);
             d.Bridges = Roads.BridgesIn(lines, ox, oz, ox + RegionSize, oz + RegionSize);
             d.Pylons = pylonsWide.FindAll(p => p.X >= ox && p.X < ox + RegionSize && p.Z >= oz && p.Z < oz + RegionSize);   // every LOD: 50 m landmarks
@@ -815,15 +822,25 @@ namespace SDG.Unturned
         // Boulders (strawberry 2026-10-10: "have boulders fill gaps around tunnel entrances and around steep embankment
         // faces").
 
-        /// <summary>The rocks: PEI's own four (the island's scatter, ProcIslandSpawn.BoulderProps, says why only these --
-        /// the others are other maps' palettes), each with its plan radius and its vertical extent about its origin, in
-        /// mesh metres, measured off content/objects (the OBJs are Z-up: z is the height). L0 re-measures them.</summary>
+        /// <summary>The rocks: every Boulder_NN in the kit EXCEPT PEI's (strawberry 2026-10-10: "use the other boulders, not
+        /// pei boulders" -- PEI's four are the orange-red palette, which stood out against the grey cuts). Eleven props
+        /// in two greys: 00, 01, 02 and 22 one, 03, 04, 06, 08, 09, 10 and 22_Russia the other (00/06 and 22/22_Russia
+        /// are one mesh each in both). Each with its plan radius (half the larger plan axis) and its vertical extent
+        /// about its origin, in mesh metres, measured off content/objects (the OBJs are Z-up: z is the height). L0
+        /// re-measures them.</summary>
         public static readonly (string Name, float Radius, float Bottom, float Height)[] BoulderKit =
         {
-            ("Boulder_11",  9.63f, -7.85f, 17.28f),
-            ("Boulder_12", 16.90f, -2.48f,  5.83f),
-            ("Boulder_13",  8.70f, -4.61f,  9.00f),
-            ("Boulder_22_PEI", 15.57f, -4.53f, 9.17f),
+            ("Boulder_00",  9.63f,  -7.85f, 17.28f),
+            ("Boulder_01", 16.90f,  -2.48f,  5.83f),
+            ("Boulder_02",  8.70f,  -4.61f,  9.00f),
+            ("Boulder_03", 15.00f, -10.00f, 20.00f),
+            ("Boulder_04", 24.00f, -16.00f, 32.00f),
+            ("Boulder_06",  9.63f,  -7.85f, 17.28f),
+            ("Boulder_08",  5.09f,  -2.25f,  4.50f),
+            ("Boulder_09",  5.88f,  -3.67f,  7.34f),
+            ("Boulder_10", 17.00f, -13.13f, 23.66f),
+            ("Boulder_22", 15.57f,  -4.53f,  9.17f),
+            ("Boulder_22_Russia", 15.57f, -4.53f, 9.17f),
         };
         /// <summary>One candidate rock per BoulderCell square: kept on a carve's shoulder at least BoulderSlope steep.</summary>
         public const float BoulderCell = 6.4f, BoulderSlope = 0.55f;

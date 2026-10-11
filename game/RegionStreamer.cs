@@ -1750,7 +1750,7 @@ void fragment() {
             RoadMesh[] roadMeshes = null;
             Vector3[][] roadCol = null;
             bool decks = d.Bridges != null && d.Bridges.Exists(bp => bp.Kind == 0);
-            if (d.Roads != null && d.Roads.Count > 0 || decks)
+            if (d.Roads != null && d.Roads.Count > 0 || decks || d.RoadPatches != null && d.RoadPatches.Count > 0)
             {
                 roadMeshes = new RoadMesh[RoadSlots];
                 var lists = new (List<Vector3> V, List<Vector3> N, List<Vector2> UV, List<int> I)[RoadSlots];
@@ -1843,13 +1843,17 @@ void fragment() {
                     Vector3 Edge(Vector3 c, Vector3 n, float w, float h) { var p = c + n * w; p.Y = Y(p.X, p.Z, h); return p; }
                     var down = new Vector3(0f, -bev, 0f);
                     // the lane edges, and the OUTER edges -- wider than the lanes only at a bridge's mouth, where the
-                    // ribbon widens to its deck's roadway (RoadPiece.W0/W1) with a plain-asphalt shoulder
+                    // ribbon widens to its deck's roadway (RoadPiece.W0/W1), or on one side where a carriageway carries a
+                    // ramp to its gore (WL/WR), each with a plain-asphalt shoulder
                     Vector3 la = Edge(A, na, hw, rp.H0), ra = Edge(A, -na, hw, rp.H0), lb = Edge(B, nb, hw, rp.H1), rb = Edge(B, -nb, hw, rp.H1);
-                    bool widened = rp.W0 > 1e-3f || rp.W1 > 1e-3f;
-                    Vector3 laW = widened ? Edge(A, na, hw + rp.W0, rp.H0) : la, raW = widened ? Edge(A, -na, hw + rp.W0, rp.H0) : ra;
-                    Vector3 lbW = widened ? Edge(B, nb, hw + rp.W1, rp.H1) : lb, rbW = widened ? Edge(B, -nb, hw + rp.W1, rp.H1) : rb;
-                    // the edge bevels: down the slab's depth over BevelRun outward (1:3; RoadField's 1:1 was a kerb)
-                    Vector3 loa = laW + na * run + down, roa = raW - na * run + down, lob = lbW + nb * run + down, rob = rbW - nb * run + down;
+                    float wla = rp.W0 + rp.WL0, wra = rp.W0 + rp.WR0, wlb = rp.W1 + rp.WL1, wrb = rp.W1 + rp.WR1;
+                    bool wideL = wla > 1e-3f || wlb > 1e-3f, wideR = wra > 1e-3f || wrb > 1e-3f;
+                    Vector3 laW = wideL ? Edge(A, na, hw + wla, rp.H0) : la, raW = wideR ? Edge(A, -na, hw + wra, rp.H0) : ra;
+                    Vector3 lbW = wideL ? Edge(B, nb, hw + wlb, rp.H1) : lb, rbW = wideR ? Edge(B, -nb, hw + wrb, rp.H1) : rb;
+                    // the edge bevels: down the slab's depth over BevelRun outward (1:3; RoadField's 1:1 was a kerb). None
+                    // where a junction's patch carries on from the top edge (RoadPiece.NoBevelL/R): straight down, unseen
+                    Vector3 loa = laW + (rp.NoBevelL ? Vector3.Zero : na * run) + down, roa = raW - (rp.NoBevelR ? Vector3.Zero : na * run) + down;
+                    Vector3 lob = lbW + (rp.NoBevelL ? Vector3.Zero : nb * run) + down, rob = rbW - (rp.NoBevelR ? Vector3.Zero : nb * run) + down;
                     float v0 = rp.S0 / texM, v1 = rp.S1 / texM;
 
                     // a quad between an A-row (a0, a1) and a B-row (b0, b1): to the visual mesh if `nA` is given, and
@@ -1872,15 +1876,12 @@ void fragment() {
                     }
                     Vector3 Lean(Vector3 n) => (n * (bev / run) + Vector3.Up).Normalized();   // the bevel's own slope
                     Quad(la, ra, lb, rb, Vector3.Up, Vector3.Up, 0f, 1f, v0, v1);                    // the driven top
-                    if (widened)
-                    {
-                        // the mouth's shoulders wear the edge column, as the deck's own shoulder bands do
-                        Quad(laW, la, lbW, lb, Vector3.Up, Vector3.Up, 0f, 0f, v0, v1);
-                        Quad(ra, raW, rb, rbW, Vector3.Up, Vector3.Up, 1f, 1f, v0, v1);
-                    }
+                    // the widened shoulders wear the edge column, as the deck's own shoulder bands do
+                    if (wideL) Quad(laW, la, lbW, lb, Vector3.Up, Vector3.Up, 0f, 0f, v0, v1);
+                    if (wideR) Quad(ra, raW, rb, rbW, Vector3.Up, Vector3.Up, 1f, 1f, v0, v1);
                     // the bevels wear the texture's edge column, as RoadField's do (u 0 left, 1 right)
-                    Quad(loa, laW, lob, lbW, Lean(na), Lean(nb), 0f, 0f, v0, v1);
-                    Quad(raW, roa, rbW, rob, Lean(-na), Lean(-nb), 1f, 1f, v0, v1);
+                    Quad(loa, laW, lob, lbW, rp.NoBevelL ? null : Lean(na), Lean(nb), 0f, 0f, v0, v1);
+                    Quad(raW, roa, rbW, rob, rp.NoBevelR ? null : Lean(-na), Lean(-nb), 1f, 1f, v0, v1);
                     Quad(loa, roa, lob, rob, null, Vector3.Down, 0f, 0f, 0f, 0f);                    // collider only: sealed underneath
                     // the line's own ends ramp down, RoadField's end caps: the whole cross-section pushed out by the bevel
                     // and dropped to its foot, so a road that stops in the open is a slope, not a step
@@ -1894,6 +1895,53 @@ void fragment() {
                         Quad(l, r, l2, r2, nOut, nOut, 0f, 1f, v, v);
                         Quad(lo, l, lo2, l2, nOut, nOut, 0f, 0f, v, v);
                         Quad(r, ro, r2, ro2, nOut, nOut, 1f, 1f, v, v);
+                    }
+                }
+                // JUNCTIONS (InfiniteJunctions): the ground paved where roads meet -- a tee's mouth and fillets, a town's
+                // middle -- in the slot of the road it continues, lifted as the slabs are, its open edges hung with the
+                // same bevel
+                foreach (var pt in d.RoadPatches ?? new List<RoadPatch>())
+                {
+                    int kind = pt.Kind, slot = pt.Ramp ? RampSlot : kind;
+                    lists[slot].V ??= new List<Vector3>(); lists[slot].N ??= new List<Vector3>(); lists[slot].UV ??= new List<Vector2>(); lists[slot].I ??= new List<int>();
+                    var RV = lists[slot].V; var RN = lists[slot].N; var RUV = lists[slot].UV; var RI = lists[slot].I;
+                    var col = soup?[kind == (int)RoadKind.Trail ? 1 : 0];
+                    var rk = (RoadKind)kind;
+                    float texM = pt.Ramp ? RampTexMetres : RoadTexMetres[kind], bev = 2f * InfiniteRoads.Thickness(rk), run = InfiniteRoads.BevelRun(rk);
+                    var P = new Vector3[pt.X.Length];
+                    for (int i = 0; i < P.Length; i++)
+                    {
+                        float lx = (float)(pt.X[i] - ox), lz = (float)(pt.Z[i] - oz);
+                        float y = Mathf.Max(pt.Y[i], InfiniteTerrain.MeshHeightAt(d, Mathf.Clamp(lx, 0f, InfiniteTerrain.RegionSize), Mathf.Clamp(lz, 0f, InfiniteTerrain.RegionSize)) + 0.02f + pt.Lift[i]);
+                        P[i] = new Vector3(lx, y, lz);
+                    }
+                    int b0 = RV.Count;
+                    for (int i = 0; i < P.Length; i++) { RV.Add(P[i]); RN.Add(Vector3.Up); RUV.Add(new Vector2(pt.U[i], pt.V[i] / texM)); }
+                    for (int t = 0; t + 2 < pt.Tris.Length; t += 3)
+                    {
+                        Tri(RV, RI, b0 + pt.Tris[t], b0 + pt.Tris[t + 1], b0 + pt.Tris[t + 2], Vector3.Up);
+                        col?.Add(P[pt.Tris[t]]); col?.Add(P[pt.Tris[t + 1]]); col?.Add(P[pt.Tris[t + 2]]);
+                    }
+                    var down = new Vector3(0f, -bev, 0f);
+                    for (int sk = 0; sk < pt.Skirts.Length; sk++)
+                    {
+                        var ids = pt.Skirts[sk];
+                        for (int q = 0; q + 1 < ids.Length; q++)
+                        {
+                            var na = new Vector3(pt.SkirtNX[sk][q], 0f, pt.SkirtNZ[sk][q]);
+                            var nb = new Vector3(pt.SkirtNX[sk][q + 1], 0f, pt.SkirtNZ[sk][q + 1]);
+                            Vector3 a = P[ids[q]], b = P[ids[q + 1]], fa = a + na * run + down, fb = b + nb * run + down;
+                            Vector3 la = (na * (bev / run) + Vector3.Up).Normalized(), lb = (nb * (bev / run) + Vector3.Up).Normalized();
+                            float va = pt.V[ids[q]] / texM, vb = pt.V[ids[q + 1]] / texM;
+                            int i0 = RV.Count;
+                            RV.Add(fa); RV.Add(a); RV.Add(fb); RV.Add(b);
+                            RN.Add(la); RN.Add(la); RN.Add(lb); RN.Add(lb);
+                            RUV.Add(new Vector2(0f, va)); RUV.Add(new Vector2(0f, va)); RUV.Add(new Vector2(0f, vb)); RUV.Add(new Vector2(0f, vb));
+                            var front = (la + lb).Normalized();
+                            Tri(RV, RI, i0, i0 + 1, i0 + 2, front);
+                            Tri(RV, RI, i0 + 1, i0 + 3, i0 + 2, front);
+                            if (col != null) { col.Add(fa); col.Add(a); col.Add(fb); col.Add(a); col.Add(b); col.Add(fb); }
+                        }
                     }
                 }
                 for (int k = 0; k < RoadSlots; k++)
@@ -1991,7 +2039,7 @@ void fragment() {
         }
 
         // ---- boulders (strawberry 2026-10-10: "have boulders fill gaps around tunnel entrances and around steep
-        // embankment faces"): PEI's rock props (InfiniteTerrain.BoulderKit), one MultiMesh per prop per region, seated
+        // embankment faces"): the kit's grey rock props (InfiniteTerrain.BoulderKit), one MultiMesh per prop per region, seated
         // the way the island's scatter seats them (ProcIslandSpawn.ScatterBoulders): stood up (the OBJs are Z-up, PEI's
         // ex=270), turned, laid onto the ground's normal, scaled to the radius asked for, and sunk Bury of its height.
         static readonly ArrayMesh[] _rockMesh = new ArrayMesh[InfiniteTerrain.BoulderKit.Length];
