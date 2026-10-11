@@ -1858,10 +1858,17 @@ namespace UnturnedGodot
             foreach (var w in _walls) if (IsInstanceValid(w)) n++;
             if (n == 0) return 0;
             var before = Snapshot();
+            var kindBefore = DesignatedKind;
+            var roomsBefore = new List<RoomDesignation>(Designations);
             foreach (var w in new List<WallSurface>(_walls)) RemoveWall(w);
+            DesignatedKind = null; Designations.Clear();   // the rooms they labelled are gone
             _selWall = null; _selOpening = -1;
             PositionHandles();
-            _editor?.PushUndo("clear plot", () => RestoreAll(before));
+            _editor?.PushUndo("clear plot", () =>
+            {
+                RestoreAll(before);
+                DesignatedKind = kindBefore; Designations.Clear(); Designations.AddRange(roomsBefore);
+            });
             return n;
         }
 
@@ -2100,7 +2107,7 @@ namespace UnturnedGodot
             try
             {
                 System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(SavePath));
-                System.IO.File.WriteAllText(SavePath, WallSave.Write(plans));
+                System.IO.File.WriteAllText(SavePath, WallSave.Write(plans, DesignatedKind, Designations));
             }
             catch (System.Exception e) { Log.Err($"[editor-buildings] save failed: {e.Message}"); return 0; }
             Log.Print($"[editor-buildings] saved {plans.Count} walls -> {SavePath}");
@@ -2112,8 +2119,11 @@ namespace UnturnedGodot
         {
             if (!System.IO.File.Exists(SavePath)) return 0;
             List<WallPlan> plans;
-            try { plans = WallSave.Read(System.IO.File.ReadAllLines(SavePath)); }
+            BuildingKind kind; List<RoomDesignation> rooms;
+            try { plans = WallSave.Read(System.IO.File.ReadAllLines(SavePath), out kind, out rooms); }
             catch (System.Exception e) { Log.Err($"[editor-buildings] load failed: {e.Message}"); return 0; }
+            Designations.Clear(); Designations.AddRange(rooms);
+            DesignatedKind = rooms.Count > 0 ? kind : null;
 
             foreach (var w in _walls.ToArray()) RemoveWall(w);
             foreach (var pl in plans)
@@ -2594,8 +2604,15 @@ namespace UnturnedGodot
             // An import replaces the whole stage, so it gets a whole-stage undo. It is the single most
             // destructive button in the panel and it was the one thing Ctrl+Z could not walk back.
             var beforeImport = Snapshot();
-            _editor?.PushUndo($"import {buildingName}", () => RestoreAll(beforeImport));
+            var kindBefore = DesignatedKind;
+            var roomsBefore = new List<RoomDesignation>(Designations);
+            _editor?.PushUndo($"import {buildingName}", () =>
+            {
+                RestoreAll(beforeImport);
+                DesignatedKind = kindBefore; Designations.Clear(); Designations.AddRange(roomsBefore);
+            });
             foreach (var w in new List<WallSurface>(_walls)) RemoveWall(w);
+            DesignatedKind = null; Designations.Clear();
             foreach (var pl in plans)
                 SpawnWall(StageOrigin + new Vector3(pl.X, pl.Y + GroundClearance, pl.Z), pl.Yaw, pl.Length, pl.Thickness,
                           pl.Material, pl.Openings, pl.Height, pl.Pitch, pl.Kind, pl.GableRise, pl.Texel,
@@ -2643,6 +2660,80 @@ namespace UnturnedGodot
             Log.Print($"[editor-buildings] imported {buildingName}: {plans.Count} surfaces "
                      + $"({nw} wall, {nr} roof, {nfl} floor, {nf} foundation, {ngab} gabled) with {nop} openings");
             return plans.Count;
+        }
+
+        /// <summary>The building's kind and its rooms' designations, in the plan space PlanOfActiveFloor works in
+        /// (world X/Z) -- set by Generate, saved with the walls. Nothing draws or edits them yet; they are the
+        /// framework's data (RoomDesignation), carried so a generated building keeps knowing which room is which.</summary>
+        public BuildingKind? DesignatedKind;
+        public readonly List<RoomDesignation> Designations = new();
+
+        /// <summary>Build a whole building from a seed (BuildingGen), REPLACING the stage the way an import does, as one
+        /// undo step. strawberry: "make the map editor buildings tool procgen. to make buildings from a seed."
+        ///
+        /// It spawns exactly what the generator planned -- walls with their openings, footings, a floor per storey,
+        /// a flat roof, and the flights through the editor's own stair path (treads, ramp, the hole in the floor
+        /// above) -- in the palette the generator chose for the kind. The outside walls come corner-solved, and
+        /// SolveCorners is run anyway as a check: it must find nothing, because it lengthens a wall from its origin
+        /// without moving its openings, and every window on a solved wall would slide off its room.</summary>
+        public BuildingGenResult Generate(BuildingGenSpec spec)
+        {
+            var res = BuildingGen.Generate(spec);
+            int mat = ActiveMaterial;
+            for (int i = 0; i < WallMaterials.Count; i++)
+                if (WallMaterials.At(i).Name == res.Palette) { mat = i; break; }
+            int roofTexel = WallMaterials.Count > 0 ? WallMaterials.At(Mathf.PosMod(mat, WallMaterials.Count)).RoofTexel : -1;
+            // centred on the stage, on the lattice
+            var at = StageOrigin + new Vector3(-Mathf.Floor(res.CellsX * 0.5f) * BuildingGen.Cell, GroundClearance,
+                                               -Mathf.Floor(res.CellsZ * 0.5f) * BuildingGen.Cell);
+
+            var before = Snapshot();
+            var kindBefore = DesignatedKind;
+            var roomsBefore = new List<RoomDesignation>(Designations);
+            // The stage's old ramps go with its old stairs -- detached, not freed, so the undo can put them back.
+            var rampsBefore = new List<StaticBody3D>(_stairRamps);
+            foreach (var r in rampsBefore) if (IsInstanceValid(r)) RemoveChild(r);
+            _stairRamps.Clear();
+            foreach (var w in new List<WallSurface>(_walls)) RemoveWall(w);
+
+            foreach (var pl in res.Walls)
+                SpawnWall(at + new Vector3(pl.X, pl.Y, pl.Z), pl.Yaw, pl.Length, pl.Thickness, mat, pl.Openings,
+                          pl.Height, pl.Pitch, pl.Kind, pl.GableRise, pl.Kind == SurfaceKind.Roof ? roofTexel : pl.Texel);
+            foreach (var s in res.Stairs)
+            {
+                var o = at + new Vector3(s.X, s.Y, s.Z);
+                int steps = WallOpenings.StairSteps(StoreyHeight);
+                foreach (var p in StairTreadOrigins(o, s.Yaw, s.Run, s.Width))
+                    SpawnWall(p, s.Yaw, s.Width, WallOpenings.StairTreadThickness, mat, null, s.Run / steps, -90f, SurfaceKind.Stairs);
+                FitStairsToStructure(o, s.Yaw, s.Run, s.Width);
+            }
+            var solved = SolveCorners();
+            if (solved.Count > 0) Log.Err($"[editor-buildings] generate: {solved.Count} walls were not corner-solved -- their openings have slid");
+
+            DesignatedKind = res.Kind;
+            Designations.Clear();
+            foreach (var d in res.Rooms) Designations.Add(new RoomDesignation(d.Kind, at.X + d.X, at.Z + d.Z, d.Floor));
+            ActiveMaterial = mat;
+            _selWall = null; _selOpening = -1;
+            PositionHandles();
+
+            var rampsMade = new List<StaticBody3D>(_stairRamps);
+            _editor?.PushUndo($"generate {res.Kind} {spec.Seed}", () =>
+            {
+                foreach (var r in rampsMade) if (IsInstanceValid(r)) r.QueueFree();
+                _stairRamps.Clear();
+                RestoreAll(before);
+                foreach (var r in rampsBefore) if (IsInstanceValid(r)) { AddChild(r); _stairRamps.Add(r); }
+                DesignatedKind = kindBefore;
+                Designations.Clear(); Designations.AddRange(roomsBefore);
+            });
+            int rooms = 0;
+            foreach (var g in res.Layout) if (!g.Circulation) rooms++;
+            Log.Print($"[editor-buildings] generated {res.Kind} seed {spec.Seed}: {res.Floors} floor(s), {rooms} rooms, "
+                     + $"{res.CellsX * BuildingGen.Cell:0} x {res.CellsZ * BuildingGen.Cell:0} m, {res.Walls.Count} surfaces, "
+                     + $"{res.Stairs.Count} flight(s), palette {res.Palette}"
+                     + (res.Notes.Count > 0 ? " -- " + string.Join("; ", res.Notes) : ""));
+            return res;
         }
 
         /// <summary>Measured retail roof pitches, area-weighted across the 52 buildings. Snap targets, not
@@ -3094,7 +3185,7 @@ namespace UnturnedGodot
             // The flight's plan footprint, grown slightly so the opening clears the treads rather than
             // touching them exactly (Aabb contact is a coin-flip and a hole flush with the tread reads as
             // a seam you can catch on).
-            const float Margin = 0.25f;
+            const float Margin = WallOpenings.StairHoleMargin;
             var a = origin;
             var b = origin + back * run + right * width;
             float minX = Mathf.Min(a.X, b.X) - Margin, maxX = Mathf.Max(a.X, b.X) + Margin;

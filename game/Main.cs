@@ -7756,7 +7756,20 @@ namespace UnturnedGodot
                 // be LOOKED at. The L1 test proves its numbers are wall-shaped; only a render shows whether
                 // the building it rebuilt is the building it read.
                 string imp = System.Environment.GetEnvironmentVariable("UG_EDITIMPORT");
+                // UG_EDITGEN=kind,seed[,minRooms,maxFloors,perFloor] generates a building from a seed instead
+                // (BuildingGen), so a generated one can be looked at the same way. Frame it with UG_EDITCAM.
+                string gen = System.Environment.GetEnvironmentVariable("UG_EDITGEN");
                 if (!string.IsNullOrEmpty(imp)) buildings.ImportRetail(imp);
+                else if (!string.IsNullOrEmpty(gen))
+                {
+                    var g = gen.Split(',');
+                    int Arg(int i, int dflt) => g.Length > i && int.TryParse(g[i], out var v) ? v : dflt;
+                    buildings.Generate(new UnturnedSim.BuildingGenSpec
+                    {
+                        Kind = UnturnedSim.RoomDesignations.ParseBuilding(g[0]), Seed = Arg(1, 0), MinRooms = Arg(2, 0),
+                        MaxFloors = Arg(3, 2), MaxRoomsPerFloor = Arg(4, 6),
+                    });
+                }
                 else if (buildings.Walls.Count == 0) DrawDemoBuilding(buildings);
                 if (System.Environment.GetEnvironmentVariable("UG_EDITBAKE") == "1")
                 {

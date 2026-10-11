@@ -39,8 +39,11 @@ namespace UnturnedSim
         public RoomKind Kind;
         /// <summary>A point inside the room, in the same plan space RoomEnclosure works in.</summary>
         public float X, Z;
+        /// <summary>Which storey: 0 the ground. The plan point alone cannot say, and a generated building has a
+        /// bedroom right over its living room -- two anchors at the same X, Z.</summary>
+        public int Floor;
 
-        public RoomDesignation(RoomKind kind, float x, float z) { Kind = kind; X = x; Z = z; }
+        public RoomDesignation(RoomKind kind, float x, float z, int floor = 0) { Kind = kind; X = x; Z = z; Floor = floor; }
     }
 
     /// <summary>Framework for building/room designation. NO placement logic -- strawberry_cow: "we dont have

@@ -333,6 +333,10 @@ namespace UnturnedSim
         public const float StairPitchTangent = 0.62f;
         public const float StairTreadThickness = 0.20f;   // matches TrimProfile: the kit's thin-plate dimension
         public const float StairDefaultWidth = 3.0f;      // one lattice, and retail's commonest door width
+        /// <summary>How far past a flight's footprint the hole it climbs through is cut (EditorBuildings.
+        /// FitStairsToStructure). Here so a generator that has to keep that hole out from under its walls reads the
+        /// same number the editor cuts with.</summary>
+        public const float StairHoleMargin = 0.25f;
 
         /// <summary>Steps in a flight climbing <paramref name="rise"/>. At least two -- one "step" is a kerb,
         /// not a staircase -- and derived so rise/count lands on the floor above exactly.</summary>

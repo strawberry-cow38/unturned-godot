@@ -514,6 +514,52 @@ namespace UnturnedGodot
             box.AddChild(imp);
             _importPick = imp;
 
+            // GENERATE: a whole building from a seed (BuildingGen). The same seed and settings give the same
+            // building every time, so a seed is a name you can come back to.
+            box.AddChild(new HSeparator());
+            box.AddChild(Dim("Generate — a building from a seed"));
+            var g1 = new HBoxContainer();
+            _genKind = new OptionButton { CustomMinimumSize = new Vector2(120, 0), FocusMode = FocusModeEnum.None };
+            foreach (BuildingKind k in System.Enum.GetValues(typeof(BuildingKind))) _genKind.AddItem(k.ToString(), (int)k);
+            g1.AddChild(_genKind);
+            _genSeed = Spin(0, 999999, 1, 70);
+            _genSeed.TooltipText = "seed";
+            g1.AddChild(_genSeed);
+            var dice = new Button { Text = "new", FocusMode = FocusModeEnum.None, TooltipText = "a random seed, generated" };
+            dice.Pressed += () => { _genSeed.Value = GD.Randi() % 1000000; DoGenerate(); };
+            g1.AddChild(dice);
+            box.AddChild(g1);
+            var g2 = new GridContainer { Columns = 4 };
+            g2.AddChild(Dim("rooms ≥")); g2.AddChild(_genMinRooms = Spin(0, 40, 0));
+            g2.AddChild(Dim("per floor ≤")); g2.AddChild(_genPerFloor = Spin(1, 12, 6));
+            g2.AddChild(Dim("floors ≥")); g2.AddChild(_genMinFloors = Spin(1, 6, 1));
+            g2.AddChild(Dim("floors ≤")); g2.AddChild(_genMaxFloors = Spin(1, 6, 2));
+            box.AddChild(g2);
+            // The per-type minimums open in a popup beside the panel. Folding them INTO the panel pushed the bake
+            // section off the bottom of a 720p screen: this panel is fixed-height and does not scroll.
+            var types = new GridContainer { Columns = 4 };
+            foreach (RoomKind k in System.Enum.GetValues(typeof(RoomKind)))
+            {
+                if (k == RoomKind.Unassigned || k == RoomKind.Hall || k == RoomKind.Stairwell) continue;
+                types.AddChild(Dim(k.ToString()));
+                types.AddChild(_genMin[k] = Spin(0, 9, 0, 52));
+            }
+            var pop = new PopupPanel();
+            pop.AddChild(types);
+            AddChild(pop);
+            var fold = new Button { Text = "at least, per room type ▸", Flat = true, FocusMode = FocusModeEnum.None,
+                                    Alignment = HorizontalAlignment.Left };
+            fold.Pressed += () =>
+            {
+                var at = fold.GetScreenPosition() + new Vector2(fold.Size.X + 8f, 0f);
+                pop.Popup(new Rect2I((Vector2I)at, Vector2I.Zero));
+            };
+            box.AddChild(fold);
+            var go = new Button { Text = "Generate", FocusMode = FocusModeEnum.None,
+                                  TooltipText = "replace the stage with a building from this seed — Ctrl+Z brings the old one back" };
+            go.Pressed += DoGenerate;
+            box.AddChild(go);
+
             box.AddChild(new HSeparator());
             box.AddChild(Dim("Bake — becomes a prop in the Level tab"));
             _name = new LineEdit { PlaceholderText = "building name", CustomMinimumSize = new Vector2(240, 0) };
@@ -525,6 +571,33 @@ namespace UnturnedGodot
 
         LineEdit _name;
         Label _bakeMsg;
+        OptionButton _genKind;
+        SpinBox _genSeed, _genMinRooms, _genPerFloor, _genMinFloors, _genMaxFloors;
+        readonly System.Collections.Generic.Dictionary<RoomKind, SpinBox> _genMin = new();
+
+        static SpinBox Spin(int min, int max, int value, int width = 56)
+            => new SpinBox { MinValue = min, MaxValue = max, Step = 1, Value = value, CustomMinimumSize = new Vector2(width, 0) };
+
+        void DoGenerate()
+        {
+            var spec = new BuildingGenSpec
+            {
+                Seed = (int)_genSeed.Value,
+                Kind = (BuildingKind)_genKind.GetSelectedId(),
+                MinRooms = (int)_genMinRooms.Value,
+                MinFloors = (int)_genMinFloors.Value,
+                MaxFloors = System.Math.Max((int)_genMinFloors.Value, (int)_genMaxFloors.Value),
+                MaxRoomsPerFloor = (int)_genPerFloor.Value,
+            };
+            foreach (var kv in _genMin) if (kv.Value.Value > 0) spec.MinOfKind[kv.Key] = (int)kv.Value.Value;
+            var res = _b.Generate(spec);
+            int rooms = 0;
+            foreach (var g in res.Layout) if (!g.Circulation) rooms++;
+            // the notes go to the log in full; the panel says only that there are some, so a long one cannot
+            // stretch the panel across the screen
+            Say($"{res.Kind} #{spec.Seed}: {res.Floors} floor(s), {rooms} rooms, {res.Palette}"
+                + (res.Notes.Count > 0 ? $" — {res.Notes.Count} note(s) in the log" : " — Ctrl+Z to undo"));
+        }
         Label _pitchLbl;
         OptionButton _importPick;
 

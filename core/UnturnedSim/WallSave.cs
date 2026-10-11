@@ -66,14 +66,16 @@ namespace UnturnedSim
             sb.Append("# wall <x> <y> <z> <yawDeg> <length> <thickness> <materialId> [height] [pitchDeg] [kind] [gableRise] [texel] [insetL0 insetL1 insetR0 insetR1] [matBack texelBack]\n");
             sb.Append("#   open <u> <v> <width> <height> <depth> <archetype> [glazed tint hp indestructible broken] [doorProp doorOpen] [barr <style>]\n");
             sb.Append("# building <kind>            -- Residential|Commercial|Industrial|Misc (the volume is DERIVED from the walls)\n");
-            sb.Append("# room <kind> <x> <z>        -- a designation ANCHORED at a point inside the room it labels\n");
+            sb.Append("# room <kind> <x> <z> [floor] -- a designation ANCHORED at a point inside the room it labels\n");
             // Kinds by NAME, never ordinal: the enums can gain or reorder members without re-labelling
             // every existing save.
             if (building.HasValue) sb.Append("building ").Append(building.Value.ToString()).Append('\n');
             if (rooms != null)
                 foreach (var r in rooms)
                     sb.Append("room ").Append(r.Kind.ToString()).Append(' ')
-                      .Append(F(r.X)).Append(' ').Append(F(r.Z)).Append('\n');
+                      .Append(F(r.X)).Append(' ').Append(F(r.Z))
+                      // only when it is not the ground, so a single-storey save reads exactly as it always did
+                      .Append(r.Floor != 0 ? " " + r.Floor.ToString(CultureInfo.InvariantCulture) : "").Append('\n');
             if (walls != null)
                 foreach (var w in walls)
                 {
@@ -160,7 +162,8 @@ namespace UnturnedSim
                     // unknown kind degrading to Unassigned.
                     if (float.TryParse(p[2], NumberStyles.Float, CultureInfo.InvariantCulture, out float rx)
                         && float.TryParse(p[3], NumberStyles.Float, CultureInfo.InvariantCulture, out float rz))
-                        rooms.Add(new RoomDesignation(RoomDesignations.ParseRoom(p[1]), rx, rz));
+                        rooms.Add(new RoomDesignation(RoomDesignations.ParseRoom(p[1]), rx, rz,
+                            p.Length >= 5 && int.TryParse(p[4], NumberStyles.Integer, CultureInfo.InvariantCulture, out int rf) ? rf : 0));
                     continue;
                 }
                 if (p[0] == "wall" && p.Length >= 8)
