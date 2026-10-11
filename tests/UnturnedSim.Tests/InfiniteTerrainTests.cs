@@ -2092,15 +2092,19 @@ namespace UnturnedSim.Tests
                         if (double.IsNaN(best)) { paintOff++; bad ??= $"{s.kind} at ({s.x:0},{s.z:0}): paint off the road at ({x:0.00},{z:0.00})"; }
                         else if (Math.Abs(m.Y[i] - best) > paintWorst) { paintWorst = Math.Abs(m.Y[i] - best); if (paintWorst > 0.01) bad = $"{s.kind} at ({s.x:0},{s.z:0}): paint {(m.Y[i] - best) * 1000:+0;-0} mm off the top at ({x:0.00},{z:0.00}), colour {m.Colour}, on a patch {m.On != null}"; }
                     }
+                // a crossing's two tees: the smaller road split, each half teed into the bigger one on its own side, so each
+                // patch is anchored on the bigger one's edge, a half-width / sin(angle) from the crossing at most (25 deg: 22 m)
+                var halves = s.kind.StartsWith("cross") ? pts.Where(q => Math.Abs(q.AnchorX - s.x) < 30 && Math.Abs(q.AnchorZ - s.z) < 30).ToList() : new List<RoadPatch>();
                 bool painted = s.kind switch
                 {
                     "taper" => marks.Any(m => m.Colour == 0 && Math.Abs(m.AnchorX - s.x) < 300 && Math.Abs(m.AnchorZ - s.z) < 300),
                     "node" => s.joined.Length < 3 || marks.Any(m => m.On != null && Math.Abs(m.On.AnchorX - s.x) < 0.01 && Math.Abs(m.On.AnchorZ - s.z) < 0.01 && m.Colour == 0),
-                    "cross" => s.joined.All(e => e.Kind == RoadKind.Trail) || marks.Any(m => m.On != null && Math.Abs(m.On.AnchorX - s.x) < 0.01 && Math.Abs(m.On.AnchorZ - s.z) < 0.01),
+                    // a crossing is split into two tees of its smaller road: each has its stop line (a trail none)
+                    "cross" => halves.Count >= 2 && halves.All(q => q.Kind == (byte)RoadKind.Trail || marks.Any(m => m.On == q && m.Colour == 0)),
                     _ when s.kind.StartsWith("tee") => s.joined[0].Kind == RoadKind.Trail || marks.Any(m => m.On != null && m.Colour == 0 && Math.Abs(m.On.AnchorX - s.x) < B && Math.Abs(m.On.AnchorZ - s.z) < B),
                     _ => true,
                 };
-                bool patched = s.kind == "taper" ? open == 0 : s.kind.StartsWith("cross") ? pts.Any(q => Math.Abs(q.AnchorX - s.x) < 0.01 && Math.Abs(q.AnchorZ - s.z) < 0.01)
+                bool patched = s.kind == "taper" ? open == 0 : s.kind.StartsWith("cross") ? halves.Count >= 2
                                                          : pts.Any(q => Math.Abs(q.AnchorX - s.x) < B && Math.Abs(q.AnchorZ - s.z) < B);
                 if (!patched && s.kind.StartsWith("cross")) open = 1;   // a crossing left to overlap: its fallback
                 // a junction that fell back overlaps as every junction used to: counted as a fallback, not as an overlap

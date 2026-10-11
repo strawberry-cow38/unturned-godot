@@ -244,7 +244,7 @@ namespace SDG.Unturned
             public (double x, double z)? T0, T1;
             public float X0, X1;   // a squared end's extra half-width (TaperGeo.Widen)
             public float H0, H1;   // ...and its profile (TaperGeo.H)
-            /// <summary>Spans cut out of the middle (arc from, to): a crossing's patch paves them.</summary>
+            /// <summary>Spans cut out of the middle (arc from, to): a road split at a crossing, its two tees' patches pave them.</summary>
             public List<(double a0, double a1)> Gaps;
             public bool J0, J1;
         }
@@ -273,7 +273,7 @@ namespace SDG.Unturned
             var plan = new JunctionPlan();
             const double M = 120;   // a junction's reach (a node's trims, a taper's widening) past its anchor
             bool Near(double x, double z) => x >= x0 - M && x <= x1 + M && z >= z0 - M && z <= z1 + M;
-            var tees = new List<(Line j, bool atEnd, Line host)>();
+            var tees = new List<(Line j, double a0, int dir, Line host, int pair)>();   // a0 NaN: the line's own end
             var tapers = new List<(Line r, bool atEnd, Line host, int cw)>();
             var ends = new Dictionary<(long, long), List<(Line e, bool atEnd)>>();
             void End(Line e, bool atEnd)
@@ -302,7 +302,7 @@ namespace SDG.Unturned
                     if (!Near(x, z)) continue;
                     var host = jn.Host ?? HighwayById(jn.HostId, x, z);   // (0 is an Id: band 0's segment 0)
                     if (host == null || !host.Exists) continue;
-                    if (jn.Type == JoinType.Tee) tees.Add((e, atEnd, host));
+                    if (jn.Type == JoinType.Tee) tees.Add((e, double.NaN, atEnd ? -1 : 1, host, -1));
                     else tapers.Add((e, atEnd, host, jn.Side));
                 }
             }
@@ -417,50 +417,16 @@ namespace SDG.Unturned
                         double d = NearestOn(h, x, z).d;
                         if (d < RibbonHalfOf(h.Kind) + 0.5 && d < best) { best = d; host = h; }
                     }
-                    if (host != null) tees.Add((e, true, host));
+                    if (host != null) tees.Add((e, double.NaN, -1, host, -1));
                 }
             }
-            // TEES: a patch's edge along its host must have a vertex at every cut the host's pieces will have, so the
-            // patches are made against every tee's cuts; one that cannot be paved (a mouth too tight for its fillets)
-            // gives up its trim and its cuts, and the rest are made again without them
-            var live = new List<TeeGeo>();
-            foreach (var (j, atEnd, host) in tees)
-                if (TeeShape(j, atEnd, host) is TeeGeo g && !Decked(g.H, host, g.ALo - 10, g.AHi + 10)) live.Add(g);
-            var made = new List<(TeeGeo g, RoadPatch p)>();
-            for (int pass = 0; pass < 4; pass++)
-            {
-                var mods = new Dictionary<LineKey, List<HostMod>>();
-                foreach (var g in live)
-                {
-                    var k = KeyOf(g.HostLine);
-                    if (!mods.TryGetValue(k, out var l)) mods[k] = l = new List<HostMod>();
-                    l.Add(new HostMod { Side = g.HSide, A0 = g.ALo, A1 = g.AHi, NoBevel = true });
-                }
-                made.Clear();
-                var failed = new List<TeeGeo>();
-                foreach (var g in live)
-                {
-                    if (TeePatch(g, mods[KeyOf(g.HostLine)], maxPiece) is RoadPatch p) made.Add((g, p));
-                    else failed.Add(g);
-                }
-                if (failed.Count == 0) break;
-                foreach (var f in failed) live.Remove(f);
-                if (pass == 3) made.Clear();
-            }
-            foreach (var (g, p) in made)
-            {
-                plan.Patches.Add(p);
-                PaintTee(plan, g, p);
-                var tr = plan.TrimOf(g.JLine);
-                if (g.AtEnd) { tr.R1 = g.J.Total - g.Trim; tr.J1 = true; } else { tr.R0 = g.Trim; tr.J0 = true; }
-                plan.ModsOf(g.HostLine, 0.0).Add(new HostMod { Side = g.HSide, A0 = g.ALo, A1 = g.AHi, NoBevel = true });
-            }
-            // CROSSINGS: two roads crossing on the level (a branch wandering over a main or another branch) are a node of four
-            // arms. Not at a shallow angle, not where they stand apart in height, and not within CrossingClear of any other
-            // crossing or any road's end (a tee's mouth, a town, a ramp's foot): two junctions' patches would overlap, and
-            // two roads bundled side by side cross and recross with nothing to pave between. ⚠ Decided from what lies round
-            // the crossing alone, gathered CrossingClear wider than the junctions a region draws -- a region whose window
-            // cut off a neighbouring crossing would pave this one while the next region, seeing both, drew its roads whole
+            int pairs = 0;
+            // CROSSINGS: two roads crossing on the level (a branch wandering over a main or another branch). Not at a shallow
+            // angle, not where they stand apart in height, and not within CrossingClear of any other crossing or any road's
+            // end (a tee's mouth, a town, a ramp's foot): two junctions' patches would overlap, and two roads bundled side by
+            // side cross and recross with nothing to pave between. ⚠ Decided from what lies round the crossing alone,
+            // gathered CrossingClear wider than the junctions a region draws -- a region whose window cut off a neighbouring
+            // crossing would pave this one while the next region, seeing both, drew its roads whole
             const double W = M + CrossingClear + 20;
             bool Wide(double x, double z) => x >= x0 - W && x <= x1 + W && z >= z0 - W && z <= z1 + W;
             var flat = new List<Line>(); var endPts = new List<(double x, double z)>();
@@ -504,13 +470,57 @@ namespace SDG.Unturned
                 foreach (var o in cands) if (!ReferenceEquals(o.A, c.A) || !ReferenceEquals(o.B, c.B) || o.sa != c.sa || o.sb != c.sb) if (Math.Abs(o.x - c.x) < CrossingClear && Math.Abs(o.z - c.z) < CrossingClear && (o.x - c.x) * (o.x - c.x) + (o.z - c.z) * (o.z - c.z) < CrossingClear * CrossingClear) crowded = true;
                 foreach (var (ex, ez) in endPts) if ((ex - c.x) * (ex - c.x) + (ez - c.z) * (ez - c.z) < CrossingClear * CrossingClear) crowded = true;
                 if (crowded) continue;
-                var rA = new Rib(c.A, 0); var rB = new Rib(c.B, 0);
-                double aA = rA.A[c.sa] + rA.Len(c.sa) * c.ta, aB = rB.A[c.sb] + rB.Len(c.sb) * c.tb;
-                MakeNode(new List<Arm>
+                // the smaller road is split and each half tees into the bigger one on its own side (strawberry 2026-10-11:
+                // "if a side road is going to cross another, instead of just crossing it, split it and merge-connect both
+                // sides"); the bigger one runs on whole. Of two equal roads, the one starting further east (then north) is split
+                bool aMinor = Rank(c.A) != Rank(c.B) ? Rank(c.A) < Rank(c.B) : KeyOf(c.A).X0 != KeyOf(c.B).X0 ? KeyOf(c.A).X0 > KeyOf(c.B).X0 : KeyOf(c.A).Z0 > KeyOf(c.B).Z0;
+                var minor = aMinor ? c.A : c.B; var major = aMinor ? c.B : c.A;
+                int seg = aMinor ? c.sa : c.sb; double tt = aMinor ? c.ta : c.tb;
+                var rm = new Rib(minor, 0);
+                double am = rm.A[seg] + rm.Len(seg) * tt;
+                int pairId = pairs++;
+                tees.Add((minor, am, 1, major, pairId)); tees.Add((minor, am, -1, major, pairId));
+            }
+            // TEES: a patch's edge along its host must have a vertex at every cut the host's pieces will have, so the
+            // patches are made against every tee's cuts; one that cannot be paved (a mouth too tight for its fillets)
+            // gives up its trim and its cuts, and the rest are made again without them
+            var live = new List<TeeGeo>();
+            foreach (var (j, a0, dir, host, pair) in tees)
+                if (TeeShape(j, a0, dir, host, pair) is TeeGeo g && !Decked(g.H, host, g.ALo - 10, g.AHi + 10)) live.Add(g);
+            // a road split at a crossing is cut only if BOTH its halves tee in: one alone would leave the other overlapping
+            var halves = new Dictionary<int, int>();
+            foreach (var g in live) if (g.Pair >= 0) halves[g.Pair] = halves.GetValueOrDefault(g.Pair) + 1;
+            live.RemoveAll(g => g.Pair >= 0 && halves[g.Pair] < 2);
+            var made = new List<(TeeGeo g, RoadPatch p)>();
+            for (int pass = 0; pass < 4; pass++)
+            {
+                var mods = new Dictionary<LineKey, List<HostMod>>();
+                foreach (var g in live)
                 {
-                    new Arm { E = c.A, R = rA, A0 = aA, Dir = 1 }, new Arm { E = c.A, R = rA, A0 = aA, Dir = -1 },
-                    new Arm { E = c.B, R = rB, A0 = aB, Dir = 1 }, new Arm { E = c.B, R = rB, A0 = aB, Dir = -1 },
-                }, c.x, c.z);
+                    var k = KeyOf(g.HostLine);
+                    if (!mods.TryGetValue(k, out var l)) mods[k] = l = new List<HostMod>();
+                    l.Add(new HostMod { Side = g.HSide, A0 = g.ALo, A1 = g.AHi, NoBevel = true });
+                }
+                made.Clear();
+                var failed = new List<TeeGeo>();
+                foreach (var g in live)
+                {
+                    if (TeePatch(g, mods[KeyOf(g.HostLine)], maxPiece) is RoadPatch p) made.Add((g, p));
+                    else failed.Add(g);
+                }
+                if (failed.Count == 0) break;
+                foreach (var f in failed.ToArray()) if (f.Pair >= 0) foreach (var o in live) if (o.Pair == f.Pair && !failed.Contains(o)) failed.Add(o);
+                foreach (var f in failed) live.Remove(f);
+                if (pass == 3) made.Clear();
+            }
+            foreach (var (g, p) in made)
+            {
+                plan.Patches.Add(p);
+                PaintTee(plan, g, p);
+                var tr = plan.TrimOf(g.JLine);
+                if (!g.IsEnd) (tr.Gaps ??= new List<(double, double)>()).Add(g.Dir > 0 ? (g.A0, g.A0 + g.Trim) : (g.A0 - g.Trim, g.A0));
+                else if (g.Dir < 0) { tr.R1 = g.J.Total - g.Trim; tr.J1 = true; } else { tr.R0 = g.Trim; tr.J0 = true; }
+                plan.ModsOf(g.HostLine, 0.0).Add(new HostMod { Side = g.HSide, A0 = g.ALo, A1 = g.AHi, NoBevel = true });
             }
             return plan;
         }
@@ -629,7 +639,7 @@ namespace SDG.Unturned
             var J = g.J; var e = g.JLine;
             if (e.Kind == RoadKind.Trail) return;
             double total = J.Total;
-            double Arc(double s) => g.AtEnd ? total - s : s;
+            double Arc(double s) => g.A0 + g.Dir * s;
             // the stop line as near the host as it clears the host's asphalt across the joiner's whole width (a skewed
             // tee's first metre beyond the edge is still the host's on one side: paint there stood on the host, at the
             // joiner's height)
@@ -646,7 +656,7 @@ namespace SDG.Unturned
                 if (clear) { stop = s; break; }
             }
             // the approach is the side on the right driving toward the host: -normal on a ribbon that starts at the host
-            int approach = g.AtEnd ? 1 : -1;
+            int approach = -g.Dir;
             var white = new RoadMark { Colour = 0, AnchorX = p.AnchorX, AnchorZ = p.AnchorZ, On = p };
             var yellow = new RoadMark { Colour = 1, AnchorX = p.AnchorX, AnchorZ = p.AnchorZ, On = p };
             foreach (var (lat, width, colour, dashed) in LinesOf(e))
@@ -660,7 +670,10 @@ namespace SDG.Unturned
 
         sealed class TeeGeo
         {
-            public Line JLine, HostLine; public Rib J, H; public bool AtEnd;
+            public Line JLine, HostLine; public Rib J, H;
+            /// <summary>Where the joiner's joined end is (arc) and which way it runs from it (+1 toward its end): a line's own
+            /// end, or one side of a road split where it crossed another (Pair names the other side).</summary>
+            public double A0; public int Dir; public bool IsEnd; public int Pair = -1;
             public double Trim, ALo, AHi; public int HSide;
             public double hwJ, hwH;
             // per side σ = +1 / -1 (the joiner's left / right, looking away from the host): the corner, the tangent points
@@ -669,22 +682,25 @@ namespace SDG.Unturned
             public double SX;       // where the joiner's centreline leaves the host's asphalt (out from its joined end)
         }
 
-        TeeGeo TeeShape(Line j, bool atEnd, Line host)
+        TeeGeo TeeShape(Line j, double a0, int dir, Line host, int pair)
         {
             var J = new Rib(j, 0); var H = new Rib(host, 0);
             double hwH = RibbonHalfOf(host.Kind), hwJ = RibbonHalfOf(j.Kind), total = J.Total;
-            double ArcOf(double s) => atEnd ? total - s : s;
+            bool isEnd = double.IsNaN(a0);
+            if (isEnd) a0 = dir > 0 ? 0 : total;
+            double room = dir > 0 ? total - a0 : a0;
+            double ArcOf(double s) => a0 + dir * s;
             double Out(double s) { J.PointAt(ArcOf(s), out double x, out double z); return Math.Abs(H.Project(x, z).lat) - hwH; }
             // 1. where the joiner's centreline leaves the host's asphalt
             double lo = 0, hi = -1;
-            for (double s = 0; s <= Math.Min(40, total * 0.5); s += 0.25) if (Out(s) >= 0) { hi = s; break; }
+            for (double s = 0; s <= Math.Min(40, room * 0.5); s += 0.25) if (Out(s) >= 0) { hi = s; break; }
             if (hi < 0) return null;
             lo = Math.Max(0, hi - 0.25);
             if (Out(lo) >= 0) hi = lo;
             for (int it = 0; it < 40 && hi - lo > 1e-6; it++) { double m = (lo + hi) * 0.5; if (Out(m) >= 0) hi = m; else lo = m; }
             double sX = hi;
             J.PointAt(ArcOf(sX), out double qx, out double qz);
-            J.PointAt(ArcOf(Math.Min(total * 0.5, sX + 12)), out double q2x, out double q2z);
+            J.PointAt(ArcOf(Math.Min(room * 0.5, sX + 12)), out double q2x, out double q2z);
             double dx = q2x - qx, dz = q2z - qz, dl = Math.Sqrt(dx * dx + dz * dz);
             if (dl < 1) return null;
             dx /= dl; dz /= dl;
@@ -696,7 +712,7 @@ namespace SDG.Unturned
             H.Point(hk, ht, out double ex, out double ez);
             ex += nHx * hSide * hwH; ez += nHz * hSide * hwH;
             double nJx = -dz, nJz = dx;
-            var g = new TeeGeo { JLine = j, HostLine = host, J = J, H = H, AtEnd = atEnd, HSide = hSide, hwJ = hwJ, hwH = hwH, DX = dx, DZ = dz, SX = sX };
+            var g = new TeeGeo { JLine = j, HostLine = host, J = J, H = H, A0 = a0, Dir = dir, IsEnd = isEnd, Pair = pair, HSide = hSide, hwJ = hwJ, hwH = hwH, DX = dx, DZ = dz, SX = sX };
             double R = FilletRadius(j.Kind, j.Ramp), trim = sX + 1.0;
             for (int si = 0; si < 2; si++)
             {
@@ -719,9 +735,9 @@ namespace SDG.Unturned
                 g.TA[si] = aX + v + sgn * L;
                 trim = Math.Max(trim, sX + (g.BpX[si] - qx) * dx + (g.BpZ[si] - qz) * dz + 0.75);
             }
-            if (trim > total * 0.5) return null;
+            if (trim > room * 0.5) return null;
             // the joiner keeps the side away from the host; the host keeps both
-            g.Trim = atEnd ? total - J.Snap(total - trim, hwJ, -1) : J.Snap(trim, hwJ, +1);
+            g.Trim = (J.Snap(a0 + dir * trim, hwJ, dir) - a0) * dir;
             g.ALo = H.Snap(Math.Min(g.TA[0], g.TA[1]), hwH, 0); g.AHi = H.Snap(Math.Max(g.TA[0], g.TA[1]), hwH, 0);
             if (g.AHi - g.ALo < 2 * hwJ) return null;
             if (g.ALo < 0 || g.AHi > H.Total) return null;
@@ -737,7 +753,7 @@ namespace SDG.Unturned
             float liftH = Lift(g.HostLine.Kind), liftJ = Lift(g.JLine.Kind);
             int V(double x, double z, float y, float lift) { vx.Add(x); vz.Add(z); vy.Add(y); vl.Add(lift); return vx.Count - 1; }
             double total = J.Total;
-            double JArc(double s) => g.AtEnd ? total - s : s;
+            double JArc(double s) => g.A0 + g.Dir * s;
             float HSurf(double x, double z)
             {
                 var (a, _) = H.Project(x, z);
@@ -779,7 +795,7 @@ namespace SDG.Unturned
             J.Normal(jk, jt, out double njx, out double njz);
             J.Dir(jk, out double tjx, out double tjz);
             // σ = +1 is the joiner's left looking away from the host: on its ribbon that is +normal at the start, -normal at the end
-            int Na(int si) => (si == 0 ? 1 : -1) * (g.AtEnd ? -1 : 1);
+            int Na(int si) => (si == 0 ? 1 : -1) * g.Dir;
             // the joiner's top edge on side si, s out from where it leaves the host -- its own ribbon, as its pieces lay it
             int JEdgeV(int si, double s, float lift)
             {
@@ -800,7 +816,7 @@ namespace SDG.Unturned
                 H.Edge(aT, g.HSide, g.hwH, out double tx, out double tz);
                 var (jk2, _) = J.Find(JArc(g.SBp[si]));
                 J.Dir(jk2, out double dx, out double dz);
-                if (g.AtEnd) { dx = -dx; dz = -dz; }   // away from the host
+                if (g.Dir < 0) { dx = -dx; dz = -dz; }   // away from the host
                 double den = ex * dz - ez * dx;
                 if (Math.Abs(den) < 1e-6) return (g.CX[si], g.CZ[si]);
                 double qx = bpx - tx, qz = bpz - tz;
@@ -1208,22 +1224,18 @@ namespace SDG.Unturned
         }
 
         /// <summary>A node's paint. Each arm's lines run on in from its cut to where it meets its neighbours, and a stop
-        /// line crosses its approach there. A town of three or more arms is an all-way stop; two roads crossing stop the
-        /// smaller one, whose crossing the bigger one's lines run straight through; two arms only (a town on a bend) are
-        /// one road, painted through.</summary>
+        /// line crosses its approach there. A town of three or more arms is an all-way stop; two arms only (a town on a
+        /// bend) are one road, painted through.</summary>
         static void PaintNode(JunctionPlan plan, NodeGeo g, RoadPatch p)
         {
             int n = g.Arms.Count;
-            int top = 0;
-            foreach (var arm in g.Arms) top = Math.Max(top, Rank(arm.E));
-            bool crossing = n == 4 && !g.Arms[0].IsEnd;
             var white = new RoadMark { Colour = 0, AnchorX = p.AnchorX, AnchorZ = p.AnchorZ, On = p };
             var yellow = new RoadMark { Colour = 1, AnchorX = p.AnchorX, AnchorZ = p.AnchorZ, On = p };
             for (int i = 0; i < n; i++)
             {
                 var arm = g.Arms[i];
                 if (arm.E.Kind == RoadKind.Trail) continue;
-                bool through = n == 2 || (crossing && Rank(arm.E) == top && g.Arms.FindAll(o => Rank(o.E) == top).Count == 2);
+                bool through = n == 2;
                 double stop = Math.Min(g.Inner[i] + 1.5, g.Trim[i] - StopWidth);
                 double from = through ? 0 : stop + StopWidth * 0.5;
                 if (from < g.Trim[i])
