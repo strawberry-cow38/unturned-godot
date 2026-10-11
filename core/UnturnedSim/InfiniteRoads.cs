@@ -186,6 +186,14 @@ namespace SDG.Unturned
         // so below both, per carriageway. UG_INF_RAISE / UG_INF_CUT override them, for tuning.
         public static readonly float RaiseFill = EnvF("UG_INF_RAISE", 3f);   // m of fill under the whole carriageway
         public const float RaiseMinLength = 30f;    // shorter than this is a bump, not a bridge
+        /// <summary>MAIN BRIDGES (strawberry 2026-10-11: "allow main roads to become bridges over gaps"): fill under a
+        /// main's whole asphalt (centre and both edges, the least) past which its embankment becomes a bridge, or water
+        /// under any of them -- a highway's RaiseFill. At 4 m a 120 m dip of 3.7-5.6 m stayed a bank: only two points
+        /// reached 4 m, too short a run to bridge. UG_INF_MAIN_RAISE overrides it, for tuning.</summary>
+        public static readonly float MainRaise = EnvF("UG_INF_MAIN_RAISE", 3f);
+        /// <summary>A main's bridge keeps this far (along it) from its ends -- its towns -- and from where it crosses a
+        /// highway (whose ramps tee in RampMeet out) or a railway on the level: a junction cannot sit on a deck.</summary>
+        public const double MainBridgeClear = 60.0;
         public const float RaiseMergeGap = 40f;     // two stretches closer than this are one bridge
         public static readonly float CutDepth = EnvF("UG_INF_CUT", 6f);      // m of cut under the whole carriageway
         public const float CutMinLength = 40f;      // a tunnel shorter than this is a culvert
@@ -812,8 +820,48 @@ namespace SDG.Unturned
                 line.Underpasses = new List<Underpass> { up };
                 if (hwX.Kind == RoadKind.Highway) line.Ramps = BuildRamps(line, fMain, hwX, fHw);
             }
+            MarkMainBridges(line);
             line.Branches = BuildBranches(line, cx, cz, dir);
             return line;
+        }
+
+        /// <summary>A main's raised stretches (MainRaise of fill under its whole asphalt, or water) bridged: one deck
+        /// down the centreline, widened to its asphalt (DeckScale), piers on the natural ground. Not within
+        /// MainBridgeClear of its ends, a grade separation's ramps, or a level crossing; not over its own decks.</summary>
+        void MarkMainBridges(Line e)
+        {
+            if (!Bridges || !e.Exists) return;
+            int n = e.X.Length;
+            var arc = Arc(e);
+            double total = arc[n - 1];
+            float hw = PavedHalf(e.Kind);
+            var on = new bool[n]; var fill = new float[n]; var wet = new bool[n];
+            for (int i = 0; i < n; i++)
+            {
+                var (tx, tz) = RibbonTangent(e, i);
+                float ground = e.H[i] - Bed, f = float.MaxValue; bool w = false;
+                for (int s = -1; s <= 1; s++)
+                {
+                    float r = _t.RawHeight(e.X[i] - tz * s * hw, e.Z[i] + tx * s * hw);
+                    f = Math.Min(f, ground - r);
+                    if (r < InfiniteTerrain.SeaLevel) w = true;
+                }
+                fill[i] = f; wet[i] = w;
+                bool clear = arc[i] > MainBridgeClear && arc[i] < total - MainBridgeClear;
+                if (clear && e.Underpasses != null)
+                    foreach (var u in e.Underpasses)
+                        if ((e.X[i] - u.X) * (e.X[i] - u.X) + (e.Z[i] - u.Z) * (e.Z[i] - u.Z) < (RampMeet + MainBridgeClear) * (RampMeet + MainBridgeClear)) clear = false;
+                if (clear && e.LevelCrossings != null)
+                    foreach (var c in e.LevelCrossings)
+                        if ((e.X[i] - c.X) * (e.X[i] - c.X) + (e.Z[i] - c.Z) * (e.Z[i] - c.Z) < (LevelFlat + MainBridgeClear) * (LevelFlat + MainBridgeClear)) clear = false;
+                if (clear && e.DeckCover != null)
+                    foreach (var d in e.DeckCover[0]) if (i >= d.F0 - 2 && i <= d.F1 + 2) clear = false;
+                on[i] = clear && (f >= MainRaise || w);
+            }
+            (e.Raised, _) = Stretches(e, arc, on, fill, wet, RaiseMinLength, RaiseMergeGap, 0);
+            if (e.Raised.Count == 0) { e.Raised = null; return; }
+            e.BridgePieces ??= new List<BridgePiece>();
+            foreach (var st in e.Raised) WalkBridge(e, st, e.BridgePieces);
         }
 
         /// <summary>The highway's own decks over a main road: per carriageway, whole units centred where the main crosses
@@ -1011,6 +1059,13 @@ namespace SDG.Unturned
                         if (Math.Sqrt((bx0 - u.X) * (bx0 - u.X) + (bz0 - u.Z) * (bz0 - u.Z)) < RampMeet + 120) atCrossing = true;
                     }
                     if (atCrossing) continue;
+                }
+                // ...nor off a bridge (MarkMainBridges): its tee would stand on the deck
+                if (main.Raised != null)
+                {
+                    bool onBridge = false;
+                    foreach (var st in main.Raised) if (s >= arc[st.I0] - MainBridgeClear && s <= arc[st.I1] + MainBridgeClear) onBridge = true;
+                    if (onBridge) continue;
                 }
                 if (main.LevelCrossings != null)
                 {
@@ -2405,8 +2460,12 @@ namespace SDG.Unturned
                         }
                         (gaps ??= new List<double>()).Add(ba);
                     }
+                // ...nor along a bridge (MarkMainBridges): a pole beside it stands down in the valley, its wire through the deck
+                List<(double a0, double a1)> spans = null;
+                if (e.Raised != null) foreach (var st in e.Raised) (spans ??= new List<(double, double)>()).Add((arc[st.I0] - 15, arc[st.I1] + 15));
                 bool InGap(double a0, double a1)
                 {
+                    if (spans != null) foreach (var (r0, r1) in spans) if (a1 >= r0 && a0 <= r1) return true;
                     if (gaps != null) foreach (var g in gaps) if (a1 >= g - PoleCrossingGap && a0 <= g + PoleCrossingGap) return true;
                     return false;
                 }

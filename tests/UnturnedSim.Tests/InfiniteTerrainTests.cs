@@ -2319,6 +2319,65 @@ namespace UnturnedSim.Tests
         /// string; every conductor -- measured here from the towers' own headings and the prop's anchors, not the
         /// generator's shortcut -- stays clear of the ground and any road deck all the way along; no tree grows in a
         /// line's corridor; and the regions together string every span exactly once.</summary>
+        /// <summary>MAIN BRIDGES (strawberry 2026-10-11: "allow main roads to become bridges over gaps"). Over a 12 km
+        /// window: some mains bridge their gaps; off a deck, and outside MainBridgeClear of a main's ends, its grade
+        /// separation's ramps and its level crossings, no main stands on more than 5.5 m of fill (the least of its
+        /// centre and both edges, as stretches are marked; a stretch shorter than RaiseMinLength stays an embankment);
+        /// every bridge's deck covers it; no branch leaves from one, and no pole stands along one. Absolute, not a
+        /// multiple of MainRaise, so raising the constant fails it (no bridges at all: a 14.9 m bank).</summary>
+        [Test]
+        public void MainsBridgeTheirGaps()
+        {
+            var mains = Gen.Roads.LinesIn(-6000, -6000, 6000, 6000).Where(e => e.Kind == RoadKind.Main && e.Exists && !e.Ramp).Distinct().ToList();
+            int bridges = 0, uncovered = 0, branchesOn = 0, polesOn = 0; double bridged = 0, worst = 0; string where = "";
+            foreach (var e in mains)
+            {
+                var arc = new double[e.X.Length];
+                for (int i = 1; i < arc.Length; i++) arc[i] = arc[i - 1] + Math.Sqrt((e.X[i] - e.X[i - 1]) * (e.X[i] - e.X[i - 1]) + (e.Z[i] - e.Z[i - 1]) * (e.Z[i] - e.Z[i - 1]));
+                double total = arc[^1];
+                var onDeck = new bool[e.X.Length];
+                if (e.Raised != null)
+                    foreach (var st in e.Raised)
+                    {
+                        bridges++; bridged += arc[st.I1] - arc[st.I0];
+                        for (int i = st.I0; i <= st.I1; i++) onDeck[i] = true;
+                        // the deck's span covers the stretch (both "sides": one roadway)
+                        double mid = 0.5 * (st.I0 + st.I1);
+                        if (e.DeckCover == null || !e.DeckCover[0].Any(d => d.F0 <= mid && d.F1 >= mid)) uncovered++;
+                        if (e.Branches != null)
+                            foreach (var br in e.Branches)
+                            {
+                                int k = Enumerable.Range(0, e.X.Length).OrderBy(i => (e.X[i] - br.X[0]) * (e.X[i] - br.X[0]) + (e.Z[i] - br.Z[0]) * (e.Z[i] - br.Z[0])).First();
+                                if (k >= st.I0 && k <= st.I1) branchesOn++;
+                            }
+                        foreach (var pp in Gen.Roads.PolesIn(new List<InfiniteRoads.Line> { e }, e.MinX - 50, e.MinZ - 50, e.MaxX + 50, e.MaxZ + 50))
+                        {
+                            int k = Enumerable.Range(0, e.X.Length).OrderBy(i => (e.X[i] - pp.X) * (e.X[i] - pp.X) + (e.Z[i] - pp.Z) * (e.Z[i] - pp.Z)).First();
+                            if (k >= st.I0 && k <= st.I1) polesOn++;
+                        }
+                    }
+                if (e.DeckCover != null) foreach (var d in e.DeckCover[0]) for (int i = Math.Max(0, (int)d.F0 - 1); i <= Math.Min(e.X.Length - 1, (int)Math.Ceiling(d.F1) + 1); i++) onDeck[i] = true;
+                for (int i = 1; i + 1 < e.X.Length; i++)
+                {
+                    if (onDeck[i] || arc[i] <= InfiniteRoads.MainBridgeClear || arc[i] >= total - InfiniteRoads.MainBridgeClear) continue;
+                    double R = InfiniteRoads.RampMeet + InfiniteRoads.MainBridgeClear, L = InfiniteRoads.LevelFlat + InfiniteRoads.MainBridgeClear;
+                    if (e.Underpasses != null && e.Underpasses.Any(u => (e.X[i] - u.X) * (e.X[i] - u.X) + (e.Z[i] - u.Z) * (e.Z[i] - u.Z) < R * R)) continue;
+                    if (e.LevelCrossings != null && e.LevelCrossings.Any(c => (e.X[i] - c.X) * (e.X[i] - c.X) + (e.Z[i] - c.Z) * (e.Z[i] - c.Z) < L * L)) continue;
+                    double tx = e.X[i + 1] - e.X[i - 1], tz = e.Z[i + 1] - e.Z[i - 1], tl = Math.Sqrt(tx * tx + tz * tz), hw = InfiniteRoads.PavedHalf(RoadKind.Main);
+                    double fill = double.MaxValue;
+                    foreach (int s2 in new[] { -1, 0, 1 })
+                        fill = Math.Min(fill, e.H[i] - InfiniteRoads.Bed - Gen.NaturalHeight(e.X[i] - tz / tl * s2 * hw, e.Z[i] + tx / tl * s2 * hw));
+                    if (fill > worst) { worst = fill; where = $" at ({e.X[i]:0}, {e.Z[i]:0})"; }
+                }
+            }
+            TestContext.WriteLine($"{mains.Count} mains: {bridges} bridges, {bridged:0} m; tallest bank off a deck and clear of junctions {worst:0.00} m{where}; {uncovered} bridges no deck covers, {branchesOn} branches and {polesOn} poles on one");
+            Assert.That(bridges, Is.GreaterThan(3), "no main bridged a gap");
+            Assert.That(uncovered, Is.EqualTo(0), "a raised stretch with no deck over it");
+            Assert.That(branchesOn, Is.EqualTo(0), "a branch leaves from a bridge");
+            Assert.That(polesOn, Is.EqualTo(0), "a pole stands along a bridge");
+            Assert.That(worst, Is.LessThanOrEqualTo(5.5), $"a main on a bank {worst:0.0} m tall{where}");
+        }
+
         [Test]
         public void PylonsStandClearOfRoadsAndStringEverySpanOnce()
         {
