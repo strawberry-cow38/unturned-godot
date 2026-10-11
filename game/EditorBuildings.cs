@@ -2672,8 +2672,10 @@ namespace UnturnedGodot
         /// undo step. strawberry: "make the map editor buildings tool procgen. to make buildings from a seed."
         ///
         /// It spawns exactly what the generator planned -- walls with their openings, footings, a floor per storey,
-        /// a flat roof, and the flights through the editor's own stair path (treads, ramp, the hole in the floor
-        /// above) -- in the palette the generator chose for the kind. The outside walls come corner-solved, and
+        /// the roofs (a house's gable with its raised ends, a business's flat slab), and the flights through the
+        /// editor's own stair path (treads, ramp, the hole in the floor above) -- in the palette the generator chose
+        /// for the kind. The gable is spawned as surfaces, not registered as a PlacedRoof, so the roof panel's
+        /// modify tools do not see it yet. The outside walls come corner-solved, and
         /// SolveCorners is run anyway as a check: it must find nothing, because it lengthens a wall from its origin
         /// without moving its openings, and every window on a solved wall would slide off its room.</summary>
         public BuildingGenResult Generate(BuildingGenSpec spec)
@@ -2698,7 +2700,8 @@ namespace UnturnedGodot
 
             foreach (var pl in res.Walls)
                 SpawnWall(at + new Vector3(pl.X, pl.Y, pl.Z), pl.Yaw, pl.Length, pl.Thickness, mat, pl.Openings,
-                          pl.Height, pl.Pitch, pl.Kind, pl.GableRise, pl.Kind == SurfaceKind.Roof ? roofTexel : pl.Texel);
+                          pl.Height, pl.Pitch, pl.Kind, pl.GableRise, pl.Kind == SurfaceKind.Roof ? roofTexel : pl.Texel,
+                          pl.InsetL0, pl.InsetL1, pl.InsetR0, pl.InsetR1);
             foreach (var s in res.Stairs)
             {
                 var o = at + new Vector3(s.X, s.Y, s.Z);
@@ -2731,7 +2734,7 @@ namespace UnturnedGodot
             foreach (var g in res.Layout) if (!g.Circulation) rooms++;
             Log.Print($"[editor-buildings] generated {res.Kind} seed {spec.Seed}: {res.Floors} floor(s), {rooms} rooms, "
                      + $"{res.CellsX * BuildingGen.Cell:0} x {res.CellsZ * BuildingGen.Cell:0} m, {res.Walls.Count} surfaces, "
-                     + $"{res.Stairs.Count} flight(s), palette {res.Palette}"
+                     + $"{res.Stairs.Count} flight(s), {res.Plan} plan, {res.Roof.ToString().ToLowerInvariant()} roof, palette {res.Palette}"
                      + (res.Notes.Count > 0 ? " -- " + string.Join("; ", res.Notes) : ""));
             return res;
         }
