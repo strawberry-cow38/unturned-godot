@@ -39,6 +39,22 @@ namespace UnturnedGodot
         /// <summary>Where the pavement stands highest above the real ground, and by how much. The harness aims
         /// its camera here: a fix for floating geometry has to be photographed where it floated, and the first
         /// re-render after this fix looked unchanged purely because the camera sat on a flat stretch.</summary>
+        /// <summary>The fixed-depth control, as a FIELD rather than a bare env read, so a single process can
+        /// render both treatments over ONE road layout. ⚠ It has to be: this harness's roads are not reproduced
+        /// between launches (measured -- the road checksum moves while the ground checksum does not), so a
+        /// before/after taken as two launches is two different worlds and cannot show a change.</summary>
+        public static bool NoGround = System.Environment.GetEnvironmentVariable("UG_WALKNOGROUND") == "1";
+
+        /// <summary>The float the demo camera AIMS for (m). ⚠ NOT the worst one: the worst float in this
+        /// harness is wherever a randomly-drawn road crosses a gully, 8 m up a bare cliff, where a 0.4 m kerb is
+        /// invisible and the drop is a ROAD problem rather than a pavement one. A float you can actually see at
+        /// eye height is about a metre.</summary>
+        public static float FloatTarget = 1.2f;
+        public static Vector3 PickAt; public static Vector3 PickOut; public static float PickFloat;
+        /// <summary>The Width of the instance that picked PickAt, so a demo camera can aim at the slab's OUTER
+        /// edge (where the daylight is) rather than at its centreline.</summary>
+        public static float DemoWidth = 2f;
+
         public static float WorstFloat; public static Vector3 WorstAt;
 
         /// <summary>Metres between evaluated points. Short enough that a bend reads as a curve rather than a
@@ -83,7 +99,10 @@ namespace UnturnedGodot
                 // The skirt's FLOOR: the lower of "a fixed bite below the surface" and "the real ground here",
                 // so it buries into a rising bank and still reaches down a falling one. Minus a few cm so it
                 // ends INSIDE the ground rather than coplanar with it, which would z-fight along the whole run.
-                float f0 = b0.Y - skirt, f1 = b1.Y - skirt;
+                // ⚠ MEASURED FROM ROAD LEVEL (p0.Y), not from the surface: dropping the kerbH term here makes
+                // the no-ground fallback SHALLOWER than the skirt asked for, which floats worse rather than
+                // better. The ribbon test rejects that, which is how this was caught.
+                float f0 = p0.Y - skirt, f1 = p1.Y - skirt;
                 if (groundY != null)
                 {
                     f0 = Mathf.Min(f0, groundY(b0.X, b0.Z) - 0.05f);
@@ -136,7 +155,7 @@ namespace UnturnedGodot
             // BuildRibbon still takes a fixed fallback depth rather than requiring one.
             // UG_WALKNOGROUND=1 restores the old fixed-depth skirt, so the fix can be photographed against
             // itself at one camera. A visual bug wants a visual control.
-            bool noGround = System.Environment.GetEnvironmentVariable("UG_WALKNOGROUND") == "1";
+            bool noGround = NoGround;
             System.Func<float, float, float> ground =
                 (!noGround && Terrain.Active != null) ? (x, z) => Terrain.Active.SampleHeight(x, z) : null;
             // ⚠ INSTRUMENTED after master said "the kerb is floating" and the re-render looked identical --
@@ -148,13 +167,32 @@ namespace UnturnedGodot
                 for (int i = 0; i < pts.Count; i++)
                 {
                     var outer = pts[i] + outward[i].Normalized() * Width;
-                    float gap = (pts[i].Y + KerbHeight) - probe(outer.X, outer.Z);   // surface height above real ground
+                    // ⚠⚠ DAYLIGHT, not surface-height-above-ground. The first version of this measured
+                    // (surface - ground), which is 1.0 m larger than the hole you can see: the fixed skirt
+                    // already hangs KerbHeight + Skirt below the surface, so nothing is visible until the drop
+                    // exceeds that. Quoting the un-named number would have claimed a 4.24 m gap where 3.24 m of
+                    // air existed -- and it sent the demo camera to a spot with 0.2 m of daylight, which
+                    // photographed as "no change" and nearly got the fix called a no-op. Name what it is OF.
+                    float drop = (pts[i].Y + KerbHeight) - probe(outer.X, outer.Z);   // surface above real ground
+                    float gap = drop - (KerbHeight + Skirt);                          // the air actually under the slab
                     if (gap > worst) { worst = gap; worstPt = pts[i]; }
+                    // ...and separately, the most PHOTOGENIC one: closest to FloatTarget, where the slab hangs
+                    // by about a person's knee height rather than by a cliff.
+                    // ⚠ AND IT HAS TO BE SOMEWHERE YOU COULD STAND. Five framings of this came back with the
+                    // lens buried in a bank or the slab filling the frame: picking purely on the number put the
+                    // camera inside the hillside the pavement was cut into. So require OPEN GROUND outside --
+                    // the terrain 6 m and 14 m out must agree to within a couple of metres -- which is the same
+                    // thing a person means by "a spot you can see it from".
+                    var o6 = pts[i] + outward[i].Normalized() * 6f;
+                    var o14 = pts[i] + outward[i].Normalized() * 14f;
+                    bool open = Mathf.Abs(probe(o14.X, o14.Z) - probe(o6.X, o6.Z)) < 2.0f;
+                    if (open && (PickAt == Vector3.Zero || Mathf.Abs(gap - FloatTarget) < Mathf.Abs(PickFloat - FloatTarget)))
+                    { PickAt = pts[i]; PickOut = outward[i].Normalized(); PickFloat = gap; DemoWidth = Width; }
                     sampled++;
                 }
             var mi = BuildRibbon(pts, outward, Width, KerbHeight, Skirt, name, ground);
-            Log.Print($"[sidewalk] {name}: worst surface-above-ground {worst:0.00} m over {sampled} pts "
-                    + $"(fixed skirt was {Skirt:0.00} -- anything beyond that WOULD have floated)");
+            Log.Print($"[sidewalk] {name}: worst DAYLIGHT under the slab {worst:0.00} m over {sampled} pts "
+                    + $"(= drop below the surface minus the {KerbHeight + Skirt:0.00} m the kerb+skirt already covers)");
             if (worst > WorstFloat) { WorstFloat = worst; WorstAt = worstPt; }
             if (mi == null) return 0;
             parent.AddChild(mi);

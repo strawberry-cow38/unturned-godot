@@ -49,6 +49,34 @@ namespace UnturnedGodot.Testing
             T.Check($"...and the skirt reaches below it ({ma.Position.Y:0.00} m)", ma.Position.Y < -0.4f);
             T.Check($"...over the full run ({ma.Size.X:0.0} m of a {11 * 1.5f:0.0} m path)", ma.Size.X > 15f);
 
+            // ---- 2b. THE SKIRT FOLLOWS FALLING GROUND. ⭐ THIS IS THE BUG MASTER SAW ("the kerb is floating"):
+            // the kerb foot has to sit at ROAD height because it meets the asphalt, so the only edge that can
+            // chase the ground is the outer one. A fixed bite is enough on a flat verge and leaves daylight
+            // under the slab the moment the bank falls away faster than the bite -- here 3 m over the run
+            // against a 0.6 m skirt.
+            // ⚠ THE CONTROL IS THE POINT: the SAME path with NO sampler must FAIL to reach, otherwise this
+            // check passes whether the sampler is consulted or quietly ignored.
+            System.Func<float, float, float> falling = (x, z) => -x * 0.18f;      // drops ~3 m across 16.5 m
+            var follow = EditorSidewalk.BuildRibbon(pts, outward, 2f, 0.4f, 0.6f, "Follow", falling);
+            var fa = follow.Mesh.GetAabb();
+            float deepest = falling(pts[pts.Count - 1].X, 0f);
+            T.Check($"the skirt reaches the real ground where it falls away ({fa.Position.Y:0.00} m, ground {deepest:0.00} m)",
+                    fa.Position.Y <= deepest);
+            T.Check($"...which the fixed-depth skirt does NOT -- the control floats ({ma.Position.Y:0.00} m vs ground {deepest:0.00} m)",
+                    ma.Position.Y > deepest + 1f);
+
+            // ⭐ AND THE WALKING SURFACE MUST NOT MOVE. Only the skirt's floor is allowed to chase the ground --
+            // if following the terrain also dragged the surface or the kerb down, the pavement would stop meeting
+            // the road, which is a worse bug than the float and one a render of the far edge would not show.
+            T.Check($"following the ground leaves the walking surface exactly where it was ({fa.End.Y:0.000} vs {ma.End.Y:0.000})",
+                    Mathf.Abs(fa.End.Y - ma.End.Y) < 0.001f);
+
+            // RISING ground must not punch the pavement up through its own walking surface: the floor is the
+            // LOWER of the two candidates, so a bank climbing past the kerb still buries, never lifts.
+            var rising = EditorSidewalk.BuildRibbon(pts, outward, 2f, 0.4f, 0.6f, "Rise", (x, z) => 5f);
+            T.Check($"rising ground never lifts the skirt above the fixed bite ({rising.Mesh.GetAabb().Position.Y:0.00} m)",
+                    rising.Mesh.GetAabb().Position.Y <= -0.55f);
+
             // ---- 3. IT IS ONE CONTINUOUS RIBBON. ⭐ This is why a generated strip was chosen over tiled props:
             // a tiled spline has to back every unit off by SplineTiling.OverlapFor to stop rigid tiles splaying
             // at a bend, and a ribbon simply shares its vertices. A CURVED path must therefore produce the same

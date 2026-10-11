@@ -8016,6 +8016,23 @@ namespace UnturnedGodot
                 int made = 0;
                 for (int r = 0; r < rf.RoadCount; r++) made += walk.LayAlongRoad(walk, rf, r, EditorSidewalk.Side.Both);
                 Log.Print($"[sidewalk-demo] {made} ribbon(s) over {rf.RoadCount} road(s), width {walk.Width:0.00} kerb {walk.KerbHeight:0.00}");
+                // ⚠ DETERMINISM PROBE. The worst float drifted 4.24 -> 6.28 m over five launches of an IDENTICAL
+                // config that each reported the same 46 ribbons over 23 roads. Same geometry, moving numbers means
+                // one of two inputs is unstable, and the two are distinguishable: a GROUND checksum (is _grid the
+                // same?) and a ROAD checksum (are the centrelines the same?). Measuring both says which, where
+                // staring at the worst number says neither.
+                if (Terrain.Active != null)
+                {
+                    double gsum = 0; for (int i = 0; i < 64; i++) gsum += Terrain.Active.SampleHeight(700f + i * 7f, -600f - i * 5f);
+                    double rsum = 0; int rn = 0;
+                    for (int r = 0; r < rf.RoadCount; r++)
+                    {
+                        float L = rf.RoadLength(r);
+                        for (int k = 0; k < 20; k++)
+                            if (rf.EvaluateAlong(r, L * k / 20f, out var cp2, out _)) { rsum += cp2.X + cp2.Y * 3.0 + cp2.Z * 7.0; rn++; }
+                    }
+                    Log.Print($"[sidewalk-det] groundSum={gsum:0.0000} roadSum={rsum:0.0000} over {rn} pts");
+                }
                 // ...and stand the camera ON the pavement at eye height, because the editor's default overview
                 // is 200 m up and a 0.4 m kerb is sub-pixel from there -- the first render of this proved the
                 // ribbons existed and showed nothing about whether the PROFILE was right.
@@ -8027,19 +8044,49 @@ namespace UnturnedGodot
                 // ⚠ THE LONGEST ROAD, not road 0. Road 0 here runs through the airport, and a camera stood at
                 // kerb height beside it ends up inside a hangar -- the second attempt at this came back as the
                 // inside of a wall. The longest road is the one most likely to have open ground beside it.
+                var abDir = System.Environment.GetEnvironmentVariable("UG_WALKAB");
+                if (!string.IsNullOrEmpty(abDir)) { _walkAbDir = abDir; _walkAbWalk = walk; _walkAbRf = rf; }
                 int demoRoad = 0;
                 for (int r = 1; r < rf.RoadCount; r++) if (rf.RoadLength(r) > rf.RoadLength(demoRoad)) demoRoad = r;
-                if (EditorSidewalk.WorstFloat > 0.3f)
+                // ⚠⚠ UG_WALKCAM="x,y,z" BAKES THE CAMERA, and an A/B MUST use it. "Aim at the worst float" picks
+                // a DIFFERENT spot per run (this world's roads are not reproduced bit-for-bit between launches:
+                // the first pair came back 5.16 m and 5.51 m at two positions 13 m apart), so a before/after shot
+                // taken that way is two pictures of two places -- it cannot show a change and would happily show
+                // one that isn't there. Find the worst float on a probe run, then bake that point into both shots.
+                var walkCamEnv = System.Environment.GetEnvironmentVariable("UG_WALKCAM");
+                Vector3 baked = Vector3.Zero; bool haveBaked = false;
+                if (!string.IsNullOrEmpty(walkCamEnv))
+                {
+                    var f = walkCamEnv.Split(',');
+                    if (f.Length == 3
+                        && float.TryParse(f[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float bx)
+                        && float.TryParse(f[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float by)
+                        && float.TryParse(f[2], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float bz))
+                    { baked = new Vector3(bx, by, bz); haveBaked = true; }
+                }
+                if (haveBaked || EditorSidewalk.PickFloat > 0.3f)
                 {
                     // Aim at the WORST float rather than the midpoint. A fix for floating geometry has to be
                     // photographed where it floated -- the first re-render after the fix looked identical only
                     // because the camera happened to sit on a flat stretch.
-                    var wp = EditorSidewalk.WorstAt;
-                    var shotCam2 = new Camera3D { Current = true, Fov = 60f };
+                    // ⚠ STAND ON THE LOW SIDE, BELOW THE SURFACE. Daylight under a slab is only visible from
+                    // outside and underneath it; the overhead three-quarter view this started as showed the top
+                    // of the pavement, which looks the same whether the far edge reaches the ground or not.
+                    var wp = haveBaked ? baked : EditorSidewalk.PickAt;
+                    var ov = EditorSidewalk.PickOut == Vector3.Zero ? Vector3.Right : EditorSidewalk.PickOut;
+                    // ⚠ STAND WHERE A PLAYER WOULD, ON THE GROUND OUTSIDE. Offsetting from the ROAD's height put
+                    // the lens inside the slab on a hillside -- the pavement filled the frame and showed nothing.
+                    // The ground out there is the only height that is guaranteed to be outdoors, so: 8 m out
+                    // along the outward normal, eye height ABOVE THAT GROUND, looking at the slab's outer edge.
+                    var outPt = wp + ov * 13f;
+                    float gy = Terrain.Active != null ? Terrain.Active.SampleHeight(outPt.X, outPt.Z) : wp.Y;
+                    var shotCam2 = new Camera3D { Current = true, Fov = 55f };
                     AddChild(shotCam2);
-                    shotCam2.GlobalPosition = wp + new Vector3(6f, 2.2f, 6f);
-                    shotCam2.LookAt(wp + Vector3.Down * 0.6f, Vector3.Up);
-                    Log.Print($"[sidewalk-demo] camera at the worst float ({EditorSidewalk.WorstFloat:0.00} m) at {wp}");
+                    shotCam2.GlobalPosition = new Vector3(outPt.X, gy + 1.65f, outPt.Z);
+                    shotCam2.LookAt(wp + ov * EditorSidewalk.DemoWidth * 0.5f, Vector3.Up);
+                    Log.Print($"[sidewalk-demo] camera {(haveBaked ? "BAKED (UG_WALKCAM)" : "on a legible float")} at {wp}"
+                            + $" -- framed DAYLIGHT {EditorSidewalk.PickFloat:0.00} m (target {EditorSidewalk.FloatTarget:0.00});"
+                            + $" this run's WORST daylight was {EditorSidewalk.WorstFloat:0.00} m at {EditorSidewalk.WorstAt}");
                 }
                 else if (rf.EvaluateAlong(demoRoad, rf.RoadLength(demoRoad) * 0.5f, out var fp, out var ft))
                 {
@@ -10434,6 +10481,41 @@ namespace UnturnedGodot
             }
         }
 
+
+        // ---- UG_WALKAB=<dir>: the floating-kerb before/after, BOTH SHOTS FROM ONE PROCESS.
+        // ⚠⚠ WHY NOT TWO LAUNCHES: this harness's roads are NOT reproduced between runs. Measured, because the
+        // numbers made no sense otherwise -- five identical launches reported the same 46 ribbons over 23 roads
+        // and a worst float that climbed 4.24 -> 6.28 m, the worst point marching down one hillside. A ground
+        // checksum came back IDENTICAL (984.7742) while a road checksum MOVED (156764.70 vs 156838.63): the
+        // terrain is deterministic and the centrelines are not. So the "before" and "after" pair I nearly sent
+        // was two pictures of two different worlds at two different cameras, which can neither show a change nor
+        // withhold one it has not got. One process, one road layout, one camera, geometry rebuilt between the
+        // two captures -- that is the only pair of these shots that means anything.
+        string _walkAbDir; int _walkAbFrame; EditorSidewalk _walkAbWalk; RoadField _walkAbRf;
+        void WalkAbTick()
+        {
+            _walkAbFrame++;
+            if (_walkAbFrame == 45 || _walkAbFrame == 75)
+            {
+                var img = GetViewport().GetTexture()?.GetImage();
+                if (img == null) { Log.Err("[walkab] null image -- needs a rendering driver, not --headless"); GetTree().Quit(1); return; }
+                SaveShot(img, $"{_walkAbDir}/kerb_{(_walkAbFrame == 45 ? "after_follows_ground" : "before_fixed_skirt")}.png");
+            }
+            if (_walkAbFrame == 46)
+            {   // flip to the CONTROL and rebuild over the SAME roads. RemoveChild before QueueFree: a queued
+                // free still draws this frame, and the control would be photographed on top of the fix.
+                EditorSidewalk.NoGround = true;
+                if (_walkAbWalk != null && _walkAbRf != null)
+                {
+                    foreach (var c in _walkAbWalk.GetChildren()) { _walkAbWalk.RemoveChild(c); c.QueueFree(); }
+                    int n = 0;
+                    for (int r = 0; r < _walkAbRf.RoadCount; r++) n += _walkAbWalk.LayAlongRoad(_walkAbWalk, _walkAbRf, r, EditorSidewalk.Side.Both);
+                    Log.Print($"[walkab] control rebuilt: {n} ribbon(s) with the FIXED {_walkAbWalk.Skirt:0.00} m skirt");
+                }
+            }
+            if (_walkAbFrame >= 80) GetTree().Quit();
+        }
+
         public void HubProcess(double delta)
         {
             // UG_PERFPROBE=1: frame cost, once a second. The A/B instrument -- master 2026-09-11 asked for
@@ -10450,6 +10532,8 @@ namespace UnturnedGodot
                 }
             }
             if (_bakeHullsFrames >= 0 && ++_bakeHullsFrames > 8) { Log.Print("[bakehulls] done"); GetTree().Quit(); return; }
+            if (_walkAbDir != null) { WalkAbTick(); return; }   // UG_WALKAB: the one-process kerb A/B owns the frame
+
             if (_orbitCam != null && IsInstanceValid(_orbitCam)) { _orbitAngle += (float)delta * 0.7f; _orbitCam.Position = _orbitCenter + new Vector3(Mathf.Cos(_orbitAngle) * _orbitR, _orbitR * 0.42f, Mathf.Sin(_orbitAngle) * _orbitR); _orbitCam.LookAt(_orbitCenter, Vector3.Up); }   // UG_PROPSPIN: 360 turntable orbit for the prop-showcase movie
             if (_zflowMode) { _zflowT += delta; UpdateZflowDots(); if (_zflowT >= 40.0) ZflowReport(); return; }   // zombie phase-2 verify owns the frame
             if (_zhMode) { _zhT += delta; if (_zhT >= 6.0) ZhuntReport(); return; }                               // zombie phase-3 verify owns the frame
