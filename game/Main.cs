@@ -10671,7 +10671,7 @@ namespace UnturnedGodot
                     }
                 Log.Print($"[towngrid] kerb join: worst straight-to-curve step {worstJoin * 100f:0.0} cm over {joins} ends at {joinAt}");
             }
-            Log.Print($"[towngrid] {rf.RoadCount - before} streets added, {patches} junction patches ({town.PaintPieces} painted), {walks} pavement ribbons + {corners} corners, {lights} lights, site {(graded ? "GRADED" : "draped")}");
+            Log.Print($"[towngrid] {rf.RoadCount - before} streets added, {patches} junction patches ({town.PaintPieces} painted, {town.CrossingPieces} crossings), {walks} pavement ribbons + {corners} corners, {lights} lights, site {(graded ? "GRADED" : "draped")}");
             // ⚠ IS THERE ACTUALLY ASPHALT? The first graded render showed the flattened pads and no road
             // surface on them, and from 250 m up "I cannot see it" and "it is not there" look identical.
             // So: does a mesh exist per street, and where is its surface relative to the ground?

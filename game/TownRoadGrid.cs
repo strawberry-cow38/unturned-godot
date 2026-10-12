@@ -318,7 +318,7 @@ namespace UnturnedGodot
                                        roads.RoadHalfWidthOfMaterial(sp.Main ? MainMaterial : StreetMaterial)));
                     }
                     if (SDG.Unturned.InfiniteRoads.TownNode(spokes, node.P.X, -node.P.Z, out var cuts, out var patch, out var marks,
-                                                           stopPastEdge: CornerKerbRadius + SignalBeforeCurve,
+                                                           stopPastEdge: StopPastEdge,
                                                            lines: LineTableFor(roads.RoadHalfWidthOfMaterial(MainMaterial)))
                         && cuts != null && cuts.Length == here.Count)
                     {
@@ -600,6 +600,7 @@ namespace UnturnedGodot
                     }
                 }
             PaintPieces = BuildMarkMeshes(parent, roads, fit);   // counted separately: paint is not pavement
+            CrossingPieces = BuildCrossings(parent, roads);
             Log.Print($"[towngrid] patch/road seam: height {worst * 100f:0.0} cm, IN-PLAN GAP {worstGap * 100f:0.0} cm "
                     + $"over {probed}/{gapProbes} probes (surf {surf:0.000}, lift {PatchLift:0.000}) -- {worstWhy}; widest gap {gapWhy}");
             return made;
@@ -667,6 +668,7 @@ namespace UnturnedGodot
         public float MarkLift = 0.015f;
         /// <summary>Painted pieces laid by the last BuildPatchMeshes -- lane lines carried in, and stop lines.</summary>
         public int PaintPieces;
+        public int CrossingPieces;
 
         /// <summary>A last hair of clearance over the asphalt. ⚠ SMALL ON PURPOSE: this is a SEAM, not an
         /// overlap -- the patch and the road meet edge to edge, so there is nothing to z-fight with and every
@@ -1025,6 +1027,83 @@ namespace UnturnedGodot
         /// stands. Small: the mast belongs at the intersection, not up the street.</summary>
         public float SignalBeforeCurve = 1f;
         float RoadGapForLights = 0.05f;
+
+        /// <summary>Pedestrian crossings on every approach of a junction (strawberry 2026-10-12: "add
+        /// crossings at junctions and intersections, pushing the roads lines back to meet the crossing").
+        ///
+        /// ⚠ THE ORDER OUTWARD FROM A JUNCTION IS: box, CROSSING, stop line, lane lines. A driver stops
+        /// BEHIND the crossing, not on it, so the stop line is pushed out past it rather than the crossing
+        /// being squeezed in behind the line -- which is why StopPastEdge is derived from the crossing's own
+        /// extent below instead of being a number of its own.
+        /// ⚠ ZEBRA STRIPES RUN ALONG THE DIRECTION OF TRAVEL, not across it. Bars across the road is a stop
+        /// line repeated, which is a different marking entirely.</summary>
+        int BuildCrossings(Node3D parent, RoadField roads)
+        {
+            if (!Crossings || roads == null) return 0;
+            var mat = roads.MaterialOfMaterial(MainMaterial);
+            var uvWhite = new Vector2(0.2363f, 0.0664f);
+            int made = 0;
+            for (int j = 0; j < roads.JunctionCount; j++)
+            {
+                var edges = roads.JunctionEdges(j);
+                if (edges.Count < 3) continue;
+                var node = roads.JunctionPos(j);
+                foreach (var (road, atEnd) in edges)
+                {
+                    float L = roads.RoadLength(road);
+                    float arc = atEnd ? Mathf.Max(0f, L - 1f) : Mathf.Min(L, 1f);
+                    if (!roads.EvaluateAlong(road, arc, out var pos, out var tan, snapTerrain: false)) continue;
+                    var fwd = (atEnd ? tan : -tan).Normalized();         // the way a driver arrives
+                    var right = new Vector3(fwd.Z, 0f, -fwd.X).Normalized();
+                    float half = roads.RoadHalfWidth(road);
+                    float y = pos.Y + roads.RoadSurfaceOffset(road) + PatchLift + MarkLift;
+                    float d0 = half + CrossingInset, d1 = d0 + CrossingWidth;
+                    var st = new SurfaceTool();
+                    st.Begin(Mesh.PrimitiveType.Triangles);
+                    void Bar(float latA, float latB)
+                    {
+                        var p00 = node - fwd * d0 + right * latA; var p01 = node - fwd * d0 + right * latB;
+                        var p10 = node - fwd * d1 + right * latA; var p11 = node - fwd * d1 + right * latB;
+                        Vector3 V(Vector3 q) => new Vector3(q.X, y, q.Z);
+                        void Tri(Vector3 a, Vector3 b, Vector3 c)
+                        {
+                            bool keep = (c - a).Cross(b - a).Y >= 0f;
+                            st.SetNormal(Vector3.Up); st.SetUV(uvWhite); st.AddVertex(a);
+                            st.SetNormal(Vector3.Up); st.SetUV(uvWhite); st.AddVertex(keep ? b : c);
+                            st.SetNormal(Vector3.Up); st.SetUV(uvWhite); st.AddVertex(keep ? c : b);
+                        }
+                        Tri(V(p00), V(p01), V(p11)); Tri(V(p00), V(p11), V(p10));
+                    }
+                    if (Zebra)
+                    {
+                        float pitch = CrossingBar + CrossingGap;
+                        int n = Mathf.Max(1, Mathf.FloorToInt((2f * half - CrossingGap) / pitch));
+                        float span = n * pitch - CrossingGap, start = -span * 0.5f;
+                        for (int k = 0; k < n; k++) { float a = start + k * pitch; Bar(a, a + CrossingBar); }
+                    }
+                    else
+                    {   // the quieter option: just the two outlines of the walkway
+                        Bar(-half + 0.2f, -half + 0.2f + CrossingBar);
+                        Bar(half - 0.2f - CrossingBar, half - 0.2f);
+                    }
+                    var mesh = st.Commit();
+                    if (mesh == null || mesh.GetSurfaceCount() == 0) continue;
+                    var mi = new MeshInstance3D { Name = $"Crossing_{j}_{made}", Mesh = mesh };
+                    if (mat != null) mi.MaterialOverride = mat;
+                    parent.AddChild(mi);
+                    made++;
+                }
+            }
+            return made;
+        }
+        public bool Crossings = true;
+        /// <summary>Zebra bars, or just the two outlines of the walkway.</summary>
+        public bool Zebra = true;
+        /// <summary>How far the crossing sits outside the carriageway's own edge, and how deep it is.</summary>
+        public float CrossingInset = 1.2f, CrossingWidth = 3f;
+        public float CrossingBar = 0.5f, CrossingGap = 0.5f;
+        /// <summary>The stop line goes OUTSIDE the crossing: a driver stops behind it, not on it.</summary>
+        public float StopPastEdge => CrossingInset + CrossingWidth + 1.2f;
 
         /// <summary>Where this road's markings actually are, DECODED FROM road_0.png rather than taken from a
         /// class table (strawberry 2026-10-12: "some of the lines are scaled/aligned wrong?").
