@@ -1101,10 +1101,12 @@ namespace UnturnedSim.Tests
         {
             const float DoorClear = 1.2f, LaneClear = 4f, Tall = 1.9f, Sill = 0.5f;
             var bad = new List<string>();
-            int pieces = 0, rooms = 0, walkedRooms = 0, beds = 0, desks = 0, couches = 0, tvs = 0, chairs = 0, kitchensFull = 0, wallPieces = 0;
+            int pieces = 0, rooms = 0, walkedRooms = 0, beds = 0, desks = 0, couches = 0, tvs = 0, chairs = 0, kitchensFull = 0, wallPieces = 0, swung = 0;
+            int wallSets = 0, crts = 0, lKitchens = 0, islands = 0, freeFridges = 0, gondolas = 0, movable = 0, turned = 0, shopsWithShelves = 0, shopsWithRows = 0;
             var missing = new Dictionary<string, int>(); var kinds = new Dictionary<RoomKind, int>();
+            // (a plain counter is worktop, reached along its run: the one in an L's corner is a blind corner)
             bool Use(string n) => !(n.StartsWith("Chair") || n.StartsWith("Lamp") || n.StartsWith("Barrel") || n.StartsWith("Crate") || n.StartsWith("Cardboard")
-                                    || n.StartsWith("Propane") || n.StartsWith("Pallet") || n.StartsWith("Coat"));
+                                    || n.StartsWith("Propane") || n.StartsWith("Pallet") || n.StartsWith("Coat") || n == "Counter_0");
             foreach (var (spec, res) in All())
             {
                 for (int f = 0; f < res.Floors; f++)
@@ -1149,7 +1151,7 @@ namespace UnturnedSim.Tests
                         }
                     }
                     var here = res.Furniture.Where(m => m.Floor == f).ToList();
-                    var floorPieces = here.Where(m => m.On == null).ToList();
+                    var floorPieces = here.Where(m => m.On == null && !m.Mounted).ToList();
                     // the floor at 0.1 m: wall, and blocked (wall, stairs, holes, furniture)
                     const float G = 0.1f, O = -1f;
                     int gnx = (int)((res.CellsX * Cell + 2f) / G) + 1, gnz = (int)((res.CellsZ * Cell + 2f) / G) + 1;
@@ -1162,7 +1164,9 @@ namespace UnturnedSim.Tests
                     foreach (var w in walls) { Mark(Box(w), isWall); Mark(Box(w), blocked); }
                     foreach (var st in stairs) Mark(st, blocked);
                     foreach (var m in floorPieces) Mark(m.Footprint, blocked);
-                    bool WallAt(float x, float z) { int i = (int)((x - O) / G), j = (int)((z - O) / G); return i >= 0 && j >= 0 && i < gnx && j < gnz && isWall[i, j]; }
+                    // exactly, against the boxes: a grid cell whose centre sits on a wall's face is neither in nor out
+                    var wallBoxes = walls.Select(Box).ToList();
+                    bool WallAt(float x, float z) => wallBoxes.Any(b => x >= b.Item1 && x <= b.Item3 && z >= b.Item2 && z <= b.Item4);
                     foreach (var m in here)
                     {
                         pieces++;
@@ -1175,7 +1179,31 @@ namespace UnturnedSim.Tests
                             if (MathF.Abs(m.Y - (m.On.Y + FurnitureCatalog.Sizes[m.On.Name].H)) > 0.01f) bad.Add($"{nm} floats or sinks on its {m.On.Name}");
                             continue;
                         }
+                        if (m.Mounted)
+                        {
+                            // hung at a sensible height, on a wall with no window or door behind it at that height
+                            if (m.Y < f * Storey + 1.8f || m.Y > f * Storey + 2.6f) bad.Add($"{nm} hangs at {m.Y - f * Storey:0.00} m");
+                            var (bx, bz) = m.Front;
+                            var behind = walls.Where(w => { var b = Box(w); var c = (X: m.X - bx * 0.3f, Z: m.Z - bz * 0.3f); return c.X > b.Item1 - 0.05f && c.X < b.Item3 + 0.05f && c.Z > b.Item2 - 0.05f && c.Z < b.Item4 + 0.05f; }).ToList();
+                            if (behind.Count == 0) bad.Add($"{nm} hangs on no wall");
+                            foreach (var w in behind)
+                                foreach (var o in w.Openings)
+                                {
+                                    // along the wall, the opening's stretch against the set's
+                                    var d = Dir(w);
+                                    float s0 = (fp.X0 - w.X) * d.X + (fp.Z0 - w.Z) * d.Z, s1 = (fp.X1 - w.X) * d.X + (fp.Z1 - w.Z) * d.Z;
+                                    bool across = MathF.Min(o.U1, MathF.Max(s0, s1)) - MathF.Max(o.U, MathF.Min(s0, s1)) > 0.05f;
+                                    bool up = w.Y + o.V < m.Y + 1f && w.Y + o.V + o.Height > m.Y - 1f;
+                                    if (across && up) bad.Add($"{nm} hangs over an opening ({o.Archetype})");
+                                }
+                            continue;
+                        }
                         if (MathF.Abs(m.Y - f * Storey) > 0.01f) bad.Add($"{nm} is not on its floor (y {m.Y:0.00})");
+                        // square to the walls, but for what gets moved in use, and that only a little
+                        float off = MathF.Abs(((m.Yaw % 90f) + 90f + 45f) % 90f - 45f);
+                        float allowed = m.Name.StartsWith("Chair") ? 10f : m.Name.StartsWith("Table") ? 5f : m.Name.StartsWith("Couch") ? 3f : 0.01f;
+                        if (off > allowed) bad.Add($"{nm} stands {off:0.0} degrees off square");
+                        if (allowed > 0.01f) { movable++; if (off > 0.2f) turned++; }
                         var inner = Grown(fp, -0.02f);
                         if (!new[] { (inner.Item1, inner.Item2), (inner.Item3, inner.Item2), (inner.Item1, inner.Item4), (inner.Item3, inner.Item4) }.All(p => m.Room.Holds(p.Item1, p.Item2)))
                             bad.Add($"{nm} is not wholly in its room");
@@ -1185,6 +1213,19 @@ namespace UnturnedSim.Tests
                         if (doorZones.Any(z => Overlap(fp, z))) bad.Add($"{nm} stands in a doorway");
                         if (FurnitureCatalog.Sizes[m.Name].H > Tall && windows.Any(z => Overlap(fp, z))) bad.Add($"{nm} stands in front of a window");
                         foreach (var o in floorPieces) if (o != m && Overlap(fp, o.Footprint)) { bad.Add($"{nm} overlaps {o}"); break; }
+                        // doors and drawers open into clear floor: no wall, stairs or other piece in front of it
+                        float swing = m.Name.StartsWith("Wardrobe") ? 0.9f : m.Name.StartsWith("Fridge") ? 0.8f
+                                    : new[] { "Oven", "Disher", "Washer", "Dryer", "Files", "Cooler", "Ice_Box" }.Any(m.Name.StartsWith) ? 0.7f : 0f;
+                        if (swing > 0f)
+                        {
+                            swung++;
+                            var sz = FurnitureCatalog.Sizes[m.Name]; var (fx, fz) = m.Front; var (rx, rz) = m.Right;
+                            var p0 = (X: m.X + rx * (sz.X0 + 0.05f) + fx * (sz.Y1 + 0.05f), Z: m.Z + rz * (sz.X0 + 0.05f) + fz * (sz.Y1 + 0.05f));
+                            var p1 = (X: m.X + rx * (sz.X1 - 0.05f) + fx * (sz.Y1 + swing), Z: m.Z + rz * (sz.X1 - 0.05f) + fz * (sz.Y1 + swing));
+                            var zone = (MathF.Min(p0.X, p1.X), MathF.Min(p0.Z, p1.Z), MathF.Max(p0.X, p1.X), MathF.Max(p0.Z, p1.Z));
+                            if (walls.Any(w => Overlap(zone, Box(w))) || stairs.Any(st => Overlap(zone, st)) || floorPieces.Any(o => o != m && Overlap(zone, o.Footprint)))
+                                bad.Add($"{nm}: its doors cannot open");
+                        }
                     }
                     // the walk: per room, doors, stair ends and the fronts of what you use, joined by clear floor
                     foreach (var room in res.Layout.Where(g => g.Floor == f))
@@ -1289,10 +1330,14 @@ namespace UnturnedSim.Tests
                             var (fx, fz) = m.Front; var (rx, rz) = m.Right; var s = FurnitureCatalog.Sizes[m.Name]; var fp = m.Footprint;
                             string nm = $"{Name(spec)}: {m}";
                             // what stands at a wall stands with its back to one, not half off its end
-                            if (new[] { "Wardrobe", "Shelf_2", "Fridge", "Counter", "Oven", "Disher", "Files", "Cooler", "Ice_Box", "Television" }.Any(m.Name.StartsWith))
+                            if (new[] { "Wardrobe", "Shelf_2", "Fridge", "Counter", "Oven", "Disher", "Files", "Cooler", "Ice_Box" }.Any(m.Name.StartsWith))
                             {
                                 wallPieces++;
-                                if (!WallBehind(fp, -fx, -fz)) bad.Add($"{nm}: its back is not to a wall");
+                                // (or back to back with another counter: an island)
+                                bool island = m.Name.StartsWith("Counter") && mine.Any(o => o != m && o.Name.StartsWith("Counter") && (o.Front.X * fx + o.Front.Z * fz) < -0.9f
+                                                                                     && MathF.Abs((o.X - m.X) * fx + (o.Z - m.Z) * fz + 1.0f) < 0.1f && MathF.Abs((o.X - m.X) * rx + (o.Z - m.Z) * rz) < 0.1f);
+                                if (island) islands++;
+                                else if (!WallBehind(fp, -fx, -fz)) bad.Add($"{nm}: its back is not to a wall");
                             }
                             if (m.Name.StartsWith("Bed"))
                             {
@@ -1311,12 +1356,22 @@ namespace UnturnedSim.Tests
                             {
                                 couches++;
                                 if (!WallBehind(fp, -fx, -fz)) bad.Add($"{nm}: its back is not to a wall");
-                                foreach (var tv in mine.Where(t => t.Name.StartsWith("Television")))
+                                // a set it can watch: facing it, near enough for its kind, nothing tall between
+                                bool Watch(FurniturePlan tv)
                                 {
-                                    tvs++;
                                     var (tx, tz) = tv.Front; float vx = m.X - tv.X, vz = m.Z - tv.Z, d = MathF.Sqrt(vx * vx + vz * vz);
-                                    if ((vx * tx + vz * tz) / d < 0.7f) bad.Add($"{nm}: its television does not face it");
+                                    float reach = tv.Name == "Television_0" ? 8.5f : 5f;
+                                    if ((vx * tx + vz * tz) / d < 0.7f || d > reach || d < 1.8f) return false;
+                                    for (float t = 0.6f; t < d - 0.6f; t += 0.2f)
+                                    {
+                                        float x = tv.X + vx * t / d, z = tv.Z + vz * t / d;
+                                        if (WallAt(x, z)) return false;
+                                        if (mine.Any(o => o != m && o != tv.On && FurnitureCatalog.Sizes[o.Name].H > 1.4f && x > o.Footprint.X0 && x < o.Footprint.X1 && z > o.Footprint.Z0 && z < o.Footprint.Z1)) return false;
+                                    }
+                                    return true;
                                 }
+                                var set = here.Where(t => t.Room == room && t.Name.StartsWith("Television")).FirstOrDefault(Watch);
+                                if (set != null) { tvs++; if (set.Mounted) wallSets++; else crts++; }
                             }
                             if (m.Name.StartsWith("Chair"))
                             {
@@ -1337,6 +1392,24 @@ namespace UnturnedSim.Tests
                             }
                         }
                         var fr = mine.FirstOrDefault(m => m.Name.StartsWith("Fridge")); var sk = mine.FirstOrDefault(m => m.Name == "Counter_1"); var ov = mine.FirstOrDefault(m => m.Name.StartsWith("Oven"));
+                        if (room.Kind == RoomKind.Kitchen && sk != null && ov != null && MathF.Abs(((sk.Yaw - ov.Yaw) % 180f + 180f) % 180f - 90f) < 10f) lKitchens++;
+                        if (room.Kind == RoomKind.Kitchen && fr != null && !mine.Any(o => o != fr && (o.Name.StartsWith("Counter") || o.Name.StartsWith("Disher") || o.Name.StartsWith("Oven")) && Overlap(Grown(fr.Footprint, 0.15f), o.Footprint, 0f))) freeFridges++;
+                        if (room.Kind == RoomKind.Kitchen && fr != null && ov != null && Overlap(Grown(fr.Footprint, 0.3f), ov.Footprint)) bad.Add($"{Name(spec)}: {room}'s fridge stands beside its stove");
+                        if (room.Kind == RoomKind.Shop)
+                        {
+                            var gs = mine.Where(o => o.Name == "Shelf_1").ToList();
+                            // all one way, and where there are rows, each in a column with one in another row
+                            bool alongX(FurniturePlan g) => MathF.Abs(MathF.Sin(g.Yaw * MathF.PI / 180f)) < 0.5f;
+                            int rowsHere = gs.Select(g => MathF.Round(alongX(g) ? g.Z : g.X, 1)).Distinct().Count();
+                            if (gs.Count > 0) { shopsWithShelves++; if (rowsHere > 1) shopsWithRows++; }
+                            foreach (var g in gs)
+                            {
+                                gondolas++;
+                                if (gs.Any(o => alongX(o) != alongX(g))) bad.Add($"{Name(spec)}: {g} is turned across the others");
+                                bool lined = gs.Any(o => o != g && MathF.Abs((alongX(g) ? o.Z - g.Z : o.X - g.X)) > 0.5f && MathF.Abs(alongX(g) ? o.X - g.X : o.Z - g.Z) < 0.05f);
+                                if (rowsHere > 1 && !lined) bad.Add($"{Name(spec)}: {g} lines up with nothing in the next row");
+                            }
+                        }
                         if (room.Kind == RoomKind.Kitchen && sk != null && ov != null)
                         {
                             var a = Grown(sk.Footprint, 0.3f);
@@ -1345,16 +1418,17 @@ namespace UnturnedSim.Tests
                             {
                                 float D(FurniturePlan p, FurniturePlan o) => MathF.Sqrt((p.X - o.X) * (p.X - o.X) + (p.Z - o.Z) * (p.Z - o.Z));
                                 float l1 = D(fr, sk), l2 = D(sk, ov), l3 = D(ov, fr);
-                                if (MathF.Min(l1, MathF.Min(l2, l3)) < 1.2f || l1 + l2 + l3 > 10f) bad.Add($"{Name(spec)}: {room}'s fridge, sink and stove are {l1:0.0}, {l2:0.0} and {l3:0.0} m apart");
+                                // (the real 26 ft, 7.9 m, for furniture about twice real size: 13.5 m)
+                                if (MathF.Min(l1, MathF.Min(l2, l3)) < 1.2f || l1 + l2 + l3 > 13.5f) bad.Add($"{Name(spec)}: {room}'s fridge, sink and stove are {l1:0.0}, {l2:0.0} and {l3:0.0} m apart");
                             }
                         }
                     }
                 }
             }
             int Of(RoomKind k) => kinds.GetValueOrDefault(k);
-            TestContext.Progress.WriteLine($"[furn] {pieces} pieces in {walkedRooms} of {rooms} rooms; {beds} beds, {desks} desk chairs, {couches} couches ({tvs} with a television), {chairs} chairs, {wallPieces} pieces backed to a wall, {kitchensFull} of {Of(RoomKind.Kitchen)} kitchens with fridge, sink and stove; missing: {(missing.Count == 0 ? "nothing" : string.Join(", ", missing.OrderByDescending(kv => kv.Value).Select(kv => $"{kv.Value} {kv.Key}")))}; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
+            TestContext.Progress.WriteLine($"[furn] {pieces} pieces in {walkedRooms} of {rooms} rooms; {beds} beds, {desks} desk chairs, {couches} couches ({tvs} with a television they can watch: {wallSets} on the wall, {crts} on a table), {chairs} chairs, {wallPieces} pieces backed to a wall ({islands} island counters), {swung} doors and drawers with room to open, kitchens {lKitchens} L, {freeFridges} with the fridge on its own; {gondolas} gondolas ({shopsWithRows} of {shopsWithShelves} shops in aligned rows), {turned} of {movable} tables, chairs and couches a little off square, {kitchensFull} of {Of(RoomKind.Kitchen)} kitchens with fridge, sink and stove; missing: {(missing.Count == 0 ? "nothing" : string.Join(", ", missing.OrderByDescending(kv => kv.Value).Select(kv => $"{kv.Value} {kv.Key}")))}; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
             foreach (var g in bad.GroupBy(b => System.Text.RegularExpressions.Regex.Replace(b.Substring(b.IndexOf(':') + 1), @"[\d.,()-]+", "#")).OrderByDescending(g => g.Count()).Take(12))
-                TestContext.Progress.WriteLine($"[furn]   {g.Count()} x {g.Key.Trim()}");
+                TestContext.Progress.WriteLine($"[furn]   {g.Count()} x {g.Key.Trim()} -- e.g. {g.First()}");
             Assert.That(pieces, Is.GreaterThan(3000));
             Assert.That(wallPieces, Is.GreaterThan(3000));
             // a room without what makes it one is a room the furnisher gave up on: a few that are too small for it, no more
@@ -1363,8 +1437,15 @@ namespace UnturnedSim.Tests
                 var kind = Enum.Parse<RoomKind>(what.Split(' ')[0]);
                 Assert.That(n, Is.LessThanOrEqualTo(Math.Max(2, Of(kind) / 100)), $"{n} of {Of(kind)} {what.Split(' ')[0]}s without {what.Substring(what.IndexOf(' ') + 1)}");
             }
-            // and the couch has its television across the room in most living rooms (a long room's far wall is too far)
-            Assert.That(tvs, Is.GreaterThanOrEqualTo(couches / 2), "few couches have a television facing them");
+            // every couch has a set it can watch, of either kind; and the kitchens vary
+            Assert.That(tvs, Is.GreaterThanOrEqualTo(couches - Math.Max(1, couches / 100)), "couches with no television they can watch");
+            Assert.That(wallSets, Is.GreaterThan(couches / 5)); Assert.That(crts, Is.GreaterThan(couches / 5));
+            int kitchens = Of(RoomKind.Kitchen);
+            Assert.That(lKitchens, Is.GreaterThan(kitchens / 5), "kitchens are all one run");
+            Assert.That(freeFridges, Is.GreaterThan(kitchens / 10), "the fridge never stands on its own");
+            Assert.That(islands, Is.GreaterThan(10), "no kitchen has an island");
+            Assert.That(turned, Is.GreaterThan(movable / 5), "what gets moved in use all stands square");
+            Assert.That(shopsWithRows, Is.GreaterThanOrEqualTo(shopsWithShelves / 2), "shops' gondolas rarely stand in aligned rows");
             Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(10)));
         }
 

@@ -57,6 +57,9 @@ namespace UnturnedGodot
         }
         public Color TrimTint => WallMaterials.At(MaterialId).Reveal;
         public bool ShowTrim = true;
+        /// <summary>Frames line the openings of walls; a hole in a floor or a roof (a flight's stairwell) is just a hole
+        /// (strawberry: "remove the floor hole's border for the stairs").</summary>
+        bool Framed => ShowTrim && Kind != SurfaceKind.Floor && Kind != SurfaceKind.Roof;
 
         /// <summary>How far this wall's top rises to a central peak, for a gable end. 0 = a flat top.
         ///
@@ -180,7 +183,7 @@ namespace UnturnedGodot
             }
             else _backMesh.Mesh = null;
 
-            if (ShowTrim && Openings.Count > 0)
+            if (Framed && Openings.Count > 0)
             {
                 var tt = new SurfaceTool();
                 tt.Begin(Mesh.PrimitiveType.Triangles);
@@ -625,7 +628,7 @@ namespace UnturnedGodot
         void RebuildTrimCollision()
         {
             var boxes = new List<(Vector3 Min, Vector3 Max)>();
-            if (ShowTrim)
+            if (Framed)
                 foreach (var o in Openings)
                 {
                     float t = Thickness * 0.5f + TrimProud, w = TrimProfile;
