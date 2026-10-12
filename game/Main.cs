@@ -10596,10 +10596,51 @@ namespace UnturnedGodot
             var rep = town.Generate(rf, HeightAt);
             Log.Print($"[towngrid] site ({site.X:0},{site.Y:0.0},{site.Z:0}) relief {flattest:0.0} m ACROSS THE FOOTPRINT -- {rep}");
             bool graded = town.GradeTerrain(terrain, rf);     // ⚠ BEFORE the pavement: its skirt is cut to the ground it finds
+            // ⚠ MEASURE THE WIGGLE. These streets are straight BY CONSTRUCTION (one offset per grid line), so
+            // any lateral deviation from the chord between a road's two ends is spline wobble and nothing
+            // else -- a number, where "seems to wiggle" is an impression. UG_TOWNNORESPACE=1 is the control.
+            {
+                float worstBow = 0f; int bowRoads = 0;
+                foreach (int r in town.Built)
+                {
+                    float L = rf.RoadLength(r);
+                    if (L < 8f) continue;
+                    if (!rf.EvaluateAlong(r, 0f, out var p0, out _, snapTerrain: false)) continue;
+                    if (!rf.EvaluateAlong(r, L, out var p1, out _, snapTerrain: false)) continue;
+                    var ax = new Vector2(p1.X - p0.X, p1.Z - p0.Z); float al = ax.Length();
+                    if (al < 1f) continue;
+                    ax /= al; bowRoads++;
+                    for (int k = 1; k < 24; k++)
+                    {
+                        if (!rf.EvaluateAlong(r, L * k / 24f, out var q, out _, snapTerrain: false)) continue;
+                        var d = new Vector2(q.X - p0.X, q.Z - p0.Z);
+                        worstBow = Mathf.Max(worstBow, Mathf.Abs(d.X * ax.Y - d.Y * ax.X));
+                    }
+                }
+                Log.Print($"[towngrid] straightness: worst bow off the chord {worstBow * 100f:0.0} cm over {bowRoads} streets"
+                        + " -- these are straight by construction, so any bow is spline wobble");
+            }
             int patches = town.BuildPatchMeshes(editor, rf);   // the asphalt paving each node, now the arms stop short of it
             int walks = town.LaySidewalks(editor, rf);
             var walkProto = new EditorSidewalk(); editor.AddChild(walkProto);
             int corners = town.LaySidewalkCorners(editor, rf, walkProto);
+            // ⚠ MEASURE THE KERB LINE ITSELF. The streets' own bow is 0.0 cm, so "sidewalks seem to wiggle"
+            // is not the road centreline -- it has to be the pavement. A wiggle is a run of KINKS, so report
+            // the sharpest turn between consecutive segments of every corner piece, and where it is.
+            {
+                float worstKink = 0f; var kinkAt = Vector3.Zero; int segs = 0;
+                foreach (var (cnode, cpts) in town.LastCorners)
+                    for (int k = 1; k + 1 < cpts.Count; k++)
+                    {
+                        var u = new Vector2(cpts[k].X - cpts[k - 1].X, cpts[k].Z - cpts[k - 1].Z);
+                        var v = new Vector2(cpts[k + 1].X - cpts[k].X, cpts[k + 1].Z - cpts[k].Z);
+                        if (u.Length() < 0.01f || v.Length() < 0.01f) continue;
+                        float ang = Mathf.RadToDeg(Mathf.Acos(Mathf.Clamp(u.Normalized().Dot(v.Normalized()), -1f, 1f)));
+                        segs++;
+                        if (ang > worstKink) { worstKink = ang; kinkAt = cpts[k]; }
+                    }
+                Log.Print($"[towngrid] kerb line: sharpest kink {worstKink:0.0} deg over {segs} corner segments at {kinkAt}");
+            }
             Log.Print($"[towngrid] {rf.RoadCount - before} streets added, {patches} junction patches, {walks} pavement ribbons + {corners} corners, site {(graded ? "GRADED" : "draped")}");
             // ⚠ IS THERE ACTUALLY ASPHALT? The first graded render showed the flattened pads and no road
             // surface on them, and from 250 m up "I cannot see it" and "it is not there" look identical.
@@ -10625,9 +10666,17 @@ namespace UnturnedGodot
             // UG_TOWNCLOSE=1 drops onto the busiest junction instead. ⚠ At 420 m a 16 m carriageway is 40
             // px and "the asphalt is not drawing" is indistinguishable from "the asphalt is small": the
             // overview could not tell those apart, so there has to be a shot that can.
+            // UG_TOWNCLOSE=1 frames the busiest junction; UG_TOWNCLOSE=3 frames a THREE-way one, because a
+            // tee is a different shape and its through-side pavement cannot be checked on a crossroads.
+            var closeEnv = System.Environment.GetEnvironmentVariable("UG_TOWNCLOSE");
+            int wantArms = closeEnv == "3" ? 3 : 0;
             var busiest = Vector3.Zero; int bestDeg = 0;
-            foreach (var (jp, ends) in rf.Junctions()) if (ends.Count > bestDeg) { bestDeg = ends.Count; busiest = jp; }
-            if (System.Environment.GetEnvironmentVariable("UG_TOWNCLOSE") == "1" && bestDeg > 0)
+            foreach (var (jp, ends) in rf.Junctions())
+            {
+                if (wantArms > 0) { if (ends.Count == wantArms && bestDeg == 0) { bestDeg = ends.Count; busiest = jp; } }
+                else if (ends.Count > bestDeg) { bestDeg = ends.Count; busiest = jp; }
+            }
+            if (!string.IsNullOrEmpty(closeEnv) && closeEnv != "0" && bestDeg > 0)
             {
                 tcam.GlobalPosition = busiest + new Vector3(0f, 26f, 40f);
                 tcam.LookAt(busiest, Vector3.Up);

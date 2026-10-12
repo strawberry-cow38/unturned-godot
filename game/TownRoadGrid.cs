@@ -173,6 +173,12 @@ namespace UnturnedGodot
                 }
                 run = s1;
             }
+            // ⚠ NO RESPACING HERE, AND THAT IS A MEASUREMENT not an omission. The cut leaves a stub
+            // segment, and Catmull-Rom over uneven spacing is a known source of subtle waviness -- so
+            // respacing looked like the explanation for "sidewalks seem to wiggle". It was not: with the
+            // respacing in and out, the streets' worst bow off their own chord measured 0.0 cm either way.
+            // The wiggle was faceting on the CORNER ARCS (11.3 degrees per segment). Code that fixes nothing
+            // measurable does not stay.
             return cut.Count >= 2 ? cut : null;
         }
         static float Flat(Vector3 p, Vector3 q) => new Vector2(q.X - p.X, q.Z - p.Z).Length();
@@ -700,7 +706,49 @@ namespace UnturnedGodot
                     var a = ring[i]; var b = ring[(i + 1) % ring.Count];
                     if (a.road == b.road) continue;                     // that gap is the carriageway
                     float sweep = b.ang - a.ang; while (sweep <= 0f) sweep += Mathf.Tau;
-                    if (sweep > Mathf.Pi * 0.95f) continue;             // not a corner: the long way round
+                    if (sweep > Mathf.Pi * 1.05f) continue;             // the long way round: not a mouth at all
+                    // ⚠ A TEE'S FAR SIDE IS NOT A CORNER, AND SKIPPING IT LEFT A HOLE (strawberry: "add the
+                    // straight sidewalks to the 3 way junctions"). Where two arms run THROUGH a node -- the
+                    // side of a tee opposite its stem, or a street simply bending -- their kerbs are parallel
+                    // and there is nothing to round: the pavement carries straight across the mouth. The old
+                    // rule threw that pair away for being too straight to fillet, which is exactly backwards.
+                    // ⚠ THE TEST IS "ARE THE KERBS PARALLEL", NOT "IS THE ANGLE BIG". The first cut used the
+                    // sweep around the node and missed every tee: the two far-side pavement ends of a
+                    // straight-through street subtend only ~126 degrees there, because each sits a half
+                    // width off the centreline well out along its arm. Two collinear arms have ANTI-PARALLEL
+                    // tangents, which is exactly the case KerbCorner already reports as "no corner".
+                    bool parallelKerbs = !KerbCorner(a.p, a.tan, b.p, b.tan, out _);
+                    if (parallelKerbs)
+                    {
+                        var dir = new Vector3(b.p.X - a.p.X, 0f, b.p.Z - a.p.Z);
+                        float run2 = dir.Length();
+                        if (run2 < 0.5f) continue;
+                        dir /= run2;
+                        var nrm = new Vector3(-dir.Z, 0f, dir.X);
+                        // outward = away from the junction, the side the pavement is on
+                        if (nrm.Dot(new Vector3(a.p.X - node.X, 0f, a.p.Z - node.Z)) < 0f) nrm = -nrm;
+                        int sn = Mathf.Max(1, Mathf.CeilToInt(run2 / 1.5f));
+                        var sp2 = new List<Vector3>(sn + 1); var so = new List<Vector3>(sn + 1);
+                        for (int k = 0; k <= sn; k++)
+                        {
+                            float f = (float)k / sn;
+                            sp2.Add(new Vector3(Mathf.Lerp(a.p.X, b.p.X, f), Mathf.Lerp(a.p.Y, b.p.Y, f), Mathf.Lerp(a.p.Z, b.p.Z, f)));
+                            so.Add(nrm);
+                        }
+                        var smi = EditorSidewalk.BuildRibbon(sp2, so, walk.Width, walk.KerbHeight, walk.Skirt,
+                                                             $"Sidewalk_Through_{j}_{i}",
+                                                             Terrain.Active != null && !EditorSidewalk.NoGround
+                                                                 ? (x, z) => Terrain.Active.SampleHeight(x, z) : null);
+                        if (smi == null) continue;
+                        LastCorners.Add((node, sp2));
+                        parent.AddChild(smi);
+                        var sbody = new StaticBody3D { Name = smi.Name + "_body", CollisionLayer = 1u << 0 };
+                        sbody.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Concrete);
+                        sbody.AddChild(new CollisionShape3D { Shape = smi.Mesh.CreateTrimeshShape() });
+                        smi.AddChild(sbody);
+                        made++;
+                        continue;
+                    }
                     // ⚠⚠ A CORNER IS A TANGENT FILLET OF FIXED RADIUS, not an arc through the two pavement
                     // ends (master: "your corners go the opposite way, they go outside, should go inside").
                     // Two wrong versions got here first, and each looked like a plausible reading of it:
@@ -744,7 +792,13 @@ namespace UnturnedGodot
                     Push(a.p, yA, Perp(dA, a.p)); Push(T1, yA, Perp(dA, T1));
                     float s0 = Mathf.Atan2(T1.Z - C.Z, T1.X - C.X), s1 = Mathf.Atan2(T2.Z - C.Z, T2.X - C.X);
                     float sweepArc = Mathf.Wrap(s1 - s0, -Mathf.Pi, Mathf.Pi);
-                    int steps = Mathf.Max(2, Mathf.CeilToInt(Mathf.Abs(sweepArc) * rad / 1.2f));
+                    // ⚠⚠ TESSELLATE BY ANGLE, NOT BY CHORD LENGTH. A fixed 1.2 m chord on a 6 m radius is
+                    // 11.3 degrees per facet -- measured -- and BuildRibbon shades per face, so each facet
+                    // reads as a jog and the run of them reads as a WIGGLE (strawberry: "sidewalks seem to
+                    // wiggle before connecting to the curved ones"). It is not the road: the streets' own
+                    // bow measures 0.0 cm. Capping the turn per segment keeps a tight corner smooth and
+                    // stops a wide one from being tessellated for nothing.
+                    int steps = Mathf.Max(4, Mathf.CeilToInt(Mathf.Abs(sweepArc) / Mathf.DegToRad(ArcFacetDegrees)));
                     for (int k = 1; k < steps; k++)
                     {
                         float ang = s0 + sweepArc * k / steps;
@@ -773,7 +827,7 @@ namespace UnturnedGodot
         public float PatchOverlap = 0.35f;
 
         /// <summary>Drop the kerb where each pavement meets a junction -- the crossing points.</summary>
-        public bool CrossingDips = true;
+        public bool CrossingDips = System.Environment.GetEnvironmentVariable("UG_TOWNNODIPS") != "1";
         public float CrossingDipLength = 3f;
 
         /// <summary>Where two kerb lines would cross: the sharp corner of the block, which is the centre the
@@ -797,6 +851,10 @@ namespace UnturnedGodot
             shapes = new List<(Vector3, List<Vector3>)>(LastCorners);
             return n;
         }
+
+        /// <summary>The most a kerb's corner may turn between two of its segments. 4 degrees is about 22
+        /// facets in a right-angle turn, which stops reading as flats.</summary>
+        public float ArcFacetDegrees = 4f;
 
         /// <summary>The radius a kerb turns through at a corner. 6 m is an ordinary urban one.</summary>
         public float CornerKerbRadius = 6f;
