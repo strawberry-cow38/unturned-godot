@@ -714,55 +714,36 @@ namespace UnturnedGodot
                                 c = new Vector2(q.X - np.X, q.Z - np.Z).Length() <= roads.RoadHalfWidth(nr) + 0.05f;
                             cov[ai, ri] = c;
                         }
+                    // ⚠⚠ A BARE RUN WITH PAVING ON BOTH SIDES, not a bare point with covered neighbours.
+                    // The neighbour test could only ever see a gap ONE probe wide (0.5 m); a 2 m crescent
+                    // between a patch edge and a road's flank has bare neighbours of its own and was
+                    // reported as open grass. That is why this said "no holes" while master kept seeing
+                    // them, three fixes running.
                     for (int ai = 0; ai < A; ai++)
-                        for (int ri = 1; ri < R; ri++)
-                        {
-                            tested++;
-                            if (cov[ai, ri]) continue;
-                            int n = 0;
-                            if (cov[ai, ri - 1]) n++;
-                            if (cov[ai, ri + 1]) n++;
-                            if (cov[(ai + 1) % A, ri]) n++;
-                            if (cov[(ai + A - 1) % A, ri]) n++;
-                            if (n < 3) continue;                       // open grass, not an enclosed hole
-                            holes++;
-                            float rad = ri * dr;
-                            if (rad > worstR) { worstR = rad; worstHole = new Vector3(jp.X + Mathf.Cos(Mathf.Tau * ai / A) * rad, jp.Y, jp.Z + Mathf.Sin(Mathf.Tau * ai / A) * rad); }
-                        }
-                }
-                // ⚠⚠ AND IS THE GROUND POKING THROUGH? Coverage is a PLAN test and says nothing about height.
-                // Four guesses at the dark wedges round every mouth -- shadows, patch normals, the patch's
-                // missing edge bevel, the pavements' open ends -- all missed, and each cost a render. The
-                // question none of them asked: where the junction IS paved, is the terrain under it actually
-                // below the paving?
-                float worstPoke = -99f; var pokeAt = Vector3.Zero;
-                var terrNow = Terrain.Active;
-                if (terrNow != null)
-                    for (int j2 = 0; j2 < roads.JunctionCount; j2++)
                     {
-                        var e2 = roads.JunctionEdges(j2);
-                        if (e2.Count < 2) continue;
-                        var jp2 = roads.JunctionPos(j2);
-                        for (float a2 = 0; a2 < Mathf.Tau; a2 += Mathf.Tau / 72f)
-                            for (float rad2 = 1f; rad2 <= 24f; rad2 += 0.5f)
+                        int ri = 1;
+                        while (ri < R)
+                        {
+                            if (cov[ai, ri]) { ri++; continue; }
+                            int start = ri;
+                            while (ri < R && !cov[ai, ri]) ri++;
+                            tested++;
+                            // paved before the run and paved after it: that is a hole, whatever its width
+                            if (start - 1 < 0 || !cov[ai, start - 1] || ri >= R || !cov[ai, ri]) continue;
+                            holes++;
+                            float width = (ri - start) * dr;
+                            if (width > worstR)
                             {
-                                var q2 = new Vector3(jp2.X + Mathf.Cos(a2) * rad2, 0f, jp2.Z + Mathf.Sin(a2) * rad2);
-                                float paved = float.NaN;
-                                foreach (var pp in Patches)
-                                    if (pp.DistanceTo(q2.X, -q2.Z) <= 0.01)
-                                    { float hh = pp.HeightAt(q2.X, -q2.Z); if (!float.IsNaN(hh)) paved = hh + (fit.TryGetValue(pp, out float pf2) ? pf2 : surf); break; }
-                                if (float.IsNaN(paved) && roads.NearestPointOnSpline(q2, 80f, out int nr2, out _, out _, out var np2)
-                                    && new Vector2(q2.X - np2.X, q2.Z - np2.Z).Length() <= roads.RoadHalfWidth(nr2))
-                                    paved = np2.Y + roads.RoadSurfaceOffset(nr2);
-                                if (float.IsNaN(paved)) continue;
-                                float poke = terrNow.SampleHeight(q2.X, q2.Z) - paved;
-                                if (poke > worstPoke) { worstPoke = poke; pokeAt = new Vector3(q2.X, paved, q2.Z); }
+                                worstR = width;
+                                float rad = (start + (ri - start) * 0.5f) * dr;
+                                worstHole = new Vector3(jp.X + Mathf.Cos(Mathf.Tau * ai / A) * rad, jp.Y,
+                                                        jp.Z + Mathf.Sin(Mathf.Tau * ai / A) * rad);
                             }
+                        }
                     }
-                Log.Print($"[towngrid] junction ground: worst terrain-above-paving {worstPoke * 100f:0.0} cm at {pokeAt}"
-                        + (worstPoke > 0f ? "  <-- GROUND IS POKING THROUGH" : "  (all paving clears its ground)"));
-                Log.Print($"[towngrid] junction coverage: {holes} ENCLOSED bare points of {tested} tested"
-                        + (holes > 0 ? $", furthest at {worstHole} ({worstR:0.0} m from its node)" : " -- no holes"));
+                }
+                Log.Print($"[towngrid] junction coverage: {holes} GAPS (bare runs with paving both sides) of {tested} runs"
+                        + (holes > 0 ? $", widest {worstR:0.0} m at {worstHole}" : " -- none"));
             }
             Log.Print($"[towngrid] patch/road seam: height {worst * 100f:0.0} cm, IN-PLAN GAP {worstGap * 100f:0.0} cm "
                     + $"over {probed}/{gapProbes} probes (surf {surf:0.000}, lift {PatchLift:0.000}) -- {worstWhy}; widest gap {gapWhy}");
