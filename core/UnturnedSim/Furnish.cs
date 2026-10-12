@@ -214,6 +214,9 @@ namespace UnturnedSim
             /// outside wall running on as a partition, 0.1 m thinner -- a piece set flush to the thin part can clip the
             /// thick one between the cell centres.</summary>
             public readonly List<(float X0, float Z0, float X1, float Z1)> WallRects = new();
+            /// <summary>The tiles at the flights' ends, exactly: kept clear on the grid too, but a piece's edge can stand up
+            /// to half a cell into one between the cell centres (a couch 5 cm onto a switchback's foot tile).</summary>
+            public readonly List<(float X0, float Z0, float X1, float Z1)> TileRects = new();
             readonly BuildingGenResult _res;
 
             public FloorPlan(BuildingGenResult res, int f)
@@ -241,13 +244,15 @@ namespace UnturnedSim
                     float mx = s.X + rx * s.Width * 0.5f, mz = s.Z + rz * s.Width * 0.5f;
                     if (s.Floor == f && MathF.Abs(s.Y - f * Storey) < 0.01f)
                     {
-                        Keep(Tile(s.X, s.Z, bx, bz, rx, rz, -1f, s.Width), KeepDoor);
+                        var foot = Tile(s.X, s.Z, bx, bz, rx, rz, -1f, s.Width);
+                        Keep(foot, KeepDoor); TileRects.Add(foot);
                         Targets.Add((mx - bx * 0.5f, mz - bz * 0.5f, null));
                     }
                     if (s.Floor == f - 1 && MathF.Abs(s.Y + Rise(s) - f * Storey) < 0.01f)
                     {
                         float tx = s.X + bx * s.Run, tz = s.Z + bz * s.Run;
-                        Keep(Tile(tx, tz, bx, bz, rx, rz, +1f, s.Width), KeepDoor);
+                        var top = Tile(tx, tz, bx, bz, rx, rz, +1f, s.Width);
+                        Keep(top, KeepDoor); TileRects.Add(top);
                         Targets.Add((mx + bx * (s.Run + M + 0.4f), mz + bz * (s.Run + M + 0.4f), null));
                     }
                 }
@@ -486,7 +491,7 @@ namespace UnturnedSim
                     Recount(before);
                     var after = FurnitureCatalog.Footprint(m.Name, nx, nz, nyaw);
                     bool ok = Clear(m.Name, nx, nz, nyaw) && !HitsPiece(m.Name, nx, nz, nyaw, m) && !_p.StairRects.Any(r => Overlaps(after, r))
-                              && !_p.WallRects.Any(r => Overlaps(after, r)) && !InSwing(after, m);
+                              && !_p.TileRects.Any(r => Overlaps(after, r)) && !_p.WallRects.Any(r => Overlaps(after, r)) && !InSwing(after, m);
                     if (ok)
                     {
                         var (ox, oz, oyaw) = (m.X, m.Z, m.Yaw);
@@ -571,7 +576,7 @@ namespace UnturnedSim
                 var sides = new List<int[]>();
                 foreach (var m in _mine.Where(m => m.On == null && !m.Mounted && Access(m.Name)))
                 {
-                    var c = AccessPoints(m).Select(p => Nearest(p.X, p.Z)).Where(i => i >= 0).ToArray();
+                    var c = AccessPoints(m).Select(p => Nearest(p.X, p.Z, 3)).Where(i => i >= 0).ToArray();
                     if (c.Length == 0) return false;
                     sides.Add(c);
                 }
@@ -598,11 +603,12 @@ namespace UnturnedSim
                 return want.Count == 0 && sides.All(c => c.Any(i => _seen[i] == _stamp));
             }
             int[] _seen, _queue; int _stamp;
-            /// <summary>The clear cell of this room nearest (x, z), within 0.4 m, as an index into the room's box; -1 if none.</summary>
-            int Nearest(float x, float z)
+            /// <summary>The clear cell of this room nearest (x, z), within `reach` cells (0.4 m), as an index into the room's
+            /// box; -1 if none.</summary>
+            int Nearest(float x, float z, int reach = 4)
             {
                 int i0 = _p.I(x) - _i0, j0 = _p.J(z) - _j0;
-                for (int r = 0; r <= 4; r++)
+                for (int r = 0; r <= reach; r++)
                     for (int a = i0 - r; a <= i0 + r; a++)
                         for (int b = j0 - r; b <= j0 + r; b++)
                             if (a >= 0 && b >= 0 && a < _ni && b < _nj && _inRoom[a, b] && _p.State[_i0 + a, _j0 + b] == FloorPlan.Free) return a * _nj + b;
@@ -613,17 +619,20 @@ namespace UnturnedSim
             static bool Access(string name) => !(name.StartsWith("Chair") || name.StartsWith("Lamp") || name.StartsWith("Barrel") || name.StartsWith("Crate")
                                                  || name.StartsWith("Cardboard") || name.StartsWith("Propane") || name.StartsWith("Pallet") || name.StartsWith("Coat")
                                                  || name == "Counter_0");
-            /// <summary>Where you might stand to use a piece: half a metre out from its front, or from either side (a
-            /// workbench or a tub along a wall is used from its long side, a bed got into from one).</summary>
+            /// <summary>Where you might stand to use a piece: 0.4 m out from the middle of its front, or of either side (a
+            /// workbench or a tub along a wall is used from its long side, a bed got into from one) -- with clear floor within
+            /// 0.3 m of it (Connected). Half a metre out within 0.4 m reached cells a test 0.4 m out within 0.3 m does not:
+            /// a rack wedged face to the wall between another rack and the end wall "had" a side through a cell past the
+            /// other rack's corner.</summary>
             public static (float X, float Z)[] AccessPoints(FurniturePlan m)
             {
                 var s = FurnitureCatalog.Sizes[m.Name]; var (fx, fz) = m.Front; var (rx, rz) = m.Right;
                 float mx = (s.X0 + s.X1) * 0.5f, my = (s.Y0 + s.Y1) * 0.5f;
                 return new[]
                 {
-                    (m.X + rx * mx + fx * (s.Y1 + 0.5f), m.Z + rz * mx + fz * (s.Y1 + 0.5f)),
-                    (m.X + rx * (s.X1 + 0.5f) + fx * my, m.Z + rz * (s.X1 + 0.5f) + fz * my),
-                    (m.X + rx * (s.X0 - 0.5f) + fx * my, m.Z + rz * (s.X0 - 0.5f) + fz * my),
+                    (m.X + rx * mx + fx * (s.Y1 + 0.4f), m.Z + rz * mx + fz * (s.Y1 + 0.4f)),
+                    (m.X + rx * (s.X1 + 0.4f) + fx * my, m.Z + rz * (s.X1 + 0.4f) + fz * my),
+                    (m.X + rx * (s.X0 - 0.4f) + fx * my, m.Z + rz * (s.X0 - 0.4f) + fz * my),
                 };
             }
 
@@ -672,7 +681,7 @@ namespace UnturnedSim
                     // its cell centres
                     if (HitsPiece(name, x, z, yaw)) continue;
                     if (InSwing(fp, null)) continue;
-                    if (_p.StairRects.Any(r => Overlaps(fp, r))) continue;
+                    if (_p.StairRects.Any(r => Overlaps(fp, r)) || _p.TileRects.Any(r => Overlaps(fp, r))) continue;
                     if (_p.WallRects.Any(r => Overlaps(fp, r))) continue;
                     var swing = SwingZone(name, x, z, yaw);
                     if (swing != null && (!SwingClear(swing.Value) || _mine.Any(o => o.On == null && !o.Mounted && Overlaps(swing.Value, o.Footprint)))) continue;
