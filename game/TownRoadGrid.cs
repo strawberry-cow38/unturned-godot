@@ -598,7 +598,7 @@ namespace UnturnedGodot
                         gapProbes++;
                     }
                 }
-            PaintPieces = BuildMarkMeshes(parent, fit);   // counted separately: paint is not pavement
+            PaintPieces = BuildMarkMeshes(parent, roads, fit);   // counted separately: paint is not pavement
             Log.Print($"[towngrid] patch/road seam: height {worst * 100f:0.0} cm, IN-PLAN GAP {worstGap * 100f:0.0} cm "
                     + $"over {probed}/{gapProbes} probes (surf {surf:0.000}, lift {PatchLift:0.000}) -- {worstWhy}; widest gap {gapWhy}");
             return made;
@@ -612,16 +612,27 @@ namespace UnturnedGodot
         /// four of them run into one another in the middle of an intersection. tiny's junctions already solve
         /// it the way a road crew does: plain tarmac through the box, with the lines PAINTED on, bent through
         /// the fillets and stopped at a stop line.</summary>
-        int BuildMarkMeshes(Node3D parent, Dictionary<SDG.Unturned.RoadPatch, float> fit)
+        int BuildMarkMeshes(Node3D parent, RoadField roads, Dictionary<SDG.Unturned.RoadPatch, float> fit)
         {
             if (Marks.Count == 0) return 0;
             int made = 0;
+            // ⚠⚠ THE PAINT WEARS THE ROAD'S OWN MATERIAL, with every vertex pinned to ONE TEXEL of the road
+            // texture -- the white dash at (60,8) and the yellow centre line at (124,0), read out of road_0
+            // rather than guessed. Matching the colour by NUMBER does not work and I tried it twice: first
+            // unshaded (full bright, right only at noon), then a lit StandardMaterial3D with the same RGB,
+            // which came out DARKER than the road because the asphalt is drawn through the wet-surface
+            // shader and a stock material is not the same light. The same texel through the same shader
+            // cannot disagree with itself -- in sun, at dusk, or soaked.
+            var paintMat = roads.MaterialOfMaterial(MainMaterial);
+            var uvWhite = new Vector2(0.2363f, 0.0664f);
+            var uvYellow = new Vector2(0.4863f, 0.0039f);
             foreach (var mk in Marks)
             {
                 if (mk == null || mk.X == null || mk.Quads == 0) continue;
                 float shift = mk.On != null && fit.TryGetValue(mk.On, out float f) ? f : 0f;
                 var st = new SurfaceTool();
                 st.Begin(Mesh.PrimitiveType.Triangles);
+                var uv = mk.Colour == 1 ? uvYellow : uvWhite;
                 for (int q = 0; q + 3 < mk.X.Count; q += 4)
                 {
                     var v = new Vector3[4];
@@ -632,27 +643,16 @@ namespace UnturnedGodot
                     void Tri(Vector3 a, Vector3 b, Vector3 c)
                     {
                         bool keep = (c - a).Cross(b - a).Y >= 0f;
-                        st.AddVertex(a); st.AddVertex(keep ? b : c); st.AddVertex(keep ? c : b);
+                        st.SetUV(uv); st.AddVertex(a);
+                        st.SetUV(uv); st.AddVertex(keep ? b : c);
+                        st.SetUV(uv); st.AddVertex(keep ? c : b);
                     }
                     Tri(v[0], v[1], v[3]); Tri(v[0], v[3], v[2]);
                 }
                 var mesh = st.Commit();
                 if (mesh == null || mesh.GetSurfaceCount() == 0) continue;
                 var mi = new MeshInstance3D { Name = $"Junction_Paint_{made}", Mesh = mesh };
-                // ⚠⚠ LIT, NOT UNSHADED, AND THAT WAS THE COLOUR MISMATCH (strawberry: "why is the color of
-                // the stop lines and extended center lines a different color to the ones on the splines?").
-                // The RGB was already the road textures' own -- 200,200,200 and 210,191,34 -- so the paint and
-                // the texture's markings are the same colour and could not look it: the asphalt is drawn LIT,
-                // through the wet-surface shader, and unshaded paint on top of it renders at full brightness
-                // whatever the sun is doing. Same albedo, same lighting, same roughness as the road, and they
-                // match at any time of day instead of only at noon.
-                mi.MaterialOverride = new StandardMaterial3D
-                {
-                    AlbedoColor = mk.Colour == 1 ? new Color(0.824f, 0.749f, 0.133f) : new Color(0.784f, 0.784f, 0.784f),
-                    Roughness = 1f,
-                    SpecularMode = BaseMaterial3D.SpecularModeEnum.Disabled,
-                    CullMode = BaseMaterial3D.CullModeEnum.Disabled,
-                };
+                mi.MaterialOverride = paintMat;
                 parent.AddChild(mi);
                 made++;
             }

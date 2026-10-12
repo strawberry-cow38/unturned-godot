@@ -1329,9 +1329,17 @@ namespace SDG.Unturned
                 if (!double.IsNaN(stopPastEdge))
                     stop = Math.Min(Math.Max(0.0, arm.Hw + stopPastEdge), g.Trim[i] - StopWidth);
                 double from = through ? 0 : stop + StopWidth * 0.5;
+                // ⚠⚠ SCALE THE LINES TO THE ARM'S ACTUAL WIDTH. LinesOf is keyed to the road's CLASS and its
+                // offsets are in metres off that class's ribbon -- but an arm may carry a caller's own half
+                // width (Arm.HwOver), and a town's 9.2 m street is not RoadKind.Main's. Unscaled, the carried
+                // lines land at the wrong lateral offsets and the wrong widths: strawberry, of a town whose
+                // arms are wider than Main, "some of the lines are scaled/aligned wrong?". The ratio is
+                // exactly 1 for InfiniteRoads' own roads, so nothing there moves.
+                double sc = arm.Hw / RibbonHalfOf(arm.E.Kind);
                 if (from < g.Trim[i])
                     foreach (var (lat, width, colour, dashed) in LinesOf(arm.E))
-                        Stripe(colour == 1 ? yellow : white, arm.R, arm.Arc(from), arm.Arc(g.Trim[i]), lat, width, dashed, arm.E.Kind);
+                        Stripe(colour == 1 ? yellow : white, arm.R, arm.Arc(from), arm.Arc(g.Trim[i]),
+                               lat * sc, width * sc, dashed, arm.E.Kind);
                 // ⚠⚠ THE APPROACH IS THE HALF A DRIVER ARRIVES ON, AND WE DRIVE ON THE RIGHT. This was
                 // Side(-1) and the comment above it said "the right" -- the sign was simply the other way
                 // round, so every stop line in the game was painted across the lanes LEAVING the junction
