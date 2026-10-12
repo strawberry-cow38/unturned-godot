@@ -1820,7 +1820,7 @@ namespace UnturnedGodot
                         // own half width stands in the 18 m road it is signalling.
                         float widest = half;
                         foreach (var (rr2, _) in edges) widest = Mathf.Max(widest, roads.RoadHalfWidth(rr2));
-                        float back = widest + CornerKerbRadius + SignalBeforeCurve;
+                        float back = KerbCurveEnd(roads, j, road, atEnd, widest, CornerKerbRadius) + SignalBeforeCurve;
                         // ⚠ ON THE DRIVER'S RIGHT, which is the kerb a mast stands on; its arm then reaches
                         // left over the lanes the drivers approaching here are in.
                         var at = node0 - fwd * back + right * (half + RoadGapForLights + 0.6f);
@@ -1925,7 +1925,7 @@ namespace UnturnedGodot
                     // (and other stuff) should consider both roads' widths when placing".
                     float crossed = half;
                     foreach (var (other, _) in edges) if (other != road) crossed = Mathf.Max(crossed, roads.RoadHalfWidth(other));
-                    float curve = crossed + CornerKerbRadius;
+                    float curve = KerbCurveEnd(roads, j, road, atEnd, crossed, CornerKerbRadius);
                     float d0 = curve + CrossingInset, d1 = d0 + CrossingWidth;
                     float sd0 = d1 + StopGap, sd1 = sd0 + StopLineWidth;
                     var st = new SurfaceTool();
@@ -2240,7 +2240,56 @@ namespace UnturnedGodot
         /// corner it leaves is.</summary>
         public float CornerRadius = 2.5f;
 
-        static float TrimFor(RoadField roads, int road, bool atEnd, float cornerRadius)
+        /// <summary>How far along an arm, measured from its node, the kerb is still TURNING -- at any angle.
+        ///
+        /// ⭐ THE 90-DEGREE RULE WAS HARDCODED FOUR TIMES. Pavement trims, crossings, stop lines and signals
+        /// each placed themselves at `widest + radius` from the node, which is exactly right when the roads
+        /// meet square and badly wrong when they do not. Two kerbs meeting at interior angle θ intersect at
+        /// (h_b + h_a·cos θ) / sin θ along this arm, and a fillet of radius R in that corner touches them a
+        /// further R / tan(θ/2) out. At 90° that is h_b + R -- the old number. At 45° (strawberry 2026-10-12:
+        /// "work on 45° intersections") it is about 25.6 m against the 10.6 m everything assumed, so every
+        /// one of the four would have stood inside the curve.
+        /// ⚠ BIT-IDENTICAL AT A RIGHT ANGLE, ON PURPOSE. Each caller passes the width it always used (hw), and
+        /// at 90° this returns hw + R exactly, so the square town master has already signed off is untouched
+        /// and only the new angles move. The sharpest corner beside the arm decides it, since the sharper
+        /// side is the one whose kerb runs out furthest.</summary>
+        float KerbCurveEnd(RoadField roads, int junction, int road, bool atEnd, float hw, float radius)
+        {
+            float theta = SharpestCorner(roads, junction, road, atEnd);
+            if (Mathf.Abs(theta - Mathf.Pi * 0.5f) < Mathf.DegToRad(0.5f)) return hw + radius;   // the old rule, exactly
+            if (theta > Mathf.DegToRad(150f)) return hw + radius;    // effectively straight through: no sharp side
+            theta = Mathf.Max(theta, Mathf.DegToRad(20f));            // a sliver of an angle is not a corner to fillet
+            float ha = roads.RoadHalfWidth(road);
+            return (hw + ha * Mathf.Cos(theta)) / Mathf.Sin(theta) + radius / Mathf.Tan(theta * 0.5f);
+        }
+
+        /// <summary>The smallest angle between this arm and any other arm at its node, in radians.</summary>
+        static float SharpestCorner(RoadField roads, int junction, int road, bool atEnd)
+        {
+            var me = ArmDir(roads, road, atEnd);
+            if (me == Vector3.Zero) return Mathf.Pi * 0.5f;
+            float best = Mathf.Pi;
+            foreach (var (o, oe) in roads.JunctionEdges(junction))
+            {
+                if (o == road && oe == atEnd) continue;
+                var d = ArmDir(roads, o, oe);
+                if (d != Vector3.Zero) best = Mathf.Min(best, me.AngleTo(d));
+            }
+            return best;
+        }
+
+        /// <summary>An arm's direction leaving its node, flat.</summary>
+        static Vector3 ArmDir(RoadField roads, int road, bool atEnd)
+        {
+            float L = roads.RoadLength(road);
+            if (!roads.EvaluateAlong(road, atEnd ? L : 0f, out _, out var tg, snapTerrain: false)) return Vector3.Zero;
+            var t = new Vector3(tg.X, 0f, tg.Z);
+            if (t.LengthSquared() < 1e-8f) return Vector3.Zero;
+            t = t.Normalized();
+            return atEnd ? -t : t;
+        }
+
+        float TrimFor(RoadField roads, int road, bool atEnd, float cornerRadius)
         {
             int j = roads.RoadEndJunction(road, atEnd);
             if (j < 0) return 0f;                      // a loose end runs to the tip, as it should
@@ -2256,7 +2305,7 @@ namespace UnturnedGodot
                 var jp = roads.JunctionPos(j);
                 have = new Vector2(tip.X - jp.X, tip.Z - jp.Z).Length();
             }
-            return Mathf.Max(0f, widest + cornerRadius - have);
+            return Mathf.Max(0f, KerbCurveEnd(roads, j, road, atEnd, widest, cornerRadius) - have);
         }
     }
 }
