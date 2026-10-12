@@ -251,10 +251,52 @@ namespace UnturnedGodot
                 bool palette = img.GetWidth() <= 16 && img.GetHeight() <= 16;
                 if (!palette) img.GenerateMipmaps();
                 mm.AlbedoTexture = ImageTexture.CreateFromImage(img);
-                mm.TextureFilter = palette ? BaseMaterial3D.TextureFilterEnum.Nearest : BaseMaterial3D.TextureFilterEnum.NearestWithMipmaps;
+                // ⚠⚠ NEAREST IS THE RIGHT DEFAULT AND THE WRONG ONE FOR FOLIAGE. The game's props are
+                // flat-shaded palette work and want crisp texels; a leaf CARD wants its edge smoothed, and
+                // master asked astraclaw for exactly that ("use bilinear on the foliage textures"). An OBJ
+                // and a PNG cannot carry a filter, so an art handoff ships a `*_materials.json` beside them
+                // saying so, and registration honours it -- read from the file rather than a list in here,
+                // because the list is what silently rots the next time astraclaw ships four more.
+                bool linear = WantsLinear(name);
+                mm.TextureFilter = linear
+                    ? (palette ? BaseMaterial3D.TextureFilterEnum.Linear : BaseMaterial3D.TextureFilterEnum.LinearWithMipmaps)
+                    : (palette ? BaseMaterial3D.TextureFilterEnum.Nearest : BaseMaterial3D.TextureFilterEnum.NearestWithMipmaps);
             }
             else mm.AlbedoColor = new Color(0.60f, 0.55f, 0.47f);
             return mm;
+        }
+
+        /// <summary>Props whose art handoff asked for Linear (bilinear) texture filtering, read out of the
+        /// `*_materials.json` files that ship beside the OBJs in content/objects.
+        ///
+        /// ⚠ ONE SCAN, CACHED, AND A MISSING OR MALFORMED FILE JUST MEANS "no overrides" -- a prop whose
+        /// filter note cannot be read must still load, looking slightly wrong, rather than not load at all.</summary>
+        static System.Collections.Generic.HashSet<string> _linearProps;
+        static bool WantsLinear(string name)
+        {
+            if (_linearProps == null)
+            {
+                _linearProps = new System.Collections.Generic.HashSet<string>();
+                try
+                {
+                    foreach (var jf in System.IO.Directory.GetFiles(Dir, "*_materials.json"))
+                    {
+                        var parsed = Json.ParseString(System.IO.File.ReadAllText(jf));
+                        if (parsed.VariantType != Variant.Type.Dictionary) continue;
+                        foreach (var key in (Godot.Collections.Dictionary)parsed)
+                        {
+                            var row = key.Value.AsGodotDictionary();
+                            if (row == null) continue;
+                            var f = row.TryGetValue("foliage_texture_filter", out var fv) ? fv.AsString() : null;
+                            if (!string.IsNullOrEmpty(f) && f.ToLowerInvariant().StartsWith("linear"))
+                                _linearProps.Add(key.Key.AsString());
+                        }
+                    }
+                }
+                catch (System.Exception e) { Log.Print($"[objects] material overrides unreadable: {e.Message}"); }
+                if (_linearProps.Count > 0) Log.Print($"[objects] {_linearProps.Count} props ask for linear filtering");
+            }
+            return _linearProps.Contains(name);
         }
 
         // upright placement basis: meshes are authored lying down, pitch ex=270 stands them up; yaw about world-up
