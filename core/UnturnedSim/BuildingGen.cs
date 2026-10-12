@@ -88,6 +88,9 @@ namespace UnturnedSim
         public List<RoomDesignation> Rooms = new List<RoomDesignation>();
         public List<GenRoom> Layout = new List<GenRoom>();
         public List<GenDoor> Doors = new List<GenDoor>();
+        /// <summary>What stands in the rooms (BuildingGen.Furnish): retail props by name.</summary>
+        public List<FurniturePlan> Furniture = new List<FurniturePlan>();
+        public IEnumerable<PropDesignation> Props => Furniture.Select(m => new PropDesignation(m.Name, m.X, m.Y, m.Z, m.Yaw));
         /// <summary>The marked doors: the front one always, the back one when there is one.</summary>
         public GenDoor Front => Doors.FirstOrDefault(d => d.Role == DoorRole.Front);
         public GenDoor Back => Doors.FirstOrDefault(d => d.Role == DoorRole.Back);
@@ -133,7 +136,7 @@ namespace UnturnedSim
     /// height, the outside walls come corner-solved (the editor's SolveCorners lengthens a wall from its origin WITHOUT
     /// moving its openings, so it must find nothing to do here), and the openings are the editor's archetypes.
     /// </summary>
-    public static class BuildingGen
+    public static partial class BuildingGen
     {
         public const float Cell = WallOpenings.LatticeStep;
         /// <summary>EditorBuildings.StoreyHeight: a storey is the wall height (retail WALL_HEIGHT).</summary>
@@ -607,6 +610,7 @@ namespace UnturnedSim
 
             BuildWalls(res, grids, k1, L);
             SolveCorners(res.Walls);
+            Furnish(res, spec.Seed);
             return res;
 
             // =========================================================================================================

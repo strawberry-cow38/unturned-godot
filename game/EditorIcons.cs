@@ -17,7 +17,7 @@ namespace UnturnedGodot
         public enum Glyph
         {
             Wall, Room, Floor, Roof, RoofHip, RoofShed, Foundation, Stairs, Delete, Move,
-            Door, Window, TallWindow, Garage, Porch, Vent,
+            Door, Window, TallWindow, Garage, Porch, Vent, Slit,
             Paint, Import, Bake,
         }
 
@@ -105,6 +105,7 @@ namespace UnturnedGodot
                 case Glyph.Garage:     Opening(im, s, 0.66f, 0.40f, 0.55f, bottom: true); break;
                 case Glyph.Porch:      Opening(im, s, 0.52f, 0.44f, 0.58f, bottom: true); break;
                 case Glyph.Vent:       Opening(im, s, 0.20f, 0.20f, 0.42f, bottom: false); break;
+                case Glyph.Slit:       Opening(im, s, 0.62f, 0.12f, 0.16f, bottom: false); break;
 
                 case Glyph.Paint:                  // a roller
                     Rect(im, P(8), P(9), P(20), P(8), Accent);

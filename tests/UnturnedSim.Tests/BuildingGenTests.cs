@@ -1050,6 +1050,324 @@ namespace UnturnedSim.Tests
             Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(10)));
         }
 
+        static string Objects()
+        {
+            for (var d = new DirectoryInfo(AppContext.BaseDirectory); d != null; d = d.Parent)
+                if (File.Exists(Path.Combine(d.FullName, "game", "content", "objects", "guid_mesh.txt"))) return Path.Combine(d.FullName, "game", "content", "objects");
+            return null;
+        }
+
+        // Q: the furnisher's sizes are the meshes' own (each OBJ's extents, to a centimetre), and every prop it uses has a
+        // GUID -- EditorObjects.Save writes a placement by GUID and skips one without.
+        // BREAK IT: a wrong extent in the table (a bed 0.3 m short); a prop with no GUID (Workbench_0).
+        [Test]
+        public void FurnitureCatalogMatchesTheMeshes()
+        {
+            string dir = Objects();
+            Assert.That(dir, Is.Not.Null, "game/content/objects not found");
+            var guids = new HashSet<string>(File.ReadAllLines(Path.Combine(dir, "guid_mesh.txt")).Select(l => l.Split(' ', StringSplitOptions.RemoveEmptyEntries)).Where(p => p.Length >= 2).Select(p => p[1]));
+            var bad = new List<string>();
+            foreach (var (name, sz) in FurnitureCatalog.Sizes)
+            {
+                if (!guids.Contains(name)) bad.Add($"{name} has no GUID: a save would drop it");
+                string obj = Path.Combine(dir, name + ".obj");
+                if (!File.Exists(obj)) { bad.Add($"{name}.obj is missing"); continue; }
+                var v = File.ReadLines(obj).Where(l => l.StartsWith("v ")).Select(l => l.Split(' ', StringSplitOptions.RemoveEmptyEntries).Skip(1).Take(3)
+                            .Select(t => float.Parse(t, System.Globalization.CultureInfo.InvariantCulture)).ToArray()).ToList();
+                var got = (v.Min(p => p[0]), v.Max(p => p[0]), v.Min(p => p[1]), v.Max(p => p[1]), v.Max(p => p[2]));
+                var want = (sz.X0, sz.X1, sz.Y0, sz.Y1, sz.H);
+                if (MathF.Abs(got.Item1 - want.X0) > 0.015f || MathF.Abs(got.Item2 - want.X1) > 0.015f || MathF.Abs(got.Item3 - want.Y0) > 0.015f
+                    || MathF.Abs(got.Item4 - want.Y1) > 0.015f || MathF.Abs(got.Item5 - want.H) > 0.015f)
+                    bad.Add($"{name}: table {want}, mesh {got}");
+            }
+            TestContext.Progress.WriteLine($"[furn-catalog] {FurnitureCatalog.Sizes.Count} props held to their meshes; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
+            Assert.That(FurnitureCatalog.Sizes.Count, Is.GreaterThan(30));
+            Assert.That(bad, Is.Empty, string.Join("\n", bad));
+        }
+
+        // P: the rooms are furnished, sensibly (strawberry: "work on placement rules/guides for the furniture in the rooms.
+        // should try for good feng shui if possible"). Every piece stands wholly in its room on its floor, clear of the
+        // walls, the stairs, the holes, the tiles at a flight's ends and every other piece; a metre and a bit in front of
+        // any door is clear (4 m in from a vehicle door); nothing taller than a man in front of a window; and in every room
+        // its doors, stair ends and the fronts of the pieces you use are joined by clear floor. Each kind of room has what
+        // makes it one. And the feng shui: a bed's head to a solid wall, not under a window, the door not straight past its
+        // foot; a desk's chair with its back to a wall and the door ahead of it; a couch's back to a wall, its television
+        // facing it; chairs facing their table; the stove never beside the sink, the fridge, sink and stove a short walk
+        // apart. (These are the test's own numbers, looser than the generator's: it keeps 1.3 m before a door, this asks 1.2.)
+        // BREAK IT: drop the door zones; drop the walk check; let tall pieces stand at windows; score beds without the
+        // coffin rule; put the sink beside the stove; turn the chairs round; ignore the desk's door.
+        [Test]
+        public void FurnitureFollowsTheRules()
+        {
+            const float DoorClear = 1.2f, LaneClear = 4f, Tall = 1.9f, Sill = 0.5f;
+            var bad = new List<string>();
+            int pieces = 0, rooms = 0, walkedRooms = 0, beds = 0, desks = 0, couches = 0, tvs = 0, chairs = 0, kitchensFull = 0, wallPieces = 0;
+            var missing = new Dictionary<string, int>(); var kinds = new Dictionary<RoomKind, int>();
+            bool Use(string n) => !(n.StartsWith("Chair") || n.StartsWith("Lamp") || n.StartsWith("Barrel") || n.StartsWith("Crate") || n.StartsWith("Cardboard")
+                                    || n.StartsWith("Propane") || n.StartsWith("Pallet") || n.StartsWith("Coat"));
+            foreach (var (spec, res) in All())
+            {
+                for (int f = 0; f < res.Floors; f++)
+                {
+                    var walls = WallsOn(res, f).ToList();
+                    var stairs = res.Stairs.Where(st => st.Floor == f).Select(Foot)
+                        .Concat(res.Walls.Where(w => w.Kind == SurfaceKind.Stairs && FloorOf(w) == f).Select(Plan))
+                        .Concat(Holes(res, f)).ToList();
+                    var tiles = new List<(float, float, float, float)>();
+                    foreach (var st in res.Stairs)
+                    {
+                        var (bx, bz) = st.Back; var (rx, rz) = st.Right;
+                        (float, float, float, float) T(float ox, float oz, float dir)
+                        {
+                            float ex = ox + bx * Cell * dir + rx * st.Width, ez = oz + bz * Cell * dir + rz * st.Width;
+                            return (MathF.Min(ox, ex), MathF.Min(oz, ez), MathF.Max(ox, ex), MathF.Max(oz, ez));
+                        }
+                        if (st.Floor == f && StartsOnFloor(st)) tiles.Add(T(st.X, st.Z, -1f));
+                        if (st.Floor == f - 1 && EndsOnFloor(st)) tiles.Add(T(st.X + bx * st.Run, st.Z + bz * st.Run, +1f));
+                    }
+                    // doorways and windows, as boxes in plan
+                    var doorZones = new List<(float, float, float, float)>(); var windows = new List<(float, float, float, float)>();
+                    var doorPts = new List<(float X, float Z)>();
+                    foreach (var w in walls)
+                    {
+                        var n = Normal(w);
+                        foreach (var o in w.Openings)
+                        {
+                            bool door = o.V < 0.05f;
+                            float deep = door ? (o.Width >= 4f ? LaneClear : DoorClear) : Sill;
+                            var a = At(w, o.U); var b = At(w, o.U1);
+                            float t = w.Thickness * 0.5f + deep;
+                            var box = (MathF.Min(MathF.Min(a.X, b.X) - n.X * t, MathF.Min(a.X, b.X) + n.X * t), MathF.Min(MathF.Min(a.Z, b.Z) - n.Z * t, MathF.Min(a.Z, b.Z) + n.Z * t),
+                                       MathF.Max(MathF.Max(a.X, b.X) - n.X * t, MathF.Max(a.X, b.X) + n.X * t), MathF.Max(MathF.Max(a.Z, b.Z) - n.Z * t, MathF.Max(a.Z, b.Z) + n.Z * t));
+                            if (door)
+                            {
+                                doorZones.Add(box);
+                                var c = At(w, o.U + o.Width * 0.5f); float d = w.Thickness * 0.5f + 0.4f;
+                                doorPts.Add((c.X + n.X * d, c.Z + n.Z * d)); doorPts.Add((c.X - n.X * d, c.Z - n.Z * d));
+                            }
+                            else if (o.Glazed) windows.Add(box);
+                        }
+                    }
+                    var here = res.Furniture.Where(m => m.Floor == f).ToList();
+                    var floorPieces = here.Where(m => m.On == null).ToList();
+                    // the floor at 0.1 m: wall, and blocked (wall, stairs, holes, furniture)
+                    const float G = 0.1f, O = -1f;
+                    int gnx = (int)((res.CellsX * Cell + 2f) / G) + 1, gnz = (int)((res.CellsZ * Cell + 2f) / G) + 1;
+                    var isWall = new bool[gnx, gnz]; var blocked = new bool[gnx, gnz];
+                    void Mark((float X0, float Z0, float X1, float Z1) b, bool[,] g)
+                    {
+                        for (int i = Math.Max(0, (int)MathF.Ceiling((b.X0 - O) / G - 0.5f)); i < gnx && O + (i + 0.5f) * G < b.X1; i++)
+                            for (int j = Math.Max(0, (int)MathF.Ceiling((b.Z0 - O) / G - 0.5f)); j < gnz && O + (j + 0.5f) * G < b.Z1; j++) g[i, j] = true;
+                    }
+                    foreach (var w in walls) { Mark(Box(w), isWall); Mark(Box(w), blocked); }
+                    foreach (var st in stairs) Mark(st, blocked);
+                    foreach (var m in floorPieces) Mark(m.Footprint, blocked);
+                    bool WallAt(float x, float z) { int i = (int)((x - O) / G), j = (int)((z - O) / G); return i >= 0 && j >= 0 && i < gnx && j < gnz && isWall[i, j]; }
+                    foreach (var m in here)
+                    {
+                        pieces++;
+                        var fp = m.Footprint;
+                        string nm = $"{Name(spec)}: {m}";
+                        if (m.On != null)
+                        {
+                            var hfp = m.On.Footprint; var cx = (fp.X0 + fp.X1) * 0.5f; var cz = (fp.Z0 + fp.Z1) * 0.5f;
+                            if (!(cx > hfp.X0 && cx < hfp.X1 && cz > hfp.Z0 && cz < hfp.Z1)) bad.Add($"{nm} is not on the {m.On.Name} it stands on");
+                            if (MathF.Abs(m.Y - (m.On.Y + FurnitureCatalog.Sizes[m.On.Name].H)) > 0.01f) bad.Add($"{nm} floats or sinks on its {m.On.Name}");
+                            continue;
+                        }
+                        if (MathF.Abs(m.Y - f * Storey) > 0.01f) bad.Add($"{nm} is not on its floor (y {m.Y:0.00})");
+                        var inner = Grown(fp, -0.02f);
+                        if (!new[] { (inner.Item1, inner.Item2), (inner.Item3, inner.Item2), (inner.Item1, inner.Item4), (inner.Item3, inner.Item4) }.All(p => m.Room.Holds(p.Item1, p.Item2)))
+                            bad.Add($"{nm} is not wholly in its room");
+                        foreach (var w in walls) if (Overlap(fp, Box(w))) { bad.Add($"{nm} runs into a wall"); break; }
+                        if (stairs.Any(st => Overlap(fp, st))) bad.Add($"{nm} stands on the stairs or over a hole");
+                        if (tiles.Any(t => Overlap(fp, t))) bad.Add($"{nm} stands on the tile at a flight's end");
+                        if (doorZones.Any(z => Overlap(fp, z))) bad.Add($"{nm} stands in a doorway");
+                        if (FurnitureCatalog.Sizes[m.Name].H > Tall && windows.Any(z => Overlap(fp, z))) bad.Add($"{nm} stands in front of a window");
+                        foreach (var o in floorPieces) if (o != m && Overlap(fp, o.Footprint)) { bad.Add($"{nm} overlaps {o}"); break; }
+                    }
+                    // the walk: per room, doors, stair ends and the fronts of what you use, joined by clear floor
+                    foreach (var room in res.Layout.Where(g => g.Floor == f))
+                    {
+                        rooms++;
+                        var mine = floorPieces.Where(m => m.Room == room).ToList();
+                        kinds[room.Kind] = kinds.GetValueOrDefault(room.Kind) + 1;
+                        // what makes the room one
+                        bool Has(params string[] ns) => here.Any(m => m.Room == room && ns.Any(n => m.Name.StartsWith(n)));
+                        void Need(string what, bool ok) { if (!ok) missing[$"{room.Kind} {what}"] = missing.GetValueOrDefault($"{room.Kind} {what}") + 1; }
+                        switch (room.Kind)
+                        {
+                            case RoomKind.Bedroom: Need("bed", Has("Bed")); break;
+                            case RoomKind.LivingRoom: Need("couch", Has("Couch")); break;
+                            case RoomKind.DiningRoom: Need("table", Has("Table")); Need("4 chairs", here.Count(m => m.Room == room && m.Name.StartsWith("Chair")) >= 4); break;
+                            case RoomKind.Kitchen: Need("fridge", Has("Fridge")); Need("sink", Has("Counter_1")); Need("stove", Has("Oven")); if (Has("Fridge") && Has("Counter_1") && Has("Oven")) kitchensFull++; break;
+                            case RoomKind.Bathroom: Need("tub or sink", Has("Tub", "Counter_1")); break;
+                            case RoomKind.Office: Need("desk", Has("Table_Wood_2")); break;
+                            case RoomKind.Shop: Need("shelves", Has("Shelf_1")); if (res.Front?.A == room) Need("checkout", Has("Checkout")); break;
+                            case RoomKind.Warehouse: case RoomKind.Storage: Need("racks", Has("Shelf")); break;
+                        }
+                        if (mine.Count == 0) continue;
+                        walkedRooms++;
+                        float gx0 = room.Rects.Min(r => r.X0) * Cell, gz0 = room.Rects.Min(r => r.Z0) * Cell, gx1 = room.Rects.Max(r => r.X1) * Cell, gz1 = room.Rects.Max(r => r.Z1) * Cell;
+                        int nx = (int)((gx1 - gx0) / 0.1f), nz = (int)((gz1 - gz0) / 0.1f);
+                        var rects = room.Rects.ToList();
+                        var open = new bool[nx, nz];
+                        for (int i = 0; i < nx; i++)
+                            for (int j = 0; j < nz; j++)
+                            {
+                                float x = gx0 + (i + 0.5f) * 0.1f, z = gz0 + (j + 0.5f) * 0.1f;
+                                int bi = (int)((x - O) / G), bj = (int)((z - O) / G);
+                                open[i, j] = rects.Any(r => x >= r.X0 * Cell && x < r.X1 * Cell && z >= r.Z0 * Cell && z < r.Z1 * Cell) && !blocked[bi, bj];
+                            }
+                        var targets = doorPts.Where(p => room.Holds(p.X, p.Z)).Select(p => ("a door", p.X, p.Z)).ToList();
+                        foreach (var st in res.Stairs.Where(st => (st.Floor == f && StartsOnFloor(st)) || (st.Floor == f - 1 && EndsOnFloor(st))))
+                        {
+                            var (bx, bz) = st.Back; var (rx, rz) = st.Right;
+                            float mx = st.X + rx * st.Width * 0.5f, mz = st.Z + rz * st.Width * 0.5f;
+                            var p = st.Floor == f ? (mx - bx * 0.4f, mz - bz * 0.4f) : (mx + bx * (st.Run + 0.65f), mz + bz * (st.Run + 0.65f));
+                            if (room.Holds(p.Item1, p.Item2)) targets.Add(("a stair end", p.Item1, p.Item2));
+                        }
+                        // and what you use, from its front or a side (a workbench along a wall is used from its long side)
+                        var uses = new List<(string What, (float X, float Z)[] At)>();
+                        foreach (var m in mine.Where(m => Use(m.Name)))
+                        {
+                            var s = FurnitureCatalog.Sizes[m.Name]; var (fx, fz) = m.Front; var (rx, rz) = m.Right;
+                            float mx = (s.X0 + s.X1) * 0.5f, my = (s.Y0 + s.Y1) * 0.5f;
+                            uses.Add((m.Name, new[] { (m.X + rx * mx + fx * (s.Y1 + 0.4f), m.Z + rz * mx + fz * (s.Y1 + 0.4f)),
+                                                      (m.X + rx * (s.X1 + 0.4f) + fx * my, m.Z + rz * (s.X1 + 0.4f) + fz * my),
+                                                      (m.X + rx * (s.X0 - 0.4f) + fx * my, m.Z + rz * (s.X0 - 0.4f) + fz * my) }));
+                        }
+                        if (targets.Count == 0 && uses.Count > 0) targets.Add(($"the {uses[0].What}", uses[0].At[0].X, uses[0].At[0].Z));
+                        if (targets.Count == 0) continue;
+                        (int, int)? Cell0(float x, float z)
+                        {
+                            int i0 = (int)((x - gx0) / 0.1f), j0 = (int)((z - gz0) / 0.1f);
+                            for (int r = 0; r <= 3; r++)
+                                for (int i = i0 - r; i <= i0 + r; i++) for (int j = j0 - r; j <= j0 + r; j++)
+                                    if (i >= 0 && j >= 0 && i < nx && j < nz && open[i, j]) return (i, j);
+                            return null;
+                        }
+                        var start = Cell0(targets[0].Item2, targets[0].Item3);
+                        if (start == null) { bad.Add($"{Name(spec)} floor {f} {room}: {targets[0].Item1} is not clear floor"); continue; }
+                        var seen = new bool[nx, nz]; var q = new Queue<(int, int)>(); q.Enqueue(start.Value); seen[start.Value.Item1, start.Value.Item2] = true;
+                        while (q.Count > 0)
+                        {
+                            var (i, j) = q.Dequeue();
+                            foreach (var (di, dj) in new[] { (1, 0), (-1, 0), (0, 1), (0, -1) })
+                            {
+                                int a = i + di, b = j + dj;
+                                if (a < 0 || b < 0 || a >= nx || b >= nz || seen[a, b] || !open[a, b]) continue;
+                                seen[a, b] = true; q.Enqueue((a, b));
+                            }
+                        }
+                        bool Reached(float x, float z) { var c = Cell0(x, z); return c != null && seen[c.Value.Item1, c.Value.Item2]; }
+                        foreach (var (what, x, z) in targets.Skip(1))
+                            if (!Reached(x, z)) { bad.Add($"{Name(spec)} floor {f} {room}: {what} cannot be walked to from {targets[0].Item1}"); break; }
+                        foreach (var (what, at) in uses)
+                            if (!at.Any(p => Reached(p.X, p.Z))) { bad.Add($"{Name(spec)} floor {f} {room}: no side of the {what} can be walked to from {targets[0].Item1}"); break; }
+                        // feng shui
+                        bool WallBehind((float X0, float Z0, float X1, float Z1) fp, float bx, float bz)
+                        {
+                            // a wall within 0.15 m behind the side facing (bx, bz), along 80% of it
+                            const float Back = 0.14f;
+                            int n = 0, hit = 0;
+                            if (MathF.Abs(bx) > 0.5f)
+                            {
+                                float x = bx > 0 ? fp.X1 + Back : fp.X0 - Back;
+                                for (float z = fp.Z0 + 0.05f; z < fp.Z1; z += 0.1f) { n++; if (WallAt(x, z)) hit++; }
+                            }
+                            else
+                            {
+                                float z = bz > 0 ? fp.Z1 + Back : fp.Z0 - Back;
+                                for (float x = fp.X0 + 0.05f; x < fp.X1; x += 0.1f) { n++; if (WallAt(x, z)) hit++; }
+                            }
+                            return n > 0 && hit >= 0.8 * n;
+                        }
+                        var roomDoors = doorPts.Where(p => room.Holds(p.X, p.Z)).ToList();
+                        foreach (var m in mine)
+                        {
+                            var (fx, fz) = m.Front; var (rx, rz) = m.Right; var s = FurnitureCatalog.Sizes[m.Name]; var fp = m.Footprint;
+                            string nm = $"{Name(spec)}: {m}";
+                            // what stands at a wall stands with its back to one, not half off its end
+                            if (new[] { "Wardrobe", "Shelf_2", "Fridge", "Counter", "Oven", "Disher", "Files", "Cooler", "Ice_Box", "Television" }.Any(m.Name.StartsWith))
+                            {
+                                wallPieces++;
+                                if (!WallBehind(fp, -fx, -fz)) bad.Add($"{nm}: its back is not to a wall");
+                            }
+                            if (m.Name.StartsWith("Bed"))
+                            {
+                                beds++;
+                                if (!WallBehind(fp, -fx, -fz)) bad.Add($"{nm}: its head is not to a wall");
+                                var head = fx > 0.5f ? (fp.X0 - 0.6f, fp.Z0, fp.X0, fp.Z1) : fx < -0.5f ? (fp.X1, fp.Z0, fp.X1 + 0.6f, fp.Z1)
+                                         : fz > 0.5f ? (fp.X0, fp.Z0 - 0.6f, fp.X1, fp.Z0) : (fp.X0, fp.Z1, fp.X1, fp.Z1 + 0.6f);
+                                if (windows.Any(z => Overlap(head, z))) bad.Add($"{nm}: its head is under a window");
+                                foreach (var (dx, dz) in roomDoors)
+                                {
+                                    float ahead = (dx - m.X) * fx + (dz - m.Z) * fz, across = (dx - m.X) * rx + (dz - m.Z) * rz;
+                                    if (ahead > s.Y1 && MathF.Abs(across) < (s.X1 - s.X0) * 0.5f) bad.Add($"{nm}: the door is straight past its foot");
+                                }
+                            }
+                            if (m.Name.StartsWith("Couch"))
+                            {
+                                couches++;
+                                if (!WallBehind(fp, -fx, -fz)) bad.Add($"{nm}: its back is not to a wall");
+                                foreach (var tv in mine.Where(t => t.Name.StartsWith("Television")))
+                                {
+                                    tvs++;
+                                    var (tx, tz) = tv.Front; float vx = m.X - tv.X, vz = m.Z - tv.Z, d = MathF.Sqrt(vx * vx + vz * vz);
+                                    if ((vx * tx + vz * tz) / d < 0.7f) bad.Add($"{nm}: its television does not face it");
+                                }
+                            }
+                            if (m.Name.StartsWith("Chair"))
+                            {
+                                chairs++;
+                                var table = mine.Where(t => t.Name.StartsWith("Table")).OrderBy(t => (t.X - m.X) * (t.X - m.X) + (t.Z - m.Z) * (t.Z - m.Z)).FirstOrDefault();
+                                if (table == null) bad.Add($"{nm}: a chair with no table");
+                                else
+                                {
+                                    float vx = table.X - m.X, vz = table.Z - m.Z, d = MathF.Sqrt(vx * vx + vz * vz) + 1e-3f;
+                                    if ((vx * fx + vz * fz) / d < 0.7f) bad.Add($"{nm}: the chair does not face its table");
+                                    if (room.Kind == RoomKind.Office)
+                                    {
+                                        desks++;
+                                        if (!WallBehind(fp, -fx, -fz)) bad.Add($"{nm}: the desk chair's back is not to a wall");
+                                        if (roomDoors.Count > 0 && !roomDoors.Any(p => (p.X - m.X) * fx + (p.Z - m.Z) * fz > 0)) bad.Add($"{nm}: the desk chair faces away from every door");
+                                    }
+                                }
+                            }
+                        }
+                        var fr = mine.FirstOrDefault(m => m.Name.StartsWith("Fridge")); var sk = mine.FirstOrDefault(m => m.Name == "Counter_1"); var ov = mine.FirstOrDefault(m => m.Name.StartsWith("Oven"));
+                        if (room.Kind == RoomKind.Kitchen && sk != null && ov != null)
+                        {
+                            var a = Grown(sk.Footprint, 0.3f);
+                            if (Overlap(a, ov.Footprint)) bad.Add($"{Name(spec)}: {room}'s stove stands beside its sink");
+                            if (fr != null)
+                            {
+                                float D(FurniturePlan p, FurniturePlan o) => MathF.Sqrt((p.X - o.X) * (p.X - o.X) + (p.Z - o.Z) * (p.Z - o.Z));
+                                float l1 = D(fr, sk), l2 = D(sk, ov), l3 = D(ov, fr);
+                                if (MathF.Min(l1, MathF.Min(l2, l3)) < 1.2f || l1 + l2 + l3 > 10f) bad.Add($"{Name(spec)}: {room}'s fridge, sink and stove are {l1:0.0}, {l2:0.0} and {l3:0.0} m apart");
+                            }
+                        }
+                    }
+                }
+            }
+            int Of(RoomKind k) => kinds.GetValueOrDefault(k);
+            TestContext.Progress.WriteLine($"[furn] {pieces} pieces in {walkedRooms} of {rooms} rooms; {beds} beds, {desks} desk chairs, {couches} couches ({tvs} with a television), {chairs} chairs, {wallPieces} pieces backed to a wall, {kitchensFull} of {Of(RoomKind.Kitchen)} kitchens with fridge, sink and stove; missing: {(missing.Count == 0 ? "nothing" : string.Join(", ", missing.OrderByDescending(kv => kv.Value).Select(kv => $"{kv.Value} {kv.Key}")))}; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
+            foreach (var g in bad.GroupBy(b => System.Text.RegularExpressions.Regex.Replace(b.Substring(b.IndexOf(':') + 1), @"[\d.,()-]+", "#")).OrderByDescending(g => g.Count()).Take(12))
+                TestContext.Progress.WriteLine($"[furn]   {g.Count()} x {g.Key.Trim()}");
+            Assert.That(pieces, Is.GreaterThan(3000));
+            Assert.That(wallPieces, Is.GreaterThan(3000));
+            // a room without what makes it one is a room the furnisher gave up on: a few that are too small for it, no more
+            foreach (var (what, n) in missing)
+            {
+                var kind = Enum.Parse<RoomKind>(what.Split(' ')[0]);
+                Assert.That(n, Is.LessThanOrEqualTo(Math.Max(2, Of(kind) / 100)), $"{n} of {Of(kind)} {what.Split(' ')[0]}s without {what.Substring(what.IndexOf(' ') + 1)}");
+            }
+            // and the couch has its television across the room in most living rooms (a long room's far wall is too far)
+            Assert.That(tvs, Is.GreaterThanOrEqualTo(couches / 2), "few couches have a television facing them");
+            Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(10)));
+        }
+
         // J: every palette a kind can draw from exists in the retail table, and generated buildings use them.
         // BREAK IT: misspell a palette name ("House_10").
         [Test]
@@ -1076,8 +1394,11 @@ namespace UnturnedSim.Tests
         public void DesignationFloorsSurviveASave()
         {
             var res = BuildingGen.Generate(new BuildingGenSpec { Seed = 3, Kind = BuildingKind.Residential, MinRooms = 8, MinFloors = 2, MaxFloors = 3, MaxRoomsPerFloor = 4 });
-            string text = WallSave.Write(res.Walls, res.Kind, res.Rooms, res.DoorMarks);
-            var walls = WallSave.Read(text.Split('\n'), out var kind, out var rooms, out var marks);
+            string text = WallSave.Write(res.Walls, res.Kind, res.Rooms, res.DoorMarks, res.Props);
+            var walls = WallSave.Read(text.Split('\n'), out var kind, out var rooms, out var marks, out var props);
+            Assert.That(props.Count, Is.EqualTo(res.Furniture.Count).And.GreaterThan(0), "the furniture survives the save");
+            Assert.That(props.Zip(res.Furniture).All(t => t.First.Name == t.Second.Name && MathF.Abs(t.First.X - t.Second.X) < 0.01f && MathF.Abs(t.First.Y - t.Second.Y) < 0.01f
+                                                           && MathF.Abs(t.First.Z - t.Second.Z) < 0.01f && MathF.Abs(t.First.Yaw - t.Second.Yaw) < 0.01f), "each piece as it was");
             Assert.That(marks.Select(m => (m.Role, m.X, m.Floor)), Is.EqualTo(res.DoorMarks.Select(m => (m.Role, MathF.Round(m.X * 1000f) / 1000f, m.Floor))).Using<(DoorRole, float, int)>((a, b) => a.Item1 == b.Item1 && MathF.Abs(a.Item2 - b.Item2) < 0.01f && a.Item3 == b.Item3),
                         "the door marks survive the save");
             Assert.That(marks.Count, Is.GreaterThan(0));

@@ -59,6 +59,15 @@ namespace UnturnedSim
         public DoorDesignation(DoorRole role, float x, float z, int floor = 0) { Role = role; X = x; Z = z; Floor = floor; }
     }
 
+    /// <summary>A piece of furniture in a building: a prop by name (game/content/objects), its OBJ origin at (X, Y, Z),
+    /// stood up and turned as EditorObjects.Upright(Yaw) does it (BuildingGen's FurniturePlan, saved).</summary>
+    public struct PropDesignation
+    {
+        public string Name;
+        public float X, Y, Z, Yaw;
+        public PropDesignation(string name, float x, float y, float z, float yaw) { Name = name; X = x; Y = y; Z = z; Yaw = yaw; }
+    }
+
     /// <summary>Framework for building/room designation. NO placement logic -- strawberry_cow: "we dont have
     /// to do the stories system yet. just the framework". What this owns is the part that is expensive to
     /// change later: how a designation is anchored, how it re-finds its room, and how it persists.</summary>

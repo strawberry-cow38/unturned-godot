@@ -7775,12 +7775,7 @@ namespace UnturnedGodot
                 // capture can look down into a building -- at its stairs, which nothing else shows from outside
                 if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_EDITCUT"), System.Globalization.NumberStyles.Float,
                                    System.Globalization.CultureInfo.InvariantCulture, out float editCut))
-                    foreach (var w in buildings.Walls)
-                    {
-                        if (w.Kind != UnturnedSim.SurfaceKind.Stairs && w.GlobalPosition.Y - EditorBuildings.StageOrigin.Y > editCut) w.Visible = false;
-                        if (w.Kind == UnturnedSim.SurfaceKind.Stairs)
-                            Log.Print($"[editcut] stairs surface at {w.GlobalPosition - EditorBuildings.StageOrigin} yaw {w.RotationDegrees.Y:0} pitch {w.RotationDegrees.X:0} {w.Length:0.00} x {w.Height:0.00} x {w.Thickness:0.00}");
-                    }
+                    buildings.HideAbove(editCut);
                 if (System.Environment.GetEnvironmentVariable("UG_EDITBAKE") == "1")
                 {
                     // Name the bake after what it came from. It used to always bake "Demo_House", so baking

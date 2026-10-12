@@ -365,7 +365,7 @@ namespace UnturnedGodot
             var grid = new GridContainer { Columns = 6 };
             grid.AddThemeConstantOverride("h_separation", 3);
             var og = new[] { EditorIcons.Glyph.Door, EditorIcons.Glyph.Window, EditorIcons.Glyph.TallWindow,
-                             EditorIcons.Glyph.Garage, EditorIcons.Glyph.Porch, EditorIcons.Glyph.Vent };
+                             EditorIcons.Glyph.Garage, EditorIcons.Glyph.Porch, EditorIcons.Glyph.Vent, EditorIcons.Glyph.Slit };
             for (int i = 0; i < EditorBuildings.Archetypes.Length; i++)
             {
                 int ai = i;

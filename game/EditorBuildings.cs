@@ -407,6 +407,9 @@ namespace UnturnedGodot
             new("garage",  4.05f, 3.80f,                          0f,  true),
             new("porch",   5.5f,  WallOpenings.DoorHeight,        0f,   true),
             new("vent",    1.0f,  1.0f,                           2.5f, false),
+            // a bathroom's: wide, shallow and high, glazed -- light without a view in (strawberry: "change the
+            // bathrooms from using vent windows to small glass windows, horizontal slit windows")
+            new("slit",    2.4f,  0.6f,                           2.6f, false, glazed: true),
         };
 
         // ---- glazing options applied to NEWLY placed openings ------------------------------------------
@@ -1861,8 +1864,10 @@ namespace UnturnedGodot
             var kindBefore = DesignatedKind;
             var roomsBefore = new List<RoomDesignation>(Designations);
             var marksBefore = new List<DoorDesignation>(DoorMarks);
+            var furnitureBefore = new List<PropDesignation>(Furniture);
             foreach (var w in new List<WallSurface>(_walls)) RemoveWall(w);
             DesignatedKind = null; Designations.Clear(); DoorMarks.Clear();   // the rooms and doors they labelled are gone
+            Furniture.Clear(); ShowFurniture();                                  // and what stood in them
             _selWall = null; _selOpening = -1;
             PositionHandles();
             _editor?.PushUndo("clear plot", () =>
@@ -1870,6 +1875,7 @@ namespace UnturnedGodot
                 RestoreAll(before);
                 DesignatedKind = kindBefore; Designations.Clear(); Designations.AddRange(roomsBefore);
                 DoorMarks.Clear(); DoorMarks.AddRange(marksBefore);
+                Furniture.Clear(); Furniture.AddRange(furnitureBefore); ShowFurniture();
             });
             return n;
         }
@@ -2109,7 +2115,7 @@ namespace UnturnedGodot
             try
             {
                 System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(SavePath));
-                System.IO.File.WriteAllText(SavePath, WallSave.Write(plans, DesignatedKind, Designations, DoorMarks));
+                System.IO.File.WriteAllText(SavePath, WallSave.Write(plans, DesignatedKind, Designations, DoorMarks, Furniture));
             }
             catch (System.Exception e) { Log.Err($"[editor-buildings] save failed: {e.Message}"); return 0; }
             Log.Print($"[editor-buildings] saved {plans.Count} walls -> {SavePath}");
@@ -2121,11 +2127,12 @@ namespace UnturnedGodot
         {
             if (!System.IO.File.Exists(SavePath)) return 0;
             List<WallPlan> plans;
-            BuildingKind kind; List<RoomDesignation> rooms; List<DoorDesignation> marks;
-            try { plans = WallSave.Read(System.IO.File.ReadAllLines(SavePath), out kind, out rooms, out marks); }
+            BuildingKind kind; List<RoomDesignation> rooms; List<DoorDesignation> marks; List<PropDesignation> props;
+            try { plans = WallSave.Read(System.IO.File.ReadAllLines(SavePath), out kind, out rooms, out marks, out props); }
             catch (System.Exception e) { Log.Err($"[editor-buildings] load failed: {e.Message}"); return 0; }
             Designations.Clear(); Designations.AddRange(rooms);
             DoorMarks.Clear(); DoorMarks.AddRange(marks);
+            Furniture.Clear(); Furniture.AddRange(props); ShowFurniture();
             DesignatedKind = rooms.Count > 0 ? kind : null;
 
             foreach (var w in _walls.ToArray()) RemoveWall(w);
@@ -2610,14 +2617,17 @@ namespace UnturnedGodot
             var kindBefore = DesignatedKind;
             var roomsBefore = new List<RoomDesignation>(Designations);
             var marksBefore = new List<DoorDesignation>(DoorMarks);
+            var furnitureBefore = new List<PropDesignation>(Furniture);
             _editor?.PushUndo($"import {buildingName}", () =>
             {
                 RestoreAll(beforeImport);
                 DesignatedKind = kindBefore; Designations.Clear(); Designations.AddRange(roomsBefore);
                 DoorMarks.Clear(); DoorMarks.AddRange(marksBefore);
+                Furniture.Clear(); Furniture.AddRange(furnitureBefore); ShowFurniture();
             });
             foreach (var w in new List<WallSurface>(_walls)) RemoveWall(w);
             DesignatedKind = null; Designations.Clear(); DoorMarks.Clear();
+            Furniture.Clear(); ShowFurniture();
             foreach (var pl in plans)
                 SpawnWall(StageOrigin + new Vector3(pl.X, pl.Y + GroundClearance, pl.Z), pl.Yaw, pl.Length, pl.Thickness,
                           pl.Material, pl.Openings, pl.Height, pl.Pitch, pl.Kind, pl.GableRise, pl.Texel,
@@ -2685,6 +2695,39 @@ namespace UnturnedGodot
         /// modify tools do not see it yet. The outside walls come corner-solved, and
         /// SolveCorners is run anyway as a check: it must find nothing, because it lengthens a wall from its origin
         /// without moving its openings, and every window on a solved wall would slide off its room.</summary>
+        /// <summary>The furniture on the stage: the data (saved as `prop` lines) and, rebuilt from it, a preview mesh per
+        /// piece -- a look, not yet a placed prop: placing through EditorObjects would put it in the MAP at the stage's
+        /// height, and the map's save would keep it there.</summary>
+        public readonly List<PropDesignation> Furniture = new();
+        readonly List<Node3D> _furnitureNodes = new();
+
+        /// <summary>For a capture: hide every surface but the stairs, and every piece of furniture, standing more than `y`
+        /// over the stage -- so a camera can look down into a storey.</summary>
+        public void HideAbove(float y)
+        {
+            foreach (var w in _walls)
+                if (IsInstanceValid(w) && w.Kind != SurfaceKind.Stairs && w.GlobalPosition.Y - StageOrigin.Y > y) w.Visible = false;
+            foreach (var n in _furnitureNodes)
+                if (IsInstanceValid(n) && n.GlobalPosition.Y - StageOrigin.Y > y) n.Visible = false;
+        }
+
+        void ShowFurniture()
+        {
+            foreach (var n in _furnitureNodes) if (IsInstanceValid(n)) n.QueueFree();
+            _furnitureNodes.Clear();
+            var objects = _editor?.Objects;
+            if (objects == null) return;
+            foreach (var m in Furniture)
+            {
+                var mesh = objects.PreviewMesh(m.Name);
+                if (mesh == null) continue;
+                var mi = new MeshInstance3D { Name = "Furniture_" + m.Name, Mesh = mesh, MaterialOverride = objects.PreviewMaterial(m.Name) };
+                AddChild(mi);
+                mi.GlobalTransform = new Transform3D(EditorObjects.Upright(m.Yaw), new Vector3(m.X, m.Y, m.Z));
+                _furnitureNodes.Add(mi);
+            }
+        }
+
         public BuildingGenResult Generate(BuildingGenSpec spec)
         {
             var res = BuildingGen.Generate(spec);
@@ -2700,6 +2743,7 @@ namespace UnturnedGodot
             var kindBefore = DesignatedKind;
             var roomsBefore = new List<RoomDesignation>(Designations);
             var marksBefore = new List<DoorDesignation>(DoorMarks);
+            var furnitureBefore = new List<PropDesignation>(Furniture);
             // The stage's old ramps go with its old stairs -- detached, not freed, so the undo can put them back.
             var rampsBefore = new List<StaticBody3D>(_stairRamps);
             foreach (var r in rampsBefore) if (IsInstanceValid(r)) RemoveChild(r);
@@ -2730,6 +2774,9 @@ namespace UnturnedGodot
             foreach (var d in res.Rooms) Designations.Add(new RoomDesignation(d.Kind, at.X + d.X, at.Z + d.Z, d.Floor));
             DoorMarks.Clear();
             foreach (var d in res.DoorMarks) DoorMarks.Add(new DoorDesignation(d.Role, at.X + d.X, at.Z + d.Z, d.Floor));
+            Furniture.Clear();
+            foreach (var m in res.Props) Furniture.Add(new PropDesignation(m.Name, at.X + m.X, at.Y + m.Y, at.Z + m.Z, m.Yaw));
+            ShowFurniture();
             ActiveMaterial = mat;
             _selWall = null; _selOpening = -1;
             PositionHandles();
@@ -2744,12 +2791,13 @@ namespace UnturnedGodot
                 DesignatedKind = kindBefore;
                 Designations.Clear(); Designations.AddRange(roomsBefore);
                 DoorMarks.Clear(); DoorMarks.AddRange(marksBefore);
+                Furniture.Clear(); Furniture.AddRange(furnitureBefore); ShowFurniture();
             });
             int rooms = 0;
             foreach (var g in res.Layout) if (!g.Circulation) rooms++;
             Log.Print($"[editor-buildings] generated {res.Kind} seed {spec.Seed}: {res.Floors} floor(s), {rooms} rooms, "
                      + $"{res.CellsX * BuildingGen.Cell:0} x {res.CellsZ * BuildingGen.Cell:0} m, {res.Walls.Count} surfaces, "
-                     + $"{res.Stairs.Count} flight(s), {res.Plan} plan, {res.Roof.ToString().ToLowerInvariant()} roof, palette {res.Palette}"
+                     + $"{res.Stairs.Count} flight(s), {res.Furniture.Count} pieces of furniture, {res.Plan} plan, {res.Roof.ToString().ToLowerInvariant()} roof, palette {res.Palette}"
                      + (res.Notes.Count > 0 ? " -- " + string.Join("; ", res.Notes) : ""));
             return res;
         }

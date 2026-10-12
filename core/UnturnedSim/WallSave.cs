@@ -60,7 +60,8 @@ namespace UnturnedSim
         public static string Write(IEnumerable<WallPlan> walls,
                                    BuildingKind? building = null,
                                    IEnumerable<RoomDesignation> rooms = null,
-                                   IEnumerable<DoorDesignation> doors = null)
+                                   IEnumerable<DoorDesignation> doors = null,
+                                   IEnumerable<PropDesignation> props = null)
         {
             var sb = new StringBuilder();
             sb.Append(Header).Append('\n');
@@ -69,6 +70,7 @@ namespace UnturnedSim
             sb.Append("# building <kind>            -- Residential|Commercial|Industrial|Misc (the volume is DERIVED from the walls)\n");
             sb.Append("# room <kind> <x> <z> [floor] -- a designation ANCHORED at a point inside the room it labels\n");
             sb.Append("# door <front|back> <x> <z> [floor] -- a marked door to outside, at the middle of its opening\n");
+            sb.Append("# prop <name> <x> <y> <z> <yawDeg> -- a piece of furniture, a prop by name stood up and turned as the editor does\n");
             // Kinds by NAME, never ordinal: the enums can gain or reorder members without re-labelling
             // every existing save.
             if (building.HasValue) sb.Append("building ").Append(building.Value.ToString()).Append('\n');
@@ -82,6 +84,11 @@ namespace UnturnedSim
                 foreach (var d in doors)
                     sb.Append("door ").Append(d.Role.ToString().ToLowerInvariant()).Append(' ').Append(F(d.X)).Append(' ').Append(F(d.Z))
                       .Append(d.Floor != 0 ? " " + d.Floor.ToString(CultureInfo.InvariantCulture) : "").Append('\n');
+            if (props != null)
+                foreach (var m in props)
+                    if (!string.IsNullOrEmpty(m.Name) && m.Name.IndexOf(' ') < 0)
+                        sb.Append("prop ").Append(m.Name).Append(' ').Append(F(m.X)).Append(' ').Append(F(m.Y)).Append(' ').Append(F(m.Z))
+                          .Append(' ').Append(F(m.Yaw)).Append('\n');
             if (walls != null)
                 foreach (var w in walls)
                 {
@@ -142,7 +149,7 @@ namespace UnturnedSim
         {
             building = BuildingKind.Misc;
             rooms = new List<RoomDesignation>();
-            return ReadInner(lines, ref building, rooms, null);
+            return ReadInner(lines, ref building, rooms, null, null);
         }
 
         /// <summary>Read walls, designations and the marked doors.</summary>
@@ -152,11 +159,22 @@ namespace UnturnedSim
             building = BuildingKind.Misc;
             rooms = new List<RoomDesignation>();
             doors = new List<DoorDesignation>();
-            return ReadInner(lines, ref building, rooms, doors);
+            return ReadInner(lines, ref building, rooms, doors, null);
+        }
+
+        /// <summary>Read walls, designations, the marked doors and the furniture.</summary>
+        public static List<WallPlan> Read(IEnumerable<string> lines, out BuildingKind building, out List<RoomDesignation> rooms,
+                                          out List<DoorDesignation> doors, out List<PropDesignation> props)
+        {
+            building = BuildingKind.Misc;
+            rooms = new List<RoomDesignation>();
+            doors = new List<DoorDesignation>();
+            props = new List<PropDesignation>();
+            return ReadInner(lines, ref building, rooms, doors, props);
         }
 
         static List<WallPlan> ReadInner(IEnumerable<string> lines, ref BuildingKind building, List<RoomDesignation> rooms,
-                                        List<DoorDesignation> doors)
+                                        List<DoorDesignation> doors, List<PropDesignation> props)
         {
             var outp = new List<WallPlan>();
             if (lines == null) return outp;
@@ -181,6 +199,13 @@ namespace UnturnedSim
                         && float.TryParse(p[3], NumberStyles.Float, CultureInfo.InvariantCulture, out float dz))
                         doors.Add(new DoorDesignation(role, dx, dz,
                             p.Length >= 5 && int.TryParse(p[4], NumberStyles.Integer, CultureInfo.InvariantCulture, out int df) ? df : 0));
+                    continue;
+                }
+                if (p[0] == "prop" && p.Length >= 6)
+                {
+                    // a malformed number drops THAT piece, not the building
+                    if (props != null && N(p[2], out float px) && N(p[3], out float py) && N(p[4], out float pz) && N(p[5], out float pyaw))
+                        props.Add(new PropDesignation(p[1], px, py, pz, pyaw));
                     continue;
                 }
                 if (p[0] == "room" && p.Length >= 4)
