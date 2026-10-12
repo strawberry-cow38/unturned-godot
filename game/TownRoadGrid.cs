@@ -274,39 +274,39 @@ namespace UnturnedGodot
             };
         }
 
-        /// <summary>Which pair of arms, if any, RUNS THROUGH this node uncut -- the priority road.
+        /// <summary>Which pair of arms, if any, RUNS THROUGH this node uncut -- a MAIN line, only.
         ///
         /// ⚠ EXACTLY ONE PAIR, AND THEY MUST BE COLLINEAR. Two arms on the same axis are two halves of one
         /// line, so leaving both uncut makes one continuous carriageway that meets itself at the node. Doing
         /// it to the crossing pair as well would lay two coplanar ribbons at right angles over each other --
         /// a z-fight, not a fix.
-        /// ⚠ A MAIN WINS. With MainEvery = 3 the main lines cross EACH OTHER, so "two main arms and no
-        /// third" missed every main crossroads and the backing measured 58%, not 100% -- the first rule was
-        /// written for the T-junction I happened to be looking at. Where two mains cross, one has to be the
-        /// priority road; where no main is present the bigger-numbered axis is picked, so the choice is
-        /// deterministic and a town rebuilds identically.</summary>
+        /// ⚠⚠ ONLY A MAIN, NEVER A STREET -- master's spec, not a preference (2026-10-12: "the bigger roads
+        /// should be the 'main' roads, their lines continue through the junction without crossings on their
+        /// parts"). A through ribbon carries its OWN baked lines across the node, which is exactly right for
+        /// a main and exactly wrong for a street, because a street HAS crossings: I generalised this to any
+        /// collinear pair to push the backing number from 58% to 89%, and every side street's centre dashes
+        /// then ran straight through its own zebras. The number went up and the junctions got worse.
+        /// ⚠ WHERE TWO MAINS CROSS, one is the priority road. With MainEvery = 3 they cross each other, and
+        /// "exactly two main arms" missed every one of those; axis 0 wins, so a town rebuilds identically.</summary>
         static bool ThroughMain(List<Span> plan, List<(int, bool)> here, out int a, out int b)
         {
             a = b = -1;
-            // best pair found so far, preferring a main line over a side street
-            bool bestMain = false;
             for (int axis = 0; axis < 2; axis++)
             {
                 int p = -1, q = -1, count = 0;
-                bool main = false;
+                bool allMain = true;
                 for (int i = 0; i < here.Count; i++)
                 {
                     if (plan[here[i].Item1].Axis != axis) continue;
                     count++;
                     if (p < 0) p = i; else if (q < 0) q = i;
-                    main |= plan[here[i].Item1].Main;
+                    allMain &= plan[here[i].Item1].Main;
                 }
-                if (count != 2 || q < 0) continue;              // a stub or a fan: nothing collinear to join
-                if (plan[here[p].Item1].Main != plan[here[q].Item1].Main) continue;   // a main must not fuse to a street
-                if (a >= 0 && (bestMain || !main)) continue;    // already have a pair, and this one is no better
-                a = p; b = q; bestMain = main;
+                if (count != 2 || q < 0 || !allMain) continue;   // a stub, a fan, or a street
+                a = p; b = q;
+                return true;                                     // first main axis wins
             }
-            return a >= 0;
+            return false;
         }
 
         static IEnumerable<(Span sp, int idx)> Enumerate(List<Span> l) { for (int i = 0; i < l.Count; i++) yield return (l[i], i); }

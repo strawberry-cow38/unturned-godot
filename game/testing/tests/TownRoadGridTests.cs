@@ -73,6 +73,7 @@ namespace UnturnedGodot.Testing
             // node) and now also fails the new way it can break (two pairs left uncut, which is two
             // coplanar ribbons overlapping at right angles).
             float leastCut = float.MaxValue; int ends = 0, through = 0, nodesThrough = 0, twoPairs = 0, tooClose = 0;
+            int streetsThrough = 0; int mainMat = Grid().MainMaterial;
             foreach (var (pos, es) in rfA.Junctions())
             {
                 float widest = 0f;
@@ -83,7 +84,12 @@ namespace UnturnedGodot.Testing
                     if (!rfA.EvaluateAlong(road, atEnd ? rfA.RoadLength(road) : 0f, out var p, out _, snapTerrain: false)) continue;
                     float d = new Vector2(p.X - pos.X, p.Z - pos.Z).Length();
                     ends++;
-                    if (d < 0.5f) { through++; uncutHere++; continue; }
+                    if (d < 0.5f)
+                    {
+                        through++; uncutHere++;
+                        if (rfA.RoadMaterialOf(road) != mainMat) streetsThrough++;
+                        continue;
+                    }
                     leastCut = Mathf.Min(leastCut, d);
                     if (d + 0.01f < widest) tooClose++;
                 }
@@ -93,6 +99,13 @@ namespace UnturnedGodot.Testing
             T.Check($"the priority road runs through its node ({through} uncut arms over {nodesThrough} junctions)",
                     through > 0 && nodesThrough > 0);
             T.Check($"...one pair per node, never two ({twoPairs} nodes left 3+ arms uncut)", twoPairs == 0);
+            // ⚠⚠ AND ONLY EVER A MAIN. A through ribbon carries its own baked lines across the node -- right
+            // for a main, wrong for a street, whose crossings it would then paint a centre line through. That
+            // shipped once (the rule was widened to any collinear pair to raise a coverage number) and no
+            // check here could see it, because every one of them was about GEOMETRY and this is about WHICH
+            // ROAD. master's spec: "their lines continue through the junction without crossings on their parts".
+            T.Check($"...and the road that runs through is always a MAIN, never a street ({streetsThrough} street arms left uncut)",
+                    streetsThrough == 0);
             T.Check($"every other arm stops clear of the widest road it meets ({ends - through} cut ends, "
                   + $"{tooClose} too close, nearest {leastCut:0.0} m back)",
                     ends - through > 0 && tooClose == 0);
