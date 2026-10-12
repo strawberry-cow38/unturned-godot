@@ -317,7 +317,8 @@ namespace UnturnedGodot
                         spokes.Add(new SDG.Unturned.InfiniteRoads.TownArm(xs, zs, hs, atEnd,
                                        roads.RoadHalfWidthOfMaterial(sp.Main ? MainMaterial : StreetMaterial)));
                     }
-                    if (SDG.Unturned.InfiniteRoads.TownNode(spokes, node.P.X, -node.P.Z, out var cuts, out var patch, out var marks)
+                    if (SDG.Unturned.InfiniteRoads.TownNode(spokes, node.P.X, -node.P.Z, out var cuts, out var patch, out var marks,
+                                                           stopPastEdge: CornerKerbRadius + SignalBeforeCurve)
                         && cuts != null && cuts.Length == here.Count)
                     {
                         for (int q = 0; q < here.Count; q++)

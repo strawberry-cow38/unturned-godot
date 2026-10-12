@@ -1213,7 +1213,8 @@ namespace SDG.Unturned
         /// (strawberry 2026-10-12: "add stop lines, continue the road texture up to the stop lines"). Two
         /// arms are a road passing through and are painted through, with no stop line.</summary>
         public static bool TownNode(IReadOnlyList<TownArm> arms, double nx, double nz,
-                                    out double[] trims, out RoadPatch patch, out List<RoadMark> marks)
+                                    out double[] trims, out RoadPatch patch, out List<RoadMark> marks,
+                                    double stopPastEdge = double.NaN)
         {
             trims = null; patch = null; marks = null;
             if (arms == null || arms.Count < 2) return false;
@@ -1229,7 +1230,7 @@ namespace SDG.Unturned
             if (NodeShape(list, nx, nz) is not NodeGeo g) return false;
             if (NodePatch(g) is not RoadPatch p) return false;
             var plan = new JunctionPlan();
-            PaintNode(plan, g, p);
+            PaintNode(plan, g, p, stopPastEdge);
             trims = g.Trim.ToArray();
             patch = p;
             marks = plan.Marks;
@@ -1310,7 +1311,11 @@ namespace SDG.Unturned
         /// <summary>A node's paint. Each arm's lines run on in from its cut to where it meets its neighbours, and a stop
         /// line crosses its approach there. A town of three or more arms is an all-way stop; two arms only (a town on a
         /// bend) are one road, painted through.</summary>
-        static void PaintNode(JunctionPlan plan, NodeGeo g, RoadPatch p)
+        /// <param name="stopPastEdge">NaN keeps the infinite world's own rule (just past where the arm's
+        /// paint meets its neighbours'). A value puts the stop line that far PAST the arm's own half width
+        /// instead -- which is where a town's kerb begins to turn, and so where a driver expects it
+        /// (strawberry 2026-10-12: "bring the stop lines just before the curve of the sidewalks").</param>
+        static void PaintNode(JunctionPlan plan, NodeGeo g, RoadPatch p, double stopPastEdge = double.NaN)
         {
             int n = g.Arms.Count;
             var white = new RoadMark { Colour = 0, AnchorX = p.AnchorX, AnchorZ = p.AnchorZ, On = p };
@@ -1321,6 +1326,8 @@ namespace SDG.Unturned
                 if (arm.E.Kind == RoadKind.Trail) continue;
                 bool through = n == 2;
                 double stop = Math.Min(g.Inner[i] + 1.5, g.Trim[i] - StopWidth);
+                if (!double.IsNaN(stopPastEdge))
+                    stop = Math.Min(Math.Max(0.0, arm.Hw + stopPastEdge), g.Trim[i] - StopWidth);
                 double from = through ? 0 : stop + StopWidth * 0.5;
                 if (from < g.Trim[i])
                     foreach (var (lat, width, colour, dashed) in LinesOf(arm.E))
