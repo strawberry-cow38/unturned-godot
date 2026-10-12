@@ -141,6 +141,174 @@ namespace UnturnedGodot
             public List<Vector3> Pts; public float Len, TrimA, TrimB;
         }
 
+        /// <summary>UG_TOWNCUTMAIN=1 puts the main back to stopping at every junction -- the control, so the
+        /// through-main change can be shown rather than asserted.</summary>
+        public static bool CutMain = System.Environment.GetEnvironmentVariable("UG_TOWNCUTMAIN") == "1";
+
+        /// <summary>Cut the through road's corridor out of a node's patch, leaving only the pieces either
+        /// side of it -- the corner fillets that join each side street to the main's edge.
+        ///
+        /// ⭐⭐ THIS IS WHAT THE JUNCTION SHOULD HAVE BEEN ALL ALONG (strawberry 2026-10-12: "the idea is
+        /// that the spline runs through - no patch, and the side roads join the sides of the spline??").
+        /// tiny's node geometry lays ONE SLAB over the whole intersection and cuts every arm back under it,
+        /// which means the slab -- plain tarmac, by design, so four lane textures do not collide in the
+        /// middle -- is what you see. Running the main through underneath changed nothing visible: the slab
+        /// still covered it and the box went BLANK, because the main's lines were buried and the painted
+        /// ones ride on the slab.
+        /// ⭐ With the corridor cut out, the main's OWN RIBBON is the surface through the junction, so its
+        /// lines continue in the road's own texture. That retires three separate complaints at once -- the
+        /// painted lines being a different colour, being misaligned, and being scaled wrong -- because
+        /// there is no longer a second thing drawing them to disagree with the first.
+        /// ⚠ The patch is in InfiniteRoads' frame (z negated); so are cx/cz and the normal.</summary>
+        static SDG.Unturned.RoadPatch ClipCorridor(SDG.Unturned.RoadPatch p, double cx, double cz,
+                                                   double nx, double nz, double half)
+        {
+            if (p?.Tris == null || p.X == null || p.Tris.Length < 3) return p;
+            var X = new List<double>(p.X); var Z = new List<double>(p.Z);
+            var Y = new List<float>(p.Y);
+            var L = p.Lift != null ? new List<float>(p.Lift) : null;
+            var U = p.U != null ? new List<float>(p.U) : null;
+            var Vv = p.V != null ? new List<float>(p.V) : null;
+            double Lat(int i) => (X[i] - cx) * nx + (Z[i] - cz) * nz;
+
+            var cuts = new Dictionary<(int, int, bool), int>();
+            int Mid(int a, int b, double plane, bool hi)
+            {
+                var key = a < b ? (a, b, hi) : (b, a, hi);
+                if (cuts.TryGetValue(key, out int got)) return got;
+                double la = Lat(a), lb = Lat(b);
+                double t = Math.Abs(lb - la) < 1e-12 ? 0.5 : (plane - la) / (lb - la);
+                t = Math.Clamp(t, 0.0, 1.0);
+                X.Add(X[a] + (X[b] - X[a]) * t); Z.Add(Z[a] + (Z[b] - Z[a]) * t);
+                Y.Add((float)(Y[a] + (Y[b] - Y[a]) * t));
+                L?.Add((float)(L[a] + (L[b] - L[a]) * t));
+                U?.Add((float)(U[a] + (U[b] - U[a]) * t));
+                Vv?.Add((float)(Vv[a] + (Vv[b] - Vv[a]) * t));
+                int id = X.Count - 1; cuts[key] = id; return id;
+            }
+
+            var tris = new List<int>();
+            var poly = new List<int>(4); var clipped = new List<int>(5);
+            void ClipTri(int a, int b, int c, double plane, int sign, bool hi)
+            {
+                poly.Clear(); poly.Add(a); poly.Add(b); poly.Add(c);
+                clipped.Clear();
+                for (int i = 0; i < poly.Count; i++)
+                {
+                    int cur = poly[i], nxt = poly[(i + 1) % poly.Count];
+                    double dc = sign * (Lat(cur) - plane), dn = sign * (Lat(nxt) - plane);
+                    if (dc >= 0) clipped.Add(cur);
+                    if ((dc > 1e-9 && dn < -1e-9) || (dc < -1e-9 && dn > 1e-9)) clipped.Add(Mid(cur, nxt, plane, hi));
+                }
+                for (int i = 2; i < clipped.Count; i++)
+                {
+                    int v0 = clipped[0], v1 = clipped[i - 1], v2 = clipped[i];
+                    // ⚠ DROP THE SLIVERS A CLIP ALWAYS MAKES. A triangle grazing the plane produces a
+                    // zero-area offcut whose normal is noise, and those are what shade as dark specks.
+                    double ar = Math.Abs((X[v1] - X[v0]) * (Z[v2] - Z[v0]) - (X[v2] - X[v0]) * (Z[v1] - Z[v0]));
+                    if (ar < 1e-4) continue;
+                    tris.Add(v0); tris.Add(v1); tris.Add(v2);
+                }
+            }
+            for (int t = 0; t + 2 < p.Tris.Length; t += 3)
+            {
+                int a = p.Tris[t], b = p.Tris[t + 1], c = p.Tris[t + 2];
+                if (a >= p.X.Length || b >= p.X.Length || c >= p.X.Length) continue;
+                ClipTri(a, b, c, half, +1, true);
+                ClipTri(a, b, c, -half, -1, false);
+            }
+            if (tris.Count < 3) return null;        // the corridor swallowed the whole patch
+
+            // ---- compact to the vertices the surviving triangles actually use
+            var map = new Dictionary<int, int>();
+            var fx = new List<double>(); var fz = new List<double>();
+            var fy = new List<float>(); var fl = new List<float>();
+            var fu = new List<float>(); var fv = new List<float>();
+            int Keep(int i)
+            {
+                if (map.TryGetValue(i, out int got)) return got;
+                fx.Add(X[i]); fz.Add(Z[i]); fy.Add(Y[i]);
+                fl.Add(L != null ? L[i] : 0f); fu.Add(U != null ? U[i] : 0f); fv.Add(Vv != null ? Vv[i] : 0f);
+                int id = fx.Count - 1; map[i] = id; return id;
+            }
+            for (int i = 0; i < tris.Count; i++) tris[i] = Keep(tris[i]);
+
+            // ---- the bevel runs round the OUTSIDE only. An edge lying on a cut plane faces the main's
+            // ribbon, which is the same asphalt at the same height: bevelling it would hang a 9 cm cliff
+            // down the middle of a junction that has no drop in it.
+            var seen = new Dictionary<(int, int), (int count, int opp)>();
+            for (int t = 0; t + 2 < tris.Count; t += 3)
+                for (int e = 0; e < 3; e++)
+                {
+                    int a = tris[t + e], b = tris[t + (e + 1) % 3], o = tris[t + (e + 2) % 3];
+                    var k = a < b ? (a, b) : (b, a);
+                    seen[k] = seen.TryGetValue(k, out var had) ? (had.count + 1, had.opp) : (1, o);
+                }
+            var skirts = new List<int[]>(); var snx = new List<float[]>(); var snz = new List<float[]>();
+            foreach (var kv in seen)
+            {
+                if (kv.Value.count != 1) continue;                       // interior edge
+                var (a, b) = kv.Key;
+                double la = (fx[a] - cx) * nx + (fz[a] - cz) * nz, lb = (fx[b] - cx) * nx + (fz[b] - cz) * nz;
+                if (Math.Abs(Math.Abs(la) - half) < 1e-3 && Math.Abs(Math.Abs(lb) - half) < 1e-3) continue;  // the cut
+                double ex = fx[b] - fx[a], ez = fz[b] - fz[a];
+                double len = Math.Sqrt(ex * ex + ez * ez);
+                if (len < 1e-6) continue;
+                double ox = -ez / len, oz = ex / len;                    // perpendicular...
+                int o2 = kv.Value.opp;                                   // ...pointing AWAY from the triangle
+                if ((fx[o2] - fx[a]) * ox + (fz[o2] - fz[a]) * oz > 0) { ox = -ox; oz = -oz; }
+                skirts.Add(new[] { a, b });
+                snx.Add(new[] { (float)ox, (float)ox }); snz.Add(new[] { (float)oz, (float)oz });
+            }
+
+            return new SDG.Unturned.RoadPatch
+            {
+                Kind = p.Kind, Ramp = p.Ramp, AnchorX = p.AnchorX, AnchorZ = p.AnchorZ,
+                X = fx.ToArray(), Z = fz.ToArray(), Y = fy.ToArray(),
+                Lift = fl.ToArray(), U = fu.ToArray(), V = fv.ToArray(),
+                Tris = tris.ToArray(),
+                Skirts = skirts.ToArray(), SkirtNX = snx.ToArray(), SkirtNZ = snz.ToArray(),
+                // ⚠ NO INTERIOR VERTICES. Interior marks the ones free to ride up onto the ground beneath;
+                // the indices it referred to are gone, and a fillet is small enough that none should.
+                Interior = int.MaxValue,
+            };
+        }
+
+        /// <summary>Which pair of arms, if any, RUNS THROUGH this node uncut -- the priority road.
+        ///
+        /// ⚠ EXACTLY ONE PAIR, AND THEY MUST BE COLLINEAR. Two arms on the same axis are two halves of one
+        /// line, so leaving both uncut makes one continuous carriageway that meets itself at the node. Doing
+        /// it to the crossing pair as well would lay two coplanar ribbons at right angles over each other --
+        /// a z-fight, not a fix.
+        /// ⚠ A MAIN WINS. With MainEvery = 3 the main lines cross EACH OTHER, so "two main arms and no
+        /// third" missed every main crossroads and the backing measured 58%, not 100% -- the first rule was
+        /// written for the T-junction I happened to be looking at. Where two mains cross, one has to be the
+        /// priority road; where no main is present the bigger-numbered axis is picked, so the choice is
+        /// deterministic and a town rebuilds identically.</summary>
+        static bool ThroughMain(List<Span> plan, List<(int, bool)> here, out int a, out int b)
+        {
+            a = b = -1;
+            // best pair found so far, preferring a main line over a side street
+            bool bestMain = false;
+            for (int axis = 0; axis < 2; axis++)
+            {
+                int p = -1, q = -1, count = 0;
+                bool main = false;
+                for (int i = 0; i < here.Count; i++)
+                {
+                    if (plan[here[i].Item1].Axis != axis) continue;
+                    count++;
+                    if (p < 0) p = i; else if (q < 0) q = i;
+                    main |= plan[here[i].Item1].Main;
+                }
+                if (count != 2 || q < 0) continue;              // a stub or a fan: nothing collinear to join
+                if (plan[here[p].Item1].Main != plan[here[q].Item1].Main) continue;   // a main must not fuse to a street
+                if (a >= 0 && (bestMain || !main)) continue;    // already have a pair, and this one is no better
+                a = p; b = q; bestMain = main;
+            }
+            return a >= 0;
+        }
+
         static IEnumerable<(Span sp, int idx)> Enumerate(List<Span> l) { for (int i = 0; i < l.Count; i++) yield return (l[i], i); }
         static void Add<TK, TV>(Dictionary<TK, List<TV>> d, TK k, TV v)
         { if (!d.TryGetValue(k, out var l)) d[k] = l = new List<TV>(); l.Add(v); }
@@ -149,6 +317,13 @@ namespace UnturnedGodot
         /// than a plain kerb-line setback. UG_TOWNNOPATCH=1 turns it off, which is the control: the same town
         /// with overlapping arms, for a before/after at one camera.</summary>
         public bool UseNodePatches = System.Environment.GetEnvironmentVariable("UG_TOWNNOPATCH") != "1";
+        /// <summary>What the corridor clip did, so "the fillets are gone" and "the fillets are fine" are
+        /// distinguishable without opening a render.</summary>
+        public int ClipsTried, ClipsEmptied, ClipTrisBefore, ClipTrisAfter;
+        /// <summary>Where the arm walk found the widest bare run, so a camera can be aimed at the thing the
+        /// probe actually measured instead of at where I guessed the defect was.</summary>
+        public Vector3 LastBareAt = Vector3.Zero;
+        public float LastBareRun = 0f;
         /// <summary>The junction patches this grid produced, for the caller to build meshes from.</summary>
         public readonly List<SDG.Unturned.RoadPatch> Patches = new();
         /// <summary>The node PAINT: each arm's lines carried into the junction, and the stop lines.</summary>
@@ -395,6 +570,58 @@ namespace UnturnedGodot
                         if (atEnd) sp.TrimB = back; else sp.TrimA = back;
                         plan[si] = sp;
                     }
+
+                // ⚠⚠ A MAIN RUNS THROUGH A JUNCTION, it does not stop at it and start again on the far side
+                // (strawberry 2026-10-12: "couldnt we just have the main road spline continue through this
+                // intersection instead?"). Every arm used to be cut back behind its fillet and the patch
+                // left to pave the middle, so a main crossing five junctions had TEN cut ends -- and a cut
+                // end is exactly where the slab can fall short of the asphalt and show ground through. Left
+                // uncut, the two halves of a through main MEET at the node: collinear, sharing the node
+                // point, so the carriageway is continuous underneath and there is real road wherever the
+                // patch is a few millimetres shy. The patch still paves the top, so nothing looks different
+                // where it already fitted -- this only removes what the gaps were made of.
+                // ⚠ ONLY A MAIN, AND ONLY STRAIGHT THROUGH. Leaving CROSSING arms uncut would overlap two
+                // coplanar ribbons at right angles in the middle of the node, which is a z-fight, not a fix.
+                if (!CutMain && ThroughMain(plan, here, out int ta, out int tb))
+                {
+                    var spT = plan[here[ta].Item1];
+                    foreach (int q in new[] { ta, tb })
+                    {
+                        var sp = plan[here[q].Item1];
+                        if (here[q].Item2) sp.TrimB = 0f; else sp.TrimA = 0f;
+                        plan[here[q].Item1] = sp;
+                    }
+                    // ⚠⚠ AND TAKE THE SLAB OFF IT. Running the main through is only half the change: the
+                    // patch still covers the corridor, and the patch is PLAIN TARMAC, so the junction went
+                    // blank. Cut the corridor out and the main's own ribbon is the surface, lines and all.
+                    if (done && Patches.Count > 0 && spT.Pts != null && spT.Pts.Count >= 2)
+                    {
+                        var ptsT = spT.Pts;
+                        var tipT = here[ta].Item2 ? ptsT[ptsT.Count - 1] : ptsT[0];
+                        var prvT = here[ta].Item2 ? ptsT[ptsT.Count - 2] : ptsT[1];
+                        double ddx = tipT.X - prvT.X, ddz = (-tipT.Z) - (-prvT.Z);
+                        double dlen = Math.Sqrt(ddx * ddx + ddz * ddz);
+                        if (dlen > 1e-6)
+                        {
+                            ddx /= dlen; ddz /= dlen;
+                            double hwT = roads.RoadHalfWidthOfMaterial(spT.Main ? MainMaterial : StreetMaterial);
+                            var oldP = Patches[Patches.Count - 1];
+                            var cut = ClipCorridor(oldP, node.P.X, -node.P.Z, -ddz, ddx, hwT);
+                            // ⚠ THE PAINT IS KEYED ON THE PATCH OBJECT. Every mark remembers which patch it
+                            // rides on and BuildMarkMeshes looks its height shift up by that reference -- so
+                            // swapping the patch without re-pointing them drops every line at this node to a
+                            // zero shift, which is the paint sunk under the asphalt rather than on it.
+                            foreach (var mk in Marks) if (mk != null && ReferenceEquals(mk.On, oldP)) mk.On = cut;
+                            ClipsTried++;
+                            if (cut != null)
+                            {
+                                Patches[Patches.Count - 1] = cut;
+                                ClipTrisBefore += oldP.Tris.Length / 3; ClipTrisAfter += cut.Tris.Length / 3;
+                            }
+                            else { Patches.RemoveAt(Patches.Count - 1); ClipsEmptied++; }
+                        }
+                    }
+                }
             }
 
             // ---- 2c. EMIT. Each span cut by whatever its two ends asked for, then bound at the NODE while
@@ -664,9 +891,23 @@ namespace UnturnedGodot
                 for (int e = 0; e < 2; e++)
                 {
                     bool atEnd = e == 1;
-                    if (roads.RoadEndJunction(r, atEnd) < 0) continue;
+                    int jg = roads.RoadEndJunction(r, atEnd);
+                    if (jg < 0) continue;
+                    // ⚠ A LOOSE END IS NOT A SEAM. Every span end gets a junction node even where the town
+                    // simply stops, and a degree-1 node has no junction paving for the arm to meet -- so
+                    // this probe was measuring the distance from the edge of town to the nearest patch and
+                    // calling 9.2 m a gap. The seam it exists to find is between an arm and what PAVES its
+                    // node; where nothing does, there is nothing to be flush with.
+                    int deg = roads.JunctionEdges(jg).Count;
+                    if (deg < 2) continue;
                     float L = roads.RoadLength(r);
                     if (!roads.EvaluateAlong(r, atEnd ? L : 0f, out var tip, out var tan, snapTerrain: false)) continue;
+                    // ⚠ AND A THROUGH ARM HAS NO CUT. Its end sits ON the node and its carriageway simply
+                    // carries on as the next block, with the slab deliberately cut away along it -- so
+                    // "how far is the nearest patch" answers a corridor half-width (9.2 m) and means
+                    // nothing. The seam this probe is for is where an arm STOPS and paving takes over.
+                    var jpg = roads.JunctionPos(jg);
+                    if (new Vector2(tip.X - jpg.X, tip.Z - jpg.Z).Length() < 0.5f) continue;
                     var right = new Vector3(tan.Z, 0f, -tan.X).Normalized();
                     float hw = roads.RoadHalfWidth(r);
                     for (int k = -2; k <= 2; k++)
@@ -674,7 +915,12 @@ namespace UnturnedGodot
                         var q = tip + right * (hw * k / 2f);
                         double best = double.MaxValue;
                         foreach (var pp in Patches) best = System.Math.Min(best, pp.DistanceTo(q.X, -q.Z));
-                        if (best > worstGap) { worstGap = (float)best; gapWhy = $"road {r} {(atEnd ? "end" : "start")} at lateral {hw * k / 2f:0.0} m"; }
+                        // ⚠⚠ OR BY ANOTHER ROAD. A THROUGH arm's cut meets its own CONTINUATION, not a
+                        // patch -- the slab is cut away along the main on purpose now -- so asking only the
+                        // patches reported a 9.2 m "gap" straight across a junction that is solid asphalt.
+                        // The question this probe exists to ask is whether the cut meets PAVING, of any kind.
+                        if (best > 0 && roads.DeepestRoadOverlap(q, 0f, out _, out _, skipRoad: r)) best = 0;
+                        if (best > worstGap) { worstGap = (float)best; gapWhy = $"road {r} {(atEnd ? "end" : "start")} at lateral {hw * k / 2f:0.0} m, node degree {deg}"; }
                         gapProbes++;
                     }
                 }
@@ -710,8 +956,11 @@ namespace UnturnedGodot
                             var q = new Vector3(jp.X + Mathf.Cos(a) * rad, 0f, jp.Z + Mathf.Sin(a) * rad);
                             bool c = false;
                             foreach (var pp in Patches) if (pp.DistanceTo(q.X, -q.Z) <= 0.01) { c = true; break; }
-                            if (!c && roads.NearestPointOnSpline(q, 80f, out int nr, out _, out _, out var np))
-                                c = new Vector2(q.X - np.X, q.Z - np.Z).Length() <= roads.RoadHalfWidth(nr) + 0.05f;
+                            // ⚠ EVERY ROAD, NOT THE NEAREST -- the third probe in this file to have had the
+                            // bug it was built to find. A point at a main's edge inside a junction is often
+                            // NEAREST to the narrow side street beside it, which it really is outside, so
+                            // the nearest-only test called solid carriageway bare and invented 136 holes.
+                            if (!c) c = roads.DeepestRoadOverlap(q, 0.05f, out _, out _);
                             cov[ai, ri] = c;
                         }
                     // ⚠⚠ A BARE RUN WITH PAVING ON BOTH SIDES, not a bare point with covered neighbours.
@@ -776,8 +1025,10 @@ namespace UnturnedGodot
                                     var q4 = jp3 + outw * d3 + rt * (latf * hw3);
                                     bool c4 = false;
                                     foreach (var pq in Patches) if (pq.DistanceTo(q4.X, -q4.Z) <= 0.001) { c4 = true; break; }
-                                    if (!c4 && roads.NearestPointOnSpline(q4, 80f, out int nr4, out _, out _, out var np4))
-                                        c4 = new Vector2(q4.X - np4.X, q4.Z - np4.Z).Length() <= roads.RoadHalfWidth(nr4);
+                                    // ⚠ EVERY ROAD, NOT THE NEAREST. The nearest spline to a point in a wide
+                                    // road's mouth is often the narrow side street beside it, which the point
+                                    // really is outside -- so a nearest-only test calls covered asphalt bare.
+                                    if (!c4) c4 = roads.DeepestRoadOverlap(q4, 0f, out _, out _);
                                     if (!c4) { run3 += Step5; }
                                     else
                                     {
@@ -785,6 +1036,7 @@ namespace UnturnedGodot
                                         {
                                             slivers++;
                                             if (run3 > worstSliver) { worstSliver = run3; sliverAt = q4 - outw * (run3 * 0.5f); }
+                                            if (run3 > LastBareRun) { LastBareRun = run3; LastBareAt = q4 - outw * (run3 * 0.5f); }
                                         }
                                         run3 = 0f;
                                     }
@@ -797,6 +1049,59 @@ namespace UnturnedGodot
                             + (slivers > 0 ? $", widest {worstSliver * 100f:0} cm at {sliverAt}" : " -- none"));
                 }
             }
+            // ⚠ THE THROUGH-MAIN CHANGE IS INVISIBLE BY DESIGN -- it puts real carriageway UNDER the patch,
+            // so a render of a junction whose patch already fitted looks identical (master, of exactly that
+            // render: "nothing changed in the pic"). What it changes is whether there is anything beneath
+            // the slab, which only a measurement can show. Walk each through main's centreline across its
+            // node and ask how much of it is backed by ROAD rather than by the patch alone.
+            {
+                int nodes = 0; float backed = 0f, total = 0f;
+                for (int j5 = 0; j5 < roads.JunctionCount; j5++)
+                {
+                    var e5 = roads.JunctionEdges(j5);
+                    if (e5.Count < 3) continue;
+                    int mainRoad = -1; float mhw = 0f;
+                    foreach (var (r5, _) in e5) if (IsMain(roads, r5)) { mainRoad = r5; mhw = roads.RoadHalfWidth(r5); }
+                    if (mainRoad < 0) continue;
+                    var jp5 = roads.JunctionPos(j5);
+                    if (!roads.EvaluateAlong(mainRoad, roads.RoadLength(mainRoad) * 0.5f, out _, out var mt, snapTerrain: false)) continue;
+                    var dir = new Vector3(mt.X, 0f, mt.Z).Normalized();
+                    nodes++;
+                    for (float d5 = -mhw; d5 <= mhw; d5 += 0.25f)
+                    {
+                        total += 1f;
+                        if (roads.DeepestRoadOverlap(jp5 + dir * d5, 0f, out _, out _)) backed += 1f;
+                    }
+                }
+                // ⚠ AND WHICH SURFACE ACTUALLY WINS AT THE NODE. Running the main through only helps if its
+                // ribbon is the thing you see; if the patch sits over it the box goes blank, because the
+                // patch is plain tarmac and the painted lines ride on the PATCH's height, not the road's.
+                for (int j6 = 0; j6 < roads.JunctionCount && j6 < 60; j6++)
+                {
+                    var e6 = roads.JunctionEdges(j6);
+                    if (e6.Count < 3) continue;
+                    int mr = -1;
+                    foreach (var (r6, _) in e6) if (IsMain(roads, r6)) mr = r6;
+                    if (mr < 0) continue;
+                    var jp6 = roads.JunctionPos(j6);
+                    float ribbon = float.NaN;
+                    if (roads.NearestPointOnSpline(jp6, 60f, out int nr6, out _, out _, out var np6)) ribbon = np6.Y;
+                    float patchY = float.NaN; float shift6 = 0f;
+                    foreach (var pp in Patches)
+                        if (pp.DistanceTo(jp6.X, -jp6.Z) <= 0.01)
+                        { patchY = pp.HeightAt(jp6.X, -jp6.Z); fit.TryGetValue(pp, out shift6); break; }
+                    Log.Print($"[towngrid] node {j6} surfaces: nearest ribbon (road {nr6}) {ribbon:0.000}, "
+                            + $"patch {patchY + shift6 + PatchLift:0.000} (raw {patchY:0.000} + fit {shift6:0.000} + lift {PatchLift:0.000}), "
+                            + $"paint {patchY + shift6 + PatchLift + MarkLift:0.000} -- "
+                            + (patchY + shift6 + PatchLift > ribbon ? "PATCH WINS" : "RIBBON WINS"));
+                    break;
+                }
+                if (nodes > 0)
+                    Log.Print($"[towngrid] through-main backing: {backed / total * 100f:0}% of the main's centreline "
+                            + $"across {nodes} junctions is REAL CARRIAGEWAY{(CutMain ? "  (UG_TOWNCUTMAIN control)" : "")}");
+            }
+            Log.Print($"[towngrid] corridor clip: {ClipsTried} nodes cut, {ClipsEmptied} left with NO patch at all, "
+                    + $"{ClipTrisBefore} tris -> {ClipTrisAfter}");
             Log.Print($"[towngrid] patch/road seam: height {worst * 100f:0.0} cm, IN-PLAN GAP {worstGap * 100f:0.0} cm "
                     + $"over {probed}/{gapProbes} probes (surf {surf:0.000}, lift {PatchLift:0.000}) -- {worstWhy}; widest gap {gapWhy}");
             return made;

@@ -427,12 +427,13 @@ namespace UnturnedGodot
         /// and reported it just as happily with the fix disabled -- a control that cannot fail. Every road
         /// has to be asked, because the offending road is by construction not the closest one.
         /// ⚠ PLAN DISTANCE ONLY: a pole stands on a kerb 20 cm above the asphalt and must still count.</summary>
-        public bool DeepestRoadOverlap(Vector3 p, float margin, out int road, out float depth)
+        public bool DeepestRoadOverlap(Vector3 p, float margin, out int road, out float depth, int skipRoad = -1)
         {
             road = -1; depth = 0f;
             const int Steps = 16;   // per segment, then an exact projection onto each chord
             for (int ri = 0; ri < _roads.Count; ri++)
             {
+                if (ri == skipRoad) continue;
                 var r = _roads[ri];
                 float half = RoadHalfWidth(ri) + margin;
                 if (half <= 0f) continue;

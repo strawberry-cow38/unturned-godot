@@ -10730,6 +10730,18 @@ namespace UnturnedGodot
                 // where a change in how finely the arc is tessellated CANNOT show -- master, of a render
                 // taken after the fix: "nothing changed in this pic from the last one". UG_TOWNCLOSE=k drops
                 // onto one corner close enough to resolve it.
+                // UG_TOWNCLOSE=s: stand ON the worst bare run the arm walk measured, low and close. ⚠ The
+                // camera goes where the INSTRUMENT says the defect is, not where I guessed -- every seam
+                // hunt so far has been me framing a junction I had reasoned my way to and finding it clean.
+                if (closeEnv == "s" && town.LastBareRun > 0f)
+                {
+                    var bare = town.LastBareAt;
+                    tcam.GlobalPosition = bare + new Vector3(9f, 4.5f, 9f);
+                    tcam.Fov = 34f;
+                    tcam.LookAt(bare, Vector3.Up);
+                    Log.Print($"[towngrid] seam camera on the widest bare run, {town.LastBareRun * 100f:0} cm at {bare}");
+                    goto noTown;
+                }
                 bool kerbShot = closeEnv == "k";
                 tcam.GlobalPosition = busiest + (kerbShot ? new Vector3(34f, 9f, 34f) : new Vector3(0f, 26f, 40f));
                 if (kerbShot) tcam.Fov = 38f;

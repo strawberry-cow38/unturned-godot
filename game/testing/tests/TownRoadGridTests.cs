@@ -58,23 +58,44 @@ namespace UnturnedGodot.Testing
             // ⭐ JOINED, BUT NOT OVERLAPPING (strawberry 2026-10-11: "use tiny's road-merging mechanic instead
             // of overlapping roads").
             //
-            // ⚠ THIS CHECK HAS NOW BEEN WRONG TWICE, IN OPPOSITE DIRECTIONS, AND BOTH TIMES IT WAS THE TEST
-            // DESCRIBING THE OLD IMPLEMENTATION. First it asserted every bound end sat exactly ON its node,
-            // which was true of overlapping ribbons. Then it asserted a "through" street reached the node
-            // while the others stopped short, which was true of the hand-rolled dominant-axis setback. With
-            // tiny's node geometry neither holds: EVERY arm is cut back past its fillets and one patch paves
-            // the middle. What is invariant across all three is the thing worth asserting -- no arm's asphalt
-            // reaches the node, and the hole that leaves is paved.
-            float leastCut = float.MaxValue; int ends = 0;
+            // ⚠ THIS CHECK HAS NOW BEEN WRONG THREE TIMES, AND EVERY TIME IT WAS THE TEST DESCRIBING THE
+            // OLD IMPLEMENTATION. First it asserted every bound end sat exactly ON its node, true of
+            // overlapping ribbons. Then that a "through" street reached the node while the others stopped
+            // short, true of the hand-rolled dominant-axis setback. Then that EVERY arm is cut back and one
+            // patch paves the middle, true of tiny's node geometry. Now the priority road runs through
+            // uncut again (strawberry 2026-10-12: "couldnt we just have the main road spline continue
+            // through this intersection instead?"), so the shape is a THROUGH PAIR plus CUT ARMS.
+            // ⭐ SO ASSERT BOTH HALVES, AND MEASURE THE CUT AGAINST WHAT IT HAS TO CLEAR rather than
+            // against a constant. A cut arm must stop at least the widest carriageway at that node back,
+            // because that is the road it would otherwise be standing in -- a fixed 9.2 m only happened to
+            // hold while every junction had a four-lane arm, and would pass a side-street node that cut
+            // nothing. Written this way the check still fails the thing it is for (an arm reaching its
+            // node) and now also fails the new way it can break (two pairs left uncut, which is two
+            // coplanar ribbons overlapping at right angles).
+            float leastCut = float.MaxValue; int ends = 0, through = 0, nodesThrough = 0, twoPairs = 0, tooClose = 0;
             foreach (var (pos, es) in rfA.Junctions())
+            {
+                float widest = 0f;
+                foreach (var (r2, _) in es) widest = Mathf.Max(widest, rfA.RoadHalfWidth(r2));
+                int uncutHere = 0;
                 foreach (var (road, atEnd) in es)
                 {
                     if (!rfA.EvaluateAlong(road, atEnd ? rfA.RoadLength(road) : 0f, out var p, out _, snapTerrain: false)) continue;
-                    leastCut = Mathf.Min(leastCut, new Vector2(p.X - pos.X, p.Z - pos.Z).Length());
+                    float d = new Vector2(p.X - pos.X, p.Z - pos.Z).Length();
                     ends++;
+                    if (d < 0.5f) { through++; uncutHere++; continue; }
+                    leastCut = Mathf.Min(leastCut, d);
+                    if (d + 0.01f < widest) tooClose++;
                 }
-            T.Check($"every arm stops short of its node ({ends} ends, nearest {leastCut:0.0} m back)",
-                    ends > 0 && leastCut >= 9.2f);
+                if (uncutHere > 0) nodesThrough++;
+                if (uncutHere > 2) twoPairs++;
+            }
+            T.Check($"the priority road runs through its node ({through} uncut arms over {nodesThrough} junctions)",
+                    through > 0 && nodesThrough > 0);
+            T.Check($"...one pair per node, never two ({twoPairs} nodes left 3+ arms uncut)", twoPairs == 0);
+            T.Check($"every other arm stops clear of the widest road it meets ({ends - through} cut ends, "
+                  + $"{tooClose} too close, nearest {leastCut:0.0} m back)",
+                    ends - through > 0 && tooClose == 0);
             T.Check($"...and every node it cut is paved ({repA.Patched} patches for {repA.Junctions} junctions)",
                     repA.Patched > 0 && repA.Patched >= repA.Crossroads);
             // ⚠ AND THE GRAPH SURVIVED THE CUTS. An arm that stops short must still be BOUND, or the town
