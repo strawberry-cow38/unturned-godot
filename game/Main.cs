@@ -10583,6 +10583,10 @@ namespace UnturnedGodot
             if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNFACET"),
                     System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float fct) && fct > 0.5f)
                 town.ArcFacetDegrees = fct;   // the control for "is the faceting what you are seeing"
+            // UG_TOWNMAT=<n>: build the whole town from one road material, so "does this support the smaller
+            // 2-lane roads?" is a run rather than an opinion. 0 = Highway_0 (18.4 m), 1 = Highway_1 (13.8 m).
+            if (int.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNMAT"), out int tmat) && tmat >= 0)
+            { town.MainMaterial = tmat; town.StreetMaterial = tmat; }
             if (int.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNSEED"), out int tseed)) town.Seed = tseed;
             if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNEXTENT"),
                     System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float tex) && tex > 50f) town.Extent = tex;

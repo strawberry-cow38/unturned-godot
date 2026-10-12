@@ -976,6 +976,28 @@ namespace UnturnedGodot
                     }
                 }
 
+            // ---- HYDRANTS, sparse, on the pavement (strawberry 2026-10-12: "add hydrants to the sidewalks,
+            // somewhat uncommon"). ⚠ DETERMINISTIC, like everything else the grid places: a hydrant that
+            // moved between launches would be a prop appearing and disappearing in a saved town.
+            if (Hydrants)
+                foreach (int r in Built)
+                {
+                    ulong h = Mix(((ulong)(uint)Seed << 32) ^ Mix((ulong)(uint)r ^ 0x4879UL));
+                    if (Unit(h, 0) > HydrantChance) continue;
+                    float L = roads.RoadLength(r);
+                    float t0 = TrimFor(roads, r, false, CornerRadius), t1 = TrimFor(roads, r, true, CornerRadius);
+                    if (L - t0 - t1 < 12f) continue;
+                    float d = Mathf.Lerp(t0 + 4f, L - t1 - 4f, Unit(h, 16));
+                    if (!roads.EvaluateAlong(r, d, out var pos, out var tan, snapTerrain: false)) continue;
+                    var side = ((h >> 40) & 1UL) == 0 ? 1f : -1f;
+                    var rr = new Vector3(tan.Z, 0f, -tan.X).Normalized();       // symmetric use: either kerb will do
+                    var at = pos + rr * (side * (roads.RoadHalfWidth(r) + RoadGapForLights + HydrantSetback));
+                    if (terr != null) at.Y = Mathf.Max(at.Y, terr.SampleHeight(at.X, at.Z));
+                    var hb = SplineTiling.SeatedBasis(terr, at, Unit(h, 32) * 360f, 6f, out _);
+                    var hn = objs.Place(HydrantProp, at, hb);
+                    if (hn != null) { into?.Add(hn); made++; }
+                }
+
             // ---- TRAFFIC SIGNALS, one per approach at a junction that has three or more.
             if (TrafficLights)
                 for (int j = 0; j < roads.JunctionCount; j++)
@@ -1018,6 +1040,11 @@ namespace UnturnedGodot
             return made;
         }
         public bool StreetLights = true, TrafficLights = true;
+        /// <summary>Hydrants, and how often a street gets one. Uncommon by default.</summary>
+        public bool Hydrants = true;
+        public float HydrantChance = 0.35f;
+        public float HydrantSetback = 0.8f;
+        public string HydrantProp = "Fire_Hydrant_0";
         public string StreetLightProp = "Street_Light_0", TrafficLightProp = "Traffic_Light_0";
         /// <summary>Metres between lamps; they alternate sides, so one side sees twice this.</summary>
         public float LampSpacing = 32f;
