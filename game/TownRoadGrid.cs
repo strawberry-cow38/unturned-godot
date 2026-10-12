@@ -1749,7 +1749,16 @@ namespace UnturnedGodot
                         walk.AddDip(L - t1 - CrossingDipLength, CrossingDipLength + walk.DipRamp + 2f);
                     }
                 }
-                made += walk.LayAlongRoad(walk, roads, r, EditorSidewalk.Side.Both, null, t0, t1);
+                // ⭐ STEPPED OUT ROUND A PARKING BAY, its kerb's corners sampled exactly so the angled ends stay
+                // straight lines rather than the nearest 1.5 m station's guess at one
+                List<float> breaks = null;
+                foreach (var bay in Bays)
+                    if (bay.Road == r) (breaks ??= new List<float>()).AddRange(new[] { bay.A, bay.A + bay.Taper, bay.B - bay.Taper, bay.B });
+                int road = r;
+                made += breaks == null
+                    ? walk.LayAlongRoad(walk, roads, r, EditorSidewalk.Side.Both, null, t0, t1)
+                    : walk.LayAlongRoad(walk, roads, r, EditorSidewalk.Side.Both, null, t0, t1,
+                                        d => BayExtra(road, 1, d), d => BayExtra(road, -1, d), breaks);
             }
             walk.Dips.Clear();
             return made;
@@ -2037,7 +2046,8 @@ namespace UnturnedGodot
                         // ⚠ ALTERNATE SIDES. Lamps down one kerb only light one half of a street and look like
                         // a runway; staggering them is what a real street does and halves the count.
                         int side = (k % 2 == 0) ? 1 : -1;
-                        var at = pos + right * (side * (half + RoadGapForLights + LampSetback));
+                        // ...on the pavement wherever it is, which round a parking bay is a bay's depth further out
+                        var at = pos + right * (side * (half + BayExtra(r, side, d) + RoadGapForLights + LampSetback));
                         if (!PushClear(roads, ref at, right * side)) continue;
                         at.Y = Mathf.Max(pos.Y, terr != null ? terr.SampleHeight(at.X, at.Z) : pos.Y) + PavementKerb;
                         // the arm has to reach OVER the carriageway, so the lamp faces across the road
@@ -2063,7 +2073,7 @@ namespace UnturnedGodot
                     if (!roads.EvaluateAlong(r, d, out var pos, out var tan, snapTerrain: false)) continue;
                     var side = ((h >> 40) & 1UL) == 0 ? 1f : -1f;
                     var rr = new Vector3(tan.Z, 0f, -tan.X).Normalized();       // symmetric use: either kerb will do
-                    var at = pos + rr * (side * (roads.RoadHalfWidth(r) + RoadGapForLights + HydrantSetback));
+                    var at = pos + rr * (side * (roads.RoadHalfWidth(r) + BayExtra(r, (int)side, d) + RoadGapForLights + HydrantSetback));
                     if (!PushClear(roads, ref at, rr * side)) continue;
                     at.Y = Mathf.Max(pos.Y, terr != null ? terr.SampleHeight(at.X, at.Z) : pos.Y) + PavementKerb;
                     var hb = SplineTiling.SeatedBasis(terr, at, Unit(h, 32) * 360f, 6f, out _);
@@ -2909,6 +2919,10 @@ namespace UnturnedGodot
             /// <summary>Its yards: in from the front, the back, and the left and right sides (left = the
             /// front-left corner's side; a corner lot's left side is its second street).</summary>
             public float YardFront, YardBack, YardLeft, YardRight;
+            /// <summary>A frontage plot's place on its street: the arc metres of its front edge's middle along Road
+            /// (-1 for a corner lot), the side it stands on (+1 = the spline's (t.z, 0, -t.x) side, the way the
+            /// pavement and the lamps count sides), and whether its run of frontage is straight.</summary>
+            public float Arc = -1f; public int RoadSide; public bool Straight;
             /// <summary>Where its building goes: the plot less its yards, corners in the same order.</summary>
             public Vector3[] BuildArea()
             {
@@ -3043,10 +3057,24 @@ namespace UnturnedGodot
         /// sides to find the free RUNS of frontage between them, and each run is filled from the catalogue --
         /// shops, apartments and big houses along a main, houses along a street -- as fully as the fixed sizes
         /// allow, in an order the seed picks. So blocks fill from their corners in, and an odd corner (a
-        /// 45-degree wedge, a triangle island) simply gets none.</summary>
-        public int MarkPlots(Node3D parent, RoadField roads)
+        /// 45-degree wedge, a triangle island) simply gets none.
+        /// ⚠ `plan: false` marks what PlanPlots already laid. The town plans its plots BEFORE its pavement, because
+        /// a parking bay moves the kerb, the pavement and the plots behind it -- and the pavement and the lamps
+        /// have to be laid where the bay put them, not moved after.</summary>
+        public int MarkPlots(Node3D parent, RoadField roads, bool plan = true)
         {
-            Plots.Clear(); Alleys.Clear();
+            if (roads == null) return 0;
+            if (plan) PlanPlots(roads);
+            if (parent != null) { BuildPlotMarks(parent); BuildParking(parent, roads); }
+            return Plots.Count;
+        }
+
+        /// <summary>Lay out the plots, the alleys and the parking bays without building anything; returns how
+        /// many plots. `walkWidth` is the pavement the plots stand behind (LaySidewalkCorners sets it too).</summary>
+        public int PlanPlots(RoadField roads, float walkWidth = -1f)
+        {
+            if (walkWidth > 0f) _walkWidth = walkWidth;
+            Plots.Clear(); Alleys.Clear(); Bays.Clear();
             if (roads == null) return 0;
             float Front(int r) => roads.RoadHalfWidth(r) + PavementGap + _walkWidth + PlotSetback;
             int corners = 0;
@@ -3219,7 +3247,8 @@ namespace UnturnedGodot
                 var outw = new Vector3(-along.Z, 0f, along.X) * side;            // from the road to this side
                 var ps = SizeOf(kind);
                 return new Plot { Kind = kind, Width = w, Depth = d, Along = along, Facing = -outw, Road = r, Front = pos + outw * off,
-                                  YardFront = ps.FrontYard, YardBack = ps.BackYard, YardLeft = ps.SideYard, YardRight = ps.SideYard };
+                                  YardFront = ps.FrontYard, YardBack = ps.BackYard, YardLeft = ps.SideYard, YardRight = ps.SideYard,
+                                  Arc = mid, RoadSide = outw.Dot(new Vector3(tan.Z, 0f, -tan.X)) > 0f ? 1 : -1 };
             }
             foreach (int r in order)
             {
@@ -3289,6 +3318,7 @@ namespace UnturnedGodot
                         {
                             var sz = SizeOf(k);
                             var pl = PlotAt(r, side, off, at + sz.Width * 0.5f, sz.Width, sz.Depth, k, runDir);
+                            if (pl != null) pl.Straight = runDir != null;
                             if (pl != null && PlotFits(roads, pl)) Plots.Add(pl);
                             at += sz.Width;
                         }
@@ -3296,7 +3326,7 @@ namespace UnturnedGodot
                 }
             }
 
-            int meshes = parent != null ? BuildPlotMarks(parent) : 0;
+            int stepped = LayParkingBays(roads);
             var counts = new System.Text.StringBuilder();
             foreach (var ps in PlotSizes)
             {
@@ -3307,6 +3337,12 @@ namespace UnturnedGodot
             float lanes = 0f; foreach (var al in Alleys) lanes += (al.B - al.A).Length();
             Log.Print($"[towngrid] plots: {Plots.Count} marked, {corners} on square corners, {area / 10000f:0.00} ha; "
                     + $"{Alleys.Count} alleys, {lanes:0} m --{counts}");
+            int spaces = 0, paired = 0;
+            foreach (var bay in Bays) spaces += bay.Spaces;
+            foreach (var bay in Bays) if (bay.Side > 0 && BayOpposite(bay) != null) paired++;
+            Log.Print($"[towngrid] parking: {Bays.Count} bays, {spaces} spaces; {paired} stretches widened on both sides; "
+                    + $"{stepped} plots stepped back {BayDepth:0.0} m behind them, of {_bayOffered} fronting a side chosen for parking "
+                    + $"({_bayNoRoom} no room behind, {_bayNearJunction} too near a junction, {_bayTooShort} in runs too short for a car)");
             return Plots.Count;
         }
 
@@ -3418,6 +3454,280 @@ namespace UnturnedGodot
                 Commit(tint, $"Plots_{ps.Kind}_Yards", new Color(ps.Colour.R, ps.Colour.G, ps.Colour.B, 0.16f));
                 Commit(zone, $"Plots_{ps.Kind}_Building", new Color(ps.Colour.R, ps.Colour.G, ps.Colour.B, 0.45f));
                 Commit(zoneLine, $"Plots_{ps.Kind}_BuildingLine", new Color(1f, 1f, 0.95f, 0.85f));
+            }
+            return made;
+        }
+
+        // ==============================================================================================
+        // PARKING BAYS (strawberry 2026-10-12: "work on widened sections of road, with dotted lines for parking
+        // on one or both sides of the street within the widened portion").
+        // ==============================================================================================
+
+        /// <summary>A stretch of one side of a street where the kerb steps out and the asphalt widens into the
+        /// gap: a lay-by for parked cars. Its kerb leaves the carriageway's edge at A, angles out over Taper to
+        /// Depth, runs parallel, and angles back in to meet the edge again at B.</summary>
+        public sealed class ParkingBay
+        {
+            public int Road;
+            /// <summary>+1 = the spline's (t.z, 0, -t.x) side, the way the pavement and the lamps count sides.</summary>
+            public int Side;
+            /// <summary>Arc metres along Road where the kerb leaves the carriageway's edge, and meets it again.</summary>
+            public float A, B;
+            public float Depth, Taper;
+            /// <summary>The car spaces marked: Spaces of SpaceLength each, the first starting at arc First.</summary>
+            public int Spaces; public float First, SpaceLength;
+            /// <summary>How far past the carriageway's edge the kerb stands at arc `d`.</summary>
+            public float Extra(float d)
+            {
+                if (d <= A || d >= B) return 0f;
+                if (d < A + Taper) return Depth * (d - A) / Taper;
+                if (d > B - Taper) return Depth * (B - d) / Taper;
+                return Depth;
+            }
+        }
+
+        /// <summary>The bays the last PlanPlots laid.</summary>
+        public readonly List<ParkingBay> Bays = new();
+        /// <summary>UG_TOWNNOPARKING=1: no bays -- the control for everything they change about a street.</summary>
+        public bool Parking = System.Environment.GetEnvironmentVariable("UG_TOWNNOPARKING") != "1";
+        /// <summary>How far the kerb steps out (a parked car and room to open its door), how long each angled end
+        /// runs along the street, and one parallel space.</summary>
+        public float BayDepth = 2.5f, BayTaper = 3f, BaySpace = 6f;
+        /// <summary>How far inside its first and last plot's frontage a bay's kerb begins to step out.</summary>
+        public float BayInset = 0.5f;
+        /// <summary>How far past a junction's crossing and stop line a bay may begin: nobody parks in the queue
+        /// for the lights.</summary>
+        public float BayClearOfJunction = 6f;
+        /// <summary>The share of streets with no bays, and with bays down one side only; the rest have them down
+        /// both.</summary>
+        public float BayNoneShare = 0.3f, BayOneSideShare = 0.4f;
+        /// <summary>The paint: line width, and the length of each dot and of the gap after it.</summary>
+        public float BayLine = 0.12f, BayDot = 0.5f, BayDotGap = 0.5f;
+        /// <summary>How far the bay's asphalt tucks under the carriageway's edge, how far it runs on under the
+        /// kerb, and how far below the road's surface it lies.</summary>
+        public float BayTuck = 0.3f, BayUnderKerb = 0.08f, BayDrop = 0.01f;
+        /// <summary>The line along the bay's open side stands this far inside it from the carriageway's edge; the
+        /// lines across it stop this short of the kerb.</summary>
+        public float BayEdgeGap = 0.05f, BayKerbGap = 0.15f;
+        /// <summary>Dots painted by the last BuildParking.</summary>
+        public int ParkingPaintPieces;
+        /// <summary>The last LayParkingBays' census of the plots fronting a side chosen for parking: all of them,
+        /// those with no room behind to step back, those too near a junction, those in a run too short for a car.</summary>
+        int _bayOffered, _bayNoRoom, _bayNearJunction, _bayTooShort;
+
+        /// <summary>How far past the carriageway's edge the kerb stands at arc `d` on `side` of `road`.</summary>
+        public float BayExtra(int road, int side, float d)
+        {
+            float e = 0f;
+            foreach (var bay in Bays) if (bay.Road == road && bay.Side == side) e = Mathf.Max(e, bay.Extra(d));
+            return e;
+        }
+
+        /// <summary>The bay across the street overlapping this one, where the street widens on both sides.</summary>
+        public ParkingBay BayOpposite(ParkingBay bay)
+        {
+            foreach (var o in Bays) if (o.Road == bay.Road && o.Side == -bay.Side && o.A < bay.B && bay.A < o.B) return o;
+            return null;
+        }
+
+        /// <summary>How far from this end of the road, in arc metres, the first bay may begin: BayClearOfJunction
+        /// past the crossing's stop line -- past the corner, for a main running through with no crossing -- and
+        /// never before the pavement itself begins.</summary>
+        float NoParkingFromEnd(RoadField roads, int road, bool atEnd)
+        {
+            float trim = TrimFor(roads, road, atEnd, CornerRadius);
+            int j = roads.RoadEndJunction(road, atEnd);
+            if (j < 0) return trim + BayClearOfJunction;
+            if (!roads.EvaluateAlong(road, atEnd ? roads.RoadLength(road) : 0f, out var tip, out _, snapTerrain: false))
+                return trim + BayClearOfJunction;
+            var node = roads.JunctionPos(j);
+            float cut = new Vector2(tip.X - node.X, tip.Z - node.Z).Length();      // the node to this ribbon's end
+            float stop;
+            if (LayCrossing(roads, j, road, atEnd, out var c)) stop = c.SD1 + c.Half * Mathf.Abs(c.Shear);
+            else
+            {
+                float crossed = roads.RoadHalfWidth(road);
+                foreach (var (o, _) in roads.JunctionEdges(j)) if (o != road) crossed = Mathf.Max(crossed, roads.RoadHalfWidth(o));
+                stop = ApproachClear(roads, j, road, atEnd, crossed);
+            }
+            return Mathf.Max(trim + BayClearOfJunction, stop + BayClearOfJunction - cut);
+        }
+
+        /// <summary>Choose the streets that get parking, lay a bay in front of each run of plots that can stand
+        /// back to make room for one, and step those plots back; returns how many were stepped.
+        ///
+        /// ⭐ THE ROOM COMES OUT OF THE PLOTS, NOT THE PAVEMENT. A bay pushes the kerb out by its depth and the
+        /// pavement goes with it at its full width, so whatever stood just behind the pavement has to stand that
+        /// much further back. A plot is a fixed size and is never trimmed, so it MOVES: the whole plot steps back,
+        /// and a bay goes only in front of plots with that much room behind them -- a 36 m lot already reaching
+        /// its block's back lane stays where it is and nothing is laid in front of it. A bay spans whole plots, so
+        /// it starts and ends where one plot's frontage meets the next, which is where the building line steps.
+        /// ⚠ CLEAR OF THE JUNCTIONS: never within BayClearOfJunction of a crossing's stop line. And never across an
+        /// alley's mouth -- that is a gap between plots, and no run of adjoining plots spans one.
+        /// ⚠ STRAIGHT FRONTAGE ONLY. A run round a bend has no single line to step its plots back along.</summary>
+        int LayParkingBays(RoadField roads)
+        {
+            Bays.Clear();
+            _bayOffered = _bayNoRoom = _bayNearJunction = _bayTooShort = 0;
+            if (!Parking || BayDepth <= 0f || BayTaper <= 0f) return 0;
+            int stepped = 0;
+            foreach (int r in Built)
+            {
+                ulong h = Mix(((ulong)(uint)Seed << 32) ^ Mix((ulong)(uint)r ^ 0xBA75EDUL));
+                float u = Unit(h, 0);
+                if (u < BayNoneShare) continue;
+                // then one side, the other, or both
+                float mid = BayNoneShare + BayOneSideShare * 0.5f, both = BayNoneShare + BayOneSideShare;
+                bool right = u < mid || u >= both, left = u >= mid;
+                float L = roads.RoadLength(r);
+                float lo = NoParkingFromEnd(roads, r, false), hi = L - NoParkingFromEnd(roads, r, true);
+                if (hi - lo < BaySpace + 2f * (BayTaper + BayInset)) continue;
+                foreach (int side in new[] { 1, -1 })
+                {
+                    if (side == 1 ? !right : !left) continue;
+                    var row = new List<Plot>();
+                    foreach (var pl in Plots)
+                        if (pl.Road == r && pl.Road2 < 0 && pl.Arc >= 0f && pl.RoadSide == side && pl.Straight) row.Add(pl);
+                    row.Sort((x, y) => x.Arc.CompareTo(y.Arc));
+                    var group = new List<(Plot pl, Vector3 was)>();
+                    void Close()
+                    {
+                        if (group.Count == 0) return;
+                        float a = group[0].pl.Arc - group[0].pl.Width * 0.5f + BayInset;
+                        float b = group[^1].pl.Arc + group[^1].pl.Width * 0.5f - BayInset;
+                        float full = b - a - 2f * BayTaper;
+                        int n = Mathf.FloorToInt(full / BaySpace + 1e-4f);
+                        if (n < 1)
+                        {
+                            foreach (var (pl, was) in group) { pl.Front = was; pl.Setback = 0f; }      // too short: put them back
+                            _bayTooShort += group.Count;
+                        }
+                        else
+                        {
+                            Bays.Add(new ParkingBay { Road = r, Side = side, A = a, B = b, Depth = BayDepth, Taper = BayTaper,
+                                                      Spaces = n, SpaceLength = BaySpace, First = a + BayTaper + (full - n * BaySpace) * 0.5f });
+                            stepped += group.Count;
+                        }
+                        group.Clear();
+                    }
+                    foreach (var pl in row)
+                    {
+                        _bayOffered++;
+                        float p0 = pl.Arc - pl.Width * 0.5f, p1 = pl.Arc + pl.Width * 0.5f;
+                        if (group.Count > 0 && Mathf.Abs(group[^1].pl.Arc + group[^1].pl.Width * 0.5f - p0) > 0.05f) Close();
+                        if (p0 < lo || p1 > hi) { _bayNearJunction++; Close(); continue; }
+                        // step it back, and keep it there only if it still fits
+                        var was = pl.Front;
+                        int at = Plots.IndexOf(pl);
+                        Plots.RemoveAt(at);
+                        pl.Front = was - pl.Facing * BayDepth; pl.Setback = BayDepth;
+                        bool fits = PlotFits(roads, pl);
+                        Plots.Insert(at, pl);
+                        if (!fits) { _bayNoRoom++; pl.Front = was; pl.Setback = 0f; Close(); continue; }
+                        group.Add((pl, was));
+                    }
+                    Close();
+                }
+            }
+            return stepped;
+        }
+
+        /// <summary>Pave and paint the bays: asphalt from under the carriageway's edge out under the stepped kerb,
+        /// and dotted lines -- one down the bay's open side along the traffic lane, and one across it at each end
+        /// of each space. The asphalt is the corner fill's (the slab material, its plain band, normals up), the
+        /// paint the crossings' (that material's own white texel), for the reasons given there.
+        /// ⚠ A HAIR UNDER THE ROAD, NOT OVER IT. The bay tucks under the carriageway's edge, so no ground shows at
+        /// the join, and lies a centimetre lower, so the road wins the overlap outright -- riding over it would
+        /// draw the bay's own edge as a lip along the lane.</summary>
+        public int BuildParking(Node3D parent, RoadField roads)
+        {
+            ParkingPaintPieces = 0;
+            if (parent == null || roads == null || Bays.Count == 0) return 0;
+            var mat = roads.MaterialOfMaterial(MainMaterial);
+            const float U0 = 4f / 256f, U1 = 56f / 256f;
+            float tile = (U1 - U0) * 2f * 2f * Mathf.Max(1f, roads.RoadHalfWidthOfMaterial(MainMaterial));
+            Vector2 UV(Vector3 q) => new Vector2(U0 + PingPong(q.X / tile) * (U1 - U0), q.Z / tile);
+            var uvWhite = new Vector2(0.2363f, 0.0664f);
+            var ground = new SurfaceTool(); ground.Begin(Mesh.PrimitiveType.Triangles);
+            var paint = new SurfaceTool(); paint.Begin(Mesh.PrimitiveType.Triangles);
+            // orient by the wanted normal (up), never by the order given
+            void Tri(SurfaceTool st, Vector3 a, Vector3 b, Vector3 c, Vector2? uv)
+            {
+                bool keep = (c - a).Cross(b - a).Y >= 0f;
+                var i1 = keep ? b : c; var i2 = keep ? c : b;
+                st.SetNormal(Vector3.Up); st.SetUV(uv ?? UV(a)); st.AddVertex(a);
+                st.SetNormal(Vector3.Up); st.SetUV(uv ?? UV(i1)); st.AddVertex(i1);
+                st.SetNormal(Vector3.Up); st.SetUV(uv ?? UV(i2)); st.AddVertex(i2);
+            }
+            foreach (var bay in Bays)
+            {
+                float half = roads.RoadHalfWidth(bay.Road), surface = roads.RoadSurfaceOffset(bay.Road);
+                // a station: the centreline at arc d, the bay side's outward unit there, and the bay's height
+                bool At(float d, out Vector3 c, out Vector3 o, out float y)
+                {
+                    c = default; o = default; y = 0f;
+                    if (!roads.EvaluateAlong(bay.Road, d, out var pos, out var tan, snapTerrain: false)) return false;
+                    c = pos; o = new Vector3(tan.Z, 0f, -tan.X).Normalized() * bay.Side; y = pos.Y + surface - BayDrop;
+                    return true;
+                }
+                static Vector3 P(Vector3 c, Vector3 o, float lat, float y) { var q = c + o * lat; q.Y = y; return q; }
+                // the asphalt, in strips across the bay, with a station at every corner of the kerb's line
+                var ds = new List<float> { bay.A, bay.A + bay.Taper, bay.B - bay.Taper, bay.B };
+                for (float d = bay.A + EditorSidewalk.Step; d < bay.B; d += EditorSidewalk.Step) ds.Add(d);
+                ds.Sort();
+                Vector3 pi = default, po = default; bool have = false;
+                foreach (float d in ds)
+                {
+                    if (!At(d, out var c, out var o, out float y)) continue;
+                    var qi = P(c, o, half - BayTuck, y);
+                    var qo = P(c, o, half + bay.Extra(d) + BayUnderKerb, y);
+                    if (have) { Tri(ground, pi, po, qo, null); Tri(ground, pi, qo, qi, null); }
+                    pi = qi; po = qo; have = true;
+                }
+                // the paint, a dot at a time, each a quad from arc d0 to d1 and from lat0 to lat1 out
+                void Dot(float d0, float d1, float lat0, float lat1)
+                {
+                    if (!At(d0, out var c0, out var o0, out float y0) || !At(d1, out var c1, out var o1, out float y1)) return;
+                    var a0 = P(c0, o0, lat0, y0 + MarkLift); var a1 = P(c0, o0, lat1, y0 + MarkLift);
+                    var b0 = P(c1, o1, lat0, y1 + MarkLift); var b1 = P(c1, o1, lat1, y1 + MarkLift);
+                    Tri(paint, a0, a1, b1, uvWhite); Tri(paint, a0, b1, b0, uvWhite);
+                    ParkingPaintPieces++;
+                }
+                float edge0 = half + BayEdgeGap, edge1 = edge0 + BayLine;
+                // along the open side, from where the angled kerb has left room for the line to where it comes back
+                float inset = bay.Taper * Mathf.Min(1f, (edge1 - half + BayKerbGap) / bay.Depth);
+                for (float d = bay.A + inset; d < bay.B - inset - 1e-3f; d += BayDot + BayDotGap)
+                    Dot(d, Mathf.Min(bay.B - inset, d + BayDot), edge0, edge1);
+                // across it, at each end of each space, from that line out to the kerb
+                float reach = half + bay.Depth - BayKerbGap;
+                for (int k = 0; k <= bay.Spaces; k++)
+                {
+                    float d = bay.First + k * bay.SpaceLength;
+                    for (float lat = edge1 + BayDotGap; lat < reach - 1e-3f; lat += BayDot + BayDotGap)
+                        Dot(d - BayLine * 0.5f, d + BayLine * 0.5f, lat, Mathf.Min(reach, lat + BayDot));
+                }
+            }
+            int made = 0;
+            var gm = ground.Commit();
+            if (gm != null && gm.GetSurfaceCount() > 0)
+            {
+                var mi = new MeshInstance3D { Name = "Parking_Bays", Mesh = gm };
+                if (mat != null) mi.MaterialOverride = mat;
+                parent.AddChild(mi);
+                // drivable: a collider and the road's own surface tag, as the junction slabs have
+                var body = new StaticBody3D { Name = mi.Name + "_body", CollisionLayer = 1u << 0 };
+                body.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Concrete);
+                body.AddChild(new CollisionShape3D { Shape = gm.CreateTrimeshShape() });
+                mi.AddChild(body);
+                made++;
+            }
+            var pm = paint.Commit();
+            if (pm != null && pm.GetSurfaceCount() > 0)
+            {
+                var mi = new MeshInstance3D { Name = "Parking_Bays_Paint", Mesh = pm };
+                if (mat != null) mi.MaterialOverride = mat;
+                parent.AddChild(mi);
+                made++;
             }
             return made;
         }

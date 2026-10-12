@@ -10634,8 +10634,12 @@ namespace UnturnedGodot
             // dark wedges at every mouth have now missed and the only honest next question is which mesh the
             // pixels belong to.
             bool noWalk = System.Environment.GetEnvironmentVariable("UG_TOWNNOWALK") == "1";
-            int walks = noWalk ? 0 : town.LaySidewalks(editor, rf);
             var walkProto = new EditorSidewalk(); editor.AddChild(walkProto);
+            // ⭐ THE PLOTS AND THEIR PARKING ARE LAID OUT BEFORE THE PAVEMENT (strawberry 2026-10-12: "widened
+            // sections of road, with dotted lines for parking"). A parking bay moves the kerb, the pavement and the
+            // plots behind it, so the pavement and the lamps have to be laid where the bays put them.
+            if (!noWalk) town.PlanPlots(rf, walkProto.Width);
+            int walks = noWalk ? 0 : town.LaySidewalks(editor, rf);
             int corners = noWalk ? 0 : town.LaySidewalkCorners(editor, rf, walkProto);
             // the asphalt under each kerb corner, from the same fillet the kerb was laid on -- then the
             // coverage probes again, because what the player sees is the slab PLUS this
@@ -10644,8 +10648,8 @@ namespace UnturnedGodot
             town.ProbeCoverage(rf, "with corner asphalt");
             int lights = town.PlaceLights(rf, editor.Objects);
             // the building plots, marked on the ground (strawberry 2026-10-12: "have the grid system mark plots for
-            // buildings, with fixed sizes and shapes") -- after the corners, whose pavements they have to stay off
-            int plots = noWalk ? 0 : town.MarkPlots(editor, rf);
+            // buildings, with fixed sizes and shapes"), and the parking bays paved and painted -- as planned above
+            int plots = noWalk ? 0 : town.MarkPlots(editor, rf, plan: false);
             // ⚠ MEASURE THE KERB LINE ITSELF. The streets' own bow is 0.0 cm, so "sidewalks seem to wiggle"
             // is not the road centreline -- it has to be the pavement. A wiggle is a run of KINKS, so report
             // the sharpest turn between consecutive segments of every corner piece, and where it is.
@@ -10807,6 +10811,27 @@ namespace UnturnedGodot
                     tcam.Fov = 45f;
                     tcam.LookAt(pp, Vector3.Up);
                     Log.Print($"[towngrid] push camera on the prop pushed furthest, {town.FurthestPush:0.0} m from {pp}");
+                    goto noTown;
+                }
+                // UG_TOWNCLOSE=pk: a PARKING BAY -- one where the street widens on both sides, if any does -- from
+                // above the road a little way down it, so the stepped kerb, the dotted spaces and the plots stepped
+                // back behind them all read in one frame
+                // (UG_TOWNCLOSE=pkh: the same bay from higher and off to its side, to see the plots behind it)
+                if ((closeEnv == "pk" || closeEnv == "pkh") && town.Bays.Count > 0)
+                {
+                    var pkBay = town.Bays[0];
+                    foreach (var pkB in town.Bays) if (town.BayOpposite(pkB) != null) { pkBay = pkB; break; }
+                    rf.EvaluateAlong(pkBay.Road, (pkBay.A + pkBay.B) * 0.5f, out var pkPos, out var pkTan, snapTerrain: false);
+                    var pkAlong = new Vector3(pkTan.X, 0f, pkTan.Z).Normalized();
+                    var pkOut = new Vector3(pkTan.Z, 0f, -pkTan.X).Normalized() * pkBay.Side;
+                    float pkHalf = rf.RoadHalfWidth(pkBay.Road);
+                    bool pkHigh = closeEnv == "pkh";
+                    tcam.GlobalPosition = pkHigh ? pkPos - pkAlong * 24f - pkOut * (pkHalf + 10f) + new Vector3(0f, 24f, 0f)
+                                                 : pkPos - pkAlong * 18f - pkOut * 1.5f + new Vector3(0f, 8f, 0f);
+                    tcam.Fov = 55f;
+                    tcam.LookAt(pkHigh ? pkPos + pkOut * (pkHalf + pkBay.Depth + 4f) : pkPos + pkAlong * 4f + pkOut * (pkHalf * 0.4f), Vector3.Up);
+                    Log.Print($"[towngrid] parking camera on a bay of {pkBay.Spaces} spaces on road {pkBay.Road} at {pkPos} "
+                            + $"({(town.BayOpposite(pkBay) != null ? "widened both sides" : "one side")}; {town.Bays.Count} bays)");
                     goto noTown;
                 }
                 if (closeEnv == "s" && town.LastBareRun > 0f)

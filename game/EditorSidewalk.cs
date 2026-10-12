@@ -215,8 +215,15 @@ namespace UnturnedGodot
         /// <summary>Lay pavement along an existing road, which is the "attach to any road surface" half.
         /// ⚠ EACH SIDE IS EVALUATED SEPARATELY, never one centreline offset twice: the two edges of a bend are
         /// different lengths, and reusing one list crowds the inside kerb. Block_Road learned this the same way.</summary>
+        /// <param name="stepRight">Optional: how much further out than usual the RIGHT kerb stands at an arc
+        /// distance -- a parking bay's lay-by, which the pavement steps out round at its full width.</param>
+        /// <param name="stepLeft">The same for the left kerb.</param>
+        /// <param name="breaks">Arc distances where a step's kerb turns a corner; each gets a station of its
+        /// own, or the 1.5 m stations would cut every corner of the step.</param>
         public int LayAlongRoad(Node parent, RoadField roads, int road, Side side, List<Node3D> into = null,
-                                float trimStart = 0f, float trimEnd = 0f)
+                                float trimStart = 0f, float trimEnd = 0f,
+                                System.Func<float, float> stepRight = null, System.Func<float, float> stepLeft = null,
+                                IReadOnlyList<float> breaks = null)
         {
             if (parent == null || roads == null) return 0;
             float total = roads.RoadLength(road);
@@ -238,14 +245,24 @@ namespace UnturnedGodot
             // ⚠ THE LAST SAMPLE LANDS ON `to`, NOT ON THE LAST WHOLE STEP. floor() leaves the ribbon up to a
             // full Step (1.5 m) short of where it was asked to end -- invisible on an open run, and at a
             // junction it is a notch between this pavement and the corner piece that starts exactly at `to`.
-            for (int i = 0; i <= n + 1; i++)
+            var ds = new List<float>(n + 2);
+            for (int i = 0; i <= n; i++) ds.Add(from + i * Step);
+            if (to - (from + n * Step) >= 0.05f) ds.Add(to);
+            if (breaks != null)
+                foreach (float b in breaks)
+                {
+                    if (b <= from + 0.05f || b >= to - 0.05f) continue;
+                    ds.RemoveAll(x => Mathf.Abs(x - b) < 0.05f);      // a corner replaces a station on top of it
+                    ds.Add(b);
+                }
+            ds.Sort();
+            foreach (float d in ds)
             {
-                float d = i <= n ? from + i * Step : to;
-                if (i == n + 1 && d - (from + n * Step) < 0.05f) break;   // already there
                 if (!roads.EvaluateAlong(road, d, out var p, out var t)) return 0;
                 var r = new Vector3(t.Z, 0f, -t.X).Normalized();   // the spline's RIGHT, same convention as Block_Road
-                rightP.Add(p + r * off); rightO.Add(r);            // kerb faces the road, surface runs outward
-                leftP.Add(p - r * off); leftO.Add(-r);
+                float sr = stepRight?.Invoke(d) ?? 0f, sl = stepLeft?.Invoke(d) ?? 0f;
+                rightP.Add(p + r * (off + sr)); rightO.Add(r);     // kerb faces the road, surface runs outward
+                leftP.Add(p - r * (off + sl)); leftO.Add(-r);
                 kerbs.Add(KerbAt(d));
             }
 

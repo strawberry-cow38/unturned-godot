@@ -449,6 +449,220 @@ namespace UnturnedGodot.Testing
                     T.Check($"...and the back of every corner's pavement is never buildable ({onWalkOk} of {onWalk} were; control: {behindOk} of {behind} spots behind them are)",
                             onWalk > 0 && onWalkOk == 0 && behindOk > 0);
                 }
+                // ⭐ PARKING BAYS (strawberry 2026-10-12: "work on widened sections of road, with dotted lines for
+                // parking on one or both sides of the street within the widened portion"). Measured on what was
+                // BUILT -- the pavement's own mesh, the plots' own corners, the paint's own triangles -- not by asking
+                // the generator what it meant to lay.
+                {
+                    var bays = gD.Bays;
+                    int spaces = 0, paired = 0, single = 0;
+                    foreach (var bay in bays) { spaces += bay.Spaces; if (gD.BayOpposite(bay) != null) paired++; else single++; }
+                    T.Check($"parking bays widen the streets ({bays.Count} bays, {spaces} spaces; {single} on one side only, {paired} with one facing them across the street)",
+                            bays.Count >= 4 && spaces >= bays.Count && single >= 1 && paired >= 2);
+                    // each bay in its road's frame at its middle: arc offset along, metres out on the bay's side. A bay
+                    // is only ever laid on straight frontage, so one frame holds for the whole of it.
+                    var frames = new Dictionary<TownRoadGrid.ParkingBay, (Vector3 c, Vector3 t, Vector3 o, float mid, float half)>();
+                    foreach (var bay in bays)
+                    {
+                        float m = (bay.A + bay.B) * 0.5f;
+                        rfD.EvaluateAlong(bay.Road, m, out var c, out var tg, snapTerrain: false);
+                        var t = new Vector3(tg.X, 0f, tg.Z).Normalized();
+                        frames[bay] = (c, t, new Vector3(tg.Z, 0f, -tg.X).Normalized() * bay.Side, m, rfD.RoadHalfWidth(bay.Road));
+                    }
+                    (Vector3 c, Vector3 t, Vector3 o, float mid, float half) Frame(TownRoadGrid.ParkingBay bay) => frames[bay];
+                    // 1. THE PAVEMENT STEPS OUT ROUND IT: the built ribbon's kerb, along the bay's full depth, stands the
+                    //    bay's depth further out -- and on a stretch with no bay, it does not (the control).
+                    var walkHost = new Node3D(); World.AddChild(walkHost);
+                    gD.LaySidewalks(walkHost, rfD);
+                    var ribbons = new Dictionary<string, Vector3[]>();
+                    void Collect(Node n)
+                    {
+                        if (n is MeshInstance3D mi && mi.Mesh != null && mi.Name.ToString().StartsWith("Sidewalk_"))
+                            ribbons[mi.Name.ToString()] = (Vector3[])mi.Mesh.SurfaceGetArrays(0)[(int)Mesh.ArrayType.Vertex];
+                        foreach (var ch in n.GetChildren()) Collect(ch);
+                    }
+                    Collect(walkHost);
+                    float KerbOut(Vector3[] verts, (Vector3 c, Vector3 t, Vector3 o, float mid, float half) f, float d0, float d1, float sign)
+                    {
+                        float best = float.MaxValue;
+                        foreach (var v in verts)
+                        {
+                            var rel = v - f.c; float al = rel.X * f.t.X + rel.Z * f.t.Z;
+                            if (al < d0 - f.mid || al > d1 - f.mid) continue;
+                            best = Mathf.Min(best, (rel.X * f.o.X + rel.Z * f.o.Z) * sign);
+                        }
+                        return best;
+                    }
+                    int kerbOut = 0, kerbIn = 0, controls = 0; float worstKerb = 0f;
+                    foreach (var bay in bays)
+                    {
+                        var f = Frame(bay);
+                        float plain = f.half + walkD.RoadGap;
+                        if (!ribbons.TryGetValue($"Sidewalk_{(bay.Side > 0 ? "R" : "L")}{bay.Road}", out var mine)) continue;
+                        float k = KerbOut(mine, f, bay.A + bay.Taper + 0.5f, bay.B - bay.Taper - 0.5f, 1f);
+                        worstKerb = Mathf.Max(worstKerb, Mathf.Abs(k - (plain + bay.Depth)));
+                        if (Mathf.Abs(k - (plain + bay.Depth)) < 0.02f) kerbOut++;
+                        // the control: across the street, where nothing widens, the same measure finds the plain kerb
+                        if (gD.BayOpposite(bay) != null) continue;
+                        if (!ribbons.TryGetValue($"Sidewalk_{(bay.Side > 0 ? "L" : "R")}{bay.Road}", out var across)) continue;
+                        controls++;
+                        if (Mathf.Abs(KerbOut(across, f, bay.A + bay.Taper + 0.5f, bay.B - bay.Taper - 0.5f, -1f) - plain) < 0.02f) kerbIn++;
+                    }
+                    T.Check($"...the pavement stepping out round each, its full width, the bay's depth further out ({kerbOut} of {bays.Count}; worst {worstKerb * 100f:0.0} cm off) -- and not across the street where nothing widens ({kerbIn} of {controls} plain)",
+                            kerbOut == bays.Count && controls > 0 && kerbIn == controls);
+                    // 2. THE PLOTS BEHIND STAND BACK: no plot on a bay or its pavement -- and a plot that stepped back,
+                    //    put back where it was, would be on one (the control).
+                    bool OnBay(Vector3 q)
+                    {
+                        foreach (var bay in bays)
+                        {
+                            var f = Frame(bay);
+                            var rel = q - f.c; float al = rel.X * f.t.X + rel.Z * f.t.Z, lat = rel.X * f.o.X + rel.Z * f.o.Z;
+                            if (al < bay.A - f.mid || al > bay.B - f.mid) continue;
+                            if (lat > f.half - 0.1f && lat < f.half + walkD.RoadGap + bay.Extra(f.mid + al) + walkW - 0.01f) return true;
+                        }
+                        return false;
+                    }
+                    bool PlotOnBay(Vector3[] c)
+                    {
+                        for (int e = 0; e < 4; e++)
+                        {
+                            var a = c[e]; var b = c[(e + 1) % 4];
+                            int n = Mathf.Max(1, Mathf.CeilToInt(new Vector2(b.X - a.X, b.Z - a.Z).Length() / 0.5f));
+                            for (int k = 0; k <= n; k++) if (OnBay(a.Lerp(b, (float)k / n))) return true;
+                        }
+                        return false;
+                    }
+                    int onBay = 0, stepped = 0, unsteppedOn = 0;
+                    foreach (var pl in plots)
+                    {
+                        if (PlotOnBay(pl.Corners())) onBay++;
+                        if (pl.Setback < gD.BayDepth - 1e-3f || pl.Kind == TownRoadGrid.PlotKind.Corner) continue;
+                        stepped++;
+                        var back = pl.Corners();
+                        for (int k = 0; k < 4; k++) back[k] += pl.Facing * pl.Setback;
+                        if (PlotOnBay(back)) unsteppedOn++;
+                    }
+                    T.Check($"...the plots behind each stepped back clear of it ({onBay} on a bay or its pavement; {stepped} stepped back, and {unsteppedOn} of those would be on one where they stood)",
+                            onBay == 0 && stepped >= bays.Count && unsteppedOn == stepped);
+                    // 3. CLEAR OF THE JUNCTIONS: no bay within BayClearOfJunction of a crossing or its stop line, nor on
+                    //    a junction's slab.
+                    var crossingQuads = new List<Vector3[]>();
+                    for (int j = 0; j < rfD.JunctionCount; j++)
+                        foreach (var (er, ee) in rfD.JunctionEdges(j))
+                            if (gD.LayCrossing(rfD, j, er, ee, out var cl))
+                                crossingQuads.Add(new[] { cl.At(cl.D0, -cl.Half), cl.At(cl.D0, cl.Half), cl.At(cl.SD1, cl.Half), cl.At(cl.SD1, -cl.Half) });
+                    float SegDist(Vector3 p, Vector3 a, Vector3 b)
+                    {
+                        float abx = b.X - a.X, abz = b.Z - a.Z, l2 = abx * abx + abz * abz;
+                        float tt = l2 < 1e-9f ? 0f : Mathf.Clamp(((p.X - a.X) * abx + (p.Z - a.Z) * abz) / l2, 0f, 1f);
+                        return new Vector2(a.X + abx * tt - p.X, a.Z + abz * tt - p.Z).Length();
+                    }
+                    float ToCrossings(Vector3 q)
+                    {
+                        float best = float.MaxValue;
+                        foreach (var cq in crossingQuads)
+                        {
+                            // inside the band is no distance at all
+                            bool neg = false, pos = false;
+                            for (int e = 0; e < 4; e++)
+                            {
+                                var a = cq[e]; var b = cq[(e + 1) % 4];
+                                float cr = (b.X - a.X) * (q.Z - a.Z) - (b.Z - a.Z) * (q.X - a.X);
+                                if (cr < 0f) neg = true; else if (cr > 0f) pos = true;
+                                best = Mathf.Min(best, SegDist(q, a, b));
+                            }
+                            if (!(neg && pos)) return 0f;
+                        }
+                        return best;
+                    }
+                    // the nearest a bay's asphalt comes to a crossing, and how many of its points lie on a slab
+                    float Nearest(TownRoadGrid.ParkingBay bay, (Vector3 c, Vector3 t, Vector3 o, float mid, float half) f, ref int onSlab)
+                    {
+                        float near = float.MaxValue;
+                        for (float d = bay.A; d <= bay.B + 1e-3f; d += 0.5f)
+                            foreach (float lat in new[] { f.half, f.half + bay.Extra(d) })
+                            {
+                                var q = f.c + f.t * (d - f.mid) + f.o * lat;
+                                near = Mathf.Min(near, ToCrossings(q));
+                                foreach (var pp in gD.Patches) if (pp.DistanceTo(q.X, -q.Z) < 0.25) { onSlab++; break; }
+                            }
+                        return near;
+                    }
+                    float nearestCrossing = float.MaxValue; int bayOnSlab = 0;
+                    foreach (var bay in bays) nearestCrossing = Mathf.Min(nearestCrossing, Nearest(bay, Frame(bay), ref bayOnSlab));
+                    // the control: a bay laid from the very start of a road that has a crossing there must read as on it
+                    float controlNear = float.MaxValue; int controlSlab = 0;
+                    for (int j = 0; j < rfD.JunctionCount && controlNear == float.MaxValue; j++)
+                        foreach (var (er, ee) in rfD.JunctionEdges(j))
+                        {
+                            if (ee || !gD.LayCrossing(rfD, j, er, false, out _)) continue;
+                            var fake = new TownRoadGrid.ParkingBay { Road = er, Side = 1, A = 0f, B = 12f, Depth = gD.BayDepth, Taper = gD.BayTaper };
+                            rfD.EvaluateAlong(er, 6f, out var fc, out var ft, snapTerrain: false);
+                            var tt = new Vector3(ft.X, 0f, ft.Z).Normalized();
+                            controlNear = Nearest(fake, (fc, tt, new Vector3(ft.Z, 0f, -ft.X).Normalized(), 6f, rfD.RoadHalfWidth(er)), ref controlSlab);
+                            break;
+                        }
+                    T.Check($"...each well clear of the junctions: nearest crossing or stop line {nearestCrossing:0.0} m from any bay (wants >= {gD.BayClearOfJunction - 1f:0}), {bayOnSlab} points on a junction slab -- and a bay laid at a road's very start would be {controlNear:0.0} m from one (control)",
+                            crossingQuads.Count > 0 && nearestCrossing >= gD.BayClearOfJunction - 1f && bayOnSlab == 0 && controlNear < gD.BayClearOfJunction - 1f);
+                    // 4. THE DOTTED LINES: every dot inside its bay, the line down the open side broken into dots, and a
+                    //    dotted line across the bay at each end of every space. The control: the middle of a space,
+                    //    where nothing is painted, reads as bare -- so "covered" is not just "near a bay".
+                    var parkHost = new Node3D(); World.AddChild(parkHost);
+                    gD.BuildParking(parkHost, rfD);
+                    var paintTris = new List<Vector3>();
+                    foreach (var ch in parkHost.GetChildren())
+                        if (ch is MeshInstance3D pmi && pmi.Name.ToString() == "Parking_Bays_Paint")
+                            paintTris.AddRange((Vector3[])pmi.Mesh.SurfaceGetArrays(0)[(int)Mesh.ArrayType.Vertex]);
+                    bool Painted(Vector3 q)
+                    {
+                        for (int k = 0; k + 2 < paintTris.Count; k += 3)
+                        {
+                            Vector3 a = paintTris[k], b = paintTris[k + 1], c = paintTris[k + 2];
+                            float d1 = (q.X - b.X) * (a.Z - b.Z) - (a.X - b.X) * (q.Z - b.Z);
+                            float d2 = (q.X - c.X) * (b.Z - c.Z) - (b.X - c.X) * (q.Z - c.Z);
+                            float d3 = (q.X - a.X) * (c.Z - a.Z) - (c.X - a.X) * (q.Z - a.Z);
+                            bool neg = d1 < 0f || d2 < 0f || d3 < 0f, pos = d1 > 0f || d2 > 0f || d3 > 0f;
+                            if (!(neg && pos)) return true;
+                        }
+                        return false;
+                    }
+                    int strayPaint = 0;
+                    foreach (var v in paintTris)
+                    {
+                        bool inside = false;
+                        foreach (var bay in bays)
+                        {
+                            var f = Frame(bay);
+                            var rel = v - f.c; float al = rel.X * f.t.X + rel.Z * f.t.Z, lat = rel.X * f.o.X + rel.Z * f.o.Z;
+                            if (al >= bay.A - f.mid - 0.01f && al <= bay.B - f.mid + 0.01f && lat >= f.half - 0.01f && lat <= f.half + bay.Extra(f.mid + al) + 0.01f)
+                            { inside = true; break; }
+                        }
+                        if (!inside) strayPaint++;
+                    }
+                    int edgeDotted = 0, crossDotted = 0, crossLines = 0, spaceBare = 0;
+                    Vector3 Pt(TownRoadGrid.ParkingBay bay, float d, float lat) { var f = Frame(bay); return f.c + f.t * (d - f.mid) + f.o * lat; }
+                    foreach (var bay in bays)
+                    {
+                        float half = rfD.RoadHalfWidth(bay.Road);
+                        float edge = half + gD.BayEdgeGap + gD.BayLine * 0.5f;
+                        int on = 0, all = 0;
+                        for (float d = bay.A + bay.Taper; d <= bay.B - bay.Taper; d += 0.05f) { all++; if (Painted(Pt(bay, d, edge))) on++; }
+                        if (all > 0 && on > all * 0.3f && on < all * 0.7f) edgeDotted++;
+                        for (int k = 0; k <= bay.Spaces; k++)
+                        {
+                            crossLines++;
+                            float d = bay.First + k * bay.SpaceLength;
+                            int con = 0, call = 0;
+                            for (float lat = edge + 0.3f; lat <= half + bay.Depth - 0.3f; lat += 0.05f) { call++; if (Painted(Pt(bay, d, lat))) con++; }
+                            if (call > 0 && con > call * 0.25f && con < call * 0.75f) crossDotted++;
+                        }
+                        if (!Painted(Pt(bay, bay.First + bay.SpaceLength * 0.5f, half + bay.Depth * 0.5f))) spaceBare++;
+                    }
+                    T.Check($"...painted in dots: the line down each bay's open side dotted ({edgeDotted} of {bays.Count}), a dotted line across at each end of every space ({crossDotted} of {crossLines}), every dot inside its bay ({strayPaint} vertices stray) -- and the middle of a space bare ({spaceBare} of {bays.Count})",
+                            paintTris.Count > 0 && edgeDotted == bays.Count && crossDotted == crossLines && strayPaint == 0 && spaceBare == bays.Count);
+                    walkHost.QueueFree(); parkHost.QueueFree();
+                }
                 // determinism: the same town again lays the same plots
                 {
                     var rfD2 = Field();
@@ -458,10 +672,13 @@ namespace UnturnedGodot.Testing
                     var w2 = new EditorSidewalk(); World.AddChild(w2);
                     gD2.LaySidewalkCornersOn(rfD2, World, w2, out _);
                     gD2.MarkPlots(null, rfD2);
-                    bool same = gD2.Plots.Count == plots.Count && gD2.Alleys.Count == gD.Alleys.Count;
+                    bool same = gD2.Plots.Count == plots.Count && gD2.Alleys.Count == gD.Alleys.Count && gD2.Bays.Count == gD.Bays.Count;
                     for (int k = 0; same && k < plots.Count; k++)
                         same = gD2.Plots[k].Kind == plots[k].Kind && (gD2.Plots[k].Front - plots[k].Front).Length() < 1e-3f;
-                    T.Check($"...and the same seed lays the same plots ({gD2.Plots.Count} vs {plots.Count})", same);
+                    for (int k = 0; same && k < gD.Bays.Count; k++)
+                        same = gD2.Bays[k].Road == gD.Bays[k].Road && gD2.Bays[k].Side == gD.Bays[k].Side
+                               && Mathf.Abs(gD2.Bays[k].A - gD.Bays[k].A) < 1e-3f && Mathf.Abs(gD2.Bays[k].B - gD.Bays[k].B) < 1e-3f;
+                    T.Check($"...and the same seed lays the same plots and bays ({gD2.Plots.Count} vs {plots.Count}; {gD2.Bays.Count} vs {gD.Bays.Count})", same);
                 }
             }
 
