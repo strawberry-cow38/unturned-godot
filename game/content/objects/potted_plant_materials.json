@@ -1,0 +1,30 @@
+{
+  "Potted_Plant_Table_0": {
+    "foliage_texture_filter": "Linear",
+    "alpha_cutoff": 0.5,
+    "double_sided": true,
+    "native_atlas_filter": "Linear; palette swatches are padded",
+    "registration_required": "Native OBJ/PNG cannot encode filtering. Existing native prop loader forces nearest; preserve this override when registering."
+  },
+  "Potted_Plant_Upright_0": {
+    "foliage_texture_filter": "Linear",
+    "alpha_cutoff": 0.5,
+    "double_sided": true,
+    "native_atlas_filter": "Linear; palette swatches are padded",
+    "registration_required": "Native OBJ/PNG cannot encode filtering. Existing native prop loader forces nearest; preserve this override when registering."
+  },
+  "Potted_Flowers_0": {
+    "foliage_texture_filter": "Linear",
+    "alpha_cutoff": 0.5,
+    "double_sided": true,
+    "native_atlas_filter": "Linear; palette swatches are padded",
+    "registration_required": "Native OBJ/PNG cannot encode filtering. Existing native prop loader forces nearest; preserve this override when registering."
+  },
+  "Potted_Plant_Tall_0": {
+    "foliage_texture_filter": "Linear",
+    "alpha_cutoff": 0.5,
+    "double_sided": true,
+    "native_atlas_filter": "Linear; palette swatches are padded",
+    "registration_required": "Native OBJ/PNG cannot encode filtering. Existing native prop loader forces nearest; preserve this override when registering."
+  }
+}
