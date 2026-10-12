@@ -1,0 +1,74 @@
+{
+  "Ceiling_Lamp_Pendant_0": {
+    "native_axes": "Z-up metres",
+    "mount_origin_native": [
+      0,
+      0,
+      0
+    ],
+    "hangs_below_ceiling": true,
+    "native_bounds": [
+      [
+        -0.3708829879760742,
+        -0.3708829879760742,
+        -0.9434469938278198
+      ],
+      [
+        0.3708829879760742,
+        0.3708829879760742,
+        0.0
+      ]
+    ],
+    "suggested_light_origin_native": [
+      0,
+      0,
+      -0.953447
+    ],
+    "suggested_light_direction_native": [
+      0,
+      0,
+      -1
+    ],
+    "light_origin_is_suggestion_only": true,
+    "emissive_shader_in_asset": false,
+    "native_palette": "unchanged Lamp_1_tex.png",
+    "art_approved_message": "1559158996772986934",
+    "integration_note": "Mount at ceiling height. Negative native Z maps to negative Godot Y with standard prop conversion. Register and wire existing lamp behaviour; metadata does not create a runtime light."
+  },
+  "Ceiling_Lamp_Flush_0": {
+    "native_axes": "Z-up metres",
+    "mount_origin_native": [
+      0,
+      0,
+      0
+    ],
+    "hangs_below_ceiling": true,
+    "native_bounds": [
+      [
+        -0.3708829879760742,
+        -0.3708829879760742,
+        -0.2750000059604645
+      ],
+      [
+        0.3708829879760742,
+        0.3708829879760742,
+        0.0
+      ]
+    ],
+    "suggested_light_origin_native": [
+      0,
+      0,
+      -0.285
+    ],
+    "suggested_light_direction_native": [
+      0,
+      0,
+      -1
+    ],
+    "light_origin_is_suggestion_only": true,
+    "emissive_shader_in_asset": false,
+    "native_palette": "unchanged Lamp_1_tex.png",
+    "art_approved_message": "1559158996772986934",
+    "integration_note": "Mount at ceiling height. Negative native Z maps to negative Godot Y with standard prop conversion. Register and wire existing lamp behaviour; metadata does not create a runtime light."
+  }
+}
