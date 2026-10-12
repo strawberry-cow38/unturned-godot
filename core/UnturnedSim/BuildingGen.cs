@@ -53,6 +53,22 @@ namespace UnturnedSim
         /// <summary>A fireplace in the living room, its chimney up through every floor and out of the roof (strawberry:
         /// "chimneys, living rooms may [have one] that extends up and out the roof"). Auto: half the houses with a living room.</summary>
         public ChimneyChoice Chimney;
+        /// <summary>Width x Depth is a PLOT the building must fit inside (a town plot's building zone), not a size its
+        /// rooms may outgrow: the generator takes fewer floors' worth of rooms, more floors, and smaller rooms (down to
+        /// each kind's minimum) before it would ever exceed it, and says what it gave up in a note.</summary>
+        public bool FitPlot;
+        /// <summary>Room sizes scaled toward each kind's minimum: 0 as designed, 1 and 2 smaller, 3 every room at its least
+        /// (set by FitPlot's search; a fitted plot's rooms are padded back out to fill it).</summary>
+        public int Compact;
+        /// <summary>Stop once the ground floor fixes the footprint: FitPlot's search measures plans this way.</summary>
+        internal bool PlanOnly;
+
+        internal BuildingGenSpec Copy()
+        {
+            var c = (BuildingGenSpec)MemberwiseClone();
+            c.MinOfKind = new Dictionary<RoomKind, int>(MinOfKind);
+            return c;
+        }
     }
 
     /// <summary>One generated room on the 3 m lattice: the cells [X0, X1) x [Z0, Z1) of its floor, and any further
@@ -165,6 +181,9 @@ namespace UnturnedSim
         public Sides NoWindowSides;
         /// <summary>Where it could not do what was asked, said so (a minimum that did not fit, a limit it broke).</summary>
         public List<string> Notes = new List<string>();
+        /// <summary>The spec the plan was drawn from when FitPlot changed it to fit (fewer rooms, more floors, smaller
+        /// rooms...), else null: what the building actually answers to.</summary>
+        public BuildingGenSpec Fitted;
     }
 
     /// <summary>
@@ -533,7 +552,143 @@ namespace UnturnedSim
         /// B is the room on the other side, or null for outside.</summary>
         struct Run { public bool AlongX; public int Line, S0, S1; public GenRoom A, B; }
 
+        /// <summary>Generate a building. With `FitPlot` and a Width x Depth, the footprint is a cap: plans are drawn with
+        /// growing compromises -- smaller rooms first (padded back out to the plot, so they cost least), then more floors,
+        /// then fewer rooms a floor, then fewer rooms -- and the first that fits is built, with a note of what it gave up.
+        /// A building may come out smaller than its plot (the yard takes the rest); if nothing fits, the least oversized
+        /// plan is built, said so.</summary>
         public static BuildingGenResult Generate(BuildingGenSpec spec)
+        {
+            if (!spec.FitPlot || spec.Width <= 0 || spec.Depth <= 0) return GenerateOnce(spec);
+            int maxF = Math.Max(1, spec.MaxFloors), minF = Math.Clamp(spec.MinFloors, 1, maxF);
+            // stairs need a bay three rows deep, a hall and two rows north of it: a shallower plot is one storey
+            if (spec.Depth < 6) maxF = minF = 1;
+            int floorRooms = Math.Min(spec.MinRooms, Math.Max(Essentials(spec.Kind).Length, Programme(spec.Kind).Always.Length));
+            // the best so far: 0 fits whole; up to Lopsided, fits but rooms came out short of what they need (by how
+            // badly); Lopsided, fits with rooms out of proportion; past it, over the plot by that many cells
+            const int Lopsided = 1000;
+            BuildingGenSpec best = null; BuildingGenResult bestBuilt = null; int bestScore = int.MaxValue, tries = 0;
+            foreach (int minRooms in new[] { spec.MinRooms, spec.MinRooms - 1, floorRooms }.Where(m => m >= floorRooms).Distinct())
+                foreach (int perFloor in new[] { spec.MaxRoomsPerFloor, 4, 3, 2 }.Where(p => p <= spec.MaxRoomsPerFloor).Distinct())
+                    for (int floors = minF; floors <= maxF; floors++)
+                        // (never so few rooms a floor that a room the kind always has is dropped)
+                        if (floors * perFloor >= Programme(spec.Kind).Always.Length || perFloor == spec.MaxRoomsPerFloor)
+                        // (an L or a T is a block and a narrower wing: on a narrow plot, a rectangle)
+                        foreach (var shape in spec.Shape == FootprintShape.Auto ? new[] { FootprintShape.Auto, FootprintShape.Rect } : new[] { spec.Shape })
+                        foreach (int compact in new[] { 0, 1, 2, 3 })
+                        {
+                            if (++tries > FitTries) goto done;
+                            var s = spec.Copy();
+                            s.Shape = shape; s.Compact = compact; s.MaxFloors = floors; s.MinFloors = Math.Min(minF, floors);
+                            s.MaxRoomsPerFloor = perFloor; s.MinRooms = minRooms; s.PlanOnly = true;
+                            BuildingGenResult plan;
+                            try { plan = GenerateOnce(s); } catch (InvalidOperationException) { continue; }
+                            s.PlanOnly = false;
+                            int over = Math.Max(0, plan.CellsX - spec.Width) + Math.Max(0, plan.CellsZ - spec.Depth);
+                            // (a plan squeezed in with its rooms out of proportion -- a shop floor at a third of its size
+                            // beside an office at its full one -- is a fit of last resort, after every other compromise)
+                            int score = over > 0 ? Lopsided + over : Proportioned(plan) ? 0 : Lopsided;
+                            BuildingGenResult r = null;
+                            if (score == 0)
+                            {
+                                // drawn in full: a room squeezed to its least can come out without what it is for
+                                r = GenerateOnce(s);
+                                r.Fitted = s;
+                                score = Shortfall(r).Sum(x => x.Weight);
+                            }
+                            if (score < bestScore) { best = s; bestBuilt = r; bestScore = score; }
+                            if (score > 0) continue;
+                            var gave = new List<string>();
+                            if (shape != spec.Shape) gave.Add("a rectangle, not an L or a T");
+                            if (compact > 0) gave.Add($"rooms smaller (compact {compact})");
+                            if (floors > minF) gave.Add($"{floors} floors");
+                            if (perFloor < spec.MaxRoomsPerFloor) gave.Add($"at most {perFloor} rooms a floor");
+                            if (minRooms < spec.MinRooms) gave.Add($"{minRooms} rooms, not {spec.MinRooms}");
+                            r.Notes.Add($"fitted the {spec.Width}x{spec.Depth} plot as {r.CellsX}x{r.CellsZ}" + (gave.Count > 0 ? ": " + string.Join(", ", gave) : ""));
+                            return r;
+                        }
+            done:
+            var closest = bestBuilt ?? (best == null ? GenerateOnce(spec) : GenerateOnce(best));
+            closest.Fitted = best;
+            closest.Notes.Add(bestScore < Lopsided
+                ? $"fitted the {spec.Width}x{spec.Depth} plot as {closest.CellsX}x{closest.CellsZ}, but short of {string.Join(", ", Shortfall(closest).Select(x => x.What))}"
+                : bestScore == Lopsided ? $"fitted the {spec.Width}x{spec.Depth} plot as {closest.CellsX}x{closest.CellsZ}, but only with rooms out of proportion"
+                : $"could not fit the {spec.Width}x{spec.Depth} plot: {closest.CellsX}x{closest.CellsZ} is the closest of {Math.Min(tries, FitTries)} plans");
+            return closest;
+        }
+
+        /// <summary>What a drawn building is short of, as "Kind: need", weighted 2 for what a room is for (a bed, a fridge, a
+        /// window) and 1 for the rest (a table's chairs, a shop's shelves): every room furnished as its kind needs, every
+        /// room that needs daylight lit by a window in an outside wall, every ground-floor garage and warehouse with its
+        /// vehicle door. (FitPlot's search asks: a room drawn at its least can come out without -- a kitchen-diner with no
+        /// floor clear of its three doors' walks for a table, a corner shop whose one street wall is its door.)</summary>
+        static List<(string What, int Weight)> Shortfall(BuildingGenResult r)
+        {
+            var miss = new List<(string What, int Weight)>();
+            bool Has(GenRoom g, params string[] ns) => r.Furniture.Any(m => m.Room == g && ns.Any(n => m.Name.StartsWith(n)));
+            void Need(GenRoom g, string what, bool ok, int weight = 2) { if (!ok) miss.Add(($"{g.Kind}: {what}", weight)); }
+            foreach (var g in r.Layout)
+                switch (g.Kind)
+                {
+                    case RoomKind.Bedroom: Need(g, "bed", Has(g, "Bed")); break;
+                    case RoomKind.LivingRoom: Need(g, "couch", Has(g, "Couch")); break;
+                    case RoomKind.DiningRoom: Need(g, "table", Has(g, "Table")); Need(g, "chairs", r.Furniture.Count(m => m.Room == g && m.Name.StartsWith("Chair")) >= 4, 1); break;
+                    case RoomKind.Kitchen:
+                        Need(g, "fridge", Has(g, "Fridge")); Need(g, "sink", Has(g, "Counter_1")); Need(g, "stove", Has(g, "Oven"));
+                        if (r.KitchenDiner) Need(g, "dining table", Has(g, "Table_Wood_0", "Table_Wood_1", "Table_Wood_3"), 1);
+                        break;
+                    case RoomKind.Bathroom: Need(g, "tub or sink", Has(g, "Tub", "Counter_1")); break;
+                    case RoomKind.Office: Need(g, "desk", Has(g, "Table_Wood_2")); break;
+                    case RoomKind.BreakRoom: Need(g, "table", Has(g, "Table"), 1); Need(g, "sink", Has(g, "Counter_1")); Need(g, "fridge", Has(g, "Fridge")); break;
+                    case RoomKind.Shop: Need(g, "shelves", Has(g, "Shelf_1"), 1); break;
+                    case RoomKind.Warehouse: case RoomKind.Storage: Need(g, "racks", Has(g, "Shelf"), 1); break;
+                }
+            // what each outside wall's openings let into: the room a metre in from the middle of each
+            var lit = new HashSet<GenRoom>(); var vehicle = new HashSet<GenRoom>();
+            foreach (var w in r.Walls.Where(w => w.Kind == SurfaceKind.Wall && w.Thickness == Ext))
+            {
+                int f = (int)MathF.Round(w.Y / Storey);
+                float a = w.Yaw * MathF.PI / 180f, dx = MathF.Cos(a), dz = -MathF.Sin(a), nx = MathF.Sin(a), nz = MathF.Cos(a);
+                foreach (var o in w.Openings)
+                {
+                    float u = o.U + o.Width * 0.5f, cx = w.X + dx * u - nx, cz = w.Z + dz * u - nz;
+                    var g = r.Layout.FirstOrDefault(q => q.Floor == f && q.Holds(cx, cz));
+                    if (g == null) continue;
+                    if (o.Glazed) lit.Add(g);
+                    if (o.Archetype == ArchGarage) vehicle.Add(g);
+                }
+            }
+            foreach (var g in r.Layout)
+            {
+                // (a building with a side asked to have no windows is let off its daylight: a room may face only that side)
+                if (Habitable(g.Kind) && r.NoWindowSides == Sides.None) Need(g, "window", lit.Contains(g));
+                if (g.Floor == 0 && g.Kind is RoomKind.Garage or RoomKind.Warehouse) Need(g, "vehicle door", vehicle.Contains(g));
+            }
+            return miss;
+        }
+
+        /// <summary>Do a plan's rooms keep to their sizes? What is left of a living room beside its stairs is no smaller than
+        /// its kitchen or dining room, and the rooms of a row share its length by their kinds' sizes, within a cell's worth
+        /// (1.5x: two and three cells). Service rooms are kept narrow on purpose; a hall bent round a bay is no row.</summary>
+        static bool Proportioned(BuildingGenResult r)
+        {
+            var bay = r.Bay;
+            int Usable(GenRoom g) => g.Cells - (bay.X1 > bay.X0 && g.Floor == 0 && g.HasCell(bay.X0, bay.Z0) ? (bay.X1 - bay.X0) * (bay.Z1 - bay.Z0) : 0);
+            foreach (var living in r.Layout.Where(g => g.Kind == RoomKind.LivingRoom))
+                if (r.Layout.Any(o => o.Floor == living.Floor && (o.Kind == RoomKind.DiningRoom || o.Kind == RoomKind.Kitchen) && o.Cells > Usable(living))) return false;
+            foreach (var row in r.Layout.Where(g => !g.Circulation && !Service(g.Kind) && g.More.Count == 0).GroupBy(g => (g.Floor, g.Z0, g.Z1)))
+            {
+                if (row.Count() < 2) continue;
+                var share = row.Select(g => Usable(g) / (double)(g.Kind == RoomKind.Kitchen && r.KitchenDiner ? DinerCells : TraitOf(g.Kind, r.Kind).Cells)).ToList();
+                if (share.Max() > share.Min() * 1.5 + 1e-6) return false;
+            }
+            return true;
+        }
+
+        /// <summary>The most plans FitPlot measures before it settles for the closest.</summary>
+        const int FitTries = 160;
+
+        static BuildingGenResult GenerateOnce(BuildingGenSpec spec)
         {
             var rng = new Rng(spec.Seed);
             var kind = spec.Kind;
@@ -547,7 +702,16 @@ namespace UnturnedSim
             int perFloor = Math.Max(1, spec.MaxRoomsPerFloor), capacity = maxFloors * perFloor;
             // a kitchen with the dining table in it is a size up (see `diner` below)
             bool diner = false;
-            Trait T(RoomKind r) => r == RoomKind.Kitchen && diner ? new Trait(DinerCells, 3, FloorPref.Ground, ArchWindow) : TraitOf(r, kind);
+            Trait T0(RoomKind r) => r == RoomKind.Kitchen && diner ? new Trait(DinerCells, 3, FloorPref.Ground, ArchWindow) : TraitOf(r, kind);
+            // a compact building's rooms: smaller toward each kind's minimum (a plot to fit, see FitPlot)
+            Trait T(RoomKind r)
+            {
+                var t = T0(r);
+                if (spec.Compact <= 0) return t;
+                int side = Math.Max(2, t.MinSide - spec.Compact);
+                int cells = Math.Max(side * 2, spec.Compact >= 3 ? 0 : (int)Math.Ceiling(t.Cells * (spec.Compact == 1 ? 0.7 : 0.5)));
+                return new Trait(Math.Min(t.Cells, cells), side, t.Pref, t.Window);
+            }
             int Width(RoomKind r, int depth) => Math.Max(Math.Max(2, T(r).MinSide), (int)Math.Ceiling(T(r).Cells / (double)depth));
 
             // ---- the programme: the kind's own rooms, raised to the minimums, filled to MinRooms, and a seeded extra
@@ -632,10 +796,12 @@ namespace UnturnedSim
             // (strawberry: "the living room, which is further eaten by stairs") -- and how far past that it may grow:
             // three quarters again, a small room one cell. Growing by share rather than by turns is what keeps a dining
             // room from outgrowing the living room ("make sure rooms are scaled proportionately to what they are").
-            int Target(RoomKind r, bool host) => T(r).Cells + (host ? L * bayRows : 0);
+            // (by the size a kind is DESIGNED at: a compact building's rooms start smaller but grow back alike, so a shop
+            // floor stays the big room beside an office -- only its least width is compact, in HostWidth and Width)
+            int Target(RoomKind r, bool host) => T0(r).Cells + (host ? L * bayRows : 0);
             int Cap(RoomKind r, int depth, bool host = false) => Service(r) ? Width(r, depth) + 1
                                                              : Math.Max(Width(r, depth), (int)(1.75f * Target(r, host) / depth));
-            int HostWidth(RoomKind r, int depth) => Math.Max(L, (int)Math.Ceiling(Target(r, true) / (double)depth));
+            int HostWidth(RoomKind r, int depth) => Math.Max(L, (int)Math.Ceiling((T(r).Cells + L * bayRows) / (double)depth));
 
             // ---- each room to a floor: ground-only first, then ground-preferring, upstairs-preferring, the rest
             var onFloor = new List<RoomKind>[floors];
@@ -974,6 +1140,7 @@ namespace UnturnedSim
             }
             foreach (var r in res.Layout)
                 res.Rooms.Add(new RoomDesignation(r.Kind, (r.X0 + r.X1) * 0.5f * Cell, (r.Z0 + r.Z1) * 0.5f * Cell, r.Floor));
+            if (spec.PlanOnly) return res;
 
             // some doorways between two rooms you walk through are left open, and some of those are wide
             // (in houses: a business's rooms keep their doors -- a shop floor is not open to its back rooms)
@@ -1034,6 +1201,8 @@ namespace UnturnedSim
                         var m = fromA[rng.Int(fromA.Count)];
                         var moving = KD(m) ? A.Where(KD).ToList() : new List<RoomKind> { m };
                         if (moving.Count >= A.Count) moving = new List<RoomKind> { m };
+                        // (a dining room holding the stairs stays, and its kitchen with it: band A keeps the stair room)
+                        if (multi && moving.Contains(host) && A.Count(x => x == host) <= moving.Count(x => x == host)) break;
                         foreach (var mv in moving) { A.Remove(mv); B.Add(mv); }
                     }
                     else if ((lb > la + 3 || A.Count == 0) && B.Count > 1) { var m = B[rng.Int(B.Count)]; B.Remove(m); A.Add(m); }

@@ -1041,8 +1041,9 @@ namespace UnturnedSim
                 var (cx, cz) = Centre();
                 bool big = _room.Rects.Min(r => Math.Min(r.X1 - r.X0, r.Z1 - r.Z0)) * Cell >= 6.5f;
                 // the round one in a big room, else the long one; tight, the small square one, and then a little less room round
+                // -- down to a chair's depth, in a small house's kitchen-diner with its walk to three doors across it
                 FurniturePlan t = null;
-                foreach (var (table, room) in new[] { ("Table_Wood_1", 1.0f), ("Table_Wood_0", 1.0f), ("Table_Wood_3", 1.0f), ("Table_Wood_3", 0.8f) })
+                foreach (var (table, room) in new[] { ("Table_Wood_1", 1.0f), ("Table_Wood_0", 1.0f), ("Table_Wood_3", 1.0f), ("Table_Wood_3", 0.8f), ("Table_Wood_3", 0.6f) })
                 {
                     if (table == "Table_Wood_1" && !big) continue;
                     if ((t = PutWithRoom(table, room, cx, cz)) != null) break;
