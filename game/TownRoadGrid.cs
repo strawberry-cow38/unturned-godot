@@ -2876,14 +2876,19 @@ namespace UnturnedGodot
         /// yards"). A front yard deep enough for a porch and a car (tinyclaw: "porches stick 3 m out the front and
         /// the garage door wants a drive"), a backyard behind, side yards so neighbours' walls do not touch -- a
         /// shop's are none, it fronts the pavement shoulder to shoulder like a high street. A corner plot is
-        /// SQUARE and fronts two streets, so its street side gets a front yard too.</summary>
+        /// SQUARE and fronts two streets, so its street side gets a front yard too.
+        /// ⚠ THE ZONES ARE SIZED FOR THE GENERATOR, NOT THE OTHER WAY ROUND. tiny's fit-the-plot houses (2026-10-12):
+        /// a 4 x 5 cell small house had no room for a kitchen table in 39 of 40 seeds, and a 4 x 6 shop came out a
+        /// thin floor with few shelves in 25. One cell more each -- the small house's out of its backyard, which
+        /// leaves the plot and so the layout as it was; the shop's in frontage -- and the small one can go two
+        /// storeys (16/40 complete, from 1) and the shop fits 40/40.</summary>
         public static readonly PlotSize[] PlotSizes =
         {
-            new(PlotKind.HouseSmall,  15f, 30f, 6f, 9f, 1.5f, new Color(0.98f, 0.86f, 0.30f)),   // house 12 x 15
+            new(PlotKind.HouseSmall,  15f, 30f, 6f, 6f, 1.5f, new Color(0.98f, 0.86f, 0.30f)),   // house 12 x 18
             new(PlotKind.HouseMedium, 18f, 33f, 6f, 9f, 1.5f, new Color(0.98f, 0.58f, 0.20f)),   // house 15 x 18
             new(PlotKind.HouseLarge,  24f, 36f, 6f, 9f, 1.5f, new Color(0.92f, 0.30f, 0.28f)),   // house 21 x 21
             new(PlotKind.Corner,      30f, 30f, 6f, 3f, 3f,   new Color(0.35f, 0.82f, 0.42f)),   // house 21 x 21
-            new(PlotKind.Shop,        12f, 27f, 3f, 6f, 0f,   new Color(0.72f, 0.45f, 0.98f)),   // shop 12 x 18
+            new(PlotKind.Shop,        15f, 27f, 3f, 6f, 0f,   new Color(0.72f, 0.45f, 0.98f)),   // shop 15 x 18
             new(PlotKind.Apartments,  30f, 36f, 6f, 9f, 3f,   new Color(0.30f, 0.62f, 0.98f)),   // block 24 x 21
         };
         public static PlotSize SizeOf(PlotKind k) { foreach (var p in PlotSizes) if (p.Kind == k) return p; return PlotSizes[0]; }
