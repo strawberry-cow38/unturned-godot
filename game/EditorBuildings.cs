@@ -408,8 +408,9 @@ namespace UnturnedGodot
             new("porch",   5.5f,  WallOpenings.DoorHeight,        0f,   true),
             new("vent",    1.0f,  1.0f,                           2.5f, false),
             // a bathroom's: wide, shallow and high, glazed -- light without a view in (strawberry: "change the
-            // bathrooms from using vent windows to small glass windows, horizontal slit windows")
-            new("slit",    2.4f,  0.6f,                           2.6f, false, glazed: true),
+            // bathrooms from using vent windows to small glass windows, horizontal slit windows", then "widen the
+            // bathroom windows horizontally"); BuildingGen.ArchSlit is this one
+            new("slit",    3.5f,  0.6f,                           2.6f, false, glazed: true),
         };
 
         // ---- glazing options applied to NEWLY placed openings ------------------------------------------
@@ -2730,7 +2731,10 @@ namespace UnturnedGodot
 
         public BuildingGenResult Generate(BuildingGenSpec spec)
         {
+            var trace = new List<string>();
+            if (!string.IsNullOrEmpty(System.Environment.GetEnvironmentVariable("UG_EDITDUMP"))) BuildingGen.FurnishTrace = trace.Add;
             var res = BuildingGen.Generate(spec);
+            BuildingGen.FurnishTrace = null;
             int mat = ActiveMaterial;
             for (int i = 0; i < WallMaterials.Count; i++)
                 if (WallMaterials.At(i).Name == res.Palette) { mat = i; break; }
@@ -2795,6 +2799,14 @@ namespace UnturnedGodot
             });
             int rooms = 0;
             foreach (var g in res.Layout) if (!g.Circulation) rooms++;
+            // UG_EDITDUMP=path writes what the generator placed, so a capture can be checked against the same seed's plan
+            var dump = System.Environment.GetEnvironmentVariable("UG_EDITDUMP");
+            if (!string.IsNullOrEmpty(dump))
+            {
+                System.IO.File.WriteAllLines(dump, System.Linq.Enumerable.Select(res.Furniture, m => System.FormattableString.Invariant($"{m.Name} {m.X:0.00} {m.Z:0.00} {m.Yaw:0} {m.Floor} {m.Room.Kind}")));
+                System.IO.File.WriteAllLines(dump + ".walls", System.Linq.Enumerable.Select(res.Walls, w => System.FormattableString.Invariant($"{w.Kind} {w.X:R} {w.Y:R} {w.Z:R} {w.Yaw:R} {w.Length:R} {w.Height:R} {w.Thickness:R} {w.Openings.Count}")));
+                System.IO.File.WriteAllLines(dump + ".trace", trace);
+            }
             Log.Print($"[editor-buildings] generated {res.Kind} seed {spec.Seed}: {res.Floors} floor(s), {rooms} rooms, "
                      + $"{res.CellsX * BuildingGen.Cell:0} x {res.CellsZ * BuildingGen.Cell:0} m, {res.Walls.Count} surfaces, "
                      + $"{res.Stairs.Count} flight(s), {res.Furniture.Count} pieces of furniture, {res.Plan} plan, {res.Roof.ToString().ToLowerInvariant()} roof, palette {res.Palette}"

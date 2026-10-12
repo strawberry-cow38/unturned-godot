@@ -1128,7 +1128,7 @@ namespace UnturnedSim.Tests
                         if (st.Floor == f - 1 && EndsOnFloor(st)) tiles.Add(T(st.X + bx * st.Run, st.Z + bz * st.Run, +1f));
                     }
                     // doorways and windows, as boxes in plan
-                    var doorZones = new List<(float, float, float, float)>(); var windows = new List<(float, float, float, float)>();
+                    var doorZones = new List<(float, float, float, float)>(); var windows = new List<((float, float, float, float) Box, float Sill)>();
                     var doorPts = new List<(float X, float Z)>();
                     foreach (var w in walls)
                     {
@@ -1136,7 +1136,7 @@ namespace UnturnedSim.Tests
                         foreach (var o in w.Openings)
                         {
                             bool door = o.V < 0.05f;
-                            float deep = door ? (o.Width >= 4f ? LaneClear : DoorClear) : Sill;
+                            float deep = door ? (o.Archetype == BuildingGen.ArchGarage ? LaneClear : DoorClear) : Sill;
                             var a = At(w, o.U); var b = At(w, o.U1);
                             float t = w.Thickness * 0.5f + deep;
                             var box = (MathF.Min(MathF.Min(a.X, b.X) - n.X * t, MathF.Min(a.X, b.X) + n.X * t), MathF.Min(MathF.Min(a.Z, b.Z) - n.Z * t, MathF.Min(a.Z, b.Z) + n.Z * t),
@@ -1147,7 +1147,7 @@ namespace UnturnedSim.Tests
                                 var c = At(w, o.U + o.Width * 0.5f); float d = w.Thickness * 0.5f + 0.4f;
                                 doorPts.Add((c.X + n.X * d, c.Z + n.Z * d)); doorPts.Add((c.X - n.X * d, c.Z - n.Z * d));
                             }
-                            else if (o.Glazed) windows.Add(box);
+                            else if (o.Glazed) windows.Add((box, o.V));
                         }
                     }
                     var here = res.Furniture.Where(m => m.Floor == f).ToList();
@@ -1163,7 +1163,28 @@ namespace UnturnedSim.Tests
                     }
                     foreach (var w in walls) { Mark(Box(w), isWall); Mark(Box(w), blocked); }
                     foreach (var st in stairs) Mark(st, blocked);
-                    foreach (var m in floorPieces) Mark(m.Footprint, blocked);
+                    // a piece's true outline: a round table is a disc, a turned chair a turned box (its axis-aligned box
+                    // would make the chairs round a round table collide with it)
+                    bool Boxy(FurniturePlan m) => !FurnitureCatalog.Round.ContainsKey(m.Name) && MathF.Abs(m.Yaw / 90f - MathF.Round(m.Yaw / 90f)) < 1e-4f;
+                    bool Hits(FurniturePlan m, (float X0, float Z0, float X1, float Z1) b)
+                    {
+                        if (!Overlap(m.Footprint, b)) return false;
+                        if (Boxy(m)) return true;
+                        var fp = m.Footprint;
+                        float x0 = MathF.Max(fp.X0, b.X0) + 0.01f, x1 = MathF.Min(fp.X1, b.X1) - 0.01f, z0 = MathF.Max(fp.Z0, b.Z0) + 0.01f, z1 = MathF.Min(fp.Z1, b.Z1) - 0.01f;
+                        for (float x = x0; x <= x1; x += 0.05f)
+                            for (float z = z0; z <= z1; z += 0.05f)
+                                if (FurnitureCatalog.Covers(m.Name, m.X, m.Z, m.Yaw, x, z)) return true;
+                        return false;
+                    }
+                    foreach (var m in floorPieces)
+                    {
+                        if (Boxy(m)) { Mark(m.Footprint, blocked); continue; }
+                        var fp = m.Footprint;
+                        for (int i = Math.Max(0, (int)MathF.Ceiling((fp.X0 - O) / G - 0.5f)); i < gnx && O + (i + 0.5f) * G < fp.X1; i++)
+                            for (int j = Math.Max(0, (int)MathF.Ceiling((fp.Z0 - O) / G - 0.5f)); j < gnz && O + (j + 0.5f) * G < fp.Z1; j++)
+                                if (FurnitureCatalog.Covers(m.Name, m.X, m.Z, m.Yaw, O + (i + 0.5f) * G, O + (j + 0.5f) * G)) blocked[i, j] = true;
+                    }
                     // exactly, against the boxes: a grid cell whose centre sits on a wall's face is neither in nor out
                     var wallBoxes = walls.Select(Box).ToList();
                     bool WallAt(float x, float z) => wallBoxes.Any(b => x >= b.Item1 && x <= b.Item3 && z >= b.Item2 && z <= b.Item4);
@@ -1201,18 +1222,27 @@ namespace UnturnedSim.Tests
                         if (MathF.Abs(m.Y - f * Storey) > 0.01f) bad.Add($"{nm} is not on its floor (y {m.Y:0.00})");
                         // square to the walls, but for what gets moved in use, and that only a little
                         float off = MathF.Abs(((m.Yaw % 90f) + 90f + 45f) % 90f - 45f);
+                        // a chair at a round table is square to the table instead: off is how far it looks past its middle
+                        var round = m.Name.StartsWith("Chair") ? floorPieces.FirstOrDefault(t => t.Room == m.Room && FurnitureCatalog.Round.TryGetValue(t.Name, out var tr)
+                                        && MathF.Sqrt((t.X - m.X) * (t.X - m.X) + (t.Z - m.Z) * (t.Z - m.Z)) < tr + 1.2f) : null;
+                        if (round != null)
+                        {
+                            var (cfx, cfz) = m.Front; float tx = round.X - m.X, tz = round.Z - m.Z, tl = MathF.Sqrt(tx * tx + tz * tz);
+                            off = MathF.Acos(Math.Clamp((cfx * tx + cfz * tz) / tl, -1f, 1f)) * 180f / MathF.PI;
+                        }
                         float allowed = m.Name.StartsWith("Chair") ? 10f : m.Name.StartsWith("Table") ? 5f : m.Name.StartsWith("Couch") ? 3f : 0.01f;
                         if (off > allowed) bad.Add($"{nm} stands {off:0.0} degrees off square");
                         if (allowed > 0.01f) { movable++; if (off > 0.2f) turned++; }
                         var inner = Grown(fp, -0.02f);
                         if (!new[] { (inner.Item1, inner.Item2), (inner.Item3, inner.Item2), (inner.Item1, inner.Item4), (inner.Item3, inner.Item4) }.All(p => m.Room.Holds(p.Item1, p.Item2)))
                             bad.Add($"{nm} is not wholly in its room");
-                        foreach (var w in walls) if (Overlap(fp, Box(w))) { bad.Add($"{nm} runs into a wall"); break; }
-                        if (stairs.Any(st => Overlap(fp, st))) bad.Add($"{nm} stands on the stairs or over a hole");
-                        if (tiles.Any(t => Overlap(fp, t))) bad.Add($"{nm} stands on the tile at a flight's end");
-                        if (doorZones.Any(z => Overlap(fp, z))) bad.Add($"{nm} stands in a doorway");
-                        if (FurnitureCatalog.Sizes[m.Name].H > Tall && windows.Any(z => Overlap(fp, z))) bad.Add($"{nm} stands in front of a window");
-                        foreach (var o in floorPieces) if (o != m && Overlap(fp, o.Footprint)) { bad.Add($"{nm} overlaps {o}"); break; }
+                        foreach (var w in walls) if (Hits(m, Box(w))) { bad.Add($"{nm} runs into a wall"); break; }
+                        if (stairs.Any(st => Hits(m, st))) bad.Add($"{nm} stands on the stairs or over a hole");
+                        if (tiles.Any(t => Hits(m, t))) bad.Add($"{nm} stands on the tile at a flight's end");
+                        if (doorZones.Any(z => Hits(m, z))) bad.Add($"{nm} stands in a doorway");
+                        // (a piece no taller than a window's sill -- a bathroom's high slit -- is under it, not in front of it)
+                        if (FurnitureCatalog.Sizes[m.Name].H > Tall && windows.Any(z => FurnitureCatalog.Sizes[m.Name].H > z.Sill && Hits(m, z.Box))) bad.Add($"{nm} stands in front of a window");
+                        foreach (var o in floorPieces) if (o != m && Overlap(fp, o.Footprint) && FurnitureCatalog.Intersects(m, o)) { bad.Add($"{nm} overlaps {o}"); break; }
                         // doors and drawers open into clear floor: no wall, stairs or other piece in front of it
                         float swing = m.Name.StartsWith("Wardrobe") ? 0.9f : m.Name.StartsWith("Fridge") ? 0.8f
                                     : new[] { "Oven", "Disher", "Washer", "Dryer", "Files", "Cooler", "Ice_Box" }.Any(m.Name.StartsWith) ? 0.7f : 0f;
@@ -1241,7 +1271,8 @@ namespace UnturnedSim.Tests
                             case RoomKind.Bedroom: Need("bed", Has("Bed")); break;
                             case RoomKind.LivingRoom: Need("couch", Has("Couch")); break;
                             case RoomKind.DiningRoom: Need("table", Has("Table")); Need("4 chairs", here.Count(m => m.Room == room && m.Name.StartsWith("Chair")) >= 4); break;
-                            case RoomKind.Kitchen: Need("fridge", Has("Fridge")); Need("sink", Has("Counter_1")); Need("stove", Has("Oven")); if (Has("Fridge") && Has("Counter_1") && Has("Oven")) kitchensFull++; break;
+                            case RoomKind.Kitchen: Need("fridge", Has("Fridge")); Need("sink", Has("Counter_1")); Need("stove", Has("Oven")); if (Has("Fridge") && Has("Counter_1") && Has("Oven")) kitchensFull++;
+                                if (res.KitchenDiner) Need("a dining table (a kitchen-diner)", Has("Table_Wood_0", "Table_Wood_1")); break;
                             case RoomKind.Bathroom: Need("tub or sink", Has("Tub", "Counter_1")); break;
                             case RoomKind.Office: Need("desk", Has("Table_Wood_2")); break;
                             case RoomKind.Shop: Need("shelves", Has("Shelf_1")); if (res.Front?.A == room) Need("checkout", Has("Checkout")); break;
@@ -1345,7 +1376,7 @@ namespace UnturnedSim.Tests
                                 if (!WallBehind(fp, -fx, -fz)) bad.Add($"{nm}: its head is not to a wall");
                                 var head = fx > 0.5f ? (fp.X0 - 0.6f, fp.Z0, fp.X0, fp.Z1) : fx < -0.5f ? (fp.X1, fp.Z0, fp.X1 + 0.6f, fp.Z1)
                                          : fz > 0.5f ? (fp.X0, fp.Z0 - 0.6f, fp.X1, fp.Z0) : (fp.X0, fp.Z1, fp.X1, fp.Z1 + 0.6f);
-                                if (windows.Any(z => Overlap(head, z))) bad.Add($"{nm}: its head is under a window");
+                                if (windows.Any(z => Overlap(head, z.Box))) bad.Add($"{nm}: its head is under a window");
                                 foreach (var (dx, dz) in roomDoors)
                                 {
                                     float ahead = (dx - m.X) * fx + (dz - m.Z) * fz, across = (dx - m.X) * rx + (dz - m.Z) * rz;

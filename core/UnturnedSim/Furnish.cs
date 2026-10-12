@@ -19,8 +19,8 @@ namespace UnturnedSim
         public FurniturePlan On;
         /// <summary>Hung on a wall (a flat television), its origin at the height it hangs: no floor of its own.</summary>
         public bool Mounted;
-        public (float X, float Z) Front => (-MathF.Sin(Yaw * MathF.PI / 180f), -MathF.Cos(Yaw * MathF.PI / 180f));
-        public (float X, float Z) Right => (MathF.Cos(Yaw * MathF.PI / 180f), -MathF.Sin(Yaw * MathF.PI / 180f));
+        public (float X, float Z) Front { get { var (c, s) = PlanTrig.CosSin(Yaw); return (-s, -c); } }
+        public (float X, float Z) Right { get { var (c, s) = PlanTrig.CosSin(Yaw); return (c, -s); } }
         public (float X0, float Z0, float X1, float Z1) Footprint => FurnitureCatalog.Footprint(Name, X, Z, Yaw);
         public override string ToString() => $"{Name} at ({X:0.00},{Z:0.00}) yaw {Yaw:0} in {Room}";
     }
@@ -53,6 +53,7 @@ namespace UnturnedSim
             ["Table_Wood_1"] = new(-1.56f, 1.56f, -1.56f, 1.56f, 1.19f),
             ["Table_Wood_2"] = new(-0.88f, 0.88f, -0.84f, 0.84f, 1.19f),   // the desk: there is no desk mesh
             ["Table_Metal_0"] = new(-0.94f, 0.94f, -1.50f, 1.50f, 1.19f),  // a workbench
+            ["Chair_Wood_0"] = new(-0.47f, 0.47f, -0.47f, 0.47f, 1.81f),   // the dining chair; back at -Y
             ["Chair_Wood_1"] = new(-0.47f, 0.47f, -0.55f, 0.47f, 1.76f),
             ["Fridge_0"] = new(-0.66f, 0.66f, -0.50f, 0.30f, 2.50f),
             ["Oven_0"] = new(-0.75f, 0.75f, -0.75f, 0.62f, 1.54f),          // the stove
@@ -80,11 +81,59 @@ namespace UnturnedSim
             ["Craft_01"] = new(-0.87f, 0.87f, -0.65f, 0.65f, 1.76f),
         };
 
-        /// <summary>A prop's footprint in plan at (x, z) turned by yaw, as an axis-aligned box (yaws are right angles).</summary>
+        /// <summary>Props that are round in plan: a disc of this radius about the origin, however turned.</summary>
+        public static readonly IReadOnlyDictionary<string, float> Round = new Dictionary<string, float> { ["Table_Wood_1"] = 1.5625f };
+
+        /// <summary>Is plan point (px, pz) under the prop at (x, z) turned by yaw -- its true outline (a turned box, or a
+        /// disc), not the axis-aligned box round it?</summary>
+        public static bool Covers(string name, float x, float z, float yaw, float px, float pz)
+        {
+            float dx = px - x, dz = pz - z;
+            if (Round.TryGetValue(name, out var r)) return dx * dx + dz * dz <= r * r;
+            var s = Sizes[name];
+            var (c, sn) = PlanTrig.CosSin(yaw);
+            float mx = dx * c - dz * sn, my = -dx * sn - dz * c;   // along right (c, -sn) and front (-sn, -c)
+            return mx >= s.X0 && mx <= s.X1 && my >= s.Y0 && my <= s.Y1;
+        }
+
+        /// <summary>Do two props' true outlines overlap by more than `eps`? Discs by their centres, a disc and a box by the
+        /// box's nearest point, two boxes by separating axes.</summary>
+        public static bool Intersects(FurniturePlan a, FurniturePlan b, float eps = 0.01f)
+        {
+            bool ra = Round.TryGetValue(a.Name, out var rA), rb = Round.TryGetValue(b.Name, out var rB);
+            if (ra && rb) return MathF.Sqrt((a.X - b.X) * (a.X - b.X) + (a.Z - b.Z) * (a.Z - b.Z)) < rA + rB - eps;
+            if (ra || rb)
+            {
+                var (d, r) = ra ? (b, rA) : (a, rB); var c = ra ? a : b;
+                var s = Sizes[d.Name]; var (rx, rz) = d.Right; var (fx, fz) = d.Front;
+                float dx = c.X - d.X, dz = c.Z - d.Z;
+                float mx = dx * rx + dz * rz, my = dx * fx + dz * fz;
+                float qx = Math.Clamp(mx, s.X0, s.X1) - mx, qy = Math.Clamp(my, s.Y0, s.Y1) - my;
+                return MathF.Sqrt(qx * qx + qy * qy) < r - eps;
+            }
+            var ca = Corners(a); var cb = Corners(b);
+            foreach (var m in new[] { a, b })
+                foreach (var (ax, az) in new[] { m.Right, m.Front })
+                {
+                    float a0 = ca.Min(p => p.X * ax + p.Z * az), a1 = ca.Max(p => p.X * ax + p.Z * az);
+                    float b0 = cb.Min(p => p.X * ax + p.Z * az), b1 = cb.Max(p => p.X * ax + p.Z * az);
+                    if (MathF.Min(a1, b1) - MathF.Max(a0, b0) <= eps) return false;
+                }
+            return true;
+        }
+
+        static (float X, float Z)[] Corners(FurniturePlan m)
+        {
+            var s = Sizes[m.Name]; var (rx, rz) = m.Right; var (fx, fz) = m.Front;
+            return new[] { (s.X0, s.Y0), (s.X1, s.Y0), (s.X1, s.Y1), (s.X0, s.Y1) }.Select(q => (m.X + rx * q.Item1 + fx * q.Item2, m.Z + rz * q.Item1 + fz * q.Item2)).ToArray();
+        }
+
+        /// <summary>A prop's footprint in plan at (x, z) turned by yaw, as the axis-aligned box round it (exact at right
+        /// angles; round it when turned or round -- <see cref="Covers"/> is the outline).</summary>
         public static (float X0, float Z0, float X1, float Z1) Footprint(string name, float x, float z, float yaw)
         {
             var s = Sizes[name];
-            float c = MathF.Cos(yaw * MathF.PI / 180f), sn = MathF.Sin(yaw * MathF.PI / 180f);
+            var (c, sn) = PlanTrig.CosSin(yaw);
             // right (c, -sn) * mx + front (-sn, -c) * my, at the box's corners
             float ax = c * s.X0, bx = c * s.X1, ay = -sn * s.Y0, by = -sn * s.Y1;   // x from mx, x from my
             float az = -sn * s.X0, bz = -sn * s.X1, cy = -c * s.Y0, dy = -c * s.Y1;  // z from mx, z from my
@@ -123,6 +172,9 @@ namespace UnturnedSim
         /// top, or over a hole; nothing taller than <see cref="TallFurniture"/> in front of a window; and after every piece
         /// the room's doors, its stairs and the front of every piece in it are still joined by clear floor. Its own seed,
         /// so furnishing never moves a wall.</summary>
+        /// <summary>Debugging only: told each placement decision as it is made (null: nothing is traced).</summary>
+        public static Action<string> FurnishTrace;
+
         static void Furnish(BuildingGenResult res, int seed)
         {
             var rng = new Rng(seed ^ 0x51ED);
@@ -184,16 +236,19 @@ namespace UnturnedSim
                         Targets.Add((mx + bx * (s.Run + M + 0.4f), mz + bz * (s.Run + M + 0.4f), null));
                     }
                 }
-                // doorways: 1.3 m either side of every opening down to the floor (a vehicle door: 6 m, its lane), the
+                // doorways: 1.3 m either side of every opening down to the floor (a vehicle door: 6 m, its lane; a wide
+                // open doorway is still a doorway), the
                 // opening's width and a little; windows: 0.7 m in front of the glass
                 foreach (var w in walls)
                 {
-                    var (dx, dz) = (MathF.Cos(w.Yaw * MathF.PI / 180f), -MathF.Sin(w.Yaw * MathF.PI / 180f));
-                    var (nx, nz) = (MathF.Sin(w.Yaw * MathF.PI / 180f), MathF.Cos(w.Yaw * MathF.PI / 180f));
+                    var (wc, ws) = PlanTrig.CosSin(w.Yaw);
+                    var (dx, dz) = (wc, -ws);
+                    var (nx, nz) = (ws, wc);
                     foreach (var o in w.Openings)
                     {
                         bool door = o.V < 0.05f;
-                        float pad = door ? 0.3f : 0.1f, deep = door ? (o.Width >= 4f ? 6f : 1.3f) : 0.7f;
+                        if (!door && o.V >= 2.5f) continue;   // a vent or a bathroom's slit: over the tallest piece's head
+                        float pad = door ? 0.3f : 0.1f, deep = door ? (o.Archetype == ArchGarage ? 6f : 1.3f) : 0.7f;
                         float u0 = o.U - pad, u1 = o.U + o.Width + pad;
                         float ax = w.X + dx * u0, az = w.Z + dz * u0, bx2 = w.X + dx * u1, bz2 = w.Z + dz * u1;
                         float t = w.Thickness * 0.5f + deep;
@@ -212,7 +267,8 @@ namespace UnturnedSim
 
             static (float, float, float, float) Box(WallPlan w)
             {
-                float dx = MathF.Cos(w.Yaw * MathF.PI / 180f), dz = -MathF.Sin(w.Yaw * MathF.PI / 180f), t = w.Thickness * 0.5f;
+                var (wc, ws) = PlanTrig.CosSin(w.Yaw);
+                float dx = wc, dz = -ws, t = w.Thickness * 0.5f;
                 float ex = w.X + dx * w.Length, ez = w.Z + dz * w.Length;
                 return (MathF.Min(w.X, ex) - t, MathF.Min(w.Z, ez) - t, MathF.Max(w.X, ex) + t, MathF.Max(w.Z, ez) + t);
             }
@@ -341,20 +397,20 @@ namespace UnturnedSim
                     float d = (float)((_rng.Int(2001) - 1000) / 1000.0) * turn;
                     var (fx, fz) = m.Front;
                     // a couch against its wall swings out from it as it turns; a chair is pushed back
-                    float push = m.Name.StartsWith("Couch") ? (s.X1 - s.X0) * 0.5f * MathF.Abs(MathF.Sin(d * MathF.PI / 180f)) + 0.01f
+                    float push = m.Name.StartsWith("Couch") ? (s.X1 - s.X0) * 0.5f * MathF.Abs(PlanTrig.CosSin(d).Sin) + 0.01f
                                : m.Name.StartsWith("Chair") ? -_rng.Int(16) * 0.01f : 0f;
                     float nx = m.X + fx * push, nz = m.Z + fz * push, nyaw = (m.Yaw + d + 360f) % 360f;
                     var before = m.Footprint;
-                    var old = _p.Cells(before).ToList();
+                    var old = Under(m.Name, m.X, m.Z, m.Yaw).Where(c => _p.State[c.I, c.J] == FloorPlan.Furn).ToList();
                     foreach (var (i, j) in old) _p.State[i, j] = FloorPlan.Free;
                     Recount(before);
                     var after = FurnitureCatalog.Footprint(m.Name, nx, nz, nyaw);
-                    bool ok = Clear(after, s.H) && !_mine.Any(o => o != m && o.On == null && !o.Mounted && Overlaps(after, o.Footprint)) && !_p.StairRects.Any(r => Overlaps(after, r));
+                    bool ok = Clear(m.Name, nx, nz, nyaw) && !HitsPiece(m.Name, nx, nz, nyaw, m) && !_p.StairRects.Any(r => Overlaps(after, r));
                     if (ok)
                     {
                         var (ox, oz, oyaw) = (m.X, m.Z, m.Yaw);
                         m.X = nx; m.Z = nz; m.Yaw = nyaw;
-                        var cells = _p.Cells(after).ToList();
+                        var cells = Under(m.Name, nx, nz, nyaw).Where(c => _p.State[c.I, c.J] == FloorPlan.Free).ToList();
                         foreach (var (i, j) in cells) _p.State[i, j] = FloorPlan.Furn;
                         if (Connected()) { Recount(after); continue; }
                         foreach (var (i, j) in cells) _p.State[i, j] = FloorPlan.Free;
@@ -366,6 +422,41 @@ namespace UnturnedSim
             }
 
             // ---- the primitives ----------------------------------------------------------------------------------
+
+            /// <summary>Square to the walls and not round: its box is its outline.</summary>
+            static bool Boxy(string name, float yaw) => !FurnitureCatalog.Round.ContainsKey(name) && MathF.Abs(yaw / 90f - MathF.Round(yaw / 90f)) < 1e-4f;
+
+            /// <summary>The floor cells under a piece's outline.</summary>
+            IEnumerable<(int I, int J)> Under(string name, float x, float z, float yaw)
+            {
+                var cells = _p.Cells(FurnitureCatalog.Footprint(name, x, z, yaw));
+                return Boxy(name, yaw) ? cells : cells.Where(c => FurnitureCatalog.Covers(name, x, z, yaw, _p.Cx(c.I), _p.Cz(c.J)));
+            }
+
+            /// <summary>Clear floor under a piece's outline (see the box overload).</summary>
+            bool Clear(string name, float x, float z, float yaw)
+            {
+                var fp = FurnitureCatalog.Footprint(name, x, z, yaw); float h = FurnitureCatalog.Sizes[name].H;
+                if (Boxy(name, yaw)) return Clear(fp, h);
+                var t = h > TallFurniture ? _badTall : _bad;
+                int n = 0;
+                foreach (var (i, j) in Under(name, x, z, yaw))
+                {
+                    int a = i - _i0, b = j - _j0;
+                    if (a < 0 || b < 0 || a >= _ni || b >= _nj || t[b, a + 1] - t[b, a] != 0) return false;
+                    n++;
+                }
+                return n > 0;
+            }
+
+            /// <summary>Does a piece at (x, z, yaw) run into one already in this room?</summary>
+            bool HitsPiece(string name, float x, float z, float yaw, FurniturePlan except = null)
+            {
+                var me = new FurniturePlan { Name = name, X = x, Z = z, Yaw = yaw };
+                var fp = me.Footprint;
+                return _mine.Any(o => o != except && o.On == null && !o.Mounted && Overlaps(fp, o.Footprint)
+                                      && (Boxy(name, yaw) && Boxy(o.Name, o.Yaw) || FurnitureCatalog.Intersects(me, o, 0f)));
+            }
 
             /// <summary>Clear floor of this room under the whole footprint: inside the room, not solid, out of the
             /// doorways and stair tiles, and if tall out of the windows.</summary>
@@ -456,7 +547,7 @@ namespace UnturnedSim
                 float d = Swing(name);
                 if (d <= 0f) return null;
                 var s = FurnitureCatalog.Sizes[name];
-                float c = MathF.Cos(yaw * MathF.PI / 180f), sn = MathF.Sin(yaw * MathF.PI / 180f);
+                var (c, sn) = PlanTrig.CosSin(yaw);
                 // right (c, -sn), front (-sn, -c): the box from the front face out d, across the width
                 float ax = x + c * s.X0 - sn * (s.Y1 + 0.02f), az = z - sn * s.X0 - c * (s.Y1 + 0.02f);
                 float bx = x + c * s.X1 - sn * (s.Y1 + d), bz = z - sn * s.X1 - c * (s.Y1 + d);
@@ -470,23 +561,34 @@ namespace UnturnedSim
             }
             readonly Dictionary<FurniturePlan, List<(int, int)>> _reserved = new();
 
+            /// <summary>Candidates best first, each score nudged by a seeded draw taken here, one per candidate in order (see
+            /// Rng.Keyed: never inside a LINQ key selector).</summary>
+            List<(float X, float Z, float Yaw)> Rank(IEnumerable<(float X, float Z, float Yaw)> cands, Func<float, float, float, double> score)
+            {
+                var l = new List<((float X, float Z, float Yaw) C, double S)>();
+                foreach (var c in cands) l.Add((c, (score?.Invoke(c.X, c.Z, c.Yaw) ?? 0) + _rng.Int(1000) * 1e-4));
+                return l.OrderByDescending(x => x.S).Select(x => x.C).ToList();
+            }
+
             /// <summary>Put a piece at the first candidate (best score first) where it is clear, its doors can open, and
             /// it leaves the room walkable; null when none will do.</summary>
             FurniturePlan Put(string name, IEnumerable<(float X, float Z, float Yaw)> cands, Func<float, float, float, double> score = null, float y = 0f)
             {
                 var s = FurnitureCatalog.Sizes[name];
-                var ranked = cands.Select(c => (c, sc: (score?.Invoke(c.X, c.Z, c.Yaw) ?? 0) + _rng.Int(1000) * 1e-4)).OrderByDescending(x => x.sc).Select(x => x.c);
+                var ranked = Rank(cands, score);
+                if (FurnishTrace != null)
+                    FurnishTrace(System.FormattableString.Invariant($"put {name} in {_room}: {ranked.Count} candidates, first {(ranked.Count > 0 ? ranked[0].ToString() : "-")}"));
                 foreach (var (x, z, yaw) in ranked)
                 {
                     var fp = FurnitureCatalog.Footprint(name, x, z, yaw);
-                    if (!Clear(fp, s.H)) continue;
+                    if (!Clear(name, x, z, yaw)) continue;
                     // the grid is 0.1 m: a sliver of overlap with a piece already in, or with the stairs, can fall between
                     // its cell centres
-                    if (_mine.Any(o => o.On == null && !o.Mounted && Overlaps(fp, o.Footprint))) continue;
+                    if (HitsPiece(name, x, z, yaw)) continue;
                     if (_p.StairRects.Any(r => Overlaps(fp, r))) continue;
                     var swing = SwingZone(name, x, z, yaw);
                     if (swing != null && (!SwingClear(swing.Value) || _mine.Any(o => o.On == null && !o.Mounted && Overlaps(swing.Value, o.Footprint)))) continue;
-                    var cells = _p.Cells(fp).ToList();
+                    var cells = Under(name, x, z, yaw).Where(c => _p.State[c.I, c.J] == FloorPlan.Free).ToList();
                     foreach (var (i, j) in cells) _p.State[i, j] = FloorPlan.Furn;
                     var m = new FurniturePlan { Name = name, X = x, Y = _room.Floor * Storey + y, Z = z, Yaw = yaw, Floor = _room.Floor, Room = _room };
                     _mine.Add(m);
@@ -514,7 +616,7 @@ namespace UnturnedSim
             /// in that stretch, and nothing hung there already. No floor of its own.</summary>
             FurniturePlan Hang(string name, IEnumerable<(float X, float Z, float Yaw)> cands, Func<float, float, float, double> score = null)
             {
-                var ranked = cands.Select(c => (c, sc: (score?.Invoke(c.X, c.Z, c.Yaw) ?? 0) + _rng.Int(1000) * 1e-4)).OrderByDescending(x => x.sc).Select(x => x.c);
+                var ranked = Rank(cands, score);
                 foreach (var (x, z, yaw) in ranked)
                 {
                     var fp = FurnitureCatalog.Footprint(name, x, z, yaw);
@@ -649,7 +751,8 @@ namespace UnturnedSim
             void Bedroom()
             {
                 float minSide = _room.Rects.Min(r => Math.Min(r.X1 - r.X0, r.Z1 - r.Z0)) * Cell;
-                string bed = minSide >= 4.5f && _area >= 20f ? "Bed_0" : "Bed_1";
+                // a double where it fits, on a roll (strawberry: "bedrooms may be single or double bed")
+                string bed = minSide >= 4.5f && _area >= 20f && _rng.Chance(60) ? "Bed_0" : "Bed_1";
                 var b = Put(bed, Against(bed, Side.Back).Where(c => !UnderWindow(bed, c)), (x, z, yaw) => BedScore(bed, x, z, yaw));
                 if (b == null && bed == "Bed_0") b = Put("Bed_1", Against("Bed_1", Side.Back).Where(c => !UnderWindow("Bed_1", c)), (x, z, yaw) => BedScore("Bed_1", x, z, yaw));
                 Put("Wardrobe_0", Against("Wardrobe_0", Side.Back), (x, z, yaw) => NearestDoor(x, z) - (b != null && MathF.Abs(yaw - b.Yaw) < 1f ? 2 : 0));
@@ -712,8 +815,7 @@ namespace UnturnedSim
             {
                 string couch = _area >= 18f ? "Couch_0" : "Couch_1";
                 bool crtFirst = _rng.Chance(50);
-                var ranked = Against(couch, Side.Back).Select(c => (c, sc: CouchScore(c.X, c.Z, c.Yaw) + _rng.Int(1000) * 1e-4))
-                                                      .OrderByDescending(c => c.sc).Select(c => c.c).ToList();
+                var ranked = Rank(Against(couch, Side.Back), CouchScore);
                 // the seeded kind of set wherever the couch can go first, the other kind after
                 FurniturePlan seat = null;
                 foreach (bool crt in new[] { crtFirst, !crtFirst })
@@ -826,8 +928,10 @@ namespace UnturnedSim
                 return Flush(fp, 1, 0) > 0.6 || Flush(fp, -1, 0) > 0.6 ? Flush(fp, 0, 1) > 0.6 || Flush(fp, 0, -1) > 0.6 : false;
             }
 
-            /// <summary>The table in the middle of the room's clear floor with a metre round it, and chairs at its sides
-            /// facing it.</summary>
+            /// <summary>The table in the middle of the room's clear floor with a metre round it, and dining chairs
+            /// (strawberry: "use chair 1 instead of chair 2 for the dining room") facing it: at a long table along its
+            /// sides and one at each end, at the round one evenly round its rim (strawberry: "consider the shape of
+            /// furniture when placing stuff around it (the kitchen table)").</summary>
             void Dining()
             {
                 var (cx, cz) = Centre();
@@ -836,9 +940,30 @@ namespace UnturnedSim
                 var t = PutWithRoom(table, 1.0f, cx, cz);
                 if (t == null && big) t = PutWithRoom(table = "Table_Wood_0", 1.0f, cx, cz);
                 if (t == null) return;
-                var ts = FurnitureCatalog.Sizes[t.Name]; var cs = FurnitureCatalog.Sizes["Chair_Wood_1"];
-                var (fx, fz) = t.Front; var (rx, rz) = t.Right;
+                foreach (var seat in Seats(t)) Put(DiningChair, new[] { seat });
+            }
+
+            const string DiningChair = "Chair_Wood_0";
+
+            /// <summary>Where the chairs go round a table, each facing it.</summary>
+            List<(float X, float Z, float Yaw)> Seats(FurniturePlan t)
+            {
+                var ts = FurnitureCatalog.Sizes[t.Name]; var cs = FurnitureCatalog.Sizes[DiningChair];
                 var seats = new List<(float, float, float)>();
+                if (t.Name == "Table_Wood_1")
+                {
+                    // round: six round it if they all fit, else four; turned whichever way more of them are clear
+                    float r = ts.X1 + 0.05f + cs.Y1;
+                    List<(float, float, float)> Ring(int n, float phase) => Enumerable.Range(0, n).Select(k =>
+                    {
+                        var (dz, dx) = PlanTrig.CosSin(t.Yaw + phase + k * 360f / n);
+                        return (t.X + dx * r, t.Z + dz * r, YawFacing(-dx, -dz));
+                    }).ToList();
+                    int Fits(List<(float X, float Z, float Yaw)> ring) => ring.Count(c => Clear(DiningChair, c.X, c.Z, c.Yaw) && !HitsPiece(DiningChair, c.X, c.Z, c.Yaw));
+                    var six = new[] { 0f, 30f }.Select(ph => Ring(6, ph)).FirstOrDefault(ring => Fits(ring) == 6);
+                    return six ?? new[] { 0f, 45f }.Select(ph => Ring(4, ph)).OrderByDescending(Fits).First();
+                }
+                var (fx, fz) = t.Front; var (rx, rz) = t.Right;
                 // along each long side, a chair every metre and a bit; at each end one
                 float half = (ts.Y1 - ts.Y0) * 0.5f;
                 int per = Math.Max(1, (int)((ts.Y1 - ts.Y0) / 1.1f));
@@ -854,10 +979,11 @@ namespace UnturnedSim
                     float e = sgn > 0 ? ts.Y1 + 0.05f + cs.Y1 : ts.Y0 - 0.05f - cs.Y1;
                     seats.Add((t.X + fx * e, t.Z + fz * e, YawFacing(-sgn * fx, -sgn * fz)));
                 }
-                foreach (var seat in seats) Put("Chair_Wood_1", new[] { seat });
+                return seats;
             }
 
-            static float YawFacing(float fx, float fz) => (MathF.Atan2(-fx, -fz) * 180f / MathF.PI + 360f) % 360f;
+            // (to a thousandth of a degree: a platform's atan2f may differ in the last place, and the yaw is fed back in)
+            static float YawFacing(float fx, float fz) => MathF.Round((MathF.Atan2(-fx, -fz) * 180f / MathF.PI + 360f) % 360f * 1000f) / 1000f % 360f;
 
             /// <summary>Put a free-standing piece as near (cx, cz) as it goes with `room` clear all round it.</summary>
             FurniturePlan PutWithRoom(string name, float room, float cx, float cz)
@@ -896,7 +1022,7 @@ namespace UnturnedSim
                 var runs = new List<(int Nx, int Nz, float Face, float Lo, float Hi)>();
                 foreach (var (nx, nz) in Fronts)
                     foreach (var (face, lo, hi) in Faces(nx, nz)) runs.Add((nx, nz, face, lo, hi));
-                runs = runs.OrderByDescending(r => r.Hi - r.Lo).ThenBy(_ => _rng.Next()).ToList();
+                runs = _rng.Keyed(runs).OrderByDescending(x => x.Item.Hi - x.Item.Lo).ThenBy(x => x.Key).Select(x => x.Item).ToList();
                 bool freeFridge = _rng.Chance(30), tryL = _rng.Chance(55);
                 // the seeded layouts first, then the plainer ones; each leaves the kitchen complete or as it found it
                 var tries = new List<Func<bool>>();
@@ -908,7 +1034,9 @@ namespace UnturnedSim
                 tries.Add(() => Pair(runs));
                 foreach (var t in tries) if (t()) break;
                 if (!_mine.Any(m => m.Name == "Oven_0")) Put("Oven_0", Against("Oven_0", Side.Back));
-                if (_area >= 30f && _rng.Chance(60)) Island();
+                // a kitchen-diner's table stands where an island would
+                if (_res.KitchenDiner) Dining();
+                else if (_area >= 30f && _rng.Chance(60)) Island();
             }
 
             /// <summary>Did a layout put in all three of fridge, sink and stove? If not, take out whatever it did.</summary>
@@ -1073,7 +1201,7 @@ namespace UnturnedSim
                     }
                     // the run's near end in the direction the pieces are laid, and every 0.25 m from it
                     float near = dir > 0 ? run.Lo : run.Hi, far = dir > 0 ? run.Hi : run.Lo;
-                    foreach (var order in new[] { names, names.Reverse().ToArray() }.OrderBy(_ => _rng.Next()))
+                    foreach (var order in _rng.Keyed(new[] { names, names.Reverse().ToArray() }).OrderBy(x => x.Key).Select(x => x.Item).ToList())
                         for (float c0 = near; (far - c0) * dir >= width - 1e-3f; c0 += dir * 0.25f)
                         {
                             // all of it clear first, then each piece in
@@ -1095,7 +1223,9 @@ namespace UnturnedSim
                                 placed.Add(m);
                             }
                             if (placed.Count < spots.Count) { foreach (var m in placed) Remove(m); continue; }
-                            // counters on along both ends while the wall lasts
+                            // counters on along both ends while the wall lasts -- returned with the row, so a caller that
+                            // gives up on it takes them out too (left standing, they ate the wall every later layout needed)
+                            var ends = new List<FurniturePlan>();
                             foreach (int end in new[] { 1, -1 })
                             {
                                 var edge = end > 0 ? placed[^1] : placed[0];
@@ -1107,10 +1237,11 @@ namespace UnturnedSim
                                     float along = cur + end * dir * ((end > 0 ? -cs.X0 : cs.X1) + 0.02f);
                                     var m = Put("Counter_0", new[] { At(along, "Counter_0") });
                                     if (m == null) break;
+                                    ends.Add(m);
                                     cur = along + end * dir * ((end > 0 ? cs.X1 : -cs.X0) + 0.02f);
                                 }
                             }
-                            return placed;
+                            return placed.Concat(ends).ToList();
                         }
                 }
                 return null;
@@ -1132,8 +1263,7 @@ namespace UnturnedSim
             {
                 var cs = FurnitureCatalog.Sizes["Chair_Wood_1"]; var ds = FurnitureCatalog.Sizes["Table_Wood_2"];
                 // where the chair can stand with its back to a wall, best facing the door
-                foreach (var (x, z, yaw) in Against("Chair_Wood_1", Side.Back)
-                             .Select(c => (c, sc: DeskScore(c.X, c.Z, c.Yaw) + _rng.Int(1000) * 1e-4)).OrderByDescending(c => c.sc).Select(c => c.c).Take(60))
+                foreach (var (x, z, yaw) in Rank(Against("Chair_Wood_1", Side.Back), DeskScore).Take(60))
                 {
                     var (fx, fz) = FrontOf(yaw);
                     float d = cs.Y1 + 0.05f - ds.Y0;
@@ -1163,7 +1293,7 @@ namespace UnturnedSim
             void Remove(FurniturePlan m)
             {
                 if (!m.Mounted && m.On == null)
-                    foreach (var (i, j) in _p.Cells(m.Footprint)) if (_p.State[i, j] == FloorPlan.Furn) _p.State[i, j] = FloorPlan.Free;
+                    foreach (var (i, j) in Under(m.Name, m.X, m.Z, m.Yaw)) if (_p.State[i, j] == FloorPlan.Furn) _p.State[i, j] = FloorPlan.Free;
                 if (_reserved.TryGetValue(m, out var held))
                 {
                     foreach (var (i, j) in held) _p.KeepDoor[i, j] = false;

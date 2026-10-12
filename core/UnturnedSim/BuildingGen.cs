@@ -19,6 +19,10 @@ namespace UnturnedSim
         public int MaxRoomsPerFloor = 6;
         /// <summary>At least this many of each kind, on top of what the building's kind always has.</summary>
         public Dictionary<RoomKind, int> MinOfKind = new Dictionary<RoomKind, int>();
+        /// <summary>The ground floor's footprint in 3 m cells, along X and along Z; 0 for as big as its rooms make it
+        /// (strawberry: "allow specifying a footprint size for the building along with its seed"). Longer than the rooms
+        /// need, they grow and more join; shorter or shallower than they can be laid in, it comes out bigger, with a note.</summary>
+        public int Width, Depth;
     }
 
     /// <summary>One generated room on the 3 m lattice: the cells [X0, X1) x [Z0, Z1) of its floor, and any further
@@ -50,6 +54,13 @@ namespace UnturnedSim
         public float At;
         /// <summary>Front or back for the two marked doors to outside; Inside for everything else.</summary>
         public DoorRole Role;
+        /// <summary>An open doorway, no door hung in it -- between two rooms you walk through (strawberry: "some doorways
+        /// may not require doors, consider this, some may fit with a wide doorframe opening").</summary>
+        public bool Open;
+        /// <summary>An open one that would rather be wide: BuildWalls widens it as far as its wall lets it.</summary>
+        public bool Wide;
+        /// <summary>How wide its opening came out, metres.</summary>
+        public float Width = BuildingGen.ArchSizes[BuildingGen.ArchDoor].W;
         /// <summary>The middle of its opening in plan, metres.</summary>
         public (float X, float Z) Middle => AlongX ? (At, Line * BuildingGen.Cell) : (Line * BuildingGen.Cell, At);
         public override string ToString() => $"{A}->{(B == null ? "outside" : B.ToString())} at {(AlongX ? "z" : "x")}={Line} {At:0.0}{(Role != DoorRole.Inside ? " " + Role : "")}";
@@ -64,8 +75,8 @@ namespace UnturnedSim
         /// <summary>How far it climbs: a storey, or half of one for a switchback's flights. 0 reads as a storey.</summary>
         public float Rise;
         /// <summary>Unit vectors in plan: the way it climbs, and the way its width runs (AddStairs' back and right).</summary>
-        public (float X, float Z) Back => (-MathF.Sin(Yaw * MathF.PI / 180f), -MathF.Cos(Yaw * MathF.PI / 180f));
-        public (float X, float Z) Right => (MathF.Cos(Yaw * MathF.PI / 180f), -MathF.Sin(Yaw * MathF.PI / 180f));
+        public (float X, float Z) Back { get { var (c, s) = PlanTrig.CosSin(Yaw); return (-s, -c); } }
+        public (float X, float Z) Right { get { var (c, s) = PlanTrig.CosSin(Yaw); return (c, -s); } }
     }
 
     public sealed class BuildingGenResult
@@ -101,6 +112,8 @@ namespace UnturnedSim
         /// <summary>Its stairs turn back on themselves at a landing halfway up (two half flights side by side, three cells
         /// by two rows) rather than climbing a storey in one straight flight (four cells by two or three rows).</summary>
         public bool Switchback;
+        /// <summary>Its kitchen has the dining table in it, and it has no dining room.</summary>
+        public bool KitchenDiner;
         /// <summary>Where it could not do what was asked, said so (a minimum that did not fit, a limit it broke).</summary>
         public List<string> Notes = new List<string>();
     }
@@ -156,14 +169,24 @@ namespace UnturnedSim
         public static readonly float[] GablePitches = { 15f, 18f, 20f, 22f };
 
         // the editor's opening archetypes (EditorBuildings.Archetypes): index and measured size
-        public const int ArchDoor = 0, ArchWindow = 1, ArchTallWindow = 2, ArchGarage = 3, ArchPorch = 4, ArchVent = 5;
+        public const int ArchDoor = 0, ArchWindow = 1, ArchTallWindow = 2, ArchGarage = 3, ArchPorch = 4, ArchVent = 5, ArchSlit = 6;
         public static readonly (float W, float H, float Sill, bool Glazed)[] ArchSizes =
         {
             (2.5f, 2.85f, 0f, false), (3.31f, WallOpenings.WindowHeight, WallOpenings.WindowSill, true),
             (2.81f, 2.97f, 0.88f, true), (4.05f, 3.80f, 0f, false), (5.5f, WallOpenings.DoorHeight, 0f, false),
             (1.0f, 1.0f, 2.5f, false),
+            // a bathroom's: wide, shallow, high and glazed (strawberry: "change the bathrooms from using 'vent' windows to
+            // small glass windows, horizontal slit windows", then "widen the bathroom windows horizontally")
+            (3.5f, 0.6f, 2.6f, true),
         };
         public const string DefaultDoor = "Door_Pine";
+        /// <summary>Percent of the doorways between two walk-through rooms left open, and of those, made wide; and how wide
+        /// a wide one gets (at most, and at least -- short of that it stays a plain doorway).</summary>
+        public const int OpenDoorway = 45, WideDoorway = 55;
+        public const float WideOpening = 4.5f, MinWideOpening = 3.5f;
+        /// <summary>How wide a business's street window may grow.</summary>
+        public const float StoreWindow = 5.5f;
+        enum Face { Front, Back, Side }
         /// <summary>A window squeezed into a short wall gets no narrower than this; below it the wall goes blank.</summary>
         public const float MinWindow = 1.5f;
         const float HalfDoor = 1.25f;
@@ -189,7 +212,7 @@ namespace UnturnedSim
         public static Trait TraitOf(RoomKind k, BuildingKind b) => k switch
         {
             RoomKind.Bedroom => new Trait(9, 3, FloorPref.Upper, ArchWindow),
-            RoomKind.Bathroom => new Trait(5, 2, FloorPref.Any, ArchVent),          // a small high window, not a view
+            RoomKind.Bathroom => new Trait(5, 2, FloorPref.Any, ArchSlit),          // a high slit of glass, not a view
             RoomKind.Kitchen => new Trait(9, 3, FloorPref.Ground, ArchWindow),
             RoomKind.LivingRoom => new Trait(12, 3, FloorPref.Ground, ArchWindow),
             RoomKind.DiningRoom => new Trait(9, 3, FloorPref.Ground, ArchWindow),
@@ -255,6 +278,12 @@ namespace UnturnedSim
             _ => new[] { RoomKind.Kitchen, RoomKind.Hall, RoomKind.Storage },
         };
 
+        /// <summary>What a kind of building is not without, however small: kept when a limit drops rooms.</summary>
+        public static RoomKind[] Essentials(BuildingKind b) => b == BuildingKind.Residential
+            ? new[] { RoomKind.Bedroom, RoomKind.Bathroom, RoomKind.Kitchen } : Array.Empty<RoomKind>();
+        /// <summary>A kitchen-diner's cells: a kitchen's and most of a dining room's, short of the living room's.</summary>
+        public const int DinerCells = 11;
+
         /// <summary>What a kind of building always has, and what it adds (in this order, round again if need be) to reach MinRooms.</summary>
         public static (RoomKind[] Always, RoomKind[] More) Programme(BuildingKind b) => b switch
         {
@@ -285,6 +314,10 @@ namespace UnturnedSim
             public Rng(int seed) { _s = 0x9E3779B97F4A7C15UL ^ ((ulong)(uint)seed * 0xBF58476D1CE4E5B9UL); if (_s == 0) _s = 1; Next(); }
             public ulong Next() { _s ^= _s >> 12; _s ^= _s << 25; _s ^= _s >> 27; return _s * 0x2545F4914F6CDD1DUL; }
             public int Int(int n) => n <= 0 ? 0 : (int)(Next() % (ulong)n);
+            /// <summary>Each item with a draw of its own, drawn here and in order. Never draw inside a LINQ key selector: how
+            /// often one runs is the runtime's business (one OrderBy over a single room called it in the plan dumper and not
+            /// in the editor, and the two built the same seed with different doors and furniture).</summary>
+            public List<(T Item, ulong Key)> Keyed<T>(IEnumerable<T> items) { var l = new List<(T, ulong)>(); foreach (var x in items) l.Add((x, Next())); return l; }
             public bool Chance(int percent) => Int(100) < percent;
             public void Shuffle<T>(IList<T> list) { for (int i = list.Count - 1; i > 0; i--) { int j = Int(i + 1); (list[i], list[j]) = (list[j], list[i]); } }
         }
@@ -324,7 +357,9 @@ namespace UnturnedSim
             res.RoofPitch = res.Roof != RoofKind.Flat ? GablePitches[rng.Int(GablePitches.Length)] : 0f;
             int maxFloors = Math.Max(1, spec.MaxFloors), minFloors = Math.Clamp(spec.MinFloors, 1, maxFloors);
             int perFloor = Math.Max(1, spec.MaxRoomsPerFloor), capacity = maxFloors * perFloor;
-            Trait T(RoomKind r) => TraitOf(r, kind);
+            // a kitchen with the dining table in it is a size up (see `diner` below)
+            bool diner = false;
+            Trait T(RoomKind r) => r == RoomKind.Kitchen && diner ? new Trait(DinerCells, 3, FloorPref.Ground, ArchWindow) : TraitOf(r, kind);
             int Width(RoomKind r, int depth) => Math.Max(Math.Max(2, T(r).MinSide), (int)Math.Ceiling(T(r).Cells / (double)depth));
 
             // ---- the programme: the kind's own rooms, raised to the minimums, filled to MinRooms, and a seeded extra
@@ -341,11 +376,34 @@ namespace UnturnedSim
                                      && !(OnlyOne(r, kind) && rooms.Contains(r));
             for (int i = 0; rooms.Count < spec.MinRooms; i++) if (Fits(more[i % more.Length])) rooms.Add(more[i % more.Length]);
             if (rng.Int(2) == 0 && rooms.Count < capacity && more[rng.Int(more.Length)] is var extra && Fits(extra)) rooms.Add(extra);
+            // a house eats in its kitchen when it has no dining room, and now and then when it has (strawberry: "kitchen
+            // could also spawn as a kitchen and dining in one room"): the dining room goes, the kitchen grows, the
+            // furnisher puts the table in it
+            if (kind == BuildingKind.Residential && rooms.Contains(RoomKind.Kitchen)
+                && (!rooms.Contains(RoomKind.DiningRoom) || (rng.Chance(30) && !spec.MinOfKind.ContainsKey(RoomKind.DiningRoom))))
+            {
+                diner = true;
+                rooms.Remove(RoomKind.DiningRoom);
+                more = more.Where(k => k != RoomKind.DiningRoom).ToArray();
+                for (int i = 0; rooms.Count < spec.MinRooms; i++) if (Fits(more[i % more.Length])) rooms.Add(more[i % more.Length]);
+            }
+            res.KitchenDiner = diner;
+            // what a building of the kind cannot do without (strawberry: "at the bare minimum a house needs a bedroom,
+            // bathroom and kitchen"): a limit too small to hold them is raised to, and said so
+            var essential = Essentials(kind);
+            if (capacity < essential.Length)
+            {
+                perFloor = (essential.Length + maxFloors - 1) / maxFloors; capacity = maxFloors * perFloor;
+                res.Notes.Add($"a {kind} needs at least {string.Join(", ", essential)}: {perFloor} rooms per floor, not {spec.MaxRoomsPerFloor}");
+            }
             if (rooms.Count > capacity)
             {
-                // the dropped ones are off the END: fillers first, then the spec's own minimums, never the kind's core
-                res.Notes.Add($"{rooms.Count} rooms asked for and at most {capacity} fit ({maxFloors} floors of {perFloor}): dropped {string.Join(", ", rooms.Skip(capacity))}");
-                rooms = rooms.Take(capacity).ToList();
+                // the dropped ones are off the END: fillers first, then the spec's own minimums, then the kind's core --
+                // but never the first of each essential room
+                var keep = new HashSet<int>(essential.Select(k => rooms.IndexOf(k)).Where(i => i >= 0));
+                for (int i = 0; i < rooms.Count && keep.Count < capacity; i++) keep.Add(i);
+                res.Notes.Add($"{rooms.Count} rooms asked for and at most {capacity} fit ({maxFloors} floors of {perFloor}): dropped {string.Join(", ", rooms.Where((_, i) => !keep.Contains(i)))}");
+                rooms = rooms.Where((_, i) => keep.Contains(i)).ToList();
             }
 
             // ---- floors: as few as hold them, at least MinFloors. A second floor is not owed to anyone ("having multiple
@@ -513,7 +571,7 @@ namespace UnturnedSim
                 row.Insert(ki + rng.Int(2), dining);
             }
             List<RoomKind> Seeded(IEnumerable<RoomKind> rs, int depth)
-                => rs.Select(r => (r, key: rng.Next())).OrderByDescending(x => Width(x.r, depth)).ThenBy(x => x.key).Select(x => x.r).ToList();
+                => rng.Keyed(rs).OrderByDescending(x => Width(x.Item, depth)).ThenBy(x => x.Key).Select(x => x.Item).ToList();
 
             // ---- the stair bay: k1 flight rows against the south wall and a row of floor beside them, four cells long --
             // a 6 m flight and a full tile clear at each end of it, at the foot and on the landing above (strawberry:
@@ -521,6 +579,15 @@ namespace UnturnedSim
             // cells by two rows: the tile at the foot and the tile it arrives on side by side, then its two flights, then
             // the landing.
             int dS = 3, dN = kind == BuildingKind.Industrial ? 4 : 3;   // upper floors: rows south of the hall, and north of it
+            // a depth asked for: the floors above take it as their north row (south of the hall is the stair bay's); one
+            // floor splits it between its two rows -- each at least two cells, so no shallower than five or four
+            int wantD = spec.Depth, wantW = spec.Width;
+            if (wantD > 0 && wantD < (multi ? dS + 3 : 4))
+            {
+                res.Notes.Add($"a depth of {wantD} cells is too shallow for {(multi ? "stairs and a hall" : "two rows of rooms")}: {(multi ? dS + 3 : 4)} at least");
+                wantD = multi ? dS + 3 : 4;
+            }
+            if (multi && wantD > 0) dN = wantD - 1 - dS;
             bool stairsWest = rng.Int(2) == 0;                          // the bay at the west end of the upper floors, or the east
 
             // ---- upper floors, top down (each must fit on the one below): a landing hall the length of the floor with the
@@ -551,6 +618,15 @@ namespace UnturnedSim
             bool bandsFirst = rng.Chance(bandsChance);
             Grid ground = null;
             int W = 0, D = 0, bx0 = 0;
+            // a footprint asked for that no layout fits is let go, said so, and the floor drawn again at its own size
+            for (int pass = 0; pass < 2 && ground == null; pass++)
+            {
+            if (pass == 1)
+            {
+                if (wantW == 0 && (wantD == 0 || multi)) break;
+                res.Notes.Add($"no layout fitted the {wantW}x{wantD} cells asked for: sized to its rooms instead");
+                wantW = 0; if (!multi) wantD = 0;
+            }
             for (int attempt = 0; attempt < 14 && ground == null; attempt++)
             {
                 bool bands = attempt < 9 ? bandsFirst : !bandsFirst;
@@ -575,8 +651,11 @@ namespace UnturnedSim
                 res.Doors.AddRange(doors);
                 onFloor[0] = here;
             }
+            }
             if (ground == null) throw new InvalidOperationException($"BuildingGen: no ground floor connected for {kind} seed {spec.Seed} (min {spec.MinRooms} rooms, {spec.MinFloors}-{spec.MaxFloors} floors, {spec.MaxRoomsPerFloor}/floor): {string.Join(", ", onFloor[0])}");
             res.CellsX = W; res.CellsZ = D;
+            if (wantW > 0 && W > wantW) res.Notes.Add($"{W} cells long, not the {wantW} asked for: its rooms need it");
+            if (wantD > 0 && D != wantD) res.Notes.Add($"{D} cells deep, not the {wantD} asked for");
             res.Bay = multi ? (bx0, 0, bx0 + L, bayRows) : (0, 0, 0, 0);
             res.Footprints.Add((0, W));
             var grids = new List<Grid> { ground };
@@ -608,6 +687,14 @@ namespace UnturnedSim
             foreach (var r in res.Layout)
                 res.Rooms.Add(new RoomDesignation(r.Kind, (r.X0 + r.X1) * 0.5f * Cell, (r.Z0 + r.Z1) * 0.5f * Cell, r.Floor));
 
+            // some doorways between two rooms you walk through are left open, and some of those are wide
+            foreach (var d in res.Doors)
+                if (d.B != null && AccessOf(d.A.Kind) == Access.Through && AccessOf(d.B.Kind) == Access.Through && rng.Chance(OpenDoorway))
+                {
+                    d.Open = true;
+                    // not wide into a small kitchen: its counters need the wall
+                    d.Wide = rng.Chance(WideDoorway) && !new[] { d.A, d.B }.Any(r => r.Kind == RoomKind.Kitchen && r.Cells < 12);
+                }
             BuildWalls(res, grids, k1, L);
             SolveCorners(res.Walls);
             Furnish(res, spec.Seed);
@@ -624,12 +711,13 @@ namespace UnturnedSim
                 int dA, dB;
                 if (multi) { dA = k1 == 2 ? 4 : 3 + rng.Int(2); dB = dS + 1 + dN - dA; }
                 else { dA = 3 + rng.Int(2); dB = 3 + rng.Int(2); }
+                if (!multi && wantD > 0) { dA = Math.Clamp(dA, 2, wantD - 2); dB = wantD - dA; }
                 var A = here.Where(r => AccessOf(r) != Access.Private).ToList();
                 var B = here.Where(r => AccessOf(r) == Access.Private).ToList();
                 RoomKind host = RoomKind.Unassigned;
                 if (multi)
                 {
-                    host = A.Where(HoldsStairs).OrderByDescending(r => T(r).Cells).ThenBy(_ => rng.Next()).FirstOrDefault();
+                    host = rng.Keyed(A.Where(HoldsStairs)).OrderByDescending(x => T(x.Item).Cells).ThenBy(x => x.Key).Select(x => x.Item).FirstOrDefault();
                     if (host == RoomKind.Unassigned) return null;
                 }
                 int LenA() => A.Sum(r => Width(r, dA)) + (multi ? HostWidth(host, dA) - Width(host, dA) : 0);
@@ -679,7 +767,7 @@ namespace UnturnedSim
                 var rowB = B.Select(r => (k: r, w: Width(r, dB))).ToList();
                 rng.Shuffle(rowB);
                 KitchenBesideDining(rowB);
-                int w = Math.Max(Math.Max(rowA.Sum(x => x.w), rowB.Sum(x => x.w)), Math.Max(need, 4));
+                int w = Math.Max(Math.Max(Math.Max(rowA.Sum(x => x.w), rowB.Sum(x => x.w)), Math.Max(need, 4)), wantW);
                 if (Pad(rowA, w, dA, here, 0, r => AccessOf(r) != Access.Private, multi ? host : RoomKind.Unassigned) > 0) return null;
                 if (Pad(rowB, w, dB, here, 0, _ => true) > 0) return null;
                 var rs = new List<GenRoom>();
@@ -706,6 +794,11 @@ namespace UnturnedSim
             (List<GenRoom> Rooms, int W, int D, int Bx0)? Corridor(List<RoomKind> here, bool safe)
             {
                 int sS = multi ? dS : 3 + rng.Int(2), sN = multi ? dN : (kind == BuildingKind.Industrial ? 4 : 3 + rng.Int(2));
+                if (!multi && wantD > 0)
+                {
+                    if (wantD < 5) return null;   // two rows of rooms and a hall between them: bands it is
+                    sS = Math.Clamp(sS, 2, wantD - 3); sN = wantD - 1 - sS;
+                }
                 var S = new List<(RoomKind k, int w)>(); var N = new List<(RoomKind k, int w)>();
                 // (the kitchen and dining room go to one side together, so they can sit side by side)
                 foreach (var r in Seeded(here.Where(r => r != RoomKind.DiningRoom || !here.Contains(RoomKind.Kitchen)), sS))
@@ -714,7 +807,7 @@ namespace UnturnedSim
                     int lenS = L + S.Sum(x => x.w) + pair.Sum(p => Width(p, sS)), lenN = N.Sum(x => x.w) + pair.Sum(p => Width(p, sN));
                     foreach (var p in pair) if (lenS <= lenN) S.Add((p, Width(p, sS))); else N.Add((p, Width(p, sN)));
                 }
-                int w = Math.Max(Math.Max(L + S.Sum(x => x.w), N.Sum(x => x.w)), Math.Max(need, 4));
+                int w = Math.Max(Math.Max(Math.Max(L + S.Sum(x => x.w), N.Sum(x => x.w)), Math.Max(need, 4)), wantW);
                 int aS = Pad(S, w - L, sS, here, 0, _ => true, hall: true), aN = Pad(N, w, sN, here, 0, _ => true, hall: true);
                 rng.Shuffle(S);
                 KitchenBesideDining(S); KitchenBesideDining(N);
@@ -832,7 +925,7 @@ namespace UnturnedSim
                     GenDoor front = null;
                     foreach (var k in EntranceOrder(kind))
                     {
-                        foreach (var r in rs.Where(r => r.Kind == k).OrderBy(_ => rng.Next()).ToList())
+                        foreach (var r in rng.Keyed(rs.Where(r => r.Kind == k)).OrderBy(x => x.Key).Select(x => x.Item).ToList())
                             if ((front = Door(r, null)) != null) break;
                         if (front != null) break;
                     }
@@ -913,7 +1006,7 @@ namespace UnturnedSim
                     int Side(bool alongX, int line) => alongX ? (line == 0 ? 0 : 2) : (line == g.Ux0 ? 3 : 1);
                     int fs = Side(front.AlongX, front.Line);
                     var order = BackDoorOrder(kind);
-                    foreach (var r in rs.Where(r => order.Contains(r.Kind)).OrderBy(r => Array.IndexOf(order, r.Kind)).ThenBy(_ => rng.Next()).ToList())
+                    foreach (var r in rng.Keyed(rs.Where(r => order.Contains(r.Kind))).OrderBy(x => Array.IndexOf(order, x.Item.Kind)).ThenBy(x => x.Key).Select(x => x.Item).ToList())
                     {
                         var outs = runs.Where(u => u.B == null && u.A == r && Side(u.AlongX, u.Line) != fs).ToList();
                         rng.Shuffle(outs);
@@ -1033,7 +1126,7 @@ namespace UnturnedSim
 
         /// <summary>Openings spread evenly over [lo, hi] (metres along the side), one slot each. A window too wide for its
         /// slot is narrowed (to MinWindow at the least); a door, garage door or vent that does not fit is left out.</summary>
-        static List<(int Arch, float At, float Width)> Spread(float lo, float hi, IList<int> arches)
+        static List<(int Arch, float At, float Width)> Spread(float lo, float hi, IList<int> arches, float fill = 0f)
         {
             var outp = new List<(int, float, float)>();
             int n = arches.Count;
@@ -1045,9 +1138,11 @@ namespace UnturnedSim
                 float width = ArchSizes[arch].W;
                 if (width > slot - gap)
                 {
-                    if ((arch == ArchWindow || arch == ArchTallWindow) && slot - gap >= MinWindow) width = slot - gap;
+                    if ((arch == ArchWindow || arch == ArchTallWindow || arch == ArchSlit) && slot - gap >= MinWindow) width = slot - gap;
                     else continue;
                 }
+                // a shop window grows to its slot, up to `fill`
+                else if (fill > width && (arch == ArchWindow || arch == ArchTallWindow)) width = MathF.Min(fill, slot - gap);
                 outp.Add((arch, lo + slot * (i + 0.5f), width));
             }
             return outp;
@@ -1086,7 +1181,8 @@ namespace UnturnedSim
                 {
                     var (band, tri, highAtEnd) = RoofShapes.ShedInfill(rs, x0, z0, x1, z1);
                     float len = MathF.Abs(x1 - x0) + MathF.Abs(z1 - z0), ext = into ? Ext : 0f, thick = into ? Ext - 0.02f : Ext;
-                    float dx = MathF.Cos(yaw * MathF.PI / 180f), dz = -MathF.Sin(yaw * MathF.PI / 180f);
+                    var (yc, ys) = PlanTrig.CosSin(yaw);
+                    float dx = yc, dz = -ys;
                     float ox = highAtEnd ? x0 : x0 - dx * ext, oz = highAtEnd ? z0 : z0 - dz * ext;
                     if (band > 0.01f)
                         res.Walls.Add(new WallPlan { X = ox, Y = head, Z = oz, Yaw = yaw, Length = len + ext, Height = band, Thickness = thick, Kind = SurfaceKind.Wall });
@@ -1094,7 +1190,8 @@ namespace UnturnedSim
                         res.Walls.Add(new WallPlan { X = ox, Y = head + band, Z = oz, Yaw = yaw, Length = len + ext, Height = tri, Thickness = thick, Kind = SurfaceKind.Wall,
                                                      InsetL1 = highAtEnd ? len : 0f, InsetR1 = highAtEnd ? 0f : len });
                 }
-                var e1 = (X: endWall.X + MathF.Cos(endWall.Yaw * MathF.PI / 180f) * endWall.Length, Z: endWall.Z - MathF.Sin(endWall.Yaw * MathF.PI / 180f) * endWall.Length);
+                var (ec, es) = PlanTrig.CosSin(endWall.Yaw);
+                var e1 = (X: endWall.X + ec * endWall.Length, Z: endWall.Z - es * endWall.Length);
                 Close(endWall.X, endWall.Z, e1.X, e1.Z, endWall.Yaw);   // the open end
                 Close(xa, Dm, xb, Dm, 0f, into: true);                   // the north side, running +X
                 Close(xb, 0f, xa, 0f, 180f, into: true);                 // the south side, running -X
@@ -1145,10 +1242,51 @@ namespace UnturnedSim
                         continue;
                     }
                     var iw = inner.First(q => q.AlongX == d.AlongX && q.Line == d.Line && q.S0 * Cell <= d.At && d.At <= q.S1 * Cell);
-                    iw.W.Openings.Add(Make(ArchDoor, d.At - iw.S0 * Cell, ArchSizes[ArchDoor].W));
+                    float width = ArchSizes[ArchDoor].W;
+                    if (d.Wide)
+                    {
+                        // as wide as the stretch where these two rooms face each other allows, off the walls meeting it and
+                        // the other doors in it, centred where the door was
+                        int c = (int)MathF.Floor(d.At / Cell), s0 = c, s1 = c + 1;
+                        bool Pair(int s) { var (a, b) = g.Across(d.AlongX, d.Line, s); return (a == d.A && b == d.B) || (a == d.B && b == d.A); }
+                        while (Pair(s0 - 1)) s0--;
+                        while (Pair(s1)) s1++;
+                        float lo = s0 * Cell + g.Meet(d.AlongX, d.Line, s0) + 0.3f, hi = s1 * Cell - g.Meet(d.AlongX, d.Line, s1) - 0.3f;
+                        foreach (var o in res.Doors.Where(o => o != d && o.Floor == f && o.AlongX == d.AlongX && o.Line == d.Line))
+                            if (o.At < d.At) lo = MathF.Max(lo, o.At + o.Width * 0.5f + 0.3f); else hi = MathF.Min(hi, o.At - o.Width * 0.5f - 0.3f);
+                        // and not within a metre of a corner another door is within a metre of (strawberry: "try to avoid
+                        // multiple doors on a corner") -- what is left is stretches; the one the door is in, or the longest
+                        var free = new List<(float A, float B)> { (lo, hi) };
+                        foreach (var o in res.Doors.Where(o => o != d && o.Floor == f))
+                        {
+                            var (ox, oz) = o.Middle; float half = o.Width * 0.5f + 1f;
+                            float ax0 = o.AlongX ? ox - half : ox, ax1 = o.AlongX ? ox + half : ox, az0 = o.AlongX ? oz : oz - half, az1 = o.AlongX ? oz : oz + half;
+                            for (int i = (int)MathF.Ceiling(ax0 / Cell - 1e-3f); i * Cell <= ax1 + 1e-3f; i++)
+                                for (int j = (int)MathF.Ceiling(az0 / Cell - 1e-3f); j * Cell <= az1 + 1e-3f; j++)
+                                {
+                                    if ((d.AlongX ? j : i) != d.Line) continue;   // a corner on this door's line
+                                    // (5 cm past the metre: a door clamped exactly to the cut's edge sat on it, within any tolerance)
+                                    float u = (d.AlongX ? i : j) * Cell, c0 = u - 1.05f, c1 = u + 1.05f;
+                                    free = free.SelectMany(q => q.B <= c0 || q.A >= c1 ? new[] { q } : new (float A, float B)[] { (q.A, Math.Min(q.B, c0)), (Math.Max(q.A, c1), q.B) })
+                                               .Where(q => q.B - q.A > 0.01f).ToList();
+                                }
+                        }
+                        var span = free.OrderByDescending(q => q.A <= d.At && d.At <= q.B).ThenByDescending(q => q.B - q.A).FirstOrDefault();
+                        // slid along from where the door was if that is what it takes; too tight, it stays a plain doorway
+                        float w2 = MathF.Min(WideOpening, span.B - span.A);
+                        if (free.Count > 0 && w2 >= MinWideOpening) { d.At = Math.Clamp(d.At, span.A + w2 * 0.5f, span.B - w2 * 0.5f); width = w2; }
+                    }
+                    d.Width = width;
+                    var op = Make(ArchDoor, d.At - iw.S0 * Cell, width);
+                    if (d.Open) op.DoorProp = null;
+                    iw.W.Openings.Add(op);
                 }
 
                 // what each room has in its outside walls
+                bool business = res.Kind == BuildingKind.Commercial || res.Kind == BuildingKind.Misc;
+                var fr = res.Front;
+                bool frLow = fr != null && (fr.AlongX ? fr.Line == 0 : fr.Line == res.Footprints[0].X0);
+                Face Facing(bool alongX, bool low) => fr == null ? Face.Side : alongX != fr.AlongX ? Face.Side : low == frLow ? Face.Front : Face.Back;
                 bool flightAgainstSouth = f < floors - 1 && (k1 == 1 || f % 2 == 0);
                 // an end wall with the floor below's roof leaning on it gets no windows: the roof is in front of them
                 bool westUnder = f > 0 && res.Roof != RoofKind.Flat && res.Footprints[f - 1].X0 < ux0;
@@ -1203,12 +1341,20 @@ namespace UnturnedSim
                         _ => TraitOf(room.Kind, res.Kind).Window,
                     };
                     if (win == ArchGarage) win = ArchWindow;
-                    if (win == ArchVent && !longest) win = -1;   // one vent is enough
+                    if ((win == ArchVent || win == ArchSlit) && !longest) win = -1;   // one is enough
+                    // a business shows itself to the street (strawberry: "stores and businesses tend to want bigger / more
+                    // windows on the front and less or none on the sides"): its front wall more and wider windows, a shop
+                    // none on its sides and anything else one a stretch there
+                    var face = Facing(run.AlongX, run.Line == (run.AlongX ? 0 : ux0));
+                    bool shopFront = business && face == Face.Front, side = business && face == Face.Side;
+                    if (side && room.Kind == RoomKind.Shop) win = -1;
                     if (win >= 0)
                         foreach (var (s0, s1) in free)
                         {
-                            int n = win == ArchVent || room.Circulation ? 1 : Math.Max(1, (int)((s1 - s0) / (2 * Cell)));
-                            arches.AddRange(Spread(s0, s1, Enumerable.Repeat(win, n).ToList()));
+                            int n = win == ArchVent || win == ArchSlit || room.Circulation ? 1
+                                  : shopFront ? Math.Max(1, (int)((s1 - s0) / (1.6f * Cell)))
+                                  : side ? 1 : Math.Max(1, (int)((s1 - s0) / (2 * Cell)));
+                            arches.AddRange(Spread(s0, s1, Enumerable.Repeat(win, n).ToList(), shopFront ? StoreWindow : 0f));
                         }
                     foreach (var (arch, at, wd) in arches) w.Openings.Add(Make(arch, U(w, at), wd));
                 }
@@ -1314,7 +1460,7 @@ namespace UnturnedSim
             const float MaxGrow = 1.6f;
             var ws = all.Where(w => w.Kind == SurfaceKind.Wall || w.Kind == SurfaceKind.Foundation).ToList();
             var gs = new float[ws.Count]; var ge = new float[ws.Count];
-            (float X, float Z) Dir(WallPlan w) => (MathF.Cos(w.Yaw * MathF.PI / 180f), -MathF.Sin(w.Yaw * MathF.PI / 180f));
+            (float X, float Z) Dir(WallPlan w) { var (c, s) = PlanTrig.CosSin(w.Yaw); return (c, -s); }
             for (int i = 0; i < ws.Count; i++)
             {
                 var a = ws[i];

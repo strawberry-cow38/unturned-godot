@@ -544,6 +544,10 @@ namespace UnturnedGodot
             // The per-type minimums open in a popup beside the panel. Folding them INTO the panel pushed the bake
             // section off the bottom of a 720p screen: this panel is fixed-height and does not scroll.
             var types = new GridContainer { Columns = 4 };
+            // the footprint, in metres on the 3 m lattice; 0 for as big as the rooms make it
+            types.AddChild(Dim("width m")); types.AddChild(_genWidth = Spin(0, 150, 0, 52)); _genWidth.Step = 3;
+            types.AddChild(Dim("depth m")); types.AddChild(_genDepth = Spin(0, 60, 0, 52)); _genDepth.Step = 3;
+            _genWidth.TooltipText = _genDepth.TooltipText = "the ground floor's footprint, metres (3 m cells); 0: as big as its rooms make it";
             foreach (RoomKind k in System.Enum.GetValues(typeof(RoomKind)))
             {
                 if (k == RoomKind.Unassigned || k == RoomKind.Hall || k == RoomKind.Stairwell) continue;
@@ -553,7 +557,7 @@ namespace UnturnedGodot
             var pop = new PopupPanel();
             pop.AddChild(types);
             AddChild(pop);
-            var fold = new Button { Text = "at least, per room type ▸", Flat = true, FocusMode = FocusModeEnum.None,
+            var fold = new Button { Text = "footprint, rooms per type ▸", Flat = true, FocusMode = FocusModeEnum.None,
                                     Alignment = HorizontalAlignment.Left };
             fold.Pressed += () =>
             {
@@ -578,7 +582,7 @@ namespace UnturnedGodot
         LineEdit _name;
         Label _bakeMsg;
         OptionButton _genKind;
-        SpinBox _genSeed, _genMinRooms, _genPerFloor, _genMinFloors, _genMaxFloors;
+        SpinBox _genSeed, _genMinRooms, _genPerFloor, _genMinFloors, _genMaxFloors, _genWidth, _genDepth;
         readonly System.Collections.Generic.Dictionary<RoomKind, SpinBox> _genMin = new();
 
         static SpinBox Spin(int min, int max, int value, int width = 56)
@@ -594,6 +598,8 @@ namespace UnturnedGodot
                 MinFloors = (int)_genMinFloors.Value,
                 MaxFloors = System.Math.Max((int)_genMinFloors.Value, (int)_genMaxFloors.Value),
                 MaxRoomsPerFloor = (int)_genPerFloor.Value,
+                Width = (int)System.Math.Round(_genWidth.Value / BuildingGen.Cell),
+                Depth = (int)System.Math.Round(_genDepth.Value / BuildingGen.Cell),
             };
             foreach (var kv in _genMin) if (kv.Value.Value > 0) spec.MinOfKind[kv.Key] = (int)kv.Value.Value;
             var res = _b.Generate(spec);
