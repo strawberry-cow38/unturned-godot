@@ -845,6 +845,93 @@ namespace UnturnedGodot
         public bool CrossingDips = System.Environment.GetEnvironmentVariable("UG_TOWNDIPS") == "1";
         public float CrossingDipLength = 3f;
 
+        /// <summary>Street lights down the pavements and traffic signals at the junctions (strawberry
+        /// 2026-10-12: "add traffic lights around junctions and street lights populating the sidewalks").
+        ///
+        /// ⚠ PLACED THROUGH EditorObjects, not as bare meshes, because that is what makes them PROPS: the
+        /// catalog row, the collider, the surface tag, and the placements save all come from there. A
+        /// hand-built MeshInstance would look identical in a render and be invisible to everything else.
+        /// ⚠ AND SEATED WITH SplineTiling.SeatedBasis, which is FromEuler(270, yaw, 0) plus a terrain tilt:
+        /// props are authored Z-UP and lie flat without it. Street_Light_0's pole runs along its local +Z.</summary>
+        public int PlaceLights(RoadField roads, EditorObjects objs, List<Node3D> into = null)
+        {
+            if (roads == null || objs == null) return 0;
+            int made = 0;
+            var terr = Terrain.Active;
+
+            // ---- STREET LIGHTS, down each street's pavement.
+            if (StreetLights)
+                foreach (int r in Built)
+                {
+                    float L = roads.RoadLength(r);
+                    float t0 = TrimFor(roads, r, false, CornerRadius), t1 = TrimFor(roads, r, true, CornerRadius);
+                    float from = t0 + LampSpacing * 0.5f, to = L - t1;
+                    if (to - from < 1f) continue;
+                    int n = Mathf.Max(1, Mathf.FloorToInt((to - from) / LampSpacing));
+                    float half = roads.RoadHalfWidth(r);
+                    for (int k = 0; k <= n; k++)
+                    {
+                        float d = from + k * LampSpacing;
+                        if (d > to) break;
+                        if (!roads.EvaluateAlong(r, d, out var pos, out var tan, snapTerrain: false)) continue;
+                        var right = new Vector3(tan.Z, 0f, -tan.X).Normalized();
+                        // ⚠ ALTERNATE SIDES. Lamps down one kerb only light one half of a street and look like
+                        // a runway; staggering them is what a real street does and halves the count.
+                        int side = (k % 2 == 0) ? 1 : -1;
+                        var at = pos + right * (side * (half + RoadGapForLights + LampSetback));
+                        if (terr != null) at.Y = Mathf.Max(at.Y, terr.SampleHeight(at.X, at.Z));
+                        // the arm has to reach OVER the carriageway, so the lamp faces across the road
+                        float yaw = ProcIsland.YawForDir(-right.X * side, right.Z * side);
+                        var basis = SplineTiling.SeatedBasis(terr, at, yaw, 6f, out _);
+                        var node = objs.Place(StreetLightProp, at, basis);
+                        if (node != null) { into?.Add(node); made++; }
+                    }
+                }
+
+            // ---- TRAFFIC SIGNALS, one per approach at a junction that has three or more.
+            if (TrafficLights)
+                for (int j = 0; j < roads.JunctionCount; j++)
+                {
+                    var edges = roads.JunctionEdges(j);
+                    if (edges.Count < 3) continue;          // a bend or a dead end gets no signals
+                    var node0 = roads.JunctionPos(j);
+                    foreach (var (road, atEnd) in edges)
+                    {
+                        float L = roads.RoadLength(road);
+                        float d = atEnd ? Mathf.Max(0f, L - TrimFor(roads, road, true, CornerRadius) - SignalSetback)
+                                        : Mathf.Min(L, TrimFor(roads, road, false, CornerRadius) + SignalSetback);
+                        if (!roads.EvaluateAlong(road, d, out var pos, out var tan, snapTerrain: false)) continue;
+                        var fwd = (atEnd ? tan : -tan).Normalized();      // pointing INTO the junction
+                        var right = new Vector3(fwd.Z, 0f, -fwd.X).Normalized();
+                        float half = roads.RoadHalfWidth(road);
+                        // ⚠ ON THE DRIVER'S RIGHT, which is the kerb a signal's mast stands on; its arm then
+                        // reaches left over the lanes the drivers approaching here are in.
+                        var at = pos + right * (half + RoadGapForLights + SignalSetback * 0.5f);
+                        if (terr != null) at.Y = Mathf.Max(at.Y, terr.SampleHeight(at.X, at.Z));
+                        // ⚠ THE MAST REACHES ACROSS THE ROAD, NOT BACK ALONG IT. Measured off the props:
+                        // both run their POLE along local +Z and their ARM along local +Y, which the 270
+                        // degree stand turns into world -Z -- so the yaw is choosing where the ARM points.
+                        // Aiming it down the approach laid the mast parallel to the kerb with its heads side
+                        // on. It belongs perpendicular, over the lanes the approaching driver is in.
+                        var armDir = -right;                                   // to the driver's left
+                        float yaw = ProcIsland.YawForDir(armDir.X, -armDir.Z);
+                        var basis = SplineTiling.SeatedBasis(terr, at, yaw, 6f, out _);
+                        var tnode = objs.Place(TrafficLightProp, at, basis);
+                        if (tnode != null) { into?.Add(tnode); made++; }
+                    }
+                }
+            return made;
+        }
+        public bool StreetLights = true, TrafficLights = true;
+        public string StreetLightProp = "Street_Light_0", TrafficLightProp = "Traffic_Light_0";
+        /// <summary>Metres between lamps; they alternate sides, so one side sees twice this.</summary>
+        public float LampSpacing = 32f;
+        /// <summary>How far back from the kerb line a lamp's pole stands, onto the pavement.</summary>
+        public float LampSetback = 0.9f;
+        /// <summary>How far back from the junction a signal stands.</summary>
+        public float SignalSetback = 2.5f;
+        float RoadGapForLights = 0.05f;
+
         /// <summary>Where two kerb lines would cross: the sharp corner of the block, which is the centre the
         /// rounded corner turns about. False when the two run parallel and there is no corner to round.</summary>
         static bool KerbCorner(Vector3 a, Vector3 ta, Vector3 b, Vector3 tb, out Vector3 p)

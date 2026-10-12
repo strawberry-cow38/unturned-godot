@@ -10517,7 +10517,7 @@ namespace UnturnedGodot
         /// <summary>UG_TOWNGRID: lay a town's street grid and frame it. Shared by the PEI editor path and the
         /// flat custom-map path -- the same code must build both, or "it looks right on the flat map" would
         /// say nothing about the one the game ships.</summary>
-        void BuildTownGrid(RoadField rf, Terrain terrain, Node3D editor)
+        void BuildTownGrid(RoadField rf, Terrain terrain, Editor editor)
         {
             if (rf == null || terrain == null) return;
             float HeightAt(float x, float z) => terrain.SampleHeight(x, z);
@@ -10627,6 +10627,7 @@ namespace UnturnedGodot
             int walks = town.LaySidewalks(editor, rf);
             var walkProto = new EditorSidewalk(); editor.AddChild(walkProto);
             int corners = town.LaySidewalkCorners(editor, rf, walkProto);
+            int lights = town.PlaceLights(rf, editor.Objects);
             // ⚠ MEASURE THE KERB LINE ITSELF. The streets' own bow is 0.0 cm, so "sidewalks seem to wiggle"
             // is not the road centreline -- it has to be the pavement. A wiggle is a run of KINKS, so report
             // the sharpest turn between consecutive segments of every corner piece, and where it is.
@@ -10670,7 +10671,7 @@ namespace UnturnedGodot
                     }
                 Log.Print($"[towngrid] kerb join: worst straight-to-curve step {worstJoin * 100f:0.0} cm over {joins} ends at {joinAt}");
             }
-            Log.Print($"[towngrid] {rf.RoadCount - before} streets added, {patches} junction patches, {walks} pavement ribbons + {corners} corners, site {(graded ? "GRADED" : "draped")}");
+            Log.Print($"[towngrid] {rf.RoadCount - before} streets added, {patches} junction patches, {walks} pavement ribbons + {corners} corners, {lights} lights, site {(graded ? "GRADED" : "draped")}");
             // ⚠ IS THERE ACTUALLY ASPHALT? The first graded render showed the flattened pads and no road
             // surface on them, and from 250 m up "I cannot see it" and "it is not there" look identical.
             // So: does a mesh exist per street, and where is its surface relative to the ground?
