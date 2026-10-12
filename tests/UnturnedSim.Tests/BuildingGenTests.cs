@@ -1442,7 +1442,7 @@ namespace UnturnedSim.Tests
                             var (fx, fz) = m.Front; var (rx, rz) = m.Right; var s = FurnitureCatalog.Sizes[m.Name]; var fp = m.Footprint;
                             string nm = $"{Name(spec)}: {m}";
                             // what stands at a wall stands with its back to one, not half off its end
-                            if (new[] { "Wardrobe", "Shelf_2", "Fridge", "Counter", "Oven", "Disher", "Files", "Cooler", "Ice_Box" }.Any(m.Name.StartsWith))
+                            if (new[] { "Wardrobe", "Shelf_2", "Fridge", "Counter", "Oven", "Disher", "Washer", "Dryer", "Files", "Cooler", "Ice_Box" }.Any(m.Name.StartsWith))
                             {
                                 wallPieces++;
                                 // (or back to back with another counter: an island)
