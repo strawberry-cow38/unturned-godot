@@ -232,6 +232,183 @@ namespace UnturnedGodot.Testing
                 T.Check($"...and no short road keeps two crossings that overlap ({wouldCollide} would have, {collide} still do; {both} roads crossed at both ends)",
                         wouldCollide > 0 && both > 0 && collide == 0);
                 marksD.QueueFree();
+
+                // ⭐ BUILDING PLOTS (strawberry 2026-10-12: "have the grid system mark plots for buildings, with fixed
+                // sizes and shapes"). Laid on THIS town -- 45-degree avenue, mains, tees, triangle islands -- because
+                // a plain grid would let a layout pass that has never met an odd corner. Every claim is checked by
+                // code of its own, not by the functions that placed the plots: a plot generator that can see a
+                // pavement and a test that asks it whether it can see one are one bug, twice.
+                int nPlots = gD.MarkPlots(null, rfD);
+                var plots = gD.Plots;
+                var kindsSeen = new HashSet<TownRoadGrid.PlotKind>();
+                int offSize = 0, offLattice = 0;
+                foreach (var pl in plots)
+                {
+                    kindsSeen.Add(pl.Kind);
+                    var want = TownRoadGrid.SizeOf(pl.Kind);
+                    if (pl.Width != want.Width || pl.Depth != want.Depth) offSize++;
+                    if (Mathf.Abs(pl.Width / 3f - Mathf.Round(pl.Width / 3f)) > 1e-4f || Mathf.Abs(pl.Depth / 3f - Mathf.Round(pl.Depth / 3f)) > 1e-4f) offLattice++;
+                }
+                T.Check($"building plots are marked ({nPlots}, {kindsSeen.Count} of {TownRoadGrid.PlotSizes.Length} kinds)",
+                        nPlots >= 20 && kindsSeen.Count >= 5);
+                T.Check($"...each EXACTLY its catalogue size ({offSize} off), on the 3 m building lattice ({offLattice} off)",
+                        offSize == 0 && offLattice == 0);
+                // no two overlap -- an overlap test of the test's own, held to a control that must overlap
+                static bool Overlaps(Vector3[] a, Vector3[] b)
+                {
+                    foreach (var poly in new[] { a, b })
+                        for (int e = 0; e < 4; e++)
+                        {
+                            var d = poly[(e + 1) % 4] - poly[e]; var axis = new Vector2(-d.Z, d.X).Normalized();
+                            float a0 = float.MaxValue, a1 = float.MinValue, b0 = float.MaxValue, b1 = float.MinValue;
+                            foreach (var q in a) { float t = q.X * axis.X + q.Z * axis.Y; a0 = Mathf.Min(a0, t); a1 = Mathf.Max(a1, t); }
+                            foreach (var q in b) { float t = q.X * axis.X + q.Z * axis.Y; b0 = Mathf.Min(b0, t); b1 = Mathf.Max(b1, t); }
+                            if (a1 <= b0 + 0.01f || b1 <= a0 + 0.01f) return false;
+                        }
+                    return true;
+                }
+                int overlapping = 0;
+                for (int x = 0; x < plots.Count; x++)
+                    for (int y = x + 1; y < plots.Count; y++)
+                        if (Overlaps(plots[x].Corners(), plots[y].Corners())) overlapping++;
+                var c0 = plots[0].Corners(); var shifted = new Vector3[4];
+                for (int k = 0; k < 4; k++) shifted[k] = c0[k] + plots[0].Along * (plots[0].Width * 0.5f);
+                T.Check($"...no two plots overlap ({overlapping} pairs), and the overlap test can see one (control: {Overlaps(c0, shifted)})",
+                        overlapping == 0 && Overlaps(c0, shifted));
+                // clear of every carriageway and its pavement, every junction slab, and every corner pavement -- by a
+                // dense sample of each plot, edge and inside
+                float walkW = walkD.Width, keepOff = walkD.RoadGap + walkW;
+                var slabBox = new List<(double x0, double x1, double z0, double z1, SDG.Unturned.RoadPatch p)>();
+                foreach (var pp in gD.Patches)
+                {
+                    double x0 = double.MaxValue, x1 = double.MinValue, z0 = double.MaxValue, z1 = double.MinValue;
+                    for (int k = 0; k < pp.X.Length; k++) { x0 = Math.Min(x0, pp.X[k]); x1 = Math.Max(x1, pp.X[k]); z0 = Math.Min(z0, pp.Z[k]); z1 = Math.Max(z1, pp.Z[k]); }
+                    slabBox.Add((x0, x1, z0, z1, pp));
+                }
+                var kerbBox = new List<(float x0, float x1, float z0, float z1, List<Vector3> kp)>();
+                foreach (var (_, kp) in kerbs)
+                {
+                    float x0 = float.MaxValue, x1 = float.MinValue, z0 = float.MaxValue, z1 = float.MinValue;
+                    foreach (var q in kp) { x0 = Mathf.Min(x0, q.X); x1 = Mathf.Max(x1, q.X); z0 = Mathf.Min(z0, q.Z); z1 = Mathf.Max(z1, q.Z); }
+                    kerbBox.Add((x0, x1, z0, z1, kp));
+                }
+                bool OnSomething(Vector3 q)
+                {
+                    if (rfD.DeepestRoadOverlap(q, keepOff, out _, out _)) return true;
+                    foreach (var (x0, x1, z0, z1, pp) in slabBox)
+                        if (q.X >= x0 - keepOff && q.X <= x1 + keepOff && -q.Z >= z0 - keepOff && -q.Z <= z1 + keepOff && pp.DistanceTo(q.X, -q.Z) < keepOff) return true;
+                    foreach (var (kx0, kx1, kz0, kz1, kp) in kerbBox)
+                    {
+                        if (q.X < kx0 - walkW || q.X > kx1 + walkW || q.Z < kz0 - walkW || q.Z > kz1 + walkW) continue;
+                        for (int k = 0; k + 1 < kp.Count; k++)
+                        {
+                            var a = kp[k]; var b = kp[k + 1];
+                            float abx = b.X - a.X, abz = b.Z - a.Z, l2 = abx * abx + abz * abz;
+                            float t = l2 < 1e-9f ? 0f : Mathf.Clamp(((q.X - a.X) * abx + (q.Z - a.Z) * abz) / l2, 0f, 1f);
+                            if (new Vector2(a.X + abx * t - q.X, a.Z + abz * t - q.Z).Length() < walkW) return true;
+                        }
+                    }
+                    return false;
+                }
+                bool PlotTouches(Vector3[] c)
+                {
+                    for (int e = 0; e < 4; e++)
+                    {
+                        var a = c[e]; var b = c[(e + 1) % 4];
+                        int n = Mathf.Max(1, Mathf.CeilToInt(new Vector2(b.X - a.X, b.Z - a.Z).Length() / 0.75f));
+                        for (int k = 0; k <= n; k++) if (OnSomething(a.Lerp(b, (float)k / n))) return true;
+                    }
+                    for (float u = 0.125f; u < 1f; u += 0.125f)
+                        for (float v = 0.125f; v < 1f; v += 0.125f)
+                            if (OnSomething(c[0].Lerp(c[1], u).Lerp(c[3].Lerp(c[2], u), v))) return true;
+                    return false;
+                }
+                int touching = 0;
+                foreach (var pl in plots) if (PlotTouches(pl.Corners())) touching++;
+                // the control: the same check on a plot slid 3 m toward its own street must see the pavement
+                var toward = new Vector3[4];
+                for (int k = 0; k < 4; k++) toward[k] = c0[k] + plots[0].Facing * 3f;
+                T.Check($"...none on a road, a pavement, a junction slab or a corner pavement ({touching} touch), and the check can see one (control: {PlotTouches(toward)})",
+                        touching == 0 && PlotTouches(toward));
+                // each fronts its street: front edge just behind the pavement, facing the road
+                int offFront = 0; float worstFront = 0f;
+                foreach (var pl in plots)
+                {
+                    float want = rfD.RoadHalfWidth(pl.Road) + walkD.RoadGap + walkW + gD.PlotSetback + pl.Setback;
+                    float best = float.MaxValue; Vector3 nearest = Vector3.Zero;
+                    float L = rfD.RoadLength(pl.Road);
+                    for (float d = 0f; d <= L; d += 0.25f)
+                        if (rfD.EvaluateAlong(pl.Road, d, out var q, out _, snapTerrain: false))
+                        {
+                            float dd = new Vector2(q.X - pl.Front.X, q.Z - pl.Front.Z).Length();
+                            if (dd < best) { best = dd; nearest = q; }
+                        }
+                    var toRoad = new Vector3(nearest.X - pl.Front.X, 0f, nearest.Z - pl.Front.Z);
+                    worstFront = Mathf.Max(worstFront, Mathf.Abs(best - want));
+                    if (Mathf.Abs(best - want) > 0.05f || toRoad.Dot(pl.Facing) <= 0f) offFront++;
+                }
+                T.Check($"...each fronts its own street, facing it from just behind the pavement ({offFront} not; worst {worstFront * 100f:0.0} cm off)",
+                        offFront == 0);
+                // inside the town: nothing on the far side of the outermost street, in open country
+                {
+                    float cb = Mathf.Cos(0.3f), sb = Mathf.Sin(0.3f);
+                    float u0 = float.MaxValue, u1 = float.MinValue, v0 = float.MaxValue, v1 = float.MinValue;
+                    for (int j = 0; j < rfD.JunctionCount; j++)
+                    {
+                        var jp = rfD.JunctionPos(j);
+                        float u = jp.X * cb + jp.Z * sb, v = -jp.X * sb + jp.Z * cb;
+                        u0 = Mathf.Min(u0, u); u1 = Mathf.Max(u1, u); v0 = Mathf.Min(v0, v); v1 = Mathf.Max(v1, v);
+                    }
+                    int outside = 0;
+                    foreach (var pl in plots)
+                        foreach (var q in pl.Corners())
+                        {
+                            float u = q.X * cb + q.Z * sb, v = -q.X * sb + q.Z * cb;
+                            if (u < u0 - 0.01f || u > u1 + 0.01f || v < v0 - 0.01f || v > v1 + 0.01f) { outside++; break; }
+                        }
+                    T.Check($"...and all inside the town's outermost streets ({outside} outside)", outside == 0);
+                }
+                int cornerLots = 0, cornerOff = 0;
+                foreach (var pl in plots)
+                {
+                    if (pl.Kind != TownRoadGrid.PlotKind.Corner) continue;
+                    cornerLots++;
+                    if (pl.Road2 < 0 || pl.Width != pl.Depth) cornerOff++;
+                }
+                T.Check($"...square corner lots at the square corners, fronting both streets ({cornerLots} lots, {cornerOff} not)",
+                        cornerLots >= 4 && cornerOff == 0);
+                // ⚠ AND NO CORNER'S PAVEMENT IS BUILDABLE, probed at its hardest spot: just inside the BACK of the
+                // pavement, where a kerb that cuts the block's corner leaves it further than (half width + pavement)
+                // from both roads. The generator has no test of its own for this -- the junction slab runs under
+                // every corner pavement and its margin refuses them (measured: within 0.03-2 m of each back edge) --
+                // so this is what says so if the slabs ever stop reaching. A spot well behind must be buildable.
+                {
+                    int onWalk = 0, onWalkOk = 0, behind = 0, behindOk = 0;
+                    foreach (var (kn, kp) in kerbs)
+                    {
+                        if (kp.Count < 5) continue;                       // a straight through-piece: no corner to it
+                        var mid = kp[kp.Count / 2];
+                        var outv = new Vector3(mid.X - kn.X, 0f, mid.Z - kn.Z).Normalized();
+                        onWalk++; if (gD.Buildable(rfD, mid + outv * (walkW - 0.15f))) onWalkOk++;
+                        behind++; if (gD.Buildable(rfD, mid + outv * (walkW + 6f))) behindOk++;
+                    }
+                    T.Check($"...and the back of every corner's pavement is never buildable ({onWalkOk} of {onWalk} were; control: {behindOk} of {behind} spots behind them are)",
+                            onWalk > 0 && onWalkOk == 0 && behindOk > 0);
+                }
+                // determinism: the same town again lays the same plots
+                {
+                    var rfD2 = Field();
+                    var gD2 = new TownRoadGrid { Seed = 7, Centre = Vector3.Zero, Extent = 250f, Spacing = 110f,
+                                                 Bearing = 0.3f, SeaLevel = 0f, SeaMargin = 2f, Diagonal = true };
+                    gD2.Generate(rfD2, flat);
+                    var w2 = new EditorSidewalk(); World.AddChild(w2);
+                    gD2.LaySidewalkCornersOn(rfD2, World, w2, out _);
+                    gD2.MarkPlots(null, rfD2);
+                    bool same = gD2.Plots.Count == plots.Count;
+                    for (int k = 0; same && k < plots.Count; k++)
+                        same = gD2.Plots[k].Kind == plots[k].Kind && (gD2.Plots[k].Front - plots[k].Front).Length() < 1e-3f;
+                    T.Check($"...and the same seed lays the same plots ({gD2.Plots.Count} vs {plots.Count})", same);
+                }
             }
 
             // ⭐ THE CORNERS ARE ROUNDED, NOT SLABBED (strawberry 2026-10-12: "work on 45° intersections. as well

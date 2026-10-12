@@ -10643,6 +10643,9 @@ namespace UnturnedGodot
             Log.Print($"[towngrid] corner asphalt: {cornerFill} triangles under {corners} kerb corners");
             town.ProbeCoverage(rf, "with corner asphalt");
             int lights = town.PlaceLights(rf, editor.Objects);
+            // the building plots, marked on the ground (strawberry 2026-10-12: "have the grid system mark plots for
+            // buildings, with fixed sizes and shapes") -- after the corners, whose pavements they have to stay off
+            int plots = noWalk ? 0 : town.MarkPlots(editor, rf);
             // ⚠ MEASURE THE KERB LINE ITSELF. The streets' own bow is 0.0 cm, so "sidewalks seem to wiggle"
             // is not the road centreline -- it has to be the pavement. A wiggle is a run of KINKS, so report
             // the sharpest turn between consecutive segments of every corner piece, and where it is.
@@ -10773,6 +10776,26 @@ namespace UnturnedGodot
                     tcam.Fov = 50f;
                     tcam.LookAt(bp, Vector3.Up);
                     Log.Print($"[towngrid] bend camera on a rounded corner at {bp} ({town.BendPoints.Count} rounded)");
+                    goto noTown;
+                }
+                // UG_TOWNCLOSE=plmap: the whole town straight down, orthographic and turned square to the grid --
+                // a site plan, where every plot's shape and size can be read and compared
+                if (closeEnv == "plmap")
+                {
+                    tcam.Projection = Camera3D.ProjectionType.Orthogonal;
+                    tcam.Size = town.Extent * 2.15f;
+                    tcam.GlobalPosition = site + new Vector3(0f, 120f, 0f);     // low: the haze washes a high one out
+                    tcam.LookAt(site, new Vector3(-Mathf.Sin(town.Bearing), 0f, Mathf.Cos(town.Bearing)) * -1f);
+                    Log.Print($"[towngrid] site plan of {town.Plots.Count} plots");
+                    goto noTown;
+                }
+                // UG_TOWNCLOSE=pl: the building plots, from high enough to read a few whole blocks
+                if (closeEnv == "pl")
+                {
+                    tcam.GlobalPosition = site + new Vector3(0f, 125f, 125f);
+                    tcam.Fov = 55f;
+                    tcam.LookAt(site, Vector3.Up);
+                    Log.Print($"[towngrid] plot camera over the town centre ({town.Plots.Count} plots)");
                     goto noTown;
                 }
                 // UG_TOWNCLOSE=p: the prop the clearance pass pushed FURTHEST off paving -- the census says how
