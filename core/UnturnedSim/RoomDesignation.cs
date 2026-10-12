@@ -22,6 +22,8 @@ namespace UnturnedSim
         Hall, Stairwell, Closet,
         Garage, Workshop, Storage,
         Office, Shop, Warehouse,
+        // (new kinds go on the END: saves hold names, but nothing should renumber)
+        BreakRoom,
     }
 
     /// <summary>A room designation as it is STORED: a kind plus a point inside the room it labels.

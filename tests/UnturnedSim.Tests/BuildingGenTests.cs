@@ -170,6 +170,11 @@ namespace UnturnedSim.Tests
                 bool over = res.Notes.Any(x => x.Contains("over its limit"));
                 if (res.Floors < Math.Max(1, spec.MinFloors) || res.Floors > spec.MaxFloors) bad.Add($"{n}: {res.Floors} floors");
                 if (real.Count < spec.MinRooms && !dropped) bad.Add($"{n}: {real.Count} rooms < {spec.MinRooms} and no note");
+                // a business has a break room where a house has a kitchen (strawberry: "businesses should have different
+                // room defs and rules. ie break rooms instead of kitchens")
+                if (spec.Kind != BuildingKind.Residential && !spec.MinOfKind.ContainsKey(RoomKind.Kitchen) && real.Any(g => g.Kind == RoomKind.Kitchen))
+                    bad.Add($"{n}: a business with a kitchen");
+                if (spec.Kind == BuildingKind.Residential && real.Any(g => g.Kind == RoomKind.BreakRoom)) bad.Add($"{n}: a house with a break room");
                 foreach (var kv in spec.MinOfKind)
                     if (real.Count(g => g.Kind == kv.Key) < kv.Value && !dropped) bad.Add($"{n}: {real.Count(g => g.Kind == kv.Key)} {kv.Key} < {kv.Value}");
                 foreach (var k in BuildingGen.Programme(spec.Kind).Always)
@@ -413,7 +418,7 @@ namespace UnturnedSim.Tests
         public void StairsStandInOpenRoomsAndLandOnFloor()
         {
             var bad = new List<string>();
-            int flights = 0, halves = 0, landingsChecked = 0, walked = 0, tiles = 0, holes = 0, headroomPoints = 0;
+            int flights = 0, halves = 0, landingsChecked = 0, walked = 0, tiles = 0, holes = 0, headroomPoints = 0, quarterLandings = 0;
             float leastClear = float.MaxValue;
             const float M = WallOpenings.StairHoleMargin;
             const float DoorTall = 2.85f;   // a door's height: what you walk through upright, you walk up upright
@@ -428,6 +433,19 @@ namespace UnturnedSim.Tests
                     return c.Count == 1 ? c[0] : null;
                 }
                 var landings = res.Walls.Where(w => w.Kind == SurfaceKind.Stairs).ToList();
+                // a quarter turn's landing is in a corner: walls within 0.7 m of two of its sides (strawberry: "corner
+                // stairs need to be up against 2 supporting walls")
+                if (res.StairShape == StairShape.Quarter)
+                    foreach (var l in landings)
+                    {
+                        var (lx0, lz0, lx1, lz1) = Plan(l);
+                        int lf = (int)MathF.Floor((l.Y + 0.1f) / Storey);
+                        var ws = WallsOn(res, lf).Select(Box).ToList();
+                        bool Near((float X0, float Z0, float X1, float Z1) side) => ws.Any(b => Overlap(side, b, 0f));
+                        int sides = new[] { (lx0 - 0.7f, lz0, lx0, lz1), (lx1, lz0, lx1 + 0.7f, lz1), (lx0, lz0 - 0.7f, lx1, lz0), (lx0, lz1, lx1, lz1 + 0.7f) }.Count(Near);
+                        quarterLandings++;
+                        if (sides < 2) bad.Add($"{Name(spec)}: a quarter turn's landing at ({lx0:0.0},{lz0:0.0}) has a wall on {sides} side(s), not in a corner");
+                    }
                 foreach (var s in res.Stairs)
                 {
                     flights++;
@@ -438,6 +456,7 @@ namespace UnturnedSim.Tests
                     var high = Holder(Grown(fp, M), s.Floor + 1);
                     if (low == null || DeadEnd(low.Kind)) bad.Add($"{Name(spec)}: flight {s.Floor} stands in {low?.ToString() ?? "more than one room"}");
                     else hostKinds[low.Kind] = hostKinds.GetValueOrDefault(low.Kind) + 1;
+                    if (low?.Kind == RoomKind.Shop) bad.Add($"{Name(spec)}: flight {s.Floor} stands on a shop floor");
                     if (high == null || DeadEnd(high.Kind)) bad.Add($"{Name(spec)}: the room over flight {s.Floor} is {high?.ToString() ?? "more than one room"}");
                     foreach (var w in WallsOn(res, s.Floor)) if (Overlap(fp, Box(w))) bad.Add($"{Name(spec)}: flight {s.Floor} runs into a wall at yaw {w.Yaw}");
                     // (a whole flight never stands over the hole the one below cut; a switchback's do, a storey above it,
@@ -589,6 +608,7 @@ namespace UnturnedSim.Tests
             Assert.That(switchbacks + quarters, Is.GreaterThan(multis / 4), "compound stairs are rare");
             Assert.That(switchbacks, Is.GreaterThan(multis / 10), "switchbacks are rare");
             Assert.That(quarters, Is.GreaterThan(multis / 10), "quarter turns are rare");
+            Assert.That(quarterLandings, Is.GreaterThan(0));
             Assert.That(multis - switchbacks - quarters, Is.GreaterThan(multis / 4), "straight flights are rare");
             Assert.That(landingsChecked, Is.EqualTo(halves));
             Assert.That(walked, Is.GreaterThan(300));
@@ -988,9 +1008,10 @@ namespace UnturnedSim.Tests
             RoomKind[] BackOk(BuildingKind b) => b switch
             {
                 BuildingKind.Residential => new[] { RoomKind.Kitchen, RoomKind.Hall, RoomKind.DiningRoom },
-                BuildingKind.Commercial => new[] { RoomKind.Storage, RoomKind.Kitchen, RoomKind.Hall },
+                // (a business's staff room -- its break room -- takes a staff entrance)
+                BuildingKind.Commercial => new[] { RoomKind.Storage, RoomKind.BreakRoom, RoomKind.Hall },
                 BuildingKind.Industrial => new[] { RoomKind.Warehouse, RoomKind.Workshop, RoomKind.Storage, RoomKind.Hall },
-                _ => new[] { RoomKind.Kitchen, RoomKind.Hall, RoomKind.Storage },
+                _ => new[] { RoomKind.BreakRoom, RoomKind.Hall, RoomKind.Storage },
             };
             var bad = new List<string>();
             int fronts = 0, backs = 0, opposite = 0;
@@ -1171,6 +1192,13 @@ namespace UnturnedSim.Tests
                             if (door)
                             {
                                 doorZones.Add(box);
+                                // a hung door's leaf swings its own width into the wall's back side, hinged at the opening's start
+                                if (o.HasDoor && o.Archetype != BuildingGen.ArchGarage)
+                                {
+                                    var p0 = At(w, o.U); var p1 = At(w, o.U1); float back = w.Thickness * 0.5f + o.Width - 0.05f;
+                                    doorZones.Add((MathF.Min(MathF.Min(p0.X, p1.X), MathF.Min(p0.X, p1.X) - n.X * back), MathF.Min(MathF.Min(p0.Z, p1.Z), MathF.Min(p0.Z, p1.Z) - n.Z * back),
+                                                   MathF.Max(MathF.Max(p0.X, p1.X), MathF.Max(p0.X, p1.X) - n.X * back), MathF.Max(MathF.Max(p0.Z, p1.Z), MathF.Max(p0.Z, p1.Z) - n.Z * back)));
+                                }
                                 var c = At(w, o.U + o.Width * 0.5f); float d = w.Thickness * 0.5f + 0.4f;
                                 doorPts.Add((c.X + n.X * d, c.Z + n.Z * d)); doorPts.Add((c.X - n.X * d, c.Z - n.Z * d));
                             }
@@ -1225,10 +1253,14 @@ namespace UnturnedSim.Tests
                             var hfp = m.On.Footprint; var cx = (fp.X0 + fp.X1) * 0.5f; var cz = (fp.Z0 + fp.Z1) * 0.5f;
                             if (!(cx > hfp.X0 && cx < hfp.X1 && cz > hfp.Z0 && cz < hfp.Z1)) bad.Add($"{nm} is not on the {m.On.Name} it stands on");
                             if (MathF.Abs(m.Y - (m.On.Y + FurnitureCatalog.Sizes[m.On.Name].H)) > 0.01f) bad.Add($"{nm} floats or sinks on its {m.On.Name}");
+                            // a set on a table against a wall: not the wall the stairs run along
+                            if (m.Name.StartsWith("Television") && wallBoxes.Any(b => Overlap(Grown(hfp, 0.3f), b, 0f))
+                                && stairs.Any(st => Overlap(Grown(hfp, BuildingGen.StairWallReach - 0.05f), st, 0f))) bad.Add($"{nm} is on a wall the stairs run along");
                             continue;
                         }
                         if (m.Mounted)
                         {
+                            if (stairs.Any(st => Overlap(Grown(fp, BuildingGen.StairWallReach - 0.05f), st, 0f))) bad.Add($"{nm} hangs on a wall the stairs run along");
                             // hung at a sensible height, on a wall with no window or door behind it at that height
                             if (m.Y < f * Storey + 1.8f || m.Y > f * Storey + 2.6f) bad.Add($"{nm} hangs at {m.Y - f * Storey:0.00} m");
                             var (bx, bz) = m.Front;
@@ -1299,9 +1331,10 @@ namespace UnturnedSim.Tests
                             case RoomKind.LivingRoom: Need("couch", Has("Couch")); break;
                             case RoomKind.DiningRoom: Need("table", Has("Table")); Need("4 chairs", here.Count(m => m.Room == room && m.Name.StartsWith("Chair")) >= 4); break;
                             case RoomKind.Kitchen: Need("fridge", Has("Fridge")); Need("sink", Has("Counter_1")); Need("stove", Has("Oven")); if (Has("Fridge") && Has("Counter_1") && Has("Oven")) kitchensFull++;
-                                if (res.KitchenDiner) Need("a dining table (a kitchen-diner)", Has("Table_Wood_0", "Table_Wood_1")); break;
+                                if (res.KitchenDiner) Need("a dining table (a kitchen-diner)", Has("Table_Wood_0", "Table_Wood_1", "Table_Wood_3")); break;
                             case RoomKind.Bathroom: Need("tub or sink", Has("Tub", "Counter_1")); break;
                             case RoomKind.Office: Need("desk", Has("Table_Wood_2")); break;
+                            case RoomKind.BreakRoom: Need("table", Has("Table")); Need("sink", Has("Counter_1")); Need("fridge", Has("Fridge")); break;
                             case RoomKind.Shop: Need("shelves", Has("Shelf_1")); if (res.Front?.A == room) Need("checkout", Has("Checkout")); break;
                             case RoomKind.Warehouse: case RoomKind.Storage: Need("racks", Has("Shelf")); break;
                         }
@@ -1410,7 +1443,8 @@ namespace UnturnedSim.Tests
                                     if (ahead > s.Y1 && MathF.Abs(across) < (s.X1 - s.X0) * 0.5f) bad.Add($"{nm}: the door is straight past its foot");
                                 }
                             }
-                            if (m.Name.StartsWith("Couch"))
+                            // (a living room's couch: a break room's has no set to watch)
+                            if (m.Name.StartsWith("Couch") && room.Kind == RoomKind.LivingRoom)
                             {
                                 couches++;
                                 if (!WallBehind(fp, -fx, -fz)) bad.Add($"{nm}: its back is not to a wall");

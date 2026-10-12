@@ -128,6 +128,9 @@ namespace UnturnedSim
         /// along the wall to a corner landing and one away from it (three cells by three rows).</summary>
         public StairShape StairShape;
         public bool Switchback => StairShape == StairShape.Switchback;
+        /// <summary>A quarter turn's landing is at the bay's west end (the turn the other way): the corner it is built into
+        /// is the one with a wall, which is the end the floors above start from.</summary>
+        public bool QuarterWest;
         /// <summary>Its kitchen has the dining table in it, and it has no dining room.</summary>
         public bool KitchenDiner;
         /// <summary>Sides with no windows, in the plan as laid out (before any turn to put the front where it was asked).</summary>
@@ -288,6 +291,8 @@ namespace UnturnedSim
             RoomKind.Office => new Trait(9, 3, b == BuildingKind.Residential ? FloorPref.Any : FloorPref.Upper, ArchWindow),
             RoomKind.Shop => new Trait(20, 4, FloorPref.GroundOnly, ArchTallWindow),
             RoomKind.Warehouse => new Trait(32, 6, FloorPref.GroundOnly, ArchGarage),
+            // a business's staff room, where a house has its kitchen: a table, a counter with a sink, a fridge
+            RoomKind.BreakRoom => new Trait(9, 3, FloorPref.Any, ArchWindow),
             _ => new Trait(6, 2, FloorPref.Any, ArchWindow),
         };
 
@@ -295,18 +300,23 @@ namespace UnturnedSim
         {
             RoomKind.Hall or RoomKind.Stairwell or RoomKind.LivingRoom or RoomKind.Kitchen or RoomKind.DiningRoom
                 or RoomKind.Shop or RoomKind.Warehouse or RoomKind.Workshop => Access.Through,
-            RoomKind.Bedroom or RoomKind.Bathroom or RoomKind.Office or RoomKind.Closet => Access.Private,
+            RoomKind.Bedroom or RoomKind.Bathroom or RoomKind.Office or RoomKind.Closet or RoomKind.BreakRoom => Access.Private,
             _ => Access.Leaf,
         };
 
         /// <summary>Rooms a flight of stairs may stand in: not private, and roomy enough to walk round one.</summary>
+        /// (Not a shop floor: strawberry, "shop rooms should not be allowed stairs".)
         public static bool HoldsStairs(RoomKind k) => k is RoomKind.Hall or RoomKind.LivingRoom or RoomKind.DiningRoom
-            or RoomKind.Shop or RoomKind.Warehouse or RoomKind.Workshop;
+            or RoomKind.Warehouse or RoomKind.Workshop;
 
         /// <summary>May a room of kind `child` have its door off a room of kind `parent`? Off anything you walk through;
         /// a closet or an en-suite off a bedroom; a store room off a garage; a closet, toilet or store off an office.
         /// Common sense, not a building code: strawberry, "dont be overly strict on room rules".</summary>
-        public static bool MayOpenOff(RoomKind child, RoomKind parent) => AccessOf(parent) == Access.Through
+        /// A break room is staff-only: off the back of the house -- a hall, the works floor -- never off the shop floor ("why
+        /// is the shop doorframed to a kitchen?").
+        public static bool MayOpenOff(RoomKind child, RoomKind parent) => child == RoomKind.BreakRoom
+            ? parent is RoomKind.Hall or RoomKind.Warehouse or RoomKind.Workshop
+            : AccessOf(parent) == Access.Through
             || (parent == RoomKind.Bedroom && child is RoomKind.Closet or RoomKind.Bathroom)
             || (parent == RoomKind.Garage && child == RoomKind.Storage)
             || (parent == RoomKind.Office && child is RoomKind.Closet or RoomKind.Bathroom or RoomKind.Storage);
@@ -316,7 +326,7 @@ namespace UnturnedSim
             or RoomKind.DiningRoom or RoomKind.Office or RoomKind.Shop or RoomKind.Workshop;
 
         /// <summary>Rooms a building has only one of unless the spec asks for more.</summary>
-        public static bool OnlyOne(RoomKind k, BuildingKind b) => k == RoomKind.Kitchen
+        public static bool OnlyOne(RoomKind k, BuildingKind b) => k == RoomKind.Kitchen || k == RoomKind.BreakRoom
             || (b == BuildingKind.Residential && (k == RoomKind.LivingRoom || k == RoomKind.DiningRoom));
 
         /// <summary>Small rooms that should stay small: they grow by a cell at most when a floor has length to spare.</summary>
@@ -337,17 +347,17 @@ namespace UnturnedSim
         /// garden door), a shop's stockroom or kitchen, a works' warehouse or workshop, an office block's kitchen or hall.</summary>
         public static RoomKind[] BackDoorOrder(BuildingKind b) => b switch
         {
-            BuildingKind.Commercial => new[] { RoomKind.Storage, RoomKind.Kitchen, RoomKind.Hall },
+            BuildingKind.Commercial => new[] { RoomKind.Storage, RoomKind.Hall, RoomKind.BreakRoom },
             BuildingKind.Industrial => new[] { RoomKind.Warehouse, RoomKind.Workshop, RoomKind.Storage, RoomKind.Hall },
             BuildingKind.Residential => new[] { RoomKind.Kitchen, RoomKind.Hall, RoomKind.DiningRoom },
-            _ => new[] { RoomKind.Kitchen, RoomKind.Hall, RoomKind.Storage },
+            _ => new[] { RoomKind.Hall, RoomKind.Storage, RoomKind.BreakRoom },
         };
 
         /// <summary>What a kind of building is not without, however small: kept when a limit drops rooms.</summary>
         public static RoomKind[] Essentials(BuildingKind b) => b == BuildingKind.Residential
             ? new[] { RoomKind.Bedroom, RoomKind.Bathroom, RoomKind.Kitchen } : Array.Empty<RoomKind>();
         /// <summary>A kitchen-diner's cells: a kitchen's and most of a dining room's, short of the living room's.</summary>
-        public const int DinerCells = 11;
+        public const int DinerCells = 12;
 
         /// <summary>What a kind of building always has, and what it adds (in this order, round again if need be) to reach MinRooms.</summary>
         public static (RoomKind[] Always, RoomKind[] More) Programme(BuildingKind b) => b switch
@@ -355,11 +365,11 @@ namespace UnturnedSim
             BuildingKind.Residential => (new[] { RoomKind.LivingRoom, RoomKind.Kitchen, RoomKind.Bathroom, RoomKind.Bedroom },
                                          new[] { RoomKind.Bedroom, RoomKind.DiningRoom, RoomKind.Bathroom, RoomKind.Closet, RoomKind.Bedroom, RoomKind.Garage, RoomKind.Storage }),
             BuildingKind.Commercial => (new[] { RoomKind.Shop, RoomKind.Storage, RoomKind.Bathroom },
-                                        new[] { RoomKind.Office, RoomKind.Storage, RoomKind.Kitchen, RoomKind.Office, RoomKind.Bathroom }),
+                                        new[] { RoomKind.Office, RoomKind.Storage, RoomKind.BreakRoom, RoomKind.Office, RoomKind.Bathroom }),
             BuildingKind.Industrial => (new[] { RoomKind.Warehouse, RoomKind.Workshop, RoomKind.Office, RoomKind.Bathroom },
                                         new[] { RoomKind.Storage, RoomKind.Office, RoomKind.Garage, RoomKind.Storage }),
             _ => (new[] { RoomKind.Office, RoomKind.Bathroom, RoomKind.Storage },
-                  new[] { RoomKind.Office, RoomKind.Kitchen, RoomKind.Storage, RoomKind.Office }),
+                  new[] { RoomKind.Office, RoomKind.BreakRoom, RoomKind.Storage, RoomKind.Office }),
         };
 
         /// <summary>The retail palettes that suit a kind of building (content/wall_palettes.tsv names).</summary>
@@ -680,6 +690,7 @@ namespace UnturnedSim
             }
             if (multi && wantD > 0) dN = wantD - 1 - dS;
             bool stairsWest = rng.Int(2) == 0;                          // the bay at the west end of the upper floors, or the east
+            res.QuarterWest = stairsWest;   // that end has the wall on every floor, so a quarter turn turns into it
 
             // ---- upper floors, top down (each must fit on the one below): a landing hall the length of the floor with the
             // bay off its south side, and the rooms either side of it
@@ -791,8 +802,9 @@ namespace UnturnedSim
                 res.Rooms.Add(new RoomDesignation(r.Kind, (r.X0 + r.X1) * 0.5f * Cell, (r.Z0 + r.Z1) * 0.5f * Cell, r.Floor));
 
             // some doorways between two rooms you walk through are left open, and some of those are wide
+            // (in houses: a business's rooms keep their doors -- a shop floor is not open to its back rooms)
             foreach (var d in res.Doors)
-                if (d.B != null && AccessOf(d.A.Kind) == Access.Through && AccessOf(d.B.Kind) == Access.Through && rng.Chance(OpenDoorway))
+                if (kind == BuildingKind.Residential && d.B != null && AccessOf(d.A.Kind) == Access.Through && AccessOf(d.B.Kind) == Access.Through && rng.Chance(OpenDoorway))
                 {
                     d.Open = true;
                     // not wide into a small kitchen: its counters need the wall
@@ -900,8 +912,10 @@ namespace UnturnedSim
                     if (multi && k == host && b < 0 && wd >= L)
                     {
                         int lo = Math.Max(x, stairsWest ? 0 : need - L), hi = Math.Min(x + wd - L, stairsWest ? w - need : w - L);
-                        // in a shop, at the far end from its street front
+                        // in a shop, at the far end from its street front; a quarter turn in the corner of its room it turns
+                        // into (strawberry: "corner stairs need to be up against 2 supporting walls")
                         if (lo <= hi) b = shopEnd && k == RoomKind.Shop ? (shopWest ? hi : lo) : lo + rng.Int(hi - lo + 1);
+                        if (res.StairShape == StairShape.Quarter) { int c = stairsWest ? x : x + wd - L; b = c >= lo && c <= hi ? c : -1; }
                     }
                     x += wd;
                 }
@@ -957,6 +971,7 @@ namespace UnturnedSim
                         int lo = stairsWest ? 0 : need - L, hi = stairsWest ? w - need : w - L;
                         if (lo > hi) return null;
                         b = lo + rng.Int(hi - lo + 1);
+                        if (res.StairShape == StairShape.Quarter) b = stairsWest ? 0 : w - L;   // into the building's corner
                     }
                 }
                 else
@@ -968,6 +983,9 @@ namespace UnturnedSim
                     if (multi)
                     {
                         var splits = safe ? new List<int> { stairsWest ? 0 : S.Count } : Enumerable.Range(0, S.Count + 1).ToList();
+                        // a quarter turn: where the side it turns into is a room's wall or the building's end, not hall
+                        if (res.StairShape == StairShape.Quarter)
+                            splits = splits.Where(i => stairsWest ? i == 0 || S[i - 1].k != RoomKind.Hall : i == S.Count || S[i].k != RoomKind.Hall).ToList();
                         if (!safe) rng.Shuffle(splits);
                         split = -1;
                         foreach (int i in splits)
@@ -1539,7 +1557,7 @@ namespace UnturnedSim
                 // under it all the same. Not past the flights' foot end: the next switchback's foot stands there.
                 var floorSlab = SlabPlan(x0m - he, x1m + he, -he, Dm + he, y, SurfaceKind.Floor);
                 if (f > 0 && res.StairShape != StairShape.Straight)
-                    foreach (var (hx0, hz0, hx1, hz1) in res.Switchback ? new[] { SwitchbackHole(bay) } : QuarterHole(bay))
+                    foreach (var (hx0, hz0, hx1, hz1) in res.Switchback ? new[] { SwitchbackHole(bay) } : QuarterHole(bay, res.QuarterWest))
                         floorSlab.Openings.Add(new WallOpening(hx0 - (x0m - he), (Dm + he) - hz1, hx1 - hx0, hz1 - hz0));
                 res.Walls.Add(floorSlab);
                 // a roof on whatever of this floor the one above leaves uncovered: flat on a business; on a house a gable of
@@ -1606,12 +1624,19 @@ namespace UnturnedSim
                 // a quarter turn: up row 0 from the bay's second column to a landing in its third at half height, then
                 // round the corner and up the third column (climbing +Z) to arrive on the next floor in row 2 -- every
                 // floor's the same, stacked
-                float half = Storey * 0.5f, run = WallOpenings.StairDefaultRun(half), x1 = bay.X0 * Cell + Cell;
-                float zA = he + WallOpenings.StairHoleMargin, xL = x1 + run, zL = zA + StairWidth;
+                float half = Storey * 0.5f, run = WallOpenings.StairDefaultRun(half), m = WallOpenings.StairHoleMargin;
+                float zA = he + m, zL = zA + StairWidth;
+                // east: up the second column eastward, the landing in the third; west: up the second column westward, the
+                // landing in the first -- either way in the corner of the bay that has a wall beside it
+                bool west = res.QuarterWest;
+                float x0 = bay.X0 * Cell, xL = west ? x0 + he + m : x0 + Cell + run;   // the landing's west edge
                 for (int f = 0; f + 1 < floors; f++)
                 {
                     float y = f * Storey, t = WallOpenings.StairTreadThickness;
-                    res.Stairs.Add(new StairPlan { X = x1, Y = y, Z = zA, Yaw = 270f, Run = run, Width = StairWidth, Rise = half, Floor = f });
+                    if (west)   // yaw 90 climbs -X, its width running -Z from its foot corner
+                        res.Stairs.Add(new StairPlan { X = x0 + 2 * Cell, Y = y, Z = zL, Yaw = 90f, Run = run, Width = StairWidth, Rise = half, Floor = f });
+                    else        // yaw 270 climbs +X, its width running +Z
+                        res.Stairs.Add(new StairPlan { X = x0 + Cell, Y = y, Z = zA, Yaw = 270f, Run = run, Width = StairWidth, Rise = half, Floor = f });
                     res.Walls.Add(new WallPlan { X = xL, Y = y + half - t * 0.5f, Z = zL, Yaw = 0f, Pitch = -90f, Length = StairWidth,
                                                  Height = zL - zA, Thickness = t, Kind = SurfaceKind.Stairs });   // the corner landing
                     // yaw 180 climbs +Z, its width running -X from its foot corner at the landing's east edge
@@ -1691,11 +1716,17 @@ namespace UnturnedSim
         /// <summary>The hole a quarter turn in `bay` needs in each floor it climbs to, in plan metres, as two rectangles that
         /// meet without overlapping: over the first flight and the corner landing (a StairHoleMargin past them but at the
         /// foot, where the next floor's foot is), and over the second flight up to its top end, where you step off.</summary>
-        public static (float X0, float Z0, float X1, float Z1)[] QuarterHole((int X0, int Z0, int X1, int Z1) bay)
+        public static (float X0, float Z0, float X1, float Z1)[] QuarterHole((int X0, int Z0, int X1, int Z1) bay, bool west)
         {
             float he = Ext * 0.5f, m = WallOpenings.StairHoleMargin, run = WallOpenings.StairDefaultRun(Storey * 0.5f);
-            float x1 = bay.X0 * Cell + Cell, zA = he + m, xL = x1 + run, zL = zA + StairWidth;
-            return new[] { (x1, he, xL + StairWidth + m, zL + m), (xL - m, zL + m, xL + StairWidth + m, zL + run) };
+            float x0 = bay.X0 * Cell, zA = he + m, zL = zA + StairWidth;
+            if (west)
+            {
+                float xL = x0 + he + m;   // the landing's west edge; the first flight's foot is at x0 + 2 cells
+                return new[] { (xL - m, he, x0 + 2 * Cell, zL + m), (xL - m, zL + m, xL + StairWidth + m, zL + run) };
+            }
+            float x1 = x0 + Cell, xE = x1 + run;
+            return new[] { (x1, he, xE + StairWidth + m, zL + m), (xE - m, zL + m, xE + StairWidth + m, zL + run) };
         }
 
         /// <summary>A flat slab over [x0, x1] x [z0, z1] with its top at `top`: the editor's frame for one -- origin at

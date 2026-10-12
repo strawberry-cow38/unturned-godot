@@ -163,6 +163,8 @@ namespace UnturnedSim
         public const float MountHeight = 2.2f, WallTvReach = 8f, CrtReach = 4.5f, TvNear = 2f;
         /// <summary>How far a set may stand off the line straight out from the middle of its couch.</summary>
         public const float TvOffAxis = 0.3f;
+        /// <summary>A set this close to a flight, a landing or a stair hole is on the wall the stairs run along.</summary>
+        public const float StairWallReach = 1.0f;
         /// <summary>The kitchen's working triangle, fridge to sink to stove and back, at most this far round. The real rule
         /// is 26 ft (7.9 m) for furniture this game builds about twice the size (a counter 1.5 m wide, a real one 0.6).</summary>
         public const float TriangleRound = 12.5f;
@@ -257,6 +259,16 @@ namespace UnturnedSim
                         var zone = (MathF.Min(MathF.Min(ax, bx2) - nx * t, MathF.Min(ax, bx2) + nx * t), MathF.Min(MathF.Min(az, bz2) - nz * t, MathF.Min(az, bz2) + nz * t),
                                     MathF.Max(MathF.Max(ax, bx2) - nx * t, MathF.Max(ax, bx2) + nx * t), MathF.Max(MathF.Max(az, bz2) - nz * t, MathF.Max(az, bz2) + nz * t));
                         Keep(zone, door ? KeepDoor : KeepTall);
+                        // a hung door's leaf swings through a quarter circle its own width round its hinge, on the wall's
+                        // back side (Door: hinged at the opening's start, opened +90 degrees, toward local -Z): kept clear
+                        // whole, as a box (strawberry: "have stairs block furniture in their footprint ... same for doors")
+                        if (door && o.HasDoor && o.Archetype != ArchGarage)
+                        {
+                            float s0 = o.U - 0.05f, s1 = o.U + o.Width + 0.05f, back = w.Thickness * 0.5f + o.Width;
+                            float px = w.X + dx * s0, pz = w.Z + dz * s0, qx = w.X + dx * s1, qz = w.Z + dz * s1;
+                            Keep((MathF.Min(MathF.Min(px, qx), MathF.Min(px, qx) - nx * back), MathF.Min(MathF.Min(pz, qz), MathF.Min(pz, qz) - nz * back),
+                                  MathF.Max(MathF.Max(px, qx), MathF.Max(px, qx) - nx * back), MathF.Max(MathF.Max(pz, qz), MathF.Max(pz, qz) - nz * back)), KeepDoor);
+                        }
                         if (door)
                         {
                             float cx = w.X + dx * (o.U + o.Width * 0.5f), cz = w.Z + dz * (o.U + o.Width * 0.5f), d = w.Thickness * 0.5f + 0.5f;
@@ -380,6 +392,7 @@ namespace UnturnedSim
                     case RoomKind.Workshop: Workshop(); break;
                     case RoomKind.Shop: Shop(); break;
                     case RoomKind.Hall: Hall(); break;
+                    case RoomKind.BreakRoom: BreakRoom(); break;
                 }
                 Jitter();
             }
@@ -407,7 +420,8 @@ namespace UnturnedSim
                     foreach (var (i, j) in old) _p.State[i, j] = FloorPlan.Free;
                     Recount(before);
                     var after = FurnitureCatalog.Footprint(m.Name, nx, nz, nyaw);
-                    bool ok = Clear(m.Name, nx, nz, nyaw) && !HitsPiece(m.Name, nx, nz, nyaw, m) && !_p.StairRects.Any(r => Overlaps(after, r));
+                    bool ok = Clear(m.Name, nx, nz, nyaw) && !HitsPiece(m.Name, nx, nz, nyaw, m) && !_p.StairRects.Any(r => Overlaps(after, r))
+                              && !InSwing(after, m);
                     if (ok)
                     {
                         var (ox, oz, oyaw) = (m.X, m.Z, m.Yaw);
@@ -450,6 +464,11 @@ namespace UnturnedSim
                 }
                 return n > 0;
             }
+
+            /// <summary>Is a box in the swing of a door or drawer already in the room -- exactly: a sliver of one falls between
+            /// the grid's cell centres, and a turned couch found the 3 cm in front of a fridge.</summary>
+            bool InSwing((float X0, float Z0, float X1, float Z1) a, FurniturePlan except)
+                => _mine.Any(o => o != except && o.On == null && !o.Mounted && SwingZone(o.Name, o.X, o.Z, o.Yaw) is { } sz && Overlaps(a, sz));
 
             /// <summary>Does a piece at (x, z, yaw) run into one already in this room?</summary>
             bool HitsPiece(string name, float x, float z, float yaw, FurniturePlan except = null)
@@ -587,6 +606,7 @@ namespace UnturnedSim
                     // the grid is 0.1 m: a sliver of overlap with a piece already in, or with the stairs, can fall between
                     // its cell centres
                     if (HitsPiece(name, x, z, yaw)) continue;
+                    if (InSwing(fp, null)) continue;
                     if (_p.StairRects.Any(r => Overlaps(fp, r))) continue;
                     var swing = SwingZone(name, x, z, yaw);
                     if (swing != null && (!SwingClear(swing.Value) || _mine.Any(o => o.On == null && !o.Mounted && Overlaps(swing.Value, o.Footprint)))) continue;
@@ -858,9 +878,17 @@ namespace UnturnedSim
                 return Against(name, Side.Back).Where(p => MathF.Abs(p.Yaw - yaw) < 1f).Where(p =>
                 {
                     float ahead = (p.X - c.X) * fx + (p.Z - c.Z) * fz, side = (p.X - c.X) * rx + (p.Z - c.Z) * rz;
-                    // straight ahead of it (strawberry: "tv needs alignment with the couch")
-                    return ahead >= TvNear && ahead <= far && MathF.Abs(side) <= TvOffAxis && Sight(c.X + fx * 0.3f, c.Z + fz * 0.3f, p.X, p.Z, c, except);
+                    // straight ahead of it (strawberry: "tv needs alignment with the couch"), and not on a wall the stairs run
+                    // along ("tvs shouldnt be allowed on walls occupied by stairs")
+                    return ahead >= TvNear && ahead <= far && MathF.Abs(side) <= TvOffAxis && !ByStairs(name, p) && Sight(c.X + fx * 0.3f, c.Z + fz * 0.3f, p.X, p.Z, c, except);
                 });
+            }
+            /// <summary>Is a piece against a wall the stairs stand along -- a flight, a landing or a hole within a metre of it?</summary>
+            bool ByStairs(string name, (float X, float Z, float Yaw) p)
+            {
+                var fp = FurnitureCatalog.Footprint(name, p.X, p.Z, p.Yaw);
+                var near = (fp.X0 - StairWallReach, fp.Z0 - StairWallReach, fp.X1 + StairWallReach, fp.Z1 + StairWallReach);
+                return _p.StairRects.Any(r => Overlaps(near, r));
             }
             bool WallTv(FurniturePlan c)
             {
@@ -938,9 +966,13 @@ namespace UnturnedSim
             {
                 var (cx, cz) = Centre();
                 bool big = _room.Rects.Min(r => Math.Min(r.X1 - r.X0, r.Z1 - r.Z0)) * Cell >= 6.5f;
-                string table = big ? "Table_Wood_1" : "Table_Wood_0";
-                var t = PutWithRoom(table, 1.0f, cx, cz);
-                if (t == null && big) t = PutWithRoom(table = "Table_Wood_0", 1.0f, cx, cz);
+                // the round one in a big room, else the long one; tight, the small square one, and then a little less room round
+                FurniturePlan t = null;
+                foreach (var (table, room) in new[] { ("Table_Wood_1", 1.0f), ("Table_Wood_0", 1.0f), ("Table_Wood_3", 1.0f), ("Table_Wood_3", 0.8f) })
+                {
+                    if (table == "Table_Wood_1" && !big) continue;
+                    if ((t = PutWithRoom(table, room, cx, cz)) != null) break;
+                }
                 if (t == null) return;
                 // each way of seating it in turn, actually placed (a chair the room's walk cannot spare is refused only
                 // then), keeping the first that seats everyone or else the one that seats the most
@@ -1421,6 +1453,23 @@ namespace UnturnedSim
                     }
                     foreach (var g in loose) Remove(g);
                 }
+            }
+
+            /// <summary>A business's staff room: a kitchenette -- the fridge and the sink side by side on a wall -- a table with
+            /// chairs, and in a big one a couch.</summary>
+            void BreakRoom()
+            {
+                var runs = new List<(int Nx, int Nz, float Face, float Lo, float Hi)>();
+                foreach (var (nx, nz) in Fronts)
+                    foreach (var (face, lo, hi) in Faces(nx, nz)) runs.Add((nx, nz, face, lo, hi));
+                runs = _rng.Keyed(runs).OrderByDescending(x => x.Item.Hi - x.Item.Lo).ThenBy(x => x.Key).Select(x => x.Item).ToList();
+                if (Row(runs, new[] { "Fridge_0", "Counter_1" }) == null)
+                {
+                    Put("Counter_1", Against("Counter_1", Side.Back));
+                    Put("Fridge_0", Against("Fridge_0", Side.Back));
+                }
+                Dining();
+                if (_area >= 30f) Put("Couch_1", Against("Couch_1", Side.Back), (x, z, yaw) => NearestDoor(x, z));
             }
 
             /// <summary>A coat stand by the front door, if the hall has it.</summary>
