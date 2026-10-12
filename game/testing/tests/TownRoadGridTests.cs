@@ -23,8 +23,13 @@ namespace UnturnedGodot.Testing
         {
             var rf = new RoadField();
             World.AddChild(rf);
-            rf.DebugSetMaterialWidth(0, 9.2f);    // Highway_0 -- main street, the generator's default
-            rf.DebugSetMaterialWidth(1, 6.9f);    // Highway_1 -- side street
+            rf.DebugSetMaterialWidth(0, 9.2f);    // Highway_0 -- the four-lane main street
+            rf.DebugSetMaterialWidth(1, 6.9f);    // Highway_1
+            rf.DebugSetMaterialWidth(6, 4.6f);    // White_0 -- the two-lane side street, the grid's default
+            // ⚠ EVERY MATERIAL THE GENERATOR MIGHT USE. A material with no width reads back 0, which makes a
+            // zero-width road: no setback at a junction, no pavement, nothing. The defaults changed to a
+            // two-class town (0 and 6) and this rig still only knew 0 and 1 -- the test caught it as "every
+            // arm stops short of its node: nearest 0.0 m back", which is precisely what it is for.
             // ⚠ The rig must give a width to the materials the GENERATOR actually uses. A material with no
             // width reads back 0, LayAlongRoad bails on `half <= 0`, and the pavement checks below would be
             // measuring nothing at all.
