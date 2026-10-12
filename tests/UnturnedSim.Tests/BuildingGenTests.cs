@@ -51,6 +51,10 @@ namespace UnturnedSim.Tests
                         yield return new BuildingGenSpec { Seed = seed, Kind = kind, MaxFloors = 3, MaxRoomsPerFloor = 14, Depth = 5 + seed % 9,
                             Width = seed % 4 == 0 ? 0 : 16 + seed % 19, FrontSide = seed % 6 == 0 ? Sides.West : Sides.None, BackSide = seed % 8 == 2 ? Sides.North : Sides.None };
                     }
+                    // fitted to a town plot's building zone (cow tools' plots: small 4x5 ... large and corner 7x7), so every
+                    // check here also runs over the compromises FitPlot makes -- smaller rooms, more floors, fewer rooms
+                    var (pw, pd) = Plots[seed % Plots.Length];
+                    yield return new BuildingGenSpec { Seed = seed, Kind = kind, MinRooms = 5, MaxFloors = 2, MaxRoomsPerFloor = 6, Width = pw, Depth = pd, FitPlot = true };
                 }
             // and, as wide as UG_APT_SEEDS asks, blocks of flats of every shape -- through EVERY check here, not only the
             // flats' own (each is a second or so to build and furnish: the default is none)
@@ -66,9 +70,13 @@ namespace UnturnedSim.Tests
             }
         }
         static int ExtraFlatSeeds => int.TryParse(Environment.GetEnvironmentVariable("UG_APT_SEEDS"), out var n) ? n : 0;
+        /// <summary>Town plots' building zones in cells (cow tools, Staging-Nyatools 40bc92dd): small, medium, large, corner,
+        /// shop, apartments.</summary>
+        static readonly (int W, int D)[] Plots = { (4, 5), (5, 6), (7, 7), (7, 7), (4, 6), (8, 7) };
 
         static List<(BuildingGenSpec Spec, BuildingGenResult Res)> _all;
-        static List<(BuildingGenSpec Spec, BuildingGenResult Res)> All() => _all ??= Specs().Select(s => (s, BuildingGen.Generate(s))).ToList();
+        // (a fitted building answers to the spec it was drawn from)
+        static List<(BuildingGenSpec Spec, BuildingGenResult Res)> All() => _all ??= Specs().Select(s => BuildingGen.Generate(s) is var r ? (r.Fitted ?? s, r) : default).ToList();
 
         static int FloorOf(WallPlan w) => (int)MathF.Round(w.Y / Storey);
         static (float X, float Z) Start(WallPlan w) => (w.X, w.Z);
@@ -156,6 +164,10 @@ namespace UnturnedSim.Tests
             => (parent == RoomKind.Bedroom && child is RoomKind.Closet or RoomKind.Bathroom)
             || (parent == RoomKind.Office && child is RoomKind.Closet or RoomKind.Bathroom or RoomKind.Storage)
             || (parent == RoomKind.Garage && child == RoomKind.Storage);
+
+        /// <summary>Does a plot-fitted building say a room of this kind came out short (of `what`, or of anything)?</summary>
+        static bool ShortBy(BuildingGenResult r, RoomKind k, string what = null)
+            => r.Notes.Any(n => n.StartsWith("fitted the") && n.Contains("but short of") && n.Contains(what == null ? $"{k}: " : $"{k}: {what}"));
 
         static string Name(BuildingGenSpec s) => $"{s.Kind} seed {s.Seed} (min {s.MinRooms}, floors {s.MinFloors}-{s.MaxFloors}, {s.MaxRoomsPerFloor}/floor)";
 
@@ -283,6 +295,47 @@ namespace UnturnedSim.Tests
                                    .GroupBy(x => x).OrderByDescending(g => g.Count()))
                 TestContext.Progress.WriteLine($"[gen-spec]   {g.Count()} x \"{g.Key.shape}...\" ({g.Key.spec})");
             Assert.That(cases, Is.GreaterThan(500));
+            Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(10)));
+        }
+
+        // P: a building fitted to a plot fits it (cow tools: "keep the zones and make the generator fit them") -- every
+        // town zone, the kinds it holds, many seeds and asks -- and says what it gave up. Teeth: the same specs drawn without
+        // FitPlot, where the width is only a floor, must mostly NOT fit, or this test proves nothing.
+        // BREAK IT: drop the Rect lever (L/T outlines need a block wider than the wing: small plots fail); stop the compact
+        // ladder at 2 (small and shop plots fail); accept a plan by its PlanOnly measure without drawing it in full.
+        [Test]
+        public void FittedBuildingsFitTheirPlots()
+        {
+            var zones = new (string Name, int W, int D, BuildingKind Kind)[]
+            {
+                ("small", 4, 5, BuildingKind.Residential), ("medium", 5, 6, BuildingKind.Residential), ("large", 7, 7, BuildingKind.Residential),
+                ("corner", 7, 7, BuildingKind.Commercial), ("shop", 4, 6, BuildingKind.Commercial), ("apartments", 8, 7, BuildingKind.Residential),
+            };
+            var bad = new List<string>();
+            int cases = 0, unfitted = 0, gaveUp = 0, filled = 0;
+            foreach (var z in zones)
+                for (int seed = 0; seed < 30; seed++)
+                {
+                    var spec = new BuildingGenSpec { Seed = seed, Kind = z.Kind, MinRooms = 4 + seed % 4, MaxFloors = 1 + seed % 3, MaxRoomsPerFloor = 4 + seed % 3,
+                                                     Width = z.W, Depth = z.D, FitPlot = true, Porches = seed % 5 == 0 ? PorchChoice.Front : PorchChoice.None };
+                    var r = BuildingGen.Generate(spec);
+                    cases++;
+                    string n = $"{z.Name} {z.W}x{z.D} {z.Kind} seed {seed} (min {spec.MinRooms}, {spec.MaxFloors} floors, {spec.MaxRoomsPerFloor}/floor)";
+                    if (r.CellsX > z.W || r.CellsZ > z.D) bad.Add($"{n}: {r.CellsX}x{r.CellsZ}");
+                    var note = r.Notes.LastOrDefault(x => x.StartsWith("fitted the"));
+                    if (note == null) bad.Add($"{n}: no note of the fit");
+                    else if (r.Fitted != null && note.Contains(':')) gaveUp++;
+                    if (r.CellsX == z.W && r.CellsZ == z.D) filled++;
+                    // the full build is the plan that was measured: same footprint
+                    if (r.Fitted != null && BuildingGen.Generate(r.Fitted) is var again && (again.CellsX != r.CellsX || again.CellsZ != r.CellsZ))
+                        bad.Add($"{n}: measured {r.CellsX}x{r.CellsZ}, drawn again {again.CellsX}x{again.CellsZ}");
+                    spec.FitPlot = false;
+                    var loose = BuildingGen.Generate(spec);
+                    if (loose.CellsX > z.W || loose.CellsZ > z.D) unfitted++;
+                }
+            TestContext.Progress.WriteLine($"[gen-fit] {cases} plots: {cases - bad.Count} fit ({filled} fill the zone exactly, {gaveUp} gave something up); without FitPlot {unfitted} of {cases} would not; {bad.Count} violations{(bad.Count > 0 ? ": " + bad[0] : "")}");
+            Assert.That(cases, Is.EqualTo(180));
+            Assert.That(unfitted, Is.GreaterThan(cases / 2), "the plots are not tight enough to test fitting");
             Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(10)));
         }
 
@@ -765,7 +818,7 @@ namespace UnturnedSim.Tests
         public void OpeningsSuitTheRoom()
         {
             var bad = new List<string>();
-            int lit = 0, vented = 0, vehicle = 0, shops = 0, endFronts = 0, blank = 0, stockDoors = 0, clear = 0;
+            int lit = 0, vented = 0, vehicle = 0, shops = 0, endFronts = 0, blank = 0, stockDoors = 0, clear = 0, shortExcused = 0;
             foreach (var (spec, res) in All())
             {
                 var outer = res.Walls.Where(w => w.Kind == SurfaceKind.Wall && w.Thickness == BuildingGen.Ext).ToList();
@@ -779,7 +832,7 @@ namespace UnturnedSim.Tests
                     // (a room whose every outside wall faces a side asked to have no windows is let off)
                     var faces = outer.Where(w => FloorOf(w) == g.Floor && SpanOf(g, w) > 0.01f && w.Openings.Count >= 0).Select(FaceOf).Distinct().ToList();
                     bool blind = spec.NoWindows != Sides.None && faces.Count > 0 && faces.All(fc => (fc & spec.NoWindows) != 0);
-                    if (BuildingGen.Habitable(g.Kind) && !blind) { if (os.Any(o => o.Glazed)) lit++; else bad.Add($"{n} has no window"); }
+                    if (BuildingGen.Habitable(g.Kind) && !blind) { if (os.Any(o => o.Glazed)) lit++; else if (ShortBy(res, g.Kind, "window")) shortExcused++; else bad.Add($"{n} has no window"); }
                     // (a bathroom tucked inside, behind the room it opens off, has no outside wall to vent through)
                     // (and an end wall with the floor below's roof leaning on it carries no window: BuildWalls)
                     bool Room(int fl, int x, int z) => res.Layout.Any(o => o.Floor == fl && o.HasCell(x, z));
@@ -790,7 +843,7 @@ namespace UnturnedSim.Tests
                     // and none at all on those sides
                     foreach (var (w, o) in mine) if (o.Glazed && (FaceOf(w) & spec.NoWindows) != 0) bad.Add($"{n} has a window on its {FaceOf(w)} side, asked to have none");
                     if ((g.Kind == RoomKind.Garage || g.Kind == RoomKind.Warehouse) && g.Floor == 0)
-                    { if (os.Any(o => o.Archetype == BuildingGen.ArchGarage)) vehicle++; else bad.Add($"{n} has no vehicle door"); }
+                    { if (os.Any(o => o.Archetype == BuildingGen.ArchGarage)) vehicle++; else if (ShortBy(res, g.Kind, "vehicle door")) shortExcused++; else bad.Add($"{n} has no vehicle door"); }
                     if (g.Kind == RoomKind.Shop && g.Floor == 0 && spec.Kind == BuildingKind.Commercial)
                     {
                         // its street door in its frontage: an end wall where it has one, so it runs back from the street
@@ -830,7 +883,8 @@ namespace UnturnedSim.Tests
                         }
                 }
             }
-            TestContext.Progress.WriteLine($"[gen-suit] {lit} habitable rooms lit, {vented} bathrooms vented, {vehicle} vehicle doors, {shops} shopfronts ({endFronts} in an end wall), {blank} closets/stores blank ({stockDoors} stores with only their back door), {clear} outside openings checked clear of flights; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
+            TestContext.Progress.WriteLine($"[gen-suit] {lit} habitable rooms lit, {vented} bathrooms vented, {vehicle} vehicle doors, {shops} shopfronts ({endFronts} in an end wall), {blank} closets/stores blank ({stockDoors} stores with only their back door), {clear} outside openings checked clear of flights; {shortExcused} rooms short of a window or vehicle door in plot-fitted buildings that say so; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
+            Assert.That(shortExcused, Is.LessThanOrEqualTo(All().Count(x => x.Spec.FitPlot) / 20), "plot-fitted buildings often come out without windows");
             Assert.That(lit, Is.GreaterThan(500));
             Assert.That(vented, Is.GreaterThan(100));
             Assert.That(vehicle, Is.GreaterThan(50));
@@ -1248,7 +1302,7 @@ namespace UnturnedSim.Tests
             var bad = new List<string>();
             int pieces = 0, ceilingLights = 0, rooms = 0, walkedRooms = 0, beds = 0, desks = 0, couches = 0, tvs = 0, chairs = 0, kitchensFull = 0, wallPieces = 0, swung = 0;
             int wallSets = 0, crts = 0, lKitchens = 0, islands = 0, freeFridges = 0, gondolas = 0, movable = 0, turned = 0, shopsWithShelves = 0, shopsWithRows = 0;
-            var missing = new Dictionary<string, int>(); var kinds = new Dictionary<RoomKind, int>();
+            var missing = new Dictionary<string, int>(); var kinds = new Dictionary<RoomKind, int>(); int shortExcused = 0;
             // (a plain counter is worktop, reached along its run: the one in an L's corner is a blind corner)
             bool Use(string n) => !(n.StartsWith("Chair") || n.StartsWith("Lamp") || n.StartsWith("Barrel") || n.StartsWith("Crate") || n.StartsWith("Cardboard")
                                     || n.StartsWith("Propane") || n.StartsWith("Pallet") || n.StartsWith("Coat") || n == "Counter_0");
@@ -1431,7 +1485,14 @@ namespace UnturnedSim.Tests
                         kinds[room.Kind] = kinds.GetValueOrDefault(room.Kind) + 1;
                         // what makes the room one
                         bool Has(params string[] ns) => here.Any(m => m.Room == room && ns.Any(n => m.Name.StartsWith(n)));
-                        void Need(string what, bool ok) { if (!ok) missing[$"{room.Kind} {what}"] = missing.GetValueOrDefault($"{room.Kind} {what}") + 1; }
+                        // (a building squeezed into a plot that says which of its rooms came out short is excused those --
+                        // counted, and bounded below)
+                        void Need(string what, bool ok)
+                        {
+                            if (ok) return;
+                            if (ShortBy(res, room.Kind)) shortExcused++;
+                            else missing[$"{room.Kind} {what}"] = missing.GetValueOrDefault($"{room.Kind} {what}") + 1;
+                        }
                         switch (room.Kind)
                         {
                             case RoomKind.Bedroom: Need("bed", Has("Bed")); break;
@@ -1629,7 +1690,8 @@ namespace UnturnedSim.Tests
                 }
             }
             int Of(RoomKind k) => kinds.GetValueOrDefault(k);
-            TestContext.Progress.WriteLine($"[furn] {pieces} pieces in {walkedRooms} of {rooms} rooms; {beds} beds, {desks} desk chairs, {couches} couches ({tvs} with a television they can watch: {wallSets} on the wall, {crts} on a table), {chairs} chairs, {wallPieces} pieces backed to a wall ({islands} island counters), {swung} doors and drawers with room to open, kitchens {lKitchens} L, {freeFridges} with the fridge on its own; {gondolas} gondolas ({shopsWithRows} of {shopsWithShelves} shops in aligned rows), {turned} of {movable} tables, chairs and couches a little off square, {kitchensFull} of {Of(RoomKind.Kitchen)} kitchens with fridge, sink and stove; missing: {(missing.Count == 0 ? "nothing" : string.Join(", ", missing.OrderByDescending(kv => kv.Value).Select(kv => $"{kv.Value} {kv.Key}")))}; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
+            TestContext.Progress.WriteLine($"[furn] {pieces} pieces in {walkedRooms} of {rooms} rooms; {beds} beds, {desks} desk chairs, {couches} couches ({tvs} with a television they can watch: {wallSets} on the wall, {crts} on a table), {chairs} chairs, {wallPieces} pieces backed to a wall ({islands} island counters), {swung} doors and drawers with room to open, kitchens {lKitchens} L, {freeFridges} with the fridge on its own; {gondolas} gondolas ({shopsWithRows} of {shopsWithShelves} shops in aligned rows), {turned} of {movable} tables, chairs and couches a little off square, {kitchensFull} of {Of(RoomKind.Kitchen)} kitchens with fridge, sink and stove; missing: {(missing.Count == 0 ? "nothing" : string.Join(", ", missing.OrderByDescending(kv => kv.Value).Select(kv => $"{kv.Value} {kv.Key}")))} ({shortExcused} more in plot-fitted buildings that say so); {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
+            Assert.That(shortExcused, Is.LessThanOrEqualTo(All().Count(x => x.Spec.FitPlot) / 4), "plot-fitted buildings often come out short of what their rooms are for");
             foreach (var g in bad.GroupBy(b => System.Text.RegularExpressions.Regex.Replace(b.Substring(b.IndexOf(':') + 1), @"[\d.,()-]+", "#")).OrderByDescending(g => g.Count()).Take(12))
                 TestContext.Progress.WriteLine($"[furn]   {g.Count()} x {g.Key.Trim()} -- e.g. {g.First()}");
             Assert.That(pieces, Is.GreaterThan(3000));

@@ -1041,8 +1041,9 @@ namespace UnturnedSim
                 var (cx, cz) = Centre();
                 bool big = _room.Rects.Min(r => Math.Min(r.X1 - r.X0, r.Z1 - r.Z0)) * Cell >= 6.5f;
                 // the round one in a big room, else the long one; tight, the small square one, and then a little less room round
+                // -- down to a chair's depth, in a small house's kitchen-diner with its walk to three doors across it
                 FurniturePlan t = null;
-                foreach (var (table, room) in new[] { ("Table_Wood_1", 1.0f), ("Table_Wood_0", 1.0f), ("Table_Wood_3", 1.0f), ("Table_Wood_3", 0.8f) })
+                foreach (var (table, room) in new[] { ("Table_Wood_1", 1.0f), ("Table_Wood_0", 1.0f), ("Table_Wood_3", 1.0f), ("Table_Wood_3", 0.8f), ("Table_Wood_3", 0.6f) })
                 {
                     if (table == "Table_Wood_1" && !big) continue;
                     if ((t = PutWithRoom(table, room, cx, cz)) != null) break;
@@ -1149,7 +1150,20 @@ namespace UnturnedSim
                 if (!freeFridge) tries.Add(() => RunWithOwnFridge(runs));
                 if (!tryL) tries.Add(() => Done(L(runs, false)) || Done(L(runs, true)));
                 tries.Add(() => Pair(runs));
-                foreach (var t in tries) if (t()) break;
+                // and counter space to work on (strawberry: "require kitchens to have actual counter space"): a layout
+                // counts only with MinPrep plain counters in its run, topped up beside the sink and the stove where the
+                // wall goes on; the plainer layouts get their turn before any kitchen goes without, and only a kitchen
+                // too small for any of them falls back to appliances alone
+                bool strict = true;
+                bool Attempt(Func<bool> t)
+                {
+                    int n0 = _mine.Count;
+                    if (!t()) return false;
+                    if (TopUp() || !strict) return true;
+                    foreach (var m in _mine.Skip(n0).ToList()) Remove(m);
+                    return false;
+                }
+                if (!tries.Any(Attempt)) { strict = false; tries.Any(Attempt); }
                 if (!_mine.Any(m => m.Name == "Oven_0")) Put("Oven_0", Against("Oven_0", Side.Back));
                 // a kitchen-diner's table stands where an island would
                 if (_res.KitchenDiner) Dining();
@@ -1160,6 +1174,39 @@ namespace UnturnedSim
                     if (_area >= 54f || (_area >= 30f && _rng.Chance(60))) Island();
                     if (_area >= 72f) Dining();
                 }
+            }
+
+            const int MinPrep = 2;
+
+            /// <summary>Plain counters (prep space) beside the run: a Counter_0 next to the sink, stove, dishwasher, fridge or
+            /// another counter, on the same wall line, until the kitchen has MinPrep of them. True when it has.</summary>
+            bool TopUp()
+            {
+                int Prep() => _mine.Count(m => m.Name == "Counter_0");
+                var cs = FurnitureCatalog.Sizes["Counter_0"];
+                for (bool grew = true; grew && Prep() < MinPrep;)
+                {
+                    grew = false;
+                    foreach (var p in _mine.Where(m => m.Name is "Counter_1" or "Oven_0" or "Disher_0" or "Fridge_0" or "Counter_0" && m.On == null).ToList())
+                    {
+                        var ps = FurnitureCatalog.Sizes[p.Name];
+                        var (rx, rz) = RightOf(p.Yaw); var (fx, fz) = FrontOf(p.Yaw);
+                        float back = ps.Y0 - cs.Y0;   // the counter's back on the same wall line as the piece's
+                        foreach (float off in new[] { ps.X1 - cs.X0 + 0.04f, ps.X0 - cs.X1 - 0.04f })
+                        {
+                            if (Prep() >= MinPrep) return true;
+                            if (Put("Counter_0", new[] { (p.X + rx * off + fx * back, p.Z + rz * off + fz * back, p.Yaw) }) != null) grew = true;
+                        }
+                    }
+                }
+                // a run that fills its stretch of wall (doors at both ends) has nothing beside it: then a counter against
+                // whatever wall is free, as near the sink and stove as there is one (within 6 m: across the room is not
+                // counter space)
+                var work = _mine.Where(m => m.Name is "Counter_1" or "Oven_0" or "Disher_0" or "Fridge_0").ToList();
+                double Near(float x, float z) => work.Count == 0 ? 0 : -work.Min(m => MathF.Abs(m.X - x) + MathF.Abs(m.Z - z));
+                while (Prep() < MinPrep && work.Count > 0
+                       && Put("Counter_0", Against("Counter_0", Side.Back).Where(c => Near(c.X, c.Z) > -6.0), (x, z, _) => Near(x, z)) != null) { }
+                return Prep() >= MinPrep;
             }
 
             /// <summary>Did a layout put in all three of fridge, sink and stove? If not, take out whatever it did.</summary>
@@ -1292,10 +1339,46 @@ namespace UnturnedSim
                             var (fx, fz) = FrontOf(yaw);
                             var a = FurnitureCatalog.Footprint("Counter_0", x, z, yaw);
                             var b = FurnitureCatalog.Footprint("Counter_0", x - fx * (cs.Y0 * -2f), z - fz * (cs.Y0 * -2f), yaw + 180f);
-                            var both = (MathF.Min(a.X0, b.X0) - 1.1f, MathF.Min(a.Z0, b.Z0) - 1.1f, MathF.Max(a.X1, b.X1) + 1.1f, MathF.Max(a.Z1, b.Z1) + 1.1f);
-                            if (Clear(both, 0f)) cands.Add((x, z, yaw));
+                            // the island itself on clear floor (out of every door's and appliance's swing), and a 1 m working
+                            // aisle round it to walls and furniture -- an aisle MAY hold an appliance's swing: that is where you
+                            // stand to open the oven. (It was 1.1 m of fully clear floor, which stacked on the oven's swing and
+                            // pushed every island 2 m off the run.)
+                            var isl = (X0: MathF.Min(a.X0, b.X0), Z0: MathF.Min(a.Z0, b.Z0), X1: MathF.Max(a.X1, b.X1), Z1: MathF.Max(a.Z1, b.Z1));
+                            var aisle = (isl.X0 - 1.0f, isl.Z0 - 1.0f, isl.X1 + 1.0f, isl.Z1 + 1.0f);
+                            if (Clear(isl, 0f) && Clear(aisle, 0f) is var roomy
+                                && (roomy || !_p.WallRects.Any(r => Overlaps(aisle, r)) && !_mine.Any(o => o.On == null && !o.Mounted && !o.Ceiling && Overlaps(aisle, o.Footprint))
+                                             && _room.Rects.Any(r => aisle.Item1 >= r.X0 * Cell && aisle.Item2 >= r.Z0 * Cell && aisle.Item3 <= r.X1 * Cell && aisle.Item4 <= r.Z1 * Cell)))
+                                cands.Add((x, z, yaw));
                         }
-                foreach (var (x, z, yaw) in cands.OrderBy(c => (c.Item1 - cx) * (c.Item1 - cx) + (c.Item2 - cz) * (c.Item2 - cz)).Take(20))
+                // beside the kitchen's working run, not in the middle of the floor (strawberry: "force the island counter
+                // to be in a more smarter spot, closer to the kitchen"): nearest the appliances and counters already
+                // placed, lying along the nearest of them, across the 1 m working aisle checked above
+                var work = _mine.Where(m => !m.Ceiling && (m.Name.StartsWith("Counter") || m.Name is "Fridge_0" or "Oven_0" or "Disher_0")).ToList();
+                (float Gap, int Cross, float Centre) Score((float X, float Z, float Yaw) c)
+                {
+                    var (fx, fz) = FrontOf(c.Yaw);
+                    var a = FurnitureCatalog.Footprint("Counter_0", c.X, c.Z, c.Yaw);
+                    var b = FurnitureCatalog.Footprint("Counter_0", c.X - fx * (cs.Y0 * -2f), c.Z - fz * (cs.Y0 * -2f), c.Yaw + 180f);
+                    var isl = (X0: MathF.Min(a.X0, b.X0), Z0: MathF.Min(a.Z0, b.Z0), X1: MathF.Max(a.X1, b.X1), Z1: MathF.Max(a.Z1, b.Z1));
+                    float centre = (c.X - cx) * (c.X - cx) + (c.Z - cz) * (c.Z - cz);
+                    if (work.Count == 0) return (0f, 0, centre);
+                    var near = work.Select(m =>
+                    {
+                        var f = m.Footprint;
+                        float dx = MathF.Max(0f, MathF.Max(f.X0 - isl.X1, isl.X0 - f.X1)), dz = MathF.Max(0f, MathF.Max(f.Z0 - isl.Z1, isl.Z0 - f.Z1));
+                        return (d: MathF.Sqrt(dx * dx + dz * dz), m);
+                    }).OrderBy(t => t.d).First();
+                    // two counters back to back are 1.5 m wide but 2.2 m deep, so the island LIES ALONG the run when its
+                    // counters face square to the run's (yaw 90 off), not the same way
+                    int cross = (int)MathF.Round(((c.Yaw - near.m.Yaw) % 180f + 180f) % 180f) == 90 ? 0 : 1;
+                    return (MathF.Round(near.d * 4f) / 4f, cross, centre);   // to the quarter metre, then parallel, then central
+                }
+                // lying along the run beats a few centimetres: among the spots within 0.75 m of the closest, one parallel
+                // to the run first (an island pointing at the run reads as a barrier, not a workstation)
+                var scored = cands.Select(c => (c, sc: Score(c))).ToList();
+                float best = scored.Count > 0 ? scored.Min(t => t.sc.Gap) : 0f;
+                foreach (var (x, z, yaw) in scored.OrderBy(t => t.sc.Gap <= best + 0.75f ? 0 : 1).ThenBy(t => t.sc.Cross)
+                                                  .ThenBy(t => t.sc.Gap).ThenBy(t => t.sc.Centre).Select(t => t.c).Take(20))
                 {
                     var (fx, fz) = FrontOf(yaw);
                     var one = Put("Counter_0", new[] { (x, z, yaw) });

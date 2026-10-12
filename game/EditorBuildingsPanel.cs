@@ -546,8 +546,14 @@ namespace UnturnedGodot
             var types = new GridContainer { Columns = 4 };
             // the footprint, in metres on the 3 m lattice; 0 for as big as the rooms make it
             types.AddChild(Dim("width m")); types.AddChild(_genWidth = Spin(0, 150, 0, 52)); _genWidth.Step = 3;
-            types.AddChild(Dim("depth m")); types.AddChild(_genDepth = Spin(0, 60, 0, 52)); _genDepth.Step = 3;
-            _genWidth.TooltipText = _genDepth.TooltipText = "the ground floor's footprint, metres (3 m cells); 0: as big as its rooms make it";
+            types.AddChild(Dim("depth m"));
+            // (the fit box beside the depth, not on a row of its own: this panel does not scroll)
+            var depthRow = new HBoxContainer();
+            depthRow.AddChild(_genDepth = Spin(0, 60, 0, 52)); _genDepth.Step = 3;
+            depthRow.AddChild(_genFit = new CheckBox { Text = "fit", FocusMode = FocusModeEnum.None,
+                TooltipText = "the footprint is a plot to fit inside: smaller rooms, more floors or fewer rooms before it grows past it" });
+            types.AddChild(depthRow);
+            _genWidth.TooltipText = _genDepth.TooltipText = "the ground floor's footprint, metres (3 m cells); 0: as big as its rooms make it. Without fit, its rooms may make it bigger";
             // the doors' sides and the sides with no windows (north is +Z, as the roof tools have it)
             OptionButton SidePick(string tip)
             {
@@ -612,6 +618,7 @@ namespace UnturnedGodot
         OptionButton _genKind;
         SpinBox _genSeed, _genMinRooms, _genPerFloor, _genMinFloors, _genMaxFloors, _genWidth, _genDepth;
         OptionButton _genFront, _genBack, _genShape, _genPorch, _genChimney;
+        CheckBox _genFit;
         readonly System.Collections.Generic.Dictionary<Sides, CheckBox> _genNoWin = new();
         readonly System.Collections.Generic.Dictionary<RoomKind, SpinBox> _genMin = new();
 
@@ -630,6 +637,7 @@ namespace UnturnedGodot
                 MaxRoomsPerFloor = (int)_genPerFloor.Value,
                 Width = (int)System.Math.Round(_genWidth.Value / BuildingGen.Cell),
                 Depth = (int)System.Math.Round(_genDepth.Value / BuildingGen.Cell),
+                FitPlot = _genFit.ButtonPressed,
                 FrontSide = (Sides)_genFront.GetSelectedId(),
                 BackSide = (Sides)_genBack.GetSelectedId(),
                 Shape = (FootprintShape)_genShape.GetSelectedId(),
