@@ -1164,7 +1164,10 @@ namespace UnturnedSim
                     return false;
                 }
                 if (!tries.Any(Attempt)) { strict = false; tries.Any(Attempt); }
-                if (!_mine.Any(m => m.Name == "Oven_0")) Put("Oven_0", Against("Oven_0", Side.Back));
+                // a kitchen too cut up by its doors for any run (a small house's, with three doors and a back door) still
+                // gets what it is for: the sink, the fridge and the stove, each on whatever wall it fits
+                foreach (var a in new[] { "Counter_1", "Fridge_0", "Oven_0" })
+                    if (!_mine.Any(m => m.Name == a)) Put(a, Against(a, Side.Back));
                 // a kitchen-diner's table stands where an island would
                 if (_res.KitchenDiner) Dining();
                 else
