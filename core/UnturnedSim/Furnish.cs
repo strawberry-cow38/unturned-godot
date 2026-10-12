@@ -1149,7 +1149,20 @@ namespace UnturnedSim
                 if (!freeFridge) tries.Add(() => RunWithOwnFridge(runs));
                 if (!tryL) tries.Add(() => Done(L(runs, false)) || Done(L(runs, true)));
                 tries.Add(() => Pair(runs));
-                foreach (var t in tries) if (t()) break;
+                // and counter space to work on (strawberry: "require kitchens to have actual counter space"): a layout
+                // counts only with MinPrep plain counters in its run, topped up beside the sink and the stove where the
+                // wall goes on; the plainer layouts get their turn before any kitchen goes without, and only a kitchen
+                // too small for any of them falls back to appliances alone
+                bool strict = true;
+                bool Attempt(Func<bool> t)
+                {
+                    int n0 = _mine.Count;
+                    if (!t()) return false;
+                    if (TopUp() || !strict) return true;
+                    foreach (var m in _mine.Skip(n0).ToList()) Remove(m);
+                    return false;
+                }
+                if (!tries.Any(Attempt)) { strict = false; tries.Any(Attempt); }
                 if (!_mine.Any(m => m.Name == "Oven_0")) Put("Oven_0", Against("Oven_0", Side.Back));
                 // a kitchen-diner's table stands where an island would
                 if (_res.KitchenDiner) Dining();
@@ -1160,6 +1173,39 @@ namespace UnturnedSim
                     if (_area >= 54f || (_area >= 30f && _rng.Chance(60))) Island();
                     if (_area >= 72f) Dining();
                 }
+            }
+
+            const int MinPrep = 2;
+
+            /// <summary>Plain counters (prep space) beside the run: a Counter_0 next to the sink, stove, dishwasher, fridge or
+            /// another counter, on the same wall line, until the kitchen has MinPrep of them. True when it has.</summary>
+            bool TopUp()
+            {
+                int Prep() => _mine.Count(m => m.Name == "Counter_0");
+                var cs = FurnitureCatalog.Sizes["Counter_0"];
+                for (bool grew = true; grew && Prep() < MinPrep;)
+                {
+                    grew = false;
+                    foreach (var p in _mine.Where(m => m.Name is "Counter_1" or "Oven_0" or "Disher_0" or "Fridge_0" or "Counter_0" && m.On == null).ToList())
+                    {
+                        var ps = FurnitureCatalog.Sizes[p.Name];
+                        var (rx, rz) = RightOf(p.Yaw); var (fx, fz) = FrontOf(p.Yaw);
+                        float back = ps.Y0 - cs.Y0;   // the counter's back on the same wall line as the piece's
+                        foreach (float off in new[] { ps.X1 - cs.X0 + 0.04f, ps.X0 - cs.X1 - 0.04f })
+                        {
+                            if (Prep() >= MinPrep) return true;
+                            if (Put("Counter_0", new[] { (p.X + rx * off + fx * back, p.Z + rz * off + fz * back, p.Yaw) }) != null) grew = true;
+                        }
+                    }
+                }
+                // a run that fills its stretch of wall (doors at both ends) has nothing beside it: then a counter against
+                // whatever wall is free, as near the sink and stove as there is one (within 6 m: across the room is not
+                // counter space)
+                var work = _mine.Where(m => m.Name is "Counter_1" or "Oven_0" or "Disher_0" or "Fridge_0").ToList();
+                double Near(float x, float z) => work.Count == 0 ? 0 : -work.Min(m => MathF.Abs(m.X - x) + MathF.Abs(m.Z - z));
+                while (Prep() < MinPrep && work.Count > 0
+                       && Put("Counter_0", Against("Counter_0", Side.Back).Where(c => Near(c.X, c.Z) > -6.0), (x, z, _) => Near(x, z)) != null) { }
+                return Prep() >= MinPrep;
             }
 
             /// <summary>Did a layout put in all three of fridge, sink and stove? If not, take out whatever it did.</summary>

@@ -320,7 +320,7 @@ namespace UnturnedSim
             RoomKind.LivingRoom => new Trait(12, 3, FloorPref.Ground, ArchWindow),
             RoomKind.DiningRoom => new Trait(9, 3, FloorPref.Ground, ArchWindow),
             RoomKind.Closet => new Trait(4, 2, FloorPref.Upper, -1),
-            RoomKind.Garage => new Trait(12, 3, FloorPref.GroundOnly, ArchGarage),
+            RoomKind.Garage => new Trait(4, 2, FloorPref.GroundOnly, ArchGarage),   // 2 x 2 cells: see MaxCells
             RoomKind.Workshop => new Trait(16, 4, FloorPref.GroundOnly, ArchWindow),
             RoomKind.Storage => new Trait(5, 2, FloorPref.Any, -1),
             RoomKind.Office => new Trait(9, 3, b == BuildingKind.Residential ? FloorPref.Any : FloorPref.Upper, ArchWindow),
@@ -977,8 +977,10 @@ namespace UnturnedSim
 
             // some doorways between two rooms you walk through are left open, and some of those are wide
             // (in houses: a business's rooms keep their doors -- a shop floor is not open to its back rooms)
+            // (dining room to kitchen always: strawberry, "prefer arches over doors for dining -> kitchen")
             foreach (var d in res.Doors)
-                if (kind == BuildingKind.Residential && d.B != null && AccessOf(d.A.Kind) == Access.Through && AccessOf(d.B.Kind) == Access.Through && rng.Chance(OpenDoorway))
+                if (kind == BuildingKind.Residential && d.B != null && AccessOf(d.A.Kind) == Access.Through && AccessOf(d.B.Kind) == Access.Through
+                    && (rng.Chance(OpenDoorway) | Pair(d.A.Kind, d.B.Kind, RoomKind.DiningRoom, RoomKind.Kitchen)))
                 {
                     d.Open = true;
                     // not wide into a small kitchen: its counters need the wall
@@ -1022,6 +1024,9 @@ namespace UnturnedSim
                     // (the kitchen and dining room stay in band A when anything else can go, and cross together when
                     // nothing else can, so they always share a band and can sit side by side)
                     var fromA = A.Where(r => r != host || A.Count(x => x == host) > 1).ToList();
+                    // (and the garage stays on the entrance side, band A, when anything else can cross: strawberry, "prefer
+                    // garage on the front door side of the house")
+                    if (fromA.Any(r => r != RoomKind.Garage)) fromA = fromA.Where(r => r != RoomKind.Garage).ToList();
                     bool KD(RoomKind r) => r == RoomKind.Kitchen || r == RoomKind.DiningRoom;
                     if (fromA.Any(r => !KD(r))) fromA = fromA.Where(r => !KD(r)).ToList();
                     if ((la > lb + 3 || B.Count == 0) && fromA.Count > 0 && A.Count > 1)
@@ -1119,7 +1124,9 @@ namespace UnturnedSim
                 {
                     var pair = r == RoomKind.Kitchen && here.Contains(RoomKind.DiningRoom) ? new[] { r, RoomKind.DiningRoom } : new[] { r };
                     int lenS = L + S.Sum(x => x.w) + pair.Sum(p => Width(p, sS)), lenN = N.Sum(x => x.w) + pair.Sum(p => Width(p, sN));
-                    foreach (var p in pair) if (lenS <= lenN) S.Add((p, Width(p, sS))); else N.Add((p, Width(p, sN)));
+                    // (a house's garage on the south side, the side its front faces once it is turned to the street)
+                    bool south = lenS <= lenN || (kind == BuildingKind.Residential && r == RoomKind.Garage);
+                    foreach (var p in pair) if (south) S.Add((p, Width(p, sS))); else N.Add((p, Width(p, sN)));
                 }
                 int w = Math.Max(Math.Max(Math.Max(L + S.Sum(x => x.w), N.Sum(x => x.w)), Math.Max(need, 4)), wantW);
                 var (nx, nl) = Cut(ref w, N.Sum(x => x.w));
@@ -1387,8 +1394,12 @@ namespace UnturnedSim
         }
 
         /// <summary>The most cells a small room may have: past it, a bathroom is a hall (strawberry: "try to clamp maximum
-        /// sizes for each room. seeing a lot of super bathrooms etc").</summary>
-        public static int MaxCells(RoomKind k) => k switch { RoomKind.Bathroom => 4, RoomKind.Closet => 4, RoomKind.Storage => 6, _ => int.MaxValue };
+        /// sizes for each room. seeing a lot of super bathrooms etc").
+        /// A garage is at most twice its vehicle door each way (strawberry: "clamp garage size to 2x the width of a garage
+        /// door hole, and 2x the depth"): 8.1 m by 7.6 m, which on the 3 m grid is two cells by two.</summary>
+        public static int MaxCells(RoomKind k) => k switch { RoomKind.Bathroom => 4, RoomKind.Closet => 4, RoomKind.Storage => 6, RoomKind.Garage => GarageCells * GarageCells, _ => int.MaxValue };
+        /// <summary>Cells a garage spans each way: twice the vehicle door's width and height, floored to whole cells.</summary>
+        public static readonly int GarageCells = (int)MathF.Floor(MathF.Min(2f * 4.05f, 2f * 3.80f) / Cell);
         /// <summary>The most cells any room of a kind should have: a small room's MaxCells, else twice its kind's size (a
         /// living room 24, a bedroom 18).</summary>
         public static int CapCells(RoomKind k, BuildingKind b) => MaxCells(k) < int.MaxValue ? MaxCells(k) : k == RoomKind.Hall || k == RoomKind.Stairwell ? int.MaxValue : 2 * TraitOf(k, b).Cells;
@@ -1421,6 +1432,31 @@ namespace UnturnedSim
                 bool south = r.Z0 == 0, north = r.Z1 == depth;
                 if (south == north) continue;   // not in an outer row (or the whole depth): leave it
                 int keep = Math.Max(1, Math.Min(d - 1, MaxCells(r.Kind) / wd));
+                // a garage keeps its OUTER rows -- the outside wall its vehicle door goes in -- and the strip on its inner
+                // side goes to the room across, or becomes a store room off the garage (a store opens off a garage)
+                if (r.Kind == RoomKind.Garage)
+                {
+                    var gIn = south ? (X0: r.X0, Z0: r.Z0 + keep, X1: r.X1, Z1: r.Z1) : (X0: r.X0, Z0: r.Z0, X1: r.X1, Z1: r.Z1 - keep);
+                    int gCells = (gIn.X1 - gIn.X0) * (gIn.Z1 - gIn.Z0);
+                    int gAcross = south ? r.Z1 : r.Z0 - 1;
+                    var gOwners = Enumerable.Range(r.X0, wd).Select(x => rs.FirstOrDefault(n => n != r && n.Floor == r.Floor && n.HasCell(x, gAcross))).Distinct().ToList();
+                    var gNb = gOwners.Count == 1 ? gOwners[0] : null;
+                    if (gNb != null && MaxCells(gNb.Kind) == int.MaxValue && gNb.Kind != RoomKind.Stairwell
+                        && (gNb.Kind == RoomKind.Hall || gNb.More.Count == 0 && (long)gNb.Cells + gCells <= (long)CapCells(gNb.Kind, kind) * 5 / 4))
+                        gNb.More.Add(gIn);
+                    else if (rs.Where(n => n != r && n.Floor == r.Floor && MaxCells(n.Kind) == int.MaxValue && n.Kind != RoomKind.Stairwell
+                                           && (n.Kind == RoomKind.Hall || n.More.Count == 0) && (n.X1 == r.X0 || n.X0 == r.X1)
+                                           && n.Z0 <= gIn.Z0 && n.Z1 >= gIn.Z1 && (long)n.Cells + gCells <= (long)CapCells(n.Kind, kind) * 5 / 4)
+                               .OrderBy(n => n.Kind == RoomKind.Hall ? 0 : 1).ThenBy(n => n.Cells).FirstOrDefault() is { } gSide)
+                        gSide.More.Add(gIn);   // (or the room beside it in its row takes that strip: an L round the garage's back)
+                    else if (gCells <= MaxCells(RoomKind.Storage) && gIn.Z1 - gIn.Z0 >= 1 && gIn.X1 - gIn.X0 >= 2
+                             && rs.Count(n => n.Floor == r.Floor && !n.Circulation) < perFloor
+                             && storeOk(r.Floor, rs.Count(n => n.Floor == r.Floor && n.Kind == RoomKind.Storage)))
+                        rs.Add(new GenRoom { Kind = RoomKind.Storage, Floor = r.Floor, X0 = gIn.X0, Z0 = gIn.Z0, X1 = gIn.X1, Z1 = gIn.Z1 });
+                    else continue;   // nothing can take it: the garage stays a row deep
+                    if (south) r.Z1 = r.Z0 + keep; else r.Z0 = r.Z1 - keep;
+                    continue;
+                }
                 // the strip behind it, along the outside wall
                 var strip = south ? (X0: r.X0, Z0: r.Z0, X1: r.X1, Z1: r.Z1 - keep) : (X0: r.X0 + 0, Z0: r.Z0 + keep, X1: r.X1, Z1: r.Z1);
                 int Pref(GenRoom n) => n.Kind is RoomKind.Bedroom or RoomKind.Office ? 0 : n.Kind == RoomKind.Hall ? 1 : 2;
@@ -1695,6 +1731,7 @@ namespace UnturnedSim
 
                 // the doors
                 var outDoors = new List<(bool AlongX, int Line, float At)>();
+                var vehicleDoors = new List<(bool AlongX, int Line, float At, float Half)>();   // placed so far on this floor
                 foreach (var d in res.Doors.Where(d => d.Floor == f))
                 {
                     if (d.B == null)
@@ -1777,8 +1814,13 @@ namespace UnturnedSim
                                    .Where(s => s.B - s.A > 0.1f).ToList();
                     // (its longest run that may have a window: a side asked to have none never takes the one vent or slit)
                     Sides SideOfRun(Run r) => g.Out(r.AlongX, r.Line, r.S0);
+                    // (a garage's: on the front door's own wall where it has a stretch of it, so the vehicle door faces the street)
+                    var frontDoor = res.Doors.FirstOrDefault(d => d.Role == DoorRole.Front && d.Floor == 0);
+                    bool OnFrontWall(Run r) => room.Kind == RoomKind.Garage && frontDoor != null && r.AlongX == frontDoor.AlongX && r.Line == frontDoor.Line
+                                               && (r.S1 - r.S0) * Cell >= ArchSizes[ArchGarage].W;
                     var mine = outside.Where(r => r.A == room && (r.AlongX || !((r.Line == ux0 && westUnder) || (r.Line == ux1 && eastUnder))))
                                       .OrderBy(r => (SideOfRun(r) & res.NoWindowSides) != 0 ? 1 : 0)
+                                      .ThenBy(r => OnFrontWall(r) ? 0 : 1)
                                       .ThenByDescending(r => r.S1 - r.S0).ThenBy(r => r.AlongX ? 0 : 1).First();
                     bool longest = mine.AlongX == run.AlongX && mine.Line == run.Line && mine.S0 == run.S0;
                     var arches = new List<(int Arch, float At, float Width)>();
@@ -1795,12 +1837,20 @@ namespace UnturnedSim
                             {
                                 for (int c = (int)MathF.Ceiling((at - half - 1f) / Cell); c * Cell <= at + half + 1f; c++) yield return c;
                             }
-                            bool Crowds(float at) => outDoors.Any(o => o.AlongX == run.AlongX && o.Line == run.Line && Near(at, gw * 0.5f).Intersect(Near(o.At, HalfDoor)).Any());
+                            // and off any corner a door of this floor is by, on whatever wall: a garage is two cells wide now,
+                            // so a centred vehicle door is within a metre of BOTH its corners and crowds the door into the
+                            // house; the 1.95 m of slack clears the one corner that has a door
+                            HashSet<(int, int)> Pts(bool ax, int line, float at, float half) => Near(at, half).Select(c => ax ? (c, line) : (line, c)).ToHashSet();
+                            var floorDoors = res.Doors.Where(d => d.Floor == f).ToList();
+                            bool Crowds(float at) => outDoors.Any(o => o.AlongX == run.AlongX && o.Line == run.Line && Near(at, gw * 0.5f).Intersect(Near(o.At, HalfDoor)).Any())
+                                                     || floorDoors.Any(d => Pts(run.AlongX, run.Line, at, gw * 0.5f).Overlaps(Pts(d.AlongX, d.Line, d.At, d.Width * 0.5f)))
+                                                     || vehicleDoors.Any(v => Pts(run.AlongX, run.Line, at, gw * 0.5f).Overlaps(Pts(v.AlongX, v.Line, v.At, v.Half)));
                             float mid = (span.A + span.B) * 0.5f, m = mid;
                             for (int k = 0; k * 0.25f <= (span.B - span.A - gw) * 0.5f; k++)
                                 if (!Crowds(mid - k * 0.25f)) { m = mid - k * 0.25f; break; }
                                 else if (!Crowds(mid + k * 0.25f)) { m = mid + k * 0.25f; break; }
                             arches.Add((ArchGarage, m, gw));
+                            vehicleDoors.Add((run.AlongX, run.Line, m, gw * 0.5f));
                             free = free.SelectMany(s => s == span ? new (float A, float B)[] { (s.A, m - gw * 0.5f - 0.3f), (m + gw * 0.5f + 0.3f, s.B) } : new[] { s })
                                        .Where(s => s.B - s.A > 0.1f).ToList();
                         }
