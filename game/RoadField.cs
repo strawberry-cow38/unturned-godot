@@ -417,6 +417,49 @@ namespace UnturnedGodot
             return road >= 0;
         }
 
+        /// <summary>How far INSIDE a carriageway a world point lies -- the deepest violation across EVERY
+        /// road, in plan.
+        ///
+        /// ⚠⚠ "NEAREST ROAD" CANNOT ANSWER THIS, and I shipped a probe that tried. A lamp post sited off
+        /// its own street's half width is ALWAYS nearest to that street and ALWAYS correctly clear of it;
+        /// the road it is actually standing in is the WIDER one it crosses, which is further away. The
+        /// nearest-spline query therefore reports "clear" for a pole planted in the middle of a highway,
+        /// and reported it just as happily with the fix disabled -- a control that cannot fail. Every road
+        /// has to be asked, because the offending road is by construction not the closest one.
+        /// ⚠ PLAN DISTANCE ONLY: a pole stands on a kerb 20 cm above the asphalt and must still count.</summary>
+        public bool DeepestRoadOverlap(Vector3 p, float margin, out int road, out float depth)
+        {
+            road = -1; depth = 0f;
+            const int Steps = 16;   // per segment, then an exact projection onto each chord
+            for (int ri = 0; ri < _roads.Count; ri++)
+            {
+                var r = _roads[ri];
+                float half = RoadHalfWidth(ri) + margin;
+                if (half <= 0f) continue;
+                float best = float.MaxValue;
+                int last = r.IsLoop ? r.Joints.Count - 1 : r.Joints.Count - 2;
+                for (int si = 0; si <= last; si++)
+                {
+                    var prev = SplinePos(r, si, 0f);
+                    for (int k = 1; k <= Steps; k++)
+                    {
+                        var cur = SplinePos(r, si, k / (float)Steps);
+                        float ax = prev.X, az = prev.Z, bx = cur.X, bz = cur.Z;
+                        float ex = bx - ax, ez = bz - az;
+                        float len2 = ex * ex + ez * ez;
+                        float t = len2 > 1e-6f ? Mathf.Clamp(((p.X - ax) * ex + (p.Z - az) * ez) / len2, 0f, 1f) : 0f;
+                        float dx = p.X - (ax + ex * t), dz = p.Z - (az + ez * t);
+                        float d = dx * dx + dz * dz;
+                        if (d < best) best = d;
+                        prev = cur;
+                    }
+                }
+                best = Mathf.Sqrt(best);
+                if (best < half && half - best > depth) { depth = half - best; road = ri; }
+            }
+            return road >= 0;
+        }
+
         /// <summary>Insert a joint at a point on a segment, so the curve can be split exactly there. Returns
         /// the new joint's index. Tangents are re-fitted across the road afterwards, which keeps the shape
         /// close to what it was -- an inserted joint should not visibly kink the road you branched off.</summary>

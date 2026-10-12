@@ -960,6 +960,7 @@ namespace UnturnedGodot
             if (parent == null || roads == null) return 0;
             var walk = proto ?? new EditorSidewalk();
             walk.KerbHeight = PavementKerb;   // ⚠ ONE number for the pavement and for whatever stands on it
+            walk.RoadGap = PavementGap;       // ...and one for how it meets the asphalt
             if (walk.GetParent() == null) parent.AddChild(walk);
             int made = 0;
             foreach (int r in Built)          // ⚠ OUR streets, not every road in the field
@@ -1006,6 +1007,11 @@ namespace UnturnedGodot
         /// rather than count meshes: a corner that curved the wrong way built just as many.</summary>
         public readonly List<(Vector3 node, List<Vector3> pts)> LastCorners = new();
 
+        /// <param name="gap">Unused; the kerb's offset comes from the walk's own RoadGap. ⚠ It was a second
+        /// copy of that number and they drifted the moment RoadGap changed: the straight runs moved to a 3 cm
+        /// LAP over the asphalt while every corner stayed on a 5 cm SETBACK, so each corner met its street
+        /// 8 cm out of line (strawberry: "slight misalignment with the sidewalk curves and the sidewalks").
+        /// One number, read from one place.</param>
         public int LaySidewalkCorners(Node3D parent, RoadField roads, EditorSidewalk walk, float gap = 0.05f)
         {
             if (parent == null || roads == null || walk == null) return 0;
@@ -1028,7 +1034,7 @@ namespace UnturnedGodot
                                     : Mathf.Min(L, TrimFor(roads, road, false, CornerRadius));
                     if (!roads.EvaluateAlong(road, t, out var pos, out var tan, snapTerrain: false)) continue;
                     var right = new Vector3(tan.Z, 0f, -tan.X).Normalized();
-                    float off = roads.RoadHalfWidth(road) + gap;
+                    float off = Mathf.Max(0.1f, roads.RoadHalfWidth(road) + walk.RoadGap);   // exactly what LayAlongRoad uses
                     foreach (int sgn in new[] { 1, -1 })
                     {
                         var e = pos + right * (off * sgn);
@@ -1212,6 +1218,23 @@ namespace UnturnedGodot
             int made = 0;
             var terr = Terrain.Active;
 
+            // ⚠ KNOWN-ANSWER CHECK BEFORE THE CENSUS BELOW IS WORTH READING. A junction centre and a road's
+            // own centreline are inside a carriageway by definition; a point a kilometre away is not. If
+            // these three do not read inside/inside/clear the census is measuring nothing, whatever it says.
+            if (roads.RoadCount > 0 && roads.JunctionCount > 0)
+            {
+                var jc = roads.JunctionPos(0);
+                bool a = roads.DeepestRoadOverlap(jc, 0.1f, out int ar, out float ad);
+                roads.EvaluateAlong(Built.Count > 0 ? Built[0] : 0, roads.RoadLength(Built.Count > 0 ? Built[0] : 0) * 0.5f,
+                                    out var mid, out _, snapTerrain: false);
+                bool b = roads.DeepestRoadOverlap(mid, 0.1f, out int br, out float bd);
+                bool c = roads.DeepestRoadOverlap(jc + new Vector3(1000f, 0f, 1000f), 0.1f, out _, out _);
+                GD.Print($"[towngrid] overlap calibration: junction centre road-only {(a ? $"inside {ar} by {ad:F2} m" : "clear")} " +
+                         $"+ patches {(ClearOfRoads(roads, jc) ? "CLEAR (WRONG)" : "on asphalt")}, " +
+                         $"road mid {(b ? $"INSIDE road {br} by {bd:F2} m" : "clear (WRONG)")}, " +
+                         $"far point {(c || !ClearOfRoads(roads, jc + new Vector3(1000f, 0f, 1000f)) ? "inside (WRONG)" : "clear")}");
+            }
+
             // ---- STREET LIGHTS, down each street's pavement.
             if (StreetLights)
                 foreach (int r in Built)
@@ -1232,6 +1255,7 @@ namespace UnturnedGodot
                         // a runway; staggering them is what a real street does and halves the count.
                         int side = (k % 2 == 0) ? 1 : -1;
                         var at = pos + right * (side * (half + RoadGapForLights + LampSetback));
+                        if (!PushClear(roads, ref at, right * side)) continue;
                         at.Y = Mathf.Max(pos.Y, terr != null ? terr.SampleHeight(at.X, at.Z) : pos.Y) + PavementKerb;
                         // the arm has to reach OVER the carriageway, so the lamp faces across the road
                         float yaw = ProcIsland.YawForDir(-right.X * side, right.Z * side);
@@ -1257,6 +1281,7 @@ namespace UnturnedGodot
                     var side = ((h >> 40) & 1UL) == 0 ? 1f : -1f;
                     var rr = new Vector3(tan.Z, 0f, -tan.X).Normalized();       // symmetric use: either kerb will do
                     var at = pos + rr * (side * (roads.RoadHalfWidth(r) + RoadGapForLights + HydrantSetback));
+                    if (!PushClear(roads, ref at, rr * side)) continue;
                     at.Y = Mathf.Max(pos.Y, terr != null ? terr.SampleHeight(at.X, at.Z) : pos.Y) + PavementKerb;
                     var hb = SplineTiling.SeatedBasis(terr, at, Unit(h, 32) * 360f, 6f, out _);
                     var hn = objs.Place(HydrantProp, at, hb);
@@ -1290,10 +1315,15 @@ namespace UnturnedGodot
                         var fwd = (atEnd ? tan : -tan).Normalized();      // the way a driver arrives
                         var right = RightOf(fwd);
                         float half = roads.RoadHalfWidth(road);
-                        float back = half + CornerKerbRadius + SignalBeforeCurve;
+                        // ⚠ THE WIDEST ARM AT THIS NODE, not this one: a mast set back by a 9 m street's
+                        // own half width stands in the 18 m road it is signalling.
+                        float widest = half;
+                        foreach (var (rr2, _) in edges) widest = Mathf.Max(widest, roads.RoadHalfWidth(rr2));
+                        float back = widest + CornerKerbRadius + SignalBeforeCurve;
                         // ⚠ ON THE DRIVER'S RIGHT, which is the kerb a mast stands on; its arm then reaches
                         // left over the lanes the drivers approaching here are in.
                         var at = node0 - fwd * back + right * (half + RoadGapForLights + 0.6f);
+                        if (!PushClear(roads, ref at, right)) continue;      // never stand it in a carriageway
                         at.Y = Mathf.Max(pos.Y, terr != null ? terr.SampleHeight(at.X, at.Z) : pos.Y) + PavementKerb;
                         // ⚠ THE MAST REACHES ACROSS THE ROAD, NOT BACK ALONG IT. Measured off the props:
                         // both run their POLE along local +Z and their ARM along local +Y, which the 270
@@ -1309,6 +1339,7 @@ namespace UnturnedGodot
                             // opposite of the mast's arm, which reaches across it. And it stands at the kerb,
                             // not out over the road.
                             var signAt = node0 - fwd * (back - 0.5f) + right * (half + RoadGapForLights + 0.7f);
+                            if (!PushClear(roads, ref signAt, right)) continue;
                             signAt.Y = Mathf.Max(pos.Y, terr != null ? terr.SampleHeight(signAt.X, signAt.Z) : pos.Y) + PavementKerb;
                             float syaw = ProcIsland.YawForDir(-fwd.X, fwd.Z);
                             var sb = SplineTiling.SeatedBasis(terr, signAt, syaw, 6f, out _);
@@ -1320,6 +1351,8 @@ namespace UnturnedGodot
                         if (tnode != null) { into?.Add(tnode); made++; }
                     }
                 }
+            GD.Print($"[towngrid] prop clearance: {_propTested} sited, {_propPushed} pushed out, " +
+                     $"{_propInRoad} LEFT STANDING IN A CARRIAGEWAY{(NoClear ? "  (UG_TOWNNOCLEAR control)" : "")}");
             return made;
         }
         /// <summary>UG_TOWNNOPROPS=1 drops every pole and hydrant: the control for "is that dark shape a
@@ -1339,7 +1372,11 @@ namespace UnturnedGodot
         /// <summary>How far outside the kerb's tangent point -- where the corner's curve begins -- a signal
         /// stands. Small: the mast belongs at the intersection, not up the street.</summary>
         public float SignalBeforeCurve = 1f;
-        float RoadGapForLights = 0.05f;
+        /// <summary>⚠ THE SAME OFFSET THE PAVEMENT USES, not a third copy of it. Props stand on the kerb, so
+        /// if this and EditorSidewalk.RoadGap disagree they stand off the edge of it.</summary>
+        float RoadGapForLights => PavementGap;
+        /// <summary>Mirrors EditorSidewalk.RoadGap; negative means the kerb laps the asphalt.</summary>
+        public float PavementGap = -0.03f;
 
         /// <summary>Pedestrian crossings on every approach of a junction (strawberry 2026-10-12: "add
         /// crossings at junctions and intersections, pushing the roads lines back to meet the crossing").
@@ -1446,6 +1483,48 @@ namespace UnturnedGodot
         /// left side driving". Check it against Godot's own axes rather than by rotating a vector in your
         /// head: forward is -Z and right is +X, and (0,0,-1) x (0,1,0) = (1,0,0).</summary>
         static Vector3 RightOf(Vector3 fwd) => new Vector3(-fwd.Z, 0f, fwd.X).Normalized();
+
+        /// <summary>Is this point clear of EVERY carriageway, not just the one it was measured from?
+        ///
+        /// ⚠⚠ A PROP SITED OFF ITS OWN ROAD'S WIDTH LANDS IN THE CROSSING ROAD. Each lamp, sign and mast was
+        /// placed at its own street's half width plus a setback -- fine in the middle of a block, and wrong
+        /// near a junction where the road it crosses is twice as wide: the pole ends up standing in the
+        /// other carriageway. bitvox: "some of the streetlight poles are on the street not the siding";
+        /// master: "traffic lights (and other stuff) should consider both roads' widths when placing".
+        /// One test, asked of every road, is the only way to be sure -- there is no arithmetic on one road's
+        /// width that can know about another's. See RoadField.DeepestRoadOverlap for why it must be EVERY
+        /// road and not the nearest one.</summary>
+        bool ClearOfRoads(RoadField roads, Vector3 at, float margin = 0.1f)
+        {
+            if (roads.DeepestRoadOverlap(at, margin, out _, out _)) return false;
+            // ⚠⚠ AND THE JUNCTION PATCHES, which are asphalt that NO ROAD SPLINE COVERS. Every arm is
+            // trimmed back from the node and the merged slab fills the middle, so a point in the middle of
+            // an intersection reads "clear of every road" -- the calibration proved it, junction centre
+            // "clear". That hole is exactly where a pole goes wrong: the pavement TURNS INWARD at the
+            // corner while the last lamp keeps the straight's lateral offset, so it carries on into the
+            // slab. Asking only about roads could never see it.
+            foreach (var pp in Patches) if (pp.DistanceTo(at.X, -at.Z) <= margin) return false;
+            return true;
+        }
+
+        /// <summary>Push a point away from the node until it is clear of every carriageway, or give up.</summary>
+        bool PushClear(RoadField roads, ref Vector3 at, Vector3 away, float margin = 0.1f)
+        {
+            // ⚠ THE CONTROL. UG_TOWNNOCLEAR=1 leaves the point exactly where its own road's width put it,
+            // so the census below MUST then report poles standing in the asphalt. A probe that reads zero
+            // both with and without the fix is measuring nothing -- it has to be able to fail.
+            if (NoClear) { _propTested++; if (!ClearOfRoads(roads, at, margin)) _propInRoad++; return true; }
+            _propTested++;
+            for (int i = 0; i < 24; i++)
+            {
+                if (ClearOfRoads(roads, at, margin)) { if (i > 0) _propPushed++; return true; }
+                at += away * 0.5f;
+            }
+            _propInRoad++;                 // gave up: do not place it, it would stand in the road
+            return false;
+        }
+        public static bool NoClear = System.Environment.GetEnvironmentVariable("UG_TOWNNOCLEAR") == "1";
+        int _propTested, _propInRoad, _propPushed;
 
         /// <summary>How far the pavement stands proud of the road.
         ///
