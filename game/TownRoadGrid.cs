@@ -147,6 +147,8 @@ namespace UnturnedGodot
         public bool UseNodePatches = System.Environment.GetEnvironmentVariable("UG_TOWNNOPATCH") != "1";
         /// <summary>The junction patches this grid produced, for the caller to build meshes from.</summary>
         public readonly List<SDG.Unturned.RoadPatch> Patches = new();
+        /// <summary>The node PAINT: each arm's lines carried into the junction, and the stop lines.</summary>
+        public readonly List<SDG.Unturned.RoadMark> Marks = new();
 
         /// <summary>A polyline with `a` metres taken off its start and `b` off its end, cut ON the line rather
         /// than at the nearest existing point -- a 12 m point spacing would otherwise round a 9 m cut to 12 or
@@ -232,7 +234,7 @@ namespace UnturnedGodot
         public Report Generate(RoadField roads, Func<float, float, float> heightAt, Func<float, float, bool> siteOk = null)
         {
             var rep = new Report();
-            Built.Clear(); _profiles.Clear();
+            Built.Clear(); _profiles.Clear(); Marks.Clear();
             if (roads == null || heightAt == null || Spacing < 4f || Extent < Spacing) return rep;
 
             int n = Mathf.FloorToInt(Extent / Spacing);
@@ -315,7 +317,7 @@ namespace UnturnedGodot
                         spokes.Add(new SDG.Unturned.InfiniteRoads.TownArm(xs, zs, hs, atEnd,
                                        roads.RoadHalfWidthOfMaterial(sp.Main ? MainMaterial : StreetMaterial)));
                     }
-                    if (SDG.Unturned.InfiniteRoads.TownNode(spokes, node.P.X, -node.P.Z, out var cuts, out var patch)
+                    if (SDG.Unturned.InfiniteRoads.TownNode(spokes, node.P.X, -node.P.Z, out var cuts, out var patch, out var marks)
                         && cuts != null && cuts.Length == here.Count)
                     {
                         for (int q = 0; q < here.Count; q++)
@@ -326,6 +328,7 @@ namespace UnturnedGodot
                             plan[si] = sp;
                         }
                         Patches.Add(patch);
+                        if (marks != null) Marks.AddRange(marks);
                         rep.Patched++;
                         done = true;
                     }
@@ -594,10 +597,63 @@ namespace UnturnedGodot
                         gapProbes++;
                     }
                 }
+            PaintPieces = BuildMarkMeshes(parent, fit);   // counted separately: paint is not pavement
             Log.Print($"[towngrid] patch/road seam: height {worst * 100f:0.0} cm, IN-PLAN GAP {worstGap * 100f:0.0} cm "
                     + $"over {probed}/{gapProbes} probes (surf {surf:0.000}, lift {PatchLift:0.000}) -- {worstWhy}; widest gap {gapWhy}");
             return made;
         }
+        /// <summary>The junction's painted lines: each arm's own markings carried on in from its cut, and a
+        /// stop line across every approach of a three-or-more-way (strawberry 2026-10-12: "add stop lines,
+        /// continue the road texture up to the stop lines").
+        ///
+        /// ⭐ PAINT, NOT MORE ASPHALT. The obvious reading of "continue the road texture" is to stretch each
+        /// arm's textured ribbon further in -- but the ribbon carries ITS OWN lane lines in its texture, and
+        /// four of them run into one another in the middle of an intersection. tiny's junctions already solve
+        /// it the way a road crew does: plain tarmac through the box, with the lines PAINTED on, bent through
+        /// the fillets and stopped at a stop line.</summary>
+        int BuildMarkMeshes(Node3D parent, Dictionary<SDG.Unturned.RoadPatch, float> fit)
+        {
+            if (Marks.Count == 0) return 0;
+            int made = 0;
+            foreach (var mk in Marks)
+            {
+                if (mk == null || mk.X == null || mk.Quads == 0) continue;
+                float shift = mk.On != null && fit.TryGetValue(mk.On, out float f) ? f : 0f;
+                var st = new SurfaceTool();
+                st.Begin(Mesh.PrimitiveType.Triangles);
+                for (int q = 0; q + 3 < mk.X.Count; q += 4)
+                {
+                    var v = new Vector3[4];
+                    for (int c = 0; c < 4; c++)
+                        v[c] = new Vector3((float)mk.X[q + c], mk.Y[q + c] + shift + PatchLift + MarkLift, -(float)mk.Z[q + c]);
+                    // ⚠ ORIENT BY THE WANTED NORMAL: the frame flip out of InfiniteRoads' negated z mirrors
+                    // these quads exactly as it mirrors the patch, and a mirror reverses winding.
+                    void Tri(Vector3 a, Vector3 b, Vector3 c)
+                    {
+                        bool keep = (c - a).Cross(b - a).Y >= 0f;
+                        st.AddVertex(a); st.AddVertex(keep ? b : c); st.AddVertex(keep ? c : b);
+                    }
+                    Tri(v[0], v[1], v[3]); Tri(v[0], v[3], v[2]);
+                }
+                var mesh = st.Commit();
+                if (mesh == null || mesh.GetSurfaceCount() == 0) continue;
+                var mi = new MeshInstance3D { Name = $"Junction_Paint_{made}", Mesh = mesh };
+                mi.MaterialOverride = new StandardMaterial3D
+                {
+                    AlbedoColor = mk.Colour == 1 ? new Color(0.824f, 0.749f, 0.133f) : new Color(0.784f, 0.784f, 0.784f),
+                    ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                    CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                };
+                parent.AddChild(mi);
+                made++;
+            }
+            return made;
+        }
+        /// <summary>How far paint stands over the asphalt it is laid on: enough not to fight it.</summary>
+        public float MarkLift = 0.015f;
+        /// <summary>Painted pieces laid by the last BuildPatchMeshes -- lane lines carried in, and stop lines.</summary>
+        public int PaintPieces;
+
         /// <summary>A last hair of clearance over the asphalt. ⚠ SMALL ON PURPOSE: this is a SEAM, not an
         /// overlap -- the patch and the road meet edge to edge, so there is nothing to z-fight with and every
         /// millimetre here is a lip you can see. It exists only to keep the join from landing exactly on the

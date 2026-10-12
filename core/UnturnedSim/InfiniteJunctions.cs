@@ -1206,8 +1206,16 @@ namespace SDG.Unturned
         /// to cut, or a geometry the fillets cannot close -- in which case the caller keeps whatever it had.</summary>
         public static bool TownNode(IReadOnlyList<TownArm> arms, double nx, double nz,
                                     out double[] trims, out RoadPatch patch)
+            => TownNode(arms, nx, nz, out trims, out patch, out _);
+
+        /// <summary>As above, and also the node's PAINT: each arm's own lines carried on in from its cut to
+        /// where it meets its neighbours, plus a stop line across every approach of a three-or-more-way
+        /// (strawberry 2026-10-12: "add stop lines, continue the road texture up to the stop lines"). Two
+        /// arms are a road passing through and are painted through, with no stop line.</summary>
+        public static bool TownNode(IReadOnlyList<TownArm> arms, double nx, double nz,
+                                    out double[] trims, out RoadPatch patch, out List<RoadMark> marks)
         {
-            trims = null; patch = null;
+            trims = null; patch = null; marks = null;
             if (arms == null || arms.Count < 2) return false;
             var list = new List<Arm>(arms.Count);
             foreach (var a in arms)
@@ -1220,8 +1228,11 @@ namespace SDG.Unturned
             }
             if (NodeShape(list, nx, nz) is not NodeGeo g) return false;
             if (NodePatch(g) is not RoadPatch p) return false;
+            var plan = new JunctionPlan();
+            PaintNode(plan, g, p);
             trims = g.Trim.ToArray();
             patch = p;
+            marks = plan.Marks;
             return true;
         }
 
