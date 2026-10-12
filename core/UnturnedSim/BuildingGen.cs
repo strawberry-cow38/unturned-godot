@@ -561,8 +561,9 @@ namespace UnturnedSim
         {
             if (!spec.FitPlot || spec.Width <= 0 || spec.Depth <= 0) return GenerateOnce(spec);
             int maxF = Math.Max(1, spec.MaxFloors), minF = Math.Clamp(spec.MinFloors, 1, maxF);
-            // stairs need a bay three rows deep, a hall and two rows north of it: a shallower plot is one storey
-            if (spec.Depth < 6) maxF = minF = 1;
+            // stairs need a bay two rows deep (on a narrow plot; three elsewhere), a hall and two rows north of it: a
+            // shallower plot is one storey
+            if (spec.Depth < 5) maxF = minF = 1;
             int floorRooms = Math.Min(spec.MinRooms, Math.Max(Essentials(spec.Kind).Length, Programme(spec.Kind).Always.Length));
             // the best so far: 0 fits whole; up to Lopsided, fits but rooms came out short of what they need (by how
             // badly); Lopsided, fits with rooms out of proportion; past it, over the plot by that many cells
@@ -789,7 +790,11 @@ namespace UnturnedSim
             // "doesnt have to be a 180 staircase either, can be 90 too" -- three cells by three rows); in a building whose
             // floors are small, and now and then in any. They stack straight up.
             bool compound = multi && (rooms.Sum(r => T(r).Cells) / floors <= SmallFloor || rng.Chance(25));
-            res.StairShape = !compound ? StairShape.Straight : rng.Chance(QuarterTurns) ? StairShape.Quarter : StairShape.Switchback;
+            // (a plot too narrow for a room beside the bay -- FitPlot -- takes a switchback, two rows deep: the hall runs right
+            // behind it, below)
+            // (the roll is drawn exactly where it always was, so every other building keeps its stairs and its stream)
+            bool narrowPlot(int bayLen) => spec.FitPlot && spec.Width > 0 && spec.Width < bayLen + 2;
+            res.StairShape = !compound ? StairShape.Straight : rng.Chance(QuarterTurns) && !narrowPlot(3) ? StairShape.Quarter : StairShape.Switchback;
             int k1 = compound || floors <= 2 ? 1 : 2, L = multi ? (compound ? 3 : 4) : 0;   // the stair bay (see below)
             int bayRows = res.StairShape switch { StairShape.Switchback => 2, StairShape.Quarter => 3, _ => k1 + 1 };
             // A room's share of a row: its target area -- the stair room's grown by the bay it gives over to the stairs
@@ -1008,6 +1013,9 @@ namespace UnturnedSim
             // cells by two rows: the tile at the foot and the tile it arrives on side by side, then its two flights, then
             // the landing.
             int dS = 3, dN = kind == BuildingKind.Industrial ? 4 : 3;   // upper floors: rows south of the hall, and north of it
+            // a plot with no room beside the bay: the row past the stairs would be landing (two thirds of a 12 m house's upper
+            // floor was hall), so the hall runs right behind the stairs and the rooms north of it get the row
+            if (multi && narrowPlot(L) && bayRows < dS) dS = bayRows;
             // a depth asked for: the floors above take it as their north row (south of the hall is the stair bay's); one
             // floor splits it between its two rows -- each at least two cells, so no shallower than five or four
             int wantD = spec.Depth, wantW = spec.Width;
