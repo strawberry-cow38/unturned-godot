@@ -836,8 +836,13 @@ namespace UnturnedGodot
         /// <summary>How far each street runs UNDER the junction patch, hiding its open slab end.</summary>
         public float PatchOverlap = 0.35f;
 
-        /// <summary>Drop the kerb where each pavement meets a junction -- the crossing points.</summary>
-        public bool CrossingDips = System.Environment.GetEnvironmentVariable("UG_TOWNNODIPS") != "1";
+        /// <summary>Drop the kerb where each pavement meets a junction -- the crossing points.
+        ///
+        /// ⚠ OFF BY DEFAULT, OPT IN WITH UG_TOWNDIPS=1 (strawberry 2026-10-12, on recognising what the
+        /// "wiggle" actually was: "ohhh those are the ramps lol, my bad. cut the ramps out for now"). The
+        /// dipped-kerb SUPPORT stays in EditorSidewalk, which is what was asked for -- this is only the
+        /// town's automatic placement of them at every junction approach.</summary>
+        public bool CrossingDips = System.Environment.GetEnvironmentVariable("UG_TOWNDIPS") == "1";
         public float CrossingDipLength = 3f;
 
         /// <summary>Where two kerb lines would cross: the sharp corner of the block, which is the centre the
