@@ -65,8 +65,12 @@ namespace UnturnedGodot
         /// centre line, road_1 is dashes only (a one-way carriageway), road_3 "Road" is 18.4 m of HALF width --
         /// the same as the Racetrack -- which is where a 40 m blob of asphalt at every junction came from.
         /// Half-widths measured off the live field: 0:9.2 1:6.9 2:18.4 3:18.4 4:2.6 5:4.6.</summary>
+        /// <summary>⚠ A TOWN HAS TWO ROAD CLASSES. Main streets are Highway_0 (9.2 m half, the four-lane
+        /// yellow-line road) and side streets are White_0 (4.6 m half, the small white-dotted two-lane one),
+        /// measured off the live field: 0:9.2 1:6.9 2:18.4 3:18.4 4:2.6 5:4.6 6:4.6. Setting both to the same
+        /// value gives a town of one class, which is what IsMain tests for.</summary>
         public int MainMaterial = 0;
-        public int StreetMaterial = 0;
+        public int StreetMaterial = 6;
         /// <summary>Steepest a span may be before it is left unbuilt, rise over run.</summary>
         public float MaxGrade = 0.16f;
         /// <summary>Steepest ground a NODE may sit on. A junction is flat ground by definition -- four roads
@@ -642,7 +646,7 @@ namespace UnturnedGodot
                     }
                 }
             PaintPieces = BuildMarkMeshes(parent, roads, fit);   // counted separately: paint is not pavement
-            CrossingPieces = BuildCrossings(parent, roads);
+            CrossingPieces = BuildCrossings(parent, roads) + BuildMainThroughLines(parent, roads);
             // ⚠⚠ COVERAGE, NOT JUST THE SEAM AT THE CUT. The seam probe samples the road's END cross-section
             // and reported 0.0 cm while master could see holes -- because a hole BESIDE the mouth, between a
             // fillet and a road's flank, is nowhere near that line.
@@ -1184,14 +1188,19 @@ namespace UnturnedGodot
                 }
 
             // ---- TRAFFIC SIGNALS, one per approach at a junction that has three or more.
-            if (TrafficLights)
+            if (TrafficLights && Junctions != Control.None)
                 for (int j = 0; j < roads.JunctionCount; j++)
                 {
                     var edges = roads.JunctionEdges(j);
-                    if (edges.Count < 3) continue;          // a bend or a dead end gets no signals
+                    if (edges.Count < 3) continue;          // a bend or a dead end gets neither
+                    bool anyMain = false;
+                    foreach (var (rr, _) in edges) if (IsMain(roads, rr)) anyMain = true;
+                    var mode = Junctions == Control.Auto ? (anyMain ? Control.Signals : Control.StopSigns) : Junctions;
                     var node0 = roads.JunctionPos(j);
                     foreach (var (road, atEnd) in edges)
                     {
+                        // a main road is not stopped: no signal head and no sign on its own approach
+                        if (mode == Control.StopSigns && IsMain(roads, road)) continue;
                         float L = roads.RoadLength(road);
                         // ⚠⚠ POSITIONED OFF THE NODE, NOT OFF THE ROAD'S CUT (strawberry 2026-10-12: "bring
                         // the traffic lights closer, actually on the intersection, a little before the curve
@@ -1218,6 +1227,19 @@ namespace UnturnedGodot
                         var armDir = -right;                                   // to the driver's left
                         float yaw = ProcIsland.YawForDir(armDir.X, -armDir.Z);
                         var basis = SplineTiling.SeatedBasis(terr, at, yaw, 6f, out _);
+                        if (mode == Control.StopSigns)
+                        {
+                            // ⚠ A SIGN FACES THE DRIVER, so its face looks back ALONG the approach -- the
+                            // opposite of the mast's arm, which reaches across it. And it stands at the kerb,
+                            // not out over the road.
+                            var signAt = node0 - fwd * (back - 0.5f) + right * (half + RoadGapForLights + 0.7f);
+                            signAt.Y = Mathf.Max(pos.Y, terr != null ? terr.SampleHeight(signAt.X, signAt.Z) : pos.Y) + PavementKerb;
+                            float syaw = ProcIsland.YawForDir(-fwd.X, fwd.Z);
+                            var sb = SplineTiling.SeatedBasis(terr, signAt, syaw, 6f, out _);
+                            var sn = objs.Place(StopSignProp, signAt, sb);
+                            if (sn != null) { into?.Add(sn); made++; }
+                            continue;
+                        }
                         var tnode = objs.Place(TrafficLightProp, at, basis);
                         if (tnode != null) { into?.Add(tnode); made++; }
                     }
@@ -1265,6 +1287,11 @@ namespace UnturnedGodot
                 var node = roads.JunctionPos(j);
                 foreach (var (road, atEnd) in edges)
                 {
+                    // ⚠ THE MAIN ROAD IS NOT STOPPED AND NOT CROSSED. Traffic on it runs through; its lines
+                    // carry on across the box and nothing is painted over them (strawberry: "the bigger roads
+                    // should be the 'main' roads, their lines continue through the junction without crossings
+                    // on their parts").
+                    if (IsMain(roads, road)) continue;
                     float L = roads.RoadLength(road);
                     float arc = atEnd ? Mathf.Max(0f, L - 1f) : Mathf.Min(L, 1f);
                     if (!roads.EvaluateAlong(road, arc, out var pos, out var tan, snapTerrain: false)) continue;
@@ -1352,6 +1379,103 @@ namespace UnturnedGodot
         /// masts stand on the same pavement and had the same error; their poles are tall enough that nobody
         /// had noticed yet.</summary>
         public float PavementKerb = 0.4f;
+
+        /// <summary>What governs a junction. ⚠ A four-lane crossing of two-lane streets gets signals; a
+        /// corner of two small streets gets a stop sign. Auto picks per junction on whether any arm is a MAIN
+        /// street, which is what decides it in a real town too (strawberry 2026-10-12: "generally these
+        /// smaller streets should use stop signs instead of traffic lights, have it as a setting").</summary>
+        public enum Control { Auto, Signals, StopSigns, None }
+        public Control Junctions = Control.Auto;
+        public string StopSignProp = "Stop_0";
+
+        /// <summary>Is this road one of the grid's MAIN streets? ⚠ Asked by material, because that is what
+        /// the generator actually varies between a main and a side street -- and a main road's junction
+        /// treatment differs from a side street's in every respect that follows.</summary>
+        bool IsMain(RoadField roads, int road) => roads.RoadMaterialOf(road) == MainMaterial && MainMaterial != StreetMaterial;
+
+        /// <summary>The main road's own lane lines, carried straight across the junction box.
+        ///
+        /// ⚠ ONLY FOR A THROUGH PAIR. Traffic on the main road is not stopped, so its markings do not stop
+        /// either -- but that is only meaningful where the main road actually passes THROUGH the node, i.e.
+        /// two main arms roughly opposite each other. A single main arm ending at a junction is a tee's stem
+        /// and its lines stop like anyone else's.</summary>
+        int BuildMainThroughLines(Node3D parent, RoadField roads)
+        {
+            if (MainMaterial == StreetMaterial) return 0;      // one class of road: nothing is "the main one"
+            var mat = roads.MaterialOfMaterial(MainMaterial);
+            var uvWhite = new Vector2(0.2363f, 0.0664f);
+            var uvYellow = new Vector2(0.4863f, 0.0039f);
+            float half = roads.RoadHalfWidthOfMaterial(MainMaterial);
+            var table = LineTableFor(half);
+            int made = 0;
+            for (int j = 0; j < roads.JunctionCount; j++)
+            {
+                var edges = roads.JunctionEdges(j);
+                if (edges.Count < 2) continue;
+                var node = roads.JunctionPos(j);
+                var arms = new List<(Vector3 tip, Vector3 outDir)>();
+                foreach (var (road, atEnd) in edges)
+                {
+                    if (!IsMain(roads, road)) continue;
+                    float L = roads.RoadLength(road);
+                    if (!roads.EvaluateAlong(road, atEnd ? L : 0f, out var tip, out var tan, snapTerrain: false)) continue;
+                    var outDir = new Vector3(tip.X - node.X, 0f, tip.Z - node.Z);
+                    if (outDir.Length() < 0.5f) continue;
+                    arms.Add((tip, outDir.Normalized()));
+                }
+                if (arms.Count < 2) continue;
+                // the most opposed pair is the through one
+                int bi = -1, bj = -1; float worst = 0f;
+                for (int a = 0; a < arms.Count; a++)
+                    for (int b = a + 1; b < arms.Count; b++)
+                    {
+                        float opp = -arms[a].outDir.Dot(arms[b].outDir);
+                        if (opp > worst) { worst = opp; bi = a; bj = b; }
+                    }
+                if (bi < 0 || worst < 0.8f) continue;          // not a straight-through main road
+                var p0 = arms[bi].tip; var p1 = arms[bj].tip;
+                var axis = new Vector3(p1.X - p0.X, 0f, p1.Z - p0.Z);
+                float span = axis.Length();
+                if (span < 1f) continue;
+                axis /= span;
+                var lat = RightOf(axis);
+                float y = node.Y + roads.RoadSurfaceOffsetOfMaterial(MainMaterial) + PatchLift + MarkLift;
+                var st = new SurfaceTool();
+                st.Begin(Mesh.PrimitiveType.Triangles);
+                int quads = 0;
+                void Bar(float s0, float s1, float off, float w, Vector2 uv)
+                {
+                    var a0 = p0 + axis * s0 + lat * (off - w * 0.5f); var a1 = p0 + axis * s0 + lat * (off + w * 0.5f);
+                    var b0 = p0 + axis * s1 + lat * (off - w * 0.5f); var b1 = p0 + axis * s1 + lat * (off + w * 0.5f);
+                    Vector3 V(Vector3 q) => new Vector3(q.X, y, q.Z);
+                    void Tri(Vector3 x, Vector3 yy, Vector3 z)
+                    {
+                        bool keep = (z - x).Cross(yy - x).Y >= 0f;
+                        st.SetNormal(Vector3.Up); st.SetUV(uv); st.AddVertex(x);
+                        st.SetNormal(Vector3.Up); st.SetUV(uv); st.AddVertex(keep ? yy : z);
+                        st.SetNormal(Vector3.Up); st.SetUV(uv); st.AddVertex(keep ? z : yy);
+                    }
+                    Tri(V(a0), V(a1), V(b1)); Tri(V(a0), V(b1), V(b0)); quads++;
+                }
+                foreach (var (off, w, colour, dashed) in table)
+                {
+                    var uv = colour == 1 ? uvYellow : uvWhite;
+                    if (!dashed) { Bar(0f, span, (float)off, (float)w, uv); continue; }
+                    // ⚠ dashes keep a rhythm rather than becoming one long line, or the box reads as solid
+                    const float dash = 3f, gap = 6f;
+                    for (float t = 0f; t < span; t += dash + gap)
+                        Bar(t, Mathf.Min(span, t + dash), (float)off, (float)w, uv);
+                }
+                if (quads == 0) continue;
+                var mesh = st.Commit();
+                if (mesh == null || mesh.GetSurfaceCount() == 0) continue;
+                var mi = new MeshInstance3D { Name = $"Junction_Through_{j}", Mesh = mesh };
+                if (mat != null) mi.MaterialOverride = mat;
+                parent.AddChild(mi);
+                made++;
+            }
+            return made;
+        }
 
         public bool Crossings = true;
         /// <summary>Zebra bars, or just the two outlines of the walkway.</summary>

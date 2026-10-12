@@ -10711,6 +10711,16 @@ namespace UnturnedGodot
             var busiest = Vector3.Zero; int bestDeg = 0;
             foreach (var (jp, ends) in rf.Junctions())
             {
+                // UG_TOWNCLOSE=m: a junction where the MAIN road crosses -- the 4-lane-meets-2-lane case,
+                // which cannot be checked at a junction of two side streets.
+                if (closeEnv == "m")
+                {
+                    bool mainHere = false, sideHere = false;
+                    foreach (var (rr, _) in ends)
+                    { if (rf.RoadMaterialOf(rr) == town.MainMaterial) mainHere = true; else sideHere = true; }
+                    if (mainHere && sideHere && ends.Count >= 4 && bestDeg == 0) { bestDeg = ends.Count; busiest = jp; }
+                    continue;
+                }
                 if (wantArms > 0) { if (ends.Count == wantArms && bestDeg == 0) { bestDeg = ends.Count; busiest = jp; } }
                 else if (ends.Count > bestDeg) { bestDeg = ends.Count; busiest = jp; }
             }
