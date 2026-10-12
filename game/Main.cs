@@ -10588,6 +10588,8 @@ namespace UnturnedGodot
             if (int.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNMAT"), out int tmat) && tmat >= 0)
             { town.MainMaterial = tmat; town.StreetMaterial = tmat; }
             if (int.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNSEED"), out int tseed)) town.Seed = tseed;
+            // UG_TOWNDIAG=0 takes the 45-degree avenue back out (strawberry 2026-10-12: "work on 45° intersections").
+            town.Diagonal = System.Environment.GetEnvironmentVariable("UG_TOWNDIAG") != "0";
             if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNEXTENT"),
                     System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float tex) && tex > 50f) town.Extent = tex;
             if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNSPACING"),
@@ -10635,6 +10637,11 @@ namespace UnturnedGodot
             int walks = noWalk ? 0 : town.LaySidewalks(editor, rf);
             var walkProto = new EditorSidewalk(); editor.AddChild(walkProto);
             int corners = noWalk ? 0 : town.LaySidewalkCorners(editor, rf, walkProto);
+            // the asphalt under each kerb corner, from the same fillet the kerb was laid on -- then the
+            // coverage probes again, because what the player sees is the slab PLUS this
+            int cornerFill = town.BuildCornerFill(editor, rf);
+            Log.Print($"[towngrid] corner asphalt: {cornerFill} triangles under {corners} kerb corners");
+            town.ProbeCoverage(rf, "with corner asphalt");
             int lights = town.PlaceLights(rf, editor.Objects);
             // ⚠ MEASURE THE KERB LINE ITSELF. The streets' own bow is 0.0 cm, so "sidewalks seem to wiggle"
             // is not the road centreline -- it has to be the pavement. A wiggle is a run of KINKS, so report
@@ -10733,6 +10740,21 @@ namespace UnturnedGodot
                 // UG_TOWNCLOSE=s: stand ON the worst bare run the arm walk measured, low and close. ⚠ The
                 // camera goes where the INSTRUMENT says the defect is, not where I guessed -- every seam
                 // hunt so far has been me framing a junction I had reasoned my way to and finding it clean.
+                // UG_TOWNCLOSE=d: a 45-DEGREE CROSSING -- the one nearest the middle, so an interior four-way rather
+                // than one of the tees at the avenue's ends (UG_TOWNCLOSE=dt frames an end tee instead).
+                if ((closeEnv == "d" || closeEnv == "dt") && town.DiagonalNodes.Count > 0)
+                {
+                    var dn = town.DiagonalNodes[0];
+                    if (closeEnv == "d")
+                    {
+                        float bd = float.MaxValue;
+                        foreach (var c in town.DiagonalNodes) { float d2 = (c - site).LengthSquared(); if (d2 < bd) { bd = d2; dn = c; } }
+                    }
+                    tcam.GlobalPosition = dn + new Vector3(0f, 34f, 46f);
+                    tcam.LookAt(dn, Vector3.Up);
+                    Log.Print($"[towngrid] diagonal camera on a 45-degree {(closeEnv == "d" ? "crossing" : "tee")} at {dn} ({town.DiagonalNodes.Count} crossings)");
+                    goto noTown;
+                }
                 // UG_TOWNCLOSE=b: a ROUNDED CORNER, from outside the curve, low enough to see the kerb follow it.
                 if (closeEnv == "b" && town.BendPoints.Count > 0)
                 {

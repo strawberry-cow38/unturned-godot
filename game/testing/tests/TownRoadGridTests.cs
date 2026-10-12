@@ -55,6 +55,46 @@ namespace UnturnedGodot.Testing
             T.Check($"...and RoadField agrees they are joined ({rfA.Junctions().Count} nodes with 2+ roads)",
                     rfA.Junctions().Count >= repA.Crossroads);
 
+            // ⭐ 45-DEGREE INTERSECTIONS (strawberry 2026-10-12: "work on 45° intersections"). A diagonal avenue on a
+            // grid big enough for a 45-degree arm to fit (64 m blocks are too short: a crossing alone sits ~30 m
+            // out), and the kerb-distance rule held to the geometry it claims -- both at 45, where it must move,
+            // and at 90, where it must be the old number BIT FOR BIT, since that is what kept the square town
+            // master has already approved untouched.
+            {
+                var rfD = Field();
+                var gD = new TownRoadGrid { Seed = 7, Centre = Vector3.Zero, Extent = 250f, Spacing = 110f,
+                                            Bearing = 0.3f, SeaLevel = 0f, SeaMargin = 2f, Diagonal = true };
+                var repD = gD.Generate(rfD, flat);
+                T.Check($"the diagonal crosses the grid ({repD.DiagonalCrossings} crossings)", repD.DiagonalCrossings >= 4);
+                int n45 = 0, n90 = 0; float worst45 = 0f; bool exact90 = true;
+                for (int j = 0; j < rfD.JunctionCount; j++)
+                {
+                    var es = rfD.JunctionEdges(j);
+                    if (es.Count < 3) continue;
+                    foreach (var (road, atEnd) in es)
+                    {
+                        float th = TownRoadGrid.SharpestCorner(rfD, j, road, atEnd);
+                        float hw = 0f;
+                        foreach (var (o, _) in es) if (o != road) hw = Mathf.Max(hw, rfD.RoadHalfWidth(o));
+                        const float R = 6f;
+                        float got = gD.KerbCurveEnd(rfD, j, road, atEnd, hw, R);
+                        float deg = Mathf.RadToDeg(th);
+                        if (Mathf.Abs(deg - 45f) < 2f)
+                        {
+                            n45++;
+                            float ha = rfD.RoadHalfWidth(road);
+                            float want = (hw + ha * Mathf.Cos(th)) / Mathf.Sin(th) + R / Mathf.Tan(th * 0.5f);
+                            worst45 = Mathf.Max(worst45, Mathf.Abs(got - want));
+                        }
+                        else if (Mathf.Abs(deg - 90f) < 0.5f) { n90++; if (got != hw + R) exact90 = false; }
+                    }
+                }
+                T.Check($"...making real 45-degree arms ({n45} of them)", n45 >= 4);
+                T.Check($"...whose kerb runs out where the corner geometry says (worst {worst45 * 100f:0.0} cm off the formula)",
+                        n45 > 0 && worst45 < 0.01f);
+                T.Check($"...and at a right angle the rule is the old one bit for bit ({n90} square arms)", n90 > 0 && exact90);
+            }
+
             // ⭐ THE CORNERS ARE ROUNDED, NOT SLABBED (strawberry 2026-10-12: "work on 45° intersections. as well
             // as curved corner pieces"). A two-arm node used to be paved as a junction and came out a sharp
             // point; now the two spans are fused into one road on an arc. Three things have to be true, and

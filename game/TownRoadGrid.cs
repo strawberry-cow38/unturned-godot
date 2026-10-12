@@ -103,12 +103,14 @@ namespace UnturnedGodot
             public int Patched, CutAway;
             /// <summary>Corners rounded into one curving road instead of slabbed as a two-arm junction.</summary>
             public int Bends;
+            /// <summary>Junctions the 45-degree diagonal made where it crosses the grid.</summary>
+            public int DiagonalCrossings;
             public float Metres;
             public ulong Checksum;
             public override string ToString() =>
                 $"{Roads} roads ({Metres:0} m), {Junctions} junctions = {Crossroads} crossroads / {Tees} tees / "
               + $"{Corners} corners / {DeadEnds} dead ends; {Nodes} nodes ({NodesRejected} rejected), "
-              + $"{SpansRejected} spans rejected ({CutAway} eaten by their junctions); {Patched} nodes patched; {Bends} corners rounded; checksum {Checksum:X16}";
+              + $"{SpansRejected} spans rejected ({CutAway} eaten by their junctions); {Patched} nodes patched; {Bends} corners rounded; {DiagonalCrossings} diagonal crossings; checksum {Checksum:X16}";
         }
 
         /// <summary>splitmix64. ⚠ NOT GetHashCode (salted per process) and NOT System.Random (no cross-version
@@ -133,7 +135,13 @@ namespace UnturnedGodot
             return new Vector3(Centre.X + u * c - v * s, y, Centre.Z + u * s + v * c);
         }
 
-        struct Node { public Vector3 P; public bool Ok; public int Junction; }
+        struct Node
+        {
+            public Vector3 P; public bool Ok; public int Junction;
+            /// <summary>A crossing the diagonal made, not a grid node -- and the half width of the grid road
+            /// it sits on, which is what a diagonal arm has to clear.</summary>
+            public bool Extra; public float CrossHalf;
+        }
 
         /// <summary>A planned street before it is cut: the two nodes it joins, its full polyline, and how much
         /// each end gives up to the junction there.</summary>
@@ -300,7 +308,7 @@ namespace UnturnedGodot
         static bool ThroughMain(List<Span> plan, List<(int, bool)> here, out int a, out int b)
         {
             a = b = -1;
-            for (int axis = 0; axis < 2; axis++)
+            for (int axis = 0; axis < 3; axis++)          // 2 = the diagonal
             {
                 int p = -1, q = -1, count = 0;
                 bool allMain = true;
@@ -435,6 +443,91 @@ namespace UnturnedGodot
             if (step == 0f) return cut;      // the caller's spacing is already right (a rounded corner's exact arc)
             return Respace(cut, step > 0f ? step : Mathf.Max(2f, PointStep));
         }
+        /// <summary>A diagonal avenue across the grid at 45 degrees -- the 45-degree intersections (strawberry
+        /// 2026-10-12: "work on 45° intersections").
+        ///
+        /// ⭐ HALF A BLOCK OFF EVERY NODE, ON PURPOSE. In grid space the line is v = u + S/2, so it meets each
+        /// span it crosses near the MIDDLE and never passes through a node -- a node it hit would become a
+        /// six-way. Every crossing is therefore a clean four-way at 45 and 135 degrees, and its two ends are
+        /// 45-degree tees on the town's edge: both shapes the junction code has never been asked to make.
+        /// ⚠ A CROSSING IS A NODE LIKE ANY OTHER. The span it lands on is split there, the diagonal's pieces
+        /// run node to node, and from here on the node pass, the patches, pavements, crossings and signals
+        /// see an ordinary junction whose arms happen not to be square -- which is the whole test of them.
+        /// Returns the number of crossings made.</summary>
+        int AddDiagonal(List<Span> plan, Node[,] grid, int w, RoadField roads, Func<float, float, float> heightAt)
+        {
+            DiagonalNodes.Clear();
+            var P0 = ToWorld(0f, Spacing * 0.5f, 0f);
+            var P1 = ToWorld(Spacing, Spacing * 1.5f, 0f);
+            var dir = new Vector3(P1.X - P0.X, 0f, P1.Z - P0.Z).Normalized();
+            static float Cross(Vector3 a, Vector3 b) => a.X * b.Z - a.Z * b.X;
+            var hits = new List<(int span, float t, float s, Vector3 x)>();
+            for (int k = 0; k < plan.Count; k++)
+            {
+                var sp = plan[k];
+                if (sp.Axis > 1 || sp.Pts == null || sp.Pts.Count < 2) continue;
+                var A = sp.Pts[0]; var B = sp.Pts[sp.Pts.Count - 1];
+                var ab = new Vector3(B.X - A.X, 0f, B.Z - A.Z);
+                float den = Cross(ab, dir);
+                if (Mathf.Abs(den) < 1e-6f) continue;                       // parallel to it
+                var ap = new Vector3(P0.X - A.X, 0f, P0.Z - A.Z);
+                float t = Cross(ap, dir) / den;                             // along the span
+                if (t < 0.2f || t > 0.8f) continue;                         // too near a node to be its own junction
+                hits.Add((k, t, Cross(ap, ab) / den, new Vector3(A.X + ab.X * t, 0f, A.Z + ab.Z * t)));
+            }
+            if (hits.Count < 2) return 0;
+            hits.Sort((a, b) => a.s.CompareTo(b.s));
+
+            var keys = new List<(int, int)>(hits.Count);
+            var splitAt = new Dictionary<int, (float t, (int, int) key)>();
+            for (int h = 0; h < hits.Count; h++)
+            {
+                int gi = w + h / w, gj = h % w;
+                if (gi >= grid.GetLength(0)) break;                        // out of spare rows
+                var (k, t, _, x) = hits[h];
+                var sp = plan[k];
+                var on = PointAlong(sp.Pts, t * PolyLen(sp.Pts));
+                grid[gi, gj] = new Node { P = new Vector3(x.X, on.Y, x.Z), Ok = true, Junction = -1, Extra = true,
+                                          CrossHalf = roads.RoadHalfWidthOfMaterial(sp.Main ? MainMaterial : StreetMaterial) };
+                keys.Add((gi, gj));
+                splitAt[k] = (t, (gi, gj));
+                DiagonalNodes.Add(grid[gi, gj].P);
+            }
+
+            // split every span the diagonal crosses, pinning both halves exactly onto the new node
+            var outPlan = new List<Span>(plan.Count + keys.Count * 2);
+            for (int k = 0; k < plan.Count; k++)
+            {
+                var sp = plan[k];
+                if (!splitAt.TryGetValue(k, out var cut)) { outPlan.Add(sp); continue; }
+                float len = PolyLen(sp.Pts), sCut = cut.t * len;
+                var first = CutBack(sp.Pts, 0f, len - sCut);
+                var second = CutBack(sp.Pts, sCut, 0f);
+                if (first == null || second == null) { outPlan.Add(sp); continue; }
+                var xp = grid[cut.key.Item1, cut.key.Item2].P;
+                first[first.Count - 1] = xp; second[0] = xp;
+                var a = sp; a.BI = cut.key.Item1; a.BJ = cut.key.Item2; a.Pts = first; a.Len = PolyLen(first);
+                var b = sp; b.AI = cut.key.Item1; b.AJ = cut.key.Item2; b.Pts = second; b.Len = PolyLen(second);
+                outPlan.Add(a); outPlan.Add(b);
+            }
+            // ...and lay the diagonal itself, crossing to crossing
+            for (int h = 0; h + 1 < keys.Count; h++)
+            {
+                var na = grid[keys[h].Item1, keys[h].Item2];
+                var nb = grid[keys[h + 1].Item1, keys[h + 1].Item2];
+                var pts = SpanPoints(na.P, nb.P, heightAt, out float len);
+                if (pts == null) continue;                                  // too steep or wet: the avenue breaks here
+                outPlan.Add(new Span { AI = keys[h].Item1, AJ = keys[h].Item2, BI = keys[h + 1].Item1, BJ = keys[h + 1].Item2,
+                                       Axis = 2, AxisA = 2, AxisB = 2, Main = DiagonalMain, Pts = pts, Len = len });
+            }
+            plan.Clear(); plan.AddRange(outPlan);
+            return keys.Count;
+        }
+        /// <summary>Lay a 45-degree avenue across the grid, and whether it is a main.</summary>
+        public bool Diagonal, DiagonalMain;
+        /// <summary>Where the diagonal crosses the grid, so a camera can be put on one.</summary>
+        public readonly List<Vector3> DiagonalNodes = new();
+
         /// <summary>Round the corners: every node with exactly two arms that TURN becomes one road curving
         /// round it on a circular arc, instead of two roads meeting at a point on a junction slab (strawberry
         /// 2026-10-12: "work on 45° intersections. as well as curved corner pieces").
@@ -478,9 +571,15 @@ namespace UnturnedGodot
                     if (turn < Mathf.DegToRad(15f) || turn > Mathf.DegToRad(150f)) continue;   // straight on, or a hairpin
                     float half = roads.RoadHalfWidthOfMaterial(A.Main ? MainMaterial : StreetMaterial);
                     // the inside pavement must keep a positive radius: carriageway + pavement + some room
-                    float R = Mathf.Max(BendRadius, 2f * half + 6f);
-                    float T = R * Mathf.Tan(turn * 0.5f);
-                    if (T > PolyLen(pA) * 0.45f || T > PolyLen(pB) * 0.45f) continue;   // no room for the arc
+                    // ⚠ TIGHTEN RATHER THAN GIVE UP. A side the diagonal split is half as long, and a fixed radius
+                    // that no longer fits left that corner SHARP. Shrink R to the room there is -- but never below
+                    // what keeps the inside pavement a real curve.
+                    float rMin = 2f * half + 6f, tanHalf = Mathf.Tan(turn * 0.5f);
+                    float room = Mathf.Min(PolyLen(pA), PolyLen(pB)) * 0.45f;
+                    float R = Mathf.Max(BendRadius, rMin);
+                    if (R * tanHalf > room) R = Mathf.Max(rMin, room / tanHalf);
+                    float T = R * tanHalf;
+                    if (T > room) continue;                                  // not even the tightest corner fits
                     var cutA = CutBack(pA, 0f, T); var cutB = CutBack(pB, T, 0f);
                     if (cutA == null || cutB == null) continue;
                     var S = cutA[cutA.Count - 1]; var E = cutB[0];
@@ -653,7 +752,9 @@ namespace UnturnedGodot
             int n = Mathf.FloorToInt(Extent / Spacing);
             if (n < 1) return rep;
             int w = 2 * n + 1;
-            var grid = new Node[w, w];
+            // ⚠ SPARE ROWS for the diagonal's crossings. They are nodes like any other, so they live in the
+            // same array and every grid[i, j] in here keeps working; the loops over the grid stop at w.
+            var grid = new Node[w + 4, w];
 
             // ---- 1. NODES. Each one is a potential junction, so the gates here are the strict ones.
             for (int gi = 0; gi < w; gi++)
@@ -704,7 +805,11 @@ namespace UnturnedGodot
             // past their fillets and hands back the patch that paves the middle. Where it declines -- too few
             // arms, one too short to cut, a shape the fillets cannot close -- the span keeps the simple
             // kerb-line setback, which is worse-looking but never leaves a hole.
-            // ---- 2a. BENDS, BEFORE THE NODES: a corner fused here is not a node any more, so the node pass
+            // ---- 2a. THE DIAGONAL, before the bends: its crossings split grid spans, and a split span next to
+            // a corner is what the bend pass then has to round.
+            if (Diagonal) rep.DiagonalCrossings = AddDiagonal(plan, grid, w, roads, heightAt);
+
+            // ---- 2b. BENDS, BEFORE THE NODES: a corner fused here is not a node any more, so the node pass
             // must never see it -- it would otherwise slab it as a two-arm junction, which is the sharp point.
             if (CurveCorners) rep.Bends = MergeBends(plan, roads);
 
@@ -757,7 +862,11 @@ namespace UnturnedGodot
                     foreach (var (si, atEnd) in here)
                     {
                         var sp = plan[si];
-                        float back = DominantAxis(kv.Key.Item1 - n, kv.Key.Item2 - n) == AxisAt(sp, atEnd)
+                        float back = node.Extra
+                            // a diagonal crossing: the grid road runs on, the diagonal stops clear of it -- and at
+                            // 45 degrees "clear" is half the width over sin 45, not half the width
+                            ? (AxisAt(sp, atEnd) == 2 ? node.CrossHalf / Mathf.Sin(Mathf.Pi * 0.25f) : 0f)
+                            : DominantAxis(kv.Key.Item1 - n, kv.Key.Item2 - n) == AxisAt(sp, atEnd)
                                    ? 0f : HalfAt(roads, kv.Key.Item1 - n, kv.Key.Item2 - n);
                         if (atEnd) sp.TrimB = back; else sp.TrimA = back;
                         plan[si] = sp;
@@ -1176,123 +1285,9 @@ namespace UnturnedGodot
             // ⚠ AND "BARE" IS NOT "A HOLE": most of a junction's surroundings is grass by design, and a first
             // version of this called 20% of the area a defect. A hole is bare ground ENCLOSED by paving, so
             // the test is whether a bare point's neighbours are covered -- which is what you can see.
-            {
-                int holes = 0, tested = 0; var worstHole = Vector3.Zero; float worstR = 0f;
-                for (int j = 0; j < roads.JunctionCount; j++)
-                {
-                    var es = roads.JunctionEdges(j);
-                    if (es.Count < 2) continue;
-                    var jp = roads.JunctionPos(j);
-                    float reach = 0f;
-                    foreach (var (rr, atEnd) in es)
-                    {
-                        if (!roads.EvaluateAlong(rr, atEnd ? roads.RoadLength(rr) : 0f, out var tp, out _, snapTerrain: false)) continue;
-                        reach = Mathf.Max(reach, new Vector2(tp.X - jp.X, tp.Z - jp.Z).Length());
-                    }
-                    if (reach < 2f) continue;
-                    const int A = 96; float dr = 0.5f;
-                    int R = Mathf.Max(2, Mathf.CeilToInt(reach / dr));
-                    var cov = new bool[A, R + 1];
-                    for (int ai = 0; ai < A; ai++)
-                        for (int ri = 0; ri <= R; ri++)
-                        {
-                            float a = Mathf.Tau * ai / A, rad = ri * dr;
-                            var q = new Vector3(jp.X + Mathf.Cos(a) * rad, 0f, jp.Z + Mathf.Sin(a) * rad);
-                            bool c = false;
-                            c = OnAnyPatch(q.X, -q.Z, 0.01);
-                            // ⚠ EVERY ROAD, NOT THE NEAREST -- the third probe in this file to have had the
-                            // bug it was built to find. A point at a main's edge inside a junction is often
-                            // NEAREST to the narrow side street beside it, which it really is outside, so
-                            // the nearest-only test called solid carriageway bare and invented 136 holes.
-                            if (!c) c = roads.DeepestRoadOverlap(q, 0.05f, out _, out _);
-                            cov[ai, ri] = c;
-                        }
-                    // ⚠⚠ A BARE RUN WITH PAVING ON BOTH SIDES, not a bare point with covered neighbours.
-                    // The neighbour test could only ever see a gap ONE probe wide (0.5 m); a 2 m crescent
-                    // between a patch edge and a road's flank has bare neighbours of its own and was
-                    // reported as open grass. That is why this said "no holes" while master kept seeing
-                    // them, three fixes running.
-                    for (int ai = 0; ai < A; ai++)
-                    {
-                        int ri = 1;
-                        while (ri < R)
-                        {
-                            if (cov[ai, ri]) { ri++; continue; }
-                            int start = ri;
-                            while (ri < R && !cov[ai, ri]) ri++;
-                            tested++;
-                            // paved before the run and paved after it: that is a hole, whatever its width
-                            if (start - 1 < 0 || !cov[ai, start - 1] || ri >= R || !cov[ai, ri]) continue;
-                            holes++;
-                            float width = (ri - start) * dr;
-                            if (width > worstR)
-                            {
-                                worstR = width;
-                                float rad = (start + (ri - start) * 0.5f) * dr;
-                                worstHole = new Vector3(jp.X + Mathf.Cos(Mathf.Tau * ai / A) * rad, jp.Y,
-                                                        jp.Z + Mathf.Sin(Mathf.Tau * ai / A) * rad);
-                            }
-                        }
-                    }
-                }
-                Log.Print($"[towngrid] junction coverage: {holes} GAPS (bare runs with paving both sides) of {tested} runs"
-                        + (holes > 0 ? $", widest {worstR:0.0} m at {worstHole}" : " -- none"));
-
-                // ⚠⚠ AND A 5 cm WALK DOWN EACH ARM, because the polar sweep CANNOT SEE A SLIVER: its rays
-                // are 2*pi*r/96 apart -- 0.65 m at 10 m out -- so a 20 cm strip of grass crossing a mouth
-                // falls between two rays and reads as nothing. A dense 2-D grid finds it but costs
-                // cells x patches x triangles, which ran for ten minutes and had to be killed. One dimension
-                // is enough: a sliver ACROSS a mouth is crossed by a line ALONG the arm.
-                // ⭐ Resolution is part of an instrument's answer, and neither of the first two stated theirs.
-                {
-                    const float Step5 = 0.05f;
-                    float worstSliver = 0f; var sliverAt = Vector3.Zero; int slivers = 0;
-                    for (int j3 = 0; j3 < roads.JunctionCount; j3++)
-                    {
-                        var e3 = roads.JunctionEdges(j3);
-                        if (e3.Count < 2) continue;
-                        var jp3 = roads.JunctionPos(j3);
-                        foreach (var (road3, atEnd3) in e3)
-                        {
-                            float L3 = roads.RoadLength(road3);
-                            if (!roads.EvaluateAlong(road3, atEnd3 ? L3 : 0f, out var tip3, out var tan3, snapTerrain: false)) continue;
-                            var outw = new Vector3(tip3.X - jp3.X, 0f, tip3.Z - jp3.Z);
-                            if (outw.Length() < 0.5f) continue;
-                            outw = outw.Normalized();
-                            var rt = RightOf(outw);
-                            float hw3 = roads.RoadHalfWidth(road3);
-                            foreach (float latf in new[] { -0.85f, -0.4f, 0f, 0.4f, 0.85f })
-                            {
-                                float run3 = 0f; bool prev3 = false;
-                                for (float d3 = 0.2f; d3 <= outw.Length() * 0f + 40f; d3 += Step5)
-                                {
-                                    var q4 = jp3 + outw * d3 + rt * (latf * hw3);
-                                    bool c4 = false;
-                                    c4 = OnAnyPatch(q4.X, -q4.Z, 0.001);
-                                    // ⚠ EVERY ROAD, NOT THE NEAREST. The nearest spline to a point in a wide
-                                    // road's mouth is often the narrow side street beside it, which the point
-                                    // really is outside -- so a nearest-only test calls covered asphalt bare.
-                                    if (!c4) c4 = roads.DeepestRoadOverlap(q4, 0f, out _, out _);
-                                    if (!c4) { run3 += Step5; }
-                                    else
-                                    {
-                                        if (prev3 == false && run3 > 0f && run3 < 3f)
-                                        {
-                                            slivers++;
-                                            if (run3 > worstSliver) { worstSliver = run3; sliverAt = q4 - outw * (run3 * 0.5f); }
-                                            if (run3 > LastBareRun) { LastBareRun = run3; LastBareAt = q4 - outw * (run3 * 0.5f); }
-                                        }
-                                        run3 = 0f;
-                                    }
-                                    prev3 = c4;
-                                }
-                            }
-                        }
-                    }
-                    Log.Print($"[towngrid] arm walk (5 cm): {slivers} bare slivers crossing a mouth"
-                            + (slivers > 0 ? $", widest {worstSliver * 100f:0} cm at {sliverAt}" : " -- none"));
-                }
-            }
+            // the slab-alone pass is diagnostic only (UG_TOWNPROBES=1): the pass that matters runs once the
+            // corner asphalt is down, from BuildTownGrid
+            if (ProbeEverything) ProbeCoverage(roads, "slab alone");
             // ⚠ THE THROUGH-MAIN CHANGE IS INVISIBLE BY DESIGN -- it puts real carriageway UNDER the patch,
             // so a render of a junction whose patch already fitted looks identical (master, of exactly that
             // render: "nothing changed in the pic"). What it changes is whether there is anything beneath
@@ -1350,6 +1345,132 @@ namespace UnturnedGodot
                     + $"over {probed}/{gapProbes} probes (surf {surf:0.000}, lift {PatchLift:0.000}) -- {worstWhy}; widest gap {gapWhy}");
             return made;
         }
+        /// <summary>The two junction-coverage probes, as one method so they can be asked twice: once over the
+        /// slab and roads alone, and again once the corner asphalt is down -- the second answer is the one
+        /// the player sees, the first says what the slab alone would have left.</summary>
+        public void ProbeCoverage(RoadField roads, string stage)
+        {
+            {
+                int holes = 0, tested = 0; var worstHole = Vector3.Zero; float worstR = 0f;
+                for (int j = 0; j < roads.JunctionCount; j++)
+                {
+                    var es = roads.JunctionEdges(j);
+                    if (es.Count < 2) continue;
+                    var jp = roads.JunctionPos(j);
+                    float reach = 0f;
+                    foreach (var (rr, atEnd) in es)
+                    {
+                        if (!roads.EvaluateAlong(rr, atEnd ? roads.RoadLength(rr) : 0f, out var tp, out _, snapTerrain: false)) continue;
+                        reach = Mathf.Max(reach, new Vector2(tp.X - jp.X, tp.Z - jp.Z).Length());
+                    }
+                    if (reach < 2f) continue;
+                    const int A = 96; float dr = 0.5f;
+                    int R = Mathf.Max(2, Mathf.CeilToInt(reach / dr));
+                    var cov = new bool[A, R + 1];
+                    for (int ai = 0; ai < A; ai++)
+                        for (int ri = 0; ri <= R; ri++)
+                        {
+                            float a = Mathf.Tau * ai / A, rad = ri * dr;
+                            var q = new Vector3(jp.X + Mathf.Cos(a) * rad, 0f, jp.Z + Mathf.Sin(a) * rad);
+                            bool c = false;
+                            c = OnAnyPatch(q.X, -q.Z, 0.01);
+                            // ⚠ EVERY ROAD, NOT THE NEAREST -- the third probe in this file to have had the
+                            // bug it was built to find. A point at a main's edge inside a junction is often
+                            // NEAREST to the narrow side street beside it, which it really is outside, so
+                            // the nearest-only test called solid carriageway bare and invented 136 holes.
+                            if (!c) c = roads.DeepestRoadOverlap(q, 0.05f, out _, out _);
+                            if (!c) c = InCornerFill(q);
+                            cov[ai, ri] = c;
+                        }
+                    // ⚠⚠ A BARE RUN WITH PAVING ON BOTH SIDES, not a bare point with covered neighbours.
+                    // The neighbour test could only ever see a gap ONE probe wide (0.5 m); a 2 m crescent
+                    // between a patch edge and a road's flank has bare neighbours of its own and was
+                    // reported as open grass. That is why this said "no holes" while master kept seeing
+                    // them, three fixes running.
+                    for (int ai = 0; ai < A; ai++)
+                    {
+                        int ri = 1;
+                        while (ri < R)
+                        {
+                            if (cov[ai, ri]) { ri++; continue; }
+                            int start = ri;
+                            while (ri < R && !cov[ai, ri]) ri++;
+                            tested++;
+                            // paved before the run and paved after it: that is a hole, whatever its width
+                            if (start - 1 < 0 || !cov[ai, start - 1] || ri >= R || !cov[ai, ri]) continue;
+                            holes++;
+                            float width = (ri - start) * dr;
+                            if (width > worstR)
+                            {
+                                worstR = width;
+                                float rad = (start + (ri - start) * 0.5f) * dr;
+                                worstHole = new Vector3(jp.X + Mathf.Cos(Mathf.Tau * ai / A) * rad, jp.Y,
+                                                        jp.Z + Mathf.Sin(Mathf.Tau * ai / A) * rad);
+                            }
+                        }
+                    }
+                }
+                Log.Print($"[towngrid] junction coverage ({stage}): {holes} GAPS (bare runs with paving both sides) of {tested} runs"
+                        + (holes > 0 ? $", widest {worstR:0.0} m at {worstHole}" : " -- none"));
+
+                // ⚠⚠ AND A 5 cm WALK DOWN EACH ARM, because the polar sweep CANNOT SEE A SLIVER: its rays
+                // are 2*pi*r/96 apart -- 0.65 m at 10 m out -- so a 20 cm strip of grass crossing a mouth
+                // falls between two rays and reads as nothing. A dense 2-D grid finds it but costs
+                // cells x patches x triangles, which ran for ten minutes and had to be killed. One dimension
+                // is enough: a sliver ACROSS a mouth is crossed by a line ALONG the arm.
+                // ⭐ Resolution is part of an instrument's answer, and neither of the first two stated theirs.
+                {
+                    const float Step5 = 0.05f;
+                    float worstSliver = 0f; var sliverAt = Vector3.Zero; int slivers = 0;
+                    for (int j3 = 0; j3 < roads.JunctionCount; j3++)
+                    {
+                        var e3 = roads.JunctionEdges(j3);
+                        if (e3.Count < 2) continue;
+                        var jp3 = roads.JunctionPos(j3);
+                        foreach (var (road3, atEnd3) in e3)
+                        {
+                            float L3 = roads.RoadLength(road3);
+                            if (!roads.EvaluateAlong(road3, atEnd3 ? L3 : 0f, out var tip3, out var tan3, snapTerrain: false)) continue;
+                            var outw = new Vector3(tip3.X - jp3.X, 0f, tip3.Z - jp3.Z);
+                            if (outw.Length() < 0.5f) continue;
+                            outw = outw.Normalized();
+                            var rt = RightOf(outw);
+                            float hw3 = roads.RoadHalfWidth(road3);
+                            foreach (float latf in new[] { -0.85f, -0.4f, 0f, 0.4f, 0.85f })
+                            {
+                                float run3 = 0f; bool prev3 = false;
+                                for (float d3 = 0.2f; d3 <= outw.Length() * 0f + 40f; d3 += Step5)
+                                {
+                                    var q4 = jp3 + outw * d3 + rt * (latf * hw3);
+                                    bool c4 = false;
+                                    c4 = OnAnyPatch(q4.X, -q4.Z, 0.001);
+                                    // ⚠ EVERY ROAD, NOT THE NEAREST. The nearest spline to a point in a wide
+                                    // road's mouth is often the narrow side street beside it, which the point
+                                    // really is outside -- so a nearest-only test calls covered asphalt bare.
+                                    if (!c4) c4 = roads.DeepestRoadOverlap(q4, 0f, out _, out _);
+                                    if (!c4) c4 = InCornerFill(q4);
+                                    if (!c4) { run3 += Step5; }
+                                    else
+                                    {
+                                        if (prev3 == false && run3 > 0f && run3 < 3f)
+                                        {
+                                            slivers++;
+                                            if (run3 > worstSliver) { worstSliver = run3; sliverAt = q4 - outw * (run3 * 0.5f); }
+                                            if (run3 > LastBareRun) { LastBareRun = run3; LastBareAt = q4 - outw * (run3 * 0.5f); }
+                                        }
+                                        run3 = 0f;
+                                    }
+                                    prev3 = c4;
+                                }
+                            }
+                        }
+                    }
+                    Log.Print($"[towngrid] arm walk ({stage}, 5 cm): {slivers} bare slivers crossing a mouth"
+                            + (slivers > 0 ? $", widest {worstSliver * 100f:0} cm at {sliverAt}" : " -- none"));
+                }
+            }
+        }
+
         /// <summary>The junction's painted lines: each arm's own markings carried on in from its cut, and a
         /// stop line across every approach of a three-or-more-way (strawberry 2026-10-12: "add stop lines,
         /// continue the road texture up to the stop lines").
@@ -1564,7 +1685,7 @@ namespace UnturnedGodot
         public int LaySidewalkCorners(Node3D parent, RoadField roads, EditorSidewalk walk, float gap = 0.05f)
         {
             if (parent == null || roads == null || walk == null) return 0;
-            LastCorners.Clear();
+            LastCorners.Clear(); _cornerFill.Clear();
             int made = 0;
             // ⚠ TALLY WHY A PAIR IS DROPPED. "We lose the 3 way junction's straight side sidewalk in some
             // pics" -- and the count already said so: 12 tees and 4 bends produced only 8 extra pieces. A
@@ -1724,6 +1845,20 @@ namespace UnturnedGodot
                                                             ? (x, z) => Terrain.Active.SampleHeight(x, z) : null, ck);
                     if (mi == null) continue;
                     LastCorners.Add((node, cp));
+                    // ⚠⚠ AND THE ASPHALT UNDER IT, from the node out to this exact kerb. At 45 degrees the
+                    // corner between two kerb lines is long and thin, and tiny's junction slab rounds it with
+                    // its OWN fillet -- which stops short of this one, leaving a wedge of grass inside the
+                    // junction (the arm walk measured slivers to 110 cm; the clip was ruled out by turning it
+                    // off and getting the identical numbers). Paving from the SAME geometry the kerb is laid
+                    // from is the only way the two can agree at every angle. It rides 1 cm under the road, so
+                    // wherever a ribbon or the slab already is, they win and nothing changes; only a hole
+                    // ever shows it.
+                    {
+                        float surf = roads.RoadSurfaceOffsetOfMaterial(StreetMaterial) - CornerFillDrop;
+                        var n0 = new Vector3(node.X, node.Y + surf, node.Z);
+                        for (int q = 0; q + 1 < cp.Count; q++)
+                            _cornerFill.Add((n0, new Vector3(cp[q].X, cp[q].Y + surf, cp[q].Z), new Vector3(cp[q + 1].X, cp[q + 1].Y + surf, cp[q + 1].Z)));
+                    }
                     nFillet++;
                     parent.AddChild(mi);
                     var body = new StaticBody3D { Name = mi.Name + "_body", CollisionLayer = 1u << 0 };
@@ -2052,6 +2187,99 @@ namespace UnturnedGodot
             }
             return made;
         }
+        /// <summary>How far under the road surface the corner asphalt rides: enough that a ribbon or the slab
+        /// always wins where they overlap it, little enough that the step at a filled hole cannot be seen.</summary>
+        public float CornerFillDrop = 0.01f;
+        readonly List<(Vector3 a, Vector3 b, Vector3 c)> _cornerFill = new();
+        /// <summary>Triangles of corner asphalt laid by the last LaySidewalkCorners.</summary>
+        public int CornerFillTris => _cornerFill.Count;
+
+        /// <summary>Is this point (in plan) inside the corner asphalt?</summary>
+        bool InCornerFill(Vector3 q)
+        {
+            foreach (var (a, b, c) in _cornerFill)
+            {
+                float minX = Mathf.Min(a.X, Mathf.Min(b.X, c.X)), maxX = Mathf.Max(a.X, Mathf.Max(b.X, c.X));
+                float minZ = Mathf.Min(a.Z, Mathf.Min(b.Z, c.Z)), maxZ = Mathf.Max(a.Z, Mathf.Max(b.Z, c.Z));
+                if (q.X < minX || q.X > maxX || q.Z < minZ || q.Z > maxZ) continue;
+                float d1 = (q.X - b.X) * (a.Z - b.Z) - (a.X - b.X) * (q.Z - b.Z);
+                float d2 = (q.X - c.X) * (b.Z - c.Z) - (b.X - c.X) * (q.Z - c.Z);
+                float d3 = (q.X - a.X) * (c.Z - a.Z) - (c.X - a.X) * (q.Z - a.Z);
+                bool neg = d1 < 0f || d2 < 0f || d3 < 0f, pos = d1 > 0f || d2 > 0f || d3 > 0f;
+                if (!(neg && pos)) return true;
+            }
+            return false;
+        }
+
+        /// <summary>Each arm's own carriageway, full width, from its node out to where its ribbon starts.
+        ///
+        /// ⚠ THE CORNER FANS ALONE LEFT A TRIANGLE. A fan runs from the node DIAGONALLY to the kerb point, so
+        /// it covers the corner but not the strip of an arm's carriageway beside its centreline between the
+        /// node and the arm's cut -- and at 45 degrees the junction slab does not reach all of that either.
+        /// The node-to-cut strip of every arm is road by definition, so it is paved as such, under
+        /// everything, the same 1 cm down. UG_TOWNNOMOUTHFILL=1 is the control.</summary>
+        void AddMouthFill(RoadField roads)
+        {
+            float surf = roads.RoadSurfaceOffsetOfMaterial(StreetMaterial) - CornerFillDrop;
+            for (int j = 0; j < roads.JunctionCount; j++)
+            {
+                var es = roads.JunctionEdges(j);
+                if (es.Count < 3) continue;
+                var node = roads.JunctionPos(j);
+                foreach (var (road, atEnd) in es)
+                {
+                    float L = roads.RoadLength(road);
+                    if (!roads.EvaluateAlong(road, atEnd ? L : 0f, out var tip, out _, snapTerrain: false)) continue;
+                    var u = new Vector3(tip.X - node.X, 0f, tip.Z - node.Z);
+                    float have = u.Length();
+                    if (have < 0.5f) continue;                    // uncut: its own ribbon already reaches the node
+                    u /= have;
+                    var nrm = new Vector3(-u.Z, 0f, u.X);
+                    float h = roads.RoadHalfWidth(road) + 0.05f;
+                    var far = tip + u * 0.5f;                     // a little under the ribbon's own start
+                    Vector3 V(Vector3 at, float y, float lat) => new Vector3(at.X + nrm.X * lat, y + surf, at.Z + nrm.Z * lat);
+                    var a0 = V(node, node.Y, -h); var a1 = V(node, node.Y, h);
+                    var b0 = V(far, tip.Y, -h);  var b1 = V(far, tip.Y, h);
+                    _cornerFill.Add((a0, a1, b1)); _cornerFill.Add((a0, b1, b0));
+                }
+            }
+        }
+        public static bool NoMouthFill = System.Environment.GetEnvironmentVariable("UG_TOWNNOMOUTHFILL") == "1";
+        /// <summary>UG_TOWNPROBES=1 also runs the diagnostic passes nobody needs on every render.</summary>
+        public static bool ProbeEverything = System.Environment.GetEnvironmentVariable("UG_TOWNPROBES") == "1";
+
+
+        /// <summary>Lay the corner asphalt LaySidewalkCorners collected: one mesh, the slab's own material and
+        /// plain-band UVs, normals up -- the same three choices BuildPatchMeshes makes, for the same reasons.</summary>
+        public int BuildCornerFill(Node3D parent, RoadField roads)
+        {
+            if (parent == null || roads == null) return 0;
+            if (!NoMouthFill) AddMouthFill(roads);
+            if (_cornerFill.Count == 0) return 0;
+            const float U0 = 4f / 256f, U1 = 56f / 256f;
+            float tile = (U1 - U0) * 2f * 2f * Mathf.Max(1f, roads.RoadHalfWidthOfMaterial(MainMaterial));
+            Vector2 UV(Vector3 q) => new Vector2(U0 + PingPong(q.X / tile) * (U1 - U0), q.Z / tile);
+            var st = new SurfaceTool();
+            st.Begin(Mesh.PrimitiveType.Triangles);
+            foreach (var (a, b, c) in _cornerFill)
+            {
+                // orient by the wanted normal (up), never by the order given -- a corner swept the other way
+                // round would otherwise come out back-facing and simply not draw
+                bool keep = (c - a).Cross(b - a).Y >= 0f;
+                var i1 = keep ? b : c; var i2 = keep ? c : b;
+                st.SetNormal(Vector3.Up); st.SetUV(UV(a)); st.AddVertex(a);
+                st.SetNormal(Vector3.Up); st.SetUV(UV(i1)); st.AddVertex(i1);
+                st.SetNormal(Vector3.Up); st.SetUV(UV(i2)); st.AddVertex(i2);
+            }
+            var mesh = st.Commit();
+            if (mesh == null || mesh.GetSurfaceCount() == 0) return 0;
+            var mi = new MeshInstance3D { Name = "Junction_Corner_Asphalt", Mesh = mesh };
+            var mat = roads.MaterialOfMaterial(MainMaterial);
+            if (mat != null) mi.MaterialOverride = mat;
+            parent.AddChild(mi);
+            return _cornerFill.Count;
+        }
+
         /// <summary>The DRIVER'S right for a heading, which is forward x up.
         ///
         /// ⚠⚠ `(f.Z, 0, -f.X)` IS THE LEFT, and it is written in this file as "right" more than once because
@@ -2301,7 +2529,7 @@ namespace UnturnedGodot
         /// at 90° this returns hw + R exactly, so the square town master has already signed off is untouched
         /// and only the new angles move. The sharpest corner beside the arm decides it, since the sharper
         /// side is the one whose kerb runs out furthest.</summary>
-        float KerbCurveEnd(RoadField roads, int junction, int road, bool atEnd, float hw, float radius)
+        public float KerbCurveEnd(RoadField roads, int junction, int road, bool atEnd, float hw, float radius)
         {
             float theta = SharpestCorner(roads, junction, road, atEnd);
             if (Mathf.Abs(theta - Mathf.Pi * 0.5f) < Mathf.DegToRad(0.5f)) return hw + radius;   // the old rule, exactly
@@ -2312,7 +2540,7 @@ namespace UnturnedGodot
         }
 
         /// <summary>The smallest angle between this arm and any other arm at its node, in radians.</summary>
-        static float SharpestCorner(RoadField roads, int junction, int road, bool atEnd)
+        public static float SharpestCorner(RoadField roads, int junction, int road, bool atEnd)
         {
             var me = ArmDir(roads, road, atEnd);
             if (me == Vector3.Zero) return Mathf.Pi * 0.5f;
