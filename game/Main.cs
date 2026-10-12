@@ -10775,6 +10775,17 @@ namespace UnturnedGodot
                     Log.Print($"[towngrid] bend camera on a rounded corner at {bp} ({town.BendPoints.Count} rounded)");
                     goto noTown;
                 }
+                // UG_TOWNCLOSE=p: the prop the clearance pass pushed FURTHEST off paving -- the census says how
+                // far, this shows where it ended up
+                if (closeEnv == "p" && town.FurthestPush > 0f)
+                {
+                    var pp = town.FurthestPushAt;
+                    tcam.GlobalPosition = pp + new Vector3(10f, 9f, 10f);
+                    tcam.Fov = 45f;
+                    tcam.LookAt(pp, Vector3.Up);
+                    Log.Print($"[towngrid] push camera on the prop pushed furthest, {town.FurthestPush:0.0} m from {pp}");
+                    goto noTown;
+                }
                 if (closeEnv == "s" && town.LastBareRun > 0f)
                 {
                     var bare = town.LastBareAt;

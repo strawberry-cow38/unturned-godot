@@ -1229,7 +1229,8 @@ namespace SDG.Unturned
         public static bool TownNode(IReadOnlyList<TownArm> arms, double nx, double nz,
                                     out double[] trims, out RoadPatch patch, out List<RoadMark> marks,
                                     double stopPastEdge = double.NaN,
-                                    IReadOnlyList<(double lat, double width, byte colour, bool dashed)> lines = null)
+                                    IReadOnlyList<(double lat, double width, byte colour, bool dashed)> lines = null,
+                                    double acuteRun = double.PositiveInfinity)
         {
             trims = null; patch = null; marks = null;
             if (arms == null || arms.Count < 2) return false;
@@ -1242,7 +1243,7 @@ namespace SDG.Unturned
                 var r = new Rib(e, 0);
                 list.Add(new Arm { E = e, R = r, A0 = a.AtEnd ? r.Total : 0, Dir = a.AtEnd ? -1 : 1, HwOver = a.HalfWidth });
             }
-            if (NodeShape(list, nx, nz) is not NodeGeo g) return false;
+            if (NodeShape(list, nx, nz, acuteRun) is not NodeGeo g) return false;
             if (NodePatch(g) is not RoadPatch p) return false;
             var plan = new JunctionPlan();
             PaintNode(plan, g, p, stopPastEdge, lines);
@@ -1263,7 +1264,11 @@ namespace SDG.Unturned
             return true;
         }
 
-        static NodeGeo NodeShape(List<Arm> arms, double nx, double nz)
+        /// <param name="acuteRun">The furthest an ACUTE corner's fillet may run along each edge. Unbounded for
+        /// InfiniteRoads' own junctions; the town grid passes its kerb radius, because at 45 degrees a fillet's
+        /// R / tan(θ/2) is 14.5 m of slab, and its kerb now turns in R -- the slab has to turn with it or it
+        /// stands out past the pavement, into the island's nose (strawberry 2026-10-12: "way closer").</param>
+        static NodeGeo NodeShape(List<Arm> arms, double nx, double nz, double acuteRun = double.PositiveInfinity)
         {
             var g = new NodeGeo { NX = nx, NZ = nz };
             var items = new List<(double ang, Arm arm, double dx, double dz)>();
@@ -1296,6 +1301,7 @@ namespace SDG.Unturned
                 inner[i] = Math.Max(inner[i], (c0x - g.NX) * a.dx + (c0z - g.NZ) * a.dz);
                 inner[j] = Math.Max(inner[j], (c0x - g.NX) * b.dx + (c0z - g.NZ) * b.dz);
                 double L = Math.Clamp(NodeFilletOf(a.arm, b.arm) / Math.Tan(beta * 0.5), 2.0, 45.0);
+                if (beta < Math.PI * 0.5 - 0.0087) L = Math.Max(2.0, Math.Min(L, acuteRun));
                 double ti = (c0x - g.NX) * a.dx + (c0z - g.NZ) * a.dz + L, tj = (c0x - g.NX) * b.dx + (c0z - g.NZ) * b.dz + L;
                 if (ti > 70 || tj > 70) return null;
                 // a wide road and a narrow one at an obtuse angle: their edges meet BEHIND the node along the narrow one --

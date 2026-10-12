@@ -893,7 +893,8 @@ namespace UnturnedGodot
                     }
                     if (SDG.Unturned.InfiniteRoads.TownNode(spokes, node.P.X, -node.P.Z, out var cuts, out var patch, out var marks,
                                                            stopPastEdge: StopPastEdge,
-                                                           lines: LineTableFor(roads.RoadHalfWidthOfMaterial(MainMaterial)))
+                                                           lines: LineTableFor(roads.RoadHalfWidthOfMaterial(MainMaterial)),
+                                                           acuteRun: CornerKerbRadius)   // the slab turns in R, like the kerb
                         && cuts != null && cuts.Length == here.Count)
                     {
                         for (int q = 0; q < here.Count; q++)
@@ -1881,6 +1882,13 @@ namespace UnturnedGodot
                     if (theta < 0.25f) { nFlatAngle++; Through(); continue; }    // a hairpin: still bridge it
                     float half2 = theta * 0.5f;
                     float rad = Mathf.Min(CornerKerbRadius, Mathf.Min(lA, lB) * 0.8f * Mathf.Tan(half2));
+                    // ⚠⚠ AN ACUTE CORNER TURNS IN THE LENGTH A RIGHT ANGLE DOES (strawberry 2026-10-12: "the
+                    // crossing + stop line + traffic light/stop sign on angled joins should be way closer to the
+                    // road its joining"). A fillet of radius r needs r / tan(θ/2) of kerb either side, so at 45
+                    // degrees this corner's ~5 m radius ran 12 m up each kerb -- and a crossing has to stand clear
+                    // of the curve, so it stood up there too. Capped at R·tan(θ/2) the curve is R long, as at a
+                    // right angle, and the corner is a tighter nose. Square and blunt corners are untouched.
+                    if (theta < Mathf.Pi * 0.5f - Mathf.DegToRad(0.5f)) rad = Mathf.Min(rad, CornerKerbRadius * Mathf.Tan(half2));
                     if (rad < 0.4f) { nShortRad++; Through(); continue; }
                     float tdist = rad / Mathf.Tan(half2);
                     var T1 = P + dA * tdist; var T2 = P + dB * tdist;
@@ -2086,7 +2094,7 @@ namespace UnturnedGodot
                         // own half width stands in the 18 m road it is signalling.
                         float widest = half;
                         foreach (var (rr2, _) in edges) widest = Mathf.Max(widest, roads.RoadHalfWidth(rr2));
-                        float back = KerbCurveEnd(roads, j, road, atEnd, widest, CornerKerbRadius) + SignalBeforeCurve;
+                        float back = SignalBack(roads, j, road, atEnd, widest, half + RoadGapForLights + 0.6f);
                         // ⚠ ON THE DRIVER'S RIGHT, which is the kerb a mast stands on; its arm then reaches
                         // left over the lanes the drivers approaching here are in.
                         var at = node0 - fwd * back + right * (half + RoadGapForLights + 0.6f);
@@ -2105,7 +2113,8 @@ namespace UnturnedGodot
                             // ⚠ A SIGN FACES THE DRIVER, so its face looks back ALONG the approach -- the
                             // opposite of the mast's arm, which reaches across it. And it stands at the kerb,
                             // not out over the road.
-                            var signAt = node0 - fwd * (back - 0.5f) + right * (half + RoadGapForLights + 0.7f);
+                            float signBack = SignalBack(roads, j, road, atEnd, widest, half + RoadGapForLights + 0.7f) - 0.5f;
+                            var signAt = node0 - fwd * signBack + right * (half + RoadGapForLights + 0.7f);
                             if (!PushClear(roads, ref signAt, right)) continue;
                             signAt.Y = Mathf.Max(pos.Y, terr != null ? terr.SampleHeight(signAt.X, signAt.Z) : pos.Y) + PavementKerb;
                             float syaw = ProcIsland.YawForDir(-fwd.X, fwd.Z);
@@ -2118,7 +2127,7 @@ namespace UnturnedGodot
                         if (tnode != null) { into?.Add(tnode); made++; }
                     }
                 }
-            GD.Print($"[towngrid] prop clearance: {_propTested} sited, {_propPushed} pushed out, " +
+            GD.Print($"[towngrid] prop clearance: {_propTested} sited, {_propPushed} pushed out ({_pushByRoad} off a road, {_pushBySlab} off a junction slab; furthest {_propPushedMax:0.0} m, at {_propPushedAt}), " +
                      $"{_propInRoad} LEFT STANDING IN A CARRIAGEWAY{(NoClear ? "  (UG_TOWNNOCLEAR control)" : "")}");
             return made;
         }
@@ -2295,10 +2304,10 @@ namespace UnturnedGodot
         /// <summary>Take one crossing off each road too short to hold both of its ends'; returns how many.
         ///
         /// ⚠⚠ ONE SHORT ROAD CANNOT ALWAYS HOLD TWO CROSSINGS. Each has to stand clear of its own kerb's curve,
-        /// and where a 9.2 m main meets at 45 degrees that is 25-40 m out -- so on the short links the diagonal
-        /// cuts (the long side of a triangle island) the two ends' crossings met in the middle, and once each
-        /// was laid parallel to ITS main they crossed in an X. The end crossing the bigger road keeps its
-        /// crossing, the start end on a tie.
+        /// and where a 9.2 m main meets at 45 degrees its far kerb end is still ~30 m out -- so on the short links
+        /// the diagonal cuts (the long side of a triangle island) the two ends' crossings met in the middle, and
+        /// once each was laid parallel to ITS main they crossed in an X. The end crossing the bigger road keeps
+        /// its crossing, the start end on a tie.
         /// ⚠ ONLY CROSSING AGAINST CROSSING. A first version also made each crossing clear the FAR junction's
         /// kerb curve, and it took two crossings off the very four-way master had just asked to have four --
         /// on a sum that said they reached a triangle island's curve, where the render showed them clear of it.</summary>
@@ -2339,12 +2348,17 @@ namespace UnturnedGodot
         /// arm joins across the arm's mouth, so it lies along THAT road, not square to the arm: at 45 degrees
         /// a square one cut across the mouth on a slant to the kerb its pedestrians were walking along. Where
         /// the arm meets that road square, parallel to it IS square, and the old numbers come back bit for bit.
-        /// ⚠ SO ITS DISTANCE IS MEASURED OFF THAT ROAD'S CENTRELINE, not along the arm. On the arm's sharp
-        /// side the kerb's fillet comes off the arm at h + R(1 + cos θ) from that centreline (h the crossed
-        /// road's half width, R the kerb radius); on the blunt side it comes off sooner, at h + R(1 - cos θ),
-        /// so a near edge CrossingInset past the first clears both. At 90 degrees that is h + R + inset --
-        /// the square rule exactly. Widths stay true widths: a 3 m walkway is 3 m across for the person on
-        /// it, which along a 45-degree arm is 4.2 m.</summary>
+        /// ⚠ SO ITS DISTANCE IS MEASURED OFF THAT ROAD'S CENTRELINE, not along the arm. The kerb on the arm's
+        /// sharp side stops turning R past the corner (LaySidewalkCorners holds an acute curve to R), which is
+        /// h + R sin θ from that centreline (h the crossed road's half width); the near edge goes CrossingInset
+        /// beyond that, and the blunt side's curve is shorter, so it is clear too. At 90 degrees that is
+        /// h + R + inset -- the square rule exactly. Widths stay true widths: a 3 m walkway is 3 m across for
+        /// the person on it, which along a 45-degree arm is 4.2 m.
+        /// ⚠⚠ AND CLOSE TO THAT ROAD (strawberry 2026-10-12: "the crossing + stop line + traffic light/stop
+        /// sign on angled joins should be way closer to the road its joining"). The first version cleared a
+        /// fillet of radius R, h + R(1 + cos θ) out: at 45 degrees that curve runs R / tan 22.5 = 14.5 m up
+        /// the arm, and the corner really was laid near that big. Pulling the crossing in alone would have
+        /// stood it on the curve -- the built-kerb test caught exactly that -- so the corner turns tighter.</summary>
         public bool LayCrossing(RoadField roads, int junction, int road, bool atEnd, out CrossingLayout c)
         {
             c = default;
@@ -2370,7 +2384,7 @@ namespace UnturnedGodot
             // consider both roads' widths when placing".
             float crossed = half;
             foreach (var (other, _) in roads.JunctionEdges(junction)) if (other != road) crossed = Mathf.Max(crossed, roads.RoadHalfWidth(other));
-            float curve = KerbCurveEnd(roads, junction, road, atEnd, crossed, CornerKerbRadius);
+            float curve = ApproachClear(roads, junction, road, atEnd, crossed);
             float d0 = curve + CrossingInset, d1 = d0 + CrossingWidth;
             float sd0 = d1 + StopGap, sd1 = sd0 + StopLineWidth;
             float shear = 0f;
@@ -2385,7 +2399,7 @@ namespace UnturnedGodot
                 if (cosT > Mathf.Sin(Mathf.DegToRad(0.5f)) && sinT > Mathf.Sin(Mathf.DegToRad(20f)))
                 {
                     shear = mu / mr;
-                    d0 = (crossed + CornerKerbRadius * (1f + cosT) + CrossingInset) / sinT;
+                    d0 = (crossed + CornerKerbRadius * sinT + CrossingInset) / sinT;
                     d1 = d0 + CrossingWidth / sinT;
                     sd0 = d1 + StopGap / sinT; sd1 = sd0 + StopLineWidth / sinT;
                 }
@@ -2457,6 +2471,9 @@ namespace UnturnedGodot
             }
         }
         public static bool NoMouthFill = System.Environment.GetEnvironmentVariable("UG_TOWNNOMOUTHFILL") == "1";
+        /// <summary>UG_TOWNNOCORNERFILL=1 lays no corner asphalt at all (nor mouth fill): the control for "is that
+        /// surface the fill, or something under it".</summary>
+        public static bool NoCornerFill = System.Environment.GetEnvironmentVariable("UG_TOWNNOCORNERFILL") == "1";
         /// <summary>UG_TOWNPROBES=1 also runs the diagnostic passes nobody needs on every render.</summary>
         public static bool ProbeEverything = System.Environment.GetEnvironmentVariable("UG_TOWNPROBES") == "1";
 
@@ -2466,6 +2483,7 @@ namespace UnturnedGodot
         public int BuildCornerFill(Node3D parent, RoadField roads)
         {
             if (parent == null || roads == null) return 0;
+            if (NoCornerFill) { _cornerFill.Clear(); return 0; }
             if (!NoMouthFill) AddMouthFill(roads);
             if (_cornerFill.Count == 0) return 0;
             const float U0 = 4f / 256f, U1 = 56f / 256f;
@@ -2533,9 +2551,22 @@ namespace UnturnedGodot
             // both with and without the fix is measuring nothing -- it has to be able to fail.
             if (NoClear) { _propTested++; if (!ClearOfRoads(roads, at, margin)) _propInRoad++; return true; }
             _propTested++;
+            var from = at;
+            if (!ClearOfRoads(roads, at, margin))
+            { if (roads.DeepestRoadOverlap(at, margin, out _, out _)) _pushByRoad++; else _pushBySlab++; }
             for (int i = 0; i < 24; i++)
             {
-                if (ClearOfRoads(roads, at, margin)) { if (i > 0) _propPushed++; return true; }
+                if (ClearOfRoads(roads, at, margin))
+                {
+                    if (i > 0)
+                    {
+                        _propPushed++;
+                        // ⚠ HOW FAR, not just how many: a count cannot tell a mast nudged off a slab's skirt from
+                        // one shoved across the pavement into the verge
+                        if (i * 0.5f > _propPushedMax) { _propPushedMax = i * 0.5f; _propPushedAt = from; }
+                    }
+                    return true;
+                }
                 at += away * 0.5f;
             }
             _propInRoad++;                 // gave up: do not place it, it would stand in the road
@@ -2543,6 +2574,11 @@ namespace UnturnedGodot
         }
         public static bool NoClear = System.Environment.GetEnvironmentVariable("UG_TOWNNOCLEAR") == "1";
         int _propTested, _propInRoad, _propPushed;
+        float _propPushedMax; Vector3 _propPushedAt; int _pushByRoad, _pushBySlab;
+        /// <summary>Where the prop pushed furthest off paving was first sited, and how far it went, so a camera
+        /// can be put on the worst one rather than on the one I guess it is.</summary>
+        public Vector3 FurthestPushAt => _propPushedAt;
+        public float FurthestPush => _propPushedMax;
 
         /// <summary>How far the pavement stands proud of the road.
         ///
@@ -2751,6 +2787,32 @@ namespace UnturnedGodot
             theta = Mathf.Max(theta, Mathf.DegToRad(20f));            // a sliver of an angle is not a corner to fillet
             float ha = roads.RoadHalfWidth(road);
             return (hw + ha * Mathf.Cos(theta)) / Mathf.Sin(theta) + radius / Mathf.Tan(theta * 0.5f);
+        }
+
+        /// <summary>How far out along an arm its approach's furniture -- crossing, stop line, signal or sign --
+        /// stands clear of the junction. At a square or blunt corner exactly KerbCurveEnd at CornerKerbRadius,
+        /// the rule master signed off. An ACUTE corner's kerb is laid to turn in R (LaySidewalkCorners caps its
+        /// radius at R·tan(θ/2)), so its curve ends R past the corner point, not R / tan(θ/2) past it -- 6 m
+        /// at 45 degrees where it was 14.5.</summary>
+        public float ApproachClear(RoadField roads, int junction, int road, bool atEnd, float hw)
+        {
+            float theta = SharpestCorner(roads, junction, road, atEnd);
+            if (theta > Mathf.Pi * 0.5f - Mathf.DegToRad(0.5f)) return KerbCurveEnd(roads, junction, road, atEnd, hw, CornerKerbRadius);
+            theta = Mathf.Max(theta, Mathf.DegToRad(20f));
+            float ha = roads.RoadHalfWidth(road);
+            return (hw + ha * Mathf.Cos(theta)) / Mathf.Sin(theta) + CornerKerbRadius;
+        }
+
+        /// <summary>How far out along an arm a signal mast or sign stands, at `lat` metres to the arriving
+        /// driver's right. ⚠ BESIDE ITS CROSSING: the mast stands SignalBeforeCurve past the clear point, a
+        /// fifth of a metre short of where the crossing starts -- and where the crossing is laid on a slant,
+        /// that start is a different distance at the kerb than on the centreline, so it is read off the
+        /// crossing at the mast's own offset. Square everywhere else, and then the old number bit for bit.</summary>
+        public float SignalBack(RoadField roads, int junction, int road, bool atEnd, float widest, float lat)
+        {
+            if (LayCrossing(roads, junction, road, atEnd, out var cl) && cl.Shear != 0f)
+                return cl.D0 + lat * cl.Shear - (CrossingInset - SignalBeforeCurve);
+            return ApproachClear(roads, junction, road, atEnd, widest) + SignalBeforeCurve;
         }
 
         /// <summary>The smallest angle between this arm and any other arm at its node, in radians.</summary>

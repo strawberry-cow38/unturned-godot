@@ -103,14 +103,40 @@ namespace UnturnedGodot.Testing
                 T.Check($"...and at a right angle the rule is the old one bit for bit ({n90} square arms)", n90 > 0 && exact90);
 
                 // ⭐ A 45-DEGREE JOIN'S CROSSING LIES PARALLEL TO THE ROAD IT JOINS (strawberry 2026-10-12: "the 45°
-                // joins should have the crosswalk parallel to the main road's direction") -- and is still clear of
-                // the kerb's curve on BOTH sides. The two sides are different corners: the sharp one's fillet runs
-                // out far further than the blunt one's, so a band pulled in to sit parallel can land on the sharp
-                // side's curve while looking fine on the other. Each side is held to ITS OWN corner's tangent
-                // point, off the very layout BuildCrossings draws.
+                // joins should have the crosswalk parallel to the main road's direction"), CLOSE to it ("the
+                // crossing + stop line + traffic light/stop sign on angled joins should be way closer to the road
+                // its joining"), and still off the kerb's curve on BOTH sides.
+                // ⚠⚠ HELD TO THE KERB THAT IS BUILT, NOT TO A FORMULA FOR IT. The first version of this check
+                // measured against a 6 m fillet -- the same model the placement used -- and so passed a crossing
+                // standing ten metres up the arm from the 4.8 m curve LaySidewalkCorners actually lays at 45
+                // degrees. A probe that shares the bug's model cannot see the bug.
                 var uAx = new Vector3(Mathf.Cos(0.3f), 0f, Mathf.Sin(0.3f)); var vAx = new Vector3(-uAx.Z, 0f, uAx.X);
-                float R2 = gD.CornerKerbRadius;
-                int joining = 0, skewed = 0, gridSquare = 0, gridSkewed = 0; float worstPar = 0f, worstClear = float.MaxValue, worstSnug = 0f;
+                var walkD = new EditorSidewalk(); World.AddChild(walkD);
+                gD.LaySidewalkCornersOn(rfD, World, walkD, out var kerbs);
+                // where the BUILT kerb stops turning on side s of an arm: the nearest point, on that kerb line,
+                // of a corner piece that curves (a straight through-piece has nothing to stop)
+                float CurveEnd(TownRoadGrid.CrossingLayout c, int s)
+                {
+                    float best = float.NaN, off = c.Half + walkD.RoadGap;
+                    var ow = -new Vector3(c.Fwd.X, 0f, c.Fwd.Z).Normalized();
+                    foreach (var (kn, kp) in kerbs)
+                    {
+                        if (new Vector2(kn.X - c.Node.X, kn.Z - c.Node.Z).Length() > 0.5f) continue;
+                        bool curved = false; float nearOn = float.MaxValue;
+                        foreach (var q in kp)
+                        {
+                            var rel = new Vector3(q.X - c.Node.X, 0f, q.Z - c.Node.Z);
+                            float al = rel.Dot(ow), la = rel.Dot(c.Right);
+                            if (Mathf.Abs(la - s * off) < 0.002f && al > 0f) nearOn = Mathf.Min(nearOn, al);
+                            else curved = true;
+                        }
+                        if (curved && nearOn < float.MaxValue) best = float.IsNaN(best) ? nearOn : Mathf.Max(best, nearOn);
+                    }
+                    return best;
+                }
+                float R2 = gD.CornerKerbRadius, inset = gD.CrossingInset;
+                int joining = 0, skewed = 0, gridSquare = 0, gridSkewed = 0, sidesHeld = 0, masts = 0, mastsOff = 0;
+                float worstPar = 0f, worstClear = float.MaxValue, furthest = 0f, worstGridOver = float.MinValue, mastWas = 0f, mastNow = 0f;
                 for (int j = 0; j < rfD.JunctionCount; j++)
                 {
                     var es = rfD.JunctionEdges(j);
@@ -131,50 +157,77 @@ namespace UnturnedGodot.Testing
                         if (joins.Count == 0) continue;
                         float acute = Mathf.Acos(Mathf.Clamp(Mathf.Abs(joins[0].Dot(outw)), 0f, 1f));
                         if (Mathf.Abs(Mathf.RadToDeg(acute) - 45f) > 2f) continue;
+                        // off the BUILT curve, both sides, whichever way it is laid
+                        for (int s = -1; s <= 1; s += 2)
+                        {
+                            float ce = CurveEnd(cl, s);
+                            if (float.IsNaN(ce)) continue;                 // a tee's straight side: no curve there
+                            var k = cl.At(cl.D0, s * cl.Half) - cl.Node; k.Y = 0f;
+                            worstClear = Mathf.Min(worstClear, k.Dot(outw) - ce);
+                            sidesHeld++;
+                        }
+                        // the mast (or sign) for this approach stands at its crossing, and nearer than it did
+                        float widest = 0f;
+                        foreach (var (o, _) in es) widest = Mathf.Max(widest, rfD.RoadHalfWidth(o));
+                        float mlat = cl.Half + gD.PavementGap + 0.6f;
+                        float back = gD.SignalBack(rfD, j, road, atEnd, widest, mlat);
+                        float was = gD.KerbCurveEnd(rfD, j, road, atEnd, widest, R2) + gD.SignalBeforeCurve;
+                        float edgeAtMast = cl.D0 + mlat * cl.Shear;
+                        masts++; mastWas += was; mastNow += back;
+                        if (back > was || edgeAtMast - back > inset + 0.01f || back > edgeAtMast) mastsOff++;
                         bool onGrid = Mathf.Abs(outw.Dot(uAx)) > 0.99f || Mathf.Abs(outw.Dot(vAx)) > 0.99f;
-                        if (onGrid) { if (cl.Shear == 0f) gridSquare++; else gridSkewed++; continue; }
+                        if (onGrid)
+                        {
+                            if (cl.Shear == 0f) gridSquare++; else gridSkewed++;
+                            // a square crossing on the road being joined: no further past the kerbs' corner than
+                            // a right angle's is past its own (R + inset)
+                            float corner = (hb + cl.Half * Mathf.Cos(acute)) / Mathf.Sin(acute);
+                            worstGridOver = Mathf.Max(worstGridOver, cl.D0 - corner - (R2 + inset));
+                            continue;
+                        }
                         joining++;
                         if (cl.Shear != 0f) skewed++;
                         var e = cl.At(cl.D0, cl.Half) - cl.At(cl.D0, -cl.Half);
                         e.Y = 0f; e = e.Normalized();
                         worstPar = Mathf.Max(worstPar, Mathf.Abs(e.X * joins[0].Z - e.Z * joins[0].X));
-                        for (int s = -1; s <= 1; s += 2)
-                        {
-                            var k = cl.At(cl.D0, s * cl.Half) - cl.Node; k.Y = 0f;
-                            float tK = k.Dot(outw);
-                            Vector3 nb = Vector3.Zero;
-                            foreach (var d in joins) if (Mathf.Sign(d.Dot(cl.Right)) == s) nb = d;
-                            if (nb == Vector3.Zero) continue;                 // a tee's straight side: no corner there
-                            float ts = outw.AngleTo(nb);
-                            float tangent = (hb + cl.Half * Mathf.Cos(ts)) / Mathf.Sin(ts) + R2 / Mathf.Tan(ts * 0.5f);
-                            worstClear = Mathf.Min(worstClear, tK - tangent);
-                            if (ts < Mathf.Pi * 0.5f) worstSnug = Mathf.Max(worstSnug, (tK - tangent) * Mathf.Sin(ts) - gD.CrossingInset);
-                        }
+                        // how far the crossing stands off the kerb of the road it joins, square to that road
+                        var n0 = cl.At(cl.D0, 0f) - cl.Node; n0.Y = 0f;
+                        float offKerb = Mathf.Abs(n0.X * joins[0].Z - n0.Z * joins[0].X) - hb;
+                        furthest = Mathf.Max(furthest, offKerb);
                     }
                 }
                 T.Check($"...a road joining at 45 degrees is crossed on a slant ({skewed} of its {joining} crossings slanted)",
                         joining >= 4 && skewed == joining);
                 T.Check($"...parallel to the road it joins (worst {Mathf.RadToDeg(Mathf.Asin(Mathf.Min(1f, worstPar))):0.000} deg off)",
                         joining > 0 && worstPar < 1e-3f);
-                T.Check($"...clear of the kerb's curve on BOTH sides (closest {worstClear:0.00} m past a tangent point)",
-                        joining > 0 && worstClear > -0.001f);
-                T.Check($"...and right after the sharp side's curve, not pushed off up the street ({worstSnug * 100f:0.0} cm beyond the inset)",
-                        joining > 0 && worstSnug < 0.01f);
-                T.Check($"...while the road it joins is crossed square ({gridSquare} square, {gridSkewed} slanted)", gridSkewed == 0);
-
+                T.Check($"...no further off that road's kerb than a square junction's crossing is (furthest {furthest:0.00} m, square {R2 + inset:0.00} m)",
+                        joining > 0 && furthest <= R2 + inset + 0.01f);
+                T.Check($"...and every 45-degree crossing is off the BUILT kerb's curve, both sides ({sidesHeld} kerbs held, closest {worstClear:0.00} m past where it stops turning)",
+                        sidesHeld >= 8 && worstClear > -0.001f);
+                T.Check($"...the road it joins is crossed square ({gridSquare} square, {gridSkewed} slanted), no further past the corner than at a right angle ({worstGridOver:0.00} m over)",
+                        gridSkewed == 0 && (gridSquare == 0 || worstGridOver < 0.01f));
+                T.Check($"...and each approach's mast stands at its crossing, nearer than before (mean {mastNow / Mathf.Max(1, masts):0.0} m out vs {mastWas / Mathf.Max(1, masts):0.0}; {mastsOff} of {masts} misplaced)",
+                        masts > 0 && mastsOff == 0 && mastNow < mastWas);
                 // ⚠ AND NO SHORT ROAD KEEPS TWO CROSSINGS THAT OVERLAP. Laid parallel to two different mains, the
                 // two ends' crossings on a triangle island's long side met in an X; the built town keeps one.
+                // ⚠ ASKED OF A TIGHTER TOWN (70 m blocks). Pulled in to the road they join, the crossings of the
+                // 110 m town above no longer crowd any link -- and a check with nothing to catch passes whether
+                // the rule exists or not.
+                var rfT = Field();
+                var gT = new TownRoadGrid { Seed = 7, Centre = Vector3.Zero, Extent = 250f, Spacing = 70f,
+                                            Bearing = 0.3f, SeaLevel = 0f, SeaMargin = 2f, Diagonal = true };
+                gT.Generate(rfT, flat);
                 var marksD = new Node3D(); World.AddChild(marksD);
-                gD.BuildCrossings(marksD, rfD);
+                gT.BuildCrossings(marksD, rfT);
                 int both = 0, collide = 0, wouldCollide = 0;
-                for (int r = 0; r < rfD.RoadCount; r++)
+                for (int r = 0; r < rfT.RoadCount; r++)
                 {
-                    int ja = rfD.RoadEndJunction(r, false), jb = rfD.RoadEndJunction(r, true);
+                    int ja = rfT.RoadEndJunction(r, false), jb = rfT.RoadEndJunction(r, true);
                     if (ja < 0 || jb < 0) continue;
-                    if (!gD.LayCrossing(rfD, ja, r, false, out var la) || !gD.LayCrossing(rfD, jb, r, true, out var lb)) continue;
-                    bool hit = TownRoadGrid.CrossingsCollide(la, lb, TownRoadGrid.NodeSpan(rfD, r));
+                    if (!gT.LayCrossing(rfT, ja, r, false, out var la) || !gT.LayCrossing(rfT, jb, r, true, out var lb)) continue;
+                    bool hit = TownRoadGrid.CrossingsCollide(la, lb, TownRoadGrid.NodeSpan(rfT, r));
                     if (hit) wouldCollide++;
-                    if (gD.CrossingBuilt(r, false) && gD.CrossingBuilt(r, true)) { both++; if (hit) collide++; }
+                    if (gT.CrossingBuilt(r, false) && gT.CrossingBuilt(r, true)) { both++; if (hit) collide++; }
                 }
                 T.Check($"...and no short road keeps two crossings that overlap ({wouldCollide} would have, {collide} still do; {both} roads crossed at both ends)",
                         wouldCollide > 0 && both > 0 && collide == 0);
@@ -354,9 +407,27 @@ namespace UnturnedGodot.Testing
                 T.Check($"...while a main meeting only small roads still runs through, uncrossed, with each small road crossed ({throughNodes} such, {throughWrong} wrong)",
                         throughNodes > 0 && throughWrong == 0);
                 // ⚠ AND THE SQUARE TOWN'S CROSSINGS ARE UNTOUCHED: laid parallel to a road met at a right angle is
-                // square, and must come out with no slant at all -- not a rounding error's worth.
+                // square, and must come out with no slant at all -- not a rounding error's worth -- and the
+                // crossings and masts must stand where the rule master signed off put them, bit for bit.
                 T.Check($"...and on a square grid every crossing is square, exactly ({square} square, {slanted} slanted)",
                         square > 0 && slanted == 0);
+                int moved = 0, held = 0;
+                for (int j = 0; j < rfM.JunctionCount; j++)
+                {
+                    var es = rfM.JunctionEdges(j);
+                    if (es.Count < 3) continue;
+                    float widest = 0f;
+                    foreach (var (o, _) in es) widest = Mathf.Max(widest, rfM.RoadHalfWidth(o));
+                    foreach (var (road, atEnd) in es)
+                    {
+                        float old = gM.KerbCurveEnd(rfM, j, road, atEnd, widest, gM.CornerKerbRadius);
+                        held++;
+                        if (gM.SignalBack(rfM, j, road, atEnd, widest, 5f) != old + gM.SignalBeforeCurve) moved++;
+                        if (gM.LayCrossing(rfM, j, road, atEnd, out var cl) && cl.D0 != old + gM.CrossingInset) moved++;
+                    }
+                }
+                T.Check($"...with every crossing and mast where the square rule always put it ({moved} of {held} approaches moved)",
+                        held > 0 && moved == 0);
                 marks.QueueFree();
             }
 
