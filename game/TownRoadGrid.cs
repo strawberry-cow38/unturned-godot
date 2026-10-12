@@ -996,7 +996,7 @@ namespace UnturnedGodot
                         float arc = atEnd ? Mathf.Max(0f, L - 1f) : Mathf.Min(L, 1f);
                         if (!roads.EvaluateAlong(road, arc, out var pos, out var tan, snapTerrain: false)) continue;
                         var fwd = (atEnd ? tan : -tan).Normalized();      // the way a driver arrives
-                        var right = new Vector3(fwd.Z, 0f, -fwd.X).Normalized();
+                        var right = RightOf(fwd);
                         float half = roads.RoadHalfWidth(road);
                         float back = half + CornerKerbRadius + SignalBeforeCurve;
                         // ⚠ ON THE DRIVER'S RIGHT, which is the kerb a mast stands on; its arm then reaches
@@ -1054,7 +1054,7 @@ namespace UnturnedGodot
                     float arc = atEnd ? Mathf.Max(0f, L - 1f) : Mathf.Min(L, 1f);
                     if (!roads.EvaluateAlong(road, arc, out var pos, out var tan, snapTerrain: false)) continue;
                     var fwd = (atEnd ? tan : -tan).Normalized();         // the way a driver arrives
-                    var right = new Vector3(fwd.Z, 0f, -fwd.X).Normalized();
+                    var right = RightOf(fwd);
                     float half = roads.RoadHalfWidth(road);
                     float y = pos.Y + roads.RoadSurfaceOffset(road) + PatchLift + MarkLift;
                     // ⚠⚠ OUTSIDE THE KERB'S CURVE (strawberry: "bring them back before the curve"). The
@@ -1119,6 +1119,16 @@ namespace UnturnedGodot
             }
             return made;
         }
+        /// <summary>The DRIVER'S right for a heading, which is forward x up.
+        ///
+        /// ⚠⚠ `(f.Z, 0, -f.X)` IS THE LEFT, and it is written in this file as "right" more than once because
+        /// a sidewalk lays both sides and never notices which is which. It matters the moment something is
+        /// one-sided: a stop line painted across the lanes LEAVING the junction, and a signal mast on the far
+        /// kerb reaching back over the oncoming traffic -- strawberry, twice: "the stop lines are assuming
+        /// left side driving". Check it against Godot's own axes rather than by rotating a vector in your
+        /// head: forward is -Z and right is +X, and (0,0,-1) x (0,1,0) = (1,0,0).</summary>
+        static Vector3 RightOf(Vector3 fwd) => new Vector3(-fwd.Z, 0f, fwd.X).Normalized();
+
         public bool Crossings = true;
         /// <summary>Zebra bars, or just the two outlines of the walkway.</summary>
         public bool Zebra = true;
