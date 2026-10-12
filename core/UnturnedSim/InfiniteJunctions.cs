@@ -1246,7 +1246,18 @@ namespace SDG.Unturned
             if (NodePatch(g) is not RoadPatch p) return false;
             var plan = new JunctionPlan();
             PaintNode(plan, g, p, stopPastEdge, lines);
-            trims = g.Trim.ToArray();
+            // ⚠⚠ BACK INTO THE CALLER'S ORDER. NodeShape SORTS its arms by angle (items.Sort) and builds
+            // g.Arms and g.Trim in that order, so handing g.Trim straight back gives every arm SOMEBODY
+            // ELSE'S cut. On a junction whose arms are all alike that is invisible; on a 4-lane crossing two
+            // 2-lane streets the cuts differ by metres, and an arm cut far too short leaves a GIANT hole
+            // between its end and the patch -- with the junction's paint still drawn across the bare ground,
+            // because the paint comes from the node geometry and only the ROAD moved.
+            trims = new double[arms.Count];
+            for (int i = 0; i < g.Arms.Count; i++)
+            {
+                int caller = list.IndexOf(g.Arms[i]);
+                if (caller >= 0 && caller < trims.Length) trims[caller] = g.Trim[i];
+            }
             patch = p;
             marks = plan.Marks;
             return true;
