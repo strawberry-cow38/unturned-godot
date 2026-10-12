@@ -155,6 +155,12 @@ namespace UnturnedGodot
             /// whatever it happened to share a number with.</summary>
             public int AxisA, AxisB;
             public bool Bent; public int BendId;
+            /// <summary>This end is half of a main running THROUGH its node: nobody stops it, so it gets no
+            /// crossing and no stop line. Decided by the node pass, read by the crossings.</summary>
+            public bool ThroughA, ThroughB;
+            /// <summary>The direction of the line this end YIELDS to at its node, or zero where it is that line
+            /// (or there is none). Its crossing runs parallel to it.</summary>
+            public Vector3 AlongA, AlongB;
         }
         static int AxisAt(Span sp, bool atEnd) => atEnd ? sp.AxisB : sp.AxisA;
 
@@ -303,8 +309,13 @@ namespace UnturnedGodot
         /// a main and exactly wrong for a street, because a street HAS crossings: I generalised this to any
         /// collinear pair to push the backing number from 58% to 89%, and every side street's centre dashes
         /// then ran straight through its own zebras. The number went up and the junctions got worse.
-        /// ⚠ WHERE TWO MAINS CROSS, one is the priority road. With MainEvery = 3 they cross each other, and
-        /// "exactly two main arms" missed every one of those; axis 0 wins, so a town rebuilds identically.</summary>
+        /// ⚠⚠ AND ONLY WHERE NOTHING ELSE AT THE NODE IS A MAIN (strawberry 2026-10-12: "where u have 2 main
+        /// roads crossing, the splines just continue through, should have the 4 crossings like it did before.
+        /// the spline continuing rule is just for small roads joining"). Where two mains crossed I made one
+        /// of them "the priority road" and ran it through -- so a crossing of two four-lane roads lost all
+        /// four zebras and had one road's lines painted straight over the other's. Two mains meeting is a
+        /// full junction: every arm cut, the slab, a crossing on each. A main STEM at a tee counts too: it is
+        /// a main joining, not a small road.</summary>
         static bool ThroughMain(List<Span> plan, List<(int, bool)> here, out int a, out int b)
         {
             a = b = -1;
@@ -320,10 +331,44 @@ namespace UnturnedGodot
                     allMain &= plan[here[i].Item1].Main;
                 }
                 if (count != 2 || q < 0 || !allMain) continue;   // a stub, a fan, or a street
+                for (int i = 0; i < here.Count; i++)
+                    if (i != p && i != q && plan[here[i].Item1].Main) return false;   // a main meets a main
                 a = p; b = q;
-                return true;                                     // first main axis wins
+                return true;
             }
             return false;
+        }
+
+        /// <summary>The line every other arm at this node YIELDS to, and so the one their crossings run parallel
+        /// to (strawberry 2026-10-12: "the 45° joins should have the crosswalk parallel to the main road's
+        /// direction"). A main over a street; between equals the GRID over the diagonal, since the avenue is
+        /// what joins the grid; and only a collinear pair is a line at all, so a tee's through road beats its
+        /// stem. -1 where no two arms make a line.
+        /// ⭐ AT A RIGHT ANGLE THIS CHANGES NOTHING: a crossing parallel to the road you are crossing into is
+        /// a square one. It only moves the crossings at 45 degrees, which is the point.</summary>
+        static int PriorityAxis(List<Span> plan, List<(int, bool)> here)
+        {
+            int best = -1, bestScore = int.MinValue;
+            for (int axis = 0; axis < 3; axis++)
+            {
+                int count = 0; bool allMain = true;
+                foreach (var (si, atEnd) in here)
+                    if (AxisAt(plan[si], atEnd) == axis) { count++; allMain &= plan[si].Main; }
+                if (count != 2) continue;
+                int score = (allMain ? 4 : 0) - axis;    // main first, then the lower axis: the grid before the diagonal
+                if (score > bestScore) { bestScore = score; best = axis; }
+            }
+            return best;
+        }
+
+        /// <summary>An end's direction leaving its node, flat, from the planned polyline.</summary>
+        static Vector3 PlanDir(Span sp, bool atEnd)
+        {
+            var p = sp.Pts;
+            if (p == null || p.Count < 2) return Vector3.Zero;
+            var d = atEnd ? p[p.Count - 2] - p[p.Count - 1] : p[1] - p[0];
+            d.Y = 0f;
+            return d.LengthSquared() < 1e-8f ? Vector3.Zero : d.Normalized();
         }
 
         static IEnumerable<(Span sp, int idx)> Enumerate(List<Span> l) { for (int i = 0; i < l.Count; i++) yield return (l[i], i); }
@@ -632,6 +677,12 @@ namespace UnturnedGodot
         /// -- and which built road carries it, so the road that was actually built can be held to it.</summary>
         readonly List<(Vector3 S, Vector3 E, Vector3 C, float R, Vector3 dIn, Vector3 dOut)> _bendGeom = new();
         readonly List<(int road, int bend)> _bentRoads = new();
+        /// <summary>Built road ends that are half of a main running through their node: not crossed, not stopped.</summary>
+        readonly HashSet<(int road, bool atEnd)> _throughEnds = new();
+        /// <summary>Built road ends whose crossing runs parallel to the line they yield to, and that line's direction.</summary>
+        readonly Dictionary<(int road, bool atEnd), Vector3> _crossAlong = new();
+        /// <summary>Is this road end half of a main that runs through its junction? Nothing stops it there.</summary>
+        public bool RunsThrough(int road, bool atEnd) => _throughEnds.Contains((road, atEnd));
         /// <summary>The middle of every rounded corner's arc, so a camera can be put on one.</summary>
         public readonly List<Vector3> BendPoints = new();
         /// <summary>The last bend-fidelity measurement, for the test to hold the built roads to.</summary>
@@ -744,7 +795,7 @@ namespace UnturnedGodot
         public Report Generate(RoadField roads, Func<float, float, float> heightAt, Func<float, float, bool> siteOk = null)
         {
             var rep = new Report();
-            Built.Clear(); _profiles.Clear(); Marks.Clear();
+            Built.Clear(); _profiles.Clear(); Marks.Clear(); _throughEnds.Clear(); _crossAlong.Clear();
             if (roads == null || heightAt == null || Spacing < 4f || Extent < Spacing) return rep;
             // the kerb return follows the road's width, so everything measured off it does too
             CornerKerbRadius = Mathf.Clamp(roads.RoadHalfWidthOfMaterial(MainMaterial) * CornerKerbFraction, 2f, 9f);
@@ -883,7 +934,34 @@ namespace UnturnedGodot
                 // where it already fitted -- this only removes what the gaps were made of.
                 // ⚠ ONLY A MAIN, AND ONLY STRAIGHT THROUGH. Leaving CROSSING arms uncut would overlap two
                 // coplanar ribbons at right angles in the middle of the node, which is a z-fight, not a fix.
-                if (!CutMain && ThroughMain(plan, here, out int ta, out int tb))
+                // ⚠ WHO IS CROSSED, AND WHICH WAY, is decided HERE -- the plan still knows each arm's axis and
+                // class -- and carried to the crossings on the span. The UG_TOWNCUTMAIN control still flags
+                // the through pair: that control is about the geometry of the cut, not about the markings.
+                bool runsThrough = ThroughMain(plan, here, out int ta, out int tb);
+                if (runsThrough)
+                    foreach (int q in new[] { ta, tb })
+                    {
+                        var sp = plan[here[q].Item1];
+                        if (here[q].Item2) sp.ThroughB = true; else sp.ThroughA = true;
+                        plan[here[q].Item1] = sp;
+                    }
+                int priAxis = here.Count >= 3 ? PriorityAxis(plan, here) : -1;
+                if (priAxis >= 0)
+                {
+                    var priDir = Vector3.Zero;
+                    foreach (var (si, atEnd) in here)
+                        if (AxisAt(plan[si], atEnd) == priAxis) { priDir = PlanDir(plan[si], atEnd); break; }
+                    if (priDir != Vector3.Zero)
+                        for (int q = 0; q < here.Count; q++)
+                        {
+                            var (si, atEnd) = here[q];
+                            if (AxisAt(plan[si], atEnd) == priAxis) continue;    // the line itself is crossed square
+                            var sp = plan[si];
+                            if (atEnd) sp.AlongB = priDir; else sp.AlongA = priDir;
+                            plan[si] = sp;
+                        }
+                }
+                if (!CutMain && runsThrough)
                 {
                     var spT = plan[here[ta].Item1];
                     foreach (int q in new[] { ta, tb })
@@ -959,6 +1037,10 @@ namespace UnturnedGodot
                 Bind(ref b, road, true, pts[^1]);
                 Built.Add(road); _profiles.Add(pts);
                 if (sp.Bent) _bentRoads.Add((road, sp.BendId));
+                if (sp.ThroughA) _throughEnds.Add((road, false));
+                if (sp.ThroughB) _throughEnds.Add((road, true));
+                if (sp.AlongA != Vector3.Zero) _crossAlong[(road, false)] = sp.AlongA;
+                if (sp.AlongB != Vector3.Zero) _crossAlong[(road, true)] = sp.AlongB;
                 // ⚠ THE LENGTH THAT WAS BUILT, not the length that was planned. Reporting sp.Len counted the
                 // whole span including the part the junction ate, so the total went UP when the cuts came in.
                 float built = 0f;
@@ -1300,7 +1382,7 @@ namespace UnturnedGodot
                     var e5 = roads.JunctionEdges(j5);
                     if (e5.Count < 3) continue;
                     int mainRoad = -1; float mhw = 0f;
-                    foreach (var (r5, _) in e5) if (IsMain(roads, r5)) { mainRoad = r5; mhw = roads.RoadHalfWidth(r5); }
+                    foreach (var (r5, x5) in e5) if (_throughEnds.Contains((r5, x5))) { mainRoad = r5; mhw = roads.RoadHalfWidth(r5); }
                     if (mainRoad < 0) continue;
                     var jp5 = roads.JunctionPos(j5);
                     if (!roads.EvaluateAlong(mainRoad, roads.RoadLength(mainRoad) * 0.5f, out _, out var mt, snapTerrain: false)) continue;
@@ -1320,7 +1402,7 @@ namespace UnturnedGodot
                     var e6 = roads.JunctionEdges(j6);
                     if (e6.Count < 3) continue;
                     int mr = -1;
-                    foreach (var (r6, _) in e6) if (IsMain(roads, r6)) mr = r6;
+                    foreach (var (r6, x6) in e6) if (_throughEnds.Contains((r6, x6))) mr = r6;
                     if (mr < 0) continue;
                     var jp6 = roads.JunctionPos(j6);
                     float ribbon = float.NaN;
@@ -1984,8 +2066,9 @@ namespace UnturnedGodot
                     var node0 = roads.JunctionPos(j);
                     foreach (var (road, atEnd) in edges)
                     {
-                        // a main road is not stopped: no signal head and no sign on its own approach
-                        if (mode == Control.StopSigns && IsMain(roads, road)) continue;
+                        // a main running through is not stopped: no sign on its own approach (two mains
+                        // crossing is a full junction, and both are)
+                        if (mode == Control.StopSigns && _throughEnds.Contains((road, atEnd))) continue;
                         float L = roads.RoadLength(road);
                         // ⚠⚠ POSITIONED OFF THE NODE, NOT OFF THE ROAD'S CUT (strawberry 2026-10-12: "bring
                         // the traffic lights closer, actually on the intersection, a little before the curve
@@ -2071,46 +2154,30 @@ namespace UnturnedGodot
         /// extent below instead of being a number of its own.
         /// ⚠ ZEBRA STRIPES RUN ALONG THE DIRECTION OF TRAVEL, not across it. Bars across the road is a stop
         /// line repeated, which is a different marking entirely.</summary>
-        int BuildCrossings(Node3D parent, RoadField roads)
+        public int BuildCrossings(Node3D parent, RoadField roads)
         {
             if (!Crossings || roads == null) return 0;
             var mat = roads.MaterialOfMaterial(MainMaterial);
             var uvWhite = new Vector2(0.2363f, 0.0664f);
-            int made = 0;
+            int made = 0, slanted = 0;
+            var plans = new Dictionary<(int road, bool atEnd), CrossingLayout>();
             for (int j = 0; j < roads.JunctionCount; j++)
             {
                 var edges = roads.JunctionEdges(j);
                 if (edges.Count < 3) continue;
-                var node = roads.JunctionPos(j);
+                foreach (var (road, atEnd) in edges)
+                    if (LayCrossing(roads, j, road, atEnd, out var cl)) plans[(road, atEnd)] = cl;
+            }
+            int dropped = DropCrowdedCrossings(roads, plans);
+            _builtCrossings.Clear();
+            for (int j = 0; j < roads.JunctionCount; j++)
+            {
+                var edges = roads.JunctionEdges(j);
+                if (edges.Count < 3) continue;
                 foreach (var (road, atEnd) in edges)
                 {
-                    // ⚠ THE MAIN ROAD IS NOT STOPPED AND NOT CROSSED. Traffic on it runs through; its lines
-                    // carry on across the box and nothing is painted over them (strawberry: "the bigger roads
-                    // should be the 'main' roads, their lines continue through the junction without crossings
-                    // on their parts").
-                    if (IsMain(roads, road)) continue;
-                    float L = roads.RoadLength(road);
-                    float arc = atEnd ? Mathf.Max(0f, L - 1f) : Mathf.Min(L, 1f);
-                    if (!roads.EvaluateAlong(road, arc, out var pos, out var tan, snapTerrain: false)) continue;
-                    var fwd = (atEnd ? tan : -tan).Normalized();         // the way a driver arrives
-                    var right = RightOf(fwd);
-                    float half = roads.RoadHalfWidth(road);
-                    float y = pos.Y + roads.RoadSurfaceOffset(road) + PatchLift + MarkLift;
-                    // ⚠⚠ OUTSIDE THE KERB'S CURVE (strawberry: "bring them back before the curve"). The
-                    // corner's fillet begins at half + CornerKerbRadius from the node; inside that the kerbs
-                    // either side are still turning, so a crossing there meets them at an angle and its
-                    // dropped kerbs cannot line up. Clear of the tangent point the two kerbs are straight and
-                    // parallel, which is the only place a crossing squares up.
-                    // ⚠⚠ ...MEASURED FROM THE ROAD IT CROSSES, NOT FROM ITSELF. The kerb turns at the CROSSING
-                    // road's half width plus the radius, so a side street meeting a 9.2 m main is still curving
-                    // until 15.2 m out -- and `half + radius` put its zebra at 11.8-14.8 m, squarely inside the
-                    // curve it was moved out of. Same bug, same fix as the signals: master's "traffic lights
-                    // (and other stuff) should consider both roads' widths when placing".
-                    float crossed = half;
-                    foreach (var (other, _) in edges) if (other != road) crossed = Mathf.Max(crossed, roads.RoadHalfWidth(other));
-                    float curve = KerbCurveEnd(roads, j, road, atEnd, crossed, CornerKerbRadius);
-                    float d0 = curve + CrossingInset, d1 = d0 + CrossingWidth;
-                    float sd0 = d1 + StopGap, sd1 = sd0 + StopLineWidth;
+                    if (!plans.TryGetValue((road, atEnd), out var cl)) continue;
+                    float half = cl.Half, y = cl.PaintY;
                     var st = new SurfaceTool();
                     st.Begin(Mesh.PrimitiveType.Triangles);
                     // ⚠⚠ A PLAIN-TARMAC APRON UNDER THE CROSSING AND THE STOP LINE. Both sit out on the street's
@@ -2122,9 +2189,9 @@ namespace UnturnedGodot
                     // It rides between the slab and the paint (ApronLift), so it neither fights the slab where
                     // they overlap nor covers the bars painted on it.
                     {
-                        float a0 = d0 - 0.3f, a1 = sd1 + 0.3f, w = half + 0.02f;
-                        float ya = pos.Y + roads.RoadSurfaceOffset(road) + PatchLift + ApronLift;
-                        Vector3 A(float dist, float lat) { var q = node - fwd * dist + right * lat; return new Vector3(q.X, ya, q.Z); }
+                        float a0 = cl.D0 - 0.3f, a1 = cl.SD1 + 0.3f, w = half + 0.02f;
+                        float ya = cl.ApronY;
+                        Vector3 A(float dist, float lat) { var q = cl.At(dist, lat); return new Vector3(q.X, ya, q.Z); }
                         var uvPlain = new Vector2(30f / 256f, 0.5f);   // the plain band between the edge and the first dash
                         void TA(Vector3 a, Vector3 b, Vector3 c)
                         {
@@ -2135,10 +2202,13 @@ namespace UnturnedGodot
                         }
                         TA(A(a0, -w), A(a0, w), A(a1, w)); TA(A(a0, -w), A(a1, w), A(a1, -w));
                     }
+                    // ⚠ A BAR STILL RUNS ALONG THE DIRECTION OF TRAVEL when the crossing is laid at a slant, so
+                    // tyres keep rolling between the bars; only its two ENDS follow the band, which makes each
+                    // bar a parallelogram rather than a rotated rectangle.
                     void Bar(float latA, float latB)
                     {
-                        var p00 = node - fwd * d0 + right * latA; var p01 = node - fwd * d0 + right * latB;
-                        var p10 = node - fwd * d1 + right * latA; var p11 = node - fwd * d1 + right * latB;
+                        var p00 = cl.At(cl.D0, latA); var p01 = cl.At(cl.D0, latB);
+                        var p10 = cl.At(cl.D1, latA); var p11 = cl.At(cl.D1, latB);
                         Vector3 V(Vector3 q) => new Vector3(q.X, y, q.Z);
                         void Tri(Vector3 a, Vector3 b, Vector3 c)
                         {
@@ -2163,10 +2233,11 @@ namespace UnturnedGodot
                     }
                     // ⚠ AND ITS OWN STOP LINE, because this is now past the junction patch and PaintNode
                     // can only paint within it. A driver stops BEHIND the crossing, so the line goes outside.
-                    // Across the approach half only -- we drive on the right.
+                    // Across the approach half only -- we drive on the right. Parallel to the crossing, the way
+                    // a give-way line follows the edge of the road it gives way to.
                     {
-                        var q00 = node - fwd * sd0 + right * 0.1f; var q01 = node - fwd * sd0 + right * (half - 0.2f);
-                        var q10 = node - fwd * sd1 + right * 0.1f; var q11 = node - fwd * sd1 + right * (half - 0.2f);
+                        var q00 = cl.At(cl.SD0, 0.1f); var q01 = cl.At(cl.SD0, half - 0.2f);
+                        var q10 = cl.At(cl.SD1, 0.1f); var q11 = cl.At(cl.SD1, half - 0.2f);
                         Vector3 W(Vector3 q) => new Vector3(q.X, y, q.Z);
                         void T2(Vector3 a, Vector3 b, Vector3 c)
                         {
@@ -2183,9 +2254,150 @@ namespace UnturnedGodot
                     if (mat != null) mi.MaterialOverride = mat;
                     parent.AddChild(mi);
                     made++;
+                    if (cl.Shear != 0f) slanted++;
+                    _builtCrossings.Add((road, atEnd));
                 }
             }
+            Log.Print($"[towngrid] crossings: {made} laid ({slanted} slanted parallel to the road they cross into), "
+                    + $"{dropped} left off where a short road could not hold them");
             return made;
+        }
+
+        /// <summary>The road ends the last BuildCrossings actually crossed.</summary>
+        readonly HashSet<(int road, bool atEnd)> _builtCrossings = new();
+        public bool CrossingBuilt(int road, bool atEnd) => _builtCrossings.Contains((road, atEnd));
+
+        /// <summary>A road's length NODE TO NODE: the built ribbon plus what each junction cut off it.</summary>
+        public static float NodeSpan(RoadField roads, int road)
+        {
+            float L = roads.RoadLength(road), span = L;
+            for (int e = 0; e < 2; e++)
+            {
+                bool atEnd = e == 1;
+                int j = roads.RoadEndJunction(road, atEnd);
+                if (j < 0 || !roads.EvaluateAlong(road, atEnd ? L : 0f, out var tip, out _, snapTerrain: false)) continue;
+                var jp = roads.JunctionPos(j);
+                span += new Vector2(tip.X - jp.X, tip.Z - jp.Z).Length();
+            }
+            return span;
+        }
+
+        /// <summary>Do the crossings at a road's two ends overlap? Each reaches from its node out to the far
+        /// side of its stop line's apron, and a slanted one reaches further at one kerb than the other -- so
+        /// both kerbs are asked. The same kerb is lat +1 at one end and -1 at the other.</summary>
+        public static bool CrossingsCollide(CrossingLayout a, CrossingLayout b, float span)
+        {
+            for (int s = -1; s <= 1; s += 2)
+                if ((a.SD1 + s * a.Half * a.Shear + 0.3f) + (b.SD1 - s * b.Half * b.Shear + 0.3f) > span) return true;
+            return false;
+        }
+
+        /// <summary>Take one crossing off each road too short to hold both of its ends'; returns how many.
+        ///
+        /// ⚠⚠ ONE SHORT ROAD CANNOT ALWAYS HOLD TWO CROSSINGS. Each has to stand clear of its own kerb's curve,
+        /// and where a 9.2 m main meets at 45 degrees that is 25-40 m out -- so on the short links the diagonal
+        /// cuts (the long side of a triangle island) the two ends' crossings met in the middle, and once each
+        /// was laid parallel to ITS main they crossed in an X. The end crossing the bigger road keeps its
+        /// crossing, the start end on a tie.
+        /// ⚠ ONLY CROSSING AGAINST CROSSING. A first version also made each crossing clear the FAR junction's
+        /// kerb curve, and it took two crossings off the very four-way master had just asked to have four --
+        /// on a sum that said they reached a triangle island's curve, where the render showed them clear of it.</summary>
+        int DropCrowdedCrossings(RoadField roads, Dictionary<(int road, bool atEnd), CrossingLayout> plans)
+        {
+            int dropped = 0;
+            foreach (var key in new List<(int road, bool atEnd)>(plans.Keys))
+            {
+                if (key.atEnd || !plans.TryGetValue((key.road, true), out var cb)) continue;   // each road once
+                var ca = plans[key];
+                if (!CrossingsCollide(ca, cb, NodeSpan(roads, key.road))) continue;
+                plans.Remove((key.road, !(cb.Crossed > ca.Crossed)));
+                dropped++;
+            }
+            return dropped;
+        }
+
+        /// <summary>Where one approach's crossing and stop line lie, in the arm's own frame: At(d, lat) is the
+        /// point d metres out from the node along the arm and lat metres to the arriving driver's right.
+        /// ⚠ BuildCrossings DRAWS FROM THIS and the tests measure it -- one copy of the rule, not two.</summary>
+        public struct CrossingLayout
+        {
+            public Vector3 Node, Fwd, Right;
+            /// <summary>This arm's half width, and the widest road it crosses into.</summary>
+            public float Half, Crossed, PaintY, ApronY;
+            /// <summary>Where the crossing's near and far edges, and the stop line's, cross the arm's centreline.</summary>
+            public float D0, D1, SD0, SD1;
+            /// <summary>Metres the band moves out along the arm per metre across it: 0 for a square crossing,
+            /// cot θ for one laid parallel to a road that meets the arm at θ.</summary>
+            public float Shear;
+            public Vector3 At(float d, float lat) => Node - Fwd * (d + lat * Shear) + Right * lat;
+        }
+
+        /// <summary>Lay out the crossing on one approach -- or say there is none, for a main running through.
+        ///
+        /// ⭐ PARALLEL TO THE ROAD IT CROSSES INTO (strawberry 2026-10-12: "the 45° joins should have the
+        /// crosswalk parallel to the main road's direction"). A crossing carries the pavement of the road the
+        /// arm joins across the arm's mouth, so it lies along THAT road, not square to the arm: at 45 degrees
+        /// a square one cut across the mouth on a slant to the kerb its pedestrians were walking along. Where
+        /// the arm meets that road square, parallel to it IS square, and the old numbers come back bit for bit.
+        /// ⚠ SO ITS DISTANCE IS MEASURED OFF THAT ROAD'S CENTRELINE, not along the arm. On the arm's sharp
+        /// side the kerb's fillet comes off the arm at h + R(1 + cos θ) from that centreline (h the crossed
+        /// road's half width, R the kerb radius); on the blunt side it comes off sooner, at h + R(1 - cos θ),
+        /// so a near edge CrossingInset past the first clears both. At 90 degrees that is h + R + inset --
+        /// the square rule exactly. Widths stay true widths: a 3 m walkway is 3 m across for the person on
+        /// it, which along a 45-degree arm is 4.2 m.</summary>
+        public bool LayCrossing(RoadField roads, int junction, int road, bool atEnd, out CrossingLayout c)
+        {
+            c = default;
+            // ⚠ A MAIN RUNNING THROUGH IS NOT STOPPED AND NOT CROSSED. Traffic on it runs through; its lines
+            // carry on across the box and nothing is painted over them (strawberry: "the bigger roads should be
+            // the 'main' roads, their lines continue through the junction without crossings on their parts").
+            // ⚠⚠ RUNNING THROUGH, NOT MERELY MAIN. This asked IsMain, so where two four-lane roads crossed
+            // there was no crossing on any arm (strawberry: "should have the 4 crossings like it did before").
+            if (_throughEnds.Contains((road, atEnd))) return false;
+            float L = roads.RoadLength(road);
+            float arc = atEnd ? Mathf.Max(0f, L - 1f) : Mathf.Min(L, 1f);
+            if (!roads.EvaluateAlong(road, arc, out var pos, out var tan, snapTerrain: false)) return false;
+            var fwd = (atEnd ? tan : -tan).Normalized();         // the way a driver arrives
+            var right = RightOf(fwd);
+            float half = roads.RoadHalfWidth(road);
+            // ⚠⚠ OUTSIDE THE KERB'S CURVE (strawberry: "bring them back before the curve"). The corner's
+            // fillet begins at half + CornerKerbRadius from the node; inside that the kerbs either side are
+            // still turning, so a crossing there meets them at an angle and its dropped kerbs cannot line up.
+            // ⚠⚠ ...MEASURED FROM THE ROAD IT CROSSES, NOT FROM ITSELF. The kerb turns at the CROSSING road's
+            // half width plus the radius, so a side street meeting a 9.2 m main is still curving until 15.2 m
+            // out -- and `half + radius` put its zebra at 11.8-14.8 m, squarely inside the curve it was moved
+            // out of. Same bug, same fix as the signals: master's "traffic lights (and other stuff) should
+            // consider both roads' widths when placing".
+            float crossed = half;
+            foreach (var (other, _) in roads.JunctionEdges(junction)) if (other != road) crossed = Mathf.Max(crossed, roads.RoadHalfWidth(other));
+            float curve = KerbCurveEnd(roads, junction, road, atEnd, crossed, CornerKerbRadius);
+            float d0 = curve + CrossingInset, d1 = d0 + CrossingWidth;
+            float sd0 = d1 + StopGap, sd1 = sd0 + StopLineWidth;
+            float shear = 0f;
+            if (_crossAlong.TryGetValue((road, atEnd), out var along))
+            {
+                var outw = new Vector3(-fwd.X, 0f, -fwd.Z).Normalized();
+                var m = new Vector3(along.X, 0f, along.Z).Normalized();
+                float mu = m.Dot(outw), mr = m.Dot(right);
+                float sinT = Mathf.Abs(mr), cosT = Mathf.Abs(mu);
+                // square to half a degree keeps the square numbers exactly; a line nearly along the arm is no
+                // road to lay a crossing parallel to
+                if (cosT > Mathf.Sin(Mathf.DegToRad(0.5f)) && sinT > Mathf.Sin(Mathf.DegToRad(20f)))
+                {
+                    shear = mu / mr;
+                    d0 = (crossed + CornerKerbRadius * (1f + cosT) + CrossingInset) / sinT;
+                    d1 = d0 + CrossingWidth / sinT;
+                    sd0 = d1 + StopGap / sinT; sd1 = sd0 + StopLineWidth / sinT;
+                }
+            }
+            c = new CrossingLayout
+            {
+                Node = roads.JunctionPos(junction), Fwd = fwd, Right = right, Half = half, Crossed = crossed,
+                PaintY = pos.Y + roads.RoadSurfaceOffset(road) + PatchLift + MarkLift,
+                ApronY = pos.Y + roads.RoadSurfaceOffset(road) + PatchLift + ApronLift,
+                D0 = d0, D1 = d1, SD0 = sd0, SD1 = sd1, Shear = shear,
+            };
+            return true;
         }
         /// <summary>How far under the road surface the corner asphalt rides: enough that a ribbon or the slab
         /// always wins where they overlap it, little enough that the step at a filled hole cannot be seen.</summary>
@@ -2377,7 +2589,9 @@ namespace UnturnedGodot
                 var arms = new List<(Vector3 tip, Vector3 outDir)>();
                 foreach (var (road, atEnd) in edges)
                 {
-                    if (!IsMain(roads, road)) continue;
+                    // ⚠ A MAIN THAT RUNS THROUGH, not any main: where two mains cross, nobody's lines carry on
+                    // across the box -- this painted one of them straight over the other's crossings
+                    if (!_throughEnds.Contains((road, atEnd))) continue;
                     float L = roads.RoadLength(road);
                     if (!roads.EvaluateAlong(road, atEnd ? L : 0f, out var tip, out var tan, snapTerrain: false)) continue;
                     var outDir = new Vector3(tip.X - node.X, 0f, tip.Z - node.Z);

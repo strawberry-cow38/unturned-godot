@@ -10728,6 +10728,15 @@ namespace UnturnedGodot
                     if (mainHere && sideHere && ends.Count >= 4 && bestDeg == 0) { bestDeg = ends.Count; busiest = jp; }
                     continue;
                 }
+                // UG_TOWNCLOSE=mm: TWO MAINS crossing -- the full junction with a crossing on every arm, since
+                // only small roads joining a main let it run through (strawberry 2026-10-12).
+                if (closeEnv == "mm")
+                {
+                    int mains = 0;
+                    foreach (var (rr, _) in ends) if (rf.RoadMaterialOf(rr) == town.MainMaterial) mains++;
+                    if (mains >= 4 && bestDeg == 0) { bestDeg = ends.Count; busiest = jp; }
+                    continue;
+                }
                 if (wantArms > 0) { if (ends.Count == wantArms && bestDeg == 0) { bestDeg = ends.Count; busiest = jp; } }
                 else if (ends.Count > bestDeg) { bestDeg = ends.Count; busiest = jp; }
             }
