@@ -1048,6 +1048,9 @@ namespace UnturnedSim
                     if (table == "Table_Wood_1" && !big) continue;
                     if ((t = PutWithRoom(table, room, cx, cz)) != null) break;
                 }
+                // a small kitchen-diner with its doors' walks across the middle: the small table against a wall, seated on
+                // its open sides (the chairs that would face the wall are refused below)
+                if (t == null && _room.Kind == RoomKind.Kitchen) t = Put("Table_Wood_3", Against("Table_Wood_3", Side.Back));
                 if (t == null) return;
                 // each way of seating it in turn, actually placed (a chair the room's walk cannot spare is refused only
                 // then), keeping the first that seats everyone or else the one that seats the most
@@ -1165,9 +1168,18 @@ namespace UnturnedSim
                 }
                 if (!tries.Any(Attempt)) { strict = false; tries.Any(Attempt); }
                 // a kitchen too cut up by its doors for any run (a small house's, with three doors and a back door) still
-                // gets what it is for: the sink, the fridge and the stove, each on whatever wall it fits
-                foreach (var a in new[] { "Counter_1", "Fridge_0", "Oven_0" })
-                    if (!_mine.Any(m => m.Name == a)) Put(a, Against(a, Side.Back));
+                // gets what it is for: the sink, the fridge and the stove, each on whatever wall it fits nearest the others
+                // -- a pace apart at least, the stove never beside the sink, and the three inside a work triangle
+                var three = new[] { "Counter_1", "Fridge_0", "Oven_0" };
+                static float Dist(FurniturePlan p, float x, float z) => MathF.Sqrt((p.X - x) * (p.X - x) + (p.Z - z) * (p.Z - z));
+                foreach (var a in three)
+                {
+                    if (_mine.Any(m => m.Name == a)) continue;
+                    var placed = three.Select(n => _mine.FirstOrDefault(m => m.Name == n)).Where(p => p != null).ToList();
+                    float Round(float x, float z) => placed.Sum(p => Dist(p, x, z)) + (placed.Count == 2 ? Dist(placed[0], placed[1].X, placed[1].Z) : 0f);
+                    var cands = Against(a, Side.Back).Where(c => placed.All(p => Dist(p, c.X, c.Z) >= 1.8f) && Round(c.X, c.Z) <= (placed.Count == 2 ? 13f : 6.5f)).ToList();
+                    Put(a, cands, (x, z, _) => -Round(x, z));
+                }
                 // a kitchen-diner's table stands where an island would
                 if (_res.KitchenDiner) Dining();
                 else
