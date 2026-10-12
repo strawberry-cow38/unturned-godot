@@ -744,6 +744,58 @@ namespace UnturnedGodot
                 }
                 Log.Print($"[towngrid] junction coverage: {holes} GAPS (bare runs with paving both sides) of {tested} runs"
                         + (holes > 0 ? $", widest {worstR:0.0} m at {worstHole}" : " -- none"));
+
+                // ⚠⚠ AND A 5 cm WALK DOWN EACH ARM, because the polar sweep CANNOT SEE A SLIVER: its rays
+                // are 2*pi*r/96 apart -- 0.65 m at 10 m out -- so a 20 cm strip of grass crossing a mouth
+                // falls between two rays and reads as nothing. A dense 2-D grid finds it but costs
+                // cells x patches x triangles, which ran for ten minutes and had to be killed. One dimension
+                // is enough: a sliver ACROSS a mouth is crossed by a line ALONG the arm.
+                // ⭐ Resolution is part of an instrument's answer, and neither of the first two stated theirs.
+                {
+                    const float Step5 = 0.05f;
+                    float worstSliver = 0f; var sliverAt = Vector3.Zero; int slivers = 0;
+                    for (int j3 = 0; j3 < roads.JunctionCount; j3++)
+                    {
+                        var e3 = roads.JunctionEdges(j3);
+                        if (e3.Count < 2) continue;
+                        var jp3 = roads.JunctionPos(j3);
+                        foreach (var (road3, atEnd3) in e3)
+                        {
+                            float L3 = roads.RoadLength(road3);
+                            if (!roads.EvaluateAlong(road3, atEnd3 ? L3 : 0f, out var tip3, out var tan3, snapTerrain: false)) continue;
+                            var outw = new Vector3(tip3.X - jp3.X, 0f, tip3.Z - jp3.Z);
+                            if (outw.Length() < 0.5f) continue;
+                            outw = outw.Normalized();
+                            var rt = RightOf(outw);
+                            float hw3 = roads.RoadHalfWidth(road3);
+                            foreach (float latf in new[] { -0.85f, -0.4f, 0f, 0.4f, 0.85f })
+                            {
+                                float run3 = 0f; bool prev3 = false;
+                                for (float d3 = 0.2f; d3 <= outw.Length() * 0f + 40f; d3 += Step5)
+                                {
+                                    var q4 = jp3 + outw * d3 + rt * (latf * hw3);
+                                    bool c4 = false;
+                                    foreach (var pq in Patches) if (pq.DistanceTo(q4.X, -q4.Z) <= 0.001) { c4 = true; break; }
+                                    if (!c4 && roads.NearestPointOnSpline(q4, 80f, out int nr4, out _, out _, out var np4))
+                                        c4 = new Vector2(q4.X - np4.X, q4.Z - np4.Z).Length() <= roads.RoadHalfWidth(nr4);
+                                    if (!c4) { run3 += Step5; }
+                                    else
+                                    {
+                                        if (prev3 == false && run3 > 0f && run3 < 3f)
+                                        {
+                                            slivers++;
+                                            if (run3 > worstSliver) { worstSliver = run3; sliverAt = q4 - outw * (run3 * 0.5f); }
+                                        }
+                                        run3 = 0f;
+                                    }
+                                    prev3 = c4;
+                                }
+                            }
+                        }
+                    }
+                    Log.Print($"[towngrid] arm walk (5 cm): {slivers} bare slivers crossing a mouth"
+                            + (slivers > 0 ? $", widest {worstSliver * 100f:0} cm at {sliverAt}" : " -- none"));
+                }
             }
             Log.Print($"[towngrid] patch/road seam: height {worst * 100f:0.0} cm, IN-PLAN GAP {worstGap * 100f:0.0} cm "
                     + $"over {probed}/{gapProbes} probes (surf {surf:0.000}, lift {PatchLift:0.000}) -- {worstWhy}; widest gap {gapWhy}");

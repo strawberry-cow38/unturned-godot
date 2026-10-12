@@ -27,9 +27,19 @@ namespace UnturnedGodot
         /// <summary>How far the kerb stands proud of the road. 0.4 m is MEASURED off the retail pieces
         /// (SplitKerb: palette faces span z -1.0 .. +0.4 against a carriageway at 0).</summary>
         public float KerbHeight = 0.4f;
-        /// <summary>How far the kerb face sits back from the road's own edge. Small and positive so the
-        /// pavement meets the asphalt without z-fighting along the join.</summary>
-        public float RoadGap = 0.05f;
+        /// <summary>How far the kerb face sits from the road's own edge. NEGATIVE = it laps OVER the asphalt.
+        ///
+        /// ⚠⚠ IT WAS +5 cm, AND 5 cm OF BARE GROUND BETWEEN A KERB AND A ROAD IS A GREEN STRIP. The reason
+        /// given for the gap -- "so the pavement meets the asphalt without z-fighting" -- does not hold: the
+        /// kerb's face is VERTICAL and the road's surface HORIZONTAL, so they cannot fight for a pixel no
+        /// matter how close they are. What the gap actually did was leave a 5 cm ribbon of terrain showing
+        /// down the side of every road, and at a grazing angle near a junction (where the grading drops the
+        /// ground furthest) it reads as a green line painted along the asphalt. strawberry, after I had
+        /// measured the road/patch seam from six directions: "you see the green strip in the road right?"
+        /// ⚠ And no probe here could ever have found it: every one of them samples the CARRIAGEWAY and the
+        /// PATCH, and this strip is outside both by construction.
+        /// Lapping the kerb 3 cm over the asphalt leaves nothing to show through.</summary>
+        public float RoadGap = -0.03f;
         /// <summary>Skirt dropped below the walking surface, so a pavement on uneven ground does not show
         /// daylight under its outer edge. The kit does the same thing -- its palette faces reach z = -1.0.</summary>
         public float Skirt = 0.6f;
@@ -212,7 +222,7 @@ namespace UnturnedGodot
             float total = roads.RoadLength(road);
             float half = roads.RoadHalfWidth(road);
             if (total < Step * 2f || half <= 0f) return 0;
-            float off = Mathf.Max(0.1f, half + RoadGap);
+            float off = Mathf.Max(0.1f, half + RoadGap);   // half is metres, so a few cm of lap never hits the floor
             // ⚠ THE TRIM EXISTS FOR JUNCTIONS. Four ribbons running to the ends of four roads that meet at one
             // crossroads all arrive in the middle of the intersection and intersect each other. Held back by
             // the widest road meeting that end plus a corner radius, they stop at the kerb line instead -- and
