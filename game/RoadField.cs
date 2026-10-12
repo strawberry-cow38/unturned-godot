@@ -662,6 +662,13 @@ namespace UnturnedGodot
             road >= 0 && road < _roads.Count && _roads[road].Mi != null
             && IsInstanceValid(_roads[road].Mi) && _roads[road].Mi.Visible;
 
+        /// <summary>The same surface offset for a MATERIAL rather than a placed road -- geometry stitched
+        /// into a road (a junction patch) has to sit at the ASPHALT, and the asphalt is this far above the
+        /// joint the spline was built from. Building at the joint height instead leaves a step the width of
+        /// the slab at every seam.</summary>
+        public float RoadSurfaceOffsetOfMaterial(int material) =>
+            material >= 0 && material < _mats.Count ? _mats[material].Depth * DepthScale + _mats[material].Offset : 0f;
+
         public float RoadSurfaceOffset(int road) =>
             road >= 0 && road < _roads.Count && _roads[road].Material < _mats.Count
                 ? _mats[_roads[road].Material].Depth * DepthScale + _mats[_roads[road].Material].Offset

@@ -10598,7 +10598,9 @@ namespace UnturnedGodot
             bool graded = town.GradeTerrain(terrain, rf);     // ⚠ BEFORE the pavement: its skirt is cut to the ground it finds
             int patches = town.BuildPatchMeshes(editor, rf);   // the asphalt paving each node, now the arms stop short of it
             int walks = town.LaySidewalks(editor, rf);
-            Log.Print($"[towngrid] {rf.RoadCount - before} streets added, {patches} junction patches, {walks} pavement ribbons, site {(graded ? "GRADED" : "draped")}");
+            var walkProto = new EditorSidewalk(); editor.AddChild(walkProto);
+            int corners = town.LaySidewalkCorners(editor, rf, walkProto);
+            Log.Print($"[towngrid] {rf.RoadCount - before} streets added, {patches} junction patches, {walks} pavement ribbons + {corners} corners, site {(graded ? "GRADED" : "draped")}");
             // ⚠ IS THERE ACTUALLY ASPHALT? The first graded render showed the flattened pads and no road
             // surface on them, and from 250 m up "I cannot see it" and "it is not there" look identical.
             // So: does a mesh exist per street, and where is its surface relative to the ground?

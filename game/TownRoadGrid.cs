@@ -449,6 +449,36 @@ namespace UnturnedGodot
             if (parent == null || roads == null || Patches.Count == 0) return 0;
             var mat = roads.MaterialOfMaterial(MainMaterial);
             float half = roads.RoadHalfWidthOfMaterial(MainMaterial);
+            // ⚠⚠ THE PATCH SITS AT THE ASPHALT, AND THE SHIFT IS MEASURED, NOT ASSUMED (strawberry: "theres
+            // a slight seam between the combined mesh and the road splines").
+            //
+            // Two lifts are in play and they are not the same number. RoadField's drivable surface is
+            // RoadSurfaceOffset (0.220 m here) above the joints the spline was built from -- and tiny's
+            // NodePatch ALREADY raises its own surface above the arm heights it was handed, by 0.130 m.
+            // Adding RoadField's on top double-counted, which measured as a 13.2 cm lip; the first guess
+            // (add the whole offset) and the second (blame Lift) were both wrong, and only printing the two
+            // heights side by side said why.
+            //
+            // So each patch is FITTED to the asphalt it actually meets: find a road end bound into it, and
+            // shift the patch by whatever makes the two agree there. That survives either side changing its
+            // mind about its own lift, which a hardcoded 0.09 would not.
+            float surf = roads.RoadSurfaceOffsetOfMaterial(MainMaterial);
+            var fit = new Dictionary<SDG.Unturned.RoadPatch, float>();
+            foreach (int r in Built)
+                for (int e = 0; e < 2; e++)
+                {
+                    bool atEnd = e == 1;
+                    if (roads.RoadEndJunction(r, atEnd) < 0) continue;
+                    if (!roads.EvaluateAlong(r, atEnd ? roads.RoadLength(r) : 0f, out var tip, out _, snapTerrain: false)) continue;
+                    float asphalt = tip.Y + roads.RoadSurfaceOffset(r);
+                    foreach (var pp in Patches)
+                    {
+                        if (fit.ContainsKey(pp) || pp.DistanceTo(tip.X, -tip.Z) > 0.5) continue;
+                        float h = pp.HeightAt(tip.X, -tip.Z);
+                        if (!float.IsNaN(h)) fit[pp] = asphalt - h;
+                        break;
+                    }
+                }
             // ⚠ THE PLAIN-ASPHALT BAND, which is why a patch does not wear the road texture whole: road_0 is
             // dashes and a yellow centre line running ALONG it, so tiling it over an intersection paints lane
             // markings straight across the junction. RegionStreamer solves this for the infinite world by
@@ -460,15 +490,19 @@ namespace UnturnedGodot
             foreach (var p in Patches)
             {
                 if (p?.Tris == null || p.Tris.Length < 3 || p.X == null) continue;
+                float shift = fit.TryGetValue(p, out float f) ? f : surf;   // no joined end found: fall back to the slab offset
                 var st = new SurfaceTool();
                 st.Begin(Mesh.PrimitiveType.Triangles);
                 var V = new Vector3[p.X.Length];
                 var UV = new Vector2[p.X.Length];
                 for (int i = 0; i < V.Length; i++)
                 {
-                    // back out of InfiniteRoads' frame: its z is the negated world z
-                    float lift = p.Lift != null && i < p.Lift.Length ? p.Lift[i] : 0f;
-                    V[i] = new Vector3((float)p.X[i], p.Y[i] + lift + PatchLift, -(float)p.Z[i]);
+                    // back out of InfiniteRoads' frame: its z is the negated world z.
+                    // ⚠ Lift IS NOT AN ADDEND. RegionStreamer uses it as a FLOOR against the ground --
+                    // max(Y, terrainHere + 0.02 + Lift) -- for the interior vertices that are free to ride up
+                    // over whatever the terrain does. Adding it instead pushed the middle of every patch 15 cm
+                    // above the asphalt feeding it, which is the seam measured rather than guessed at.
+                    V[i] = new Vector3((float)p.X[i], p.Y[i] + shift + PatchLift, -(float)p.Z[i]);
                     float tu = ((float)(p.X[i] - p.AnchorX)) / tile, tv = ((float)(-p.Z[i] + p.AnchorZ)) / tile;
                     UV[i] = new Vector2(U0 + PingPong(tu) * (U1 - U0), tv);
                 }
@@ -499,10 +533,40 @@ namespace UnturnedGodot
                 mi.AddChild(body);
                 made++;
             }
+            // ⚠ MEASURE THE SEAM, because "slight" is not a number and a 2 cm lip and a 22 cm one look the
+            // same from 30 m up. For every street end that is bound into a junction, compare the asphalt's
+            // height there with the patch's surface at the same spot.
+            float worst = 0f; int probed = 0; string worstWhy = "";
+            foreach (int r in Built)
+                for (int e = 0; e < 2; e++)
+                {
+                    bool atEnd = e == 1;
+                    if (roads.RoadEndJunction(r, atEnd) < 0) continue;
+                    // snapTerrain:false for clarity -- a GRADED town's joints are ignoreTerrain anyway, so
+                    // PosAlong skips the snap either way and both calls agree. (Checked: changing it moved
+                    // the number by nothing, which is how that was established rather than assumed.)
+                    if (!roads.EvaluateAlong(r, atEnd ? roads.RoadLength(r) : 0f, out var tip, out _, snapTerrain: false)) continue;
+                    float road = tip.Y + roads.RoadSurfaceOffset(r);
+                    foreach (var p in Patches)
+                    {
+                        if (p.DistanceTo(tip.X, -tip.Z) > 0.5) continue;
+                        float h = p.HeightAt(tip.X, -tip.Z);
+                        if (float.IsNaN(h)) continue;
+                        float d = Mathf.Abs(h + (fit.TryGetValue(p, out float pf) ? pf : surf) + PatchLift - road);
+                        if (d > worst) { worst = d; worstWhy = $"road {r} asphalt {road:0.000}; patch {h:0.000} fitted by {(fit.TryGetValue(p, out float pg) ? pg : surf):0.000}"; }
+                        probed++;
+                        break;
+                    }
+                }
+            Log.Print($"[towngrid] patch/road seam: worst {worst * 100f:0.0} cm over {probed} joined ends "
+                    + $"(surface offset {surf:0.000} m, patch lift {PatchLift:0.000} m) -- {worstWhy}");
             return made;
         }
-        /// <summary>How far a patch sits over the ground, matching the slab lift the roads get.</summary>
-        public float PatchLift = 0.02f;
+        /// <summary>A last hair of clearance over the asphalt. ⚠ SMALL ON PURPOSE: this is a SEAM, not an
+        /// overlap -- the patch and the road meet edge to edge, so there is nothing to z-fight with and every
+        /// millimetre here is a lip you can see. It exists only to keep the join from landing exactly on the
+        /// road's own surface where the two disagree by a float's worth.</summary>
+        public float PatchLift = 0.002f;
         static float PingPong(float t) { t = Mathf.Abs(t) % 2f; return t <= 1f ? t : 2f - t; }
 
         /// <summary>Conform the ground to the streets. Call it AFTER Generate and BEFORE LaySidewalks: the
@@ -539,10 +603,102 @@ namespace UnturnedGodot
             {
                 float t0 = TrimFor(roads, r, false, cornerRadius);
                 float t1 = TrimFor(roads, r, true, cornerRadius);
+                // DROPPED KERBS AT THE CROSSINGS. A junction approach is where people step into the road, so
+                // that is where the kerb comes down -- the same places a real street has them.
+                // ⚠ IN THE ROAD'S ARC SPACE, not the trimmed ribbon's: KerbAt is asked about `from + i*Step`,
+                // so a dip measured from the ribbon's own start would sit a trim's length out of place.
+                walk.Dips.Clear();
+                if (CrossingDips)
+                {
+                    float L = roads.RoadLength(r);
+                    if (L - t0 - t1 > CrossingDipLength * 3f)
+                    {
+                        walk.AddDip(t0 + 1f, CrossingDipLength);
+                        walk.AddDip(L - t1 - 1f - CrossingDipLength, CrossingDipLength);
+                    }
+                }
                 made += walk.LayAlongRoad(walk, roads, r, EditorSidewalk.Side.Both, null, t0, t1);
+            }
+            walk.Dips.Clear();
+            return made;
+        }
+
+        /// <summary>Pavement around the corners of each junction (strawberry 2026-10-12: "can u make the
+        /// sidewalks fill the missing curves").
+        ///
+        /// Each street's pavement now stops where its asphalt does, short of the node -- so every junction is
+        /// ringed by pairs of loose ends with a gap between them where the corner should be. This walks the
+        /// ends around each node BY ANGLE and arcs the pavement from one to the next.
+        /// ⚠ ONLY BETWEEN DIFFERENT STREETS. Sorted by angle, a street's own two pavements are neighbours
+        /// too -- the gap between them is its CARRIAGEWAY, and bridging that would pave straight across the
+        /// road people drive on.</summary>
+        public int LaySidewalkCorners(Node3D parent, RoadField roads, EditorSidewalk walk, float gap = 0.05f)
+        {
+            if (parent == null || roads == null || walk == null) return 0;
+            int made = 0;
+            for (int j = 0; j < roads.JunctionCount; j++)
+            {
+                var edges = roads.JunctionEdges(j);
+                if (edges.Count < 2) continue;
+                var node = roads.JunctionPos(j);
+                var ring = new List<(float ang, Vector3 p, int road, float r)>();
+                foreach (var (road, atEnd) in edges)
+                {
+                    float L = roads.RoadLength(road);
+                    float t = atEnd ? Mathf.Max(0f, L - TrimFor(roads, road, true, CornerRadius))
+                                    : Mathf.Min(L, TrimFor(roads, road, false, CornerRadius));
+                    if (!roads.EvaluateAlong(road, t, out var pos, out var tan, snapTerrain: false)) continue;
+                    var right = new Vector3(tan.Z, 0f, -tan.X).Normalized();
+                    float off = roads.RoadHalfWidth(road) + gap;
+                    foreach (int sgn in new[] { 1, -1 })
+                    {
+                        var e = pos + right * (off * sgn);
+                        var d = new Vector3(e.X - node.X, 0f, e.Z - node.Z);
+                        if (d.Length() < 0.5f) continue;
+                        ring.Add((Mathf.Atan2(d.Z, d.X), new Vector3(e.X, pos.Y, e.Z), road, d.Length()));
+                    }
+                }
+                if (ring.Count < 2) continue;
+                ring.Sort((a, b) => a.ang.CompareTo(b.ang));
+                for (int i = 0; i < ring.Count; i++)
+                {
+                    var a = ring[i]; var b = ring[(i + 1) % ring.Count];
+                    if (a.road == b.road) continue;                     // that gap is the carriageway
+                    float sweep = b.ang - a.ang; while (sweep <= 0f) sweep += Mathf.Tau;
+                    if (sweep > Mathf.Pi * 0.95f) continue;             // not a corner: the long way round
+                    float rad = (a.r + b.r) * 0.5f;
+                    int steps = Mathf.Max(2, Mathf.CeilToInt(sweep * rad / 1.5f));
+                    var cp = new List<Vector3>(steps + 1); var co = new List<Vector3>(steps + 1);
+                    for (int k = 0; k <= steps; k++)
+                    {
+                        float ang = a.ang + sweep * k / steps;
+                        var dir = new Vector3(Mathf.Cos(ang), 0f, Mathf.Sin(ang));
+                        float y = Mathf.Lerp(a.p.Y, b.p.Y, (float)k / steps);
+                        cp.Add(new Vector3(node.X + dir.X * rad, y, node.Z + dir.Z * rad));
+                        co.Add(dir);                                     // the pavement runs OUTWARD from the node
+                    }
+                    var mi = EditorSidewalk.BuildRibbon(cp, co, walk.Width, walk.KerbHeight, walk.Skirt,
+                                                        $"Sidewalk_Corner_{j}_{i}",
+                                                        Terrain.Active != null && !EditorSidewalk.NoGround
+                                                            ? (x, z) => Terrain.Active.SampleHeight(x, z) : null);
+                    if (mi == null) continue;
+                    parent.AddChild(mi);
+                    var body = new StaticBody3D { Name = mi.Name + "_body", CollisionLayer = 1u << 0 };
+                    body.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Concrete);
+                    body.AddChild(new CollisionShape3D { Shape = mi.Mesh.CreateTrimeshShape() });
+                    mi.AddChild(body);
+                    made++;
+                }
             }
             return made;
         }
+        /// <summary>Drop the kerb where each pavement meets a junction -- the crossing points.</summary>
+        public bool CrossingDips = true;
+        public float CrossingDipLength = 3f;
+
+        /// <summary>How far past the widest road at a junction a pavement is held back, and so how wide the
+        /// corner it leaves is.</summary>
+        public float CornerRadius = 2.5f;
 
         static float TrimFor(RoadField roads, int road, bool atEnd, float cornerRadius)
         {

@@ -34,6 +34,36 @@ namespace UnturnedGodot
         /// daylight under its outer edge. The kit does the same thing -- its palette faces reach z = -1.0.</summary>
         public float Skirt = 0.6f;
 
+        /// <summary>DROPPED KERBS (strawberry 2026-10-12: "add support for dipped kerbs with ur sidewalk
+        /// tool"). Each entry is a run along the ribbon -- metres from its start, and how long -- where the
+        /// kerb falls to DipKerb so a wheelchair, a pram or a car crossing a driveway can get up it. The
+        /// WALKING SURFACE DOES NOT MOVE: a dropped kerb lowers the KERB, not the pavement, so the slab stays
+        /// level and the drop is taken by the kerb face alone. Lowering the surface too would be a ramp down
+        /// into the road, which is a different thing and wrong at a crossing.</summary>
+        public readonly List<(float at, float length)> Dips = new();
+        /// <summary>The lip left at the bottom of a dropped kerb. ⚠ NOT ZERO: a flush kerb gives a white cane
+        /// nothing to find, and the pavement and the road would meet in a single coplanar edge.</summary>
+        public float DipKerb = 0.04f;
+        /// <summary>How long the kerb takes to fall into a dip and climb back out.</summary>
+        public float DipRamp = 0.9f;
+
+        /// <summary>Drop the kerb across `length` metres starting `at` metres along the ribbon.</summary>
+        public void AddDip(float at, float length) { if (length > 0.05f) Dips.Add((at, length)); }
+
+        /// <summary>The kerb's height `d` metres along a ribbon, given the dips asked for.</summary>
+        public float KerbAt(float d)
+        {
+            float h = KerbHeight;
+            foreach (var (at, len) in Dips)
+            {
+                if (d <= at - DipRamp || d >= at + len + DipRamp) continue;
+                // inside the flat of the dip, or on one of its two ramps
+                float f = d < at ? (at - d) / DipRamp : d > at + len ? (d - at - len) / DipRamp : 0f;
+                h = Mathf.Min(h, Mathf.Lerp(DipKerb, KerbHeight, Mathf.Clamp(f, 0f, 1f)));
+            }
+            return h;
+        }
+
         public enum Side { Left, Right, Both }
 
         /// <summary>The fixed-depth control, as a FIELD rather than a bare env read, so a single process can
@@ -72,7 +102,8 @@ namespace UnturnedGodot
         /// the actual ground at each point instead of guessing a depth.</param>
         public static MeshInstance3D BuildRibbon(IReadOnlyList<Vector3> pts, IReadOnlyList<Vector3> outward,
                                                  float width, float kerbH, float skirt, string name = "Sidewalk",
-                                                 System.Func<float, float, float> groundY = null)
+                                                 System.Func<float, float, float> groundY = null,
+                                                 IReadOnlyList<float> kerbPerPoint = null)
         {
             if (pts == null || pts.Count < 2 || outward == null || outward.Count != pts.Count) return null;
             var st = new SurfaceTool();
@@ -101,14 +132,21 @@ namespace UnturnedGodot
             {
                 Vector3 p0 = pts[i], p1 = pts[i + 1];
                 Vector3 o0 = outward[i].Normalized(), o1 = outward[i + 1].Normalized();
-                Vector3 up = Vector3.Up * kerbH;
+                // ⚠ THE KERB IS PER POINT, so a dropped kerb can fall away under a surface that does not
+                // move. Both ends of the segment get their own height or the quad twists.
+                float k0h = kerbPerPoint != null && i < kerbPerPoint.Count ? kerbPerPoint[i] : kerbH;
+                float k1h = kerbPerPoint != null && i + 1 < kerbPerPoint.Count ? kerbPerPoint[i + 1] : kerbH;
+                Vector3 up = Vector3.Up * k0h, up1 = Vector3.Up * k1h;
                 // Which way round this segment's quads must go, measured rather than assumed.
                 var along = p1 - p0;
                 flip = along.Cross(o0).Y < 0f;
 
                 Vector3 k0 = p0, k1 = p1;                               // kerb foot, at road level
-                Vector3 t0 = p0 + up, t1 = p1 + up;                     // kerb top (front of the walking surface)
-                Vector3 b0 = p0 + o0 * width + up, b1 = p1 + o1 * width + up;   // back of the walking surface
+                Vector3 t0 = p0 + up, t1 = p1 + up1;                    // kerb top (front of the walking surface)
+                // ⚠ THE SURFACE KEEPS THE FULL KERB HEIGHT even where the kerb is dropped -- the pavement is
+                // level and the dip is a chamfer in its front face. Taking the dipped height here instead
+                // would tip the whole slab into the gutter.
+                Vector3 b0 = p0 + o0 * width + Vector3.Up * kerbH, b1 = p1 + o1 * width + Vector3.Up * kerbH;
                 // The skirt's FLOOR: the lower of "a fixed bite below the surface" and "the real ground here",
                 // so it buries into a rising bank and still reaches down a falling one. Minus a few cm so it
                 // ends INSIDE the ground rather than coplanar with it, which would z-fight along the whole run.
@@ -155,23 +193,25 @@ namespace UnturnedGodot
             int n = Mathf.FloorToInt((to - from) / Step);
             var leftP = new List<Vector3>(n + 1); var leftO = new List<Vector3>(n + 1);
             var rightP = new List<Vector3>(n + 1); var rightO = new List<Vector3>(n + 1);
+            var kerbs = new List<float>(n + 1);
             for (int i = 0; i <= n; i++)
             {
                 if (!roads.EvaluateAlong(road, from + i * Step, out var p, out var t)) return 0;
                 var r = new Vector3(t.Z, 0f, -t.X).Normalized();   // the spline's RIGHT, same convention as Block_Road
                 rightP.Add(p + r * off); rightO.Add(r);            // kerb faces the road, surface runs outward
                 leftP.Add(p - r * off); leftO.Add(-r);
+                kerbs.Add(KerbAt(from + i * Step));
             }
 
             int made = 0;
-            if (side != Side.Left) made += Emit(parent, rightP, rightO, $"Sidewalk_R{road}", into);
-            if (side != Side.Right) made += Emit(parent, leftP, leftO, $"Sidewalk_L{road}", into);
+            if (side != Side.Left) made += Emit(parent, rightP, rightO, $"Sidewalk_R{road}", into, kerbs);
+            if (side != Side.Right) made += Emit(parent, leftP, leftO, $"Sidewalk_L{road}", into, kerbs);
             Log.Print($"[sidewalk] road {road}: {made} ribbon(s) over {to - from:0.#} m of {total:0.#}"
                     + $" (trim {from:0.#}/{total - to:0.#}), {Width:0.00} m wide, kerb {KerbHeight:0.00} m");
             return made;
         }
 
-        int Emit(Node parent, List<Vector3> pts, List<Vector3> outward, string name, List<Node3D> into)
+        int Emit(Node parent, List<Vector3> pts, List<Vector3> outward, string name, List<Node3D> into, List<float> kerbs = null)
         {
             // The live terrain, so the skirt buries instead of floating. Null in a bare harness, which is why
             // BuildRibbon still takes a fixed fallback depth rather than requiring one.
@@ -212,7 +252,7 @@ namespace UnturnedGodot
                     { PickAt = pts[i]; PickOut = outward[i].Normalized(); PickFloat = gap; DemoWidth = Width; }
                     sampled++;
                 }
-            var mi = BuildRibbon(pts, outward, Width, KerbHeight, Skirt, name, ground);
+            var mi = BuildRibbon(pts, outward, Width, KerbHeight, Skirt, name, ground, kerbs);
             Log.Print($"[sidewalk] {name}: worst DAYLIGHT under the slab {worst:0.00} m over {sampled} pts "
                     + $"(= drop below the surface minus the {KerbHeight + Skirt:0.00} m the kerb+skirt already covers)");
             if (worst > WorstFloat) { WorstFloat = worst; WorstAt = worstPt; }

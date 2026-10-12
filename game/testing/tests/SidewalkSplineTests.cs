@@ -109,6 +109,36 @@ namespace UnturnedGodot.Testing
             T.Check($"...and so is the MIRRORED one, the side that went invisible ({lu2 * 100f:0}%)", lu2 > 0.9f);
             T.Check($"...the two sides agree with each other ({ru * 100f:0}% vs {lu2 * 100f:0}%)", Mathf.Abs(ru - lu2) < 0.05f);
 
+            // ---- 2d. DROPPED KERBS (strawberry 2026-10-12: "add support for dipped kerbs with ur sidewalk
+            // tool"). ⭐ THE CLAIM IS TWO-SIDED and the second half is the one that can go wrong silently:
+            // the kerb must FALL, and the walking surface must NOT. A dip implemented by lowering both would
+            // look plausible in a render and is a ramp into the gutter, not a dropped kerb.
+            var walkD = new EditorSidewalk { Width = 2f, KerbHeight = 0.4f, Skirt = 0.6f };
+            var plain = new List<float>(); var dipped = new List<float>();
+            for (int i = 0; i < pts.Count; i++) plain.Add(0.4f);
+            walkD.AddDip(6f, 3f);
+            for (int i = 0; i < pts.Count; i++) dipped.Add(walkD.KerbAt(i * 1.5f));
+            float lowest = float.MaxValue, highest = 0f;
+            foreach (var k in dipped) { lowest = Mathf.Min(lowest, k); highest = Mathf.Max(highest, k); }
+            T.Check($"the kerb drops inside the dip ({lowest:0.00} m) and stands full height outside it ({highest:0.00} m)",
+                    lowest <= walkD.DipKerb + 0.001f && highest > 0.39f);
+            T.Check($"...but not to nothing -- a flush kerb gives a cane nothing to find ({lowest:0.00} m)", lowest > 0.005f);
+            var flat2 = EditorSidewalk.BuildRibbon(pts, outward, 2f, 0.4f, 0.6f, "Plain", null, plain);
+            var dip2 = EditorSidewalk.BuildRibbon(pts, outward, 2f, 0.4f, 0.6f, "Dipped", null, dipped);
+            T.Check("both ribbons build", flat2 != null && dip2 != null);
+            if (flat2 != null && dip2 != null)
+            {
+                // ⭐ THE SURFACE MUST NOT MOVE. Same top, same bounding box height: only the kerb face changed.
+                var fa2 = flat2.Mesh.GetAabb(); var da2 = dip2.Mesh.GetAabb();
+                T.Check($"the walking surface is untouched by the dip ({da2.End.Y:0.000} vs {fa2.End.Y:0.000})",
+                        Mathf.Abs(da2.End.Y - fa2.End.Y) < 0.001f);
+                // ...and the geometry really did change, or the check above is passing on two identical meshes.
+                var fv = flat2.Mesh.GetFaces(); var dv = dip2.Mesh.GetFaces();
+                int moved = 0;
+                for (int i = 0; i < Mathf.Min(fv.Length, dv.Length); i++) if ((fv[i] - dv[i]).LengthSquared() > 1e-8f) moved++;
+                T.Check($"...and the kerb face actually moved ({moved} vertices differ)", moved > 0);
+            }
+
             // ---- 3. IT IS ONE CONTINUOUS RIBBON. ⭐ This is why a generated strip was chosen over tiled props:
             // a tiled spline has to back every unit off by SplineTiling.OverlapFor to stop rigid tiles splaying
             // at a bend, and a ribbon simply shares its vertices. A CURVED path must therefore produce the same
