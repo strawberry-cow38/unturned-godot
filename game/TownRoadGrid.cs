@@ -1057,7 +1057,13 @@ namespace UnturnedGodot
                     var right = new Vector3(fwd.Z, 0f, -fwd.X).Normalized();
                     float half = roads.RoadHalfWidth(road);
                     float y = pos.Y + roads.RoadSurfaceOffset(road) + PatchLift + MarkLift;
-                    float d0 = half + CrossingInset, d1 = d0 + CrossingWidth;
+                    // ⚠⚠ OUTSIDE THE KERB'S CURVE (strawberry: "bring them back before the curve"). The
+                    // corner's fillet begins at half + CornerKerbRadius from the node; inside that the kerbs
+                    // either side are still turning, so a crossing there meets them at an angle and its
+                    // dropped kerbs cannot line up. Clear of the tangent point the two kerbs are straight and
+                    // parallel, which is the only place a crossing squares up.
+                    float curve = half + CornerKerbRadius;
+                    float d0 = curve + CrossingInset, d1 = d0 + CrossingWidth;
                     var st = new SurfaceTool();
                     st.Begin(Mesh.PrimitiveType.Triangles);
                     void Bar(float latA, float latB)
@@ -1086,6 +1092,23 @@ namespace UnturnedGodot
                         Bar(-half + 0.2f, -half + 0.2f + CrossingBar);
                         Bar(half - 0.2f - CrossingBar, half - 0.2f);
                     }
+                    // ⚠ AND ITS OWN STOP LINE, because this is now past the junction patch and PaintNode
+                    // can only paint within it. A driver stops BEHIND the crossing, so the line goes outside.
+                    // Across the approach half only -- we drive on the right.
+                    {
+                        float sd0 = d1 + StopGap, sd1 = sd0 + StopLineWidth;
+                        var q00 = node - fwd * sd0 + right * 0.1f; var q01 = node - fwd * sd0 + right * (half - 0.2f);
+                        var q10 = node - fwd * sd1 + right * 0.1f; var q11 = node - fwd * sd1 + right * (half - 0.2f);
+                        Vector3 W(Vector3 q) => new Vector3(q.X, y, q.Z);
+                        void T2(Vector3 a, Vector3 b, Vector3 c)
+                        {
+                            bool keep = (c - a).Cross(b - a).Y >= 0f;
+                            st.SetNormal(Vector3.Up); st.SetUV(uvWhite); st.AddVertex(a);
+                            st.SetNormal(Vector3.Up); st.SetUV(uvWhite); st.AddVertex(keep ? b : c);
+                            st.SetNormal(Vector3.Up); st.SetUV(uvWhite); st.AddVertex(keep ? c : b);
+                        }
+                        T2(W(q00), W(q01), W(q11)); T2(W(q00), W(q11), W(q10));
+                    }
                     var mesh = st.Commit();
                     if (mesh == null || mesh.GetSurfaceCount() == 0) continue;
                     var mi = new MeshInstance3D { Name = $"Crossing_{j}_{made}", Mesh = mesh };
@@ -1102,8 +1125,12 @@ namespace UnturnedGodot
         /// <summary>How far the crossing sits outside the carriageway's own edge, and how deep it is.</summary>
         public float CrossingInset = 1.2f, CrossingWidth = 3f;
         public float CrossingBar = 0.5f, CrossingGap = 0.5f;
-        /// <summary>The stop line goes OUTSIDE the crossing: a driver stops behind it, not on it.</summary>
-        public float StopPastEdge => CrossingInset + CrossingWidth + 1.2f;
+        /// <summary>Gap between the crossing and the stop line behind it, and the line's own depth.</summary>
+        public float StopGap = 0.8f, StopLineWidth = 0.5f;
+        /// <summary>⚠ NEGATIVE: the crossing and its stop line now sit OUTSIDE the junction patch, where
+        /// PaintNode cannot paint, so this tells it to skip its own stop line and carry the arm's lines the
+        /// whole way in instead of starting them past a line that is not there.</summary>
+        public float StopPastEdge => -1f;
 
         /// <summary>Where this road's markings actually are, DECODED FROM road_0.png rather than taken from a
         /// class table (strawberry 2026-10-12: "some of the lines are scaled/aligned wrong?").

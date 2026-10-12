@@ -1339,8 +1339,15 @@ namespace SDG.Unturned
                 if (arm.E.Kind == RoadKind.Trail) continue;
                 bool through = n == 2;
                 double stop = Math.Min(g.Inner[i] + 1.5, g.Trim[i] - StopWidth);
+                // ⚠ NEGATIVE = PAINT NOTHING IN THE BOX for this arm. A caller whose crossing sits at the
+                // mouth marks its own approach outside the patch, and the box behind a crossing is BARE on a
+                // real junction -- carrying lines in there instead runs the centre line straight across the
+                // middle of the intersection.
                 if (!double.IsNaN(stopPastEdge))
+                {
+                    if (stopPastEdge < 0) continue;
                     stop = Math.Min(Math.Max(0.0, arm.Hw + stopPastEdge), g.Trim[i] - StopWidth);
+                }
                 double from = through ? 0 : stop + StopWidth * 0.5;
                 // ⚠⚠ SCALE THE LINES TO THE ARM'S ACTUAL WIDTH. LinesOf is keyed to the road's CLASS and its
                 // offsets are in metres off that class's ribbon -- but an arm may carry a caller's own half
