@@ -649,8 +649,15 @@ namespace UnturnedGodot
                     float L = roads.RoadLength(r);
                     if (L - t0 - t1 > CrossingDipLength * 3f)
                     {
-                        walk.AddDip(t0 + 1f, CrossingDipLength);
-                        walk.AddDip(L - t1 - 1f - CrossingDipLength, CrossingDipLength);
+                        // ⚠⚠ THE DROP RUNS OUT THROUGH THE CORNER, it does not sit just inside it. Dipping a
+                        // metre short of the end gave kerb-down, kerb-up, then a full-height corner -- a
+                        // visible jog exactly where the straight meets the curve, which is what master saw:
+                        // "sidewalks seem to wiggle before connecting to the curved ones". Starting the dip
+                        // BEFORE the ribbon begins means it starts already dropped and ramps up once, away
+                        // from the junction -- and the corner piece is laid dropped to match, so the whole
+                        // radius is a crossing, which is how a real one is built.
+                        walk.AddDip(t0 - walk.DipRamp - 2f, CrossingDipLength + walk.DipRamp + 2f);
+                        walk.AddDip(L - t1 - CrossingDipLength, CrossingDipLength + walk.DipRamp + 2f);
                     }
                 }
                 made += walk.LayAlongRoad(walk, roads, r, EditorSidewalk.Side.Both, null, t0, t1);
@@ -807,10 +814,13 @@ namespace UnturnedGodot
                     }
                     Push(T2, yB, Perp(dB, T2)); Push(b.p, yB, Perp(dB, b.p));
 
+                    // the corner IS the crossing, so its kerb is the dropped one all the way round
+                    var ck = new List<float>(cp.Count);
+                    for (int q = 0; q < cp.Count; q++) ck.Add(CrossingDips ? walk.DipKerb : walk.KerbHeight);
                     var mi = EditorSidewalk.BuildRibbon(cp, co, walk.Width, walk.KerbHeight, walk.Skirt,
                                                         $"Sidewalk_Corner_{j}_{i}",
                                                         Terrain.Active != null && !EditorSidewalk.NoGround
-                                                            ? (x, z) => Terrain.Active.SampleHeight(x, z) : null);
+                                                            ? (x, z) => Terrain.Active.SampleHeight(x, z) : null, ck);
                     if (mi == null) continue;
                     LastCorners.Add((node, cp));
                     parent.AddChild(mi);

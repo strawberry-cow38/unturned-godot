@@ -10580,6 +10580,9 @@ namespace UnturnedGodot
             bool drape = System.Environment.GetEnvironmentVariable("UG_TOWNDRAPE") == "1";
             var town = new TownRoadGrid { Centre = site, Seed = 1337, Bearing = 0.35f,
                                           GradeSite = !drape, FollowTerrain = drape };
+            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNFACET"),
+                    System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float fct) && fct > 0.5f)
+                town.ArcFacetDegrees = fct;   // the control for "is the faceting what you are seeing"
             if (int.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNSEED"), out int tseed)) town.Seed = tseed;
             if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNEXTENT"),
                     System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float tex) && tex > 50f) town.Extent = tex;
@@ -10640,6 +10643,32 @@ namespace UnturnedGodot
                         if (ang > worstKink) { worstKink = ang; kinkAt = cpts[k]; }
                     }
                 Log.Print($"[towngrid] kerb line: sharpest kink {worstKink:0.0} deg over {segs} corner segments at {kinkAt}");
+                // ⚠ AND THE JOIN ITSELF, which is literally what master described: "wiggle BEFORE CONNECTING
+                // TO the curved ones". A corner piece starts at a point the straight pavement is supposed to
+                // have ended on. If the two disagree -- laterally or in height -- there is a step in the kerb
+                // exactly there, and a step at the end of a straight run reads as a wiggle.
+                float worstJoin = 0f; var joinAt = Vector3.Zero; int joins = 0;
+                foreach (var (cnode, cpts) in town.LastCorners)
+                    foreach (var tip in new[] { cpts[0], cpts[^1] })
+                    {
+                        float best = float.MaxValue;
+                        foreach (int r in town.Built)
+                        {
+                            float L = rf.RoadLength(r);
+                            float t0 = 0f, t1 = L;
+                            foreach (var (arc, atEnd) in new[] { (t0, false), (t1, true) })
+                            {
+                                if (rf.RoadEndJunction(r, atEnd) < 0) continue;
+                                if (!rf.EvaluateAlong(r, arc, out var pp, out var tt, snapTerrain: false)) continue;
+                                var rr = new Vector3(tt.Z, 0f, -tt.X).Normalized();
+                                float off = rf.RoadHalfWidth(r) + 0.05f;
+                                foreach (int sg in new[] { 1, -1 })
+                                    best = Mathf.Min(best, (pp + rr * (off * sg) - tip).Length());
+                            }
+                        }
+                        if (best < 50f) { joins++; if (best > worstJoin) { worstJoin = best; joinAt = tip; } }
+                    }
+                Log.Print($"[towngrid] kerb join: worst straight-to-curve step {worstJoin * 100f:0.0} cm over {joins} ends at {joinAt}");
             }
             Log.Print($"[towngrid] {rf.RoadCount - before} streets added, {patches} junction patches, {walks} pavement ribbons + {corners} corners, site {(graded ? "GRADED" : "draped")}");
             // ⚠ IS THERE ACTUALLY ASPHALT? The first graded render showed the flattened pads and no road
@@ -10678,8 +10707,14 @@ namespace UnturnedGodot
             }
             if (!string.IsNullOrEmpty(closeEnv) && closeEnv != "0" && bestDeg > 0)
             {
-                tcam.GlobalPosition = busiest + new Vector3(0f, 26f, 40f);
-                tcam.LookAt(busiest, Vector3.Up);
+                // ⚠ A KERB IS 0.4 m TALL AND ITS CORNER TURNS OVER 6 m. At 26/40 m that is a few pixels,
+                // where a change in how finely the arc is tessellated CANNOT show -- master, of a render
+                // taken after the fix: "nothing changed in this pic from the last one". UG_TOWNCLOSE=k drops
+                // onto one corner close enough to resolve it.
+                bool kerbShot = closeEnv == "k";
+                tcam.GlobalPosition = busiest + (kerbShot ? new Vector3(34f, 9f, 34f) : new Vector3(0f, 26f, 40f));
+                if (kerbShot) tcam.Fov = 38f;
+                tcam.LookAt(busiest + (kerbShot ? new Vector3(11f, 0f, 11f) : Vector3.Zero), Vector3.Up);
                 Log.Print($"[towngrid] close camera on a {bestDeg}-way junction at {busiest}");
             }
             else { tcam.GlobalPosition = site + new Vector3(0f, town.Extent * 1.25f, town.Extent * 1.25f); tcam.LookAt(site, Vector3.Up); }
