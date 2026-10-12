@@ -1185,7 +1185,13 @@ namespace SDG.Unturned
         static double NodeFilletOf(Arm a, Arm b)
         {
             static double R(Line e) => e.Ramp ? 8.0 : e.Kind == RoadKind.Main ? NodeFillet : e.Kind == RoadKind.Small ? 8.0 : 5.0;
-            return Math.Min(R(a.E), R(b.E));
+            // ⚠ SCALED TO THE ARM'S ACTUAL WIDTH, not just its class. A kerb return is a fraction of the
+            // road it turns off; keyed to Kind alone, a 9.2 m street gets a Main road's 12 m fillet and its
+            // junction comes out an open plaza with four lanes feeding into it (strawberry, of a town built
+            // on the narrow white-dotted road). Hw == RibbonHalfOf(Kind) for InfiniteRoads' own roads, so the
+            // ratio is exactly 1 there and nothing in the infinite world moves.
+            static double Scale(Arm m) => R(m.E) * (m.Hw / RibbonHalfOf(m.E.Kind));
+            return Math.Min(Scale(a), Scale(b));
         }
 
         // =============================================================================================

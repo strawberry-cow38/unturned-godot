@@ -236,6 +236,8 @@ namespace UnturnedGodot
             var rep = new Report();
             Built.Clear(); _profiles.Clear(); Marks.Clear();
             if (roads == null || heightAt == null || Spacing < 4f || Extent < Spacing) return rep;
+            // the kerb return follows the road's width, so everything measured off it does too
+            CornerKerbRadius = Mathf.Clamp(roads.RoadHalfWidthOfMaterial(MainMaterial) * CornerKerbFraction, 2f, 9f);
 
             int n = Mathf.FloorToInt(Extent / Spacing);
             if (n < 1) return rep;
@@ -1221,7 +1223,10 @@ namespace UnturnedGodot
         /// facets in a right-angle turn, which stops reading as flats.</summary>
         public float ArcFacetDegrees = 4f;
 
-        /// <summary>The radius a kerb turns through at a corner. 6 m is an ordinary urban one.</summary>
+        /// <summary>The radius a kerb turns through at a corner, as a fraction of the carriageway's half
+        /// width. ⚠ NOT A FIXED NUMBER: 6 m is an ordinary urban return off an 18 m street and a sweeping
+        /// curve off a 9 m one. 0.65 reproduces the old 6 m at Highway_0 and scales down with the road.</summary>
+        public float CornerKerbFraction = 0.65f;
         public float CornerKerbRadius = 6f;
 
         /// <summary>How far past the widest road at a junction a pavement is held back, and so how wide the
