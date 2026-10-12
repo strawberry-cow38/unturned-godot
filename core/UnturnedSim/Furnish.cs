@@ -1292,10 +1292,46 @@ namespace UnturnedSim
                             var (fx, fz) = FrontOf(yaw);
                             var a = FurnitureCatalog.Footprint("Counter_0", x, z, yaw);
                             var b = FurnitureCatalog.Footprint("Counter_0", x - fx * (cs.Y0 * -2f), z - fz * (cs.Y0 * -2f), yaw + 180f);
-                            var both = (MathF.Min(a.X0, b.X0) - 1.1f, MathF.Min(a.Z0, b.Z0) - 1.1f, MathF.Max(a.X1, b.X1) + 1.1f, MathF.Max(a.Z1, b.Z1) + 1.1f);
-                            if (Clear(both, 0f)) cands.Add((x, z, yaw));
+                            // the island itself on clear floor (out of every door's and appliance's swing), and a 1 m working
+                            // aisle round it to walls and furniture -- an aisle MAY hold an appliance's swing: that is where you
+                            // stand to open the oven. (It was 1.1 m of fully clear floor, which stacked on the oven's swing and
+                            // pushed every island 2 m off the run.)
+                            var isl = (X0: MathF.Min(a.X0, b.X0), Z0: MathF.Min(a.Z0, b.Z0), X1: MathF.Max(a.X1, b.X1), Z1: MathF.Max(a.Z1, b.Z1));
+                            var aisle = (isl.X0 - 1.0f, isl.Z0 - 1.0f, isl.X1 + 1.0f, isl.Z1 + 1.0f);
+                            if (Clear(isl, 0f) && Clear(aisle, 0f) is var roomy
+                                && (roomy || !_p.WallRects.Any(r => Overlaps(aisle, r)) && !_mine.Any(o => o.On == null && !o.Mounted && !o.Ceiling && Overlaps(aisle, o.Footprint))
+                                             && _room.Rects.Any(r => aisle.Item1 >= r.X0 * Cell && aisle.Item2 >= r.Z0 * Cell && aisle.Item3 <= r.X1 * Cell && aisle.Item4 <= r.Z1 * Cell)))
+                                cands.Add((x, z, yaw));
                         }
-                foreach (var (x, z, yaw) in cands.OrderBy(c => (c.Item1 - cx) * (c.Item1 - cx) + (c.Item2 - cz) * (c.Item2 - cz)).Take(20))
+                // beside the kitchen's working run, not in the middle of the floor (strawberry: "force the island counter
+                // to be in a more smarter spot, closer to the kitchen"): nearest the appliances and counters already
+                // placed, lying along the nearest of them, across the 1 m working aisle checked above
+                var work = _mine.Where(m => !m.Ceiling && (m.Name.StartsWith("Counter") || m.Name is "Fridge_0" or "Oven_0" or "Disher_0")).ToList();
+                (float Gap, int Cross, float Centre) Score((float X, float Z, float Yaw) c)
+                {
+                    var (fx, fz) = FrontOf(c.Yaw);
+                    var a = FurnitureCatalog.Footprint("Counter_0", c.X, c.Z, c.Yaw);
+                    var b = FurnitureCatalog.Footprint("Counter_0", c.X - fx * (cs.Y0 * -2f), c.Z - fz * (cs.Y0 * -2f), c.Yaw + 180f);
+                    var isl = (X0: MathF.Min(a.X0, b.X0), Z0: MathF.Min(a.Z0, b.Z0), X1: MathF.Max(a.X1, b.X1), Z1: MathF.Max(a.Z1, b.Z1));
+                    float centre = (c.X - cx) * (c.X - cx) + (c.Z - cz) * (c.Z - cz);
+                    if (work.Count == 0) return (0f, 0, centre);
+                    var near = work.Select(m =>
+                    {
+                        var f = m.Footprint;
+                        float dx = MathF.Max(0f, MathF.Max(f.X0 - isl.X1, isl.X0 - f.X1)), dz = MathF.Max(0f, MathF.Max(f.Z0 - isl.Z1, isl.Z0 - f.Z1));
+                        return (d: MathF.Sqrt(dx * dx + dz * dz), m);
+                    }).OrderBy(t => t.d).First();
+                    // two counters back to back are 1.5 m wide but 2.2 m deep, so the island LIES ALONG the run when its
+                    // counters face square to the run's (yaw 90 off), not the same way
+                    int cross = (int)MathF.Round(((c.Yaw - near.m.Yaw) % 180f + 180f) % 180f) == 90 ? 0 : 1;
+                    return (MathF.Round(near.d * 4f) / 4f, cross, centre);   // to the quarter metre, then parallel, then central
+                }
+                // lying along the run beats a few centimetres: among the spots within 0.75 m of the closest, one parallel
+                // to the run first (an island pointing at the run reads as a barrier, not a workstation)
+                var scored = cands.Select(c => (c, sc: Score(c))).ToList();
+                float best = scored.Count > 0 ? scored.Min(t => t.sc.Gap) : 0f;
+                foreach (var (x, z, yaw) in scored.OrderBy(t => t.sc.Gap <= best + 0.75f ? 0 : 1).ThenBy(t => t.sc.Cross)
+                                                  .ThenBy(t => t.sc.Gap).ThenBy(t => t.sc.Centre).Select(t => t.c).Take(20))
                 {
                     var (fx, fz) = FrontOf(yaw);
                     var one = Put("Counter_0", new[] { (x, z, yaw) });
