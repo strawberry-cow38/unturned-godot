@@ -91,6 +91,9 @@ namespace UnturnedGodot
         }
 
         Node3D RePlace(string guid, Transform3D x) => _guidToName.TryGetValue(guid, out var nm) ? Place(nm, x.Origin, x.Basis) : null;
+        /// <summary>The mesh a saved placement's guid loads as, or null -- the lookup RePlace makes, exposed so a
+        /// test can hold a registration to the GUIDs other code already writes into layouts.</summary>
+        public string NameForGuid(string guid) => _guidToName.TryGetValue(guid, out var nm) ? nm : null;
 
         public EditorObjects(Editor editor, Node world, EditorCamera cam, bool objectsPreloaded = false)
         {
