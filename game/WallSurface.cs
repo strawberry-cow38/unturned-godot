@@ -716,20 +716,36 @@ namespace UnturnedGodot
             var poly = ClipToTaper(s);
             if (poly.Count < 3) return;
             var bt = backTool ?? st;
-            for (int i = 1; i + 1 < poly.Count; i++)          // +Z face
+            // Each face wound from its geometry against the way it must face, not from a fixed vertex order: Godot
+            // takes CLOCKWISE as front (AddBoxFaces reverses its table for the same reason), and a fixed order that
+            // is right for one polygon is back-facing for its mirror. Wound the other way, every face was culled from
+            // outside and the solid read as a hole -- strawberry, of the triangle closing a shed's side, "missing the
+            // gable end wall under it". (cow tools hit the same thing on the kerbs and fixed it this way.)
+            var c = Vector2.Zero;
+            foreach (var p in poly) c += p;
+            c /= poly.Count;
+            for (int i = 1; i + 1 < poly.Count; i++)
             {
-                Tri(st, new Vector3(poly[0].X, poly[0].Y, t), new Vector3(poly[i].X, poly[i].Y, t),
-                        new Vector3(poly[i + 1].X, poly[i + 1].Y, t));
-                Tri(bt, new Vector3(poly[0].X, poly[0].Y, -t), new Vector3(poly[i + 1].X, poly[i + 1].Y, -t),
-                        new Vector3(poly[i].X, poly[i].Y, -t));
+                Facing(st, new Vector3(poly[0].X, poly[0].Y, t), new Vector3(poly[i].X, poly[i].Y, t),
+                           new Vector3(poly[i + 1].X, poly[i + 1].Y, t), Vector3.Back);       // +Z face
+                Facing(bt, new Vector3(poly[0].X, poly[0].Y, -t), new Vector3(poly[i].X, poly[i].Y, -t),
+                           new Vector3(poly[i + 1].X, poly[i + 1].Y, -t), Vector3.Forward);   // -Z face
             }
-            for (int i = 0; i < poly.Count; i++)              // the rim
+            for (int i = 0; i < poly.Count; i++)              // the rim, facing away from the middle
             {
                 var a = poly[i];
                 var b = poly[(i + 1) % poly.Count];
-                Quad(st, new Vector3(a.X, a.Y, -t), new Vector3(b.X, b.Y, -t),
-                         new Vector3(b.X, b.Y, t), new Vector3(a.X, a.Y, t));
+                var out2 = (a + b) * 0.5f - c;
+                var outward = new Vector3(out2.X, out2.Y, 0f);
+                Facing(st, new Vector3(a.X, a.Y, -t), new Vector3(b.X, b.Y, -t), new Vector3(b.X, b.Y, t), outward);
+                Facing(st, new Vector3(a.X, a.Y, -t), new Vector3(b.X, b.Y, t), new Vector3(a.X, a.Y, t), outward);
             }
+        }
+
+        /// <summary>A triangle wound so its front (Godot: clockwise as seen) faces `want`.</summary>
+        static void Facing(SurfaceTool st, Vector3 a, Vector3 b, Vector3 c, Vector3 want)
+        {
+            if ((c - a).Cross(b - a).Dot(want) >= 0f) Tri(st, a, b, c); else Tri(st, a, c, b);
         }
 
         /// <summary>A solid rectangle clipped by the two cut lines. Sutherland-Hodgman against two

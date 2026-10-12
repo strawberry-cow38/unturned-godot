@@ -67,6 +67,22 @@ namespace UnturnedSim.Tests
             return (MathF.Min(ax, cx), MathF.Min(az, cz), MathF.Max(ax, cx), MathF.Max(az, cz));
         }
         static (float X0, float Z0, float X1, float Z1) Grown((float X0, float Z0, float X1, float Z1) a, float m) => (a.X0 - m, a.Z0 - m, a.X1 + m, a.Z1 + m);
+        static bool Inside((float X0, float Z0, float X1, float Z1) a, (float X0, float Z0, float X1, float Z1) b)
+            => a.X0 >= b.X0 && a.X1 <= b.X1 && a.Z0 >= b.Z0 && a.Z1 <= b.Z1;
+        /// <summary>A slab's footprint in plan (origin at its min-X, max-Z corner, run along +X, depth along -Z).</summary>
+        static (float X0, float Z0, float X1, float Z1) Plan(WallPlan w) => (w.X, w.Z - w.Height, w.X + w.Length, w.Z);
+        static float RiseOf(StairPlan s) => s.Rise > 0f ? s.Rise : Storey;
+        static bool StartsOnFloor(StairPlan s) => MathF.Abs(s.Y - s.Floor * Storey) < 0.01f;
+        static bool EndsOnFloor(StairPlan s) => MathF.Abs(s.Y + RiseOf(s) - (s.Floor + 1) * Storey) < 0.01f;
+        /// <summary>The holes in floor f: what the editor cuts round a whole flight arriving there (its footprint and a
+        /// margin, EditorBuildings.FitStairsToStructure), and what the generator cut in the slab itself.</summary>
+        static List<(float X0, float Z0, float X1, float Z1)> Holes(BuildingGenResult r, int f)
+        {
+            var hs = r.Stairs.Where(s => s.Floor == f - 1 && RiseOf(s) >= Storey - 0.01f).Select(s => Grown(Foot(s), WallOpenings.StairHoleMargin)).ToList();
+            foreach (var w in r.Walls.Where(w => w.Kind == SurfaceKind.Floor && MathF.Abs(w.Y + w.Thickness * 0.5f - f * Storey) < 0.05f))
+                foreach (var o in w.Openings) hs.Add((w.X + o.U, w.Z - o.V - o.Height, w.X + o.U + o.Width, w.Z - o.V));
+            return hs;
+        }
         static bool Walkable(WallOpening o) => o.V < 0.05f && o.Height >= 2.5f && o.Width >= 2.4f;
         /// <summary>Every walkable opening on a floor, with the rooms (or null: no room) on its two sides.</summary>
         static IEnumerable<(WallPlan W, WallOpening O, GenRoom A, GenRoom B, (float X, float Z) PA, (float X, float Z) PB)> Doors(BuildingGenResult r, int f)
@@ -199,6 +215,83 @@ namespace UnturnedSim.Tests
             Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(10)));
         }
 
+        // O: the walls come out of the generator already joined at their corners -- the editor's SolveCorners (copied
+        // here: walls and footings, crossing a non-parallel wall of the same storey on its span, an end within 1.6 m of
+        // the crossing grows to it, and on to the far face where the crossing is at the other wall's end) finds nothing
+        // to grow. What it grows it grows blind: through a wall that already fills the corner, into the room past it.
+        // And no two walls share a face (the same plane, overlapping: the two fight over which one shows).
+        // BREAK IT: stop a shed's side infill at the upper wall's outer face; run it on at full thickness; skip the
+        // generator's own corner pass.
+        [Test]
+        public void WallsComeOutCornerSolved()
+        {
+            var bad = new List<string>();
+            int walls = 0, crossings = 0;
+            var grown = new Dictionary<string, int>();
+            foreach (var (spec, res) in All())
+            {
+                var ws = res.Walls.Where(w => w.Kind == SurfaceKind.Wall || w.Kind == SurfaceKind.Foundation).ToList();
+                foreach (var a in ws)
+                {
+                    walls++;
+                    var a0 = Start(a); var ad = Dir(a);
+                    float growStart = 0f, growEnd = 0f;
+                    foreach (var b in ws)
+                    {
+                        if (b == a) continue;
+                        float dy = MathF.Abs(((a.Yaw - b.Yaw) % 180f + 270f) % 180f - 90f);
+                        if (dy < 20f || MathF.Abs(a.Y - b.Y) > 0.6f) continue;
+                        var b0 = Start(b); var e = (At(b, b.Length).X - b0.X, At(b, b.Length).Z - b0.Z);
+                        float den = ad.X * e.Item2 - ad.Z * e.Item1;
+                        if (MathF.Abs(den) < 1e-6f) continue;
+                        float rx = b0.X - a0.X, rz = b0.Z - a0.Z;
+                        float t = (rx * e.Item2 - rz * e.Item1) / den, s2 = (rx * ad.Z - rz * ad.X) / den;
+                        if (s2 < -0.02f || s2 > 1.02f) continue;
+                        crossings++;
+                        float target = t + (s2 < 0.08f || s2 > 0.92f ? b.Thickness * 0.5f : 0f);
+                        if (target < 0f && target >= -1.6f) growStart = MathF.Max(growStart, -target);
+                        else if (target > a.Length && target <= a.Length + 1.6f) growEnd = MathF.Max(growEnd, target - a.Length);
+                    }
+                    if (growStart <= 1e-3f && growEnd <= 1e-3f) continue;
+                    string what = a.Height < Storey - 0.01f ? "an infill" : a.Thickness == BuildingGen.Ext ? "an outside wall" : "a partition";
+                    grown[what] = grown.GetValueOrDefault(what) + 1;
+                    bad.Add($"{Name(spec)}: {what} at ({a.X:0.00},{a.Y:0.00},{a.Z:0.00}) yaw {a.Yaw} {a.Length:0.00} m grows {growStart:0.00} at its start, {growEnd:0.00} at its end");
+                }
+            }
+            // and no two walls share a face: parallel, on one line, one thickness, overlapping along it and in height
+            int pairs = 0, shared = 0;
+            foreach (var (spec, res) in All())
+            {
+                var ws = res.Walls.Where(w => w.Kind == SurfaceKind.Wall).ToList();
+                (bool AlongX, float Line, float Lo, float Hi) Seg(WallPlan w)
+                {
+                    var p = Start(w); var q = At(w, w.Length);
+                    bool ax = MathF.Abs(p.Z - q.Z) < 0.01f;
+                    return ax ? (true, p.Z, MathF.Min(p.X, q.X), MathF.Max(p.X, q.X)) : (false, p.X, MathF.Min(p.Z, q.Z), MathF.Max(p.Z, q.Z));
+                }
+                for (int i = 0; i < ws.Count; i++)
+                    for (int j = i + 1; j < ws.Count; j++)
+                    {
+                        var (a, b) = (ws[i], ws[j]);
+                        var (sa, sb) = (Seg(a), Seg(b));
+                        if (sa.AlongX != sb.AlongX || MathF.Abs(sa.Line - sb.Line) > 0.01f) continue;
+                        pairs++;
+                        if (MathF.Abs(a.Thickness - b.Thickness) > 0.005f) continue;
+                        float along = MathF.Min(sa.Hi, sb.Hi) - MathF.Max(sa.Lo, sb.Lo);
+                        float up = MathF.Min(a.Y + a.Height, b.Y + b.Height) - MathF.Max(a.Y, b.Y);
+                        if (along > 0.05f && up > 0.05f)
+                        {
+                            shared++;
+                            bad.Add($"{Name(spec)}: walls at ({a.X:0.00},{a.Y:0.00},{a.Z:0.00}) and ({b.X:0.00},{b.Y:0.00},{b.Z:0.00}) share a face {along:0.00} m along and {up:0.00} m up");
+                        }
+                    }
+            }
+            TestContext.Progress.WriteLine($"[gen-solve] {walls} walls, {crossings} crossings; {grown.Values.Sum()} would grow ({string.Join(", ", grown.Select(kv => $"{kv.Value} {kv.Key}"))}); {pairs} pairs of walls on one line, {shared} sharing a face{(bad.Count > 0 ? ": " + bad[0] : "")}");
+            Assert.That(pairs, Is.GreaterThan(1000));
+            Assert.That(crossings, Is.GreaterThan(1000));
+            Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(10)));
+        }
+
         // C: the walls enclose exactly the planned rooms -- found by RoomEnclosure from the wall centrelines, and each
         // designation resolves to the room of its kind with the planned area (a hall's landing included).
         // BREAK IT: leave out the partitions between rooms; wall a hall off from its own landing.
@@ -296,18 +389,24 @@ namespace UnturnedSim.Tests
         }
 
         // E: each flight stands in ONE room you walk through (never a bedroom, bathroom, office -- nor a store room or
-        // garage, which would make the floor above reachable only through a dead end), clear of every
-        // wall; the hole it needs in the floor above is in one such room up there and clear of every wall; its treads are
-        // not over the hole the flight below cut; and in the stair room on every floor, every door, the foot of the
-        // flight up and the top of the flight from below are joined by floor you can stand on (0.1 m grid).
+        // garage, which would make the floor above reachable only through a dead end), clear of every wall; every hole in
+        // a floor is in one such room and clear of every wall; and in the stair room on every floor, every door, the foot
+        // of the flight up and the top of the flight from below are joined by floor you can stand on (0.1 m grid). A full
+        // tile of floor at the foot and at the top ("stairs should want 1 full tile at the foot and 1 tile on the landing
+        // above"); a switchback's landing, at its flights' height, at least as deep as they are wide; and a door's height
+        // clear above every tread and landing -- which is what keeps a flight from running under the one above it.
         // BREAK IT: the flight away from the wall (hole under it); both flights in one row (treads over the hole); a door
-        // allowed into the bay (onto the steps); the stairs in any room; a three-cell bay (half a tile at each end).
+        // allowed into the bay (onto the steps); the stairs in any room; a three-cell bay (half a tile at each end); a
+        // switchback's hole over its second flight only, or not over the landing; its landing short or at the wrong
+        // height; its second flight in the first one's row.
         [Test]
         public void StairsStandInOpenRoomsAndLandOnFloor()
         {
             var bad = new List<string>();
-            int flights = 0, walked = 0, tiles = 0;
+            int flights = 0, halves = 0, landingsChecked = 0, walked = 0, tiles = 0, holes = 0, headroomPoints = 0;
+            float leastClear = float.MaxValue;
             const float M = WallOpenings.StairHoleMargin;
+            const float DoorTall = 2.85f;   // a door's height: what you walk through upright, you walk up upright
             var hostKinds = new Dictionary<RoomKind, int>();
             foreach (var (spec, res) in All())
             {
@@ -318,53 +417,117 @@ namespace UnturnedSim.Tests
                                 .Select(p => RoomAt(res, f, p.Item1, p.Item2)).Distinct().ToList();
                     return c.Count == 1 ? c[0] : null;
                 }
+                var landings = res.Walls.Where(w => w.Kind == SurfaceKind.Stairs).ToList();
                 foreach (var s in res.Stairs)
                 {
                     flights++;
+                    bool half = RiseOf(s) < Storey - 0.01f;
+                    if (half) halves++;
                     var fp = Foot(s);
-                    var hole = Grown(fp, M);
                     var low = Holder(fp, s.Floor);
-                    var high = Holder(hole, s.Floor + 1);
+                    var high = Holder(Grown(fp, M), s.Floor + 1);
                     if (low == null || DeadEnd(low.Kind)) bad.Add($"{Name(spec)}: flight {s.Floor} stands in {low?.ToString() ?? "more than one room"}");
                     else hostKinds[low.Kind] = hostKinds.GetValueOrDefault(low.Kind) + 1;
-                    if (high == null || DeadEnd(high.Kind)) bad.Add($"{Name(spec)}: flight {s.Floor}'s hole is in {high?.ToString() ?? "more than one room"}");
+                    if (high == null || DeadEnd(high.Kind)) bad.Add($"{Name(spec)}: the room over flight {s.Floor} is {high?.ToString() ?? "more than one room"}");
                     foreach (var w in WallsOn(res, s.Floor)) if (Overlap(fp, Box(w))) bad.Add($"{Name(spec)}: flight {s.Floor} runs into a wall at yaw {w.Yaw}");
-                    foreach (var w in WallsOn(res, s.Floor + 1)) if (Overlap(hole, Box(w))) bad.Add($"{Name(spec)}: flight {s.Floor}'s hole runs under a wall on floor {s.Floor + 1} (yaw {w.Yaw}, thick {w.Thickness})");
-                    foreach (var b in res.Stairs.Where(b => b.Floor == s.Floor - 1))
-                        if (Overlap(fp, Grown(Foot(b), M), 0f)) bad.Add($"{Name(spec)}: flight {s.Floor} stands over the hole flight {b.Floor} cut");
-                    // a full tile clear at the foot and on the landing above (strawberry: "stairs should want 1 full tile at
-                    // the foot and 1 tile on the landing above"): the 3 m before the foot and past the top, the flight's
-                    // width wide, all floor of the same room -- no wall, no flight, no hole in it but the top's own margin
+                    // (a whole flight never stands over the hole the one below cut; a switchback's do, a storey above it,
+                    // and the headroom check below is what says that is all right)
+                    if (!half && Holes(res, s.Floor).Any(h => Overlap(fp, h, 0f))) bad.Add($"{Name(spec)}: flight {s.Floor} stands over the hole in its floor");
                     var (bx, bz) = s.Back; var (rx, rz) = s.Right;
-                    (float, float, float, float) Tile(float ox, float oz, float dir)
+                    (float, float, float, float) Tile(float ox, float oz, float dir, float depth)
                     {
-                        float ex = ox + bx * Cell * dir + rx * s.Width, ez = oz + bz * Cell * dir + rz * s.Width;
+                        float ex = ox + bx * depth * dir + rx * s.Width, ez = oz + bz * depth * dir + rz * s.Width;
                         return (MathF.Min(ox, ex), MathF.Min(oz, ez), MathF.Max(ox, ex), MathF.Max(oz, ez));
                     }
-                    var footTile = Tile(s.X, s.Z, -1f);
-                    var topTile = Tile(s.X + bx * s.Run, s.Z + bz * s.Run, +1f);
-                    foreach (var (tile, f, what, room) in new[] { (footTile, s.Floor, "foot", low), (topTile, s.Floor + 1, "landing", high) })
+                    float topX = s.X + bx * s.Run, topZ = s.Z + bz * s.Run;
+                    // a full tile at whichever end meets a floor: the 3 m before the foot or past the top, the flight's width
+                    // wide, all floor of one room -- no wall, no flight or landing, no hole in it but the top's own margin
+                    var ends = new List<((float, float, float, float) Tile, int F, string What, GenRoom Room)>();
+                    if (StartsOnFloor(s)) ends.Add((Tile(s.X, s.Z, -1f, Cell), s.Floor, "foot", low));
+                    if (EndsOnFloor(s)) ends.Add((Tile(topX, topZ, +1f, Cell), s.Floor + 1, "landing", high));
+                    foreach (var (tile, f, what, room) in ends)
                     {
                         tiles++;
                         var inner = Grown(tile, -0.4f);   // a wall's half thickness may stand at the tile's far edge
                         if (Holder(inner, f) != room) bad.Add($"{Name(spec)}: flight {s.Floor}'s {what} tile is not all {room}");
                         foreach (var w in WallsOn(res, f)) if (Overlap(inner, Box(w))) bad.Add($"{Name(spec)}: a wall stands in flight {s.Floor}'s {what} tile");
                         foreach (var o in res.Stairs.Where(o => o.Floor == f)) if (Overlap(Grown(tile, -0.01f), Foot(o))) bad.Add($"{Name(spec)}: flight {o.Floor} is in flight {s.Floor}'s {what} tile");
-                        foreach (var o in res.Stairs.Where(o => o.Floor == f - 1 && !(o.Floor == s.Floor && what == "landing"))) if (Overlap(Grown(tile, -0.01f), Grown(Foot(o), M))) bad.Add($"{Name(spec)}: flight {o.Floor}'s hole is in flight {s.Floor}'s {what} tile");
-                        if (what == "landing" && Overlap(Grown(tile, -M - 0.01f), Grown(Foot(s), M))) bad.Add($"{Name(spec)}: flight {s.Floor}'s own hole runs into its landing tile");
+                        foreach (var l in landings.Where(l => FloorOf(l) == f)) if (Overlap(Grown(tile, -0.01f), Plan(l))) bad.Add($"{Name(spec)}: a landing is in flight {s.Floor}'s {what} tile");
+                        foreach (var h in Holes(res, f)) if (Overlap(Grown(tile, what == "landing" ? -M - 0.01f : -0.01f), h)) bad.Add($"{Name(spec)}: a hole in floor {f} is in flight {s.Floor}'s {what} tile");
                     }
+                    // and at whichever end stops between floors, a landing at that height as deep as the flight is wide
+                    var mids = new List<((float, float, float, float) Sq, float Y, string What)>();
+                    if (!StartsOnFloor(s)) mids.Add((Tile(s.X, s.Z, -1f, s.Width), s.Y, "foot"));
+                    if (!EndsOnFloor(s)) mids.Add((Tile(topX, topZ, +1f, s.Width), s.Y + RiseOf(s), "top"));
+                    foreach (var (sq, y, what) in mids)
+                    {
+                        landingsChecked++;
+                        bool held = landings.Any(l => MathF.Abs(l.Y + l.Thickness * 0.5f - y) < 0.02f && Inside(Grown(sq, -0.02f), Plan(l)));
+                        if (!held) bad.Add($"{Name(spec)}: flight {s.Floor}'s {what} stops at {y:0.00} m with no landing under the square past it");
+                    }
+                    // a door's height clear over every tread
+                    int steps = WallOpenings.StairSteps(RiseOf(s));
+                    float going = s.Run / steps, stepRise = RiseOf(s) / steps;
+                    for (int k = 0; k < steps; k++)
+                        foreach (float across in new[] { 0.15f, 0.5f, 0.85f })
+                        {
+                            float d = (k + 0.5f) * going, x = s.X + bx * d + rx * s.Width * across, z = s.Z + bz * d + rz * s.Width * across;
+                            Headroom(res, s.Y + (k + 1) * stepRise, x, z, $"flight {s.Floor}'s step {k + 1}");
+                        }
                 }
+                foreach (var l in landings)
+                {
+                    var (x0, z0, x1, z1) = Plan(l);
+                    for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++)
+                        Headroom(res, l.Y + l.Thickness * 0.5f, x0 + (x1 - x0) * (i + 0.5f) / 3f, z0 + (z1 - z0) * (j + 0.5f) / 3f, $"a landing at {l.Y + l.Thickness * 0.5f:0.00} m");
+                }
+                void Headroom(BuildingGenResult r, float y0, float x, float z, string what)
+                {
+                    headroomPoints++;
+                    float lid = float.MaxValue;
+                    bool In((float X0, float Z0, float X1, float Z1) a) => x > a.X0 && x < a.X1 && z > a.Z0 && z < a.Z1;
+                    foreach (var o in r.Stairs)
+                    {
+                        if (!In(Foot(o))) continue;
+                        var (obx, obz) = o.Back;
+                        int n = WallOpenings.StairSteps(RiseOf(o));
+                        float d = (x - o.X) * obx + (z - o.Z) * obz;
+                        int k = Math.Clamp((int)MathF.Floor(d / (o.Run / n)), 0, n - 1);
+                        float under = o.Y + (k + 1) * RiseOf(o) / n - WallOpenings.StairTreadThickness;
+                        if (under > y0 + 0.01f) lid = MathF.Min(lid, under);
+                    }
+                    foreach (var l in landings)
+                        if (In(Plan(l)) && l.Y - l.Thickness * 0.5f > y0 + 0.01f) lid = MathF.Min(lid, l.Y - l.Thickness * 0.5f);
+                    for (int f = 1; f < r.Floors; f++)
+                    {
+                        float under = f * Storey - BuildingGen.Slab;
+                        if (under > y0 + 0.01f && OnFloor(r, f, x, z) && !Holes(r, f).Any(In)) lid = MathF.Min(lid, under);
+                    }
+                    if (lid == float.MaxValue) return;   // only the roof over it
+                    leastClear = MathF.Min(leastClear, lid - y0);
+                    if (lid - y0 < DoorTall) bad.Add($"{Name(spec)}: {what} has {lid - y0:0.00} m over it at ({x:0.0},{z:0.0})");
+                }
+                // every hole is in one walk-through room, clear of the walls round it
+                for (int f = 1; f < res.Floors; f++)
+                    foreach (var h in Holes(res, f))
+                    {
+                        holes++;
+                        var room = Holder(h, f);
+                        if (room == null || DeadEnd(room.Kind)) bad.Add($"{Name(spec)}: a hole in floor {f} is in {room?.ToString() ?? "more than one room"}");
+                        foreach (var w in WallsOn(res, f)) if (Overlap(h, Box(w))) bad.Add($"{Name(spec)}: a hole in floor {f} runs under a wall (yaw {w.Yaw}, thick {w.Thickness})");
+                    }
                 // walk each floor's stair room on a 0.1 m grid
                 for (int f = 0; f < res.Floors; f++)
                 {
-                    var up = res.Stairs.Where(s => s.Floor == f).ToList();
-                    var down = res.Stairs.Where(s => s.Floor == f - 1).ToList();
+                    var up = res.Stairs.Where(s => s.Floor == f && StartsOnFloor(s)).ToList();
+                    var down = res.Stairs.Where(s => s.Floor == f - 1 && EndsOnFloor(s)).ToList();
                     var host = up.Count > 0 ? Holder(Foot(up[0]), f) : Holder(Grown(Foot(down[0]), M), f);
                     if (host == null) continue;   // reported above
                     float gx0 = host.Rects.Min(r => r.X0) * Cell, gz0 = host.Rects.Min(r => r.Z0) * Cell;
                     float gx1 = host.Rects.Max(r => r.X1) * Cell, gz1 = host.Rects.Max(r => r.Z1) * Cell;
                     int nx = (int)((gx1 - gx0) / 0.1f), nz = (int)((gz1 - gz0) / 0.1f);
-                    var blocks = up.Select(Foot).Concat(down.Select(s => Grown(Foot(s), M))).Concat(WallsOn(res, f).Select(Box)).ToList();
+                    var blocks = res.Stairs.Where(s => s.Floor == f).Select(Foot).Concat(landings.Where(l => FloorOf(l) == f).Select(Plan))
+                                    .Concat(Holes(res, f)).Concat(WallsOn(res, f).Select(Box)).ToList();
                     var open = new bool[nx, nz];
                     for (int i = 0; i < nx; i++)
                         for (int j = 0; j < nz; j++)
@@ -407,8 +570,12 @@ namespace UnturnedSim.Tests
                     }
                 }
             }
-            TestContext.Progress.WriteLine($"[gen-stairs] {flights} flights, in {string.Join(", ", hostKinds.Select(kv => $"{kv.Value} {kv.Key}"))}; {tiles} foot/landing tiles checked; {walked} stair rooms walked; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
+            int switchbacks = All().Count(x => x.Res.Switchback), multis = All().Count(x => x.Res.Floors > 1);
+            TestContext.Progress.WriteLine($"[gen-stairs] {flights} flights ({halves} half flights of {switchbacks} switchbacks, in {multis} buildings with stairs), in {string.Join(", ", hostKinds.Select(kv => $"{kv.Value} {kv.Key}"))}; {tiles} foot/top tiles, {landingsChecked} landings, {holes} floor holes checked; {headroomPoints} points' headroom, the least {leastClear:0.00} m; {walked} stair rooms walked; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
             Assert.That(flights, Is.GreaterThan(200));
+            Assert.That(switchbacks, Is.GreaterThan(multis / 4), "switchbacks are rare");
+            Assert.That(multis - switchbacks, Is.GreaterThan(multis / 4), "straight flights are rare");
+            Assert.That(landingsChecked, Is.EqualTo(halves));
             Assert.That(walked, Is.GreaterThan(300));
             Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(10)));
         }
@@ -474,13 +641,15 @@ namespace UnturnedSim.Tests
         }
 
         /// <summary>The height of a wall's top over the plan point at x along it (a wall running along X), NaN when x is
-        /// off its run: a rectangle's top, or a right triangle's sloping one (InsetL1 = its length: apex at its end; InsetR1:
-        /// apex at its start).</summary>
+        /// off its run. A tapered wall keeps, at height v, u from InsetL0..L1 to Length - InsetR0..R1 (lerped over its
+        /// height: WallSurface.CutL/CutR), so with its bottom insets zero its top at u is where u meets a cut line.</summary>
         static float TopAt(WallPlan w, float x)
         {
             float u = (x - w.X) * Dir(w).X;
             if (u < -0.01f || u > w.Length + 0.01f) return float.NaN;
-            float k = w.InsetL1 > 0.01f ? u / w.Length : w.InsetR1 > 0.01f ? 1f - u / w.Length : 1f;
+            float k = 1f;
+            if (w.InsetL1 > 0.01f) k = MathF.Min(k, u / w.InsetL1);
+            if (w.InsetR1 > 0.01f) k = MathF.Min(k, (w.Length - u) / w.InsetR1);
             return w.Y + w.Height * Math.Clamp(k, 0f, 1f);
         }
 

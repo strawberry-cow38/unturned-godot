@@ -56,10 +56,13 @@ namespace UnturnedSim
     }
 
     /// <summary>A flight of stairs as the editor lays one (EditorBuildings.AddStairs): its foot corner, the way it climbs
-    /// (yaw; it recedes along local -Z and is Width wide along local +X), its run, from storey Floor to the next.</summary>
+    /// (yaw; it recedes along local -Z and is Width wide along local +X), its run, from storey Floor to the next -- or,
+    /// for each half of a switchback, from Y up Rise to the landing or from the landing up to the next storey.</summary>
     public struct StairPlan
     {
         public float X, Y, Z, Yaw, Run, Width; public int Floor;
+        /// <summary>How far it climbs: a storey, or half of one for a switchback's flights. 0 reads as a storey.</summary>
+        public float Rise;
         /// <summary>Unit vectors in plan: the way it climbs, and the way its width runs (AddStairs' back and right).</summary>
         public (float X, float Z) Back => (-MathF.Sin(Yaw * MathF.PI / 180f), -MathF.Cos(Yaw * MathF.PI / 180f));
         public (float X, float Z) Right => (MathF.Cos(Yaw * MathF.PI / 180f), -MathF.Sin(Yaw * MathF.PI / 180f));
@@ -92,6 +95,9 @@ namespace UnturnedSim
         /// <summary>The stair bay in cells, the same on every floor: the flight rows and the row of floor beside them.
         /// All zero for one floor.</summary>
         public (int X0, int Z0, int X1, int Z1) Bay;
+        /// <summary>Its stairs turn back on themselves at a landing halfway up (two half flights side by side, three cells
+        /// by two rows) rather than climbing a storey in one straight flight (four cells by two or three rows).</summary>
+        public bool Switchback;
         /// <summary>Where it could not do what was asked, said so (a minimum that did not fit, a limit it broke).</summary>
         public List<string> Notes = new List<string>();
     }
@@ -140,6 +146,9 @@ namespace UnturnedSim
         public const float Ext = WallOpenings.DefaultThickness, Inner = WallOpenings.InteriorThickness;
         /// <summary>How wide a generated flight is.</summary>
         public const float StairWidth = 2.4f;
+        /// <summary>A floor whose rooms want this many cells or fewer is small: it gets switchback stairs. About the median
+        /// of the houses and shops of two floors or more; a straight flight's bay is a third of a floor that size.</summary>
+        public const int SmallFloor = 28;
         /// <summary>Retail's pitched roofs cluster at 15-22 degrees (EditorBuildings.RoofPitches).</summary>
         public static readonly float[] GablePitches = { 15f, 18f, 20f, 22f };
 
@@ -345,7 +354,12 @@ namespace UnturnedSim
             floors = Math.Min(floors, maxFloors);
             res.Floors = floors;
             bool multi = floors > 1;
-            int k1 = floors > 2 ? 2 : 1, L = multi ? 4 : 0, bayRows = k1 + 1;   // the stair bay (see below)
+            // compound stairs for small spaces (strawberry: "add support for compound stairs (stairs that stop halfway up,
+            // then change directions) for small spaces"): up one row to a landing halfway, back along the next row, three
+            // cells by two rows -- in a building whose floors are small, and now and then in any. They stack straight up.
+            bool switchback = multi && (rooms.Sum(r => T(r).Cells) / floors <= SmallFloor || rng.Chance(25));
+            res.Switchback = switchback;
+            int k1 = switchback || floors <= 2 ? 1 : 2, L = multi ? (switchback ? 3 : 4) : 0, bayRows = switchback ? 2 : k1 + 1;   // the stair bay (see below)
             // A room's share of a row: its target area -- the stair room's grown by the bay it gives over to the stairs
             // (strawberry: "the living room, which is further eaten by stairs") -- and how far past that it may grow:
             // three quarters again, a small room one cell. Growing by share rather than by turns is what keeps a dining
@@ -442,9 +456,10 @@ namespace UnturnedSim
             // the bigger rooms grow by up to four cells, what is left becomes more rooms while the floor has space for
             // them, then the small rooms grow a cell, and only then does anything grow past its limit (the bigger rooms
             // first). Handing it all out round-robin made an 18 m bathroom. Returns what it could not place -- all of it,
-            // when the row is empty -- for the caller's hall to take.
+            // when the row is empty, and with `hall` (a hall runs beside the row to take it) what is left over a row of
+            // small rooms past one more cell -- for the caller's hall to take.
             int Pad(List<(RoomKind k, int w)> list, int length, int depth, List<RoomKind> here, int f, Func<RoomKind, bool> ok,
-                    RoomKind host = RoomKind.Unassigned)
+                    RoomKind host = RoomKind.Unassigned, bool hall = false)
             {
                 int spare = length - list.Sum(x => x.w);
                 Grow(list, ref spare, depth, k => !Service(k), host);
@@ -459,6 +474,8 @@ namespace UnturnedSim
                 }
                 Grow(list, ref spare, depth, Service, host);
                 if (list.Count == 0) return spare;
+                // a row of small rooms only, with a hall beside it: an alcove of hall rather than a 15 m bathroom
+                if (hall && spare >= 2 && !list.Any(x => !Service(x.k))) return spare;
                 // past the limits now, still by share: the bigger rooms first, the small ones only if there is nothing else
                 if (list.Any(x => !Service(x.k))) Grow(list, ref spare, depth, k => !Service(k), host, capped: false);
                 Grow(list, ref spare, depth, _ => true, host, capped: false);
@@ -497,7 +514,9 @@ namespace UnturnedSim
 
             // ---- the stair bay: k1 flight rows against the south wall and a row of floor beside them, four cells long --
             // a 6 m flight and a full tile clear at each end of it, at the foot and on the landing above (strawberry:
-            // "stairs should want 1 full tile at the foot and 1 tile on the landing above")
+            // "stairs should want 1 full tile at the foot and 1 tile on the landing above"). A switchback's is three
+            // cells by two rows: the tile at the foot and the tile it arrives on side by side, then its two flights, then
+            // the landing.
             int dS = 3, dN = kind == BuildingKind.Industrial ? 4 : 3;   // upper floors: rows south of the hall, and north of it
             bool stairsWest = rng.Int(2) == 0;                          // the bay at the west end of the upper floors, or the east
 
@@ -518,8 +537,8 @@ namespace UnturnedSim
                     if (lenS <= lenN) S.Add((r, Width(r, dS))); else N.Add((r, Width(r, dN)));
                 }
                 int Lu = Math.Max(Math.Max(L + S.Sum(x => x.w), N.Sum(x => x.w)), Math.Max(L, need));
-                upAbsorbS[f] = Pad(S, Lu - L, dS, onFloor[f], f, _ => true);
-                upAbsorbN[f] = Pad(N, Lu, dN, onFloor[f], f, _ => true);
+                upAbsorbS[f] = Pad(S, Lu - L, dS, onFloor[f], f, _ => true, hall: true);
+                upAbsorbN[f] = Pad(N, Lu, dN, onFloor[f], f, _ => true, hall: true);
                 upS[f] = S; upN[f] = N; upLen[f] = Lu;
                 need = Lu;
             }
@@ -569,10 +588,10 @@ namespace UnturnedSim
                 // the south side beyond the bay, the north side the whole length; a side with no room is landing
                 int x = stairsWest ? bx0 + L : ux0;
                 foreach (var (k, w) in upS[f]) { rs.Add(new GenRoom { Kind = k, Floor = f, X0 = x, X1 = x + w, Z0 = 0, Z1 = dS }); x += w; }
-                if (upAbsorbS[f] > 0) hall.More.Add(stairsWest ? (bx0 + L, 0, ux1, dS) : (ux0, 0, bx0, dS));
+                if (upAbsorbS[f] > 0) hall.More.Add((x, 0, x + upAbsorbS[f], dS));
                 x = ux0;
                 foreach (var (k, w) in upN[f]) { rs.Add(new GenRoom { Kind = k, Floor = f, X0 = x, X1 = x + w, Z0 = dS + 1, Z1 = D }); x += w; }
-                if (upAbsorbN[f] > 0) hall.More.Add((ux0, dS + 1, ux1, D));
+                if (upAbsorbN[f] > 0) hall.More.Add((x, dS + 1, ux1, D));
                 var g = new Grid(W, D, ux0, ux1);
                 foreach (var r in rs) g.Paint(r);
                 var doors = new List<GenDoor>();
@@ -587,6 +606,7 @@ namespace UnturnedSim
                 res.Rooms.Add(new RoomDesignation(r.Kind, (r.X0 + r.X1) * 0.5f * Cell, (r.Z0 + r.Z1) * 0.5f * Cell, r.Floor));
 
             BuildWalls(res, grids, k1, L);
+            SolveCorners(res.Walls);
             return res;
 
             // =========================================================================================================
@@ -691,13 +711,13 @@ namespace UnturnedSim
                     foreach (var p in pair) if (lenS <= lenN) S.Add((p, Width(p, sS))); else N.Add((p, Width(p, sN)));
                 }
                 int w = Math.Max(Math.Max(L + S.Sum(x => x.w), N.Sum(x => x.w)), Math.Max(need, 4));
-                int aS = Pad(S, w - L, sS, here, 0, _ => true), aN = Pad(N, w, sN, here, 0, _ => true);
+                int aS = Pad(S, w - L, sS, here, 0, _ => true, hall: true), aN = Pad(N, w, sN, here, 0, _ => true, hall: true);
                 rng.Shuffle(S);
                 KitchenBesideDining(S); KitchenBesideDining(N);
                 var hall = new GenRoom { Kind = RoomKind.Hall, Floor = 0, X0 = 0, X1 = w, Z0 = sS, Z1 = sS + 1 };
                 var rs = new List<GenRoom> { hall };
                 int b = 0;
-                if (aS > 0 || S.Count == 0)
+                if (S.Count == 0)
                 {
                     // no south rooms: the whole south side is hall, and the bay anywhere in it the floors above fit
                     hall.More.Add((0, 0, w, sS));
@@ -710,6 +730,8 @@ namespace UnturnedSim
                 }
                 else
                 {
+                    // what a row of small rooms left is an alcove of hall at one end of it, placed like a room
+                    if (aS > 0) S.Insert(rng.Int(2) == 0 ? 0 : S.Count, (RoomKind.Hall, aS));
                     // the bay between two of the south rooms: the first split that leaves the floors above room
                     int split = 0;
                     if (multi)
@@ -729,13 +751,14 @@ namespace UnturnedSim
                     {
                         if (multi && i == split) { hall.More.Add((x, 0, x + L, sS)); x += L; }
                         if (i == S.Count) break;
-                        rs.Add(new GenRoom { Kind = S[i].k, Floor = 0, X0 = x, X1 = x + S[i].w, Z0 = 0, Z1 = sS });
+                        if (S[i].k == RoomKind.Hall) hall.More.Add((x, 0, x + S[i].w, sS));
+                        else rs.Add(new GenRoom { Kind = S[i].k, Floor = 0, X0 = x, X1 = x + S[i].w, Z0 = 0, Z1 = sS });
                         x += S[i].w;
                     }
                 }
                 int xn = 0;
                 foreach (var (k, wd) in N) { rs.Add(new GenRoom { Kind = k, Floor = 0, X0 = xn, X1 = xn + wd, Z0 = sS + 1, Z1 = sS + 1 + sN }); xn += wd; }
-                if (aN > 0) hall.More.Add((0, sS + 1, w, sS + 1 + sN));
+                if (aN > 0) hall.More.Add((xn, sS + 1, w, sS + 1 + sN));
                 return (rs, w, sS + 1 + sN, b);
             }
 
@@ -1051,20 +1074,26 @@ namespace UnturnedSim
                 foreach (var pl in RoofShapes.Planes(rs))
                     res.Walls.Add(new WallPlan { X = pl.X, Y = pl.Y, Z = pl.Z, Yaw = pl.YawDeg, Pitch = pl.PitchDeg, Length = pl.Length, Height = pl.Height,
                                                  Thickness = Slab, Kind = SurfaceKind.Roof });
-                void Close(float x0, float z0, float x1, float z1, float yaw)
+                // `into`: run on past the high end, through the upper wall to its inner face -- a side's corner with
+                // that wall, which the editor's corner pass would otherwise grow blind into the wall already standing
+                // there (and on into the room). A hair thinner than that wall, so the overlap hides inside it rather
+                // than fighting its faces.
+                void Close(float x0, float z0, float x1, float z1, float yaw, bool into = false)
                 {
                     var (band, tri, highAtEnd) = RoofShapes.ShedInfill(rs, x0, z0, x1, z1);
-                    float len = MathF.Abs(x1 - x0) + MathF.Abs(z1 - z0);
+                    float len = MathF.Abs(x1 - x0) + MathF.Abs(z1 - z0), ext = into ? Ext : 0f, thick = into ? Ext - 0.02f : Ext;
+                    float dx = MathF.Cos(yaw * MathF.PI / 180f), dz = -MathF.Sin(yaw * MathF.PI / 180f);
+                    float ox = highAtEnd ? x0 : x0 - dx * ext, oz = highAtEnd ? z0 : z0 - dz * ext;
                     if (band > 0.01f)
-                        res.Walls.Add(new WallPlan { X = x0, Y = head, Z = z0, Yaw = yaw, Length = len, Height = band, Thickness = Ext, Kind = SurfaceKind.Wall });
+                        res.Walls.Add(new WallPlan { X = ox, Y = head, Z = oz, Yaw = yaw, Length = len + ext, Height = band, Thickness = thick, Kind = SurfaceKind.Wall });
                     if (tri > 0.01f)
-                        res.Walls.Add(new WallPlan { X = x0, Y = head + band, Z = z0, Yaw = yaw, Length = len, Height = tri, Thickness = Ext, Kind = SurfaceKind.Wall,
+                        res.Walls.Add(new WallPlan { X = ox, Y = head + band, Z = oz, Yaw = yaw, Length = len + ext, Height = tri, Thickness = thick, Kind = SurfaceKind.Wall,
                                                      InsetL1 = highAtEnd ? len : 0f, InsetR1 = highAtEnd ? 0f : len });
                 }
                 var e1 = (X: endWall.X + MathF.Cos(endWall.Yaw * MathF.PI / 180f) * endWall.Length, Z: endWall.Z - MathF.Sin(endWall.Yaw * MathF.PI / 180f) * endWall.Length);
                 Close(endWall.X, endWall.Z, e1.X, e1.Z, endWall.Yaw);   // the open end
-                Close(xa, Dm, xb, Dm, 0f);                               // the north side, running +X
-                Close(xb, 0f, xa, 0f, 180f);                             // the south side, running -X
+                Close(xa, Dm, xb, Dm, 0f, into: true);                   // the north side, running +X
+                Close(xb, 0f, xa, 0f, 180f, into: true);                 // the south side, running -X
             }
             for (int f = 0; f < floors; f++)
             {
@@ -1188,8 +1217,17 @@ namespace UnturnedSim
                                                      Height = WallOpenings.FoundationDepth, Thickness = w.Thickness, Kind = SurfaceKind.Foundation });
                 foreach (var q in inner) res.Walls.Add(q.W);
 
-                // the floor, its top at the storey's base, out to the outside walls' outer faces (the editor's slab)
-                res.Walls.Add(SlabPlan(x0m - he, x1m + he, -he, Dm + he, y, SurfaceKind.Floor));
+                // the floor, its top at the storey's base, out to the outside walls' outer faces (the editor's slab) -- over a
+                // switchback, open above both its flights and its landing: a straight flight's hole the editor cuts as it
+                // lays the flight, but a switchback's first flight and landing stop short of this floor and need headroom
+                // under it all the same. Not past the flights' foot end: the next switchback's foot stands there.
+                var floorSlab = SlabPlan(x0m - he, x1m + he, -he, Dm + he, y, SurfaceKind.Floor);
+                if (f > 0 && res.Switchback)
+                {
+                    var (hx0, hz0, hx1, hz1) = SwitchbackHole(bay);
+                    floorSlab.Openings.Add(new WallOpening(hx0 - (x0m - he), (Dm + he) - hz1, hx1 - hx0, hz1 - hz0));
+                }
+                res.Walls.Add(floorSlab);
                 // a roof on whatever of this floor the one above leaves uncovered: flat on a business; on a house a gable of
                 // its own, its ridge running into the wall of the floor above (strawberry: "any reason why the 1st floor
                 // section of roof is flat instead of gable? it can be a lower angle gable if required")
@@ -1233,6 +1271,22 @@ namespace UnturnedSim
             // ---- the stairs: k1 flight rows against the south wall, centred along the bay. One flight climbs east up row
             // 0; with alternating rows, odd floors climb west up row 1, so each lands beside the next one's foot.
             if (floors < 2) return;
+            if (res.Switchback)
+            {
+                // a switchback: up row 0 from the bay's second column to a landing in its third at half height, then back
+                // along row 1 to arrive on the next floor beside its own foot -- every floor's the same, stacked
+                float half = Storey * 0.5f, run = WallOpenings.StairDefaultRun(half), x1 = bay.X0 * Cell + Cell;
+                float zA = he + WallOpenings.StairHoleMargin, zB = Cell + 0.3f + StairWidth;
+                for (int f = 0; f + 1 < floors; f++)
+                {
+                    float y = f * Storey, t = WallOpenings.StairTreadThickness;
+                    res.Stairs.Add(new StairPlan { X = x1, Y = y, Z = zA, Yaw = 270f, Run = run, Width = StairWidth, Rise = half, Floor = f });
+                    res.Walls.Add(new WallPlan { X = x1 + run, Y = y + half - t * 0.5f, Z = zB, Yaw = 0f, Pitch = -90f, Length = StairWidth,
+                                                 Height = zB - zA, Thickness = t, Kind = SurfaceKind.Stairs });   // the landing
+                    res.Stairs.Add(new StairPlan { X = x1 + run, Y = y + half, Z = zB, Yaw = 90f, Run = run, Width = StairWidth, Rise = half, Floor = f });
+                }
+                return;
+            }
             float flight = WallOpenings.StairDefaultRun(Storey), sw = StairWidth;
             float foot = bay.X0 * Cell + (L * Cell - flight) * 0.5f;
             for (int f = 0; f + 1 < floors; f++)
@@ -1242,6 +1296,64 @@ namespace UnturnedSim
                 else                         // yaw 90: climbs -X, width along -Z, z 5.7 down to 3.3
                     res.Stairs.Add(new StairPlan { X = foot + flight, Y = f * Storey, Z = Cell + 0.3f + sw, Yaw = 90f, Run = flight, Width = sw, Floor = f });
             }
+        }
+
+        /// <summary>EditorBuildings.SolveCorners, run on the plan, so the walls leave here already joined and the
+        /// editor's pass finds nothing to grow: a wall's end within 1.6 m of where it crosses a wall of its storey grows
+        /// to it -- to that wall's centreline at a tee, its far face at a corner (the corner's square is otherwise left
+        /// out of both). Where a hall turns round a room's corner the partitions met at their centrelines and left that
+        /// square open. Short walls -- a roof's infills, standing on a wall head -- are laid joined and left alone: grown
+        /// blind they ran on through the upper wall already filling the corner. Openings keep their place when a wall
+        /// grows at its start. Returns how many walls grew.</summary>
+        static int SolveCorners(List<WallPlan> all)
+        {
+            const float MaxGrow = 1.6f;
+            var ws = all.Where(w => w.Kind == SurfaceKind.Wall || w.Kind == SurfaceKind.Foundation).ToList();
+            var gs = new float[ws.Count]; var ge = new float[ws.Count];
+            (float X, float Z) Dir(WallPlan w) => (MathF.Cos(w.Yaw * MathF.PI / 180f), -MathF.Sin(w.Yaw * MathF.PI / 180f));
+            for (int i = 0; i < ws.Count; i++)
+            {
+                var a = ws[i];
+                if (a.Kind == SurfaceKind.Wall && a.Height < Storey - 0.01f) continue;
+                var ad = Dir(a);
+                for (int j = 0; j < ws.Count; j++)
+                {
+                    var b = ws[j];
+                    if (i == j) continue;
+                    float dy = MathF.Abs(((a.Yaw - b.Yaw) % 180f + 270f) % 180f - 90f);
+                    if (dy < 20f || MathF.Abs(a.Y - b.Y) > 0.6f) continue;
+                    var bd = Dir(b);
+                    float ex = bd.X * b.Length, ez = bd.Z * b.Length;
+                    float den = ad.X * ez - ad.Z * ex;
+                    if (MathF.Abs(den) < 1e-6f) continue;
+                    float rx = b.X - a.X, rz = b.Z - a.Z;
+                    float t = (rx * ez - rz * ex) / den, s2 = (rx * ad.Z - rz * ad.X) / den;
+                    if (s2 < -0.02f || s2 > 1.02f) continue;
+                    float target = t + (s2 < 0.08f || s2 > 0.92f ? b.Thickness * 0.5f : 0f);
+                    if (target < 0f && target >= -MaxGrow) gs[i] = MathF.Max(gs[i], -target);
+                    else if (target > a.Length && target <= a.Length + MaxGrow) ge[i] = MathF.Max(ge[i], target - a.Length);
+                }
+            }
+            int grew = 0;
+            for (int i = 0; i < ws.Count; i++)
+            {
+                if (gs[i] <= 1e-4f && ge[i] <= 1e-4f) continue;
+                var w = ws[i]; var d = Dir(w);
+                w.X -= d.X * gs[i]; w.Z -= d.Z * gs[i];
+                w.Length += gs[i] + ge[i];
+                for (int k = 0; k < w.Openings.Count; k++) { var o = w.Openings[k]; o.U += gs[i]; w.Openings[k] = o; }
+                grew++;
+            }
+            return grew;
+        }
+
+        /// <summary>The hole a switchback in `bay` needs in each floor it climbs to, in plan metres: over its two flights and
+        /// its landing, a StairHoleMargin past them but for the flights' foot end, where the next floor's foot is.</summary>
+        public static (float X0, float Z0, float X1, float Z1) SwitchbackHole((int X0, int Z0, int X1, int Z1) bay)
+        {
+            float he = Ext * 0.5f, m = WallOpenings.StairHoleMargin, run = WallOpenings.StairDefaultRun(Storey * 0.5f);
+            float x1 = bay.X0 * Cell + Cell;
+            return (x1, he, x1 + run + StairWidth + m, Cell + 0.3f + StairWidth + m);
         }
 
         /// <summary>A flat slab over [x0, x1] x [z0, z1] with its top at `top`: the editor's frame for one -- origin at

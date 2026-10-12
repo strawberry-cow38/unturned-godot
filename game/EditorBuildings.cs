@@ -2713,13 +2713,17 @@ namespace UnturnedGodot
             foreach (var s in res.Stairs)
             {
                 var o = at + new Vector3(s.X, s.Y, s.Z);
-                int steps = WallOpenings.StairSteps(StoreyHeight);
-                foreach (var p in StairTreadOrigins(o, s.Yaw, s.Run, s.Width))
+                // a switchback's half flights climb half a storey each; the generator cut their floor's hole itself (it
+                // covers the landing too), so they only want their ramps
+                float rise = s.Rise > 0f ? s.Rise : StoreyHeight;
+                int steps = WallOpenings.StairSteps(rise);
+                foreach (var p in StairTreadOrigins(o, s.Yaw, s.Run, s.Width, rise))
                     SpawnWall(p, s.Yaw, s.Width, WallOpenings.StairTreadThickness, mat, null, s.Run / steps, -90f, SurfaceKind.Stairs);
-                FitStairsToStructure(o, s.Yaw, s.Run, s.Width);
+                FitStairsToStructure(o, s.Yaw, s.Run, s.Width, rise, cutFloor: rise >= StoreyHeight - 0.01f);
             }
             var solved = SolveCorners();
-            if (solved.Count > 0) Log.Err($"[editor-buildings] generate: {solved.Count} walls were not corner-solved -- their openings have slid");
+            if (solved.Count > 0) Log.Err($"[editor-buildings] generate: {solved.Count} walls were not corner-solved -- their openings have slid: "
+                                          + string.Join("; ", System.Linq.Enumerable.Select(solved, x => $"{x.W.Kind} at {x.W.Position - at} yaw {x.W.RotationDegrees.Y:0} {x.Len:0.00} -> {x.W.Length:0.00} m")));
 
             DesignatedKind = res.Kind;
             Designations.Clear();
@@ -3158,9 +3162,9 @@ namespace UnturnedGodot
         /// you get, which is precisely how the draw cursor came to sit on the ground while walls landed a
         /// storey up. Sharing the function is the guarantee; a second copy of the arithmetic is not.</summary>
         public static IEnumerable<Vector3> StairTreadOrigins(Vector3 origin, float yawDeg, float run = 0f,
-                                                             float width = 0f)
+                                                             float width = 0f, float rise = 0f)
         {
-            float rise = StoreyHeight;
+            if (rise <= 0f) rise = StoreyHeight;   // a flight climbs a storey unless it is half of a switchback
             int steps = WallOpenings.StairSteps(rise);
             if (run <= 0f) run = WallOpenings.StairDefaultRun(rise);
             float stepRise = WallOpenings.StairStepRise(rise);
@@ -3188,9 +3192,9 @@ namespace UnturnedGodot
         /// on the STAIRS layer so it moves and deletes with the flight rather than becoming loose furniture.
         /// strawberry: "add an invisible ramp to the staircase, to enable smoother movement".</summary>
         /// <returns>How many floors were cut.</returns>
-        public int FitStairsToStructure(Vector3 origin, float yawDeg, float run, float width)
+        public int FitStairsToStructure(Vector3 origin, float yawDeg, float run, float width, float rise = 0f, bool cutFloor = true)
         {
-            float rise = StoreyHeight;
+            if (rise <= 0f) rise = StoreyHeight;
             float yaw = Mathf.DegToRad(yawDeg);
             var back = new Vector3(-Mathf.Sin(yaw), 0f, -Mathf.Cos(yaw));
             var right = new Vector3(Mathf.Cos(yaw), 0f, -Mathf.Sin(yaw));
@@ -3213,6 +3217,7 @@ namespace UnturnedGodot
             // Pitch so the box lies along the flight: atan(rise/run) about the flight's lateral axis.
             ramp.GlobalRotation = new Vector3(Mathf.Atan2(rise, run), yaw, 0f);
             _stairRamps.Add(ramp);
+            if (!cutFloor) return 0;   // the caller cut the hole itself (a generated switchback's spans its landing)
 
             // ---- cut the floor above ------------------------------------------------------------------
             // The flight's plan footprint, grown slightly so the opening clears the treads rather than
