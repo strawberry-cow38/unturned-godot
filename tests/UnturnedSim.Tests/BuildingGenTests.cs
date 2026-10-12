@@ -46,7 +46,9 @@ namespace UnturnedSim.Tests
         /// <summary>The way a wall's front face looks: its local +Z.</summary>
         static (float X, float Z) Normal(WallPlan w) => (MathF.Sin(w.Yaw * MathF.PI / 180f), MathF.Cos(w.Yaw * MathF.PI / 180f));
         static (float X, float Z) At(WallPlan w, float u) { var d = Dir(w); return (w.X + d.X * u, w.Z + d.Z * u); }
-        static IEnumerable<WallPlan> WallsOn(BuildingGenResult r, int f) => r.Walls.Where(w => w.Kind == SurfaceKind.Wall && FloorOf(w) == f);
+        // a storey's walls: full height -- the bands and triangles that close a roof stand on a wall head, which is the
+        // next storey's base, and are not walls of it
+        static IEnumerable<WallPlan> WallsOn(BuildingGenResult r, int f) => r.Walls.Where(w => w.Kind == SurfaceKind.Wall && FloorOf(w) == f && w.Height > Storey - 0.01f);
         static GenRoom RoomAt(BuildingGenResult r, int f, float x, float z) => r.Layout.FirstOrDefault(g => g.Floor == f && g.Holds(x, z));
         static bool OnFloor(BuildingGenResult r, int f, float x, float z)
             => x > r.Footprints[f].X0 * Cell && x < r.Footprints[f].X1 * Cell && z > 0 && z < r.CellsZ * Cell;
@@ -471,6 +473,17 @@ namespace UnturnedSim.Tests
             return w.Y + into * MathF.Tan(pitch);
         }
 
+        /// <summary>The height of a wall's top over the plan point at x along it (a wall running along X), NaN when x is
+        /// off its run: a rectangle's top, or a right triangle's sloping one (InsetL1 = its length: apex at its end; InsetR1:
+        /// apex at its start).</summary>
+        static float TopAt(WallPlan w, float x)
+        {
+            float u = (x - w.X) * Dir(w).X;
+            if (u < -0.01f || u > w.Length + 0.01f) return float.NaN;
+            float k = w.InsetL1 > 0.01f ? u / w.Length : w.InsetR1 > 0.01f ? 1f - u / w.Length : 1f;
+            return w.Y + w.Height * Math.Clamp(k, 0f, 1f);
+        }
+
         /// <summary>How much of an outside wall a room has: the length of its stretch of the building's edge on that wall.</summary>
         static float SpanOf(GenRoom g, WallPlan w)
         {
@@ -488,7 +501,7 @@ namespace UnturnedSim.Tests
         public void OpeningsSuitTheRoom()
         {
             var bad = new List<string>();
-            int lit = 0, vented = 0, vehicle = 0, shops = 0, blank = 0, clear = 0;
+            int lit = 0, vented = 0, vehicle = 0, shops = 0, blank = 0, stockDoors = 0, clear = 0;
             foreach (var (spec, res) in All())
             {
                 var outer = res.Walls.Where(w => w.Kind == SurfaceKind.Wall && w.Thickness == BuildingGen.Ext).ToList();
@@ -512,7 +525,13 @@ namespace UnturnedSim.Tests
                         else if (doorWalls.Max(w => SpanOf(g, w)) < longest - 0.01f) bad.Add($"{n}'s doors are on a {doorWalls.Max(w => SpanOf(g, w)):0.0} m wall, not its {longest:0.0} m front");
                         else shops++;
                     }
-                    if (g.Kind == RoomKind.Closet || g.Kind == RoomKind.Storage) { if (os.Count == 0) blank++; else bad.Add($"{n} has {os.Count} openings"); }
+                    // blank, but for a stockroom's back door (where the deliveries come in)
+                    bool BackDoor((WallPlan W, WallOpening O) p) { var c = At(p.W, p.O.U + p.O.Width * 0.5f); return p.O.HasDoor && res.DoorMarks.Any(m => m.Role == DoorRole.Back && MathF.Abs(m.X - c.X) < 0.05f && MathF.Abs(m.Z - c.Z) < 0.05f); }
+                    if (g.Kind == RoomKind.Closet || g.Kind == RoomKind.Storage)
+                    {
+                        int others = mine.Count(p => !(g.Kind == RoomKind.Storage && BackDoor(p)));
+                        if (others == 0) { blank++; if (os.Count > 0) stockDoors++; } else bad.Add($"{n} has {others} openings");
+                    }
                     if (g.Floor > 0 && os.Any(o => o.Archetype == BuildingGen.ArchGarage || o.HasDoor)) bad.Add($"{n} has a door to outside upstairs");
                 }
                 // nothing in the outside wall a flight climbs along
@@ -529,7 +548,7 @@ namespace UnturnedSim.Tests
                         }
                 }
             }
-            TestContext.Progress.WriteLine($"[gen-suit] {lit} habitable rooms lit, {vented} bathrooms vented, {vehicle} vehicle doors, {shops} shopfronts, {blank} closets/stores blank, {clear} outside openings checked clear of flights; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
+            TestContext.Progress.WriteLine($"[gen-suit] {lit} habitable rooms lit, {vented} bathrooms vented, {vehicle} vehicle doors, {shops} shopfronts, {blank} closets/stores blank ({stockDoors} stores with only their back door), {clear} outside openings checked clear of flights; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
             Assert.That(lit, Is.GreaterThan(500));
             Assert.That(vented, Is.GreaterThan(100));
             Assert.That(vehicle, Is.GreaterThan(50));
@@ -537,24 +556,34 @@ namespace UnturnedSim.Tests
             Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(10)));
         }
 
-        // H: houses get a gable roof, businesses a flat one (strawberry: "businesses having flat roofs while houses have
-        // gable") -- a house's lower floor too, where the one above leaves it uncovered ("any reason why the 1st floor
-        // section of roof is flat instead of gable?") -- every cell of every floor is under the floor above or a roof,
-        // a lower gable meets the upper wall under its head, and no window is behind it.
-        // BREAK IT: a flat roof on houses (or on their lower parts); forget a roof; no gable ends; the lower gable at the
-        // house's pitch (too tall); windows left in the wall behind it.
+        // H: houses get a gable or hip roof, businesses a flat one (strawberry: "businesses having flat roofs while houses
+        // have gable"); a house's lower floor where the one above leaves it uncovered gets a shed leaning on the upper
+        // wall ("slope from the wall off the edge"), meeting it under its head, closed down both sides, with no window
+        // behind it; and every cell of every floor is under the floor above or a roof.
+        // BREAK IT: a flat roof on houses (or on their lower parts); forget a roof; no gable ends; the lower roof at the
+        // house's pitch (too tall); windows left in the wall behind it; a shed with no side infills; a shed rising to its
+        // open end.
         [Test]
         public void RoofsSuitTheKindAndCoverEverything()
         {
             var bad = new List<string>();
-            int gables = 0, flats = 0, cells = 0, exposed = 0, lowers = 0;
+            int gables = 0, hips = 0, flats = 0, cells = 0, exposed = 0, lowers = 0, leaning = 0, closed = 0;
             foreach (var (spec, res) in All())
             {
                 var roofs = res.Walls.Where(w => w.Kind == SurfaceKind.Roof).ToList();
                 var slopes = roofs.Where(w => MathF.Abs(w.Pitch + 90f) > 0.5f).ToList();
+                var topSlopes = slopes.Where(w => MathF.Abs(w.Y - res.Floors * Storey) < 0.05f).ToList();
                 bool raised = res.Walls.Any(w => w.Kind == SurfaceKind.Wall && w.GableRise > 0.01f);
+                int exposedParts = Enumerable.Range(0, res.Floors - 1).Sum(f => (res.Footprints[f + 1].X0 > res.Footprints[f].X0 ? 1 : 0) + (res.Footprints[f + 1].X1 < res.Footprints[f].X1 ? 1 : 0));
                 if (spec.Kind == BuildingKind.Residential)
-                { if (slopes.Count >= 2 && slopes.Count % 2 == 0 && raised) gables++; else bad.Add($"{Name(spec)}: a house without a gable roof ({slopes.Count} slopes, gable ends {raised})"); }
+                {
+                    // the top a gable (two slopes, ends raised) or a hip (four, none raised); each part a floor above
+                    // leaves uncovered one shed slope of its own
+                    bool topOk = res.Roof == RoofKind.Gable ? topSlopes.Count == 2 && raised : res.Roof == RoofKind.Hip && topSlopes.Count == 4 && !raised;
+                    if (!topOk) bad.Add($"{Name(spec)}: a house's top roof is {res.Roof} with {topSlopes.Count} slopes, gable ends {raised}");
+                    else if (res.Roof == RoofKind.Gable) gables++; else hips++;
+                    if (slopes.Count - topSlopes.Count != exposedParts) bad.Add($"{Name(spec)}: {exposedParts} uncovered lower parts, {slopes.Count - topSlopes.Count} lower slopes");
+                }
                 else if (slopes.Count > 0 || raised) bad.Add($"{Name(spec)}: a {spec.Kind} with a pitched roof");
                 else flats++;
                 // a lower floor's gable meets the wall of the floor above under that wall's head, and nothing in that wall
@@ -565,6 +594,31 @@ namespace UnturnedSim.Tests
                     float pitch = w.Pitch + 90f, rise = w.Height * MathF.Sin(pitch * MathF.PI / 180f);
                     if (rise > Storey - 0.5f) bad.Add($"{Name(spec)}: a lower gable rises {rise:0.00} m, over the upper wall's head");
                     int above = (int)MathF.Round(w.Y / Storey);
+                    // closed at its sides: along the two side walls, the wall and what stands on it reach the roof's underside
+                    int below = above - 1;
+                    var dw = Dir(w); var nw = Normal(w);
+                    float runW = w.Height * MathF.Cos((w.Pitch + 90f) * MathF.PI / 180f);
+                    var xs = new[] { w.X, w.X + dw.X * w.Length, w.X - nw.X * runW, w.X + dw.X * w.Length - nw.X * runW };
+                    float sx0 = xs.Min(), sx1 = xs.Max();
+                    // leaning on the upper wall: highest against it, its eave at the open end
+                    var (u0, u1) = res.Footprints[above];
+                    bool westPart = sx1 <= u0 * Cell + 0.5f;
+                    float zMid = res.CellsZ * Cell * 0.5f;
+                    float hWall = RoofHeightAt(w, westPart ? u0 * Cell - 0.6f : u1 * Cell + 0.6f, zMid);
+                    float hOpen = RoofHeightAt(w, westPart ? sx0 + 0.6f : sx1 - 0.6f, zMid);
+                    if (float.IsNaN(hWall) || float.IsNaN(hOpen) || hWall < hOpen + 0.5f) bad.Add($"{Name(spec)}: the roof over floor {above - 1} does not rise to the wall above it ({hWall:0.00} m there, {hOpen:0.00} at its open end)");
+                    else leaning++;
+                    foreach (float zLine in new[] { 0f, res.CellsZ * Cell })
+                        for (int t = 1; t < 8; t++)
+                        {
+                            float x = sx0 + (sx1 - sx0) * t / 8f;
+                            float h = RoofHeightAt(w, x, zLine);
+                            if (float.IsNaN(h)) continue;
+                            float topAt = res.Walls.Where(u => u.Kind == SurfaceKind.Wall && u.Pitch == 0f && (u.Yaw == 0f || u.Yaw == 180f) && MathF.Abs(u.Z - zLine) < 0.01f)
+                                                   .Select(u => TopAt(u, x)).DefaultIfEmpty(float.NaN).Max();
+                            closed++;
+                            if (float.IsNaN(topAt) || topAt < h - 0.1f) { bad.Add($"{Name(spec)}: the roof over floor {below} is open at its side at x {x:0.0}, z {zLine:0} ({h:0.00} m over, the wall reaches {topAt:0.00})"); break; }
+                        }
                     foreach (var u in WallsOn(res, above).Where(u => u.Thickness == BuildingGen.Ext))
                         foreach (var o in u.Openings)
                             for (int t = 0; t <= 4; t++)
@@ -584,15 +638,18 @@ namespace UnturnedSim.Tests
                             float px = (x + 0.5f) * Cell, pz = (z + 0.5f) * Cell;
                             if (f < top && x >= res.Footprints[f + 1].X0 && x < res.Footprints[f + 1].X1) continue;
                             exposed++;
-                            bool covered = res.Roof == RoofKind.Gable
+                            bool covered = res.Roof != RoofKind.Flat
                                 ? slopes.Any(w => MathF.Abs(w.Y - (f + 1) * Storey) < 0.05f && !float.IsNaN(RoofHeightAt(w, px, pz)))
                                 : roofs.Any(w => MathF.Abs(w.Pitch + 90f) < 0.5f && MathF.Abs(w.Y - (f + 1) * Storey - BuildingGen.Slab * 0.5f) < 0.05f
                                                  && px > w.X && px < w.X + w.Length && pz > w.Z - w.Height && pz < w.Z);
                             if (!covered) bad.Add($"{Name(spec)}: floor {f} cell ({x},{z}) has no roof over it");
                         }
             }
-            TestContext.Progress.WriteLine($"[gen-roof] {gables} gabled houses ({lowers} slopes on lower floors), {flats} flat-roofed businesses; {exposed} of {cells} floor cells open to the sky, each checked for its roof; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
-            Assert.That(gables, Is.GreaterThan(100));
+            TestContext.Progress.WriteLine($"[gen-roof] {gables} gabled and {hips} hipped houses ({lowers} sheds on lower floors, {leaning} rising to the wall above, {closed} side points closed), {flats} flat-roofed businesses; {exposed} of {cells} floor cells open to the sky, each checked for its roof; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
+            Assert.That(gables, Is.GreaterThan(60));
+            Assert.That(hips, Is.GreaterThan(20));
+            Assert.That(closed, Is.GreaterThan(500));
+            Assert.That(leaning, Is.EqualTo(lowers).And.GreaterThan(50));
             Assert.That(flats, Is.GreaterThan(300));
             Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(10)));
         }
@@ -716,6 +773,114 @@ namespace UnturnedSim.Tests
                 }
         }
 
+        // M: one front door and at most one back door, marked, each into a room that suits it (strawberry: "mark a
+        // front and back door of the house only in appropriate rooms"); the back in another wall than the front; and
+        // each mark is a real door in an outside wall at that spot.
+        // BREAK IT: let the front door into any walk-through room; let the back door into any; mark nothing; put the
+        // back door in the front's wall.
+        [Test]
+        public void FrontAndBackDoorsAreMarkedInTheRightRooms()
+        {
+            // the test's own idea of a sensible room for each, not BuildingGen.EntranceOrder's
+            RoomKind[] FrontOk(BuildingKind b) => b switch
+            {
+                BuildingKind.Residential => new[] { RoomKind.Hall, RoomKind.LivingRoom },
+                BuildingKind.Commercial => new[] { RoomKind.Shop, RoomKind.Hall },
+                BuildingKind.Industrial => new[] { RoomKind.Hall, RoomKind.Workshop, RoomKind.Warehouse, RoomKind.Shop },
+                _ => new[] { RoomKind.Hall },
+            };
+            RoomKind[] BackOk(BuildingKind b) => b switch
+            {
+                BuildingKind.Residential => new[] { RoomKind.Kitchen, RoomKind.Hall, RoomKind.DiningRoom },
+                BuildingKind.Commercial => new[] { RoomKind.Storage, RoomKind.Kitchen, RoomKind.Hall },
+                BuildingKind.Industrial => new[] { RoomKind.Warehouse, RoomKind.Workshop, RoomKind.Storage, RoomKind.Hall },
+                _ => new[] { RoomKind.Kitchen, RoomKind.Hall, RoomKind.Storage },
+            };
+            var bad = new List<string>();
+            int fronts = 0, backs = 0, opposite = 0;
+            var into = new Dictionary<string, int>();
+            foreach (var (spec, res) in All())
+            {
+                var marks = res.DoorMarks.ToList();
+                var outs = Doors(res, 0).Where(d => (d.A == null) != (d.B == null)).ToList();   // the walkable openings to outside
+                foreach (var m in marks)
+                {
+                    var near = outs.Where(d => { var c = At(d.W, d.O.U + d.O.Width * 0.5f); return MathF.Abs(c.X - m.X) < 0.05f && MathF.Abs(c.Z - m.Z) < 0.05f; }).ToList();
+                    if (m.Floor != 0 || near.Count != 1 || !near[0].O.HasDoor) { bad.Add($"{Name(spec)}: the {m.Role} mark at ({m.X:0.0},{m.Z:0.0}) is not a door to outside"); continue; }
+                    var room = near[0].A ?? near[0].B;
+                    var ok = m.Role == DoorRole.Front ? FrontOk(spec.Kind) : BackOk(spec.Kind);
+                    if (!ok.Contains(room.Kind)) bad.Add($"{Name(spec)}: the {m.Role} door opens into the {room.Kind}");
+                    string key = $"{spec.Kind} {m.Role} {room.Kind}";
+                    into[key] = into.GetValueOrDefault(key) + 1;
+                }
+                int nf = marks.Count(m => m.Role == DoorRole.Front), nb = marks.Count(m => m.Role == DoorRole.Back);
+                fronts += nf; backs += nb;
+                if (nf != 1) bad.Add($"{Name(spec)}: {nf} front doors");
+                if (nb > 1) bad.Add($"{Name(spec)}: {nb} back doors");
+                if (nf == 1 && nb == 1)
+                {
+                    var f = res.Front; var b = res.Back;
+                    if (f.AlongX == b.AlongX && f.Line == b.Line) bad.Add($"{Name(spec)}: the back door is in the front door's wall");
+                    else if (f.AlongX == b.AlongX) opposite++;
+                }
+            }
+            TestContext.Progress.WriteLine($"[gen-doors] {fronts} front doors, {backs} back doors ({opposite} in the wall opposite the front); {string.Join(", ", into.OrderByDescending(kv => kv.Value).Take(12).Select(kv => $"{kv.Value} {kv.Key}"))}; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
+            Assert.That(fronts, Is.EqualTo(All().Count));
+            Assert.That(backs, Is.GreaterThan(All().Count / 3));
+            Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(10)));
+        }
+
+        // N: rooms keep to their proportions (strawberry: "make sure rooms are scaled proportionately to what they are,
+        // i think the dining room is way too big compared to the living room, which is further eaten by stairs"): what is
+        // left of the living room beside the stairs is at least as big as the dining room and the kitchen on its floor,
+        // and rooms sharing a row are scaled alike against their kinds' sizes.
+        // BREAK IT: grow by turns instead of by share; forget the stairs' area in the stair room's share; drop the check.
+        [Test]
+        public void RoomsKeepToTheirProportions()
+        {
+            var bad = new List<string>();
+            int livings = 0, excused = 0, rows = 0;
+            var spreads = new List<double>();
+            foreach (var (spec, res) in All())
+            {
+                var bay = res.Bay;
+                foreach (var living in res.Layout.Where(g => g.Kind == RoomKind.LivingRoom))
+                {
+                    livings++;
+                    int usable = living.Cells - (bay.X1 > bay.X0 && living.Floor == 0 && living.HasCell(bay.X0, bay.Z0) ? (bay.X1 - bay.X0) * (bay.Z1 - bay.Z0) : 0);
+                    foreach (var o in res.Layout.Where(g => g.Floor == living.Floor && (g.Kind == RoomKind.DiningRoom || g.Kind == RoomKind.Kitchen)))
+                        if (o.Cells > usable)
+                        {
+                            if (res.Notes.Any(n => n.Contains("living room came out smaller"))) excused++;
+                            else bad.Add($"{Name(spec)}: {o} ({o.Cells} cells) outgrows the {usable} cells left of {living}");
+                        }
+                }
+                // rooms sharing a row share its length by their kinds' sizes: what each got over its kind's size is about
+                // the same for all of them (the stair room counted without the stairs, service rooms left out -- they are
+                // kept narrow on purpose)
+                double Usable(GenRoom g) => g.Cells - (bay.X1 > bay.X0 && g.Floor == 0 && g.HasCell(bay.X0, bay.Z0) ? (bay.X1 - bay.X0) * (bay.Z1 - bay.Z0) : 0);
+                foreach (var row in res.Layout.Where(g => !g.Circulation && !BuildingGen.Service(g.Kind) && g.More.Count == 0).GroupBy(g => (g.Floor, g.Z0, g.Z1)))
+                {
+                    var rs = row.ToList();
+                    if (rs.Count < 2) continue;
+                    rows++;
+                    var share = rs.Select(g => (G: g, R: Usable(g) / BuildingGen.TraitOf(g.Kind, spec.Kind).Cells)).OrderBy(x => x.R).ToList();
+                    double spread = share[^1].R / share[0].R;
+                    spreads.Add(spread);
+                    // within a whole cell: two rooms of one kind two and three cells wide are 1.5x apart and as even as
+                    // a row of odd length can make them; five and three (1.67x) is a cell given to the wrong one
+                    if (spread > 1.5 + 1e-6) bad.Add($"{Name(spec)}: {share[^1].G} has {share[^1].R:0.0}x its kind's size beside {share[0].G} with {share[0].R:0.0}x");
+                }
+            }
+            spreads.Sort();
+            double Pct(double q) => spreads.Count == 0 ? 0 : spreads[(int)((spreads.Count - 1) * q)];
+            TestContext.Progress.WriteLine($"[gen-size] {livings} living rooms checked against their dining rooms and kitchens ({excused} excused by a note); {rows} rows of rooms, the most over its kind's size against the least over: median {Pct(0.5):0.00}x, 90% {Pct(0.9):0.00}x, worst {Pct(1):0.00}x; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
+            Assert.That(livings, Is.GreaterThan(100));
+            Assert.That(rows, Is.GreaterThan(300));
+            Assert.That(excused, Is.LessThanOrEqualTo(livings / 50), "living rooms often lose to the dining room, with a note");
+            Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(10)));
+        }
+
         // J: every palette a kind can draw from exists in the retail table, and generated buildings use them.
         // BREAK IT: misspell a palette name ("House_10").
         [Test]
@@ -742,8 +907,11 @@ namespace UnturnedSim.Tests
         public void DesignationFloorsSurviveASave()
         {
             var res = BuildingGen.Generate(new BuildingGenSpec { Seed = 3, Kind = BuildingKind.Residential, MinRooms = 8, MinFloors = 2, MaxFloors = 3, MaxRoomsPerFloor = 4 });
-            string text = WallSave.Write(res.Walls, res.Kind, res.Rooms);
-            var walls = WallSave.Read(text.Split('\n'), out var kind, out var rooms);
+            string text = WallSave.Write(res.Walls, res.Kind, res.Rooms, res.DoorMarks);
+            var walls = WallSave.Read(text.Split('\n'), out var kind, out var rooms, out var marks);
+            Assert.That(marks.Select(m => (m.Role, m.X, m.Floor)), Is.EqualTo(res.DoorMarks.Select(m => (m.Role, MathF.Round(m.X * 1000f) / 1000f, m.Floor))).Using<(DoorRole, float, int)>((a, b) => a.Item1 == b.Item1 && MathF.Abs(a.Item2 - b.Item2) < 0.01f && a.Item3 == b.Item3),
+                        "the door marks survive the save");
+            Assert.That(marks.Count, Is.GreaterThan(0));
             Assert.That(kind, Is.EqualTo(res.Kind));
             Assert.That(walls.Count, Is.EqualTo(res.Walls.Count));
             Assert.That(rooms.Select(r => (r.Kind, r.Floor)), Is.EqualTo(res.Rooms.Select(r => (r.Kind, r.Floor))));

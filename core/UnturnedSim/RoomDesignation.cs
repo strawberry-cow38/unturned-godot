@@ -46,6 +46,19 @@ namespace UnturnedSim
         public RoomDesignation(RoomKind kind, float x, float z, int floor = 0) { Kind = kind; X = x; Z = z; Floor = floor; }
     }
 
+    /// <summary>What a door to outside is for: the way in, or the way out the back. Inside doors are not marked.</summary>
+    public enum DoorRole { Inside, Front, Back }
+
+    /// <summary>A marked door as it is STORED: its role and the middle of its opening in plan (the same space a room
+    /// designation's anchor is in), on a storey. strawberry: "mark a front and back door of the house".</summary>
+    public struct DoorDesignation
+    {
+        public DoorRole Role;
+        public float X, Z;
+        public int Floor;
+        public DoorDesignation(DoorRole role, float x, float z, int floor = 0) { Role = role; X = x; Z = z; Floor = floor; }
+    }
+
     /// <summary>Framework for building/room designation. NO placement logic -- strawberry_cow: "we dont have
     /// to do the stories system yet. just the framework". What this owns is the part that is expensive to
     /// change later: how a designation is anchored, how it re-finds its room, and how it persists.</summary>

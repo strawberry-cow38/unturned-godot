@@ -16,7 +16,7 @@ namespace UnturnedGodot
     {
         public enum Glyph
         {
-            Wall, Room, Floor, Roof, RoofHip, Foundation, Stairs, Delete, Move,
+            Wall, Room, Floor, Roof, RoofHip, RoofShed, Foundation, Stairs, Delete, Move,
             Door, Window, TallWindow, Garage, Porch, Vent,
             Paint, Import, Bake,
         }
@@ -78,6 +78,10 @@ namespace UnturnedGodot
                     Tri(im, P(14), P(8), P(6), P(24), P(26), P(8), Ink);
                     Tri(im, P(26), P(8), P(6), P(24), P(34), P(24), Ink);
                     Rect(im, P(14), P(8), P(12), Mathf.Max(2, P(2)), Dim);   // the ridge, visibly shorter
+                    Rect(im, P(6), P(24), P(28), Mathf.Max(2, P(3)), Dim);
+                    break;
+                case Glyph.RoofShed:               // one slope, low on the left, high on the right
+                    Tri(im, P(6), P(24), P(34), P(10), P(34), P(24), Ink);
                     Rect(im, P(6), P(24), P(28), Mathf.Max(2, P(3)), Dim);
                     break;
                 case Glyph.Foundation:             // a slab with the buried skirt under it

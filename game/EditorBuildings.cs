@@ -1860,14 +1860,16 @@ namespace UnturnedGodot
             var before = Snapshot();
             var kindBefore = DesignatedKind;
             var roomsBefore = new List<RoomDesignation>(Designations);
+            var marksBefore = new List<DoorDesignation>(DoorMarks);
             foreach (var w in new List<WallSurface>(_walls)) RemoveWall(w);
-            DesignatedKind = null; Designations.Clear();   // the rooms they labelled are gone
+            DesignatedKind = null; Designations.Clear(); DoorMarks.Clear();   // the rooms and doors they labelled are gone
             _selWall = null; _selOpening = -1;
             PositionHandles();
             _editor?.PushUndo("clear plot", () =>
             {
                 RestoreAll(before);
                 DesignatedKind = kindBefore; Designations.Clear(); Designations.AddRange(roomsBefore);
+                DoorMarks.Clear(); DoorMarks.AddRange(marksBefore);
             });
             return n;
         }
@@ -2107,7 +2109,7 @@ namespace UnturnedGodot
             try
             {
                 System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(SavePath));
-                System.IO.File.WriteAllText(SavePath, WallSave.Write(plans, DesignatedKind, Designations));
+                System.IO.File.WriteAllText(SavePath, WallSave.Write(plans, DesignatedKind, Designations, DoorMarks));
             }
             catch (System.Exception e) { Log.Err($"[editor-buildings] save failed: {e.Message}"); return 0; }
             Log.Print($"[editor-buildings] saved {plans.Count} walls -> {SavePath}");
@@ -2119,10 +2121,11 @@ namespace UnturnedGodot
         {
             if (!System.IO.File.Exists(SavePath)) return 0;
             List<WallPlan> plans;
-            BuildingKind kind; List<RoomDesignation> rooms;
-            try { plans = WallSave.Read(System.IO.File.ReadAllLines(SavePath), out kind, out rooms); }
+            BuildingKind kind; List<RoomDesignation> rooms; List<DoorDesignation> marks;
+            try { plans = WallSave.Read(System.IO.File.ReadAllLines(SavePath), out kind, out rooms, out marks); }
             catch (System.Exception e) { Log.Err($"[editor-buildings] load failed: {e.Message}"); return 0; }
             Designations.Clear(); Designations.AddRange(rooms);
+            DoorMarks.Clear(); DoorMarks.AddRange(marks);
             DesignatedKind = rooms.Count > 0 ? kind : null;
 
             foreach (var w in _walls.ToArray()) RemoveWall(w);
@@ -2606,13 +2609,15 @@ namespace UnturnedGodot
             var beforeImport = Snapshot();
             var kindBefore = DesignatedKind;
             var roomsBefore = new List<RoomDesignation>(Designations);
+            var marksBefore = new List<DoorDesignation>(DoorMarks);
             _editor?.PushUndo($"import {buildingName}", () =>
             {
                 RestoreAll(beforeImport);
                 DesignatedKind = kindBefore; Designations.Clear(); Designations.AddRange(roomsBefore);
+                DoorMarks.Clear(); DoorMarks.AddRange(marksBefore);
             });
             foreach (var w in new List<WallSurface>(_walls)) RemoveWall(w);
-            DesignatedKind = null; Designations.Clear();
+            DesignatedKind = null; Designations.Clear(); DoorMarks.Clear();
             foreach (var pl in plans)
                 SpawnWall(StageOrigin + new Vector3(pl.X, pl.Y + GroundClearance, pl.Z), pl.Yaw, pl.Length, pl.Thickness,
                           pl.Material, pl.Openings, pl.Height, pl.Pitch, pl.Kind, pl.GableRise, pl.Texel,
@@ -2667,6 +2672,8 @@ namespace UnturnedGodot
         /// framework's data (RoomDesignation), carried so a generated building keeps knowing which room is which.</summary>
         public BuildingKind? DesignatedKind;
         public readonly List<RoomDesignation> Designations = new();
+        /// <summary>The marked front and back doors, in the same space (strawberry: "mark a front and back door").</summary>
+        public readonly List<DoorDesignation> DoorMarks = new();
 
         /// <summary>Build a whole building from a seed (BuildingGen), REPLACING the stage the way an import does, as one
         /// undo step. strawberry: "make the map editor buildings tool procgen. to make buildings from a seed."
@@ -2692,6 +2699,7 @@ namespace UnturnedGodot
             var before = Snapshot();
             var kindBefore = DesignatedKind;
             var roomsBefore = new List<RoomDesignation>(Designations);
+            var marksBefore = new List<DoorDesignation>(DoorMarks);
             // The stage's old ramps go with its old stairs -- detached, not freed, so the undo can put them back.
             var rampsBefore = new List<StaticBody3D>(_stairRamps);
             foreach (var r in rampsBefore) if (IsInstanceValid(r)) RemoveChild(r);
@@ -2716,6 +2724,8 @@ namespace UnturnedGodot
             DesignatedKind = res.Kind;
             Designations.Clear();
             foreach (var d in res.Rooms) Designations.Add(new RoomDesignation(d.Kind, at.X + d.X, at.Z + d.Z, d.Floor));
+            DoorMarks.Clear();
+            foreach (var d in res.DoorMarks) DoorMarks.Add(new DoorDesignation(d.Role, at.X + d.X, at.Z + d.Z, d.Floor));
             ActiveMaterial = mat;
             _selWall = null; _selOpening = -1;
             PositionHandles();
@@ -2729,6 +2739,7 @@ namespace UnturnedGodot
                 foreach (var r in rampsBefore) if (IsInstanceValid(r)) { AddChild(r); _stairRamps.Add(r); }
                 DesignatedKind = kindBefore;
                 Designations.Clear(); Designations.AddRange(roomsBefore);
+                DoorMarks.Clear(); DoorMarks.AddRange(marksBefore);
             });
             int rooms = 0;
             foreach (var g in res.Layout) if (!g.Circulation) rooms++;
@@ -2828,6 +2839,23 @@ namespace UnturnedGodot
             foreach (var w in new List<WallSurface>(_walls))
             {
                 if (!IsInstanceValid(w) || w.Kind != SurfaceKind.Wall) continue;
+                if (spec.Kind == RoofKind.Shed)
+                {
+                    // A shed closes against every wall whose head it sits on: a band up to its underside, and on a
+                    // wall running along the slope a right triangle on that (a tapered surface, apex at the high end).
+                    if (Mathf.Abs(w.Position.Y + w.Height - spec.TopY) > 0.05f) continue;
+                    var a = w.UVToWorld(0f, 0f); var b = w.UVToWorld(w.Length, 0f);
+                    var (shedBand, tri, highAtEnd) = RoofShapes.ShedInfill(spec, a.X, a.Z, b.X, b.Z);
+                    var head = w.Position + new Vector3(0f, w.Height, 0f);
+                    if (shedBand > 0.01f)
+                        roof.Members.Add(SpawnWall(head, w.RotationDegrees.Y, w.Length, w.Thickness, w.MaterialId, null, shedBand,
+                                                   w.RotationDegrees.X, SurfaceKind.Wall));
+                    if (tri > 0.01f)
+                        roof.Members.Add(SpawnWall(head + new Vector3(0f, shedBand, 0f), w.RotationDegrees.Y, w.Length, w.Thickness,
+                                                   w.MaterialId, null, tri, w.RotationDegrees.X, SurfaceKind.Wall, 0f, -1,
+                                                   0f, highAtEnd ? w.Length : 0f, 0f, highAtEnd ? 0f : w.Length));
+                    continue;
+                }
                 float yaw = Mathf.Wrap(w.RotationDegrees.Y, 0f, 180f);
                 bool runsAlongX = yaw < 45f || yaw > 135f;
                 if (!RoofShapes.WallGetsGable(spec, runsAlongX)) continue;
@@ -2935,7 +2963,7 @@ namespace UnturnedGodot
             {
                 Kind = kind, MinX = minX - grow, MaxX = maxX + grow, MinZ = minZ - grow, MaxZ = maxZ + grow,
                 TopY = topY, PitchDeg = ActiveRoofPitch, Thickness = SlabThickness,
-                Material = material, Texel = -1,
+                Material = material, Texel = -1, High = ActiveRoofHigh,
             };
             return true;
         }
@@ -2943,6 +2971,8 @@ namespace UnturnedGodot
         /// <summary>Which shape the roof buttons build. Flat is the default because it is what retail
         /// overwhelmingly is -- 80% of the sloped-and-flat roof area across 52 sampled buildings.</summary>
         public RoofKind ActiveRoofKind = RoofKind.Flat;
+        /// <summary>Which side a shed roof rises to (the Shed button turns it).</summary>
+        public RoofSide ActiveRoofHigh = RoofSide.North;
 
         /// <summary>Roof everything drawn, in the shape asked for.</summary>
         public PlacedRoof PlaceRoofOverWalls(RoofKind kind, float pitchDeg)

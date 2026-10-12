@@ -159,6 +159,9 @@ namespace UnturnedGodot
 
         void PickRoofShape(RoofKind k)
         {
+            // a shed picked again turns: the high side goes round north, east, south, west
+            if (k == RoofKind.Shed && _b.ActiveRoofKind == RoofKind.Shed)
+                _b.ActiveRoofHigh = (RoofSide)(((int)_b.ActiveRoofHigh + 1) % 4);
             _b.ActiveRoofKind = k;
             foreach (var (kk, btn) in _shapeButtons) btn.ButtonPressed = kk == k;
             RetargetRoof();
@@ -175,9 +178,11 @@ namespace UnturnedGodot
             var spec = roof.Spec;
             spec.Kind = _b.ActiveRoofKind;
             spec.PitchDeg = _b.ActiveRoofPitch;
+            spec.High = _b.ActiveRoofHigh;
             if (_b.ModifyRoof(roof, spec) != null)
                 Say($"roof is now {_b.ActiveRoofKind.ToString().ToLowerInvariant()}"
-                    + (_b.ActiveRoofKind == RoofKind.Flat ? "" : $" at {_b.ActiveRoofPitch:0.#}°"));
+                    + (_b.ActiveRoofKind == RoofKind.Flat ? "" : $" at {_b.ActiveRoofPitch:0.#}°")
+                    + (_b.ActiveRoofKind == RoofKind.Shed ? $", high side {_b.ActiveRoofHigh.ToString().ToLowerInvariant()}" : ""));
         }
 
         void SyncToolButtons()
@@ -313,13 +318,14 @@ namespace UnturnedGodot
             // ROOF SHAPE. Separate from the pitch, because they are separate questions -- a hip and a gable
             // at 30 degrees are the same slope and a different building.
             box.AddChild(Dim("ROOF SHAPE"));
-            var shapes = new GridContainer { Columns = 3 };
+            var shapes = new GridContainer { Columns = 4 };
             shapes.AddThemeConstantOverride("h_separation", 4);
             var kinds = new (RoofKind K, EditorIcons.Glyph G, string Label, string Tip)[]
             {
                 (RoofKind.Flat, EditorIcons.Glyph.Floor, "Flat", "a slab on the wall heads — 80% of retail"),
                 (RoofKind.Gable, EditorIcons.Glyph.Roof, "Gable", "two slopes to a ridge; the end walls close it"),
                 (RoofKind.Hip, EditorIcons.Glyph.RoofHip, "Hip", "four slopes, no gable ends — square gives a pyramid"),
+                (RoofKind.Shed, EditorIcons.Glyph.RoofShed, "Shed", "one slope, a lean-to — press again to turn which side is high"),
             };
             foreach (var (k, g, label, tip) in kinds)
             {

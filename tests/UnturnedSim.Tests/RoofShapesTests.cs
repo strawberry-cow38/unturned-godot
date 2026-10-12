@@ -213,6 +213,60 @@ namespace UnturnedSim.Tests
             Assert.That(RoofShapes.GableRiseForWall(s, 12f), Is.EqualTo(s.Rise).Within(1e-3f));
         }
 
+        // A SHED IS ONE SLOPE RISING THE WHOLE SPAN TO ITS HIGH SIDE: its eave (the plane's origin edge) on the low
+        // side, its run the span across the slope -- not half of it, which is a gable's.
+        // BREAK IT: give it a gable's half run (rise halved); lay the eave on the high side; turn N/S into E/W.
+        [Test]
+        public void AShedIsOneSlopeRisingToItsHighSide()
+        {
+            float tan = MathF.Tan(30f * MathF.PI / 180f), cos = MathF.Cos(30f * MathF.PI / 180f);
+            foreach (RoofSide high in Enum.GetValues(typeof(RoofSide)))
+            {
+                var s = Spec(RoofKind.Shed, 20f, 12f, 30f);
+                s.High = high;
+                var p = RoofShapes.Planes(s);
+                bool ns = high is RoofSide.North or RoofSide.South;
+                float run = ns ? 12f : 20f;
+                Assert.That(p.Count, Is.EqualTo(1), $"{high}");
+                Assert.That(s.Rise, Is.EqualTo(run * tan).Within(1e-3f), $"{high}: rise over the whole span");
+                Assert.That(p[0].Height, Is.EqualTo(run / cos).Within(1e-3f), $"{high}: slope length");
+                Assert.That(p[0].Length, Is.EqualTo(ns ? 20f : 12f).Within(1e-3f), $"{high}: eave length");
+                switch (high)
+                {
+                    case RoofSide.North: Assert.That(p[0].Z, Is.EqualTo(0f).Within(1e-3f), "rises north: eave on the south edge"); break;
+                    case RoofSide.South: Assert.That(p[0].Z, Is.EqualTo(12f).Within(1e-3f), "rises south: eave on the north edge"); break;
+                    case RoofSide.East: Assert.That(p[0].X, Is.EqualTo(0f).Within(1e-3f), "rises east: eave on the west edge"); break;
+                    case RoofSide.West: Assert.That(p[0].X, Is.EqualTo(20f).Within(1e-3f), "rises west: eave on the east edge"); break;
+                }
+                Assert.That(RoofShapes.WallGetsGable(s, true) || RoofShapes.WallGetsGable(s, false), Is.False, "a shed has no gable ends");
+            }
+        }
+
+        // A SHED CLOSES AGAINST ITS WALLS ALONG ITS UNDERSIDE: a wall across the slope, d from the eave, gets a band
+        // d * tan high and no triangle; a wall along the slope gets its low end's height as a band and the rest as a
+        // triangle with its apex at the HIGH end; a wall outside the footprint gets nothing.
+        // BREAK IT: measure from the high side; put the apex at the low end; drop the footprint check.
+        [Test]
+        public void AShedClosesAgainstItsWallsAlongItsUnderside()
+        {
+            var s = Spec(RoofKind.Shed, 20f, 12f, 30f);
+            s.High = RoofSide.East;                       // rises +X, 20 m run
+            float tan = MathF.Tan(30f * MathF.PI / 180f);
+            var across = RoofShapes.ShedInfill(s, 5f, 0f, 5f, 12f);          // a wall along Z at x 5
+            Assert.That(across.Band, Is.EqualTo(5f * tan).Within(1e-3f));
+            Assert.That(across.Triangle, Is.EqualTo(0f).Within(1e-3f));
+            var along = RoofShapes.ShedInfill(s, 2f, 6f, 18f, 6f);           // along X from x 2 to x 18
+            Assert.That(along.Band, Is.EqualTo(2f * tan).Within(1e-3f));
+            Assert.That(along.Triangle, Is.EqualTo(16f * tan).Within(1e-3f));
+            Assert.That(along.HighAtEnd, Is.True, "the end at x 18 is the high one");
+            var back = RoofShapes.ShedInfill(s, 18f, 6f, 2f, 6f);            // the same wall, drawn the other way
+            Assert.That(back.HighAtEnd, Is.False, "drawn from x 18, the high end is its start");
+            Assert.That(RoofShapes.ShedInfill(s, 25f, 0f, 25f, 12f).Band, Is.EqualTo(0f), "outside the footprint");
+            var west = s; west.High = RoofSide.West;
+            Assert.That(RoofShapes.ShedInfill(west, 5f, 0f, 5f, 12f).Band, Is.EqualTo(15f * tan).Within(1e-3f), "measured from the east eave");
+            Assert.That(RoofShapes.ShedInfill(Spec(RoofKind.Gable), 5f, 0f, 5f, 12f).Band, Is.EqualTo(0f), "not a shed");
+        }
+
         [Test]
         public void ARoofWithNoFootprintIsNoPlanes()
         {

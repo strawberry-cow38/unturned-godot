@@ -14,7 +14,14 @@ namespace UnturnedSim
         /// <summary>Four slopes, no gable ends -- the two ends are triangles and the two sides trapezoids
         /// whose top edge is the ridge. A square footprint degenerates to a pyramid, correctly.</summary>
         Hip,
+        /// <summary>One slope, rising from its eave on one side to its high edge on the side named by
+        /// RoofSpec.High -- a lean-to against a taller wall, or a shed roof of its own. The walls along the slope
+        /// are closed by a band and a right triangle each, the high wall by a band (ShedInfill).</summary>
+        Shed,
     }
+
+    /// <summary>A side of a roof's footprint: north is +Z, east +X.</summary>
+    public enum RoofSide { North, East, South, West }
 
     /// <summary>Everything a roof IS. A roof is fully determined by this, which is the point: modifying one
     /// means changing a number here and rebuilding, rather than hunting down the surfaces it turned into.
@@ -36,13 +43,16 @@ namespace UnturnedSim
         public float Thickness;
         public int Material;
         public int Texel;
+        /// <summary>Shed only: the side the roof rises to.</summary>
+        public RoofSide High;
 
         public float SpanX => MaxX - MinX;
         public float SpanZ => MaxZ - MinZ;
-        /// <summary>A roof's ridge runs the LONG way, as a roof does.</summary>
-        public bool RidgeAlongX => SpanX >= SpanZ;
-        /// <summary>Half the SHORT span: the horizontal run of one slope.</summary>
-        public float HalfRun => (RidgeAlongX ? SpanZ : SpanX) * 0.5f;
+        /// <summary>A roof's ridge runs the LONG way, as a roof does -- except a shed's, whose high edge runs along
+        /// the side it rises to.</summary>
+        public bool RidgeAlongX => Kind == RoofKind.Shed ? High is RoofSide.North or RoofSide.South : SpanX >= SpanZ;
+        /// <summary>The horizontal run of one slope: half the SHORT span, or a shed's whole span across its slope.</summary>
+        public float HalfRun => Kind == RoofKind.Shed ? (RidgeAlongX ? SpanZ : SpanX) : (RidgeAlongX ? SpanZ : SpanX) * 0.5f;
         public float Rise => Kind == RoofKind.Flat ? 0f
                            : HalfRun * MathF.Tan(MathF.PI / 180f * Clamped);
         /// <summary>Sloped length from eave to ridge -- the surface's own height up the slope.</summary>
@@ -94,6 +104,19 @@ namespace UnturnedSim
             float pitchNode = s.Clamped - 90f;
             float slope = s.Slope;
             float half = s.HalfRun;
+
+            // A shed is one of a gable's two slopes, run the whole span: its eave on the low side, rising to High.
+            if (s.Kind == RoofKind.Shed)
+            {
+                planes.Add(s.High switch
+                {
+                    RoofSide.North => Slope1(s.MaxX, s.TopY, s.MinZ, 180f, s.SpanX, slope, pitchNode, 0f),
+                    RoofSide.South => Slope1(s.MinX, s.TopY, s.MaxZ, 0f, s.SpanX, slope, pitchNode, 0f),
+                    RoofSide.East => Slope1(s.MinX, s.TopY, s.MinZ, -90f, s.SpanZ, slope, pitchNode, 0f),
+                    _ => Slope1(s.MaxX, s.TopY, s.MaxZ, 90f, s.SpanZ, slope, pitchNode, 0f),
+                });
+                return planes;
+            }
 
             // The two long slopes. For a gable they are the whole roof; for a hip they are trapezoids whose
             // top edge is the ridge, shortened by one run at each end.
@@ -167,6 +190,27 @@ namespace UnturnedSim
         /// first; they do not repeat this test.</summary>
         public static bool WallGetsGable(RoofSpec s, bool wallRunsAlongX)
             => s.Kind == RoofKind.Gable && wallRunsAlongX != s.RidgeAlongX;
+
+        /// <summary>What closes a shed roof against one wall (its mid-plane from (x0, z0) to (x1, z1)): a straight band
+        /// on the wall's head, Band high, and on that a right triangle rising by Triangle to the wall's high end --
+        /// the end at u = Length when HighAtEnd, else at u = 0. Both follow the roof's underside exactly: the height
+        /// of the slope over a point is its distance from the eave times the pitch's tangent, so a wall across the
+        /// slope gets a band of that height and no triangle, and a wall along it gets the height at its low end as a
+        /// band and the rest as a triangle. Zero for a wall outside the footprint or a roof that is not a shed.</summary>
+        public static (float Band, float Triangle, bool HighAtEnd) ShedInfill(RoofSpec s, float x0, float z0, float x1, float z1)
+        {
+            if (s.Kind != RoofKind.Shed) return (0f, 0f, false);
+            float tan = MathF.Tan(MathF.PI / 180f * s.Clamped);
+            float Up(float x, float z) => s.High switch
+            {
+                RoofSide.North => z - s.MinZ, RoofSide.South => s.MaxZ - z,
+                RoofSide.East => x - s.MinX, _ => s.MaxX - x,
+            } * tan;
+            bool In(float x, float z) => x >= s.MinX - 0.01f && x <= s.MaxX + 0.01f && z >= s.MinZ - 0.01f && z <= s.MaxZ + 0.01f;
+            if (!In(x0, z0) || !In(x1, z1)) return (0f, 0f, false);   // not under this roof
+            float h0 = Up(x0, z0), h1 = Up(x1, z1);
+            return (MathF.Min(h0, h1), MathF.Abs(h1 - h0), h1 > h0);
+        }
 
         /// <summary>Height of the ridge above the eaves. Zero for a flat roof.</summary>
         public static float RidgeHeight(RoofSpec s) => s.Kind == RoofKind.Flat ? 0f : s.Rise;
