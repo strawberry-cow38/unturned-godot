@@ -157,7 +157,7 @@ namespace UnturnedGodot
         /// <summary>A polyline with `a` metres taken off its start and `b` off its end, cut ON the line rather
         /// than at the nearest existing point -- a 12 m point spacing would otherwise round a 9 m cut to 12 or
         /// to 0, and at a junction that is the difference between meeting the kerb and crossing it.</summary>
-        static List<Vector3> CutBack(List<Vector3> pts, float a, float b)
+        List<Vector3> CutBack(List<Vector3> pts, float a, float b)
         {
             if (pts == null || pts.Count < 2) return null;
             float total = 0f;
@@ -194,11 +194,44 @@ namespace UnturnedGodot
             // their chord measured 0.0 cm. True, and the wrong instrument: a cusp in the last half metre
             // barely moves a 24-sample chord deviation, so the probe called a road with a fold in its end
             // "straight" and six explanations were then spent elsewhere.
-            const float Stub = 2.0f;
-            while (cut.Count > 2 && Flat(cut[0], cut[1]) < Stub) cut.RemoveAt(1);
-            while (cut.Count > 2 && Flat(cut[^2], cut[^1]) < Stub) cut.RemoveAt(cut.Count - 2);
-            return cut.Count >= 2 ? cut : null;
+            // ⚠⚠ RESPACE THE WHOLE RUN, not just the stubs. Dropping end segments under 2 m fixed the folds
+            // on a single-class town and left them on a mixed one: a 2.5 m first segment against a 12 m
+            // neighbour is still 5:1, and Catmull-Rom overshoots on the RATIO, not on an absolute length.
+            // Even spacing has no ratio to overshoot on. (This is the third time round on the same bug --
+            // written, deleted on a measurement that asked the wrong question, reinstated as a stub trim,
+            // and only now in the form that actually holds.)
+            return Respace(cut, Mathf.Max(2f, PointStep));
         }
+        /// <summary>The same polyline, its points evenly spaced, with both ends exactly where they were --
+        /// the far end must stay on the junction node it is about to be bound to.</summary>
+        static List<Vector3> Respace(List<Vector3> pts, float step)
+        {
+            if (pts == null || pts.Count < 2) return null;
+            float total = 0f;
+            for (int i = 0; i + 1 < pts.Count; i++) total += Flat(pts[i], pts[i + 1]);
+            if (total < 1e-3f) return null;
+            int n = Mathf.Max(1, Mathf.RoundToInt(total / step));
+            var outp = new List<Vector3>(n + 1) { pts[0] };
+            float seg = total / n, run = 0f, want = seg;
+            for (int i = 0; i + 1 < pts.Count && outp.Count <= n; i++)
+            {
+                float len = Flat(pts[i], pts[i + 1]);
+                if (len < 1e-6f) continue;
+                while (want <= run + len + 1e-4f && outp.Count <= n)
+                {
+                    float f = Mathf.Clamp((want - run) / len, 0f, 1f);
+                    outp.Add(new Vector3(Mathf.Lerp(pts[i].X, pts[i + 1].X, f),
+                                         Mathf.Lerp(pts[i].Y, pts[i + 1].Y, f),
+                                         Mathf.Lerp(pts[i].Z, pts[i + 1].Z, f)));
+                    want += seg;
+                }
+                run += len;
+            }
+            if (outp.Count < 2) return null;
+            outp[^1] = pts[^1];
+            return outp;
+        }
+
         static float Flat(Vector3 p, Vector3 q) => new Vector2(q.X - p.X, q.Z - p.Z).Length();
 
         // ⚠ ALL THREE TAKE LATTICE-CENTRED INDICES (i, j already offset by -n, so the middle line is 0).
