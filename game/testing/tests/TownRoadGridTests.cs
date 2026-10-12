@@ -88,6 +88,20 @@ namespace UnturnedGodot.Testing
                 T.Check($"...and turns smoothly, no kink or wiggle (largest heading change over 2 m: {worstStep:0.#}deg)",
                         worstStep < 15f);
             }
+            // ⚠⚠ AND THE BUILT ROAD FOLLOWS THE CIRCLE IT WAS GIVEN. The two checks above passed while the
+            // built curves strayed 33 cm off the true arc and turned the WRONG way at both joins -- master saw
+            // it ("are the curves overshooting and correcting as they connect lol?"). A cap on the heading
+            // change per 2 m catches a KINK; an overshoot is small at every step and only shows as a
+            // DEVIATION from the intended path and a turn AGAINST the bend. So those are what is held here,
+            // measured by the generator's own probe on the roads it actually built.
+            {
+                var gF = Grid();
+                gF.Generate(Field(), flat);
+                T.Check($"...a rounded corner is built ON its circle, not overshooting it (worst stray {gF.BendWorstOffCm:0.0} cm)",
+                        gF.BendWorstOffCm < 2f);
+                T.Check($"...and never turns against the bend at the joins beyond spline noise (worst {gF.BendWorstReverseDegPerM:0.00} deg/m)",
+                        gF.BendWorstReverseDegPerM < 0.5f);
+            }
             // ⭐ THE CONTROL: the same town with rounding off must come back with NO bends and its corners
             // slabbed -- otherwise "rounded" above could be counting something that was always there.
             {

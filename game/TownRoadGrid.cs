@@ -146,7 +146,7 @@ namespace UnturnedGodot
             /// see the right one -- pairing arms by a single Axis would call a bend's far end collinear with
             /// whatever it happened to share a number with.</summary>
             public int AxisA, AxisB;
-            public bool Bent;
+            public bool Bent; public int BendId;
         }
         static int AxisAt(Span sp, bool atEnd) => atEnd ? sp.AxisB : sp.AxisA;
 
@@ -341,7 +341,7 @@ namespace UnturnedGodot
         /// <summary>A polyline with `a` metres taken off its start and `b` off its end, cut ON the line rather
         /// than at the nearest existing point -- a 12 m point spacing would otherwise round a 9 m cut to 12 or
         /// to 0, and at a junction that is the difference between meeting the kerb and crossing it.</summary>
-        List<Vector3> CutBack(List<Vector3> pts, float a, float b)
+        List<Vector3> CutBack(List<Vector3> pts, float a, float b, float step = -1f)
         {
             if (pts == null || pts.Count < 2) return null;
             float total = 0f;
@@ -384,7 +384,8 @@ namespace UnturnedGodot
             // Even spacing has no ratio to overshoot on. (This is the third time round on the same bug --
             // written, deleted on a measurement that asked the wrong question, reinstated as a stub trim,
             // and only now in the form that actually holds.)
-            return Respace(cut, Mathf.Max(2f, PointStep));
+            if (step == 0f) return cut;      // the caller's spacing is already right (a rounded corner's exact arc)
+            return Respace(cut, step > 0f ? step : Mathf.Max(2f, PointStep));
         }
         /// <summary>Round the corners: every node with exactly two arms that TURN becomes one road curving
         /// round it on a circular arc, instead of two roads meeting at a point on a junction slab (strawberry
@@ -402,7 +403,7 @@ namespace UnturnedGodot
         int MergeBends(List<Span> plan, RoadField roads)
         {
             int made = 0;
-            BendPoints.Clear();
+            BendPoints.Clear(); _bendGeom.Clear(); _bentRoads.Clear();
             for (int guard = 0; guard < 256; guard++)
             {
                 var at = new Dictionary<(int, int), List<(int span, bool atEnd)>>();
@@ -440,22 +441,34 @@ namespace UnturnedGodot
                     var C = new Vector3(S.X, 0f, S.Z) + nIn * R;
                     float a0 = Mathf.Atan2(S.Z - C.Z, S.X - C.X), a1 = Mathf.Atan2(E.Z - C.Z, E.X - C.X);
                     float da = Mathf.Wrap(a1 - a0, -Mathf.Pi, Mathf.Pi);
-                    var fusedPts = new List<Vector3>(cutA);
-                    int arcN = Mathf.Max(4, Mathf.CeilToInt(Mathf.Abs(da) * R / 2f));
-                    for (int k = 1; k < arcN; k++)
+                    // ⚠⚠ SAMPLED ON THE IDEAL PATH, NOT RESPACED ONTO CHORDS. Respace interpolates LINEARLY, so
+                    // every respacing of an arc moves its points onto chords -- inside the circle by the sagitta
+                    // -- and each pass compounds it: measured 4.4 cm off the true arc mid-curve, getting WORSE as
+                    // the step shrank, which is how it showed itself to be a second error and not the first.
+                    // Walk the straight-arc-straight by arc length instead and put every point exactly on it.
+                    float lenA = PolyLen(cutA), lenB = PolyLen(cutB), arcLen = Mathf.Abs(da) * R;
+                    float total = lenA + arcLen + lenB;
+                    int nPts = Mathf.Max(2, Mathf.RoundToInt(total / BendStep));
+                    var fusedPts = new List<Vector3>(nPts + 1);
+                    for (int k = 0; k <= nPts; k++)
                     {
-                        float t = (float)k / arcN, ang = a0 + da * t;
-                        fusedPts.Add(new Vector3(C.X + Mathf.Cos(ang) * R, Mathf.Lerp(S.Y, E.Y, t), C.Z + Mathf.Sin(ang) * R));
+                        float sAt = total * k / nPts;
+                        if (sAt <= lenA) fusedPts.Add(PointAlong(cutA, sAt));
+                        else if (sAt >= lenA + arcLen) fusedPts.Add(PointAlong(cutB, sAt - lenA - arcLen));
+                        else
+                        {
+                            float t = (sAt - lenA) / arcLen, ang = a0 + da * t;
+                            fusedPts.Add(new Vector3(C.X + Mathf.Cos(ang) * R, Mathf.Lerp(S.Y, E.Y, t), C.Z + Mathf.Sin(ang) * R));
+                        }
                     }
-                    fusedPts.AddRange(cutB);
-                    fusedPts = Respace(fusedPts, BendStep);
-                    if (fusedPts == null) continue;
                     // the fused span runs from A's far node to B's far node, each end keeping its own axis
                     var far1 = e1 ? (A.AI, A.AJ) : (A.BI, A.BJ);
                     var far2 = e2 ? (B.AI, B.AJ) : (B.BI, B.BJ);
                     int axA = e1 ? A.AxisA : A.AxisB, axB = e2 ? B.AxisA : B.AxisB;
+                    _bendGeom.Add((S, E, C, R, dIn, dOut));
                     var fused = new Span { AI = far1.Item1, AJ = far1.Item2, BI = far2.Item1, BJ = far2.Item2,
                                            Axis = axA, AxisA = axA, AxisB = axB, Main = A.Main, Bent = true,
+                                           BendId = _bendGeom.Count - 1,
                                            Pts = fusedPts, Len = PolyLen(fusedPts), TrimA = 0f, TrimB = 0f };
                     plan.RemoveAt(Mathf.Max(s1, s2)); plan.RemoveAt(Mathf.Min(s1, s2));
                     plan.Add(fused);
@@ -468,12 +481,34 @@ namespace UnturnedGodot
             }
             return made;
         }
+        /// <summary>Each rounded corner's INTENDED shape -- tangent points, centre, radius, the two directions
+        /// -- and which built road carries it, so the road that was actually built can be held to it.</summary>
+        readonly List<(Vector3 S, Vector3 E, Vector3 C, float R, Vector3 dIn, Vector3 dOut)> _bendGeom = new();
+        readonly List<(int road, int bend)> _bentRoads = new();
         /// <summary>The middle of every rounded corner's arc, so a camera can be put on one.</summary>
         public readonly List<Vector3> BendPoints = new();
+        /// <summary>The last bend-fidelity measurement, for the test to hold the built roads to.</summary>
+        public float BendWorstOffCm, BendWorstReverseDegPerM;
         /// <summary>UG_TOWNSHARPCORNERS=1 puts the corners back to two roads on a slab -- the control.</summary>
         public bool CurveCorners = System.Environment.GetEnvironmentVariable("UG_TOWNSHARPCORNERS") != "1";
         /// <summary>Centreline radius of a rounded corner, and the point spacing a fused road is respaced to.</summary>
-        public float BendRadius = 22f, BendStep = 4f;
+        public float BendRadius = 22f, BendStep = 2f;
+        /// <summary>The point at arc length <paramref name="sAt"/> along a polyline (clamped to its ends).</summary>
+        static Vector3 PointAlong(List<Vector3> pts, float sAt)
+        {
+            float run = 0f;
+            for (int i = 0; i + 1 < pts.Count; i++)
+            {
+                float seg = Flat(pts[i], pts[i + 1]);
+                if (seg > 1e-6f && sAt <= run + seg)
+                {
+                    float f = Mathf.Clamp((sAt - run) / seg, 0f, 1f);
+                    return pts[i].Lerp(pts[i + 1], f);
+                }
+                run += seg;
+            }
+            return pts[pts.Count - 1];
+        }
         static float PolyLen(List<Vector3> pts)
         {
             float t = 0f;
@@ -750,7 +785,13 @@ namespace UnturnedGodot
                 // matching to 2 mm and the surfaces meeting to 7 mm in plan: "the seams are still there".
                 // Overlapping by a handful of centimetres hides the opening under the patch, and the patch
                 // sits PatchLift above, so the two cannot z-fight over the shared strip.
-                var pts = CutBack(sp.Pts, Mathf.Max(0f, sp.TrimA - PatchOverlap), Mathf.Max(0f, sp.TrimB - PatchOverlap));
+                // ⚠⚠ A ROUNDED CORNER KEEPS ITS OWN SPACING HERE. CutBack respaces to PointStep (12 m), and this
+                // is the LAST stage before the road is built -- so it silently undid the 4 m respacing MergeBends
+                // gave the arc, leaving a 35 m quarter-circle on three 12 m chords. Catmull-Rom across that
+                // overshot by 33 cm and turned against the bend at the joins: exactly master's "are the curves
+                // overshooting and correcting as they connect". The stage that runs last wins.
+                var pts = CutBack(sp.Pts, Mathf.Max(0f, sp.TrimA - PatchOverlap), Mathf.Max(0f, sp.TrimB - PatchOverlap),
+                                  sp.Bent ? 0f : -1f);
                 if (pts == null) { rep.SpansRejected++; rep.CutAway++; continue; }
                 int road = roads.AddRoadFromPolyline(pts, sp.Main ? MainMaterial : StreetMaterial,
                                                     loop: false, ignoreTerrain: !FollowTerrain);
@@ -760,6 +801,7 @@ namespace UnturnedGodot
                 Bind(ref a, road, false, pts[0]);
                 Bind(ref b, road, true, pts[^1]);
                 Built.Add(road); _profiles.Add(pts);
+                if (sp.Bent) _bentRoads.Add((road, sp.BendId));
                 // ⚠ THE LENGTH THAT WAS BUILT, not the length that was planned. Reporting sp.Len counted the
                 // whole span including the part the junction ate, so the total went UP when the cuts came in.
                 float built = 0f;
@@ -775,6 +817,51 @@ namespace UnturnedGodot
             // neighbours existed. Without this pass the first arm at every junction keeps a ramp nobody can
             // see the cause of.
             foreach (int r in Built) roads.RebuildRoad(r);
+
+            // ⚠⚠ BEND FIDELITY: the BUILT road against the INTENDED curve. master: "are the curves
+            // overshooting and correcting as they connect lol?" -- and the town test could not answer, because
+            // it only bounded the heading change over 2 m, which catches a KINK. An overshoot is a different
+            // shape: the road turns the WRONG way for a few metres, by small amounts at every step, then swings
+            // back. So this asks the two questions that shape answers to: how far does the built centreline
+            // stray from the true straight-arc-straight path, and does it ever turn against the bend.
+            if (_bentRoads.Count > 0)
+            {
+                float worstOff = 0f, worstRev = 0f; string offAt = "", revAt = "";
+                foreach (var (road, bid) in _bentRoads)
+                {
+                    var g = _bendGeom[bid];
+                    float L = roads.RoadLength(road);
+                    const float Step = 0.25f;
+                    float prevH = float.NaN, total = 0f;
+                    var dth = new List<(float d, float v)>();
+                    for (float d = 0f; d <= L; d += Step)
+                    {
+                        if (!roads.EvaluateAlong(road, d, out var p, out var tg, snapTerrain: false)) continue;
+                        var q = new Vector3(p.X, 0f, p.Z);
+                        float off;
+                        var S0 = new Vector3(g.S.X, 0f, g.S.Z); var E0 = new Vector3(g.E.X, 0f, g.E.Z);
+                        if ((q - S0).Dot(g.dIn) < 0f)            // still on the incoming straight
+                        { var rel = q - S0; off = (rel - g.dIn * rel.Dot(g.dIn)).Length(); }
+                        else if ((q - E0).Dot(g.dOut) > 0f)      // already on the outgoing straight
+                        { var rel = q - E0; off = (rel - g.dOut * rel.Dot(g.dOut)).Length(); }
+                        else off = Mathf.Abs((q - g.C).Length() - g.R);   // on the arc
+                        if (off > worstOff) { worstOff = off; offAt = $"road {road} at {d:0.0}/{L:0} m"; }
+                        float h = Mathf.Atan2(tg.Z, tg.X);
+                        if (!float.IsNaN(prevH)) { float dh = Mathf.Wrap(h - prevH, -Mathf.Pi, Mathf.Pi); dth.Add((d, dh)); total += dh; }
+                        prevH = h;
+                    }
+                    float sign = Mathf.Sign(total);
+                    foreach (var (d, dh) in dth)
+                    {
+                        float rev = -sign * dh / Step;            // rad per metre turned AGAINST the bend
+                        if (rev > worstRev) { worstRev = rev; revAt = $"road {road} at {d:0.0}/{L:0} m"; }
+                    }
+                }
+                Log.Print($"[towngrid] bend fidelity: {_bentRoads.Count} rounded corners; worst stray from the true arc "
+                        + $"{worstOff * 100f:0.0} cm ({offAt}); worst turn AGAINST the bend {Mathf.RadToDeg(worstRev):0.00} deg/m"
+                        + (worstRev > 0f ? $" ({revAt})" : ""));
+                BendWorstOffCm = worstOff * 100f; BendWorstReverseDegPerM = Mathf.RadToDeg(worstRev);
+            }
 
             // ---- 3. CENSUS. Reported by DEGREE, because "47 junctions" says nothing about whether the thing
             // is a grid: a lattice that failed to bind would report the same count as one that worked, all of
