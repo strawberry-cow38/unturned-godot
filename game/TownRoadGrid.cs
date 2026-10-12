@@ -181,6 +181,18 @@ namespace UnturnedGodot
             // respacing in and out, the streets' worst bow off their own chord measured 0.0 cm either way.
             // The wiggle was faceting on the CORNER ARCS (11.3 degrees per segment). Code that fixes nothing
             // measurable does not stay.
+            // ⚠⚠ DROP THE STUB AT EACH END. Cutting at an arbitrary arc leaves a first segment that can be a
+            // few centimetres against a 12 m neighbour, and RoadField tangents its joints with Catmull-Rom:
+            // over spacing that uneven the curve OVERSHOOTS and the ribbon folds back on itself, right at the
+            // junction mouth. strawberry saw it immediately -- "its like the spline loops back on itself or
+            // somethinf" -- which is literally what it is.
+            // ⚠ I HAD THIS AND THREW IT AWAY. An earlier respace was removed because the streets' bow off
+            // their chord measured 0.0 cm. True, and the wrong instrument: a cusp in the last half metre
+            // barely moves a 24-sample chord deviation, so the probe called a road with a fold in its end
+            // "straight" and six explanations were then spent elsewhere.
+            const float Stub = 2.0f;
+            while (cut.Count > 2 && Flat(cut[0], cut[1]) < Stub) cut.RemoveAt(1);
+            while (cut.Count > 2 && Flat(cut[^2], cut[^1]) < Stub) cut.RemoveAt(cut.Count - 2);
             return cut.Count >= 2 ? cut : null;
         }
         static float Flat(Vector3 p, Vector3 q) => new Vector2(q.X - p.X, q.Z - p.Z).Length();
