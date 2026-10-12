@@ -898,15 +898,22 @@ namespace UnturnedGodot
                     foreach (var (road, atEnd) in edges)
                     {
                         float L = roads.RoadLength(road);
-                        float d = atEnd ? Mathf.Max(0f, L - TrimFor(roads, road, true, CornerRadius) - SignalSetback)
-                                        : Mathf.Min(L, TrimFor(roads, road, false, CornerRadius) + SignalSetback);
-                        if (!roads.EvaluateAlong(road, d, out var pos, out var tan, snapTerrain: false)) continue;
-                        var fwd = (atEnd ? tan : -tan).Normalized();      // pointing INTO the junction
+                        // ⚠⚠ POSITIONED OFF THE NODE, NOT OFF THE ROAD'S CUT (strawberry 2026-10-12: "bring
+                        // the traffic lights closer, actually on the intersection, a little before the curve
+                        // actually starts"). The cut is wherever tiny's fillet trim happened to land -- about
+                        // 18 m out -- so measuring back from it put the signals a further 2.5 m up the street,
+                        // nowhere near the intersection. What a signal is actually placed against is the
+                        // CORNER: the kerb runs straight to a tangent point at (half width + kerb radius)
+                        // from the node and turns there, so the mast stands a metre before that.
+                        float arc = atEnd ? Mathf.Max(0f, L - 1f) : Mathf.Min(L, 1f);
+                        if (!roads.EvaluateAlong(road, arc, out var pos, out var tan, snapTerrain: false)) continue;
+                        var fwd = (atEnd ? tan : -tan).Normalized();      // the way a driver arrives
                         var right = new Vector3(fwd.Z, 0f, -fwd.X).Normalized();
                         float half = roads.RoadHalfWidth(road);
-                        // ⚠ ON THE DRIVER'S RIGHT, which is the kerb a signal's mast stands on; its arm then
-                        // reaches left over the lanes the drivers approaching here are in.
-                        var at = pos + right * (half + RoadGapForLights + SignalSetback * 0.5f);
+                        float back = half + CornerKerbRadius + SignalBeforeCurve;
+                        // ⚠ ON THE DRIVER'S RIGHT, which is the kerb a mast stands on; its arm then reaches
+                        // left over the lanes the drivers approaching here are in.
+                        var at = node0 - fwd * back + right * (half + RoadGapForLights + 0.6f);
                         if (terr != null) at.Y = Mathf.Max(at.Y, terr.SampleHeight(at.X, at.Z));
                         // ⚠ THE MAST REACHES ACROSS THE ROAD, NOT BACK ALONG IT. Measured off the props:
                         // both run their POLE along local +Z and their ARM along local +Y, which the 270
@@ -928,8 +935,9 @@ namespace UnturnedGodot
         public float LampSpacing = 32f;
         /// <summary>How far back from the kerb line a lamp's pole stands, onto the pavement.</summary>
         public float LampSetback = 0.9f;
-        /// <summary>How far back from the junction a signal stands.</summary>
-        public float SignalSetback = 2.5f;
+        /// <summary>How far outside the kerb's tangent point -- where the corner's curve begins -- a signal
+        /// stands. Small: the mast belongs at the intersection, not up the street.</summary>
+        public float SignalBeforeCurve = 1f;
         float RoadGapForLights = 0.05f;
 
         /// <summary>Where two kerb lines would cross: the sharp corner of the block, which is the centre the
