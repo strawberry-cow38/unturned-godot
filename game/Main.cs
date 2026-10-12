@@ -7756,7 +7756,8 @@ namespace UnturnedGodot
                 // be LOOKED at. The L1 test proves its numbers are wall-shaped; only a render shows whether
                 // the building it rebuilt is the building it read.
                 string imp = System.Environment.GetEnvironmentVariable("UG_EDITIMPORT");
-                // UG_EDITGEN=kind,seed[,minRooms,maxFloors,perFloor[,width,depth[,front,back,nowin]]] (sides as NESW letters) generates a building from a seed instead
+                // UG_EDITGEN=kind,seed[,minRooms,maxFloors,perFloor[,width,depth[,front,back,nowin[,shape]]]] (sides as NESW letters,
+                // shape R/L/T, anything else auto) generates a building from a seed instead
                 // (BuildingGen), so a generated one can be looked at the same way. Frame it with UG_EDITCAM.
                 string gen = System.Environment.GetEnvironmentVariable("UG_EDITGEN");
                 if (!string.IsNullOrEmpty(imp)) buildings.ImportRetail(imp);
@@ -7777,6 +7778,11 @@ namespace UnturnedGodot
                         Kind = UnturnedSim.RoomDesignations.ParseBuilding(g[0]), Seed = Arg(1, 0), MinRooms = Arg(2, 0),
                         MaxFloors = Arg(3, 2), MaxRoomsPerFloor = Arg(4, 6), Width = Arg(5, 0), Depth = Arg(6, 0),
                         FrontSide = SidesArg(7), BackSide = SidesArg(8), NoWindows = SidesArg(9),
+                        Shape = g.Length > 10 ? g[10].ToUpperInvariant() switch
+                        {
+                            "R" => UnturnedSim.FootprintShape.Rect, "L" => UnturnedSim.FootprintShape.L, "T" => UnturnedSim.FootprintShape.T,
+                            _ => UnturnedSim.FootprintShape.Auto,
+                        } : UnturnedSim.FootprintShape.Auto,
                     });
                 }
                 else if (buildings.Walls.Count == 0) DrawDemoBuilding(buildings);

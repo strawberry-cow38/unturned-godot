@@ -55,12 +55,24 @@ namespace UnturnedSim.Tests
         static IEnumerable<WallPlan> WallsOn(BuildingGenResult r, int f) => r.Walls.Where(w => w.Kind == SurfaceKind.Wall && FloorOf(w) == f && w.Height > Storey - 0.01f);
         static GenRoom RoomAt(BuildingGenResult r, int f, float x, float z) => r.Layout.FirstOrDefault(g => g.Floor == f && g.Holds(x, z));
         static bool OnFloor(BuildingGenResult r, int f, float x, float z)
-            => x > r.Footprints[f].X0 * Cell && x < r.Footprints[f].X1 * Cell && z > 0 && z < r.CellsZ * Cell;
+            => x > r.Footprints[f].X0 * Cell && x < r.Footprints[f].X1 * Cell && z > 0 && z < r.CellsZ * Cell && !InNotch(r, x, z);
+        /// <summary>In the corner an L or a T leaves out of its bounding box (metres): outside, though inside CellsX x CellsZ.
+        /// The wing is the part narrower than the rest; the rest is the full length, on the far side of the wing's base.</summary>
+        static bool InNotch(BuildingGenResult r, float x, float z)
+        {
+            if (r.Shape == FootprintShape.Rect) return false;
+            var (wx0, wz0, wx1, wz1) = r.Wing;
+            bool wingNorth = wz1 == r.CellsZ;   // as laid out; turned half round, the wing is on the south
+            bool wingSide = wingNorth ? z > wz0 * Cell : z < wz1 * Cell;
+            return wingSide && (x < wx0 * Cell || x > wx1 * Cell);
+        }
         /// <summary>A wall's footprint in plan: its mid-plane grown by half its thickness.</summary>
         static (float X0, float Z0, float X1, float Z1) Box(WallPlan w)
         {
-            var p = Start(w); var q = At(w, w.Length); float t = w.Thickness * 0.5f;
-            return (MathF.Min(p.X, q.X) - t, MathF.Min(p.Z, q.Z) - t, MathF.Max(p.X, q.X) + t, MathF.Max(p.Z, q.Z) + t);
+            // exact: the length as laid (its ends already run on to their corners), the thickness across it only
+            var p = Start(w); var q = At(w, w.Length); var d = Dir(w); float t = w.Thickness * 0.5f;
+            float tx = MathF.Abs(d.Z) * t, tz = MathF.Abs(d.X) * t;
+            return (MathF.Min(p.X, q.X) - tx, MathF.Min(p.Z, q.Z) - tz, MathF.Max(p.X, q.X) + tx, MathF.Max(p.Z, q.Z) + tz);
         }
         static bool Overlap((float X0, float Z0, float X1, float Z1) a, (float X0, float Z0, float X1, float Z1) b, float eps = 0.01f)
             => a.X0 < b.X1 - eps && a.X1 > b.X0 + eps && a.Z0 < b.Z1 - eps && a.Z1 > b.Z0 + eps;
@@ -795,7 +807,13 @@ namespace UnturnedSim.Tests
                 {
                     // the top a gable (two slopes, ends raised) or a hip (four, none raised); each part a floor above
                     // leaves uncovered one shed slope of its own
-                    bool topOk = res.Roof == RoofKind.Gable ? topSlopes.Count == 2 && raised : res.Roof == RoofKind.Hip && topSlopes.Count == 4 && !raised;
+                    // (an L or a T: a cross gable -- every slope over the top floor, starting at its head or, above an
+                    // arm's ridge, higher; the main roof's ends and each arm's raised)
+                    bool cross = res.Shape != FootprintShape.Rect;
+                    int raisedEnds = res.Walls.Count(w => w.Kind == SurfaceKind.Wall && w.GableRise > 0.01f);
+                    if (cross) topSlopes = slopes.Where(w => w.Y > res.Floors * Storey - 0.05f).ToList();
+                    bool topOk = cross ? res.Roof == RoofKind.Gable && topSlopes.Count >= 5 && raisedEnds >= 3
+                               : res.Roof == RoofKind.Gable ? topSlopes.Count == 2 && raised : res.Roof == RoofKind.Hip && topSlopes.Count == 4 && !raised;
                     if (!topOk) bad.Add($"{Name(spec)}: a house's top roof is {res.Roof} with {topSlopes.Count} slopes, gable ends {raised}");
                     else if (res.Roof == RoofKind.Gable) gables++; else hips++;
                     if (slopes.Count - topSlopes.Count != exposedParts) bad.Add($"{Name(spec)}: {exposedParts} uncovered lower parts, {slopes.Count - topSlopes.Count} lower slopes");
@@ -852,10 +870,11 @@ namespace UnturnedSim.Tests
                         {
                             cells++;
                             float px = (x + 0.5f) * Cell, pz = (z + 0.5f) * Cell;
+                            if (InNotch(res, px, pz)) continue;
                             if (f < top && x >= res.Footprints[f + 1].X0 && x < res.Footprints[f + 1].X1) continue;
                             exposed++;
                             bool covered = res.Roof != RoofKind.Flat
-                                ? slopes.Any(w => MathF.Abs(w.Y - (f + 1) * Storey) < 0.05f && !float.IsNaN(RoofHeightAt(w, px, pz)))
+                                ? slopes.Any(w => (res.Shape != FootprintShape.Rect ? w.Y > (f + 1) * Storey - 0.05f : MathF.Abs(w.Y - (f + 1) * Storey) < 0.05f) && !float.IsNaN(RoofHeightAt(w, px, pz)))
                                 : roofs.Any(w => MathF.Abs(w.Pitch + 90f) < 0.5f && MathF.Abs(w.Y - (f + 1) * Storey - BuildingGen.Slab * 0.5f) < 0.05f
                                                  && px > w.X && px < w.X + w.Length && pz > w.Z - w.Height && pz < w.Z);
                             if (!covered) bad.Add($"{Name(spec)}: floor {f} cell ({x},{z}) has no roof over it");
@@ -1081,7 +1100,9 @@ namespace UnturnedSim.Tests
                     var rs = row.ToList();
                     if (rs.Count < 2) continue;
                     rows++;
-                    var share = rs.Select(g => (G: g, R: Usable(g) / BuildingGen.TraitOf(g.Kind, spec.Kind).Cells)).OrderBy(x => x.R).ToList();
+                    // (a kitchen with the dining table in it is sized as a kitchen-diner, a size up)
+                    double Size(GenRoom g) => g.Kind == RoomKind.Kitchen && res.KitchenDiner ? BuildingGen.DinerCells : BuildingGen.TraitOf(g.Kind, spec.Kind).Cells;
+                    var share = rs.Select(g => (G: g, R: Usable(g) / Size(g))).OrderBy(x => x.R).ToList();
                     double spread = share[^1].R / share[0].R;
                     spreads.Add(spread);
                     // within a whole cell: two rooms of one kind two and three cells wide are 1.5x apart and as even as

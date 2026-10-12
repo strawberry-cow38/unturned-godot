@@ -555,6 +555,11 @@ namespace UnturnedGodot
                 foreach (var (n, v) in new[] { ("any", Sides.None), ("N", Sides.North), ("E", Sides.East), ("S", Sides.South), ("W", Sides.West) }) o.AddItem(n, (int)v);
                 return o;
             }
+            // the outline: a rectangle, an L or a T (one storey only for now), or any of them by the seed
+            types.AddChild(Dim("shape"));
+            _genShape = new OptionButton { FocusMode = FocusModeEnum.None, TooltipText = "the ground floor's outline; an L or a T is one storey only for now" };
+            foreach (var (n, v) in new[] { ("any", FootprintShape.Auto), ("rect", FootprintShape.Rect), ("L", FootprintShape.L), ("T", FootprintShape.T) }) _genShape.AddItem(n, (int)v);
+            types.AddChild(_genShape);
             types.AddChild(Dim("front door")); types.AddChild(_genFront = SidePick("the side the front door goes in (north is +Z)"));
             types.AddChild(Dim("back door")); types.AddChild(_genBack = SidePick("the side a back door goes in; picking one always makes one"));
             foreach (var (n, v) in new[] { ("no win N", Sides.North), ("no win E", Sides.East), ("no win S", Sides.South), ("no win W", Sides.West) })
@@ -598,7 +603,7 @@ namespace UnturnedGodot
         Label _bakeMsg;
         OptionButton _genKind;
         SpinBox _genSeed, _genMinRooms, _genPerFloor, _genMinFloors, _genMaxFloors, _genWidth, _genDepth;
-        OptionButton _genFront, _genBack;
+        OptionButton _genFront, _genBack, _genShape;
         readonly System.Collections.Generic.Dictionary<Sides, CheckBox> _genNoWin = new();
         readonly System.Collections.Generic.Dictionary<RoomKind, SpinBox> _genMin = new();
 
@@ -619,6 +624,7 @@ namespace UnturnedGodot
                 Depth = (int)System.Math.Round(_genDepth.Value / BuildingGen.Cell),
                 FrontSide = (Sides)_genFront.GetSelectedId(),
                 BackSide = (Sides)_genBack.GetSelectedId(),
+                Shape = (FootprintShape)_genShape.GetSelectedId(),
             };
             foreach (var kv in _genNoWin) if (kv.Value.ButtonPressed) spec.NoWindows |= kv.Key;
             foreach (var kv in _genMin) if (kv.Value.Value > 0) spec.MinOfKind[kv.Key] = (int)kv.Value.Value;

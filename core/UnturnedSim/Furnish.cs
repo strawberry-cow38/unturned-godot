@@ -203,6 +203,10 @@ namespace UnturnedSim
             public readonly List<(float X, float Z, GenRoom Room)> Targets = new();
             /// <summary>The stairs, landings and holes on this floor, exactly.</summary>
             public readonly List<(float X0, float Z0, float X1, float Z1)> StairRects = new();
+            /// <summary>The walls' exact footprints: the grid is 0.1 m, and where a wall's line steps in thickness -- an L's
+            /// outside wall running on as a partition, 0.1 m thinner -- a piece set flush to the thin part can clip the
+            /// thick one between the cell centres.</summary>
+            public readonly List<(float X0, float Z0, float X1, float Z1)> WallRects = new();
             readonly BuildingGenResult _res;
 
             public FloorPlan(BuildingGenResult res, int f)
@@ -215,7 +219,7 @@ namespace UnturnedSim
                 const float M = WallOpenings.StairHoleMargin;
                 int FloorOf(float y) => (int)MathF.Round(y / Storey);
                 var walls = res.Walls.Where(w => w.Kind == SurfaceKind.Wall && FloorOf(w.Y) == f && w.Height > Storey - 0.01f).ToList();
-                foreach (var w in walls) Fill(Box(w), Wall);
+                foreach (var w in walls) { Fill(Box(w), Wall); WallRects.Add(Box(w)); }
                 // the stairs: flights on this floor, the landings, and the holes in this floor
                 float Rise(StairPlan s) => s.Rise > 0f ? s.Rise : Storey;
                 foreach (var s in res.Stairs.Where(s => s.Floor == f)) Fill(Foot(s), Stair);
@@ -279,12 +283,17 @@ namespace UnturnedSim
                 }
             }
 
+            /// <summary>What a wall stands on: its length exactly (its ends already run on to its corners), half its
+            /// thickness either side. Grown by the half thickness at its ends too, an L's inside corner had a phantom 0.35 m
+            /// of outside wall poking past the partition's face into the room -- and a kitchen run lined up on it, 0.38 m
+            /// off the real wall.</summary>
             static (float, float, float, float) Box(WallPlan w)
             {
                 var (wc, ws) = PlanTrig.CosSin(w.Yaw);
                 float dx = wc, dz = -ws, t = w.Thickness * 0.5f;
                 float ex = w.X + dx * w.Length, ez = w.Z + dz * w.Length;
-                return (MathF.Min(w.X, ex) - t, MathF.Min(w.Z, ez) - t, MathF.Max(w.X, ex) + t, MathF.Max(w.Z, ez) + t);
+                float tx = MathF.Abs(dz) * t, tz = MathF.Abs(dx) * t;   // across the wall only
+                return (MathF.Min(w.X, ex) - tx, MathF.Min(w.Z, ez) - tz, MathF.Max(w.X, ex) + tx, MathF.Max(w.Z, ez) + tz);
             }
             static (float, float, float, float) Foot(StairPlan s)
             {
@@ -608,6 +617,7 @@ namespace UnturnedSim
                     if (HitsPiece(name, x, z, yaw)) continue;
                     if (InSwing(fp, null)) continue;
                     if (_p.StairRects.Any(r => Overlaps(fp, r))) continue;
+                    if (_p.WallRects.Any(r => Overlaps(fp, r))) continue;
                     var swing = SwingZone(name, x, z, yaw);
                     if (swing != null && (!SwingClear(swing.Value) || _mine.Any(o => o.On == null && !o.Mounted && Overlaps(swing.Value, o.Footprint)))) continue;
                     var cells = Under(name, x, z, yaw).Where(c => _p.State[c.I, c.J] == FloorPlan.Free).ToList();
@@ -1430,7 +1440,7 @@ namespace UnturnedSim
                 bool longX = x1 - x0 >= z1 - z0;
                 float a0 = longX ? x0 : z0, a1 = longX ? x1 : z1, b0 = longX ? z0 : x0, b1 = longX ? z1 : x1;
                 float yaw = longX ? 0f : 90f;   // its length along the shop's
-                for (float b = b0 + Edge + deep * 0.5f; b + deep * 0.5f <= b1 - Edge + 1e-3f; b += deep + Aisle)
+                void Row(float b)
                 {
                     float a = a0 + Edge + len * 0.5f;
                     for (int k = 0; a + len * 0.5f <= a1 - Edge + 1e-3f; k++)
@@ -1438,6 +1448,16 @@ namespace UnturnedSim
                         Put("Shelf_1", new[] { longX ? (a, b, yaw) : (b, a, yaw) });
                         a += len + (k % 2 == 1 ? Aisle : 0f);
                     }
+                }
+                for (float b = b0 + Edge + deep * 0.5f; b + deep * 0.5f <= b1 - Edge + 1e-3f; b += deep + Aisle) Row(b);
+                // A shallow shop can have the coolers' doors along one long wall and the back rooms' doors along the other,
+                // their swings taking both rows that start from the edge and leaving the middle clear: there, fewer rows,
+                // centred across the shop -- one, down its middle, at the least.
+                int fit = (int)((b1 - b0 - 2 * Edge + Aisle) / (deep + Aisle));
+                for (int n = fit; n >= 1 && !_mine.Any(m => m.Name == "Shelf_1"); n--)
+                {
+                    float span = n * deep + (n - 1) * Aisle, mid = (b0 + b1) * 0.5f;
+                    for (int q = 0; q < n; q++) Row(mid - span * 0.5f + deep * 0.5f + q * (deep + Aisle));
                 }
                 // one with no partner in another row (its neighbours would not fit) is taken back out: the columns line up
                 var all = _mine.Where(m => m.Name == "Shelf_1").ToList();
