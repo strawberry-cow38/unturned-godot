@@ -10650,6 +10650,32 @@ namespace UnturnedGodot
             // the building plots, marked on the ground (strawberry 2026-10-12: "have the grid system mark plots for
             // buildings, with fixed sizes and shapes"), and the parking bays paved and painted -- as planned above
             int plots = noWalk ? 0 : town.MarkPlots(editor, rf, plan: false);
+            // UG_TOWNPARKED=1: a car in every parking space -- the game's own cars, dropped in and left to settle on
+            // their wheels -- so a render SHOWS whether the bays fit them (strawberry 2026-10-12: "make sure they're
+            // scaled to fit the vehicles in game"). Against the kerb, nosed the way the lane beside them runs:
+            // traffic keeps right, and a bay on the spline's (t.z, 0, -t.x) side is on the left of +t.
+            if (System.Environment.GetEnvironmentVariable("UG_TOWNPARKED") == "1")
+            {
+                string[] pcModels = { "sedan", "hatchback", "police", "van", "wagon", "truck", "roadster", "golf" };
+                int pcParked = 0;
+                foreach (var pcBay in town.Bays)
+                {
+                    float pcHalf = rf.RoadHalfWidth(pcBay.Road);
+                    for (int pcK = 0; pcK < pcBay.Spaces; pcK++)
+                    {
+                        if (!rf.EvaluateAlong(pcBay.Road, pcBay.First + (pcK + 0.5f) * pcBay.SpaceLength, out var pcPos, out var pcTan, snapTerrain: false)) continue;
+                        var pcAlong = new Vector3(pcTan.X, 0f, pcTan.Z).Normalized();
+                        var pcOut = new Vector3(pcTan.Z, 0f, -pcTan.X).Normalized() * pcBay.Side;
+                        var pcAt = pcPos + pcOut * (pcHalf + pcBay.Depth - 0.03f - 0.25f - 1.5f)
+                                 + Vector3.Up * (rf.RoadSurfaceOffset(pcBay.Road) + 1.0f);
+                        var pcCar = Vehicle.BuildByName(pcModels[(pcParked * 5 + 3) % pcModels.Length]);
+                        editor.AddChild(pcCar);
+                        pcCar.GlobalTransform = new Transform3D(Basis.LookingAt(pcBay.Side > 0 ? -pcAlong : pcAlong, Vector3.Up), pcAt);
+                        pcParked++;
+                    }
+                }
+                Log.Print($"[towngrid] parked {pcParked} cars in {town.Bays.Count} bays");
+            }
             // ⚠ MEASURE THE KERB LINE ITSELF. The streets' own bow is 0.0 cm, so "sidewalks seem to wiggle"
             // is not the road centreline -- it has to be the pavement. A wiggle is a run of KINKS, so report
             // the sharpest turn between consecutive segments of every corner piece, and where it is.

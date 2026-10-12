@@ -3490,11 +3490,19 @@ namespace UnturnedGodot
         public readonly List<ParkingBay> Bays = new();
         /// <summary>UG_TOWNNOPARKING=1: no bays -- the control for everything they change about a street.</summary>
         public bool Parking = System.Environment.GetEnvironmentVariable("UG_TOWNNOPARKING") != "1";
-        /// <summary>How far the kerb steps out (a parked car and room to open its door), how long each angled end
-        /// runs along the street, and one parallel space.</summary>
-        public float BayDepth = 2.5f, BayTaper = 3f, BaySpace = 6f;
-        /// <summary>How far inside its first and last plot's frontage a bay's kerb begins to step out.</summary>
-        public float BayInset = 0.5f;
+        /// <summary>How far the kerb steps out, how long each angled end runs along the street, and one parallel
+        /// space.
+        /// ⚠⚠ SIZED TO THIS GAME'S CARS, WHICH ARE NOT REAL-WORLD CARS (strawberry 2026-10-12: "make sure they're
+        /// scaled to fit the vehicles in game"). Measured off the BUILT vehicles, wheels and fittings included:
+        /// every car is 3.0 m across its tyres (a real one is ~1.8) and the longest, the sedan, is 6.15 m (a real
+        /// one is ~4.7) -- the lanes here are 4.6 m for the same reason. A real-world 2.4 x 6 m bay left a parked
+        /// sedan most of a metre out in the traffic lane and hanging off both ends of its space. So: deep enough
+        /// for the widest car with 25 cm either side, inside the lane line and the kerb's lap; long enough for the
+        /// longest with 1.35 m to pull in and out. The town test builds the cars and holds the bays to them.</summary>
+        public float BayDepth = 3.7f, BayTaper = 3.5f, BaySpace = 7.5f;
+        /// <summary>How far inside its first and last plot's frontage a bay's kerb begins to step out. Small enough
+        /// that one 15 m house plot still holds a single space.</summary>
+        public float BayInset = 0.25f;
         /// <summary>How far past a junction's crossing and stop line a bay may begin: nobody parks in the queue
         /// for the lights.</summary>
         public float BayClearOfJunction = 6f;

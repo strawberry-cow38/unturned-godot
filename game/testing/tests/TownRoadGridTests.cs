@@ -459,6 +459,43 @@ namespace UnturnedGodot.Testing
                     foreach (var bay in bays) { spaces += bay.Spaces; if (gD.BayOpposite(bay) != null) paired++; else single++; }
                     T.Check($"parking bays widen the streets ({bays.Count} bays, {spaces} spaces; {single} on one side only, {paired} with one facing them across the street)",
                             bays.Count >= 4 && spaces >= bays.Count && single >= 1 && paired >= 2);
+                    // 0. SIZED TO THIS GAME'S CARS (strawberry 2026-10-12: "make sure they're scaled to fit the vehicles in
+                    //    game"). Each car is built and measured whole -- body, wheels, everything that draws -- and must fit
+                    //    between the lane line and the kerb with 20 cm either side, and a space must hold it with a metre
+                    //    to pull in and out. ⚠ Measured, not remembered: these cars are 3 m across their tyres, and a
+                    //    real-world 2.4 x 6 m bay (the control) fits none of them.
+                    {
+                        string[] cars = { "sedan", "hatchback", "police", "roadster", "wagon", "van", "offroader", "jeep", "humvee", "truck", "ambulance", "golf" };
+                        float widest = 0f, longest = 0f; string wideCar = "", longCar = "";
+                        foreach (var name in cars)
+                        {
+                            var v = Vehicle.BuildByName(name);
+                            float x0 = float.MaxValue, x1 = float.MinValue, z0 = float.MaxValue, z1 = float.MinValue;
+                            void Walk(Node n, Transform3D xf)
+                            {
+                                if (n is Node3D n3 && n != v) xf = xf * n3.Transform;
+                                if (n is MeshInstance3D mi && mi.Mesh != null && mi.Visible)
+                                {
+                                    var a = mi.Mesh.GetAabb();
+                                    for (int k = 0; k < 8; k++)
+                                    {
+                                        var q = xf * a.GetEndpoint(k);
+                                        x0 = Mathf.Min(x0, q.X); x1 = Mathf.Max(x1, q.X); z0 = Mathf.Min(z0, q.Z); z1 = Mathf.Max(z1, q.Z);
+                                    }
+                                }
+                                foreach (var ch in n.GetChildren()) Walk(ch, xf);
+                            }
+                            Walk(v, Transform3D.Identity);
+                            if (x1 - x0 > widest) { widest = x1 - x0; wideCar = name; }
+                            if (z1 - z0 > longest) { longest = z1 - z0; longCar = name; }
+                            v.Free();
+                        }
+                        bool Fits(float depth, float space) => depth - gD.BayEdgeGap - gD.BayLine - 0.03f >= widest + 0.4f && space >= longest + 1f;
+                        int fit = 0;
+                        foreach (var bay in bays) if (Fits(bay.Depth, bay.SpaceLength)) fit++;
+                        T.Check($"...each sized to the game's own cars: widest {widest:0.00} m ({wideCar}), longest {longest:0.00} m ({longCar}) -- {fit} of {bays.Count} bays hold them ({gD.BayDepth:0.0} m deep, {gD.BaySpace:0.0} m spaces), and a real-world 2.4 x 6 m bay would not (control: {(Fits(2.4f, 6f) ? "FITS" : "does not")})",
+                                widest > 1f && longest > 2f && fit == bays.Count && !Fits(2.4f, 6f));
+                    }
                     // each bay in its road's frame at its middle: arc offset along, metres out on the bay's side. A bay
                     // is only ever laid on straight frontage, so one frame holds for the whole of it.
                     var frames = new Dictionary<TownRoadGrid.ParkingBay, (Vector3 c, Vector3 t, Vector3 o, float mid, float half)>();
