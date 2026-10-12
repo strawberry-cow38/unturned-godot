@@ -548,6 +548,21 @@ namespace UnturnedGodot
             types.AddChild(Dim("width m")); types.AddChild(_genWidth = Spin(0, 150, 0, 52)); _genWidth.Step = 3;
             types.AddChild(Dim("depth m")); types.AddChild(_genDepth = Spin(0, 60, 0, 52)); _genDepth.Step = 3;
             _genWidth.TooltipText = _genDepth.TooltipText = "the ground floor's footprint, metres (3 m cells); 0: as big as its rooms make it";
+            // the doors' sides and the sides with no windows (north is +Z, as the roof tools have it)
+            OptionButton SidePick(string tip)
+            {
+                var o = new OptionButton { FocusMode = FocusModeEnum.None, TooltipText = tip };
+                foreach (var (n, v) in new[] { ("any", Sides.None), ("N", Sides.North), ("E", Sides.East), ("S", Sides.South), ("W", Sides.West) }) o.AddItem(n, (int)v);
+                return o;
+            }
+            types.AddChild(Dim("front door")); types.AddChild(_genFront = SidePick("the side the front door goes in (north is +Z)"));
+            types.AddChild(Dim("back door")); types.AddChild(_genBack = SidePick("the side a back door goes in; picking one always makes one"));
+            foreach (var (n, v) in new[] { ("no win N", Sides.North), ("no win E", Sides.East), ("no win S", Sides.South), ("no win W", Sides.West) })
+            {
+                var c = new CheckBox { Text = "", FocusMode = FocusModeEnum.None, TooltipText = $"no windows on the {v} side, any floor" };
+                _genNoWin[v] = c;
+                types.AddChild(Dim(n)); types.AddChild(c);
+            }
             foreach (RoomKind k in System.Enum.GetValues(typeof(RoomKind)))
             {
                 if (k == RoomKind.Unassigned || k == RoomKind.Hall || k == RoomKind.Stairwell) continue;
@@ -557,7 +572,7 @@ namespace UnturnedGodot
             var pop = new PopupPanel();
             pop.AddChild(types);
             AddChild(pop);
-            var fold = new Button { Text = "footprint, rooms per type ▸", Flat = true, FocusMode = FocusModeEnum.None,
+            var fold = new Button { Text = "footprint, sides, rooms per type ▸", Flat = true, FocusMode = FocusModeEnum.None,
                                     Alignment = HorizontalAlignment.Left };
             fold.Pressed += () =>
             {
@@ -583,6 +598,8 @@ namespace UnturnedGodot
         Label _bakeMsg;
         OptionButton _genKind;
         SpinBox _genSeed, _genMinRooms, _genPerFloor, _genMinFloors, _genMaxFloors, _genWidth, _genDepth;
+        OptionButton _genFront, _genBack;
+        readonly System.Collections.Generic.Dictionary<Sides, CheckBox> _genNoWin = new();
         readonly System.Collections.Generic.Dictionary<RoomKind, SpinBox> _genMin = new();
 
         static SpinBox Spin(int min, int max, int value, int width = 56)
@@ -600,7 +617,10 @@ namespace UnturnedGodot
                 MaxRoomsPerFloor = (int)_genPerFloor.Value,
                 Width = (int)System.Math.Round(_genWidth.Value / BuildingGen.Cell),
                 Depth = (int)System.Math.Round(_genDepth.Value / BuildingGen.Cell),
+                FrontSide = (Sides)_genFront.GetSelectedId(),
+                BackSide = (Sides)_genBack.GetSelectedId(),
             };
+            foreach (var kv in _genNoWin) if (kv.Value.ButtonPressed) spec.NoWindows |= kv.Key;
             foreach (var kv in _genMin) if (kv.Value.Value > 0) spec.MinOfKind[kv.Key] = (int)kv.Value.Value;
             var res = _b.Generate(spec);
             int rooms = 0;

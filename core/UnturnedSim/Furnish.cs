@@ -161,6 +161,8 @@ namespace UnturnedSim
         /// from each and still watch it (strawberry: "couch should have a sight line within a max distance of a tv set,
         /// different for both types").</summary>
         public const float MountHeight = 2.2f, WallTvReach = 8f, CrtReach = 4.5f, TvNear = 2f;
+        /// <summary>How far a set may stand off the line straight out from the middle of its couch.</summary>
+        public const float TvOffAxis = 0.3f;
         /// <summary>The kitchen's working triangle, fridge to sink to stove and back, at most this far round. The real rule
         /// is 26 ft (7.9 m) for furniture this game builds about twice the size (a counter 1.5 m wide, a real one 0.6).</summary>
         public const float TriangleRound = 12.5f;
@@ -856,8 +858,8 @@ namespace UnturnedSim
                 return Against(name, Side.Back).Where(p => MathF.Abs(p.Yaw - yaw) < 1f).Where(p =>
                 {
                     float ahead = (p.X - c.X) * fx + (p.Z - c.Z) * fz, side = (p.X - c.X) * rx + (p.Z - c.Z) * rz;
-                    // in view: no more than a third of the way off to one side
-                    return ahead >= TvNear && ahead <= far && MathF.Abs(side) <= MathF.Max(1f, ahead * 0.33f) && Sight(c.X + fx * 0.3f, c.Z + fz * 0.3f, p.X, p.Z, c, except);
+                    // straight ahead of it (strawberry: "tv needs alignment with the couch")
+                    return ahead >= TvNear && ahead <= far && MathF.Abs(side) <= TvOffAxis && Sight(c.X + fx * 0.3f, c.Z + fz * 0.3f, p.X, p.Z, c, except);
                 });
             }
             bool WallTv(FurniturePlan c)
@@ -940,28 +942,37 @@ namespace UnturnedSim
                 var t = PutWithRoom(table, 1.0f, cx, cz);
                 if (t == null && big) t = PutWithRoom(table = "Table_Wood_0", 1.0f, cx, cz);
                 if (t == null) return;
-                foreach (var seat in Seats(t)) Put(DiningChair, new[] { seat });
+                // each way of seating it in turn, actually placed (a chair the room's walk cannot spare is refused only
+                // then), keeping the first that seats everyone or else the one that seats the most
+                var best = new List<(float X, float Z, float Yaw)>(); int most = -1;
+                foreach (var seats in Seatings(t))
+                {
+                    var placed = seats.Select(sp => (sp, m: Put(DiningChair, new[] { sp }))).Where(x => x.m != null).ToList();
+                    if (placed.Count == seats.Count) return;
+                    if (placed.Count > most) { most = placed.Count; best = placed.Select(x => x.sp).ToList(); }
+                    foreach (var (_, m) in placed) Remove(m);
+                }
+                foreach (var sp in best) Put(DiningChair, new[] { sp });
             }
 
             const string DiningChair = "Chair_Wood_0";
 
-            /// <summary>Where the chairs go round a table, each facing it.</summary>
-            List<(float X, float Z, float Yaw)> Seats(FurniturePlan t)
+            /// <summary>The ways of seating a table, best first, each a list of chairs facing it.</summary>
+            List<List<(float X, float Z, float Yaw)>> Seatings(FurniturePlan t)
             {
                 var ts = FurnitureCatalog.Sizes[t.Name]; var cs = FurnitureCatalog.Sizes[DiningChair];
                 var seats = new List<(float, float, float)>();
                 if (t.Name == "Table_Wood_1")
                 {
-                    // round: six round it if they all fit, else four; turned whichever way more of them are clear
+                    // round: four round it (strawberry: "need less chairs at the round table"), on the diagonals first --
+                    // they reach less far into the room -- then square
                     float r = ts.X1 + 0.05f + cs.Y1;
                     List<(float, float, float)> Ring(int n, float phase) => Enumerable.Range(0, n).Select(k =>
                     {
                         var (dz, dx) = PlanTrig.CosSin(t.Yaw + phase + k * 360f / n);
                         return (t.X + dx * r, t.Z + dz * r, YawFacing(-dx, -dz));
                     }).ToList();
-                    int Fits(List<(float X, float Z, float Yaw)> ring) => ring.Count(c => Clear(DiningChair, c.X, c.Z, c.Yaw) && !HitsPiece(DiningChair, c.X, c.Z, c.Yaw));
-                    var six = new[] { 0f, 30f }.Select(ph => Ring(6, ph)).FirstOrDefault(ring => Fits(ring) == 6);
-                    return six ?? new[] { 0f, 45f }.Select(ph => Ring(4, ph)).OrderByDescending(Fits).First();
+                    return new[] { 45f, 0f }.Select(ph => Ring(4, ph).Select(c => ((float X, float Z, float Yaw))c).ToList()).ToList();
                 }
                 var (fx, fz) = t.Front; var (rx, rz) = t.Right;
                 // along each long side, a chair every metre and a bit; at each end one
@@ -979,7 +990,7 @@ namespace UnturnedSim
                     float e = sgn > 0 ? ts.Y1 + 0.05f + cs.Y1 : ts.Y0 - 0.05f - cs.Y1;
                     seats.Add((t.X + fx * e, t.Z + fz * e, YawFacing(-sgn * fx, -sgn * fz)));
                 }
-                return seats;
+                return new List<List<(float X, float Z, float Yaw)>> { seats.Select(c => ((float X, float Z, float Yaw))c).ToList() };
             }
 
             // (to a thousandth of a degree: a platform's atan2f may differ in the last place, and the yaw is fed back in)
@@ -1023,7 +1034,7 @@ namespace UnturnedSim
                 foreach (var (nx, nz) in Fronts)
                     foreach (var (face, lo, hi) in Faces(nx, nz)) runs.Add((nx, nz, face, lo, hi));
                 runs = _rng.Keyed(runs).OrderByDescending(x => x.Item.Hi - x.Item.Lo).ThenBy(x => x.Key).Select(x => x.Item).ToList();
-                bool freeFridge = _rng.Chance(30), tryL = _rng.Chance(55);
+                bool freeFridge = _rng.Chance(40), tryL = _rng.Chance(55);
                 // the seeded layouts first, then the plainer ones; each leaves the kitchen complete or as it found it
                 var tries = new List<Func<bool>>();
                 if (tryL) tries.Add(() => Done(L(runs, freeFridge)) || Done(L(runs, !freeFridge)));

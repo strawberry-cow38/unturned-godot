@@ -32,7 +32,11 @@ namespace UnturnedSim.Tests
                     yield return new BuildingGenSpec { Seed = seed, Kind = kind, MinRooms = 12, MaxFloors = 2, MaxRoomsPerFloor = 4 };   // cannot fit
                     yield return new BuildingGenSpec { Seed = seed, Kind = kind, MinFloors = 3, MaxFloors = 4, MaxRoomsPerFloor = 3, MinRooms = 9,
                         MinOfKind = new Dictionary<RoomKind, int> { [RoomKind.Office] = 2, [RoomKind.Garage] = 1 } };
-                    yield return new BuildingGenSpec { Seed = seed, Kind = kind, MinRooms = 7, MaxFloors = 2, MaxRoomsPerFloor = 6 };
+                    // (and sides asked for: a front door on the north turns the whole building half round, so every check
+                    // here also runs over turned buildings)
+                    yield return new BuildingGenSpec { Seed = seed, Kind = kind, MinRooms = 7, MaxFloors = 2, MaxRoomsPerFloor = 6,
+                        FrontSide = seed % 3 == 0 ? Sides.North : seed % 3 == 1 ? Sides.None : Sides.West,
+                        BackSide = seed % 4 == 1 ? Sides.East : Sides.None, NoWindows = seed % 5 == 2 ? Sides.East : Sides.None };
                     yield return new BuildingGenSpec { Seed = seed, Kind = kind, MinRooms = 5, MaxFloors = 2, MaxRoomsPerFloor = 8 };   // one floor or two: the roll
                 }
         }
@@ -71,6 +75,12 @@ namespace UnturnedSim.Tests
             => a.X0 >= b.X0 && a.X1 <= b.X1 && a.Z0 >= b.Z0 && a.Z1 <= b.Z1;
         /// <summary>A slab's footprint in plan (origin at its min-X, max-Z corner, run along +X, depth along -Z).</summary>
         static (float X0, float Z0, float X1, float Z1) Plan(WallPlan w) => (w.X, w.Z - w.Height, w.X + w.Length, w.Z);
+        /// <summary>The side an outside wall looks out of: its front face, local +Z, is (sin yaw, cos yaw); north is +Z.</summary>
+        static Sides FaceOf(WallPlan w)
+        {
+            float a = w.Yaw * MathF.PI / 180f, nx = MathF.Sin(a), nz = MathF.Cos(a);
+            return MathF.Abs(nz) >= MathF.Abs(nx) ? (nz > 0 ? Sides.North : Sides.South) : (nx > 0 ? Sides.East : Sides.West);
+        }
         static float RiseOf(StairPlan s) => s.Rise > 0f ? s.Rise : Storey;
         static bool StartsOnFloor(StairPlan s) => MathF.Abs(s.Y - s.Floor * Storey) < 0.01f;
         static bool EndsOnFloor(StairPlan s) => MathF.Abs(s.Y + RiseOf(s) - (s.Floor + 1) * Storey) < 0.01f;
@@ -501,7 +511,9 @@ namespace UnturnedSim.Tests
                     for (int f = 1; f < r.Floors; f++)
                     {
                         float under = f * Storey - BuildingGen.Slab;
-                        if (under > y0 + 0.01f && OnFloor(r, f, x, z) && !Holes(r, f).Any(In)) lid = MathF.Min(lid, under);
+                        // (a hole cut as two rectangles -- a quarter turn's L -- has a seam between them: a point on it is in
+                        // the hole, so each is grown a millimetre)
+                        if (under > y0 + 0.01f && OnFloor(r, f, x, z) && !Holes(r, f).Any(h => In(Grown(h, 1e-3f)))) lid = MathF.Min(lid, under);
                     }
                     if (lid == float.MaxValue) return;   // only the roof over it
                     leastClear = MathF.Min(leastClear, lid - y0);
@@ -570,11 +582,14 @@ namespace UnturnedSim.Tests
                     }
                 }
             }
-            int switchbacks = All().Count(x => x.Res.Switchback), multis = All().Count(x => x.Res.Floors > 1);
-            TestContext.Progress.WriteLine($"[gen-stairs] {flights} flights ({halves} half flights of {switchbacks} switchbacks, in {multis} buildings with stairs), in {string.Join(", ", hostKinds.Select(kv => $"{kv.Value} {kv.Key}"))}; {tiles} foot/top tiles, {landingsChecked} landings, {holes} floor holes checked; {headroomPoints} points' headroom, the least {leastClear:0.00} m; {walked} stair rooms walked; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
+            int switchbacks = All().Count(x => x.Res.StairShape == StairShape.Switchback), quarters = All().Count(x => x.Res.StairShape == StairShape.Quarter);
+            int multis = All().Count(x => x.Res.Floors > 1);
+            TestContext.Progress.WriteLine($"[gen-stairs] {flights} flights ({halves} half flights of {switchbacks} switchbacks and {quarters} quarter turns, in {multis} buildings with stairs), in {string.Join(", ", hostKinds.Select(kv => $"{kv.Value} {kv.Key}"))}; {tiles} foot/top tiles, {landingsChecked} landings, {holes} floor holes checked; {headroomPoints} points' headroom, the least {leastClear:0.00} m; {walked} stair rooms walked; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
             Assert.That(flights, Is.GreaterThan(200));
-            Assert.That(switchbacks, Is.GreaterThan(multis / 4), "switchbacks are rare");
-            Assert.That(multis - switchbacks, Is.GreaterThan(multis / 4), "straight flights are rare");
+            Assert.That(switchbacks + quarters, Is.GreaterThan(multis / 4), "compound stairs are rare");
+            Assert.That(switchbacks, Is.GreaterThan(multis / 10), "switchbacks are rare");
+            Assert.That(quarters, Is.GreaterThan(multis / 10), "quarter turns are rare");
+            Assert.That(multis - switchbacks - quarters, Is.GreaterThan(multis / 4), "straight flights are rare");
             Assert.That(landingsChecked, Is.EqualTo(halves));
             Assert.That(walked, Is.GreaterThan(300));
             Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(10)));
@@ -670,7 +685,7 @@ namespace UnturnedSim.Tests
         public void OpeningsSuitTheRoom()
         {
             var bad = new List<string>();
-            int lit = 0, vented = 0, vehicle = 0, shops = 0, blank = 0, stockDoors = 0, clear = 0;
+            int lit = 0, vented = 0, vehicle = 0, shops = 0, endFronts = 0, blank = 0, stockDoors = 0, clear = 0;
             foreach (var (spec, res) in All())
             {
                 var outer = res.Walls.Where(w => w.Kind == SurfaceKind.Wall && w.Thickness == BuildingGen.Ext).ToList();
@@ -681,18 +696,30 @@ namespace UnturnedSim.Tests
                     var mine = Of(g);
                     var os = mine.Select(p => p.O).ToList();
                     string n = $"{Name(spec)}: {g}";
-                    if (BuildingGen.Habitable(g.Kind)) { if (os.Any(o => o.Glazed)) lit++; else bad.Add($"{n} has no window"); }
-                    if (g.Kind == RoomKind.Bathroom) { if (os.Any(o => o.Archetype == BuildingGen.ArchVent || o.Glazed)) vented++; else bad.Add($"{n} has no vent"); }
+                    // (a room whose every outside wall faces a side asked to have no windows is let off)
+                    var faces = outer.Where(w => FloorOf(w) == g.Floor && SpanOf(g, w) > 0.01f && w.Openings.Count >= 0).Select(FaceOf).Distinct().ToList();
+                    bool blind = spec.NoWindows != Sides.None && faces.Count > 0 && faces.All(fc => (fc & spec.NoWindows) != 0);
+                    if (BuildingGen.Habitable(g.Kind) && !blind) { if (os.Any(o => o.Glazed)) lit++; else bad.Add($"{n} has no window"); }
+                    if (g.Kind == RoomKind.Bathroom && !blind) { if (os.Any(o => o.Archetype == BuildingGen.ArchVent || o.Glazed)) vented++; else bad.Add($"{n} has no vent"); }
+                    // and none at all on those sides
+                    foreach (var (w, o) in mine) if (o.Glazed && (FaceOf(w) & spec.NoWindows) != 0) bad.Add($"{n} has a window on its {FaceOf(w)} side, asked to have none");
                     if ((g.Kind == RoomKind.Garage || g.Kind == RoomKind.Warehouse) && g.Floor == 0)
                     { if (os.Any(o => o.Archetype == BuildingGen.ArchGarage)) vehicle++; else bad.Add($"{n} has no vehicle door"); }
                     if (g.Kind == RoomKind.Shop && g.Floor == 0 && spec.Kind == BuildingKind.Commercial)
                     {
-                        // (any of its doors: a back door may be on an end wall too)
+                        // its street door in its frontage: an end wall where it has one, so it runs back from the street
+                        // (strawberry: "in general stores should span deeper instead of wider"), else its longest wall
+                        // (any of its doors: a back door may be on another wall)
                         var doorWalls = mine.Where(p => p.O.HasDoor).Select(p => p.W).ToList();
-                        float longest = outer.Where(w => FloorOf(w) == 0).Max(w => SpanOf(g, w));
+                        var ground = outer.Where(w => FloorOf(w) == 0).ToList();
+                        var ends = ground.Where(w => !(w.Yaw == 0f || w.Yaw == 180f) && SpanOf(g, w) > 0.01f).ToList();
+                        float longest = ground.Max(w => SpanOf(g, w));
+                        var front = ends.Count > 0 ? ends : ground.Where(w => SpanOf(g, w) >= longest - 0.01f).ToList();
+                        // a front side asked for outranks the frontage
+                        if (spec.FrontSide != Sides.None) front = ground.Where(w => SpanOf(g, w) > 0.01f && (FaceOf(w) & spec.FrontSide) != 0).ToList();
                         if (doorWalls.Count == 0) bad.Add($"{n} has no street door");
-                        else if (doorWalls.Max(w => SpanOf(g, w)) < longest - 0.01f) bad.Add($"{n}'s doors are on a {doorWalls.Max(w => SpanOf(g, w)):0.0} m wall, not its {longest:0.0} m front");
-                        else shops++;
+                        else if (!doorWalls.Any(front.Contains)) bad.Add($"{n}'s doors are not in its frontage ({(ends.Count > 0 ? "an end wall" : "its longest wall")})");
+                        else { shops++; if (ends.Count > 0) endFronts++; }
                     }
                     // blank, but for a stockroom's back door (where the deliveries come in)
                     bool BackDoor((WallPlan W, WallOpening O) p) { var c = At(p.W, p.O.U + p.O.Width * 0.5f); return p.O.HasDoor && res.DoorMarks.Any(m => m.Role == DoorRole.Back && MathF.Abs(m.X - c.X) < 0.05f && MathF.Abs(m.Z - c.Z) < 0.05f); }
@@ -717,7 +744,7 @@ namespace UnturnedSim.Tests
                         }
                 }
             }
-            TestContext.Progress.WriteLine($"[gen-suit] {lit} habitable rooms lit, {vented} bathrooms vented, {vehicle} vehicle doors, {shops} shopfronts, {blank} closets/stores blank ({stockDoors} stores with only their back door), {clear} outside openings checked clear of flights; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
+            TestContext.Progress.WriteLine($"[gen-suit] {lit} habitable rooms lit, {vented} bathrooms vented, {vehicle} vehicle doors, {shops} shopfronts ({endFronts} in an end wall), {blank} closets/stores blank ({stockDoors} stores with only their back door), {clear} outside openings checked clear of flights; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
             Assert.That(lit, Is.GreaterThan(500));
             Assert.That(vented, Is.GreaterThan(100));
             Assert.That(vehicle, Is.GreaterThan(50));
@@ -1393,6 +1420,10 @@ namespace UnturnedSim.Tests
                                     var (tx, tz) = tv.Front; float vx = m.X - tv.X, vz = m.Z - tv.Z, d = MathF.Sqrt(vx * vx + vz * vz);
                                     float reach = tv.Name == "Television_0" ? 8.5f : 5f;
                                     if ((vx * tx + vz * tz) / d < 0.7f || d > reach || d < 1.8f) return false;
+                                    // straight ahead of the couch: off its middle line by the generator's bound, and what the
+                                    // couch's few degrees of jitter swing that line by at this distance
+                                    var (crx, crz) = m.Right;
+                                    if (MathF.Abs(-vx * crx - vz * crz) > BuildingGen.TvOffAxis + 0.06f * d) return false;
                                     for (float t = 0.6f; t < d - 0.6f; t += 0.2f)
                                     {
                                         float x = tv.X + vx * t / d, z = tv.Z + vz * t / d;
