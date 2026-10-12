@@ -161,10 +161,19 @@ namespace UnturnedGodot
                 }
                 Vector3 s0 = new Vector3(b0.X, f0, b0.Z), s1 = new Vector3(b1.X, f1, b1.Z);
 
-                Quad(k0, t0, t1, k1);     // the kerb face, standing against the road
-                Quad(t0, b0, b1, t1);     // the surface you walk on
-                Quad(b0, s0, s1, b1);     // the outer skirt, so no daylight under the far edge
+                // ⚠⚠ A SMOOTH GROUP PER STRIP, so normals average ALONG the run but never across the kerb's
+                // top edge (strawberry 2026-10-12: "theres a lighting bug with the sidewalks between the
+                // straights and the curves?"). Flat per-face normals light a tessellated curve as a row of
+                // discrete facets, and where that meets a straight run -- one face, one normal -- the two
+                // disagree at the join. Smoothing along each strip makes both tangent-aligned, so they agree
+                // at the seam even though they are separate meshes; keeping the strips in SEPARATE groups
+                // keeps the kerb's 90-degree edge hard, which one blanket smoothing pass would round off into
+                // a sausage.
+                st.SetSmoothGroup(0); Quad(k0, t0, t1, k1);     // the kerb face, standing against the road
+                st.SetSmoothGroup(1); Quad(t0, b0, b1, t1);     // the surface you walk on
+                st.SetSmoothGroup(2); Quad(b0, s0, s1, b1);     // the outer skirt, so no daylight under the far edge
             }
+            st.Index();              // weld within a smooth group: GenerateNormals averages over shared verts
             st.GenerateNormals();
             var mesh = st.Commit();
             if (mesh == null || mesh.GetSurfaceCount() == 0) return null;
