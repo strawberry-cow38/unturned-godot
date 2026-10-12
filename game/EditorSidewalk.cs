@@ -173,6 +173,28 @@ namespace UnturnedGodot
                 st.SetSmoothGroup(1); Quad(t0, b0, b1, t1);     // the surface you walk on
                 st.SetSmoothGroup(2); Quad(b0, s0, s1, b1);     // the outer skirt, so no daylight under the far edge
             }
+            // ⚠⚠ CAP BOTH ENDS. A ribbon is three strips and nothing closes the rectangle they leave at each
+            // tip, so every pavement that stops -- which is every one of them, trimmed back at a junction --
+            // ends in an open box you can see straight into. At a mouth that reads as a dark wedge between
+            // the road and the kerb, which is what master kept reporting as "big gaps between the road
+            // spline and the merged mesh area". Exactly the fault the ROADS had at their junction ends, in a
+            // different mesh: an unclosed slab is a hole whatever is holding it up.
+            if (pts.Count >= 2)
+            {
+                void Cap(int i, bool front)
+                {
+                    Vector3 o = outward[i].Normalized(), p0 = pts[i];
+                    float kh = kerbPerPoint != null && i < kerbPerPoint.Count ? kerbPerPoint[i] : kerbH;
+                    Vector3 k = p0, t = p0 + Vector3.Up * kh, b = p0 + o * width + Vector3.Up * kerbH;
+                    float f = p0.Y - skirt;
+                    if (groundY != null) f = Mathf.Min(f, groundY(b.X, b.Z) - 0.05f);
+                    Vector3 sq = new Vector3(b.X, f, b.Z);
+                    st.SetSmoothGroup(uint.MaxValue);      // a flat cap: never averaged into its neighbours
+                    if (front) { st.AddVertex(k); st.AddVertex(t); st.AddVertex(b); st.AddVertex(k); st.AddVertex(b); st.AddVertex(sq); }
+                    else { st.AddVertex(k); st.AddVertex(b); st.AddVertex(t); st.AddVertex(k); st.AddVertex(sq); st.AddVertex(b); }
+                }
+                Cap(0, true); Cap(pts.Count - 1, false);
+            }
             st.Index();              // weld within a smooth group: GenerateNormals averages over shared verts
             st.GenerateNormals();
             var mesh = st.Commit();

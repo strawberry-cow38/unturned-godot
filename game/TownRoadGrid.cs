@@ -482,27 +482,11 @@ namespace UnturnedGodot
             // shift the patch by whatever makes the two agree there. That survives either side changing its
             // mind about its own lift, which a hardcoded 0.09 would not.
             float surf = roads.RoadSurfaceOffsetOfMaterial(MainMaterial);
-            var fit = new Dictionary<SDG.Unturned.RoadPatch, float>();
-            foreach (int r in Built)
-                for (int e = 0; e < 2; e++)
-                {
-                    bool atEnd = e == 1;
-                    if (roads.RoadEndJunction(r, atEnd) < 0) continue;
-                    if (!roads.EvaluateAlong(r, atEnd ? roads.RoadLength(r) : 0f, out var tip, out _, snapTerrain: false)) continue;
-                    float asphalt = tip.Y + roads.RoadSurfaceOffset(r);
-                    foreach (var pp in Patches)
-                    {
-                        if (fit.ContainsKey(pp) || pp.DistanceTo(tip.X, -tip.Z) > 0.5) continue;
-                        float h = pp.HeightAt(tip.X, -tip.Z);
-                        if (!float.IsNaN(h)) fit[pp] = asphalt - h;
-                        break;
-                    }
-                }
-            // ⚠ THE PLAIN-ASPHALT BAND, which is why a patch does not wear the road texture whole: road_0 is
-            // dashes and a yellow centre line running ALONG it, so tiling it over an intersection paints lane
-            // markings straight across the junction. RegionStreamer solves this for the infinite world by
-            // sampling only u 4/256..56/256 -- the asphalt between the left edge and the first dash -- and
-            // MIRRORING it, so it tiles with no seam. Same band, same reason.
+            var fit = FitShifts(roads, surf);
+            // ⚠ THE PLAIN-ASPHALT BAND: road_0 is dashes and a yellow centre line running ALONG it, so
+            // tiling the texture whole over an intersection paints lane markings across the junction.
+            // RegionStreamer samples only u 4/256..56/256 -- the asphalt between the left edge and the first
+            // dash -- and MIRRORS it so it tiles with no seam. Same band, same reason.
             const float U0 = 4f / 256f, U1 = 56f / 256f;
             float tile = (U1 - U0) * 2f * 2f * Mathf.Max(1f, half);   // metres across one mirrored tile
             int made = 0;
@@ -534,11 +518,55 @@ namespace UnturnedGodot
                     // simply not drawn, which is the same failure the left-hand pavement had.
                     bool keep = (V[c] - V[a]).Cross(V[b] - V[a]).Y >= 0f;
                     int i1 = keep ? b : c, i2 = keep ? c : b;
-                    st.SetUV(UV[a]); st.AddVertex(V[a]);
-                    st.SetUV(UV[i1]); st.AddVertex(V[i1]);
-                    st.SetUV(UV[i2]); st.AddVertex(V[i2]);
+                    // ⚠⚠ NORMAL UP, EXPLICITLY -- not GenerateNormals. A node's patch is a FAN of triangles
+                    // radiating from the middle, and per-face normals over vertices that are not exactly
+                    // coplanar light each wedge of that fan slightly differently: dark wedges spreading from
+                    // the junction, which read as holes beside every mouth. They are not holes -- a coverage
+                    // sweep of the junctions found 0 enclosed bare points in 52,800 -- they are the fan's own
+                    // shading. RegionStreamer sets Vector3.Up on its patches for the same reason.
+                    st.SetNormal(Vector3.Up); st.SetUV(UV[a]); st.AddVertex(V[a]);
+                    st.SetNormal(Vector3.Up); st.SetUV(UV[i1]); st.AddVertex(V[i1]);
+                    st.SetNormal(Vector3.Up); st.SetUV(UV[i2]); st.AddVertex(V[i2]);
                 }
-                st.GenerateNormals();
+                // ⚠⚠ THE PATCH'S EDGE BEVEL, which I skipped when first building these and which is what
+                // master kept seeing: "theres big gaps between the road spline and the merged mesh area".
+                // They are not gaps -- a coverage sweep found 0 enclosed bare points in 52,800 -- and they
+                // are not shadows either, since they survive with every prop removed. A patch's open edge is
+                // a 9 cm cliff standing on ground that GradeTerrain never conformed (it conforms to the
+                // ROADS), so you see the drop and the dark band under it all the way round each mouth.
+                // RegionStreamer hangs the same bevel on its patches; the data for it has been sitting in
+                // p.Skirts the whole time.
+                if (p.Skirts != null)
+                {
+                    float bev = 2f * SDG.Unturned.InfiniteRoads.Thickness(SDG.Unturned.RoadKind.Main);
+                    float run = SDG.Unturned.InfiniteRoads.BevelRun(SDG.Unturned.RoadKind.Main);
+                    var down = new Vector3(0f, -bev, 0f);
+                    for (int sk = 0; sk < p.Skirts.Length; sk++)
+                    {
+                        var ids = p.Skirts[sk];
+                        if (ids == null) continue;
+                        for (int q = 0; q + 1 < ids.Length; q++)
+                        {
+                            if (ids[q] >= V.Length || ids[q + 1] >= V.Length) continue;
+                            // ⚠ the outward normals are in InfiniteRoads' frame: z negates coming out of it
+                            var na = new Vector3(p.SkirtNX[sk][q], 0f, -p.SkirtNZ[sk][q]);
+                            var nb = new Vector3(p.SkirtNX[sk][q + 1], 0f, -p.SkirtNZ[sk][q + 1]);
+                            Vector3 a2 = V[ids[q]], b2 = V[ids[q + 1]];
+                            Vector3 fa = a2 + na * run + down, fb = b2 + nb * run + down;
+                            var la = (na * (bev / run) + Vector3.Up).Normalized();
+                            var lb = (nb * (bev / run) + Vector3.Up).Normalized();
+                            void Face(Vector3 x, Vector3 y2, Vector3 z2, Vector3 nx, Vector3 ny, Vector3 nz)
+                            {
+                                bool keep2 = (z2 - x).Cross(y2 - x).Dot(nx) >= 0f;
+                                st.SetNormal(nx); st.SetUV(UV[ids[q]]); st.AddVertex(x);
+                                st.SetNormal(keep2 ? ny : nz); st.SetUV(UV[ids[q]]); st.AddVertex(keep2 ? y2 : z2);
+                                st.SetNormal(keep2 ? nz : ny); st.SetUV(UV[ids[q]]); st.AddVertex(keep2 ? z2 : y2);
+                            }
+                            Face(fa, a2, fb, la, la, lb);
+                            Face(a2, b2, fb, la, lb, lb);
+                        }
+                    }
+                }
                 var mesh = st.Commit();
                 if (mesh == null || mesh.GetSurfaceCount() == 0) continue;
                 var mi = new MeshInstance3D { Name = $"Junction_Patch_{made}", Mesh = mesh };
@@ -603,6 +631,90 @@ namespace UnturnedGodot
                 }
             PaintPieces = BuildMarkMeshes(parent, roads, fit);   // counted separately: paint is not pavement
             CrossingPieces = BuildCrossings(parent, roads);
+            // ⚠⚠ COVERAGE, NOT JUST THE SEAM AT THE CUT. The seam probe samples the road's END cross-section
+            // and reported 0.0 cm while master could see holes -- because a hole BESIDE the mouth, between a
+            // fillet and a road's flank, is nowhere near that line.
+            // ⚠ AND "BARE" IS NOT "A HOLE": most of a junction's surroundings is grass by design, and a first
+            // version of this called 20% of the area a defect. A hole is bare ground ENCLOSED by paving, so
+            // the test is whether a bare point's neighbours are covered -- which is what you can see.
+            {
+                int holes = 0, tested = 0; var worstHole = Vector3.Zero; float worstR = 0f;
+                for (int j = 0; j < roads.JunctionCount; j++)
+                {
+                    var es = roads.JunctionEdges(j);
+                    if (es.Count < 2) continue;
+                    var jp = roads.JunctionPos(j);
+                    float reach = 0f;
+                    foreach (var (rr, atEnd) in es)
+                    {
+                        if (!roads.EvaluateAlong(rr, atEnd ? roads.RoadLength(rr) : 0f, out var tp, out _, snapTerrain: false)) continue;
+                        reach = Mathf.Max(reach, new Vector2(tp.X - jp.X, tp.Z - jp.Z).Length());
+                    }
+                    if (reach < 2f) continue;
+                    const int A = 96; float dr = 0.5f;
+                    int R = Mathf.Max(2, Mathf.CeilToInt(reach / dr));
+                    var cov = new bool[A, R + 1];
+                    for (int ai = 0; ai < A; ai++)
+                        for (int ri = 0; ri <= R; ri++)
+                        {
+                            float a = Mathf.Tau * ai / A, rad = ri * dr;
+                            var q = new Vector3(jp.X + Mathf.Cos(a) * rad, 0f, jp.Z + Mathf.Sin(a) * rad);
+                            bool c = false;
+                            foreach (var pp in Patches) if (pp.DistanceTo(q.X, -q.Z) <= 0.01) { c = true; break; }
+                            if (!c && roads.NearestPointOnSpline(q, 80f, out int nr, out _, out _, out var np))
+                                c = new Vector2(q.X - np.X, q.Z - np.Z).Length() <= roads.RoadHalfWidth(nr) + 0.05f;
+                            cov[ai, ri] = c;
+                        }
+                    for (int ai = 0; ai < A; ai++)
+                        for (int ri = 1; ri < R; ri++)
+                        {
+                            tested++;
+                            if (cov[ai, ri]) continue;
+                            int n = 0;
+                            if (cov[ai, ri - 1]) n++;
+                            if (cov[ai, ri + 1]) n++;
+                            if (cov[(ai + 1) % A, ri]) n++;
+                            if (cov[(ai + A - 1) % A, ri]) n++;
+                            if (n < 3) continue;                       // open grass, not an enclosed hole
+                            holes++;
+                            float rad = ri * dr;
+                            if (rad > worstR) { worstR = rad; worstHole = new Vector3(jp.X + Mathf.Cos(Mathf.Tau * ai / A) * rad, jp.Y, jp.Z + Mathf.Sin(Mathf.Tau * ai / A) * rad); }
+                        }
+                }
+                // ⚠⚠ AND IS THE GROUND POKING THROUGH? Coverage is a PLAN test and says nothing about height.
+                // Four guesses at the dark wedges round every mouth -- shadows, patch normals, the patch's
+                // missing edge bevel, the pavements' open ends -- all missed, and each cost a render. The
+                // question none of them asked: where the junction IS paved, is the terrain under it actually
+                // below the paving?
+                float worstPoke = -99f; var pokeAt = Vector3.Zero;
+                var terrNow = Terrain.Active;
+                if (terrNow != null)
+                    for (int j2 = 0; j2 < roads.JunctionCount; j2++)
+                    {
+                        var e2 = roads.JunctionEdges(j2);
+                        if (e2.Count < 2) continue;
+                        var jp2 = roads.JunctionPos(j2);
+                        for (float a2 = 0; a2 < Mathf.Tau; a2 += Mathf.Tau / 72f)
+                            for (float rad2 = 1f; rad2 <= 24f; rad2 += 0.5f)
+                            {
+                                var q2 = new Vector3(jp2.X + Mathf.Cos(a2) * rad2, 0f, jp2.Z + Mathf.Sin(a2) * rad2);
+                                float paved = float.NaN;
+                                foreach (var pp in Patches)
+                                    if (pp.DistanceTo(q2.X, -q2.Z) <= 0.01)
+                                    { float hh = pp.HeightAt(q2.X, -q2.Z); if (!float.IsNaN(hh)) paved = hh + (fit.TryGetValue(pp, out float pf2) ? pf2 : surf); break; }
+                                if (float.IsNaN(paved) && roads.NearestPointOnSpline(q2, 80f, out int nr2, out _, out _, out var np2)
+                                    && new Vector2(q2.X - np2.X, q2.Z - np2.Z).Length() <= roads.RoadHalfWidth(nr2))
+                                    paved = np2.Y + roads.RoadSurfaceOffset(nr2);
+                                if (float.IsNaN(paved)) continue;
+                                float poke = terrNow.SampleHeight(q2.X, q2.Z) - paved;
+                                if (poke > worstPoke) { worstPoke = poke; pokeAt = new Vector3(q2.X, paved, q2.Z); }
+                            }
+                    }
+                Log.Print($"[towngrid] junction ground: worst terrain-above-paving {worstPoke * 100f:0.0} cm at {pokeAt}"
+                        + (worstPoke > 0f ? "  <-- GROUND IS POKING THROUGH" : "  (all paving clears its ground)"));
+                Log.Print($"[towngrid] junction coverage: {holes} ENCLOSED bare points of {tested} tested"
+                        + (holes > 0 ? $", furthest at {worstHole} ({worstR:0.0} m from its node)" : " -- no holes"));
+            }
             Log.Print($"[towngrid] patch/road seam: height {worst * 100f:0.0} cm, IN-PLAN GAP {worstGap * 100f:0.0} cm "
                     + $"over {probed}/{gapProbes} probes (surf {surf:0.000}, lift {PatchLift:0.000}) -- {worstWhy}; widest gap {gapWhy}");
             return made;
@@ -672,12 +784,46 @@ namespace UnturnedGodot
         public int PaintPieces;
         public int CrossingPieces;
 
-        /// <summary>A last hair of clearance over the asphalt. ⚠ SMALL ON PURPOSE: this is a SEAM, not an
-        /// overlap -- the patch and the road meet edge to edge, so there is nothing to z-fight with and every
-        /// millimetre here is a lip you can see. It exists only to keep the join from landing exactly on the
-        /// road's own surface where the two disagree by a float's worth.</summary>
-        public float PatchLift = 0.002f;
+        /// <summary>How far the patch rides over the asphalt it overlaps.
+        ///
+        /// ⚠⚠ 2 mm WAS RIGHT AND THEN STOPPED BEING RIGHT. It was chosen when the patch met the road EDGE TO
+        /// EDGE -- nothing to z-fight, and every millimetre a visible lip. PatchOverlap came later, to bury
+        /// the road's open slab end under the patch, and that turned the join into a genuine OVERLAP: 35 cm
+        /// of two surfaces 2 mm apart, seen at a grazing angle, which the depth buffer resolves per pixel.
+        /// The serrated dark bands along every mouth were that fight -- not a hole (coverage: 0 enclosed bare
+        /// points in 52,800), not the ground (the paving clears it by 12 cm), not shadows, normals, the
+        /// patch's bevel or the pavements' ends, all of which were measured and ruled out first.
+        /// ⚠ The lesson is the one that cost five renders: a constant justified by a condition has to be
+        /// revisited when that condition changes. "There is nothing to z-fight with" stopped being true the
+        /// day the overlap was added, and nothing pointed at the number.</summary>
+        public float PatchLift = 0.012f;
         static float PingPong(float t) { t = Mathf.Abs(t) % 2f; return t <= 1f ? t : 2f - t; }
+
+        /// <summary>How far each patch must be shifted to meet the asphalt it joins, measured per patch.
+        /// ⚠ SHARED BY THE MESH AND THE CONFORM. They used different numbers for one frame -- the mesh used
+        /// this fit (0.090) and the conform used the raw surface offset (0.220) -- and the ground came out
+        /// 13 cm too high, poking through the paving it was meant to sit under.</summary>
+        Dictionary<SDG.Unturned.RoadPatch, float> FitShifts(RoadField roads, float fallback)
+        {
+            var fit = new Dictionary<SDG.Unturned.RoadPatch, float>();
+            foreach (int r in Built)
+                for (int e = 0; e < 2; e++)
+                {
+                    bool atEnd = e == 1;
+                    if (roads.RoadEndJunction(r, atEnd) < 0) continue;
+                    if (!roads.EvaluateAlong(r, atEnd ? roads.RoadLength(r) : 0f, out var tip, out _, snapTerrain: false)) continue;
+                    float asphalt = tip.Y + roads.RoadSurfaceOffset(r);
+                    foreach (var pp in Patches)
+                    {
+                        if (fit.ContainsKey(pp) || pp.DistanceTo(tip.X, -tip.Z) > 0.5) continue;
+                        float h = pp.HeightAt(tip.X, -tip.Z);
+                        if (!float.IsNaN(h)) fit[pp] = asphalt - h;
+                        break;
+                    }
+                }
+            foreach (var pp in Patches) if (!fit.ContainsKey(pp)) fit[pp] = fallback;
+            return fit;
+        }
 
         /// <summary>Conform the ground to the streets. Call it AFTER Generate and BEFORE LaySidewalks: the
         /// pavement's skirt is cut to the ground it finds, so grading afterwards would leave every ribbon
@@ -687,12 +833,36 @@ namespace UnturnedGodot
             if (!GradeSite || terr == null || roads == null || _profiles.Count == 0) return false;
             float widest = 0f;
             foreach (int r in Built) widest = Mathf.Max(widest, roads.RoadHalfWidth(r));
-            var sunk = new List<List<Vector3>>(_profiles.Count);
+            var sunk = new List<List<Vector3>>(_profiles.Count + Patches.Count);
             foreach (var line in _profiles)
             {
                 var one = new List<Vector3>(line.Count);
                 foreach (var q in line) one.Add(new Vector3(q.X, q.Y - GradeDrop, q.Z));
                 sunk.Add(one);
+            }
+            // ⚠⚠ AND THE PATCHES, which were never graded at all. GradeTerrain conformed to the road
+            // CENTRELINES only, so the ground around every junction kept whatever height it had -- measured,
+            // up to 28 cm BELOW the paving. That is not a hole and nothing pokes through (a coverage sweep
+            // found 0 enclosed bare points in 52,800, and a poke sweep says the paving clears its ground
+            // everywhere); it is the slab's own EDGE, on show all the way round each mouth because the land
+            // falls away from it. Four guesses missed this -- shadows, patch normals, the patch's bevel, the
+            // pavements' open ends -- and the measurement found it.
+            // The boundary loops are already in the patch: Skirts is exactly the list of its open edges.
+            float fallbackLift = roads.RoadSurfaceOffsetOfMaterial(MainMaterial);
+            var pfit = FitShifts(roads, fallbackLift);
+            foreach (var pp in Patches)
+            {
+                if (pp?.Skirts == null || pp.X == null) continue;
+                float shift = pfit.TryGetValue(pp, out float pf) ? pf : fallbackLift;
+                foreach (var ids in pp.Skirts)
+                {
+                    if (ids == null || ids.Length < 2) continue;
+                    var loop = new List<Vector3>(ids.Length);
+                    foreach (int ix in ids)
+                        if (ix >= 0 && ix < pp.X.Length)
+                            loop.Add(new Vector3((float)pp.X[ix], pp.Y[ix] + shift - GradeDrop, -(float)pp.Z[ix]));
+                    if (loop.Count >= 2) sunk.Add(loop);
+                }
             }
             terr.ConformToPolylines(sunk, widest + GradeReach, GradeFeather);
             return true;
@@ -707,6 +877,7 @@ namespace UnturnedGodot
         {
             if (parent == null || roads == null) return 0;
             var walk = proto ?? new EditorSidewalk();
+            walk.KerbHeight = PavementKerb;   // ⚠ ONE number for the pavement and for whatever stands on it
             if (walk.GetParent() == null) parent.AddChild(walk);
             int made = 0;
             foreach (int r in Built)          // ⚠ OUR streets, not every road in the field
@@ -969,7 +1140,7 @@ namespace UnturnedGodot
                         // a runway; staggering them is what a real street does and halves the count.
                         int side = (k % 2 == 0) ? 1 : -1;
                         var at = pos + right * (side * (half + RoadGapForLights + LampSetback));
-                        if (terr != null) at.Y = Mathf.Max(at.Y, terr.SampleHeight(at.X, at.Z));
+                        at.Y = Mathf.Max(pos.Y, terr != null ? terr.SampleHeight(at.X, at.Z) : pos.Y) + PavementKerb;
                         // the arm has to reach OVER the carriageway, so the lamp faces across the road
                         float yaw = ProcIsland.YawForDir(-right.X * side, right.Z * side);
                         var basis = SplineTiling.SeatedBasis(terr, at, yaw, 6f, out _);
@@ -994,7 +1165,7 @@ namespace UnturnedGodot
                     var side = ((h >> 40) & 1UL) == 0 ? 1f : -1f;
                     var rr = new Vector3(tan.Z, 0f, -tan.X).Normalized();       // symmetric use: either kerb will do
                     var at = pos + rr * (side * (roads.RoadHalfWidth(r) + RoadGapForLights + HydrantSetback));
-                    if (terr != null) at.Y = Mathf.Max(at.Y, terr.SampleHeight(at.X, at.Z));
+                    at.Y = Mathf.Max(pos.Y, terr != null ? terr.SampleHeight(at.X, at.Z) : pos.Y) + PavementKerb;
                     var hb = SplineTiling.SeatedBasis(terr, at, Unit(h, 32) * 360f, 6f, out _);
                     var hn = objs.Place(HydrantProp, at, hb);
                     if (hn != null) { into?.Add(hn); made++; }
@@ -1026,7 +1197,7 @@ namespace UnturnedGodot
                         // ⚠ ON THE DRIVER'S RIGHT, which is the kerb a mast stands on; its arm then reaches
                         // left over the lanes the drivers approaching here are in.
                         var at = node0 - fwd * back + right * (half + RoadGapForLights + 0.6f);
-                        if (terr != null) at.Y = Mathf.Max(at.Y, terr.SampleHeight(at.X, at.Z));
+                        at.Y = Mathf.Max(pos.Y, terr != null ? terr.SampleHeight(at.X, at.Z) : pos.Y) + PavementKerb;
                         // ⚠ THE MAST REACHES ACROSS THE ROAD, NOT BACK ALONG IT. Measured off the props:
                         // both run their POLE along local +Z and their ARM along local +Y, which the 270
                         // degree stand turns into world -Z -- so the yaw is choosing where the ARM points.
@@ -1041,9 +1212,12 @@ namespace UnturnedGodot
                 }
             return made;
         }
-        public bool StreetLights = true, TrafficLights = true;
+        /// <summary>UG_TOWNNOPROPS=1 drops every pole and hydrant: the control for "is that dark shape a
+        /// hole in the mesh, or a mast's shadow lying in it".</summary>
+        public static bool NoProps = System.Environment.GetEnvironmentVariable("UG_TOWNNOPROPS") == "1";
+        public bool StreetLights = !NoProps, TrafficLights = !NoProps;
         /// <summary>Hydrants, and how often a street gets one. Uncommon by default.</summary>
-        public bool Hydrants = true;
+        public bool Hydrants = !NoProps;
         public float HydrantChance = 0.35f;
         public float HydrantSetback = 0.8f;
         public string HydrantProp = "Fire_Hydrant_0";
@@ -1157,6 +1331,15 @@ namespace UnturnedGodot
         /// left side driving". Check it against Godot's own axes rather than by rotating a vector in your
         /// head: forward is -Z and right is +X, and (0,0,-1) x (0,1,0) = (1,0,0).</summary>
         static Vector3 RightOf(Vector3 fwd) => new Vector3(-fwd.Z, 0f, fwd.X).Normalized();
+
+        /// <summary>How far the pavement stands proud of the road.
+        ///
+        /// ⚠⚠ ANYTHING ON THE PAVEMENT IS PLACED AT THIS HEIGHT, NOT AT THE ROAD'S. A hydrant seated on the
+        /// terrain stands 0.4 m inside the slab it is supposed to be bolted to -- a 1.15 m prop with 0.75 m
+        /// showing, which is exactly what "hydrants look sunk into the ground" is. The lamps and the signal
+        /// masts stand on the same pavement and had the same error; their poles are tall enough that nobody
+        /// had noticed yet.</summary>
+        public float PavementKerb = 0.4f;
 
         public bool Crossings = true;
         /// <summary>Zebra bars, or just the two outlines of the walkway.</summary>

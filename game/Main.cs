@@ -10628,9 +10628,13 @@ namespace UnturnedGodot
                         + " -- these are straight by construction, so any bow is spline wobble");
             }
             int patches = town.BuildPatchMeshes(editor, rf);   // the asphalt paving each node, now the arms stop short of it
-            int walks = town.LaySidewalks(editor, rf);
+            // UG_TOWNNOWALK=1: no pavements at all. An ABLATION, because five measured explanations for the
+            // dark wedges at every mouth have now missed and the only honest next question is which mesh the
+            // pixels belong to.
+            bool noWalk = System.Environment.GetEnvironmentVariable("UG_TOWNNOWALK") == "1";
+            int walks = noWalk ? 0 : town.LaySidewalks(editor, rf);
             var walkProto = new EditorSidewalk(); editor.AddChild(walkProto);
-            int corners = town.LaySidewalkCorners(editor, rf, walkProto);
+            int corners = noWalk ? 0 : town.LaySidewalkCorners(editor, rf, walkProto);
             int lights = town.PlaceLights(rf, editor.Objects);
             // ⚠ MEASURE THE KERB LINE ITSELF. The streets' own bow is 0.0 cm, so "sidewalks seem to wiggle"
             // is not the road centreline -- it has to be the pavement. A wiggle is a run of KINKS, so report
