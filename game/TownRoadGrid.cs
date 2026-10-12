@@ -35,7 +35,11 @@ namespace UnturnedGodot
         /// <summary>Half the town's span, metres.</summary>
         public float Extent = 240f;
         /// <summary>Nominal block size. The node spacing before jitter.</summary>
-        public float Spacing = 64f;
+        /// <summary>Nominal block size. ⚠ IT HAS TO CLEAR THE JUNCTIONS. tiny's node geometry cuts each arm
+        /// back past its fillets, which on an 18 m street costs about 18 m per end -- so 64 m blocks came out
+        /// as 19 m of street between two junctions, a town that is mostly intersection. 110 m is a town block
+        /// that still looks like one once its corners are rounded.</summary>
+        public float Spacing = 110f;
         /// <summary>How far a LINE may wander from its lattice position, as a fraction of Spacing.
         ///
         /// ⚠⚠ PER LINE, NOT PER NODE, and that is the whole difference between an irregular grid and a wiggly
@@ -91,12 +95,14 @@ namespace UnturnedGodot
         {
             public int Nodes, NodesRejected, Roads, SpansRejected;
             public int Junctions, Crossroads, Tees, Corners, DeadEnds;
+            /// <summary>Nodes paved with one of tiny's junction patches, and spans a junction ate entirely.</summary>
+            public int Patched, CutAway;
             public float Metres;
             public ulong Checksum;
             public override string ToString() =>
                 $"{Roads} roads ({Metres:0} m), {Junctions} junctions = {Crossroads} crossroads / {Tees} tees / "
               + $"{Corners} corners / {DeadEnds} dead ends; {Nodes} nodes ({NodesRejected} rejected), "
-              + $"{SpansRejected} spans rejected; checksum {Checksum:X16}";
+              + $"{SpansRejected} spans rejected ({CutAway} eaten by their junctions); {Patched} nodes patched; checksum {Checksum:X16}";
         }
 
         /// <summary>splitmix64. ⚠ NOT GetHashCode (salted per process) and NOT System.Random (no cross-version
@@ -122,6 +128,54 @@ namespace UnturnedGodot
         }
 
         struct Node { public Vector3 P; public bool Ok; public int Junction; }
+
+        /// <summary>A planned street before it is cut: the two nodes it joins, its full polyline, and how much
+        /// each end gives up to the junction there.</summary>
+        struct Span
+        {
+            public int AI, AJ, BI, BJ, Axis; public bool Main;
+            public List<Vector3> Pts; public float Len, TrimA, TrimB;
+        }
+
+        static IEnumerable<(Span sp, int idx)> Enumerate(List<Span> l) { for (int i = 0; i < l.Count; i++) yield return (l[i], i); }
+        static void Add<TK, TV>(Dictionary<TK, List<TV>> d, TK k, TV v)
+        { if (!d.TryGetValue(k, out var l)) d[k] = l = new List<TV>(); l.Add(v); }
+
+        /// <summary>Whether to use tiny's node geometry (fillet-aware cuts + a patch paving the middle) rather
+        /// than a plain kerb-line setback. UG_TOWNNOPATCH=1 turns it off, which is the control: the same town
+        /// with overlapping arms, for a before/after at one camera.</summary>
+        public bool UseNodePatches = System.Environment.GetEnvironmentVariable("UG_TOWNNOPATCH") != "1";
+        /// <summary>The junction patches this grid produced, for the caller to build meshes from.</summary>
+        public readonly List<SDG.Unturned.RoadPatch> Patches = new();
+
+        /// <summary>A polyline with `a` metres taken off its start and `b` off its end, cut ON the line rather
+        /// than at the nearest existing point -- a 12 m point spacing would otherwise round a 9 m cut to 12 or
+        /// to 0, and at a junction that is the difference between meeting the kerb and crossing it.</summary>
+        static List<Vector3> CutBack(List<Vector3> pts, float a, float b)
+        {
+            if (pts == null || pts.Count < 2) return null;
+            float total = 0f;
+            for (int i = 0; i + 1 < pts.Count; i++) total += Flat(pts[i], pts[i + 1]);
+            if (total - a - b < 4f) return null;            // all intersection: this span does not exist
+            var cut = new List<Vector3>();
+            float want0 = Mathf.Max(0f, a), want1 = total - Mathf.Max(0f, b), run = 0f;
+            Vector3 At(Vector3 p, Vector3 q, float f) => new Vector3(Mathf.Lerp(p.X, q.X, f), Mathf.Lerp(p.Y, q.Y, f), Mathf.Lerp(p.Z, q.Z, f));
+            for (int i = 0; i + 1 < pts.Count; i++)
+            {
+                float segLen = Flat(pts[i], pts[i + 1]);
+                if (segLen < 1e-5f) continue;
+                float s0 = run, s1 = run + segLen;
+                if (s1 >= want0 && s0 <= want1)
+                {
+                    float f0 = Mathf.Clamp((want0 - s0) / segLen, 0f, 1f), f1 = Mathf.Clamp((want1 - s0) / segLen, 0f, 1f);
+                    if (cut.Count == 0) cut.Add(At(pts[i], pts[i + 1], f0));
+                    cut.Add(At(pts[i], pts[i + 1], f1));
+                }
+                run = s1;
+            }
+            return cut.Count >= 2 ? cut : null;
+        }
+        static float Flat(Vector3 p, Vector3 q) => new Vector2(q.X - p.X, q.Z - p.Z).Length();
 
         // ⚠ ALL THREE TAKE LATTICE-CENTRED INDICES (i, j already offset by -n, so the middle line is 0).
         // The first cut passed raw grid indices to one and centred ones to another, which is the sort of
@@ -203,15 +257,11 @@ namespace UnturnedGodot
                     grid[gi, gj] = node;
                 }
 
-            // ---- 2. SPANS. Rows first, then columns; identical treatment, so the grid has no favoured axis.
-            var endsAt = new Dictionary<int, int>();   // junction -> bound ends, for the topology census
-            void Bind(ref Node nd, int road, bool atEnd, Vector3 geomAt)
-            {
-                if (nd.Junction < 0) nd.Junction = roads.AddJunction(nd.P);
-                roads.BindRoadEndAt(road, atEnd, nd.Junction, geomAt);   // bound at the NODE, drawn to the KERB
-                endsAt[nd.Junction] = endsAt.TryGetValue(nd.Junction, out int c) ? c + 1 : 1;
-            }
-
+            // ---- 2. SPANS, IN TWO PASSES. ⚠ THE ORDER IS FORCED BY tiny's NODE GEOMETRY: it is handed whole
+            // arms and tells you how far to cut each one, so every span's full polyline has to exist BEFORE
+            // any road is built. The old single pass built each road as it went and could only ever apply a
+            // setback it had guessed itself.
+            var plan = new List<Span>();
             for (int axis = 0; axis < 2; axis++)
                 for (int line = 0; line < w; line++)
                 {
@@ -220,38 +270,107 @@ namespace UnturnedGodot
                     {
                         int ai = axis == 0 ? k : line, aj = axis == 0 ? line : k;
                         int bi = axis == 0 ? k + 1 : line, bj = axis == 0 ? line : k + 1;
-                        ref Node a = ref grid[ai, aj];
-                        ref Node b = ref grid[bi, bj];
-                        if (!a.Ok || !b.Ok) { rep.SpansRejected++; continue; }
-
-                        // ⭐ MEET AT THE EDGE, NOT THE MIDDLE. The arm that does NOT own a node stops at the
-                        // kerb of the street that does; only the through street keeps its centreline to the
-                        // node. Running every arm to the centre lays each one's last half-carriageway on top
-                        // of the others, which is the merged blob of tarmac at every junction.
-                        // ⚠ AND IT TAKES THE NODE'S HEIGHT, not the ground's at the pulled-back point: the
-                        // through street's surface is what the arm has to meet, so sampling raw terrain there
-                        // would put a step in the road exactly where the two join.
-                        var dir = new Vector3(b.P.X - a.P.X, 0f, b.P.Z - a.P.Z).Normalized();
-                        float backA = DominantAxis(ai - n, aj - n) == axis ? 0f : HalfAt(roads, ai - n, aj - n);
-                        float backB = DominantAxis(bi - n, bj - n) == axis ? 0f : HalfAt(roads, bi - n, bj - n);
-                        var startAt = new Vector3(a.P.X + dir.X * backA, a.P.Y, a.P.Z + dir.Z * backA);
-                        var endAt = new Vector3(b.P.X - dir.X * backB, b.P.Y, b.P.Z - dir.Z * backB);
-
-                        var pts = SpanPoints(startAt, endAt, heightAt, out float len);
+                        if (!grid[ai, aj].Ok || !grid[bi, bj].Ok) { rep.SpansRejected++; continue; }
+                        var pts = SpanPoints(grid[ai, aj].P, grid[bi, bj].P, heightAt, out float len);
                         if (pts == null) { rep.SpansRejected++; continue; }
-
-                        int road = roads.AddRoadFromPolyline(pts, main ? MainMaterial : StreetMaterial,
-                                                            loop: false, ignoreTerrain: !FollowTerrain);
-                        if (road < 0) { rep.SpansRejected++; continue; }
-                        Bind(ref a, road, false, startAt);
-                        Bind(ref b, road, true, endAt);
-                        Built.Add(road); _profiles.Add(pts);
-                        rep.Roads++; rep.Metres += len;
-                        foreach (var p in pts) rep.Checksum = Mix(rep.Checksum ^ (ulong)BitConverter.SingleToInt32Bits(p.X)
-                                                        ^ ((ulong)BitConverter.SingleToInt32Bits(p.Y) << 21)
-                                                        ^ ((ulong)BitConverter.SingleToInt32Bits(p.Z) << 42));
+                        plan.Add(new Span { AI = ai, AJ = aj, BI = bi, BJ = bj, Axis = axis, Main = main,
+                                            Pts = pts, Len = len, TrimA = 0f, TrimB = 0f });
                     }
                 }
+
+            // ---- 2b. THE NODES. Every span touching a node becomes an arm; tiny's geometry cuts them back
+            // past their fillets and hands back the patch that paves the middle. Where it declines -- too few
+            // arms, one too short to cut, a shape the fillets cannot close -- the span keeps the simple
+            // kerb-line setback, which is worse-looking but never leaves a hole.
+            var touching = new Dictionary<(int, int), List<(int span, bool atEnd)>>();
+            foreach (var (sp, idx) in Enumerate(plan))
+            {
+                Add(touching, (sp.AI, sp.AJ), (idx, false));
+                Add(touching, (sp.BI, sp.BJ), (idx, true));
+            }
+            Patches.Clear();
+            foreach (var kv in touching)
+            {
+                var here = kv.Value;
+                var node = grid[kv.Key.Item1, kv.Key.Item2];
+                bool done = false;
+                if (UseNodePatches && here.Count >= 2)
+                {
+                    var spokes = new List<SDG.Unturned.InfiniteRoads.TownArm>(here.Count);
+                    foreach (var (si, atEnd) in here)
+                    {
+                        var sp = plan[si];
+                        int m = sp.Pts.Count;
+                        var xs = new double[m]; var zs = new double[m]; var hs = new float[m];
+                        // ⚠ INTO InfiniteRoads' FRAME: its z is the NEGATED world z. Handing it world
+                        // coordinates mirrors the node, and a mirror swaps which side is counter-clockwise --
+                        // the ordering every fillet in there is built on.
+                        for (int q = 0; q < m; q++) { xs[q] = sp.Pts[q].X; zs[q] = -sp.Pts[q].Z; hs[q] = sp.Pts[q].Y; }
+                        spokes.Add(new SDG.Unturned.InfiniteRoads.TownArm(xs, zs, hs, atEnd,
+                                       roads.RoadHalfWidthOfMaterial(sp.Main ? MainMaterial : StreetMaterial)));
+                    }
+                    if (SDG.Unturned.InfiniteRoads.TownNode(spokes, node.P.X, -node.P.Z, out var cuts, out var patch)
+                        && cuts != null && cuts.Length == here.Count)
+                    {
+                        for (int q = 0; q < here.Count; q++)
+                        {
+                            var (si, atEnd) = here[q];
+                            var sp = plan[si];
+                            if (atEnd) sp.TrimB = (float)cuts[q]; else sp.TrimA = (float)cuts[q];
+                            plan[si] = sp;
+                        }
+                        Patches.Add(patch);
+                        rep.Patched++;
+                        done = true;
+                    }
+                }
+                if (!done)
+                    foreach (var (si, atEnd) in here)
+                    {
+                        var sp = plan[si];
+                        float back = DominantAxis(kv.Key.Item1 - n, kv.Key.Item2 - n) == sp.Axis
+                                   ? 0f : HalfAt(roads, kv.Key.Item1 - n, kv.Key.Item2 - n);
+                        if (atEnd) sp.TrimB = back; else sp.TrimA = back;
+                        plan[si] = sp;
+                    }
+            }
+
+            // ---- 2c. EMIT. Each span cut by whatever its two ends asked for, then bound at the NODE while
+            // its geometry stops at the cut.
+            var endsAt = new Dictionary<int, int>();   // junction -> bound ends, for the topology census
+            void Bind(ref Node nd, int road, bool atEnd, Vector3 geomAt)
+            {
+                if (nd.Junction < 0) nd.Junction = roads.AddJunction(nd.P);
+                roads.BindRoadEndAt(road, atEnd, nd.Junction, geomAt);   // bound at the NODE, drawn to the KERB
+                endsAt[nd.Junction] = endsAt.TryGetValue(nd.Junction, out int c) ? c + 1 : 1;
+            }
+            foreach (var sp in plan)
+            {
+                var pts = CutBack(sp.Pts, sp.TrimA, sp.TrimB);
+                if (pts == null) { rep.SpansRejected++; rep.CutAway++; continue; }
+                int road = roads.AddRoadFromPolyline(pts, sp.Main ? MainMaterial : StreetMaterial,
+                                                    loop: false, ignoreTerrain: !FollowTerrain);
+                if (road < 0) { rep.SpansRejected++; continue; }
+                ref Node a = ref grid[sp.AI, sp.AJ];
+                ref Node b = ref grid[sp.BI, sp.BJ];
+                Bind(ref a, road, false, pts[0]);
+                Bind(ref b, road, true, pts[^1]);
+                Built.Add(road); _profiles.Add(pts);
+                // ⚠ THE LENGTH THAT WAS BUILT, not the length that was planned. Reporting sp.Len counted the
+                // whole span including the part the junction ate, so the total went UP when the cuts came in.
+                float built = 0f;
+                for (int q = 0; q + 1 < pts.Count; q++) built += Flat(pts[q], pts[q + 1]);
+                rep.Roads++; rep.Metres += built;
+                foreach (var p in pts) rep.Checksum = Mix(rep.Checksum ^ (ulong)BitConverter.SingleToInt32Bits(p.X)
+                                                ^ ((ulong)BitConverter.SingleToInt32Bits(p.Y) << 21)
+                                                ^ ((ulong)BitConverter.SingleToInt32Bits(p.Z) << 42));
+            }
+
+            // ⚠ REBUILD ONCE EVERY BIND IS IN. Whether an end ramps depends on how many roads share its node,
+            // and the first road bound to a node sees a count of one -- its mesh was built before its
+            // neighbours existed. Without this pass the first arm at every junction keeps a ramp nobody can
+            // see the cause of.
+            foreach (int r in Built) roads.RebuildRoad(r);
 
             // ---- 3. CENSUS. Reported by DEGREE, because "47 junctions" says nothing about whether the thing
             // is a grid: a lattice that failed to bind would report the same count as one that worked, all of
@@ -321,6 +440,70 @@ namespace UnturnedGodot
             for (int i = 0; i < pts.Count; i++) pts[i] = new Vector3(pts[i].X, ys[i], pts[i].Z);
             return pts;
         }
+
+        /// <summary>Lay a mesh for every junction patch -- the asphalt that paves the middle of a node now
+        /// that the arms stop at its fillets. ⚠ WITHOUT THIS THE CUTS ARE A REGRESSION: trimmed arms and no
+        /// patch is a hole at every junction, which is worse than the overlap it replaced.</summary>
+        public int BuildPatchMeshes(Node3D parent, RoadField roads)
+        {
+            if (parent == null || roads == null || Patches.Count == 0) return 0;
+            var mat = roads.MaterialOfMaterial(MainMaterial);
+            float half = roads.RoadHalfWidthOfMaterial(MainMaterial);
+            // ⚠ THE PLAIN-ASPHALT BAND, which is why a patch does not wear the road texture whole: road_0 is
+            // dashes and a yellow centre line running ALONG it, so tiling it over an intersection paints lane
+            // markings straight across the junction. RegionStreamer solves this for the infinite world by
+            // sampling only u 4/256..56/256 -- the asphalt between the left edge and the first dash -- and
+            // MIRRORING it, so it tiles with no seam. Same band, same reason.
+            const float U0 = 4f / 256f, U1 = 56f / 256f;
+            float tile = (U1 - U0) * 2f * 2f * Mathf.Max(1f, half);   // metres across one mirrored tile
+            int made = 0;
+            foreach (var p in Patches)
+            {
+                if (p?.Tris == null || p.Tris.Length < 3 || p.X == null) continue;
+                var st = new SurfaceTool();
+                st.Begin(Mesh.PrimitiveType.Triangles);
+                var V = new Vector3[p.X.Length];
+                var UV = new Vector2[p.X.Length];
+                for (int i = 0; i < V.Length; i++)
+                {
+                    // back out of InfiniteRoads' frame: its z is the negated world z
+                    float lift = p.Lift != null && i < p.Lift.Length ? p.Lift[i] : 0f;
+                    V[i] = new Vector3((float)p.X[i], p.Y[i] + lift + PatchLift, -(float)p.Z[i]);
+                    float tu = ((float)(p.X[i] - p.AnchorX)) / tile, tv = ((float)(-p.Z[i] + p.AnchorZ)) / tile;
+                    UV[i] = new Vector2(U0 + PingPong(tu) * (U1 - U0), tv);
+                }
+                for (int t = 0; t + 2 < p.Tris.Length; t += 3)
+                {
+                    int a = p.Tris[t], b = p.Tris[t + 1], c = p.Tris[t + 2];
+                    if (a >= V.Length || b >= V.Length || c >= V.Length) continue;
+                    // ⚠ ORIENT BY THE WANTED NORMAL, never by the index order as given: the frame flip above
+                    // MIRRORS the patch, and a mirror reverses winding -- the surface would be back-facing and
+                    // simply not drawn, which is the same failure the left-hand pavement had.
+                    bool keep = (V[c] - V[a]).Cross(V[b] - V[a]).Y >= 0f;
+                    int i1 = keep ? b : c, i2 = keep ? c : b;
+                    st.SetUV(UV[a]); st.AddVertex(V[a]);
+                    st.SetUV(UV[i1]); st.AddVertex(V[i1]);
+                    st.SetUV(UV[i2]); st.AddVertex(V[i2]);
+                }
+                st.GenerateNormals();
+                var mesh = st.Commit();
+                if (mesh == null || mesh.GetSurfaceCount() == 0) continue;
+                var mi = new MeshInstance3D { Name = $"Junction_Patch_{made}", Mesh = mesh };
+                if (mat != null) mi.MaterialOverride = mat;
+                parent.AddChild(mi);
+                // Drivable, so it needs a collider and the road's own surface tag -- an untagged junction
+                // would give tyres and footsteps the default while the asphalt either side gives concrete.
+                var body = new StaticBody3D { Name = mi.Name + "_body", CollisionLayer = 1u << 0 };
+                body.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Concrete);
+                body.AddChild(new CollisionShape3D { Shape = mesh.CreateTrimeshShape() });
+                mi.AddChild(body);
+                made++;
+            }
+            return made;
+        }
+        /// <summary>How far a patch sits over the ground, matching the slab lift the roads get.</summary>
+        public float PatchLift = 0.02f;
+        static float PingPong(float t) { t = Mathf.Abs(t) % 2f; return t <= 1f ? t : 2f - t; }
 
         /// <summary>Conform the ground to the streets. Call it AFTER Generate and BEFORE LaySidewalks: the
         /// pavement's skirt is cut to the ground it finds, so grading afterwards would leave every ribbon

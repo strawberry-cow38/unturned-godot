@@ -50,34 +50,49 @@ namespace UnturnedGodot.Testing
             T.Check($"...and RoadField agrees they are joined ({rfA.Junctions().Count} nodes with 2+ roads)",
                     rfA.Junctions().Count >= repA.Crossroads);
 
-            // ⭐ JOINED, BUT MEETING AT THE KERB (strawberry 2026-10-11: "use tiny's road-merging mechanic
-            // instead of overlapping roads", pointing at the island junctions' rule -- "when roads intersect
-            // (for junctions) dont meet all the way in the middle, meet at the edges").
+            // ⭐ JOINED, BUT NOT OVERLAPPING (strawberry 2026-10-11: "use tiny's road-merging mechanic instead
+            // of overlapping roads").
             //
-            // ⚠ THIS REPLACES AN EARLIER CHECK THAT EVERY BOUND END SAT EXACTLY ON ITS NODE. That invariant
-            // was right for roads that overlap and is WRONG now, on purpose: the binding stays at the node
-            // because a router reads it, while the surface stops short because that is what you see. So the
-            // two cases are measured separately -- the through street reaches the middle, the arms do not --
-            // and an implementation that pulled BOTH back, or neither, fails one of them.
-            float worstThrough = 0f, leastArm = float.MaxValue; int through = 0, arms = 0;
-            foreach (var (pos, ends) in rfA.Junctions())
-                foreach (var (road, atEnd) in ends)
+            // ⚠ THIS CHECK HAS NOW BEEN WRONG TWICE, IN OPPOSITE DIRECTIONS, AND BOTH TIMES IT WAS THE TEST
+            // DESCRIBING THE OLD IMPLEMENTATION. First it asserted every bound end sat exactly ON its node,
+            // which was true of overlapping ribbons. Then it asserted a "through" street reached the node
+            // while the others stopped short, which was true of the hand-rolled dominant-axis setback. With
+            // tiny's node geometry neither holds: EVERY arm is cut back past its fillets and one patch paves
+            // the middle. What is invariant across all three is the thing worth asserting -- no arm's asphalt
+            // reaches the node, and the hole that leaves is paved.
+            float leastCut = float.MaxValue; int ends = 0;
+            foreach (var (pos, es) in rfA.Junctions())
+                foreach (var (road, atEnd) in es)
                 {
                     if (!rfA.EvaluateAlong(road, atEnd ? rfA.RoadLength(road) : 0f, out var p, out _, snapTerrain: false)) continue;
-                    float d = new Vector2(p.X - pos.X, p.Z - pos.Z).Length();
-                    if (d < 0.5f) { through++; worstThrough = Mathf.Max(worstThrough, d); }
-                    else { arms++; leastArm = Mathf.Min(leastArm, d); }
+                    leastCut = Mathf.Min(leastCut, new Vector2(p.X - pos.X, p.Z - pos.Z).Length());
+                    ends++;
                 }
-            T.Check($"the through street still reaches the node ({through} ends, worst {worstThrough:0.000} m off)",
-                    through > 0 && worstThrough < 0.05f);
-            T.Check($"...and the arms stop at its kerb instead of crossing it ({arms} ends, nearest {leastArm:0.0} m back)",
-                    arms > 0 && leastArm >= 6.0f);
-            // ⚠ AND THE GRAPH SURVIVED THE SETBACK. An arm that stops short must still be BOUND, or the town
+            T.Check($"every arm stops short of its node ({ends} ends, nearest {leastCut:0.0} m back)",
+                    ends > 0 && leastCut >= 9.2f);
+            T.Check($"...and every node it cut is paved ({repA.Patched} patches for {repA.Junctions} junctions)",
+                    repA.Patched > 0 && repA.Patched >= repA.Crossroads);
+            // ⚠ AND THE GRAPH SURVIVED THE CUTS. An arm that stops short must still be BOUND, or the town
             // looks right and routes as a pile of disconnected stubs.
             int bound = 0;
             for (int r = 0; r < rfA.RoadCount; r++)
                 if (rfA.RoadEndJunction(r, false) >= 0 && rfA.RoadEndJunction(r, true) >= 0) bound++;
             T.Check($"every street is still bound at both ends ({bound} of {rfA.RoadCount})", bound == rfA.RoadCount);
+
+            // THE FALLBACK still has to work: where tiny's geometry declines a node, the grid keeps the plain
+            // kerb-line setback rather than leaving arms crossing each other. Exercised explicitly, because in
+            // a healthy town it never runs and would rot unnoticed.
+            var rfF = Field();
+            var gf = Grid(); gf.UseNodePatches = false;
+            var repF = gf.Generate(rfF, flat);
+            T.Check($"the no-patch fallback still builds a joined town ({repF.Roads} roads, {repF.Junctions} junctions, {repF.Patched} patches)",
+                    repF.Roads > 0 && repF.Junctions > 0 && repF.Patched == 0);
+            float fallbackWorst = 0f;
+            foreach (var (pos, es) in rfF.Junctions())
+                foreach (var (road, atEnd) in es)
+                    if (rfF.EvaluateAlong(road, atEnd ? rfF.RoadLength(road) : 0f, out var p, out _, snapTerrain: false))
+                        fallbackWorst = Mathf.Max(fallbackWorst, new Vector2(p.X - pos.X, p.Z - pos.Z).Length());
+            T.Check($"...with its arms held off the centreline too ({fallbackWorst:0.0} m)", fallbackWorst > 1f);
 
             // ---- 1b. TINY'S NODE GEOMETRY, through the new facade (strawberry: "use tiny's road-merging
             // mechanic instead of overlapping roads"). Four arms meeting at the origin -- a plain crossroads --

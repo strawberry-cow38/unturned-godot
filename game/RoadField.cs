@@ -614,6 +614,13 @@ namespace UnturnedGodot
         /// the collider are built from, so anything placed at this offset lands exactly at the asphalt's edge.
         /// Exposed for EditorFenceRoad, which puts a guardrail a fixed clearance outside it: the alternative is
         /// a magic constant in the tool that silently stops matching the day a road material's width changes.</summary>
+        /// <summary>The material a road of this MATERIAL index wears -- so geometry laid BETWEEN roads (a
+        /// junction patch) can wear exactly the same one. ⚠ Not a lookalike: paved roads carry the
+        /// wet-surface shader, so a patch with its own StandardMaterial would stay dry and ring-free in rain
+        /// while the asphalt it is stitched into soaked, which reads as a hole in the weather.</summary>
+        public Material MaterialOfMaterial(int material) =>
+            material >= 0 && material < _mats.Count ? RoadMaterial3D(material, _mats[material].Concrete) : null;
+
         /// <summary>The same half-width for a MATERIAL rather than a placed road -- a generator picking a
         /// material needs to know how wide it will be before it has a road to ask about.</summary>
         public float RoadHalfWidthOfMaterial(int material) =>
@@ -1185,9 +1192,17 @@ namespace UnturnedGodot
             var rings = new List<Vector3[]>();
             var rn = new List<Vector3>();
             var rv = new List<float>();
-            if (!loop) { rings.Add(Cap(fC, fS, fN, fD, -1f, halfWidth, verticalSize, halfVerticalSize, verticalOffset)); rn.Add(fN); rv.Add(ringVd[0]); }
+            // ⚠ NO RAMP WHERE THE ROAD DOES NOT ACTUALLY END. The cap exists so a road that simply STOPS ramps
+            // down to the ground rather than ending in a 22 cm cliff. An end bound into a REAL junction (2+
+            // roads on the node) does not stop -- it meets the junction's asphalt at the same height -- and
+            // the ramp then dips UNDER it, which renders as a dark gash across every corner. tiny's own
+            // junctions leave the bevel off across a mouth for exactly this reason.
+            // A lone bound end still ramps: one road on a node is a loose end, not a junction.
+            bool JoinedAt(int j) => j >= 0 && JunctionEdges(j).Count >= 2;
+            bool capStart = !loop && !JoinedAt(r.StartJunction), capEnd = !loop && !JoinedAt(r.EndJunction);
+            if (capStart) { rings.Add(Cap(fC, fS, fN, fD, -1f, halfWidth, verticalSize, halfVerticalSize, verticalOffset)); rn.Add(fN); rv.Add(ringVd[0]); }
             for (int i = 0; i < ringV.Count; i++) { rings.Add(ringV[i]); rn.Add(ringN[i]); rv.Add(ringVd[i]); }
-            if (!loop) { rings.Add(Cap(lC, lS, lN, lD, 1f, halfWidth, verticalSize, halfVerticalSize, verticalOffset)); rn.Add(lN); rv.Add(ringVd[ringVd.Count - 1]); }
+            if (capEnd) { rings.Add(Cap(lC, lS, lN, lD, 1f, halfWidth, verticalSize, halfVerticalSize, verticalOffset)); rn.Add(lN); rv.Add(ringVd[ringVd.Count - 1]); }
             if (rings.Count < 2) return null;
 
             var verts = new List<Vector3>();
