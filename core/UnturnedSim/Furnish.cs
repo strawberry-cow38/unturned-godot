@@ -19,6 +19,9 @@ namespace UnturnedSim
         public FurniturePlan On;
         /// <summary>Hung on a wall (a flat television), its origin at the height it hangs: no floor of its own.</summary>
         public bool Mounted;
+        /// <summary>Hung from the ceiling (a ceiling light), its origin at the ceiling's underside and the piece below it:
+        /// no floor of its own, nothing it stands in the way of.</summary>
+        public bool Ceiling;
         public (float X, float Z) Front { get { var (c, s) = PlanTrig.CosSin(Yaw); return (-s, -c); } }
         public (float X, float Z) Right { get { var (c, s) = PlanTrig.CosSin(Yaw); return (c, -s); } }
         public (float X0, float Z0, float X1, float Z1) Footprint => FurnitureCatalog.Footprint(Name, X, Z, Yaw);
@@ -42,6 +45,10 @@ namespace UnturnedSim
             ["Wardrobe_0"] = new(-1.03f, 1.03f, -0.38f, 0.50f, 2.60f),
             ["Wardrobe_1"] = new(-1.03f, 1.03f, -0.38f, 0.50f, 2.60f),
             ["Lamp_1"] = new(-0.37f, 0.37f, -0.37f, 0.37f, 2.30f),         // floor lamp
+            // ceiling lights (astraclaw, from Lamp_1's shade): origin at the ceiling, the piece hanging below it -- so its
+            // highest point is 0; the pendant drops 0.94 m, the flush mount 0.28
+            ["Ceiling_Lamp_Pendant_0"] = new(-0.37f, 0.37f, -0.37f, 0.37f, 0f),
+            ["Ceiling_Lamp_Flush_0"] = new(-0.37f, 0.37f, -0.37f, 0.37f, 0f),
             ["Coat_0"] = new(-0.26f, 0.32f, -0.32f, 0.26f, 1.99f),
             ["Couch_0"] = new(-1.50f, 1.50f, -0.75f, 0.78f, 1.50f),
             ["Couch_1"] = new(-1.10f, 1.10f, -0.75f, 0.78f, 1.50f),
@@ -404,6 +411,55 @@ namespace UnturnedSim
                     case RoomKind.BreakRoom: BreakRoom(); break;
                 }
                 Jitter();
+                CeilingLights();
+            }
+
+            /// <summary>Ceiling lights (strawberry: "apply ceiling lights to ur layouts"): a pendant in the rooms you sit in
+            /// -- over the table where there is one -- a flush mount in the rest; one to about every 9 m of each of the
+            /// room's rectangles, at the middle of its share. Hung from the ceiling: the next floor's slab underside, a
+            /// flat roof's, or under a pitched roof the roof itself over the spot. Not under a stair hole or over a
+            /// flight, not in a wall.</summary>
+            // (every 6 m hung four to seven pendants in one living room, a grid like an office's)
+            const float LightEvery = 9f;
+            void CeilingLights()
+            {
+                bool pendant = _room.Kind is RoomKind.LivingRoom or RoomKind.DiningRoom or RoomKind.Bedroom or RoomKind.BreakRoom
+                               || (_room.Kind == RoomKind.Kitchen && _res.KitchenDiner);
+                string lamp = pendant ? "Ceiling_Lamp_Pendant_0" : "Ceiling_Lamp_Flush_0";
+                int f = _room.Floor;
+                bool top = f == _res.Floors - 1;
+                float Ceil(float x, float z)
+                {
+                    if (!top) return (f + 1) * Storey - Slab;                               // the floor above's underside
+                    if (_res.Roof == RoofKind.Flat) return (f + 1) * Storey;                 // the roof slab sits on the wall heads
+                    float h = RoofTopAt(_res, x, z);
+                    return float.IsNaN(h) ? (f + 1) * Storey : h;
+                }
+                var spots = new List<(float X, float Z)>();
+                foreach (var q in _room.Rects)
+                {
+                    float x0 = q.X0 * Cell, x1 = q.X1 * Cell, z0 = q.Z0 * Cell, z1 = q.Z1 * Cell;
+                    int nx = Math.Max(1, (int)MathF.Round((x1 - x0) / LightEvery)), nz = Math.Max(1, (int)MathF.Round((z1 - z0) / LightEvery));
+                    for (int i = 0; i < nx; i++)
+                        for (int j = 0; j < nz; j++)
+                            spots.Add((x0 + (x1 - x0) * (i + 0.5f) / nx, z0 + (z1 - z0) * (j + 0.5f) / nz));
+                }
+                // over the dining table, the spot nearest it moves there
+                var table = _mine.FirstOrDefault(m => m.Name is "Table_Wood_1" or "Table_Wood_0" && (_room.Kind is RoomKind.DiningRoom or RoomKind.Kitchen or RoomKind.BreakRoom));
+                if (table != null && spots.Count > 0)
+                {
+                    int k = spots.Select((p, i) => (d: (p.X - table.X) * (p.X - table.X) + (p.Z - table.Z) * (p.Z - table.Z), i)).OrderBy(t => t.d).First().i;
+                    spots[k] = (table.X, table.Z);
+                }
+                foreach (var (x, z) in spots)
+                {
+                    var fp = FurnitureCatalog.Footprint(lamp, x, z, 0f);
+                    var grown = (fp.X0 - 0.6f, fp.Z0 - 0.6f, fp.X1 + 0.6f, fp.Z1 + 0.6f);
+                    if (_p.StairRects.Any(r => Overlaps(grown, r)) || _p.WallRects.Any(r => Overlaps(fp, r))) continue;
+                    var m = new FurniturePlan { Name = lamp, X = x, Y = Ceil(x, z), Z = z, Yaw = 0f, Floor = f, Room = _room, Ceiling = true };
+                    _mine.Add(m);
+                    _res.Furniture.Add(m);
+                }
             }
 
             /// <summary>What gets moved in use stands a little off square (strawberry: "allow furniture to have slight yaw
@@ -430,7 +486,7 @@ namespace UnturnedSim
                     Recount(before);
                     var after = FurnitureCatalog.Footprint(m.Name, nx, nz, nyaw);
                     bool ok = Clear(m.Name, nx, nz, nyaw) && !HitsPiece(m.Name, nx, nz, nyaw, m) && !_p.StairRects.Any(r => Overlaps(after, r))
-                              && !InSwing(after, m);
+                              && !_p.WallRects.Any(r => Overlaps(after, r)) && !InSwing(after, m);
                     if (ok)
                     {
                         var (ox, oz, oyaw) = (m.X, m.Z, m.Yaw);
@@ -785,8 +841,16 @@ namespace UnturnedSim
                 float minSide = _room.Rects.Min(r => Math.Min(r.X1 - r.X0, r.Z1 - r.Z0)) * Cell;
                 // a double where it fits, on a roll (strawberry: "bedrooms may be single or double bed")
                 string bed = minSide >= 4.5f && _area >= 20f && _rng.Chance(60) ? "Bed_0" : "Bed_1";
-                var b = Put(bed, Against(bed, Side.Back).Where(c => !UnderWindow(bed, c)), (x, z, yaw) => BedScore(bed, x, z, yaw));
-                if (b == null && bed == "Bed_0") b = Put("Bed_1", Against("Bed_1", Side.Back).Where(c => !UnderWindow("Bed_1", c)), (x, z, yaw) => BedScore("Bed_1", x, z, yaw));
+                // never the coffin (the door straight past its foot) while anywhere else will do -- the score alone let an
+                // L-shaped room, every wall of which faced the door, pick one
+                bool Coffin(string bd, (float X, float Z, float Yaw) c)
+                {
+                    var s0 = FurnitureCatalog.Sizes[bd]; var (fx, fz) = FrontOf(c.Yaw); var (rx, rz) = RightOf(c.Yaw);
+                    return Doors().Any(d => { float vx = d.X - c.X, vz = d.Z - c.Z; return vx * fx + vz * fz > s0.Y1 && MathF.Abs(vx * rx + vz * rz) < (s0.X1 - s0.X0) * 0.5f; });
+                }
+                var b = Put(bed, Against(bed, Side.Back).Where(c => !UnderWindow(bed, c) && !Coffin(bed, c)), (x, z, yaw) => BedScore(bed, x, z, yaw));
+                if (b == null && bed == "Bed_0") b = Put("Bed_1", Against("Bed_1", Side.Back).Where(c => !UnderWindow("Bed_1", c) && !Coffin("Bed_1", c)), (x, z, yaw) => BedScore("Bed_1", x, z, yaw));
+                if (b == null) b = Put("Bed_1", Against("Bed_1", Side.Back).Where(c => !UnderWindow("Bed_1", c)), (x, z, yaw) => BedScore("Bed_1", x, z, yaw));
                 Put("Wardrobe_0", Against("Wardrobe_0", Side.Back), (x, z, yaw) => NearestDoor(x, z) - (b != null && MathF.Abs(yaw - b.Yaw) < 1f ? 2 : 0));
                 if (b != null)
                 {
@@ -1089,7 +1153,13 @@ namespace UnturnedSim
                 if (!_mine.Any(m => m.Name == "Oven_0")) Put("Oven_0", Against("Oven_0", Side.Back));
                 // a kitchen-diner's table stands where an island would
                 if (_res.KitchenDiner) Dining();
-                else if (_area >= 30f && _rng.Chance(60)) Island();
+                else
+                {
+                    // a big kitchen fills its floor (a 108 m2 one stood empty with every appliance in one corner): an
+                    // island always from 54 m2, and a breakfast table as well from 72
+                    if (_area >= 54f || (_area >= 30f && _rng.Chance(60))) Island();
+                    if (_area >= 72f) Dining();
+                }
             }
 
             /// <summary>Did a layout put in all three of fridge, sink and stove? If not, take out whatever it did.</summary>

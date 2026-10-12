@@ -13,6 +13,13 @@ namespace UnturnedSim
     /// (strawberry: "does the layout support non-square footprints for floorplans?"). Auto for a seeded choice.</summary>
     public enum FootprintShape { Auto, Rect, L, T }
 
+    /// <summary>Which marked doors get a porch (strawberry: "porches: floored, separate outdoor roofed areas outside front
+    /// and/or back doors with columns supporting the roof"). Auto for a seeded choice.</summary>
+    public enum PorchChoice { Auto, None, Front, Back, Both }
+
+    /// <summary>Whether a house's living room gets a fireplace and a chimney up through the roof. Auto for a seeded choice.</summary>
+    public enum ChimneyChoice { Auto, None, Yes }
+
     /// <summary>What to generate: a building from a seed (strawberry 2026-10-11: "make the map editor buildings tool
     /// procgen. to make buildings from a seed. certain min number of rooms, min number of each type, max number per floor,
     /// max number of floors, consider the building's type, what colors it should use. which openings are relevant, which
@@ -40,6 +47,12 @@ namespace UnturnedSim
         /// <summary>The outline: Auto is mostly rectangles, now and then an L or a T. One storey only for now -- a building
         /// of more floors is a rectangle, with a note when an L or a T was asked for.</summary>
         public FootprintShape Shape;
+        /// <summary>Porches outside the front and/or back door: Auto is a house's front door now and then, its back door
+        /// less often, a business's front a canopy sometimes.</summary>
+        public PorchChoice Porches;
+        /// <summary>A fireplace in the living room, its chimney up through every floor and out of the roof (strawberry:
+        /// "chimneys, living rooms may [have one] that extends up and out the roof"). Auto: half the houses with a living room.</summary>
+        public ChimneyChoice Chimney;
     }
 
     /// <summary>One generated room on the 3 m lattice: the cells [X0, X1) x [Z0, Z1) of its floor, and any further
@@ -134,6 +147,10 @@ namespace UnturnedSim
         /// wing on its north side as laid out (south, once turned half round). All zero for a rectangle.</summary>
         public (int X0, int Z0, int X1, int Z1) Wing;
         public FootprintShape Shape = FootprintShape.Rect;
+        /// <summary>Each porch's deck in plan metres, against the outside wall it serves.</summary>
+        public List<(float X0, float Z0, float X1, float Z1)> Porches = new List<(float, float, float, float)>();
+        /// <summary>The chimney's footprint in plan metres (the stack's box), or all zero for none.</summary>
+        public (float X0, float Z0, float X1, float Z1) Chimney;
         /// <summary>How its stairs climb: one straight flight (a bay four cells by two or three rows); a switchback, two
         /// half flights side by side turning back at a landing (three cells by two rows); or a quarter turn, a half flight
         /// along the wall to a corner landing and one away from it (three cells by three rows).</summary>
@@ -244,6 +261,8 @@ namespace UnturnedSim
             for (int i = 0; i < res.Footprints.Count; i++) res.Footprints[i] = (cx - res.Footprints[i].X1, cx - res.Footprints[i].X0);
             res.Bay = (cx - res.Bay.X1, cz - res.Bay.Z1, cx - res.Bay.X0, cz - res.Bay.Z0);
             if (res.Shape != FootprintShape.Rect) res.Wing = (cx - res.Wing.X1, cz - res.Wing.Z1, cx - res.Wing.X0, cz - res.Wing.Z0);
+            for (int i = 0; i < res.Porches.Count; i++) { var q = res.Porches[i]; res.Porches[i] = (W - q.X1, D - q.Z1, W - q.X0, D - q.Z0); }
+            if (res.Chimney.X1 > res.Chimney.X0) res.Chimney = (W - res.Chimney.X1, D - res.Chimney.Z1, W - res.Chimney.X0, D - res.Chimney.Z0);
             res.NoWindowSides = Turned(res.NoWindowSides);
         }
 
@@ -396,6 +415,80 @@ namespace UnturnedSim
             BuildingKind.Industrial => new[] { "Barn_0", "Barn_1", "Mechanic_0", "Fire_0", "Drill", "Research_0" },
             _ => new[] { "Office_0", "Office_1", "Office_2", "Office_3", "Police_0", "Police_1", "Medic_0", "Medic_1", "School_0", "School_1", "Barracks_0" },
         };
+
+        /// <summary>Each retail palette's floor texels, measured off its own mesh (strawberry: "the floors need the actual
+        /// floor colors for the pallete of the building, and we should also do diff materials per room"): Floor, the
+        /// texel covering the most up-facing area at its ground level (a wood brown in a house, a grey in an office);
+        /// Tile, its lightest neutral texel that is neither wall, floor nor concrete; Concrete, its mid grey (texel 6,
+        /// 7e7e7e, in most -- the retail buildings' own second floor colour, where they have one).</summary>
+        public static readonly Dictionary<string, (int Floor, int Tile, int Concrete)> FloorTexels = new Dictionary<string, (int, int, int)>
+        {
+            ["Airport_0"] = (4, 3, 6),
+            ["Apartment_0"] = (4, 3, 6),
+            ["Apartment_1"] = (4, 3, 6),
+            ["Apartment_2"] = (4, 7, 6),
+            ["Apartment_3"] = (4, 7, 1),
+            ["Bank_0"] = (4, 3, 6),
+            ["Barn_0"] = (6, 2, 1),
+            ["Barn_1"] = (6, 2, 4),
+            ["Barracks_0"] = (4, 7, 6),
+            ["Barracks_2"] = (4, 7, 6),
+            ["Botanist_0"] = (4, 2, 6),
+            ["Cafe_0"] = (4, 3, 1),
+            ["Cafe_1"] = (4, 3, 6),
+            ["Castle_0"] = (5, 7, 2),
+            ["Clothes_0"] = (4, 3, 6),
+            ["Clothes_1"] = (4, 5, 6),
+            ["Diner_0"] = (4, 3, 6),
+            ["Diner_1"] = (4, 5, 6),
+            ["Diner_2"] = (4, 7, 6),
+            ["Drill"] = (7, 5, 6),
+            ["Fire_0"] = (6, 2, 6),
+            ["Grocer_0"] = (4, 3, 6),
+            ["Guns_0"] = (4, 5, 6),
+            ["Hardware_0"] = (6, 4, 6),
+            ["House_00"] = (5, 2, 1),
+            ["House_01"] = (5, 3, 6),
+            ["House_02"] = (5, 2, 6),
+            ["House_03"] = (5, 7, 6),
+            ["House_04"] = (4, 5, 6),
+            ["House_05"] = (4, 3, 6),
+            ["House_06"] = (4, 5, 6),
+            ["House_07"] = (4, 3, 6),
+            ["House_08"] = (4, 7, 6),
+            ["House_09"] = (4, 3, 6),
+            ["Library_0"] = (4, 7, 6),
+            ["Mall_0"] = (4, 5, 6),
+            ["Mechanic_0"] = (4, 3, 6),
+            ["Medic_0"] = (4, 2, 6),
+            ["Medic_1"] = (4, 3, 1),
+            ["Medic_2"] = (4, 3, 6),
+            ["Office_0"] = (4, 3, 6),
+            ["Office_1"] = (4, 3, 6),
+            ["Office_2"] = (4, 3, 6),
+            ["Office_3"] = (4, 3, 6),
+            ["Police_0"] = (4, 5, 6),
+            ["Police_1"] = (4, 7, 6),
+            ["Post_0"] = (6, 4, 6),
+            ["Research_0"] = (4, 0, 6),
+            ["School_0"] = (4, 3, 6),
+            ["School_1"] = (4, 3, 6),
+            ["Ship_0"] = (4, 3, 6),
+            ["Ship_1"] = (4, 3, 6),
+        };
+
+        /// <summary>The texel a room's floor wears: tile where water is, concrete where vehicles and stock are, the
+        /// building's floor colour everywhere else. -1 for "the palette's default" when the palette is not in the table.</summary>
+        public static int FloorTexelFor(string palette, RoomKind k)
+        {
+            if (palette == null || !FloorTexels.TryGetValue(palette, out var t)) return -1;
+            return k switch
+            {
+                RoomKind.Bathroom or RoomKind.Kitchen or RoomKind.BreakRoom => t.Tile,
+                RoomKind.Garage or RoomKind.Workshop or RoomKind.Warehouse or RoomKind.Storage => t.Concrete,
+                _ => t.Floor,
+            };
+        }
 
         /// <summary>A small, stable RNG (xorshift64*): the same seed builds the same building on every machine and runtime,
         /// which System.Random does not promise.</summary>
@@ -593,7 +686,9 @@ namespace UnturnedSim
             // Widen the rooms that pass `which`, a cell at a time from a seeded one, each up to its limit.
             // Widen the rooms that pass `which`, a cell at a time, each time the one furthest below its share (seeded among
             // equals), each up to its limit -- or past it, when `capped` is off.
-            void Grow(List<(RoomKind k, int w)> list, ref int spare, int depth, Func<RoomKind, bool> which, RoomKind host, bool capped = true)
+            int overflowStores = 0;
+            // With `hard`, never past CapCells either (twice a kind's size; the stair room's bay on top).
+            void Grow(List<(RoomKind k, int w)> list, ref int spare, int depth, Func<RoomKind, bool> which, RoomKind host, bool capped = true, bool hard = false)
             {
                 int hostAt = host == RoomKind.Unassigned ? -1 : list.FindIndex(x => x.k == host);
                 while (spare > 0)
@@ -603,6 +698,7 @@ namespace UnturnedSim
                     {
                         var (k, w) = list[i];
                         if (!which(k) || (capped && w >= Cap(k, depth, i == hostAt))) continue;
+                        if (hard && (long)(w + 1) * depth > (long)CapCells(k, kind) + (i == hostAt ? L * bayRows : 0)) continue;
                         double share = (double)(w * depth) / Target(k, i == hostAt) + rng.Int(1000) * 1e-6;
                         if (share < low) { low = share; best = i; }
                     }
@@ -651,8 +747,22 @@ namespace UnturnedSim
                 if (list.Count == 0) return spare;
                 // a row of small rooms only, with a hall beside it: an alcove of hall rather than a 15 m bathroom
                 if (hall && spare >= 2 && !list.Any(x => !Service(x.k))) return spare;
-                // past the limits now, still by share: the bigger rooms first, the small ones only if there is nothing else
-                if (list.Any(x => !Service(x.k))) Grow(list, ref spare, depth, k => !Service(k), host, capped: false);
+                // past the limits now, still by share: the bigger rooms first, the small ones only if there is nothing else --
+                // but none past twice its kind's size (strawberry: "try to clamp maximum sizes for each room")
+                if (list.Any(x => !Service(x.k))) Grow(list, ref spare, depth, k => !Service(k), host, capped: false, hard: true);
+                Grow(list, ref spare, depth, _ => true, host, capped: false, hard: true);
+                // what is still left becomes store rooms while the floor has room for them, rather than a 300 m2 room
+                bool Spread(RoomKind k) => !Enumerable.Range(0, floors).Any(g => g != f && onFloor[g].Count < perFloor && onFloor[g].Count(x => x == k) < here.Count(x => x == k) + 1);
+                while (spare >= 2 && ok(RoomKind.Storage) && here.Count < perFloor && Spread(RoomKind.Storage))
+                {
+                    int w = Math.Min(spare, Width(RoomKind.Storage, depth) + 1);
+                    if (spare - w == 1) w++;
+                    list.Insert(rng.Int(list.Count + 1), (RoomKind.Storage, w));
+                    here.Add(RoomKind.Storage);
+                    spare -= w;
+                    overflowStores++;
+                }
+                // a last odd cell, or a row that takes no store room: anyone, as before
                 Grow(list, ref spare, depth, _ => true, host, capped: false);
                 Balance(list, depth, host);
                 return 0;
@@ -707,6 +817,8 @@ namespace UnturnedSim
                 ki = row.FindIndex(x => x.k == RoomKind.Kitchen);
                 row.Insert(ki + rng.Int(2), dining);
             }
+            // a store room may be added on floor fl, which has n of them, only if no other floor with space has fewer
+            bool StoreOk(int fl, int n) => !Enumerable.Range(0, floors).Any(g => g != fl && onFloor[g].Count < perFloor && onFloor[g].Count(x => x == RoomKind.Storage) < n + 1);
             List<RoomKind> Seeded(IEnumerable<RoomKind> rs, int depth)
                 => rng.Keyed(rs).OrderByDescending(x => Width(x.Item, depth)).ThenBy(x => x.Key).Select(x => x.Item).ToList();
             // An L or a T: the north row, `lb` cells of rooms long, comes up short of the south row at one end or at both,
@@ -799,6 +911,7 @@ namespace UnturnedSim
                 var plan = bands ? Bands(here, attempt >= 6 && attempt < 9 || attempt >= 12) : Corridor(here, attempt >= 12);
                 if (plan == null) continue;
                 var (prs, pw, pd, pb) = plan.Value;
+                TuckServiceRooms(prs, pd, kind, perFloor, StoreOk);
                 var g = new Grid(pw, pd, 0, pw);
                 foreach (var r in prs) g.Paint(r);
                 var doors = new List<GenDoor>();
@@ -848,6 +961,7 @@ namespace UnturnedSim
                 x = ux0;
                 foreach (var (k, w) in upN[f]) { rs.Add(new GenRoom { Kind = k, Floor = f, X0 = x, X1 = x + w, Z0 = dS + 1, Z1 = D }); x += w; }
                 if (upAbsorbN[f] > 0) hall.More.Add((x, dS + 1, ux1, D));
+                TuckServiceRooms(rs, D, kind, perFloor, StoreOk);
                 var g = new Grid(W, D, ux0, ux1);
                 foreach (var r in rs) g.Paint(r);
                 var doors = new List<GenDoor>();
@@ -873,6 +987,9 @@ namespace UnturnedSim
             res.NoWindowSides = turn ? Turned(spec.NoWindows) : spec.NoWindows;
             BuildWalls(res, grids, k1, L);
             SolveCorners(res.Walls);
+            // (after the corner solve, which must not grow a house wall toward a porch post)
+            AddPorches(res, ground, spec.Porches, spec.Seed);
+            AddChimney(res, grids, spec.Chimney, spec.Seed);
             Furnish(res, spec.Seed);
             if (turn) TurnHalf(res);
             return res;
@@ -1269,6 +1386,117 @@ namespace UnturnedSim
             }
         }
 
+        /// <summary>The most cells a small room may have: past it, a bathroom is a hall (strawberry: "try to clamp maximum
+        /// sizes for each room. seeing a lot of super bathrooms etc").</summary>
+        public static int MaxCells(RoomKind k) => k switch { RoomKind.Bathroom => 4, RoomKind.Closet => 4, RoomKind.Storage => 6, _ => int.MaxValue };
+        /// <summary>The most cells any room of a kind should have: a small room's MaxCells, else twice its kind's size (a
+        /// living room 24, a bedroom 18).</summary>
+        public static int CapCells(RoomKind k, BuildingKind b) => MaxCells(k) < int.MaxValue ? MaxCells(k) : k == RoomKind.Hall || k == RoomKind.Stairwell ? int.MaxValue : 2 * TraitOf(k, b).Cells;
+
+        /// <summary>A small room deeper than its kind allows -- it spans its row's whole depth, three to five cells, so a
+        /// bathroom two cells wide was 54 m2 and up -- keeps the INNER part of the row, beside the hall or the rooms it opens
+        /// off, and the strip behind it along the outside wall goes to a neighbour in the row: a bedroom or office by
+        /// preference (an en-suite tucked into its corner), else a hall, else any room but another small one. Without such a
+        /// neighbour it stays as it was. Runs on a floor's rooms before they are painted, so walls and doors follow.</summary>
+        static void TuckServiceRooms(List<GenRoom> rs, int depth, BuildingKind kind, int perFloor, Func<int, int, bool> storeOk)
+        {
+            foreach (var r in rs.Where(r => MaxCells(r.Kind) < int.MaxValue && r.More.Count == 0).ToList())
+            {
+                // wider than two cells: hand a column at a time to a row neighbour that stays within its cap
+                while (r.X1 - r.X0 > 2 && (r.X1 - r.X0) * (r.Z1 - r.Z0) > MaxCells(r.Kind))
+                {
+                    int dd = r.Z1 - r.Z0;
+                    var side = rs.Where(n => n != r && n.Floor == r.Floor && n.More.Count == 0 && MaxCells(n.Kind) == int.MaxValue && n.Kind != RoomKind.Stairwell
+                                             && n.Z0 == r.Z0 && n.Z1 == r.Z1 && (n.X1 == r.X0 || n.X0 == r.X1) && (long)n.Cells + dd <= CapCells(n.Kind, kind))
+                                 .OrderBy(n => n.Cells).ThenBy(n => n.X0).FirstOrDefault();
+                    // (failing that, one a quarter past its cap: a bedroom 20 cells big is no stranger than a bathroom 12)
+                    side ??= rs.Where(n => n != r && n.Floor == r.Floor && n.More.Count == 0 && MaxCells(n.Kind) == int.MaxValue && n.Kind != RoomKind.Stairwell
+                                           && n.Z0 == r.Z0 && n.Z1 == r.Z1 && (n.X1 == r.X0 || n.X0 == r.X1) && (long)n.Cells + dd <= (long)CapCells(n.Kind, kind) * 5 / 4)
+                               .OrderBy(n => n.Cells + dd - CapCells(n.Kind, kind)).ThenBy(n => n.X0).FirstOrDefault();
+                    if (side == null) break;
+                    if (side.X1 == r.X0) { side.X1++; r.X0++; } else { side.X0--; r.X1--; }
+                }
+                int wd = r.X1 - r.X0, d = r.Z1 - r.Z0;
+                if (wd * d <= MaxCells(r.Kind)) continue;
+                bool south = r.Z0 == 0, north = r.Z1 == depth;
+                if (south == north) continue;   // not in an outer row (or the whole depth): leave it
+                int keep = Math.Max(1, Math.Min(d - 1, MaxCells(r.Kind) / wd));
+                // the strip behind it, along the outside wall
+                var strip = south ? (X0: r.X0, Z0: r.Z0, X1: r.X1, Z1: r.Z1 - keep) : (X0: r.X0 + 0, Z0: r.Z0 + keep, X1: r.X1, Z1: r.Z1);
+                int Pref(GenRoom n) => n.Kind is RoomKind.Bedroom or RoomKind.Office ? 0 : n.Kind == RoomKind.Hall ? 1 : 2;
+                int stripCells = (strip.X1 - strip.X0) * (strip.Z1 - strip.Z0);
+                // (and only where the neighbour stays within its own cap: a strip that makes a super bedroom is no better)
+                // (against its main rectangle, and one strip to a room: a bedroom that took two became a corridor 6 m long
+                // round to a closet door, every wall of it facing a door)
+                var nb = rs.Where(n => n != r && n.Floor == r.Floor && MaxCells(n.Kind) == int.MaxValue && n.Kind != RoomKind.Stairwell
+                                       && (long)n.Cells + stripCells <= CapCells(n.Kind, kind) && (n.Kind == RoomKind.Hall || n.More.Count == 0)
+                                       && (n.X1 == r.X0 || n.X0 == r.X1) && n.Z0 <= strip.Z0 && n.Z1 >= strip.Z1)
+                           .OrderBy(Pref).ThenBy(n => n.X0 < r.X0 ? 0 : 1).FirstOrDefault();
+                // not if that leaves it an island inside its neighbour: a room with that one room on every side
+                bool Island(GenRoom taker)
+                {
+                    var after = south ? (X0: r.X0, Z0: r.Z1 - keep, X1: r.X1, Z1: r.Z1) : (X0: r.X0, Z0: r.Z0, X1: r.X1, Z1: r.Z0 + keep);
+                    GenRoom Owner(int x, int z) => z >= strip.Z0 && z < strip.Z1 && x >= strip.X0 && x < strip.X1 ? taker
+                        : rs.FirstOrDefault(n => n != r && n.Floor == r.Floor && n.HasCell(x, z));
+                    var ring = new List<GenRoom>();
+                    for (int x = after.X0; x < after.X1; x++) { ring.Add(Owner(x, after.Z0 - 1)); ring.Add(Owner(x, after.Z1)); }
+                    for (int z = after.Z0; z < after.Z1; z++) { ring.Add(Owner(after.X0 - 1, z)); ring.Add(Owner(after.X1, z)); }
+                    return ring.All(o => o == taker);
+                }
+                if (nb != null && Island(nb)) nb = null;
+                if (nb == null)
+                {
+                    // or the other way round: it keeps the OUTER rows (its outside wall, for a vent) and the strip on its
+                    // inner side goes to the room across that side -- a hall (a nook leading to its door) or a bedroom or
+                    // office within its cap (an en-suite's lobby), when one room owns that whole side
+                    var inner = south ? (X0: r.X0, Z0: r.Z0 + keep, X1: r.X1, Z1: r.Z1) : (X0: r.X0, Z0: r.Z0, X1: r.X1, Z1: r.Z1 - keep);
+                    int across = south ? r.Z1 : r.Z0 - 1;
+                    var owners = Enumerable.Range(r.X0, wd).Select(x => rs.FirstOrDefault(n => n != r && n.Floor == r.Floor && n.HasCell(x, across))).Distinct().ToList();
+                    var inb = owners.Count == 1 ? owners[0] : null;
+                    if (inb != null && (inb.Kind == RoomKind.Hall
+                                        || inb.Kind is RoomKind.Bedroom or RoomKind.Office && inb.More.Count == 0 && (long)inb.Cells + stripCells <= CapCells(inb.Kind, kind)))
+                    {
+                        inb.More.Add(inner);
+                        if (south) r.Z1 = r.Z0 + keep; else r.Z0 = r.Z1 - keep;
+                        continue;
+                    }
+                    // no room can take it: a closet or store room of its own, opening off a row neighbour it may open off
+                    // (two cells deep at least: a one-cell strip has no room for a door and a shelf both)
+                    var own = stripCells <= MaxCells(RoomKind.Storage) && strip.Z1 - strip.Z0 >= 2 ? RoomKind.Storage : RoomKind.Unassigned;
+                    bool parent = rs.Any(n => n != r && n.Floor == r.Floor && MayOpenOff(own, n.Kind)
+                                              && n.Rects.Any(q => (q.X1 == r.X0 || q.X0 == r.X1) && q.Z0 <= strip.Z0 && q.Z1 >= strip.Z1));
+                    if (own != RoomKind.Unassigned && rs.Count(n => n.Floor == r.Floor && !n.Circulation) < perFloor
+                        && storeOk(r.Floor, rs.Count(n => n.Floor == r.Floor && n.Kind == RoomKind.Storage)) && parent)
+                    {
+                        rs.Add(new GenRoom { Kind = own, Floor = r.Floor, X0 = strip.X0, Z0 = strip.Z0, X1 = strip.X1, Z1 = strip.Z1 });
+                        if (south) r.Z0 = r.Z1 - keep; else r.Z1 = r.Z0 + keep;
+                        continue;
+                    }
+                    // last of all a big room a little past its cap (a quarter at most) beats a super bathroom: the row
+                    // neighbour takes the outer strip, or the room across the inner side takes the inner one
+                    bool Roomy(GenRoom n) => n != null && MaxCells(n.Kind) == int.MaxValue && n.Kind != RoomKind.Stairwell
+                                             && (n.Kind == RoomKind.Hall || n.More.Count == 0) && (long)n.Cells + stripCells <= (long)CapCells(n.Kind, kind) * 5 / 4;
+                    var over = rs.Where(n => n != r && n.Floor == r.Floor && Roomy(n) && (n.X1 == r.X0 || n.X0 == r.X1) && n.Z0 <= strip.Z0 && n.Z1 >= strip.Z1 && !Island(n))
+                                 .OrderBy(n => n.Cells + stripCells - CapCells(n.Kind, kind)).ThenBy(Pref).FirstOrDefault();
+                    if (over != null)
+                    {
+                        over.More.Add(strip);
+                        if (south) r.Z0 = r.Z1 - keep; else r.Z1 = r.Z0 + keep;
+                        continue;
+                    }
+                    if (Roomy(inb))
+                    {
+                        inb.More.Add(inner);
+                        if (south) r.Z1 = r.Z0 + keep; else r.Z0 = r.Z1 - keep;
+                        continue;
+                    }
+                    continue;
+                }
+                nb.More.Add(strip);
+                if (south) r.Z0 = r.Z1 - keep; else r.Z1 = r.Z0 + keep;
+            }
+        }
+
         static bool Pair(RoomKind a, RoomKind b, RoomKind x, RoomKind y) => (a == x && b == y) || (a == y && b == x);
 
         /// <summary>Do two doors crowd the same corner -- both within a metre of one lattice point (where walls meet)? Two
@@ -1618,8 +1846,27 @@ namespace UnturnedSim
                 // switchback, open above both its flights and its landing: a straight flight's hole the editor cuts as it
                 // lays the flight, but a switchback's first flight and landing stop short of this floor and need headroom
                 // under it all the same. Not past the flights' foot end: the next switchback's foot stands there.
-                if (res.Shape != FootprintShape.Rect) { res.Walls.AddRange(Slabs(res, y, SurfaceKind.Floor)); continue; }   // one storey
+                // the rooms that are not the building's floor colour get a cover of their own over the slab, 2 cm proud of it
+                // (flush, the two faces would fight): tile in the wet rooms, concrete in garages and stores
+                int baseTexel = FloorTexels.TryGetValue(res.Palette ?? "", out var ft) ? ft.Floor : -1;
+                foreach (var room in res.Layout.Where(r => r.Floor == f))
+                {
+                    int tx = FloorTexelFor(res.Palette, room.Kind);
+                    if (tx < 0 || tx == baseTexel) continue;
+                    foreach (var q in room.Rects)
+                    {
+                        var cover = SlabPlan(q.X0 * Cell, q.X1 * Cell, q.Z0 * Cell, q.Z1 * Cell, y + 0.02f, SurfaceKind.Floor);
+                        cover.Thickness = 0.04f; cover.Y = y + 0.02f - 0.02f; cover.Texel = tx;
+                        res.Walls.Add(cover);
+                    }
+                }
+                if (res.Shape != FootprintShape.Rect)   // one storey
+                {
+                    foreach (var sl in Slabs(res, y, SurfaceKind.Floor)) { sl.Texel = baseTexel; res.Walls.Add(sl); }
+                    continue;
+                }
                 var floorSlab = SlabPlan(x0m - he, x1m + he, -he, Dm + he, y, SurfaceKind.Floor);
+                floorSlab.Texel = baseTexel;
                 if (f > 0 && res.StairShape != StairShape.Straight)
                     foreach (var (hx0, hz0, hx1, hz1) in res.Switchback ? new[] { SwitchbackHole(bay) } : QuarterHole(bay, res.QuarterWest))
                         floorSlab.Openings.Add(new WallOpening(hx0 - (x0m - he), (Dm + he) - hz1, hx1 - hx0, hz1 - hz0));
@@ -1820,6 +2067,262 @@ namespace UnturnedSim
             float hmm = (mm.Z1 - mm.Z0) * 0.5f + o;
             Gable(turn0, mm.X1, mm.Z1 + he, mm.X1, mm.Z0 - he, hmm);
             Gable(turn0, mm.X0, mm.Z0 - he, mm.X0, mm.Z1 + he, hmm);
+        }
+
+        /// <summary>A chimney breast: this long along its wall and this deep into the room; its stack stands this far over
+        /// the roof where it comes through.</summary>
+        public const float ChimneyWide = 1.8f, ChimneyDeep = 0.9f, ChimneyOverRoof = 1.0f;
+
+        /// <summary>The top of the roof over a plan point: the highest roof surface there (a pitched plane's, a flat slab's
+        /// top), NaN where no roof is. The pitched planes' trapezoid ends (Inset*) are honoured, so a cross gable's valley
+        /// cuts are respected.</summary>
+        public static float RoofTopAt(BuildingGenResult res, float x, float z)
+        {
+            float best = float.NaN;
+            foreach (var w in res.Walls)
+            {
+                if (w.Kind != SurfaceKind.Roof) continue;
+                float h;
+                if (MathF.Abs(w.Pitch + 90f) < 0.01f)
+                {
+                    if (x < w.X || x > w.X + w.Length || z < w.Z - w.Height || z > w.Z) continue;   // a slab: origin at min X, max Z
+                    h = w.Y + w.Thickness * 0.5f;
+                }
+                else
+                {
+                    var (c, s) = PlanTrig.CosSin(w.Yaw);
+                    float dx = c, dz = -s, ux = dz, uz = -dx;        // along the eave, and up the slope (to its right)
+                    float px = x - w.X, pz = z - w.Z, u = px * dx + pz * dz, vp = px * ux + pz * uz;
+                    float pitch = (w.Pitch + 90f) * MathF.PI / 180f, Hp = w.Height * MathF.Cos(pitch);
+                    if (vp < 0f || vp > Hp) continue;
+                    float t = Hp > 1e-4f ? vp / Hp : 0f;
+                    float lo = w.InsetL0 + (w.InsetL1 - w.InsetL0) * t, hi = w.Length - (w.InsetR0 + (w.InsetR1 - w.InsetR0) * t);
+                    if (u < lo || u > hi) continue;
+                    h = w.Y + vp * MathF.Tan(pitch);
+                }
+                if (float.IsNaN(best) || h > best) best = h;
+            }
+            return best;
+        }
+
+        /// <summary>The fireplace and chimney: a breast ChimneyWide by ChimneyDeep against an outside wall of the living room,
+        /// a fireplace opening at its foot, and the stack straight up through every floor -- on each, against that floor's
+        /// own outside wall on the same line, in a stretch with no opening behind it and clear of the stairs -- and out of the
+        /// top roof to ChimneyOverRoof over its highest point there. A position that fails any floor is not used; with none
+        /// that passes, no chimney (said so when one was asked for). Added after the corner solve, which must not grow walls
+        /// toward it, and before the furnisher, which then keeps its pieces off it and clear of the fire.</summary>
+        static void AddChimney(BuildingGenResult res, List<Grid> grids, ChimneyChoice choice, int seed)
+        {
+            var crng = new Rng(unchecked(seed * 7177 + 0x4348));
+            bool roll = crng.Chance(50);
+            var living = res.Layout.FirstOrDefault(g => g.Kind == RoomKind.LivingRoom && g.Floor == 0);
+            if (choice == ChimneyChoice.None || (choice == ChimneyChoice.Auto && !roll) || res.Kind != BuildingKind.Residential) return;
+            if (living == null) { if (choice == ChimneyChoice.Yes) res.Notes.Add("a chimney was asked for, but there is no living room on the ground floor for its fireplace"); return; }
+            // (its ends kept further from any wall crossing its line than the corner solve reaches, 1.6 m, or the editor would
+            // grow the breast to meet it)
+            float he = Ext * 0.5f, half = ChimneyWide * 0.5f, clearEnds = 2.1f;   // 1.6 m and the far face of a corner wall
+            var ground = grids[0];
+            // the floors' outside walls as built (with their openings), by floor, line and run
+            WallPlan OuterWall(int f, bool alongX, int line, float at)
+            {
+                foreach (var w in res.Walls)
+                {
+                    if (w.Kind != SurfaceKind.Wall || MathF.Abs(w.Y - f * Storey) > 0.01f || MathF.Abs(w.Thickness - Ext) > 0.01f || w.Height < Storey - 0.01f) continue;
+                    var (c, s) = PlanTrig.CosSin(w.Yaw);
+                    float dx = c, dz = -s;
+                    if (alongX ? MathF.Abs(dz) > 0.5f || MathF.Abs(w.Z - line * Cell) > 0.01f : MathF.Abs(dx) > 0.5f || MathF.Abs(w.X - line * Cell) > 0.01f) continue;
+                    float a = alongX ? w.X : w.Z, b = a + (alongX ? dx : dz) * w.Length;
+                    if (at >= MathF.Min(a, b) && at <= MathF.Max(a, b)) return w;
+                }
+                return null;
+            }
+            float U(WallPlan w, float at) => w.Yaw switch { 0f => at - w.X, 180f => w.X - at, 270f => at - w.Z, _ => w.Z - at };
+            bool Clear(WallPlan w, float p) { float u0 = U(w, p - half - 0.3f), u1 = U(w, p + half + 0.3f); float lo = MathF.Min(u0, u1), hi = MathF.Max(u0, u1); return !w.Openings.Any(o => o.U < hi && o.U + o.Width > lo); }
+            var bay = res.Bay;
+            var cands = new List<(bool AlongX, int Line, float P, float E, int Pref)>();
+            foreach (var run in Runs(ground).Where(r => r.B == null && r.A == living))
+            {
+                var face = ground.Out(run.AlongX, run.Line, run.S0);
+                float e = face is Sides.North or Sides.East ? 1f : -1f;
+                // the front door's wall last: the fire on the street wall reads oddly; an end wall first
+                var fr = res.Front;
+                bool frontWall = fr != null && fr.AlongX == run.AlongX && fr.Line == run.Line;
+                int pref = frontWall ? 2 : run.AlongX ? 1 : 0;
+                for (float p = run.S0 * Cell + clearEnds + half; p <= run.S1 * Cell - clearEnds - half + 1e-3f; p += 0.75f)
+                    cands.Add((run.AlongX, run.Line, p, e, pref));
+            }
+            foreach (var (alongX, line, p, e, _) in crng.Keyed(cands).OrderBy(c => c.Item.Pref).ThenBy(c => c.Key).Select(c => c.Item).ToList())
+            {
+                float inner = line * Cell - e * he, across = inner - e * ChimneyDeep * 0.5f;
+                (float X0, float Z0, float X1, float Z1) box = alongX
+                    ? (p - half, MathF.Min(inner, inner - e * ChimneyDeep), p + half, MathF.Max(inner, inner - e * ChimneyDeep))
+                    : (MathF.Min(inner, inner - e * ChimneyDeep), p - half, MathF.Max(inner, inner - e * ChimneyDeep), p + half);
+                bool ok = true;
+                for (int f = 0; f < res.Floors && ok; f++)
+                {
+                    // the floor has the spot inside it, on the same outside wall, with nothing in that wall behind the breast
+                    int ci = (int)MathF.Floor((alongX ? p : across) / Cell), cj = (int)MathF.Floor((alongX ? across : p) / Cell);
+                    var room = grids[f].At(ci, cj);
+                    var w = OuterWall(f, alongX, line, p);
+                    ok = room != null && grids[f].Out(alongX, line, alongX ? ci : cj) == (e > 0 ? (alongX ? Sides.North : Sides.East) : (alongX ? Sides.South : Sides.West))
+                         && w != null && Clear(w, p);
+                    // no wall of this floor crossing its line within the corner solve's reach of its ends
+                    if (ok)
+                        ok = !res.Walls.Any(q =>
+                        {
+                            if (q.Kind != SurfaceKind.Wall || MathF.Abs(q.Y - f * Storey) > 0.01f || q.Height < Storey - 0.01f) return false;
+                            var (c, s) = PlanTrig.CosSin(q.Yaw); float dx = c, dz = -s;
+                            if (alongX ? MathF.Abs(dx) > 0.5f : MathF.Abs(dz) > 0.5f) return false;   // parallel to it
+                            float ql = alongX ? q.X : q.Z;
+                            float qa = alongX ? q.Z : q.X, qb = qa + (alongX ? dz : dx) * q.Length;
+                            if (across < MathF.Min(qa, qb) - 0.05f || across > MathF.Max(qa, qb) + 0.05f) return false;
+                            return MathF.Abs(ql - p) < half + 2.05f;
+                        });
+                    // no partition of this floor running into it
+                    if (ok)
+                        ok = !res.Walls.Any(q =>
+                        {
+                            if (q.Kind != SurfaceKind.Wall || MathF.Abs(q.Y - f * Storey) > 0.01f || q.Height < Storey - 0.01f || q == w) return false;
+                            var (c, s) = PlanTrig.CosSin(q.Yaw); float ex = q.X + c * q.Length, ez = q.Z - s * q.Length, t = q.Thickness * 0.5f;
+                            float tx = MathF.Abs(s) * t, tz = MathF.Abs(c) * t;
+                            return box.X0 < MathF.Max(q.X, ex) + tx - 0.01f && box.X1 > MathF.Min(q.X, ex) - tx + 0.01f
+                                && box.Z0 < MathF.Max(q.Z, ez) + tz - 0.01f && box.Z1 > MathF.Min(q.Z, ez) - tz + 0.01f;
+                        });
+                    // and clear of the stair bay
+                    if (ok && bay.X1 > bay.X0)
+                        ok = !(box.X0 < bay.X1 * Cell && box.X1 > bay.X0 * Cell && box.Z0 < bay.Z1 * Cell && box.Z1 > bay.Z0 * Cell);
+                }
+                if (!ok) continue;
+                // the breast and stack, a storey at a time, then over the roof
+                WallPlan Seg(float y, float h)
+                {
+                    var w = alongX ? Wall(p - half, across, p + half, across, y, ChimneyDeep) : Wall(across, p - half, across, p + half, y, ChimneyDeep);
+                    w.Height = h;
+                    return w;
+                }
+                var foot = Seg(0f, Storey);
+                // the fireplace: a low opening in the breast's room face, its back the house wall behind it (V just off the
+                // floor, so the furnisher keeps tall pieces off it but does not take it for a door to walk through)
+                foot.Openings.Add(new WallOpening(ChimneyWide * 0.5f - 0.55f, 0.06f, 1.1f, 1.0f, 999f, ArchVent) { Glazed = false });
+                res.Walls.Add(foot);
+                for (int f = 1; f < res.Floors; f++) res.Walls.Add(Seg(f * Storey, Storey));
+                float head = res.Floors * Storey;
+                // over the roof where it comes through by ChimneyOverRoof, and -- the usual rule for a flue -- 0.6 m over
+                // any roof within 3 m of it, so one by the eave stands tall instead of a stub
+                float roofTop = new[] { (box.X0, box.Z0), (box.X1, box.Z0), (box.X0, box.Z1), (box.X1, box.Z1), ((box.X0 + box.X1) * 0.5f, (box.Z0 + box.Z1) * 0.5f) }
+                                .Select(q => RoofTopAt(res, q.Item1, q.Item2)).Where(h => !float.IsNaN(h)).DefaultIfEmpty(head).Max();
+                float near = head;
+                for (float x = box.X0 - 3f; x <= box.X1 + 3f; x += 0.5f)
+                    for (float z = box.Z0 - 3f; z <= box.Z1 + 3f; z += 0.5f)
+                        if (RoofTopAt(res, x, z) is float h && !float.IsNaN(h)) near = MathF.Max(near, h);
+                float top = MathF.Max(roofTop + ChimneyOverRoof, near + 0.6f);
+                var stack = Seg(head, top - head);
+                stack.Thickness = ChimneyDeep * 0.8f;   // a touch slimmer than the breast, as a stack is
+                res.Walls.Add(stack);
+                res.Chimney = box;
+                return;
+            }
+            if (choice == ChimneyChoice.Yes) res.Notes.Add("a chimney was asked for, but no outside wall of the living room had a clear stretch for it on every floor");
+        }
+
+        /// <summary>Porch posts: square, this wide.</summary>
+        public const float PorchPost = 0.35f;
+        /// <summary>A porch roof's pitch when the house's is pitched: shallow, a lean-to.</summary>
+        public const float PorchPitch = 10f;
+
+        /// <summary>Porches (strawberry: "floored, separate outdoor roofed areas outside front and/or back doors with columns
+        /// supporting the roof"): a deck one cell deep against the outside wall, two to four cells along it and centred on
+        /// the door as the lattice and the wall allow; posts at its outer corners and between, no further apart than 3.6 m;
+        /// a roof on them -- a shed leaning on the house for a pitched-roof house, its high edge just under the wall head and
+        /// over the windows behind it (they reach OpeningTop), a flat canopy for a flat-roofed business; footings under its
+        /// open edges, as the house has. Its own rng stream, so a building without one is the building it was.</summary>
+        static void AddPorches(BuildingGenResult res, Grid ground, PorchChoice choice, int seed)
+        {
+            var prng = new Rng(unchecked(seed * 31337 + 0x504F));
+            bool house = res.Kind == BuildingKind.Residential;
+            bool rollFront = prng.Chance(house ? 55 : 30), rollBack = prng.Chance(house ? 30 : 10);
+            bool front = choice is PorchChoice.Front or PorchChoice.Both || (choice == PorchChoice.Auto && rollFront);
+            bool back = choice is PorchChoice.Back or PorchChoice.Both || (choice == PorchChoice.Auto && rollBack);
+            float he = Ext * 0.5f, ovp = 0.3f, depth = Cell, hi = Storey - 0.2f;
+            var outs = Outline(ground, 0f);
+            foreach (var (door, want) in new[] { (res.Front, front), (res.Back, back) })
+            {
+                if (!want) continue;
+                if (door == null) { res.Notes.Add("a back porch was asked for, but it has no back door (ask for a back door's side to get one)"); continue; }
+                if (door.Floor != 0) continue;
+                var o = outs.FirstOrDefault(q => q.AlongX == door.AlongX && q.Line == door.Line && q.A0 <= door.At && door.At <= q.A1);
+                if (o == null) continue;
+                int lo = (int)MathF.Ceiling(o.A0 / Cell - 1e-3f), hiCell = (int)MathF.Floor(o.A1 / Cell + 1e-3f);
+                int n = Math.Min(house ? 2 + prng.Int(2) : 3 + prng.Int(2), hiCell - lo);
+                if (n < 1) continue;
+                int s0 = Math.Clamp((int)MathF.Round(door.At / Cell - n * 0.5f), lo, hiCell - n);
+                float e = o.Face is Sides.North or Sides.East ? 1f : -1f, face = o.Line * Cell + e * he;
+                // along the wall: where it reaches the wall's end, flush with the building's corner at an outside corner,
+                // and up to the other wall's face at an inside one (an L's, where the wing stands just past the end)
+                int ext = e > 0 ? o.Line : o.Line - 1;   // the row (or column) of cells on the outside of this wall
+                bool Inside(float A, bool past) { int c = (int)MathF.Round(A / Cell) + (past ? 0 : -1); return (o.AlongX ? ground.At(c, ext) : ground.At(ext, c)) != null; }
+                bool in0 = s0 * Cell <= o.A0 + 0.01f && Inside(o.A0, false), in1 = (s0 + n) * Cell >= o.A1 - 0.01f && Inside(o.A1, true);
+                float a0 = s0 * Cell > o.A0 + 0.01f ? s0 * Cell : in0 ? o.A0 + he : o.A0 - he;
+                float a1 = (s0 + n) * Cell < o.A1 - 0.01f ? (s0 + n) * Cell : in1 ? o.A1 - he : o.A1 + he;
+                if (door.At - HalfDoor < a0 - 0.01f || door.At + HalfDoor > a1 + 0.01f) continue;
+                (float X0, float Z0, float X1, float Z1) R(float al0, float al1, float ac0, float ac1)
+                {
+                    float c0 = MathF.Min(ac0, ac1), c1 = MathF.Max(ac0, ac1);
+                    return o.AlongX ? (al0, c0, al1, c1) : (c0, al0, c1, al1);
+                }
+                var deck = R(a0, a1, face, face + e * depth);
+                if (res.Porches.Any(q => q.X0 < deck.X1 && q.X1 > deck.X0 && q.Z0 < deck.Z1 && q.Z1 > deck.Z0)) continue;
+                res.Porches.Add(deck);
+                res.Walls.Add(SlabPlan(deck.X0, deck.X1, deck.Z0, deck.Z1, 0f, SurfaceKind.Floor));
+                // the roof, and how tall the posts stand to meet its underside over them
+                var top = R(a0 - ovp, a1 + ovp, face, face + e * (depth + ovp));
+                float postH;
+                if (res.Roof == RoofKind.Flat)
+                {
+                    res.Walls.Add(SlabPlan(top.X0, top.X1, top.Z0, top.Z1, hi, SurfaceKind.Roof));
+                    postH = hi - Slab;
+                }
+                else
+                {
+                    float tan = MathF.Tan(PorchPitch * MathF.PI / 180f), eave = hi - (depth + ovp) * tan;
+                    var rs = new RoofSpec
+                    {
+                        Kind = RoofKind.Shed, MinX = top.X0, MaxX = top.X1, MinZ = top.Z0, MaxZ = top.Z1, TopY = eave, PitchDeg = PorchPitch, Thickness = Slab,
+                        High = o.Face switch { Sides.South => RoofSide.North, Sides.North => RoofSide.South, Sides.West => RoofSide.East, _ => RoofSide.West },
+                    };
+                    foreach (var pl in RoofShapes.Planes(rs))
+                        res.Walls.Add(new WallPlan { X = pl.X, Y = pl.Y, Z = pl.Z, Yaw = pl.YawDeg, Pitch = pl.PitchDeg, Length = pl.Length, Height = pl.Height,
+                                                     Thickness = Slab, Kind = SurfaceKind.Roof });
+                    postH = eave + (ovp + PorchPost) * tan;
+                }
+                // the posts, along its outer edge (none at an end against an inside corner: the wing's wall carries it)
+                float across = face + e * (depth - PorchPost * 0.5f), p0 = a0 + PorchPost * 0.5f, p1 = a1 - PorchPost * 0.5f;
+                int posts = Math.Max(2, (int)MathF.Ceiling((p1 - p0) / 3.6f) + 1);
+                for (int k = 0; k < posts; k++)
+                {
+                    if ((k == 0 && in0) || (k == posts - 1 && in1)) continue;
+                    float at = p0 + (p1 - p0) * k / (posts - 1);
+                    var w = o.AlongX ? Wall(at - PorchPost * 0.5f, across, at + PorchPost * 0.5f, across, 0f, PorchPost)
+                                     : Wall(across, at - PorchPost * 0.5f, across, at + PorchPost * 0.5f, 0f, PorchPost);
+                    w.Height = postH;
+                    res.Walls.Add(w);
+                }
+                // footings under its three open edges
+                const float tf = 0.35f;
+                float outer = face + e * (depth - tf * 0.5f);
+                // (into the wing's footing at an inside corner, which stands where this side's own would)
+                float f0 = in0 ? a0 - he : a0, f1 = in1 ? a1 + he : a1;
+                var footings = new List<(float, float, float, float)> { o.AlongX ? (f0, outer, f1, outer) : (outer, f0, outer, f1) };
+                // (each side from the house wall's centreline, inside its footing, so the corner solve finds them already met)
+                if (!in0) footings.Add(o.AlongX ? (a0 + tf * 0.5f, face - e * he, a0 + tf * 0.5f, face + e * depth) : (face - e * he, a0 + tf * 0.5f, face + e * depth, a0 + tf * 0.5f));
+                if (!in1) footings.Add(o.AlongX ? (a1 - tf * 0.5f, face - e * he, a1 - tf * 0.5f, face + e * depth) : (face - e * he, a1 - tf * 0.5f, face + e * depth, a1 - tf * 0.5f));
+                foreach (var (x0, z0, x1, z1) in footings)
+                {
+                    var f = Wall(x0, z0, x1, z1, -WallOpenings.FoundationDepth, tf);
+                    f.Height = WallOpenings.FoundationDepth; f.Kind = SurfaceKind.Foundation;
+                    res.Walls.Add(f);
+                }
+            }
         }
 
         /// <summary>An outside wall of one floor: on the lattice line Line (of constant z when AlongX, else of constant x),

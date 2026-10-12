@@ -7756,8 +7756,8 @@ namespace UnturnedGodot
                 // be LOOKED at. The L1 test proves its numbers are wall-shaped; only a render shows whether
                 // the building it rebuilt is the building it read.
                 string imp = System.Environment.GetEnvironmentVariable("UG_EDITIMPORT");
-                // UG_EDITGEN=kind,seed[,minRooms,maxFloors,perFloor[,width,depth[,front,back,nowin[,shape]]]] (sides as NESW letters,
-                // shape R/L/T, anything else auto) generates a building from a seed instead
+                // UG_EDITGEN=kind,seed[,minRooms,maxFloors,perFloor[,width,depth[,front,back,nowin[,shape[,porch[,chimney]]]]]] (sides as NESW
+                // letters, shape R/L/T, porch N/F/B/FB, chimney N/Y, anything else auto) generates a building from a seed instead
                 // (BuildingGen), so a generated one can be looked at the same way. Frame it with UG_EDITCAM.
                 string gen = System.Environment.GetEnvironmentVariable("UG_EDITGEN");
                 if (!string.IsNullOrEmpty(imp)) buildings.ImportRetail(imp);
@@ -7783,6 +7783,15 @@ namespace UnturnedGodot
                             "R" => UnturnedSim.FootprintShape.Rect, "L" => UnturnedSim.FootprintShape.L, "T" => UnturnedSim.FootprintShape.T,
                             _ => UnturnedSim.FootprintShape.Auto,
                         } : UnturnedSim.FootprintShape.Auto,
+                        Porches = g.Length > 11 ? g[11].ToUpperInvariant() switch
+                        {
+                            "N" => UnturnedSim.PorchChoice.None, "F" => UnturnedSim.PorchChoice.Front, "B" => UnturnedSim.PorchChoice.Back,
+                            "FB" or "BF" => UnturnedSim.PorchChoice.Both, _ => UnturnedSim.PorchChoice.Auto,
+                        } : UnturnedSim.PorchChoice.Auto,
+                        Chimney = g.Length > 12 ? g[12].ToUpperInvariant() switch
+                        {
+                            "N" => UnturnedSim.ChimneyChoice.None, "Y" => UnturnedSim.ChimneyChoice.Yes, _ => UnturnedSim.ChimneyChoice.Auto,
+                        } : UnturnedSim.ChimneyChoice.Auto,
                     });
                 }
                 else if (buildings.Walls.Count == 0) DrawDemoBuilding(buildings);

@@ -732,7 +732,13 @@ namespace UnturnedSim.Tests
                     var faces = outer.Where(w => FloorOf(w) == g.Floor && SpanOf(g, w) > 0.01f && w.Openings.Count >= 0).Select(FaceOf).Distinct().ToList();
                     bool blind = spec.NoWindows != Sides.None && faces.Count > 0 && faces.All(fc => (fc & spec.NoWindows) != 0);
                     if (BuildingGen.Habitable(g.Kind) && !blind) { if (os.Any(o => o.Glazed)) lit++; else bad.Add($"{n} has no window"); }
-                    if (g.Kind == RoomKind.Bathroom && !blind) { if (os.Any(o => o.Archetype == BuildingGen.ArchVent || o.Glazed)) vented++; else bad.Add($"{n} has no vent"); }
+                    // (a bathroom tucked inside, behind the room it opens off, has no outside wall to vent through)
+                    // (and an end wall with the floor below's roof leaning on it carries no window: BuildWalls)
+                    bool Room(int fl, int x, int z) => res.Layout.Any(o => o.Floor == fl && o.HasCell(x, z));
+                    bool outside = g.Rects.Any(q => Enumerable.Range(q.X0, q.X1 - q.X0).Any(x => Enumerable.Range(q.Z0, q.Z1 - q.Z0).Any(z =>
+                        new[] { (x, z - 1), (x, z + 1) }.Any(c => !Room(g.Floor, c.Item1, c.Item2))
+                        || new[] { x - 1, x + 1 }.Any(cx => !Room(g.Floor, cx, z) && (g.Floor == 0 || res.Roof == RoofKind.Flat || !Room(g.Floor - 1, cx, z))))));
+                    if (g.Kind == RoomKind.Bathroom && !blind && outside) { if (os.Any(o => o.Archetype == BuildingGen.ArchVent || o.Glazed)) vented++; else bad.Add($"{n} has no vent"); }
                     // and none at all on those sides
                     foreach (var (w, o) in mine) if (o.Glazed && (FaceOf(w) & spec.NoWindows) != 0) bad.Add($"{n} has a window on its {FaceOf(w)} side, asked to have none");
                     if ((g.Kind == RoomKind.Garage || g.Kind == RoomKind.Warehouse) && g.Floor == 0)
@@ -798,7 +804,15 @@ namespace UnturnedSim.Tests
             int gables = 0, hips = 0, flats = 0, cells = 0, exposed = 0, lowers = 0, leaning = 0, closed = 0;
             foreach (var (spec, res) in All())
             {
-                var roofs = res.Walls.Where(w => w.Kind == SurfaceKind.Roof).ToList();
+                // (a porch's roof is its own, over its deck: not the house's)
+                bool OverPorch(WallPlan w)
+                {
+                    var d = Dir(w); var nn = Normal(w); float run = w.Height * MathF.Cos((w.Pitch + 90f) * MathF.PI / 180f);
+                    float cx = w.X + d.X * w.Length * 0.5f - nn.X * run * 0.5f, cz = w.Z + d.Z * w.Length * 0.5f - nn.Z * run * 0.5f;
+                    if (MathF.Abs(w.Pitch + 90f) < 0.5f) { cx = w.X + w.Length * 0.5f; cz = w.Z - w.Height * 0.5f; }
+                    return res.Porches.Any(p => cx > p.X0 - 0.6f && cx < p.X1 + 0.6f && cz > p.Z0 - 0.6f && cz < p.Z1 + 0.6f);
+                }
+                var roofs = res.Walls.Where(w => w.Kind == SurfaceKind.Roof && !OverPorch(w)).ToList();
                 var slopes = roofs.Where(w => MathF.Abs(w.Pitch + 90f) > 0.5f).ToList();
                 var topSlopes = slopes.Where(w => MathF.Abs(w.Y - res.Floors * Storey) < 0.05f).ToList();
                 bool raised = res.Walls.Any(w => w.Kind == SurfaceKind.Wall && w.GableRise > 0.01f);
@@ -1170,7 +1184,7 @@ namespace UnturnedSim.Tests
         {
             const float DoorClear = 1.2f, LaneClear = 4f, Tall = 1.9f, Sill = 0.5f;
             var bad = new List<string>();
-            int pieces = 0, rooms = 0, walkedRooms = 0, beds = 0, desks = 0, couches = 0, tvs = 0, chairs = 0, kitchensFull = 0, wallPieces = 0, swung = 0;
+            int pieces = 0, ceilingLights = 0, rooms = 0, walkedRooms = 0, beds = 0, desks = 0, couches = 0, tvs = 0, chairs = 0, kitchensFull = 0, wallPieces = 0, swung = 0;
             int wallSets = 0, crts = 0, lKitchens = 0, islands = 0, freeFridges = 0, gondolas = 0, movable = 0, turned = 0, shopsWithShelves = 0, shopsWithRows = 0;
             var missing = new Dictionary<string, int>(); var kinds = new Dictionary<RoomKind, int>();
             // (a plain counter is worktop, reached along its run: the one in an L's corner is a blind corner)
@@ -1227,7 +1241,7 @@ namespace UnturnedSim.Tests
                         }
                     }
                     var here = res.Furniture.Where(m => m.Floor == f).ToList();
-                    var floorPieces = here.Where(m => m.On == null && !m.Mounted).ToList();
+                    var floorPieces = here.Where(m => m.On == null && !m.Mounted && !m.Ceiling).ToList();
                     // the floor at 0.1 m: wall, and blocked (wall, stairs, holes, furniture)
                     const float G = 0.1f, O = -1f;
                     int gnx = (int)((res.CellsX * Cell + 2f) / G) + 1, gnz = (int)((res.CellsZ * Cell + 2f) / G) + 1;
@@ -1269,6 +1283,16 @@ namespace UnturnedSim.Tests
                         pieces++;
                         var fp = m.Footprint;
                         string nm = $"{Name(spec)}: {m}";
+                        // a ceiling light: in its room, high enough to walk under, not hung over a flight
+                        if (m.Ceiling)
+                        {
+                            ceilingLights++;
+                            if (!m.Room.Holds(m.X, m.Z)) bad.Add($"{nm} hangs outside its room");
+                            float drop = m.Name.Contains("Pendant") ? 0.95f : 0.28f;
+                            if (m.Y - drop < f * Storey + 2.4f) bad.Add($"{nm} hangs down to {m.Y - drop - f * Storey:0.00} m");
+                            if (stairs.Any(st => Overlap(fp, st))) bad.Add($"{nm} hangs over a flight");
+                            continue;
+                        }
                         if (m.On != null)
                         {
                             var hfp = m.On.Footprint; var cx = (fp.X0 + fp.X1) * 0.5f; var cz = (fp.Z0 + fp.Z1) * 0.5f;
@@ -1547,6 +1571,7 @@ namespace UnturnedSim.Tests
             foreach (var g in bad.GroupBy(b => System.Text.RegularExpressions.Regex.Replace(b.Substring(b.IndexOf(':') + 1), @"[\d.,()-]+", "#")).OrderByDescending(g => g.Count()).Take(12))
                 TestContext.Progress.WriteLine($"[furn]   {g.Count()} x {g.Key.Trim()} -- e.g. {g.First()}");
             Assert.That(pieces, Is.GreaterThan(3000));
+            Assert.That(ceilingLights, Is.GreaterThan(1000), "rooms get ceiling lights");
             Assert.That(wallPieces, Is.GreaterThan(3000));
             // a room without what makes it one is a room the furnisher gave up on: a few that are too small for it, no more
             foreach (var (what, n) in missing)

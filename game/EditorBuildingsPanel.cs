@@ -560,6 +560,14 @@ namespace UnturnedGodot
             _genShape = new OptionButton { FocusMode = FocusModeEnum.None, TooltipText = "the ground floor's outline; an L or a T is one storey only for now" };
             foreach (var (n, v) in new[] { ("any", FootprintShape.Auto), ("rect", FootprintShape.Rect), ("L", FootprintShape.L), ("T", FootprintShape.T) }) _genShape.AddItem(n, (int)v);
             types.AddChild(_genShape);
+            types.AddChild(Dim("porch"));
+            _genPorch = new OptionButton { FocusMode = FocusModeEnum.None, TooltipText = "a porch outside the front and/or back door" };
+            foreach (var (n, v) in new[] { ("any", PorchChoice.Auto), ("none", PorchChoice.None), ("front", PorchChoice.Front), ("back", PorchChoice.Back), ("both", PorchChoice.Both) }) _genPorch.AddItem(n, (int)v);
+            types.AddChild(_genPorch);
+            types.AddChild(Dim("chimney"));
+            _genChimney = new OptionButton { FocusMode = FocusModeEnum.None, TooltipText = "a fireplace in the living room, its chimney out through the roof (houses)" };
+            foreach (var (n, v) in new[] { ("any", ChimneyChoice.Auto), ("none", ChimneyChoice.None), ("yes", ChimneyChoice.Yes) }) _genChimney.AddItem(n, (int)v);
+            types.AddChild(_genChimney);
             types.AddChild(Dim("front door")); types.AddChild(_genFront = SidePick("the side the front door goes in (north is +Z)"));
             types.AddChild(Dim("back door")); types.AddChild(_genBack = SidePick("the side a back door goes in; picking one always makes one"));
             foreach (var (n, v) in new[] { ("no win N", Sides.North), ("no win E", Sides.East), ("no win S", Sides.South), ("no win W", Sides.West) })
@@ -603,7 +611,7 @@ namespace UnturnedGodot
         Label _bakeMsg;
         OptionButton _genKind;
         SpinBox _genSeed, _genMinRooms, _genPerFloor, _genMinFloors, _genMaxFloors, _genWidth, _genDepth;
-        OptionButton _genFront, _genBack, _genShape;
+        OptionButton _genFront, _genBack, _genShape, _genPorch, _genChimney;
         readonly System.Collections.Generic.Dictionary<Sides, CheckBox> _genNoWin = new();
         readonly System.Collections.Generic.Dictionary<RoomKind, SpinBox> _genMin = new();
 
@@ -625,6 +633,8 @@ namespace UnturnedGodot
                 FrontSide = (Sides)_genFront.GetSelectedId(),
                 BackSide = (Sides)_genBack.GetSelectedId(),
                 Shape = (FootprintShape)_genShape.GetSelectedId(),
+                Porches = (PorchChoice)_genPorch.GetSelectedId(),
+                Chimney = (ChimneyChoice)_genChimney.GetSelectedId(),
             };
             foreach (var kv in _genNoWin) if (kv.Value.ButtonPressed) spec.NoWindows |= kv.Key;
             foreach (var kv in _genMin) if (kv.Value.Value > 0) spec.MinOfKind[kv.Key] = (int)kv.Value.Value;
