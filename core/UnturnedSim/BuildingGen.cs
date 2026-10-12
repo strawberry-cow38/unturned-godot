@@ -585,7 +585,8 @@ namespace UnturnedSim
         /// plan is built, said so.</summary>
         public static BuildingGenResult Generate(BuildingGenSpec spec)
         {
-            if (!spec.FitPlot || spec.Width <= 0 || spec.Depth <= 0) return GenerateOnce(spec);
+            // (a block of flats fits itself -- corridor, stairwell and whole flats, not rooms a floor: BuildingGenApartments)
+            if (!spec.FitPlot || spec.Width <= 0 || spec.Depth <= 0 || spec.Kind == BuildingKind.Apartment) return GenerateOnce(spec);
             int maxF = Math.Max(1, spec.MaxFloors), minF = Math.Clamp(spec.MinFloors, 1, maxF);
             // stairs need a bay three rows deep, a hall and two rows north of it: a shallower plot is one storey
             if (spec.Depth < 6) maxF = minF = 1;
