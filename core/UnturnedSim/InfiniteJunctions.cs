@@ -611,6 +611,14 @@ namespace SDG.Unturned
         /// <summary>Where a class's lines lie across it (ribbon normal units from its centre), how wide, which colour, and
         /// dashed or solid -- read off its texture: a main's solid yellow centre 0.575 m wide and white lane dashes 4.82 m
         /// out; a small road's dashed yellow centre, a ramp's dashed white one, 0.29 m; a trail none.</summary>
+        static List<(double lat, double width, byte colour, bool dashed)> Scaled(
+            IEnumerable<(double lat, double width, byte colour, bool dashed)> src, double sc)
+        {
+            var outp = new List<(double, double, byte, bool)>();
+            foreach (var (lat, width, colour, dashed) in src) outp.Add((lat * sc, width * sc, colour, dashed));
+            return outp;
+        }
+
         static IEnumerable<(double lat, double width, byte colour, bool dashed)> LinesOf(Line e)
         {
             if (e.Kind == RoadKind.Main) { yield return (0, 0.575, 1, false); yield return (4.82, 0.29, 0, true); yield return (-4.82, 0.29, 0, true); }
@@ -1214,7 +1222,8 @@ namespace SDG.Unturned
         /// arms are a road passing through and are painted through, with no stop line.</summary>
         public static bool TownNode(IReadOnlyList<TownArm> arms, double nx, double nz,
                                     out double[] trims, out RoadPatch patch, out List<RoadMark> marks,
-                                    double stopPastEdge = double.NaN)
+                                    double stopPastEdge = double.NaN,
+                                    IReadOnlyList<(double lat, double width, byte colour, bool dashed)> lines = null)
         {
             trims = null; patch = null; marks = null;
             if (arms == null || arms.Count < 2) return false;
@@ -1230,7 +1239,7 @@ namespace SDG.Unturned
             if (NodeShape(list, nx, nz) is not NodeGeo g) return false;
             if (NodePatch(g) is not RoadPatch p) return false;
             var plan = new JunctionPlan();
-            PaintNode(plan, g, p, stopPastEdge);
+            PaintNode(plan, g, p, stopPastEdge, lines);
             trims = g.Trim.ToArray();
             patch = p;
             marks = plan.Marks;
@@ -1315,7 +1324,11 @@ namespace SDG.Unturned
         /// paint meets its neighbours'). A value puts the stop line that far PAST the arm's own half width
         /// instead -- which is where a town's kerb begins to turn, and so where a driver expects it
         /// (strawberry 2026-10-12: "bring the stop lines just before the curve of the sidewalks").</param>
-        static void PaintNode(JunctionPlan plan, NodeGeo g, RoadPatch p, double stopPastEdge = double.NaN)
+        /// <param name="lines">The arm's own line table, already in ITS metres. Null uses LinesOf, which is
+        /// keyed to the road's CLASS -- right for InfiniteRoads' roads and wrong for a caller whose arms are a
+        /// different width, or whose texture puts its dashes somewhere else.</param>
+        static void PaintNode(JunctionPlan plan, NodeGeo g, RoadPatch p, double stopPastEdge = double.NaN,
+                              IReadOnlyList<(double lat, double width, byte colour, bool dashed)> lines = null)
         {
             int n = g.Arms.Count;
             var white = new RoadMark { Colour = 0, AnchorX = p.AnchorX, AnchorZ = p.AnchorZ, On = p };
@@ -1335,11 +1348,15 @@ namespace SDG.Unturned
                 // lines land at the wrong lateral offsets and the wrong widths: strawberry, of a town whose
                 // arms are wider than Main, "some of the lines are scaled/aligned wrong?". The ratio is
                 // exactly 1 for InfiniteRoads' own roads, so nothing there moves.
+                // A caller's own table is already in its metres; LinesOf is in the CLASS's, so it is scaled
+                // to this arm. ⚠ Scaling is still only an approximation of a different texture's layout --
+                // a caller that knows where its own dashes are should pass them.
                 double sc = arm.Hw / RibbonHalfOf(arm.E.Kind);
+                var table = lines ?? Scaled(LinesOf(arm.E), sc);
                 if (from < g.Trim[i])
-                    foreach (var (lat, width, colour, dashed) in LinesOf(arm.E))
+                    foreach (var (lat, width, colour, dashed) in table)
                         Stripe(colour == 1 ? yellow : white, arm.R, arm.Arc(from), arm.Arc(g.Trim[i]),
-                               lat * sc, width * sc, dashed, arm.E.Kind);
+                               lat, width, dashed, arm.E.Kind);
                 // ⚠⚠ THE APPROACH IS THE HALF A DRIVER ARRIVES ON, AND WE DRIVE ON THE RIGHT. This was
                 // Side(-1) and the comment above it said "the right" -- the sign was simply the other way
                 // round, so every stop line in the game was painted across the lanes LEAVING the junction

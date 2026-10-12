@@ -318,7 +318,8 @@ namespace UnturnedGodot
                                        roads.RoadHalfWidthOfMaterial(sp.Main ? MainMaterial : StreetMaterial)));
                     }
                     if (SDG.Unturned.InfiniteRoads.TownNode(spokes, node.P.X, -node.P.Z, out var cuts, out var patch, out var marks,
-                                                           stopPastEdge: CornerKerbRadius + SignalBeforeCurve)
+                                                           stopPastEdge: CornerKerbRadius + SignalBeforeCurve,
+                                                           lines: LineTableFor(roads.RoadHalfWidthOfMaterial(MainMaterial)))
                         && cuts != null && cuts.Length == here.Count)
                     {
                         for (int q = 0; q < here.Count; q++)
@@ -643,9 +644,13 @@ namespace UnturnedGodot
                     void Tri(Vector3 a, Vector3 b, Vector3 c)
                     {
                         bool keep = (c - a).Cross(b - a).Y >= 0f;
-                        st.SetUV(uv); st.AddVertex(a);
-                        st.SetUV(uv); st.AddVertex(keep ? b : c);
-                        st.SetUV(uv); st.AddVertex(keep ? c : b);
+                        // ⚠⚠ A NORMAL PER VERTEX. BuildPatchMeshes calls GenerateNormals and this did not, so
+                        // every painted quad reached the wet-surface shader with no normal at all and lit as
+                        // though it faced nowhere -- which is why the paint stayed DARKER than the road even
+                        // once it wore the road's own material and texel. Paint lies flat: the normal is up.
+                        st.SetNormal(Vector3.Up); st.SetUV(uv); st.AddVertex(a);
+                        st.SetNormal(Vector3.Up); st.SetUV(uv); st.AddVertex(keep ? b : c);
+                        st.SetNormal(Vector3.Up); st.SetUV(uv); st.AddVertex(keep ? c : b);
                     }
                     Tri(v[0], v[1], v[3]); Tri(v[0], v[3], v[2]);
                 }
@@ -1020,6 +1025,32 @@ namespace UnturnedGodot
         /// stands. Small: the mast belongs at the intersection, not up the street.</summary>
         public float SignalBeforeCurve = 1f;
         float RoadGapForLights = 0.05f;
+
+        /// <summary>Where this road's markings actually are, DECODED FROM road_0.png rather than taken from a
+        /// class table (strawberry 2026-10-12: "some of the lines are scaled/aligned wrong?").
+        ///
+        /// ⚠⚠ THE TEXTURE IS THE ONLY TRUTH ABOUT WHERE A ROAD'S LINES ARE, because it is literally what is
+        /// drawn. InfiniteJunctions' LinesOf says a Main road's dashes sit at +-4.82 m, symmetrically; the
+        /// actual texture has them at columns 60..63 and 188..191 of 256, which against a centre at 127.5 is
+        /// 66 px one side and 62 the other -- NOT symmetric. Scaling the class table lands both at the same
+        /// distance and one of them is then a quarter of a metre out, which is exactly the misalignment.
+        /// RoadField's cross-section gives u = 0 and 1 to the carriageway's own edges (uC = {0,0,1,1}; the
+        /// tapers share them), so u maps to lateral as (u - 0.5) * 2 * halfWidth with nothing else to allow for.</summary>
+        static List<(double lat, double width, byte colour, bool dashed)> LineTableFor(float half)
+        {
+            // (u centre, u width, colour, dashed) measured off road_0.png: white 60..63, yellow 124..131,
+            // white 188..191, all of 256 across.
+            var src = new (double u, double w, byte colour, bool dashed)[]
+            {
+                (0.2422, 0.0156, 0, true),
+                (0.5000, 0.0312, 1, false),
+                (0.7422, 0.0156, 0, true),
+            };
+            var outp = new List<(double, double, byte, bool)>(src.Length);
+            foreach (var (u, w, colour, dashed) in src)
+                outp.Add(((u - 0.5) * 2.0 * half, w * 2.0 * half, colour, dashed));
+            return outp;
+        }
 
         /// <summary>Where two kerb lines would cross: the sharp corner of the block, which is the centre the
         /// rounded corner turns about. False when the two run parallel and there is no corner to round.</summary>
