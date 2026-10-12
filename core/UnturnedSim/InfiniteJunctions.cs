@@ -1152,7 +1152,11 @@ namespace SDG.Unturned
             public double Arc(double t) => A0 + Dir * t;
             public int Side(int ccw) => ccw * Dir;   // the counter-clockwise side, on the ribbon's own normal
             public double Room => Dir > 0 ? R.Total - A0 : A0;
-            public double Hw => RibbonHalfOf(E.Kind);
+            /// <summary>A caller-supplied half width, for arms that are not InfiniteRoads' own. ⚠ The town grid
+            /// sizes its streets off RoadField MATERIALS (Highway_0 is 9.2 m), not off RoadKind, and a node
+            /// built to the wrong width leaves its patch standing proud of the asphalt it is supposed to meet.</summary>
+            public double HwOver;
+            public double Hw => HwOver > 0 ? HwOver : RibbonHalfOf(E.Kind);
             public bool IsEnd => Dir > 0 ? A0 <= 1e-9 : A0 >= R.Total - 1e-9;
         }
 
@@ -1176,7 +1180,52 @@ namespace SDG.Unturned
             return Math.Min(R(a.E), R(b.E));
         }
 
-        NodeGeo NodeShape(List<Arm> arms, double nx, double nz)
+        // =============================================================================================
+        // PUBLIC FACADE: the node geometry, for a caller whose roads are NOT InfiniteRoads' own.
+        //
+        // strawberry 2026-10-11, on the town grid's overlapping junctions: "use tiny's road-merging mechanic
+        // instead of overlapping roads". The machinery below already does exactly that -- arms cut back past
+        // their fillets and one fanned patch paving the middle -- but it is keyed to Line/RoadKind/Rib, none
+        // of which a RoadField-side generator has. This hands it plain polylines instead and gives back the
+        // two things such a generator needs: how far to cut each arm, and the patch to lay between them.
+        // ⚠ FRAME: X/Z here are InfiniteRoads' own, where z is the NEGATED world z. Passing Godot world
+        // coordinates straight in mirrors the node, and a mirror swaps which side is counter-clockwise --
+        // which is the ordering every fillet below is built on.
+        public readonly struct TownArm
+        {
+            public readonly double[] X, Z; public readonly float[] H;
+            /// <summary>Is the node at this polyline's END (otherwise its start)?</summary>
+            public readonly bool AtEnd;
+            public readonly double HalfWidth;
+            public TownArm(double[] x, double[] z, float[] h, bool atEnd, double halfWidth)
+            { X = x; Z = z; H = h; AtEnd = atEnd; HalfWidth = halfWidth; }
+        }
+
+        /// <summary>The node where these arms meet: how far back each one is cut (same order as `arms`), and
+        /// the patch that paves the middle. False when the shape cannot be made -- too few arms, one too short
+        /// to cut, or a geometry the fillets cannot close -- in which case the caller keeps whatever it had.</summary>
+        public static bool TownNode(IReadOnlyList<TownArm> arms, double nx, double nz,
+                                    out double[] trims, out RoadPatch patch)
+        {
+            trims = null; patch = null;
+            if (arms == null || arms.Count < 2) return false;
+            var list = new List<Arm>(arms.Count);
+            foreach (var a in arms)
+            {
+                if (a.X == null || a.Z == null || a.H == null || a.X.Length < 2
+                    || a.Z.Length != a.X.Length || a.H.Length != a.X.Length || a.HalfWidth <= 0) return false;
+                var e = new Line { Kind = RoadKind.Main, X = a.X, Z = a.Z, H = a.H };
+                var r = new Rib(e, 0);
+                list.Add(new Arm { E = e, R = r, A0 = a.AtEnd ? r.Total : 0, Dir = a.AtEnd ? -1 : 1, HwOver = a.HalfWidth });
+            }
+            if (NodeShape(list, nx, nz) is not NodeGeo g) return false;
+            if (NodePatch(g) is not RoadPatch p) return false;
+            trims = g.Trim.ToArray();
+            patch = p;
+            return true;
+        }
+
+        static NodeGeo NodeShape(List<Arm> arms, double nx, double nz)
         {
             var g = new NodeGeo { NX = nx, NZ = nz };
             var items = new List<(double ang, Arm arm, double dx, double dz)>();
@@ -1273,7 +1322,7 @@ namespace SDG.Unturned
         }
         static int Rank(Line e) => e.Kind == RoadKind.Main ? 2 : e.Kind == RoadKind.Small ? 1 : 0;
 
-        RoadPatch NodePatch(NodeGeo g)
+        static RoadPatch NodePatch(NodeGeo g)
         {
             int n = g.Arms.Count;
             var vx = new List<double>(); var vz = new List<double>(); var vy = new List<float>(); var vl = new List<float>();

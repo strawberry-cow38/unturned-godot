@@ -79,6 +79,36 @@ namespace UnturnedGodot.Testing
                 if (rfA.RoadEndJunction(r, false) >= 0 && rfA.RoadEndJunction(r, true) >= 0) bound++;
             T.Check($"every street is still bound at both ends ({bound} of {rfA.RoadCount})", bound == rfA.RoadCount);
 
+            // ---- 1b. TINY'S NODE GEOMETRY, through the new facade (strawberry: "use tiny's road-merging
+            // mechanic instead of overlapping roads"). Four arms meeting at the origin -- a plain crossroads --
+            // must come back with a cut for each arm and a patch to pave the middle.
+            // ⚠ FRAME: InfiniteRoads' z is the NEGATED world z, so the arms are built in that frame here. A
+            // mirror swaps which side is counter-clockwise, and the fillets are built on that ordering.
+            {
+                var spokes = new List<SDG.Unturned.InfiniteRoads.TownArm>();
+                foreach (var (ax, az) in new[] { (1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0) })
+                {
+                    int m = 25;
+                    var xs = new double[m]; var zs = new double[m]; var hs = new float[m];
+                    for (int k = 0; k < m; k++) { xs[k] = ax * k * 8.0; zs[k] = az * k * 8.0; hs[k] = 30f; }
+                    spokes.Add(new SDG.Unturned.InfiniteRoads.TownArm(xs, zs, hs, atEnd: false, halfWidth: 9.2));
+                }
+                bool got = SDG.Unturned.InfiniteRoads.TownNode(spokes, 0, 0, out var trims, out var patch);
+                T.Check("tiny's node geometry accepts a four-arm crossroads", got && trims != null && patch != null);
+                if (got)
+                {
+                    T.Check($"...a cut for every arm ({trims.Length})", trims.Length == 4);
+                    float worstCut = 0f; foreach (var t in trims) worstCut = Mathf.Max(worstCut, (float)t);
+                    T.Check($"...each arm cut back past its fillet, not to the centre (worst {worstCut:0.0} m)",
+                            worstCut > 9.2f);
+                    T.Check($"...and a patch with triangles to pave the middle ({patch.Tris.Length / 3} tris, {patch.X.Length} verts)",
+                            patch.Tris.Length >= 3 && patch.X.Length >= 3);
+                    // The patch has to actually COVER the hole the cuts leave, or the junction is a gap.
+                    T.Check($"...covering the node itself (distance {patch.DistanceTo(0, 0):0.00} m)",
+                            patch.DistanceTo(0, 0) < 0.01);
+                }
+            }
+
             // ---- 2. DETERMINISM. ⚠ THE REASON THIS TEST EXISTS: the editor roads harness re-rolls its roads
             // every launch, which was only noticed after it wrecked an A/B. A generated town has to be
             // reproducible or nothing may ever be built on it.
