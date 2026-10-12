@@ -124,6 +124,29 @@ namespace UnturnedGodot.Testing
                 }
             }
 
+            // ---- 1c. THE CORNERS TURN THE RIGHT WAY (strawberry 2026-10-12: "your corners go the opposite
+            // way, they go outside, should go inside").
+            //
+            // ⚠ COUNTING THEM PROVES NOTHING -- the inside-out version built exactly as many. The shape is
+            // the claim: a street corner is the BLOCK's corner rounded off, so its centre of curvature sits
+            // in the block and the kerb bulges TOWARD the junction. An arc centred on the node instead keeps
+            // every point the same distance from it, which is the bug, and this check is what separates them.
+            {
+                var cornerWalk = new EditorSidewalk(); World.AddChild(cornerWalk);
+                int cn = Grid().LaySidewalkCornersOn(rfA, World, cornerWalk, out var shapes);
+                T.Check($"corners are laid ({cn})", cn > 0 && shapes.Count == cn);
+                int inward = 0, outward2 = 0;
+                foreach (var (cnode, cpts) in shapes)
+                {
+                    if (cpts.Count < 3) continue;
+                    float D(Vector3 q) => new Vector2(q.X - cnode.X, q.Z - cnode.Z).Length();
+                    float mid = D(cpts[cpts.Count / 2]), tips = Mathf.Min(D(cpts[0]), D(cpts[^1]));
+                    if (mid < tips - 0.5f) inward++; else outward2++;
+                }
+                T.Check($"...and every one bulges TOWARD its junction ({inward} inward, {outward2} not)",
+                        inward > 0 && outward2 == 0);
+            }
+
             // ---- 2. DETERMINISM. ⚠ THE REASON THIS TEST EXISTS: the editor roads harness re-rolls its roads
             // every launch, which was only noticed after it wrecked an A/B. A generated town has to be
             // reproducible or nothing may ever be built on it.

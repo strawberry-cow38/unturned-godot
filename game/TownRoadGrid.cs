@@ -346,7 +346,13 @@ namespace UnturnedGodot
             }
             foreach (var sp in plan)
             {
-                var pts = CutBack(sp.Pts, sp.TrimA, sp.TrimB);
+                // ⚠⚠ RUN EACH ARM A LITTLE INTO THE PATCH. Its end cap is suppressed (the ramp dipped under
+                // the junction), which leaves the slab OPEN -- and an open end is a 22 cm hole you see into
+                // at any grazing angle: a thin dark line across every join. master, with the heights already
+                // matching to 2 mm and the surfaces meeting to 7 mm in plan: "the seams are still there".
+                // Overlapping by a handful of centimetres hides the opening under the patch, and the patch
+                // sits PatchLift above, so the two cannot z-fight over the shared strip.
+                var pts = CutBack(sp.Pts, Mathf.Max(0f, sp.TrimA - PatchOverlap), Mathf.Max(0f, sp.TrimB - PatchOverlap));
                 if (pts == null) { rep.SpansRejected++; rep.CutAway++; continue; }
                 int road = roads.AddRoadFromPolyline(pts, sp.Main ? MainMaterial : StreetMaterial,
                                                     loop: false, ignoreTerrain: !FollowTerrain);
@@ -558,8 +564,32 @@ namespace UnturnedGodot
                         break;
                     }
                 }
-            Log.Print($"[towngrid] patch/road seam: worst {worst * 100f:0.0} cm over {probed} joined ends "
-                    + $"(surface offset {surf:0.000} m, patch lift {PatchLift:0.000} m) -- {worstWhy}");
+            // ⚠⚠ AND THE SEAM IN PLAN, which the height probe above cannot see. Two surfaces can agree to a
+            // millimetre in Y and still leave a stripe of ground between them, or overlap into a double
+            // edge. master: "the seams are still there" with the vertical mismatch already at 2 mm -- so the
+            // gap that is left is a HORIZONTAL one. Sample across the road's full width at its cut and ask
+            // the patch whether it reaches that far.
+            float worstGap = 0f; int gapProbes = 0; string gapWhy = "";
+            foreach (int r in Built)
+                for (int e = 0; e < 2; e++)
+                {
+                    bool atEnd = e == 1;
+                    if (roads.RoadEndJunction(r, atEnd) < 0) continue;
+                    float L = roads.RoadLength(r);
+                    if (!roads.EvaluateAlong(r, atEnd ? L : 0f, out var tip, out var tan, snapTerrain: false)) continue;
+                    var right = new Vector3(tan.Z, 0f, -tan.X).Normalized();
+                    float hw = roads.RoadHalfWidth(r);
+                    for (int k = -2; k <= 2; k++)
+                    {
+                        var q = tip + right * (hw * k / 2f);
+                        double best = double.MaxValue;
+                        foreach (var pp in Patches) best = System.Math.Min(best, pp.DistanceTo(q.X, -q.Z));
+                        if (best > worstGap) { worstGap = (float)best; gapWhy = $"road {r} {(atEnd ? "end" : "start")} at lateral {hw * k / 2f:0.0} m"; }
+                        gapProbes++;
+                    }
+                }
+            Log.Print($"[towngrid] patch/road seam: height {worst * 100f:0.0} cm, IN-PLAN GAP {worstGap * 100f:0.0} cm "
+                    + $"over {probed}/{gapProbes} probes (surf {surf:0.000}, lift {PatchLift:0.000}) -- {worstWhy}; widest gap {gapWhy}");
             return made;
         }
         /// <summary>A last hair of clearance over the asphalt. ⚠ SMALL ON PURPOSE: this is a SEAM, not an
@@ -632,16 +662,21 @@ namespace UnturnedGodot
         /// ⚠ ONLY BETWEEN DIFFERENT STREETS. Sorted by angle, a street's own two pavements are neighbours
         /// too -- the gap between them is its CARRIAGEWAY, and bridging that would pave straight across the
         /// road people drive on.</summary>
+        /// <summary>Each corner's centreline and the junction it belongs to, so a test can measure the SHAPE
+        /// rather than count meshes: a corner that curved the wrong way built just as many.</summary>
+        public readonly List<(Vector3 node, List<Vector3> pts)> LastCorners = new();
+
         public int LaySidewalkCorners(Node3D parent, RoadField roads, EditorSidewalk walk, float gap = 0.05f)
         {
             if (parent == null || roads == null || walk == null) return 0;
+            LastCorners.Clear();
             int made = 0;
             for (int j = 0; j < roads.JunctionCount; j++)
             {
                 var edges = roads.JunctionEdges(j);
                 if (edges.Count < 2) continue;
                 var node = roads.JunctionPos(j);
-                var ring = new List<(float ang, Vector3 p, int road, float r)>();
+                var ring = new List<(float ang, Vector3 p, Vector3 tan, int road, float r)>();
                 foreach (var (road, atEnd) in edges)
                 {
                     float L = roads.RoadLength(road);
@@ -655,7 +690,7 @@ namespace UnturnedGodot
                         var e = pos + right * (off * sgn);
                         var d = new Vector3(e.X - node.X, 0f, e.Z - node.Z);
                         if (d.Length() < 0.5f) continue;
-                        ring.Add((Mathf.Atan2(d.Z, d.X), new Vector3(e.X, pos.Y, e.Z), road, d.Length()));
+                        ring.Add((Mathf.Atan2(d.Z, d.X), new Vector3(e.X, pos.Y, e.Z), tan.Normalized(), road, d.Length()));
                     }
                 }
                 if (ring.Count < 2) continue;
@@ -666,22 +701,64 @@ namespace UnturnedGodot
                     if (a.road == b.road) continue;                     // that gap is the carriageway
                     float sweep = b.ang - a.ang; while (sweep <= 0f) sweep += Mathf.Tau;
                     if (sweep > Mathf.Pi * 0.95f) continue;             // not a corner: the long way round
-                    float rad = (a.r + b.r) * 0.5f;
-                    int steps = Mathf.Max(2, Mathf.CeilToInt(sweep * rad / 1.5f));
-                    var cp = new List<Vector3>(steps + 1); var co = new List<Vector3>(steps + 1);
-                    for (int k = 0; k <= steps; k++)
+                    // ⚠⚠ A CORNER IS A TANGENT FILLET OF FIXED RADIUS, not an arc through the two pavement
+                    // ends (master: "your corners go the opposite way, they go outside, should go inside").
+                    // Two wrong versions got here first, and each looked like a plausible reading of it:
+                    //   - centred on the NODE: the pavement curves AROUND the junction, concave toward it and
+                    //     bulging out into the block. That is a street corner turned inside out.
+                    //   - centred on the kerb corner but running A->B directly: the ends are ~18 m out along
+                    //     each arm (tiny's fillet cut), so the arc subtends almost a full turn and closes
+                    //     into a loop enclosing a disc of grass.
+                    // The real thing: the two kerb lines cross at P, the block's sharp corner; the kerb runs
+                    // STRAIGHT to a tangent point a fixed distance short of P, turns through one arc of
+                    // radius R about a centre on the bisector, and runs straight out the other side.
+                    if (!KerbCorner(a.p, a.tan, b.p, b.tan, out var P)) continue;
+                    var dA = new Vector3(a.p.X - P.X, 0f, a.p.Z - P.Z);
+                    var dB = new Vector3(b.p.X - P.X, 0f, b.p.Z - P.Z);
+                    float lA = dA.Length(), lB = dB.Length();
+                    if (lA < 1f || lB < 1f) continue;
+                    dA /= lA; dB /= lB;
+                    float theta = Mathf.Acos(Mathf.Clamp(dA.Dot(dB), -1f, 1f));
+                    if (theta < 0.25f || theta > Mathf.Pi - 0.05f) continue;    // no corner to round
+                    float half2 = theta * 0.5f;
+                    float rad = Mathf.Min(CornerKerbRadius, Mathf.Min(lA, lB) * 0.8f * Mathf.Tan(half2));
+                    if (rad < 0.4f) continue;
+                    float tdist = rad / Mathf.Tan(half2);
+                    var T1 = P + dA * tdist; var T2 = P + dB * tdist;
+                    var bis = (dA + dB).Normalized();
+                    var C = P + bis * (rad / Mathf.Sin(half2));
+                    // ⚠ THE OUTWARD IS PERPENDICULAR ON THE STRAIGHTS AND RADIAL ONLY ON THE ARC. Using the
+                    // radial everywhere skews the first cross-section away from the street's own, and the two
+                    // ribbons meet at a visible notch even though they share an endpoint. They agree exactly
+                    // at the tangent point, because that is what tangent means -- so the two rules join
+                    // without a step.
+                    Vector3 Radial(Vector3 at) => new Vector3(C.X - at.X, 0f, C.Z - at.Z).Normalized();
+                    Vector3 Perp(Vector3 d, Vector3 at)
                     {
-                        float ang = a.ang + sweep * k / steps;
-                        var dir = new Vector3(Mathf.Cos(ang), 0f, Mathf.Sin(ang));
-                        float y = Mathf.Lerp(a.p.Y, b.p.Y, (float)k / steps);
-                        cp.Add(new Vector3(node.X + dir.X * rad, y, node.Z + dir.Z * rad));
-                        co.Add(dir);                                     // the pavement runs OUTWARD from the node
+                        var nn = new Vector3(-d.Z, 0f, d.X);
+                        return nn.Dot(new Vector3(C.X - at.X, 0f, C.Z - at.Z)) < 0f ? -nn : nn;
                     }
+                    float yA = a.p.Y, yB = b.p.Y;
+                    var cp = new List<Vector3>(); var co = new List<Vector3>();
+                    void Push(Vector3 at, float y, Vector3 outw) { cp.Add(new Vector3(at.X, y, at.Z)); co.Add(outw); }
+                    Push(a.p, yA, Perp(dA, a.p)); Push(T1, yA, Perp(dA, T1));
+                    float s0 = Mathf.Atan2(T1.Z - C.Z, T1.X - C.X), s1 = Mathf.Atan2(T2.Z - C.Z, T2.X - C.X);
+                    float sweepArc = Mathf.Wrap(s1 - s0, -Mathf.Pi, Mathf.Pi);
+                    int steps = Mathf.Max(2, Mathf.CeilToInt(Mathf.Abs(sweepArc) * rad / 1.2f));
+                    for (int k = 1; k < steps; k++)
+                    {
+                        float ang = s0 + sweepArc * k / steps;
+                        var at = new Vector3(C.X + Mathf.Cos(ang) * rad, 0f, C.Z + Mathf.Sin(ang) * rad);
+                        Push(at, Mathf.Lerp(yA, yB, (float)k / steps), Radial(at));
+                    }
+                    Push(T2, yB, Perp(dB, T2)); Push(b.p, yB, Perp(dB, b.p));
+
                     var mi = EditorSidewalk.BuildRibbon(cp, co, walk.Width, walk.KerbHeight, walk.Skirt,
                                                         $"Sidewalk_Corner_{j}_{i}",
                                                         Terrain.Active != null && !EditorSidewalk.NoGround
                                                             ? (x, z) => Terrain.Active.SampleHeight(x, z) : null);
                     if (mi == null) continue;
+                    LastCorners.Add((node, cp));
                     parent.AddChild(mi);
                     var body = new StaticBody3D { Name = mi.Name + "_body", CollisionLayer = 1u << 0 };
                     body.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Concrete);
@@ -692,9 +769,37 @@ namespace UnturnedGodot
             }
             return made;
         }
+        /// <summary>How far each street runs UNDER the junction patch, hiding its open slab end.</summary>
+        public float PatchOverlap = 0.35f;
+
         /// <summary>Drop the kerb where each pavement meets a junction -- the crossing points.</summary>
         public bool CrossingDips = true;
         public float CrossingDipLength = 3f;
+
+        /// <summary>Where two kerb lines would cross: the sharp corner of the block, which is the centre the
+        /// rounded corner turns about. False when the two run parallel and there is no corner to round.</summary>
+        static bool KerbCorner(Vector3 a, Vector3 ta, Vector3 b, Vector3 tb, out Vector3 p)
+        {
+            p = Vector3.Zero;
+            float den = ta.X * tb.Z - ta.Z * tb.X;
+            if (Mathf.Abs(den) < 1e-4f) return false;
+            float s = ((b.X - a.X) * tb.Z - (b.Z - a.Z) * tb.X) / den;
+            p = new Vector3(a.X + ta.X * s, (a.Y + b.Y) * 0.5f, a.Z + ta.Z * s);
+            return true;
+        }
+
+        /// <summary>Lay corners against an EXISTING field (one another grid already populated) and hand back
+        /// their centrelines. The test seam: a town built by one instance, cornered by another.</summary>
+        public int LaySidewalkCornersOn(RoadField roads, Node3D parent, EditorSidewalk walk,
+                                        out List<(Vector3 node, List<Vector3> pts)> shapes)
+        {
+            int n = LaySidewalkCorners(parent, roads, walk);
+            shapes = new List<(Vector3, List<Vector3>)>(LastCorners);
+            return n;
+        }
+
+        /// <summary>The radius a kerb turns through at a corner. 6 m is an ordinary urban one.</summary>
+        public float CornerKerbRadius = 6f;
 
         /// <summary>How far past the widest road at a junction a pavement is held back, and so how wide the
         /// corner it leaves is.</summary>

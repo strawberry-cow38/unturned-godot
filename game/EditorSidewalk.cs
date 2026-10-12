@@ -194,13 +194,18 @@ namespace UnturnedGodot
             var leftP = new List<Vector3>(n + 1); var leftO = new List<Vector3>(n + 1);
             var rightP = new List<Vector3>(n + 1); var rightO = new List<Vector3>(n + 1);
             var kerbs = new List<float>(n + 1);
-            for (int i = 0; i <= n; i++)
+            // ⚠ THE LAST SAMPLE LANDS ON `to`, NOT ON THE LAST WHOLE STEP. floor() leaves the ribbon up to a
+            // full Step (1.5 m) short of where it was asked to end -- invisible on an open run, and at a
+            // junction it is a notch between this pavement and the corner piece that starts exactly at `to`.
+            for (int i = 0; i <= n + 1; i++)
             {
-                if (!roads.EvaluateAlong(road, from + i * Step, out var p, out var t)) return 0;
+                float d = i <= n ? from + i * Step : to;
+                if (i == n + 1 && d - (from + n * Step) < 0.05f) break;   // already there
+                if (!roads.EvaluateAlong(road, d, out var p, out var t)) return 0;
                 var r = new Vector3(t.Z, 0f, -t.X).Normalized();   // the spline's RIGHT, same convention as Block_Road
                 rightP.Add(p + r * off); rightO.Add(r);            // kerb faces the road, surface runs outward
                 leftP.Add(p - r * off); leftO.Add(-r);
-                kerbs.Add(KerbAt(from + i * Step));
+                kerbs.Add(KerbAt(d));
             }
 
             int made = 0;
