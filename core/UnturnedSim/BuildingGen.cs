@@ -407,7 +407,8 @@ namespace UnturnedSim
                 while (spare >= 2 && here.Count < perFloor && Filler(here, f, spare, depth, ok) is var fill && fill != RoomKind.Unassigned)
                 {
                     int w = Math.Min(spare, Cap(fill, depth));
-                    if (spare - w == 1) w++;   // a one-cell leftover is too narrow for anything: the new room takes it
+                    // a one-cell leftover is too narrow for anything: a bigger room in the row takes it, or else the new room
+                    if (spare - w == 1 && (Service(fill) ? !list.Any(x => !Service(x.k)) : true)) w++;
                     list.Insert(rng.Int(list.Count + 1), (fill, w));
                     here.Add(fill);
                     spare -= w;
@@ -420,13 +421,24 @@ namespace UnturnedSim
                 for (int i = rng.Int(list.Count); spare > 0; i = (i + 1) % list.Count, spare--) list[i] = (list[i].k, list[i].w + 1);
                 return 0;
             }
+            // put a row's dining room right next to its kitchen, on a seeded side
+            void KitchenBesideDining(List<(RoomKind k, int w)> row)
+            {
+                int ki = row.FindIndex(x => x.k == RoomKind.Kitchen), di = row.FindIndex(x => x.k == RoomKind.DiningRoom);
+                if (ki < 0 || di < 0 || Math.Abs(ki - di) == 1) return;
+                var dining = row[di];
+                row.RemoveAt(di);
+                ki = row.FindIndex(x => x.k == RoomKind.Kitchen);
+                row.Insert(ki + rng.Int(2), dining);
+            }
             List<RoomKind> Seeded(IEnumerable<RoomKind> rs, int depth)
                 => rs.Select(r => (r, key: rng.Next())).OrderByDescending(x => Width(x.r, depth)).ThenBy(x => x.key).Select(x => x.r).ToList();
 
-            // ---- the stair bay: k1 flight rows against the south wall and a row of floor beside them; three cells long
-            // for one flight, four when the flights alternate rows (so each has a landing at both ends)
+            // ---- the stair bay: k1 flight rows against the south wall and a row of floor beside them, four cells long --
+            // a 6 m flight and a full tile clear at each end of it, at the foot and on the landing above (strawberry:
+            // "stairs should want 1 full tile at the foot and 1 tile on the landing above")
             bool multi = floors > 1;
-            int k1 = floors > 2 ? 2 : 1, L = multi ? (k1 == 1 ? 3 : 4) : 0, bayRows = k1 + 1;
+            int k1 = floors > 2 ? 2 : 1, L = multi ? 4 : 0, bayRows = k1 + 1;
             int dS = 3, dN = kind == BuildingKind.Industrial ? 4 : 3;   // upper floors: rows south of the hall, and north of it
             bool stairsWest = rng.Int(2) == 0;                          // the bay at the west end of the upper floors, or the east
 
@@ -462,20 +474,25 @@ namespace UnturnedSim
             {
                 bool bands = attempt < 9 ? bandsFirst : !bandsFirst;
                 var here = new List<RoomKind>(onFloor[0]);
-                var plan = bands ? Bands(here) : Corridor(here, attempt >= 12);
+                var plan = bands ? Bands(here, attempt >= 6 && attempt < 9 || attempt >= 12) : Corridor(here, attempt >= 12);
                 if (plan == null) continue;
                 var (prs, pw, pd, pb) = plan.Value;
                 var g = new Grid(pw, pd, 0, pw);
                 foreach (var r in prs) g.Paint(r);
                 var doors = new List<GenDoor>();
+                // the dining room beside the kitchen, or facing it across a hall (strawberry: "require dining room to be
+                // adjascent or at least nearby a kitchen"); the last, safe draws take what they get and say so
+                bool apart = !KitchenNearDining(g, prs);
+                if (apart && attempt < 12) continue;
                 if (!Connect(g, prs, 0, null, doors, multi ? (pb, 0, pb + L, bayRows) : (0, 0, 0, 0))) continue;
+                if (apart) res.Notes.Add("the dining room could not be put beside the kitchen");
                 ground = g; W = pw; D = pd; bx0 = pb;
                 res.Plan = bands ? "bands" : "corridor";
                 res.Layout.AddRange(prs);
                 res.Doors.AddRange(doors);
                 onFloor[0] = here;
             }
-            if (ground == null) throw new InvalidOperationException($"BuildingGen: no ground floor connected for {kind} seed {spec.Seed}");
+            if (ground == null) throw new InvalidOperationException($"BuildingGen: no ground floor connected for {kind} seed {spec.Seed} (min {spec.MinRooms} rooms, {spec.MinFloors}-{spec.MaxFloors} floors, {spec.MaxRoomsPerFloor}/floor): {string.Join(", ", onFloor[0])}");
             res.CellsX = W; res.CellsZ = D;
             res.Bay = multi ? (bx0, 0, bx0 + L, bayRows) : (0, 0, 0, 0);
             res.Footprints.Add((0, W));
@@ -517,7 +534,7 @@ namespace UnturnedSim
             // BANDS: walk-through and leaf rooms in a row along the south side (band A), private ones along the north
             // (band B), the lengths evened out by moving rooms across; every room opens into whichever walk-through room it
             // faces or sits beside. With stairs, the bay stands in band A's roomiest walk-through room.
-            (List<GenRoom> Rooms, int W, int D, int Bx0)? Bands(List<RoomKind> here)
+            (List<GenRoom> Rooms, int W, int D, int Bx0)? Bands(List<RoomKind> here, bool forceEnds)
             {
                 int dA, dB;
                 if (multi) { dA = k1 == 2 ? 4 : 3 + rng.Int(2); dB = dS + 1 + dN - dA; }
@@ -535,20 +552,48 @@ namespace UnturnedSim
                 for (int guard = 0; guard < 12; guard++)
                 {
                     int la = LenA(), lb = LenB();
+                    // (the kitchen and dining room stay in band A when anything else can go, and cross together when
+                    // nothing else can, so they always share a band and can sit side by side)
                     var fromA = A.Where(r => r != host || A.Count(x => x == host) > 1).ToList();
-                    if ((la > lb + 3 || B.Count == 0) && fromA.Count > 0 && A.Count > 1) { var m = fromA[rng.Int(fromA.Count)]; A.Remove(m); B.Add(m); }
+                    bool KD(RoomKind r) => r == RoomKind.Kitchen || r == RoomKind.DiningRoom;
+                    if (fromA.Any(r => !KD(r))) fromA = fromA.Where(r => !KD(r)).ToList();
+                    if ((la > lb + 3 || B.Count == 0) && fromA.Count > 0 && A.Count > 1)
+                    {
+                        var m = fromA[rng.Int(fromA.Count)];
+                        var moving = KD(m) ? A.Where(KD).ToList() : new List<RoomKind> { m };
+                        if (moving.Count >= A.Count) moving = new List<RoomKind> { m };
+                        foreach (var mv in moving) { A.Remove(mv); B.Add(mv); }
+                    }
                     else if ((lb > la + 3 || A.Count == 0) && B.Count > 1) { var m = B[rng.Int(B.Count)]; B.Remove(m); A.Add(m); }
                     else break;
                 }
                 if (A.Count == 0 || B.Count == 0) return null;
                 // band A: its dead ends to the ends of the row, so they never sit between two rooms you walk through
                 var rowA = new List<(RoomKind k, int w)>();
-                foreach (var r in Seeded(A.Where(r => AccessOf(r) == Access.Through), dA))
+                var thr = Seeded(A.Where(r => AccessOf(r) == Access.Through), dA);
+                // the dining room next to the kitchen, on a seeded side of it
+                if (thr.Contains(RoomKind.Kitchen) && thr.Contains(RoomKind.DiningRoom))
+                {
+                    thr.Remove(RoomKind.DiningRoom);
+                    thr.Insert(thr.IndexOf(RoomKind.Kitchen) + rng.Int(2), RoomKind.DiningRoom);
+                }
+                foreach (var r in thr)
                     rowA.Add((r, r == host ? Math.Max(L, Width(r, dA)) : Width(r, dA)));
                 foreach (var r in Seeded(A.Where(r => AccessOf(r) != Access.Through), dA))
-                    if (rng.Int(2) == 0) rowA.Insert(0, (r, Width(r, dA))); else rowA.Add((r, Width(r, dA)));
+                    if ((forceEnds && multi) ? !stairsWest : rng.Int(2) == 0) rowA.Insert(0, (r, Width(r, dA))); else rowA.Add((r, Width(r, dA)));
+                // the stair room at the end of the row the floors above start from: the bay is four cells and the floors
+                // above must fit inside this one from it, so a stair room in the middle of a long row often has no room
+                if (multi && (forceEnds || rng.Chance(60)))
+                {
+                    int hi0 = rowA.FindIndex(x => x.k == host);
+                    var hr = rowA[hi0];
+                    rowA.RemoveAt(hi0);
+                    if (stairsWest) rowA.Insert(0, hr); else rowA.Add(hr);
+                    KitchenBesideDining(rowA);
+                }
                 var rowB = B.Select(r => (k: r, w: Width(r, dB))).ToList();
                 rng.Shuffle(rowB);
+                KitchenBesideDining(rowB);
                 int w = Math.Max(Math.Max(rowA.Sum(x => x.w), rowB.Sum(x => x.w)), Math.Max(need, 4));
                 if (Pad(rowA, w, dA, here, 0, r => AccessOf(r) != Access.Private) > 0) return null;
                 if (Pad(rowB, w, dB, here, 0, _ => true) > 0) return null;
@@ -577,14 +622,17 @@ namespace UnturnedSim
             {
                 int sS = multi ? dS : 3 + rng.Int(2), sN = multi ? dN : (kind == BuildingKind.Industrial ? 4 : 3 + rng.Int(2));
                 var S = new List<(RoomKind k, int w)>(); var N = new List<(RoomKind k, int w)>();
-                foreach (var r in Seeded(here, sS))
+                // (the kitchen and dining room go to one side together, so they can sit side by side)
+                foreach (var r in Seeded(here.Where(r => r != RoomKind.DiningRoom || !here.Contains(RoomKind.Kitchen)), sS))
                 {
-                    int lenS = L + S.Sum(x => x.w) + Width(r, sS), lenN = N.Sum(x => x.w) + Width(r, sN);
-                    if (lenS <= lenN) S.Add((r, Width(r, sS))); else N.Add((r, Width(r, sN)));
+                    var pair = r == RoomKind.Kitchen && here.Contains(RoomKind.DiningRoom) ? new[] { r, RoomKind.DiningRoom } : new[] { r };
+                    int lenS = L + S.Sum(x => x.w) + pair.Sum(p => Width(p, sS)), lenN = N.Sum(x => x.w) + pair.Sum(p => Width(p, sN));
+                    foreach (var p in pair) if (lenS <= lenN) S.Add((p, Width(p, sS))); else N.Add((p, Width(p, sN)));
                 }
                 int w = Math.Max(Math.Max(L + S.Sum(x => x.w), N.Sum(x => x.w)), Math.Max(need, 4));
                 int aS = Pad(S, w - L, sS, here, 0, _ => true), aN = Pad(N, w, sN, here, 0, _ => true);
                 rng.Shuffle(S);
+                KitchenBesideDining(S); KitchenBesideDining(N);
                 var hall = new GenRoom { Kind = RoomKind.Hall, Floor = 0, X0 = 0, X1 = w, Z0 = sS, Z1 = sS + 1 };
                 var rs = new List<GenRoom> { hall };
                 int b = 0;
@@ -640,32 +688,52 @@ namespace UnturnedSim
                 var reached = new HashSet<GenRoom>();
                 bool InBay(int x, int z) => x >= bay.X0 && x < bay.X1 && z >= bay.Z0 && z < bay.Z1;
                 // a door's middle on a run, or NaN: kept off the walls meeting the run, and not opening onto the stairs
-                float Slot(Run r)
+                // A door's middle on a run, or NaN: kept off the walls meeting the run, not opening onto the stairs, and
+                // -- where the run allows -- not at a corner another door already uses (strawberry: "try to avoid
+                // multiple doors on a corner"). `crowded` says the only place left was such a corner.
+                float Slot(Run r, out bool crowded)
                 {
+                    crowded = false;
                     float lo = r.S0 * Cell + g.Meet(r.AlongX, r.Line, r.S0) + HalfDoor;
                     float hi = r.S1 * Cell - g.Meet(r.AlongX, r.Line, r.S1) - HalfDoor;
                     if (lo > hi) return float.NaN;
-                    var cells = Enumerable.Range(r.S0, r.S1 - r.S0).ToList();
-                    rng.Shuffle(cells);
-                    foreach (int c in cells)
+                    // where it may go: the middle of each cell, and each lattice point inside the run (a door straddling
+                    // two cells keeps clear of both their corners, which a cell-middle one in a two-cell wall cannot)
+                    var spots = Enumerable.Range(r.S0, r.S1 - r.S0).Select(c => (c + 0.5f) * Cell)
+                                          .Concat(Enumerable.Range(r.S0 + 1, Math.Max(0, r.S1 - r.S0 - 1)).Select(c => c * Cell)).ToList();
+                    rng.Shuffle(spots);
+                    float fallback = float.NaN;
+                    foreach (float spot in spots)
                     {
-                        float m = Math.Clamp((c + 0.5f) * Cell, lo, hi);
+                        float m = Math.Clamp(spot, lo, hi);
                         bool clear = true;
                         for (int s = (int)MathF.Floor((m - HalfDoor) / Cell); s <= (int)MathF.Floor((m + HalfDoor - 0.01f) / Cell) && clear; s++)
                             clear = r.AlongX ? !InBay(s, r.Line - 1) && !InBay(s, r.Line) : !InBay(r.Line - 1, s) && !InBay(r.Line, s);
-                        if (clear) return m;
+                        if (!clear) continue;
+                        if (!doors.Any(d => SharesCorner(r.AlongX, r.Line, m, d.AlongX, d.Line, d.At))) return m;
+                        if (float.IsNaN(fallback)) fallback = m;
                     }
-                    return float.NaN;
+                    crowded = !float.IsNaN(fallback);
+                    return fallback;
                 }
-                GenDoor Door(GenRoom a, GenRoom b)
+                GenDoor Door(GenRoom a, GenRoom b) => Door2(a, b, out _);
+                GenDoor Door2(GenRoom a, GenRoom b, out bool crowdedOut)
                 {
+                    crowdedOut = false;
                     var mine = runs.Where(r => (r.A == a && r.B == b) || (r.A == b && r.B == a)).ToList();
                     rng.Shuffle(mine);
                     // a shop's street door goes in its longest outside wall, the shopfront
                     if (b == null && a.Kind == RoomKind.Shop) mine = mine.OrderByDescending(r => r.S1 - r.S0).ToList();
+                    GenDoor second = null;
                     foreach (var r in mine)
-                        if (Slot(r) is float m && !float.IsNaN(m)) return new GenDoor { Floor = f, A = a, B = b, AlongX = r.AlongX, Line = r.Line, At = m };
-                    return null;
+                        if (Slot(r, out bool crowded) is float m && !float.IsNaN(m))
+                        {
+                            var d = new GenDoor { Floor = f, A = a, B = b, AlongX = r.AlongX, Line = r.Line, At = m };
+                            if (!crowded) return d;
+                            second ??= d;
+                        }
+                    crowdedOut = second != null;
+                    return second;
                 }
                 List<GenRoom> Next(GenRoom a) => runs.Where(r => r.A == a || r.B == a).Select(r => r.A == a ? r.B : r.A).Where(b => b != null).Distinct().ToList();
                 bool Doored(GenRoom a, GenRoom b) => doors.Any(d => (d.A == a && d.B == b) || (d.A == b && d.B == a));
@@ -685,21 +753,40 @@ namespace UnturnedSim
                     root = front.A;
                 }
                 reached.Add(root);
-                var q = new Queue<GenRoom>();
-                q.Enqueue(root);
-                while (q.Count > 0)
+                // walk-through rooms that belong together get their door first, so it has the pick of the wall: a kitchen
+                // and the dining room beside it always, the others usually -- and not where it would crowd a corner
+                // (the kitchen-dining door first of all: its wall may have one spot, and the optional ones then keep off it)
+                var together = rs.Where(r => AccessOf(r.Kind) == Access.Through)
+                                 .SelectMany(a => Next(a).Where(b => AccessOf(b.Kind) == Access.Through && rs.IndexOf(b) > rs.IndexOf(a) && Together(a.Kind, b.Kind)).Select(b => (a, b)))
+                                 .OrderBy(p => Pair(p.a.Kind, p.b.Kind, RoomKind.Kitchen, RoomKind.DiningRoom) ? 0 : 1).ToList();
+                foreach (var (a, b) in together)
                 {
-                    var a = q.Dequeue();
-                    var nb = Next(a).Where(b => AccessOf(b.Kind) == Access.Through && !reached.Contains(b)).ToList();
-                    rng.Shuffle(nb);
-                    foreach (var b in nb)
-                        if (Door(a, b) is GenDoor d) { doors.Add(d); reached.Add(b); q.Enqueue(b); }
+                    bool kd = Pair(a.Kind, b.Kind, RoomKind.Kitchen, RoomKind.DiningRoom);
+                    if (!Doored(a, b) && (kd || rng.Chance(85)) && Door2(a, b, out bool c) is GenDoor d && (kd || !c)) doors.Add(d);
+                }
+                // then a tree through the rest, from the way in, using those doors where they already join two rooms --
+                // first with only doors that crowd no corner, then, for whatever that left unreached, any door at all
+                foreach (bool anyDoor in new[] { false, true })
+                {
+                    var q = new Queue<GenRoom>(reached);
+                    while (q.Count > 0)
+                    {
+                        var a = q.Dequeue();
+                        var nb = Next(a).Where(b => AccessOf(b.Kind) == Access.Through && !reached.Contains(b)).ToList();
+                        rng.Shuffle(nb);
+                        foreach (var b in nb.OrderBy(b => Doored(a, b) ? 0 : 1))
+                        {
+                            if (reached.Contains(b)) continue;
+                            if (Doored(a, b)) { reached.Add(b); q.Enqueue(b); }
+                            else if (Door2(a, b, out bool c) is GenDoor d && (anyDoor || !c)) { doors.Add(d); reached.Add(b); q.Enqueue(b); }
+                        }
+                    }
                 }
                 if (rs.Any(r => AccessOf(r.Kind) == Access.Through && !reached.Contains(r))) return false;
-                // walk-through rooms that belong together get a door between them too; others now and then
+                // and now and then a second way between two others, where it crowds no corner
                 foreach (var a in rs.Where(r => AccessOf(r.Kind) == Access.Through).ToList())
                     foreach (var b in Next(a).Where(b => AccessOf(b.Kind) == Access.Through && rs.IndexOf(b) > rs.IndexOf(a)).ToList())
-                        if (!Doored(a, b) && rng.Chance(Together(a.Kind, b.Kind) ? 85 : 20) && Door(a, b) is GenDoor d) doors.Add(d);
+                        if (!Doored(a, b) && rng.Chance(20) && Door2(a, b, out bool c) is GenDoor d && !c) doors.Add(d);
                 // the dead ends, each off a room already reached that it may open off: a closet off a bedroom by
                 // preference, a bathroom off a walk-through room unless it rolls an en-suite, the rest off what they face
                 var left = rs.Where(r => !reached.Contains(r)).ToList();
@@ -715,8 +802,17 @@ namespace UnturnedSim
                         bool suite = r.Kind == RoomKind.Closet || (r.Kind == RoomKind.Bathroom && rng.Chance(30));
                         rng.Shuffle(parents);
                         int Prefer(GenRoom p) => suite && AccessOf(p.Kind) != Access.Through ? 0 : p.Kind == RoomKind.Hall ? 1 : AccessOf(p.Kind) == Access.Through ? 2 : 3;
+                        // the first parent (in that order) with a spot that crowds no corner; failing that, the first at all
+                        GenDoor pick = null, crowdedPick = null;
                         foreach (var p in parents.OrderBy(Prefer).ToList())
-                            if (Door(p, r) is GenDoor d) { doors.Add(d); reached.Add(r); left.Remove(r); progress = true; break; }
+                        {
+                            var d = Door2(p, r, out bool c);
+                            if (d == null) continue;
+                            if (!c) { pick = d; break; }
+                            crowdedPick ??= d;
+                        }
+                        pick ??= crowdedPick;
+                        if (pick != null) { doors.Add(pick); reached.Add(r); left.Remove(r); progress = true; }
                     }
                 }
                 if (left.Count > 0) return false;
@@ -730,12 +826,51 @@ namespace UnturnedSim
                         rng.Shuffle(outs);
                         GenDoor back = null;
                         foreach (var u in outs)
-                            if (Slot(u) is float m && !float.IsNaN(m)) { back = new GenDoor { Floor = f, A = r, B = null, AlongX = u.AlongX, Line = u.Line, At = m }; break; }
+                            if (Slot(u, out bool crowded) is float m && !float.IsNaN(m) && !crowded) { back = new GenDoor { Floor = f, A = r, B = null, AlongX = u.AlongX, Line = u.Line, At = m }; break; }
                         if (back != null) { doors.Add(back); break; }
                     }
                 }
+                // last, a door that crowds a corner moves to a clean spot on the same wall if it has one: placed early it
+                // had the pick, and a door placed later may have had only that corner
+                for (int pass = 0; pass < 2; pass++)
+                    foreach (var d in doors.ToList())
+                    {
+                        if (!doors.Any(o => o != d && SharesCorner(d.AlongX, d.Line, d.At, o.AlongX, o.Line, o.At))) continue;
+                        int at = doors.IndexOf(d);
+                        doors.RemoveAt(at);
+                        var moved = Door2(d.A, d.B, out bool still);
+                        doors.Insert(at, moved != null && !still ? moved : d);
+                    }
                 return true;
             }
+        }
+
+        static bool Pair(RoomKind a, RoomKind b, RoomKind x, RoomKind y) => (a == x && b == y) || (a == y && b == x);
+
+        /// <summary>Do two doors crowd the same corner -- both within a metre of one lattice point (where walls meet)? Two
+        /// doors on perpendicular walls by the same corner, or side by side either side of a partition's end.</summary>
+        public static bool SharesCorner(bool alongX1, int line1, float at1, bool alongX2, int line2, float at2)
+        {
+            const float Near = 1.0f;
+            IEnumerable<(int X, int Z)> Points(bool alongX, int line, float at)
+            {
+                for (int s = (int)MathF.Ceiling((at - HalfDoor - Near) / Cell); s * Cell <= at + HalfDoor + Near; s++)
+                    yield return alongX ? (s, line) : (line, s);
+            }
+            return Points(alongX1, line1, at1).Intersect(Points(alongX2, line2, at2)).Any();
+        }
+
+        /// <summary>Is the dining room (if any) beside the kitchen (if any) on this floor, or facing it across a hall?</summary>
+        static bool KitchenNearDining(Grid g, List<GenRoom> rs)
+        {
+            var k = rs.FirstOrDefault(r => r.Kind == RoomKind.Kitchen);
+            var d = rs.FirstOrDefault(r => r.Kind == RoomKind.DiningRoom);
+            if (k == null || d == null) return true;
+            if (Runs(g).Any(r => (r.A == k && r.B == d) || (r.A == d && r.B == k))) return true;
+            // facing: both on a hall, overlapping along it by a cell or more
+            var halls = rs.Where(r => r.Kind == RoomKind.Hall).ToList();
+            bool OnHall(GenRoom x) => Runs(g).Any(r => (r.A == x && halls.Contains(r.B)) || (r.B == x && halls.Contains(r.A)));
+            return OnHall(k) && OnHall(d) && Math.Min(k.X1, d.X1) - Math.Max(k.X0, d.X0) >= 1;
         }
 
         /// <summary>Two walk-through rooms that a house would join with a door even when another way round exists.</summary>
@@ -818,6 +953,26 @@ namespace UnturnedSim
             float Dm = D * Cell, he = Ext * 0.5f;
             var bay = res.Bay;
             var tops = new List<WallPlan>();
+            // A lower floor's own roof over [xa, xb]: a gable whose ridge runs along X from its open end into the wall of
+            // the floor above -- RoofShapes would turn a strip narrower than it is deep the other way, with its gable ends
+            // on walls that run on under the floor above, so the two slopes are laid here, in RoofShapes' own frame
+            // (Slope1 for a ridge along X). Pitched no steeper than lets the ridge meet that wall under its head.
+            void Lower(float xa, float xb, WallPlan endWall, bool westEnd, float head)
+            {
+                if (res.Roof != RoofKind.Gable) { res.Walls.Add(SlabPlan(xa, xb, -he, Dm + he, head + Slab, SurfaceKind.Roof)); return; }
+                float minX = westEnd ? xa - RoofOverhang : xa, maxX = westEnd ? xb : xb + RoofOverhang;
+                float minZ = -he - RoofOverhang, maxZ = Dm + he + RoofOverhang, half = (maxZ - minZ) * 0.5f;
+                float pitch = MathF.Min(res.RoofPitch, MathF.Atan((Storey - 0.6f) / half) * 180f / MathF.PI);
+                float tan = MathF.Tan(pitch * MathF.PI / 180f), slope = half / MathF.Cos(pitch * MathF.PI / 180f);
+                res.Walls.Add(new WallPlan { X = minX, Y = head, Z = maxZ, Yaw = 0f, Pitch = pitch - 90f, Length = maxX - minX, Height = slope, Thickness = Slab, Kind = SurfaceKind.Roof });
+                res.Walls.Add(new WallPlan { X = maxX, Y = head, Z = minZ, Yaw = 180f, Pitch = pitch - 90f, Length = maxX - minX, Height = slope, Thickness = Slab, Kind = SurfaceKind.Roof });
+                // the open end's wall raised to meet it, as EditorBuildings.PlaceRoof raises a gable end
+                float tri = endWall.Length * 0.5f * tan, band = half * tan - tri;
+                if (band > 0.01f)
+                    res.Walls.Add(new WallPlan { X = endWall.X, Y = endWall.Y + endWall.Height, Z = endWall.Z, Yaw = endWall.Yaw, Length = endWall.Length, Height = band,
+                                                 Thickness = endWall.Thickness, Kind = SurfaceKind.Wall, GableRise = tri });
+                else endWall.GableRise = tri;
+            }
             for (int f = 0; f < floors; f++)
             {
                 var g = grids[f];
@@ -869,9 +1024,13 @@ namespace UnturnedSim
 
                 // what each room has in its outside walls
                 bool flightAgainstSouth = f < floors - 1 && (k1 == 1 || f % 2 == 0);
+                // an end wall with the floor below's gable climbing it gets no windows: the roof is in front of them
+                bool westUnder = f > 0 && res.Roof == RoofKind.Gable && res.Footprints[f - 1].X0 < ux0;
+                bool eastUnder = f > 0 && res.Roof == RoofKind.Gable && res.Footprints[f - 1].X1 > ux1;
                 var outside = Runs(g).Where(r => r.B == null).ToList();
                 foreach (var run in outside)
                 {
+                    if (!run.AlongX && ((run.Line == ux0 && westUnder) || (run.Line == ux1 && eastUnder))) continue;
                     var room = run.A;
                     var w = Side(run.AlongX, run.Line);
                     float lo = run.S0 * Cell + g.Meet(run.AlongX, run.Line, run.S0), hi = run.S1 * Cell - g.Meet(run.AlongX, run.Line, run.S1);
@@ -883,7 +1042,8 @@ namespace UnturnedSim
                     foreach (var (c0, c1) in cuts)
                         free = free.SelectMany(s => s.B <= c0 || s.A >= c1 ? new[] { s } : new (float A, float B)[] { (s.A, Math.Min(s.B, c0)), (Math.Max(s.A, c1), s.B) })
                                    .Where(s => s.B - s.A > 0.1f).ToList();
-                    var mine = outside.Where(r => r.A == room).OrderByDescending(r => r.S1 - r.S0).ThenBy(r => r.AlongX ? 0 : 1).First();
+                    var mine = outside.Where(r => r.A == room && (r.AlongX || !((r.Line == ux0 && westUnder) || (r.Line == ux1 && eastUnder))))
+                                      .OrderByDescending(r => r.S1 - r.S0).ThenBy(r => r.AlongX ? 0 : 1).First();
                     bool longest = mine.AlongX == run.AlongX && mine.Line == run.Line && mine.S0 == run.S0;
                     var arches = new List<(int Arch, float At, float Width)>();
                     // the vehicle door first, on a garage's or warehouse's longest outside run, then windows round it
@@ -927,13 +1087,15 @@ namespace UnturnedSim
 
                 // the floor, its top at the storey's base, out to the outside walls' outer faces (the editor's slab)
                 res.Walls.Add(SlabPlan(x0m - he, x1m + he, -he, Dm + he, y, SurfaceKind.Floor));
-                // a flat roof on whatever of this floor the one above leaves uncovered
+                // a roof on whatever of this floor the one above leaves uncovered: flat on a business; on a house a gable of
+                // its own, its ridge running into the wall of the floor above (strawberry: "any reason why the 1st floor
+                // section of roof is flat instead of gable? it can be a lower angle gable if required")
                 if (f + 1 < floors)
                 {
                     var (a0, a1) = res.Footprints[f + 1];
-                    float top = (f + 1) * Storey + Slab;
-                    if (a0 > ux0) res.Walls.Add(SlabPlan(x0m - he, a0 * Cell - he, -he, Dm + he, top, SurfaceKind.Roof));
-                    if (a1 < ux1) res.Walls.Add(SlabPlan(a1 * Cell + he, x1m + he, -he, Dm + he, top, SurfaceKind.Roof));
+                    float wallHead = (f + 1) * Storey;
+                    if (a0 > ux0) Lower(x0m - he, a0 * Cell - he, west, true, wallHead);
+                    if (a1 < ux1) Lower(a1 * Cell + he, x1m + he, east, false, wallHead);
                 }
             }
 
