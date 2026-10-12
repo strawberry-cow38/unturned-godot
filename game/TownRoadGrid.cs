@@ -809,6 +809,7 @@ namespace UnturnedGodot
 
             // ---- 1. NODES. Each one is a potential junction, so the gates here are the strict ones.
             _frameU0 = _frameV0 = float.MaxValue; _frameU1 = _frameV1 = float.MinValue;
+            _lineN = n; _lineU = new float[w]; _lineV = new float[w]; _nodeOk = new bool[w, w];
             for (int gi = 0; gi < w; gi++)
                 for (int gj = 0; gj < w; gj++)
                 {
@@ -833,6 +834,7 @@ namespace UnturnedGodot
                         _frameU0 = Mathf.Min(_frameU0, u); _frameU1 = Mathf.Max(_frameU1, u);
                         _frameV0 = Mathf.Min(_frameV0, v); _frameV1 = Mathf.Max(_frameV1, v);
                     }
+                    _lineU[gi] = u; _lineV[gj] = v; _nodeOk[gi, gj] = node.Ok;
                     grid[gi, gj] = node;
                 }
 
@@ -2856,26 +2858,33 @@ namespace UnturnedGodot
         /// <summary>What a plot is for.</summary>
         public enum PlotKind { HouseSmall, HouseMedium, HouseLarge, Corner, Shop, Apartments }
 
-        /// <summary>One entry of the plot catalogue: a kind, its frontage and depth, and the colour it is marked in.</summary>
+        /// <summary>One entry of the plot catalogue: a kind, its frontage and depth, its yards, and the colour it is
+        /// marked in. The building stands in what the yards leave: (Width - 2 SideYard) x (Depth - FrontYard -
+        /// BackYard), a whole number of 3 m cells, so a generated footprint fills it exactly.</summary>
         public readonly struct PlotSize
         {
-            public readonly PlotKind Kind; public readonly float Width, Depth; public readonly Color Colour;
-            public PlotSize(PlotKind kind, float width, float depth, Color colour) { Kind = kind; Width = width; Depth = depth; Colour = colour; }
+            public readonly PlotKind Kind; public readonly float Width, Depth, FrontYard, BackYard, SideYard; public readonly Color Colour;
+            public PlotSize(PlotKind kind, float width, float depth, float front, float back, float side, Color colour)
+            { Kind = kind; Width = width; Depth = depth; FrontYard = front; BackYard = back; SideYard = side; Colour = colour; }
         }
 
-        /// <summary>The catalogue, frontage x depth in metres.
+        /// <summary>The catalogue: frontage x depth, then front, back and side yards, in metres.
         /// ⚠ FIXED. A plot is one of these exactly and is never stretched or trimmed to fill a gap; what is left
-        /// over stays open ground. Every size is a whole number of tiny's 3 m building cells (BuildingGen.Cell),
-        /// so a building generated for a plot lands on its lattice. A corner plot is SQUARE, because it fronts
-        /// two streets and either may be its front.</summary>
+        /// over stays open ground. Every plot and every building zone in it is a whole number of tiny's 3 m
+        /// building cells (BuildingGen.Cell), so a building generated for a plot lands on its lattice.
+        /// ⭐ THE YARDS ARE PART OF THE PLOT (strawberry 2026-10-12: "consider space for alleys, backyards, front
+        /// yards"). A front yard deep enough for a porch and a car (tinyclaw: "porches stick 3 m out the front and
+        /// the garage door wants a drive"), a backyard behind, side yards so neighbours' walls do not touch -- a
+        /// shop's are none, it fronts the pavement shoulder to shoulder like a high street. A corner plot is
+        /// SQUARE and fronts two streets, so its street side gets a front yard too.</summary>
         public static readonly PlotSize[] PlotSizes =
         {
-            new(PlotKind.HouseSmall,  15f, 30f, new Color(0.98f, 0.86f, 0.30f)),
-            new(PlotKind.HouseMedium, 18f, 33f, new Color(0.98f, 0.58f, 0.20f)),
-            new(PlotKind.HouseLarge,  24f, 36f, new Color(0.92f, 0.30f, 0.28f)),
-            new(PlotKind.Corner,      30f, 30f, new Color(0.35f, 0.82f, 0.42f)),
-            new(PlotKind.Shop,        12f, 27f, new Color(0.72f, 0.45f, 0.98f)),
-            new(PlotKind.Apartments,  30f, 36f, new Color(0.30f, 0.62f, 0.98f)),
+            new(PlotKind.HouseSmall,  15f, 30f, 6f, 9f, 1.5f, new Color(0.98f, 0.86f, 0.30f)),   // house 12 x 15
+            new(PlotKind.HouseMedium, 18f, 33f, 6f, 9f, 1.5f, new Color(0.98f, 0.58f, 0.20f)),   // house 15 x 18
+            new(PlotKind.HouseLarge,  24f, 36f, 6f, 9f, 1.5f, new Color(0.92f, 0.30f, 0.28f)),   // house 21 x 21
+            new(PlotKind.Corner,      30f, 30f, 6f, 3f, 3f,   new Color(0.35f, 0.82f, 0.42f)),   // house 21 x 21
+            new(PlotKind.Shop,        12f, 27f, 3f, 6f, 0f,   new Color(0.72f, 0.45f, 0.98f)),   // shop 12 x 18
+            new(PlotKind.Apartments,  30f, 36f, 6f, 9f, 3f,   new Color(0.30f, 0.62f, 0.98f)),   // block 24 x 21
         };
         public static PlotSize SizeOf(PlotKind k) { foreach (var p in PlotSizes) if (p.Kind == k) return p; return PlotSizes[0]; }
 
@@ -2892,6 +2901,18 @@ namespace UnturnedGodot
             /// <summary>How much further back than its street's frontage line it stands: 0, except a corner lot
             /// nudged out along its diagonal to clear the corner's pavement.</summary>
             public float Setback;
+            /// <summary>Its yards: in from the front, the back, and the left and right sides (left = the
+            /// front-left corner's side; a corner lot's left side is its second street).</summary>
+            public float YardFront, YardBack, YardLeft, YardRight;
+            /// <summary>Where its building goes: the plot less its yards, corners in the same order.</summary>
+            public Vector3[] BuildArea()
+            {
+                float x0 = -Width * 0.5f + YardLeft, x1 = Width * 0.5f - YardRight, y0 = YardFront, y1 = Depth - YardBack;
+                Vector3 P(float x, float y) => Front + Along * x - Facing * y;
+                return new[] { P(x0, y0), P(x1, y0), P(x1, y1), P(x0, y1) };
+            }
+            public float BuildWidth => Width - YardLeft - YardRight;
+            public float BuildDepth => Depth - YardFront - YardBack;
             public Vector3 Centre => Front - Facing * (Depth * 0.5f);
             /// <summary>Its corners in plan: front-left, front-right, back-right, back-left.</summary>
             public Vector3[] Corners()
@@ -2903,6 +2924,46 @@ namespace UnturnedGodot
 
         /// <summary>The plots the last MarkPlots laid.</summary>
         public readonly List<Plot> Plots = new();
+        /// <summary>What fronts a main, and what fronts a street.</summary>
+        static readonly PlotKind[] MainPlotKinds = { PlotKind.Shop, PlotKind.Apartments, PlotKind.HouseLarge };
+        static readonly PlotKind[] StreetPlotKinds = { PlotKind.HouseSmall, PlotKind.HouseMedium, PlotKind.HouseLarge };
+
+        /// <summary>A back lane through a block, from the pavement of one street to the pavement of the next.</summary>
+        public sealed class Alley
+        {
+            public Vector3 A, B; public float Width;
+            /// <summary>A starts at the knee of an L inside its block, not at a street.</summary>
+            public bool FromKnee;
+            public Vector3[] Corners()
+            {
+                var d = B - A; d.Y = 0f;
+                var n = new Vector3(-d.Z, 0f, d.X).Normalized() * (Width * 0.5f);
+                return new[] { A - n, B - n, B + n, A + n };
+            }
+        }
+        /// <summary>The alleys the last MarkPlots laid.</summary>
+        public readonly List<Alley> Alleys = new();
+        /// <summary>How wide a back lane is: two 3 m cells, room for a bin lorry.</summary>
+        public float AlleyWidth = 6f;
+        float[] _lineU, _lineV; int _lineN; bool[,] _nodeOk;
+
+        /// <summary>Do two convex quads (four corners in order, in plan) overlap? Shared edges do not count.</summary>
+        public static bool QuadsOverlap(Vector3[] a, Vector3[] b, float tol = 0.001f)
+        {
+            foreach (var poly in new[] { a, b })
+                for (int e = 0; e < 4; e++)
+                {
+                    var d = poly[(e + 1) % 4] - poly[e];
+                    float l = Mathf.Sqrt(d.X * d.X + d.Z * d.Z);
+                    if (l < 1e-6f) continue;
+                    float ax = -d.Z / l, az = d.X / l;
+                    float a0 = float.MaxValue, a1 = float.MinValue, b0 = float.MaxValue, b1 = float.MinValue;
+                    foreach (var q in a) { float t = q.X * ax + q.Z * az; a0 = Mathf.Min(a0, t); a1 = Mathf.Max(a1, t); }
+                    foreach (var q in b) { float t = q.X * ax + q.Z * az; b0 = Mathf.Min(b0, t); b1 = Mathf.Max(b1, t); }
+                    if (a1 <= b0 + tol || b1 <= a0 + tol) return false;
+                }
+            return true;
+        }
         /// <summary>How far behind the back of the pavement a plot's front line stands.</summary>
         public float PlotSetback = 0.5f;
         /// <summary>How close to a road's pavement, a slab or a corner pavement any part of a plot may come.</summary>
@@ -2957,6 +3018,7 @@ namespace UnturnedGodot
             var c = pl.Corners();
             foreach (var q in c) if (!Buildable(roads, q)) return false;
             foreach (var q in Plots) if (PlotsOverlap(pl, q)) return false;
+            foreach (var al in Alleys) if (QuadsOverlap(c, al.Corners())) return false;
             for (int e = 0; e < 4; e++)
             {
                 var a = c[e]; var b = c[(e + 1) % 4];
@@ -2979,10 +3041,128 @@ namespace UnturnedGodot
         /// 45-degree wedge, a triangle island) simply gets none.</summary>
         public int MarkPlots(Node3D parent, RoadField roads)
         {
-            Plots.Clear();
+            Plots.Clear(); Alleys.Clear();
             if (roads == null) return 0;
             float Front(int r) => roads.RoadHalfWidth(r) + PavementGap + _walkWidth + PlotSetback;
             int corners = 0;
+
+            // ---- alleys first: a back lane through the middle of every block, laid before any plot so the plots
+            // fill round it. It runs between the block's two NON-main sides, so it comes out onto side streets
+            // and a main's frontage -- its shops -- stays unbroken; between equals the seed decides; a block with
+            // mains on two sides gets an L out to its other two. Walked in half metres, every stretch whose full
+            // width is buildable is a lane: a block the diagonal cuts gets one each side of it.
+            // ⚠ CENTRED BETWEEN THE PAVEMENTS, NOT THE ROADS. Halfway between two centrelines is 2.3 m nearer a
+            // main's frontage than a street's, and on a block the jitter had narrowed, that cost the main's 36 m
+            // plots their last metre: whole main frontages came out empty.
+            if (_lineU != null)
+            {
+                int wl = _lineU.Length;
+                float mainOff = roads.RoadHalfWidthOfMaterial(MainMaterial) + PavementGap + _walkWidth + PlotSetback;
+                float streetOff = roads.RoadHalfWidthOfMaterial(StreetMaterial) + PavementGap + _walkWidth + PlotSetback;
+                float OffOf(int line) => MainLine(line - _lineN) ? mainOff : streetOff;
+                void Lane(Vector3 p0, Vector3 p1, bool knee = false)
+                {
+                    var dir = p1 - p0; dir.Y = 0f; float len = dir.Length(); if (len < 1f) return;
+                    dir /= len;
+                    var nrm = new Vector3(-dir.Z, 0f, dir.X) * (AlleyWidth * 0.5f);
+                    // ⚠ THE CENTRE RUNS TO THE PAVEMENT; THE FULL WIDTH ONLY HAS TO BE CLEAR AWAY FROM THE ENDS.
+                    // Asking the whole width at every step stopped a lane meeting the diagonal at 45 degrees -- or
+                    // passing a junction's slab -- metres short, its near corner having reached the clearance
+                    // first: six lanes in the test town dead-ended in the grass. Within a lane's width of an end
+                    // a corner may run under the pavement or the slab, both of which stand over it.
+                    void Keep(float s0, float s1)
+                    {
+                        float zone = AlleyWidth, a = s0; bool open = true;
+                        for (float t = s0; t <= s1 + 1e-3f; t += 0.5f)
+                        {
+                            bool sideOk = t - s0 < zone || s1 - t < zone
+                                          || Buildable(roads, p0 + dir * t + nrm) && Buildable(roads, p0 + dir * t - nrm);
+                            if (!sideOk && open) { Add(a, t - 0.5f); open = false; }
+                            if (sideOk && !open) { a = t; open = true; }
+                        }
+                        if (open) Add(a, s1);
+                    }
+                    void Add(float s0, float s1)
+                    {
+                        if (s1 - s0 >= 15f)
+                            Alleys.Add(new Alley { A = p0 + dir * s0, B = p0 + dir * s1, Width = AlleyWidth, FromKnee = knee && s0 == 0f });
+                    }
+                    float start = -1f;
+                    int steps = Mathf.FloorToInt(len / 0.5f);
+                    for (int k = 0; k <= steps + 1; k++)          // one past the end, which closes any open stretch
+                    {
+                        float tt = k * 0.5f;
+                        bool ok = k <= steps && Buildable(roads, p0 + dir * tt);
+                        if (ok && start < 0f) start = tt;
+                        if (!ok && start >= 0f)
+                        {
+                            // out to the pavement: the stretch ends where its clearance began
+                            Keep(start > 0f ? Mathf.Max(0f, start - PlotClearance) : 0f, Mathf.Min(len, tt - 0.5f + PlotClearance));
+                            start = -1f;
+                        }
+                    }
+                }
+                // ⚠ WHERE A LANE GOES ACROSS ITS BLOCK is a fit, not the middle. It has to stay a deep plot plus
+                // half its width off the two frontages it runs PARALLEL to, or their 36 m plots run into it (put
+                // beside a corner lot, it emptied both of them); within that window it goes where the frontages
+                // it comes OUT on fill best -- down the middle it split ~30 m between two corner lots into two
+                // halves just short of the smallest plot. The seed chooses between equally good places.
+                float deepest = 0f; foreach (var ps in PlotSizes) deepest = Mathf.Max(deepest, ps.Depth);
+                float cornerTake = SizeOf(PlotKind.Corner).Width + 1f;
+                float FillOf(float len, PlotKind[] kinds)
+                {
+                    float sum = 0f;
+                    foreach (var k in FillRun((int)(len * 10f + 1e-3f), kinds, 0UL)) sum += SizeOf(k).Width;
+                    return sum;
+                }
+                float BestLane(float lo, float hi, PlotKind[] exitKinds, ulong hash)
+                {
+                    float half = AlleyWidth * 0.5f, w0 = lo + deepest + half + 0.5f, w1 = hi - deepest - half - 0.5f;
+                    if (w1 < w0) return (lo + hi) * 0.5f;
+                    float best = -1f, at = (w0 + w1) * 0.5f; int ties = 0;
+                    for (float a = w0; a <= w1 + 1e-3f; a += 0.5f)
+                    {
+                        float f = FillOf((a - half) - (lo + cornerTake), exitKinds) + FillOf((hi - cornerTake) - (a + half), exitKinds);
+                        if (f > best + 1e-3f) { best = f; at = a; ties = 1; }
+                        else if (Mathf.Abs(f - best) <= 1e-3f && Unit(Mix(hash ^ (ulong)(uint)ties * 0x9E37UL), 0) * ++ties < 1f) at = a;
+                    }
+                    return at;
+                }
+                PlotKind[] KindsOn(int line) => MainLine(line - _lineN) ? MainPlotKinds : StreetPlotKinds;
+                for (int gi = 0; gi + 1 < wl; gi++)
+                    for (int gj = 0; gj + 1 < wl; gj++)
+                    {
+                        if (!_nodeOk[gi, gj] || !_nodeOk[gi + 1, gj] || !_nodeOk[gi, gj + 1] || !_nodeOk[gi + 1, gj + 1]) continue;
+                        bool row0 = MainLine(gj - _lineN), row1 = MainLine(gj + 1 - _lineN);
+                        bool col0 = MainLine(gi - _lineN), col1 = MainLine(gi + 1 - _lineN);
+                        bool rowsMain = row0 || row1, colsMain = col0 || col1;
+                        float uLo = _lineU[gi] + OffOf(gi), uHi = _lineU[gi + 1] - OffOf(gi + 1);
+                        float vLo = _lineV[gj] + OffOf(gj), vHi = _lineV[gj + 1] - OffOf(gj + 1);
+                        ulong ch = Mix(((ulong)(uint)Seed << 32) ^ Mix(((ulong)(uint)gi << 16) ^ (ulong)(uint)gj ^ 0xA11E7UL));
+                        if (rowsMain && colsMain)
+                        {
+                            // mains on two sides: an L from inside the block out to the other two
+                            int rowOut = row0 ? gj + 1 : gj, colOut = col0 ? gi + 1 : gi;
+                            float ua = BestLane(uLo, uHi, KindsOn(rowOut), ch), va = BestLane(vLo, vHi, KindsOn(colOut), ch ^ 0x5EEDUL);
+                            var knee = ToWorld(ua, va, 0f);
+                            Lane(knee, ToWorld(ua, _lineV[rowOut], 0f), knee: true);
+                            Lane(knee, ToWorld(_lineU[colOut], va, 0f), knee: true);
+                            continue;
+                        }
+                        // along v it comes out onto the rows; along u, onto the columns
+                        bool alongV = rowsMain == colsMain ? Unit(ch, 0) < 0.5f : colsMain;
+                        if (alongV)
+                        {
+                            float at = BestLane(uLo, uHi, row0 || row1 ? MainPlotKinds : StreetPlotKinds, ch);
+                            Lane(ToWorld(at, _lineV[gj], 0f), ToWorld(at, _lineV[gj + 1], 0f));
+                        }
+                        else
+                        {
+                            float at = BestLane(vLo, vHi, col0 || col1 ? MainPlotKinds : StreetPlotKinds, ch);
+                            Lane(ToWorld(_lineU[gi], at, 0f), ToWorld(_lineU[gi + 1], at, 0f));
+                        }
+                    }
+            }
 
             // ---- corner lots: at every square corner of every junction
             var corner = SizeOf(PlotKind.Corner);
@@ -3014,7 +3194,10 @@ namespace UnturnedGodot
                         var at = node + F.d * (offS + nudge) + inward * (offF + nudge);
                         var pl = new Plot { Kind = PlotKind.Corner, Width = corner.Width, Depth = corner.Depth,
                                             Along = F.d, Facing = -inward, Road = F.road, Road2 = S.road,
-                                            Front = at + F.d * (corner.Width * 0.5f), Setback = nudge };
+                                            Front = at + F.d * (corner.Width * 0.5f), Setback = nudge,
+                                            // its left side is its second street: a front yard there too
+                                            YardFront = corner.FrontYard, YardBack = corner.BackYard,
+                                            YardLeft = corner.FrontYard, YardRight = corner.SideYard };
                         if (PlotFits(roads, pl)) { Plots.Add(pl); corners++; break; }
                     }
                 }
@@ -3023,14 +3206,15 @@ namespace UnturnedGodot
             // ---- frontages: mains first, then streets, each side walked from end to end
             var order = new List<int>(Built);
             order.Sort((x, y) => { int mx = IsMain(roads, x) ? 0 : 1, my = IsMain(roads, y) ? 0 : 1; return mx != my ? mx.CompareTo(my) : x.CompareTo(y); });
-            PlotKind[] mainKinds = { PlotKind.Shop, PlotKind.Apartments, PlotKind.HouseLarge };
-            PlotKind[] streetKinds = { PlotKind.HouseSmall, PlotKind.HouseMedium, PlotKind.HouseLarge };
+            var mainKinds = MainPlotKinds; var streetKinds = StreetPlotKinds;
             Plot PlotAt(int r, int side, float off, float mid, float w, float d, PlotKind kind, Vector3? runDir = null)
             {
                 if (!roads.EvaluateAlong(r, mid, out var pos, out var tan, snapTerrain: false)) return null;
                 var along = runDir ?? new Vector3(tan.X, 0f, tan.Z).Normalized();
                 var outw = new Vector3(-along.Z, 0f, along.X) * side;            // from the road to this side
-                return new Plot { Kind = kind, Width = w, Depth = d, Along = along, Facing = -outw, Road = r, Front = pos + outw * off };
+                var ps = SizeOf(kind);
+                return new Plot { Kind = kind, Width = w, Depth = d, Along = along, Facing = -outw, Road = r, Front = pos + outw * off,
+                                  YardFront = ps.FrontYard, YardBack = ps.BackYard, YardLeft = ps.SideYard, YardRight = ps.SideYard };
             }
             foreach (int r in order)
             {
@@ -3115,7 +3299,9 @@ namespace UnturnedGodot
                 counts.Append($" {ps.Kind} {n} ({ps.Width:0}x{ps.Depth:0});");
             }
             float area = 0f; foreach (var pl in Plots) area += pl.Width * pl.Depth;
-            Log.Print($"[towngrid] plots: {Plots.Count} marked, {corners} on square corners, {area / 10000f:0.00} ha --{counts}");
+            float lanes = 0f; foreach (var al in Alleys) lanes += (al.B - al.A).Length();
+            Log.Print($"[towngrid] plots: {Plots.Count} marked, {corners} on square corners, {area / 10000f:0.00} ha; "
+                    + $"{Alleys.Count} alleys, {lanes:0} m --{counts}");
             return Plots.Count;
         }
 
@@ -3143,77 +3329,90 @@ namespace UnturnedGodot
             return list;
         }
 
-        /// <summary>Each plot marked on the ground in its kind's colour: a bold outline and a light tint over its
-        /// area, so a block reads as its lots from the air as well as up close.</summary>
+        /// <summary>The plots and alleys marked on the ground. Each plot: its lot line in its kind's colour, the
+        /// whole lot lightly tinted, and the building zone the yards leave tinted strongly with a pale outline --
+        /// so front yard, backyard and side yards read as the lighter ring round it. Each alley: a gravel lane.</summary>
         int BuildPlotMarks(Node3D parent)
         {
-            const float LineW = 0.6f, Lift = 0.05f;
+            const float Lift = 0.05f;
             float Ground(float x, float z, float fallback) => Terrain.Active != null ? Terrain.Active.SampleHeight(x, z) : fallback;
+            Vector3 G(Vector3 q, float lift, float fallback) => new Vector3(q.X, Ground(q.X, q.Z, fallback) + lift, q.Z);
+            // a closed outline, as flat quads in 3 m pieces so it follows the ground
+            void Outline(SurfaceTool st, Vector3[] c, float width, float lift, float fallback)
+            {
+                for (int e = 0; e < 4; e++)
+                {
+                    var a = c[e]; var b = c[(e + 1) % 4];
+                    var dir = new Vector3(b.X - a.X, 0f, b.Z - a.Z);
+                    float len = dir.Length();
+                    if (len < 0.01f) continue;
+                    dir /= len;
+                    var n = new Vector3(-dir.Z, 0f, dir.X) * (width * 0.5f);
+                    a -= dir * (width * 0.5f); b += dir * (width * 0.5f);   // overlap at the corners: no notch
+                    int pieces = Mathf.Max(1, Mathf.CeilToInt((len + width) / 3f));
+                    for (int k = 0; k < pieces; k++)
+                    {
+                        var p0 = a.Lerp(b, (float)k / pieces); var p1 = a.Lerp(b, (float)(k + 1) / pieces);
+                        var v00 = G(p0 - n, lift, fallback); var v01 = G(p0 + n, lift, fallback);
+                        var v10 = G(p1 - n, lift, fallback); var v11 = G(p1 + n, lift, fallback);
+                        foreach (var v in new[] { v00, v01, v11, v00, v11, v10 }) { st.SetNormal(Vector3.Up); st.AddVertex(v); }
+                    }
+                }
+            }
+            // a filled quad, as a 3 m grid so it lies on the ground
+            void Fill(SurfaceTool st, Vector3[] c, float lift, float fallback)
+            {
+                float wu = (c[1] - c[0]).Length(), wv = (c[3] - c[0]).Length();
+                int nu = Mathf.Max(1, Mathf.CeilToInt(wu / 3f)), nv = Mathf.Max(1, Mathf.CeilToInt(wv / 3f));
+                Vector3 P(int i, int k) => G(c[0].Lerp(c[1], (float)i / nu).Lerp(c[3].Lerp(c[2], (float)i / nu), (float)k / nv), lift, fallback);
+                for (int i = 0; i < nu; i++)
+                    for (int k = 0; k < nv; k++)
+                        foreach (var v in new[] { P(i, k), P(i + 1, k), P(i + 1, k + 1), P(i, k), P(i + 1, k + 1), P(i, k + 1) })
+                        { st.SetNormal(Vector3.Up); st.AddVertex(v); }
+            }
+            MeshInstance3D Commit(SurfaceTool st, string name, Color colour, bool unshaded = true)
+            {
+                var mesh = st.Commit();
+                if (mesh == null || mesh.GetSurfaceCount() == 0) return null;
+                var mat = new StandardMaterial3D
+                {
+                    AlbedoColor = colour, CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                    ShadingMode = unshaded ? BaseMaterial3D.ShadingModeEnum.Unshaded : BaseMaterial3D.ShadingModeEnum.PerPixel,
+                    Transparency = colour.A < 1f ? BaseMaterial3D.TransparencyEnum.Alpha : BaseMaterial3D.TransparencyEnum.Disabled,
+                };
+                var mi = new MeshInstance3D { Name = name, Mesh = mesh, MaterialOverride = mat };
+                parent.AddChild(mi);
+                return mi;
+            }
             int made = 0;
+            // the alleys: gravel, lit like the ground it is
+            if (Alleys.Count > 0)
+            {
+                var st = new SurfaceTool(); st.Begin(Mesh.PrimitiveType.Triangles);
+                foreach (var al in Alleys) Fill(st, al.Corners(), Lift * 0.4f, al.A.Y);
+                if (Commit(st, "Plots_Alleys", new Color(0.66f, 0.60f, 0.50f), unshaded: false) != null) made++;
+            }
             foreach (var ps in PlotSizes)
             {
-                var st = new SurfaceTool();
-                st.Begin(Mesh.PrimitiveType.Triangles);
-                int quads = 0;
+                var lots = new SurfaceTool(); lots.Begin(Mesh.PrimitiveType.Triangles);
+                var tint = new SurfaceTool(); tint.Begin(Mesh.PrimitiveType.Triangles);
+                var zone = new SurfaceTool(); zone.Begin(Mesh.PrimitiveType.Triangles);
+                var zoneLine = new SurfaceTool(); zoneLine.Begin(Mesh.PrimitiveType.Triangles);
+                int any = 0;
                 foreach (var pl in Plots)
                 {
                     if (pl.Kind != ps.Kind) continue;
-                    var c = pl.Corners();
-                    for (int e = 0; e < 4; e++)
-                    {
-                        var a = c[e]; var b = c[(e + 1) % 4];
-                        var dir = new Vector3(b.X - a.X, 0f, b.Z - a.Z);
-                        float len = dir.Length();
-                        if (len < 0.01f) continue;
-                        dir /= len;
-                        var n = new Vector3(-dir.Z, 0f, dir.X) * (LineW * 0.5f);
-                        a -= dir * (LineW * 0.5f); b += dir * (LineW * 0.5f);   // overlap at the corners: no notch
-                        // in 3 m pieces, so the line follows the ground rather than cutting through a rise
-                        int pieces = Mathf.Max(1, Mathf.CeilToInt((len + LineW) / 3f));
-                        for (int k = 0; k < pieces; k++)
-                        {
-                            var p0 = a.Lerp(b, (float)k / pieces); var p1 = a.Lerp(b, (float)(k + 1) / pieces);
-                            Vector3 G(Vector3 q) => new Vector3(q.X, Ground(q.X, q.Z, pl.Front.Y) + Lift, q.Z);
-                            var v00 = G(p0 - n); var v01 = G(p0 + n); var v10 = G(p1 - n); var v11 = G(p1 + n);
-                            foreach (var v in new[] { v00, v01, v11, v00, v11, v10 }) { st.SetNormal(Vector3.Up); st.AddVertex(v); }
-                            quads++;
-                        }
-                    }
+                    any++;
+                    Outline(lots, pl.Corners(), 0.45f, Lift, pl.Front.Y);
+                    Fill(tint, pl.Corners(), Lift * 0.5f, pl.Front.Y);
+                    Fill(zone, pl.BuildArea(), Lift * 0.7f, pl.Front.Y);
+                    Outline(zoneLine, pl.BuildArea(), 0.25f, Lift * 0.9f, pl.Front.Y);
                 }
-                if (quads == 0) continue;
-                var mesh = st.Commit();
-                if (mesh == null) continue;
-                var mat = new StandardMaterial3D { AlbedoColor = ps.Colour, ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-                                                   CullMode = BaseMaterial3D.CullModeEnum.Disabled };
-                parent.AddChild(new MeshInstance3D { Name = $"Plots_{ps.Kind}", Mesh = mesh, MaterialOverride = mat });
-                made++;
-                // the tint: each plot's area, a 3 m grid of quads so it lies on the ground, a little under the line
-                var ft = new SurfaceTool();
-                ft.Begin(Mesh.PrimitiveType.Triangles);
-                foreach (var pl in Plots)
-                {
-                    if (pl.Kind != ps.Kind) continue;
-                    int nu = Mathf.Max(1, Mathf.CeilToInt(pl.Width / 3f)), nv = Mathf.Max(1, Mathf.CeilToInt(pl.Depth / 3f));
-                    var o = pl.Front - pl.Along * (pl.Width * 0.5f);
-                    Vector3 P(int i, int k)
-                    {
-                        var q = o + pl.Along * (pl.Width * i / nu) - pl.Facing * (pl.Depth * k / nv);
-                        return new Vector3(q.X, Ground(q.X, q.Z, pl.Front.Y) + Lift * 0.6f, q.Z);
-                    }
-                    for (int i = 0; i < nu; i++)
-                        for (int k = 0; k < nv; k++)
-                            foreach (var v in new[] { P(i, k), P(i + 1, k), P(i + 1, k + 1), P(i, k), P(i + 1, k + 1), P(i, k + 1) })
-                            { ft.SetNormal(Vector3.Up); ft.AddVertex(v); }
-                }
-                var fill = ft.Commit();
-                if (fill == null) continue;
-                var tint = new StandardMaterial3D
-                {
-                    AlbedoColor = new Color(ps.Colour.R, ps.Colour.G, ps.Colour.B, 0.38f),
-                    Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-                    ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, CullMode = BaseMaterial3D.CullModeEnum.Disabled,
-                };
-                parent.AddChild(new MeshInstance3D { Name = $"Plots_{ps.Kind}_Tint", Mesh = fill, MaterialOverride = tint });
+                if (any == 0) continue;
+                if (Commit(lots, $"Plots_{ps.Kind}", ps.Colour) != null) made++;
+                Commit(tint, $"Plots_{ps.Kind}_Yards", new Color(ps.Colour.R, ps.Colour.G, ps.Colour.B, 0.16f));
+                Commit(zone, $"Plots_{ps.Kind}_Building", new Color(ps.Colour.R, ps.Colour.G, ps.Colour.B, 0.45f));
+                Commit(zoneLine, $"Plots_{ps.Kind}_BuildingLine", new Color(1f, 1f, 0.95f, 0.85f));
             }
             return made;
         }

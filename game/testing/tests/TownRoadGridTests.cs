@@ -349,6 +349,60 @@ namespace UnturnedGodot.Testing
                 }
                 T.Check($"...each fronts its own street, facing it from just behind the pavement ({offFront} not; worst {worstFront * 100f:0.0} cm off)",
                         offFront == 0);
+                // ⭐ YARDS AND ALLEYS (strawberry 2026-10-12: "consider space for alleys, backyards, front yards").
+                // Each plot's building zone is the plot less its fixed yards -- still whole 3 m cells -- and every
+                // block has a back lane: on its own ground, out to a street at each end, never onto a main, and
+                // never under a plot.
+                int zoneOff = 0;
+                foreach (var pl in plots)
+                {
+                    var ps = TownRoadGrid.SizeOf(pl.Kind);
+                    float wantW = pl.Kind == TownRoadGrid.PlotKind.Corner ? ps.Width - ps.FrontYard - ps.SideYard : ps.Width - 2f * ps.SideYard;
+                    float wantD = ps.Depth - ps.FrontYard - ps.BackYard;
+                    var z = pl.BuildArea();
+                    float zw = (z[1] - z[0]).Length(), zd = (z[3] - z[0]).Length();
+                    bool lattice = Mathf.Abs(zw / 3f - Mathf.Round(zw / 3f)) < 1e-3f && Mathf.Abs(zd / 3f - Mathf.Round(zd / 3f)) < 1e-3f;
+                    bool inside = true;
+                    foreach (var q in z)
+                    {
+                        var rel = q - pl.Front; float al = rel.X * pl.Along.X + rel.Z * pl.Along.Z, fa = -(rel.X * pl.Facing.X + rel.Z * pl.Facing.Z);
+                        if (Mathf.Abs(al) > pl.Width * 0.5f + 1e-3f || fa < -1e-3f || fa > pl.Depth + 1e-3f) inside = false;
+                    }
+                    if (Mathf.Abs(zw - wantW) > 1e-3f || Mathf.Abs(zd - wantD) > 1e-3f || !lattice || !inside || ps.FrontYard < 3f && pl.Kind != TownRoadGrid.PlotKind.Shop) zoneOff++;
+                }
+                T.Check($"...each with front yard, backyard and side yards round a building zone of whole 3 m cells ({zoneOff} off)", zoneOff == 0);
+                var alleys = gD.Alleys;
+                int alleyOnPlot = 0, alleyOnRoad = 0, alleyLoose = 0, alleyOnMain = 0;
+                foreach (var al in alleys)
+                {
+                    var ac = al.Corners();
+                    foreach (var pl in plots) if (Overlaps(pl.Corners(), ac)) alleyOnPlot++;
+                    // its strip is on its own ground -- away from its ends, where a corner may tuck under a pavement
+                    var d = (al.B - al.A); float len = d.Length(); d /= len;
+                    var n = new Vector3(-d.Z, 0f, d.X) * (al.Width * 0.5f - 0.1f);
+                    for (float t = al.Width; t < len - al.Width; t += 1f)
+                        foreach (var q in new[] { al.A + d * t, al.A + d * t + n, al.A + d * t - n })
+                            if (OnSomething(q)) { alleyOnRoad++; goto nextAlley; }
+                    nextAlley:
+                    // and each street end comes out at a pavement -- of a side street, never a main
+                    foreach (var (end, street) in new[] { (al.A, !al.FromKnee), (al.B, true) })
+                    {
+                        if (!street) continue;
+                        if (!rfD.DeepestRoadOverlap(end, keepOff + 0.75f, out int er, out _))
+                        {
+                            // or at a junction's slab: a lane can come out where the corner's asphalt begins
+                            bool atSlab = false;
+                            foreach (var pp in gD.Patches) if (pp.DistanceTo(end.X, -end.Z) < keepOff + 0.75f) { atSlab = true; break; }
+                            if (!atSlab) alleyLoose++;
+                            continue;
+                        }
+                        if (rfD.RoadMaterialOf(er) == gD.MainMaterial) alleyOnMain++;
+                    }
+                }
+                T.Check($"...and back lanes through the blocks ({alleys.Count} lanes)", alleys.Count >= 6);
+                T.Check($"...never under a plot ({alleyOnPlot}) nor on a road or pavement ({alleyOnRoad})", alleyOnPlot == 0 && alleyOnRoad == 0);
+                T.Check($"...each coming out at a street's pavement ({alleyLoose} loose ends), and never onto a main ({alleyOnMain})",
+                        alleyLoose == 0 && alleyOnMain == 0);
                 // inside the town: nothing on the far side of the outermost street, in open country
                 {
                     float cb = Mathf.Cos(0.3f), sb = Mathf.Sin(0.3f);
@@ -404,7 +458,7 @@ namespace UnturnedGodot.Testing
                     var w2 = new EditorSidewalk(); World.AddChild(w2);
                     gD2.LaySidewalkCornersOn(rfD2, World, w2, out _);
                     gD2.MarkPlots(null, rfD2);
-                    bool same = gD2.Plots.Count == plots.Count;
+                    bool same = gD2.Plots.Count == plots.Count && gD2.Alleys.Count == gD.Alleys.Count;
                     for (int k = 0; same && k < plots.Count; k++)
                         same = gD2.Plots[k].Kind == plots[k].Kind && (gD2.Plots[k].Front - plots[k].Front).Length() < 1e-3f;
                     T.Check($"...and the same seed lays the same plots ({gD2.Plots.Count} vs {plots.Count})", same);
