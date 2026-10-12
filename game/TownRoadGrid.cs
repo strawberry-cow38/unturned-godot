@@ -992,7 +992,13 @@ namespace UnturnedGodot
                     var a = ring[i]; var b = ring[(i + 1) % ring.Count];
                     if (a.road == b.road) { nSame++; continue; }       // that gap is the carriageway
                     float sweep = b.ang - a.ang; while (sweep <= 0f) sweep += Mathf.Tau;
-                    if (sweep > Mathf.Pi * 1.05f) { nLong++; continue; }   // the long way round: not a mouth at all
+                    // ⚠⚠ EVERY ADJACENT PAIR GETS SOMETHING, or the kerb ring has a hole in it. The "long way
+                    // round" guard dropped its pair outright, and Through() can bail too -- between them that
+                    // left 6 missing pieces across 25 junctions, each one a visible break in the pavement
+                    // right where it meets the road. master, pointing at the pic: "stilllll got gaps between
+                    // the road spline and the merged mesh". They were in the PAVEMENT, not the asphalt, and
+                    // three rounds of probing the road/patch seam could never have found them.
+                    if (sweep > Mathf.Pi * 1.05f) { nLong++; Through(); continue; }
                     // ⚠ A TEE'S FAR SIDE IS NOT A CORNER, AND SKIPPING IT LEFT A HOLE (strawberry: "add the
                     // straight sidewalks to the 3 way junctions"). Where two arms run THROUGH a node -- the
                     // side of a tee opposite its stem, or a street simply bending -- their kerbs are parallel
@@ -1057,15 +1063,15 @@ namespace UnturnedGodot
                     var dA = new Vector3(a.p.X - P.X, 0f, a.p.Z - P.Z);
                     var dB = new Vector3(b.p.X - P.X, 0f, b.p.Z - P.Z);
                     float lA = dA.Length(), lB = dB.Length();
-                    if (lA < 1f || lB < 1f) continue;
+                    if (lA < 1f || lB < 1f) { nShortRad++; Through(); continue; }
                     dA /= lA; dB /= lB;
                     float theta = Mathf.Acos(Mathf.Clamp(dA.Dot(dB), -1f, 1f));
                     // ⚠ too straight to round is NOT a reason to leave a hole -- it is the through case.
                     if (theta > Mathf.Pi - 0.25f) { nFlatAngle++; Through(); continue; }
-                    if (theta < 0.25f) { nFlatAngle++; continue; }               // a hairpin: no mouth to pave
+                    if (theta < 0.25f) { nFlatAngle++; Through(); continue; }    // a hairpin: still bridge it
                     float half2 = theta * 0.5f;
                     float rad = Mathf.Min(CornerKerbRadius, Mathf.Min(lA, lB) * 0.8f * Mathf.Tan(half2));
-                    if (rad < 0.4f) { nShortRad++; continue; }
+                    if (rad < 0.4f) { nShortRad++; Through(); continue; }
                     float tdist = rad / Mathf.Tan(half2);
                     var T1 = P + dA * tdist; var T2 = P + dB * tdist;
                     var bis = (dA + dB).Normalized();
@@ -1120,6 +1126,10 @@ namespace UnturnedGodot
                     made++;
                 }
             }
+            int attempted = nLong + nNoCorner + nFlatAngle + nShortRad;
+            int unpaved = attempted - nThrough;
+            Log.Print($"[towngrid] kerb ring: {unpaved} ADJACENT PAIRS LEFT UNPAVED"
+                    + (unpaved > 0 ? "  <-- each one is a visible break in the pavement" : "  (ring closed)"));
             Log.Print($"[towngrid] kerb pieces: {nFillet} fillets, {nThrough} straight-through; dropped "
                     + $"{nSame} same-road, {nLong} long-way, {nNoCorner} no-corner, {nFlatAngle} too-straight, {nShortRad} tiny-radius");
             return made;
