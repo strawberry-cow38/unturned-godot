@@ -335,6 +335,54 @@ namespace UnturnedGodot
         public float LastBareRun = 0f;
         /// <summary>The junction patches this grid produced, for the caller to build meshes from.</summary>
         public readonly List<SDG.Unturned.RoadPatch> Patches = new();
+
+        /// <summary>Each patch's bounding box in InfiniteRoads' frame, built on first use after generation.
+        ///
+        /// ⚠⚠ WHERE A TOWN RENDER'S TEN MINUTES WENT. Timed line by line: the whole town generates in 2.7 s,
+        /// and 627 of 633 seconds were two of the probes in this file -- each sample asked EVERY patch for
+        /// its distance, and RoadPatch.DistanceTo walks every triangle and edge. Half a million samples times
+        /// every triangle of every junction. A point cannot be on, or nearer than d to, a patch whose box it
+        /// is further than d outside, so skipping those patches changes no answer.</summary>
+        readonly List<(double x0, double x1, double z0, double z1)> _patchBox = new();
+        void EnsurePatchBoxes()
+        {
+            if (_patchBox.Count == Patches.Count) return;
+            _patchBox.Clear();
+            foreach (var pp in Patches)
+            {
+                double x0 = double.MaxValue, x1 = double.MinValue, z0 = double.MaxValue, z1 = double.MinValue;
+                if (pp?.X != null)
+                    for (int i = 0; i < pp.X.Length; i++)
+                    { x0 = System.Math.Min(x0, pp.X[i]); x1 = System.Math.Max(x1, pp.X[i]); z0 = System.Math.Min(z0, pp.Z[i]); z1 = System.Math.Max(z1, pp.Z[i]); }
+                _patchBox.Add((x0, x1, z0, z1));
+            }
+        }
+        /// <summary>Is (x, zFrame) on any junction patch, to within <paramref name="tol"/>?</summary>
+        bool OnAnyPatch(double x, double zf, double tol)
+        {
+            EnsurePatchBoxes();
+            for (int k = 0; k < Patches.Count; k++)
+            {
+                var b = _patchBox[k];
+                if (x < b.x0 - tol || x > b.x1 + tol || zf < b.z0 - tol || zf > b.z1 + tol) continue;
+                if (Patches[k].DistanceTo(x, zf) <= tol) return true;
+            }
+            return false;
+        }
+        /// <summary>Distance from (x, zFrame) to the nearest junction patch.</summary>
+        double NearestPatch(double x, double zf)
+        {
+            EnsurePatchBoxes();
+            double best = double.MaxValue;
+            for (int k = 0; k < Patches.Count; k++)
+            {
+                var b = _patchBox[k];
+                double dx = System.Math.Max(0, System.Math.Max(b.x0 - x, x - b.x1)), dz = System.Math.Max(0, System.Math.Max(b.z0 - zf, zf - b.z1));
+                if (dx * dx + dz * dz >= best * best) continue;          // its box is already further than the best
+                best = System.Math.Min(best, Patches[k].DistanceTo(x, zf));
+            }
+            return best;
+        }
         /// <summary>The node PAINT: each arm's lines carried into the junction, and the stop lines.</summary>
         public readonly List<SDG.Unturned.RoadMark> Marks = new();
 
@@ -666,7 +714,7 @@ namespace UnturnedGodot
                 Add(touching, (sp.AI, sp.AJ), (idx, false));
                 Add(touching, (sp.BI, sp.BJ), (idx, true));
             }
-            Patches.Clear();
+            Patches.Clear(); _patchBox.Clear();
             foreach (var kv in touching)
             {
                 var here = kv.Value;
@@ -1110,7 +1158,7 @@ namespace UnturnedGodot
                     {
                         var q = tip + right * (hw * k / 2f);
                         double best = double.MaxValue;
-                        foreach (var pp in Patches) best = System.Math.Min(best, pp.DistanceTo(q.X, -q.Z));
+                        best = NearestPatch(q.X, -q.Z);
                         // ⚠⚠ OR BY ANOTHER ROAD. A THROUGH arm's cut meets its own CONTINUATION, not a
                         // patch -- the slab is cut away along the main on purpose now -- so asking only the
                         // patches reported a 9.2 m "gap" straight across a junction that is solid asphalt.
@@ -1151,7 +1199,7 @@ namespace UnturnedGodot
                             float a = Mathf.Tau * ai / A, rad = ri * dr;
                             var q = new Vector3(jp.X + Mathf.Cos(a) * rad, 0f, jp.Z + Mathf.Sin(a) * rad);
                             bool c = false;
-                            foreach (var pp in Patches) if (pp.DistanceTo(q.X, -q.Z) <= 0.01) { c = true; break; }
+                            c = OnAnyPatch(q.X, -q.Z, 0.01);
                             // ⚠ EVERY ROAD, NOT THE NEAREST -- the third probe in this file to have had the
                             // bug it was built to find. A point at a main's edge inside a junction is often
                             // NEAREST to the narrow side street beside it, which it really is outside, so
@@ -1220,7 +1268,7 @@ namespace UnturnedGodot
                                 {
                                     var q4 = jp3 + outw * d3 + rt * (latf * hw3);
                                     bool c4 = false;
-                                    foreach (var pq in Patches) if (pq.DistanceTo(q4.X, -q4.Z) <= 0.001) { c4 = true; break; }
+                                    c4 = OnAnyPatch(q4.X, -q4.Z, 0.001);
                                     // ⚠ EVERY ROAD, NOT THE NEAREST. The nearest spline to a point in a wide
                                     // road's mouth is often the narrow side street beside it, which the point
                                     // really is outside -- so a nearest-only test calls covered asphalt bare.
@@ -2033,7 +2081,7 @@ namespace UnturnedGodot
             // "clear". That hole is exactly where a pole goes wrong: the pavement TURNS INWARD at the
             // corner while the last lamp keeps the straight's lateral offset, so it carries on into the
             // slab. Asking only about roads could never see it.
-            foreach (var pp in Patches) if (pp.DistanceTo(at.X, -at.Z) <= margin) return false;
+            if (OnAnyPatch(at.X, -at.Z, margin)) return false;
             return true;
         }
 

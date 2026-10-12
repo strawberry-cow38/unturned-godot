@@ -209,6 +209,7 @@ namespace UnturnedGodot
         // build (or rebuild) the MeshInstance + collider for one road, stashing them on the RoadData (flat top-ribbon collider)
         void BuildRoadNode(RoadData r)
         {
+            _overlapCache.Remove(r);      // its centreline may have moved: DeepestRoadOverlap resamples it on demand
             float texH = r.Material < TexHeight.Length ? TexHeight[r.Material] : 256f;
             var mesh = BuildRoadMesh(r, _mats[r.Material], texH, out var collShape);
             BuildLanePaths(r, _roads.IndexOf(r), _mats[r.Material]);   // lanes follow the road: rebuilt whenever it is
@@ -430,36 +431,56 @@ namespace UnturnedGodot
         public bool DeepestRoadOverlap(Vector3 p, float margin, out int road, out float depth, int skipRoad = -1)
         {
             road = -1; depth = 0f;
-            const int Steps = 16;   // per segment, then an exact projection onto each chord
             for (int ri = 0; ri < _roads.Count; ri++)
             {
                 if (ri == skipRoad) continue;
                 var r = _roads[ri];
                 float half = RoadHalfWidth(ri) + margin;
                 if (half <= 0f) continue;
+                if (!_overlapCache.TryGetValue(r, out var c)) { c = OverlapSamples(r); _overlapCache[r] = c; }
+                // a road's chords lie inside the box of its own samples, so a point outside that box grown by
+                // the half width cannot be inside the road: skipping it changes no answer, only the cost
+                if (p.X < c.MinX - half || p.X > c.MaxX + half || p.Z < c.MinZ - half || p.Z > c.MaxZ + half) continue;
                 float best = float.MaxValue;
-                int last = r.IsLoop ? r.Joints.Count - 1 : r.Joints.Count - 2;
-                for (int si = 0; si <= last; si++)
+                var P = c.P;
+                for (int k = 0; k + 1 < P.Length; k++)
                 {
-                    var prev = SplinePos(r, si, 0f);
-                    for (int k = 1; k <= Steps; k++)
-                    {
-                        var cur = SplinePos(r, si, k / (float)Steps);
-                        float ax = prev.X, az = prev.Z, bx = cur.X, bz = cur.Z;
-                        float ex = bx - ax, ez = bz - az;
-                        float len2 = ex * ex + ez * ez;
-                        float t = len2 > 1e-6f ? Mathf.Clamp(((p.X - ax) * ex + (p.Z - az) * ez) / len2, 0f, 1f) : 0f;
-                        float dx = p.X - (ax + ex * t), dz = p.Z - (az + ez * t);
-                        float d = dx * dx + dz * dz;
-                        if (d < best) best = d;
-                        prev = cur;
-                    }
+                    float ax = P[k].X, az = P[k].Y, ex = P[k + 1].X - ax, ez = P[k + 1].Y - az;
+                    float len2 = ex * ex + ez * ez;
+                    float t = len2 > 1e-6f ? Mathf.Clamp(((p.X - ax) * ex + (p.Z - az) * ez) / len2, 0f, 1f) : 0f;
+                    float dx = p.X - (ax + ex * t), dz = p.Z - (az + ez * t);
+                    float d = dx * dx + dz * dz;
+                    if (d < best) best = d;
                 }
                 best = Mathf.Sqrt(best);
                 if (best < half && half - best > depth) { depth = half - best; road = ri; }
             }
             return road >= 0;
         }
+
+        /// <summary>A road's centreline sampled the way DeepestRoadOverlap always sampled it -- 16 points a
+        /// segment, in plan -- plus their bounding box, computed ONCE per rebuild instead of on every call.
+        ///
+        /// ⚠ WHY IT IS CACHED. The town's probes ask this hundreds of thousands of times per build, and each
+        /// call re-evaluated every segment of every road from the Bezier: a town render went from 2.5 to more
+        /// than 10 minutes of CPU once a 45-degree avenue and 2 m-spaced corners added roads and joints.
+        /// Same samples, same answer; BuildRoadNode drops the entry whenever a road is rebuilt.</summary>
+        (Vector2[] P, float MinX, float MaxX, float MinZ, float MaxZ) OverlapSamples(RoadData r)
+        {
+            const int Steps = 16;
+            var pts = new System.Collections.Generic.List<Vector2>();
+            int last = r.IsLoop ? r.Joints.Count - 1 : r.Joints.Count - 2;
+            for (int si = 0; si <= last; si++)
+                for (int k = (si == 0 ? 0 : 1); k <= Steps; k++)
+                {
+                    var q = SplinePos(r, si, k / (float)Steps);
+                    pts.Add(new Vector2(q.X, q.Z));
+                }
+            float minX = float.MaxValue, maxX = float.MinValue, minZ = float.MaxValue, maxZ = float.MinValue;
+            foreach (var q in pts) { minX = Mathf.Min(minX, q.X); maxX = Mathf.Max(maxX, q.X); minZ = Mathf.Min(minZ, q.Y); maxZ = Mathf.Max(maxZ, q.Y); }
+            return (pts.ToArray(), minX, maxX, minZ, maxZ);
+        }
+        readonly System.Collections.Generic.Dictionary<RoadData, (Vector2[] P, float MinX, float MaxX, float MinZ, float MaxZ)> _overlapCache = new();
 
         /// <summary>Insert a joint at a point on a segment, so the curve can be split exactly there. Returns
         /// the new joint's index. Tangents are re-fitted across the road afterwards, which keeps the shape
