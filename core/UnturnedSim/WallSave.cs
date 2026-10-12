@@ -67,7 +67,7 @@ namespace UnturnedSim
             sb.Append(Header).Append('\n');
             sb.Append("# wall <x> <y> <z> <yawDeg> <length> <thickness> <materialId> [height] [pitchDeg] [kind] [gableRise] [texel] [insetL0 insetL1 insetR0 insetR1] [matBack texelBack]\n");
             sb.Append("#   open <u> <v> <width> <height> <depth> <archetype> [glazed tint hp indestructible broken] [doorProp doorOpen] [barr <style>]\n");
-            sb.Append("# building <kind>            -- Residential|Commercial|Industrial|Misc (the volume is DERIVED from the walls)\n");
+            sb.Append("# building <kind>            -- Residential|Commercial|Industrial|Misc|Apartment (the volume is DERIVED from the walls)\n");
             sb.Append("# room <kind> <x> <z> [floor] -- a designation ANCHORED at a point inside the room it labels\n");
             sb.Append("# door <front|back> <x> <z> [floor] -- a marked door to outside, at the middle of its opening\n");
             sb.Append("# prop <name> <x> <y> <z> <yawDeg> -- a piece of furniture, a prop by name stood up and turned as the editor does\n");
