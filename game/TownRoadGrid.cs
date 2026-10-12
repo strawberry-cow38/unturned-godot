@@ -684,6 +684,10 @@ namespace UnturnedGodot
             if (parent == null || roads == null || walk == null) return 0;
             LastCorners.Clear();
             int made = 0;
+            // ⚠ TALLY WHY A PAIR IS DROPPED. "We lose the 3 way junction's straight side sidewalk in some
+            // pics" -- and the count already said so: 12 tees and 4 bends produced only 8 extra pieces. A
+            // count of what was BUILT cannot say which rule ate the rest.
+            int nSame = 0, nLong = 0, nThrough = 0, nNoCorner = 0, nFlatAngle = 0, nShortRad = 0, nFillet = 0;
             for (int j = 0; j < roads.JunctionCount; j++)
             {
                 var edges = roads.JunctionEdges(j);
@@ -711,9 +715,9 @@ namespace UnturnedGodot
                 for (int i = 0; i < ring.Count; i++)
                 {
                     var a = ring[i]; var b = ring[(i + 1) % ring.Count];
-                    if (a.road == b.road) continue;                     // that gap is the carriageway
+                    if (a.road == b.road) { nSame++; continue; }       // that gap is the carriageway
                     float sweep = b.ang - a.ang; while (sweep <= 0f) sweep += Mathf.Tau;
-                    if (sweep > Mathf.Pi * 1.05f) continue;             // the long way round: not a mouth at all
+                    if (sweep > Mathf.Pi * 1.05f) { nLong++; continue; }   // the long way round: not a mouth at all
                     // ⚠ A TEE'S FAR SIDE IS NOT A CORNER, AND SKIPPING IT LEFT A HOLE (strawberry: "add the
                     // straight sidewalks to the 3 way junctions"). Where two arms run THROUGH a node -- the
                     // side of a tee opposite its stem, or a street simply bending -- their kerbs are parallel
@@ -724,12 +728,18 @@ namespace UnturnedGodot
                     // straight-through street subtend only ~126 degrees there, because each sits a half
                     // width off the centreline well out along its arm. Two collinear arms have ANTI-PARALLEL
                     // tangents, which is exactly the case KerbCorner already reports as "no corner".
-                    bool parallelKerbs = !KerbCorner(a.p, a.tan, b.p, b.tan, out _);
-                    if (parallelKerbs)
+                    // ⚠⚠ "CANNOT BE FILLETED" AND "IS A THROUGH SIDE" ARE THE SAME CASE, and splitting them
+                    // is what lost master the tee pavements: "we lose the 3 way junction's straight side
+                    // sidewalk in some pics". KerbCorner only reports parallel when the two tangents are
+                    // EXACTLY anti-parallel -- measured, that was 4 pairs -- while 7 more were a hair off,
+                    // succeeded, and were then dropped by the fillet path's own "too straight to round"
+                    // guard. Both mean the same thing on the ground: there is no corner here, carry the
+                    // pavement straight across the mouth.
+                    bool Through()
                     {
                         var dir = new Vector3(b.p.X - a.p.X, 0f, b.p.Z - a.p.Z);
                         float run2 = dir.Length();
-                        if (run2 < 0.5f) continue;
+                        if (run2 < 0.5f) return false;
                         dir /= run2;
                         var nrm = new Vector3(-dir.Z, 0f, dir.X);
                         // outward = away from the junction, the side the pavement is on
@@ -746,7 +756,8 @@ namespace UnturnedGodot
                                                              $"Sidewalk_Through_{j}_{i}",
                                                              Terrain.Active != null && !EditorSidewalk.NoGround
                                                                  ? (x, z) => Terrain.Active.SampleHeight(x, z) : null);
-                        if (smi == null) continue;
+                        if (smi == null) return false;
+                        nThrough++;
                         LastCorners.Add((node, sp2));
                         parent.AddChild(smi);
                         var sbody = new StaticBody3D { Name = smi.Name + "_body", CollisionLayer = 1u << 0 };
@@ -754,7 +765,7 @@ namespace UnturnedGodot
                         sbody.AddChild(new CollisionShape3D { Shape = smi.Mesh.CreateTrimeshShape() });
                         smi.AddChild(sbody);
                         made++;
-                        continue;
+                        return true;
                     }
                     // ⚠⚠ A CORNER IS A TANGENT FILLET OF FIXED RADIUS, not an arc through the two pavement
                     // ends (master: "your corners go the opposite way, they go outside, should go inside").
@@ -767,17 +778,19 @@ namespace UnturnedGodot
                     // The real thing: the two kerb lines cross at P, the block's sharp corner; the kerb runs
                     // STRAIGHT to a tangent point a fixed distance short of P, turns through one arc of
                     // radius R about a centre on the bisector, and runs straight out the other side.
-                    if (!KerbCorner(a.p, a.tan, b.p, b.tan, out var P)) continue;
+                    if (!KerbCorner(a.p, a.tan, b.p, b.tan, out var P)) { nNoCorner++; Through(); continue; }
                     var dA = new Vector3(a.p.X - P.X, 0f, a.p.Z - P.Z);
                     var dB = new Vector3(b.p.X - P.X, 0f, b.p.Z - P.Z);
                     float lA = dA.Length(), lB = dB.Length();
                     if (lA < 1f || lB < 1f) continue;
                     dA /= lA; dB /= lB;
                     float theta = Mathf.Acos(Mathf.Clamp(dA.Dot(dB), -1f, 1f));
-                    if (theta < 0.25f || theta > Mathf.Pi - 0.05f) continue;    // no corner to round
+                    // ⚠ too straight to round is NOT a reason to leave a hole -- it is the through case.
+                    if (theta > Mathf.Pi - 0.25f) { nFlatAngle++; Through(); continue; }
+                    if (theta < 0.25f) { nFlatAngle++; continue; }               // a hairpin: no mouth to pave
                     float half2 = theta * 0.5f;
                     float rad = Mathf.Min(CornerKerbRadius, Mathf.Min(lA, lB) * 0.8f * Mathf.Tan(half2));
-                    if (rad < 0.4f) continue;
+                    if (rad < 0.4f) { nShortRad++; continue; }
                     float tdist = rad / Mathf.Tan(half2);
                     var T1 = P + dA * tdist; var T2 = P + dB * tdist;
                     var bis = (dA + dB).Normalized();
@@ -823,6 +836,7 @@ namespace UnturnedGodot
                                                             ? (x, z) => Terrain.Active.SampleHeight(x, z) : null, ck);
                     if (mi == null) continue;
                     LastCorners.Add((node, cp));
+                    nFillet++;
                     parent.AddChild(mi);
                     var body = new StaticBody3D { Name = mi.Name + "_body", CollisionLayer = 1u << 0 };
                     body.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Concrete);
@@ -831,6 +845,8 @@ namespace UnturnedGodot
                     made++;
                 }
             }
+            Log.Print($"[towngrid] kerb pieces: {nFillet} fillets, {nThrough} straight-through; dropped "
+                    + $"{nSame} same-road, {nLong} long-way, {nNoCorner} no-corner, {nFlatAngle} too-straight, {nShortRad} tiny-radius");
             return made;
         }
         /// <summary>How far each street runs UNDER the junction patch, hiding its open slab end.</summary>
