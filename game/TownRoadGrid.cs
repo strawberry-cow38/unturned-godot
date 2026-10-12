@@ -1722,10 +1722,40 @@ namespace UnturnedGodot
                     // either side are still turning, so a crossing there meets them at an angle and its
                     // dropped kerbs cannot line up. Clear of the tangent point the two kerbs are straight and
                     // parallel, which is the only place a crossing squares up.
-                    float curve = half + CornerKerbRadius;
+                    // ⚠⚠ ...MEASURED FROM THE ROAD IT CROSSES, NOT FROM ITSELF. The kerb turns at the CROSSING
+                    // road's half width plus the radius, so a side street meeting a 9.2 m main is still curving
+                    // until 15.2 m out -- and `half + radius` put its zebra at 11.8-14.8 m, squarely inside the
+                    // curve it was moved out of. Same bug, same fix as the signals: master's "traffic lights
+                    // (and other stuff) should consider both roads' widths when placing".
+                    float crossed = half;
+                    foreach (var (other, _) in edges) if (other != road) crossed = Mathf.Max(crossed, roads.RoadHalfWidth(other));
+                    float curve = crossed + CornerKerbRadius;
                     float d0 = curve + CrossingInset, d1 = d0 + CrossingWidth;
+                    float sd0 = d1 + StopGap, sd1 = sd0 + StopLineWidth;
                     var st = new SurfaceTool();
                     st.Begin(Mesh.PrimitiveType.Triangles);
+                    // ⚠⚠ A PLAIN-TARMAC APRON UNDER THE CROSSING AND THE STOP LINE. Both sit out on the street's
+                    // own RIBBON, past the junction slab, and the ribbon's lane lines are baked into its texture
+                    // -- so wherever a centre dash happened to fall, it ran straight through the zebra. It never
+                    // showed on one render and always on the next, because it depends on the dash's phase.
+                    // Blanking the ribbon from the crossing's near edge to the stop line's far edge is what a
+                    // road crew does, and what master asked for: "continue the road texture up to the stop lines".
+                    // It rides between the slab and the paint (ApronLift), so it neither fights the slab where
+                    // they overlap nor covers the bars painted on it.
+                    {
+                        float a0 = d0 - 0.3f, a1 = sd1 + 0.3f, w = half + 0.02f;
+                        float ya = pos.Y + roads.RoadSurfaceOffset(road) + PatchLift + ApronLift;
+                        Vector3 A(float dist, float lat) { var q = node - fwd * dist + right * lat; return new Vector3(q.X, ya, q.Z); }
+                        var uvPlain = new Vector2(30f / 256f, 0.5f);   // the plain band between the edge and the first dash
+                        void TA(Vector3 a, Vector3 b, Vector3 c)
+                        {
+                            bool keep = (c - a).Cross(b - a).Y >= 0f;
+                            st.SetNormal(Vector3.Up); st.SetUV(uvPlain); st.AddVertex(a);
+                            st.SetNormal(Vector3.Up); st.SetUV(uvPlain); st.AddVertex(keep ? b : c);
+                            st.SetNormal(Vector3.Up); st.SetUV(uvPlain); st.AddVertex(keep ? c : b);
+                        }
+                        TA(A(a0, -w), A(a0, w), A(a1, w)); TA(A(a0, -w), A(a1, w), A(a1, -w));
+                    }
                     void Bar(float latA, float latB)
                     {
                         var p00 = node - fwd * d0 + right * latA; var p01 = node - fwd * d0 + right * latB;
@@ -1756,7 +1786,6 @@ namespace UnturnedGodot
                     // can only paint within it. A driver stops BEHIND the crossing, so the line goes outside.
                     // Across the approach half only -- we drive on the right.
                     {
-                        float sd0 = d1 + StopGap, sd1 = sd0 + StopLineWidth;
                         var q00 = node - fwd * sd0 + right * 0.1f; var q01 = node - fwd * sd0 + right * (half - 0.2f);
                         var q10 = node - fwd * sd1 + right * 0.1f; var q11 = node - fwd * sd1 + right * (half - 0.2f);
                         Vector3 W(Vector3 q) => new Vector3(q.X, y, q.Z);
@@ -1945,6 +1974,9 @@ namespace UnturnedGodot
         public float CrossingBar = 0.5f, CrossingGap = 0.5f;
         /// <summary>Gap between the crossing and the stop line behind it, and the line's own depth.</summary>
         public float StopGap = 0.8f, StopLineWidth = 0.5f;
+        /// <summary>How far the plain apron under a crossing rides over the slab: between the slab (0) and the
+        /// paint (MarkLift), so it fights neither.</summary>
+        public float ApronLift = 0.007f;
         /// <summary>⚠ NEGATIVE: the crossing and its stop line now sit OUTSIDE the junction patch, where
         /// PaintNode cannot paint, so this tells it to skip its own stop line and carry the arm's lines the
         /// whole way in instead of starting them past a line that is not there.</summary>
