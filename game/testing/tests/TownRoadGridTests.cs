@@ -55,6 +55,49 @@ namespace UnturnedGodot.Testing
             T.Check($"...and RoadField agrees they are joined ({rfA.Junctions().Count} nodes with 2+ roads)",
                     rfA.Junctions().Count >= repA.Crossroads);
 
+            // ⭐ THE CORNERS ARE ROUNDED, NOT SLABBED (strawberry 2026-10-12: "work on 45° intersections. as well
+            // as curved corner pieces"). A two-arm node used to be paved as a junction and came out a sharp
+            // point; now the two spans are fused into one road on an arc. Three things have to be true, and
+            // each is checked on its own because each fails differently:
+            //   - it HAPPENED (a count of rounded corners, and no two-arm junction left over);
+            //   - the fused road really TURNS, about a right angle end to end -- a fusion that kept the
+            //     straight and dropped the arc would pass the count;
+            //   - it turns SMOOTHLY: no jump in heading between samples 2 m apart. An arc stitched badly to
+            //     its straights shows here as a kink, and uneven spacing as Catmull-Rom wiggle.
+            T.Check($"the town's corners are rounded into curves ({repA.Bends} rounded)", repA.Bends > 0);
+            T.Check($"...and none is left slabbed as a two-arm junction ({repA.Corners} corner junctions)", repA.Corners == 0);
+            {
+                float bestTurn = 0f, worstStep = 0f;
+                for (int r = 0; r < rfA.RoadCount; r++)
+                {
+                    float L = rfA.RoadLength(r);
+                    if (L < 8f) continue;
+                    Vector3 Dir(float d) { rfA.EvaluateAlong(r, d, out _, out var tg, snapTerrain: false); return new Vector3(tg.X, 0f, tg.Z).Normalized(); }
+                    var first = Dir(1f); var last = Dir(L - 1f);
+                    bestTurn = Mathf.Max(bestTurn, Mathf.RadToDeg(first.AngleTo(last)));
+                    var prev = first;
+                    for (float d = 3f; d < L - 1f; d += 2f)
+                    {
+                        var cur = Dir(d);
+                        worstStep = Mathf.Max(worstStep, Mathf.RadToDeg(prev.AngleTo(cur)));
+                        prev = cur;
+                    }
+                }
+                T.Check($"...a rounded corner really turns (largest end-to-end turn on one road {bestTurn:0.#}deg)",
+                        bestTurn > 80f && bestTurn < 100f);
+                T.Check($"...and turns smoothly, no kink or wiggle (largest heading change over 2 m: {worstStep:0.#}deg)",
+                        worstStep < 15f);
+            }
+            // ⭐ THE CONTROL: the same town with rounding off must come back with NO bends and its corners
+            // slabbed -- otherwise "rounded" above could be counting something that was always there.
+            {
+                var rfSharp = Field();
+                var gSharp = Grid(); gSharp.CurveCorners = false;
+                var repSharp = gSharp.Generate(rfSharp, flat);
+                T.Check($"control: with rounding off there are no bends and the corners are junctions again ({repSharp.Bends} bends, {repSharp.Corners} corners)",
+                        repSharp.Bends == 0 && repSharp.Corners > 0);
+            }
+
             // ⭐ JOINED, BUT NOT OVERLAPPING (strawberry 2026-10-11: "use tiny's road-merging mechanic instead
             // of overlapping roads").
             //

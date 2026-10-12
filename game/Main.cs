@@ -10733,6 +10733,17 @@ namespace UnturnedGodot
                 // UG_TOWNCLOSE=s: stand ON the worst bare run the arm walk measured, low and close. ⚠ The
                 // camera goes where the INSTRUMENT says the defect is, not where I guessed -- every seam
                 // hunt so far has been me framing a junction I had reasoned my way to and finding it clean.
+                // UG_TOWNCLOSE=b: a ROUNDED CORNER, from outside the curve, low enough to see the kerb follow it.
+                if (closeEnv == "b" && town.BendPoints.Count > 0)
+                {
+                    var bp = town.BendPoints[0];
+                    var outward = new Vector3(bp.X - site.X, 0f, bp.Z - site.Z).Normalized();
+                    tcam.GlobalPosition = bp + outward * 30f + new Vector3(0f, 18f, 0f);
+                    tcam.Fov = 50f;
+                    tcam.LookAt(bp, Vector3.Up);
+                    Log.Print($"[towngrid] bend camera on a rounded corner at {bp} ({town.BendPoints.Count} rounded)");
+                    goto noTown;
+                }
                 if (closeEnv == "s" && town.LastBareRun > 0f)
                 {
                     var bare = town.LastBareAt;

@@ -101,12 +101,14 @@ namespace UnturnedGodot
             public int Junctions, Crossroads, Tees, Corners, DeadEnds;
             /// <summary>Nodes paved with one of tiny's junction patches, and spans a junction ate entirely.</summary>
             public int Patched, CutAway;
+            /// <summary>Corners rounded into one curving road instead of slabbed as a two-arm junction.</summary>
+            public int Bends;
             public float Metres;
             public ulong Checksum;
             public override string ToString() =>
                 $"{Roads} roads ({Metres:0} m), {Junctions} junctions = {Crossroads} crossroads / {Tees} tees / "
               + $"{Corners} corners / {DeadEnds} dead ends; {Nodes} nodes ({NodesRejected} rejected), "
-              + $"{SpansRejected} spans rejected ({CutAway} eaten by their junctions); {Patched} nodes patched; checksum {Checksum:X16}";
+              + $"{SpansRejected} spans rejected ({CutAway} eaten by their junctions); {Patched} nodes patched; {Bends} corners rounded; checksum {Checksum:X16}";
         }
 
         /// <summary>splitmix64. ⚠ NOT GetHashCode (salted per process) and NOT System.Random (no cross-version
@@ -139,7 +141,14 @@ namespace UnturnedGodot
         {
             public int AI, AJ, BI, BJ, Axis; public bool Main;
             public List<Vector3> Pts; public float Len, TrimA, TrimB;
+            /// <summary>The axis each END runs along. Equal to Axis for a straight span; a span fused round a
+            /// corner arrives along one axis and leaves along the other, and a junction at either end has to
+            /// see the right one -- pairing arms by a single Axis would call a bend's far end collinear with
+            /// whatever it happened to share a number with.</summary>
+            public int AxisA, AxisB;
+            public bool Bent;
         }
+        static int AxisAt(Span sp, bool atEnd) => atEnd ? sp.AxisB : sp.AxisA;
 
         /// <summary>UG_TOWNCUTMAIN=1 puts the main back to stopping at every junction -- the control, so the
         /// through-main change can be shown rather than asserted.</summary>
@@ -297,7 +306,7 @@ namespace UnturnedGodot
                 bool allMain = true;
                 for (int i = 0; i < here.Count; i++)
                 {
-                    if (plan[here[i].Item1].Axis != axis) continue;
+                    if (AxisAt(plan[here[i].Item1], here[i].Item2) != axis) continue;
                     count++;
                     if (p < 0) p = i; else if (q < 0) q = i;
                     allMain &= plan[here[i].Item1].Main;
@@ -377,6 +386,101 @@ namespace UnturnedGodot
             // and only now in the form that actually holds.)
             return Respace(cut, Mathf.Max(2f, PointStep));
         }
+        /// <summary>Round the corners: every node with exactly two arms that TURN becomes one road curving
+        /// round it on a circular arc, instead of two roads meeting at a point on a junction slab (strawberry
+        /// 2026-10-12: "work on 45° intersections. as well as curved corner pieces").
+        ///
+        /// ⭐ A BEND IS NOT A JUNCTION. Two roads meeting at a corner were given everything a junction gets --
+        /// a slab, fillet kerbs, cut ends -- and came out as a sharp point, because nothing in a junction
+        /// knows how to TURN a road. Fusing the two spans into one polyline makes the corner the road's own
+        /// geometry: its lane lines follow the curve, its pavements are offset round it, and there is no
+        /// seam to fit because there is no second piece.
+        /// ⚠ RESPACED EVENLY ONCE THE ARC IS IN. Catmull-Rom overshoots on the RATIO between neighbouring
+        /// segments, and an arc sampled every couple of metres stitched to 12 m straights is exactly that
+        /// ratio: the road would wiggle at both ends of every bend. One spacing, end to end.
+        /// ⚠ NEVER FUSES TWO WIDTHS. A main turning into a street stays a junction; one ribbon is one width.</summary>
+        int MergeBends(List<Span> plan, RoadField roads)
+        {
+            int made = 0;
+            BendPoints.Clear();
+            for (int guard = 0; guard < 256; guard++)
+            {
+                var at = new Dictionary<(int, int), List<(int span, bool atEnd)>>();
+                for (int k = 0; k < plan.Count; k++)
+                {
+                    Add(at, (plan[k].AI, plan[k].AJ), (k, false));
+                    Add(at, (plan[k].BI, plan[k].BJ), (k, true));
+                }
+                bool any = false;
+                foreach (var kv in at)
+                {
+                    if (kv.Value.Count != 2) continue;
+                    var (s1, e1) = kv.Value[0]; var (s2, e2) = kv.Value[1];
+                    if (s1 == s2) continue;                                  // a ring closing on itself
+                    var A = plan[s1]; var B = plan[s2];
+                    if (A.Main != B.Main) continue;
+                    // A oriented to END at the node, B to START at it
+                    var pA = new List<Vector3>(A.Pts); if (!e1) pA.Reverse();
+                    var pB = new List<Vector3>(B.Pts); if (e2) pB.Reverse();
+                    if (pA.Count < 2 || pB.Count < 2) continue;
+                    var dIn = new Vector3(pA[^1].X - pA[^2].X, 0f, pA[^1].Z - pA[^2].Z).Normalized();
+                    var dOut = new Vector3(pB[1].X - pB[0].X, 0f, pB[1].Z - pB[0].Z).Normalized();
+                    float turn = Mathf.Acos(Mathf.Clamp(dIn.Dot(dOut), -1f, 1f));
+                    if (turn < Mathf.DegToRad(15f) || turn > Mathf.DegToRad(150f)) continue;   // straight on, or a hairpin
+                    float half = roads.RoadHalfWidthOfMaterial(A.Main ? MainMaterial : StreetMaterial);
+                    // the inside pavement must keep a positive radius: carriageway + pavement + some room
+                    float R = Mathf.Max(BendRadius, 2f * half + 6f);
+                    float T = R * Mathf.Tan(turn * 0.5f);
+                    if (T > PolyLen(pA) * 0.45f || T > PolyLen(pB) * 0.45f) continue;   // no room for the arc
+                    var cutA = CutBack(pA, 0f, T); var cutB = CutBack(pB, T, 0f);
+                    if (cutA == null || cutB == null) continue;
+                    var S = cutA[cutA.Count - 1]; var E = cutB[0];
+                    // centre: inward from the start tangent point by R, inward = dOut minus its part along dIn
+                    var nIn = (dOut - dIn * dIn.Dot(dOut)).Normalized();
+                    var C = new Vector3(S.X, 0f, S.Z) + nIn * R;
+                    float a0 = Mathf.Atan2(S.Z - C.Z, S.X - C.X), a1 = Mathf.Atan2(E.Z - C.Z, E.X - C.X);
+                    float da = Mathf.Wrap(a1 - a0, -Mathf.Pi, Mathf.Pi);
+                    var fusedPts = new List<Vector3>(cutA);
+                    int arcN = Mathf.Max(4, Mathf.CeilToInt(Mathf.Abs(da) * R / 2f));
+                    for (int k = 1; k < arcN; k++)
+                    {
+                        float t = (float)k / arcN, ang = a0 + da * t;
+                        fusedPts.Add(new Vector3(C.X + Mathf.Cos(ang) * R, Mathf.Lerp(S.Y, E.Y, t), C.Z + Mathf.Sin(ang) * R));
+                    }
+                    fusedPts.AddRange(cutB);
+                    fusedPts = Respace(fusedPts, BendStep);
+                    if (fusedPts == null) continue;
+                    // the fused span runs from A's far node to B's far node, each end keeping its own axis
+                    var far1 = e1 ? (A.AI, A.AJ) : (A.BI, A.BJ);
+                    var far2 = e2 ? (B.AI, B.AJ) : (B.BI, B.BJ);
+                    int axA = e1 ? A.AxisA : A.AxisB, axB = e2 ? B.AxisA : B.AxisB;
+                    var fused = new Span { AI = far1.Item1, AJ = far1.Item2, BI = far2.Item1, BJ = far2.Item2,
+                                           Axis = axA, AxisA = axA, AxisB = axB, Main = A.Main, Bent = true,
+                                           Pts = fusedPts, Len = PolyLen(fusedPts), TrimA = 0f, TrimB = 0f };
+                    plan.RemoveAt(Mathf.Max(s1, s2)); plan.RemoveAt(Mathf.Min(s1, s2));
+                    plan.Add(fused);
+                    float am = a0 + da * 0.5f;
+                    BendPoints.Add(new Vector3(C.X + Mathf.Cos(am) * R, Mathf.Lerp(S.Y, E.Y, 0.5f), C.Z + Mathf.Sin(am) * R));
+                    made++; any = true;
+                    break;                                   // indices moved: rebuild the map
+                }
+                if (!any) break;
+            }
+            return made;
+        }
+        /// <summary>The middle of every rounded corner's arc, so a camera can be put on one.</summary>
+        public readonly List<Vector3> BendPoints = new();
+        /// <summary>UG_TOWNSHARPCORNERS=1 puts the corners back to two roads on a slab -- the control.</summary>
+        public bool CurveCorners = System.Environment.GetEnvironmentVariable("UG_TOWNSHARPCORNERS") != "1";
+        /// <summary>Centreline radius of a rounded corner, and the point spacing a fused road is respaced to.</summary>
+        public float BendRadius = 22f, BendStep = 4f;
+        static float PolyLen(List<Vector3> pts)
+        {
+            float t = 0f;
+            for (int i = 0; i + 1 < pts.Count; i++) t += Flat(pts[i], pts[i + 1]);
+            return t;
+        }
+
         /// <summary>The same polyline, its points evenly spaced, with both ends exactly where they were --
         /// the far end must stay on the junction node it is about to be bound to.</summary>
         static List<Vector3> Respace(List<Vector3> pts, float step)
@@ -508,6 +612,7 @@ namespace UnturnedGodot
                         var pts = SpanPoints(grid[ai, aj].P, grid[bi, bj].P, heightAt, out float len);
                         if (pts == null) { rep.SpansRejected++; continue; }
                         plan.Add(new Span { AI = ai, AJ = aj, BI = bi, BJ = bj, Axis = axis, Main = main,
+                                            AxisA = axis, AxisB = axis,
                                             Pts = pts, Len = len, TrimA = 0f, TrimB = 0f });
                     }
                 }
@@ -516,6 +621,10 @@ namespace UnturnedGodot
             // past their fillets and hands back the patch that paves the middle. Where it declines -- too few
             // arms, one too short to cut, a shape the fillets cannot close -- the span keeps the simple
             // kerb-line setback, which is worse-looking but never leaves a hole.
+            // ---- 2a. BENDS, BEFORE THE NODES: a corner fused here is not a node any more, so the node pass
+            // must never see it -- it would otherwise slab it as a two-arm junction, which is the sharp point.
+            if (CurveCorners) rep.Bends = MergeBends(plan, roads);
+
             var touching = new Dictionary<(int, int), List<(int span, bool atEnd)>>();
             foreach (var (sp, idx) in Enumerate(plan))
             {
@@ -565,7 +674,7 @@ namespace UnturnedGodot
                     foreach (var (si, atEnd) in here)
                     {
                         var sp = plan[si];
-                        float back = DominantAxis(kv.Key.Item1 - n, kv.Key.Item2 - n) == sp.Axis
+                        float back = DominantAxis(kv.Key.Item1 - n, kv.Key.Item2 - n) == AxisAt(sp, atEnd)
                                    ? 0f : HalfAt(roads, kv.Key.Item1 - n, kv.Key.Item2 - n);
                         if (atEnd) sp.TrimB = back; else sp.TrimA = back;
                         plan[si] = sp;
