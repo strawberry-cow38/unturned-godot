@@ -1332,8 +1332,13 @@ namespace SDG.Unturned
                 if (from < g.Trim[i])
                     foreach (var (lat, width, colour, dashed) in LinesOf(arm.E))
                         Stripe(colour == 1 ? yellow : white, arm.R, arm.Arc(from), arm.Arc(g.Trim[i]), lat, width, dashed, arm.E.Kind);
-                // the approach is on the right driving in: the arm's clockwise side
-                if (!through && stop > 0) StopLine(white, arm.R, arm.Arc(stop), arm.Side(-1), arm.Hw, arm.E.Kind);
+                // ⚠⚠ THE APPROACH IS THE HALF A DRIVER ARRIVES ON, AND WE DRIVE ON THE RIGHT. This was
+                // Side(-1) and the comment above it said "the right" -- the sign was simply the other way
+                // round, so every stop line in the game was painted across the lanes LEAVING the junction
+                // (strawberry 2026-10-12: "the stop lines are assuming they drive on the left lol").
+                // Side(ccw) is ccw * Dir, so the approach half -- clockwise of the direction of travel -- is
+                // Side(+1). PEI is Canada; traffic keeps right.
+                if (!through && stop > 0) StopLine(white, arm.R, arm.Arc(stop), arm.Side(1), arm.Hw, arm.E.Kind);
             }
             if (white.Quads > 0) plan.Marks.Add(white);
             if (yellow.Quads > 0) plan.Marks.Add(yellow);

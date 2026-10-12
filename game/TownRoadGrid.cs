@@ -639,10 +639,18 @@ namespace UnturnedGodot
                 var mesh = st.Commit();
                 if (mesh == null || mesh.GetSurfaceCount() == 0) continue;
                 var mi = new MeshInstance3D { Name = $"Junction_Paint_{made}", Mesh = mesh };
+                // ⚠⚠ LIT, NOT UNSHADED, AND THAT WAS THE COLOUR MISMATCH (strawberry: "why is the color of
+                // the stop lines and extended center lines a different color to the ones on the splines?").
+                // The RGB was already the road textures' own -- 200,200,200 and 210,191,34 -- so the paint and
+                // the texture's markings are the same colour and could not look it: the asphalt is drawn LIT,
+                // through the wet-surface shader, and unshaded paint on top of it renders at full brightness
+                // whatever the sun is doing. Same albedo, same lighting, same roughness as the road, and they
+                // match at any time of day instead of only at noon.
                 mi.MaterialOverride = new StandardMaterial3D
                 {
                     AlbedoColor = mk.Colour == 1 ? new Color(0.824f, 0.749f, 0.133f) : new Color(0.784f, 0.784f, 0.784f),
-                    ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                    Roughness = 1f,
+                    SpecularMode = BaseMaterial3D.SpecularModeEnum.Disabled,
                     CullMode = BaseMaterial3D.CullModeEnum.Disabled,
                 };
                 parent.AddChild(mi);
