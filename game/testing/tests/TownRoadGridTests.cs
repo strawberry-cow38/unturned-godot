@@ -1222,8 +1222,11 @@ namespace UnturnedGodot.Testing
                             for (float d = m0; d <= m1 && !found; d += 0.25f) found = PaintAt(On(r, d, lat)) == (colour == 1 ? 2 : 1);
                             if (found) linesFound++;
                         }
-                        // bare between the lines: halfway between each neighbouring pair across the road
+                        // bare between the lines: halfway between each neighbouring pair across the road -- the kerbs
+                        // counted as lines too, so the outside lanes are checked as well
                         var lats = new List<float>(); foreach (var (lat, _, _, _, _) in table) lats.Add(lat);
+                        float hr = rfD.RoadHalfWidth(r);
+                        lats.Add(hr); lats.Add(-hr);
                         lats.Sort();
                         for (int k = 0; k + 1 < lats.Count; k++)
                         {

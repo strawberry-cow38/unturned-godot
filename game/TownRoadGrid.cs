@@ -2769,8 +2769,9 @@ namespace UnturnedGodot
                 {
                     var uv = colour == 1 ? uvYellow : uvWhite;
                     if (!dashed) { Bar(0f, span, (float)off, (float)w, uv); continue; }
-                    // ⚠ dashes keep a rhythm rather than becoming one long line, or the box reads as solid
-                    const float dash = 3f, gap = 6f;
+                    // ⚠ dashes keep a rhythm rather than becoming one long line, or the box reads as solid -- the
+                    // roads' own rhythm, where the town paints its own lines
+                    float dash = PaintOwnLines && _plainMain >= 0 ? LineDash : 3f, gap = PaintOwnLines && _plainMain >= 0 ? LineGap : 6f;
                     for (float t = 0f; t < span; t += dash + gap)
                         Bar(t, Mathf.Min(span, t + dash), (float)off, (float)w, uv);
                 }
@@ -4139,8 +4140,16 @@ namespace UnturnedGodot
         public bool PaintOwnLines = System.Environment.GetEnvironmentVariable("UG_TOWNTEXLINES") != "1";
         int _plainMain = -1, _plainStreet = -1;
         /// <summary>The paint: line width; how far inside the carriageway's edge the edge line runs, and inside the
-        /// median's kerb its yellow line; a dash and the gap after it.</summary>
-        public float LineWidth = 0.15f, EdgeLineInset = 0.35f, MedianLineInset = 0.35f, LineDash = 3f, LineGap = 6f;
+        /// median's kerb its yellow line; a dash and the gap after it.
+        /// ⚠ THE OLD TEXTURES' OWN SIZES, MEASURED OFF THEM (strawberry 2026-10-13: "whyd the dotted center lines become
+        /// thinner? match them to the old spline size"). road_0 paints its dashes 4 texels of 256 across 18.4 m and
+        /// road_6 8 of 256 across 9.2 m -- 0.2875 m both -- and both run 4 m on, 4 m off (16 of 32 rows of a texture
+        /// that repeats every 32 m on road_0, 32 of 64 on road_6). road_0's centre yellow is 8 texels, 0.575 m: the
+        /// double yellow keeps that overall width.</summary>
+        public float LineWidth = 0.2875f, EdgeLineInset = 0.35f, MedianLineInset = 0.35f, LineDash = 4f, LineGap = 4f;
+        /// <summary>The double yellow: each line's width, and their centres either side of the road's (0.575 m overall,
+        /// road_0's yellow).</summary>
+        public float DoubleYellowLine = 0.2f, DoubleYellowAt = 0.1875f;
         /// <summary>Line pieces laid by the last BuildRoadLines.</summary>
         public int RoadLinePieces;
         /// <summary>White edge lines along the kerbs, and a yellow line along each side of a boulevard's median. Both
@@ -4169,7 +4178,7 @@ namespace UnturnedGodot
             else if (IsMain(roads, road))
                 foreach (int s in new[] { -1, 1 })
                 {
-                    t.Add((s * LineWidth, LineWidth * 0.8f, 1, false, false));
+                    t.Add((s * DoubleYellowAt, DoubleYellowLine, 1, false, false));
                     t.Add((s * RoadField.LaneWidth, LineWidth, 0, true, false));
                 }
             else t.Add((0f, LineWidth, 1, true, false));
