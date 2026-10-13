@@ -4219,10 +4219,11 @@ namespace UnturnedGodot
         /// that repeats every 32 m on road_0, 32 of 64 on road_6). road_0's centre yellow is 8 texels, 0.575 m: the
         /// double yellow keeps that overall width.</summary>
         public float LineWidth = 0.2875f, EdgeLineInset = 0.35f, MedianLineInset = 0.35f, LineDash = 4f, LineGap = 4f;
-        /// <summary>A main's centre line: ONE solid yellow, road_0's own 8 texels -- 0.575 m. ⚠ It was a double yellow
-        /// (two 0.2 m lines 0.175 m apart), and two lines that close read as one line drawn twice: strawberry 2026-10-13,
-        /// "i still see the duped lines, they are spaced slightly apart, dead center of the junction" -- where a main
-        /// runs through, that is exactly where its centre line crosses the box.</summary>
+        /// <summary>A main's centre line: ONE solid yellow, road_0's own 8 texels -- 0.575 m. It was a double yellow (two
+        /// 0.2 m lines 0.175 m apart). ⚠ That swap was made as the fix for strawberry's "i still see the duped lines,
+        /// they are spaced slightly apart, dead center of the junction" and it was NOT the cause: the junction in that
+        /// picture was a boulevard's, which has no yellow at all. The doubling was the dash rhythm restarting at a
+        /// through node -- see BuildRoadLines, and the test that walks each dashed line through one.</summary>
         public float CentreYellowWidth = 0.575f;
         /// <summary>Line pieces laid by the last BuildRoadLines.</summary>
         public int RoadLinePieces;
@@ -4266,8 +4267,8 @@ namespace UnturnedGodot
         /// ⚠ TO THE STOP LINE AND NO FURTHER where the end has a crossing: the crossing and the box behind it are bare
         /// on a real junction, and a line run on into them is exactly "those double lines extend into the crossing".
         /// The stop line may be slanted, so each line stops where it meets it. Where a main runs through, its centre and
-        /// lane lines run on to the node and are carried across the box (BuildMainThroughLines); its EDGE lines stop
-        /// where the kerb turns away into the side street's mouth.</summary>
+        /// lane lines run on to the node from both halves, their dashes counted from it so the two keep one step
+        /// (BuildRoadLines); its EDGE lines stop where the kerb turns away into the side street's mouth.</summary>
         float LineLimit(RoadField roads, int road, bool atEnd, float lat, bool edge)
         {
             int j = roads.RoadEndJunction(road, atEnd);
@@ -4334,6 +4335,21 @@ namespace UnturnedGodot
                         RoadLinePieces++;
                     }
                 }
+                // ⚠⚠ THE RHYTHM IS ANCHORED AT A NODE THE ROAD RUNS THROUGH (strawberry 2026-10-13: "i still see the duped
+                // lines, they are spaced slightly apart, dead center of the junction"). A through main's two halves meet at
+                // the node and each paints up to it -- so with each counting its dashes from its own start, the two rhythms
+                // met anywhere at all, and in most boxes that was a dash, a sliver of a gap and another dash. Counted from
+                // the node instead, each half stops half a gap short of it and the pair leave one whole gap there. A road
+                // running through at both ends fits a whole number of dashes between them, stretched by a hair to fit.
+                bool thruA = _throughEnds.Contains((r, false)), thruB = _throughEnds.Contains((r, true));
+                float period = LineDash + LineGap, dashLen = LineDash, phase = 0f;
+                if (thruA && thruB)
+                {
+                    float fit = L / (Mathf.Max(1f, Mathf.Round(L / period)) * period);
+                    period *= fit; dashLen *= fit; phase = LineGap * fit * 0.5f;
+                }
+                else if (thruA) phase = LineGap * 0.5f;
+                else if (thruB) phase = L - LineGap * 0.5f - dashLen;
                 foreach (var (lat, w, colour, dashed, edge) in OwnLines(roads, r, withEdges: true))
                 {
                     var uv = colour == 1 ? uvYellow : uvWhite;
@@ -4358,9 +4374,8 @@ namespace UnturnedGodot
                     {
                         if (!dashed) { Run(a, b, lat, w, uv); continue; }
                         // a fixed rhythm along the road, so a line broken by a bay picks up in step
-                        float period = LineDash + LineGap;
-                        for (float d = Mathf.Floor(a / period) * period; d < b; d += period)
-                            Run(Mathf.Max(a, d), Mathf.Min(b, d + LineDash), lat, w, uv);
+                        for (float d = phase + Mathf.Floor((a - phase) / period) * period; d < b; d += period)
+                            Run(Mathf.Max(a, d), Mathf.Min(b, d + dashLen), lat, w, uv);
                     }
                 }
             }

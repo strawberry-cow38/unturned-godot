@@ -1331,6 +1331,61 @@ namespace UnturnedGodot.Testing
                     }
                     T.Check($"...with no edge lines along the kerbs, nor a yellow along the boulevard's median ({stripsPainted} of {stripsChecked} strips painted)",
                             stripsChecked > 20 && stripsPainted == 0);
+                    // 4. THE DASHES KEEP THEIR STEP THROUGH A JUNCTION A MAIN RUNS THROUGH (strawberry 2026-10-13: "i still
+                    //    see the duped lines, they are spaced slightly apart, dead center of the junction"). Its two halves
+                    //    meet at the node and each paints right up to it, so the middle of the box holds whatever the two
+                    //    halves' rhythms leave there. Walk each dashed line straight through the node: the run across the
+                    //    node and the two either side of it are each one whole dash or one whole gap. The walk finding those
+                    //    neighbours at all is the control -- a line it misses fails rather than passes.
+                    int thruNodes = 0, thruLines = 0, offStep = 0, unpaired = 0; string offAt = "";
+                    float stepWalk = 2f * (gD.LineDash + gD.LineGap), stepTol = 0.5f;
+                    for (int j = 0; j < rfD.JunctionCount; j++)
+                    {
+                        var thr = new List<(int road, bool atEnd)>();
+                        foreach (var (er, ee) in rfD.JunctionEdges(j)) if (gD.Built.Contains(er) && gD.RunsThrough(er, ee)) thr.Add((er, ee));
+                        if (thr.Count != 2) continue;
+                        float L0 = rfD.RoadLength(thr[0].road), L1 = rfD.RoadLength(thr[1].road);
+                        if (L0 < stepWalk + 1f || L1 < stepWalk + 1f) continue;
+                        thruNodes++;
+                        var table1 = gD.OwnLines(rfD, thr[1].road, withEdges: false);
+                        foreach (var (lat0, _, _, dashed0, _) in gD.OwnLines(rfD, thr[0].road, withEdges: false))
+                        {
+                            if (!dashed0) continue;
+                            // the same paint, as each road reckons its lateral: to the right walking OUT of the node along
+                            // road 0 is to the left walking out along road 1
+                            float out0 = thr[0].atEnd ? -lat0 : lat0;
+                            float lat1 = thr[1].atEnd ? out0 : -out0;
+                            bool met = false;
+                            foreach (var (l1, _, _, d1, _) in table1) if (d1 && Mathf.Abs(l1 - lat1) < 0.05f) met = true;
+                            if (!met) { unpaired++; continue; }
+                            thruLines++;
+                            // u < 0 out along road 0, u > 0 out along road 1, the node at 0
+                            var on = new List<bool>();
+                            for (int k = -(int)(stepWalk / 0.05f); k <= (int)(stepWalk / 0.05f); k++)
+                            {
+                                float u = k * 0.05f, s = Mathf.Abs(u);
+                                var (rr, ae, la, LL) = k < 0 ? (thr[0].road, thr[0].atEnd, lat0, L0) : (thr[1].road, thr[1].atEnd, lat1, L1);
+                                on.Add(PaintAt(On(rr, ae ? LL - s : s, la)) != 0);
+                            }
+                            var runs = new List<(bool paint, int a, int b)>();
+                            for (int k = 0; k < on.Count; k++)
+                                if (runs.Count == 0 || runs[^1].paint != on[k]) runs.Add((on[k], k, k)); else runs[^1] = (on[k], runs[^1].a, k);
+                            int nodeAt = on.Count / 2, at = runs.FindIndex(x => x.a <= nodeAt && x.b >= nodeAt);
+                            // the run over the node and one whole run either side of it -- never the window's clipped ends
+                            bool inStep = at > 1 && at < runs.Count - 2;
+                            if (!inStep && offAt == "") offAt = $"node {j}: no whole run either side of it on the line at {lat0:0.0}";
+                            for (int k = at - 1; inStep && k <= at + 1; k++)
+                            {
+                                float len = (runs[k].b - runs[k].a + 1) * 0.05f, want = runs[k].paint ? gD.LineDash : gD.LineGap;
+                                if (Mathf.Abs(len - want) <= stepTol) continue;
+                                inStep = false;
+                                if (offAt == "") offAt = $"{(runs[k].paint ? "a dash" : "a gap")} of {len:0.00} m {(k == at ? "across" : "beside")} node {j} (roads {thr[0].road}/{thr[1].road}, line at {lat0:0.0})";
+                            }
+                            if (!inStep) offStep++;
+                        }
+                    }
+                    T.Check($"...and their dashes keep step straight through every junction a main runs through ({offStep} of {thruLines} lines out of step over {thruNodes} nodes{(offAt != "" ? $"; first: {offAt}" : "")}; {unpaired} meeting no line on the far side)",
+                            thruNodes >= 2 && thruLines >= 4 && offStep == 0 && unpaired == 0);
                     lHost.QueueFree(); cxHost.QueueFree();
                 }
                 // determinism: the same town again lays the same plots
