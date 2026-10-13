@@ -212,6 +212,98 @@ namespace UnturnedSim
             return (MathF.Min(h0, h1), MathF.Abs(h1 - h0), h1 > h0);
         }
 
+        /// <summary>The two faces of one solid of a PITCHED roof surface -- `front` at +halfThick, `back` at -halfThick,
+        /// both in the surface's own (u, v) -- with every edge but the eave cut PLUMB: along the vertical plane through
+        /// that edge of the mid-plane polygon, rather than square to the slab.
+        ///
+        /// strawberry: "the top of roofs where the gables meet has a small gap". Each slope was a slab cut square to
+        /// itself, so at a ridge the two cuts crossed at the mid-plane and nowhere else: above it a V open to the sky,
+        /// t/cos(pitch) deep and 2t sin(pitch) across the top -- 266 mm by 171 mm on a 0.5 m slab at 20 degrees -- along
+        /// every ridge and every hip; below it the two slabs ran into each other. Two slopes of one pitch meet on the
+        /// vertical plane through their shared mid-plane edge, which is where a carpenter cuts a rafter at the ridge (the
+        /// plumb cut) and at a hip or a valley: cut there, both faces of both slabs end on the same line, and the slabs
+        /// neither part nor overlap. The same cut stands a shed's high edge flush against the wall it leans on.
+        ///
+        /// The EAVE stays square, on purpose: it meets nothing, and squaring it is what it has always looked like. So
+        /// does any other level edge below the top -- the head or sill of an opening -- because the slab on its far side
+        /// is cut square too. A square edge is tested where it is; a plumb one where the point straight below or above
+        /// it crosses the mid-plane: a point at depth w lies plumb over (u - w*shiftU, v - w*shiftV) -- the shift being
+        /// the surface's own vertical, (up.u, up.v) / up.w in its frame, which the caller reads off the transform it
+        /// actually built rather than having it re-derived here from a sign convention (a roof read off a retail mesh
+        /// leans the other way from a generated one).
+        ///
+        /// `mid` is the mid-plane polygon (the solid's rectangle, clipped to the surface's trapezoid), convex. Only its
+        /// real edges cut: the rectangle side a hip's cut line meets at the eave corner is a vertex, not an edge, so the
+        /// face may run past it -- out to where the hip's outer line actually is.</summary>
+        public static void PlumbFaces(IReadOnlyList<(float U, float V)> mid, float height, float halfThick,
+                                      float shiftU, float shiftV,
+                                      List<(float U, float V)> front, List<(float U, float V)> back)
+        {
+            front.Clear(); back.Clear();
+            if (mid == null || mid.Count < 3) return;
+            float cu = 0f, cv = 0f, u0 = float.MaxValue, u1 = float.MinValue, v0 = float.MaxValue, v1 = float.MinValue;
+            foreach (var (u, v) in mid)
+            {
+                cu += u; cv += v;
+                u0 = MathF.Min(u0, u); u1 = MathF.Max(u1, u); v0 = MathF.Min(v0, v); v1 = MathF.Max(v1, v);
+            }
+            cu /= mid.Count; cv /= mid.Count;
+            // Far enough out that nothing but the edges below can bound the face.
+            float m = (MathF.Abs(shiftU) + MathF.Abs(shiftV)) * halfThick + 1f;
+            foreach (var (face, w) in new[] { (front, halfThick), (back, -halfThick) })
+            {
+                var poly = new List<(float U, float V)> { (u0 - m, v0 - m), (u1 + m, v0 - m), (u1 + m, v1 + m), (u0 - m, v1 + m) };
+                for (int i = 0; i < mid.Count && poly.Count > 0; i++)
+                {
+                    var a = mid[i];
+                    var b = mid[(i + 1) % mid.Count];
+                    float eu = b.U - a.U, ev = b.V - a.V;
+                    if (eu * eu + ev * ev < 1e-10f) continue;   // a corner the clip doubled, not an edge
+                    bool level = MathF.Abs(ev) < 1e-4f;
+                    bool square = level && MathF.Abs(a.V - height) > 1e-3f;
+                    float side = MathF.Sign(eu * (cv - a.V) - ev * (cu - a.U));
+                    float du = square ? 0f : w * shiftU, dv = square ? 0f : w * shiftV;
+                    poly = ClipHalfPlane(poly, p => side * (eu * (p.V - dv - a.V) - ev * (p.U - du - a.U)));
+                }
+                face.AddRange(poly);
+            }
+        }
+
+        /// <summary>One solid of a surface (its rectangle u0..u1 by v0..v1) clipped to the surface's trapezoid: keep u from the
+        /// left cut line to the right one, each straight from its inset at the base (…0) to its inset at the top (…1) of a
+        /// surface `height` tall. Convex. The one definition of a tapered surface's outline: WallSurface meshes and collides
+        /// it, and an inset that puts a cut line outside the rectangle leaves the rectangle's side as the edge there.</summary>
+        public static List<(float U, float V)> TaperPolygon(float u0, float v0, float u1, float v1, float length, float height,
+                                                           float insetL0, float insetL1, float insetR0, float insetR1)
+        {
+            float At(float a, float b, float v) => a + (b - a) * (height > WallOpenings.Eps ? v / height : 0f);
+            var poly = new List<(float U, float V)> { (u0, v0), (u1, v0), (u1, v1), (u0, v1) };
+            poly = ClipHalfPlane(poly, p => p.U - At(insetL0, insetL1, p.V));
+            return ClipHalfPlane(poly, p => length - At(insetR0, insetR1, p.V) - p.U);
+        }
+
+        static List<(float U, float V)> ClipHalfPlane(List<(float U, float V)> poly, Func<(float U, float V), float> keep)
+        {
+            var outp = new List<(float U, float V)>(poly.Count + 2);
+            for (int i = 0; i < poly.Count; i++)
+            {
+                var a = poly[i];
+                var b = poly[(i + 1) % poly.Count];
+                float da = keep(a), db = keep(b);
+                if (da >= 0f) outp.Add(a);
+                if ((da >= 0f) != (db >= 0f))
+                {
+                    float f = da / (da - db);
+                    if (float.IsFinite(f))
+                    {
+                        f = Math.Clamp(f, 0f, 1f);
+                        outp.Add((a.U + (b.U - a.U) * f, a.V + (b.V - a.V) * f));
+                    }
+                }
+            }
+            return outp;
+        }
+
         /// <summary>Height of the ridge above the eaves. Zero for a flat roof.</summary>
         public static float RidgeHeight(RoofSpec s) => s.Kind == RoofKind.Flat ? 0f : s.Rise;
 

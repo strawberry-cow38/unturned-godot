@@ -2791,9 +2791,10 @@ namespace UnturnedSim
         /// along it and gable ends on both its ends; the rest -- the wing, or, when the wing spans more, the one or two
         /// arms of the long part either side of it -- each a gable of its own, its ridge running square into the main
         /// roof's slope, lower since it spans less. Where an arm's slopes meet the main roof's, both are cut along the valley
-        /// (45 degrees in plan: one pitch): the arm's planes start at the valley, and the main roof's slope on that side is a
-        /// band above the arm's ridge and two trapezoids below it, each ending at a valley -- the editor's planes taper at
-        /// their ends (Inset*), not along their eaves, so every valley is made an end. Neither roof runs on inside the other.
+        /// (45 degrees in plan: one pitch): the arm's planes start at the valley, and the main roof's slope on that side is
+        /// two planes, eave to ridge, meeting over the arm's ridge, each ending at a valley up to that ridge -- the editor's
+        /// planes taper at their ends (Inset*), not along their eaves, so every valley is made an end. Neither roof runs on
+        /// inside the other.
         /// Worked in a frame turned so the main ridge runs along +X and the arm is off its +Z side, and turned back.</summary>
         static void CrossGable(BuildingGenResult res, float head)
         {
@@ -2825,11 +2826,11 @@ namespace UnturnedSim
                 return (Math.Min(ax, bx), Math.Min(az, bz), Math.Max(ax, bx), Math.Max(az, bz));
             }
             // a sloped plane from its eave corner (x, z) at height y, running `len` along local `yaw`, `run` across in plan
-            void Plane(int t, float x, float y, float z, float yaw, float len, float run, float l0 = 0f, float r0 = 0f)
+            void Plane(int t, float x, float y, float z, float yaw, float len, float run, float l0 = 0f, float r0 = 0f, float l1 = 0f, float r1 = 0f)
             {
                 var (px, pz) = Turn(t, x, z);
                 res.Walls.Add(new WallPlan { X = px, Y = y, Z = pz, Yaw = (yaw + t) % 360f, Pitch = node, Length = len, Height = run / cos,
-                                             Thickness = Slab, Kind = SurfaceKind.Roof, InsetL0 = l0, InsetR0 = r0 });
+                                             Thickness = Slab, Kind = SurfaceKind.Roof, InsetL0 = l0, InsetR0 = r0, InsetL1 = l1, InsetR1 = r1 });
             }
             // a gable end on the outside wall from (x0, z0) to (x1, z1), the floor on its right: a band where the roof
             // reaches past the wall, the triangle on that -- as the rectangle's (EditorBuildings.PlaceRoof)
@@ -2849,11 +2850,14 @@ namespace UnturnedSim
                 if (arm == null) { Plane(t, X0, head, Z1, 0f, X1 - X0, hm); continue; }
                 var a = arm.Value;
                 float hw = (a.X1 - a.X0) * 0.5f + o, xr = (a.X0 + a.X1) * 0.5f, zA = Z1 - hw, zF = a.Z1 + o;
-                // the main slope on this side: below the arm's ridge, a trapezoid either side of it ending at a valley;
-                // above it, all of it
-                Plane(t, X0, head, Z1, 0f, xr - X0, hw, r0: hw);
-                Plane(t, xr, head, Z1, 0f, X1 - xr, hw, l0: hw);
-                if (hm - hw > 0.01f) Plane(t, X0, head + hw * tan, Z1 - hw, 0f, X1 - X0, hm - hw);
+                // the main slope on this side: two planes, eave to ridge, meeting over the arm's ridge -- each cut along a
+                // valley up to the arm's ridge, and past it by that valley's line carried on (a negative inset) until the
+                // plane's own end stops it. Not a band above the arm's ridge over a trapezoid either side below it, as it
+                // was: a slope's top edge is cut plumb to meet the slope across the ridge (RoofShapes.PlumbFaces), and
+                // across a joint ALONG the slope that cut met a band's eave cut square, leaving a groove under the joint.
+                // Split along the slope instead, the two meet on a line that is plumb and square at once.
+                Plane(t, X0, head, Z1, 0f, xr - X0, hm, r0: hw, r1: hw - hm);
+                Plane(t, xr, head, Z1, 0f, X1 - xr, hm, l0: hw, l1: hw - hm);
                 // the arm's two slopes, from the valleys out to its gable end
                 Plane(t, xr - hw, head, zA, 270f, zF - zA, hw, l0: hw);
                 Plane(t, xr + hw, head, zF, 90f, zF - zA, hw, r0: hw);
@@ -2901,7 +2905,7 @@ namespace UnturnedSim
                     float pitch = (w.Pitch + 90f) * MathF.PI / 180f, Hp = w.Height * MathF.Cos(pitch);
                     if (vp < 0f || vp > Hp) continue;
                     float t = Hp > 1e-4f ? vp / Hp : 0f;
-                    float lo = w.InsetL0 + (w.InsetL1 - w.InsetL0) * t, hi = w.Length - (w.InsetR0 + (w.InsetR1 - w.InsetR0) * t);
+                    float lo = MathF.Max(0f, w.InsetL0 + (w.InsetL1 - w.InsetL0) * t), hi = MathF.Min(w.Length, w.Length - (w.InsetR0 + (w.InsetR1 - w.InsetR0) * t));
                     if (u < lo || u > hi) continue;
                     h = w.Y + vp * MathF.Tan(pitch);
                 }
@@ -2930,7 +2934,7 @@ namespace UnturnedSim
             float pitch = (w.Pitch + 90f) * MathF.PI / 180f, Hp = w.Height * MathF.Cos(pitch);
             if (vp < 0f || vp > Hp) return float.NaN;
             float t = Hp > 1e-4f ? vp / Hp : 0f;
-            float lo = w.InsetL0 + (w.InsetL1 - w.InsetL0) * t, hi = w.Length - (w.InsetR0 + (w.InsetR1 - w.InsetR0) * t);
+            float lo = MathF.Max(0f, w.InsetL0 + (w.InsetL1 - w.InsetL0) * t), hi = MathF.Min(w.Length, w.Length - (w.InsetR0 + (w.InsetR1 - w.InsetR0) * t));
             if (u < lo || u > hi) return float.NaN;
             return w.Y + vp * MathF.Tan(pitch) + w.Thickness * 0.5f / MathF.Cos(pitch);
         }
