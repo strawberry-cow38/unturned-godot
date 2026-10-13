@@ -85,6 +85,32 @@ namespace UnturnedGodot
 
         List<RoadMat> _mats = new();
         byte _pathsVersion = 6;
+
+        /// <summary>DERIVED MATERIALS: a material made at runtime from another -- same surface, depth and wet shader,
+        /// its own width and its own texture -- for a road type no map ships (strawberry 2026-10-13: "a new road type,
+        /// with a central concrete median/grass + concrete median. 2 + 2 lanes"). A boulevard is the main road's two
+        /// carriageways pulled apart by its median: its texture is road_0's two halves with a gap between, so every
+        /// lane keeps road_0's painted width and the yellow centre line splits into a yellow edge line along each
+        /// side of the median. ⚠ Never written to Roads.dat or Paths.dat: a generator builds them, and a saved map
+        /// would not know the index.</summary>
+        readonly Dictionary<int, (int src, Image tex, float medianHalf)> _derived = new();
+        /// <summary>Add a material derived from `src`, `halfWidth` metres half wide (after WidthScale, as
+        /// RoadHalfWidthOfMaterial reports it), drawn with `texture`; `medianHalf` is half the median it carries,
+        /// which its traffic lanes keep clear of. Returns the new material's index.</summary>
+        public int AddDerivedMaterial(int src, float halfWidth, Image texture, float medianHalf)
+        {
+            if (src < 0 || src >= _mats.Count || halfWidth <= 0f) return -1;
+            var m = _mats[src];
+            m.Width = halfWidth / WidthScale;
+            _mats.Add(m);
+            _derived[_mats.Count - 1] = (src, texture, Mathf.Max(0f, medianHalf));
+            return _mats.Count - 1;
+        }
+        /// <summary>Half the median a material's road carries down its middle; 0 for every shipped material.</summary>
+        public float MedianHalfOfMaterial(int material) => _derived.TryGetValue(material, out var d) ? d.medianHalf : 0f;
+        /// <summary>The shipped material a derived one was made from (itself for a shipped one): what its texture
+        /// height and whether it carries traffic are read from.</summary>
+        int SourceOf(int material) => _derived.TryGetValue(material, out var d) ? d.src : material;
         public int RoadCount => _roads.Count;
         public int JointCount(int road) => road >= 0 && road < _roads.Count ? _roads[road].Joints.Count : 0;
         public Vector3 JointPos(int road, int joint) => _roads[road].Joints[joint].Vertex;
@@ -104,7 +130,8 @@ namespace UnturnedGodot
         {
             string p = ProjectSettings.GlobalizePath($"res://content/roads/road_{index}.png");
             Image img = null;
-            if (System.IO.File.Exists(p)) { img = new Image(); if (!ContentProvider.LoadOk(img, p)) img = null; }
+            if (_derived.TryGetValue(index, out var dv) && dv.tex != null) img = dv.tex;      // a derived material's own
+            else if (System.IO.File.Exists(p)) { img = new Image(); if (!ContentProvider.LoadOk(img, p)) img = null; }
             if (!concrete)   // dirt / gravel TRAILS stay plain: no wet sheen, no raindrop rings (strawberry: "just the solid concrete roads")
             {
                 if (img != null)
@@ -181,14 +208,18 @@ namespace UnturnedGodot
         void BuildLanePaths(RoadData r, int roadIndex, RoadMat mat)
         {
             _lanes.RemoveAll(l => l.Road == roadIndex);
-            if (!Drivable(r.Material) || r.Joints.Count < 2) return;
-            float full = mat.Width * WidthScale * 2f;
+            if (!Drivable(SourceOf(r.Material)) || r.Joints.Count < 2) return;
+            // ⚠ A MEDIAN TAKES THE MIDDLE: the lanes are laid in what is left, each half pushed out by half the median,
+            // or the inside lane of a boulevard runs straight down its kerb
+            float medianHalf = MedianHalfOfMaterial(r.Material);
+            float full = mat.Width * WidthScale * 2f - medianHalf * 2f;
             int lanes = Mathf.Max(2, 2 * Mathf.RoundToInt(full / LaneWidth * 0.5f));   // round to an EVEN count: a road carries traffic both ways
             var samples = SampleWalk(r);
             if (samples.Count < 2) return;
             for (int k = 0; k < lanes; k++)
             {
                 float off = ((lanes - 1) * 0.5f - k) * LaneWidth;
+                off += Mathf.Sign(off) * medianHalf;
                 var pts = new Vector3[samples.Count];
                 for (int i = 0; i < samples.Count; i++)
                 {
@@ -210,7 +241,8 @@ namespace UnturnedGodot
         void BuildRoadNode(RoadData r)
         {
             _overlapCache.Remove(r);      // its centreline may have moved: DeepestRoadOverlap resamples it on demand
-            float texH = r.Material < TexHeight.Length ? TexHeight[r.Material] : 256f;
+            int srcMat = SourceOf(r.Material);
+            float texH = srcMat < TexHeight.Length ? TexHeight[srcMat] : 256f;
             var mesh = BuildRoadMesh(r, _mats[r.Material], texH, out var collShape);
             BuildLanePaths(r, _roads.IndexOf(r), _mats[r.Material]);   // lanes follow the road: rebuilt whenever it is
             if (mesh == null) return;
@@ -898,7 +930,7 @@ namespace UnturnedGodot
         public string RoadMaterialName(int road)
         {
             int m = RoadMaterial(road);
-            string name = m >= 0 && m < MatNames.Length ? MatNames[m] : $"mat{m}";
+            string name = _derived.TryGetValue(m, out var dv) ? $"derived from {SourceOf(m)}" : m >= 0 && m < MatNames.Length ? MatNames[m] : $"mat{m}";
             return $"{m}:{name}";
         }
 

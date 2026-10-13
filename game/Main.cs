@@ -10630,6 +10630,8 @@ namespace UnturnedGodot
                         + " -- these are straight by construction, so any bow is spline wobble");
             }
             int patches = town.BuildPatchMeshes(editor, rf);   // the asphalt paving each node, now the arms stop short of it
+            // the boulevard's median, once its crossings are known: it stops short of each one
+            town.BuildMedians(editor, rf);
             // UG_TOWNNOWALK=1: no pavements at all. An ABLATION, because five measured explanations for the
             // dark wedges at every mouth have now missed and the only honest next question is which mesh the
             // pixels belong to.
@@ -10858,6 +10860,21 @@ namespace UnturnedGodot
                     tcam.LookAt(pkHigh ? pkPos + pkOut * (pkHalf + pkBay.Depth + 4f) : pkPos + pkAlong * 4f + pkOut * (pkHalf * 0.4f), Vector3.Up);
                     Log.Print($"[towngrid] parking camera on a bay of {pkBay.Spaces} spaces on road {pkBay.Road} at {pkPos} "
                             + $"({(town.BayOpposite(pkBay) != null ? "widened both sides" : "one side")}; {town.Bays.Count} bays)");
+                    goto noTown;
+                }
+                // UG_TOWNCLOSE=bv: the boulevard, along its median from just off one end, so the median's nose, the
+                // lanes either side of it and the plain main it crosses all read in one frame
+                if (closeEnv == "bv" && town.Medians.Count > 0)
+                {
+                    var bvM = town.Medians[0];
+                    foreach (var bvX in town.Medians) if (bvX.B - bvX.A > bvM.B - bvM.A) bvM = bvX;
+                    rf.EvaluateAlong(bvM.Road, bvM.A, out var bvPos, out var bvTan, snapTerrain: false);
+                    var bvAlong = new Vector3(bvTan.X, 0f, bvTan.Z).Normalized();
+                    var bvSide = new Vector3(bvTan.Z, 0f, -bvTan.X).Normalized();
+                    tcam.GlobalPosition = bvPos - bvAlong * 16f + bvSide * 7f + new Vector3(0f, 9f, 0f);
+                    tcam.Fov = 58f;
+                    tcam.LookAt(bvPos + bvAlong * 14f, Vector3.Up);
+                    Log.Print($"[towngrid] boulevard camera at the nose of a {(bvM.Grass ? "grass" : "concrete")} median on road {bvM.Road}, {bvM.B - bvM.A:0} m long");
                     goto noTown;
                 }
                 // UG_TOWNCLOSE=wc: the corner where two wide pavements still cross before their corner piece begins,

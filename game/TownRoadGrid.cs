@@ -148,6 +148,8 @@ namespace UnturnedGodot
         struct Span
         {
             public int AI, AJ, BI, BJ, Axis; public bool Main;
+            /// <summary>A main with a median down its middle: wider, and its own material (see BoulevardMaterial).</summary>
+            public bool Boulevard;
             public List<Vector3> Pts; public float Len, TrimA, TrimB;
             /// <summary>The axis each END runs along. Equal to Axis for a straight span; a span fused round a
             /// corner arrives along one axis and leaves along the other, and a junction at either end has to
@@ -533,7 +535,7 @@ namespace UnturnedGodot
                 var sp = plan[k];
                 var on = PointAlong(sp.Pts, t * PolyLen(sp.Pts));
                 grid[gi, gj] = new Node { P = new Vector3(x.X, on.Y, x.Z), Ok = true, Junction = -1, Extra = true,
-                                          CrossHalf = roads.RoadHalfWidthOfMaterial(sp.Main ? MainMaterial : StreetMaterial) };
+                                          CrossHalf = roads.RoadHalfWidthOfMaterial(MatOf(sp)) };
                 keys.Add((gi, gj));
                 splitAt[k] = (t, (gi, gj));
                 DiagonalNodes.Add(grid[gi, gj].P);
@@ -605,7 +607,7 @@ namespace UnturnedGodot
                     var (s1, e1) = kv.Value[0]; var (s2, e2) = kv.Value[1];
                     if (s1 == s2) continue;                                  // a ring closing on itself
                     var A = plan[s1]; var B = plan[s2];
-                    if (A.Main != B.Main) continue;
+                    if (A.Main != B.Main || A.Boulevard != B.Boulevard) continue;
                     // A oriented to END at the node, B to START at it
                     var pA = new List<Vector3>(A.Pts); if (!e1) pA.Reverse();
                     var pB = new List<Vector3>(B.Pts); if (e2) pB.Reverse();
@@ -614,7 +616,7 @@ namespace UnturnedGodot
                     var dOut = new Vector3(pB[1].X - pB[0].X, 0f, pB[1].Z - pB[0].Z).Normalized();
                     float turn = Mathf.Acos(Mathf.Clamp(dIn.Dot(dOut), -1f, 1f));
                     if (turn < Mathf.DegToRad(15f) || turn > Mathf.DegToRad(150f)) continue;   // straight on, or a hairpin
-                    float half = roads.RoadHalfWidthOfMaterial(A.Main ? MainMaterial : StreetMaterial);
+                    float half = roads.RoadHalfWidthOfMaterial(MatOf(A));
                     // the inside pavement must keep a positive radius: carriageway + pavement + some room
                     // ⚠ TIGHTEN RATHER THAN GIVE UP. A side the diagonal split is half as long, and a fixed radius
                     // that no longer fits left that corner SHARP. Shrink R to the room there is -- but never below
@@ -659,7 +661,7 @@ namespace UnturnedGodot
                     int axA = e1 ? A.AxisA : A.AxisB, axB = e2 ? B.AxisA : B.AxisB;
                     _bendGeom.Add((S, E, C, R, dIn, dOut));
                     var fused = new Span { AI = far1.Item1, AJ = far1.Item2, BI = far2.Item1, BJ = far2.Item2,
-                                           Axis = axA, AxisA = axA, AxisB = axB, Main = A.Main, Bent = true,
+                                           Axis = axA, AxisA = axA, AxisB = axB, Main = A.Main, Boulevard = A.Boulevard, Bent = true,
                                            BendId = _bendGeom.Count - 1,
                                            Pts = fusedPts, Len = PolyLen(fusedPts), TrimA = 0f, TrimB = 0f };
                     plan.RemoveAt(Mathf.Max(s1, s2)); plan.RemoveAt(Mathf.Min(s1, s2));
@@ -800,6 +802,7 @@ namespace UnturnedGodot
             if (roads == null || heightAt == null || Spacing < 4f || Extent < Spacing) return rep;
             // the kerb return follows the road's width, so everything measured off it does too
             CornerKerbRadius = Mathf.Clamp(roads.RoadHalfWidthOfMaterial(MainMaterial) * CornerKerbFraction, 2f, 9f);
+            MakeBoulevardMaterial(roads);
 
             int n = Mathf.FloorToInt(Extent / Spacing);
             if (n < 1) return rep;
@@ -848,6 +851,7 @@ namespace UnturnedGodot
                 for (int line = 0; line < w; line++)
                 {
                     bool main = MainLine(line - n);
+                    bool boulevard = main && BoulevardLine(axis, line - n);
                     for (int k = 0; k + 1 < w; k++)
                     {
                         int ai = axis == 0 ? k : line, aj = axis == 0 ? line : k;
@@ -855,7 +859,7 @@ namespace UnturnedGodot
                         if (!grid[ai, aj].Ok || !grid[bi, bj].Ok) { rep.SpansRejected++; continue; }
                         var pts = SpanPoints(grid[ai, aj].P, grid[bi, bj].P, heightAt, out float len);
                         if (pts == null) { rep.SpansRejected++; continue; }
-                        plan.Add(new Span { AI = ai, AJ = aj, BI = bi, BJ = bj, Axis = axis, Main = main,
+                        plan.Add(new Span { AI = ai, AJ = aj, BI = bi, BJ = bj, Axis = axis, Main = main, Boulevard = boulevard,
                                             AxisA = axis, AxisB = axis,
                                             Pts = pts, Len = len, TrimA = 0f, TrimB = 0f });
                     }
@@ -898,7 +902,7 @@ namespace UnturnedGodot
                         // the ordering every fillet in there is built on.
                         for (int q = 0; q < m; q++) { xs[q] = sp.Pts[q].X; zs[q] = -sp.Pts[q].Z; hs[q] = sp.Pts[q].Y; }
                         spokes.Add(new SDG.Unturned.InfiniteRoads.TownArm(xs, zs, hs, atEnd,
-                                       roads.RoadHalfWidthOfMaterial(sp.Main ? MainMaterial : StreetMaterial)));
+                                       roads.RoadHalfWidthOfMaterial(MatOf(sp))));
                     }
                     if (SDG.Unturned.InfiniteRoads.TownNode(spokes, node.P.X, -node.P.Z, out var cuts, out var patch, out var marks,
                                                            stopPastEdge: StopPastEdge,
@@ -993,7 +997,7 @@ namespace UnturnedGodot
                         if (dlen > 1e-6)
                         {
                             ddx /= dlen; ddz /= dlen;
-                            double hwT = roads.RoadHalfWidthOfMaterial(spT.Main ? MainMaterial : StreetMaterial);
+                            double hwT = roads.RoadHalfWidthOfMaterial(MatOf(spT));
                             var oldP = Patches[Patches.Count - 1];
                             var cut = ClipCorridor(oldP, node.P.X, -node.P.Z, -ddz, ddx, hwT);
                             // ⚠ THE PAINT IS KEYED ON THE PATCH OBJECT. Every mark remembers which patch it
@@ -1038,7 +1042,7 @@ namespace UnturnedGodot
                 var pts = CutBack(sp.Pts, Mathf.Max(0f, sp.TrimA - PatchOverlap), Mathf.Max(0f, sp.TrimB - PatchOverlap),
                                   sp.Bent ? 0f : -1f);
                 if (pts == null) { rep.SpansRejected++; rep.CutAway++; continue; }
-                int road = roads.AddRoadFromPolyline(pts, sp.Main ? MainMaterial : StreetMaterial,
+                int road = roads.AddRoadFromPolyline(pts, MatOf(sp),
                                                     loop: false, ignoreTerrain: !FollowTerrain);
                 if (road < 0) { rep.SpansRejected++; continue; }
                 ref Node a = ref grid[sp.AI, sp.AJ];
@@ -1135,7 +1139,8 @@ namespace UnturnedGodot
         {
             int ax = DominantAxis(i, j);
             bool mainHere = ax == 0 ? MainLine(j) : MainLine(i);
-            return roads.RoadHalfWidthOfMaterial(mainHere ? MainMaterial : StreetMaterial);
+            bool boulHere = ax == 0 ? BoulevardLine(0, j) : BoulevardLine(1, i);
+            return roads.RoadHalfWidthOfMaterial(boulHere ? BoulevardMaterial : mainHere ? MainMaterial : StreetMaterial);
         }
 
         /// <summary>One span's spline points: terrain-following, graded, ends pinned to the node positions.
@@ -2665,7 +2670,13 @@ namespace UnturnedGodot
         /// <summary>Is this road one of the grid's MAIN streets? ⚠ Asked by material, because that is what
         /// the generator actually varies between a main and a side street -- and a main road's junction
         /// treatment differs from a side street's in every respect that follows.</summary>
-        bool IsMain(RoadField roads, int road) => roads.RoadMaterialOf(road) == MainMaterial && MainMaterial != StreetMaterial;
+        bool IsMain(RoadField roads, int road)
+        {
+            int m = roads.RoadMaterialOf(road);
+            return MainMaterial != StreetMaterial && (m == MainMaterial || m == BoulevardMaterial && BoulevardMaterial >= 0);
+        }
+        /// <summary>Is this road the boulevard -- a main with a median down its middle?</summary>
+        public bool IsBoulevard(RoadField roads, int road) => BoulevardMaterial >= 0 && roads.RoadMaterialOf(road) == BoulevardMaterial;
 
         /// <summary>The main road's own lane lines, carried straight across the junction box.
         ///
@@ -2687,7 +2698,7 @@ namespace UnturnedGodot
                 var edges = roads.JunctionEdges(j);
                 if (edges.Count < 2) continue;
                 var node = roads.JunctionPos(j);
-                var arms = new List<(Vector3 tip, Vector3 outDir)>();
+                var arms = new List<(Vector3 tip, Vector3 outDir, int road)>();
                 foreach (var (road, atEnd) in edges)
                 {
                     // ⚠ A MAIN THAT RUNS THROUGH, not any main: where two mains cross, nobody's lines carry on
@@ -2697,7 +2708,7 @@ namespace UnturnedGodot
                     if (!roads.EvaluateAlong(road, atEnd ? L : 0f, out var tip, out var tan, snapTerrain: false)) continue;
                     var outDir = new Vector3(tip.X - node.X, 0f, tip.Z - node.Z);
                     if (outDir.Length() < 0.5f) continue;
-                    arms.Add((tip, outDir.Normalized()));
+                    arms.Add((tip, outDir.Normalized(), road));
                 }
                 if (arms.Count < 2) continue;
                 // the most opposed pair is the through one
@@ -2709,6 +2720,8 @@ namespace UnturnedGodot
                         if (opp > worst) { worst = opp; bi = a; bj = b; }
                     }
                 if (bi < 0 || worst < 0.8f) continue;          // not a straight-through main road
+                // ⚠ A BOULEVARD CARRIES ITS OWN LINES ACROSS: each half of the main's, pushed out by half the median
+                table = LineTableFor(half, MedianHalfOf(roads, arms[bi].road));
                 var p0 = arms[bi].tip; var p1 = arms[bj].tip;
                 var axis = new Vector3(p1.X - p0.X, 0f, p1.Z - p0.Z);
                 float span = axis.Length();
@@ -2779,6 +2792,27 @@ namespace UnturnedGodot
         /// distance and one of them is then a quarter of a metre out, which is exactly the misalignment.
         /// RoadField's cross-section gives u = 0 and 1 to the carriageway's own edges (uC = {0,0,1,1}; the
         /// tapers share them), so u maps to lateral as (u - 0.5) * 2 * halfWidth with nothing else to allow for.</summary>
+        /// <summary>The same table for a road carrying a median `medianHalf` either side of its centre: road_0's two
+        /// halves pulled apart, as the boulevard's texture is built -- every line moved out by the median's half, and
+        /// the centre line split into one half-width line along each side of the median.</summary>
+        static List<(double lat, double width, byte colour, bool dashed)> LineTableFor(float half, float medianHalf)
+        {
+            var table = LineTableFor(half);
+            if (medianHalf <= 0f) return table;
+            var outp = new List<(double, double, byte, bool)>(table.Count + 1);
+            foreach (var (lat, w, colour, dashed) in table)
+            {
+                if (Math.Abs(lat) < 1e-3)
+                {
+                    outp.Add((-(medianHalf + w * 0.25), w * 0.5, colour, dashed));
+                    outp.Add((medianHalf + w * 0.25, w * 0.5, colour, dashed));
+                }
+                else outp.Add((lat + Math.Sign(lat) * medianHalf, w, colour, dashed));
+            }
+            return outp;
+        }
+        float MedianHalfOf(RoadField roads, int road) => IsBoulevard(roads, road) ? roads.MedianHalfOfMaterial(BoulevardMaterial) : 0f;
+
         static List<(double lat, double width, byte colour, bool dashed)> LineTableFor(float half)
         {
             // (u centre, u width, colour, dashed) measured off road_0.png: white 60..63, yellow 124..131,
@@ -3139,6 +3173,10 @@ namespace UnturnedGodot
                 float mainOff = roads.RoadHalfWidthOfMaterial(MainMaterial) + PavementGap + _walkWidth + PlotSetback;
                 float streetOff = roads.RoadHalfWidthOfMaterial(StreetMaterial) + PavementGap + _walkWidth + PlotSetback;
                 float OffOf(int line) => MainLine(line - _lineN) ? mainOff : streetOff;
+                // the boulevard is a main as wide again as its median: a u line is an axis-1 line, a v line an axis-0 one
+                float boulOff = BoulevardMaterial >= 0 ? roads.RoadHalfWidthOfMaterial(BoulevardMaterial) + PavementGap + _walkWidth + PlotSetback : mainOff;
+                float OffU(int line) => BoulevardLine(1, line - _lineN) ? boulOff : OffOf(line);
+                float OffV(int line) => BoulevardLine(0, line - _lineN) ? boulOff : OffOf(line);
                 void Lane(Vector3 p0, Vector3 p1, bool knee = false)
                 {
                     var dir = p1 - p0; dir.Y = 0f; float len = dir.Length(); if (len < 1f) return;
@@ -3215,8 +3253,8 @@ namespace UnturnedGodot
                         bool row0 = MainLine(gj - _lineN), row1 = MainLine(gj + 1 - _lineN);
                         bool col0 = MainLine(gi - _lineN), col1 = MainLine(gi + 1 - _lineN);
                         bool rowsMain = row0 || row1, colsMain = col0 || col1;
-                        float uLo = _lineU[gi] + OffOf(gi), uHi = _lineU[gi + 1] - OffOf(gi + 1);
-                        float vLo = _lineV[gj] + OffOf(gj), vHi = _lineV[gj + 1] - OffOf(gj + 1);
+                        float uLo = _lineU[gi] + OffU(gi), uHi = _lineU[gi + 1] - OffU(gi + 1);
+                        float vLo = _lineV[gj] + OffV(gj), vHi = _lineV[gj + 1] - OffV(gj + 1);
                         ulong ch = Mix(((ulong)(uint)Seed << 32) ^ Mix(((ulong)(uint)gi << 16) ^ (ulong)(uint)gj ^ 0xA11E7UL));
                         if (rowsMain && colsMain)
                         {
@@ -3795,6 +3833,221 @@ namespace UnturnedGodot
                 parent.AddChild(mi);
                 made++;
             }
+            return made;
+        }
+
+        // ==============================================================================================
+        // THE BOULEVARD (strawberry 2026-10-13: "work on a new road type, with a central concrete median/grass +
+        // concrete median. 2 + 2 lanes").
+        // ==============================================================================================
+
+        /// <summary>UG_TOWNNOBOULEVARD=1: no boulevard -- every main a plain one, the control.</summary>
+        public bool Boulevards = System.Environment.GetEnvironmentVariable("UG_TOWNNOBOULEVARD") != "1";
+        /// <summary>The median: how wide, and how far its kerb stands proud of the road.
+        /// ⚠ 3 m because the game's cars are 3 m across their tyres (see BayDepth): a median narrower than a car
+        /// reads as a painted island at this scale.</summary>
+        public float MedianWidth = 3f, MedianKerb = 0.25f;
+        /// <summary>How far past its crossing's stop line a median stops, so the crossing and the queue at the
+        /// line are all on asphalt; where the boulevard runs through, it stops where the side street's kerb
+        /// does, leaving the mouth open to turn across.</summary>
+        public float MedianPastStop = 1f;
+        /// <summary>Grass down the middle with a concrete kerb round it, or concrete all over. Null: the seed picks.
+        /// UG_TOWNMEDIAN=grass|concrete forces it.</summary>
+        public bool? MedianGrass = System.Environment.GetEnvironmentVariable("UG_TOWNMEDIAN") switch { "grass" => true, "concrete" => false, _ => null };
+        /// <summary>How wide the concrete kerb round a grass median is.</summary>
+        public float MedianEdge = 0.4f;
+        /// <summary>Which axis's central main line is the boulevard (0 or 1); -1: the seed picks.</summary>
+        public int BoulevardAxis = -1;
+        /// <summary>The material the boulevard's spans are built from: derived from MainMaterial by MakeBoulevardMaterial,
+        /// -1 when there is none.</summary>
+        public int BoulevardMaterial = -1;
+
+        int BoulevardAxisNow => BoulevardAxis >= 0 ? BoulevardAxis : (int)(Unit(Mix(((ulong)(uint)Seed << 32) ^ 0xB0A1EUL), 0) * 2f) % 2;
+        /// <summary>Is grid line `line` (counted from the centre) of `axis` the boulevard? The CENTRAL main line of one
+        /// axis: the town's high street, crossing a plain main at its middle.</summary>
+        bool BoulevardLine(int axis, int line) => BoulevardMaterial >= 0 && line == 0 && axis == BoulevardAxisNow && MainLine(line);
+        /// <summary>The material a span is built from.</summary>
+        int MatOf(Span sp) => sp.Boulevard && BoulevardMaterial >= 0 ? BoulevardMaterial : sp.Main ? MainMaterial : StreetMaterial;
+
+        /// <summary>Derive the boulevard's material from the main road's: as wide again as its median, and drawn with
+        /// road_0 split down its yellow centre line and pulled apart by the median -- so every lane keeps the main
+        /// road's painted width and the centre line becomes a yellow edge line along each side of the median.</summary>
+        void MakeBoulevardMaterial(RoadField roads)
+        {
+            BoulevardMaterial = -1;
+            if (!Boulevards || MainMaterial == StreetMaterial || MedianWidth <= 0f) return;
+            float half = roads.RoadHalfWidthOfMaterial(MainMaterial);
+            if (half <= 0f) return;
+            float medianHalf = MedianWidth * 0.5f, wide = half + medianHalf;
+            Image tex = null;
+            string path = ProjectSettings.GlobalizePath($"res://content/roads/road_{MainMaterial}.png");
+            var src = new Image();
+            if (System.IO.File.Exists(path) && ContentProvider.LoadOk(src, path) && src.GetWidth() >= 8)
+            {
+                int sw = src.GetWidth(), sh = src.GetHeight();
+                int ow = Mathf.Max(8, Mathf.RoundToInt(sw * wide / half));       // the same texels per metre as road_0
+                tex = Image.CreateEmpty(ow, sh, false, Image.Format.Rgba8);
+                var asphalt = src.GetPixel(Mathf.Min(sw - 1, sw / 8), 0);
+                for (int x = 0; x < ow; x++)
+                {
+                    float lat = ((x + 0.5f) / ow * 2f - 1f) * wide;              // metres from the centre, as RoadField lays u
+                    int col;
+                    if (Mathf.Abs(lat) <= medianHalf) col = -1;                  // under the median
+                    else
+                    {
+                        float srcLat = lat - Mathf.Sign(lat) * medianHalf;
+                        col = Mathf.Clamp(Mathf.FloorToInt((srcLat / half * 0.5f + 0.5f) * sw), 0, sw - 1);
+                    }
+                    for (int y = 0; y < sh; y++) tex.SetPixel(x, y, col < 0 ? asphalt : src.GetPixel(col, y));
+                }
+            }
+            BoulevardMaterial = roads.AddDerivedMaterial(MainMaterial, wide, tex, medianHalf);
+        }
+
+        /// <summary>One median: on which road, from and to which arc metres (nose to nose), how wide, and which kind.</summary>
+        public sealed class Median { public int Road; public float A, B, Width; public bool Grass; }
+        /// <summary>The medians the last BuildMedians laid.</summary>
+        public readonly List<Median> Medians = new();
+
+        /// <summary>How far from this end of a boulevard (arc metres) its median may come: MedianPastStop past the
+        /// crossing's stop line, or -- where the boulevard runs through -- to where the side street's kerb begins to
+        /// turn, which leaves the side street's mouth open across it.</summary>
+        float MedianClear(RoadField roads, int road, bool atEnd)
+        {
+            int j = roads.RoadEndJunction(road, atEnd);
+            if (j < 0) return MedianWidth;
+            if (!roads.EvaluateAlong(road, atEnd ? roads.RoadLength(road) : 0f, out var tip, out _, snapTerrain: false)) return MedianWidth;
+            var node = roads.JunctionPos(j);
+            float cut = new Vector2(tip.X - node.X, tip.Z - node.Z).Length();
+            float clear;
+            if (LayCrossing(roads, j, road, atEnd, out var c)) clear = c.SD1 + c.Half * Mathf.Abs(c.Shear) + MedianPastStop;
+            else
+            {
+                float crossed = 0f;
+                foreach (var (o, _) in roads.JunctionEdges(j)) if (o != road) crossed = Mathf.Max(crossed, roads.RoadHalfWidth(o));
+                clear = ApproachClear(roads, j, road, atEnd, crossed > 0f ? crossed : roads.RoadHalfWidth(road));
+            }
+            return Mathf.Max(0f, clear - cut);
+        }
+
+        /// <summary>Lay the boulevard's median down every span of it: a raised strip, rounded at each end, of concrete
+        /// or of grass inside a concrete kerb. Solid -- a car that leaves its lane hits it. Returns how many.</summary>
+        public int BuildMedians(Node3D parent, RoadField roads)
+        {
+            Medians.Clear();
+            if (roads == null || BoulevardMaterial < 0) return 0;
+            float half = MedianWidth * 0.5f;
+            bool grass = MedianGrass ?? Unit(Mix(((ulong)(uint)Seed << 32) ^ 0x6A55UL), 0) < 0.5f;
+            foreach (int r in Built)
+            {
+                if (!IsBoulevard(roads, r)) continue;
+                float L = roads.RoadLength(r);
+                float a = MedianClear(roads, r, false), b = L - MedianClear(roads, r, true);
+                if (b - a < MedianWidth * 2f) continue;
+                Medians.Add(new Median { Road = r, A = a, B = b, Width = MedianWidth, Grass = grass });
+            }
+            if (parent == null || Medians.Count == 0) return Medians.Count;
+            var kerbSt = new SurfaceTool(); kerbSt.Begin(Mesh.PrimitiveType.Triangles);
+            var grassSt = new SurfaceTool(); grassSt.Begin(Mesh.PrimitiveType.Triangles);
+            // orient by the wanted normal, never by the order given
+            void Tri(SurfaceTool st, Vector3 p, Vector3 q, Vector3 t, Vector3 want)
+            {
+                bool keep = (t - p).Cross(q - p).Dot(want) >= 0f;
+                st.SetNormal(want); st.AddVertex(p);
+                st.SetNormal(want); st.AddVertex(keep ? q : t);
+                st.SetNormal(want); st.AddVertex(keep ? t : q);
+            }
+            foreach (var md in Medians)
+            {
+                float surface = roads.RoadSurfaceOffset(md.Road);
+                // the outline, nose to nose: down one side, round the far nose, back up the other, round the near one
+                var ring = new List<(Vector3 p, Vector3 o)>();          // point at road level, and its outward normal
+                bool Frame(float d, out Vector3 c, out Vector3 t, out Vector3 o)
+                {
+                    c = default; t = default; o = default;
+                    if (!roads.EvaluateAlong(md.Road, d, out var pos, out var tan, snapTerrain: false)) return false;
+                    t = new Vector3(tan.X, 0f, tan.Z).Normalized(); o = new Vector3(t.Z, 0f, -t.X);
+                    c = new Vector3(pos.X, pos.Y + surface, pos.Z);
+                    return true;
+                }
+                float s0 = md.A + half, s1 = md.B - half;                // where each nose's semicircle is centred
+                const int noseSteps = 10;
+                var side = new List<float>();
+                for (float d = s0; d < s1; d += 1.5f) side.Add(d);
+                side.Add(s1);
+                foreach (float d in side) if (Frame(d, out var c, out _, out var o)) ring.Add((c + o * half, o));
+                if (Frame(s1, out var cB, out var tB, out var oB))
+                    for (int k = 1; k < noseSteps; k++)
+                    {
+                        float ang = Mathf.Pi * k / noseSteps;
+                        var dir = oB * Mathf.Cos(ang) + tB * Mathf.Sin(ang);
+                        ring.Add((cB + dir * half, dir));
+                    }
+                for (int k = side.Count - 1; k >= 0; k--) if (Frame(side[k], out var c, out _, out var o)) ring.Add((c - o * half, -o));
+                if (Frame(s0, out var cA, out var tA, out var oA))
+                    for (int k = 1; k < noseSteps; k++)
+                    {
+                        float ang = Mathf.Pi * k / noseSteps;
+                        var dir = -oA * Mathf.Cos(ang) - tA * Mathf.Sin(ang);
+                        ring.Add((cA + dir * half, dir));
+                    }
+                if (ring.Count < 6) continue;
+                // the centre of each section, for the top's fan: the median's own centreline
+                var mid = new List<Vector3>();
+                foreach (var (p, _) in ring) mid.Add(p);
+                var top = Vector3.Up * MedianKerb;
+                float inset = md.Grass ? Mathf.Min(MedianEdge, half * 0.8f) : 0f;
+                // the kerb face all the way round, from a little under the road to the top
+                for (int k = 0; k < ring.Count; k++)
+                {
+                    var (p0, o0) = ring[k]; var (p1, o1) = ring[(k + 1) % ring.Count];
+                    var b0 = p0 - Vector3.Up * 0.05f; var b1 = p1 - Vector3.Up * 0.05f;
+                    var want = (o0 + o1).Normalized();
+                    Tri(kerbSt, b0, p0 + top, p1 + top, want); Tri(kerbSt, b0, p1 + top, b1, want);
+                }
+                // the top: a strip from each outline point to its point `inset` in (or to the centreline for
+                // concrete), concrete in the kerb band and grass inside it
+                Vector3 Centre(Vector3 p, Vector3 o) => p - o * half;   // straight in to the centreline...
+                for (int k = 0; k < ring.Count; k++)
+                {
+                    var (p0, o0) = ring[k]; var (p1, o1) = ring[(k + 1) % ring.Count];
+                    var a0 = p0 + top; var a1 = p1 + top;
+                    // ...for a nose point that is its circle's centre, which is where the radial points
+                    var c0 = Centre(p0, o0) + top; var c1 = Centre(p1, o1) + top;
+                    if (inset <= 0f)
+                    {
+                        Tri(kerbSt, a0, a1, c1, Vector3.Up); Tri(kerbSt, a0, c1, c0, Vector3.Up);
+                        continue;
+                    }
+                    var i0 = p0 - o0 * inset + top; var i1 = p1 - o1 * inset + top;
+                    Tri(kerbSt, a0, a1, i1, Vector3.Up); Tri(kerbSt, a0, i1, i0, Vector3.Up);
+                    var g0 = i0 - Vector3.Up * 0.02f; var g1 = i1 - Vector3.Up * 0.02f;
+                    var gc0 = c0 - Vector3.Up * 0.02f; var gc1 = c1 - Vector3.Up * 0.02f;
+                    Tri(grassSt, g0, g1, gc1, Vector3.Up); Tri(grassSt, g0, gc1, gc0, Vector3.Up);
+                }
+            }
+            int made = 0;
+            var km = kerbSt.Commit();
+            if (km != null && km.GetSurfaceCount() > 0)
+            {
+                var mi = new MeshInstance3D { Name = "Boulevard_Median", Mesh = km };
+                parent.AddChild(mi);
+                var body = new StaticBody3D { Name = mi.Name + "_body", CollisionLayer = 1u << 0 };
+                body.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Concrete);
+                body.AddChild(new CollisionShape3D { Shape = km.CreateTrimeshShape() });
+                mi.AddChild(body);
+                made++;
+            }
+            var gm = grassSt.Commit();
+            if (gm != null && gm.GetSurfaceCount() > 0)
+            {
+                var mi = new MeshInstance3D { Name = "Boulevard_Median_Grass", Mesh = gm,
+                    MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.40f, 0.58f, 0.26f), Roughness = 1f } };
+                parent.AddChild(mi);
+                made++;
+            }
+            Log.Print($"[towngrid] boulevard: {Medians.Count} {(Medians.Count > 0 && Medians[0].Grass ? "grass" : "concrete")} median(s), "
+                    + $"{MedianWidth:0.0} m wide, kerb {MedianKerb:0.00} m");
             return made;
         }
 

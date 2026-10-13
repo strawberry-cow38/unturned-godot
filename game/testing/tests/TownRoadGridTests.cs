@@ -943,6 +943,171 @@ namespace UnturnedGodot.Testing
                     foldMi?.Free();
                     stHost.QueueFree(); cnHost.QueueFree();
                 }
+                // ⭐ THE BOULEVARD (strawberry 2026-10-13: "a new road type, with a central concrete median/grass +
+                // concrete median. 2 + 2 lanes"). One of the town's central main lines, as wide again as its median.
+                // Measured on what was built: the texture its lanes are painted from, the median mesh, and the AI
+                // lane paths that traffic actually drives.
+                {
+                    var boul = new List<int>();
+                    foreach (int r in gD.Built) if (gD.IsBoulevard(rfD, r)) boul.Add(r);
+                    float mainHalf = rfD.RoadHalfWidthOfMaterial(gD.MainMaterial), mHalf = gD.MedianWidth * 0.5f;
+                    float boulHalf = boul.Count > 0 ? rfD.RoadHalfWidth(boul[0]) : 0f;
+                    T.Check($"a boulevard runs down one of the town's central main lines ({boul.Count} spans), as wide as a main plus its median ({boulHalf:0.00} m half width vs {mainHalf:0.00} + {mHalf:0.00})",
+                            boul.Count >= 2 && Mathf.Abs(boulHalf - (mainHalf + mHalf)) < 1e-3f);
+                    // 1. 2 + 2 LANES AT THE MAIN ROAD'S OWN PAINTED WIDTHS: the boulevard's texture is road_0's halves
+                    //    pulled apart, so its dashed lane lines sit exactly a median's half further out than the main's,
+                    //    and its centre yellow sits along each side of the median. Read off the texture, as drawn.
+                    Image TexOf(int material)
+                    {
+                        var mat = rfD.MaterialOfMaterial(material);
+                        Texture2D t = mat is StandardMaterial3D sm ? sm.AlbedoTexture : mat is ShaderMaterial shm ? shm.GetShaderParameter("albedo_tex").As<Texture2D>() : null;
+                        return t?.GetImage();
+                    }
+                    List<(float lat, bool yellow)> LinesIn(Image img, float halfW)
+                    {
+                        var outp = new List<(float, bool)>();
+                        if (img == null) return outp;
+                        int w = img.GetWidth(), h = img.GetHeight();
+                        int start = -1; bool yel = false, dashed = false;
+                        for (int x = 0; x <= w; x++)
+                        {
+                            bool paint = false, isYellow = false, varies = false;
+                            if (x < w)
+                            {
+                                var top = img.GetPixel(x, 0);
+                                for (int y = 0; y < h; y += Mathf.Max(1, h / 32))
+                                {
+                                    var px = img.GetPixel(x, y);
+                                    if (px.R > 0.5f || px.G > 0.5f) { paint = true; isYellow |= px.B < 0.3f; }
+                                    if (!px.IsEqualApprox(top)) varies = true;
+                                }
+                            }
+                            if (paint && start < 0) { start = x; yel = isYellow; dashed = varies; }
+                            if (!paint && start >= 0)
+                            {
+                                float u = (start + x) * 0.5f / w;
+                                outp.Add(((u * 2f - 1f) * halfW, yel));
+                                start = -1;
+                            }
+                        }
+                        return outp;
+                    }
+                    var mainLines = LinesIn(TexOf(gD.MainMaterial), mainHalf);
+                    var boulLines = LinesIn(TexOf(gD.BoulevardMaterial), boulHalf);
+                    int whiteMoved = 0, whiteMain = 0, yellowEdges = 0;
+                    foreach (var (lat, yellow) in mainLines)
+                    {
+                        if (yellow) continue;
+                        whiteMain++;
+                        float want = lat + Mathf.Sign(lat) * mHalf;
+                        foreach (var (bl, by) in boulLines) if (!by && Mathf.Abs(bl - want) < 0.1f) { whiteMoved++; break; }
+                    }
+                    foreach (var (bl, by) in boulLines) if (by && Mathf.Abs(Mathf.Abs(bl) - mHalf) < 0.3f) yellowEdges++;
+                    T.Check($"...2 + 2 lanes at the main road's painted widths: its {whiteMoved} of {whiteMain} lane lines sit exactly a median's half out from the main's, with a yellow line along each side of the median ({yellowEdges})",
+                            whiteMain == 2 && whiteMoved == whiteMain && yellowEdges == 2);
+                    // 2. TRAFFIC KEEPS CLEAR OF IT: every AI lane down the boulevard runs a car's half width clear of the
+                    //    median's kerb, and still inside the carriageway. The control: a plain main's inside lanes,
+                    //    held to the same median, would run along it.
+                    const float carHalf = 1.5f;
+                    int lanes = 0, clear = 0; float worstGap = float.MaxValue;
+                    foreach (var lp in rfD.LanePaths)
+                    {
+                        if (!boul.Contains(lp.Road)) continue;
+                        lanes++;
+                        float gap = Mathf.Abs(lp.Offset) - carHalf - mHalf;
+                        worstGap = Mathf.Min(worstGap, gap);
+                        if (gap >= 0.25f && Mathf.Abs(lp.Offset) + carHalf <= boulHalf) clear++;
+                    }
+                    float plainInner = float.MaxValue;
+                    foreach (var lp in rfD.LanePaths) if (!boul.Contains(lp.Road) && rfD.RoadMaterialOf(lp.Road) == gD.MainMaterial) plainInner = Mathf.Min(plainInner, Mathf.Abs(lp.Offset));
+                    T.Check($"...its traffic lanes all clear of the median ({clear} of {lanes} lanes; nearest car {worstGap:0.00} m off its kerb) -- where a plain main's inside lane would be {plainInner - carHalf - mHalf:0.00} (control)",
+                            lanes == 4 * boul.Count && clear == lanes && plainInner - carHalf - mHalf < 0.25f);
+                    // 3. THE MEDIAN, AS BUILT: down the middle, raised, solid, stopping short of every crossing and its
+                    //    stop line, and leaving every side street's mouth open across it.
+                    var mHost = new Node3D(); World.AddChild(mHost);
+                    gD.BuildMedians(mHost, rfD);
+                    var medVerts = new List<Vector3>(); bool solid = false;
+                    foreach (var ch in mHost.GetChildren())
+                        if (ch is MeshInstance3D mmi && mmi.Mesh != null)
+                        {
+                            medVerts.AddRange((Vector3[])mmi.Mesh.SurfaceGetArrays(0)[(int)Mesh.ArrayType.Vertex]);
+                            foreach (var gc in mmi.GetChildren()) if (gc is StaticBody3D) solid = true;
+                        }
+                    int offMiddle = 0, nearCrossing = 0, inMouth = 0;
+                    float highest = float.MinValue;
+                    var medCrossings = new List<Vector3[]>();
+                    for (int j = 0; j < rfD.JunctionCount; j++)
+                        foreach (var (er, ee) in rfD.JunctionEdges(j))
+                            if (boul.Contains(er) && gD.LayCrossing(rfD, j, er, ee, out var cl))
+                                medCrossings.Add(new[] { cl.At(cl.D0, -cl.Half), cl.At(cl.D0, cl.Half), cl.At(cl.SD1, cl.Half), cl.At(cl.SD1, -cl.Half) });
+                    // the boulevard sampled once, every 2 m, and each junction on it with its other arms
+                    var boulSamples = new List<(Vector3 c, Vector3 t, int road)>();
+                    foreach (int r in boul)
+                    {
+                        float L = rfD.RoadLength(r);
+                        for (float d = 0f; d <= L; d += 2f)
+                            if (rfD.EvaluateAlong(r, d, out var pc, out var tc, snapTerrain: false))
+                                boulSamples.Add((pc, new Vector3(tc.X, 0f, tc.Z).Normalized(), r));
+                    }
+                    var mouths = new List<(Vector3 node, Vector3 dir, float half)>();
+                    for (int j = 0; j < rfD.JunctionCount; j++)
+                    {
+                        var es = rfD.JunctionEdges(j);
+                        bool onBoul = false; foreach (var (er, _) in es) if (boul.Contains(er)) onBoul = true;
+                        if (!onBoul) continue;
+                        var node = rfD.JunctionPos(j);
+                        foreach (var (er, ee) in es)
+                        {
+                            if (boul.Contains(er)) continue;
+                            if (!rfD.EvaluateAlong(er, ee ? rfD.RoadLength(er) : 0f, out var tip, out _, snapTerrain: false)) continue;
+                            var armDir = new Vector3(tip.X - node.X, 0f, tip.Z - node.Z);
+                            if (armDir.Length() < 0.5f) continue;
+                            mouths.Add((node, armDir.Normalized(), rfD.RoadHalfWidth(er)));
+                        }
+                    }
+                    foreach (var v in medVerts)
+                    {
+                        // which boulevard span it is over, and where across it
+                        float bestD = float.MaxValue, lat = 0f; int onRoad = -1;
+                        foreach (var (pc, t, r) in boulSamples)
+                        {
+                            var rel = new Vector3(v.X - pc.X, 0f, v.Z - pc.Z);
+                            if (Mathf.Abs(rel.Dot(t)) > 1.01f) continue;
+                            float l = Mathf.Abs(rel.Dot(new Vector3(t.Z, 0f, -t.X)));
+                            if (l < bestD) { bestD = l; lat = l; onRoad = r; }
+                        }
+                        if (onRoad < 0 || lat > mHalf + 0.01f) offMiddle++;
+                        if (onRoad >= 0 && rfD.EvaluateAlong(onRoad, 0f, out var p0, out _, snapTerrain: false))
+                            highest = Mathf.Max(highest, v.Y - (p0.Y + rfD.RoadSurfaceOffset(onRoad)));
+                        foreach (var cq in medCrossings)
+                        {
+                            bool inside = true;
+                            for (int e = 0; e < 4 && inside; e++)
+                            {
+                                var a = cq[e]; var b = cq[(e + 1) % 4];
+                                // a metre's margin round the band
+                                var dir = new Vector3(b.X - a.X, 0f, b.Z - a.Z).Normalized();
+                                var nn = new Vector3(-dir.Z, 0f, dir.X);
+                                var centre = (cq[0] + cq[1] + cq[2] + cq[3]) / 4f;
+                                if (nn.Dot(centre - a) < 0f) nn = -nn;
+                                if (nn.Dot(new Vector3(v.X - a.X, 0f, v.Z - a.Z)) < -0.5f) inside = false;
+                            }
+                            if (inside) { nearCrossing++; break; }
+                        }
+                        // a side street's mouth: in line with any other arm's carriageway at a junction on the boulevard
+                        foreach (var (node, armDir, ahalf) in mouths)
+                        {
+                            var rel = new Vector3(v.X - node.X, 0f, v.Z - node.Z);
+                            float side = Mathf.Abs(rel.Dot(new Vector3(armDir.Z, 0f, -armDir.X)));
+                            if (side < ahalf + 1f && rel.Length() < 40f) { inMouth++; break; }
+                        }
+                    }
+                    T.Check($"...and its median down the middle of it ({gD.Medians.Count} medians, {(gD.Medians.Count > 0 && gD.Medians[0].Grass ? "grass" : "concrete")}; {offMiddle} of {medVerts.Count} points off the middle), raised {highest:0.00} m and solid ({solid})",
+                            gD.Medians.Count >= 1 && medVerts.Count > 0 && offMiddle == 0 && Mathf.Abs(highest - gD.MedianKerb) < 0.02f && solid);
+                    T.Check($"...stopping short of every crossing on it ({nearCrossing} points within half a metre of one, of {medCrossings.Count} crossings) and leaving every side street's mouth open ({inMouth} points in one)",
+                            medCrossings.Count + gD.Medians.Count > 0 && nearCrossing == 0 && inMouth == 0);
+                    mHost.QueueFree();
+                }
                 // determinism: the same town again lays the same plots
                 {
                     var rfD2 = Field();
@@ -1051,7 +1216,9 @@ namespace UnturnedGodot.Testing
                     if (d < 0.5f)
                     {
                         through++; uncutHere++;
-                        if (rfA.RoadMaterialOf(road) != mainMat) streetsThrough++;
+                        // a main -- or the boulevard, a main with a median down it, on a material derived from the main's
+                        int rm = rfA.RoadMaterialOf(road);
+                        if (rm != mainMat && rfA.MedianHalfOfMaterial(rm) <= 0f) streetsThrough++;
                         continue;
                     }
                     leastCut = Mathf.Min(leastCut, d);
