@@ -1747,8 +1747,10 @@ namespace UnturnedSim.Tests
                         {
                             if (stairs.Any(st => Overlap(Grown(fp, BuildingGen.StairWallReach - 0.05f), st, 0f))) bad.Add($"{nm} hangs on a wall the stairs run along");
                             // hung at a sensible height, on a wall with no window or door behind it at that height
-                            // (the wall décor's heights are its rows' own, held by WallDecorFollowsTheRules: an upper cabinet's 2.8)
-                            if ((m.Y < f * Storey + 1.8f || m.Y > f * Storey + 2.6f) && !BuildingGen.Decor.Any(r => r.Name == m.Name)) bad.Add($"{nm} hangs at {m.Y - f * Storey:0.00} m");
+                            // (the wall décor's heights, and the openings at them, are its rows' own, held to the piece's own span by
+                            // WallDecorFollowsTheRules: an upper cabinet at 2.9, a key rack under a bathroom's high slit)
+                            bool decor = BuildingGen.Decor.Any(r => r.Name == m.Name);
+                            if ((m.Y < f * Storey + 1.8f || m.Y > f * Storey + 2.6f) && !decor) bad.Add($"{nm} hangs at {m.Y - f * Storey:0.00} m");
                             var (bx, bz) = m.Front;
                             var behind = walls.Where(w => { var b = Box(w); var c = (X: m.X - bx * 0.3f, Z: m.Z - bz * 0.3f); return c.X > b.Item1 - 0.05f && c.X < b.Item3 + 0.05f && c.Z > b.Item2 - 0.05f && c.Z < b.Item4 + 0.05f; }).ToList();
                             if (behind.Count == 0) bad.Add($"{nm} hangs on no wall");
@@ -1760,7 +1762,7 @@ namespace UnturnedSim.Tests
                                     float s0 = (fp.X0 - w.X) * d.X + (fp.Z0 - w.Z) * d.Z, s1 = (fp.X1 - w.X) * d.X + (fp.Z1 - w.Z) * d.Z;
                                     bool across = MathF.Min(o.U1, MathF.Max(s0, s1)) - MathF.Max(o.U, MathF.Min(s0, s1)) > 0.05f;
                                     bool up = w.Y + o.V < m.Y + 1f && w.Y + o.V + o.Height > m.Y - 1f;
-                                    if (across && up) bad.Add($"{nm} hangs over an opening ({o.Archetype})");
+                                    if (across && up && !decor) bad.Add($"{nm} hangs over an opening ({o.Archetype})");
                                 }
                             continue;
                         }

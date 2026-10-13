@@ -5,26 +5,39 @@ using NUnit.Framework;
 
 namespace UnturnedSim.Tests
 {
-    // L0 for the wall décor (BuildingGen.Decor, FurnishDecor.cs): the same sweep as the rest of BuildingGenTests, read off
-    // the generated walls, not the generator's plan of them. Its own numbers are looser than the generator's: it keeps
-    // 0.3 m between hung pieces, this asks 0.05; it keeps what stands within 0.25 m below a piece's bottom less 0.1, this
-    // looks 0.15 m round.
+    // L0 for the wall décor (BuildingGen.Decor and DecorRecipes, FurnishDecor.cs): the same sweep as the rest of
+    // BuildingGenTests, read off the generated walls, not the generator's plan of them. Its own numbers are looser than the
+    // generator's: it keeps 0.6 m between hung pieces (0.3 in a group, 0.02 between cabinets in a run), this asks 0.25 (and
+    // no overlap); it keeps what stands within 0.25 m below a piece's bottom less 0.1, this looks 0.15 m round (along the
+    // wall, a fixture over a counter only over its own span, as the generator); it fills half a wall's run at most, this
+    // allows half the room's length.
     public partial class BuildingGenTests
     {
+        static bool SameWay(FurniturePlan a, FurniturePlan b) => MathF.Abs(((a.Yaw - b.Yaw) % 360f + 540f) % 360f - 180f) < 10f;
+        /// <summary>Where a hung piece's back stands, across its wall: the coordinate of its back plane on the axis it faces.</summary>
+        static float BackPlane(FurniturePlan m)
+        {
+            var (fx, fz) = m.Front; float y0 = FurnitureCatalog.Sizes[m.Name].Y0;
+            return MathF.Abs(fx) > 0.5f ? m.X + fx * y0 : m.Z + fz * y0;
+        }
+        static float Width(FurniturePlan m) { var fp = m.Footprint; var (fx, _) = m.Front; return MathF.Abs(fx) > 0.5f ? fp.Z1 - fp.Z0 : fp.X1 - fp.X0; }
+
         /// <summary>Every rule a hung piece of wall décor breaks, over one building: `rowOf` says which pieces are décor and
-        /// from which row (null: not décor). `tally`, by building kind and room kind, counts [pieces, rooms the table lists
-        /// that kind for, rooms with at least one]; `rows` counts pieces per row.</summary>
-        static List<string> DecorViolations(string label, BuildingGenResult res, Func<FurniturePlan, DecorRow> rowOf, IReadOnlyCollection<DecorRow> table,
+        /// from which row (null: not décor). `tally`, by building kind and room kind, counts [pieces, rooms of a kind the
+        /// recipes cover, rooms with at least one]; `rows` counts pieces per row.</summary>
+        static List<string> DecorViolations(string label, BuildingGenResult res, Func<FurniturePlan, DecorRow> rowOf,
                                             Dictionary<(BuildingKind, RoomKind), int[]> tally, Dictionary<DecorRow, int> rows)
         {
             var bad = new List<string>();
             var decor = res.Furniture.Where(m => rowOf(m) != null).ToList();
-            foreach (var g in res.Layout.Where(g => table.Any(r => r.Rooms.Contains(g.Kind))))
+            foreach (var g in res.Layout.Where(g => BuildingGen.DecorRecipes.ContainsKey(g.Kind)))
             {
                 var t = tally.TryGetValue((res.Kind, g.Kind), out var a) ? a : tally[(res.Kind, g.Kind)] = new int[3];
                 int n = decor.Count(m => m.Room == g);
                 t[0] += n; t[1]++; if (n > 0) t[2]++;
             }
+            bool Fixture(FurniturePlan m) => rowOf(m)?.Spot == DecorSpot.Over;
+            bool Focal(FurniturePlan m) => rowOf(m)?.Focal ?? m.Name == "Television_0";
             for (int f = 0; f < res.Floors; f++)
             {
                 var walls = WallsOn(res, f).ToList();
@@ -51,7 +64,9 @@ namespace UnturnedSim.Tests
                     }
                 }
                 var here = res.Furniture.Where(m => m.Floor == f).ToList();
-                float ceiling = f * Storey + Storey - BuildingGen.Slab;
+                var doorsOut = Doors(res, f).ToList();
+                bool Outer(GenRoom g) => doorsOut.Any(d => (d.A == g && (d.B == null || (g.Unit >= 0 && d.B.Unit < 0))) || (d.B == g && (d.A == null || (g.Unit >= 0 && d.A.Unit < 0))));
+                float ceiling = Storey - BuildingGen.Slab;
                 foreach (var m in decor.Where(m => m.Floor == f))
                 {
                     var row = rowOf(m);
@@ -61,8 +76,9 @@ namespace UnturnedSim.Tests
                     var (fx, fz) = m.Front; var (rx, rz) = m.Right; var fp = m.Footprint;
                     float bottom = m.Y - f * Storey - s.H, top = m.Y - f * Storey + s.H;
                     if (!m.Mounted || m.Ceiling || m.On != null) { bad.Add($"{nm} is not hung on a wall"); continue; }
-                    // in a room the row allows, the house meeting its conditions
+                    // in a room the row allows and its kind's recipe has a slot for, the house meeting its conditions
                     if (!row.Rooms.Contains(m.Room.Kind)) bad.Add($"{nm}: {row.Name} does not go in a {m.Room.Kind}");
+                    if (!BuildingGen.DecorRecipes.TryGetValue(m.Room.Kind, out var recipe) || !recipe.Any(sl => row.Fills(sl.Slot))) bad.Add($"{nm}: no slot of a {m.Room.Kind} takes it");
                     bool home = res.Kind is BuildingKind.Residential or BuildingKind.Apartment;
                     if (row.Need.HasFlag(DecorNeed.Home) && !home) bad.Add($"{nm}: a home's, in a {res.Kind}");
                     if (row.Need.HasFlag(DecorNeed.Business) && res.Kind is not (BuildingKind.Commercial or BuildingKind.Industrial)) bad.Add($"{nm}: a business's, in a {res.Kind}");
@@ -73,8 +89,7 @@ namespace UnturnedSim.Tests
                         if (row.Need.HasFlag(DecorNeed.SingleBed) && (bed == null || bed.Name == "Bed_0")) bad.Add($"{nm}: a kid's room's, with {bed?.Name ?? "no bed"}");
                         if (row.Need.HasFlag(DecorNeed.Wardrobe) && !here.Any(o => o.Room == m.Room && o.Name.StartsWith("Wardrobe"))) bad.Add($"{nm}: wants a wardrobe");
                     }
-                    if (row.Need.HasFlag(DecorNeed.OuterDoor) && !Doors(res, f).Any(d => (d.A == m.Room && d.B == null) || (d.B == m.Room && d.A == null)))
-                        bad.Add($"{nm}: wants a door to outside");
+                    if (row.Need.HasFlag(DecorNeed.OuterDoor) && !Outer(m.Room)) bad.Add($"{nm}: wants a door to outside");
                     // where its spot says: over one of its anchors, lined up with it and backed to the same wall; by a door
                     if (row.Spot == DecorSpot.Over && !here.Any(o => o.Room == m.Room && !o.Mounted && !o.Ceiling && o.On == null && row.Over.Any(o.Name.StartsWith)
                                                                      && MathF.Abs((o.X - m.X) * rx + (o.Z - m.Z) * rz) < 0.1f && (o.X - m.X) * fx + (o.Z - m.Z) * fz is > 0f and < 1.5f))
@@ -123,16 +138,60 @@ namespace UnturnedSim.Tests
                     // off the stairs' wall
                     if (stairs.Any(st => Overlap(Grown(fp, BuildingGen.StairWallReach - 0.05f), st, 0f))) bad.Add($"{nm} hangs on a wall the stairs run along");
                     // at a height: over a sill, under the ceiling
-                    if (bottom < 1.0f || top > ceiling - f * Storey - 0.05f) bad.Add($"{nm} spans {bottom:0.00}-{top:0.00} m");
-                    // apart from every other hung piece, the clock and the television too: not touching
+                    if (bottom < 1.0f || top > ceiling - 0.05f) bad.Add($"{nm} spans {bottom:0.00}-{top:0.00} m");
+                    // apart from every other hung piece, the clock and the television too: fixtures over a run of counters side by
+                    // side, the rest not crowding
                     foreach (var o in here.Where(o => o != m && o.Mounted))
-                        if (Overlap(Grown(fp, 0.05f), o.Footprint, 0f)) { bad.Add($"{nm} touches {o.Name} at ({o.X:0.00},{o.Z:0.00})"); break; }
-                    // nothing under it taller than its bottom less 0.1 (a piece on another: the top of the pair); no light hung into it
-                    foreach (var o in here.Where(o => !o.Mounted && Overlap(Grown(fp, 0.15f), o.Footprint, 0f)))
+                    {
+                        bool run = Fixture(m) && Fixture(o);
+                        if (run ? Overlap(fp, o.Footprint, 0.005f) : Overlap(Grown(fp, 0.25f), o.Footprint, 0f)) { bad.Add($"{nm} {(run ? "overlaps" : "crowds")} {o.Name} at ({o.X:0.00},{o.Z:0.00})"); break; }
+                    }
+                    // nothing under it taller than its bottom less 0.1 (a piece on another: the top of the pair); no light hung into it.
+                    // Under a fixture over a counter: along the wall, its own span (it abuts the fridge beside its counter)
+                    bool fixture = Fixture(m);
+                    var under = fixture ? (MathF.Abs(fx) > 0.5f ? (fp.X0 - 0.15f, fp.Z0, fp.X1 + 0.15f, fp.Z1) : (fp.X0, fp.Z0 - 0.15f, fp.X1, fp.Z1 + 0.15f)) : Grown(fp, 0.15f);
+                    foreach (var o in here.Where(o => !o.Mounted && Overlap(under, o.Footprint, 0.005f)))
                     {
                         float oTop = o.Y - f * Storey + FurnitureCatalog.Sizes[o.Name].H;
                         if (o.Ceiling && o.Y - f * Storey - (o.Name.Contains("Pendant") ? 0.95f : 0.28f) < top) bad.Add($"{nm}: {o.Name} hangs into it");
                         if (!o.Ceiling && oTop > bottom - 0.1f) bad.Add($"{nm}: {o.Name} under it stands {oTop:0.00} m, its bottom {bottom:0.00}");
+                    }
+                }
+                // a wall holds one big piece (the television is one), and its hung pieces, fixtures aside, take at most half of
+                // it (here: of the room's length that way, which a wall's run never exceeds)
+                foreach (var g in res.Layout.Where(g => g.Floor == f))
+                {
+                    var hung = here.Where(m => m.Mounted && m.Room == g).ToList();
+                    // the room's hung pieces by wall line: turned the same way, their backs within 0.3 m across
+                    var lines = new List<List<FurniturePlan>>();
+                    foreach (var m in hung.OrderBy(m => ((int)MathF.Round(m.Yaw / 90f) % 4 + 4) % 4).ThenBy(BackPlane))
+                        if (lines.Count > 0 && SameWay(lines[^1][^1], m) && MathF.Abs(BackPlane(lines[^1][^1]) - BackPlane(m)) < 0.3f) lines[^1].Add(m);
+                        else lines.Add(new List<FurniturePlan> { m });
+                    // two pieces on one wall: wall behind and the room's floor in front all the way between them
+                    bool OneWall(FurniturePlan a, FurniturePlan b)
+                    {
+                        var (fx, fz) = a.Front; float y0 = FurnitureCatalog.Sizes[a.Name].Y0;
+                        float ax = a.X + fx * y0, az = a.Z + fz * y0, bx = b.X + fx * FurnitureCatalog.Sizes[b.Name].Y0, bz = b.Z + fz * FurnitureCatalog.Sizes[b.Name].Y0;
+                        float d = MathF.Sqrt((bx - ax) * (bx - ax) + (bz - az) * (bz - az));
+                        for (float t = 0f; t <= d; t += 0.1f)
+                        {
+                            float px = ax + (bx - ax) * t / Math.Max(d, 1e-3f), pz = az + (bz - az) * t / Math.Max(d, 1e-3f);
+                            if (!boxes.Any(q => px - fx * 0.15f >= q.X0 && px - fx * 0.15f <= q.X1 && pz - fz * 0.15f >= q.Z0 && pz - fz * 0.15f <= q.Z1)) return false;
+                            if (!g.Holds(px + fx * 0.3f, pz + fz * 0.3f)) return false;
+                        }
+                        return true;
+                    }
+                    foreach (var l in lines)
+                    {
+                        if (!l.Any(m => rowOf(m) != null)) continue;
+                        var focal = l.Where(Focal).ToList();
+                        for (int i = 0; i < focal.Count; i++)
+                            for (int j = i + 1; j < focal.Count; j++)
+                                if (OneWall(focal[i], focal[j])) bad.Add($"{label}: {g}: {focal[i].Name} and {focal[j].Name} on one wall");
+                        bool alongX = MathF.Abs(l[0].Front.Z) > 0.5f;
+                        float len = (alongX ? g.Rects.Max(r => r.X1) - g.Rects.Min(r => r.X0) : g.Rects.Max(r => r.Z1) - g.Rects.Min(r => r.Z0)) * Cell;
+                        float fill = l.Where(m => !Fixture(m)).Sum(Width);
+                        if (fill > 0.5f * len + 0.01f) bad.Add($"{label}: {g}: {fill:0.0} m hung on a wall of a room {len:0.0} m that way ({string.Join(", ", l.Select(m => m.Name))})");
                     }
                 }
             }
@@ -144,14 +203,18 @@ namespace UnturnedSim.Tests
                                       .Select(kv => $"{kv.Key.Item1} {kv.Key.Item2}: {kv.Value[0]} pieces, {kv.Value[2]} of {kv.Value[1]} rooms"));
 
         // S: the wall décor (VoX: "needs more wall doo dads like posters and art and clocks and coat hooks and stuff like
-        // that"). Every piece of a live Decor row is hung, flat on a wall of its own room -- the wall within 0.15 m behind it
-        // all along its width, its back not in the wall -- in a kind of room its row allows and a house that meets its
-        // conditions; over no window, doorway or vent at its height, out of every doorway's walk and door's swing, off the
-        // stairs' wall; above a sill and under the ceiling; not touching another hung piece (the clock, the television);
-        // nothing under it taller than its bottom less 0.1 m, nor a light hanging into it. And it is there: every live row
-        // hangs somewhere, and most of the rooms that can take one do.
+        // that", then of astraclaw's kit: "start integrating these intelligently into the interior proc gen system"). Every
+        // hung piece of a Decor row is flat on a wall of its own room -- the wall within 0.15 m behind it all along its
+        // width, its back not in the wall -- in a kind of room its row allows and its recipe has a slot for, in a house that
+        // meets its conditions (a double bed's paintings, a single's posters, a business's whiteboard, hooks by a way out);
+        // where its spot says (over the counter it serves, by a door); over no window, doorway or vent at its height, out of
+        // every doorway's walk and door's swing, off the stairs' wall; above a sill and under the ceiling; not crowding
+        // another hung piece (the clock, the television), cabinets in a run side by side; nothing under it taller than its
+        // bottom less 0.1 m (the wall cabinets, 2.4 m up, off the 2.5 m fridge), nor a light hanging into it; one big piece
+        // to a wall and half a wall at most. And it is there: every row hangs somewhere but one waiting on furniture the
+        // furnisher does not place, and most of the rooms that can take a piece do.
         // BREAK IT: let a piece hang over what stands below it; over an opening; into the wall; in a room its row does not
-        // list; touching the next one.
+        // list; two big pieces to a wall.
         [Test]
         public void WallDecorFollowsTheRules()
         {
@@ -159,46 +222,45 @@ namespace UnturnedSim.Tests
             var byName = table.ToDictionary(r => r.Name);
             var bad = new List<string>();
             var tally = new Dictionary<(BuildingKind, RoomKind), int[]>(); var rows = new Dictionary<DecorRow, int>();
-            int buildings = 0;
+            int buildings = 0, cabinets = 0, cabinetsByFridge = 0;
+            var anchors = new HashSet<string>();
             foreach (var (spec, res) in All())
             {
                 buildings++;
-                bad.AddRange(DecorViolations(Name(spec), res, m => byName.GetValueOrDefault(m.Name), table, tally, rows));
+                bad.AddRange(DecorViolations(Name(spec), res, m => byName.GetValueOrDefault(m.Name), tally, rows));
+                foreach (var m in res.Furniture.Where(m => !m.Mounted && !m.Ceiling && m.On == null)) anchors.Add(m.Name);
+                // the cabinets, and how many of them have a fridge beside them (side by side is right; over it, the rule above)
+                foreach (var c in res.Furniture.Where(m => m.Name.StartsWith("Wall_Cabinet")))
+                {
+                    cabinets++;
+                    if (res.Furniture.Any(o => o.Room == c.Room && o.Name.StartsWith("Fridge") && SameWay(o, c) && Overlap(Grown(c.Footprint, 0.1f), o.Footprint, 0f))) cabinetsByFridge++;
+                }
             }
             int pieces = rows.Values.Sum(), rooms = tally.Values.Sum(t => t[1]), with = tally.Values.Sum(t => t[2]);
-            TestContext.Progress.WriteLine($"[decor] {pieces} pieces hung in {with} of {rooms} rooms the table has rows for, over {buildings} buildings: {DecorTally(tally)}; "
-                                           + $"by row: {string.Join(", ", table.Select(r => $"{r.Name} {rows.GetValueOrDefault(r)}"))}; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
+            // a fixture's row waits on furniture the furnisher does not place yet (the grey cabinet on Counter_2): said, not failed
+            var waiting = table.Where(r => r.Spot == DecorSpot.Over && !r.Over.Any(p => anchors.Any(a => a.StartsWith(p)))).ToList();
+            TestContext.Progress.WriteLine($"[decor] {pieces} pieces hung in {with} of {rooms} rooms the recipes cover, over {buildings} buildings: {DecorTally(tally)}; "
+                                           + $"by row: {string.Join(", ", table.Select(r => $"{r.Name} {rows.GetValueOrDefault(r)}"))}; {cabinets} wall cabinets, {cabinetsByFridge} of them beside a fridge; "
+                                           + $"waiting on furniture: {(waiting.Count == 0 ? "none" : string.Join(", ", waiting.Select(r => r.Name)))}; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
             foreach (var r in table)
             {
                 Assert.That(FurnitureCatalog.Sizes.ContainsKey(r.Name), $"{r.Name}: a live row with no Sizes entry");
-                Assert.That(rows.GetValueOrDefault(r), Is.GreaterThan(0), $"{r.Name} never hangs anywhere");
+                if (!waiting.Contains(r)) Assert.That(rows.GetValueOrDefault(r), Is.GreaterThan(0), $"{r.Name} never hangs anywhere");
             }
+            Assert.That(waiting.Count, Is.LessThanOrEqualTo(1), "only the grey cabinet waits on furniture");
             Assert.That(with, Is.GreaterThanOrEqualTo(rooms / 2), "most rooms that can take a piece have one");
             Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(20)));
         }
 
         // T: the décor draws nothing from the furniture's dice. The Furnisher's Rng is shared by the whole building, so a
         // single draw from it in one room's décor would move every later room's furniture; the décor seeds its own. Each
-        // building is generated with no décor at all and with a busy table -- stand-in pieces (meshes in the catalog now)
-        // through every kind of room, every spot (a free wall, over a piece, by a door), groups, every condition -- and every
-        // piece that is not décor (the clocks and televisions too) must come out identical: name, place, turn, floor, in the
-        // same order. The busy pieces are held to the same rules as the live ones, so the rows waiting on astraclaw's
-        // models have had their spots walked before they go live.
+        // building is generated with no décor at all and with it, and every piece that is not décor (the clocks and the
+        // televisions too) must come out identical: name, place, turn, floor, in the same order. The décor itself is held to
+        // the rules above.
         // BREAK IT: draw once from the Furnisher's Rng in Decorate.
         [Test]
         public void WallDecorKeepsToItsOwnDraws()
         {
-            var every = Enum.GetValues(typeof(RoomKind)).Cast<RoomKind>().ToArray();
-            var busy = new[]
-            {
-                new DecorRow("Poster_0", every, Height: 2.55f, Weight: 6, Max: 2, Over: new[] { "Couch", "Bed_0", "Table_Metal_0" }, Beside: new[] { "Wardrobe" }),
-                new DecorRow("Clock_0", In(RoomKind.Kitchen, RoomKind.BreakRoom, RoomKind.Bathroom), Height: 2.8f, Max: 6, Spot: DecorSpot.Over, Over: new[] { "Counter_0", "Counter_1" }),
-                new DecorRow("Clock_0", In(RoomKind.Hall, RoomKind.Garage, RoomKind.Kitchen, RoomKind.LivingRoom), Height: 2.0f, Weight: 8, Need: DecorNeed.OuterDoor, Spot: DecorSpot.Door),
-                new DecorRow("Clock_0", every, Height: 2.4f, Weight: 6, Max: 2, Group: 3, Over: new[] { "Couch", "Bed" }),
-                new DecorRow("Clock_0", In(RoomKind.Bedroom), Height: 2.65f, Weight: 6, Need: DecorNeed.SingleBed, Over: new[] { "Bed_1" }),
-                new DecorRow("Clock_0", In(RoomKind.Bedroom, RoomKind.Hall), Height: 2.6f, Weight: 6, Need: DecorNeed.Wardrobe | DecorNeed.Home, Beside: new[] { "Wardrobe" }),
-                new DecorRow("Poster_0", In(RoomKind.Office, RoomKind.BreakRoom), Height: 2.5f, Weight: 6, Need: DecorNeed.Business),
-            };
             var specs = new List<BuildingGenSpec>();
             foreach (var kind in new[] { BuildingKind.Residential, BuildingKind.Commercial, BuildingKind.Industrial, BuildingKind.Apartment })
                 for (int seed = 0; seed < (kind == BuildingKind.Apartment ? 3 : 12); seed++)
@@ -216,7 +278,7 @@ namespace UnturnedSim.Tests
                     BuildingGen.DecorOverride = Array.Empty<DecorRow>();
                     var plain = BuildingGen.Generate(spec);
                     var mine = new Dictionary<FurniturePlan, DecorRow>();
-                    BuildingGen.DecorOverride = busy;
+                    BuildingGen.DecorOverride = null;
                     BuildingGen.DecorTrace = (m, r) => mine[m] = r;
                     var dressed = BuildingGen.Generate(spec);
                     BuildingGen.DecorTrace = null;
@@ -228,17 +290,57 @@ namespace UnturnedSim.Tests
                     else
                         for (int i = 0; i < rest.Count; i++)
                             if (Key(rest[i]) != Key(plain.Furniture[i])) { bad.Add($"{Name(spec)}: piece {i} {Key(plain.Furniture[i])} became {Key(rest[i])}"); break; }
-                    bad.AddRange(DecorViolations(Name(spec), dressed, m => mine.GetValueOrDefault(m), busy, tally, rows));
+                    // (every décor piece came through Decorate: none is in the dressed building untold)
+                    int named = dressed.Furniture.Count(m => BuildingGen.Decor.Any(r => r.Name == m.Name));
+                    if (named != mine.Count) bad.Add($"{Name(spec)}: {named} décor pieces by name, {mine.Count} told");
+                    bad.AddRange(DecorViolations(Name(spec), dressed, m => mine.GetValueOrDefault(m), tally, rows));
                 }
             }
             finally { BuildingGen.DecorOverride = null; BuildingGen.DecorTrace = null; }
-            TestContext.Progress.WriteLine($"[decor-draws] {compared} pieces compared over {specs.Count} buildings, {hung} busy pieces hung besides: {DecorTally(tally)}; "
-                                           + $"by row: {string.Join(", ", busy.Select((r, i) => $"#{i} {r.Name} {r.Spot} {rows.GetValueOrDefault(r)}"))}; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
+            TestContext.Progress.WriteLine($"[decor-draws] {compared} pieces compared over {specs.Count} buildings, {hung} décor pieces hung besides: {DecorTally(tally)}; "
+                                           + $"{bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
             Assert.That(compared, Is.GreaterThan(1000));
-            foreach (var r in busy) Assert.That(rows.GetValueOrDefault(r), Is.GreaterThan(0), $"busy row {r.Name} {r.Spot} never hung");
+            Assert.That(hung, Is.GreaterThan(500));
             Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(20)));
         }
 
-        static RoomKind[] In(params RoomKind[] k) => k;
+        // U: the kit is registered under the GUIDs its manifest gave (astraclaw's wall_decor_manifest.json, approved by VoX
+        // 2026-10-13). A layout saved by the generator stores each piece as a GUID and loads it back through guid_mesh.txt,
+        // so the GUID is the contract: a piece registered under a fresh one passes every catalog check and loads as nothing.
+        // BREAK IT: mint a fresh GUID for one row.
+        [Test]
+        public void WallDecorKitKeepsItsGuids()
+        {
+            var want = new Dictionary<string, string>
+            {
+                ["Painting_Landscape_0"] = "346af548d3dd44538c982498df0e9b90", ["Painting_Landscape_1"] = "0e4a100d9c944e369423e52e5c390ad0",
+                ["Painting_Landscape_2"] = "f651e1b9289d4aa89359a5123b0ae040", ["Painting_Landscape_3"] = "9397e55c26724f4d96cd950d4d15304b",
+                ["Painting_Portrait_0"] = "1036625e4c1b46f0b9ca36592c9745c0", ["Painting_Portrait_1"] = "daf247b3d81c46e2ba67c1a3510fc1cb",
+                ["Painting_Small_0"] = "912c1f63ea464847944b5d47b2ee53bc", ["Painting_Small_1"] = "09cee6c96cfb4c4ea0bd347f24b1f5c4",
+                ["Painting_Small_2"] = "2da2fd1f55e849c3801b1766e2d006fe", ["Photo_Frames_0"] = "f488b031ced247878e120e8be72d13e7",
+                ["Poster_Tall_0"] = "215f4daf3a784d41b44411af042024ad", ["Poster_Tall_1"] = "4d48536130124f7ba62a2a92b66fb7fa",
+                ["Poster_Tall_2"] = "8ace427204dc4c60a9a39665a863f710", ["Poster_Tall_3"] = "7dc13751f37645aab27a9a8d5197ccf9",
+                ["Mirror_0"] = "74b1af9317bf4afbb495330d0dacc3ca", ["Coat_Hooks_0"] = "80e5677b4b714036bf145feab43564d4",
+                ["Key_Rack_0"] = "e92d87f48d2d4275bc73f8dabc78b2c4", ["Wall_Shelf_0"] = "d3951a2f183445588a88deb8a658c327",
+                ["Wall_Shelf_1"] = "7b96fbe15e8e49aa9470ee79db535889", ["Wall_Cabinet_0"] = "122e3aaa346640daabd06b73dc4c2fe1",
+                ["Wall_Cabinet_1"] = "628034939a4c48b7b2cf3b85a6ecdc9b", ["Utensil_Rail_0"] = "66922cd52bac4dd196ea956c5f639b6b",
+                ["Calendar_0"] = "1c9fa1cc1ace4d268b5c67ffdee6d227", ["Towel_Rail_0"] = "471d7fabd6e048ac9f65c15345b8620b",
+                ["Medicine_Cabinet_0"] = "189e6e3aa286434aa1dc42f5b490f512", ["Whiteboard_0"] = "03a0c8aa49804a058fb175f3bca91944",
+                ["Corkboard_0"] = "f0e010853da94220897d1732bc3b2c44", ["Certificate_0"] = "184611e0903f449a870760ffe08b6e89",
+                ["Wall_Map_0"] = "91281d896ec949e584718b60edd53916", ["Pegboard_0"] = "2ea6760b40124eafa70f49436862b201",
+                ["Antlers_0"] = "1c731cb8c97844c7a7c1ac9e405941dc",
+            };
+            string dir = Objects();
+            Assert.That(dir, Is.Not.Null, "game/content/objects not found");
+            // the lookup a loading placement makes: guid -> first name (EditorObjects._guidToName, TryAdd)
+            var byGuid = new Dictionary<string, string>();
+            foreach (var p in System.IO.File.ReadAllLines(System.IO.Path.Combine(dir, "guid_mesh.txt")).Select(l => l.Split(' ', StringSplitOptions.RemoveEmptyEntries)).Where(p => p.Length >= 2))
+                byGuid.TryAdd(p[0], p[1]);
+            var bad = want.Where(kv => byGuid.GetValueOrDefault(kv.Value) != kv.Key).Select(kv => $"{kv.Key}: its GUID {kv.Value} loads {byGuid.GetValueOrDefault(kv.Value) ?? "NOTHING"}").ToList();
+            // and every live row is one of them, or the retail poster
+            bad.AddRange(BuildingGen.Decor.Where(r => r.Name != "Poster_0" && !want.ContainsKey(r.Name)).Select(r => $"{r.Name}: a live row not in the kit"));
+            TestContext.Progress.WriteLine($"[decor-guids] {want.Count} kit pieces held to their manifest GUIDs, {BuildingGen.Decor.Count} live rows; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
+            Assert.That(bad, Is.Empty, string.Join("\n", bad));
+        }
     }
 }

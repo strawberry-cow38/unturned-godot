@@ -2060,7 +2060,16 @@ namespace UnturnedGodot
                 off = new Vector3(0f, high, dist).Rotated(Vector3.Up, Mathf.DegToRad(yaw));
             }
             _cam.GlobalPosition = StageOrigin + off;
-            _cam.LookAt(StageOrigin + new Vector3(0f, 2f, -4.5f), Vector3.Up);
+            // UG_EDITLOOK=x,y,z aims it at that point over the stage instead, so a capture can stand IN a room (UG_EDITCAM
+            // puts the eye anywhere: yaw = atan2(x, z), dist = |(x, z)|) and look at one wall of it -- a picture on a wall
+            // that faces away from the stage's middle could otherwise only be seen through the wall in front of it.
+            var look = new Vector3(0f, 2f, -4.5f);
+            var lk = System.Environment.GetEnvironmentVariable("UG_EDITLOOK")?.Split(',');
+            if (lk is { Length: 3 } && float.TryParse(lk[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var lx)
+                && float.TryParse(lk[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var ly)
+                && float.TryParse(lk[2], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var lz))
+                look = new Vector3(lx, ly, lz);
+            _cam.LookAt(StageOrigin + look, Vector3.Up);
         }
 
         void BuildStage()

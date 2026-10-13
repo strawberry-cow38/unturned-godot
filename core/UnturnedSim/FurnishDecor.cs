@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using static UnturnedSim.RoomKind;
 
 namespace UnturnedSim
 {
@@ -16,11 +17,12 @@ namespace UnturnedSim
         SingleBed = 1 << 1,
         /// <summary>In a bedroom, only one with a wardrobe (a mirror goes beside it).</summary>
         Wardrobe = 1 << 2,
-        /// <summary>Only a room with a door to outside -- the front, the back, a side door, a vehicle door (hooks, keys).</summary>
+        /// <summary>Only a room with a door to outside -- the front, the back, a side door, a vehicle door -- or, a flat's,
+        /// to the shared corridor: hooks, keys.</summary>
         OuterDoor = 1 << 3,
         /// <summary>Only in a house or a flat.</summary>
         Home = 1 << 4,
-        /// <summary>Only in a business, Commercial or Industrial: the work items (whiteboards, pegboards...).</summary>
+        /// <summary>Only in a business, Commercial or Industrial: the work items (whiteboards...).</summary>
         Business = 1 << 5,
     }
 
@@ -30,8 +32,8 @@ namespace UnturnedSim
         /// <summary>The middle of a free stretch of wall; better, centred over one of its Over pieces (a couch, a bed's
         /// head) or just beside one of its Beside pieces, where one is against a wall with room.</summary>
         Wall,
-        /// <summary>Only centred over one of its Over pieces, lined up with it: upper cabinets over the counters, a run
-        /// of them over a run of counters.</summary>
+        /// <summary>Only centred over one of its Over pieces, lined up with it: upper cabinets over the counters (a run of
+        /// them over a run of counters, side by side), a utensil rail over the stove, a medicine cabinet over the basin.</summary>
         Over,
         /// <summary>Within <see cref="BuildingGen.DecorDoorReach"/> of the room's door to outside, or failing one of any
         /// door of the room: hooks, a key rack.</summary>
@@ -39,92 +41,126 @@ namespace UnturnedSim
     }
 
     /// <summary>One wall-décor item: the prop (game/content/objects/{Name}.obj, its extents in FurnitureCatalog.Sizes, its
-    /// GUID in guid_mesh.txt), the kinds of room it goes in and what else it needs there, its odds against the room's other
-    /// rows (Weight), the most of it one room gets (Max), the height of its origin over the floor (Height: a hung mesh is
-    /// centred on its origin up and down, so it spans Height +- its Sizes H), and how many hang side by side as a group
-    /// (Group: 2..Group of them; 1 alone). Over and Beside name pieces by prefix ("Couch" is both couches). Tags are the
-    /// manifest's (formal, rustic, kid, work), for the record.</summary>
-    public sealed record DecorRow(string Name, RoomKind[] Rooms, float Height, int Weight = 10, int Max = 1, DecorNeed Need = DecorNeed.None,
-                                  DecorSpot Spot = DecorSpot.Wall, string[] Over = null, string[] Beside = null, int Group = 1, string Tags = "");
+    /// GUID in guid_mesh.txt); the kinds of room it goes in and what else it needs there; the slot(s) of those rooms'
+    /// recipes it fills (<see cref="BuildingGen.DecorRecipes"/>; space-separated); its odds against the slot's other rows
+    /// (Weight) and the most of it one room gets (Max); the height of its origin over the floor (Height: a hung mesh is
+    /// centred on its origin up and down, so it spans Height +- its Sizes H); where on the wall it goes (Spot, Over,
+    /// Beside -- pieces by name prefix, "Couch" is both couches); how many hang side by side (Group: 2..Group of them, the
+    /// row's look-alikes taking turns; 1 alone); and whether it is a room's big focal piece, of which a wall holds one
+    /// (Focal: the television is one). Tags are the manifest's, for the record.</summary>
+    public sealed record DecorRow(string Name, RoomKind[] Rooms, float Height, string Slot, int Weight = 10, int Max = 1, DecorNeed Need = DecorNeed.None,
+                                  DecorSpot Spot = DecorSpot.Wall, string[] Over = null, string[] Beside = null, int Group = 1, bool Focal = false,
+                                  string Tags = "")
+    {
+        public bool Fills(string slot) => (" " + Slot + " ").Contains(" " + slot + " ");
+    }
 
     public static partial class BuildingGen
     {
         static RoomKind[] In(params RoomKind[] k) => k;
-        // (names by prefix: a couch either size; a bed's head is where a painting goes, a bunk's 2.92 m never clears)
-        static readonly string[] Couches = { "Couch" }, DoubleBeds = { "Bed_0" }, SingleBeds = { "Bed_1" };
+        static readonly string[] CouchOrDouble = { "Couch", "Bed_0" }, CouchOrBed = { "Couch", "Bed_0", "Bed_1" };
 
-        /// <summary>The wall décor (VoX: "needs more wall doo dads like posters and art and clocks and coat hooks"), one
-        /// row per model; Decorate hangs them. A row's name must not start with a prefix the furnisher or Shortfall reads
-        /// a room's furniture by (Bed, Couch, Table, Chair, Shelf, Counter, Fridge, Oven, Tub, Lamp, Television): a hung
-        /// piece would pass for the floor piece. The wall clock (Clock) and the flat television (WallTv) hang in their
-        /// rooms' own recipes, before this -- the clock stays there: it draws from the Furnisher's shared Rng, so moving it
-        /// onto the décor's would move every kitchen's and living room's clock, and every room furnished after them.</summary>
+        /// <summary>The wall décor (VoX: "needs more wall doo dads like posters and art and clocks and coat hooks", then of
+        /// astraclaw's kit: "start integrating these intelligently into the interior proc gen system"), one row per model.
+        /// Heights are the kit manifest's suggested_origin_height (the mirror 5 cm higher: at 2.6 its bottom came 0.07 m
+        /// over the basin's 1.83, inside the 0.1 a piece keeps over what stands under it); rooms the manifest's, widened as
+        /// VoX's brief has them (the workshop's map and poster). A row's name must not start with a prefix the furnisher or
+        /// Shortfall reads a room's furniture by (Bed, Couch, Table, Chair, Shelf, Counter, Fridge, Oven, Tub, Lamp,
+        /// Television): a hung piece would pass for the floor piece. The wall clock (Clock) and the flat television
+        /// (WallTv) hang in their rooms' own recipes, before this; the clock stays there, because it draws from the
+        /// Furnisher's shared Rng and moving it onto the décor's would move every room furnished after it.</summary>
         public static readonly IReadOnlyList<DecorRow> Decor = new DecorRow[]
         {
-            // retail: the 3 x 1.5 m pixel-art poster (16x8 texture). Its OBJ is centred in depth too (Y0 -0.1), so its back
-            // stands 3 cm off the wall like every piece; 2.55 m up its bottom is at 1.8, over a couch, a washer, a counter
-            new("Poster_0", In(RoomKind.BreakRoom, RoomKind.Garage, RoomKind.Workshop, RoomKind.Shop), Height: 2.55f, Weight: 10, Tags: "work"),
-            // (Board_0, retail, 3.5 x 2.5 m, is a CHALKBOARD -- a dark green-grey panel recessed in a wood frame with a
-            // chalk ledge along its foot -- not a noticeboard; left out. Live, it would be:
-            //  new("Board_0", In(RoomKind.Office, RoomKind.BreakRoom), Height: 2.5f, Weight: 4, Need: DecorNeed.Business, Tags: "work"),
-            //  with Sizes ["Board_0"] = new(-1.75f, 1.75f, -0.12f, 0.28f, 1.25f).)
-
-            // astraclaw's kit (wall_decor_spec.md), each going live with its line uncommented, its Sizes entry measured off
-            // its OBJ, and its GUID in guid_mesh.txt. Heights: each bottom clears what it is meant to hang over by 0.1 m
-            // (a couch 1.5, a bed 1.67, a sink 1.83, a microwave on a counter 2.15) at the spec's target size -- recheck
-            // Height against the delivered mesh's (spec: +-20%), since a piece hangs Height +- its Sizes H.
-            // new("Painting_Landscape_0", In(RoomKind.LivingRoom, RoomKind.DiningRoom, RoomKind.Hall, RoomKind.Bedroom), Height: 2.55f, Weight: 6, Need: DecorNeed.DoubleBed, Over: new[] { "Couch", "Bed_0" }, Tags: "formal"),
-            // new("Painting_Landscape_1", In(RoomKind.LivingRoom, RoomKind.DiningRoom, RoomKind.Hall, RoomKind.Bedroom), Height: 2.55f, Weight: 6, Need: DecorNeed.DoubleBed, Over: new[] { "Couch", "Bed_0" }, Tags: "formal"),
-            // new("Painting_Landscape_2", In(RoomKind.LivingRoom, RoomKind.DiningRoom, RoomKind.Hall, RoomKind.Bedroom), Height: 2.55f, Weight: 6, Need: DecorNeed.DoubleBed, Over: new[] { "Couch", "Bed_0" }, Tags: "rustic"),
-            // new("Painting_Landscape_3", In(RoomKind.LivingRoom, RoomKind.DiningRoom, RoomKind.Hall, RoomKind.Bedroom), Height: 2.55f, Weight: 6, Need: DecorNeed.DoubleBed, Over: new[] { "Couch", "Bed_0" }, Tags: "rustic"),
-            // new("Painting_Portrait_0", In(RoomKind.Hall, RoomKind.DiningRoom, RoomKind.Stairwell), Height: 2.55f, Weight: 6, Tags: "formal"),
-            // new("Painting_Portrait_1", In(RoomKind.Hall, RoomKind.DiningRoom, RoomKind.Stairwell), Height: 2.55f, Weight: 6, Tags: "formal"),
-            // new("Painting_Small_0", In(RoomKind.LivingRoom, RoomKind.DiningRoom, RoomKind.Kitchen, RoomKind.Bedroom, RoomKind.Hall, RoomKind.Office), Height: 2.4f, Weight: 4, Group: 3, Over: new[] { "Couch", "Bed" }),
-            // new("Painting_Small_1", In(RoomKind.LivingRoom, RoomKind.DiningRoom, RoomKind.Kitchen, RoomKind.Bedroom, RoomKind.Hall, RoomKind.Office), Height: 2.4f, Weight: 4, Group: 3, Over: new[] { "Couch", "Bed" }),
-            // new("Painting_Small_2", In(RoomKind.LivingRoom, RoomKind.DiningRoom, RoomKind.Kitchen, RoomKind.Bedroom, RoomKind.Hall, RoomKind.Office), Height: 2.4f, Weight: 4, Group: 3, Over: new[] { "Couch", "Bed" }),
-            // new("Photo_Frames_0", In(RoomKind.LivingRoom, RoomKind.Bedroom, RoomKind.Hall), Height: 2.3f, Weight: 6, Need: DecorNeed.Home, Over: new[] { "Couch" }),
-            // new("Poster_Tall_0", In(RoomKind.Bedroom, RoomKind.Garage, RoomKind.BreakRoom), Height: 2.55f, Weight: 6, Need: DecorNeed.SingleBed, Over: new[] { "Bed_1" }, Tags: "kid"),
-            // new("Poster_Tall_1", In(RoomKind.Bedroom, RoomKind.Garage, RoomKind.BreakRoom), Height: 2.55f, Weight: 6, Need: DecorNeed.SingleBed, Over: new[] { "Bed_1" }, Tags: "kid"),
-            // new("Poster_Tall_2", In(RoomKind.Bedroom, RoomKind.Garage, RoomKind.BreakRoom), Height: 2.55f, Weight: 6, Need: DecorNeed.SingleBed, Over: new[] { "Bed_1" }, Tags: "kid"),
-            // new("Poster_Tall_3", In(RoomKind.Bedroom, RoomKind.Garage, RoomKind.BreakRoom), Height: 2.55f, Weight: 6, Need: DecorNeed.SingleBed, Over: new[] { "Bed_1" }, Tags: "kid"),
-            // new("Mirror_0", In(RoomKind.Bathroom, RoomKind.Hall, RoomKind.Bedroom), Height: 2.65f, Weight: 8, Need: DecorNeed.Wardrobe, Over: new[] { "Counter_1" }, Beside: new[] { "Wardrobe" }),
-            // new("Coat_Hooks_0", In(RoomKind.Hall, RoomKind.Garage, RoomKind.Kitchen), Height: 2.0f, Weight: 8, Need: DecorNeed.OuterDoor, Spot: DecorSpot.Door),
-            // new("Coat_Hooks_1", In(RoomKind.Hall, RoomKind.Garage, RoomKind.Kitchen), Height: 2.0f, Weight: 8, Need: DecorNeed.OuterDoor, Spot: DecorSpot.Door),
-            // new("Key_Rack_0", In(RoomKind.Hall), Height: 2.0f, Weight: 6, Need: DecorNeed.OuterDoor | DecorNeed.Home, Spot: DecorSpot.Door),
-            // new("Wall_Shelf_0", In(RoomKind.LivingRoom, RoomKind.Bedroom, RoomKind.Office), Height: 2.4f, Weight: 5),
-            // new("Wall_Shelf_1", In(RoomKind.LivingRoom, RoomKind.Bedroom, RoomKind.Office), Height: 2.4f, Weight: 5),
-            // (upper cabinets: one over each plain counter and the sink, in a run; _1 is the grey set's, Counter_2's)
-            // new("Wall_Cabinet_0", In(RoomKind.Kitchen, RoomKind.BreakRoom), Height: 2.8f, Max: 6, Spot: DecorSpot.Over, Over: new[] { "Counter_0", "Counter_1" }),
-            // new("Wall_Cabinet_1", In(RoomKind.Kitchen, RoomKind.BreakRoom), Height: 2.8f, Max: 6, Spot: DecorSpot.Over, Over: new[] { "Counter_2" }),
-            // new("Utensil_Rail_0", In(RoomKind.Kitchen), Height: 2.4f, Spot: DecorSpot.Over, Over: new[] { "Oven_0", "Counter_0" }),
-            // new("Calendar_0", In(RoomKind.Kitchen, RoomKind.Office, RoomKind.BreakRoom), Height: 2.3f, Weight: 5),
-            // new("Towel_Rail_0", In(RoomKind.Bathroom), Height: 2.1f, Weight: 8, Beside: new[] { "Tub", "Counter_1" }),
-            // new("Medicine_Cabinet_0", In(RoomKind.Bathroom), Height: 2.45f, Weight: 6, Spot: DecorSpot.Over, Over: new[] { "Counter_1" }),
-            // new("Whiteboard_0", In(RoomKind.Office, RoomKind.BreakRoom), Height: 2.5f, Weight: 8, Need: DecorNeed.Business, Tags: "work"),
-            // new("Corkboard_0", In(RoomKind.Office, RoomKind.BreakRoom, RoomKind.Kitchen), Height: 2.4f, Weight: 6, Tags: "work"),
-            // new("Certificate_0", In(RoomKind.Office), Height: 2.4f, Weight: 4, Group: 2, Tags: "formal"),
-            // new("Wall_Map_0", In(RoomKind.Office, RoomKind.Hall, RoomKind.Garage), Height: 2.5f, Weight: 4, Tags: "work"),
-            // new("Pegboard_0", In(RoomKind.Garage, RoomKind.Workshop, RoomKind.Storage), Height: 2.3f, Weight: 8, Over: new[] { "Table_Metal_0" }, Tags: "work"),
-            // new("Antlers_0", In(RoomKind.LivingRoom, RoomKind.Hall), Height: 2.7f, Weight: 1, Need: DecorNeed.Home, Tags: "rustic"),
+            // the big pieces, one to a wall: over the couch or a double bed's head where there is one, else the middle of
+            // the longest free wall
+            new("Painting_Landscape_0", In(LivingRoom, DiningRoom, Hall, Bedroom), 2.6f, "focal", Weight: 3, Need: DecorNeed.DoubleBed, Over: CouchOrDouble, Focal: true, Tags: "adult landscape rustic"),
+            new("Painting_Landscape_1", In(LivingRoom, DiningRoom, Hall, Bedroom), 2.6f, "focal", Weight: 3, Need: DecorNeed.DoubleBed, Over: CouchOrDouble, Focal: true, Tags: "adult landscape neutral"),
+            new("Painting_Landscape_2", In(LivingRoom, DiningRoom, Hall, Bedroom), 2.6f, "focal", Weight: 3, Need: DecorNeed.DoubleBed, Over: CouchOrDouble, Focal: true, Tags: "adult landscape rustic"),
+            new("Painting_Landscape_3", In(LivingRoom, DiningRoom, Hall, Bedroom), 2.6f, "focal", Weight: 3, Need: DecorNeed.DoubleBed, Over: CouchOrDouble, Focal: true, Tags: "adult landscape neutral"),
+            new("Painting_Portrait_0", In(Hall, DiningRoom), 2.6f, "focal", Weight: 6, Focal: true, Tags: "formal portrait"),
+            new("Painting_Portrait_1", In(Hall, DiningRoom), 2.6f, "focal", Weight: 6, Focal: true, Tags: "formal portrait"),
+            new("Whiteboard_0", In(Office, BreakRoom), 2.6f, "focal", Weight: 8, Need: DecorNeed.Business, Focal: true, Tags: "work modern"),
+            new("Wall_Map_0", In(Office, Hall, Garage, Workshop), 2.6f, "focal", Weight: 4, Focal: true, Tags: "map work"),
+            new("Pegboard_0", In(Garage, Workshop, Storage), 2.4f, "focal", Weight: 10, Over: new[] { "Table_Metal_0" }, Focal: true, Tags: "tools work"),
+            // retail: the 3 x 1.5 m pixel-art poster. Its OBJ is centred in depth (Y0 -0.1), not backed at Y 0
+            new("Poster_0", In(BreakRoom, Garage, Workshop, Shop), 2.55f, "focal", Weight: 10, Focal: true, Tags: "work"),
+            // a kid's or a teen's room: one over the bed (a single's; a bunk's 2.92 m never clears) and maybe another
+            new("Poster_Tall_0", In(Bedroom, Garage, BreakRoom, Workshop), 2.6f, "focal wall", Weight: 3, Need: DecorNeed.SingleBed, Over: new[] { "Bed_1" }, Tags: "kid teen band"),
+            new("Poster_Tall_1", In(Bedroom, Garage, BreakRoom, Workshop), 2.6f, "focal wall", Weight: 3, Need: DecorNeed.SingleBed, Over: new[] { "Bed_1" }, Tags: "kid teen space"),
+            new("Poster_Tall_2", In(Bedroom, Garage, BreakRoom, Workshop), 2.6f, "focal wall", Weight: 3, Need: DecorNeed.SingleBed, Over: new[] { "Bed_1" }, Tags: "kid teen arcade"),
+            new("Poster_Tall_3", In(Bedroom, Garage, BreakRoom, Workshop), 2.6f, "focal wall", Weight: 3, Need: DecorNeed.SingleBed, Over: new[] { "Bed_1" }, Tags: "kid teen sport"),
+            // the lesser pieces: small paintings in twos and threes, photos, shelves, a mirror, the antlers (rare)
+            new("Painting_Small_0", In(LivingRoom, DiningRoom, Hall, Bedroom, Office), 2.6f, "wall", Weight: 4, Group: 3, Over: CouchOrBed, Tags: "small groupable neutral"),
+            new("Painting_Small_1", In(LivingRoom, DiningRoom, Hall, Bedroom, Office), 2.6f, "wall", Weight: 4, Group: 3, Over: CouchOrBed, Tags: "small groupable neutral"),
+            new("Painting_Small_2", In(LivingRoom, DiningRoom, Hall, Bedroom, Office), 2.6f, "wall", Weight: 4, Group: 3, Over: CouchOrBed, Tags: "small groupable neutral"),
+            new("Photo_Frames_0", In(LivingRoom, Bedroom, Hall), 2.6f, "wall", Weight: 8, Need: DecorNeed.Home | DecorNeed.DoubleBed, Over: CouchOrDouble, Tags: "family adult"),
+            new("Wall_Shelf_0", In(LivingRoom, Bedroom, Office), 2.5f, "shelf", Weight: 5, Over: new[] { "Couch" }, Tags: "shelf neutral"),
+            new("Wall_Shelf_1", In(LivingRoom, Bedroom, Office), 2.7f, "shelf", Weight: 5, Over: new[] { "Couch" }, Tags: "shelf books plant clutter"),
+            new("Mirror_0", In(Bathroom, Hall, Bedroom), 2.65f, "sink mirror", Weight: 8, Need: DecorNeed.Wardrobe, Over: new[] { "Counter_1" }, Beside: new[] { "Wardrobe" }, Tags: "mirror wardrobe"),
+            new("Antlers_0", In(LivingRoom, Hall), 2.9f, "trophy", Weight: 1, Need: DecorNeed.Home, Tags: "rustic rural rare"),
+            // work: notes and certificates
+            new("Calendar_0", In(Kitchen, Office, BreakRoom), 2.2f, "notes", Weight: 5, Tags: "work household"),
+            new("Corkboard_0", In(Office, BreakRoom, Kitchen), 2.6f, "notes", Weight: 5, Tags: "work notes"),
+            new("Certificate_0", In(Office), 2.6f, "certs", Weight: 5, Group: 3, Tags: "formal work"),
+            // by the way in
+            new("Coat_Hooks_0", In(Hall, Garage), 2.0f, "hooks", Weight: 8, Need: DecorNeed.OuterDoor, Spot: DecorSpot.Door, Tags: "entry front_or_back_door"),
+            // (Coat_Hooks_1, the rack with a coat on it, was dropped -- VoX: "might be confusing to players, a coat they can't
+            // use". astraclaw's replacement, a sunburst, awaits VoX's review: on approval, uncomment its row, add its Sizes
+            // entry off its OBJ, its GUID line in guid_mesh.txt and in WallDecorKitKeepsItsGuids, and take its rooms, slot and
+            // height from its manifest entry -- the ones below are placeholders)
+            // new("Wall_Sunburst_0", In(LivingRoom, DiningRoom, Hall), 2.6f, "wall", Weight: 4, Tags: "ef0e6c14a98645a88623ba40c269a4d4"),
+            new("Key_Rack_0", In(Hall), 1.8f, "keys", Weight: 6, Need: DecorNeed.OuterDoor | DecorNeed.Home, Spot: DecorSpot.Door, Tags: "entry front_door"),
+            // fixtures, over what they serve: upper cabinets over the counters, sink and dishwasher (wood over the wood set,
+            // grey over the grey set's Counter_2 -- which the furnisher does not place yet, so the grey waits), a utensil
+            // rail over the stove, a medicine cabinet over the basin, a towel rail by the tub or the basin
+            new("Wall_Cabinet_0", In(Kitchen), 2.9f, "cabinets", Max: 8, Spot: DecorSpot.Over, Over: new[] { "Counter_0", "Counter_1", "Disher_0" }, Tags: "upper_cabinet wood counter_0"),
+            new("Wall_Cabinet_1", In(Kitchen), 2.9f, "cabinets", Max: 8, Spot: DecorSpot.Over, Over: new[] { "Counter_2" }, Tags: "upper_cabinet grey counter_2"),
+            new("Utensil_Rail_0", In(Kitchen), 2.15f, "rail", Spot: DecorSpot.Over, Over: new[] { "Oven_0", "Counter_0" }, Tags: "counter cooking"),
+            new("Medicine_Cabinet_0", In(Bathroom), 2.5f, "sink", Weight: 8, Spot: DecorSpot.Over, Over: new[] { "Counter_1" }, Tags: "mirror sink"),
+            new("Towel_Rail_0", In(Bathroom), 1.6f, "towel", Beside: new[] { "Tub", "Counter_1" }, Tags: "towel wash"),
         };
+
+        /// <summary>What each kind of room hangs, in order (VoX's brief, "coherent per room, not random"): its slots, each
+        /// filled at the given odds by one of the rows that fill it there (a weighted draw; one that will not go anywhere
+        /// gives way to the next). The art slots -- all but the fixtures' (DecorFixtures) -- are bounded by the room's free
+        /// wall (DecorEvery); every piece by its wall (one focal piece, DecorFill of its length).</summary>
+        public static readonly IReadOnlyDictionary<RoomKind, (string Slot, int Chance)[]> DecorRecipes = new Dictionary<RoomKind, (string, int)[]>
+        {
+            [Kitchen] = new[] { ("cabinets", 100), ("rail", 70), ("notes", 60) },
+            [LivingRoom] = new[] { ("focal", 100), ("wall", 70), ("shelf", 40), ("trophy", 8) },
+            [DiningRoom] = new[] { ("focal", 100), ("wall", 50) },
+            [Bedroom] = new[] { ("focal", 100), ("wall", 60), ("mirror", 40), ("shelf", 25) },
+            [Hall] = new[] { ("hooks", 100), ("keys", 60), ("focal", 70), ("mirror", 35), ("trophy", 5) },
+            [Bathroom] = new[] { ("sink", 100), ("towel", 75) },
+            [Office] = new[] { ("focal", 100), ("notes", 70), ("certs", 50), ("wall", 30), ("shelf", 30) },
+            [BreakRoom] = new[] { ("focal", 100), ("notes", 70) },
+            [Garage] = new[] { ("focal", 100), ("hooks", 60), ("wall", 40) },
+            [Workshop] = new[] { ("focal", 100), ("wall", 50) },
+            [Storage] = new[] { ("focal", 60) },
+            [Shop] = new[] { ("focal", 100) },
+        };
+        /// <summary>The slots of fixtures, not art: they go with what they serve, outside the room's art budget.</summary>
+        public static readonly IReadOnlyCollection<string> DecorFixtures = new HashSet<string> { "cabinets", "rail", "sink", "towel", "hooks", "keys" };
 
         /// <summary>Testing only: a table to hang in place of <see cref="Decor"/> on this thread (null: Decor).</summary>
         [ThreadStatic] public static IReadOnlyList<DecorRow> DecorOverride;
         /// <summary>Debugging only: told each piece Decorate hangs and the row it came from (null: nothing is told).</summary>
         [ThreadStatic] public static Action<FurniturePlan, DecorRow> DecorTrace;
 
-        /// <summary>A room gets about one piece of wall art per this much free wall -- wall with no window, door or flight
-        /// by it (a big home: DecorEveryBig, more art in a bigger house) -- and at most DecorMost; each piece is left out
-        /// one time in DecorBare out of a hundred. Pieces anchored over furniture (DecorSpot.Over: the kitchen's upper
-        /// cabinets) are not art and do not count.</summary>
-        public const float DecorEvery = 9f, DecorEveryBig = 7f;
-        public const int DecorMost = 4, DecorBare = 25;
+        /// <summary>A room hangs art in at most 1 + one more slot per DecorEvery of free wall -- wall with no window, door or
+        /// flight by it -- (a big home one more again: more art in a bigger house), and never more than DecorMost.</summary>
+        public const float DecorEvery = 6f;
+        public const int DecorMost = 5;
         /// <summary>A home this big (rooms, or storeys) is a big home.</summary>
         public const int BigHomeRooms = 8, BigHomeFloors = 2;
-        /// <summary>Hung pieces keep DecorGap apart (and from the clock and the television), DecorEnd off a corner,
-        /// DecorOpenGap off the edge of a window or a doorway; what stands within DecorClear of one is under it, and must be
-        /// lower than its bottom by DecorUnder. A group's pieces hang DecorGroupGap apart.</summary>
-        public const float DecorGap = 0.3f, DecorEnd = 0.2f, DecorOpenGap = 0.15f, DecorClear = 0.25f, DecorUnder = 0.1f, DecorGroupGap = 0.3f;
+        /// <summary>Hung pieces keep DecorGap apart (and from the clock and the television) -- fixtures over a run of
+        /// counters only DecorRunGap, side by side -- DecorEnd off a corner (a fixture over a counter in the corner, none), DecorOpenGap off the edge of a window or a
+        /// doorway; what stands within DecorClear of one is under it, and must be lower than its bottom by DecorUnder (along
+        /// the wall a fixture over a counter keeps only DecorRunGap: it abuts the fridge beside its counter, as in any
+        /// kitchen). A group's pieces hang DecorGroupGap apart; a wall's hung pieces, fixtures aside, take at most DecorFill
+        /// of it.</summary>
+        public const float DecorGap = 0.6f, DecorRunGap = 0.02f, DecorEnd = 0.2f, DecorOpenGap = 0.15f, DecorClear = 0.25f, DecorUnder = 0.1f,
+                           DecorGroupGap = 0.3f, DecorFill = 0.5f;
         /// <summary>A hung piece's back stands this far off the wall's face; Hang looks this far past its face for a
         /// window's or a doorway's zone (the television's 0.6 m kept every poster off a garage's side walls, the whole
         /// 6 m of its vehicle lane).</summary>
@@ -143,41 +179,49 @@ namespace UnturnedSim
         {
             /// <summary>The building's seed (Furnish), from which the décor pass seeds its own draws.</summary>
             public int Seed;
+            /// <summary>The pieces this room's décor hung, and the row each came from.</summary>
+            readonly Dictionary<FurniturePlan, DecorRow> _hung = new();
 
-            /// <summary>Hang the room's wall décor (<see cref="Decor"/>), last of all, from the pieces the room's kind and the
-            /// house allow. Its draws are its OWN: an Rng seeded from the building's seed and this room's key (its floor and
-            /// first rectangle) -- never the Furnisher's shared one, every draw from which would move every later room's
-            /// furniture. It reads the room's furniture and leaves the floor plan as it found it.</summary>
+            /// <summary>Hang the room's wall décor, last of all: its kind's recipe (<see cref="DecorRecipes"/>), slot by slot,
+            /// from the rows (<see cref="Decor"/>) the room's kind and the house allow. Its draws are its OWN: an Rng seeded
+            /// from the building's seed and this room's key (its floor and first rectangle) -- never the Furnisher's shared
+            /// one, every draw from which would move every later room's furniture. It reads the room's furniture and leaves
+            /// the floor plan as it found it.</summary>
             void Decorate()
             {
+                if (!DecorRecipes.TryGetValue(_room.Kind, out var recipe)) return;
                 var rows = (DecorOverride ?? Decor).Where(r => r.Rooms.Contains(_room.Kind) && FurnitureCatalog.Sizes.ContainsKey(r.Name) && Needs(r)).ToList();
                 if (rows.Count == 0) return;
                 var rng = new Rng(unchecked((((((Seed * 486187739 + _room.Floor) * 486187739 + _room.X0) * 486187739 + _room.Z0) * 486187739 + _room.X1) * 486187739 + _room.Z1) ^ 0x0DEC0));
                 var count = new Dictionary<DecorRow, int>();
-                bool Hung(DecorRow r) { if (HangDecor(r, rng)) { count[r] = count.GetValueOrDefault(r) + 1; return true; } return false; }
-                // what hangs over furniture first, over each of its anchors while it goes (not art: no part of the budget)
-                foreach (var r in rows.Where(r => r.Spot == DecorSpot.Over))
-                    while (count.GetValueOrDefault(r) < r.Max && Hung(r)) { }
-                // then the art: a slot per DecorEvery of free wall, each a weighted draw among the rows that still have room,
-                // or bare; a row that does not fit anywhere is out for the room, and the slot draws again without it
                 bool big = _res.Kind is BuildingKind.Residential or BuildingKind.Apartment
                            && (_res.Floors >= BigHomeFloors || _res.Layout.Count(g => g.Unit == _room.Unit && !g.Circulation) >= BigHomeRooms);
                 float free = FreeWall();
-                int slots = Math.Min(DecorMost, (int)MathF.Round(free / (big ? DecorEveryBig : DecorEvery)));
-                FurnishTrace?.Invoke(System.FormattableString.Invariant($"decor in {_room}: {free:0.0} m of free wall, {slots} slots, rows {string.Join(", ", rows.Select(r => r.Name))}"));
-                var art = rows.Where(r => r.Spot != DecorSpot.Over).ToList();
-                for (int k = 0; k < slots; k++)
+                int budget = Math.Min(DecorMost, 1 + (int)(free / DecorEvery) + (big ? 1 : 0)), art = 0;
+                FurnishTrace?.Invoke(System.FormattableString.Invariant($"decor in {_room}: {free:0.0} m of free wall, {budget} art slots, rows {string.Join(", ", rows.Select(r => r.Name))}"));
+                foreach (var (slot, chance) in recipe)
                 {
-                    if (rng.Int(100) < DecorBare) continue;
+                    bool fixture = DecorFixtures.Contains(slot);
+                    var cands = rows.Where(r => r.Fills(slot)).ToList();
+                    // (a slot with nothing to hang draws nothing: the draws stay where they were for the slots after it)
+                    if (cands.Count == 0 || (!fixture && art >= budget)) continue;
+                    if (rng.Int(100) >= chance) continue;
                     while (true)
                     {
-                        var open = art.Where(r => count.GetValueOrDefault(r) < r.Max && r.Weight > 0).ToList();
-                        if (open.Count == 0) return;
+                        var open = cands.Where(r => count.GetValueOrDefault(r) < r.Max && r.Weight > 0).ToList();
+                        if (open.Count == 0) break;
                         int roll = rng.Int(open.Sum(r => r.Weight));
                         var pick = open[^1];
                         foreach (var r in open) { if (roll < r.Weight) { pick = r; break; } roll -= r.Weight; }
-                        if (Hung(pick)) break;
-                        art.Remove(pick);
+                        int n = 0;
+                        // a fixture over furniture hangs over each of its pieces it can (a run of cabinets); the rest once
+                        while (count.GetValueOrDefault(pick) < pick.Max && HangDecor(pick, rng, rows))
+                        {
+                            count[pick] = count.GetValueOrDefault(pick) + 1; n++;
+                            if (pick.Spot != DecorSpot.Over) break;
+                        }
+                        if (n > 0) { if (!fixture) art++; break; }
+                        cands.Remove(pick);
                     }
                 }
             }
@@ -200,7 +244,8 @@ namespace UnturnedSim
             }
 
             /// <summary>The middles of this room's doorways, read off its walls: those to outside (no room past them on this
-            /// floor: the front, the back, a side or a vehicle door) when `outside`, else every one.</summary>
+            /// floor: the front, the back, a side or a vehicle door; a flat's to the shared corridor) when `outside`, else
+            /// every one.</summary>
             List<(float X, float Z)> DoorsOut(bool outside)
             {
                 var l = new List<(float X, float Z)>();
@@ -215,7 +260,8 @@ namespace UnturnedSim
                         {
                             float px = cx + sgn * nx * d, pz = cz + sgn * nz * d, qx = cx - sgn * nx * d, qz = cz - sgn * nz * d;
                             if (!_room.Holds(px, pz)) continue;
-                            if (!outside || !_res.Layout.Any(g => g.Floor == _room.Floor && g.Holds(qx, qz))) l.Add((px, pz));
+                            var past = _res.Layout.FirstOrDefault(g => g.Floor == _room.Floor && g.Holds(qx, qz));
+                            if (!outside || past == null || (_room.Unit >= 0 && past.Unit < 0)) l.Add((px, pz));
                         }
                     }
                 }
@@ -248,11 +294,23 @@ namespace UnturnedSim
                     foreach (var (at, lo, hi) in Faces(nx, nz)) yield return new Face(nx, nz, at, lo, hi);
             }
 
+            /// <summary>Is a hung piece on this face: turned to it, its back at it, along its run?</summary>
+            bool HungOn(FurniturePlan m, Face f)
+            {
+                var q = f.Span(m.Footprint);
+                float yaw = YawFacing(f.Nx, f.Nz);
+                return m.Mounted && MathF.Abs(((m.Yaw - yaw) % 360f + 540f) % 360f - 180f) < 10f && q.D0 > -0.15f && q.D0 < 0.25f && q.A1 > f.Lo && q.A0 < f.Hi;
+            }
+            /// <summary>A room's big piece: a focal row's, or the flat television.</summary>
+            bool IsFocal(FurniturePlan m) => _hung.TryGetValue(m, out var r) ? r.Focal : m.Name == "Television_0";
+            bool IsFixture(FurniturePlan m) => _hung.TryGetValue(m, out var r) && r.Spot == DecorSpot.Over;
+
             /// <summary>The stretches of a face a piece `depth` deep, hung from `bottom` to `top`, may span: the run less
             /// DecorEnd at each corner, every opening in the wall behind it at that height (and DecorOpenGap either side), the
-            /// stairs' reach (StairWallReach, as ByStairs), and -- with `furnished` -- the pieces already hung on it
-            /// (DecorGap) and whatever stands within DecorClear of it taller than its bottom less DecorUnder.</summary>
-            List<(float A, float B)> Stretches(Face f, float depth, float bottom, float top, bool furnished)
+            /// stairs' reach (StairWallReach, as ByStairs), and -- with `row` -- the pieces already hung on it (DecorGap;
+            /// DecorRunGap between fixtures) and whatever stands within DecorClear of it taller than its bottom less
+            /// DecorUnder (along the wall, DecorRunGap for a fixture).</summary>
+            List<(float A, float B)> Stretches(Face f, float depth, float bottom, float top, DecorRow row)
             {
                 var cuts = new List<(float, float)>();
                 float floorY = _room.Floor * Storey;
@@ -276,23 +334,29 @@ namespace UnturnedSim
                     var s = f.Span(r);
                     if (s.D0 < depth + 0.03f + StairWallReach && s.D1 > -StairWallReach) cuts.Add((s.A0 - StairWallReach, s.A1 + StairWallReach));
                 }
-                if (furnished)
+                if (row != null)
+                {
+                    bool fixture = row.Spot == DecorSpot.Over;
                     foreach (var o in _res.Furniture.Where(o => o.Floor == _room.Floor))
                     {
                         var s = f.Span(o.Footprint);
                         if (o.Mounted)
                         {
-                            if (s.D1 > -DecorGap && s.D0 < depth + DecorGap) cuts.Add((s.A0 - DecorGap, s.A1 + DecorGap));
+                            float gap = fixture && IsFixture(o) ? DecorRunGap : DecorGap;
+                            if (s.D1 > -gap && s.D0 < depth + gap) cuts.Add((s.A0 - gap, s.A1 + gap));
                             continue;
                         }
                         // its top over the floor: a piece on another stands on its top; a ceiling light hangs down from the ceiling
                         float h = FurnitureCatalog.Sizes[o.Name].H;
                         bool under = o.Ceiling ? o.Y - floorY - (o.Name.Contains("Pendant") ? PendantDrop : 0.28f) < top + DecorUnder
                                                : o.Y - floorY + h > bottom - DecorUnder;
-                        if (under && s.D1 > -DecorClear && s.D0 < depth + DecorClear) cuts.Add((s.A0 - DecorClear, s.A1 + DecorClear));
+                        float along = fixture && !o.Ceiling ? DecorRunGap : DecorClear;
+                        if (under && s.D1 > -DecorClear && s.D0 < depth + DecorClear) cuts.Add((s.A0 - along, s.A1 + along));
                     }
-                // the run less the cuts
-                var free = new List<(float A, float B)> { (f.Lo + DecorEnd, f.Hi - DecorEnd) };
+                }
+                // the run less the cuts (a fixture right into the corner, over the counter there)
+                float end = row?.Spot == DecorSpot.Over ? 0f : DecorEnd;
+                var free = new List<(float A, float B)> { (f.Lo + end, f.Hi - end) };
                 foreach (var (c0, c1) in cuts)
                     free = free.SelectMany(q => c1 <= q.A || c0 >= q.B ? new[] { q } : new (float A, float B)[] { (q.A, c0), (c1, q.B) }).Where(q => q.B - q.A > 0.01f).ToList();
                 return free;
@@ -309,7 +373,7 @@ namespace UnturnedSim
             }
 
             /// <summary>How much of this room's wall art could hang on: its faces less their windows, doorways and stairs.</summary>
-            float FreeWall() => AllFaces().Sum(f => Stretches(f, 0.2f, 1.2f, 3.4f, false).Sum(q => q.B - q.A));
+            float FreeWall() => AllFaces().Sum(f => Stretches(f, 0.2f, 1.2f, 3.4f, null).Sum(q => q.B - q.A));
 
             /// <summary>Where a piece hangs on a face with its middle `t` along it: its back DecorWallGap off the wall's real
             /// face, and on wall along all but a sliver (Flush, Backed), off the stairs' wall; null where it is not. (The
@@ -341,30 +405,49 @@ namespace UnturnedSim
                 return c;
             }
 
+            /// <summary>A group's pieces, first to last: the row's own, then its look-alikes in the table (the same mesh size,
+            /// the name but for its number) taking turns -- three small paintings, not one three times.</summary>
+            List<string> GroupNames(DecorRow row, int n, IReadOnlyList<DecorRow> rows)
+            {
+                string stem = row.Name.TrimEnd('0', '1', '2', '3', '4', '5', '6', '7', '8', '9');
+                var s = FurnitureCatalog.Sizes[row.Name];
+                var like = rows.Where(r => r != row && r.Name.TrimEnd('0', '1', '2', '3', '4', '5', '6', '7', '8', '9') == stem
+                                           && FurnitureCatalog.Sizes[r.Name].X0 == s.X0 && FurnitureCatalog.Sizes[r.Name].X1 == s.X1).Select(r => r.Name).ToList();
+                var l = new List<string> { row.Name };
+                for (int k = 1; k < n; k++) l.Add(like.Count == 0 ? row.Name : like[(k - 1) % like.Count]);
+                return l;
+            }
+
             /// <summary>Hang one of a row (a group of them, side by side) where its spot says, best first: the middle of the
             /// longest free stretch, centred over an Over piece or beside a Beside piece where the row has them, with a draw of
-            /// the décor's own per stretch for which wall. Each piece goes in through Hang (no window or door in front of it,
-            /// nothing hung there already). False when it fits nowhere.</summary>
-            bool HangDecor(DecorRow row, Rng rng)
+            /// the décor's own per stretch for which wall -- never a second focal piece on a wall, nor more than DecorFill of
+            /// a wall's length hung. Each piece goes in through Hang (no window or door in front of it, nothing hung there
+            /// already). False when it fits nowhere.</summary>
+            bool HangDecor(DecorRow row, Rng rng, IReadOnlyList<DecorRow> rows)
             {
                 var s = FurnitureCatalog.Sizes[row.Name];
                 var (bottom, top) = DecorSpan(row);
                 float w = s.X1 - s.X0, depth = s.Y1 - s.Y0;
                 int n = row.Group > 1 ? 2 + rng.Int(row.Group - 1) : 1;
                 float span = n * w + (n - 1) * DecorGroupGap, half = span * 0.5f;
-                bool Is(FurniturePlan m, string[] names) => names != null && m.On == null && !m.Mounted && !m.Ceiling && names.Any(p => m.Name.StartsWith(p));
+                var names = GroupNames(row, n, rows);
+                bool Is(FurniturePlan m, string[] pre) => pre != null && m.On == null && !m.Mounted && !m.Ceiling && pre.Any(p => m.Name.StartsWith(p));
                 var doors = row.Spot == DecorSpot.Door ? DoorsOut(true) is { Count: > 0 } outside ? outside : DoorsOut(false) : null;
                 var cands = new List<(Face F, float T, double Score)>();
                 foreach (var f in AllFaces())
                 {
                     float yaw = YawFacing(f.Nx, f.Nz);
+                    var onIt = _mine.Where(m => HungOn(m, f)).ToList();
+                    // one big piece to a wall; and a wall not filled past DecorFill (fixtures over counters aside)
+                    if (row.Focal && onIt.Any(IsFocal)) continue;
+                    if (row.Spot != DecorSpot.Over && onIt.Where(m => !IsFixture(m)).Sum(m => { var q = f.Span(m.Footprint); return q.A1 - q.A0; }) + span > DecorFill * (f.Hi - f.Lo)) continue;
                     // the pieces standing at this face (not at another face the same way round, behind it or across the
                     // room), with their backs to it for Over, and where along it their middles are
                     bool AtThis(FurniturePlan m) { var q = f.Span(m.Footprint); return q.D0 > -0.1f && q.D0 < 0.25f; }
                     var over = _mine.Where(m => Is(m, row.Over) && AtThis(m) && MathF.Abs(((m.Yaw - yaw) % 360f + 540f) % 360f - 180f) < 10f)
                                     .Select(m => { var q = f.Span(m.Footprint); return (q.A0 + q.A1) * 0.5f; }).ToList();
                     var beside = _mine.Where(m => Is(m, row.Beside) && AtThis(m)).Select(m => f.Span(m.Footprint)).ToList();
-                    foreach (var (a, b) in Stretches(f, depth, bottom, top, true))
+                    foreach (var (a, b) in Stretches(f, depth, bottom, top, row))
                     {
                         if (b - a < span) continue;
                         float lo = a + half, hi = b - half, mid = (a + b) * 0.5f;
@@ -373,7 +456,7 @@ namespace UnturnedSim
                         var ts = new List<(float T, double Bonus)>();
                         foreach (float t in over) if (t >= lo - 1e-3f && t <= hi + 1e-3f) ts.Add((t, 10));
                         foreach (var q in beside)
-                            foreach (float t in new[] { q.A0 - DecorGap - half, q.A1 + DecorGap + half })
+                            foreach (float t in new[] { q.A0 - DecorClear - 0.05f - half, q.A1 + DecorClear + 0.05f + half })
                                 if (t >= lo - 1e-3f && t <= hi + 1e-3f) ts.Add((t, 5));
                         if (row.Spot != DecorSpot.Over)
                         {
@@ -400,11 +483,12 @@ namespace UnturnedSim
                     var placed = new List<FurniturePlan>();
                     for (int k = 0; k < n; k++)
                     {
-                        var at = AtFace(row.Name, f, t - half + w * 0.5f + k * (w + DecorGroupGap));
-                        var m = at == null ? null : Hang(row.Name, new[] { at.Value }, null, row.Height, rng, DecorReach);
+                        var at = AtFace(names[k], f, t - half + w * 0.5f + k * (w + DecorGroupGap));
+                        var m = at == null ? null : Hang(names[k], new[] { at.Value }, null, row.Height, rng, DecorReach);
                         if (at == null) offWall++; else if (m == null) refused++;
                         if (m == null) break;
                         placed.Add(m);
+                        _hung[m] = row;
                     }
                     if (placed.Count == n)
                     {
@@ -412,7 +496,7 @@ namespace UnturnedSim
                         if (DecorTrace != null) foreach (var m in placed) DecorTrace(m, row);
                         return true;
                     }
-                    foreach (var m in placed) Remove(m);
+                    foreach (var m in placed) { _hung.Remove(m); Remove(m); }
                 }
                 FurnishTrace?.Invoke(System.FormattableString.Invariant($"decor {row.Name} x{n} in {_room}: nowhere, {cands.Count} candidates, {offWall} off a wall, {refused} refused by Hang"));
                 return false;
