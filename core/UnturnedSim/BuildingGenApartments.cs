@@ -564,11 +564,10 @@ namespace UnturnedSim
                     d.Wide = rng.Chance(WideDoorway) && !new[] { d.A, d.B }.Any(r => r.Kind == RoomKind.Kitchen && r.Cells < 12);
                 }
             res.NoWindowSides = turn ? Turned(spec.NoWindows) : spec.NoWindows;
-            BuildWalls(res, grids, k1, L);
-            SolveCorners(res.Walls);
-            // no porch unless one was asked for (a canopy over the lobby door, then), and no chimney
-            AddPorches(res, grids[0], spec.Porches == PorchChoice.Auto ? PorchChoice.None : spec.Porches, spec.Seed);
-            Furnish(res, spec.Seed);
+            // walls, furniture -- no porch unless one was asked for (a canopy over the lobby door, then), and no chimney --
+            // and inside a flat, now and then its living room open to its kitchen or its vestibule (OpenPlan: never the
+            // corridor, never a party wall)
+            BuildOut(res, grids, k1, L, spec, spec.Porches == PorchChoice.Auto ? PorchChoice.None : spec.Porches, chimney: false);
             // on a plot: what its rooms came out short of, said as the house fit says it
             if (fit && Shortfall(res) is var miss && miss.Count > 0)
             {

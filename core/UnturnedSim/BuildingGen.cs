@@ -122,6 +122,23 @@ namespace UnturnedSim
         public override string ToString() => $"{A}->{(B == null ? "outside" : B.ToString())} at {(AlongX ? "z" : "x")}={Line} {At:0.0}{(Role != DoorRole.Inside ? " " + Role : "")}";
     }
 
+    /// <summary>Two rooms that open into each other (strawberry, 2026-10-13: "allow buildings to actually omit interior
+    /// walls, within reason. ie a kitchen can open into a living room. but not a bathroom into a kitchen or something.
+    /// both rooms keep their room definitions, floor paints, but can open into eachother"): the wall between them on a
+    /// lattice line -- AlongX, the line of constant z = Line, else of constant x -- over cells [S0, S1) along it, cut away.
+    /// The wall itself stays, as the editor's rooms need it: they are derived from wall centrelines (RoomEnclosure), so a
+    /// wall left out would make the two rooms one enclosure and orphan one of their designations. What is left of it is a
+    /// pier at each end and a beam overhead -- the retail kit's own "open interior span" (WallOpenings: a garage, a porch
+    /// and an open span are one shape), cut as BuildWalls' ArchPorch opening.</summary>
+    public sealed class GenOpening
+    {
+        public int Floor;
+        public GenRoom A, B;
+        public bool AlongX;
+        public int Line, S0, S1;
+        public override string ToString() => $"{A}<->{B} open at {(AlongX ? "z" : "x")}={Line} [{S0},{S1})";
+    }
+
     /// <summary>How a building's stairs climb a storey: one straight flight; two half flights turning back on themselves
     /// at a landing (a switchback, 180 degrees); or two half flights turning a corner at one (a quarter turn, 90).</summary>
     public enum StairShape { Straight, Switchback, Quarter }
@@ -159,6 +176,8 @@ namespace UnturnedSim
         public List<RoomDesignation> Rooms = new List<RoomDesignation>();
         public List<GenRoom> Layout = new List<GenRoom>();
         public List<GenDoor> Doors = new List<GenDoor>();
+        /// <summary>The walls cut away between rooms that open into each other (BuildingGen.OpenPlan): an open plan.</summary>
+        public List<GenOpening> OpenPlan = new List<GenOpening>();
         /// <summary>What stands in the rooms (BuildingGen.Furnish): retail props by name.</summary>
         public List<FurniturePlan> Furniture = new List<FurniturePlan>();
         public IEnumerable<PropDesignation> Props => Furniture.Select(m => new PropDesignation(m.Name, m.X, m.Y, m.Z, m.Yaw));
@@ -301,6 +320,7 @@ namespace UnturnedSim
                 for (int i = 0; i < g.More.Count; i++) { var q = g.More[i]; g.More[i] = (cx - q.X1, cz - q.Z1, cx - q.X0, cz - q.Z0); }
             }
             foreach (var d in res.Doors) { d.Line = d.AlongX ? cz - d.Line : cx - d.Line; d.At = (d.AlongX ? W : D) - d.At; }
+            foreach (var o in res.OpenPlan) { o.Line = o.AlongX ? cz - o.Line : cx - o.Line; (o.S0, o.S1) = o.AlongX ? (cx - o.S1, cx - o.S0) : (cz - o.S1, cz - o.S0); }
             for (int i = 0; i < res.Footprints.Count; i++) res.Footprints[i] = (cx - res.Footprints[i].X1, cx - res.Footprints[i].X0);
             res.Bay = (cx - res.Bay.X1, cz - res.Bay.Z1, cx - res.Bay.X0, cz - res.Bay.Z0);
             if (res.Shape != FootprintShape.Rect) res.Wing = (cx - res.Wing.X1, cz - res.Wing.Z1, cx - res.Wing.X0, cz - res.Wing.Z0);
@@ -681,11 +701,12 @@ namespace UnturnedSim
         /// room that needs daylight lit by a window in an outside wall, every ground-floor garage and warehouse with its
         /// vehicle door. (FitPlot's search asks: a room drawn at its least can come out without -- a kitchen-diner with no
         /// floor clear of its three doors' walks for a table, a corner shop whose one street wall is its door.)</summary>
-        static List<(string What, int Weight)> Shortfall(BuildingGenResult r)
+        /// (`unfurnished` and `unlit`, when given, collect the rooms short of their furniture and of their daylight.)
+        static List<(string What, int Weight)> Shortfall(BuildingGenResult r, HashSet<GenRoom> unfurnished = null, HashSet<GenRoom> unlit = null)
         {
             var miss = new List<(string What, int Weight)>();
             bool Has(GenRoom g, params string[] ns) => r.Furniture.Any(m => m.Room == g && ns.Any(n => m.Name.StartsWith(n)));
-            void Need(GenRoom g, string what, bool ok, int weight = 2) { if (!ok) miss.Add(($"{g.Kind}: {what}", weight)); }
+            void Need(GenRoom g, string what, bool ok, int weight = 2) { if (!ok) { miss.Add(($"{g.Kind}: {what}", weight)); unfurnished?.Add(g); } }
             foreach (var g in r.Layout)
                 switch (g.Kind)
                 {
@@ -722,8 +743,8 @@ namespace UnturnedSim
             foreach (var g in r.Layout)
             {
                 // (a building with a side asked to have no windows is let off its daylight: a room may face only that side)
-                if (Habitable(g.Kind) && r.NoWindowSides == Sides.None) Need(g, "window", lit.Contains(g));
-                if (g.Floor == 0 && g.Kind is RoomKind.Garage or RoomKind.Warehouse) Need(g, "vehicle door", vehicle.Contains(g));
+                if (Habitable(g.Kind) && r.NoWindowSides == Sides.None && !lit.Contains(g)) { miss.Add(($"{g.Kind}: window", 2)); unlit?.Add(g); }
+                if (g.Floor == 0 && g.Kind is RoomKind.Garage or RoomKind.Warehouse && !vehicle.Contains(g)) miss.Add(($"{g.Kind}: vehicle door", 2));
             }
             return miss;
         }
@@ -1289,12 +1310,8 @@ namespace UnturnedSim
                     d.Wide = rng.Chance(WideDoorway) && !new[] { d.A, d.B }.Any(r => r.Kind == RoomKind.Kitchen && r.Cells < 12);
                 }
             res.NoWindowSides = turn ? Turned(spec.NoWindows) : spec.NoWindows;
-            BuildWalls(res, grids, k1, L);
-            SolveCorners(res.Walls);
-            // (after the corner solve, which must not grow a house wall toward a porch post)
-            AddPorches(res, ground, spec.Porches, spec.Seed);
-            AddChimney(res, grids, spec.Chimney, spec.Seed);
-            Furnish(res, spec.Seed);
+            // walls, porches, the chimney, furniture -- and now and then the wall between two of them left out altogether
+            BuildOut(res, grids, k1, L, spec, spec.Porches, chimney: true);
             if (turn) TurnHalf(res);
             return res;
 
@@ -2028,6 +2045,166 @@ namespace UnturnedSim
                       or (RoomKind.LivingRoom, RoomKind.DiningRoom) or (RoomKind.DiningRoom, RoomKind.LivingRoom)
                       or (RoomKind.Kitchen, RoomKind.LivingRoom) or (RoomKind.LivingRoom, RoomKind.Kitchen);
 
+        /// <summary>Rooms that may share one space with no wall between them: the living room, the kitchen, the dining room,
+        /// and a hall (circulation, which an open-plan room is walked through anyway).</summary>
+        public static bool OpenPlanKind(RoomKind k) => k is RoomKind.LivingRoom or RoomKind.Kitchen or RoomKind.DiningRoom or RoomKind.Hall;
+        /// <summary>May the wall between these two rooms be left out (strawberry: "a kitchen can open into a living room. but
+        /// not a bathroom into a kitchen")? Both of the open-plan kinds, not two halls; in a house, or inside one flat -- never
+        /// the corridor, never a party wall. Never in a business: a shop floor keeps its walls to the back of the house (its
+        /// office and break room are private besides), as its doorways keep their doors.</summary>
+        public static bool MayOpenPlan(GenRoom a, GenRoom b, BuildingKind kind)
+            => (kind == BuildingKind.Residential || (kind == BuildingKind.Apartment && a.Unit >= 0)) && a.Unit == b.Unit
+               && OpenPlanKind(a.Kind) && OpenPlanKind(b.Kind) && !(a.Kind == RoomKind.Hall && b.Kind == RoomKind.Hall);
+        /// <summary>Percent of homes -- houses, and flats one by one -- with rooms that may open into each other that are
+        /// open plan; and of an open-plan home's pairs of such rooms, the percent that open (one at least: OpenPlanRank).
+        /// strawberry asked for it "within reason": a home is open plan or it is not, as real ones are, and a little under
+        /// half are -- measured, OpenPlan's doc says how many of what.</summary>
+        public const int OpenPlanHomes = 45, OpenPlanPairs = 60;
+        /// <summary>The least stretch of wall left out, in cells: one cell is a wide doorway's width, not a room opening up.
+        /// And the most in one opening: four cells is about 11 m clear between its piers, the widest open span the retail
+        /// kit has (WallOpenings.Widths) -- a longer stretch (a hall the length of a living room) is opened in parts of four
+        /// cells or fewer, a pier standing between them under the beam.</summary>
+        public const int OpenPlanCells = 2, OpenPlanMostCells = 4;
+        /// <summary>What is left of a wall left out: a pier this long at each end, off the faces of the walls meeting it (as
+        /// a wide doorway keeps off them), and under a floor above a beam this deep below the slab -- the slab's own
+        /// underside, a reveal flush with it, would fight it for the same pixels. Under a roof the wall's top half metre,
+        /// which the next storey's slab would otherwise fill, is the beam.</summary>
+        public const float OpenPier = 0.3f, OpenBeam = 0.3f;
+
+        /// <summary>From the rooms and doors on: the walls, their corners solved, the porches, the chimney and the furniture
+        /// -- built, and where what they came out as says so, built again, for one of two reasons. The chimney's stack is
+        /// wider at its foot than a window's clear stretch of wall often is, so where every spot for it has a window behind
+        /// it, the walls are built again with that wall's windows laid round the spot (BuildWalls' keepClear) -- unless that
+        /// leaves a room that had daylight without it, when the chimney goes instead. And open plan (OpenPlan): a room it
+        /// leaves short of what it is for -- a kitchen of its counters, a living room of its couch -- has its walls back,
+        /// its pairs closed, and the building is built again; after three tries, all of them. Everything rebuilt here is
+        /// laid afresh: the walls, stairs, porches, chimney and furniture, the notes they wrote, and the doors' places
+        /// (BuildWalls slides a wide one).</summary>
+        static void BuildOut(BuildingGenResult res, List<Grid> grids, int k1, int L, BuildingGenSpec spec, PorchChoice porches, bool chimney)
+        {
+            var doors = res.Doors.ToList();
+            var placed = doors.Select(d => (d.At, d.Width)).ToList();
+            int notes = res.Notes.Count;
+            void Reset()
+            {
+                res.Walls.Clear(); res.Stairs.Clear(); res.Porches.Clear(); res.Furniture.Clear();
+                res.Chimney = default;
+                res.Notes.RemoveRange(notes, res.Notes.Count - notes);
+                for (int i = 0; i < doors.Count; i++) { doors[i].At = placed[i].At; doors[i].Width = placed[i].Width; }
+                // (the doors between rooms that are still open to each other stay out)
+                res.Doors.Clear();
+                res.Doors.AddRange(doors.Where(d => !res.OpenPlan.Any(o => o.Floor == d.Floor && ((o.A == d.A && o.B == d.B) || (o.A == d.B && o.B == d.A)))));
+            }
+            OpenPlan(res, grids, spec.Seed);
+            List<(int Floor, bool AlongX, int Line, float A0, float A1)> keep = null;
+            (bool AlongX, int Line, float P)? spot = null;
+            bool mayMove = true;
+            HashSet<GenRoom> unlitBefore = null;
+            for (int pass = 0, closes = 0; ; pass++)
+            {
+                BuildWalls(res, grids, k1, L, keep);
+                SolveCorners(res.Walls);
+                // (after the corner solve, which must not grow a house wall toward a porch post)
+                AddPorches(res, grids[0], porches, spec.Seed);
+                var move = chimney ? AddChimney(res, grids, spec.Chimney, spec.Seed, spot, mayMove && spot == null) : null;
+                if (move != null)
+                {
+                    // the only spots for the chimney have windows behind them: build again with them laid round it
+                    unlitBefore = new HashSet<GenRoom>(); Shortfall(res, null, unlitBefore);
+                    spot = move;
+                    keep = ChimneyKeepClear(res, move.Value);
+                    Reset();
+                    continue;
+                }
+                if (spot != null && unlitBefore != null)
+                {
+                    var unlit = new HashSet<GenRoom>(); Shortfall(res, null, unlit);
+                    if (!unlit.IsSubsetOf(unlitBefore) || res.Chimney.X1 <= res.Chimney.X0)
+                    {
+                        // moving the windows left a room in the dark (or the spot failed after all): the walls as they were,
+                        // and a chimney only where one is clear of them -- none, as the first build found
+                        spot = null; keep = null; mayMove = false; unlitBefore = null;
+                        Reset();
+                        continue;
+                    }
+                }
+                Furnish(res, spec.Seed);
+                if (res.OpenPlan.Count == 0) return;
+                var unfurnished = new HashSet<GenRoom>(); Shortfall(res, unfurnished);
+                int before = res.OpenPlan.Count;
+                if (++closes > 3) res.OpenPlan.Clear();
+                else res.OpenPlan.RemoveAll(o => unfurnished.Contains(o.A) || unfurnished.Contains(o.B));
+                if (res.OpenPlan.Count == before) return;
+                Reset();
+            }
+        }
+
+        /// <summary>Open plan: the walls between pairs of rooms that MayOpenPlan, left out in some homes -- a house, or a flat
+        /// (OpenPlanHomes), and in one of those some of its pairs and one at least (OpenPlanPairs, OpenPlanRank). Every
+        /// stretch of 2+ cells where the two face each other is opened, but never beside the stair bay (whose walls the
+        /// flights and the landing stand against: strawberry, "the landing of the stairs is only supported by 1 wall, should
+        /// require two"). The doors that joined the two go: the opening joins them. The rooms keep their kinds, their floors
+        /// (each room's cover is its own rectangles) and their furnishing; the wall's line keeps a wall, so its corners solve
+        /// as before and the editor's rooms stay two (GenOpening). Its own rng stream, so a building that opens nothing is
+        /// the one it was. (BuildOut closes a pair again where it left a room short of its furniture.)</summary>
+        static void OpenPlan(BuildingGenResult res, List<Grid> grids, int seed)
+        {
+            var orng = new Rng(unchecked(seed * 6007 + 0x4F50));
+            var bay = res.Bay;
+            bool InBay(int x, int z) => res.Floors > 1 && bay.X1 > bay.X0 && x >= bay.X0 && x < bay.X1 && z >= bay.Z0 && z < bay.Z1;
+            // every pair that may open and has a stretch to open, with that stretch: floor by floor, in the order the floor's
+            // runs come (a stable order: the draws follow it)
+            var pairs = new List<(int Floor, GenRoom A, GenRoom B, List<(bool AlongX, int Line, int S0, int S1)> Spans)>();
+            for (int f = 0; f < grids.Count; f++)
+                foreach (var r in Runs(grids[f]))
+                {
+                    if (r.B == null || !MayOpenPlan(r.A, r.B, res.Kind)) continue;
+                    int at = pairs.FindIndex(p => (p.A == r.A && p.B == r.B) || (p.A == r.B && p.B == r.A));
+                    if (at < 0) { pairs.Add((f, r.A, r.B, new List<(bool, int, int, int)>())); at = pairs.Count - 1; }
+                    // the run, less its cells beside the bay
+                    int s = r.S0;
+                    while (s < r.S1)
+                    {
+                        bool Bay(int c) => r.AlongX ? InBay(c, r.Line - 1) || InBay(c, r.Line) : InBay(r.Line - 1, c) || InBay(r.Line, c);
+                        if (Bay(s)) { s++; continue; }
+                        int s0 = s;
+                        while (s < r.S1 && !Bay(s)) s++;
+                        if (s - s0 >= OpenPlanCells) pairs[at].Spans.Add((r.AlongX, r.Line, s0, s));
+                    }
+                }
+            pairs.RemoveAll(p => p.Spans.Count == 0);
+            // home by home -- a house, or a flat -- open plan or not; an open one opens each of its pairs on a roll, and at
+            // least the best of them (OpenPlanRank)
+            foreach (var home in pairs.GroupBy(p => p.A.Unit).ToList())
+            {
+                if (!orng.Chance(OpenPlanHomes)) continue;
+                var mine = home.ToList();
+                var open = mine.Where(_ => orng.Chance(OpenPlanPairs)).ToList();
+                if (open.Count == 0) open.Add(mine.OrderBy(p => OpenPlanRank(p.A.Kind, p.B.Kind)).First());
+                foreach (var (f, a, b, spans) in open)
+                {
+                    foreach (var (alongX, line, s0, s1) in spans)
+                    {
+                        // in parts as even as the lattice makes them, none longer than OpenPlanMostCells (and so none shorter
+                        // than OpenPlanCells)
+                        int parts = (s1 - s0 + OpenPlanMostCells - 1) / OpenPlanMostCells, at = s0;
+                        for (int k = 0; k < parts; k++)
+                        {
+                            int len = (s1 - at + (parts - k) - 1) / (parts - k);
+                            res.OpenPlan.Add(new GenOpening { Floor = f, A = a, B = b, AlongX = alongX, Line = line, S0 = at, S1 = at + len });
+                            at += len;
+                        }
+                    }
+                    res.Doors.RemoveAll(d => d.Floor == f && ((d.A == a && d.B == b) || (d.A == b && d.B == a)));
+                }
+            }
+        }
+
+        /// <summary>Which pair an open-plan home opens first, when its rolls opened none: the kitchen into the living room
+        /// (strawberry's own example), into the dining room, the dining room into the living room, then a hall into any.</summary>
+        static int OpenPlanRank(RoomKind a, RoomKind b) => Pair(a, b, RoomKind.Kitchen, RoomKind.LivingRoom) ? 0 : Pair(a, b, RoomKind.Kitchen, RoomKind.DiningRoom) ? 1
+            : Pair(a, b, RoomKind.DiningRoom, RoomKind.LivingRoom) ? 2 : 3;
+
         /// <summary>Every run where two owners face each other on a floor: room and room, or room and outside (B null).</summary>
         static List<Run> Runs(Grid g)
         {
@@ -2102,7 +2279,10 @@ namespace UnturnedSim
             return outp;
         }
 
-        static void BuildWalls(BuildingGenResult res, List<Grid> grids, int k1, int L)
+        /// (`keepClear`: stretches of an outside wall's line, by floor, that no window goes in -- the chimney's spot, where it
+        /// had to have the windows laid round it: BuildOut.)
+        static void BuildWalls(BuildingGenResult res, List<Grid> grids, int k1, int L,
+                               IReadOnlyList<(int Floor, bool AlongX, int Line, float A0, float A1)> keepClear = null)
         {
             int D = res.CellsZ, floors = res.Floors;
             float Dm = D * Cell, he = Ext * 0.5f;
@@ -2247,6 +2427,19 @@ namespace UnturnedSim
                     if (d.Open) op.DoorProp = null;
                     iw.W.Openings.Add(op);
                 }
+                // open plan: the wall between two rooms that share one space, cut away from a pier at one end to a pier at
+                // the other -- each OpenPier off the face of the wall meeting it there -- and from the floor to a beam: up
+                // to OpenBeam under a slab, where the floor above stands over it, else to OpeningTop (the wall's top half
+                // metre is the beam). The wall stays: the editor's rooms are found from wall centrelines (GenOpening).
+                foreach (var op in res.OpenPlan.Where(o => o.Floor == f))
+                {
+                    var iw = inner.First(q => q.AlongX == op.AlongX && q.Line == op.Line && q.S0 <= op.S0 && op.S1 <= q.S1);
+                    float lo = op.S0 * Cell + g.Meet(op.AlongX, op.Line, op.S0) + OpenPier, hi = op.S1 * Cell - g.Meet(op.AlongX, op.Line, op.S1) - OpenPier;
+                    // (under a slab anywhere along it: a reveal flush with the slab's underside fights it, so the beam)
+                    float xa = op.AlongX ? lo : op.Line * Cell, xb = op.AlongX ? hi : op.Line * Cell;
+                    bool slabOver = f + 1 < floors && xb >= res.Footprints[f + 1].X0 * Cell - he && xa <= res.Footprints[f + 1].X1 * Cell + he;
+                    iw.W.Openings.Add(new WallOpening(lo - iw.S0 * Cell, 0f, hi - lo, slabOver ? OpeningTop - OpenBeam : OpeningTop, 999f, ArchPorch) { Glazed = false });
+                }
 
                 // what each room has in its outside walls
                 bool business = res.Kind == BuildingKind.Commercial || res.Kind == BuildingKind.Misc;
@@ -2319,6 +2512,9 @@ namespace UnturnedSim
                     }
                     // and not where a roof below leans on it, nor within WindowBesideRoof of that
                     cuts.AddRange(leaned[ri].Stretches.Select(q => (q.A - WindowBesideRoof, q.B + WindowBesideRoof)));
+                    // nor behind the chimney, where it needed them out of its way
+                    if (keepClear != null)
+                        cuts.AddRange(keepClear.Where(k => k.Floor == f && k.AlongX == run.AlongX && k.Line == run.Line).Select(k => (k.A0, k.A1)));
                     var free = new List<(float A, float B)> { (lo, hi) };
                     foreach (var (c0, c1) in cuts)
                         free = free.SelectMany(s => s.B <= c0 || s.A >= c1 ? new[] { s } : new (float A, float B)[] { (s.A, Math.Min(s.B, c0)), (Math.Max(s.A, c1), s.B) })
@@ -2677,6 +2873,10 @@ namespace UnturnedSim
         /// "chimney should buldge out of the exterior wall to some degree"): a breast's depth, so it clears the eaves'
         /// RoofOverhang by half a metre and reads as passing up through them rather than tucked under.</summary>
         public const float ChimneyOut = 0.9f;
+        /// <summary>The stack's foot, through the ground storey: this wide along its wall (the stack's 1.8 m and 0.6 m a
+        /// side, about what a real breast's foot is to its flue), up to this high; its shoulders then slope in to the stack's
+        /// width by OpeningTop -- 0.6 m in over 0.75 m up, about 50 degrees, a weathering's slope.</summary>
+        public const float ChimneyBaseWide = 3.0f, ChimneyBaseTop = 3.0f;
 
         /// <summary>The top of the roof over a plan point: the highest roof surface there (a pitched plane's, a flat slab's
         /// top), NaN where no roof is. The pitched planes' trapezoid ends (Inset*) are honoured, so a cross gable's valley
@@ -2744,17 +2944,25 @@ namespace UnturnedSim
         /// there (a corner, a lower roof leaning on it) reaches the stack, and clear of any porch on that wall; on the
         /// ground floor the breast keeps clear of the partitions and the stairs. A position that fails any floor is not
         /// used; with none that passes, no chimney (said so when one was asked for). Added after the corner solve, which
-        /// must not grow walls toward it, and before the furnisher, which then keeps its pieces off it and clear of the fire.</summary>
-        static void AddChimney(BuildingGenResult res, List<Grid> grids, ChimneyChoice choice, int seed)
+        /// must not grow walls toward it, and before the furnisher, which then keeps its pieces off it and clear of the fire.
+        /// The stack's foot is wider than the clear wall between a living room's windows often is (round 10's 1.8 m stack
+        /// found a spot in 84 of 160 houses asked for one; a 3 m foot, 19 -- and with the windows laid round it, 146). So
+        /// with `mayMove`, when no spot is clear, the first that would be but for windows (an opening off the floor) is
+        /// returned and nothing is laid: BuildOut builds the walls again with their windows laid round it and asks again for
+        /// `only` that spot. Null otherwise.</summary>
+        static (bool AlongX, int Line, float P)? AddChimney(BuildingGenResult res, List<Grid> grids, ChimneyChoice choice, int seed,
+                                                            (bool AlongX, int Line, float P)? only = null, bool mayMove = false)
         {
             var crng = new Rng(unchecked(seed * 7177 + 0x4348));
             bool roll = crng.Chance(50);
             var living = res.Layout.FirstOrDefault(g => g.Kind == RoomKind.LivingRoom && g.Floor == 0);
-            if (choice == ChimneyChoice.None || (choice == ChimneyChoice.Auto && !roll) || res.Kind != BuildingKind.Residential) return;
-            if (living == null) { if (choice == ChimneyChoice.Yes) res.Notes.Add("a chimney was asked for, but there is no living room on the ground floor for its fireplace"); return; }
+            if (choice == ChimneyChoice.None || (choice == ChimneyChoice.Auto && !roll) || res.Kind != BuildingKind.Residential) return null;
+            if (living == null) { if (choice == ChimneyChoice.Yes) res.Notes.Add("a chimney was asked for, but there is no living room on the ground floor for its fireplace"); return null; }
             // (its ends kept further from any wall crossing its line than the corner solve reaches, 1.6 m, or the editor would
             // grow the breast -- or the stack -- to meet it)
             float he = Ext * 0.5f, half = ChimneyWide * 0.5f, clearEnds = 2.1f;   // 1.6 m and the far face of a corner wall
+            // (the stack is wider at its foot, through the ground storey: what keeps clear of the stack there keeps clear of that)
+            float baseHalf = ChimneyBaseWide * 0.5f;
             var ground = grids[0];
             // the floors' outside walls as built (with their openings), by floor, line and run
             WallPlan OuterWall(int f, bool alongX, int line, float at)
@@ -2771,7 +2979,8 @@ namespace UnturnedSim
                 return null;
             }
             float U(WallPlan w, float at) => w.Yaw switch { 0f => at - w.X, 180f => w.X - at, 270f => at - w.Z, _ => w.Z - at };
-            bool Clear(WallPlan w, float p) { float u0 = U(w, p - half - 0.3f), u1 = U(w, p + half + 0.3f); float lo = MathF.Min(u0, u1), hi = MathF.Max(u0, u1); return !w.Openings.Any(o => o.U < hi && o.U + o.Width > lo); }
+            // (`windows`: whether a window -- an opening off the floor -- counts; a door never moves)
+            bool Clear(WallPlan w, float p, float half, bool windows) { float u0 = U(w, p - half - 0.3f), u1 = U(w, p + half + 0.3f); float lo = MathF.Min(u0, u1), hi = MathF.Max(u0, u1); return !w.Openings.Any(o => (windows || o.V < 0.05f) && o.U < hi && o.U + o.Width > lo); }
             // the stretch of floor f's outline on a line, facing `face`, that holds position p (metres along it): the cells
             // either side of p's, while they have floor inside and nothing out
             (float A0, float A1) Stretch(Grid g, bool alongX, int line, Sides face, float p)
@@ -2795,30 +3004,38 @@ namespace UnturnedSim
                 var fr = res.Front;
                 bool frontWall = fr != null && fr.AlongX == run.AlongX && fr.Line == run.Line;
                 int pref = frontWall ? 2 : run.AlongX ? 1 : 0;
-                for (float p = run.S0 * Cell + clearEnds + half; p <= run.S1 * Cell - clearEnds - half + 1e-3f; p += 0.75f)
+                for (float p = run.S0 * Cell + clearEnds + baseHalf; p <= run.S1 * Cell - clearEnds - baseHalf + 1e-3f; p += 0.75f)
                     cands.Add((run.AlongX, run.Line, p, e, pref));
             }
-            foreach (var (alongX, line, p, e, _) in crng.Keyed(cands).OrderBy(c => c.Item.Pref).ThenBy(c => c.Key).Select(c => c.Item).ToList())
+            var order = crng.Keyed(cands).OrderBy(c => c.Item.Pref).ThenBy(c => c.Key).Select(c => c.Item).ToList();
+            // (at a spot asked for -- the one the walls were built again round -- that spot alone)
+            if (only != null) order = order.Where(c => c.AlongX == only.Value.AlongX && c.Line == only.Value.Line && MathF.Abs(c.P - only.Value.P) < 1e-3f).ToList();
+            // a spot clear as the walls are, else (with mayMove) one that would be but for its windows
+            foreach (bool windows in mayMove ? new[] { true, false } : new[] { true })
+            foreach (var (alongX, line, p, e, _) in order)
             {
                 var face = e > 0 ? (alongX ? Sides.North : Sides.East) : (alongX ? Sides.South : Sides.West);
                 // across the wall: the breast from its inner face into the room, the stack from its outer face out
                 float inner = line * Cell - e * he, outer = line * Cell + e * he;
                 float across = inner - e * ChimneyDeep * 0.5f, stackAt = outer + e * ChimneyOut * 0.5f;
-                (float X0, float Z0, float X1, float Z1) Span(float a, float b) => alongX
-                    ? (p - half, MathF.Min(a, b), p + half, MathF.Max(a, b)) : (MathF.Min(a, b), p - half, MathF.Max(a, b), p + half);
-                var box = Span(inner, inner - e * ChimneyDeep);
-                var stackBox = Span(outer, outer + e * ChimneyOut);
+                (float X0, float Z0, float X1, float Z1) Span(float a, float b, float hw) => alongX
+                    ? (p - hw, MathF.Min(a, b), p + hw, MathF.Max(a, b)) : (MathF.Min(a, b), p - hw, MathF.Max(a, b), p + hw);
+                var box = Span(inner, inner - e * ChimneyDeep, half);
+                var stackBox = Span(outer, outer + e * ChimneyOut, half);
+                var baseBox = Span(outer, outer + e * ChimneyOut, baseHalf);
                 bool ok = true;
                 for (int f = 0; f < res.Floors && ok; f++)
                 {
+                    // (the stack's half width on this floor: its base's on the ground floor)
+                    float hw = f == 0 ? baseHalf : half;
                     // the floor has the spot inside it, on the same outside wall, with nothing in that wall behind the
                     // chimney, and that wall runs on past it both ways at least as far as from the ground floor's ends
                     int ci = (int)MathF.Floor((alongX ? p : across) / Cell), cj = (int)MathF.Floor((alongX ? across : p) / Cell);
                     var room = grids[f].At(ci, cj);
                     var w = OuterWall(f, alongX, line, p);
                     var (a0, a1) = Stretch(grids[f], alongX, line, face, p);
-                    ok = room != null && grids[f].Out(alongX, line, alongX ? ci : cj) == face && w != null && Clear(w, p)
-                         && p - half - clearEnds >= a0 - 1e-3f && p + half + clearEnds <= a1 + 1e-3f;
+                    ok = room != null && grids[f].Out(alongX, line, alongX ? ci : cj) == face && w != null && Clear(w, p, hw, windows)
+                         && p - hw - clearEnds >= a0 - 1e-3f && p + hw + clearEnds <= a1 + 1e-3f;
                     // no wall of this floor crossing the breast's line (on the ground floor) or the stack's within the
                     // corner solve's reach of their ends
                     foreach (float lineAt in f == 0 ? new[] { across, stackAt } : new[] { stackAt })
@@ -2831,7 +3048,7 @@ namespace UnturnedSim
                                 float ql = alongX ? q.X : q.Z;
                                 float qa = alongX ? q.Z : q.X, qb = qa + (alongX ? dz : dx) * q.Length;
                                 if (lineAt < MathF.Min(qa, qb) - 0.05f || lineAt > MathF.Max(qa, qb) + 0.05f) return false;
-                                return MathF.Abs(ql - p) < half + 2.05f;
+                                return MathF.Abs(ql - p) < (lineAt == stackAt ? hw : half) + 2.05f;
                             });
                     // nor one meeting the wall behind the stack -- a partition ending at the wall's centreline, across the
                     // stack's span, is in the corner solve's reach of the stack and would grow through the wall to it
@@ -2842,7 +3059,7 @@ namespace UnturnedSim
                             var (c, s) = PlanTrig.CosSin(q.Yaw); float dx = c, dz = -s;
                             if (alongX ? MathF.Abs(dx) > 0.5f : MathF.Abs(dz) > 0.5f) return false;   // parallel to it
                             float ql = alongX ? q.X : q.Z;
-                            if (MathF.Abs(ql - p) > half + 0.1f) return false;
+                            if (MathF.Abs(ql - p) > hw + 0.1f) return false;
                             float qa = alongX ? q.Z : q.X, qb = qa + (alongX ? dz : dx) * q.Length;
                             return MathF.Max(0f, MathF.Max(MathF.Min(qa, qb) - stackAt, stackAt - MathF.Max(qa, qb))) < 1.7f;
                         });
@@ -2864,11 +3081,13 @@ namespace UnturnedSim
                 // and clear of every porch -- its deck, its roof's overhang, and far enough along the wall that its posts'
                 // and footings' corner solve does not reach the stack's footing either
                 if (ok)
-                    ok = !res.Porches.Any(q => q.X0 - clearEnds < stackBox.X1 && q.X1 + clearEnds > stackBox.X0 && q.Z0 - clearEnds < stackBox.Z1 && q.Z1 + clearEnds > stackBox.Z0);
+                    ok = !res.Porches.Any(q => q.X0 - clearEnds < baseBox.X1 && q.X1 + clearEnds > baseBox.X0 && q.Z0 - clearEnds < baseBox.Z1 && q.Z1 + clearEnds > baseBox.Z0);
                 if (!ok) continue;
-                WallPlan Seg(float at, float deep, float y, float h)
+                if (!windows) return (alongX, line, p);
+                WallPlan Seg(float at, float deep, float y, float h, float hw = -1f)
                 {
-                    var w = alongX ? Wall(p - half, at, p + half, at, y, deep) : Wall(at, p - half, at, p + half, y, deep);
+                    if (hw < 0f) hw = half;
+                    var w = alongX ? Wall(p - hw, at, p + hw, at, y, deep) : Wall(at, p - hw, at, p + hw, y, deep);
                     w.Height = h;
                     return w;
                 }
@@ -2878,13 +3097,24 @@ namespace UnturnedSim
                 // floor, so the furnisher keeps tall pieces off it but does not take it for a door to walk through)
                 foot.Openings.Add(new WallOpening(ChimneyWide * 0.5f - 0.55f, 0.06f, 1.1f, 1.0f, 999f, ArchVent) { Glazed = false });
                 res.Walls.Add(foot);
-                // the stack outside: a footing as deep as the house's under it, a storey at a time up the wall, then on up
-                // past the eaves over the roof where it comes through by ChimneyOverRoof, and -- the usual rule for a flue
-                // -- 0.6 m over any roof within 3 m of it, so one by the eave stands tall instead of a stub
-                var footing = Seg(stackAt, ChimneyOut, -WallOpenings.FoundationDepth, WallOpenings.FoundationDepth);
+                // the stack outside, wider at its foot (strawberry, 2026-10-13: "widen the bottom of a chimney with sloped
+                // sections on the 1st floor" -- her first floor, the ground storey, the fireplace's): on a footing as deep as
+                // the house's and as wide as it, a base ChimneyBaseWide across up to ChimneyBaseTop; its shoulders, sloping
+                // in on both sides to the stack's ChimneyWide by OpeningTop -- the floor above's underside, and under the
+                // eaves of a house of one storey, which a wider shoulder up to the wall head would run into -- then the
+                // stack a storey at a time up the wall and on up past the eaves over the roof where it comes through by
+                // ChimneyOverRoof, and -- the usual rule for a flue -- 0.6 m over any roof within 3 m of it, so one by the
+                // eave stands tall instead of a stub
+                var footing = Seg(stackAt, ChimneyOut, -WallOpenings.FoundationDepth, WallOpenings.FoundationDepth, baseHalf);
                 footing.Kind = SurfaceKind.Foundation;
                 res.Walls.Add(footing);
-                for (int f = 0; f < res.Floors; f++) res.Walls.Add(Seg(stackAt, ChimneyOut, f * Storey, Storey));
+                res.Walls.Add(Seg(stackAt, ChimneyOut, 0f, ChimneyBaseTop, baseHalf));
+                // (a trapezoid, as a shed's gable infill is: the editor cuts it to InsetL/R, its sides lerped up its height)
+                var shoulders = Seg(stackAt, ChimneyOut, ChimneyBaseTop, OpeningTop - ChimneyBaseTop, baseHalf);
+                shoulders.InsetL1 = shoulders.InsetR1 = baseHalf - half;
+                res.Walls.Add(shoulders);
+                res.Walls.Add(Seg(stackAt, ChimneyOut, OpeningTop, Storey - OpeningTop));
+                for (int f = 1; f < res.Floors; f++) res.Walls.Add(Seg(stackAt, ChimneyOut, f * Storey, Storey));
                 float head = res.Floors * Storey;
                 var sb = stackBox;
                 float roofTop = new[] { (sb.X0, sb.Z0), (sb.X1, sb.Z0), (sb.X0, sb.Z1), (sb.X1, sb.Z1), ((sb.X0 + sb.X1) * 0.5f, (sb.Z0 + sb.Z1) * 0.5f) }
@@ -2895,10 +3125,24 @@ namespace UnturnedSim
                         if (RoofTopAt(res, x, z) is float h && !float.IsNaN(h)) near = MathF.Max(near, h);
                 float top = MathF.Max(roofTop + ChimneyOverRoof, near + 0.6f);
                 res.Walls.Add(Seg(stackAt, ChimneyOut, head, top - head));
-                res.Chimney = (MathF.Min(box.X0, stackBox.X0), MathF.Min(box.Z0, stackBox.Z0), MathF.Max(box.X1, stackBox.X1), MathF.Max(box.Z1, stackBox.Z1));
-                return;
+                res.Chimney = (MathF.Min(box.X0, baseBox.X0), MathF.Min(box.Z0, baseBox.Z0), MathF.Max(box.X1, baseBox.X1), MathF.Max(box.Z1, baseBox.Z1));
+                return null;
             }
             if (choice == ChimneyChoice.Yes) res.Notes.Add("a chimney was asked for, but no outside wall of the living room had a clear stretch for it on every floor");
+            return null;
+        }
+
+        /// <summary>Where the walls keep their windows off a chimney at `spot` (AddChimney's measure of clear, and 5 cm): on
+        /// every floor, its line, the stack's width -- its foot's on the ground floor -- and AddChimney's 0.3 m either side.</summary>
+        static List<(int Floor, bool AlongX, int Line, float A0, float A1)> ChimneyKeepClear(BuildingGenResult res, (bool AlongX, int Line, float P) spot)
+        {
+            var keep = new List<(int, bool, int, float, float)>();
+            for (int f = 0; f < res.Floors; f++)
+            {
+                float hw = (f == 0 ? ChimneyBaseWide : ChimneyWide) * 0.5f + 0.35f;
+                keep.Add((f, spot.AlongX, spot.Line, spot.P - hw, spot.P + hw));
+            }
+            return keep;
         }
 
         /// <summary>Porch posts: square, this wide.</summary>
