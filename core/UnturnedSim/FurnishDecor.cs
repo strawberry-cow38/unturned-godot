@@ -98,6 +98,7 @@ namespace UnturnedSim
             new("Wall_Shelf_1", In(LivingRoom, Bedroom, Office), 2.7f, "shelf", Weight: 5, Over: new[] { "Couch" }, Tags: "shelf books plant clutter"),
             new("Mirror_0", In(Bathroom, Hall, Bedroom), 2.65f, "sink mirror", Weight: 8, Need: DecorNeed.Wardrobe, Over: new[] { "Counter_1" }, Beside: new[] { "Wardrobe" }, Tags: "mirror wardrobe"),
             new("Antlers_0", In(LivingRoom, Hall), 2.9f, "trophy", Weight: 1, Need: DecorNeed.Home, Tags: "rustic rural rare"),
+            new("Wall_Sunburst_0", In(LivingRoom, Hall), 2.7f, "wall", Weight: 4, Tags: "decorative rustic playful"),
             // work: notes and certificates
             new("Calendar_0", In(Kitchen, Office, BreakRoom), 2.2f, "notes", Weight: 5, Tags: "work household"),
             new("Corkboard_0", In(Office, BreakRoom, Kitchen), 2.6f, "notes", Weight: 5, Tags: "work notes"),
@@ -105,10 +106,7 @@ namespace UnturnedSim
             // by the way in
             new("Coat_Hooks_0", In(Hall, Garage), 2.0f, "hooks", Weight: 8, Need: DecorNeed.OuterDoor, Spot: DecorSpot.Door, Tags: "entry front_or_back_door"),
             // (Coat_Hooks_1, the rack with a coat on it, was dropped -- VoX: "might be confusing to players, a coat they can't
-            // use". astraclaw's replacement, a sunburst, awaits VoX's review: on approval, uncomment its row, add its Sizes
-            // entry off its OBJ, its GUID line in guid_mesh.txt and in WallDecorKitKeepsItsGuids, and take its rooms, slot and
-            // height from its manifest entry -- the ones below are placeholders)
-            // new("Wall_Sunburst_0", In(LivingRoom, DiningRoom, Hall), 2.6f, "wall", Weight: 4, Tags: "ef0e6c14a98645a88623ba40c269a4d4"),
+            // use"; astraclaw's replacement is the sunburst, with the lesser art below)
             new("Key_Rack_0", In(Hall), 1.8f, "keys", Weight: 6, Need: DecorNeed.OuterDoor | DecorNeed.Home, Spot: DecorSpot.Door, Tags: "entry front_door"),
             // fixtures, over what they serve: upper cabinets over the counters, sink and dishwasher (wood over the wood set,
             // grey over the grey set's Counter_2 -- which the furnisher does not place yet, so the grey waits), a utensil
@@ -130,7 +128,7 @@ namespace UnturnedSim
             [LivingRoom] = new[] { ("focal", 100), ("wall", 70), ("shelf", 40), ("trophy", 8) },
             [DiningRoom] = new[] { ("focal", 100), ("wall", 50) },
             [Bedroom] = new[] { ("focal", 100), ("wall", 60), ("mirror", 40), ("shelf", 25) },
-            [Hall] = new[] { ("hooks", 100), ("keys", 60), ("focal", 70), ("mirror", 35), ("trophy", 5) },
+            [Hall] = new[] { ("hooks", 100), ("keys", 60), ("focal", 70), ("mirror", 35), ("wall", 35), ("trophy", 5) },
             [Bathroom] = new[] { ("sink", 100), ("towel", 75) },
             [Office] = new[] { ("focal", 100), ("notes", 70), ("certs", 50), ("wall", 30), ("shelf", 30) },
             [BreakRoom] = new[] { ("focal", 100), ("notes", 70) },
@@ -147,8 +145,15 @@ namespace UnturnedSim
         /// <summary>Debugging only: told each piece Decorate hangs and the row it came from (null: nothing is told).</summary>
         [ThreadStatic] public static Action<FurniturePlan, DecorRow> DecorTrace;
 
+        /// <summary>THE DENSITY KNOB: how much wall décor a room gets, 1 as tuned. Above 1 each art slot's odds go up by this
+        /// factor (to a sure thing), the room's art budget grows by it, and the recipe's art slots are gone through again --
+        /// ceil(DecorDensity) times in all -- so a bigger room takes a second painting, a second group, on another wall. The
+        /// spacing rules hold at any density: one big piece to a wall, DecorFill of a wall at most, DecorGap apart; below 1
+        /// the odds and the budget shrink. Every draw at 1 is the draw the generator made before the knob.</summary>
+        public const float DecorDensity = 1f;
         /// <summary>A room hangs art in at most 1 + one more slot per DecorEvery of free wall -- wall with no window, door or
-        /// flight by it -- (a big home one more again: more art in a bigger house), and never more than DecorMost.</summary>
+        /// flight by it -- (a big home one more again: more art in a bigger house), times DecorDensity, and never more than
+        /// DecorMost a pass.</summary>
         public const float DecorEvery = 6f;
         public const int DecorMost = 5;
         /// <summary>A home this big (rooms, or storeys) is a big home.</summary>
@@ -197,15 +202,18 @@ namespace UnturnedSim
                 bool big = _res.Kind is BuildingKind.Residential or BuildingKind.Apartment
                            && (_res.Floors >= BigHomeFloors || _res.Layout.Count(g => g.Unit == _room.Unit && !g.Circulation) >= BigHomeRooms);
                 float free = FreeWall();
-                int budget = Math.Min(DecorMost, 1 + (int)(free / DecorEvery) + (big ? 1 : 0)), art = 0;
+                int passes = Math.Max(1, (int)MathF.Ceiling(DecorDensity));
+                int budget = Math.Min(DecorMost * passes, (int)MathF.Round((1 + (int)(free / DecorEvery) + (big ? 1 : 0)) * DecorDensity)), art = 0;
                 FurnishTrace?.Invoke(System.FormattableString.Invariant($"decor in {_room}: {free:0.0} m of free wall, {budget} art slots, rows {string.Join(", ", rows.Select(r => r.Name))}"));
-                foreach (var (slot, chance) in recipe)
+                // the recipe once, fixtures and art; then, at a density over 1, its art slots again
+                var plan = recipe.Concat(Enumerable.Range(1, passes - 1).SelectMany(_ => recipe.Where(sl => !DecorFixtures.Contains(sl.Slot))));
+                foreach (var (slot, chance) in plan)
                 {
                     bool fixture = DecorFixtures.Contains(slot);
                     var cands = rows.Where(r => r.Fills(slot)).ToList();
                     // (a slot with nothing to hang draws nothing: the draws stay where they were for the slots after it)
                     if (cands.Count == 0 || (!fixture && art >= budget)) continue;
-                    if (rng.Int(100) >= chance) continue;
+                    if (rng.Int(100) >= (int)MathF.Min(100f, chance * DecorDensity)) continue;
                     while (true)
                     {
                         var open = cands.Where(r => count.GetValueOrDefault(r) < r.Max && r.Weight > 0).ToList();
@@ -294,6 +302,21 @@ namespace UnturnedSim
                     foreach (var (at, lo, hi) in Faces(nx, nz)) yield return new Face(nx, nz, at, lo, hi);
             }
 
+            /// <summary>The faces making one wall line with f: turned the same way, within 0.3 m across of it, their runs
+            /// meeting end to end (within 0.3 m) -- an outside wall that runs on as a thinner partition, a step of 0.1 m.</summary>
+            List<Face> WallLine(Face f)
+            {
+                var all = AllFaces().Where(g => g.Nx == f.Nx && g.Nz == f.Nz && MathF.Abs(g.At - f.At) < 0.3f).ToList();
+                var line = new List<Face> { f };
+                for (bool grew = true; grew;)
+                {
+                    grew = false;
+                    foreach (var g in all)
+                        if (!line.Contains(g) && line.Any(h => g.Lo <= h.Hi + 0.3f && g.Hi >= h.Lo - 0.3f)) { line.Add(g); grew = true; }
+                }
+                return line;
+            }
+
             /// <summary>Is a hung piece on this face: turned to it, its back at it, along its run?</summary>
             bool HungOn(FurniturePlan m, Face f)
             {
@@ -342,8 +365,10 @@ namespace UnturnedSim
                         var s = f.Span(o.Footprint);
                         if (o.Mounted)
                         {
+                            // (on this side of the wall: DecorGap is wider than a 0.5 m partition, and a picture in the next
+                            // room, its back to the same wall, kept this room's side of it bare)
                             float gap = fixture && IsFixture(o) ? DecorRunGap : DecorGap;
-                            if (s.D1 > -gap && s.D0 < depth + gap) cuts.Add((s.A0 - gap, s.A1 + gap));
+                            if (s.D1 > -0.15f && s.D0 < depth + gap) cuts.Add((s.A0 - gap, s.A1 + gap));
                             continue;
                         }
                         // its top over the floor: a piece on another stands on its top; a ceiling light hangs down from the ceiling
@@ -438,8 +463,10 @@ namespace UnturnedSim
                 {
                     float yaw = YawFacing(f.Nx, f.Nz);
                     var onIt = _mine.Where(m => HungOn(m, f)).ToList();
-                    // one big piece to a wall; and a wall not filled past DecorFill (fixtures over counters aside)
-                    if (row.Focal && onIt.Any(IsFocal)) continue;
+                    // one big piece to a wall -- the whole wall line, not the face's run: where an outside wall runs on as a
+                    // partition 0.1 m thinner the grid sees two faces, and at DecorDensity 2 two landscapes went up on what
+                    // is one wall -- and a wall not filled past DecorFill (fixtures over counters aside)
+                    if (row.Focal && WallLine(f).Any(g => _mine.Any(m => IsFocal(m) && HungOn(m, g)))) continue;
                     if (row.Spot != DecorSpot.Over && onIt.Where(m => !IsFixture(m)).Sum(m => { var q = f.Span(m.Footprint); return q.A1 - q.A0; }) + span > DecorFill * (f.Hi - f.Lo)) continue;
                     // the pieces standing at this face (not at another face the same way round, behind it or across the
                     // room), with their backs to it for Over, and where along it their middles are

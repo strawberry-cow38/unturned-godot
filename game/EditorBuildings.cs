@@ -2719,7 +2719,8 @@ namespace UnturnedGodot
         readonly List<Node3D> _furnitureNodes = new();
 
         /// <summary>For a capture: hide every surface but the stairs, and every piece of furniture, standing more than `y`
-        /// over the stage -- so a camera can look down into a storey.</summary>
+        /// over the stage -- so a camera can look down into a storey. (By the piece's ORIGIN: a wall cabinet's is 3.15 over
+        /// the stage, so a cut at 3.0 takes every cabinet off a ground-floor cutaway; 3.5 keeps the décor.)</summary>
         public void HideAbove(float y)
         {
             foreach (var w in _walls)

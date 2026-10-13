@@ -134,6 +134,20 @@ namespace UnturnedSim.Tests
                                 bad.Add($"{nm} hangs over an opening (archetype {o.Archetype}, {v0:0.00}-{v1:0.00} m)");
                         }
                     }
+                    // nor on what open plan left of a wall between two rooms that share one space: its 0.3 m piers either side of the
+                    // cut (the cut itself is an opening, above)
+                    foreach (var w in behindWalls)
+                    {
+                        var d = Dir(w); var nrm = Normal(w);
+                        float s0 = (fp.X0 - w.X) * d.X + (fp.Z0 - w.Z) * d.Z, s1 = (fp.X1 - w.X) * d.X + (fp.Z1 - w.Z) * d.Z;
+                        foreach (var o in w.Openings.Where(o => o.Archetype == BuildingGen.ArchPorch && o.V < 0.05f))
+                        {
+                            var c = At(w, o.U + o.Width * 0.5f); float off = w.Thickness * 0.5f + 0.3f;
+                            if (RoomAt(res, f, c.X + nrm.X * off, c.Z + nrm.Z * off) == null || RoomAt(res, f, c.X - nrm.X * off, c.Z - nrm.Z * off) == null) continue;
+                            if (MathF.Min(o.U1 + BuildingGen.OpenPier, MathF.Max(s0, s1)) - MathF.Max(o.U - BuildingGen.OpenPier, MathF.Min(s0, s1)) > 0f)
+                                bad.Add($"{nm} hangs on an open plan's pier");
+                        }
+                    }
                     if (doorZones.Any(z => Overlap(fp, z))) bad.Add($"{nm} hangs in a doorway's walk or a door's swing");
                     // off the stairs' wall
                     if (stairs.Any(st => Overlap(Grown(fp, BuildingGen.StairWallReach - 0.05f), st, 0f))) bad.Add($"{nm} hangs on a wall the stairs run along");
@@ -222,13 +236,18 @@ namespace UnturnedSim.Tests
             var byName = table.ToDictionary(r => r.Name);
             var bad = new List<string>();
             var tally = new Dictionary<(BuildingKind, RoomKind), int[]>(); var rows = new Dictionary<DecorRow, int>();
-            int buildings = 0, cabinets = 0, cabinetsByFridge = 0;
+            int buildings = 0, cabinets = 0, cabinetsByFridge = 0, openCuts = 0, openRooms = 0, openRoomPieces = 0;
             var anchors = new HashSet<string>();
             foreach (var (spec, res) in All())
             {
                 buildings++;
                 bad.AddRange(DecorViolations(Name(spec), res, m => byName.GetValueOrDefault(m.Name), tally, rows));
                 foreach (var m in res.Furniture.Where(m => !m.Mounted && !m.Ceiling && m.On == null)) anchors.Add(m.Name);
+                // open plan (round 11): the cuts, and the décor of the rooms either side of one -- none of it on the cut or a pier
+                var opened = new HashSet<GenRoom>();
+                foreach (var o in res.OpenPlan) { openCuts++; opened.Add(o.A); opened.Add(o.B); }
+                openRooms += opened.Count;
+                openRoomPieces += res.Furniture.Count(m => opened.Contains(m.Room) && byName.ContainsKey(m.Name));
                 // the cabinets, and how many of them have a fridge beside them (side by side is right; over it, the rule above)
                 foreach (var c in res.Furniture.Where(m => m.Name.StartsWith("Wall_Cabinet")))
                 {
@@ -241,13 +260,15 @@ namespace UnturnedSim.Tests
             var waiting = table.Where(r => r.Spot == DecorSpot.Over && !r.Over.Any(p => anchors.Any(a => a.StartsWith(p)))).ToList();
             TestContext.Progress.WriteLine($"[decor] {pieces} pieces hung in {with} of {rooms} rooms the recipes cover, over {buildings} buildings: {DecorTally(tally)}; "
                                            + $"by row: {string.Join(", ", table.Select(r => $"{r.Name} {rows.GetValueOrDefault(r)}"))}; {cabinets} wall cabinets, {cabinetsByFridge} of them beside a fridge; "
-                                           + $"waiting on furniture: {(waiting.Count == 0 ? "none" : string.Join(", ", waiting.Select(r => r.Name)))}; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
+                                           + $"waiting on furniture: {(waiting.Count == 0 ? "none" : string.Join(", ", waiting.Select(r => r.Name)))}; "
+                                           + $"{openCuts} open-plan cuts, {openRoomPieces} pieces in the {openRooms} rooms beside them; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
             foreach (var r in table)
             {
                 Assert.That(FurnitureCatalog.Sizes.ContainsKey(r.Name), $"{r.Name}: a live row with no Sizes entry");
                 if (!waiting.Contains(r)) Assert.That(rows.GetValueOrDefault(r), Is.GreaterThan(0), $"{r.Name} never hangs anywhere");
             }
             Assert.That(waiting.Count, Is.LessThanOrEqualTo(1), "only the grey cabinet waits on furniture");
+            Assert.That(openRoomPieces, Is.GreaterThan(0), "the open-plan rules were walked: décor hangs in rooms beside a cut");
             Assert.That(with, Is.GreaterThanOrEqualTo(rooms / 2), "most rooms that can take a piece have one");
             Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(20)));
         }
@@ -304,8 +325,26 @@ namespace UnturnedSim.Tests
             Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(20)));
         }
 
+        // V: the table and the recipes agree: every room a row lists has a slot that row fills, or the row would never hang
+        // there and nothing would say so (the small paintings listed halls, whose recipe had no "wall" slot).
+        // BREAK IT: drop the hall's "wall" slot.
+        [Test]
+        public void WallDecorRowsReachTheirRooms()
+        {
+            var bad = new List<string>();
+            int pairs = 0;
+            foreach (var r in BuildingGen.Decor)
+                foreach (var k in r.Rooms)
+                {
+                    pairs++;
+                    if (!BuildingGen.DecorRecipes.TryGetValue(k, out var recipe) || !recipe.Any(sl => r.Fills(sl.Slot))) bad.Add($"{r.Name} lists {k}, whose recipe has none of its slots ({r.Slot})");
+                }
+            TestContext.Progress.WriteLine($"[decor-reach] {pairs} row/room pairs over {BuildingGen.Decor.Count} rows; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
+            Assert.That(bad, Is.Empty, string.Join("\n", bad));
+        }
+
         // U: the kit is registered under the GUIDs its manifest gave (astraclaw's wall_decor_manifest.json, approved by VoX
-        // 2026-10-13). A layout saved by the generator stores each piece as a GUID and loads it back through guid_mesh.txt,
+        // 2026-10-13, and the sunburst's sunburst_manifest.json). A layout saved by the generator stores each piece as a GUID and loads it back through guid_mesh.txt,
         // so the GUID is the contract: a piece registered under a fresh one passes every catalog check and loads as nothing.
         // BREAK IT: mint a fresh GUID for one row.
         [Test]
@@ -328,7 +367,7 @@ namespace UnturnedSim.Tests
                 ["Medicine_Cabinet_0"] = "189e6e3aa286434aa1dc42f5b490f512", ["Whiteboard_0"] = "03a0c8aa49804a058fb175f3bca91944",
                 ["Corkboard_0"] = "f0e010853da94220897d1732bc3b2c44", ["Certificate_0"] = "184611e0903f449a870760ffe08b6e89",
                 ["Wall_Map_0"] = "91281d896ec949e584718b60edd53916", ["Pegboard_0"] = "2ea6760b40124eafa70f49436862b201",
-                ["Antlers_0"] = "1c731cb8c97844c7a7c1ac9e405941dc",
+                ["Antlers_0"] = "1c731cb8c97844c7a7c1ac9e405941dc", ["Wall_Sunburst_0"] = "ef0e6c14a98645a88623ba40c269a4d4",
             };
             string dir = Objects();
             Assert.That(dir, Is.Not.Null, "game/content/objects not found");

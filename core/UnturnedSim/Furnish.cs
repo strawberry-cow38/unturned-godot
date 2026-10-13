@@ -115,6 +115,7 @@ namespace UnturnedSim
             ["Wall_Map_0"] = new(-1.000f, 1.000f, 0f, 0.030f, 0.700f),
             ["Pegboard_0"] = new(-1.200f, 1.200f, 0f, 0.150f, 0.600f),
             ["Antlers_0"] = new(-0.453f, 0.453f, 0f, 0.483f, 0.410f),
+            ["Wall_Sunburst_0"] = new(-0.600f, 0.600f, 0f, 0.121f, 0.600f),   // astraclaw's replacement for the dropped Coat_Hooks_1
             ["Crate_0"] = new(-0.62f, 0.62f, -0.62f, 0.62f, 1.25f),
             ["Crate_3"] = new(-0.94f, 0.94f, -0.94f, 0.94f, 1.88f),
             ["Barrel_0"] = new(-0.54f, 0.54f, -0.54f, 0.54f, 1.28f),

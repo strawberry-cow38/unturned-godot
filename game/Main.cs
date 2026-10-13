@@ -7799,6 +7799,9 @@ namespace UnturnedGodot
                 else if (buildings.Walls.Count == 0) DrawDemoBuilding(buildings);
                 // UG_EDITCUT=y hides every surface but the stairs whose origin stands more than y over the stage, so a
                 // capture can look down into a building -- at its stairs, which nothing else shows from outside
+                // ⚠ it hides FURNITURE by its origin too: at 3.0 every wall cabinet (origin 2.9 over the floor + the stage's
+                // 0.25 = 3.15) and the antlers (the same) vanish from a ground-floor cutaway. Use 3.5 for a décor shot -- it
+                // still hides the roof, the floor above and the ceiling lamps (4.5).
                 if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_EDITCUT"), System.Globalization.NumberStyles.Float,
                                    System.Globalization.CultureInfo.InvariantCulture, out float editCut))
                     buildings.HideAbove(editCut);
