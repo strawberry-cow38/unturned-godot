@@ -10645,6 +10645,10 @@ namespace UnturnedGodot
             town.BuildRoadLines(editor, rf);
             int walks = noWalk ? 0 : town.LaySidewalks(editor, rf);
             int corners = noWalk ? 0 : town.LaySidewalkCorners(editor, rf, walkProto);
+            // the back lanes down the alleys PlanPlots marked (strawberry 2026-10-13: "replace placeholder alleys with
+            // single lane roads with short sidewalks/kerbs and no markings") -- after the corners, whose fill their own
+            // kerb returns join, and before that fill is laid
+            if (!noWalk) town.BuildLanes(editor, rf);
             // the asphalt under each kerb corner, from the same fillet the kerb was laid on -- then the
             // coverage probes again, because what the player sees is the slab PLUS this
             int cornerFill = town.BuildCornerFill(editor, rf);
@@ -10822,6 +10826,43 @@ namespace UnturnedGodot
                     tcam.GlobalPosition = site + new Vector3(0f, 120f, 0f);     // low: the haze washes a high one out
                     tcam.LookAt(site, new Vector3(-Mathf.Sin(town.Bearing), 0f, Mathf.Cos(town.Bearing)) * -1f);
                     Log.Print($"[towngrid] site plan of {town.Plots.Count} plots");
+                    goto noTown;
+                }
+                // UG_TOWNCLOSE=ln: a BACK LANE'S MOUTH, from the street it opens off and a little above, looking up the lane --
+                // the kerb returns, the street's pavement stopping for it, and the lane's low pavements climbing to meet
+                // it (UG_TOWNCLOSE=lnh: the same mouth from high above, to see the lane run off into its block)
+                // (UG_TOWNCLOSE=lnc0 / lnc1: right down on one corner's kerb return -- [0] the left of the way in)
+                // (UG_TOWNCLOSE=lnd: the first lane end that could NOT open onto a street, from above and behind it)
+                if (closeEnv == "lnd" && town.LaneDeadEnds > 0)
+                {
+                    var de = town.FirstDeadEnd;
+                    de.Y = Terrain.Active != null ? Terrain.Active.SampleHeight(de.X, de.Z) : de.Y;
+                    tcam.GlobalPosition = de + new Vector3(14f, 22f, 14f);
+                    tcam.Fov = 55f;
+                    tcam.LookAt(de, Vector3.Up);
+                    Log.Print($"[towngrid] lane dead-end camera on {de}");
+                    goto noTown;
+                }
+                if ((closeEnv == "ln" || closeEnv == "lnh" || closeEnv == "lnc0" || closeEnv == "lnc1") && town.LaneMouths.Count > 0)
+                {
+                    var lm = town.LaneMouths[0];
+                    float bestLm = float.MaxValue;
+                    foreach (var m in town.LaneMouths) { float d2 = (m.Edge - site).LengthSquared(); if (d2 < bestLm) { bestLm = d2; lm = m; } }
+                    var across = new Vector3(-lm.Into.Z, 0f, lm.Into.X);
+                    if (closeEnv.StartsWith("lnc") && lm.Kerb[closeEnv == "lnc0" ? 0 : 1] is { Count: > 1 } ck)
+                    {
+                        var mid = ck[ck.Count / 2]; mid.Y = lm.Edge.Y;
+                        tcam.GlobalPosition = mid - lm.Into * 4.5f + across * (closeEnv == "lnc0" ? -1.5f : 1.5f) + new Vector3(0f, 2.6f, 0f);
+                        tcam.Fov = 60f;
+                        tcam.LookAt(mid + new Vector3(0f, 0.2f, 0f), Vector3.Up);
+                        Log.Print($"[towngrid] lane corner camera on {mid}");
+                        goto noTown;
+                    }
+                    tcam.GlobalPosition = closeEnv == "lnh" ? lm.Edge - lm.Into * 18f + new Vector3(0f, 45f, 0f)
+                                                            : lm.Edge - lm.Into * 14f + across * 5f + new Vector3(0f, 7f, 0f);
+                    tcam.Fov = closeEnv == "lnh" ? 55f : 60f;
+                    tcam.LookAt(lm.Edge + lm.Into * (closeEnv == "lnh" ? 18f : 6f), Vector3.Up);
+                    Log.Print($"[towngrid] lane camera on the mouth at {lm.Edge} ({town.LaneMouths.Count} mouths, {town.LaneRoads.Count} lanes)");
                     goto noTown;
                 }
                 // UG_TOWNCLOSE=pl: the building plots, from high enough to read a few whole blocks

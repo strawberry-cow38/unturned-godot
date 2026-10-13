@@ -1,6 +1,7 @@
 using Godot;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace UnturnedGodot.Testing
 {
@@ -427,6 +428,97 @@ namespace UnturnedGodot.Testing
                 T.Check($"...never under a plot ({alleyOnPlot}) nor on a road or pavement ({alleyOnRoad})", alleyOnPlot == 0 && alleyOnRoad == 0);
                 T.Check($"...each coming out at a street's pavement ({alleyLoose} loose ends), and never onto a main ({alleyOnMain})",
                         alleyLoose == 0 && alleyOnMain == 0);
+                // ⭐⭐ NO FRONTAGE LEFT WITH ROOM FOR A PLOT (strawberry 2026-10-13: "fill gaps in zoning with more buildings").
+                // Along both sides of every street, a window as narrow as the narrowest kind that street is offered -- plus
+                // half a metre -- and as deep as its shallowest, standing on the frontage line, has to run into something: a
+                // road or its pavement, a junction's slab or corner, a plot, a lane, the edge of town. Kept off all of them by
+                // the planner's own clearance, and measured with this test's geometry rather than PlotFits. The control is the
+                // old planner -- the same town with each frontage offered its DEEPEST kind only, as UG_TOWNDEEPONLY=1 does --
+                // whose empty frontages this must find: a block whose back lane runs down its middle is ~35 m deep a side,
+                // too shallow for a 36 m plot, and the old planner gave up on the whole side.
+                {
+                    float keepGap = keepOff + gD.PlotClearance + 0.1f;
+                    float cbG = Mathf.Cos(0.3f), sbG = Mathf.Sin(0.3f);
+                    float fu0 = float.MaxValue, fu1 = float.MinValue, fv0 = float.MaxValue, fv1 = float.MinValue;
+                    for (int j = 0; j < rfD.JunctionCount; j++)
+                    {
+                        var jp = rfD.JunctionPos(j);
+                        float u = jp.X * cbG + jp.Z * sbG, v = -jp.X * sbG + jp.Z * cbG;
+                        fu0 = Mathf.Min(fu0, u); fu1 = Mathf.Max(fu1, u); fv0 = Mathf.Min(fv0, v); fv1 = Mathf.Max(fv1, v);
+                    }
+                    bool Blocked(Vector3 q)
+                    {
+                        float u = q.X * cbG + q.Z * sbG, v = -q.X * sbG + q.Z * cbG;
+                        if (u < fu0 || u > fu1 || v < fv0 || v > fv1) return true;
+                        if (rfD.DeepestRoadOverlap(q, keepGap, out _, out _)) return true;
+                        foreach (var (x0, x1, z0, z1, pp) in slabBox)
+                            if (q.X >= x0 - keepGap && q.X <= x1 + keepGap && -q.Z >= z0 - keepGap && -q.Z <= z1 + keepGap && pp.DistanceTo(q.X, -q.Z) < keepGap) return true;
+                        float wk = walkW + gD.PlotClearance + 0.1f;
+                        foreach (var (kx0, kx1, kz0, kz1, kp) in kerbBox)
+                        {
+                            if (q.X < kx0 - wk || q.X > kx1 + wk || q.Z < kz0 - wk || q.Z > kz1 + wk) continue;
+                            for (int k = 0; k + 1 < kp.Count; k++)
+                            {
+                                var a = kp[k]; var b = kp[k + 1];
+                                float abx = b.X - a.X, abz = b.Z - a.Z, l2 = abx * abx + abz * abz;
+                                float t = l2 < 1e-9f ? 0f : Mathf.Clamp(((q.X - a.X) * abx + (q.Z - a.Z) * abz) / l2, 0f, 1f);
+                                if (new Vector2(a.X + abx * t - q.X, a.Z + abz * t - q.Z).Length() < wk) return true;
+                            }
+                        }
+                        return false;
+                    }
+                    bool WindowBlocked(Vector3[] c)
+                    {
+                        for (int e = 0; e < 4; e++)
+                        {
+                            var a = c[e]; var b = c[(e + 1) % 4];
+                            int n = Mathf.Max(1, Mathf.CeilToInt(new Vector2(b.X - a.X, b.Z - a.Z).Length() / 0.75f));
+                            for (int k = 0; k <= n; k++) if (Blocked(a.Lerp(b, (float)k / n))) return true;
+                        }
+                        for (float u = 0.125f; u < 1f; u += 0.125f)
+                            for (float v = 0.125f; v < 1f; v += 0.125f)
+                                if (Blocked(c[0].Lerp(c[1], u).Lerp(c[3].Lerp(c[2], u), v))) return true;
+                        return false;
+                    }
+                    int FrontageGaps(List<TownRoadGrid.Plot> pls, List<TownRoadGrid.Alley> als, out string firstGap)
+                    {
+                        firstGap = "";
+                        int gaps = 0;
+                        foreach (int r in gD.Built)
+                        {
+                            float wMin = float.MaxValue, dMin = float.MaxValue;
+                            foreach (var k in TownRoadGrid.FrontageKinds(gD.IsMain(rfD, r)))
+                            { var ps = TownRoadGrid.SizeOf(k); wMin = Mathf.Min(wMin, ps.Width); dMin = Mathf.Min(dMin, ps.Depth); }
+                            float win = wMin + 0.5f, L = rfD.RoadLength(r), front = rfD.RoadHalfWidth(r) + walkD.RoadGap + walkW + gD.PlotSetback;
+                            foreach (int side in new[] { -1, 1 })
+                                for (float d = win * 0.5f; d + win * 0.5f <= L; d += 0.5f)
+                                {
+                                    if (!rfD.EvaluateAlong(r, d, out var pos, out var tan, snapTerrain: false)) continue;
+                                    var along = new Vector3(tan.X, 0f, tan.Z).Normalized();
+                                    var outw = new Vector3(-along.Z, 0f, along.X) * side;
+                                    var w = new TownRoadGrid.Plot { Width = win, Depth = dMin, Along = along, Facing = -outw, Front = pos + outw * front }.Corners();
+                                    bool taken = false;
+                                    foreach (var pl in pls) if (Overlaps(w, pl.Corners())) { taken = true; break; }
+                                    if (!taken) foreach (var al in als) if (Overlaps(w, al.Corners())) { taken = true; break; }
+                                    if (taken || WindowBlocked(w)) continue;
+                                    if (gaps++ == 0) firstGap = $"road {r} side {side} at {d:0.0} of {L:0.0} m";
+                                    d += wMin;                 // one gap counted once, not once per half metre of it
+                                }
+                        }
+                        return gaps;
+                    }
+                    var rfD3 = Field();
+                    var gD3 = new TownRoadGrid { Seed = 7, Centre = Vector3.Zero, Extent = 250f, Spacing = 110f,
+                                                 Bearing = 0.3f, SeaLevel = 0f, SeaMargin = 2f, Diagonal = true, FillShallower = false };
+                    gD3.Generate(rfD3, flat);
+                    var w3 = new EditorSidewalk(); World.AddChild(w3);
+                    gD3.LaySidewalkCornersOn(rfD3, World, w3, out _);
+                    gD3.MarkPlots(null, rfD3);
+                    int gapsNow = FrontageGaps(plots, gD.Alleys, out string gapAt);
+                    int gapsOld = FrontageGaps(gD3.Plots, gD3.Alleys, out string oldAt);
+                    T.Check($"...and no frontage left with room for a plot ({gapsNow} gaps{(gapsNow > 0 ? $", first on {gapAt}" : "")}; {gD.ShallowPlots} plots laid where only a shallower kind fitted) -- where the deepest kind alone left {gapsOld} (control: {gD3.Plots.Count} plots against {plots.Count}{(gapsOld > 0 ? $", first on {oldAt}" : "")})",
+                            gapsNow == 0 && gapsOld > 0 && gD.ShallowPlots > 0 && plots.Count > gD3.Plots.Count);
+                }
                 // inside the town: nothing on the far side of the outermost street, in open country
                 {
                     float cb = Mathf.Cos(0.3f), sb = Mathf.Sin(0.3f);
@@ -545,7 +637,13 @@ namespace UnturnedGodot.Testing
                         {
                             var arr = mi.Mesh.SurfaceGetArrays(0);
                             var vs = (Vector3[])arr[(int)Mesh.ArrayType.Vertex];
-                            ribbons[mi.Name.ToString()] = vs;
+                            // one side laid in pieces round a lane's mouth ("Sidewalk_R12_p0", "_p1") is still one side
+                            string key = mi.Name.ToString();
+                            int cut = key.IndexOf("_p", 10);
+                            if (cut > 0) key = key.Substring(0, cut);
+                            var merged = vs;
+                            if (ribbons.TryGetValue(key, out var had)) { merged = new Vector3[had.Length + vs.Length]; had.CopyTo(merged, 0); vs.CopyTo(merged, had.Length); }
+                            ribbons[key] = merged;
                             var ix = arr[(int)Mesh.ArrayType.Index].VariantType == Variant.Type.Nil ? null : (int[])arr[(int)Mesh.ArrayType.Index];
                             var tops = new List<(Vector3, Vector3, Vector3)>();
                             int cnt = ix != null ? ix.Length : vs.Length;
@@ -555,7 +653,8 @@ namespace UnturnedGodot.Testing
                                 var nn = (b - a).Cross(c - a);
                                 if (nn.Length() > 1e-3f && Mathf.Abs(nn.Y) > 0.9f * nn.Length()) tops.Add((a, b, c));
                             }
-                            ribbonTops[mi.Name.ToString()] = tops;
+                            if (ribbonTops.TryGetValue(key, out var hadTops)) tops.AddRange(hadTops);
+                            ribbonTops[key] = tops;
                         }
                         foreach (var ch in n.GetChildren()) Collect(ch);
                     }
@@ -807,6 +906,9 @@ namespace UnturnedGodot.Testing
                     var cnHost = new Node3D(); World.AddChild(cnHost);
                     gD.LaySidewalks(stHost, rfD);
                     gD.LaySidewalkCorners(cnHost, rfD, walkD);
+                    // the back lanes, built into the same set: every check below holds their pavements, kerb returns and
+                    // closed ends to the same rules as the streets'
+                    gD.BuildLanes(cnHost, rfD);
                     // a mesh's walking surface: its level triangles, indexed or not
                     List<(Vector3 a, Vector3 b, Vector3 c, float ny)> Tops(MeshInstance3D mi)
                     {
@@ -834,12 +936,15 @@ namespace UnturnedGodot.Testing
                     }
                     GatherNodes(stHost); GatherNodes(cnHost);
                     // 1. as wide as the town says: across one station of each straight run, kerb to back edge
-                    int straights = 0, rightWidth = 0; float worstWidth = 0f;
+                    int straights = 0, rightWidth = 0, laneStraights = 0; float worstWidth = 0f;
                     foreach (var mi in meshNodes)
                     {
                         string nm = mi.Name.ToString();
                         if (!nm.StartsWith("Sidewalk_R") && !nm.StartsWith("Sidewalk_L")) continue;
-                        if (!int.TryParse(nm.Substring(10), out int road)) continue;
+                        string num = nm.Substring(10); int us = num.IndexOf('_'); if (us >= 0) num = num.Substring(0, us);   // "_p1": one piece of a side
+                        if (!int.TryParse(num, out int road)) continue;
+                        // a back lane's pavement is its own, narrower width
+                        float wantW = gD.LaneRoads.Contains(road) ? gD.LaneWalkWidth : gD.PavementWidth;
                         float L = rfD.RoadLength(road);
                         int rside = nm[9] == 'R' ? 1 : -1;
                         if (gD.BayExtra(road, rside, L * 0.5f - 4f) > 0f || gD.BayExtra(road, rside, L * 0.5f) > 0f
@@ -862,17 +967,20 @@ namespace UnturnedGodot.Testing
                         }
                         if (hi < lo) continue;
                         straights++;
-                        worstWidth = Mathf.Max(worstWidth, Mathf.Abs(hi - lo - gD.PavementWidth));
-                        if (Mathf.Abs(hi - lo - gD.PavementWidth) < 0.02f) rightWidth++;
+                        if (gD.LaneRoads.Contains(road)) laneStraights++;
+                        worstWidth = Mathf.Max(worstWidth, Mathf.Abs(hi - lo - wantW));
+                        if (Mathf.Abs(hi - lo - wantW) < 0.02f) rightWidth++;
                     }
-                    T.Check($"pavements are the town's {gD.PavementWidth:0.0} m wide ({rightWidth} of {straights} straight runs; worst {worstWidth * 100f:0.0} cm off)",
-                            gD.PavementWidth >= 3.99f && straights > 20 && rightWidth == straights);
+                    T.Check($"pavements are the town's {gD.PavementWidth:0.0} m wide, a back lane's {gD.LaneWalkWidth:0.0} m ({rightWidth} of {straights} straight runs, {laneStraights} of them a lane's; worst {worstWidth * 100f:0.0} cm off)",
+                            gD.PavementWidth >= 3.99f && straights > 20 && laneStraights > 4 && rightWidth == straights);
                     // 2. nowhere does one pavement lie over another: a point well inside one mesh's walking surface is
                     //    inside no other's. Bucketed by 2 m cells; the control is a ribbon laid over a copy of itself.
                     var tris = new List<(int mesh, Vector3 a, Vector3 b, Vector3 c)>();
                     for (int m = 0; m < meshNodes.Count; m++) foreach (var (a, b, c, _) in Tops(meshNodes[m])) tris.Add((m, a, b, c));
+                    string firstOver = "";
                     int Overlapping(List<(int mesh, Vector3 a, Vector3 b, Vector3 c)> ts)
                     {
+                        firstOver = "";
                         var grid = new Dictionary<(int, int), List<int>>();
                         for (int k = 0; k < ts.Count; k++)
                         {
@@ -902,7 +1010,10 @@ namespace UnturnedGodot.Testing
                                 {
                                     var (mo, oa, ob, oc) = ts[o2];
                                     if (mo == mk || !Inside(q, oa, ob, oc)) continue;
-                                    hit = true; break;
+                                    hit = true;
+                                    if (firstOver == "" && mk < meshNodes.Count && mo < meshNodes.Count)
+                                        firstOver = $"{meshNodes[mk].Name} over {meshNodes[mo].Name} at ({q.X:0.0}, {q.Z:0.0})";
+                                    break;
                                 }
                                 if (hit) break;
                             }
@@ -911,10 +1022,11 @@ namespace UnturnedGodot.Testing
                         return hits;
                     }
                     int over = Overlapping(tris);
+                    string overAt = firstOver;
                     var dup = new List<(int, Vector3, Vector3, Vector3)>();
                     foreach (var (m, a, b, c) in tris) if (m == 0) { dup.Add((0, a, b, c)); dup.Add((1, a + new Vector3(0.5f, 0f, 0.5f), b + new Vector3(0.5f, 0f, 0.5f), c + new Vector3(0.5f, 0f, 0.5f))); }
                     int dupOver = Overlapping(dup);
-                    T.Check($"...and no pavement lies over another ({over} of {tris.Count} surface triangles do; control: a ribbon over a shifted copy of itself, {dupOver} of {dup.Count})",
+                    T.Check($"...and no pavement lies over another ({over} of {tris.Count} surface triangles do{(over > 0 ? $", first {overAt}" : "")}; control: a ribbon over a shifted copy of itself, {dupOver} of {dup.Count})",
                             tris.Count > 500 && over == 0 && dupOver > 0);
                     // 2b. and no plot stands on one -- the BUILT walking surfaces, straights, corners and parking steps
                     //     alike, not the arithmetic that placed the plots (a pavement mitred round a bay's angled kerb
@@ -968,7 +1080,8 @@ namespace UnturnedGodot.Testing
                     }
                     int folded = 0, cornerPieces = 0;
                     foreach (var mi in meshNodes)
-                        if (mi.Name.ToString().StartsWith("Sidewalk_Corner_")) { cornerPieces++; if (Folded(Tops(mi)) > 0) folded++; }
+                        if (mi.Name.ToString().StartsWith("Sidewalk_Corner_") || mi.Name.ToString().StartsWith("Sidewalk_LaneMouth_"))
+                        { cornerPieces++; if (Folded(Tops(mi)) > 0) folded++; }
                     var arcP = new List<Vector3>(); var arcO = new List<Vector3>();
                     for (int k = 0; k <= 12; k++)
                     {
@@ -981,6 +1094,126 @@ namespace UnturnedGodot.Testing
                     T.Check($"...and no corner piece folds over itself ({folded} of {cornerPieces} do; control: {foldControl} folded triangles in a {gD.PavementWidth:0.0} m ribbon round a 2.5 m arc)",
                             cornerPieces > 20 && folded == 0 && foldControl > 0);
                     foldMi?.Free();
+                    // ⭐ THE BACK LANES (strawberry 2026-10-13: "replace placeholder alleys with single lane roads with short
+                    //    sidewalks/kerbs and no markings"), measured on the meshes BuildLanes built -- which the checks above
+                    //    already hold: no lane pavement lies over a street's, no plot stands on one, no kerb return folds.
+                    // a. one single-lane road per lane, LaneHalf a side, a lane and not a street
+                    int laneRoadsOk = 0;
+                    foreach (int lr in gD.LaneRoads)
+                        if (Mathf.Abs(rfD.RoadHalfWidth(lr) - gD.LaneHalf) < 0.01f && !gD.IsMain(rfD, lr) && !gD.Built.Contains(lr)) laneRoadsOk++;
+                    T.Check($"the alleys are single-lane roads now ({gD.LaneRoads.Count} lanes from {gD.Alleys.Count} alleys, {laneRoadsOk} of them {gD.LaneHalf * 2f:0.0} m of carriageway)",
+                            gD.LaneRoads.Count >= 6 && gD.LaneRoads.Count == gD.LanePlans.Count && laneRoadsOk == gD.LaneRoads.Count);
+                    // b. each opens off its street THROUGH the street's pavement: along its centreline, from the asphalt's edge
+                    //    to where its own pavements begin, there is no pavement at all and it is road all the way -- while the
+                    //    street's pavement carries on either side of the opening (2 m past each end of the cut, the control)
+                    int mouthsOpen = 0, mouthsRoad = 0, sidesPaved = 0, sidesTried = 0;
+                    foreach (var m in gD.LaneMouths)
+                    {
+                        float upTo = Mathf.Min(m.LaneFrom[0], m.LaneFrom[1]) - 0.3f;
+                        bool open = true, isRoad = true;
+                        for (float u = 0.3f; u <= upTo; u += 0.25f)
+                        {
+                            var q = m.Edge + m.Into * u;
+                            if (OnPave(q)) open = false;
+                            if (!rfD.DeepestRoadOverlap(q, 0.05f, out _, out _)) isRoad = false;
+                        }
+                        if (open) mouthsOpen++;
+                        if (isRoad) mouthsRoad++;
+                        foreach (float d in new[] { m.From - 2f, m.To + 2f })
+                        {
+                            if (!rfD.EvaluateAlong(m.Road, d, out var sp, out var st, snapTerrain: false)) continue;
+                            var so = new Vector3(st.Z, 0f, -st.X).Normalized() * m.Side;
+                            sidesTried++;
+                            if (OnPave(sp + so * (rfD.RoadHalfWidth(m.Road) + walkD.RoadGap + gD.PavementWidth * 0.5f))) sidesPaved++;
+                        }
+                    }
+                    T.Check($"...each opening off its street through the pavement ({mouthsOpen} of {gD.LaneMouths.Count} mouths with no pavement across them, {mouthsRoad} road all the way in) -- the street's pavement carrying on either side ({sidesPaved} of {sidesTried})",
+                            gD.LaneMouths.Count >= 6 && mouthsOpen == gD.LaneMouths.Count && mouthsRoad == gD.LaneMouths.Count && sidesTried > 0 && sidesPaved == sidesTried);
+                    // c. SHORT KERBS: down the lane its pavement stands LaneKerb over the lane's own kerb foot; each kerb return
+                    //    stands at the street's PavementKerb, level -- within a centimetre -- with the street's pavement on one
+                    //    side of it and the lane's on the other, where the lane's starts before falling to its own height
+                    static float? LevelAt(List<(Vector3 a, Vector3 b, Vector3 c, float ny)> ts, Vector3 q)
+                    {
+                        foreach (var (a, b, c, _) in ts)
+                        {
+                            float det = (b.Z - c.Z) * (a.X - c.X) + (c.X - b.X) * (a.Z - c.Z);
+                            if (Mathf.Abs(det) < 1e-9f) continue;
+                            float l1 = ((b.Z - c.Z) * (q.X - c.X) + (c.X - b.X) * (q.Z - c.Z)) / det;
+                            float l2 = ((c.Z - a.Z) * (q.X - c.X) + (a.X - c.X) * (q.Z - c.Z)) / det;
+                            float l3 = 1f - l1 - l2;
+                            if (l1 < -1e-4f || l2 < -1e-4f || l3 < -1e-4f) continue;
+                            return l1 * a.Y + l2 * b.Y + l3 * c.Y;
+                        }
+                        return null;
+                    }
+                    var topsOf = new Dictionary<MeshInstance3D, List<(Vector3 a, Vector3 b, Vector3 c, float ny)>>();
+                    List<(Vector3 a, Vector3 b, Vector3 c, float ny)> TopsOf(MeshInstance3D mi) => topsOf.TryGetValue(mi, out var t) ? t : topsOf[mi] = Tops(mi);
+                    var byName = new Dictionary<string, MeshInstance3D>();
+                    foreach (var mi in meshNodes) byName[mi.Name.ToString()] = mi;
+                    float? LevelOn(IEnumerable<string> names, Vector3 q)
+                    {
+                        foreach (var nm in names) if (byName.TryGetValue(nm, out var mi)) { var h = LevelAt(TopsOf(mi), q); if (h != null) return h; }
+                        return null;
+                    }
+                    IEnumerable<string> SideNames(int road, int side)
+                    {
+                        string b = $"Sidewalk_{(side > 0 ? "R" : "L")}{road}";
+                        yield return b;
+                        for (int k = 0; k < 8; k++) yield return $"{b}_p{k}";
+                    }
+                    int lowOk = 0, lowTried = 0; float worstLow = 0f;
+                    foreach (var lp in gD.LanePlans)
+                    {
+                        float L = rfD.RoadLength(lp.Road);
+                        rfD.EvaluateAlong(lp.Road, L * 0.5f, out var mp, out var mt);
+                        var rt = new Vector3(mt.Z, 0f, -mt.X).Normalized();
+                        foreach (int sgn in new[] { 1, -1 })
+                        {
+                            lowTried++;
+                            var h = LevelOn(SideNames(lp.Road, sgn), mp + rt * sgn * (gD.LaneHalf + walkD.RoadGap + gD.LaneWalkWidth * 0.5f));
+                            if (h == null) continue;
+                            worstLow = Mathf.Max(worstLow, Mathf.Abs(h.Value - mp.Y - gD.LaneKerb));
+                            if (Mathf.Abs(h.Value - mp.Y - gD.LaneKerb) < 0.01f) lowOk++;
+                        }
+                    }
+                    int seams = 0, seamsLevel = 0, atStreetHeight = 0; float worstSeam = 0f;
+                    foreach (var lp in gD.LanePlans)
+                        foreach (var (m, end) in new[] { (lp.A, "A"), (lp.B, "B") })
+                        {
+                            if (m == null) continue;
+                            for (int c = 0; c < 2; c++)
+                            {
+                                seams++;
+                                if (!byName.TryGetValue($"Sidewalk_LaneMouth_{lp.Road}_{end}{c}", out var corner)) continue;
+                                rfD.EvaluateAlong(m.Road, m.StreetArc[c], out var sf, out var stn);
+                                var ts = new Vector3(stn.X, 0f, stn.Z).Normalized();
+                                var so = new Vector3(stn.Z, 0f, -stn.X).Normalized() * m.Side;
+                                float sLat = rfD.RoadHalfWidth(m.Road) + walkD.RoadGap + gD.PavementWidth * 0.5f;
+                                float inward = Mathf.Abs(m.StreetArc[c] - m.From) < 1e-3f ? 0.05f : -0.05f;   // toward the mouth
+                                var hc = LevelAt(TopsOf(corner), sf + so * sLat + ts * inward);
+                                var hs = LevelOn(SideNames(m.Road, m.Side), sf + so * sLat - ts * inward);
+                                if (hc != null && Mathf.Abs(hc.Value - sf.Y - gD.PavementKerb) < 0.01f) atStreetHeight++;
+                                var lat = new Vector3(-m.Into.Z, 0f, m.Into.X) * (c == 0 ? 1f : -1f) * (gD.LaneHalf + walkD.RoadGap + gD.LaneWalkWidth * 0.5f);
+                                var hlc = LevelAt(TopsOf(corner), m.Edge + m.Into * (m.LaneFrom[c] - 0.05f) + lat);
+                                var hll = LevelOn(SideNames(lp.Road, 1).Concat(SideNames(lp.Road, -1)), m.Edge + m.Into * (m.LaneFrom[c] + 0.05f) + lat);
+                                bool level = hc != null && hs != null && hlc != null && hll != null;
+                                if (level)
+                                {
+                                    float step = Mathf.Max(Mathf.Abs(hc.Value - hs.Value), Mathf.Abs(hlc.Value - hll.Value));
+                                    worstSeam = Mathf.Max(worstSeam, step);
+                                    level = step < 0.01f;
+                                }
+                                if (level) seamsLevel++;
+                            }
+                        }
+                    T.Check($"...with short kerbs: the lanes' pavements stand {gD.LaneKerb:0.00} m ({lowOk} of {lowTried} measured mid-lane; worst {worstLow * 100f:0.0} cm off), each kerb return at the street's {gD.PavementKerb:0.00} m ({atStreetHeight} of {seams}) and level with the street's pavement and the lane's where they meet ({seamsLevel} of {seams}; worst step {worstSeam * 100f:0.0} cm)",
+                            lowTried >= 12 && lowOk == lowTried && seams == 2 * gD.LaneMouths.Count && atStreetHeight == seams && seamsLevel == seams);
+                    // d. a lane end that cannot open onto a street is closed off with a kerb across it, never left as road ending
+                    //    in the grass
+                    int shortEnds = 0, endKerbs = 0;
+                    foreach (var lp in gD.LanePlans) { if (lp.A == null) shortEnds++; if (lp.B == null) shortEnds++; }
+                    foreach (var mi in meshNodes) if (mi.Name.ToString().StartsWith("Sidewalk_LaneEnd_")) endKerbs++;
+                    T.Check($"...and every lane end that cannot open onto a street closed off with a kerb ({endKerbs} of {shortEnds})", endKerbs == shortEnds);
                     stHost.QueueFree(); cnHost.QueueFree();
                 }
                 // ⭐ THE BOULEVARD (strawberry 2026-10-13: "a new road type, with a central concrete median/grass +
@@ -1195,6 +1428,24 @@ namespace UnturnedGodot.Testing
                     {
                         rfD.EvaluateAlong(road, d, out var pc, out var tc, snapTerrain: false);
                         return pc + new Vector3(tc.Z, 0f, -tc.X).Normalized() * lat;
+                    }
+                    // 0. THE BACK LANES CARRY NO PAINT AT ALL (strawberry 2026-10-13: "single lane roads ... and no markings"):
+                    //    across their whole carriageway, end to end, nothing -- where a main's solid yellow centre, the control,
+                    //    reads as painted
+                    {
+                        int laneSamples = 0, lanePainted = 0, controlPainted = 0, controlTried = 0;
+                        foreach (int lr in gD.LaneRoads)
+                        {
+                            float L = rfD.RoadLength(lr);
+                            for (float d = 0.5f; d <= L - 0.5f; d += 1f)
+                                foreach (float lat in new[] { -1.5f, -0.75f, 0f, 0.75f, 1.5f })
+                                { laneSamples++; if (PaintAt(On(lr, d, lat)) != 0) lanePainted++; }
+                        }
+                        foreach (int r in gD.Built)
+                            if (gD.IsMain(rfD, r) && !gD.IsBoulevard(rfD, r) && controlTried++ < 3 && PaintAt(On(r, rfD.RoadLength(r) * 0.5f, 0f)) == 2) controlPainted++;
+                        controlTried = Mathf.Min(controlTried, 3);
+                        T.Check($"the back lanes carry no paint ({lanePainted} of {laneSamples} points across their carriageways painted) -- where a main's yellow centre is ({controlPainted} of {controlTried})",
+                                laneSamples > 200 && lanePainted == 0 && controlTried > 0 && controlPainted == controlTried);
                     }
                     // 1. EVERY ROAD CARRIES ITS CLASS'S LINES, at their offsets and in their colours, across one whole dash
                     //    period at its middle -- and nothing between them (the lane centres are bare). An EDGE line is owed
