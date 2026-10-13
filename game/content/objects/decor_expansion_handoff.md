@@ -52,8 +52,8 @@ Existing GUIDs retained: Wall_Shelf_0, Wall_Shelf_1, Mirror_0,
 Medicine_Cabinet_0. Shelf boards are now 0.10 m instead of 0.04 m; stocked
 books/plant were raised onto the new board top. Bounds/feature offsets updated.
 
-Mirror highlights are adjacent, non-overlapping parts of ONE plane, not a
-second nearly-coplanar face. Hidden front underlays were removed. This removes
+Mirror faces are now plain tinted quads with NO reflection highlight, per owner
+request 1559633562926317621. Hidden front underlays remain removed. This removes
 the geometry responsible for the fighting rather than moving it 1 mm farther.
 Mirrors remain flat stylized art, not realtime reflections.
 

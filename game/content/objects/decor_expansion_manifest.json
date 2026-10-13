@@ -326,8 +326,8 @@
         0.699999988079071
       ]
     ],
-    "vertices": 50,
-    "triangles": 62,
+    "vertices": 44,
+    "triangles": 60,
     "mount_origin_native": [
       0,
       0,
@@ -349,7 +349,7 @@
     ],
     "placement_features": {
       "mirror_panel_y": 0.044399999999999995,
-      "highlight_geometry": "non-overlapping coplanar tessellation",
+      "highlight_geometry": "none \u2014 plain tinted panel",
       "underlying_front_face_removed": true
     },
     "texture": "Mirror_0_tex.png",
@@ -377,8 +377,8 @@
         0.5
       ]
     ],
-    "vertices": 58,
-    "triangles": 74,
+    "vertices": 52,
+    "triangles": 72,
     "mount_origin_native": [
       0,
       0,
@@ -398,7 +398,7 @@
     ],
     "placement_features": {
       "mirror_panel_y": 0.193,
-      "highlight_geometry": "non-overlapping coplanar tessellation",
+      "highlight_geometry": "none \u2014 plain tinted panel",
       "underlying_front_face_removed": true
     },
     "texture": "Medicine_Cabinet_0_tex.png",
@@ -426,8 +426,8 @@
         1.399999976158142
       ]
     ],
-    "vertices": 50,
-    "triangles": 62,
+    "vertices": 44,
+    "triangles": 60,
     "mount_origin_native": [
       0,
       0,
@@ -451,7 +451,7 @@
     ],
     "placement_features": {
       "mirror_panel_y": 0.06659999999999999,
-      "highlight_geometry": "non-overlapping coplanar tessellation",
+      "highlight_geometry": "none \u2014 plain tinted panel",
       "underlying_front_face_removed": true
     },
     "texture": "Mirror_1_tex.png",
