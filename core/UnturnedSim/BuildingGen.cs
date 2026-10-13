@@ -78,6 +78,12 @@ namespace UnturnedSim
     {
         public RoomKind Kind;
         public int Floor, X0, Z0, X1, Z1;
+        /// <summary>The flat it belongs to in an apartment block, numbered across the whole building; -1 for shared space
+        /// (the corridor, the stairwell) and for every room of any other kind of building.</summary>
+        public int Unit = -1;
+        /// <summary>A flat's way in: the one room of it that may have a door to shared space (its living room, or its own
+        /// entry hall), and only from the corridor.</summary>
+        public bool Entry;
         public readonly List<(int X0, int Z0, int X1, int Z1)> More = new List<(int, int, int, int)>();
         public IEnumerable<(int X0, int Z0, int X1, int Z1)> Rects
         { get { yield return (X0, Z0, X1, Z1); foreach (var r in More) yield return r; } }
@@ -87,7 +93,7 @@ namespace UnturnedSim
         /// <summary>Is this plan point (metres) in the room? Half-open, so a point is in at most one room.</summary>
         public bool Holds(float x, float z) => Rects.Any(r => x >= r.X0 * BuildingGen.Cell && x < r.X1 * BuildingGen.Cell
                                                             && z >= r.Z0 * BuildingGen.Cell && z < r.Z1 * BuildingGen.Cell);
-        public override string ToString() => $"{Kind}@{Floor} [{X0},{Z0}..{X1},{Z1}]" + (More.Count > 0 ? $"+{More.Count}" : "");
+        public override string ToString() => $"{Kind}@{Floor} [{X0},{Z0}..{X1},{Z1}]" + (More.Count > 0 ? $"+{More.Count}" : "") + (Unit >= 0 ? $" flat {Unit}" : "");
     }
 
     /// <summary>A door the generator decided on: between two rooms (B null: to outside), cut in the wall on a lattice
@@ -388,6 +394,17 @@ namespace UnturnedSim
             || (parent == RoomKind.Garage && child == RoomKind.Storage)
             || (parent == RoomKind.Office && child is RoomKind.Closet or RoomKind.Bathroom or RoomKind.Storage);
 
+        /// <summary>May a door join these two rooms? In anything but a block of flats, always (every room's Unit is -1). In
+        /// one: within a flat, between two shared rooms, or between the corridor and a flat's way in (its Entry) -- never
+        /// from one flat into another, nor into a flat any other way (strawberry: "shared corridor and staircases").</summary>
+        public static bool MayJoin(GenRoom a, GenRoom b) => a.Unit == b.Unit
+            || (a.Unit < 0 ? a.Kind == RoomKind.Hall && b.Entry : b.Unit < 0 && b.Kind == RoomKind.Hall && a.Entry);
+
+        /// <summary>Inside a flat, its bedrooms, bathroom and study open off its living room or its own entry hall -- not off
+        /// its kitchen, and its one bathroom not off a bedroom, where a guest would walk through someone's room to it.</summary>
+        public static bool OffInAFlat(RoomKind child, RoomKind parent) => child is RoomKind.Bedroom or RoomKind.Bathroom or RoomKind.Office
+            ? parent is RoomKind.LivingRoom or RoomKind.Hall : MayOpenOff(child, parent);
+
         /// <summary>Rooms that need daylight: each gets at least one glazed opening in an outside wall.</summary>
         public static bool Habitable(RoomKind k) => k is RoomKind.Bedroom or RoomKind.Kitchen or RoomKind.LivingRoom
             or RoomKind.DiningRoom or RoomKind.Office or RoomKind.Shop or RoomKind.Workshop;
@@ -407,6 +424,8 @@ namespace UnturnedSim
             BuildingKind.Commercial => new[] { RoomKind.Shop, RoomKind.Hall },
             BuildingKind.Industrial => new[] { RoomKind.Hall, RoomKind.Workshop, RoomKind.Warehouse, RoomKind.Shop },
             BuildingKind.Residential => new[] { RoomKind.Hall, RoomKind.LivingRoom },
+            // a block of flats: its lobby -- the stairwell, on the ground floor -- or the corridor, never a flat
+            BuildingKind.Apartment => new[] { RoomKind.Stairwell, RoomKind.Hall },
             _ => new[] { RoomKind.Hall },
         };
 
@@ -417,6 +436,8 @@ namespace UnturnedSim
             BuildingKind.Commercial => new[] { RoomKind.Storage, RoomKind.Hall, RoomKind.BreakRoom },
             BuildingKind.Industrial => new[] { RoomKind.Warehouse, RoomKind.Workshop, RoomKind.Storage, RoomKind.Hall },
             BuildingKind.Residential => new[] { RoomKind.Kitchen, RoomKind.Hall, RoomKind.DiningRoom },
+            // a block of flats: out of the end of its corridor (a flat has no door of its own to outside)
+            BuildingKind.Apartment => new[] { RoomKind.Hall },
             _ => new[] { RoomKind.Hall, RoomKind.Storage, RoomKind.BreakRoom },
         };
 
@@ -435,6 +456,9 @@ namespace UnturnedSim
                                         new[] { RoomKind.Office, RoomKind.Storage, RoomKind.BreakRoom, RoomKind.Office, RoomKind.Bathroom }),
             BuildingKind.Industrial => (new[] { RoomKind.Warehouse, RoomKind.Workshop, RoomKind.Office, RoomKind.Bathroom },
                                         new[] { RoomKind.Storage, RoomKind.Office, RoomKind.Garage, RoomKind.Storage }),
+            // what EVERY flat has (BuildingGen.Apartments), and what a bigger one adds: a second bedroom, or a study
+            BuildingKind.Apartment => (new[] { RoomKind.LivingRoom, RoomKind.Kitchen, RoomKind.Bathroom, RoomKind.Bedroom },
+                                       new[] { RoomKind.Bedroom, RoomKind.Office }),
             _ => (new[] { RoomKind.Office, RoomKind.Bathroom, RoomKind.Storage },
                   new[] { RoomKind.Office, RoomKind.BreakRoom, RoomKind.Storage, RoomKind.Office }),
         };
@@ -442,7 +466,9 @@ namespace UnturnedSim
         /// <summary>The retail palettes that suit a kind of building (content/wall_palettes.tsv names).</summary>
         public static string[] PalettesFor(BuildingKind b) => b switch
         {
-            BuildingKind.Residential => new[] { "House_00", "House_01", "House_02", "House_03", "House_04", "House_05", "House_06", "House_07", "House_08", "House_09", "Apartment_0", "Apartment_1", "Apartment_2", "Apartment_3" },
+            BuildingKind.Residential => new[] { "House_00", "House_01", "House_02", "House_03", "House_04", "House_05", "House_06", "House_07", "House_08", "House_09" },
+            // (a house drew from these too until a block of flats was a kind of its own: see Generate)
+            BuildingKind.Apartment => new[] { "Apartment_0", "Apartment_1", "Apartment_2", "Apartment_3" },
             BuildingKind.Commercial => new[] { "Cafe_0", "Cafe_1", "Clothes_0", "Clothes_1", "Diner_0", "Diner_1", "Diner_2", "Grocer_0", "Guns_0", "Hardware_0", "Post_0", "Bank_0", "Mall_0", "Library_0" },
             BuildingKind.Industrial => new[] { "Barn_0", "Barn_1", "Mechanic_0", "Fire_0", "Drill", "Research_0" },
             _ => new[] { "Office_0", "Office_1", "Office_2", "Office_3", "Police_0", "Police_1", "Medic_0", "Medic_1", "School_0", "School_1", "Barracks_0" },
@@ -572,7 +598,8 @@ namespace UnturnedSim
         /// plan is built, said so.</summary>
         public static BuildingGenResult Generate(BuildingGenSpec spec)
         {
-            if (!spec.FitPlot || spec.Width <= 0 || spec.Depth <= 0) return GenerateOnce(spec);
+            // (a block of flats fits itself -- corridor, stairwell and whole flats, not rooms a floor: BuildingGenApartments)
+            if (!spec.FitPlot || spec.Width <= 0 || spec.Depth <= 0 || spec.Kind == BuildingKind.Apartment) return GenerateOnce(spec);
             int maxF = Math.Max(1, spec.MaxFloors), minF = Math.Clamp(spec.MinFloors, 1, maxF);
             // stairs need a bay two rows deep (on a narrow plot; three elsewhere), a hall and two rows north of it: a
             // shallower plot is one storey
@@ -711,10 +738,18 @@ namespace UnturnedSim
             var kind = spec.Kind;
             var res = new BuildingGenResult { Kind = kind };
             var pals = PalettesFor(kind);
-            res.Palette = pals[rng.Int(pals.Length)];
+            // A house drew from fourteen palettes, its ten and the four apartment ones, until a block of flats became a
+            // kind of its own (strawberry: "apartments should function differently from houses"). The same draw over the
+            // same fourteen keeps every house that drew a house palette exactly as it was; one that drew an apartment's
+            // draws again among the houses, from a stream of its own so nothing after it moves.
+            int pick = rng.Int(kind == BuildingKind.Residential ? pals.Length + PalettesFor(BuildingKind.Apartment).Length : pals.Length);
+            res.Palette = pals[pick < pals.Length ? pick : new Rng(unchecked(spec.Seed * 7349 + 0x5041)).Int(pals.Length)];
             // a house's top roof is a gable or, now and then, a hip; a business's is flat
             res.Roof = kind == BuildingKind.Residential ? (rng.Chance(35) ? RoofKind.Hip : RoofKind.Gable) : RoofKind.Flat;
             res.RoofPitch = res.Roof != RoofKind.Flat ? GablePitches[rng.Int(GablePitches.Length)] : 0f;
+            // a block of flats is laid out its own way (BuildingGenApartments.cs) -- corridor, stairwell, flats -- and joins
+            // this one for its doors (Connect, which keeps every door inside a flat or at its way in), walls, roof, furniture
+            if (kind == BuildingKind.Apartment) return Apartments(spec, res, rng, Connect);
             int maxFloors = Math.Max(1, spec.MaxFloors), minFloors = Math.Clamp(spec.MinFloors, 1, maxFloors);
             int perFloor = Math.Max(1, spec.MaxRoomsPerFloor), capacity = maxFloors * perFloor;
             // a kitchen with the dining table in it is a size up (see `diner` below)
@@ -1134,7 +1169,7 @@ namespace UnturnedSim
                 bool apart = !KitchenNearDining(g, prs);
                 bool lopsided = !Proportioned(prs, multi ? (pb, 0, pb + L, bayRows) : (0, 0, 0, 0));
                 if ((apart || lopsided) && attempt < 12) continue;
-                if (!Connect(g, prs, 0, null, doors, multi ? (pb, 0, pb + L, bayRows) : (0, 0, 0, 0))) continue;
+                if (!Connect(g, prs, 0, null, doors, multi ? (pb, 0, pb + L, bayRows) : (0, 0, 0, 0), frontAsked, ref turn)) continue;
                 if (apart) res.Notes.Add("the dining room could not be put beside the kitchen");
                 if (lopsided) res.Notes.Add("the living room came out smaller than the dining room or kitchen");
                 ground = g; W = pw; D = pd; bx0 = pb;
@@ -1182,7 +1217,7 @@ namespace UnturnedSim
                 var g = new Grid(W, D, ux0, ux1);
                 foreach (var r in rs) g.Paint(r);
                 var doors = new List<GenDoor>();
-                if (!Connect(g, rs, f, hall, doors, (bx0, 0, bx0 + L, bayRows)))
+                if (!Connect(g, rs, f, hall, doors, (bx0, 0, bx0 + L, bayRows), frontAsked, ref turn))
                     res.Notes.Add($"floor {f}: not every room could be given a door");
                 res.Layout.AddRange(rs);
                 res.Doors.AddRange(doors);
@@ -1509,8 +1544,12 @@ namespace UnturnedSim
             // =========================================================================================================
             // Doors. A front door on the ground floor (an upper floor is entered by its stairs, into its landing hall);
             // a tree of doors through the walk-through rooms, and a second where two of them belong together; then every
-            // dead end off a room it may open off. False when a room cannot be reached.
-            bool Connect(Grid g, List<GenRoom> rs, int f, GenRoom root, List<GenDoor> doors, (int X0, int Z0, int X1, int Z1) bay)
+            // dead end off a room it may open off. False when a room cannot be reached. `frontAsked`: the side(s) the front
+            // door may go in; `turn` comes back true when it went in the opposite one (the building is then turned).
+            // In a block of flats a door joins only rooms that MayJoin -- no door from one flat into another, and into a flat
+            // only by its way in, from the corridor -- so the walk-through tree enters each flat once, by its entry.
+            bool Connect(Grid g, List<GenRoom> rs, int f, GenRoom root, List<GenDoor> doors, (int X0, int Z0, int X1, int Z1) bay,
+                         Sides frontAsked, ref bool turn)
             {
                 var runs = Runs(g);
                 var reached = new HashSet<GenRoom>();
@@ -1574,7 +1613,7 @@ namespace UnturnedSim
                     crowdedOut = second != null;
                     return second;
                 }
-                List<GenRoom> Next(GenRoom a) => runs.Where(r => r.A == a || r.B == a).Select(r => r.A == a ? r.B : r.A).Where(b => b != null).Distinct().ToList();
+                List<GenRoom> Next(GenRoom a) => runs.Where(r => r.A == a || r.B == a).Select(r => r.A == a ? r.B : r.A).Where(b => b != null && MayJoin(a, b)).Distinct().ToList();
                 bool Doored(GenRoom a, GenRoom b) => doors.Any(d => (d.A == a && d.B == b) || (d.A == b && d.B == a));
 
                 if (root == null)
@@ -1583,7 +1622,7 @@ namespace UnturnedSim
                     GenDoor front = null;
                     foreach (var k in EntranceOrder(kind))
                     {
-                        foreach (var r in rng.Keyed(rs.Where(r => r.Kind == k)).OrderBy(x => x.Key).Select(x => x.Item).ToList())
+                        foreach (var r in rng.Keyed(rs.Where(r => r.Kind == k && r.Unit < 0)).OrderBy(x => x.Key).Select(x => x.Item).ToList())
                             if ((front = Door(r, null)) != null) break;
                         if (front != null) break;
                     }
@@ -1637,7 +1676,7 @@ namespace UnturnedSim
                     progress = false;
                     foreach (var r in left.ToList())
                     {
-                        var parents = Next(r).Where(p => reached.Contains(p) && MayOpenOff(r.Kind, p.Kind)).ToList();
+                        var parents = Next(r).Where(p => reached.Contains(p) && MayOpenOff(r.Kind, p.Kind) && (r.Unit < 0 || OffInAFlat(r.Kind, p.Kind))).ToList();
                         if (parents.Count == 0) continue;
                         // a closet (or a bathroom that rolls an en-suite) off a bedroom or office first; then the
                         // hall, since a bathroom off the hall beats one off the kitchen; then whatever it faces
@@ -1668,9 +1707,9 @@ namespace UnturnedSim
                     int Side(Sides sd) => sd switch { Sides.South => 0, Sides.East => 1, Sides.North => 2, _ => 3 };
                     int fs = Side(DoorSide(front));
                     var order = BackDoorOrder(kind);
-                    var backRooms = rng.Keyed(rs.Where(r => order.Contains(r.Kind))).OrderBy(x => Array.IndexOf(order, x.Item.Kind)).ThenBy(x => x.Key).Select(x => x.Item).ToList();
+                    var backRooms = rng.Keyed(rs.Where(r => order.Contains(r.Kind) && r.Unit < 0)).OrderBy(x => Array.IndexOf(order, x.Item.Kind)).ThenBy(x => x.Key).Select(x => x.Item).ToList();
                     // a side asked for: after the rooms that suit one, a hall
-                    if (backOk != Sides.None) backRooms.AddRange(rs.Where(r => !backRooms.Contains(r) && r.Kind == RoomKind.Hall));
+                    if (backOk != Sides.None) backRooms.AddRange(rs.Where(r => !backRooms.Contains(r) && r.Kind == RoomKind.Hall && r.Unit < 0));
                     foreach (var r in backRooms)
                     {
                         var outs = runs.Where(u => u.B == null && u.A == r && Side(SideOf(u)) != fs
@@ -1717,7 +1756,9 @@ namespace UnturnedSim
         /// bathroom two cells wide was 54 m2 and up -- keeps the INNER part of the row, beside the hall or the rooms it opens
         /// off, and the strip behind it along the outside wall goes to a neighbour in the row: a bedroom or office by
         /// preference (an en-suite tucked into its corner), else a hall, else any room but another small one. Without such a
-        /// neighbour it stays as it was. Runs on a floor's rooms before they are painted, so walls and doors follow.</summary>
+        /// neighbour it stays as it was. Runs on a floor's rooms before they are painted, so walls and doors follow. In a
+        /// block of flats only a room of the same flat takes anything: a strip handed across a party wall would be a door's
+        /// worth of one flat inside another.</summary>
         static void TuckServiceRooms(List<GenRoom> rs, int depth, BuildingKind kind, int perFloor, Func<int, int, bool> storeOk)
         {
             foreach (var r in rs.Where(r => MaxCells(r.Kind) < int.MaxValue && r.More.Count == 0).ToList())
@@ -1726,11 +1767,11 @@ namespace UnturnedSim
                 while (r.X1 - r.X0 > 2 && (r.X1 - r.X0) * (r.Z1 - r.Z0) > MaxCells(r.Kind))
                 {
                     int dd = r.Z1 - r.Z0;
-                    var side = rs.Where(n => n != r && n.Floor == r.Floor && n.More.Count == 0 && MaxCells(n.Kind) == int.MaxValue && n.Kind != RoomKind.Stairwell
+                    var side = rs.Where(n => n != r && n.Floor == r.Floor && n.Unit == r.Unit && n.More.Count == 0 && MaxCells(n.Kind) == int.MaxValue && n.Kind != RoomKind.Stairwell
                                              && n.Z0 == r.Z0 && n.Z1 == r.Z1 && (n.X1 == r.X0 || n.X0 == r.X1) && (long)n.Cells + dd <= CapCells(n.Kind, kind))
                                  .OrderBy(n => n.Cells).ThenBy(n => n.X0).FirstOrDefault();
                     // (failing that, one a quarter past its cap: a bedroom 20 cells big is no stranger than a bathroom 12)
-                    side ??= rs.Where(n => n != r && n.Floor == r.Floor && n.More.Count == 0 && MaxCells(n.Kind) == int.MaxValue && n.Kind != RoomKind.Stairwell
+                    side ??= rs.Where(n => n != r && n.Floor == r.Floor && n.Unit == r.Unit && n.More.Count == 0 && MaxCells(n.Kind) == int.MaxValue && n.Kind != RoomKind.Stairwell
                                            && n.Z0 == r.Z0 && n.Z1 == r.Z1 && (n.X1 == r.X0 || n.X0 == r.X1) && (long)n.Cells + dd <= (long)CapCells(n.Kind, kind) * 5 / 4)
                                .OrderBy(n => n.Cells + dd - CapCells(n.Kind, kind)).ThenBy(n => n.X0).FirstOrDefault();
                     if (side == null) break;
@@ -1773,7 +1814,7 @@ namespace UnturnedSim
                 // (and only where the neighbour stays within its own cap: a strip that makes a super bedroom is no better)
                 // (against its main rectangle, and one strip to a room: a bedroom that took two became a corridor 6 m long
                 // round to a closet door, every wall of it facing a door)
-                var nb = rs.Where(n => n != r && n.Floor == r.Floor && MaxCells(n.Kind) == int.MaxValue && n.Kind != RoomKind.Stairwell
+                var nb = rs.Where(n => n != r && n.Floor == r.Floor && n.Unit == r.Unit && MaxCells(n.Kind) == int.MaxValue && n.Kind != RoomKind.Stairwell
                                        && (long)n.Cells + stripCells <= CapCells(n.Kind, kind) && (n.Kind == RoomKind.Hall || n.More.Count == 0)
                                        && (n.X1 == r.X0 || n.X0 == r.X1) && n.Z0 <= strip.Z0 && n.Z1 >= strip.Z1)
                            .OrderBy(Pref).ThenBy(n => n.X0 < r.X0 ? 0 : 1).FirstOrDefault();
@@ -1782,7 +1823,7 @@ namespace UnturnedSim
                 {
                     var after = south ? (X0: r.X0, Z0: r.Z1 - keep, X1: r.X1, Z1: r.Z1) : (X0: r.X0, Z0: r.Z0, X1: r.X1, Z1: r.Z0 + keep);
                     GenRoom Owner(int x, int z) => z >= strip.Z0 && z < strip.Z1 && x >= strip.X0 && x < strip.X1 ? taker
-                        : rs.FirstOrDefault(n => n != r && n.Floor == r.Floor && n.HasCell(x, z));
+                        : rs.FirstOrDefault(n => n != r && n.Floor == r.Floor && n.Unit == r.Unit && n.HasCell(x, z));
                     var ring = new List<GenRoom>();
                     for (int x = after.X0; x < after.X1; x++) { ring.Add(Owner(x, after.Z0 - 1)); ring.Add(Owner(x, after.Z1)); }
                     for (int z = after.Z0; z < after.Z1; z++) { ring.Add(Owner(after.X0 - 1, z)); ring.Add(Owner(after.X1, z)); }
@@ -1796,7 +1837,7 @@ namespace UnturnedSim
                     // office within its cap (an en-suite's lobby), when one room owns that whole side
                     var inner = south ? (X0: r.X0, Z0: r.Z0 + keep, X1: r.X1, Z1: r.Z1) : (X0: r.X0, Z0: r.Z0, X1: r.X1, Z1: r.Z1 - keep);
                     int across = south ? r.Z1 : r.Z0 - 1;
-                    var owners = Enumerable.Range(r.X0, wd).Select(x => rs.FirstOrDefault(n => n != r && n.Floor == r.Floor && n.HasCell(x, across))).Distinct().ToList();
+                    var owners = Enumerable.Range(r.X0, wd).Select(x => rs.FirstOrDefault(n => n != r && n.Floor == r.Floor && n.Unit == r.Unit && n.HasCell(x, across))).Distinct().ToList();
                     var inb = owners.Count == 1 ? owners[0] : null;
                     if (inb != null && (inb.Kind == RoomKind.Hall
                                         || inb.Kind is RoomKind.Bedroom or RoomKind.Office && inb.More.Count == 0 && (long)inb.Cells + stripCells <= CapCells(inb.Kind, kind)))
@@ -1808,7 +1849,7 @@ namespace UnturnedSim
                     // no room can take it: a closet or store room of its own, opening off a row neighbour it may open off
                     // (two cells deep at least: a one-cell strip has no room for a door and a shelf both)
                     var own = stripCells <= MaxCells(RoomKind.Storage) && strip.Z1 - strip.Z0 >= 2 ? RoomKind.Storage : RoomKind.Unassigned;
-                    bool parent = rs.Any(n => n != r && n.Floor == r.Floor && MayOpenOff(own, n.Kind)
+                    bool parent = rs.Any(n => n != r && n.Floor == r.Floor && n.Unit == r.Unit && MayOpenOff(own, n.Kind)
                                               && n.Rects.Any(q => (q.X1 == r.X0 || q.X0 == r.X1) && q.Z0 <= strip.Z0 && q.Z1 >= strip.Z1));
                     if (own != RoomKind.Unassigned && rs.Count(n => n.Floor == r.Floor && !n.Circulation) < perFloor
                         && storeOk(r.Floor, rs.Count(n => n.Floor == r.Floor && n.Kind == RoomKind.Storage)) && parent)
@@ -1821,7 +1862,7 @@ namespace UnturnedSim
                     // neighbour takes the outer strip, or the room across the inner side takes the inner one
                     bool Roomy(GenRoom n) => n != null && MaxCells(n.Kind) == int.MaxValue && n.Kind != RoomKind.Stairwell
                                              && (n.Kind == RoomKind.Hall || n.More.Count == 0) && (long)n.Cells + stripCells <= (long)CapCells(n.Kind, kind) * 5 / 4;
-                    var over = rs.Where(n => n != r && n.Floor == r.Floor && Roomy(n) && (n.X1 == r.X0 || n.X0 == r.X1) && n.Z0 <= strip.Z0 && n.Z1 >= strip.Z1 && !Island(n))
+                    var over = rs.Where(n => n != r && n.Floor == r.Floor && n.Unit == r.Unit && Roomy(n) && (n.X1 == r.X0 || n.X0 == r.X1) && n.Z0 <= strip.Z0 && n.Z1 >= strip.Z1 && !Island(n))
                                  .OrderBy(n => n.Cells + stripCells - CapCells(n.Kind, kind)).ThenBy(Pref).FirstOrDefault();
                     if (over != null)
                     {

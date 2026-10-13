@@ -6,8 +6,12 @@ namespace UnturnedSim
     /// <summary>What a whole building is FOR. One per building, and the volume it applies to is DERIVED from
     /// the walls rather than drawn -- strawberry_cow: "volume(s) that perfectly encompass the building, not
     /// stretching past". Deriving it is not a shortcut: a hand-drawn box goes stale the moment a wall moves,
-    /// and "perfectly encompasses" is a property nothing but the walls can answer.</summary>
-    public enum BuildingKind { Residential, Commercial, Industrial, Misc }
+    /// and "perfectly encompasses" is a property nothing but the walls can answer.
+    ///
+    /// Apartment: a block of flats (strawberry: "apartments should function differently from houses, no staircase
+    /// inside the apartment, shared corridor and staircases"). On the END, as RoomKind's new members are: kinds persist
+    /// by NAME, but nothing should renumber.</summary>
+    public enum BuildingKind { Residential, Commercial, Industrial, Misc, Apartment }
 
     /// <summary>What one ROOM is for. Extending this is a one-line change and safe: designations persist by
     /// NAME, never by ordinal, so adding or reordering members cannot silently re-label existing saves.
