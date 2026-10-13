@@ -2676,10 +2676,12 @@ namespace UnturnedGodot
         /// <summary>Is this road one of the grid's MAIN streets? ⚠ Asked by material, because that is what
         /// the generator actually varies between a main and a side street -- and a main road's junction
         /// treatment differs from a side street's in every respect that follows.</summary>
-        bool IsMain(RoadField roads, int road)
+        /// <summary>Is this road a main -- the plain one, the boulevard, or the textured original? Asked of the material
+        /// it was DERIVED from, since the town draws every road from a material of its own.</summary>
+        public bool IsMain(RoadField roads, int road)
         {
             int m = roads.RoadMaterialOf(road);
-            return MainMaterial != StreetMaterial && (m == MainMaterial || m == BoulevardMaterial && BoulevardMaterial >= 0);
+            return MainMaterial != StreetMaterial && m >= 0 && roads.MaterialSource(m) == MainMaterial;
         }
         /// <summary>Is this road the boulevard -- a main with a median down its middle?</summary>
         public bool IsBoulevard(RoadField roads, int road) => BoulevardMaterial >= 0 && roads.RoadMaterialOf(road) == BoulevardMaterial;
@@ -2726,8 +2728,15 @@ namespace UnturnedGodot
                         if (opp > worst) { worst = opp; bi = a; bj = b; }
                     }
                 if (bi < 0 || worst < 0.8f) continue;          // not a straight-through main road
-                // ⚠ A BOULEVARD CARRIES ITS OWN LINES ACROSS: each half of the main's, pushed out by half the median
-                table = LineTableFor(half, MedianHalfOf(roads, arms[bi].road));
+                // ⚠ A BOULEVARD CARRIES ITS OWN LINES ACROSS: each half of the main's, pushed out by half the median.
+                // Painting its own lines, the town carries ITS table across -- the centre and the lanes, never the edges,
+                // which belong to kerbs the box does not have.
+                if (PaintOwnLines && _plainMain >= 0)
+                {
+                    table = new List<(double lat, double width, byte colour, bool dashed)>();
+                    foreach (var (ol, ow, oc, od, oe) in OwnLines(roads, arms[bi].road, withEdges: false)) table.Add((ol, ow, oc, od));
+                }
+                else table = LineTableFor(half, MedianHalfOf(roads, arms[bi].road));
                 var p0 = arms[bi].tip; var p1 = arms[bj].tip;
                 var axis = new Vector3(p1.X - p0.X, 0f, p1.Z - p0.Z);
                 float span = axis.Length();
@@ -3897,18 +3906,45 @@ namespace UnturnedGodot
         /// axis: the town's high street, crossing a plain main at its middle.</summary>
         bool BoulevardLine(int axis, int line) => BoulevardMaterial >= 0 && line == 0 && axis == BoulevardAxisNow && MainLine(line);
         /// <summary>The material a span is built from.</summary>
-        int MatOf(Span sp) => sp.Boulevard && BoulevardMaterial >= 0 ? BoulevardMaterial : sp.Main ? MainMaterial : StreetMaterial;
+        int MatOf(Span sp) => sp.Boulevard && BoulevardMaterial >= 0 ? BoulevardMaterial
+                            : sp.Main ? (_plainMain >= 0 ? _plainMain : MainMaterial)
+                            : (_plainStreet >= 0 ? _plainStreet : StreetMaterial);
 
         /// <summary>Derive the boulevard's material from the main road's: as wide again as its median, and drawn with
         /// road_0 split down its yellow centre line and pulled apart by the median -- so every lane keeps the main
         /// road's painted width and the centre line becomes a yellow edge line along each side of the median.</summary>
         void MakeBoulevardMaterial(RoadField roads)
         {
-            BoulevardMaterial = -1;
+            BoulevardMaterial = -1; _plainMain = _plainStreet = -1;
+            // ⭐ THE TOWN'S ROADS ARE PLAIN TARMAC AND ITS LINES ARE PAINTED SEPARATELY (strawberry 2026-10-13: "it
+            // might be better to rip the line etc decals and apply them ourselves instead of adjusting the existing
+            // spline thing. the spline becomes just the tarmac road, decals are a separate thing"). Baked into the
+            // texture a line runs the length of the ribbon whatever is laid over it -- into the crossings, along the
+            // parking bays -- and has no edge lines to give. So each road wears its own material's width and surface
+            // with no paint on it at all, and BuildRoadLines lays the lines where they belong.
+            Image plain = null;
+            {
+                string p0 = ProjectSettings.GlobalizePath($"res://content/roads/road_{MainMaterial}.png");
+                var s0 = new Image();
+                if (System.IO.File.Exists(p0) && ContentProvider.LoadOk(s0, p0) && s0.GetWidth() >= 8)
+                {
+                    var asphalt0 = s0.GetPixel(Mathf.Min(s0.GetWidth() - 1, s0.GetWidth() / 8), 0);
+                    plain = Image.CreateEmpty(8, 8, false, Image.Format.Rgba8);
+                    plain.Fill(asphalt0);
+                }
+            }
+            if (PaintOwnLines && plain != null)
+            {
+                float mh0 = roads.RoadHalfWidthOfMaterial(MainMaterial), sh0 = roads.RoadHalfWidthOfMaterial(StreetMaterial);
+                if (mh0 > 0f) _plainMain = roads.AddDerivedMaterial(MainMaterial, mh0, plain, 0f);
+                if (sh0 > 0f && StreetMaterial != MainMaterial) _plainStreet = roads.AddDerivedMaterial(StreetMaterial, sh0, plain, 0f);
+                else if (StreetMaterial == MainMaterial) _plainStreet = _plainMain;
+            }
             if (!Boulevards || MainMaterial == StreetMaterial || MedianWidth <= 0f) return;
             float half = roads.RoadHalfWidthOfMaterial(MainMaterial);
             if (half <= 0f) return;
             float medianHalf = MedianWidth * 0.5f, wide = half + medianHalf;
+            if (PaintOwnLines && plain != null) { BoulevardMaterial = roads.AddDerivedMaterial(MainMaterial, wide, plain, medianHalf); return; }
             Image tex = null;
             string path = ProjectSettings.GlobalizePath($"res://content/roads/road_{MainMaterial}.png");
             var src = new Image();
@@ -4079,6 +4115,161 @@ namespace UnturnedGodot
             Log.Print($"[towngrid] boulevard: {Medians.Count} {(Medians.Count > 0 && Medians[0].Grass ? "grass" : "concrete")} median(s), "
                     + $"{MedianWidth:0.0} m wide, kerb {MedianKerb:0.00} m");
             return made;
+        }
+
+        // ==============================================================================================
+        // THE LINES (strawberry 2026-10-13: "rip the line etc decals and apply them ourselves ... the spline becomes
+        // just the tarmac road, decals are a separate thing"; and "should we add yellow lines to the sides of the
+        // roads? ... those double lines extend into the crossing").
+        // ==============================================================================================
+
+        /// <summary>UG_TOWNTEXLINES=1: the old way -- each road's lines baked into its texture -- as the control.</summary>
+        public bool PaintOwnLines = System.Environment.GetEnvironmentVariable("UG_TOWNTEXLINES") != "1";
+        int _plainMain = -1, _plainStreet = -1;
+        /// <summary>The paint: line width; how far inside the carriageway's edge the edge line runs, and inside the
+        /// median's kerb its yellow line; a dash and the gap after it.</summary>
+        public float LineWidth = 0.15f, EdgeLineInset = 0.35f, MedianLineInset = 0.35f, LineDash = 3f, LineGap = 6f;
+        /// <summary>Line pieces laid by the last BuildRoadLines.</summary>
+        public int RoadLinePieces;
+
+        /// <summary>A road's own lines, in metres off its centreline along the spline's (t.z, 0, -t.x) side: where,
+        /// how wide, white (0) or yellow (1), dashed or solid, and whether it is an EDGE line (one that follows a kerb).
+        /// ⚠ CANADIAN, LIKE PEI: yellow only ever on the left of traffic -- the centre of a two-way road and the median
+        /// side of a boulevard -- and white for everything else, edges included.
+        ///   main      a double yellow down the middle, a dashed white between each side's two lanes, white edges
+        ///   boulevard a yellow along each side of the median, a dashed white between each side's lanes, white edges
+        ///   street    a dashed yellow down the middle, white edges</summary>
+        public List<(float lat, float width, byte colour, bool dashed, bool edge)> OwnLines(RoadField roads, int road, bool withEdges)
+        {
+            var t = new List<(float, float, byte, bool, bool)>();
+            float h = roads.RoadHalfWidth(road), mh = roads.MedianHalfOfMaterial(roads.RoadMaterialOf(road));
+            if (mh > 0f)
+                foreach (int s in new[] { -1, 1 })
+                {
+                    t.Add((s * (mh + MedianLineInset), LineWidth, 1, false, false));
+                    t.Add((s * (mh + RoadField.LaneWidth), LineWidth, 0, true, false));
+                }
+            else if (IsMain(roads, road))
+                foreach (int s in new[] { -1, 1 })
+                {
+                    t.Add((s * LineWidth, LineWidth * 0.8f, 1, false, false));
+                    t.Add((s * RoadField.LaneWidth, LineWidth, 0, true, false));
+                }
+            else t.Add((0f, LineWidth, 1, true, false));
+            if (withEdges)
+                foreach (int s in new[] { -1, 1 }) t.Add((s * (h - EdgeLineInset), LineWidth, 0, false, true));
+            return t;
+        }
+
+        /// <summary>How far in from this end of a road a line at `lat` may come, in arc metres (0: to the end).
+        /// ⚠ TO THE STOP LINE AND NO FURTHER where the end has a crossing: the crossing and the box behind it are bare
+        /// on a real junction, and a line run on into them is exactly "those double lines extend into the crossing".
+        /// The stop line may be slanted, so each line stops where it meets it. Where a main runs through, its centre and
+        /// lane lines run on to the node and are carried across the box (BuildMainThroughLines); its EDGE lines stop
+        /// where the kerb turns away into the side street's mouth.</summary>
+        float LineLimit(RoadField roads, int road, bool atEnd, float lat, bool edge)
+        {
+            int j = roads.RoadEndJunction(road, atEnd);
+            if (j < 0) return 0f;
+            float L = roads.RoadLength(road);
+            if (!roads.EvaluateAlong(road, atEnd ? L : 0f, out var tip, out _, snapTerrain: false)) return 0f;
+            var node = roads.JunctionPos(j);
+            float cut = new Vector2(tip.X - node.X, tip.Z - node.Z).Length();
+            if (_throughEnds.Contains((road, atEnd)))
+            {
+                if (!edge) return 0f;
+                float crossed = 0f;
+                foreach (var (o, _) in roads.JunctionEdges(j)) if (o != road) crossed = Mathf.Max(crossed, roads.RoadHalfWidth(o));
+                return Mathf.Max(0f, ApproachClear(roads, j, road, atEnd, crossed > 0f ? crossed : roads.RoadHalfWidth(road)) - cut);
+            }
+            if (CrossingBuilt(road, atEnd) && LayCrossing(roads, j, road, atEnd, out var c))
+            {
+                // the arm's lateral is to the ARRIVING driver's right: the spline's side at its start, the other at its end
+                float armLat = atEnd ? -lat : lat;
+                return Mathf.Max(0f, c.SD1 + armLat * c.Shear - cut);
+            }
+            return 0f;
+        }
+
+        /// <summary>Paint every road's lines: its own table (OwnLines), each line from stop line to stop line, an edge
+        /// line broken where a parking bay opens off it (the bay's own dotted line takes over), dashes in a fixed
+        /// rhythm along the road. One mesh, the crossings' paint: the main road's material and its own white and
+        /// yellow texels. Returns the pieces laid.</summary>
+        public int BuildRoadLines(Node3D parent, RoadField roads)
+        {
+            RoadLinePieces = 0;
+            if (!PaintOwnLines || parent == null || roads == null || _plainMain < 0) return 0;
+            var mat = roads.MaterialOfMaterial(MainMaterial);
+            var uvWhite = new Vector2(0.2363f, 0.0664f); var uvYellow = new Vector2(0.4863f, 0.0039f);
+            var st = new SurfaceTool(); st.Begin(Mesh.PrimitiveType.Triangles);
+            void Tri(Vector3 a, Vector3 b, Vector3 c, Vector2 uv)
+            {
+                bool keep = (c - a).Cross(b - a).Y >= 0f;
+                st.SetNormal(Vector3.Up); st.SetUV(uv); st.AddVertex(a);
+                st.SetNormal(Vector3.Up); st.SetUV(uv); st.AddVertex(keep ? b : c);
+                st.SetNormal(Vector3.Up); st.SetUV(uv); st.AddVertex(keep ? c : b);
+            }
+            foreach (int r in Built)
+            {
+                float L = roads.RoadLength(r), surface = roads.RoadSurfaceOffset(r);
+                bool Station(float d, float lat, out Vector3 q)
+                {
+                    q = default;
+                    if (!roads.EvaluateAlong(r, d, out var pos, out var tan, snapTerrain: false)) return false;
+                    var o = new Vector3(tan.Z, 0f, -tan.X).Normalized();
+                    q = pos + o * lat; q.Y = pos.Y + surface + MarkLift;
+                    return true;
+                }
+                void Run(float a, float b, float lat, float w, Vector2 uv)
+                {
+                    if (b - a < 0.05f) return;
+                    int n = Mathf.Max(1, Mathf.CeilToInt((b - a) / 3f));
+                    for (int k = 0; k < n; k++)
+                    {
+                        float d0 = a + (b - a) * k / n, d1 = a + (b - a) * (k + 1) / n;
+                        if (!Station(d0, lat - w * 0.5f, out var a0) || !Station(d0, lat + w * 0.5f, out var a1)
+                            || !Station(d1, lat - w * 0.5f, out var b0) || !Station(d1, lat + w * 0.5f, out var b1)) continue;
+                        Tri(a0, a1, b1, uv); Tri(a0, b1, b0, uv);
+                        RoadLinePieces++;
+                    }
+                }
+                foreach (var (lat, w, colour, dashed, edge) in OwnLines(roads, r, withEdges: true))
+                {
+                    var uv = colour == 1 ? uvYellow : uvWhite;
+                    float s0 = LineLimit(roads, r, false, lat, edge), s1 = L - LineLimit(roads, r, true, lat, edge);
+                    if (s1 - s0 < 0.1f) continue;
+                    // the stretches this line runs: all of [s0, s1], less any parking bay opening off an edge line
+                    var spans = new List<(float a, float b)> { (s0, s1) };
+                    if (edge)
+                        foreach (var bay in Bays)
+                        {
+                            if (bay.Road != r || bay.Side != Mathf.Sign(lat)) continue;
+                            var next = new List<(float, float)>();
+                            foreach (var (a, b) in spans)
+                            {
+                                if (bay.B <= a || bay.A >= b) { next.Add((a, b)); continue; }
+                                if (bay.A > a) next.Add((a, bay.A));
+                                if (bay.B < b) next.Add((bay.B, b));
+                            }
+                            spans = next;
+                        }
+                    foreach (var (a, b) in spans)
+                    {
+                        if (!dashed) { Run(a, b, lat, w, uv); continue; }
+                        // a fixed rhythm along the road, so a line broken by a bay picks up in step
+                        float period = LineDash + LineGap;
+                        for (float d = Mathf.Floor(a / period) * period; d < b; d += period)
+                            Run(Mathf.Max(a, d), Mathf.Min(b, d + LineDash), lat, w, uv);
+                    }
+                }
+            }
+            var mesh = st.Commit();
+            if (mesh == null || mesh.GetSurfaceCount() == 0) return 0;
+            var mi = new MeshInstance3D { Name = "Road_Lines", Mesh = mesh };
+            if (mat != null) mi.MaterialOverride = mat;
+            parent.AddChild(mi);
+            Log.Print($"[towngrid] lines: {RoadLinePieces} pieces painted over {Built.Count} roads (plain tarmac underneath)");
+            return RoadLinePieces;
         }
 
         /// <summary>How far short of its end a road's pavement stops: clear of the corner, and -- for a pavement

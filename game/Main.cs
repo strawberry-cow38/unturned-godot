@@ -10641,6 +10641,8 @@ namespace UnturnedGodot
             // sections of road, with dotted lines for parking"). A parking bay moves the kerb, the pavement and the
             // plots behind it, so the pavement and the lamps have to be laid where the bays put them.
             if (!noWalk) town.PlanPlots(rf, walkProto.Width);
+            // the roads' own lines, painted over plain tarmac -- after the bays, which break the edge lines they open off
+            town.BuildRoadLines(editor, rf);
             int walks = noWalk ? 0 : town.LaySidewalks(editor, rf);
             int corners = noWalk ? 0 : town.LaySidewalkCorners(editor, rf, walkProto);
             // the asphalt under each kerb corner, from the same fillet the kerb was laid on -- then the
@@ -10759,7 +10761,7 @@ namespace UnturnedGodot
                 {
                     bool mainHere = false, sideHere = false;
                     foreach (var (rr, _) in ends)
-                    { if (rf.RoadMaterialOf(rr) == town.MainMaterial) mainHere = true; else sideHere = true; }
+                    { if (town.IsMain(rf, rr)) mainHere = true; else sideHere = true; }
                     if (mainHere && sideHere && ends.Count >= 4 && bestDeg == 0) { bestDeg = ends.Count; busiest = jp; }
                     continue;
                 }
@@ -10768,7 +10770,7 @@ namespace UnturnedGodot
                 if (closeEnv == "mm")
                 {
                     int mains = 0;
-                    foreach (var (rr, _) in ends) if (rf.RoadMaterialOf(rr) == town.MainMaterial) mains++;
+                    foreach (var (rr, _) in ends) if (town.IsMain(rf, rr)) mains++;
                     if (mains >= 4 && bestDeg == 0) { bestDeg = ends.Count; busiest = jp; }
                     continue;
                 }

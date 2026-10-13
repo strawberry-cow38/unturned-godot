@@ -396,7 +396,7 @@ namespace UnturnedGodot.Testing
                             if (!atSlab) alleyLoose++;
                             continue;
                         }
-                        if (rfD.RoadMaterialOf(er) == gD.MainMaterial) alleyOnMain++;
+                        if (gD.IsMain(rfD, er)) alleyOnMain++;
                     }
                 }
                 T.Check($"...and back lanes through the blocks ({alleys.Count} lanes)", alleys.Count >= 6);
@@ -961,57 +961,8 @@ namespace UnturnedGodot.Testing
                     float boulHalf = boul.Count > 0 ? rfD.RoadHalfWidth(boul[0]) : 0f;
                     T.Check($"a boulevard runs down one of the town's central main lines ({boul.Count} spans), as wide as a main plus its median ({boulHalf:0.00} m half width vs {mainHalf:0.00} + {mHalf:0.00})",
                             boul.Count >= 2 && Mathf.Abs(boulHalf - (mainHalf + mHalf)) < 1e-3f);
-                    // 1. 2 + 2 LANES AT THE MAIN ROAD'S OWN PAINTED WIDTHS: the boulevard's texture is road_0's halves
-                    //    pulled apart, so its dashed lane lines sit exactly a median's half further out than the main's,
-                    //    and its centre yellow sits along each side of the median. Read off the texture, as drawn.
-                    Image TexOf(int material)
-                    {
-                        var mat = rfD.MaterialOfMaterial(material);
-                        Texture2D t = mat is StandardMaterial3D sm ? sm.AlbedoTexture : mat is ShaderMaterial shm ? shm.GetShaderParameter("albedo_tex").As<Texture2D>() : null;
-                        return t?.GetImage();
-                    }
-                    List<(float lat, bool yellow)> LinesIn(Image img, float halfW)
-                    {
-                        var outp = new List<(float, bool)>();
-                        if (img == null) return outp;
-                        int w = img.GetWidth(), h = img.GetHeight();
-                        int start = -1; bool yel = false, dashed = false;
-                        for (int x = 0; x <= w; x++)
-                        {
-                            bool paint = false, isYellow = false, varies = false;
-                            if (x < w)
-                            {
-                                var top = img.GetPixel(x, 0);
-                                for (int y = 0; y < h; y += Mathf.Max(1, h / 32))
-                                {
-                                    var px = img.GetPixel(x, y);
-                                    if (px.R > 0.5f || px.G > 0.5f) { paint = true; isYellow |= px.B < 0.3f; }
-                                    if (!px.IsEqualApprox(top)) varies = true;
-                                }
-                            }
-                            if (paint && start < 0) { start = x; yel = isYellow; dashed = varies; }
-                            if (!paint && start >= 0)
-                            {
-                                float u = (start + x) * 0.5f / w;
-                                outp.Add(((u * 2f - 1f) * halfW, yel));
-                                start = -1;
-                            }
-                        }
-                        return outp;
-                    }
-                    var mainLines = LinesIn(TexOf(gD.MainMaterial), mainHalf);
-                    var boulLines = LinesIn(TexOf(gD.BoulevardMaterial), boulHalf);
-                    int whiteMoved = 0, whiteMain = 0, yellowEdges = 0;
-                    foreach (var (lat, yellow) in mainLines)
-                    {
-                        if (yellow) continue;
-                        whiteMain++;
-                        float want = lat + Mathf.Sign(lat) * mHalf;
-                        foreach (var (bl, by) in boulLines) if (!by && Mathf.Abs(bl - want) < 0.1f) { whiteMoved++; break; }
-                    }
-                    foreach (var (bl, by) in boulLines) if (by && Mathf.Abs(Mathf.Abs(bl) - mHalf) < 0.3f) yellowEdges++;
-                    T.Check($"...2 + 2 lanes at the main road's painted widths: its {whiteMoved} of {whiteMain} lane lines sit exactly a median's half out from the main's, with a yellow line along each side of the median ({yellowEdges})",
-                            whiteMain == 2 && whiteMoved == whiteMain && yellowEdges == 2);
+                    // (its 2 + 2 lanes are painted, not textured: the lines block below holds every road to its class's
+                    // lines, the boulevard's included)
                     // 2. TRAFFIC KEEPS CLEAR OF IT: every AI lane down the boulevard runs a car's half width clear of the
                     //    median's kerb, and still inside the carriageway. The control: a plain main's inside lanes,
                     //    held to the same median, would run along it.
@@ -1026,7 +977,7 @@ namespace UnturnedGodot.Testing
                         if (gap >= 0.25f && Mathf.Abs(lp.Offset) + carHalf <= boulHalf) clear++;
                     }
                     float plainInner = float.MaxValue;
-                    foreach (var lp in rfD.LanePaths) if (!boul.Contains(lp.Road) && rfD.RoadMaterialOf(lp.Road) == gD.MainMaterial) plainInner = Mathf.Min(plainInner, Mathf.Abs(lp.Offset));
+                    foreach (var lp in rfD.LanePaths) if (!boul.Contains(lp.Road) && gD.IsMain(rfD, lp.Road)) plainInner = Mathf.Min(plainInner, Mathf.Abs(lp.Offset));
                     T.Check($"...its traffic lanes all clear of the median ({clear} of {lanes} lanes; nearest car {worstGap:0.00} m off its kerb) -- where a plain main's inside lane would be {plainInner - carHalf - mHalf:0.00} (control)",
                             lanes == 4 * boul.Count && clear == lanes && plainInner - carHalf - mHalf < 0.25f);
                     // 3. THE MEDIAN, AS BUILT: down the middle, raised, solid, stopping short of every crossing and its
@@ -1114,6 +1065,202 @@ namespace UnturnedGodot.Testing
                     T.Check($"...stopping short of every crossing on it ({nearCrossing} points within half a metre of one, of {medCrossings.Count} crossings) and leaving every side street's mouth open ({inMouth} points in one)",
                             medCrossings.Count + gD.Medians.Count > 0 && nearCrossing == 0 && inMouth == 0);
                     mHost.QueueFree();
+                }
+                // ⭐ THE LINES (strawberry 2026-10-13: "rip the line etc decals and apply them ourselves ... the spline
+                // becomes just the tarmac road, decals are a separate thing"; "those double lines extend into the
+                // crossing"). Every road plain tarmac; every line its own paint, measured off the painted mesh.
+                {
+                    // a texture's lines: columns of paint across it, as laterals off the centre
+                    Image TexOf(int material)
+                    {
+                        var mat = rfD.MaterialOfMaterial(material);
+                        Texture2D t = mat is StandardMaterial3D sm ? sm.AlbedoTexture : mat is ShaderMaterial shm ? shm.GetShaderParameter("albedo_tex").As<Texture2D>() : null;
+                        return t?.GetImage();
+                    }
+                    int LinesIn(Image img)
+                    {
+                        if (img == null) return 0;
+                        int w = img.GetWidth(), h = img.GetHeight(), runs = 0; bool inRun = false;
+                        for (int x = 0; x < w; x++)
+                        {
+                            bool paint = false;
+                            for (int y = 0; y < h && !paint; y += Mathf.Max(1, h / 32)) { var px = img.GetPixel(x, y); paint = px.R > 0.5f || px.G > 0.5f; }
+                            if (paint && !inRun) runs++;
+                            inRun = paint;
+                        }
+                        return runs;
+                    }
+                    var mats = new HashSet<int>();
+                    foreach (int r in gD.Built) mats.Add(rfD.RoadMaterialOf(r));
+                    int texLines = 0; foreach (int m in mats) texLines += LinesIn(TexOf(m));
+                    int origLines = LinesIn(TexOf(gD.MainMaterial));
+                    T.Check($"the town's roads are plain tarmac ({mats.Count} materials, {texLines} lines in their textures) -- where the main road's own texture has {origLines} (control)",
+                            mats.Count >= 2 && texLines == 0 && origLines >= 3);
+                    // the painted lines, as built: triangles with their colour (the yellow texel sits right of the white)
+                    var lHost = new Node3D(); World.AddChild(lHost);
+                    var cxHost = new Node3D(); World.AddChild(cxHost);
+                    gD.BuildCrossings(cxHost, rfD);        // the lines stop at the crossings that were built
+                    gD.BuildRoadLines(lHost, rfD);
+                    var paint = new List<(Vector3 a, Vector3 b, Vector3 c, bool yellow)>();
+                    foreach (var ch in lHost.GetChildren())
+                        if (ch is MeshInstance3D lmi && lmi.Mesh != null && lmi.Name.ToString() == "Road_Lines")
+                        {
+                            var arr = lmi.Mesh.SurfaceGetArrays(0);
+                            var vs = (Vector3[])arr[(int)Mesh.ArrayType.Vertex]; var uvs = (Vector2[])arr[(int)Mesh.ArrayType.TexUV];
+                            for (int k = 0; k + 2 < vs.Length; k += 3) paint.Add((vs[k], vs[k + 1], vs[k + 2], uvs[k].X > 0.4f));
+                        }
+                    var pgrid = new Dictionary<(int, int), List<int>>();
+                    for (int k = 0; k < paint.Count; k++)
+                    {
+                        var (a, b, c, _) = paint[k];
+                        int x0 = Mathf.FloorToInt(Mathf.Min(a.X, Mathf.Min(b.X, c.X)) / 2f), x1 = Mathf.FloorToInt(Mathf.Max(a.X, Mathf.Max(b.X, c.X)) / 2f);
+                        int z0 = Mathf.FloorToInt(Mathf.Min(a.Z, Mathf.Min(b.Z, c.Z)) / 2f), z1 = Mathf.FloorToInt(Mathf.Max(a.Z, Mathf.Max(b.Z, c.Z)) / 2f);
+                        for (int x = x0; x <= x1; x++) for (int z = z0; z <= z1; z++)
+                        { if (!pgrid.TryGetValue((x, z), out var l)) pgrid[(x, z)] = l = new List<int>(); l.Add(k); }
+                    }
+                    // what colour of paint is at a point: 0 none, 1 white, 2 yellow
+                    int PaintAt(Vector3 q)
+                    {
+                        if (!pgrid.TryGetValue((Mathf.FloorToInt(q.X / 2f), Mathf.FloorToInt(q.Z / 2f)), out var l)) return 0;
+                        foreach (int k in l)
+                        {
+                            var (a, b, c, y) = paint[k];
+                            float d1 = (q.X - b.X) * (a.Z - b.Z) - (a.X - b.X) * (q.Z - b.Z);
+                            float d2 = (q.X - c.X) * (b.Z - c.Z) - (b.X - c.X) * (q.Z - c.Z);
+                            float d3 = (q.X - a.X) * (c.Z - a.Z) - (c.X - a.X) * (q.Z - a.Z);
+                            if (!((d1 < 0f || d2 < 0f || d3 < 0f) && (d1 > 0f || d2 > 0f || d3 > 0f))) return y ? 2 : 1;
+                        }
+                        return 0;
+                    }
+                    Vector3 On(int road, float d, float lat)
+                    {
+                        rfD.EvaluateAlong(road, d, out var pc, out var tc, snapTerrain: false);
+                        return pc + new Vector3(tc.Z, 0f, -tc.X).Normalized() * lat;
+                    }
+                    // 1. EVERY ROAD CARRIES ITS CLASS'S LINES, at their offsets and in their colours, across one whole dash
+                    //    period at its middle -- and nothing between them (the lane centres are bare). An EDGE line is owed
+                    //    where a straight kerb runs beside the road: read off the built pavement, not the rule that stops it
+                    //    (a short link between two 45-degree corners is all kerb curve, and has none).
+                    var swHost = new Node3D(); World.AddChild(swHost);
+                    gD.LaySidewalks(swHost, rfD);
+                    var walkTops = new Dictionary<string, List<(Vector3 a, Vector3 b, Vector3 c)>>();
+                    void Walks(Node n)
+                    {
+                        if (n is MeshInstance3D wmi && wmi.Mesh != null && wmi.Name.ToString().StartsWith("Sidewalk_"))
+                        {
+                            var arr = wmi.Mesh.SurfaceGetArrays(0);
+                            var vs = (Vector3[])arr[(int)Mesh.ArrayType.Vertex];
+                            var ix = arr[(int)Mesh.ArrayType.Index].VariantType == Variant.Type.Nil ? null : (int[])arr[(int)Mesh.ArrayType.Index];
+                            var tops = new List<(Vector3, Vector3, Vector3)>();
+                            int cnt = ix != null ? ix.Length : vs.Length;
+                            for (int k = 0; k + 2 < cnt; k += 3)
+                            {
+                                Vector3 a = vs[ix != null ? ix[k] : k], b = vs[ix != null ? ix[k + 1] : k + 1], c = vs[ix != null ? ix[k + 2] : k + 2];
+                                var nn = (b - a).Cross(c - a);
+                                if (nn.Length() > 1e-3f && Mathf.Abs(nn.Y) > 0.9f * nn.Length()) tops.Add((a, b, c));
+                            }
+                            walkTops[wmi.Name.ToString()] = tops;
+                        }
+                        foreach (var ch in n.GetChildren()) Walks(ch);
+                    }
+                    Walks(swHost);
+                    bool PavedAt(string name, Vector3 q)
+                    {
+                        if (!walkTops.TryGetValue(name, out var tops)) return false;
+                        foreach (var (a, b, c) in tops)
+                        {
+                            float d1 = (q.X - b.X) * (a.Z - b.Z) - (a.X - b.X) * (q.Z - b.Z);
+                            float d2 = (q.X - c.X) * (b.Z - c.Z) - (b.X - c.X) * (q.Z - c.Z);
+                            float d3 = (q.X - a.X) * (c.Z - a.Z) - (c.X - a.X) * (q.Z - a.Z);
+                            if (!((d1 < 0f || d2 < 0f || d3 < 0f) && (d1 > 0f || d2 > 0f || d3 > 0f))) return true;
+                        }
+                        return false;
+                    }
+                    int roadsChecked = 0, linesWant = 0, linesFound = 0, laneCentres = 0, laneCentresPainted = 0;
+                    foreach (int r in gD.Built)
+                    {
+                        float L = rfD.RoadLength(r);
+                        if (L < 40f) continue;
+                        float m0 = L * 0.5f - 4.5f, m1 = L * 0.5f + 4.5f;
+                        roadsChecked++;
+                        var table = gD.OwnLines(rfD, r, withEdges: true);
+                        foreach (var (lat, w, colour, dashed, edge) in table)
+                        {
+                            bool bayHere = false;
+                            foreach (var bay in gD.Bays) if (bay.Road == r && bay.Side == Mathf.Sign(lat) && bay.A < m1 + 1f && bay.B > m0 - 1f) bayHere = true;
+                            if (edge && bayHere) continue;                        // broken for the bay: measured below
+                            // an edge line is owed only beside a straight kerb: the street's own pavement, there
+                            if (edge && !PavedAt($"Sidewalk_{(lat > 0f ? "R" : "L")}{r}",
+                                                 On(r, L * 0.5f, Mathf.Sign(lat) * (rfD.RoadHalfWidth(r) + walkD.RoadGap + walkD.Width * 0.5f)))) continue;
+                            linesWant++;
+                            bool found = false;
+                            for (float d = m0; d <= m1 && !found; d += 0.25f) found = PaintAt(On(r, d, lat)) == (colour == 1 ? 2 : 1);
+                            if (found) linesFound++;
+                        }
+                        // bare between the lines: halfway between each neighbouring pair across the road
+                        var lats = new List<float>(); foreach (var (lat, _, _, _, _) in table) lats.Add(lat);
+                        lats.Sort();
+                        for (int k = 0; k + 1 < lats.Count; k++)
+                        {
+                            float mid = (lats[k] + lats[k + 1]) * 0.5f;
+                            if (gD.IsBoulevard(rfD, r) && Mathf.Abs(mid) < rfD.MedianHalfOfMaterial(rfD.RoadMaterialOf(r))) continue;  // under the median
+                            if (lats[k + 1] - lats[k] < 1f) continue;          // the double yellow's own gap
+                            laneCentres++;
+                            for (float d = m0; d <= m1; d += 0.5f) if (PaintAt(On(r, d, mid)) != 0) { laneCentresPainted++; break; }
+                        }
+                    }
+                    T.Check($"...every road painted with its class's lines ({linesFound} of {linesWant} lines, over {roadsChecked} roads), and bare between them ({laneCentresPainted} of {laneCentres} lane centres painted)",
+                            roadsChecked >= 10 && linesWant > 0 && linesFound == linesWant && laneCentresPainted == 0);
+                    swHost.QueueFree();
+                    // 2. NONE OF IT INTO A CROSSING: from the node out to its stop line, an approach is bare of road lines
+                    //    (the stop line and the zebra are the crossings' own paint, another mesh). The control: a metre
+                    //    past the stop line, the approach's solid edge line IS there.
+                    int crossingsChecked = 0, lineInCrossing = 0, edgePast = 0;
+                    for (int j = 0; j < rfD.JunctionCount; j++)
+                        foreach (var (er, ee) in rfD.JunctionEdges(j))
+                        {
+                            if (!gD.Built.Contains(er) || !gD.CrossingBuilt(er, ee) || !gD.LayCrossing(rfD, j, er, ee, out var cl)) continue;
+                            crossingsChecked++;
+                            bool dirty = false;
+                            // the crossing and the stop line's run-up: the approach's own ground, no other road's lines on it
+                            for (float lt = -cl.Half + 0.1f; lt <= cl.Half - 0.1f && !dirty; lt += 0.1f)
+                                for (float d = cl.D0; d < cl.SD1 - 0.1f && !dirty; d += 0.25f)
+                                    if (PaintAt(cl.At(d, lt)) != 0) dirty = true;
+                            if (dirty) lineInCrossing++;
+                            // the control: its own lines take up again within one dash period past the stop line -- on a road
+                            // with that much room before its far end's crossing (a short link between two has none)
+                            float roomHere = rfD.RoadLength(er);
+                            if (rfD.EvaluateAlong(er, ee ? rfD.RoadLength(er) : 0f, out var tipH, out _, snapTerrain: false))
+                                roomHere -= cl.SD1 - new Vector2(tipH.X - cl.Node.X, tipH.Z - cl.Node.Z).Length();
+                            int jFar = rfD.RoadEndJunction(er, !ee);
+                            if (jFar >= 0 && gD.CrossingBuilt(er, !ee) && gD.LayCrossing(rfD, jFar, er, !ee, out var clFar)
+                                && rfD.EvaluateAlong(er, !ee ? rfD.RoadLength(er) : 0f, out var tipF, out _, snapTerrain: false))
+                                roomHere -= clFar.SD1 - new Vector2(tipF.X - clFar.Node.X, tipF.Z - clFar.Node.Z).Length();
+                            if (roomHere < gD.LineDash + gD.LineGap + 2f) { edgePast++; continue; }
+                            bool resumes = false;
+                            foreach (var (olat, _, _, _, _) in gD.OwnLines(rfD, er, withEdges: false))
+                            {
+                                float armLat = ee ? -olat : olat;
+                                for (float d = cl.SD1 + 0.2f; d <= cl.SD1 + gD.LineDash + gD.LineGap + 0.5f && !resumes; d += 0.25f)
+                                    if (PaintAt(cl.At(d, armLat)) != 0) resumes = true;
+                            }
+                            if (resumes) edgePast++;
+                        }
+                    T.Check($"...and none of it runs into a crossing ({lineInCrossing} of {crossingsChecked} approaches painted over the crossing or up to the stop line; control: their lines take up again just past it, {edgePast} of {crossingsChecked})",
+                            crossingsChecked > 10 && lineInCrossing == 0 && edgePast == crossingsChecked);
+                    // 3. A PARKING BAY BREAKS THE EDGE LINE IT OPENS OFF -- its own dotted line takes over -- and the edge
+                    //    line is there either side of it (the control)
+                    int baysChecked = 0, edgeInBay = 0, edgeBeside = 0;
+                    foreach (var bay in gD.Bays)
+                    {
+                        float elat = bay.Side * (rfD.RoadHalfWidth(bay.Road) - gD.EdgeLineInset);
+                        baysChecked++;
+                        for (float d = bay.A + 1f; d <= bay.B - 1f; d += 0.5f) if (PaintAt(On(bay.Road, d, elat)) == 1) { edgeInBay++; break; }
+                        if (PaintAt(On(bay.Road, bay.A - 1f, elat)) == 1 || PaintAt(On(bay.Road, bay.B + 1f, elat)) == 1) edgeBeside++;
+                    }
+                    T.Check($"...the edge line broken where a parking bay opens off it ({edgeInBay} of {baysChecked} bays painted across) and there either side of it ({edgeBeside} of {baysChecked})",
+                            baysChecked > 0 && edgeInBay == 0 && edgeBeside == baysChecked);
+                    lHost.QueueFree(); cxHost.QueueFree();
                 }
                 // determinism: the same town again lays the same plots
                 {
@@ -1225,7 +1372,7 @@ namespace UnturnedGodot.Testing
                         through++; uncutHere++;
                         // a main -- or the boulevard, a main with a median down it, on a material derived from the main's
                         int rm = rfA.RoadMaterialOf(road);
-                        if (rm != mainMat && rfA.MedianHalfOfMaterial(rm) <= 0f) streetsThrough++;
+                        if (rfA.MaterialSource(rm) != mainMat) streetsThrough++;
                         continue;
                     }
                     leastCut = Mathf.Min(leastCut, d);
@@ -1283,7 +1430,7 @@ namespace UnturnedGodot.Testing
                     int mains = 0, uncut = 0, thr = 0;
                     foreach (var (road, atEnd) in es)
                     {
-                        if (rfM.RoadMaterialOf(road) == mainMat) mains++;
+                        if (gM.IsMain(rfM, road)) mains++;
                         if (gM.RunsThrough(road, atEnd)) thr++;
                         if (rfM.EvaluateAlong(road, atEnd ? rfM.RoadLength(road) : 0f, out var tip, out _, snapTerrain: false)
                             && new Vector2(tip.X - jp.X, tip.Z - jp.Z).Length() < 0.5f) uncut++;

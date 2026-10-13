@@ -111,6 +111,9 @@ namespace UnturnedGodot
         /// <summary>The shipped material a derived one was made from (itself for a shipped one): what its texture
         /// height and whether it carries traffic are read from.</summary>
         int SourceOf(int material) => _derived.TryGetValue(material, out var d) ? d.src : material;
+        /// <summary>The shipped material a road's material was derived from -- itself for a shipped one. What a caller
+        /// asks to know what CLASS of road it is: a main is a main whatever texture it was given.</summary>
+        public int MaterialSource(int material) => SourceOf(material);
         public int RoadCount => _roads.Count;
         public int JointCount(int road) => road >= 0 && road < _roads.Count ? _roads[road].Joints.Count : 0;
         public Vector3 JointPos(int road, int joint) => _roads[road].Joints[joint].Vertex;
