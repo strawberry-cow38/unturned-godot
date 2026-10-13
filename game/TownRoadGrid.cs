@@ -3649,14 +3649,16 @@ namespace UnturnedGodot
         /// ⚠ THE KERB RETURN IS THE PAVEMENT'S OWN 1 m. The opening it cuts in the street's pavement is then the lane's
         /// own 6 m and no wider, so the plots either side, and any parking bay in front of them, start at its edge; a
         /// junction's 6 m return here would have run into both.
-        /// ⚠⚠ "SHORT" KERBS, MEASURED FROM THE LANE'S OWN ASPHALT (strawberry 2026-10-13: "make sure the alleys and their
-        /// kerbs arent sinking below the road level"). LaneKerb is how far the kerb stands PROUD of the carriageway:
-        /// 0.1 m, about half the street's. The street's PavementKerb (0.4) is measured from the kerb's FOOT, and a
-        /// carriageway's surface stands 0.22 m above that foot -- so the street's kerb shows 0.18 m, and the first lanes,
-        /// given 0.2 m from the foot "as half the street's", had kerbs standing 2 cm UNDER their own asphalt. Where the
-        /// lane's pavement meets the street's it climbs to the street's height over LaneRamp, clear of the street's own
-        /// pavement, so the two meet level.</summary>
-        public float LaneHalf = 2f, LaneWalkWidth = 1f, LaneKerb = 0.1f, LaneKerbRadius = 1f, LaneRamp = 2.5f;
+        /// ⚠⚠ THE KERB IS THE STREETS', NOT A SHORT ONE (strawberry 2026-10-13: "kerb height should stay the same as the
+        /// other roads too"). "Short sidewalks/kerbs" was the 1 m pavement; read as a low kerb it went in at 0.2 m from
+        /// the kerb's foot -- 2 cm UNDER the lane's asphalt, which stands 0.22 m over that foot ("make sure the alleys and
+        /// their kerbs arent sinking below the road level") -- then at 0.1 m over the asphalt, still not the streets'.
+        /// A lane's kerb now stands exactly as far over its asphalt as a street's does over its own: KerbProud.
+        /// LaneRamp: where a kerb return's height and the lane's own kerb foot differ, the difference fades over this.</summary>
+        public float LaneHalf = 2f, LaneWalkWidth = 1f, LaneKerbRadius = 1f, LaneRamp = 2.5f;
+        /// <summary>How far the town's kerbs stand over their own asphalt -- a street's, and so a lane's: PavementKerb is
+        /// counted from the kerb's foot, and the carriageway's surface stands its material's surface offset over that.</summary>
+        public float KerbProud(RoadField roads) => PavementKerb - roads.RoadSurfaceOffsetOfMaterial(_plainStreet >= 0 ? _plainStreet : StreetMaterial);
         /// <summary>The centreline radius an L-shaped lane turns its corner on, inside its block.</summary>
         public float LaneKneeRadius = 8f;
         /// <summary>The lanes' material: the street's, plain tarmac -- no markings at all -- and LaneHalf wide. -1: none.</summary>
@@ -3982,9 +3984,9 @@ namespace UnturnedGodot
                 if (road < 0) continue;
                 lp.Road = road; LaneRoads.Add(road);
                 float L = roads.RoadLength(road);
-                // the kerb's height as the pavement builder counts it, from its foot: the asphalt's own height there plus
-                // the LaneKerb it stands proud of it
-                float kerb = roads.RoadSurfaceOffset(road) + LaneKerb;
+                // the kerb's height as the pavement builder counts it, from its foot: the lane's asphalt there plus as far
+                // as the streets' kerbs stand over theirs
+                float kerb = roads.RoadSurfaceOffset(road) + KerbProud(roads);
                 walk.KerbHeight = kerb;
                 // the spline runs from end A to end B, so A's Into is its tangent and B's its reverse: the spline's right,
                 // (t.z, 0, -t.x), is the right of A's way in and the left of B's

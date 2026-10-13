@@ -1167,13 +1167,14 @@ namespace UnturnedGodot.Testing
                     }
                     T.Check($"...each opening off its street through the pavement ({mouthsOpen} of {gD.LaneMouths.Count} mouths with no pavement across them, {mouthsRoad} road all the way in) -- the street's pavement carrying on either side ({sidesPaved} of {sidesTried})",
                             gD.LaneMouths.Count >= 6 && mouthsOpen == gD.LaneMouths.Count && mouthsRoad == gD.LaneMouths.Count && sidesTried > 0 && sidesPaved == sidesTried);
-                    // c. SHORT KERBS, ABOVE THE ROAD: down the lane its pavement stands LaneKerb PROUD OF THE LANE'S OWN ASPHALT --
-                    //    above it, and lower than the street's kerb stands above the street's; each kerb return stands at the
+                    // c. KERBS AS HIGH AS THE STREETS' (strawberry 2026-10-13: "kerb height should stay the same as the other
+                    //    roads too"): down the lane its pavement stands as far over THE LANE'S OWN ASPHALT as a street's
+                    //    pavement, MEASURED off the street's own mesh, stands over the street's; each kerb return stands at the
                     //    street's PavementKerb, level -- within a centimetre -- with the street's pavement on one side of it and
-                    //    the lane's on the other, where the lane's starts before falling to its own height.
-                    //    ⚠⚠ FROM THE ASPHALT, NOT THE KERB'S FOOT (strawberry 2026-10-13: "make sure the alleys and their kerbs
-                    //    arent sinking below the road level"). This check first measured the pavement over the kerb's foot, which
-                    //    stands 0.22 m BELOW a carriageway's surface -- and passed a lane kerb 2 cm under its own road.
+                    //    the lane's on the other.
+                    //    ⚠⚠ FROM THE ASPHALT, NOT THE KERB'S FOOT ("make sure the alleys and their kerbs arent sinking below
+                    //    the road level"). This check first measured the pavement over the kerb's foot, which stands 0.22 m
+                    //    BELOW a carriageway's surface in game -- and passed a lane kerb 2 cm under its own road.
                     static float? LevelAt(List<(Vector3 a, Vector3 b, Vector3 c, float ny)> ts, Vector3 q)
                     {
                         foreach (var (a, b, c, _) in ts)
@@ -1204,7 +1205,20 @@ namespace UnturnedGodot.Testing
                         for (int k = 0; k < 8; k++) yield return $"{b}_p{k}";
                     }
                     int lowOk = 0, lowTried = 0; float worstLow = 0f, lowestProud = float.MaxValue;
-                    float streetProud = gD.PavementKerb - rfD.RoadSurfaceOffset(gD.Built[0]);
+                    // the streets' kerb, off the streets' own pavements: the middle of the first few with nothing at their middles
+                    float streetProud = 0f; int streetsMeasured = 0;
+                    foreach (int r in gD.Built)
+                    {
+                        if (streetsMeasured >= 4) break;
+                        float L = rfD.RoadLength(r);
+                        if (gD.BayExtra(r, 1, L * 0.5f) > 0f || gD.MouthAt(r, 1, L * 0.5f - 2f, L * 0.5f + 2f) != null) continue;
+                        rfD.EvaluateAlong(r, L * 0.5f, out var sp, out var st);
+                        var so = new Vector3(st.Z, 0f, -st.X).Normalized();
+                        var h = LevelOn(SideNames(r, 1), sp + so * (rfD.RoadHalfWidth(r) + walkD.RoadGap + gD.PavementWidth * 0.5f));
+                        if (h == null) continue;
+                        streetProud += h.Value - (sp.Y + rfD.RoadSurfaceOffset(r)); streetsMeasured++;
+                    }
+                    streetProud = streetsMeasured > 0 ? streetProud / streetsMeasured : float.NaN;
                     foreach (var lp in gD.LanePlans)
                     {
                         float L = rfD.RoadLength(lp.Road);
@@ -1218,8 +1232,8 @@ namespace UnturnedGodot.Testing
                             if (h == null) continue;
                             float proud = h.Value - asphalt;
                             lowestProud = Mathf.Min(lowestProud, proud);
-                            worstLow = Mathf.Max(worstLow, Mathf.Abs(proud - gD.LaneKerb));
-                            if (Mathf.Abs(proud - gD.LaneKerb) < 0.01f) lowOk++;
+                            worstLow = Mathf.Max(worstLow, Mathf.Abs(proud - streetProud));
+                            if (Mathf.Abs(proud - streetProud) < 0.01f) lowOk++;
                         }
                     }
                     int seams = 0, seamsLevel = 0, atStreetHeight = 0; float worstSeam = 0f;
@@ -1252,8 +1266,8 @@ namespace UnturnedGodot.Testing
                                 if (level) seamsLevel++;
                             }
                         }
-                    T.Check($"...with short kerbs standing ABOVE the lane's road: its pavements {gD.LaneKerb:0.00} m proud of the lane's own asphalt ({lowOk} of {lowTried} measured mid-lane; lowest {lowestProud * 100f:0.0} cm, worst {worstLow * 100f:0.0} cm off), against the street kerb's {streetProud * 100f:0} cm; each kerb return at the street's {gD.PavementKerb:0.00} m over its foot ({atStreetHeight} of {seams}) and level with the street's pavement and the lane's where they meet ({seamsLevel} of {seams}; worst step {worstSeam * 100f:0.0} cm)",
-                            lowTried >= 12 && lowOk == lowTried && lowestProud > 0.05f && lowestProud < streetProud
+                    T.Check($"...with kerbs as high as the streets': the lanes' pavements stand over their own asphalt as the streets' do over theirs, {streetProud * 100f:0.0} cm measured on {streetsMeasured} streets ({lowOk} of {lowTried} measured mid-lane; lowest {lowestProud * 100f:0.0} cm, worst {worstLow * 100f:0.0} cm off); each kerb return at the street's {gD.PavementKerb:0.00} m over its foot ({atStreetHeight} of {seams}) and level with the street's pavement and the lane's where they meet ({seamsLevel} of {seams}; worst step {worstSeam * 100f:0.0} cm)",
+                            streetsMeasured > 0 && lowTried >= 12 && lowOk == lowTried && lowestProud > 0.05f
                             && seams == 2 * gD.LaneMouths.Count && atStreetHeight == seams && seamsLevel == seams);
                     // d. a lane end that cannot open onto a street is closed off with a kerb across it, never left as road ending
                     //    in the grass
@@ -1265,8 +1279,8 @@ namespace UnturnedGodot.Testing
                     //    foot -- so here a kerb counted from its foot and one counted from the asphalt read the same, and the
                     //    first lanes passed (c) with kerbs that stood 2 cm UNDER their own road in game, where the asphalt is
                     //    0.22 m over the foot. So the same town again on a field with that depth: the lane's pavement still
-                    //    stands LaneKerb proud of its asphalt. The control: a pavement laid the old way, 0.2 m over its foot,
-                    //    on the same lane, reads as under it.
+                    //    stands over its asphalt as the street's pavements there stand over theirs. The control: a pavement
+                    //    laid the old way, 0.2 m over its foot, on the same lane, reads as under it.
                     {
                         var rfL = Field();
                         foreach (int mat in new[] { 0, 1, 6 }) rfL.DebugSetMaterialDepth(mat, 0.22f);
@@ -1289,6 +1303,7 @@ namespace UnturnedGodot.Testing
                         foreach (var lp in gL.LanePlans) if (lp.A != null) droppedStep = Mathf.Max(droppedStep, lp.A.Edge.Y - lp.Pts[0].Y);
                         gL.FollowTerrain = false;
                         gL.MarkPlots(null, rfL);
+                        gL.LaySidewalks(hostL, rfL);            // the streets' own pavements, to hold the lanes' kerbs to
                         gL.BuildLanes(hostL, rfL);
                         var meshesL = new Dictionary<string, MeshInstance3D>();
                         void GatherL(Node n) { if (n is MeshInstance3D mi && mi.Mesh != null) meshesL[mi.Name.ToString()] = mi; foreach (var ch in n.GetChildren()) GatherL(ch); }
@@ -1308,6 +1323,23 @@ namespace UnturnedGodot.Testing
                             var h = LevelAt(Tops(mi), mp + rt * (gL.LaneHalf + walkD.RoadGap + gL.LaneWalkWidth * 0.5f));
                             return h == null ? null : h.Value - (mp.Y + rfL.RoadSurfaceOffset(lane));
                         }
+                        // the streets' kerb on this field, off their own pavements' meshes (a side laid in pieces round a mouth
+                        // is "Sidewalk_R12_p0"...: any piece the probe lands on)
+                        float streetProudL = 0f; int streetsL = 0;
+                        foreach (int r in gL.Built)
+                        {
+                            if (streetsL >= 4) break;
+                            float L = rfL.RoadLength(r);
+                            if (gL.BayExtra(r, 1, L * 0.5f) > 0f || gL.MouthAt(r, 1, L * 0.5f - 2f, L * 0.5f + 2f) != null) continue;
+                            rfL.EvaluateAlong(r, L * 0.5f, out var sp, out var st);
+                            var q = sp + new Vector3(st.Z, 0f, -st.X).Normalized() * (rfL.RoadHalfWidth(r) + walkD.RoadGap + gL.PavementWidth * 0.5f);
+                            float? h = null;
+                            foreach (var kv in meshesL)
+                                if (kv.Key == $"Sidewalk_R{r}" || kv.Key.StartsWith($"Sidewalk_R{r}_p")) { h = LevelAt(Tops(kv.Value), q); if (h != null) break; }
+                            if (h == null) continue;
+                            streetProudL += h.Value - (sp.Y + rfL.RoadSurfaceOffset(r)); streetsL++;
+                        }
+                        streetProudL = streetsL > 0 ? streetProudL / streetsL : float.NaN;
                         int deepOk = 0, deepTried = 0; float deepLowest = float.MaxValue;
                         foreach (int lr in gL.LaneRoads)
                         {
@@ -1315,11 +1347,11 @@ namespace UnturnedGodot.Testing
                             var pr = Proud($"Sidewalk_R{lr}", lr);
                             if (pr == null) continue;
                             deepLowest = Mathf.Min(deepLowest, pr.Value);
-                            if (Mathf.Abs(pr.Value - gL.LaneKerb) < 0.01f) deepOk++;
+                            if (Mathf.Abs(pr.Value - streetProudL) < 0.01f) deepOk++;
                         }
                         var oldProud = lane0 >= 0 ? Proud($"Sidewalk_R{lane0}_old", lane0) : null;
-                        T.Check($"...and on roads with the game's depth (asphalt {depthL:0.00} m over the kerb's foot) the lanes' kerbs still stand {gL.LaneKerb:0.00} m above their asphalt ({deepOk} of {deepTried}; lowest {deepLowest * 100f:0.0} cm) -- where one laid the old way, 0.2 m over its foot, stands {(oldProud == null ? "NOWHERE" : $"{oldProud.Value * 100f:0.0} cm")} (control)",
-                                depthL > 0.2f && deepTried >= 6 && deepOk == deepTried && deepLowest > 0.05f && oldProud != null && oldProud.Value < 0f);
+                        T.Check($"...and on roads with the game's depth (asphalt {depthL:0.00} m over the kerb's foot) the lanes' kerbs still stand as high over their asphalt as the streets' there, {streetProudL * 100f:0.0} cm measured on {streetsL} ({deepOk} of {deepTried}; lowest {deepLowest * 100f:0.0} cm) -- where one laid the old way, 0.2 m over its foot, stands {(oldProud == null ? "NOWHERE" : $"{oldProud.Value * 100f:0.0} cm")} (control)",
+                                depthL > 0.2f && streetsL > 0 && deepTried >= 6 && deepOk == deepTried && deepLowest > 0.05f && oldProud != null && oldProud.Value < 0f);
                         // f. AND LEVEL WITH THE STREET IT OPENS OFF (strawberry 2026-10-13: "they are still sinking below street
                         //    road level??"). The first lanes took their heights from the ground, which the town had already cut
                         //    0.12 m below its streets: a 12 cm step down off every street, and kerbs 10 cm over a lane that low
