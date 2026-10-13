@@ -27,6 +27,9 @@ namespace UnturnedSim.Tests
             foreach (BuildingKind kind in Enum.GetValues(typeof(BuildingKind)))
                 for (int seed = 0; seed < SweepSeeds; seed++)
                 {
+                    // (a block of flats is five to ten times a house's rooms, and furnishing is most of the time a building
+                    // takes: every other seed, and its own specs below on those)
+                    if (kind == BuildingKind.Apartment && seed % 2 == 1) continue;
                     yield return new BuildingGenSpec { Seed = seed, Kind = kind };
                     yield return new BuildingGenSpec { Seed = seed, Kind = kind, MinRooms = 10, MaxFloors = 3, MaxRoomsPerFloor = 4,
                         MinOfKind = new Dictionary<RoomKind, int> { [RoomKind.Bedroom] = 3, [RoomKind.Bathroom] = 3 } };
@@ -40,6 +43,16 @@ namespace UnturnedSim.Tests
                         FrontSide = seed % 3 == 0 ? Sides.North : seed % 3 == 1 ? Sides.None : Sides.West,
                         BackSide = seed % 4 == 1 ? Sides.East : Sides.None, NoWindows = seed % 5 == 2 ? Sides.East : Sides.None };
                     yield return new BuildingGenSpec { Seed = seed, Kind = kind, MinRooms = 5, MaxFloors = 2, MaxRoomsPerFloor = 8 };   // one floor or two: the roll
+                    // a block of flats sized as one is: floors of three or four flats and more, some of them deep (a study as
+                    // well), a depth and a length asked for (single-loaded where it is narrow)
+                    if (kind == BuildingKind.Apartment)
+                    {
+                        yield return new BuildingGenSpec { Seed = seed, Kind = kind, MinFloors = 2, MaxFloors = 4, MaxRoomsPerFloor = 12 };
+                        yield return new BuildingGenSpec { Seed = seed, Kind = kind, MinFloors = 3, MaxFloors = 4, MaxRoomsPerFloor = 18,
+                            MinOfKind = new Dictionary<RoomKind, int> { [RoomKind.Bedroom] = 14, [RoomKind.Office] = 2 } };
+                        yield return new BuildingGenSpec { Seed = seed, Kind = kind, MaxFloors = 3, MaxRoomsPerFloor = 14, Depth = 5 + seed % 9,
+                            Width = seed % 4 == 0 ? 0 : 16 + seed % 19, FrontSide = seed % 6 == 0 ? Sides.West : Sides.None, BackSide = seed % 8 == 2 ? Sides.North : Sides.None };
+                    }
                     // fitted to a town plot's building zone (cow tools' plots: small 4x5 ... large and corner 7x7), so every
                     // check here also runs over the compromises FitPlot makes -- smaller rooms, more floors, fewer rooms
                     var (pw, pd) = Plots[seed % Plots.Length];
@@ -50,7 +63,20 @@ namespace UnturnedSim.Tests
                         Shape = seed % 2 == 0 ? FootprintShape.L : FootprintShape.T, Chimney = seed % 3 == 0 ? ChimneyChoice.Yes : ChimneyChoice.Auto,
                         Porches = seed % 4 == 1 ? PorchChoice.Both : PorchChoice.Auto };
                 }
+            // and, as wide as UG_APT_SEEDS asks, blocks of flats of every shape -- through EVERY check here, not only the
+            // flats' own (each is a second or so to build and furnish: the default is none)
+            for (int seed = 1000; seed < 1000 + ExtraFlatSeeds; seed++)
+            {
+                yield return new BuildingGenSpec { Seed = seed, Kind = BuildingKind.Apartment, MinFloors = 1 + seed % 4, MaxFloors = 1 + seed % 4, MaxRoomsPerFloor = 8 + seed % 13 };
+                yield return new BuildingGenSpec { Seed = seed, Kind = BuildingKind.Apartment, MinFloors = 2, MaxFloors = 5, MaxRoomsPerFloor = 10 + seed % 11, Depth = seed % 3 == 0 ? 5 + seed % 9 : 0,
+                                                   Width = seed % 5 == 0 ? 15 + seed % 25 : 0, FrontSide = (Sides)(seed % 5 == 4 ? 0 : 1 << (seed % 4)), BackSide = seed % 7 == 1 ? Sides.East : Sides.None,
+                                                   MinOfKind = new Dictionary<RoomKind, int> { [RoomKind.Bedroom] = seed % 17, [RoomKind.Office] = seed % 3 } };
+                // (what a block of flats does not do, asked for anyway: an L, porches, a chimney -- a note each, or a canopy)
+                yield return new BuildingGenSpec { Seed = seed, Kind = BuildingKind.Apartment, MaxFloors = 1 + seed % 3, MaxRoomsPerFloor = 12, Shape = FootprintShape.L,
+                                                   Porches = PorchChoice.Both, Chimney = ChimneyChoice.Yes, BackSide = seed % 2 == 0 ? Sides.East : Sides.None };
+            }
         }
+        static int ExtraFlatSeeds => int.TryParse(Environment.GetEnvironmentVariable("UG_APT_SEEDS"), out var n) ? n : 0;
         /// <summary>Town plots' building zones in cells (cow tools, Staging-Nyatools 40bc92dd): small, medium, large, corner,
         /// shop, apartments.</summary>
         static readonly (int W, int D)[] Plots = { (4, 5), (5, 6), (7, 7), (7, 7), (4, 6), (8, 7) };
@@ -199,13 +225,17 @@ namespace UnturnedSim.Tests
                 string n = Name(spec);
                 bool dropped = res.Notes.Any(x => x.Contains("dropped"));
                 bool over = res.Notes.Any(x => x.Contains("over its limit"));
+                // a block of flats has two flats a floor at the least -- two of four rooms -- and raises a smaller limit to
+                // that, said so; past THAT is still a violation
+                bool flats = spec.Kind == BuildingKind.Apartment;
+                int perLimit = flats && res.Notes.Any(x => x.Contains("rooms a floor, not")) ? Math.Max(spec.MaxRoomsPerFloor, 2 * 4) : spec.MaxRoomsPerFloor;
                 if (res.Floors < Math.Max(1, spec.MinFloors) || res.Floors > spec.MaxFloors) bad.Add($"{n}: {res.Floors} floors");
                 if (real.Count < spec.MinRooms && !dropped) bad.Add($"{n}: {real.Count} rooms < {spec.MinRooms} and no note");
                 // a business has a break room where a house has a kitchen (strawberry: "businesses should have different
                 // room defs and rules. ie break rooms instead of kitchens")
-                if (spec.Kind != BuildingKind.Residential && !spec.MinOfKind.ContainsKey(RoomKind.Kitchen) && real.Any(g => g.Kind == RoomKind.Kitchen))
+                if (spec.Kind is not (BuildingKind.Residential or BuildingKind.Apartment) && !spec.MinOfKind.ContainsKey(RoomKind.Kitchen) && real.Any(g => g.Kind == RoomKind.Kitchen))
                     bad.Add($"{n}: a business with a kitchen");
-                if (spec.Kind == BuildingKind.Residential && real.Any(g => g.Kind == RoomKind.BreakRoom)) bad.Add($"{n}: a house with a break room");
+                if (spec.Kind is BuildingKind.Residential or BuildingKind.Apartment && real.Any(g => g.Kind == RoomKind.BreakRoom)) bad.Add($"{n}: a home with a break room");
                 foreach (var kv in spec.MinOfKind)
                     if (real.Count(g => g.Kind == kv.Key) < kv.Value && !dropped) bad.Add($"{n}: {real.Count(g => g.Kind == kv.Key)} {kv.Key} < {kv.Value}");
                 foreach (var k in BuildingGen.Programme(spec.Kind).Always)
@@ -213,12 +243,17 @@ namespace UnturnedSim.Tests
                 var per = Enumerable.Range(0, res.Floors).Select(f => real.Count(g => g.Floor == f)).ToArray();
                 for (int f = 0; f < res.Floors; f++)
                 {
-                    if (per[f] > spec.MaxRoomsPerFloor && !over) bad.Add($"{n}: floor {f} has {per[f]} rooms > {spec.MaxRoomsPerFloor}");
+                    if (per[f] > perLimit && !over) bad.Add($"{n}: floor {f} has {per[f]} rooms > {perLimit}");
                     if (per[f] == 0) bad.Add($"{n}: floor {f} has no room");
                 }
                 bool upperFull = Enumerable.Range(1, res.Floors - 1).All(f => per[f] >= spec.MaxRoomsPerFloor);
-                // one kitchen (and a house's one living and dining room) unless the spec asked for more
-                foreach (var k in real.Select(g => g.Kind).Distinct().Where(k => BuildingGen.OnlyOne(k, spec.Kind)))
+                // one kitchen (and a house's one living and dining room) unless the spec asked for more -- a block of flats one
+                // kitchen and one living room in each flat, and as many flats as it has
+                if (flats)
+                    foreach (var flat in real.GroupBy(g => g.Unit))
+                        foreach (var k in new[] { RoomKind.Kitchen, RoomKind.LivingRoom, RoomKind.DiningRoom })
+                            if (flat.Count(g => g.Kind == k) > 1) bad.Add($"{n}: flat {flat.Key} has {flat.Count(g => g.Kind == k)} {k}s");
+                foreach (var k in real.Select(g => g.Kind).Distinct().Where(k => !flats && BuildingGen.OnlyOne(k, spec.Kind)))
                 {
                     int have = real.Count(g => g.Kind == k), asked = spec.MinOfKind.TryGetValue(k, out var a) ? a : 1;
                     if (have > Math.Max(1, asked)) bad.Add($"{n}: {have} {k}s, asked for {asked}");
@@ -230,10 +265,19 @@ namespace UnturnedSim.Tests
                     int limit = Math.Max(2, (int)Math.Ceiling(BuildingGen.TraitOf(g.Kind, spec.Kind).Cells / (double)(g.Z1 - g.Z0))) + 1;
                     if (!real.Any(o => o.Floor == g.Floor && o.Z0 == g.Z0 && o.Z1 == g.Z1 && !BuildingGen.Service(o.Kind))) limit++;
                     serviced++;
-                    if (g.X1 - g.X0 > limit && per[g.Floor] < spec.MaxRoomsPerFloor)
+                    if (g.X1 - g.X0 > limit && per[g.Floor] < perLimit)
                         bad.Add($"{n}: {g} is {g.X1 - g.X0} cells long (limit {limit}) with floor {g.Floor} at {per[g.Floor]} of {spec.MaxRoomsPerFloor} rooms");
                 }
-                foreach (var g in real)
+                // a house's rooms keep to their floors ("which rooms prefer 2nd+ floor"); a block of flats has the same flats on
+                // every floor instead, a bedroom on the ground floor as on the top one -- and every floor the same rooms
+                if (flats)
+                    for (int f = 1; f < res.Floors; f++)
+                    {
+                        string Plan(int fl) => string.Join(" ", res.Layout.Where(g => g.Floor == fl).Select(g => $"{g.Kind}[{g.X0},{g.Z0}..{g.X1},{g.Z1}]+{g.More.Count}").OrderBy(x => x));
+                        prefs++;
+                        if (Plan(f) != Plan(0)) bad.Add($"{n}: floor {f}'s rooms are not the ground floor's");
+                    }
+                foreach (var g in real.Where(_ => !flats))
                 {
                     var p = BuildingGen.TraitOf(g.Kind, spec.Kind).Pref;
                     if (p == BuildingGen.FloorPref.Any) continue;
@@ -413,7 +457,9 @@ namespace UnturnedSim.Tests
 
         // D: every room can be walked to from outside without walking THROUGH a private room or a store -- through the
         // doors as placed and up the flights -- and a dead end has one way in (its children aside: a closet or en-suite
-        // off a bedroom, a store off a garage). strawberry: "bedrooms, bathrooms, offices are private".
+        // off a bedroom, a store off a garage). strawberry: "bedrooms, bathrooms, offices are private". In a block of flats,
+        // nor through ANOTHER flat: the walk never steps from one flat's room into another's (the corridor and the stairwell
+        // are everyone's) -- ApartmentsAreFlatsOffASharedCorridor checks that no door even offers to.
         // BREAK IT: no door into the stair room; no front door; let a dead end open onto two rooms it is not the parent
         // of; let the walk-through tree go through a bedroom.
         [Test]
@@ -444,8 +490,10 @@ namespace UnturnedSim.Tests
                     float mx = s.X + rx * s.Width * 0.5f, mz = s.Z + rz * s.Width * 0.5f;
                     Link(RoomAt(res, s.Floor, mx - bx * 0.3f, mz - bz * 0.3f), RoomAt(res, s.Floor + 1, mx + bx * (s.Run + 0.3f), mz + bz * (s.Run + 0.3f)));
                 }
-                // walk in: on through rooms you may walk through, into a dead end, and from a dead end only to its own children
+                // walk in: on through rooms you may walk through, into a dead end, and from a dead end only to its own children;
+                // never from one flat into another
                 bool Child(GenRoom c, GenRoom p) => DeadEnd(p.Kind) && ChildOf(c.Kind, p.Kind);
+                bool Trespass(GenRoom a, GenRoom b) => a.Unit >= 0 && b.Unit >= 0 && a.Unit != b.Unit;
                 var seen = new HashSet<GenRoom> { outside };
                 var q = new Queue<GenRoom>(); q.Enqueue(outside);
                 while (q.Count > 0)
@@ -455,11 +503,11 @@ namespace UnturnedSim.Tests
                     foreach (var b in nb)
                     {
                         if (seen.Contains(b)) continue;
-                        if (!(a == outside || !DeadEnd(a.Kind) || Child(b, a))) continue;
+                        if (!(a == outside || !DeadEnd(a.Kind) || Child(b, a)) || Trespass(a, b)) continue;
                         seen.Add(b); q.Enqueue(b);
                     }
                 }
-                foreach (var g in res.Layout) { total++; if (seen.Contains(g)) reached++; else bad.Add($"{Name(spec)}: {g} cannot be reached without walking through a private room"); }
+                foreach (var g in res.Layout) { total++; if (seen.Contains(g)) reached++; else bad.Add($"{Name(spec)}: {g} cannot be reached without walking through a private room or another flat"); }
                 // a dead end: exactly one door to a room that is not its child (outside does not count: a garage's vehicle door)
                 foreach (var g in res.Layout.Where(g => DeadEnd(g.Kind)))
                 {
@@ -469,7 +517,7 @@ namespace UnturnedSim.Tests
                     if (ways.Count == 1 && DeadEnd(ways[0].Kind)) suites++;
                 }
             }
-            TestContext.Progress.WriteLine($"[gen-reach] {doors} doors, {flights} flights; {reached} of {total} rooms reached without walking through a private room; {deadEnds} dead ends ({suites} off a bedroom/garage/office){(bad.Count > 0 ? "; first: " + bad[0] : "")}");
+            TestContext.Progress.WriteLine($"[gen-reach] {doors} doors, {flights} flights; {reached} of {total} rooms reached without walking through a private room or another flat; {deadEnds} dead ends ({suites} off a bedroom/garage/office){(bad.Count > 0 ? "; first: " + bad[0] : "")}");
             Assert.That(flights, Is.GreaterThan(200));
             Assert.That(suites, Is.GreaterThan(0), "no closet or en-suite ever opens off a bedroom");
             Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(10)));
@@ -1150,7 +1198,7 @@ namespace UnturnedSim.Tests
         public void RoofsSuitTheKindAndCoverEverything()
         {
             var bad = new List<string>();
-            int gables = 0, hips = 0, flats = 0, cells = 0, exposed = 0, lowers = 0, leaning = 0, closed = 0;
+            int gables = 0, hips = 0, flats = 0, cells = 0, exposed = 0, lowers = 0, leaning = 0, closed = 0, blockFlat = 0, blockGable = 0;
             foreach (var (spec, res) in All())
             {
                 // (a porch's roof is its own, over its deck: not the house's)
@@ -1182,6 +1230,14 @@ namespace UnturnedSim.Tests
                     if (!topOk) bad.Add($"{Name(spec)}: a house's top roof is {res.Roof} with {topSlopes.Count} slopes, gable ends {raised}");
                     else if (res.Roof == RoofKind.Gable) gables++; else hips++;
                     if (slopes.Count - topSlopes.Count != exposedParts) bad.Add($"{Name(spec)}: {exposedParts} uncovered lower parts, {slopes.Count - topSlopes.Count} lower slopes");
+                }
+                else if (spec.Kind == BuildingKind.Apartment)
+                {
+                    // a block of flats: flat, or one plain gable over the whole block, ends raised -- every floor the same
+                    // length, so nothing lower is left to roof
+                    if (res.Roof == RoofKind.Flat && slopes.Count == 0 && !raised) blockFlat++;
+                    else if (res.Roof == RoofKind.Gable && topSlopes.Count == 2 && slopes.Count == 2 && raised) blockGable++;
+                    else bad.Add($"{Name(spec)}: a block of flats' roof is {res.Roof} with {slopes.Count} slopes ({topSlopes.Count} on top), gable ends {raised}");
                 }
                 else if (slopes.Count > 0 || raised) bad.Add($"{Name(spec)}: a {spec.Kind} with a pitched roof");
                 else flats++;
@@ -1249,12 +1305,13 @@ namespace UnturnedSim.Tests
                             if (!covered) bad.Add($"{Name(spec)}: floor {f} cell ({x},{z}) has no roof over it");
                         }
             }
-            TestContext.Progress.WriteLine($"[gen-roof] {gables} gabled and {hips} hipped houses ({lowers} sheds on lower floors, {leaning} rising to the wall above, {closed} side points closed), {flats} flat-roofed businesses; {exposed} of {cells} floor cells open to the sky, each checked for its roof; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
+            TestContext.Progress.WriteLine($"[gen-roof] {gables} gabled and {hips} hipped houses ({lowers} sheds on lower floors, {leaning} rising to the wall above, {closed} side points closed), {flats} flat-roofed businesses, {blockFlat} flat-roofed and {blockGable} gabled blocks of flats; {exposed} of {cells} floor cells open to the sky, each checked for its roof; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
             Assert.That(gables, Is.GreaterThan(60));
             Assert.That(hips, Is.GreaterThan(20));
             Assert.That(closed, Is.GreaterThan(500));
             Assert.That(leaning, Is.EqualTo(lowers).And.GreaterThan(50));
             Assert.That(flats, Is.GreaterThan(300));
+            Assert.That(blockFlat, Is.GreaterThan(30)); Assert.That(blockGable, Is.GreaterThan(30));
             Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(10)));
         }
 
@@ -1391,6 +1448,8 @@ namespace UnturnedSim.Tests
                 BuildingKind.Residential => new[] { RoomKind.Hall, RoomKind.LivingRoom },
                 BuildingKind.Commercial => new[] { RoomKind.Shop, RoomKind.Hall },
                 BuildingKind.Industrial => new[] { RoomKind.Hall, RoomKind.Workshop, RoomKind.Warehouse, RoomKind.Shop },
+                // a block of flats: its lobby (the stairwell) or its corridor -- never a flat (checked below: shared rooms only)
+                BuildingKind.Apartment => new[] { RoomKind.Stairwell, RoomKind.Hall },
                 _ => new[] { RoomKind.Hall },
             };
             RoomKind[] BackOk(BuildingKind b) => b switch
@@ -1399,6 +1458,7 @@ namespace UnturnedSim.Tests
                 // (a business's staff room -- its break room -- takes a staff entrance)
                 BuildingKind.Commercial => new[] { RoomKind.Storage, RoomKind.BreakRoom, RoomKind.Hall },
                 BuildingKind.Industrial => new[] { RoomKind.Warehouse, RoomKind.Workshop, RoomKind.Storage, RoomKind.Hall },
+                BuildingKind.Apartment => new[] { RoomKind.Hall },
                 _ => new[] { RoomKind.BreakRoom, RoomKind.Hall, RoomKind.Storage },
             };
             var bad = new List<string>();
@@ -1415,6 +1475,7 @@ namespace UnturnedSim.Tests
                     var room = near[0].A ?? near[0].B;
                     var ok = m.Role == DoorRole.Front ? FrontOk(spec.Kind) : BackOk(spec.Kind);
                     if (!ok.Contains(room.Kind)) bad.Add($"{Name(spec)}: the {m.Role} door opens into the {room.Kind}");
+                    if (room.Unit >= 0) bad.Add($"{Name(spec)}: the {m.Role} door opens into flat {room.Unit}'s {room.Kind}");
                     string key = $"{spec.Kind} {m.Role} {room.Kind}";
                     into[key] = into.GetValueOrDefault(key) + 1;
                 }
@@ -1453,7 +1514,8 @@ namespace UnturnedSim.Tests
                 {
                     livings++;
                     int usable = living.Cells - (bay.X1 > bay.X0 && living.Floor == 0 && living.HasCell(bay.X0, bay.Z0) ? (bay.X1 - bay.X0) * (bay.Z1 - bay.Z0) : 0);
-                    foreach (var o in res.Layout.Where(g => g.Floor == living.Floor && (g.Kind == RoomKind.DiningRoom || g.Kind == RoomKind.Kitchen)))
+                    // (in a block of flats, against its own flat's: Unit is -1 in every other building)
+                    foreach (var o in res.Layout.Where(g => g.Floor == living.Floor && g.Unit == living.Unit && (g.Kind == RoomKind.DiningRoom || g.Kind == RoomKind.Kitchen)))
                         if (o.Cells > usable)
                         {
                             if (res.Notes.Any(n => n.Contains("living room came out smaller"))) excused++;
@@ -1954,6 +2016,283 @@ namespace UnturnedSim.Tests
             Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(10)));
         }
 
+        // R: a block of flats (strawberry: "apartments should function differently from houses, no staircase inside the
+        // apartment, shared corridor and staircases"), read off its walls and flights like everything above -- the layout
+        // only names the rooms and says which flat each is in. A flat: one floor; a living room, a kitchen, a bathroom no
+        // bigger than a bathroom may be, one or two bedrooms (or a bedroom and a study). Shared space: a corridor on every
+        // floor and, with floors above, a stairwell on every floor, the same cells on each. Doors: none between two flats;
+        // into a flat exactly one, from the corridor into its living room or its own hall; its bedrooms, bathroom and study
+        // only off its living room or hall; no flat with a door of its own to outside. Stairs: every flight standing in the
+        // stairwell, over the stairwell above, and flights from every floor to the next. And every room walked to from
+        // outside, through the doors as cut and up the flights, never from one flat into another.
+        static List<string> FlatViolations(BuildingGenResult res, string name, Dictionary<string, int> tally = null)
+        {
+            var bad = new List<string>();
+            void T(string k, int n = 1) { if (tally != null) tally[k] = tally.GetValueOrDefault(k) + n; }
+            var flats = res.Layout.Where(g => g.Unit >= 0).GroupBy(g => g.Unit).ToDictionary(g => g.Key, g => g.ToList());
+            T("flats", flats.Count);
+            foreach (var (id, rs) in flats)
+            {
+                int Of(RoomKind k) => rs.Count(g => g.Kind == k);
+                if (rs.Select(g => g.Floor).Distinct().Count() != 1) bad.Add($"{name}: flat {id} is on more than one floor");
+                if (Of(RoomKind.LivingRoom) != 1 || Of(RoomKind.Kitchen) != 1 || Of(RoomKind.Bathroom) != 1 || Of(RoomKind.Bedroom) < 1
+                    || Of(RoomKind.Bedroom) + Of(RoomKind.Office) > 2 || Of(RoomKind.Hall) > 1
+                    || rs.Any(g => !(g.Kind is RoomKind.LivingRoom or RoomKind.Kitchen or RoomKind.Bathroom or RoomKind.Bedroom or RoomKind.Office or RoomKind.Hall)))
+                    bad.Add($"{name}: flat {id} is {string.Join(", ", rs.Select(g => g.Kind))}");
+                foreach (var g in rs.Where(g => g.Kind == RoomKind.Bathroom && g.Cells > BuildingGen.MaxCells(RoomKind.Bathroom))) bad.Add($"{name}: {g} is {g.Cells} cells");
+                T(Of(RoomKind.Bedroom) + Of(RoomKind.Office) == 2 ? (Of(RoomKind.Office) > 0 ? "flats with a study" : "two-bedroom flats") : "one-bedroom flats");
+                T(Of(RoomKind.Hall) == 1 ? "flats entered by a hall" : "flats entered by the living room");
+                // a flat's entry hall is a vestibule at its door, not a second corridor beside the shared one: two cells (three
+                // where it bends), one deep -- the rooms behind run on to the corridor wall (the coordinator, on e85d091f7's
+                // 51 m strips)
+                foreach (var h in rs.Where(g => g.Kind == RoomKind.Hall))
+                {
+                    bool bent = h.More.Count > 0;
+                    int most = bent ? 3 : 2;
+                    T("entry-hall cells", h.Cells);
+                    if (h.Cells > most || h.Rects.Any(q => Math.Min(q.X1 - q.X0, q.Z1 - q.Z0) > 1)) bad.Add($"{name}: flat {id}'s entry hall {h} is {h.Cells} cells, not a vestibule of {most} or fewer one deep");
+                }
+                // and a flat is a flat, not a whole row: its frontage no more than its rooms at their designed widths (three
+                // cells a room, two for the bathroom) and two cells over -- the rest of a long row goes to more flats or to
+                // shared space, never to one flat's rooms
+                var cells = rs.SelectMany(g => g.Rects).ToList();
+                int front = cells.Max(q => q.X1) - cells.Min(q => q.X0), designed = 3 * rs.Count(g => !(g.Kind is RoomKind.Hall or RoomKind.Bathroom)) + 2 * Of(RoomKind.Bathroom);
+                T("flat frontage cells", front);
+                // its living room's own column no wider than a couch can see a flat television across (LivingAcross): wider,
+                // and every set in it is a CRT on a table out in the room
+                foreach (var g in rs.Where(g => g.Kind == RoomKind.LivingRoom && g.X1 - g.X0 > BuildingGen.LivingAcross))
+                    bad.Add($"{name}: flat {id}'s {g} is {g.X1 - g.X0} cells across its row, more than {BuildingGen.LivingAcross}");
+                if (tally != null) { var key = $"frontage {front}"; tally[key] = tally.GetValueOrDefault(key) + 1; }
+                if (front > designed + 2) bad.Add($"{name}: flat {id} is {front} cells along its row, its rooms {designed} at their designed widths");
+            }
+            var shared = res.Layout.Where(g => g.Unit < 0).ToList();
+            foreach (var g in shared.Where(g => !(g.Kind is RoomKind.Hall or RoomKind.Stairwell))) bad.Add($"{name}: {g} is shared but neither corridor nor stairwell");
+            for (int f = 0; f < res.Floors; f++)
+            {
+                int halls = shared.Count(g => g.Floor == f && g.Kind == RoomKind.Hall), wells = shared.Count(g => g.Floor == f && g.Kind == RoomKind.Stairwell);
+                if (halls != 1) bad.Add($"{name} floor {f}: {halls} corridors");
+                if (wells != (res.Floors > 1 ? 1 : 0)) bad.Add($"{name} floor {f}: {wells} stairwells");
+            }
+            if (shared.Where(g => g.Kind == RoomKind.Stairwell).Select(g => (g.X0, g.Z0, g.X1, g.Z1)).Distinct().Count() > 1) bad.Add($"{name}: the stairwell is not the same cells on every floor");
+            // (how often the shared space was stretched to make up a row: the generator's least-used paths)
+            var corridor0 = shared.FirstOrDefault(g => g.Floor == 0 && g.Kind == RoomKind.Hall);
+            if (corridor0 != null && corridor0.More.Count > 0) T(res.Floors == 1 ? "lobbies of one storey" : "corridors with an alcove");
+            var well0 = shared.FirstOrDefault(g => g.Floor == 0 && g.Kind == RoomKind.Stairwell);
+            if (well0 != null && well0.X1 - well0.X0 > res.Bay.X1 - res.Bay.X0 + 1) T("stairwells wider than their stairs and a landing");
+            // the doors, as cut in the walls
+            var ways = flats.Keys.ToDictionary(k => k, _ => 0);
+            var edges = new Dictionary<GenRoom, HashSet<GenRoom>>();
+            var outside = new GenRoom { Kind = RoomKind.Unassigned, Floor = -1 };
+            void Link(GenRoom a, GenRoom b) { if (a == null || b == null || a == b) return;
+                (edges.TryGetValue(a, out var p) ? p : edges[a] = new HashSet<GenRoom>()).Add(b);
+                (edges.TryGetValue(b, out var q) ? q : edges[b] = new HashSet<GenRoom>()).Add(a); }
+            for (int f = 0; f < res.Floors; f++)
+                foreach (var d in Doors(res, f))
+                {
+                    T("doors");
+                    var (a, b) = (d.A, d.B);
+                    if (a == null || b == null)
+                    {
+                        var r = a ?? b;
+                        if (r != null && r.Unit >= 0) bad.Add($"{name} floor {f}: flat {r.Unit}'s {r.Kind} has a door to outside");
+                        if (r != null && f == 0) Link(r, outside);
+                        continue;
+                    }
+                    Link(a, b);
+                    if (a.Unit >= 0 && b.Unit >= 0 && a.Unit != b.Unit) { bad.Add($"{name} floor {f}: a door between flat {a.Unit}'s {a.Kind} and flat {b.Unit}'s {b.Kind}"); continue; }
+                    if ((a.Unit < 0) != (b.Unit < 0))
+                    {
+                        var (sh, fl) = a.Unit < 0 ? (a, b) : (b, a);
+                        ways[fl.Unit]++;
+                        T("ways in");
+                        if (sh.Kind != RoomKind.Hall) bad.Add($"{name} floor {f}: flat {fl.Unit} is entered from the {sh.Kind}, not the corridor");
+                        if (!(fl.Kind is RoomKind.LivingRoom or RoomKind.Hall)) bad.Add($"{name} floor {f}: flat {fl.Unit} is entered into its {fl.Kind}");
+                        continue;
+                    }
+                    if (a.Unit >= 0)
+                        foreach (var (c, p) in new[] { (a, b), (b, a) })
+                            if (c.Kind is RoomKind.Bedroom or RoomKind.Bathroom or RoomKind.Office && !(p.Kind is RoomKind.LivingRoom or RoomKind.Hall))
+                                bad.Add($"{name} floor {f}: flat {c.Unit}'s {c.Kind} opens off its {p.Kind}");
+                }
+            foreach (var (id, n) in ways) if (n != 1) bad.Add($"{name}: flat {id} has {n} doors to shared space");
+            // the stairs: the flight and the floor over it all stairwell; flights from every floor to the next
+            foreach (var s in res.Stairs)
+            {
+                T("flights");
+                var (x0, z0, x1, z1) = Grown(Foot(s), -0.05f);
+                bool inWell = true;
+                foreach (int f in new[] { s.Floor, s.Floor + 1 })
+                    for (float x = x0; x <= x1 + 1e-3f && inWell; x += (x1 - x0) / 6f)
+                        for (float z = z0; z <= z1 + 1e-3f && inWell; z += (z1 - z0) / 4f)
+                            if (RoomAt(res, f, x, z) is not { Kind: RoomKind.Stairwell, Unit: < 0 } r) { inWell = false; bad.Add($"{name}: flight {s.Floor} stands over {RoomAt(res, f, x, z)?.ToString() ?? "no room"} on floor {f}"); }
+                var (bx, bz) = s.Back; var (rx, rz) = s.Right;
+                float mx = s.X + rx * s.Width * 0.5f, mz = s.Z + rz * s.Width * 0.5f;
+                Link(RoomAt(res, s.Floor, mx - bx * 0.3f, mz - bz * 0.3f), RoomAt(res, s.Floor + 1, mx + bx * (s.Run + 0.3f), mz + bz * (s.Run + 0.3f)));
+            }
+            for (int f = 0; f + 1 < res.Floors; f++)
+                if (!res.Stairs.Any(s => s.Floor == f && StartsOnFloor(s)) || !res.Stairs.Any(s => s.Floor == f && EndsOnFloor(s)))
+                    bad.Add($"{name}: no stairs from floor {f} to floor {f + 1}");
+            // and the walk in
+            var seen = new HashSet<GenRoom> { outside };
+            var q = new Queue<GenRoom>(); q.Enqueue(outside);
+            while (q.Count > 0)
+            {
+                var a = q.Dequeue();
+                if (!edges.TryGetValue(a, out var nb)) continue;
+                foreach (var b in nb)
+                    if (!(a.Unit >= 0 && b.Unit >= 0 && a.Unit != b.Unit) && seen.Add(b)) q.Enqueue(b);
+            }
+            foreach (var g in res.Layout.Where(g => !seen.Contains(g))) bad.Add($"{name}: {g} cannot be walked to from outside without going through another flat");
+            T("rooms", res.Layout.Count);
+            return bad;
+        }
+
+        /// <summary>A door cut in a wall of floor 0 where `pick` likes the rooms either side -- for breaking a block of flats
+        /// on purpose. True when one was cut.</summary>
+        static bool CutDoor(BuildingGenResult res, Func<GenRoom, GenRoom, bool> pick)
+        {
+            foreach (var w in WallsOn(res, 0).Where(w => w.Thickness < BuildingGen.Ext - 0.01f))
+                for (float u = 1.7f; u + 1.7f <= w.Length; u += 0.5f)
+                {
+                    var c = At(w, u); var n = Normal(w);
+                    var a = RoomAt(res, 0, c.X + n.X * 0.6f, c.Z + n.Z * 0.6f); var b = RoomAt(res, 0, c.X - n.X * 0.6f, c.Z - n.Z * 0.6f);
+                    if (a == null || b == null || !(pick(a, b) || pick(b, a))) continue;
+                    if (w.Openings.Any(o => o.U < u + 1.6f && o.U1 > u - 1.6f)) continue;
+                    w.Openings.Add(new WallOpening(u - 1.25f, 0f, 2.5f, 2.85f, 999f, BuildingGen.ArchDoor) { DoorProp = BuildingGen.DefaultDoor });
+                    return true;
+                }
+            return false;
+        }
+
+        // BREAK IT (each below, on a fresh building): cut a door through a party wall; cut a second door from the corridor
+        // into a flat's bedroom; move the stairs into the flat beside the stairwell; brick up a flat's only door. In the
+        // generator: drop MayJoin from Connect's Next (doors between flats, flats entered anywhere); drop OffInAFlat (a
+        // bedroom off the kitchen); lay the bay outside the stairwell.
+        [Test]
+        public void ApartmentsAreFlatsOffASharedCorridor()
+        {
+            var bad = new List<string>();
+            var tally = new Dictionary<string, int>();
+            int blocks = 0, broken = 0, single = 0;
+            var byFloors = new SortedDictionary<int, int>();
+            void Check(BuildingGenSpec spec, BuildingGenResult res)
+            {
+                blocks++;
+                byFloors[res.Floors] = byFloors.GetValueOrDefault(res.Floors) + 1;
+                if (res.Plan.Contains("single")) single++;
+                var v = FlatViolations(res, Name(spec), tally);
+                if (v.Count > 0) { broken++; bad.AddRange(v); }
+            }
+            foreach (var (spec, res) in All().Where(x => x.Spec.Kind == BuildingKind.Apartment)) Check(spec, res);
+            int seeds = ExtraFlatSeeds, shared = blocks - All().Count(x => x.Spec.Kind == BuildingKind.Apartment && x.Spec.Seed >= 1000);
+            TestContext.Progress.WriteLine($"[flats] {blocks} blocks of flats ({shared} from the shared sweep, {blocks - shared} from UG_APT_SEEDS={seeds}; by floors {string.Join(", ", byFloors.Select(kv => $"{kv.Value} of {kv.Key}"))}; {single} single-loaded): {string.Join(", ", tally.Where(kv => !kv.Key.StartsWith("frontage ")).OrderBy(kv => kv.Key).Select(kv => $"{kv.Value} {kv.Key}"))}; {broken} blocks with any violation, {bad.Count} violations{(bad.Count > 0 ? ": " + bad[0] : "")}");
+            foreach (var g in bad.GroupBy(b => System.Text.RegularExpressions.Regex.Replace(b.Substring(b.IndexOf(':') + 1), @"[\d.,()-]+", "#")).OrderByDescending(g => g.Count()).Take(8))
+                TestContext.Progress.WriteLine($"[flats]   {g.Count()} x {g.Key.Trim()} -- e.g. {g.First()}");
+            // the flats' frontage, cells along their row: the distribution, min / median / max
+            var fronts = tally.Where(kv => kv.Key.StartsWith("frontage ")).SelectMany(kv => Enumerable.Repeat(int.Parse(kv.Key.Substring(9)), kv.Value)).OrderBy(x => x).ToList();
+            if (fronts.Count > 0)
+                TestContext.Progress.WriteLine($"[flats] frontage of {fronts.Count} flats: min {fronts[0]}, median {fronts[fronts.Count / 2]}, max {fronts[^1]} cells ({string.Join(" ", fronts.GroupBy(x => x).Select(g => $"{g.Key}:{g.Count()}"))})");
+            Assert.That(blocks, Is.GreaterThan(100));
+            Assert.That(tally.GetValueOrDefault("flats"), Is.GreaterThan(500));
+            Assert.That(tally.GetValueOrDefault("lobbies of one storey"), Is.EqualTo(byFloors.GetValueOrDefault(1)), "a block of one storey without its lobby");
+            Assert.That(tally.GetValueOrDefault("ways in"), Is.EqualTo(tally.GetValueOrDefault("flats")));
+            foreach (var k in new[] { "one-bedroom flats", "two-bedroom flats", "flats with a study", "flats entered by a hall", "flats entered by the living room" })
+                Assert.That(tally.GetValueOrDefault(k), Is.GreaterThan(20), $"few {k}");
+            Assert.That(single, Is.GreaterThan(10), "never single-loaded");
+            Assert.That(byFloors.Keys, Is.SupersetOf(new[] { 1, 2, 3, 4 }));
+            Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(10)));
+
+            // the kind by name, as the editor's GEN= field and a save read it, and round a save
+            Assert.That(RoomDesignations.ParseBuilding("Apartment"), Is.EqualTo(BuildingKind.Apartment));
+            Assert.That(RoomDesignations.ParseBuilding("apartment"), Is.EqualTo(BuildingKind.Apartment));
+            var saved = All().First(x => x.Spec.Kind == BuildingKind.Apartment).Res;
+            WallSave.Read(WallSave.Write(saved.Walls, saved.Kind, saved.Rooms).Split('\n'), out var savedKind, out List<RoomDesignation> _);
+            Assert.That(savedKind, Is.EqualTo(BuildingKind.Apartment), "a block of flats saves as one");
+
+            // the checks have teeth: each way of breaking a block is caught
+            // (a block with two flats side by side somewhere on the ground floor, so a party wall to cut)
+            bool PartyWall(BuildingGenResult r) => r.Layout.Any(a => a.Floor == 0 && a.Unit >= 0 && r.Layout.Any(b => b.Floor == 0 && b.Unit >= 0 && b.Unit != a.Unit
+                && a.Rects.Any(p => b.Rects.Any(q => (p.X1 == q.X0 || q.X1 == p.X0) && Math.Min(p.Z1, q.Z1) - Math.Max(p.Z0, q.Z0) >= 2))));
+            int probe = Enumerable.Range(5, 40).First(sd => PartyWall(BuildingGen.Generate(new BuildingGenSpec { Seed = sd, Kind = BuildingKind.Apartment, MinFloors = 2, MaxFloors = 2, MaxRoomsPerFloor = 16 })));
+            BuildingGenResult Fresh() => BuildingGen.Generate(new BuildingGenSpec { Seed = probe, Kind = BuildingKind.Apartment, MinFloors = 2, MaxFloors = 2, MaxRoomsPerFloor = 16 });
+            var clean = Fresh();
+            Assert.That(FlatViolations(clean, "control"), Is.Empty, "the control block");
+            Assert.That(clean.Layout.Count(g => g.Unit >= 0 && g.Floor == 0 && g.Entry), Is.GreaterThanOrEqualTo(2), "the control has two flats a floor");
+            void Broken(string what, Func<BuildingGenResult, bool> breakIt, string expect)
+            {
+                var r = Fresh();
+                Assert.That(breakIt(r), Is.True, $"{what}: nothing to break");
+                var v = FlatViolations(r, what);
+                TestContext.Progress.WriteLine($"[flats] break it: {what} -> {v.Count} violations{(v.Count > 0 ? ": " + v[0] : "")}");
+                Assert.That(v.Any(x => x.Contains(expect)), Is.True, $"{what} was not caught: {string.Join("; ", v)}");
+            }
+            Broken("a door through a party wall", r => CutDoor(r, (a, b) => a.Unit >= 0 && b.Unit >= 0 && a.Unit != b.Unit), "a door between flat");
+            Broken("a second door into a flat", r => CutDoor(r, (a, b) => a.Unit < 0 && a.Kind == RoomKind.Hall && b.Kind == RoomKind.Bedroom), "doors to shared space");
+            Broken("the stairs moved into a flat", r =>
+            {
+                var well = r.Layout.First(g => g.Kind == RoomKind.Stairwell);
+                float dx = (well.X0 > 0 ? -1 : 1) * (well.X1 - well.X0) * Cell;
+                for (int i = 0; i < r.Stairs.Count; i++) { var s = r.Stairs[i]; s.X += dx; r.Stairs[i] = s; }
+                return r.Stairs.Count > 0;
+            }, "flight");
+            Broken("a flat's only door bricked up", r =>
+            {
+                foreach (var w in WallsOn(r, 0))
+                    for (int i = w.Openings.Count - 1; i >= 0; i--)
+                    {
+                        var o = w.Openings[i];
+                        if (!Walkable(o)) continue;
+                        var c = At(w, o.U + o.Width * 0.5f); var nn = Normal(w);
+                        var a = RoomAt(r, 0, c.X + nn.X * 0.6f, c.Z + nn.Z * 0.6f); var b = RoomAt(r, 0, c.X - nn.X * 0.6f, c.Z - nn.Z * 0.6f);
+                        if (a != null && b != null && (a.Unit < 0) != (b.Unit < 0) && (a.Unit == 0 || b.Unit == 0)) { w.Openings.RemoveAt(i); return true; }
+                    }
+                return false;
+            }, "cannot be walked to");
+        }
+
+        // S: a block of flats on a town plot (FitPlot: width x depth a cap). The town's apartments zone is 8x7 cells (cow
+        // tools' plots); a block there needs a corridor, a stairwell, two flats a floor at the least and two to four floors.
+        // Each zone is built in full over the seeds and held to FlatViolations; a block that fits says "fitted the", one that
+        // cannot says "could not fit" and is the closest -- never silently oversize. The smallest zones that hold one are
+        // pinned, so a change that loses them fails here. UG_APT_PLOT_SEEDS widens it (60 for the report).
+        // BREAK IT: drop the compact rung of the fit ladder (11x9 stops fitting); keep the landing column on a plot (11x9
+        // stops fitting); let a fit pass the depth cap (a double-loaded block "fits" 8 deep).
+        [Test]
+        public void ApartmentsFitTownPlots()
+        {
+            int seeds = int.TryParse(Environment.GetEnvironmentVariable("UG_APT_PLOT_SEEDS"), out var ps) ? ps : 16;
+            var zones = new (string Name, int W, int D)[] { ("the apartments zone", 8, 7), ("smallest double-loaded", 11, 9), ("smallest single-loaded", 19, 5), ("roomier", 16, 11) };
+            var bad = new List<string>();
+            foreach (var z in zones)
+            {
+                int fits = 0, valid = 0, closest = 0, shortOf = 0;
+                var gave = new Dictionary<string, int>();
+                var sizes = new Dictionary<string, int>();
+                for (int seed = 0; seed < seeds; seed++)
+                {
+                    var spec = new BuildingGenSpec { Seed = seed, Kind = BuildingKind.Apartment, MinFloors = 2, MaxFloors = 4, MaxRoomsPerFloor = 16, Width = z.W, Depth = z.D, FitPlot = true };
+                    var r = BuildingGen.Generate(spec);
+                    string n = $"{z.Name} {z.W}x{z.D} seed {seed}";
+                    bool fit = r.CellsX <= z.W && r.CellsZ <= z.D;
+                    var note = r.Notes.LastOrDefault(x => x.StartsWith("fitted the") || x.StartsWith("could not fit"));
+                    sizes[$"{r.CellsX}x{r.CellsZ}"] = sizes.GetValueOrDefault($"{r.CellsX}x{r.CellsZ}") + 1;
+                    if (fit) { fits++; if (note == null || !note.StartsWith("fitted the")) bad.Add($"{n}: fits as {r.CellsX}x{r.CellsZ} but says {note ?? "nothing"}"); }
+                    else { closest++; if (note == null || !note.StartsWith("could not fit")) bad.Add($"{n}: {r.CellsX}x{r.CellsZ}, over the plot, and says {note ?? "nothing"}"); }
+                    if (note != null && note.Contains("but short of")) shortOf++;
+                    if (note != null && note.IndexOf(':') is int c && c > 0 && note.StartsWith("fitted the"))
+                        foreach (var g in note.Substring(c + 1).Split(',').Select(x => x.Trim()).Where(x => !x.StartsWith("but") && x.Length > 0 && !x.Contains(':')))
+                            gave[g] = gave.GetValueOrDefault(g) + 1;
+                    int flats = r.Layout.Where(g => g.Unit >= 0 && g.Floor == 0).Select(g => g.Unit).Distinct().Count();
+                    var v = FlatViolations(r, n);
+                    bool ok = v.Count == 0 && r.Floors >= 2 && r.Floors <= 4 && flats >= 2 && r.Layout.Any(g => g.Kind == RoomKind.Stairwell);
+                    if (ok) valid++; else bad.Add($"{n}: {r.Floors} floors, {flats} flats a floor; {string.Join("; ", v.Take(2))}");
+                }
+                TestContext.Progress.WriteLine($"[flats-plot] {z.Name} {z.W}x{z.D}: {fits} of {seeds} fit, {closest} the closest instead ({string.Join(", ", sizes.Select(kv => $"{kv.Value} at {kv.Key}"))}); {valid} of {seeds} valid blocks (corridor, stairwell, 2+ flats a floor, 2-4 floors, every flat check); {shortOf} short of furniture; gave up {string.Join(", ", gave.Select(kv => $"{kv.Value} x {kv.Key}"))}");
+                if (z.W >= 11 && z.D >= 9 || z.W >= 19) Assert.That(fits, Is.EqualTo(seeds), $"{z.Name} {z.W}x{z.D}: not every block fits");
+            }
+            Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(10)));
+        }
+
         // R: an L or a T asked for keeps its outline with floors above (strawberry asked for the shapes; "one storey only"
         // made every L or T of two floors a rectangle, with a note). The floors above stand on exactly the wing's columns,
         // the full depth; the full-length row runs on past them one storey -- one arm for an L, one each side for a T, two
@@ -1969,6 +2308,7 @@ namespace UnturnedSim.Tests
             var kept = new Dictionary<FootprintShape, (int Kept, int Asked)>();
             int arms = 0, roofed = 0;
             foreach (BuildingKind kind in Enum.GetValues(typeof(BuildingKind)))
+                if (kind != BuildingKind.Apartment)   // (a block of flats is a rectangle by design, and says so in a note)
                 foreach (var shape in new[] { FootprintShape.L, FootprintShape.T })
                     for (int seed = 0; seed < 12; seed++)
                         foreach (int fl in new[] { 2, 3 })

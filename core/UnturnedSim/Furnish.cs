@@ -1508,11 +1508,12 @@ namespace UnturnedSim
             /// <summary>A house's: a tub along a wall, in a corner where it goes; a sink at a wall; in a big one, a washer.</summary>
             void Bathroom()
             {
-                // a house's has a tub; a shop's or a factory's washroom just the basin
-                if (_res.Kind == BuildingKind.Residential)
+                // a home's has a tub -- a house's or a flat's; a shop's or a factory's washroom just the basin
+                bool home = _res.Kind is BuildingKind.Residential or BuildingKind.Apartment;
+                if (home)
                     Put("Tub_0", Against("Tub_0", Side.Left).Concat(Against("Tub_0", Side.Right)), (x, z, yaw) => (Corner("Tub_0", (x, z, yaw)) ? 10 : 0) + NearestDoor(x, z));
                 Put("Counter_1", Against("Counter_1", Side.Back), (x, z, yaw) => -NearestDoor(x, z));
-                if (_area >= 14f && _res.Kind == BuildingKind.Residential) Put("Washer_0", Against("Washer_0", Side.Back), (x, z, yaw) => NearestDoor(x, z));
+                if (_area >= 14f && home) Put("Washer_0", Against("Washer_0", Side.Back), (x, z, yaw) => NearestDoor(x, z));
             }
 
             /// <summary>The desk in the command position: the chair's back to a wall, facing the door across the desk;
