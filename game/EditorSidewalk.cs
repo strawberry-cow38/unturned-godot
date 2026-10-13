@@ -223,14 +223,19 @@ namespace UnturnedGodot
         /// ⚠ EACH SIDE IS EVALUATED SEPARATELY, never one centreline offset twice: the two edges of a bend are
         /// different lengths, and reusing one list crowds the inside kerb. Block_Road learned this the same way.</summary>
         /// <param name="stepRight">Optional: how much further out than usual the RIGHT kerb stands at an arc
-        /// distance -- a parking bay's lay-by, which the pavement steps out round at its full width.</param>
+        /// distance -- a parking bay's lay-by, which the pavement steps out round.</param>
         /// <param name="stepLeft">The same for the left kerb.</param>
-        /// <param name="breaks">Arc distances where a step's kerb turns a corner; each gets a station of its
-        /// own, or the 1.5 m stations would cut every corner of the step.</param>
+        /// <param name="backRight">Optional: how much further out than usual the right pavement's BACK edge stands.
+        /// Where it does not match the kerb's step the pavement is wider than Width there -- it runs back to the
+        /// property line rather than following the kerb in a band.</param>
+        /// <param name="backLeft">The same for the left back edge.</param>
+        /// <param name="breaks">Arc distances where a step's kerb or back edge turns a corner; each gets a station
+        /// of its own, or the 1.5 m stations would cut every corner of the step.</param>
         public int LayAlongRoad(Node parent, RoadField roads, int road, Side side, List<Node3D> into = null,
                                 float trimStart = 0f, float trimEnd = 0f,
                                 System.Func<float, float> stepRight = null, System.Func<float, float> stepLeft = null,
-                                IReadOnlyList<float> breaks = null)
+                                IReadOnlyList<float> breaks = null,
+                                System.Func<float, float> backRight = null, System.Func<float, float> backLeft = null)
         {
             if (parent == null || roads == null) return 0;
             float total = roads.RoadLength(road);
@@ -256,13 +261,24 @@ namespace UnturnedGodot
             for (int i = 0; i <= n; i++) ds.Add(from + i * Step);
             if (to - (from + n * Step) >= 0.05f) ds.Add(to);
             if (breaks != null)
-                foreach (float b in breaks)
-                {
-                    if (b <= from + 0.05f || b >= to - 0.05f) continue;
-                    ds.RemoveAll(x => Mathf.Abs(x - b) < 0.05f);      // a corner replaces a station on top of it
-                    ds.Add(b);
-                }
+            {
+                // a corner replaces a regular station on top of it; two corners a centimetre apart (a square jog in
+                // the back edge) both stay
+                var bs = new List<float>();
+                foreach (float b in breaks) if (b > from + 0.05f && b < to - 0.05f && !bs.Contains(b)) bs.Add(b);
+                ds.RemoveAll(x => x > from && x < to && bs.Exists(b => Mathf.Abs(x - b) < 0.05f));
+                ds.AddRange(bs);
+            }
             ds.Sort();
+            // ⚠⚠ A STEPPED KERB'S PAVEMENT RUNS BACK TO THE PROPERTY LINE, NOT IN A BAND BESIDE IT (strawberry
+            // 2026-10-12: "the angled parts for the parking area? dont look like they got widened"). Width pushed out
+            // square to the ROAD is the kerb's own square only where the kerb runs parallel; along a bay's angled end
+            // (~47 degrees) it left the pavement 2.7 m across, square to that kerb. A band mitred to the kerb instead
+            // has to start its turn W tan(23 degrees) = 1.7 m BEFORE the kerb does, in front of the next house, and
+            // laid a metre of pavement over its garden. So the back edge stands where the plots behind stand -- a
+            // square step out where they step back -- and the pavement fills to it: never narrower than Width.
+            var rightW = backRight != null || stepRight != null ? new List<float>(ds.Count) : null;
+            var leftW = backLeft != null || stepLeft != null ? new List<float>(ds.Count) : null;
             foreach (float d in ds)
             {
                 if (!roads.EvaluateAlong(road, d, out var p, out var t)) return 0;
@@ -270,18 +286,21 @@ namespace UnturnedGodot
                 float sr = stepRight?.Invoke(d) ?? 0f, sl = stepLeft?.Invoke(d) ?? 0f;
                 rightP.Add(p + r * (off + sr)); rightO.Add(r);     // kerb faces the road, surface runs outward
                 leftP.Add(p - r * (off + sl)); leftO.Add(-r);
+                rightW?.Add(Width + Mathf.Max(sr, backRight?.Invoke(d) ?? sr) - sr);
+                leftW?.Add(Width + Mathf.Max(sl, backLeft?.Invoke(d) ?? sl) - sl);
                 kerbs.Add(KerbAt(d));
             }
 
             int made = 0;
-            if (side != Side.Left) made += Emit(parent, rightP, rightO, $"Sidewalk_R{road}", into, kerbs);
-            if (side != Side.Right) made += Emit(parent, leftP, leftO, $"Sidewalk_L{road}", into, kerbs);
+            if (side != Side.Left) made += Emit(parent, rightP, rightO, $"Sidewalk_R{road}", into, kerbs, rightW);
+            if (side != Side.Right) made += Emit(parent, leftP, leftO, $"Sidewalk_L{road}", into, kerbs, leftW);
             Log.Print($"[sidewalk] road {road}: {made} ribbon(s) over {to - from:0.#} m of {total:0.#}"
                     + $" (trim {from:0.#}/{total - to:0.#}), {Width:0.00} m wide, kerb {KerbHeight:0.00} m");
             return made;
         }
 
-        int Emit(Node parent, List<Vector3> pts, List<Vector3> outward, string name, List<Node3D> into, List<float> kerbs = null)
+        int Emit(Node parent, List<Vector3> pts, List<Vector3> outward, string name, List<Node3D> into, List<float> kerbs = null,
+                 List<float> widths = null)
         {
             // The live terrain, so the skirt buries instead of floating. Null in a bare harness, which is why
             // BuildRibbon still takes a fixed fallback depth rather than requiring one.
@@ -322,7 +341,7 @@ namespace UnturnedGodot
                     { PickAt = pts[i]; PickOut = outward[i].Normalized(); PickFloat = gap; DemoWidth = Width; }
                     sampled++;
                 }
-            var mi = BuildRibbon(pts, outward, Width, KerbHeight, Skirt, name, ground, kerbs);
+            var mi = BuildRibbon(pts, outward, Width, KerbHeight, Skirt, name, ground, kerbs, widths);
             Log.Print($"[sidewalk] {name}: worst DAYLIGHT under the slab {worst:0.00} m over {sampled} pts "
                     + $"(= drop below the surface minus the {KerbHeight + Skirt:0.00} m the kerb+skirt already covers)");
             if (worst > WorstFloat) { WorstFloat = worst; WorstAt = worstPt; }

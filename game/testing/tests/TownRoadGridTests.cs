@@ -512,11 +512,33 @@ namespace UnturnedGodot.Testing
                     var walkHost = new Node3D(); World.AddChild(walkHost);
                     gD.LaySidewalks(walkHost, rfD);
                     var ribbons = new Dictionary<string, Vector3[]>();
+                    var ribbonTops = new Dictionary<string, List<(Vector3 a, Vector3 b, Vector3 c)>>();
                     void Collect(Node n)
                     {
                         if (n is MeshInstance3D mi && mi.Mesh != null && mi.Name.ToString().StartsWith("Sidewalk_"))
-                            ribbons[mi.Name.ToString()] = (Vector3[])mi.Mesh.SurfaceGetArrays(0)[(int)Mesh.ArrayType.Vertex];
+                        {
+                            var arr = mi.Mesh.SurfaceGetArrays(0);
+                            var vs = (Vector3[])arr[(int)Mesh.ArrayType.Vertex];
+                            ribbons[mi.Name.ToString()] = vs;
+                            var ix = arr[(int)Mesh.ArrayType.Index].VariantType == Variant.Type.Nil ? null : (int[])arr[(int)Mesh.ArrayType.Index];
+                            var tops = new List<(Vector3, Vector3, Vector3)>();
+                            int cnt = ix != null ? ix.Length : vs.Length;
+                            for (int k = 0; k + 2 < cnt; k += 3)
+                            {
+                                Vector3 a = vs[ix != null ? ix[k] : k], b = vs[ix != null ? ix[k + 1] : k + 1], c = vs[ix != null ? ix[k + 2] : k + 2];
+                                var nn = (b - a).Cross(c - a);
+                                if (nn.Length() > 1e-3f && Mathf.Abs(nn.Y) > 0.9f * nn.Length()) tops.Add((a, b, c));
+                            }
+                            ribbonTops[mi.Name.ToString()] = tops;
+                        }
                         foreach (var ch in n.GetChildren()) Collect(ch);
+                    }
+                    static bool InTri(Vector3 q, Vector3 a, Vector3 b, Vector3 c)
+                    {
+                        float d1 = (q.X - b.X) * (a.Z - b.Z) - (a.X - b.X) * (q.Z - b.Z);
+                        float d2 = (q.X - c.X) * (b.Z - c.Z) - (b.X - c.X) * (q.Z - c.Z);
+                        float d3 = (q.X - a.X) * (c.Z - a.Z) - (c.X - a.X) * (q.Z - a.Z);
+                        return !((d1 < 0f || d2 < 0f || d3 < 0f) && (d1 > 0f || d2 > 0f || d3 > 0f));
                     }
                     Collect(walkHost);
                     float KerbOut(Vector3[] verts, (Vector3 c, Vector3 t, Vector3 o, float mid, float half) f, float d0, float d1, float sign)
@@ -547,6 +569,40 @@ namespace UnturnedGodot.Testing
                     }
                     T.Check($"...the pavement stepping out round each, its full width, the bay's depth further out ({kerbOut} of {bays.Count}; worst {worstKerb * 100f:0.0} cm off) -- and not across the street where nothing widens ({kerbIn} of {controls} plain)",
                             kerbOut == bays.Count && controls > 0 && kerbIn == controls);
+                    // ...and round its ANGLED ends the pavement fills back to where the stepped plots stand (strawberry:
+                    // "the angled parts for the parking area? dont look like they got widened"). Pushed out square to the
+                    // road, a 4 m band along a 47-degree kerb is 2.7 m across square to that kerb, and that was the
+                    // complaint. So the back edge is the plots' own line: across the whole stretch of stepped plots, the
+                    // built surface reaches the bay's depth plus the pavement's width out, angled ends included. The
+                    // control: a metre past that stretch, in front of the next plot, it does not reach that far.
+                    int filled = 0, fillControl = 0, fillMeasured = 0; float worstFill = 0f;
+                    foreach (var bay in bays)
+                    {
+                        var f = Frame(bay);
+                        string rn = $"Sidewalk_{(bay.Side > 0 ? "R" : "L")}{bay.Road}";
+                        if (!ribbonTops.TryGetValue(rn, out var mineTops)) continue;
+                        bool OnRibbon(Vector3 q) { foreach (var (ta, tb, tc) in mineTops) if (InTri(q, ta, tb, tc)) return true; return false; }
+                        float line = f.half + walkD.RoadGap + bay.Depth + walkD.Width - 0.1f;     // just inside the back edge
+                        Vector3 At(float d, float lat) => f.c + f.t * (d - f.mid) + f.o * lat;
+                        fillMeasured++;
+                        bool all = true; int stations = 0;
+                        for (float d = bay.Front0 + 0.1f; d <= bay.Front1 - 0.1f + 1e-3f; d += 0.5f)
+                        {
+                            stations++;
+                            if (!OnRibbon(At(d, line)))
+                            {
+                                all = false;
+                                // how far out the surface does reach here, for the message
+                                float reach = 0f;
+                                for (float lat = f.half; lat <= line; lat += 0.1f) if (OnRibbon(At(d, lat))) reach = lat - f.half - walkD.RoadGap;
+                                worstFill = Mathf.Max(worstFill, bay.Depth + walkD.Width - reach);
+                            }
+                        }
+                        if (all && stations > 0) filled++;
+                        if (!OnRibbon(At(bay.Front0 - 1f, line)) && !OnRibbon(At(bay.Front1 + 1f, line))) fillControl++;
+                    }
+                    T.Check($"...and round its angled ends the pavement fills back to the stepped plots' line ({filled} of {fillMeasured} bays; worst {worstFill:0.00} m short) -- and a metre past them it does not (control: {fillControl} of {fillMeasured})",
+                            fillMeasured >= bays.Count && filled == fillMeasured && fillControl == fillMeasured);
                     // 2. THE PLOTS BEHIND STAND BACK: no plot on a bay or its pavement -- and a plot that stepped back,
                     //    put back where it was, would be on one (the control).
                     bool OnBay(Vector3 q)
@@ -556,7 +612,8 @@ namespace UnturnedGodot.Testing
                             var f = Frame(bay);
                             var rel = q - f.c; float al = rel.X * f.t.X + rel.Z * f.t.Z, lat = rel.X * f.o.X + rel.Z * f.o.Z;
                             if (al < bay.A - f.mid || al > bay.B - f.mid) continue;
-                            if (lat > f.half - 0.1f && lat < f.half + walkD.RoadGap + bay.Extra(f.mid + al) + walkW - 0.01f) return true;
+                            float back = Mathf.Max(bay.Extra(f.mid + al), f.mid + al >= bay.Front0 && f.mid + al <= bay.Front1 ? bay.Depth : 0f);
+                            if (lat > f.half - 0.1f && lat < f.half + walkD.RoadGap + back + walkW - 0.01f) return true;
                         }
                         return false;
                     }
@@ -744,6 +801,9 @@ namespace UnturnedGodot.Testing
                         if (!nm.StartsWith("Sidewalk_R") && !nm.StartsWith("Sidewalk_L")) continue;
                         if (!int.TryParse(nm.Substring(10), out int road)) continue;
                         float L = rfD.RoadLength(road);
+                        int rside = nm[9] == 'R' ? 1 : -1;
+                        if (gD.BayExtra(road, rside, L * 0.5f - 4f) > 0f || gD.BayExtra(road, rside, L * 0.5f) > 0f
+                            || gD.BayExtra(road, rside, L * 0.5f + 4f) > 0f) continue;     // a bay's step: measured with the bays
                         if (!rfD.EvaluateAlong(road, L * 0.5f, out var mc, out var mt, snapTerrain: false)) continue;
                         // straight runs only: across a rounded corner one station's kerb and back are not square to the middle's tangent
                         if (!rfD.EvaluateAlong(road, L * 0.5f - 5f, out _, out var ma, snapTerrain: false) || !rfD.EvaluateAlong(road, L * 0.5f + 5f, out _, out var mb, snapTerrain: false)
@@ -816,6 +876,48 @@ namespace UnturnedGodot.Testing
                     int dupOver = Overlapping(dup);
                     T.Check($"...and no pavement lies over another ({over} of {tris.Count} surface triangles do; control: a ribbon over a shifted copy of itself, {dupOver} of {dup.Count})",
                             tris.Count > 500 && over == 0 && dupOver > 0);
+                    // 2b. and no plot stands on one -- the BUILT walking surfaces, straights, corners and parking steps
+                    //     alike, not the arithmetic that placed the plots (a pavement mitred round a bay's angled kerb
+                    //     ran a metre into the next garden, and every check that modelled the pavement agreed with
+                    //     the code that laid it). The control: a plot slid 3 m toward its street is on one.
+                    var paveGrid = new Dictionary<(int, int), List<int>>();
+                    for (int k = 0; k < tris.Count; k++)
+                    {
+                        var (_, a, b, c) = tris[k];
+                        int x0 = Mathf.FloorToInt(Mathf.Min(a.X, Mathf.Min(b.X, c.X)) / 2f), x1 = Mathf.FloorToInt(Mathf.Max(a.X, Mathf.Max(b.X, c.X)) / 2f);
+                        int z0 = Mathf.FloorToInt(Mathf.Min(a.Z, Mathf.Min(b.Z, c.Z)) / 2f), z1 = Mathf.FloorToInt(Mathf.Max(a.Z, Mathf.Max(b.Z, c.Z)) / 2f);
+                        for (int x = x0; x <= x1; x++) for (int z = z0; z <= z1; z++)
+                        { if (!paveGrid.TryGetValue((x, z), out var l)) paveGrid[(x, z)] = l = new List<int>(); l.Add(k); }
+                    }
+                    bool OnPave(Vector3 q)
+                    {
+                        if (!paveGrid.TryGetValue((Mathf.FloorToInt(q.X / 2f), Mathf.FloorToInt(q.Z / 2f)), out var l)) return false;
+                        foreach (int k in l)
+                        {
+                            var (_, a, b, c) = tris[k];
+                            float d1 = (q.X - b.X) * (a.Z - b.Z) - (a.X - b.X) * (q.Z - b.Z);
+                            float d2 = (q.X - c.X) * (b.Z - c.Z) - (b.X - c.X) * (q.Z - c.Z);
+                            float d3 = (q.X - a.X) * (c.Z - a.Z) - (c.X - a.X) * (q.Z - a.Z);
+                            if (d1 > 0f && d2 > 0f && d3 > 0f || d1 < 0f && d2 < 0f && d3 < 0f) return true;
+                        }
+                        return false;
+                    }
+                    bool PlotOnPave(Vector3[] c)
+                    {
+                        for (int e = 0; e < 4; e++)
+                        {
+                            var a = c[e]; var b = c[(e + 1) % 4];
+                            int n = Mathf.Max(1, Mathf.CeilToInt(new Vector2(b.X - a.X, b.Z - a.Z).Length() / 0.5f));
+                            for (int k = 0; k <= n; k++) if (OnPave(a.Lerp(b, (float)k / n))) return true;
+                        }
+                        return false;
+                    }
+                    int plotsOnPave = 0;
+                    foreach (var pl in plots) if (PlotOnPave(pl.Corners())) plotsOnPave++;
+                    var slid = plots[0].Corners();
+                    for (int k = 0; k < 4; k++) slid[k] += plots[0].Facing * 3f;
+                    T.Check($"...and no plot stands on a built pavement ({plotsOnPave} of {plots.Count} do; control: a plot slid 3 m toward its street {(PlotOnPave(slid) ? "is" : "IS NOT")})",
+                            plotsOnPave == 0 && PlotOnPave(slid));
                     // 3. no corner folds: every level triangle of a corner piece faces the same way. The control is a
                     //    ribbon laid round a 2.5 m arc at the town's width with nothing to stop it folding.
                     int Folded(List<(Vector3 a, Vector3 b, Vector3 c, float ny)> tops)

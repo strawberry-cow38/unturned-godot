@@ -1753,14 +1753,17 @@ namespace UnturnedGodot
                 }
                 // ⭐ STEPPED OUT ROUND A PARKING BAY, its kerb's corners sampled exactly so the angled ends stay
                 // straight lines rather than the nearest 1.5 m station's guess at one
+                // ...and its back edge stepped out to where the plots behind it now stand, a square jog at each end
                 List<float> breaks = null;
                 foreach (var bay in Bays)
-                    if (bay.Road == r) (breaks ??= new List<float>()).AddRange(new[] { bay.A, bay.A + bay.Taper, bay.B - bay.Taper, bay.B });
+                    if (bay.Road == r) (breaks ??= new List<float>()).AddRange(new[] { bay.A, bay.A + bay.Taper, bay.B - bay.Taper, bay.B,
+                                                                                      bay.Front0 - 0.005f, bay.Front0 + 0.005f, bay.Front1 - 0.005f, bay.Front1 + 0.005f });
                 int road = r;
                 made += breaks == null
                     ? walk.LayAlongRoad(walk, roads, r, EditorSidewalk.Side.Both, null, t0, t1)
                     : walk.LayAlongRoad(walk, roads, r, EditorSidewalk.Side.Both, null, t0, t1,
-                                        d => BayExtra(road, 1, d), d => BayExtra(road, -1, d), breaks);
+                                        d => BayExtra(road, 1, d), d => BayExtra(road, -1, d), breaks,
+                                        d => BayBack(road, 1, d), d => BayBack(road, -1, d));
             }
             walk.Dips.Clear();
             return made;
@@ -3519,6 +3522,9 @@ namespace UnturnedGodot
             public float Depth, Taper;
             /// <summary>The car spaces marked: Spaces of SpaceLength each, the first starting at arc First.</summary>
             public int Spaces; public float First, SpaceLength;
+            /// <summary>Arc metres where the plots stepped back behind it begin and end: the pavement's back edge
+            /// steps out by Depth over exactly this stretch, to stand where they stand.</summary>
+            public float Front0, Front1;
             /// <summary>How far past the carriageway's edge the kerb stands at arc `d`.</summary>
             public float Extra(float d)
             {
@@ -3572,6 +3578,14 @@ namespace UnturnedGodot
             float e = 0f;
             foreach (var bay in Bays) if (bay.Road == road && bay.Side == side) e = Mathf.Max(e, bay.Extra(d));
             return e;
+        }
+
+        /// <summary>How far past its usual line the pavement's BACK edge stands at arc `d` on `side` of `road`: a bay's
+        /// depth in front of the plots stepped back behind it, nothing elsewhere.</summary>
+        public float BayBack(int road, int side, float d)
+        {
+            foreach (var bay in Bays) if (bay.Road == road && bay.Side == side && d >= bay.Front0 && d <= bay.Front1) return bay.Depth;
+            return 0f;
         }
 
         /// <summary>The bay across the street overlapping this one, where the street widens on both sides.</summary>
@@ -3656,7 +3670,8 @@ namespace UnturnedGodot
                         else
                         {
                             Bays.Add(new ParkingBay { Road = r, Side = side, A = a, B = b, Depth = BayDepth, Taper = BayTaper,
-                                                      Spaces = n, SpaceLength = BaySpace, First = a + BayTaper + (full - n * BaySpace) * 0.5f });
+                                                      Spaces = n, SpaceLength = BaySpace, First = a + BayTaper + (full - n * BaySpace) * 0.5f,
+                                                      Front0 = a - BayInset, Front1 = b + BayInset });
                             stepped += group.Count;
                         }
                         group.Clear();
