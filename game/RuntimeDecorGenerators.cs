@@ -56,6 +56,29 @@ public static class RuntimeDecorGenerators
         }
     }
     static StandardMaterial3D Material() => new(){VertexColorUseAsAlbedo=true,Roughness=1,CullMode=BaseMaterial3D.CullModeEnum.Disabled};
+    static (int cols,int rows,int cell,int ox,int oy,int lx,int ly,int w,int h) RugLayout(float length,float depth)
+    {
+        double border=Math.Min(.15,Math.Min(length,depth)*.09),line=border*.45;
+        double iw=length-2*(border+line),ih=depth-2*(border+line);
+        int baseC=Math.Clamp((int)Math.Round(Math.Min(64,iw/.45)),1,64),baseR=Math.Clamp((int)Math.Round(Math.Min(64,ih/.45)),1,64);
+        int cols=baseC,rows=baseR;double best=double.PositiveInfinity;
+        // Whole repeats, near-square physical cells, and a modest preference for ~0.45 m motifs.
+        for(int c=Math.Max(1,baseC-3);c<=Math.Min(64,baseC+3);c++)
+        for(int r=Math.Max(1,baseR-3);r<=Math.Min(64,baseR+3);r++)
+        {
+            double cw=iw/c,ch=ih/r,score=2*Math.Abs(Math.Log(cw/ch))+.30*(Math.Abs(Math.Log(cw/.45))+Math.Abs(Math.Log(ch/.45)));
+            if(score<best){best=score;cols=c;rows=r;}
+        }
+        int cell=Math.Clamp(224/Math.Max(cols,rows),1,8);
+        while(true)
+        {
+            int ox=Math.Max(1,(int)Math.Round(border/iw*cols*cell)),oy=Math.Max(1,(int)Math.Round(border/ih*rows*cell));
+            int lx=Math.Max(1,(int)Math.Round(line/iw*cols*cell)),ly=Math.Max(1,(int)Math.Round(line/ih*rows*cell));
+            int w=cols*cell+2*(ox+lx),h=rows*cell+2*(oy+ly);
+            if((w<=256&&h<=256)||cell==1)return(cols,rows,cell,ox,oy,lx,ly,w,h);
+            cell--;
+        }
+    }
 
     /// <param name="length">Desired fabric coverage width, metres; rail adds 0.28*scale m.
     /// Window side overlap is selected by FurniturePlan (e.g. window opening width + 0.40 m).</param>
@@ -131,24 +154,26 @@ public static class RuntimeDecorGenerators
         string key="rug|"+F(length)+"|"+F(height)+"|"+style;
         if(!Cache.TryGetValue(key,out var asset))
         {
-            int w=Math.Clamp((int)Math.Ceiling(Math.Min(256,(double)length*16)),16,256),h=Math.Clamp((int)Math.Ceiling(Math.Min(256,(double)height*16)),16,256);
+            var layout=RugLayout(length,height);int w=layout.w,h=layout.h;
             var image=Image.CreateEmpty(w,h,false,Image.Format.Rgba8);
             Color[] palette=style switch{
                 RugStyle.Diamond=>new[]{new Color(.25f,.32f,.35f),new Color(.74f,.72f,.61f),new Color(.44f,.55f,.57f),new Color(.86f,.83f,.72f)},
                 RugStyle.Striped=>new[]{new Color(.34f,.39f,.28f),new Color(.69f,.72f,.56f),new Color(.83f,.80f,.68f),new Color(.48f,.52f,.36f)},
                 RugStyle.Checker=>new[]{new Color(.31f,.40f,.49f),new Color(.73f,.68f,.49f),new Color(.85f,.81f,.69f),new Color(.45f,.56f,.59f)},
                 _=>new[]{new Color(.49f,.25f,.19f),new Color(.68f,.43f,.29f),new Color(.83f,.75f,.56f),new Color(.57f,.32f,.23f)}};
-            float border=MathF.Min(.15f,MathF.Min(length,height)*.09f),rx=MathF.Min(64,length/.45f),ry=MathF.Min(64,height/.45f);
+            int sx=layout.ox+layout.lx,sy=layout.oy+layout.ly;
             for(int y=0;y<h;y++)for(int x=0;x<w;x++)
             {
-                float u=(x+.5f)/w,v=(y+.5f)/h,edge=MathF.Min(MathF.Min(u,1-u)*length,MathF.Min(v,1-v)*height);
-                int c=edge<border?0:edge<border*1.45f?2:1;
-                if(edge>=border*1.45f)
+                bool outer=x<layout.ox||x>=w-layout.ox||y<layout.oy||y>=h-layout.oy;
+                bool interior=x>=sx&&x<w-sx&&y>=sy&&y<h-sy;
+                int c=outer?0:interior?1:2;
+                if(interior)
                 {
-                    float a=u*rx,b=v*ry;
-                    c=style switch{RugStyle.Diamond=>MathF.Abs(a-MathF.Floor(a)-.5f)+MathF.Abs(b-MathF.Floor(b)-.5f)<.36f?0:1,
-                        RugStyle.Striped=>((int)MathF.Floor(b)&1)==0?1:3,
-                        RugStyle.Checker=>(((int)MathF.Floor(a)+(int)MathF.Floor(b))&1)==0?1:3,_=>1};
+                    int col=(x-sx)/layout.cell,row=(y-sy)/layout.cell;
+                    float a=((x-sx)%layout.cell+.5f)/layout.cell,b=((y-sy)%layout.cell+.5f)/layout.cell;
+                    c=style switch{RugStyle.Diamond=>MathF.Abs(a-.5f)+MathF.Abs(b-.5f)<.36f?0:1,
+                        RugStyle.Striped=>(row&1)==0?1:3,
+                        RugStyle.Checker=>((col+row)&1)==0?1:3,_=>1};
                 }
                 image.SetPixel(x,y,palette[c]);
             }

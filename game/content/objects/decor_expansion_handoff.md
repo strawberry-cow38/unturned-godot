@@ -31,7 +31,11 @@ ArrayMesh rug = RuntimeDecorGenerators.CreateRugMesh(length, depth,
   all vertices lie at Y=0.015 m to clear the caller's floor origin.
 - Rug Image/ImageTexture is generated when called: Bordered, Diamond, Striped,
   Checker. Pixel-art nearest filtering, with size-dependent texture resolution
-  and border/pattern solving. No PNG or OBJ is loaded by either factory.
+  and border/pattern solving. WHOLE repeats fit the inner field; repeat counts
+  balance near-square physical motifs and a consistent border scale. This
+  includes the owner's texture-fit refinement in message 1559628137082658957.
+  Four different rug aspect ratios, including a runner, were rendered to check
+  the fit. No PNG or OBJ is loaded by either factory.
 - Valid finite positive floating-point sizes are accepted, not snapped to a
   list of presets. Impossible/overflow-prone inputs are rejected explicitly.
   Four runtime curtain dimensions, including 3.17×1.93 m, were exercised.
@@ -63,7 +67,8 @@ unchanged: metres, Z-up, front +Y, middle of back face on Y=0.
 - Self-contained factory compiled with Godot.NET.Sdk 4.6.0 and 4.6.2 / .NET 8,
   zero compiler errors/warnings; no full game suite was run.
 - Actual standalone Godot C# process called the factories, checked requested
-  dimensions/seams/UV axes, and rendered the returned meshes directly.
+  dimensions/back planes/UV axes, and rendered the returned meshes directly.
+  Closed seams were inspected visually and meet by construction.
 - Rug mesh vertices are genuinely flat. Godot pads its resource AABB by 1e-5
   on the flat axis; this is not rug thickness.
 - Nine revised/new static pieces: front + three-quarter views, visually checked.
