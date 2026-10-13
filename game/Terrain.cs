@@ -18,6 +18,8 @@ namespace UnturnedGodot
         // painted with THIS map's textures. tools/terrain_map.py bakes them from the tile "Materials" GUID palette.
         public static string MapDir = "terrain";
         const float TILE_SIZE = 1024f, TILE_HEIGHT = 2048f, UNIT = 4f;
+        /// <summary>The heightmap's spacing in metres: the ground between two of its points is interpolated.</summary>
+        public const float GridUnit = UNIT;
         const float BRUSH_FALLOFF = 0.5f;   // source Devkit brushFalloff: full strength inside this radius fraction, then linear to 0 at the edge
         static float BrushAlpha(float normDist) => normDist <= BRUSH_FALLOFF ? 1f : (1f - normDist) / (1f - BRUSH_FALLOFF);   // source TerrainEditor.getBrushAlpha
 
@@ -501,6 +503,25 @@ void fragment() {
             RebuildChunksIn(cgx - rg, cgx + rg, cgy - rg, cgy + rg);
         }
 
+        /// <summary>Raise (or lower) the ground over a world rectangle by delta(x, z) metres, then rebuild what that touched:
+        /// a scripted landform -- the town harness's UG_TOWNHILLS rolls gentle hills under a town to be built on.</summary>
+        public void AddHeightField(System.Func<float, float, float> deltaWorld, float x0, float z0, float x1, float z1)
+        {
+            if (_grid == null || deltaWorld == null) return;
+            int gx0 = System.Math.Max(0, Mathf.FloorToInt((Mathf.Min(x0, x1) - _bx) / UNIT));
+            int gx1 = System.Math.Min(_gw - 1, Mathf.CeilToInt((Mathf.Max(x0, x1) - _bx) / UNIT));
+            int gy0 = System.Math.Max(0, Mathf.FloorToInt((-Mathf.Max(z0, z1) - _bz) / UNIT));
+            int gy1 = System.Math.Min(_gh - 1, Mathf.CeilToInt((-Mathf.Min(z0, z1) - _bz) / UNIT));
+            for (int gx = gx0; gx <= gx1; gx++)
+                for (int gy = gy0; gy <= gy1; gy++)
+                {
+                    float wx = _bx + gx * UNIT, wz = -(_bz + gy * UNIT);
+                    _grid[gx, gy] = Mathf.Clamp(_grid[gx, gy] + deltaWorld(wx, wz) / TILE_HEIGHT, 0f, 1f);
+                }
+            _dirty = true;
+            RebuildChunksIn(gx0, gx1, gy0, gy1, withCollider: true);
+        }
+
         bool _dirty;
         public bool Dirty => _dirty;
 
@@ -896,8 +917,10 @@ void fragment() {
         /// ribbon's outer edge. Lowest-wins is the choice that cannot produce that: the worst it can do is leave
         /// the higher road a little clear of the ground at the crossing, which is invisible, instead of putting
         /// a hillside through a carriageway, which is not. Resolve every claim first, write once.</summary>
+        /// <param name="cover">Per line, how far either side of it is ITS tarmac -- the reach of the ceiling below.
+        /// Null is the island's own road, RenderedRoadHalf, for every line.</param>
         public void ConformToPolylines(System.Collections.Generic.IReadOnlyList<System.Collections.Generic.List<Vector3>> lines,
-                                       float radius, float feather)
+                                       float radius, float feather, System.Collections.Generic.IReadOnlyList<float> cover = null)
         {
             if (_grid == null || lines == null) return;
             var claim = new System.Collections.Generic.Dictionary<(int, int), (float target, float w, float d, int line)>();
@@ -907,7 +930,7 @@ void fragment() {
             // from). Only a DIFFERENT road's tarmac is a reason to hold ground down.
             var cap = new System.Collections.Generic.Dictionary<(int, int), (float y, int line)>();
             for (int li = 0; li < lines.Count; li++)
-                GatherConform(lines[li], radius, feather, claim, cap, ProcIsland.RenderedRoadHalf, li);
+                GatherConform(lines[li], radius, feather, claim, cap, cover != null && li < cover.Count ? cover[li] : ProcIsland.RenderedRoadHalf, li);
             if (claim.Count == 0) return;
             // ⚠ SMOOTH THE CLAIMS BEFORE WRITING THEM (strawberry 2026-09-17: "the ground below road splines
             // isnt smooth at all. its really jagged. needs a real smoothing pass before placing the actual

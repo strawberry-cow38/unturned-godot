@@ -1457,7 +1457,7 @@ namespace UnturnedGodot.Testing
                             {
                                 if (m == null || lp.Road < 0) continue;
                                 mouthsL++;
-                                rfL.EvaluateAlong(m.Road, (m.From + m.To) * 0.5f, out var sq, out _);
+                                rfL.EvaluateAlong(m.Road, m.EdgeArc, out var sq, out _);
                                 rfL.EvaluateAlong(lp.Road, atEnd ? rfL.RoadLength(lp.Road) : 0f, out var lq, out _);
                                 worstStep = Mathf.Max(worstStep, Mathf.Abs(sq.Y + rfL.RoadSurfaceOffset(m.Road) - lq.Y - rfL.RoadSurfaceOffset(lp.Road)));
                             }

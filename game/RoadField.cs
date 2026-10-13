@@ -38,7 +38,21 @@ namespace UnturnedGodot
             }
         }
         class RoadData { public int Material; public bool IsLoop; public List<Joint> Joints = new(); public byte[] GuidBytes; public MeshInstance3D Mi; public StaticBody3D Body;
-            public int StartJunction = -1, EndJunction = -1; }   // junction NODE this road's first/last joint is bound to (-1 = free end)
+            public int StartJunction = -1, EndJunction = -1;   // junction NODE this road's first/last joint is bound to (-1 = free end)
+            public (Vector3 origin, Vector3 gradient)? EndPlaneA, EndPlaneB; }   // the surface an open end's ring must meet: SetEndPlane
+
+        /// <summary>Make an OPEN end's last ring meet a sloping surface at both its corners rather than lie level across
+        /// (strawberry 2026-10-13, "follow gentle hills and slopes"). A road's cross-section is level from side to side, so
+        /// a back lane ending on the edge of a street that climbs along it stood up to 11 cm proud of the street at one
+        /// corner of its mouth -- and its end ramp poked up through the street as a dark sliver. The ring's two corners now
+        /// take the plane's height (surface = origin.Y + gradient . (p - origin), in plan), the end ramp follows them down,
+        /// and the road twists back to level by its next ring. Null clears it.</summary>
+        public void SetEndPlane(int road, bool atEnd, Vector3? origin, Vector3 gradient)
+        {
+            if (road < 0 || road >= _roads.Count) return;
+            var plane = origin.HasValue ? (origin.Value, gradient) : ((Vector3, Vector3)?)null;
+            if (atEnd) _roads[road].EndPlaneB = plane; else _roads[road].EndPlaneA = plane;
+        }
 
         // JUNCTION NODES (strawberry 2026-08-19: "we should invent a junction node. the existing maps are
         // considered 'legacy' and simply use the old tool"). A junction OWNS its position; road ends reference
@@ -1283,6 +1297,7 @@ namespace UnturnedGodot
 
             float invRepeat = mat.Height != 0f ? mat.Height / texHeight : 1f / texHeight;   // src: UV repeats every texture.height/mat.height world units
 
+            float bankAl = 0f, bankAr = 0f, bankBl = 0f, bankBr = 0f;   // what SetEndPlane moved each end ring's corners by
             var ringV = new List<Vector3[]>();
             var ringN = new List<Vector3>();
             var ringVd = new List<float>();   // UV v = accumulated distance * invRepeat
@@ -1314,6 +1329,16 @@ namespace UnturnedGodot
                 }
                 float lY = ((Terr != null && !ign) ? Terr.SampleHeight(lp.X, lp.Z) : pos.Y - jo) + jo;
                 float rY = ((Terr != null && !ign) ? Terr.SampleHeight(rp.X, rp.Z) : pos.Y - jo) + jo;
+                var endPlane = s == 0 && !loop ? r.EndPlaneA : s == samples.Count - 1 && !loop ? r.EndPlaneB : null;
+                if (endPlane.HasValue)
+                {
+                    var (po, pg) = endPlane.Value;
+                    float lift = halfVerticalSize + verticalOffset;
+                    float dl = po.Y + pg.X * (lp.X - po.X) + pg.Z * (lp.Z - po.Z) - lift - lY;
+                    float dr = po.Y + pg.X * (rp.X - po.X) + pg.Z * (rp.Z - po.Z) - lift - rY;
+                    lY += dl; rY += dr;
+                    if (s == 0) { bankAl = dl; bankAr = dr; } else { bankBl = dl; bankBr = dr; }
+                }
                 Vector3 lSurf = new Vector3(lp.X, lY, lp.Z) + normal * (halfVerticalSize + verticalOffset);
                 Vector3 rSurf = new Vector3(rp.X, rY, rp.Z) + normal * (halfVerticalSize + verticalOffset);
                 var cs = new Vector3[4];
@@ -1341,9 +1366,11 @@ namespace UnturnedGodot
             // A lone bound end still ramps: one road on a node is a loose end, not a junction.
             bool JoinedAt(int j) => j >= 0 && JunctionEdges(j).Count >= 2;
             bool capStart = !loop && !JoinedAt(r.StartJunction), capEnd = !loop && !JoinedAt(r.EndJunction);
-            if (capStart) { rings.Add(Cap(fC, fS, fN, fD, -1f, halfWidth, verticalSize, halfVerticalSize, verticalOffset)); rn.Add(fN); rv.Add(ringVd[0]); }
+            // (a banked end's ramp goes down from its ring's corners, not from where they were)
+            Vector3[] Banked(Vector3[] c, float dl, float dr) { c[0].Y += dl; c[1].Y += dl; c[2].Y += dr; c[3].Y += dr; return c; }
+            if (capStart) { rings.Add(Banked(Cap(fC, fS, fN, fD, -1f, halfWidth, verticalSize, halfVerticalSize, verticalOffset), bankAl, bankAr)); rn.Add(fN); rv.Add(ringVd[0]); }
             for (int i = 0; i < ringV.Count; i++) { rings.Add(ringV[i]); rn.Add(ringN[i]); rv.Add(ringVd[i]); }
-            if (capEnd) { rings.Add(Cap(lC, lS, lN, lD, 1f, halfWidth, verticalSize, halfVerticalSize, verticalOffset)); rn.Add(lN); rv.Add(ringVd[ringVd.Count - 1]); }
+            if (capEnd) { rings.Add(Banked(Cap(lC, lS, lN, lD, 1f, halfWidth, verticalSize, halfVerticalSize, verticalOffset), bankBl, bankBr)); rn.Add(lN); rv.Add(ringVd[ringVd.Count - 1]); }
             if (rings.Count < 2) return null;
 
             var verts = new List<Vector3>();

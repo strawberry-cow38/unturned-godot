@@ -10520,6 +10520,19 @@ namespace UnturnedGodot
         void BuildTownGrid(RoadField rf, Terrain terrain, Editor editor)
         {
             if (rf == null || terrain == null) return;
+            // UG_TOWNHILLS=<metres>: roll gentle hills under the town before it is laid (strawberry 2026-10-13: "add support
+            // for the grid to follow gentle hills and slopes") -- two long swells crossing, a few hundred metres from crest
+            // to crest, so the steepest of it is a gentle 1-in-10 at 5 m. Everything the town builds has only ever met flat
+            // ground on this map; this is the ground to prove it on.
+            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNHILLS"), System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out float hillAmp) && hillAmp > 0f)
+            {
+                // (raised by its own amplitude, so its troughs stay on the ground the map had: below that is the sea margin)
+                float Hills(float x, float z) => hillAmp * (1f + 0.6f * Mathf.Sin(x * Mathf.Tau / 320f + 0.7f) * Mathf.Cos(z * Mathf.Tau / 280f + 1.3f)
+                                                               + 0.4f * Mathf.Sin((x * 0.6f + z * 0.8f) * Mathf.Tau / 410f + 2.1f));
+                terrain.AddHeightField(Hills, terrain.WorldMinX, terrain.WorldMinZ, terrain.WorldMaxX, terrain.WorldMaxZ);
+                Log.Print($"[towngrid] rolled hills of {hillAmp:0.0} m under the site (steepest about {hillAmp * 0.0196f * 100f:0}%)");
+            }
             float HeightAt(float x, float z) => terrain.SampleHeight(x, z);
             // ⚠ SITE THE TOWN ON THE FLATTEST DRY GROUND, by scanning -- not at the origin, and not at
             // "wherever road 0 happens to be". A town dropped on a hillside is mostly refused nodes, and
@@ -10574,6 +10587,14 @@ namespace UnturnedGodot
                       + $"{dryN}/{n2} probes dry (sea {Terrain.SeaLevelY:0.0} + 3).");
             }
             if (flattest == float.MaxValue) goto noTown;    // ⚠ no site means NO TOWN, not a town at (0,0)
+            // UG_TOWNSITE=<x>,<z>: put the town there instead -- e.g. where a test built it, to look at what the test saw
+            {
+                var siteParts = (System.Environment.GetEnvironmentVariable("UG_TOWNSITE") ?? "").Split(',');
+                var ic = System.Globalization.CultureInfo.InvariantCulture;
+                if (siteParts.Length == 2 && float.TryParse(siteParts[0], System.Globalization.NumberStyles.Float, ic, out float sx2)
+                    && float.TryParse(siteParts[1], System.Globalization.NumberStyles.Float, ic, out float sz2))
+                    site = new Vector3(sx2, HeightAt(sx2, sz2), sz2);
+            }
             // GRADE THE SITE by default: a town cuts and fills its streets, and a grid draped over raw PEI
             // (the flattest 400 m box on this map still has 34 m of relief) bucks over every hummock.
             // UG_TOWNDRAPE=1 turns it off and lets the streets follow the ground instead.
@@ -10604,6 +10625,21 @@ namespace UnturnedGodot
             int before = rf.RoadCount;
             var rep = town.Generate(rf, HeightAt);
             Log.Print($"[towngrid] site ({site.X:0},{site.Y:0.0},{site.Z:0}) relief {flattest:0.0} m ACROSS THE FOOTPRINT -- {rep}");
+            // UG_TOWNNOWALK=1: no pavements at all. An ABLATION, because five measured explanations for the
+            // dark wedges at every mouth have now missed and the only honest next question is which mesh the
+            // pixels belong to.
+            bool noWalk = System.Environment.GetEnvironmentVariable("UG_TOWNNOWALK") == "1";
+            var walkProto = new EditorSidewalk { Width = town.PavementWidth }; editor.AddChild(walkProto);
+            // ⭐ THE PLOTS AND THEIR PARKING ARE LAID OUT BEFORE THE PAVEMENT (strawberry 2026-10-12: "widened
+            // sections of road, with dotted lines for parking"). A parking bay moves the kerb, the pavement and the
+            // plots behind it, so the pavement and the lamps have to be laid where the bays put them.
+            // ⚠⚠ AND BEFORE THE GROUND IS GRADED (strawberry 2026-10-13: "add support for the grid to follow gentle hills and
+            // slopes"). The back lanes are planned here, and they take their profile off the ground as the streets took
+            // theirs -- off the ground as it WAS. Planned after the grading, a lane read the cut 0.12 m under its street at
+            // the mouth, and on a hill the ground in mid-block was nothing it could be pinned to: graded straight between
+            // its two streets instead, one ran under a crest and out of sight. The grading then cuts under lanes and streets
+            // alike.
+            if (!noWalk) town.PlanPlots(rf, walkProto.Width);
             bool graded = town.GradeTerrain(terrain, rf);     // ⚠ BEFORE the pavement: its skirt is cut to the ground it finds
             // ⚠ MEASURE THE WIGGLE. These streets are straight BY CONSTRUCTION (one offset per grid line), so
             // any lateral deviation from the chord between a road's two ends is spline wobble and nothing
@@ -10632,15 +10668,6 @@ namespace UnturnedGodot
             int patches = town.BuildPatchMeshes(editor, rf);   // the asphalt paving each node, now the arms stop short of it
             // the boulevard's median, once its crossings are known: it stops short of each one
             town.BuildMedians(editor, rf);
-            // UG_TOWNNOWALK=1: no pavements at all. An ABLATION, because five measured explanations for the
-            // dark wedges at every mouth have now missed and the only honest next question is which mesh the
-            // pixels belong to.
-            bool noWalk = System.Environment.GetEnvironmentVariable("UG_TOWNNOWALK") == "1";
-            var walkProto = new EditorSidewalk { Width = town.PavementWidth }; editor.AddChild(walkProto);
-            // ⭐ THE PLOTS AND THEIR PARKING ARE LAID OUT BEFORE THE PAVEMENT (strawberry 2026-10-12: "widened
-            // sections of road, with dotted lines for parking"). A parking bay moves the kerb, the pavement and the
-            // plots behind it, so the pavement and the lamps have to be laid where the bays put them.
-            if (!noWalk) town.PlanPlots(rf, walkProto.Width);
             // the roads' own lines, painted over plain tarmac -- after the bays, which break the edge lines they open off
             town.BuildRoadLines(editor, rf);
             int walks = noWalk ? 0 : town.LaySidewalks(editor, rf);
@@ -10744,6 +10771,34 @@ namespace UnturnedGodot
                     sb.Append($" road{r}: spline Y {mp.Y:0.00} vs ground {terrain.SampleHeight(mp.X, mp.Z):0.00};");
                 }
                 Log.Print($"[towngrid] {meshes} mesh children under the road field;{sb}");
+            }
+            {   // ...and does the ground stay under it? (strawberry 2026-10-13, "follow gentle hills and slopes")
+                var gp = town.GroundPokes(rf, (x, z) => terrain.SampleHeight(x, z));
+                Log.Print($"[towngrid] ground under the paving: {gp.pokes}/{gp.samples} points within 3 cm of the surface or through it; "
+                        + $"worst {gp.worst * 100f:0.0} cm proud at {gp.at} ({gp.what})");
+                foreach (var m in TownRoadGrid.GroundOverMeshes(editor, (x, z) => terrain.SampleHeight(x, z)))
+                {
+                    Log.Print($"[towngrid]   ...{m.kind}: {m.pokes}/{m.samples} top vertices within 3 cm of the ground or under it; "
+                            + $"worst {m.worst * 100f:0.0} cm proud at {m.at} ({m.mesh})");
+                    if (m.pokes > 0 && TownRoadGrid.ProbeEverything)
+                        Log.Print($"[towngrid]      there: {town.ExplainPoint(rf, m.at, (x, z) => terrain.SampleHeight(x, z))}");
+                }
+                var psKinds = new System.Collections.Generic.Dictionary<string, (int steps, float worst, Vector3 at, string between)>();
+                var ps = TownRoadGrid.PavementSteps(editor, psKinds);
+                Log.Print($"[towngrid] pavement joins: {ps.steps}/{ps.joins} step more than 1 cm; worst {ps.worst * 100f:0.0} cm at {ps.at} ({ps.between})");
+                foreach (var kv in psKinds)
+                    Log.Print($"[towngrid]   ...{kv.Key}: {kv.Value.steps} steps, worst {kv.Value.worst * 100f:0.0} cm at {kv.Value.at} ({kv.Value.between})");
+                var vf = town.VisibleFillOverGround(rf, (x, z) => terrain.SampleHeight(x, z));
+                Log.Print($"[towngrid] corner fill where it is seen: {vf.under}/{vf.samples} points within 3 cm of the ground or under it; worst {vf.worst * 100f:0.0} cm at {vf.at}");
+                var pcKinds = new System.Collections.Generic.Dictionary<string, (int thin, float least, Vector3 at)>();
+                var pc = town.PaintClearance(editor, rf, pcKinds);
+                Log.Print($"[towngrid] paint clearance: {pc.thin}/{pc.samples} samples within 3 mm of what is under them (or under it); "
+                        + $"thinnest {pc.least * 100f:0.00} cm at {pc.at} ({pc.what})");
+                foreach (var kv in pcKinds)
+                    Log.Print($"[towngrid]   ...{kv.Key}: {kv.Value.thin} thin, thinnest {kv.Value.least * 100f:0.00} cm at {kv.Value.at}");
+                foreach (var m in town.PaintUnderPaving(editor, rf))
+                    Log.Print($"[towngrid] paint {m.kind}: {m.buried}/{m.samples} top vertices under the paving they are painted on; "
+                            + $"worst {m.worst * 100f:0.0} cm under at {m.at}");
             }
             // A GRID READS FROM THE AIR. Unlike the kerb, whose whole subject is 0.4 m tall, the claim here
             // is the LAYOUT -- junctions, blocks, where the gates refused to build -- and none of that is
@@ -10890,6 +10945,23 @@ namespace UnturnedGodot
                     tcam.LookAt(site, Vector3.Up);
                     Log.Print($"[towngrid] plot camera over the town centre ({town.Plots.Count} plots)");
                     goto noTown;
+                }
+                // UG_TOWNCLOSE=at:<x>,<z>[,<height>]: a point a probe named -- looking down on it from the south-east
+                if (closeEnv != null && closeEnv.StartsWith("at:"))
+                {
+                    var atParts = closeEnv.Substring(3).Split(',');
+                    var ic = System.Globalization.CultureInfo.InvariantCulture;
+                    if (atParts.Length >= 2 && float.TryParse(atParts[0], System.Globalization.NumberStyles.Float, ic, out float atX)
+                        && float.TryParse(atParts[1], System.Globalization.NumberStyles.Float, ic, out float atZ))
+                    {
+                        float atH = atParts.Length >= 3 && float.TryParse(atParts[2], System.Globalization.NumberStyles.Float, ic, out float hh) ? hh : 14f;
+                        var atP = new Vector3(atX, terrain.SampleHeight(atX, atZ), atZ);
+                        tcam.GlobalPosition = atP + new Vector3(atH * 0.6f, atH, atH * 0.6f);
+                        tcam.Fov = 55f;
+                        tcam.LookAt(atP, Vector3.Up);
+                        Log.Print($"[towngrid] camera on {atP}");
+                        goto noTown;
+                    }
                 }
                 // UG_TOWNCLOSE=p: the prop the clearance pass pushed FURTHEST off paving -- the census says how
                 // far, this shows where it ended up
