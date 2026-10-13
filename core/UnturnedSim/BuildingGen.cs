@@ -1004,11 +1004,20 @@ namespace UnturnedSim
             {
                 int hostAt = host == RoomKind.Unassigned ? -1 : list.FindIndex(x => x.k == host);
                 double Share(int i, int w) => (double)(w * depth) / Target(list[i].k, i == hostAt);
+                // a garage is a car's width, not a share of the row: what it was given past that goes to the room furthest
+                // under its share, and it takes no part in the evening out
+                bool Shares(int i) => !Service(list[i].k) && list[i].k != RoomKind.Garage;
+                for (int gi = 0; gi < list.Count; gi++)
+                    while (list[gi].k == RoomKind.Garage && list[gi].w > Width(RoomKind.Garage, depth)
+                           && Enumerable.Range(0, list.Count).Where(Shares).OrderBy(i => Share(i, list[i].w)).FirstOrDefault(-1) is int to && to >= 0)
+                    {
+                        list[gi] = (list[gi].k, list[gi].w - 1);
+                        list[to] = (list[to].k, list[to].w + 1);
+                    }
                 for (int guard = 0; guard < 64; guard++)
                 {
-                    // (a garage keeps its width: a car's, not a share of the row)
-                    var big = Enumerable.Range(0, list.Count).Where(i => !Service(list[i].k) && list[i].k != RoomKind.Garage && list[i].w > Width(list[i].k, depth)).OrderByDescending(i => Share(i, list[i].w)).FirstOrDefault(-1);
-                    var small = Enumerable.Range(0, list.Count).Where(i => !Service(list[i].k) && list[i].k != RoomKind.Garage).OrderBy(i => Share(i, list[i].w)).FirstOrDefault(-1);
+                    var big = Enumerable.Range(0, list.Count).Where(i => Shares(i) && list[i].w > Width(list[i].k, depth)).OrderByDescending(i => Share(i, list[i].w)).FirstOrDefault(-1);
+                    var small = Enumerable.Range(0, list.Count).Where(Shares).OrderBy(i => Share(i, list[i].w)).FirstOrDefault(-1);
                     if (big < 0 || small < 0 || big == small) return;
                     if (Math.Max(Share(big, list[big].w - 1), Share(small, list[small].w + 1)) >= Share(big, list[big].w) - 1e-9) return;
                     list[big] = (list[big].k, list[big].w - 1);
