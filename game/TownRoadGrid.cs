@@ -1758,11 +1758,17 @@ namespace UnturnedGodot
                 }
                 // ⭐ STEPPED OUT ROUND A PARKING BAY, its kerb's corners sampled exactly so the angled ends stay
                 // straight lines rather than the nearest 1.5 m station's guess at one
-                // ...and its back edge stepped out to where the plots behind it now stand, a square jog at each end
+                // ...and its back edge a band of its own width round the angled kerb, clipped in front of the next plot
                 List<float> breaks = null;
                 foreach (var bay in Bays)
-                    if (bay.Road == r) (breaks ??= new List<float>()).AddRange(new[] { bay.A, bay.A + bay.Taper, bay.B - bay.Taper, bay.B,
-                                                                                      bay.Front0 - 0.005f, bay.Front0 + 0.005f, bay.Front1 - 0.005f, bay.Front1 + 0.005f });
+                {
+                    if (bay.Road != r) continue;
+                    float lead = BayBackLead(bay);
+                    (breaks ??= new List<float>()).AddRange(new[] { bay.A, bay.A + bay.Taper, bay.B - bay.Taper, bay.B,
+                                                                   bay.Front0 - 0.005f, bay.Front0 + 0.005f, bay.Front1 - 0.005f, bay.Front1 + 0.005f });
+                    foreach (float bk in new[] { bay.A - lead, bay.A + bay.Taper - lead, bay.B - bay.Taper + lead, bay.B + lead })
+                        if (bk > bay.Front0 + 0.01f && bk < bay.Front1 - 0.01f) breaks.Add(bk);
+                }
                 int road = r;
                 made += breaks == null
                     ? walk.LayAlongRoad(walk, roads, r, EditorSidewalk.Side.Both, null, t0, t1)
@@ -3618,12 +3624,30 @@ namespace UnturnedGodot
             return e;
         }
 
-        /// <summary>How far past its usual line the pavement's BACK edge stands at arc `d` on `side` of `road`: a bay's
-        /// depth in front of the plots stepped back behind it, nothing elsewhere.</summary>
+        /// <summary>How far past its usual line the pavement's BACK edge stands at arc `d` on `side` of `road`.
+        /// ⚠⚠ THE PAVEMENT'S OWN WIDTH SQUARE TO THE ANGLED KERB, FOLLOWING IT (strawberry 2026-10-13, of a back edge
+        /// squared off to the plots: "now theyre square?"). A band W wide round a kerb that turns through phi has to
+        /// start turning W tan(phi/2) BEFORE the kerb does -- 1.7 m for a 4 m pavement at a bay's 47 degrees -- which
+        /// is in front of the next house. So it follows the kerb at its full width wherever the plots behind have
+        /// stepped back to make room, and is clipped to the usual line in front of the next plot: a short square
+        /// step there, and the angle everywhere else.</summary>
         public float BayBack(int road, int side, float d)
         {
-            foreach (var bay in Bays) if (bay.Road == road && bay.Side == side && d >= bay.Front0 && d <= bay.Front1) return bay.Depth;
-            return 0f;
+            float best = 0f;
+            foreach (var bay in Bays)
+            {
+                if (bay.Road != road || bay.Side != side || d < bay.Front0 || d > bay.Front1) continue;
+                float slant = Mathf.Sqrt(bay.Taper * bay.Taper + bay.Depth * bay.Depth);
+                float lead = PavementWidth * (slant - bay.Taper) / bay.Depth;     // how far before the kerb turns the band does
+                best = Mathf.Max(best, Mathf.Clamp(bay.Depth / bay.Taper * Mathf.Min(d - bay.A + lead, bay.B - d + lead), 0f, bay.Depth));
+            }
+            return best;
+        }
+        /// <summary>Where a bay's pavement back edge turns: the band's own corners, which lead the kerb's.</summary>
+        float BayBackLead(ParkingBay bay)
+        {
+            float slant = Mathf.Sqrt(bay.Taper * bay.Taper + bay.Depth * bay.Depth);
+            return PavementWidth * (slant - bay.Taper) / bay.Depth;
         }
 
         /// <summary>The bay across the street overlapping this one, where the street widens on both sides.</summary>

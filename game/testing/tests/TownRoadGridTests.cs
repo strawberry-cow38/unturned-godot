@@ -569,40 +569,47 @@ namespace UnturnedGodot.Testing
                     }
                     T.Check($"...the pavement stepping out round each, its full width, the bay's depth further out ({kerbOut} of {bays.Count}; worst {worstKerb * 100f:0.0} cm off) -- and not across the street where nothing widens ({kerbIn} of {controls} plain)",
                             kerbOut == bays.Count && controls > 0 && kerbIn == controls);
-                    // ...and round its ANGLED ends the pavement fills back to where the stepped plots stand (strawberry:
-                    // "the angled parts for the parking area? dont look like they got widened"). Pushed out square to the
-                    // road, a 4 m band along a 47-degree kerb is 2.7 m across square to that kerb, and that was the
-                    // complaint. So the back edge is the plots' own line: across the whole stretch of stepped plots, the
-                    // built surface reaches the bay's depth plus the pavement's width out, angled ends included. The
-                    // control: a metre past that stretch, in front of the next plot, it does not reach that far.
-                    int filled = 0, fillControl = 0, fillMeasured = 0; float worstFill = 0f;
+                    // ...and round its ANGLED ends it is a band of its own width, square to that kerb and following it
+                    // (strawberry: "the angled parts for the parking area? dont look like they got widened", then, of a
+                    // back edge squared off to the plots instead, "now theyre square?"). From every station along each
+                    // angled end, a point just inside the pavement's width square to the kerb is paved wherever the
+                    // plots behind have stepped back (in front of the next plot it is clipped), and a point just beyond
+                    // that width is not: the back edge runs parallel to the kerb, not to the plots.
+                    int bandEnds = 0, bandRight = 0, bandInside = 0, bandBeyond = 0, bandMissing = 0;
                     foreach (var bay in bays)
                     {
                         var f = Frame(bay);
                         string rn = $"Sidewalk_{(bay.Side > 0 ? "R" : "L")}{bay.Road}";
-                        if (!ribbonTops.TryGetValue(rn, out var mineTops)) continue;
+                        if (!ribbons.TryGetValue(rn, out var mine) || !ribbonTops.TryGetValue(rn, out var mineTops)) continue;
                         bool OnRibbon(Vector3 q) { foreach (var (ta, tb, tc) in mineTops) if (InTri(q, ta, tb, tc)) return true; return false; }
-                        float line = f.half + walkD.RoadGap + bay.Depth + walkD.Width - 0.1f;     // just inside the back edge
-                        Vector3 At(float d, float lat) => f.c + f.t * (d - f.mid) + f.o * lat;
-                        fillMeasured++;
-                        bool all = true; int stations = 0;
-                        for (float d = bay.Front0 + 0.1f; d <= bay.Front1 - 0.1f + 1e-3f; d += 0.5f)
+                        float plain = f.half + walkD.RoadGap;
+                        foreach (var (d0, d1) in new[] { (bay.A, bay.A + bay.Taper), (bay.B, bay.B - bay.Taper) })
                         {
-                            stations++;
-                            if (!OnRibbon(At(d, line)))
+                            Vector3 K(float d) => f.c + f.t * (d - f.mid) + f.o * (plain + bay.Extra(d));
+                            var k0 = K(d0); var k1 = K(d1);
+                            var u = new Vector3(k1.X - k0.X, 0f, k1.Z - k0.Z); float len = u.Length(); u /= len;
+                            var nrm = new Vector3(-u.Z, 0f, u.X); if (nrm.Dot(f.o) < 0f) nrm = -nrm;
+                            int seen = 0; bool ok = true;
+                            foreach (var v in mine)
                             {
-                                all = false;
-                                // how far out the surface does reach here, for the message
-                                float reach = 0f;
-                                for (float lat = f.half; lat <= line; lat += 0.1f) if (OnRibbon(At(d, lat))) reach = lat - f.half - walkD.RoadGap;
-                                worstFill = Mathf.Max(worstFill, bay.Depth + walkD.Width - reach);
+                                var rel = new Vector3(v.X - k0.X, 0f, v.Z - k0.Z);
+                                float along = rel.Dot(u), off = rel.Dot(nrm);
+                                if (along < len * 0.15f || along > len * 0.85f || Mathf.Abs(off) > 0.03f) continue;
+                                var kp = new Vector3(v.X, 0f, v.Z);
+                                var pin = kp + nrm * (walkD.Width - 0.15f); var pout = kp + nrm * (walkD.Width + 0.15f);
+                                float pinAt = (pin - f.c).Dot(f.t) + f.mid;
+                                if (pinAt < bay.Front0 + 0.05f || pinAt > bay.Front1 - 0.05f) continue;   // the clipped end
+                                seen++;
+                                if (!OnRibbon(pin)) { ok = false; bandMissing++; } else bandInside++;
+                                if (OnRibbon(pout)) { ok = false; bandBeyond++; }
                             }
+                            if (seen == 0) continue;
+                            bandEnds++;
+                            if (ok) bandRight++;
                         }
-                        if (all && stations > 0) filled++;
-                        if (!OnRibbon(At(bay.Front0 - 1f, line)) && !OnRibbon(At(bay.Front1 + 1f, line))) fillControl++;
                     }
-                    T.Check($"...and round its angled ends the pavement fills back to the stepped plots' line ({filled} of {fillMeasured} bays; worst {worstFill:0.00} m short) -- and a metre past them it does not (control: {fillControl} of {fillMeasured})",
-                            fillMeasured >= bays.Count && filled == fillMeasured && fillControl == fillMeasured);
+                    T.Check($"...and round each angled end a band its own width, square to that kerb ({bandRight} of {bandEnds} angled ends; {bandInside} stations paved to within 15 cm of the width, {bandMissing} short of it, {bandBeyond} paved past it)",
+                            bandEnds >= bays.Count && bandRight == bandEnds);
                     // 2. THE PLOTS BEHIND STAND BACK: no plot on a bay or its pavement -- and a plot that stepped back,
                     //    put back where it was, would be on one (the control).
                     bool OnBay(Vector3 q)

@@ -270,13 +270,12 @@ namespace UnturnedGodot
                 ds.AddRange(bs);
             }
             ds.Sort();
-            // ⚠⚠ A STEPPED KERB'S PAVEMENT RUNS BACK TO THE PROPERTY LINE, NOT IN A BAND BESIDE IT (strawberry
-            // 2026-10-12: "the angled parts for the parking area? dont look like they got widened"). Width pushed out
-            // square to the ROAD is the kerb's own square only where the kerb runs parallel; along a bay's angled end
-            // (~47 degrees) it left the pavement 2.7 m across, square to that kerb. A band mitred to the kerb instead
-            // has to start its turn W tan(23 degrees) = 1.7 m BEFORE the kerb does, in front of the next house, and
-            // laid a metre of pavement over its garden. So the back edge stands where the plots behind stand -- a
-            // square step out where they step back -- and the pavement fills to it: never narrower than Width.
+            // ⚠⚠ THE BACK EDGE IS THE CALLER'S, NOT THE KERB'S PLUS WIDTH (strawberry 2026-10-12: "the angled parts for
+            // the parking area? dont look like they got widened"). Width pushed out square to the ROAD is the kerb's
+            // own square only where the kerb runs parallel; along a parking bay's angled end it left a 4 m pavement
+            // 2.7 m across, square to that kerb. A caller that knows where the back edge belongs -- a band square to
+            // the angled kerb, clipped where it would cross into a garden -- says so, and each station is as wide as
+            // reaching it takes, square to the road. Never narrower than Width.
             var rightW = backRight != null || stepRight != null ? new List<float>(ds.Count) : null;
             var leftW = backLeft != null || stepLeft != null ? new List<float>(ds.Count) : null;
             foreach (float d in ds)
