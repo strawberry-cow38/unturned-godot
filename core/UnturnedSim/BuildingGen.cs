@@ -63,6 +63,9 @@ namespace UnturnedSim
         public int Compact;
         /// <summary>Stop once the ground floor fixes the footprint: FitPlot's search measures plans this way.</summary>
         internal bool PlanOnly;
+        /// <summary>No garage among the rooms added to reach MinRooms or drawn as an extra: FitPlot's last compromise for a
+        /// house whose garage -- two cells by three, for a car -- leaves its plot no whole plan.</summary>
+        internal bool NoGarage;
 
         internal BuildingGenSpec Copy()
         {
@@ -349,7 +352,7 @@ namespace UnturnedSim
             RoomKind.LivingRoom => new Trait(12, 3, FloorPref.Ground, ArchWindow),
             RoomKind.DiningRoom => new Trait(9, 3, FloorPref.Ground, ArchWindow),
             RoomKind.Closet => new Trait(4, 2, FloorPref.Upper, -1),
-            RoomKind.Garage => new Trait(4, 2, FloorPref.GroundOnly, ArchGarage),   // 2 x 2 cells: see MaxCells
+            RoomKind.Garage => new Trait(GarageWide * GarageDeep, 2, FloorPref.GroundOnly, ArchGarage),   // 2 x 3 cells: see MaxCells
             RoomKind.Workshop => new Trait(16, 4, FloorPref.GroundOnly, ArchWindow),
             RoomKind.Storage => new Trait(5, 2, FloorPref.Any, -1),
             RoomKind.Office => new Trait(9, 3, b == BuildingKind.Residential ? FloorPref.Any : FloorPref.Upper, ArchWindow),
@@ -579,6 +582,13 @@ namespace UnturnedSim
             // badly); Lopsided, fits with rooms out of proportion; past it, over the plot by that many cells
             const int Lopsided = 1000;
             BuildingGenSpec best = null; BuildingGenResult bestBuilt = null; int bestScore = int.MaxValue, tries = 0;
+            // and when nothing fits whole, all of it again without a garage the spec did not ask for (a garage is two
+            // cells by three, for a car: strawberry, "yes 2x3"), and the house goes without one, as it would without a room
+            bool sawGarage = false;
+            for (int pass = 0; pass < 2; pass++)
+            {
+            if (pass == 1 && (!sawGarage || spec.MinOfKind.ContainsKey(RoomKind.Garage))) break;
+            int passTries = 0;
             foreach (int minRooms in new[] { spec.MinRooms, spec.MinRooms - 1, floorRooms }.Where(m => m >= floorRooms).Distinct())
                 foreach (int perFloor in new[] { spec.MaxRoomsPerFloor, 4, 3, 2 }.Where(p => p <= spec.MaxRoomsPerFloor).Distinct())
                     for (int floors = minF; floors <= maxF; floors++)
@@ -588,13 +598,15 @@ namespace UnturnedSim
                         foreach (var shape in spec.Shape == FootprintShape.Auto ? new[] { FootprintShape.Auto, FootprintShape.Rect } : new[] { spec.Shape })
                         foreach (int compact in new[] { 0, 1, 2, 3 })
                         {
-                            if (++tries > FitTries) goto done;
+                            if (++passTries > FitTries) goto nextPass;
+                            tries++;
                             var s = spec.Copy();
                             s.Shape = shape; s.Compact = compact; s.MaxFloors = floors; s.MinFloors = Math.Min(minF, floors);
-                            s.MaxRoomsPerFloor = perFloor; s.MinRooms = minRooms; s.PlanOnly = true;
+                            s.MaxRoomsPerFloor = perFloor; s.MinRooms = minRooms; s.PlanOnly = true; s.NoGarage = pass == 1;
                             BuildingGenResult plan;
                             try { plan = GenerateOnce(s); } catch (InvalidOperationException) { continue; }
                             s.PlanOnly = false;
+                            sawGarage |= plan.Layout.Any(g => g.Kind == RoomKind.Garage);
                             int over = Math.Max(0, plan.CellsX - spec.Width) + Math.Max(0, plan.CellsZ - spec.Depth);
                             // (a plan squeezed in with its rooms out of proportion -- a shop floor at a third of its size
                             // beside an office at its full one -- is a fit of last resort, after every other compromise)
@@ -615,16 +627,18 @@ namespace UnturnedSim
                             if (floors > minF) gave.Add($"{floors} floors");
                             if (perFloor < spec.MaxRoomsPerFloor) gave.Add($"at most {perFloor} rooms a floor");
                             if (minRooms < spec.MinRooms) gave.Add($"{minRooms} rooms, not {spec.MinRooms}");
+                            if (pass == 1) gave.Add("no garage");
                             r.Notes.Add($"fitted the {spec.Width}x{spec.Depth} plot as {r.CellsX}x{r.CellsZ}" + (gave.Count > 0 ? ": " + string.Join(", ", gave) : ""));
                             return r;
                         }
-            done:
+            nextPass: ;
+            }
             var closest = bestBuilt ?? (best == null ? GenerateOnce(spec) : GenerateOnce(best));
             closest.Fitted = best;
             closest.Notes.Add(bestScore < Lopsided
                 ? $"fitted the {spec.Width}x{spec.Depth} plot as {closest.CellsX}x{closest.CellsZ}, but short of {string.Join(", ", Shortfall(closest).Select(x => x.What))}"
                 : bestScore == Lopsided ? $"fitted the {spec.Width}x{spec.Depth} plot as {closest.CellsX}x{closest.CellsZ}, but only with rooms out of proportion"
-                : $"could not fit the {spec.Width}x{spec.Depth} plot: {closest.CellsX}x{closest.CellsZ} is the closest of {Math.Min(tries, FitTries)} plans");
+                : $"could not fit the {spec.Width}x{spec.Depth} plot: {closest.CellsX}x{closest.CellsZ} is the closest of {tries} plans");
             return closest;
         }
 
@@ -687,7 +701,8 @@ namespace UnturnedSim
             int Usable(GenRoom g) => g.Cells - (bay.X1 > bay.X0 && g.Floor == 0 && g.HasCell(bay.X0, bay.Z0) ? (bay.X1 - bay.X0) * (bay.Z1 - bay.Z0) : 0);
             foreach (var living in r.Layout.Where(g => g.Kind == RoomKind.LivingRoom))
                 if (r.Layout.Any(o => o.Floor == living.Floor && (o.Kind == RoomKind.DiningRoom || o.Kind == RoomKind.Kitchen) && o.Cells > Usable(living))) return false;
-            foreach (var row in r.Layout.Where(g => !g.Circulation && !Service(g.Kind) && g.More.Count == 0).GroupBy(g => (g.Floor, g.Z0, g.Z1)))
+            // (a garage is kept to a car's size, as a service room to its own: neither is in a row's share)
+            foreach (var row in r.Layout.Where(g => !g.Circulation && !Service(g.Kind) && g.Kind != RoomKind.Garage && g.More.Count == 0).GroupBy(g => (g.Floor, g.Z0, g.Z1)))
             {
                 if (row.Count() < 2) continue;
                 var share = row.Select(g => Usable(g) / (double)(g.Kind == RoomKind.Kitchen && r.KitchenDiner ? DinerCells : TraitOf(g.Kind, r.Kind).Cells)).ToList();
@@ -727,6 +742,7 @@ namespace UnturnedSim
 
             // ---- the programme: the kind's own rooms, raised to the minimums, filled to MinRooms, and a seeded extra
             var (always, more) = Programme(kind);
+            if (spec.NoGarage) more = more.Where(k => k != RoomKind.Garage).ToArray();
             var rooms = new List<RoomKind>(always);
             foreach (var kv in spec.MinOfKind.OrderBy(kv => (int)kv.Key))
                 if (kv.Key != RoomKind.Unassigned && kv.Key != RoomKind.Hall && kv.Key != RoomKind.Stairwell)
@@ -811,7 +827,8 @@ namespace UnturnedSim
             // (by the size a kind is DESIGNED at: a compact building's rooms start smaller but grow back alike, so a shop
             // floor stays the big room beside an office -- only its least width is compact, in HostWidth and Width)
             int Target(RoomKind r, bool host) => T0(r).Cells + (host ? L * bayRows : 0);
-            int Cap(RoomKind r, int depth, bool host = false) => Service(r) ? Width(r, depth) + 1
+            // (a garage not past its own width: it is wide for its vehicle door, and deep for the car)
+            int Cap(RoomKind r, int depth, bool host = false) => Service(r) ? Width(r, depth) + 1 : r == RoomKind.Garage ? Width(r, depth)
                                                              : Math.Max(Width(r, depth), (int)(1.75f * Target(r, host) / depth));
             int HostWidth(RoomKind r, int depth) => Math.Max(L, (int)Math.Ceiling((T(r).Cells + L * bayRows) / (double)depth));
 
@@ -954,8 +971,9 @@ namespace UnturnedSim
                 double Share(int i, int w) => (double)(w * depth) / Target(list[i].k, i == hostAt);
                 for (int guard = 0; guard < 64; guard++)
                 {
-                    var big = Enumerable.Range(0, list.Count).Where(i => !Service(list[i].k) && list[i].w > Width(list[i].k, depth)).OrderByDescending(i => Share(i, list[i].w)).FirstOrDefault(-1);
-                    var small = Enumerable.Range(0, list.Count).Where(i => !Service(list[i].k)).OrderBy(i => Share(i, list[i].w)).FirstOrDefault(-1);
+                    // (a garage keeps its width: a car's, not a share of the row)
+                    var big = Enumerable.Range(0, list.Count).Where(i => !Service(list[i].k) && list[i].k != RoomKind.Garage && list[i].w > Width(list[i].k, depth)).OrderByDescending(i => Share(i, list[i].w)).FirstOrDefault(-1);
+                    var small = Enumerable.Range(0, list.Count).Where(i => !Service(list[i].k) && list[i].k != RoomKind.Garage).OrderBy(i => Share(i, list[i].w)).FirstOrDefault(-1);
                     if (big < 0 || small < 0 || big == small) return;
                     if (Math.Max(Share(big, list[big].w - 1), Share(small, list[small].w + 1)) >= Share(big, list[big].w) - 1e-9) return;
                     list[big] = (list[big].k, list[big].w - 1);
@@ -1132,7 +1150,18 @@ namespace UnturnedSim
                 bool lopsided = !Proportioned(prs, multi ? (pb, 0, pb + L, bayRows) : (0, 0, 0, 0));
                 // (and a compound flight's landing against its end of the bay: not hall or more of its own room past it)
                 bool unwalled = multi && landing && !LandingWalled(g, pb);
-                if ((apart || lopsided || unwalled) && attempt < 12) continue;
+                // (and every garage with an outside wall on a side it runs GarageDeep cells back from, for its vehicle door:
+                // a car fits in behind it -- on the last draws, a garage that has none is a store room instead, with a note,
+                // and the house goes without one as it goes without a room that does not fit)
+                var shallow = prs.Where(r => r.Kind == RoomKind.Garage && !Runs(g).Any(u => u.B == null && u.A == r && u.S1 - u.S0 >= GarageWide
+                                                                                           && (u.AlongX ? r.Z1 - r.Z0 : r.X1 - r.X0) >= GarageDeep)).ToList();
+                if ((apart || lopsided || unwalled || shallow.Count > 0) && attempt < 12) continue;
+                foreach (var r in shallow)
+                {
+                    r.Kind = RoomKind.Storage;
+                    if (here.IndexOf(RoomKind.Garage) is int gi && gi >= 0) here[gi] = RoomKind.Storage;
+                    res.Notes.Add("no garage could be laid deep enough for a car: a store room instead");
+                }
                 if (!Connect(g, prs, 0, null, doors, multi ? (pb, 0, pb + L, bayRows) : (0, 0, 0, 0))) continue;
                 if (apart) res.Notes.Add("the dining room could not be put beside the kitchen");
                 if (lopsided) res.Notes.Add("the living room came out smaller than the dining room or kitchen");
@@ -1727,11 +1756,14 @@ namespace UnturnedSim
 
         /// <summary>The most cells a small room may have: past it, a bathroom is a hall (strawberry: "try to clamp maximum
         /// sizes for each room. seeing a lot of super bathrooms etc").
-        /// A garage is at most twice its vehicle door each way (strawberry: "clamp garage size to 2x the width of a garage
-        /// door hole, and 2x the depth"): 8.1 m by 7.6 m, which on the 3 m grid is two cells by two.</summary>
-        public static int MaxCells(RoomKind k) => k switch { RoomKind.Bathroom => 4, RoomKind.Closet => 4, RoomKind.Storage => 6, RoomKind.Garage => GarageCells * GarageCells, _ => int.MaxValue };
-        /// <summary>Cells a garage spans each way: twice the vehicle door's width and height, floored to whole cells.</summary>
-        public static readonly int GarageCells = (int)MathF.Floor(MathF.Min(2f * 4.05f, 2f * 3.80f) / Cell);
+        /// A garage is two cells wide by three deep (strawberry, approving it 2026-10-13: "yes 2x3"): her first clamp, "2x
+        /// the width of a garage door hole, and 2x the depth", was two cells by two, whose 5.3 to 5.5 m between the walls a
+        /// car does not fit -- cow tools measured the game's built cars at 3.0 m across the tyres and up to 6.15 m long
+        /// with their fittings (the sedan). Its vehicle door is in a two-cell side and the three cells run back from it.</summary>
+        public static int MaxCells(RoomKind k) => k switch { RoomKind.Bathroom => 4, RoomKind.Closet => 4, RoomKind.Storage => 6, RoomKind.Garage => GarageWide * GarageDeep, _ => int.MaxValue };
+        /// <summary>A garage's cells: across its vehicle door (twice the door's 4.05 m, floored to whole cells), and back
+        /// from it (a 6.15 m car and room to walk round it: 8.4 m or so between the walls).</summary>
+        public const int GarageWide = 2, GarageDeep = 3;
         /// <summary>The most cells any room of a kind should have: a small room's MaxCells, else twice its kind's size (a
         /// living room 24, a bedroom 18).</summary>
         public static int CapCells(RoomKind k, BuildingKind b) => MaxCells(k) < int.MaxValue ? MaxCells(k) : k == RoomKind.Hall || k == RoomKind.Stairwell ? int.MaxValue : 2 * TraitOf(k, b).Cells;
@@ -1766,7 +1798,9 @@ namespace UnturnedSim
                 if (wd * d <= MaxCells(r.Kind)) continue;
                 bool south = r.Z0 == 0, north = r.Z1 == depth;
                 if (south == north) continue;   // not in an outer row (or the whole depth): leave it
-                int keep = Math.Max(1, Math.Min(d - 1, MaxCells(r.Kind) / wd));
+                // (a garage keeps GarageDeep rows, the depth a car needs back from its vehicle door, whatever its width)
+                int keep = r.Kind == RoomKind.Garage ? Math.Min(d, GarageDeep) : Math.Max(1, Math.Min(d - 1, MaxCells(r.Kind) / wd));
+                if (keep >= d) continue;
                 // A strip one row deep handed to a room BESIDE it in the row sticks out of that room by its end, a corridor
                 // along the outside wall as long as the small room is wide (strawberry: "rooms tend to want to do this thing
                 // where they have a really long thin tumor. which isnt necessary and looks weird"). Handed ACROSS, to the
@@ -2246,15 +2280,18 @@ namespace UnturnedSim
                     // the one the stairs stand against -- a narrow plot's warehouse lost its door that way)
                     bool vehicleRoom = (room.Kind == RoomKind.Garage || room.Kind == RoomKind.Warehouse) && f == 0;
                     bool DoorFits(int i) => FreeOf(i).Any(q => q.B - q.A >= ArchSizes[ArchGarage].W);
+                    // (a garage's in a side it runs GarageDeep cells back from, so a car fits in behind it -- first of all)
+                    bool Deep(Run r) => room.Kind != RoomKind.Garage || (r.AlongX ? room.Z1 - room.Z0 : room.X1 - room.X0) >= GarageDeep;
                     var mine = outside.Select((r, i) => (r, i)).Where(x => x.r.A == room && !leaned[x.i].Whole)
-                                      .OrderBy(x => (SideOfRun(x.r) & res.NoWindowSides) != 0 ? 1 : 0)
+                                      .OrderBy(x => vehicleRoom && !Deep(x.r) ? 1 : 0)
+                                      .ThenBy(x => (SideOfRun(x.r) & res.NoWindowSides) != 0 ? 1 : 0)
                                       .ThenBy(x => !vehicleRoom || DoorFits(x.i) ? 0 : 1)
                                       .ThenBy(x => OnFrontWall(x.r) ? 0 : 1)
                                       .ThenByDescending(x => x.r.S1 - x.r.S0).ThenBy(x => x.r.AlongX ? 0 : 1).First().r;
                     bool longest = mine.AlongX == run.AlongX && mine.Line == run.Line && mine.S0 == run.S0;
                     var arches = new List<(int Arch, float At, float Width)>();
                     // the vehicle door first, on a garage's or warehouse's longest outside run, then windows round it
-                    if ((room.Kind == RoomKind.Garage || room.Kind == RoomKind.Warehouse) && f == 0 && longest && free.Count > 0)
+                    if ((room.Kind == RoomKind.Garage || room.Kind == RoomKind.Warehouse) && f == 0 && longest && Deep(run) && free.Count > 0)
                     {
                         var span = free.OrderByDescending(s => s.B - s.A).First();
                         float gw = ArchSizes[ArchGarage].W;

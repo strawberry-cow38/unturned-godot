@@ -883,6 +883,80 @@ namespace UnturnedSim.Tests
             Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(10)));
         }
 
+        // E5: a car fits in a garage (strawberry approved "2x3": cow tools measured the game's built cars at 3.0 m across the
+        // tyres and up to 6.15 m long with fittings, the sedan, and a 2x2-cell garage has 5.3 to 5.5 m between its walls).
+        // Measured from the generated walls, not the plan: from the inner face of the wall its vehicle door is in, straight
+        // back into the room to the first wall -- at the door's middle and a car's half width either side -- at least
+        // 6.5 m (6.15 m and room to shut the door); and along that wall, between the walls either side, at least 3.6 m, near
+        // the door, half way back and at the back. Every ground-floor garage has a vehicle door, or a note saying it fell
+        // short of one.
+        // BREAK IT: garages two cells by two, as they were; the vehicle door in a garage's three-cell side; the trim keeping
+        // two rows.
+        [Test]
+        public void GaragesFitACar()
+        {
+            const float Deep = 6.5f, Wide = 3.6f, Step = 0.02f;
+            var bad = new List<string>();
+            int garages = 0, measured = 0, excused = 0;
+            float leastDeep = float.MaxValue, leastWide = float.MaxValue;
+            foreach (var (spec, res) in All())
+            {
+                var walls = WallsOn(res, 0).ToList();
+                var boxes = walls.Select(w => (W: w, B: Box(w))).ToList();
+                bool InWall((float X, float Z) p, WallPlan except) => boxes.Any(b => b.W != except && p.X > b.B.X0 && p.X < b.B.X1 && p.Z > b.B.Z0 && p.Z < b.B.Z1);
+                // how far from p along d before a wall (any but `except`), up to 30 m
+                float Reach((float X, float Z) p, (float X, float Z) d, WallPlan except)
+                {
+                    for (float t = 0f; t < 30f; t += Step) if (InWall((p.X + d.X * t, p.Z + d.Z * t), except)) return t;
+                    return 30f;
+                }
+                foreach (var g in res.Layout.Where(g => g.Floor == 0 && g.Kind == RoomKind.Garage))
+                {
+                    garages++;
+                    var doors = new List<(WallPlan W, WallOpening O)>();
+                    foreach (var w in walls.Where(w => MathF.Abs(w.Thickness - BuildingGen.Ext) < 0.01f))
+                        foreach (var o in w.Openings.Where(o => o.Archetype == BuildingGen.ArchGarage))
+                        {
+                            var c = At(w, o.U + o.Width * 0.5f); var n = Normal(w);
+                            if (RoomAt(res, 0, c.X - n.X, c.Z - n.Z) == g) doors.Add((w, o));
+                        }
+                    if (doors.Count == 0)
+                    {
+                        if (ShortBy(res, RoomKind.Garage, "vehicle door")) excused++;
+                        else bad.Add($"{Name(spec)}: {g} has no vehicle door");
+                        continue;
+                    }
+                    foreach (var (w, o) in doors)
+                    {
+                        measured++;
+                        var d = Dir(w); var n = Normal(w); var inward = (X: -n.X, Z: -n.Z);
+                        float half = w.Thickness * 0.5f;
+                        // straight back from the wall's inner face, at the door's middle and a car's half width either side
+                        float deep = float.MaxValue;
+                        foreach (float across in new[] { -1.5f, 0f, 1.5f })
+                        {
+                            var p = At(w, o.U + o.Width * 0.5f + across);
+                            deep = MathF.Min(deep, Reach((p.X + inward.X * (half + Step), p.Z + inward.Z * (half + Step)), inward, w) + Step);
+                        }
+                        // along the wall, both ways, near the door, half way back and at the back
+                        float wide = float.MaxValue;
+                        var mid = At(w, o.U + o.Width * 0.5f);
+                        foreach (float back in new[] { 0.5f, deep * 0.5f, deep - 0.5f })
+                        {
+                            var p = (X: mid.X + inward.X * (half + back), Z: mid.Z + inward.Z * (half + back));
+                            wide = MathF.Min(wide, Reach(p, d, null) + Reach(p, (-d.X, -d.Z), null));
+                        }
+                        leastDeep = MathF.Min(leastDeep, deep); leastWide = MathF.Min(leastWide, wide);
+                        if (deep < Deep) bad.Add($"{Name(spec)}: {g} is {deep:0.00} m deep behind its vehicle door, not {Deep}");
+                        if (wide < Wide) bad.Add($"{Name(spec)}: {g} is {wide:0.00} m wide along its vehicle door, not {Wide}");
+                    }
+                }
+            }
+            TestContext.Progress.WriteLine($"[gen-garage] {garages} ground-floor garages, {measured} vehicle doors measured ({excused} garages without one, with a note): the least {(measured > 0 ? $"{leastDeep:0.00} m deep and {leastWide:0.00} m wide" : "-")}; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
+            Assert.That(measured, Is.GreaterThan(40));
+            Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(10)));
+        }
+
         // F: every opening fits its wall: inside its length, under the floor above, clear of its siblings, and clear of
         // the walls that meet this one (an opening cut across a partition's end shows the partition in its jamb).
         // BREAK IT: drop the half-thickness offset from the outside walls' u; ignore the meeting wall's thickness when
@@ -1388,9 +1462,9 @@ namespace UnturnedSim.Tests
                 }
                 // rooms sharing a row share its length by their kinds' sizes: what each got over its kind's size is about
                 // the same for all of them (the stair room counted without the stairs, service rooms left out -- they are
-                // kept narrow on purpose)
+                // kept narrow on purpose -- and garages, kept to a car's size: two cells by three)
                 double Usable(GenRoom g) => g.Cells - (bay.X1 > bay.X0 && g.Floor == 0 && g.HasCell(bay.X0, bay.Z0) ? (bay.X1 - bay.X0) * (bay.Z1 - bay.Z0) : 0);
-                foreach (var row in res.Layout.Where(g => !g.Circulation && !BuildingGen.Service(g.Kind) && g.More.Count == 0).GroupBy(g => (g.Floor, g.Z0, g.Z1)))
+                foreach (var row in res.Layout.Where(g => !g.Circulation && !BuildingGen.Service(g.Kind) && g.Kind != RoomKind.Garage && g.More.Count == 0).GroupBy(g => (g.Floor, g.Z0, g.Z1)))
                 {
                     var rs = row.ToList();
                     if (rs.Count < 2) continue;
