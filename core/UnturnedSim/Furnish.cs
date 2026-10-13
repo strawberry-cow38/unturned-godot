@@ -81,6 +81,7 @@ namespace UnturnedSim
             ["Coffee_0"] = new(-0.60f, 0.60f, -0.30f, 0.46f, 0.80f),       // a coffee machine, on a counter
             ["Toaster_0"] = new(-0.29f, 0.29f, -0.47f, 0.54f, 0.63f),      // on a counter
             ["Clock_0"] = new(-0.50f, 0.50f, 0.00f, 0.13f, 0.50f),         // hung on a wall: origin at its back's middle
+            ["Poster_0"] = new(-1.50f, 1.50f, -0.10f, 0.10f, 0.75f),        // hung (FurnishDecor): centred in depth too, unlike the clock
             ["Crate_0"] = new(-0.62f, 0.62f, -0.62f, 0.62f, 1.25f),
             ["Crate_3"] = new(-0.94f, 0.94f, -0.94f, 0.94f, 1.88f),
             ["Barrel_0"] = new(-0.54f, 0.54f, -0.54f, 0.54f, 1.28f),
@@ -232,7 +233,7 @@ namespace UnturnedSim
             {
                 var fp = new FloorPlan(res, f);
                 foreach (var room in res.Layout.Where(r => r.Floor == f))
-                    new Furnisher(res, fp, room, rng).Run();
+                    new Furnisher(res, fp, room, rng) { Seed = seed }.Run();
             }
         }
 
@@ -379,7 +380,7 @@ namespace UnturnedSim
         }
 
         /// <summary>One room's furnishing: its recipe, run against the floor's plan.</summary>
-        sealed class Furnisher
+        sealed partial class Furnisher
         {
             readonly BuildingGenResult _res; readonly FloorPlan _p; readonly GenRoom _room; readonly Rng _rng;
             readonly List<(float X, float Z)> _targets;
@@ -457,6 +458,7 @@ namespace UnturnedSim
                 Coats();
                 Jitter();
                 CeilingLights();
+                Decorate();
             }
 
             /// <summary>Ceiling lights (strawberry: "apply ceiling lights to ur layouts"): a pendant in the rooms you sit in
@@ -749,10 +751,10 @@ namespace UnturnedSim
 
             /// <summary>Candidates best first, each score nudged by a seeded draw taken here, one per candidate in order (see
             /// Rng.Keyed: never inside a LINQ key selector).</summary>
-            List<(float X, float Z, float Yaw)> Rank(IEnumerable<(float X, float Z, float Yaw)> cands, Func<float, float, float, double> score)
+            List<(float X, float Z, float Yaw)> Rank(IEnumerable<(float X, float Z, float Yaw)> cands, Func<float, float, float, double> score, Rng rng = null)
             {
                 var l = new List<((float X, float Z, float Yaw) C, double S)>();
-                foreach (var c in cands) l.Add((c, (score?.Invoke(c.X, c.Z, c.Yaw) ?? 0) + _rng.Int(1000) * 1e-4));
+                foreach (var c in cands) l.Add((c, (score?.Invoke(c.X, c.Z, c.Yaw) ?? 0) + (rng ?? _rng).Int(1000) * 1e-4));
                 return l.OrderByDescending(x => x.S).Select(x => x.C).ToList();
             }
 
@@ -809,16 +811,18 @@ namespace UnturnedSim
             }
 
             /// <summary>Hang a piece on a wall (a flat television): where its back meets wall with no window or door
-            /// in that stretch, and nothing hung there already. No floor of its own.</summary>
-            FurniturePlan Hang(string name, IEnumerable<(float X, float Z, float Yaw)> cands, Func<float, float, float, double> score = null, float height = MountHeight)
+            /// in that stretch, and nothing hung there already. No floor of its own. (`reach`: how far in front of it the
+            /// window and doorway zones are looked for -- the wall décor looks only just past its face, so a garage's 6 m
+            /// vehicle lane does not keep a poster off the side walls beside it.)</summary>
+            FurniturePlan Hang(string name, IEnumerable<(float X, float Z, float Yaw)> cands, Func<float, float, float, double> score = null, float height = MountHeight, Rng rng = null, float reach = 0.6f)
             {
-                var ranked = Rank(cands, score);
+                var ranked = Rank(cands, score, rng);
                 foreach (var (x, z, yaw) in ranked)
                 {
                     var fp = FurnitureCatalog.Footprint(name, x, z, yaw);
                     // the wall behind it: no window's glass and no doorway along its span
                     var (fx, fz) = FrontOf(yaw);
-                    var strip = (fp.X0 - (fx < 0 ? 0.6f : 0f), fp.Z0 - (fz < 0 ? 0.6f : 0f), fp.X1 + (fx > 0 ? 0.6f : 0f), fp.Z1 + (fz > 0 ? 0.6f : 0f));
+                    var strip = (fp.X0 - (fx < 0 ? reach : 0f), fp.Z0 - (fz < 0 ? reach : 0f), fp.X1 + (fx > 0 ? reach : 0f), fp.Z1 + (fz > 0 ? reach : 0f));
                     if (_p.Cells(strip).Any(c => _p.KeepTall[c.I, c.J] || (_p.KeepDoor[c.I, c.J] && !_reserved.Values.Any(l => l.Contains(c))))) continue;
                     if (_mine.Any(o => o.Mounted && Overlaps(fp, o.Footprint))) continue;
                     var m = new FurniturePlan { Name = name, X = x, Y = _room.Floor * Storey + height, Z = z, Yaw = yaw, Floor = _room.Floor, Room = _room, Mounted = true };

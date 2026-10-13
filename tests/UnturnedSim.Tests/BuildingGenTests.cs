@@ -15,7 +15,7 @@ namespace UnturnedSim.Tests
     // the rooms -- and WallsEncloseThePlannedRooms pins that the walls enclose exactly the layout's rooms, so that
     // naming is earned. Each check prints its counts beside its verdict: "0 violations" over 0 cases is not a pass.
     [TestFixture]
-    public class BuildingGenTests
+    public partial class BuildingGenTests
     {
         const float Cell = BuildingGen.Cell, Storey = BuildingGen.Storey;
 
@@ -1747,7 +1747,8 @@ namespace UnturnedSim.Tests
                         {
                             if (stairs.Any(st => Overlap(Grown(fp, BuildingGen.StairWallReach - 0.05f), st, 0f))) bad.Add($"{nm} hangs on a wall the stairs run along");
                             // hung at a sensible height, on a wall with no window or door behind it at that height
-                            if (m.Y < f * Storey + 1.8f || m.Y > f * Storey + 2.6f) bad.Add($"{nm} hangs at {m.Y - f * Storey:0.00} m");
+                            // (the wall décor's heights are its rows' own, held by WallDecorFollowsTheRules: an upper cabinet's 2.8)
+                            if ((m.Y < f * Storey + 1.8f || m.Y > f * Storey + 2.6f) && !BuildingGen.Decor.Any(r => r.Name == m.Name)) bad.Add($"{nm} hangs at {m.Y - f * Storey:0.00} m");
                             var (bx, bz) = m.Front;
                             var behind = walls.Where(w => { var b = Box(w); var c = (X: m.X - bx * 0.3f, Z: m.Z - bz * 0.3f); return c.X > b.Item1 - 0.05f && c.X < b.Item3 + 0.05f && c.Z > b.Item2 - 0.05f && c.Z < b.Item4 + 0.05f; }).ToList();
                             if (behind.Count == 0) bad.Add($"{nm} hangs on no wall");
