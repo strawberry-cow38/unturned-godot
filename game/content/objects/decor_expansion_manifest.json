@@ -1,0 +1,464 @@
+{
+  "Wall_Shelf_0": {
+    "name": "Wall_Shelf_0",
+    "guid": "d3951a2f183445588a88deb8a658c327",
+    "width_x": 1.6,
+    "height_z": 0.23,
+    "depth_y": 0.35,
+    "bounds_native": [
+      [
+        -0.800000011920929,
+        0.0,
+        -0.11500000953674316
+      ],
+      [
+        0.800000011920929,
+        0.3499999940395355,
+        0.11499999463558197
+      ]
+    ],
+    "vertices": 20,
+    "triangles": 28,
+    "mount_origin_native": [
+      0,
+      0,
+      0
+    ],
+    "wall_plane": "Y=0",
+    "front": "+Y",
+    "units": "metres",
+    "native_up": "+Z",
+    "suggested_origin_height": 2.5,
+    "room_kinds": [
+      "LivingRoom",
+      "Bedroom",
+      "Office"
+    ],
+    "tags": [
+      "shelf",
+      "neutral"
+    ],
+    "placement_features": {
+      "shelf_board_top_z": 0.115,
+      "board_thickness": 0.1
+    },
+    "texture": "Wall_Shelf_0_tex.png",
+    "texture_filter": "nearest",
+    "art_status": "REVISION_REVIEW_PENDING",
+    "registered": null,
+    "mirrors": null,
+    "revision_status": "EXISTING_GUID_REVISION"
+  },
+  "Wall_Shelf_1": {
+    "name": "Wall_Shelf_1",
+    "guid": "7b96fbe15e8e49aa9470ee79db535889",
+    "width_x": 1.6,
+    "height_z": 0.74,
+    "depth_y": 0.35,
+    "bounds_native": [
+      [
+        -0.800000011920929,
+        0.0,
+        -0.3700000047683716
+      ],
+      [
+        0.800000011920929,
+        0.3499999940395355,
+        0.3700000047683716
+      ]
+    ],
+    "vertices": 81,
+    "triangles": 111,
+    "mount_origin_native": [
+      0,
+      0,
+      0
+    ],
+    "wall_plane": "Y=0",
+    "front": "+Y",
+    "units": "metres",
+    "native_up": "+Z",
+    "suggested_origin_height": 2.7,
+    "room_kinds": [
+      "LivingRoom",
+      "Bedroom",
+      "Office"
+    ],
+    "tags": [
+      "shelf",
+      "books",
+      "plant",
+      "clutter"
+    ],
+    "placement_features": {
+      "shelf_board_top_z": -0.14,
+      "board_thickness": 0.1
+    },
+    "texture": "Wall_Shelf_1_tex.png",
+    "texture_filter": "nearest",
+    "art_status": "REVISION_REVIEW_PENDING",
+    "registered": null,
+    "mirrors": null,
+    "revision_status": "EXISTING_GUID_REVISION"
+  },
+  "Wall_Shelf_2": {
+    "name": "Wall_Shelf_2",
+    "guid": "59f3ee2231f04ebaafbc4562d085cdb5",
+    "width_x": 0.9,
+    "height_z": 0.23,
+    "depth_y": 0.42,
+    "bounds_native": [
+      [
+        -0.44999998807907104,
+        0.0,
+        -0.11500000953674316
+      ],
+      [
+        0.44999998807907104,
+        0.41999998688697815,
+        0.11499999463558197
+      ]
+    ],
+    "vertices": 20,
+    "triangles": 28,
+    "mount_origin_native": [
+      0,
+      0,
+      0
+    ],
+    "wall_plane": "Y=0",
+    "front": "+Y",
+    "units": "metres",
+    "native_up": "+Z",
+    "suggested_origin_height": 2.5,
+    "room_kinds": [
+      "LivingRoom",
+      "Bedroom",
+      "Office",
+      "Storage"
+    ],
+    "tags": [
+      "shelf",
+      "short_utility"
+    ],
+    "placement_features": {
+      "shelf_board_top_z": 0.115,
+      "board_thickness": 0.1
+    },
+    "texture": "Wall_Shelf_2_tex.png",
+    "texture_filter": "nearest",
+    "art_status": "REVIEW_ONLY",
+    "registered": false,
+    "mirrors": null,
+    "revision_status": "NEW_VARIANT"
+  },
+  "Wall_Shelf_3": {
+    "name": "Wall_Shelf_3",
+    "guid": "6c3344eee91149ba9e0edde5e998eedf",
+    "width_x": 1.7,
+    "height_z": 0.85,
+    "depth_y": 0.36,
+    "bounds_native": [
+      [
+        -0.8500000238418579,
+        0.0,
+        -0.42500001192092896
+      ],
+      [
+        0.8500000238418579,
+        0.36000001430511475,
+        0.42500001192092896
+      ]
+    ],
+    "vertices": 32,
+    "triangles": 48,
+    "mount_origin_native": [
+      0,
+      0,
+      0
+    ],
+    "wall_plane": "Y=0",
+    "front": "+Y",
+    "units": "metres",
+    "native_up": "+Z",
+    "suggested_origin_height": 2.5,
+    "room_kinds": [
+      "LivingRoom",
+      "Bedroom",
+      "Office",
+      "Storage"
+    ],
+    "tags": [
+      "shelf",
+      "two_tier"
+    ],
+    "placement_features": {
+      "lower_board_top_z": -0.325,
+      "upper_board_top_z": 0.425,
+      "board_thickness": 0.1
+    },
+    "texture": "Wall_Shelf_3_tex.png",
+    "texture_filter": "nearest",
+    "art_status": "REVIEW_ONLY",
+    "registered": false,
+    "mirrors": null,
+    "revision_status": "NEW_VARIANT"
+  },
+  "Wall_Shelf_4": {
+    "name": "Wall_Shelf_4",
+    "guid": "a4189c24f4154ce28670e812788e215e",
+    "width_x": 1.6,
+    "height_z": 0.65,
+    "depth_y": 0.33,
+    "bounds_native": [
+      [
+        -0.800000011920929,
+        0.0,
+        -0.32499998807907104
+      ],
+      [
+        0.800000011920929,
+        0.33000001311302185,
+        0.32499998807907104
+      ]
+    ],
+    "vertices": 40,
+    "triangles": 60,
+    "mount_origin_native": [
+      0,
+      0,
+      0
+    ],
+    "wall_plane": "Y=0",
+    "front": "+Y",
+    "units": "metres",
+    "native_up": "+Z",
+    "suggested_origin_height": 2.5,
+    "room_kinds": [
+      "LivingRoom",
+      "Bedroom",
+      "Office",
+      "Storage"
+    ],
+    "tags": [
+      "shelf",
+      "cubbies"
+    ],
+    "placement_features": {
+      "shelf_board_top_z": -0.245,
+      "compartments": 2,
+      "board_thickness": 0.08
+    },
+    "texture": "Wall_Shelf_4_tex.png",
+    "texture_filter": "nearest",
+    "art_status": "REVIEW_ONLY",
+    "registered": false,
+    "mirrors": null,
+    "revision_status": "NEW_VARIANT"
+  },
+  "Wall_Shelf_5": {
+    "name": "Wall_Shelf_5",
+    "guid": "93c0dd72c58845009fd89a8c99d92768",
+    "width_x": 2.1,
+    "height_z": 0.16,
+    "depth_y": 0.22,
+    "bounds_native": [
+      [
+        -1.0499999523162842,
+        0.0,
+        -0.07999999821186066
+      ],
+      [
+        1.0499999523162842,
+        0.2199999988079071,
+        0.07999999821186066
+      ]
+    ],
+    "vertices": 24,
+    "triangles": 36,
+    "mount_origin_native": [
+      0,
+      0,
+      0
+    ],
+    "wall_plane": "Y=0",
+    "front": "+Y",
+    "units": "metres",
+    "native_up": "+Z",
+    "suggested_origin_height": 2.5,
+    "room_kinds": [
+      "LivingRoom",
+      "Bedroom",
+      "Office",
+      "Storage"
+    ],
+    "tags": [
+      "shelf",
+      "display_ledge"
+    ],
+    "placement_features": {
+      "shelf_board_top_z": 0.0,
+      "front_lip_height": 0.08,
+      "board_thickness": 0.08
+    },
+    "texture": "Wall_Shelf_5_tex.png",
+    "texture_filter": "nearest",
+    "art_status": "REVIEW_ONLY",
+    "registered": false,
+    "mirrors": null,
+    "revision_status": "NEW_VARIANT"
+  },
+  "Mirror_0": {
+    "name": "Mirror_0",
+    "guid": "74b1af9317bf4afbb495330d0dacc3ca",
+    "width_x": 1.0,
+    "height_z": 1.4,
+    "depth_y": 0.06,
+    "bounds_native": [
+      [
+        -0.5,
+        0.0,
+        -0.699999988079071
+      ],
+      [
+        0.5,
+        0.05999999865889549,
+        0.699999988079071
+      ]
+    ],
+    "vertices": 50,
+    "triangles": 62,
+    "mount_origin_native": [
+      0,
+      0,
+      0
+    ],
+    "wall_plane": "Y=0",
+    "front": "+Y",
+    "units": "metres",
+    "native_up": "+Z",
+    "suggested_origin_height": 2.6,
+    "room_kinds": [
+      "Bathroom",
+      "Hall",
+      "Bedroom"
+    ],
+    "tags": [
+      "mirror",
+      "wardrobe"
+    ],
+    "placement_features": {
+      "mirror_panel_y": 0.044399999999999995,
+      "highlight_geometry": "non-overlapping coplanar tessellation",
+      "underlying_front_face_removed": true
+    },
+    "texture": "Mirror_0_tex.png",
+    "texture_filter": "nearest",
+    "art_status": "REVISION_REVIEW_PENDING",
+    "registered": null,
+    "mirrors": "flat stylized surface, not realtime reflection",
+    "revision_status": "EXISTING_GUID_REVISION"
+  },
+  "Medicine_Cabinet_0": {
+    "name": "Medicine_Cabinet_0",
+    "guid": "189e6e3aa286434aa1dc42f5b490f512",
+    "width_x": 0.8,
+    "height_z": 1.0,
+    "depth_y": 0.221,
+    "bounds_native": [
+      [
+        -0.4000000059604645,
+        0.0,
+        -0.5
+      ],
+      [
+        0.4000000059604645,
+        0.22100000083446503,
+        0.5
+      ]
+    ],
+    "vertices": 58,
+    "triangles": 74,
+    "mount_origin_native": [
+      0,
+      0,
+      0
+    ],
+    "wall_plane": "Y=0",
+    "front": "+Y",
+    "units": "metres",
+    "native_up": "+Z",
+    "suggested_origin_height": 2.5,
+    "room_kinds": [
+      "Bathroom"
+    ],
+    "tags": [
+      "mirror",
+      "sink"
+    ],
+    "placement_features": {
+      "mirror_panel_y": 0.193,
+      "highlight_geometry": "non-overlapping coplanar tessellation",
+      "underlying_front_face_removed": true
+    },
+    "texture": "Medicine_Cabinet_0_tex.png",
+    "texture_filter": "nearest",
+    "art_status": "REVISION_REVIEW_PENDING",
+    "registered": null,
+    "mirrors": "flat stylized surface, not realtime reflection",
+    "revision_status": "EXISTING_GUID_REVISION"
+  },
+  "Mirror_1": {
+    "name": "Mirror_1",
+    "guid": "8874b447897e4ddf908733d9d4a09852",
+    "width_x": 1.2,
+    "height_z": 2.8,
+    "depth_y": 0.09,
+    "bounds_native": [
+      [
+        -0.6000000238418579,
+        0.0,
+        -1.399999976158142
+      ],
+      [
+        0.6000000238418579,
+        0.09000000357627869,
+        1.399999976158142
+      ]
+    ],
+    "vertices": 50,
+    "triangles": 62,
+    "mount_origin_native": [
+      0,
+      0,
+      0
+    ],
+    "wall_plane": "Y=0",
+    "front": "+Y",
+    "units": "metres",
+    "native_up": "+Z",
+    "suggested_origin_height": 1.5,
+    "room_kinds": [
+      "Bedroom",
+      "Hall",
+      "Bathroom"
+    ],
+    "tags": [
+      "mirror",
+      "full_height",
+      "wardrobe",
+      "hall"
+    ],
+    "placement_features": {
+      "mirror_panel_y": 0.06659999999999999,
+      "highlight_geometry": "non-overlapping coplanar tessellation",
+      "underlying_front_face_removed": true
+    },
+    "texture": "Mirror_1_tex.png",
+    "texture_filter": "nearest",
+    "art_status": "REVIEW_ONLY",
+    "registered": false,
+    "mirrors": "flat stylized surface, not realtime reflection",
+    "revision_status": "NEW_VARIANT"
+  }
+}
