@@ -116,6 +116,12 @@ namespace UnturnedSim
             ["Pegboard_0"] = new(-1.200f, 1.200f, 0f, 0.150f, 0.600f),
             ["Antlers_0"] = new(-0.453f, 0.453f, 0f, 0.483f, 0.410f),
             ["Wall_Sunburst_0"] = new(-0.600f, 0.600f, 0f, 0.121f, 0.600f),   // astraclaw's replacement for the dropped Coat_Hooks_1
+            // astraclaw's potted plants, the four strawberry approved (2026-10-12; Potted_Plant_Floor_0 was not): origin at the
+            // middle of the pot's base. The two small ones go on a top, the two big ones on the floor (FurnishPlants)
+            ["Potted_Plant_Table_0"] = new(-0.161f, 0.161f, -0.139f, 0.139f, 0.401f),
+            ["Potted_Flowers_0"] = new(-0.222f, 0.222f, -0.192f, 0.192f, 0.368f),
+            ["Potted_Plant_Upright_0"] = new(-0.215f, 0.215f, -0.186f, 0.186f, 0.852f),
+            ["Potted_Plant_Tall_0"] = new(-0.697f, 0.697f, -0.603f, 0.603f, 1.701f),     // its leaves 1.39 x 1.21 m across
             ["Crate_0"] = new(-0.62f, 0.62f, -0.62f, 0.62f, 1.25f),
             ["Crate_3"] = new(-0.94f, 0.94f, -0.94f, 0.94f, 1.88f),
             ["Barrel_0"] = new(-0.54f, 0.54f, -0.54f, 0.54f, 1.28f),
@@ -273,8 +279,10 @@ namespace UnturnedSim
                     fu.Run();
                     done.Add(fu);
                 }
-                // the wall décor once the whole floor is furnished: what the next room hangs later (a television through a
-                // corner) is there to keep clear of. It draws nothing from rng (FurnishDecor).
+                // the potted plants once the whole floor is furnished, then the wall décor: what the next room hangs later (a
+                // television through a corner) is there to keep clear of, and a plant is floor furniture the décor keeps clear
+                // of. Neither draws from rng (FurnishPlants, FurnishDecor).
+                if (!NoPlants) foreach (var fu in done) fu.Plants();
                 foreach (var fu in done) fu.Decorate();
             }
         }
@@ -738,11 +746,11 @@ namespace UnturnedSim
                             if (a >= 0 && b >= 0 && a < _ni && b < _nj && _inRoom[a, b] && _p.State[_i0 + a, _j0 + b] == FloorPlan.Free) return a * _nj + b;
                 return -1;
             }
-            /// <summary>Must you be able to get to it? Not a chair, a lamp, a barrel or a crate -- nor a plain counter, worktop
-            /// reached along its run (the one in an L's corner is a blind corner, as in any kitchen).</summary>
+            /// <summary>Must you be able to get to it? Not a chair, a lamp, a barrel or a crate, a potted plant -- nor a plain
+            /// counter, worktop reached along its run (the one in an L's corner is a blind corner, as in any kitchen).</summary>
             static bool Access(string name) => !(name.StartsWith("Chair") || name.StartsWith("Lamp") || name.StartsWith("Barrel") || name.StartsWith("Crate")
                                                  || name.StartsWith("Cardboard") || name.StartsWith("Propane") || name.StartsWith("Pallet") || name.StartsWith("Coat")
-                                                 || name == "Counter_0");
+                                                 || name.StartsWith("Potted") || name == "Counter_0");
             /// <summary>Where you might stand to use a piece: 0.4 m out from the middle of its front, or of either side (a
             /// workbench or a tub along a wall is used from its long side, a bed got into from one) -- with clear floor within
             /// 0.3 m of it (Connected). Half a metre out within 0.4 m reached cells a test 0.4 m out within 0.3 m does not:
@@ -825,11 +833,13 @@ namespace UnturnedSim
             }
 
             /// <summary>Put a piece at the first candidate (best score first) where it is clear, its doors can open, and
-            /// it leaves the room walkable; null when none will do.</summary>
-            FurniturePlan Put(string name, IEnumerable<(float X, float Z, float Yaw)> cands, Func<float, float, float, double> score = null, float y = 0f)
+            /// it leaves the room walkable; null when none will do. (`rng`: the draws to rank by, the Furnisher's own by
+            /// default.)</summary>
+            FurniturePlan Put(string name, IEnumerable<(float X, float Z, float Yaw)> cands, Func<float, float, float, double> score = null, float y = 0f,
+                              Rng rng = null)
             {
                 var s = FurnitureCatalog.Sizes[name];
-                var ranked = Rank(cands, score);
+                var ranked = Rank(cands, score, rng);
                 if (FurnishTrace != null)
                     FurnishTrace(System.FormattableString.Invariant($"put {name} in {_room}: {ranked.Count} candidates, first {(ranked.Count > 0 ? ranked[0].ToString() : "-")}"));
                 foreach (var (x, z, yaw) in ranked)
@@ -879,12 +889,15 @@ namespace UnturnedSim
             /// <summary>Hang a piece on a wall (a flat television): where its back meets wall with no window or door
             /// in that stretch, and nothing hung there already. No floor of its own. (`reach`: how far in front of it the
             /// window and doorway zones are looked for -- the wall décor looks only just past its face, so a garage's 6 m
-            /// vehicle lane does not keep a poster off the side walls beside it.)</summary>
-            FurniturePlan Hang(string name, IEnumerable<(float X, float Z, float Yaw)> cands, Func<float, float, float, double> score = null, float height = MountHeight, Rng rng = null, float reach = 0.6f)
+            /// vehicle lane does not keep a poster off the side walls beside it. `refuse`: places it may not go, asked of
+            /// the candidates once they are ranked, so the draws Rank takes are the same however many it refuses.)</summary>
+            FurniturePlan Hang(string name, IEnumerable<(float X, float Z, float Yaw)> cands, Func<float, float, float, double> score = null, float height = MountHeight, Rng rng = null, float reach = 0.6f,
+                               Func<float, float, float, bool> refuse = null)
             {
                 var ranked = Rank(cands, score, rng);
                 foreach (var (x, z, yaw) in ranked)
                 {
+                    if (refuse != null && refuse(x, z, yaw)) continue;
                     var fp = FurnitureCatalog.Footprint(name, x, z, yaw);
                     // the wall behind it: no window's glass and no doorway along its span
                     var (fx, fz) = FrontOf(yaw);
@@ -903,14 +916,16 @@ namespace UnturnedSim
                 => a.X0 < b.X1 - 0.005f && a.X1 > b.X0 + 0.005f && a.Z0 < b.Z1 - 0.005f && a.Z1 > b.Z0 + 0.005f;
 
             /// <summary>Set a piece on another's top (a monitor on a desk, a till on a checkout): no floor of its own.</summary>
-            void On(FurniturePlan host, string name, float along, float back, float yaw)
+            FurniturePlan On(FurniturePlan host, string name, float along, float back, float yaw)
             {
                 var (fx, fz) = host.Front; var (rx, rz) = host.Right;
-                _res.Furniture.Add(new FurniturePlan
+                var m = new FurniturePlan
                 {
                     Name = name, X = host.X + rx * along + fx * back, Z = host.Z + rz * along + fz * back, Y = host.Y + FurnitureCatalog.Sizes[host.Name].H,
                     Yaw = yaw, Floor = host.Floor, Room = _room, On = host,
-                });
+                };
+                _res.Furniture.Add(m);
+                return m;
             }
 
             /// <summary>Where a piece stands with one side flush to a wall of this room: for each heading, the runs of
@@ -2069,7 +2084,9 @@ namespace UnturnedSim
             }
 
             /// <summary>A clock on a kitchen's or living room's wall, high, over nothing taller than a counter: on a stretch
-            /// with no window or door (Hang), off the stairs' wall, nearest the middle of the room.</summary>
+            /// with no window or door (Hang), off the stairs' wall, nearest the middle of the room -- and, as the wall décor,
+            /// off a fireplace's wall and DecorWindowGap from any window (HangRefused: refused once ranked, so the furniture's
+            /// draws are the ones they were and every room after this one is furnished as it was).</summary>
             void Clock()
             {
                 var (cx, cz) = Centre();
@@ -2079,7 +2096,7 @@ namespace UnturnedSim
                     var fp = FurnitureCatalog.Footprint("Clock_0", p.X, p.Z, p.Yaw);
                     var below = (fp.X0 - 0.2f, fp.Z0 - 0.2f, fp.X1 + 0.2f, fp.Z1 + 0.2f);
                     return !ByStairs("Clock_0", p) && !_mine.Any(o => o.On == null && !o.Mounted && !o.Ceiling && FurnitureCatalog.Sizes[o.Name].H > bottom - 0.1f && Overlaps(below, o.Footprint));
-                }), (x, z, _) => -Math.Sqrt((x - cx) * (x - cx) + (z - cz) * (z - cz)), ClockHeight);
+                }), (x, z, _) => -Math.Sqrt((x - cx) * (x - cx) + (z - cz) * (z - cz)), ClockHeight, refuse: (x, z, yaw) => HangRefused("Clock_0", x, z, yaw));
             }
             /// <summary>A wall clock's middle stands this high: above a counter's sink, below the ceiling's lights.</summary>
             const float ClockHeight = 2.5f;

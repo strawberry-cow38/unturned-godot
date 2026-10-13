@@ -166,6 +166,12 @@ namespace UnturnedSim
         /// of it.</summary>
         public const float DecorGap = 0.6f, DecorRunGap = 0.02f, DecorEnd = 0.2f, DecorOpenGap = 0.15f, DecorClear = 0.25f, DecorUnder = 0.1f,
                            DecorGroupGap = 0.3f, DecorFill = 0.5f;
+        /// <summary>No hung piece -- the décor, the clock -- within this of a window, measured in plan from its jambs, at any
+        /// height: not beside it, not over or under it (a towel rail under a bathroom's high slit), not round the corner
+        /// from it (strawberry: "increase wall prop no-go-zones around windows"; it was DecorOpenGap, 0.15 m, and only at
+        /// the piece's height). The berth one hung piece gives another, DecorGap: a window is the biggest thing on its
+        /// wall, and a picture nearer to it than to the next picture reads as crowding it.</summary>
+        public const float DecorWindowGap = DecorGap;
         /// <summary>A hung piece's back stands this far off the wall's face; Hang looks this far past its face for a
         /// window's or a doorway's zone (the television's 0.6 m kept every poster off a garage's side walls, the whole
         /// 6 m of its vehicle lane).</summary>
@@ -276,10 +282,11 @@ namespace UnturnedSim
                 return l;
             }
 
-            List<WallPlan> _walls;
-            /// <summary>The walls of this floor that the floor plan stands (full storey high).</summary>
-            List<WallPlan> RoomWalls() => _walls ??= _res.Walls.Where(w => w.Kind == SurfaceKind.Wall && (int)MathF.Round(w.Y / Storey) == _room.Floor
-                                                                            && w.Height > Storey - 0.01f).ToList();
+            /// <summary>The walls of this floor that the floor plan stands (full storey high), as they stand when asked: not
+            /// kept from one call to the next, since the clock asks during the room's furnishing and the décor once the floor
+            /// is done, and a window moved between the two is the décor's to see.</summary>
+            List<WallPlan> RoomWalls() => _res.Walls.Where(w => w.Kind == SurfaceKind.Wall && (int)MathF.Round(w.Y / Storey) == _room.Floor
+                                                                && w.Height > Storey - 0.01f).ToList();
 
             /// <summary>One face of wall into this room: its normal into the room (Nx, Nz), where it stands across, and the
             /// run of it along.</summary>
@@ -329,13 +336,13 @@ namespace UnturnedSim
             bool IsFixture(FurniturePlan m) => _hung.TryGetValue(m, out var r) && r.Spot == DecorSpot.Over;
 
             /// <summary>The stretches of a face a piece `depth` deep, hung from `bottom` to `top`, may span: the run less
-            /// DecorEnd at each corner, every opening in the wall behind it at that height (and DecorOpenGap either side), the
-            /// stairs' reach (StairWallReach, as ByStairs), and -- with `row` -- the pieces already hung on it (DecorGap;
-            /// DecorRunGap between fixtures) and whatever stands within DecorClear of it taller than its bottom less
-            /// DecorUnder (along the wall, DecorRunGap for a fixture).</summary>
+            /// DecorEnd at each corner, every doorway in the wall behind it at that height (and DecorOpenGap either side), all
+            /// within DecorWindowGap of a window at any height (WindowCuts), the stairs' reach (StairWallReach, as ByStairs),
+            /// and -- with `row` -- the pieces already hung on it (DecorGap; DecorRunGap between fixtures) and whatever stands
+            /// within DecorClear of it taller than its bottom less DecorUnder (along the wall, DecorRunGap for a fixture).</summary>
             List<(float A, float B)> Stretches(Face f, float depth, float bottom, float top, DecorRow row)
             {
-                var cuts = new List<(float, float)>();
+                var cuts = new List<(float, float)>(WindowCuts(f));
                 float floorY = _room.Floor * Storey;
                 foreach (var w in RoomWalls())
                 {
@@ -344,7 +351,8 @@ namespace UnturnedSim
                     if (MathF.Abs(f.Nx != 0 ? dz : dx) < 0.99f) continue;
                     var s = f.Span(WallBox(w));
                     if (s.D1 < -0.12f || s.D1 > 0.12f || s.A1 < f.Lo || s.A0 > f.Hi) continue;
-                    foreach (var o in w.Openings)
+                    // (the windows are WindowCuts')
+                    foreach (var o in w.Openings.Where(o => o.V < 0.05f))
                     {
                         float v0 = w.Y + o.V - floorY, v1 = v0 + o.Height;
                         if (v1 < bottom - DecorUnder || v0 > top + DecorUnder) continue;
@@ -389,6 +397,116 @@ namespace UnturnedSim
                 return free;
             }
 
+            /// <summary>The windows into this room -- openings off the floor (a bathroom's slit, a vent and the fireplace too)
+            /// in the walls of its floor, the room on one side of them -- and that side (+1: the wall's -dz, dx normal). Read
+            /// off the walls as they stand when asked, never the floor plan's grid, which is laid before the rooms are
+            /// furnished: whatever moves a window before the décor (a room's layout shrinking one) is seen.</summary>
+            List<(WallPlan W, WallOpening O, int Side)> Windows()
+            {
+                var l = new List<(WallPlan, WallOpening, int)>();
+                foreach (var w in RoomWalls())
+                {
+                    var (dx, dz) = PlanTrig.CosSin(w.Yaw); dz = -dz;
+                    var (nx, nz) = (-dz, dx);
+                    float d = w.Thickness * 0.5f + 0.3f;
+                    foreach (var o in w.Openings.Where(o => o.V >= 0.05f))
+                    {
+                        float u = o.U + o.Width * 0.5f, cx = w.X + dx * u, cz = w.Z + dz * u;
+                        foreach (int sgn in new[] { 1, -1 })
+                            if (_room.Holds(cx + sgn * nx * d, cz + sgn * nz * d)) l.Add((w, o, sgn));
+                    }
+                }
+                return l;
+            }
+
+            /// <summary>The stretches of a face within DecorWindowGap of a window, in plan, at any height: the window's jambs
+            /// on the room's face of its wall, as a segment, and the stretch of the face's line within DecorWindowGap of it --
+            /// beside it on the wall behind, and round a corner, from the face's end, on a wall meeting it.</summary>
+            IEnumerable<(float A, float B)> WindowCuts(Face f)
+            {
+                foreach (var (w, o, side) in Windows())
+                {
+                    var (dx, dz) = PlanTrig.CosSin(w.Yaw); dz = -dz;
+                    float nx = -dz * side, nz = dx * side, t = w.Thickness * 0.5f;
+                    float x0 = w.X + dx * o.U + nx * t, z0 = w.Z + dz * o.U + nz * t, x1 = w.X + dx * o.U1 + nx * t, z1 = w.Z + dz * o.U1 + nz * t;
+                    float a0 = f.Along(x0, z0), a1 = f.Along(x1, z1);
+                    float q0 = ((f.Nx != 0 ? x0 : z0) - f.At) * f.N, q1 = ((f.Nx != 0 ? x1 : z1) - f.At) * f.N;
+                    // how far out from the face's line the segment comes nearest it (the face is the grid's, up to a cell in
+                    // front of the wall's real one: in the wall behind it, a window is on it)
+                    float q = q0 * q1 <= 0f ? 0f : MathF.Min(MathF.Abs(q0), MathF.Abs(q1));
+                    q = MathF.Max(0f, q - 0.15f);
+                    if (q >= DecorWindowGap) continue;
+                    float h = MathF.Sqrt(DecorWindowGap * DecorWindowGap - q * q);
+                    yield return (MathF.Min(a0, a1) - h, MathF.Max(a0, a1) + h);
+                }
+            }
+
+            /// <summary>Would a hung piece at (x, z, yaw) have a window within DecorWindowGap (WindowCuts), or be on the
+            /// fireplace's wall (FireFace)? For a piece hung by a room's own recipe (the clock), which takes no stretches.</summary>
+            bool HangRefused(string name, float x, float z, float yaw)
+            {
+                var fp = FurnitureCatalog.Footprint(name, x, z, yaw);
+                var (fx, fz) = FrontOf(yaw);
+                // the face its back is on: turned its way, at its back, along its width
+                var f = fx != 0 ? new Face(fx, 0, fx > 0 ? fp.X0 : fp.X1, fp.Z0, fp.Z1) : new Face(0, fz, fz > 0 ? fp.Z0 : fp.Z1, fp.X0, fp.X1);
+                return FireFace(f) || WindowCuts(f).Any(c => c.A < f.Hi && c.B > f.Lo);
+            }
+
+            List<(float X0, float Z0, float X1, float Z1, int Nx, int Nz, bool Own)> _fires;
+            /// <summary>The fireplaces whose wall this room has: each chimney breast (AddChimney: a full-storey wall
+            /// ChimneyDeep thick, inside the chimney's footprint) standing in this room (Own) or in one open to it (open plan:
+            /// the one wall runs on across the cut), as its box and its normal into the room.</summary>
+            List<(float X0, float Z0, float X1, float Z1, int Nx, int Nz, bool Own)> Fires()
+            {
+                if (_fires != null) return _fires;
+                _fires = new();
+                var c = _res.Chimney;
+                if (c.X1 <= c.X0) return _fires;
+                foreach (var w in RoomWalls().Where(w => MathF.Abs(w.Thickness - ChimneyDeep) < 0.01f))
+                {
+                    var b = WallBox(w);
+                    if (b.X0 < c.X0 - 0.05f || b.X1 > c.X1 + 0.05f || b.Z0 < c.Z0 - 0.05f || b.Z1 > c.Z1 + 0.05f) continue;
+                    // its back to the house wall: the way out of it the wall is not
+                    bool alongX = b.X1 - b.X0 > b.Z1 - b.Z0;
+                    float mx = (b.X0 + b.X1) * 0.5f, mz = (b.Z0 + b.Z1) * 0.5f, half = alongX ? (b.Z1 - b.Z0) * 0.5f : (b.X1 - b.X0) * 0.5f;
+                    bool WallAt(float px, float pz) => _p.WallRects.Any(r => px >= r.X0 && px <= r.X1 && pz >= r.Z0 && pz <= r.Z1);
+                    foreach (int sgn in new[] { 1, -1 })
+                    {
+                        int nx = alongX ? 0 : sgn, nz = alongX ? sgn : 0;
+                        if (!WallAt(mx - nx * (half + 0.15f), mz - nz * (half + 0.15f)) || WallAt(mx + nx * (half + 0.15f), mz + nz * (half + 0.15f))) continue;
+                        var room = _res.Layout.FirstOrDefault(g => g.Floor == _room.Floor && g.Holds(mx + nx * (half + 0.3f), mz + nz * (half + 0.3f)));
+                        if (room == null) continue;
+                        if (room == _room || _res.OpenPlan.Any(o => o.Floor == _room.Floor && ((o.A == room && o.B == _room) || (o.B == room && o.A == _room))))
+                            _fires.Add((b.X0, b.Z0, b.X1, b.Z1, nx, nz, room == _room));
+                    }
+                }
+                return _fires;
+            }
+
+            /// <summary>Is a face on a fireplace's wall (strawberry: "prevent wall props placing on fireplace walls")? The
+            /// whole of it: the house wall the breast stands against, both sides of it (the breast splits it in two), the
+            /// breast's front over the fire, and its two cheeks -- in the fireplace's room, and in a room open to it but for
+            /// a `fixture` (upper cabinets over a kitchen's counters, open to the living room: they go with the counters).</summary>
+            bool FireFace(Face f, bool fixture = false)
+            {
+                foreach (var (x0, z0, x1, z1, nx, nz, own) in Fires())
+                {
+                    if (fixture && !own) continue;
+                    var s = f.Span((x0, z0, x1, z1));
+                    if (f.Nx == nx && f.Nz == nz)
+                    {
+                        // the house wall: the breast stands out of it, its back in the face's plane, anywhere along
+                        if (MathF.Abs(s.D0) <= 0.2f) return true;
+                        // the breast's front: the breast behind it, over its run
+                        if (MathF.Abs(s.D1) <= 0.2f && f.Hi > s.A0 && f.Lo < s.A1) return true;
+                    }
+                    // a cheek: square to the house wall, at the breast's end, over its depth
+                    else if (f.Nx != -nx || f.Nz != -nz)
+                        if (MathF.Abs(s.D1) <= 0.2f && f.Hi > s.A0 + 0.05f && f.Lo < s.A1 - 0.05f) return true;
+                }
+                return false;
+            }
+
             /// <summary>A wall's footprint, as FloorPlan lays it on the grid.</summary>
             static (float X0, float Z0, float X1, float Z1) WallBox(WallPlan w)
             {
@@ -399,8 +517,9 @@ namespace UnturnedSim
                 return (MathF.Min(w.X, ex) - tx, MathF.Min(w.Z, ez) - tz, MathF.Max(w.X, ex) + tx, MathF.Max(w.Z, ez) + tz);
             }
 
-            /// <summary>How much of this room's wall art could hang on: its faces less their windows, doorways and stairs.</summary>
-            float FreeWall() => AllFaces().Sum(f => Stretches(f, 0.2f, 1.2f, 3.4f, null).Sum(q => q.B - q.A));
+            /// <summary>How much of this room's wall art could hang on: its faces less their windows, doorways and stairs, and
+            /// less a fireplace's wall.</summary>
+            float FreeWall() => AllFaces().Where(f => !FireFace(f)).Sum(f => Stretches(f, 0.2f, 1.2f, 3.4f, null).Sum(q => q.B - q.A));
 
             /// <summary>Where a piece hangs on a face with its middle `t` along it: its back DecorWallGap off the wall's real
             /// face, and on wall along all but a sliver (Flush, Backed), off the stairs' wall; null where it is not. (The
@@ -447,9 +566,9 @@ namespace UnturnedSim
 
             /// <summary>Hang one of a row (a group of them, side by side) where its spot says, best first: the middle of the
             /// longest free stretch, centred over an Over piece or beside a Beside piece where the row has them, with a draw of
-            /// the décor's own per stretch for which wall -- never a second focal piece on a wall, nor more than DecorFill of
-            /// a wall's length hung. Each piece goes in through Hang (no window or door in front of it, nothing hung there
-            /// already). False when it fits nowhere.</summary>
+            /// the décor's own per stretch for which wall -- never on a fireplace's wall, never a second focal piece on a wall,
+            /// nor more than DecorFill of a wall's length hung. Each piece goes in through Hang (no window or door in front of
+            /// it, nothing hung there already). False when it fits nowhere.</summary>
             bool HangDecor(DecorRow row, Rng rng, IReadOnlyList<DecorRow> rows)
             {
                 var s = FurnitureCatalog.Sizes[row.Name];
@@ -463,6 +582,8 @@ namespace UnturnedSim
                 var cands = new List<(Face F, float T, double Score)>();
                 foreach (var f in AllFaces())
                 {
+                    // nothing on a fireplace's wall, any of it
+                    if (FireFace(f, row.Spot == DecorSpot.Over)) continue;
                     float yaw = YawFacing(f.Nx, f.Nz);
                     var onIt = _mine.Where(m => HungOn(m, f)).ToList();
                     // one big piece to a wall -- the whole wall line, not the face's run: where an outside wall runs on as a

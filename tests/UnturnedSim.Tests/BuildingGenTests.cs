@@ -1859,7 +1859,7 @@ namespace UnturnedSim.Tests
             void Feng(string what) => feng[what] = feng.GetValueOrDefault(what) + 1;
             // (a plain counter is worktop, reached along its run: the one in an L's corner is a blind corner)
             bool Use(string n) => !(n.StartsWith("Chair") || n.StartsWith("Lamp") || n.StartsWith("Barrel") || n.StartsWith("Crate") || n.StartsWith("Cardboard")
-                                    || n.StartsWith("Propane") || n.StartsWith("Pallet") || n.StartsWith("Coat") || n == "Counter_0");
+                                    || n.StartsWith("Propane") || n.StartsWith("Pallet") || n.StartsWith("Coat") || n.StartsWith("Potted") || n == "Counter_0");
             foreach (var (spec, res) in All())
             {
                 for (int f = 0; f < res.Floors; f++)

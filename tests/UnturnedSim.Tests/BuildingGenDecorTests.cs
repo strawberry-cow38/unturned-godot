@@ -134,6 +134,8 @@ namespace UnturnedSim.Tests
                                 bad.Add($"{nm} hangs over an opening (archetype {o.Archetype}, {v0:0.00}-{v1:0.00} m)");
                         }
                     }
+                    // nor near a window of its room at any height: beside it, over or under it, round a corner (WallPropsKeepOffFireplacesAndWindows)
+                    foreach (var why in NearWindows(res, m)) bad.Add($"{nm} hangs {why}");
                     // nor on what open plan left of a wall between two rooms that share one space: its 0.3 m piers either side of the
                     // cut (the cut itself is an opening, above)
                     foreach (var w in behindWalls)
