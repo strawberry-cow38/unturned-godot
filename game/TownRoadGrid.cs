@@ -3740,11 +3740,44 @@ namespace UnturnedGodot
                 var b = mB != null ? mB.Edge : endB - outB * CloseBack(roads, endB, outB);
                 var line = knee ? RoundedPath(a, kneeAt, b, LaneKneeRadius, 2f) : RoundedPath(a, a, b, 0f, 3f);
                 if (line == null || line.Count < 2) continue;
-                for (int q = 0; q < line.Count; q++) line[q] = new Vector3(line[q].X, Y(line[q]), line[q].Z);
+                // ⚠⚠ THE STREET'S HEIGHT, NOT THE GROUND'S (strawberry 2026-10-13, twice: "make sure the alleys and their
+                // kerbs arent sinking below the road level", then "they are still sinking below street road level??"). The
+                // town's streets hold their own graded profile and the ground was cut 0.12 m BELOW it (GradeTerrain, before
+                // this runs) -- so a lane laid on that ground came off its street 12 cm low, its asphalt a step down at the
+                // mouth and its kerbs below the street's asphalt. So each end stands at the height of the street it opens
+                // onto, and the lane is graded straight between them, as a street span is between its nodes. A closed end
+                // takes the nearest street's height; a draped town's lanes follow the ground as its streets do.
+                if (!FollowTerrain)
+                {
+                    float ya = mA != null ? mA.Edge.Y : StreetHeightNear(roads, line[0]);
+                    float yb = mB != null ? mB.Edge.Y : StreetHeightNear(roads, line[^1]);
+                    float total = 0f; for (int q = 0; q + 1 < line.Count; q++) total += Flat(line[q], line[q + 1]);
+                    float run = 0f;
+                    for (int q = 0; q < line.Count; q++)
+                    {
+                        if (q > 0) run += Flat(line[q - 1], line[q]);
+                        line[q] = new Vector3(line[q].X, Mathf.Lerp(ya, yb, total > 1e-3f ? run / total : 0f), line[q].Z);
+                    }
+                }
+                else for (int q = 0; q < line.Count; q++) line[q] = new Vector3(line[q].X, Y(line[q]), line[q].Z);
                 if (mA != null) LaneMouths.Add(mA);
                 if (mB != null) LaneMouths.Add(mB);
                 LanePlans.Add(new LanePlan { Pts = line, A = mA, B = mB });
             }
+        }
+
+        /// <summary>The height of the nearest of our streets' own profiles to a point: where a closed lane end stands.</summary>
+        float StreetHeightNear(RoadField roads, Vector3 p)
+        {
+            float best = float.MaxValue, y = _heightAt != null ? _heightAt(p.X, p.Z) : p.Y;
+            foreach (int r in Built)
+            {
+                float L = roads.RoadLength(r);
+                for (float d = 0f; d <= L; d += 2f)
+                    if (roads.EvaluateAlong(r, d, out var q, out _, snapTerrain: false))
+                    { float dd = Flat(q, p); if (dd < best) { best = dd; y = q.Y; } }
+            }
+            return y;
         }
 
         /// <summary>How far back from `end`, against `w`, a lane that cannot open must stop for the kerb across its end -- the
@@ -4030,10 +4063,11 @@ namespace UnturnedGodot
                         corners++;
                         // the asphalt under the return, fanned from the middle of the mouth: under the road surfaces, so
                         // the street's and the lane's own ribbons win wherever they are and only the fillet shows it.
-                        // ⚠ ON THE GROUND UNDER EACH POINT, as the ribbons are: laid flat at the corner's height it stood
-                        // proud of the street wherever the ground fell away from the centreline, and showed as a dark
-                        // sliver across the mouth (gone with UG_TOWNNOCORNERFILL=1, which is how it was found).
-                        Vector3 F(Vector3 q) => new Vector3(q.X, (ground != null ? ground(q.X, q.Z) : y) + fillSurf, q.Z);
+                        // ⚠ AT THE ROADS' OWN HEIGHT: the street's profile where the town holds one, the ground where it is
+                        // draped. (A dark sliver across the mouth was this fill standing proud of a lane that had been laid
+                        // 12 cm low on the graded ground; putting the fill on the ground hid it and sank the fillet's asphalt
+                        // instead. The lane is at the street's height now, and so is this.)
+                        Vector3 F(Vector3 q) => new Vector3(q.X, (FollowTerrain && ground != null ? ground(q.X, q.Z) : y) + fillSurf, q.Z);
                         var e0 = F(m.Edge);
                         for (int q = 0; q + 1 < cp.Count; q++) _cornerFill.Add((e0, F(cp[q]), F(cp[q + 1])));
                     }
@@ -4049,25 +4083,21 @@ namespace UnturnedGodot
                 {
                     if (lp.Road < 0) continue;
                     float L = roads.RoadLength(lp.Road);
-                    foreach (var m in new[] { lp.A, lp.B })
+                    foreach (var (m, d) in new[] { (lp.A, 0f), (lp.B, L) })
                     {
                         if (m == null) continue;
-                        float edgeArc = (m.From + m.To) * 0.5f;
-                        roads.EvaluateAlong(m.Road, edgeArc, out var sc, out var stg);
-                        var so = new Vector3(stg.Z, 0f, -stg.X).Normalized() * m.Side;
-                        var e = sc + so * roads.RoadHalfWidth(m.Road);
-                        float streetY = (Terrain.Active != null ? Terrain.Active.SampleHeight(e.X, e.Z) : sc.Y) + roads.RoadSurfaceOffset(m.Road);
-                        for (float d = 0f; d <= L; d += 1f)
-                        {
-                            roads.EvaluateAlong(lp.Road, d, out var lq, out _);
-                            float sink = streetY - (lq.Y + roads.RoadSurfaceOffset(lp.Road));
-                            if (sink > worstSink) { worstSink = sink; sinkAt = $"lane {lp.Road} at {d:0} of {L:0} m"; }
-                        }
+                        // ⚠ THE STREET'S SURFACE, read the way the road builds it: its own profile here (EvaluateAlong only snaps
+                        // to the ground for a draped road). The first version of this read the GROUND at the street's edge --
+                        // graded 0.12 m below the street -- and reported a lane 12 cm low as "0.003 m".
+                        roads.EvaluateAlong(m.Road, (m.From + m.To) * 0.5f, out var sp2, out _);
+                        roads.EvaluateAlong(lp.Road, d, out var lq, out _);
+                        float sink = sp2.Y + roads.RoadSurfaceOffset(m.Road) - (lq.Y + roads.RoadSurfaceOffset(lp.Road));
+                        if (Mathf.Abs(sink) > Mathf.Abs(worstSink)) { worstSink = sink; sinkAt = $"lane {lp.Road}'s {(d == 0f ? "A" : "B")} end"; }
                     }
                 }
                 Log.Print($"[towngrid] lane heights: carriageway surface {laneOff:0.000} m over its kerb foot, street's {streetOff:0.000}; "
                         + $"lane kerb {walk.KerbHeight - laneOff:0.000} m proud of the lane's asphalt, street kerb {PavementKerb - streetOff:0.000} m proud of the street's; "
-                        + $"deepest a lane's asphalt sinks below its street's at the mouth {worstSink:0.000} m{(worstSink > 0f ? $" ({sinkAt})" : "")}");
+                        + $"worst step from a street's asphalt down onto its lane's at the mouth {worstSink:0.000} m{(worstSink != 0f ? $" ({sinkAt})" : "")}");
             }
             Log.Print($"[towngrid] lanes: {LaneRoads.Count} built from {Alleys.Count} alleys, {LaneMouths.Count} mouths opened "
                     + $"({corners} kerb returns), {walks} pavement runs; {LaneDeadEnds} ends could not open onto a street and stop short "

@@ -1270,12 +1270,24 @@ namespace UnturnedGodot.Testing
                     {
                         var rfL = Field();
                         foreach (int mat in new[] { 0, 1, 6 }) rfL.DebugSetMaterialDepth(mat, 0.22f);
+                        // ...and as the game's town is: its streets holding their own profile, the ground then cut 0.12 m
+                        // below them (GradeTerrain) before anything else is laid -- a sampler that drops once they are in
+                        float groundL = 40f;
+                        Func<float, float, float> liveL = (x, z) => groundL;
                         var gL = new TownRoadGrid { Seed = 7, Centre = Vector3.Zero, Extent = 250f, Spacing = 110f,
-                                                    Bearing = 0.3f, SeaLevel = 0f, SeaMargin = 2f, Diagonal = true };
-                        gL.Generate(rfL, flat);
+                                                    Bearing = 0.3f, SeaLevel = 0f, SeaMargin = 2f, Diagonal = true, FollowTerrain = false };
+                        gL.Generate(rfL, liveL);
+                        groundL = 40f - gL.GradeDrop;
                         var hostL = new Node3D(); World.AddChild(hostL);
                         var wL = new EditorSidewalk(); hostL.AddChild(wL);
                         gL.LaySidewalkCornersOn(rfL, hostL, wL, out _);
+                        // (the control for f, below, planned first: lanes planned on the ground, as a draped town's are --
+                        // planned before any lane is BUILT, whose roads would leave no ground for an alley to be laid on)
+                        gL.FollowTerrain = true;
+                        gL.MarkPlots(null, rfL);
+                        float droppedStep = 0f;
+                        foreach (var lp in gL.LanePlans) if (lp.A != null) droppedStep = Mathf.Max(droppedStep, lp.A.Edge.Y - lp.Pts[0].Y);
+                        gL.FollowTerrain = false;
                         gL.MarkPlots(null, rfL);
                         gL.BuildLanes(hostL, rfL);
                         var meshesL = new Dictionary<string, MeshInstance3D>();
@@ -1308,6 +1320,24 @@ namespace UnturnedGodot.Testing
                         var oldProud = lane0 >= 0 ? Proud($"Sidewalk_R{lane0}_old", lane0) : null;
                         T.Check($"...and on roads with the game's depth (asphalt {depthL:0.00} m over the kerb's foot) the lanes' kerbs still stand {gL.LaneKerb:0.00} m above their asphalt ({deepOk} of {deepTried}; lowest {deepLowest * 100f:0.0} cm) -- where one laid the old way, 0.2 m over its foot, stands {(oldProud == null ? "NOWHERE" : $"{oldProud.Value * 100f:0.0} cm")} (control)",
                                 depthL > 0.2f && deepTried >= 6 && deepOk == deepTried && deepLowest > 0.05f && oldProud != null && oldProud.Value < 0f);
+                        // f. AND LEVEL WITH THE STREET IT OPENS OFF (strawberry 2026-10-13: "they are still sinking below street
+                        //    road level??"). The first lanes took their heights from the ground, which the town had already cut
+                        //    0.12 m below its streets: a 12 cm step down off every street, and kerbs 10 cm over a lane that low
+                        //    still under the street's asphalt. On this field the ground drops the same 0.12 m once the streets
+                        //    are in, and at every mouth the lane's asphalt must meet the street's -- where the same lanes planned
+                        //    on the ground, as a draped town's are, step down (control).
+                        float worstStep = 0f; int mouthsL = 0;
+                        foreach (var lp in gL.LanePlans)
+                            foreach (var (m, atEnd) in new[] { (lp.A, false), (lp.B, true) })
+                            {
+                                if (m == null || lp.Road < 0) continue;
+                                mouthsL++;
+                                rfL.EvaluateAlong(m.Road, (m.From + m.To) * 0.5f, out var sq, out _);
+                                rfL.EvaluateAlong(lp.Road, atEnd ? rfL.RoadLength(lp.Road) : 0f, out var lq, out _);
+                                worstStep = Mathf.Max(worstStep, Mathf.Abs(sq.Y + rfL.RoadSurfaceOffset(m.Road) - lq.Y - rfL.RoadSurfaceOffset(lp.Road)));
+                            }
+                        T.Check($"...and level with the street each opens off ({mouthsL} mouths, the ground graded {gL.GradeDrop * 100f:0} cm below the streets; worst step {worstStep * 100f:0.0} cm) -- where lanes laid on that ground step down {droppedStep * 100f:0.0} cm (control)",
+                                mouthsL >= 6 && worstStep < 0.01f && droppedStep > 0.1f);
                         hostL.QueueFree();
                     }
                     stHost.QueueFree(); cnHost.QueueFree();
