@@ -346,6 +346,12 @@ namespace UnturnedGodot
             var mat = MatFor(string.IsNullOrEmpty(materialName) ? name : materialName);
             var mainMi = new MeshInstance3D { Mesh = mesh, MaterialOverride = mat };
             root.AddChild(mainMi);   // FIRST: PositionMarkers reads child 0 for the selection outline's bounds
+            // TREE FOLIAGE: a separate leaf mesh wearing its own leaf material, laid exactly as the world loader lays
+            // it (WorldBuilder: name + "_foliage"). This path never did, so a maple placed here was a bare trunk --
+            // the town's median planting (strawberry 2026-10-13: "place hedges and trees along the grassy median")
+            // grew a row of dead ones. No collider: the world's leaves have none either.
+            if (System.IO.File.Exists(Dir + name + "_foliage.obj") && MeshFor(name + "_foliage") is ArrayMesh foliage)
+                root.AddChild(new MeshInstance3D { Name = "Foliage", Mesh = foliage, MaterialOverride = MatFor(name + "_foliage") });
 
             // SMART PROPS (strawberry: "make all 'smart' props (tvs, clocks, lights, doors, etc etc) functional
             // in the editor and editor play mode"). A prop placed here used to be a dead mesh: the clock's hands

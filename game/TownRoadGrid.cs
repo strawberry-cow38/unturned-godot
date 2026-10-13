@@ -2699,6 +2699,11 @@ namespace UnturnedGodot
         int BuildMainThroughLines(Node3D parent, RoadField roads)
         {
             if (MainMaterial == StreetMaterial) return 0;      // one class of road: nothing is "the main one"
+            // ⚠⚠ NOT WHEN THE TOWN PAINTS ITS OWN LINES (strawberry 2026-10-13: "theres a duplicate line in the middle of
+            // the intersection"). A through main is uncut: its two halves meet AT the node, and their own lines run to
+            // it from both sides (LineLimit is 0 at a through end) -- so the box is already painted, and this painted
+            // it a second time along a chord a hair off the roads' own centrelines: a doubled line down the middle.
+            if (PaintOwnLines && _plainMain >= 0) return 0;
             var mat = roads.MaterialOfMaterial(MainMaterial);
             var uvWhite = new Vector2(0.2363f, 0.0664f);
             var uvYellow = new Vector2(0.4863f, 0.0039f);
@@ -3624,8 +3629,9 @@ namespace UnturnedGodot
         /// <summary>The share of streets with no bays, and with bays down one side only; the rest have them down
         /// both.</summary>
         public float BayNoneShare = 0.3f, BayOneSideShare = 0.4f;
-        /// <summary>The paint: line width, and the length of each dot and of the gap after it.</summary>
-        public float BayLine = 0.12f, BayDot = 0.5f, BayDotGap = 0.5f;
+        /// <summary>The paint: the width of the solid line across each end of a space (and the length of a dot and its
+        /// gap, unused since the bays went solid).</summary>
+        public float BayLine = 0.15f, BayDot = 0.5f, BayDotGap = 0.5f;
         /// <summary>How far the bay's asphalt tucks under the carriageway's edge, how far it runs on under the
         /// kerb, and how far below the road's surface it lies.</summary>
         public float BayTuck = 0.3f, BayUnderKerb = 0.08f, BayDrop = 0.01f;
@@ -3849,18 +3855,14 @@ namespace UnturnedGodot
                     Tri(paint, a0, a1, b1, uvWhite); Tri(paint, a0, b1, b0, uvWhite);
                     ParkingPaintPieces++;
                 }
-                float edge0 = half + BayEdgeGap, edge1 = edge0 + BayLine;
-                // along the open side, from where the angled kerb has left room for the line to where it comes back
-                float inset = bay.Taper * Mathf.Min(1f, (edge1 - half + BayKerbGap) / bay.Depth);
-                for (float d = bay.A + inset; d < bay.B - inset - 1e-3f; d += BayDot + BayDotGap)
-                    Dot(d, Mathf.Min(bay.B - inset, d + BayDot), edge0, edge1);
-                // across it, at each end of each space, from that line out to the kerb
+                // ⚠ ONE SOLID LINE ACROSS THE BAY AT EACH END OF EACH SPACE, AND NOTHING ALONG IT (strawberry 2026-10-13:
+                // "change the parking bays to not have dotted lines at all, only perpendicular solid ones relative to
+                // the road's length"): from the carriageway's edge out to just short of the kerb
                 float reach = half + bay.Depth - BayKerbGap;
                 for (int k = 0; k <= bay.Spaces; k++)
                 {
                     float d = bay.First + k * bay.SpaceLength;
-                    for (float lat = edge1 + BayDotGap; lat < reach - 1e-3f; lat += BayDot + BayDotGap)
-                        Dot(d - BayLine * 0.5f, d + BayLine * 0.5f, lat, Mathf.Min(reach, lat + BayDot));
+                    Dot(d - BayLine * 0.5f, d + BayLine * 0.5f, half + BayEdgeGap, reach);
                 }
             }
             int made = 0;
@@ -3982,6 +3984,76 @@ namespace UnturnedGodot
             }
             BoulevardMaterial = roads.AddDerivedMaterial(MainMaterial, wide, tex, medianHalf);
         }
+
+        /// <summary>The planting down a grass median (strawberry 2026-10-13: "place hedges and trees along the grassy
+        /// median"): a tree every MedianTreeSpacing metres, scaled down -- the stock maples and birches are 17-21 m giants
+        /// with 18 m crowns, and a row of those over a 3 m median roofs both carriageways -- and hedges end to end
+        /// between them, kept MedianTreeClear back from each trunk. Nothing within a median's width of its noses.</summary>
+        public float MedianTreeSpacing = 15f, MedianTreeScale = 0.6f, MedianTreeClear = 2f;
+        public string HedgeProp = "Hedge_0";
+        public string[] MedianTrees = { "Maple_0", "Maple_1", "Birch_0", "Birch_1" };
+        /// <summary>What the last PlantMedians planted, for the tests: prop, where, and which median.</summary>
+        public readonly List<(string prop, Vector3 at, int road)> MedianPlants = new();
+
+        /// <summary>Plant every grass median; returns the props placed.</summary>
+        public int PlantMedians(RoadField roads, EditorObjects objs, List<Node3D> into = null)
+        {
+            MedianPlants.Clear();
+            if (roads == null) return 0;
+            // the hedge's own length, off its mesh, so a different hedge prop still lays end to end
+            float hedgeLen = 4.5f;
+            var hm = ContentProvider.ParseObj($"res://content/objects/{HedgeProp}.obj");
+            if (hm != null) hedgeLen = Mathf.Max(1f, hm.GetAabb().Size.X);
+            int made = 0;
+            foreach (var md in Medians)
+            {
+                if (!md.Grass) continue;
+                float surface = roads.RoadSurfaceOffset(md.Road);
+                float s0 = md.A + md.Width + 1f, s1 = md.B - md.Width - 1f;
+                if (s1 - s0 < 2f) continue;
+                ulong h = Mix(((ulong)(uint)Seed << 32) ^ Mix((ulong)(uint)md.Road ^ 0x7EE5UL));
+                int nTrees = Mathf.Max(1, Mathf.FloorToInt((s1 - s0) / MedianTreeSpacing) + 1);
+                var treeAt = new List<float>();
+                for (int k = 0; k < nTrees; k++) treeAt.Add(nTrees > 1 ? Mathf.Lerp(s0, s1, (float)k / (nTrees - 1)) : (s0 + s1) * 0.5f);
+                bool At(float d, out Vector3 at, out float yaw)
+                {
+                    at = default; yaw = 0f;
+                    if (!roads.EvaluateAlong(md.Road, d, out var pos, out var tan, snapTerrain: false)) return false;
+                    at = new Vector3(pos.X, pos.Y + surface + MedianKerb, pos.Z);
+                    yaw = ProcIsland.YawForDir(tan.X, tan.Z);
+                    return true;
+                }
+                void Plant(string prop, Vector3 at, Basis b)
+                {
+                    Node3D node = objs?.Place(prop, at, b);
+                    if (objs != null && node == null) return;
+                    if (node != null) into?.Add(node);
+                    MedianPlants.Add((prop, at, md.Road));
+                    made++;
+                }
+                for (int k = 0; k < treeAt.Count; k++)
+                {
+                    if (!At(treeAt[k], out var at, out _)) continue;
+                    string tree = MedianTrees[(int)(Unit(Mix(h ^ ((ulong)(uint)k * 0x9E37UL)), 0) * MedianTrees.Length) % MedianTrees.Length];
+                    var turn = new Basis(Vector3.Up, Unit(Mix(h ^ ((ulong)(uint)k * 0x51UL) ^ 0xA5UL), 0) * Mathf.Tau);
+                    Plant(tree, at, turn.Scaled(Vector3.One * MedianTreeScale));
+                    if (k + 1 >= treeAt.Count) continue;
+                    // hedges end to end between this tree and the next, the leftover split at both ends
+                    float g0 = treeAt[k] + MedianTreeClear, g1 = treeAt[k + 1] - MedianTreeClear;
+                    int nh = Mathf.FloorToInt((g1 - g0) / hedgeLen);
+                    float lead = ((g1 - g0) - nh * hedgeLen) * 0.5f;
+                    for (int q = 0; q < nh; q++)
+                    {
+                        if (!At(g0 + lead + (q + 0.5f) * hedgeLen, out var hat, out float yaw)) continue;
+                        Plant(HedgeProp, hat, new Basis(Vector3.Up, Mathf.DegToRad(yaw + HedgeYaw)));
+                    }
+                }
+            }
+            if (made > 0) Log.Print($"[towngrid] median planting: {made} props ({MedianPlants.FindAll(p => p.prop == HedgeProp).Count} hedges) down {Medians.FindAll(m => m.Grass).Count} grass medians");
+            return made;
+        }
+        /// <summary>The hedge's turn on top of the road's heading, to lay its long side along the median.</summary>
+        public float HedgeYaw = 90f;
 
         /// <summary>One median: on which road, from and to which arc metres (nose to nose), how wide, and which kind.</summary>
         public sealed class Median { public int Road; public float A, B, Width; public bool Grass; }

@@ -730,9 +730,10 @@ namespace UnturnedGodot.Testing
                         }
                     T.Check($"...each well clear of the junctions: nearest crossing or stop line {nearestCrossing:0.0} m from any bay (wants >= {gD.BayClearOfJunction - 1f:0}), {bayOnSlab} points on a junction slab -- and a bay laid at a road's very start would be {controlNear:0.0} m from one (control)",
                             crossingQuads.Count > 0 && nearestCrossing >= gD.BayClearOfJunction - 1f && bayOnSlab == 0 && controlNear < gD.BayClearOfJunction - 1f);
-                    // 4. THE DOTTED LINES: every dot inside its bay, the line down the open side broken into dots, and a
-                    //    dotted line across the bay at each end of every space. The control: the middle of a space,
-                    //    where nothing is painted, reads as bare -- so "covered" is not just "near a bay".
+                    // 4. THE LINES ACROSS, AND NONE ALONG (strawberry 2026-10-13: "change the parking bays to not have dotted
+                    //    lines at all, only perpendicular solid ones relative to the road's length"): a SOLID line across the
+                    //    bay at each end of every space, nothing down its open side, every bit of paint inside its bay. The
+                    //    control: the middle of a space reads as bare -- so "covered" is not just "near a bay".
                     var parkHost = new Node3D(); World.AddChild(parkHost);
                     gD.BuildParking(parkHost, rfD);
                     var paintTris = new List<Vector3>();
@@ -765,27 +766,33 @@ namespace UnturnedGodot.Testing
                         }
                         if (!inside) strayPaint++;
                     }
-                    int edgeDotted = 0, crossDotted = 0, crossLines = 0, spaceBare = 0;
+                    int edgeBare = 0, crossSolid = 0, crossLines = 0, spaceBare = 0;
                     Vector3 Pt(TownRoadGrid.ParkingBay bay, float d, float lat) { var f = Frame(bay); return f.c + f.t * (d - f.mid) + f.o * lat; }
                     foreach (var bay in bays)
                     {
                         float half = rfD.RoadHalfWidth(bay.Road);
                         float edge = half + gD.BayEdgeGap + gD.BayLine * 0.5f;
-                        int on = 0, all = 0;
-                        for (float d = bay.A + bay.Taper; d <= bay.B - bay.Taper; d += 0.05f) { all++; if (Painted(Pt(bay, d, edge))) on++; }
-                        if (all > 0 && on > all * 0.3f && on < all * 0.7f) edgeDotted++;
+                        // nothing down the open side, between the spaces' lines (each line itself crosses it)
+                        bool sideBare = true;
+                        for (float d = bay.A + 0.3f; d <= bay.B - 0.3f && sideBare; d += 0.05f)
+                        {
+                            float nearLine = float.MaxValue;
+                            for (int k = 0; k <= bay.Spaces; k++) nearLine = Mathf.Min(nearLine, Mathf.Abs(d - (bay.First + k * bay.SpaceLength)));
+                            if (nearLine > gD.BayLine && Painted(Pt(bay, d, edge))) sideBare = false;
+                        }
+                        if (sideBare) edgeBare++;
                         for (int k = 0; k <= bay.Spaces; k++)
                         {
                             crossLines++;
                             float d = bay.First + k * bay.SpaceLength;
                             int con = 0, call = 0;
-                            for (float lat = edge + 0.3f; lat <= half + bay.Depth - 0.3f; lat += 0.05f) { call++; if (Painted(Pt(bay, d, lat))) con++; }
-                            if (call > 0 && con > call * 0.25f && con < call * 0.75f) crossDotted++;
+                            for (float lat = edge + 0.1f; lat <= half + bay.Depth - 0.3f; lat += 0.05f) { call++; if (Painted(Pt(bay, d, lat))) con++; }
+                            if (call > 0 && con == call) crossSolid++;
                         }
                         if (!Painted(Pt(bay, bay.First + bay.SpaceLength * 0.5f, half + bay.Depth * 0.5f))) spaceBare++;
                     }
-                    T.Check($"...painted in dots: the line down each bay's open side dotted ({edgeDotted} of {bays.Count}), a dotted line across at each end of every space ({crossDotted} of {crossLines}), every dot inside its bay ({strayPaint} vertices stray) -- and the middle of a space bare ({spaceBare} of {bays.Count})",
-                            paintTris.Count > 0 && edgeDotted == bays.Count && crossDotted == crossLines && strayPaint == 0 && spaceBare == bays.Count);
+                    T.Check($"...marked with a solid line across at each end of every space ({crossSolid} of {crossLines}), nothing down its open side ({edgeBare} of {bays.Count} bare), every bit of paint inside its bay ({strayPaint} vertices stray) -- and the middle of a space bare ({spaceBare} of {bays.Count})",
+                            paintTris.Count > 0 && crossSolid == crossLines && edgeBare == bays.Count && strayPaint == 0 && spaceBare == bays.Count);
                     walkHost.QueueFree(); parkHost.QueueFree();
                 }
                 // ⭐ WIDE PAVEMENTS (strawberry 2026-10-12: "add support for wider sidewalks ... just make them twice as
@@ -1089,6 +1096,31 @@ namespace UnturnedGodot.Testing
                             gD.Medians.Count >= 1 && medVerts.Count > 0 && offMiddle == 0 && Mathf.Abs(highest - gD.MedianKerb) < 0.02f && solid);
                     T.Check($"...stopping short of every crossing on it ({nearCrossing} points within half a metre of one, of {medCrossings.Count} crossings) and leaving every side street's mouth open ({inMouth} points in one)",
                             medCrossings.Count + gD.Medians.Count > 0 && nearCrossing == 0 && inMouth == 0);
+                    // 4. A GRASS MEDIAN IS PLANTED (strawberry 2026-10-13: "place hedges and trees along the grassy median"):
+                    //    trees and hedges, every one on the median's grass, clear of its noses. The control: a concrete
+                    //    median gets nothing.
+                    bool? wasGrass = gD.MedianGrass;
+                    gD.MedianGrass = false; gD.BuildMedians(null, rfD); gD.PlantMedians(rfD, null);
+                    int onConcrete = gD.MedianPlants.Count;
+                    gD.MedianGrass = true; gD.BuildMedians(null, rfD); gD.PlantMedians(rfD, null);
+                    int trees = 0, hedges = 0, offGrass = 0, nearNose = 0;
+                    foreach (var (prop, at, road) in gD.MedianPlants)
+                    {
+                        if (prop == gD.HedgeProp) hedges++; else trees++;
+                        var md = gD.Medians.Find(m => m.Road == road);
+                        float best = float.MaxValue, along = 0f, latOff = 0f;
+                        for (float d = 0f; d <= rfD.RoadLength(road); d += 0.5f)
+                        {
+                            if (!rfD.EvaluateAlong(road, d, out var pc, out _, snapTerrain: false)) continue;
+                            float dd = new Vector2(pc.X - at.X, pc.Z - at.Z).Length();
+                            if (dd < best) { best = dd; along = d; latOff = dd; }
+                        }
+                        if (latOff > gD.MedianWidth * 0.5f - gD.MedianEdge + 0.01f) offGrass++;
+                        if (md == null || along < md.A + md.Width - 0.5f || along > md.B - md.Width + 0.5f) nearNose++;
+                    }
+                    T.Check($"...and a grass median planted with trees and hedges ({trees} trees, {hedges} hedges; {offGrass} off its grass, {nearNose} near a nose) -- a concrete one with nothing ({onConcrete})",
+                            trees >= 2 && hedges >= trees && offGrass == 0 && nearNose == 0 && onConcrete == 0);
+                    gD.MedianGrass = wasGrass; gD.BuildMedians(null, rfD);
                     mHost.QueueFree();
                 }
                 // ⭐ THE LINES (strawberry 2026-10-13: "rip the line etc decals and apply them ourselves ... the spline

@@ -10651,6 +10651,7 @@ namespace UnturnedGodot
             Log.Print($"[towngrid] corner asphalt: {cornerFill} triangles under {corners} kerb corners");
             town.ProbeCoverage(rf, "with corner asphalt");
             int lights = town.PlaceLights(rf, editor.Objects);
+            town.PlantMedians(rf, editor.Objects);     // hedges and trees down the grass medians
             // the building plots, marked on the ground (strawberry 2026-10-12: "have the grid system mark plots for
             // buildings, with fixed sizes and shapes"), and the parking bays paved and painted -- as planned above
             int plots = noWalk ? 0 : town.MarkPlots(editor, rf, plan: false);
