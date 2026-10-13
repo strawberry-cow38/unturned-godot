@@ -735,6 +735,276 @@ namespace UnturnedSim.Tests
             Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(10)));
         }
 
+        // E2: a compound flight's landing rests on two walls (strawberry: "the landing of the stairs is only supported by 1
+        // wall, should require two"; before that, "corner stairs need to be up against 2 supporting walls"): on the floor
+        // it stands in, SOLID wall -- no opening in it there -- with its face within 0.15 m of nine tenths of one of the
+        // landing's east/west sides and of one of its north/south sides. A corner: an outside one, or an outside wall
+        // and a partition. Every floor a flight climbs from is checked, so a third floor's landing is too. (A straight
+        // flight has no landing: its top end is the floor above's.)
+        // BREAK IT: lay the switchback's landing at the bay's east end whatever end the floors above start from; put the
+        // bay anywhere in its room rather than at the end its landing is on; stop the landing short of the walls by the
+        // hole margin, as it was.
+        [Test]
+        public void LandingsRestOnTwoWalls()
+        {
+            const float Reach = 0.15f, Most = 0.9f;
+            var bad = new List<string>();
+            var byShape = new Dictionary<StairShape, (int All, int Two)>();
+            int straight = 0, upper = 0;
+            foreach (var (spec, res) in All())
+            {
+                if (res.Floors < 2) continue;
+                if (res.StairShape == StairShape.Straight) { straight++; continue; }
+                foreach (var l in res.Walls.Where(w => w.Kind == SurfaceKind.Stairs))
+                {
+                    var (x0, z0, x1, z1) = Plan(l);
+                    int f = FloorOf(l);
+                    if (f > 0) upper++;
+                    var ws = WallsOn(res, f).ToList();
+                    // how much of one side of the landing (the line `at`, from a0 to a1 along it) has solid wall facing it
+                    // within Reach, out on the side `outward` (+1: toward +X or +Z)
+                    float Held(bool alongX, float at, float a0, float a1, int outward)
+                    {
+                        var spans = new List<(float A, float B)>();
+                        foreach (var w in ws)
+                        {
+                            var b = Box(w);
+                            float face = alongX ? (outward > 0 ? b.Z0 : b.Z1) : (outward > 0 ? b.X0 : b.X1);
+                            float gap = outward * (face - at);
+                            if (gap < -0.05f || gap > Reach) continue;
+                            float lo = MathF.Max(alongX ? b.X0 : b.Z0, a0), hi = MathF.Min(alongX ? b.X1 : b.Z1, a1);
+                            if (hi <= lo) continue;
+                            var solid = new List<(float A, float B)> { (lo, hi) };
+                            foreach (var o in w.Openings)
+                            {
+                                var p = At(w, o.U); var q = At(w, o.U + o.Width);
+                                float o0 = alongX ? MathF.Min(p.X, q.X) : MathF.Min(p.Z, q.Z), o1 = alongX ? MathF.Max(p.X, q.X) : MathF.Max(p.Z, q.Z);
+                                solid = solid.SelectMany(s => s.B <= o0 || s.A >= o1 ? new[] { s } : new (float A, float B)[] { (s.A, MathF.Min(s.B, o0)), (MathF.Max(s.A, o1), s.B) })
+                                             .Where(s => s.B - s.A > 0.01f).ToList();
+                            }
+                            spans.AddRange(solid);
+                        }
+                        float held = 0f, upTo = float.NegativeInfinity;
+                        foreach (var (a, b) in spans.OrderBy(s => s.A)) { float from = MathF.Max(a, upTo); if (b > from) { held += b - from; upTo = b; } }
+                        return held / (a1 - a0);
+                    }
+                    bool W = Held(false, x0, z0, z1, -1) >= Most, E = Held(false, x1, z0, z1, +1) >= Most;
+                    bool S = Held(true, z0, x0, x1, -1) >= Most, N = Held(true, z1, x0, x1, +1) >= Most;
+                    bool cornered = (W || E) && (S || N);
+                    var c = byShape.GetValueOrDefault(res.StairShape);
+                    byShape[res.StairShape] = (c.All + 1, c.Two + (cornered ? 1 : 0));
+                    if (!cornered) bad.Add($"{Name(spec)}: a {res.StairShape} landing on floor {f} at ({x0:0.00},{z0:0.00})..({x1:0.00},{z1:0.00}) has wall {(W || E || S || N ? $"on its {(W ? "W " : "")}{(E ? "E " : "")}{(S ? "S " : "")}{(N ? "N " : "")}side only" : "on no side")}");
+                }
+            }
+            int all = byShape.Values.Sum(v => v.All), two = byShape.Values.Sum(v => v.Two);
+            TestContext.Progress.WriteLine($"[gen-landing] {two} of {all} landings rest on two walls ({string.Join(", ", byShape.Select(kv => $"{kv.Key} {kv.Value.Two}/{kv.Value.All}"))}; {upper} on floors above the ground); {straight} buildings with straight flights, which have none{(bad.Count > 0 ? "; first: " + bad[0] : "")}");
+            Assert.That(byShape.GetValueOrDefault(StairShape.Switchback).All, Is.GreaterThan(100));
+            Assert.That(byShape.GetValueOrDefault(StairShape.Quarter).All, Is.GreaterThan(100));
+            Assert.That(upper, Is.GreaterThan(20), "no landing on a floor above the ground was checked");
+            Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(10)));
+        }
+
+        // E3: no room has a thin ARM (strawberry: "in the bedroom, ive noticed rooms tend to want to do this thing where
+        // they have a really long thin tumor. which isnt necessary and looks weird"): no rectangle of a room one cell across
+        // and two or more long that touches the rest of the room along less than its length -- a strip sticking out of it
+        // by its end, typically along the outside wall behind a bathroom. Allowed: a one-cell-deep alcove open to the room
+        // along its whole length (a room an L, not a room with a corridor), and a 1x1 nub. Both are counted and printed,
+        // with the cruder measure the arms were first counted by (any rectangle 1 across and 2+ long, end-on or not).
+        // BREAK IT: let a small room's one-row strip go to the room beside it in its row again; hand a garage's inner strip
+        // to its row neighbour whatever its depth.
+        [Test]
+        public void RoomsHaveNoThinArms()
+        {
+            var bad = new List<string>();
+            int rooms = 0, multi = 0, crude = 0, alcoves = 0, nubs = 0;
+            var armKinds = new Dictionary<RoomKind, int>();
+            foreach (var (spec, res) in All())
+                foreach (var g in res.Layout.Where(g => !g.Circulation))
+                {
+                    rooms++;
+                    var rl = g.Rects.ToList();
+                    if (rl.Count < 2) continue;
+                    multi++;
+                    if (rl.Any(q => Math.Min(q.X1 - q.X0, q.Z1 - q.Z0) == 1 && Math.Max(q.X1 - q.X0, q.Z1 - q.Z0) >= 2)) crude++;
+                    if (g.More.Any(q => q.X1 - q.X0 == 1 && q.Z1 - q.Z0 == 1)) nubs++;
+                    bool arm = false, alcove = false;
+                    for (int i = 0; i < rl.Count; i++)
+                    {
+                        var q = rl[i];
+                        int wx = q.X1 - q.X0, wz = q.Z1 - q.Z0;
+                        if (Math.Min(wx, wz) != 1 || Math.Max(wx, wz) < 2) continue;
+                        // how long an edge it shares with the room's other rectangles
+                        int contact = 0;
+                        for (int j = 0; j < rl.Count; j++)
+                        {
+                            if (j == i) continue;
+                            var o = rl[j];
+                            if (o.X1 == q.X0 || o.X0 == q.X1) contact += Math.Max(0, Math.Min(o.Z1, q.Z1) - Math.Max(o.Z0, q.Z0));
+                            if (o.Z1 == q.Z0 || o.Z0 == q.Z1) contact += Math.Max(0, Math.Min(o.X1, q.X1) - Math.Max(o.X0, q.X0));
+                        }
+                        if (contact < Math.Max(wx, wz)) arm = true; else alcove = true;
+                    }
+                    if (alcove && !arm) alcoves++;
+                    if (!arm) continue;
+                    armKinds[g.Kind] = armKinds.GetValueOrDefault(g.Kind) + 1;
+                    bad.Add($"{Name(spec)}: {g.Kind}@{g.Floor} has a thin arm: {string.Join(" ", rl.Select(q => $"[{q.X0},{q.Z0}..{q.X1},{q.Z1}]"))}");
+                }
+            TestContext.Progress.WriteLine($"[gen-arms] {rooms} rooms, {multi} of more than one rectangle: {bad.Count} with a thin arm ({string.Join(", ", armKinds.OrderByDescending(kv => kv.Value).Select(kv => $"{kv.Value} {kv.Key}"))}), {alcoves} with a one-cell alcove, {nubs} with a 1x1 nub; {crude} with any rectangle 1 across and 2+ long{(bad.Count > 0 ? "; first: " + bad[0] : "")}");
+            Assert.That(multi, Is.GreaterThan(100), "too few rooms of more than one rectangle to say anything");
+            Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(10)));
+        }
+
+        // E4: a chimney stands out of the outside wall it climbs (strawberry: "chimney should buldge out of the exterior
+        // wall to some degree, if its on an exterior wall"). Found from the walls, not the generator's word for it: the
+        // fireplace is the breast with a low vent opening in it on the ground floor; the outside wall is the one behind
+        // it; the stack is whatever wall stands past that wall's outer face across the breast's span. The stack reaches out
+        // half the breast's depth or more, stands on a footing, climbs every storey without a gap and on over the top
+        // roof by a metre where it comes through; no opening in any floor's wall behind it; and no porch within 0.3 m.
+        // BREAK IT: lay the stack inside the footprint, as it was; leave out its footing; stop it at the wall head;
+        // place it where a window or a porch is.
+        [Test]
+        public void ChimneysStandOutOfTheWall()
+        {
+            var bad = new List<string>();
+            int chimneys = 0;
+            var outs = new List<float>();
+            foreach (var (spec, res) in All())
+            {
+                var breasts = WallsOn(res, 0).Where(w => MathF.Abs(w.Thickness - BuildingGen.ChimneyDeep) < 0.01f
+                                                        && w.Openings.Any(o => o.Archetype == BuildingGen.ArchVent && o.V < 0.1f)).ToList();
+                if (breasts.Count == 0) continue;
+                chimneys++;
+                var br = breasts[0];
+                var bb = Box(br);
+                bool alongX = bb.X1 - bb.X0 > bb.Z1 - bb.Z0;
+                float mid = alongX ? (bb.Z0 + bb.Z1) * 0.5f : (bb.X0 + bb.X1) * 0.5f;
+                // the outside wall behind it: Ext thick, parallel, its inner face against the breast's back
+                var house = WallsOn(res, 0).Where(w => MathF.Abs(w.Thickness - BuildingGen.Ext) < 0.01f).Select(w => (W: w, B: Box(w)))
+                                           .Where(x => (alongX ? x.B.X1 - x.B.X0 > x.B.Z1 - x.B.Z0 : x.B.Z1 - x.B.Z0 > x.B.X1 - x.B.X0)
+                                                       && (alongX ? x.B.X0 <= bb.X0 + 0.01f && x.B.X1 >= bb.X1 - 0.01f : x.B.Z0 <= bb.Z0 + 0.01f && x.B.Z1 >= bb.Z1 - 0.01f)
+                                                       && MathF.Abs((alongX ? (x.B.Z0 + x.B.Z1) * 0.5f : (x.B.X0 + x.B.X1) * 0.5f) - mid) < (BuildingGen.ChimneyDeep + BuildingGen.Ext) * 0.5f + 0.05f)
+                                           .ToList();
+                if (house.Count != 1) { bad.Add($"{Name(spec)}: the fireplace stands against {house.Count} outside walls"); continue; }
+                var hb = house[0].B;
+                float line = alongX ? (hb.Z0 + hb.Z1) * 0.5f : (hb.X0 + hb.X1) * 0.5f;
+                int outward = line > mid ? 1 : -1;
+                float face = outward > 0 ? (alongX ? hb.Z1 : hb.X1) : (alongX ? hb.Z0 : hb.X0);
+                float s0 = alongX ? bb.X0 : bb.Z0, s1 = alongX ? bb.X1 : bb.Z1;
+                // the stack: walls and footings past the outer face, across the breast's span
+                var stack = res.Walls.Where(w => w.Kind is SurfaceKind.Wall or SurfaceKind.Foundation).Select(w => (W: w, B: Box(w)))
+                                     .Where(x => (alongX ? x.B.X0 < s1 - 0.01f && x.B.X1 > s0 + 0.01f : x.B.Z0 < s1 - 0.01f && x.B.Z1 > s0 + 0.01f)
+                                                 && outward * ((alongX ? (x.B.Z0 + x.B.Z1) : (x.B.X0 + x.B.X1)) * 0.5f - face) > 0.01f
+                                                 && outward * ((outward > 0 ? (alongX ? x.B.Z0 : x.B.X0) : (alongX ? x.B.Z1 : x.B.X1)) - face) > -0.01f
+                                                 && outward * ((outward > 0 ? (alongX ? x.B.Z0 : x.B.X0) : (alongX ? x.B.Z1 : x.B.X1)) - face) < 0.05f)
+                                     .ToList();
+                float reach = stack.Count == 0 ? 0f : stack.Max(x => outward * ((outward > 0 ? (alongX ? x.B.Z1 : x.B.X1) : (alongX ? x.B.Z0 : x.B.X0)) - face));
+                outs.Add(reach);
+                if (reach < BuildingGen.ChimneyDeep * 0.5f - 0.01f) { bad.Add($"{Name(spec)}: the chimney stands {reach:0.00} m out of its wall, under half its depth"); continue; }
+                // from its footing up, storey on storey without a gap, to a metre over the roof where it comes through
+                var pieces = stack.Select(x => x.W).OrderBy(w => w.Y).ToList();
+                if (!pieces.Any(w => w.Kind == SurfaceKind.Foundation && w.Y + w.Height >= -0.01f)) bad.Add($"{Name(spec)}: the chimney's stack has no footing");
+                float upTo = pieces.Where(w => w.Kind == SurfaceKind.Wall).Select(w => w.Y).DefaultIfEmpty(1f).Min() > 0.01f ? float.NaN : 0f;
+                foreach (var w in pieces.Where(w => w.Kind == SurfaceKind.Wall)) if (!float.IsNaN(upTo) && w.Y <= upTo + 0.01f) upTo = MathF.Max(upTo, w.Y + w.Height);
+                var sbox = (X0: stack.Min(x => x.B.X0), Z0: stack.Min(x => x.B.Z0), X1: stack.Max(x => x.B.X1), Z1: stack.Max(x => x.B.Z1));
+                float roof = new[] { (sbox.X0, sbox.Z0), (sbox.X1, sbox.Z0), (sbox.X0, sbox.Z1), (sbox.X1, sbox.Z1), ((sbox.X0 + sbox.X1) * 0.5f, (sbox.Z0 + sbox.Z1) * 0.5f) }
+                                 .Select(p => BuildingGen.RoofTopAt(res, p.Item1, p.Item2)).Where(h => !float.IsNaN(h)).DefaultIfEmpty(res.Floors * Storey).Max();
+                if (float.IsNaN(upTo) || upTo < roof + BuildingGen.ChimneyOverRoof - 0.01f) bad.Add($"{Name(spec)}: the chimney's stack climbs to {upTo:0.00} m, the roof it comes through is at {roof:0.00}");
+                // no opening behind it on any floor, and no porch by it
+                for (int f = 0; f < res.Floors; f++)
+                    foreach (var w in WallsOn(res, f).Where(w => MathF.Abs(w.Thickness - BuildingGen.Ext) < 0.01f))
+                    {
+                        var b = Box(w);
+                        if (MathF.Abs((alongX ? (b.Z0 + b.Z1) : (b.X0 + b.X1)) * 0.5f - line) > 0.01f || (alongX ? b.X1 - b.X0 < b.Z1 - b.Z0 : b.Z1 - b.Z0 < b.X1 - b.X0)) continue;
+                        foreach (var o in w.Openings)
+                        {
+                            var p = At(w, o.U); var q = At(w, o.U + o.Width);
+                            float o0 = alongX ? MathF.Min(p.X, q.X) : MathF.Min(p.Z, q.Z), o1 = alongX ? MathF.Max(p.X, q.X) : MathF.Max(p.Z, q.Z);
+                            if (o0 < s1 && o1 > s0) bad.Add($"{Name(spec)}: an opening in floor {f}'s wall is behind the chimney");
+                        }
+                    }
+                foreach (var q in res.Porches)
+                    if (q.X0 < sbox.X1 + 0.3f && q.X1 > sbox.X0 - 0.3f && q.Z0 < sbox.Z1 + 0.3f && q.Z1 > sbox.Z0 - 0.3f) bad.Add($"{Name(spec)}: a porch runs into the chimney");
+            }
+            outs.Sort();
+            TestContext.Progress.WriteLine($"[gen-chimney] {chimneys} chimneys; their stacks stand out of the wall {(outs.Count > 0 ? $"{outs[0]:0.00} to {outs[^1]:0.00} m (median {outs[outs.Count / 2]:0.00})" : "-")}; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
+            Assert.That(chimneys, Is.GreaterThan(30));
+            Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(10)));
+        }
+
+        // E5: a car fits in a garage (strawberry approved "2x3": cow tools measured the game's built cars at 3.0 m across the
+        // tyres and up to 6.15 m long with fittings, the sedan, and a 2x2-cell garage has 5.3 to 5.5 m between its walls).
+        // Measured from the generated walls, not the plan: from the inner face of the wall its vehicle door is in, straight
+        // back into the room to the first wall -- at the door's middle and a car's half width either side -- at least
+        // 6.5 m (6.15 m and room to shut the door); and along that wall, between the walls either side, at least 3.6 m, near
+        // the door, half way back and at the back. Every ground-floor garage has a vehicle door, or a note saying it fell
+        // short of one.
+        // BREAK IT: garages two cells by two, as they were; the vehicle door in a garage's three-cell side; the trim keeping
+        // two rows.
+        [Test]
+        public void GaragesFitACar()
+        {
+            const float Deep = 6.5f, Wide = 3.6f, Step = 0.02f;
+            var bad = new List<string>();
+            int garages = 0, measured = 0, excused = 0;
+            float leastDeep = float.MaxValue, leastWide = float.MaxValue;
+            foreach (var (spec, res) in All())
+            {
+                var walls = WallsOn(res, 0).ToList();
+                var boxes = walls.Select(w => (W: w, B: Box(w))).ToList();
+                bool InWall((float X, float Z) p, WallPlan except) => boxes.Any(b => b.W != except && p.X > b.B.X0 && p.X < b.B.X1 && p.Z > b.B.Z0 && p.Z < b.B.Z1);
+                // how far from p along d before a wall (any but `except`), up to 30 m
+                float Reach((float X, float Z) p, (float X, float Z) d, WallPlan except)
+                {
+                    for (float t = 0f; t < 30f; t += Step) if (InWall((p.X + d.X * t, p.Z + d.Z * t), except)) return t;
+                    return 30f;
+                }
+                foreach (var g in res.Layout.Where(g => g.Floor == 0 && g.Kind == RoomKind.Garage))
+                {
+                    garages++;
+                    var doors = new List<(WallPlan W, WallOpening O)>();
+                    foreach (var w in walls.Where(w => MathF.Abs(w.Thickness - BuildingGen.Ext) < 0.01f))
+                        foreach (var o in w.Openings.Where(o => o.Archetype == BuildingGen.ArchGarage))
+                        {
+                            var c = At(w, o.U + o.Width * 0.5f); var n = Normal(w);
+                            if (RoomAt(res, 0, c.X - n.X, c.Z - n.Z) == g) doors.Add((w, o));
+                        }
+                    if (doors.Count == 0)
+                    {
+                        if (ShortBy(res, RoomKind.Garage, "vehicle door")) excused++;
+                        else bad.Add($"{Name(spec)}: {g} has no vehicle door");
+                        continue;
+                    }
+                    foreach (var (w, o) in doors)
+                    {
+                        measured++;
+                        var d = Dir(w); var n = Normal(w); var inward = (X: -n.X, Z: -n.Z);
+                        float half = w.Thickness * 0.5f;
+                        // straight back from the wall's inner face, at the door's middle and a car's half width either side
+                        float deep = float.MaxValue;
+                        foreach (float across in new[] { -1.5f, 0f, 1.5f })
+                        {
+                            var p = At(w, o.U + o.Width * 0.5f + across);
+                            deep = MathF.Min(deep, Reach((p.X + inward.X * (half + Step), p.Z + inward.Z * (half + Step)), inward, w) + Step);
+                        }
+                        // along the wall, both ways, near the door, half way back and at the back
+                        float wide = float.MaxValue;
+                        var mid = At(w, o.U + o.Width * 0.5f);
+                        foreach (float back in new[] { 0.5f, deep * 0.5f, deep - 0.5f })
+                        {
+                            var p = (X: mid.X + inward.X * (half + back), Z: mid.Z + inward.Z * (half + back));
+                            wide = MathF.Min(wide, Reach(p, d, null) + Reach(p, (-d.X, -d.Z), null));
+                        }
+                        leastDeep = MathF.Min(leastDeep, deep); leastWide = MathF.Min(leastWide, wide);
+                        if (deep < Deep) bad.Add($"{Name(spec)}: {g} is {deep:0.00} m deep behind its vehicle door, not {Deep}");
+                        if (wide < Wide) bad.Add($"{Name(spec)}: {g} is {wide:0.00} m wide along its vehicle door, not {Wide}");
+                    }
+                }
+            }
+            TestContext.Progress.WriteLine($"[gen-garage] {garages} ground-floor garages, {measured} vehicle doors measured ({excused} garages without one, with a note): the least {(measured > 0 ? $"{leastDeep:0.00} m deep and {leastWide:0.00} m wide" : "-")}; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
+            Assert.That(measured, Is.GreaterThan(40));
+            Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(10)));
+        }
+
         // F: every opening fits its wall: inside its length, under the floor above, clear of its siblings, and clear of
         // the walls that meet this one (an opening cut across a partition's end shows the partition in its jamb).
         // BREAK IT: drop the half-thickness offset from the outside walls' u; ignore the meeting wall's thickness when
@@ -1265,9 +1535,9 @@ namespace UnturnedSim.Tests
                 }
                 // rooms sharing a row share its length by their kinds' sizes: what each got over its kind's size is about
                 // the same for all of them (the stair room counted without the stairs, service rooms left out -- they are
-                // kept narrow on purpose)
+                // kept narrow on purpose -- and garages, kept to a car's size: two cells by three)
                 double Usable(GenRoom g) => g.Cells - (bay.X1 > bay.X0 && g.Floor == 0 && g.HasCell(bay.X0, bay.Z0) ? (bay.X1 - bay.X0) * (bay.Z1 - bay.Z0) : 0);
-                foreach (var row in res.Layout.Where(g => !g.Circulation && !BuildingGen.Service(g.Kind) && g.More.Count == 0).GroupBy(g => (g.Floor, g.Z0, g.Z1)))
+                foreach (var row in res.Layout.Where(g => !g.Circulation && !BuildingGen.Service(g.Kind) && g.Kind != RoomKind.Garage && g.More.Count == 0).GroupBy(g => (g.Floor, g.Z0, g.Z1)))
                 {
                     var rs = row.ToList();
                     if (rs.Count < 2) continue;

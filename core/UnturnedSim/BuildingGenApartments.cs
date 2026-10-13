@@ -250,7 +250,7 @@ namespace UnturnedSim
             // front door comes in. A quarter turn's landing is in the corner of the bay with a wall, so the stairwell's
             // landing column is on its other side. (A plot too tight for them gets compound stairs and no landing column.)
             bool compoundRoll = rng.Chance(40), quarterRoll = rng.Chance(QuarterTurns);
-            res.QuarterWest = rng.Chance(50);
+            bool quarterWestRoll = rng.Chance(50);
             bool landingWestRoll = rng.Chance(50);
 
             // ---- the depth: double-loaded where it allows, single-loaded (the corridor along the north wall) on a narrow
@@ -378,7 +378,11 @@ namespace UnturnedSim
             res.StairShape = !compound ? StairShape.Straight : quarterRoll ? StairShape.Quarter : StairShape.Switchback;
             int k1 = compound || floors <= 2 ? 1 : 2, L = multi ? (compound ? 3 : 4) : 0;
             int bayRows = res.StairShape switch { StairShape.Switchback => 2, StairShape.Quarter => 3, _ => k1 + 1 };
-            bool landingWest = res.StairShape == StairShape.Quarter ? !res.QuarterWest : landingWestRoll;
+            bool landingWest = res.StairShape == StairShape.Quarter ? !quarterWestRoll : landingWestRoll;
+            // (the stairs' own landing, half way up, at the other end of the bay: against the stairwell's end wall, so
+            // borne by that and the south wall -- strawberry, "the landing of the stairs is only supported by 1 wall,
+            // should require two" -- a switchback's as well as a quarter turn's)
+            res.LandingWest = !landingWest;
             int SW = multi ? L + (landing ? 1 : 0) : (landing ? 2 : 0);
             if (fit)
             {
@@ -496,7 +500,7 @@ namespace UnturnedSim
                             stair = new GenRoom { Kind = RoomKind.Stairwell, Floor = f, X0 = ax, X1 = xs + SW, Z0 = 0, Z1 = dS };
                             rs.Add(stair);
                             // the bay against an end wall of the stairwell, the landing column (if any) and an alcove taken in
-                            // on the other side of it: a quarter turn's landing stands in the corner of that end wall
+                            // on the other side of it: a compound flight's landing stands in the corner of that end wall
                             bx0 = landingWest ? xs + SW - L : ax;
                         }
                         else if (SW > 0) corridor.More.Add((xs, 0, xs + SW, dS));   // one storey: a lobby, part of the corridor
