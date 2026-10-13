@@ -796,6 +796,7 @@ namespace UnturnedGodot
         {
             var rep = new Report();
             Built.Clear(); _profiles.Clear(); Marks.Clear(); _throughEnds.Clear(); _crossAlong.Clear();
+            _wideTrimRoads = null;
             if (roads == null || heightAt == null || Spacing < 4f || Extent < Spacing) return rep;
             // the kerb return follows the road's width, so everything measured off it does too
             CornerKerbRadius = Mathf.Clamp(roads.RoadHalfWidthOfMaterial(MainMaterial) * CornerKerbFraction, 2f, 9f);
@@ -1722,6 +1723,7 @@ namespace UnturnedGodot
             var walk = proto ?? new EditorSidewalk();
             walk.KerbHeight = PavementKerb;   // ⚠ ONE number for the pavement and for whatever stands on it
             walk.RoadGap = PavementGap;       // ...and one for how it meets the asphalt
+            walk.Width = PavementWidth;       // ...and one for how wide it is, which the corners read too
             if (walk.GetParent() == null) parent.AddChild(walk);
             int made = 0;
             foreach (int r in Built)          // ⚠ OUR streets, not every road in the field
@@ -1786,12 +1788,14 @@ namespace UnturnedGodot
         {
             if (parent == null || roads == null || walk == null) return 0;
             LastCorners.Clear(); _cornerFill.Clear();
+            walk.Width = PavementWidth;       // the corners are exactly as wide as the streets' pavements they join
             _walkWidth = walk.Width;          // plots start behind this pavement
             int made = 0;
             // ⚠ TALLY WHY A PAIR IS DROPPED. "We lose the 3 way junction's straight side sidewalk in some
             // pics" -- and the count already said so: 12 tees and 4 bends produced only 8 extra pieces. A
             // count of what was BUILT cannot say which rule ate the rest.
             int nSame = 0, nLong = 0, nThrough = 0, nNoCorner = 0, nFlatAngle = 0, nShortRad = 0, nFillet = 0;
+            int nWide = 0, nBackCross = 0; WideCrossAt = Vector3.Zero;
             for (int j = 0; j < roads.JunctionCount; j++)
             {
                 var edges = roads.JunctionEdges(j);
@@ -1944,13 +1948,40 @@ namespace UnturnedGodot
                     }
                     Push(T2, yB, Perp(dB, T2)); Push(b.p, yB, Perp(dB, b.p));
 
+                    // ⚠⚠ A PAVEMENT WIDER THAN ITS CORNER'S RADIUS MEETS ITSELF IN A POINT (strawberry 2026-10-12: "make
+                    // them twice as wide everywhere"). Each section's back edge is its kerb pushed Width in toward the
+                    // arc's centre, and where the arc is tighter than that -- every 45-degree corner, whose kerb turns
+                    // in 2.5 m -- the back edge passes the centre and folds back over the pavement. What the back edge
+                    // does instead is what a property line does: the two straights' back edges run on until they meet,
+                    // at Q on the bisector, and every section between them ends there.
+                    List<float> cw = null;
+                    float wide = walk.Width;
+                    if (wide > rad - 0.01f)
+                    {
+                        nWide++;
+                        var Q = P + bis * (wide / Mathf.Sin(half2));
+                        float sQ = wide / Mathf.Tan(half2);         // how far from P, along either kerb, the back edges meet
+                        if (lA < sQ || lB < sQ) { if (nBackCross++ == 0) WideCrossAt = P; }   // ...beyond where the street's own pavement stops
+                        cw = new List<float>(cp.Count);
+                        for (int q = 0; q < cp.Count; q++)
+                        {
+                            var at = cp[q];
+                            var rel = new Vector3(at.X - P.X, 0f, at.Z - P.Z);
+                            bool onA = q < 2, onB = q >= cp.Count - 2;          // the two points on each straight
+                            if (onA && rel.Dot(dA) > sQ || onB && rel.Dot(dB) > sQ) { cw.Add(wide); continue; }
+                            var toQ = new Vector3(Q.X - at.X, 0f, Q.Z - at.Z);
+                            float lq = toQ.Length();
+                            if (lq > 1e-4f) co[q] = toQ / lq;
+                            cw.Add(lq);
+                        }
+                    }
                     // the corner IS the crossing, so its kerb is the dropped one all the way round
                     var ck = new List<float>(cp.Count);
                     for (int q = 0; q < cp.Count; q++) ck.Add(CrossingDips ? walk.DipKerb : walk.KerbHeight);
                     var mi = EditorSidewalk.BuildRibbon(cp, co, walk.Width, walk.KerbHeight, walk.Skirt,
                                                         $"Sidewalk_Corner_{j}_{i}",
                                                         Terrain.Active != null && !EditorSidewalk.NoGround
-                                                            ? (x, z) => Terrain.Active.SampleHeight(x, z) : null, ck);
+                                                            ? (x, z) => Terrain.Active.SampleHeight(x, z) : null, ck, cw);
                     if (mi == null) continue;
                     LastCorners.Add((node, cp));
                     // ⚠⚠ AND THE ASPHALT UNDER IT, from the node out to this exact kerb. At 45 degrees the
@@ -1981,9 +2012,15 @@ namespace UnturnedGodot
             Log.Print($"[towngrid] kerb ring: {unpaved} ADJACENT PAIRS LEFT UNPAVED"
                     + (unpaved > 0 ? "  <-- each one is a visible break in the pavement" : "  (ring closed)"));
             Log.Print($"[towngrid] kerb pieces: {nFillet} fillets, {nThrough} straight-through; dropped "
-                    + $"{nSame} same-road, {nLong} long-way, {nNoCorner} no-corner, {nFlatAngle} too-straight, {nShortRad} tiny-radius");
+                    + $"{nSame} same-road, {nLong} long-way, {nNoCorner} no-corner, {nFlatAngle} too-straight, {nShortRad} tiny-radius; "
+                    + $"{nWide} corners tighter than the {walk.Width:0.0} m pavement (back edge meets in a point), "
+                    + $"{nBackCross} of them where the streets' own back edges cross first{(nBackCross > 0 ? $" (first at {WideCrossAt})" : "")}");
+            WideCrossCount = nBackCross;
             return made;
         }
+        /// <summary>The last LaySidewalkCorners' count of corners where two streets' wide pavements still cross before
+        /// their corner piece begins -- a road too short to hold them back -- and where the first one is.</summary>
+        public int WideCrossCount; public Vector3 WideCrossAt;
         /// <summary>How far each street runs UNDER the junction patch, hiding its open slab end.</summary>
         public float PatchOverlap = 0.35f;
 
@@ -2607,6 +2644,12 @@ namespace UnturnedGodot
         /// masts stand on the same pavement and had the same error; their poles are tall enough that nobody
         /// had noticed yet.</summary>
         public float PavementKerb = 0.4f;
+        /// <summary>How wide the town's pavements are, straight runs and corners alike -- one number, read from one
+        /// place, so the corners always meet the streets they join. UG_TOWNWALK=<metres> overrides it.
+        /// ⚠ 4 m (strawberry 2026-10-12: "add support for wider sidewalks ... just make them twice as wide
+        /// everywhere"); the kit's own pavement is 2.</summary>
+        public float PavementWidth = float.TryParse(System.Environment.GetEnvironmentVariable("UG_TOWNWALK"),
+                System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float tw) && tw > 0.5f ? tw : 4f;
 
         /// <summary>What governs a junction. ⚠ A four-lane crossing of two-lane streets gets signals; a
         /// corner of two small streets gets a stop sign. Auto picks per junction on whether any arm is a MAIN
@@ -3740,7 +3783,79 @@ namespace UnturnedGodot
             return made;
         }
 
+        /// <summary>How far short of its end a road's pavement stops: clear of the corner, and -- for a pavement
+        /// wider than a sharp corner's radius -- far enough back that its own back edge never crosses the next
+        /// street's (see WideCornerTrims).</summary>
         float TrimFor(RoadField roads, int road, bool atEnd, float cornerRadius)
+        {
+            EnsureWideTrims(roads);
+            return BaseTrimFor(roads, road, atEnd, cornerRadius) + (_wideTrim.TryGetValue((road, atEnd), out float x) ? x : 0f);
+        }
+
+        /// <summary>⚠⚠ WIDE PAVEMENTS CROSS AT A SHARP CORNER BEFORE THEY GET TO IT (strawberry 2026-10-12: "make them
+        /// twice as wide everywhere"). Two pavements meeting at a corner have back edges that run on until they meet,
+        /// at Q on the corner's bisector, W / tan(θ/2) along each kerb from the corner point: 4.8 m back for a 2 m
+        /// pavement at 45 degrees, but 9.7 m for a 4 m one -- further out than the street's own ribbon stops. So
+        /// the last few metres of each ribbon lay over the other's, two surfaces at one height, which is z-fighting
+        /// at every acute corner in town. Each street's pavement is held back to just past where its back edge
+        /// meets the next one; the corner piece runs from there, its back edge already at Q. Measured per corner,
+        /// with exactly LaySidewalkCorners' geometry, and kept per road end.</summary>
+        readonly Dictionary<(int road, bool atEnd), float> _wideTrim = new();
+        RoadField _wideTrimRoads; float _wideTrimWidth = -1f;
+        void EnsureWideTrims(RoadField roads)
+        {
+            if (roads == _wideTrimRoads && _wideTrimWidth == PavementWidth) return;
+            _wideTrimRoads = roads; _wideTrimWidth = PavementWidth; _wideTrim.Clear();
+            if (roads == null) return;
+            float wide = PavementWidth;
+            for (int j = 0; j < roads.JunctionCount; j++)
+            {
+                var edges = roads.JunctionEdges(j);
+                if (edges.Count < 2) continue;
+                var node = roads.JunctionPos(j);
+                var ring = new List<(float ang, Vector3 p, Vector3 tan, int road, bool atEnd)>();
+                foreach (var (road, atEnd) in edges)
+                {
+                    float L = roads.RoadLength(road);
+                    float trim = BaseTrimFor(roads, road, atEnd, CornerRadius);
+                    float t = atEnd ? Mathf.Max(0f, L - trim) : Mathf.Min(L, trim);
+                    if (!roads.EvaluateAlong(road, t, out var pos, out var tan, snapTerrain: false)) continue;
+                    var right = new Vector3(tan.Z, 0f, -tan.X).Normalized();
+                    float off = Mathf.Max(0.1f, roads.RoadHalfWidth(road) + PavementGap);
+                    foreach (int sgn in new[] { 1, -1 })
+                    {
+                        var e = pos + right * (off * sgn);
+                        var d = new Vector3(e.X - node.X, 0f, e.Z - node.Z);
+                        if (d.Length() < 0.5f) continue;
+                        ring.Add((Mathf.Atan2(d.Z, d.X), e, tan.Normalized(), road, atEnd));
+                    }
+                }
+                ring.Sort((a, b) => a.ang.CompareTo(b.ang));
+                for (int i = 0; i < ring.Count; i++)
+                {
+                    var a = ring[i]; var b = ring[(i + 1) % ring.Count];
+                    if (a.road == b.road) continue;
+                    float sweep = b.ang - a.ang; while (sweep <= 0f) sweep += Mathf.Tau;
+                    if (sweep > Mathf.Pi * 1.05f) continue;
+                    if (!KerbCorner(a.p, a.tan, b.p, b.tan, out var P)) continue;
+                    var dA = new Vector3(a.p.X - P.X, 0f, a.p.Z - P.Z); var dB = new Vector3(b.p.X - P.X, 0f, b.p.Z - P.Z);
+                    float lA = dA.Length(), lB = dB.Length();
+                    if (lA < 1f || lB < 1f) continue;
+                    float theta = Mathf.Acos(Mathf.Clamp(dA.Dot(dB) / (lA * lB), -1f, 1f));
+                    if (theta > Mathf.Pi - 0.25f || theta < 0.25f) continue;
+                    float half2 = theta * 0.5f;
+                    // the corner's own radius, as LaySidewalkCorners will lay it
+                    float rad = Mathf.Min(CornerKerbRadius, Mathf.Min(lA, lB) * 0.8f * Mathf.Tan(half2));
+                    if (theta < Mathf.Pi * 0.5f - Mathf.DegToRad(0.5f)) rad = Mathf.Min(rad, CornerKerbRadius * Mathf.Tan(half2));
+                    if (wide <= rad - 0.01f) continue;                      // its back edge is an arc: nothing crosses
+                    float sQ = wide / Mathf.Tan(half2) + 0.05f;
+                    foreach (var (end, l) in new[] { ((a.road, a.atEnd), lA), ((b.road, b.atEnd), lB) })
+                        if (l < sQ) _wideTrim[end] = Mathf.Max(_wideTrim.TryGetValue(end, out float had) ? had : 0f, sQ - l);
+                }
+            }
+        }
+
+        float BaseTrimFor(RoadField roads, int road, bool atEnd, float cornerRadius)
         {
             int j = roads.RoadEndJunction(road, atEnd);
             if (j < 0) return 0f;                      // a loose end runs to the tip, as it should

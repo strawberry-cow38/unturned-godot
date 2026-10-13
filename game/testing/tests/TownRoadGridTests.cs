@@ -700,6 +700,147 @@ namespace UnturnedGodot.Testing
                             paintTris.Count > 0 && edgeDotted == bays.Count && crossDotted == crossLines && strayPaint == 0 && spaceBare == bays.Count);
                     walkHost.QueueFree(); parkHost.QueueFree();
                 }
+                // ⭐ WIDE PAVEMENTS (strawberry 2026-10-12: "add support for wider sidewalks ... just make them twice as
+                // wide everywhere"). Measured on the built ribbons: each straight run is the town's width; no pavement
+                // lies over another anywhere (the wide ones crossed at every acute corner before their corner piece
+                // began -- two surfaces at one height); and no corner piece folds over itself where its kerb turns
+                // tighter than the pavement is wide.
+                {
+                    var stHost = new Node3D(); World.AddChild(stHost);
+                    var cnHost = new Node3D(); World.AddChild(cnHost);
+                    gD.LaySidewalks(stHost, rfD);
+                    gD.LaySidewalkCorners(cnHost, rfD, walkD);
+                    // a mesh's walking surface: its level triangles, indexed or not
+                    List<(Vector3 a, Vector3 b, Vector3 c, float ny)> Tops(MeshInstance3D mi)
+                    {
+                        var arr = mi.Mesh.SurfaceGetArrays(0);
+                        var vs = (Vector3[])arr[(int)Mesh.ArrayType.Vertex];
+                        var ix = arr[(int)Mesh.ArrayType.Index].VariantType == Variant.Type.Nil ? null : (int[])arr[(int)Mesh.ArrayType.Index];
+                        var outp = new List<(Vector3, Vector3, Vector3, float)>();
+                        int n = ix != null ? ix.Length : vs.Length;
+                        for (int k = 0; k + 2 < n; k += 3)
+                        {
+                            Vector3 a = vs[ix != null ? ix[k] : k], b = vs[ix != null ? ix[k + 1] : k + 1], c = vs[ix != null ? ix[k + 2] : k + 2];
+                            var nn = (b - a).Cross(c - a);
+                            // ⚠ NOT the slivers: where a corner's back edge meets in a point, two of a quad's corners land
+                            // on it a float's width apart, and a triangle of no area has no meaningful way up
+                            if (nn.Length() < 1e-3f || Mathf.Abs(nn.Y) < 0.9f * nn.Length()) continue;
+                            outp.Add((a, b, c, nn.Y));
+                        }
+                        return outp;
+                    }
+                    var meshNodes = new List<MeshInstance3D>();
+                    void GatherNodes(Node n)
+                    {
+                        if (n is MeshInstance3D mi && mi.Mesh != null && mi.Name.ToString().StartsWith("Sidewalk_")) meshNodes.Add(mi);
+                        foreach (var ch in n.GetChildren()) GatherNodes(ch);
+                    }
+                    GatherNodes(stHost); GatherNodes(cnHost);
+                    // 1. as wide as the town says: across one station of each straight run, kerb to back edge
+                    int straights = 0, rightWidth = 0; float worstWidth = 0f;
+                    foreach (var mi in meshNodes)
+                    {
+                        string nm = mi.Name.ToString();
+                        if (!nm.StartsWith("Sidewalk_R") && !nm.StartsWith("Sidewalk_L")) continue;
+                        if (!int.TryParse(nm.Substring(10), out int road)) continue;
+                        float L = rfD.RoadLength(road);
+                        if (!rfD.EvaluateAlong(road, L * 0.5f, out var mc, out var mt, snapTerrain: false)) continue;
+                        // straight runs only: across a rounded corner one station's kerb and back are not square to the middle's tangent
+                        if (!rfD.EvaluateAlong(road, L * 0.5f - 5f, out _, out var ma, snapTerrain: false) || !rfD.EvaluateAlong(road, L * 0.5f + 5f, out _, out var mb, snapTerrain: false)
+                            || ma.Normalized().Dot(mb.Normalized()) < Mathf.Cos(Mathf.DegToRad(0.5f))) continue;
+                        var t = new Vector3(mt.X, 0f, mt.Z).Normalized(); var o = new Vector3(mt.Z, 0f, -mt.X).Normalized();
+                        var vs = (Vector3[])mi.Mesh.SurfaceGetArrays(0)[(int)Mesh.ArrayType.Vertex];
+                        float nearAl = float.MaxValue;
+                        foreach (var v in vs) { float al = (v - mc).Dot(t); if (Mathf.Abs(al) < Mathf.Abs(nearAl)) nearAl = al; }
+                        float lo = float.MaxValue, hi = float.MinValue;
+                        foreach (var v in vs)
+                        {
+                            var rel = v - mc;
+                            if (Mathf.Abs(rel.Dot(t) - nearAl) > 0.02f) continue;
+                            float lat = Mathf.Abs(rel.X * o.X + rel.Z * o.Z);
+                            lo = Mathf.Min(lo, lat); hi = Mathf.Max(hi, lat);
+                        }
+                        if (hi < lo) continue;
+                        straights++;
+                        worstWidth = Mathf.Max(worstWidth, Mathf.Abs(hi - lo - gD.PavementWidth));
+                        if (Mathf.Abs(hi - lo - gD.PavementWidth) < 0.02f) rightWidth++;
+                    }
+                    T.Check($"pavements are the town's {gD.PavementWidth:0.0} m wide ({rightWidth} of {straights} straight runs; worst {worstWidth * 100f:0.0} cm off)",
+                            gD.PavementWidth >= 3.99f && straights > 20 && rightWidth == straights);
+                    // 2. nowhere does one pavement lie over another: a point well inside one mesh's walking surface is
+                    //    inside no other's. Bucketed by 2 m cells; the control is a ribbon laid over a copy of itself.
+                    var tris = new List<(int mesh, Vector3 a, Vector3 b, Vector3 c)>();
+                    for (int m = 0; m < meshNodes.Count; m++) foreach (var (a, b, c, _) in Tops(meshNodes[m])) tris.Add((m, a, b, c));
+                    int Overlapping(List<(int mesh, Vector3 a, Vector3 b, Vector3 c)> ts)
+                    {
+                        var grid = new Dictionary<(int, int), List<int>>();
+                        for (int k = 0; k < ts.Count; k++)
+                        {
+                            var (_, a, b, c) = ts[k];
+                            int x0 = Mathf.FloorToInt(Mathf.Min(a.X, Mathf.Min(b.X, c.X)) / 2f), x1 = Mathf.FloorToInt(Mathf.Max(a.X, Mathf.Max(b.X, c.X)) / 2f);
+                            int z0 = Mathf.FloorToInt(Mathf.Min(a.Z, Mathf.Min(b.Z, c.Z)) / 2f), z1 = Mathf.FloorToInt(Mathf.Max(a.Z, Mathf.Max(b.Z, c.Z)) / 2f);
+                            for (int x = x0; x <= x1; x++) for (int z = z0; z <= z1; z++)
+                            { if (!grid.TryGetValue((x, z), out var l)) grid[(x, z)] = l = new List<int>(); l.Add(k); }
+                        }
+                        static bool Inside(Vector3 q, Vector3 a, Vector3 b, Vector3 c)
+                        {
+                            float d1 = (q.X - b.X) * (a.Z - b.Z) - (a.X - b.X) * (q.Z - b.Z);
+                            float d2 = (q.X - c.X) * (b.Z - c.Z) - (b.X - c.X) * (q.Z - c.Z);
+                            float d3 = (q.X - a.X) * (c.Z - a.Z) - (c.X - a.X) * (q.Z - a.Z);
+                            return d1 > 0f && d2 > 0f && d3 > 0f || d1 < 0f && d2 < 0f && d3 < 0f;
+                        }
+                        int hits = 0;
+                        for (int k = 0; k < ts.Count; k++)
+                        {
+                            var (mk, a, b, c) = ts[k];
+                            var g = (a + b + c) / 3f;
+                            bool hit = false;
+                            foreach (var q in new[] { g, a.Lerp(g, 0.6f), b.Lerp(g, 0.6f), c.Lerp(g, 0.6f) })
+                            {
+                                if (!grid.TryGetValue((Mathf.FloorToInt(q.X / 2f), Mathf.FloorToInt(q.Z / 2f)), out var l)) continue;
+                                foreach (int o2 in l)
+                                {
+                                    var (mo, oa, ob, oc) = ts[o2];
+                                    if (mo == mk || !Inside(q, oa, ob, oc)) continue;
+                                    hit = true; break;
+                                }
+                                if (hit) break;
+                            }
+                            if (hit) hits++;
+                        }
+                        return hits;
+                    }
+                    int over = Overlapping(tris);
+                    var dup = new List<(int, Vector3, Vector3, Vector3)>();
+                    foreach (var (m, a, b, c) in tris) if (m == 0) { dup.Add((0, a, b, c)); dup.Add((1, a + new Vector3(0.5f, 0f, 0.5f), b + new Vector3(0.5f, 0f, 0.5f), c + new Vector3(0.5f, 0f, 0.5f))); }
+                    int dupOver = Overlapping(dup);
+                    T.Check($"...and no pavement lies over another ({over} of {tris.Count} surface triangles do; control: a ribbon over a shifted copy of itself, {dupOver} of {dup.Count})",
+                            tris.Count > 500 && over == 0 && dupOver > 0);
+                    // 3. no corner folds: every level triangle of a corner piece faces the same way. The control is a
+                    //    ribbon laid round a 2.5 m arc at the town's width with nothing to stop it folding.
+                    int Folded(List<(Vector3 a, Vector3 b, Vector3 c, float ny)> tops)
+                    {
+                        int up = 0, down = 0;
+                        foreach (var (_, _, _, ny) in tops) { if (ny > 0f) up++; else down++; }
+                        return Mathf.Min(up, down);
+                    }
+                    int folded = 0, cornerPieces = 0;
+                    foreach (var mi in meshNodes)
+                        if (mi.Name.ToString().StartsWith("Sidewalk_Corner_")) { cornerPieces++; if (Folded(Tops(mi)) > 0) folded++; }
+                    var arcP = new List<Vector3>(); var arcO = new List<Vector3>();
+                    for (int k = 0; k <= 12; k++)
+                    {
+                        float ang = Mathf.Pi * 0.75f * k / 12f;
+                        arcP.Add(new Vector3(Mathf.Cos(ang) * 2.5f, 0f, Mathf.Sin(ang) * 2.5f));
+                        arcO.Add(new Vector3(-Mathf.Cos(ang), 0f, -Mathf.Sin(ang)));          // toward the centre, as a corner's is
+                    }
+                    var foldMi = EditorSidewalk.BuildRibbon(arcP, arcO, gD.PavementWidth, 0.4f, 0.6f, "fold_control");
+                    int foldControl = foldMi != null ? Folded(Tops(foldMi)) : 0;
+                    T.Check($"...and no corner piece folds over itself ({folded} of {cornerPieces} do; control: {foldControl} folded triangles in a {gD.PavementWidth:0.0} m ribbon round a 2.5 m arc)",
+                            cornerPieces > 20 && folded == 0 && foldControl > 0);
+                    foldMi?.Free();
+                    stHost.QueueFree(); cnHost.QueueFree();
+                }
                 // determinism: the same town again lays the same plots
                 {
                     var rfD2 = Field();

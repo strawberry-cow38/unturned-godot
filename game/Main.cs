@@ -10634,7 +10634,7 @@ namespace UnturnedGodot
             // dark wedges at every mouth have now missed and the only honest next question is which mesh the
             // pixels belong to.
             bool noWalk = System.Environment.GetEnvironmentVariable("UG_TOWNNOWALK") == "1";
-            var walkProto = new EditorSidewalk(); editor.AddChild(walkProto);
+            var walkProto = new EditorSidewalk { Width = town.PavementWidth }; editor.AddChild(walkProto);
             // ⭐ THE PLOTS AND THEIR PARKING ARE LAID OUT BEFORE THE PAVEMENT (strawberry 2026-10-12: "widened
             // sections of road, with dotted lines for parking"). A parking bay moves the kerb, the pavement and the
             // plots behind it, so the pavement and the lamps have to be laid where the bays put them.
@@ -10858,6 +10858,16 @@ namespace UnturnedGodot
                     tcam.LookAt(pkHigh ? pkPos + pkOut * (pkHalf + pkBay.Depth + 4f) : pkPos + pkAlong * 4f + pkOut * (pkHalf * 0.4f), Vector3.Up);
                     Log.Print($"[towngrid] parking camera on a bay of {pkBay.Spaces} spaces on road {pkBay.Road} at {pkPos} "
                             + $"({(town.BayOpposite(pkBay) != null ? "widened both sides" : "one side")}; {town.Bays.Count} bays)");
+                    goto noTown;
+                }
+                // UG_TOWNCLOSE=wc: the corner where two wide pavements still cross before their corner piece begins,
+                // if the kerb pass counted one -- the instrument says where, the camera goes there
+                if (closeEnv == "wc" && town.WideCrossCount > 0)
+                {
+                    tcam.GlobalPosition = town.WideCrossAt + new Vector3(12f, 14f, 12f);
+                    tcam.Fov = 50f;
+                    tcam.LookAt(town.WideCrossAt, Vector3.Up);
+                    Log.Print($"[towngrid] wide-corner camera on {town.WideCrossAt} ({town.WideCrossCount} such corners)");
                     goto noTown;
                 }
                 if (closeEnv == "s" && town.LastBareRun > 0f)

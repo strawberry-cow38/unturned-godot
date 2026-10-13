@@ -22,8 +22,11 @@ namespace UnturnedGodot
     public partial class EditorSidewalk : Node3D
     {
         /// <summary>Walking surface width, metres. The retail kit's pavement is about 2 m; the dial exists
-        /// because a town high street and a suburban lane want different ones.</summary>
-        public float Width = 2.0f;
+        /// because a town high street and a suburban lane want different ones.
+        /// ⚠ 4 m BY DEFAULT, TWICE THE KIT (strawberry 2026-10-12: "make them twice as wide everywhere"). This
+        /// game's people and cars are bigger than real ones -- a car is 3 m across its tyres -- and a 2 m pavement
+        /// beside them read as a ledge.</summary>
+        public float Width = 4.0f;
         /// <summary>How far the kerb stands proud of the road. 0.4 m is MEASURED off the retail pieces
         /// (SplitKerb: palette faces span z -1.0 .. +0.4 against a carriageway at 0).</summary>
         public float KerbHeight = 0.4f;
@@ -110,11 +113,15 @@ namespace UnturnedGodot
         /// the ground falls away beside them, so anywhere the drop exceeded 0.6 m the pavement hung in the air
         /// with daylight under it (master, on the first render: "the kerb is floating"). The skirt now reaches
         /// the actual ground at each point instead of guessing a depth.</param>
+        /// <param name="widthPerPoint">Optional: the walking surface's width at each point, where it is not
+        /// `width` -- a corner whose back edge has to meet in a point rather than fold over itself.</param>
         public static MeshInstance3D BuildRibbon(IReadOnlyList<Vector3> pts, IReadOnlyList<Vector3> outward,
                                                  float width, float kerbH, float skirt, string name = "Sidewalk",
                                                  System.Func<float, float, float> groundY = null,
-                                                 IReadOnlyList<float> kerbPerPoint = null)
+                                                 IReadOnlyList<float> kerbPerPoint = null,
+                                                 IReadOnlyList<float> widthPerPoint = null)
         {
+            float W(int i) => widthPerPoint != null && i < widthPerPoint.Count ? widthPerPoint[i] : width;
             if (pts == null || pts.Count < 2 || outward == null || outward.Count != pts.Count) return null;
             var st = new SurfaceTool();
             st.Begin(Mesh.PrimitiveType.Triangles);
@@ -156,7 +163,7 @@ namespace UnturnedGodot
                 // ⚠ THE SURFACE KEEPS THE FULL KERB HEIGHT even where the kerb is dropped -- the pavement is
                 // level and the dip is a chamfer in its front face. Taking the dipped height here instead
                 // would tip the whole slab into the gutter.
-                Vector3 b0 = p0 + o0 * width + Vector3.Up * kerbH, b1 = p1 + o1 * width + Vector3.Up * kerbH;
+                Vector3 b0 = p0 + o0 * W(i) + Vector3.Up * kerbH, b1 = p1 + o1 * W(i + 1) + Vector3.Up * kerbH;
                 // The skirt's FLOOR: the lower of "a fixed bite below the surface" and "the real ground here",
                 // so it buries into a rising bank and still reaches down a falling one. Minus a few cm so it
                 // ends INSIDE the ground rather than coplanar with it, which would z-fight along the whole run.
@@ -195,7 +202,7 @@ namespace UnturnedGodot
                 {
                     Vector3 o = outward[i].Normalized(), p0 = pts[i];
                     float kh = kerbPerPoint != null && i < kerbPerPoint.Count ? kerbPerPoint[i] : kerbH;
-                    Vector3 k = p0, t = p0 + Vector3.Up * kh, b = p0 + o * width + Vector3.Up * kerbH;
+                    Vector3 k = p0, t = p0 + Vector3.Up * kh, b = p0 + o * W(i) + Vector3.Up * kerbH;
                     float f = p0.Y - skirt;
                     if (groundY != null) f = Mathf.Min(f, groundY(b.X, b.Z) - 0.05f);
                     Vector3 sq = new Vector3(b.X, f, b.Z);
