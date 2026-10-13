@@ -1272,9 +1272,93 @@ namespace UnturnedGodot.Testing
                     // d. a lane end that cannot open onto a street is closed off with a kerb across it, never left as road ending
                     //    in the grass
                     int shortEnds = 0, endKerbs = 0;
-                    foreach (var lp in gD.LanePlans) { if (lp.A == null) shortEnds++; if (lp.B == null) shortEnds++; }
+                    foreach (var lp in gD.LanePlans) { if (lp.A == null && !lp.KneeA) shortEnds++; if (lp.B == null && !lp.KneeB) shortEnds++; }
                     foreach (var mi in meshNodes) if (mi.Name.ToString().StartsWith("Sidewalk_LaneEnd_")) endKerbs++;
                     T.Check($"...and every lane end that cannot open onto a street closed off with a kerb ({endKerbs} of {shortEnds})", endKerbs == shortEnds);
+                    // d2. HARD 90s FOR THE ALLEYS (strawberry 2026-10-13: "make hard 90s with both the road and the sidewalks
+                    //     possible ... for alleys ... as an option you can toggle on/off"). Each L's two halves meet at their knee:
+                    //     their ASPHALT -- the ribbons as built -- neither overlaps (two coplanar surfaces) nor leaves the outside
+                    //     of the turn bare, and their PAVEMENTS carry on across the line they meet on, both sides of the turn.
+                    //     The control: the same two straights NOT joined at a node, each ending square as a lone road does,
+                    //     overlap on the inside of the turn and leave the outside bare.
+                    static List<(Vector3 a, Vector3 b, Vector3 c)> RibbonTop(Mesh m)
+                    {
+                        var outp = new List<(Vector3, Vector3, Vector3)>();
+                        if (m == null) return outp;
+                        var arr = m.SurfaceGetArrays(0);
+                        var vs = (Vector3[])arr[(int)Mesh.ArrayType.Vertex];
+                        var ix = arr[(int)Mesh.ArrayType.Index].VariantType == Variant.Type.Nil ? null : (int[])arr[(int)Mesh.ArrayType.Index];
+                        int n = ix != null ? ix.Length : vs.Length;
+                        for (int k = 0; k + 2 < n; k += 3)
+                        {
+                            Vector3 a = vs[ix != null ? ix[k] : k], b = vs[ix != null ? ix[k + 1] : k + 1], c = vs[ix != null ? ix[k + 2] : k + 2];
+                            var nn = (b - a).Cross(c - a);
+                            if (nn.Length() > 1e-4f && Mathf.Abs(nn.Y) > 0.9f * nn.Length()) outp.Add((a, b, c));
+                        }
+                        return outp;
+                    }
+                    static bool OnTop(List<(Vector3 a, Vector3 b, Vector3 c)> ts, Vector3 q)
+                    {
+                        foreach (var (a, b, c) in ts)
+                        {
+                            float d1 = (q.X - b.X) * (a.Z - b.Z) - (a.X - b.X) * (q.Z - b.Z);
+                            float d2 = (q.X - c.X) * (b.Z - c.Z) - (b.X - c.X) * (q.Z - c.Z);
+                            float d3 = (q.X - a.X) * (c.Z - a.Z) - (c.X - a.X) * (q.Z - a.Z);
+                            if (d1 > 0f && d2 > 0f && d3 > 0f || d1 < 0f && d2 < 0f && d3 < 0f) return true;
+                        }
+                        return false;
+                    }
+                    // over the corner's square: points on BOTH halves' asphalt, and the turn's outer corner left bare
+                    (int onBoth, int bareOuter) Knee(List<(Vector3, Vector3, Vector3)> t1, List<(Vector3, Vector3, Vector3)> t2, Vector3 knee, Vector3 into, Vector3 outp, float half)
+                    {
+                        int onBoth = 0, bare = 0;
+                        var side = new Vector3(-into.Z, 0f, into.X);
+                        // (the v grid sits half a step off the u grid, so no sample lands exactly ON the mitre's diagonal)
+                        for (float u = -half + 0.15f; u <= half - 0.15f; u += 0.25f)
+                            for (float v = -half + 0.275f; v <= half - 0.15f; v += 0.25f)
+                            {
+                                var q = knee + into * u + side * v;
+                                if (OnTop(t1, q) && OnTop(t2, q)) onBoth++;
+                            }
+                        foreach (int so in new[] { 1, -1 })
+                        {
+                            var corner = RoadField.CornerPoint(knee, into, outp, half, half, so);
+                            var toKnee = new Vector3(knee.X - corner.X, 0f, knee.Z - corner.Z).Normalized();
+                            var q = corner + toKnee * 0.3f;
+                            if (!OnTop(t1, q) && !OnTop(t2, q)) bare++;
+                        }
+                        return (onBoth, bare);
+                    }
+                    int kneesSeen = 0, kneeOverlaps = 0, kneeBare = 0, mitresPaved = 0, mitresTried = 0;
+                    foreach (var lp in gD.LanePlans)
+                    {
+                        if (!lp.KneeB || lp.Partner == null) continue;
+                        kneesSeen++;
+                        var knee = lp.Pts[^1];
+                        var into = lp.Pts[^1] - lp.Pts[^2]; into.Y = 0f; into = into.Normalized();
+                        var outp = lp.Partner.Pts[1] - lp.Partner.Pts[0]; outp.Y = 0f; outp = outp.Normalized();
+                        var (kOver, kBare) = Knee(RibbonTop(rfD.RoadMeshOf(lp.Road)), RibbonTop(rfD.RoadMeshOf(lp.Partner.Road)), knee, into, outp, gD.LaneHalf);
+                        kneeOverlaps += kOver; kneeBare += kBare;
+                        // each side's pavement on both sides of the line the halves meet on, halfway across it
+                        float kOff = gD.LaneHalf + walkD.RoadGap;
+                        foreach (int so in new[] { 1, -1 })
+                        {
+                            var k = RoadField.CornerPoint(knee, into, outp, kOff, kOff, so);
+                            var b = RoadField.CornerPoint(knee, into, outp, kOff + gD.LaneWalkWidth, kOff + gD.LaneWalkWidth, so);
+                            var mid = (k + b) * 0.5f;
+                            var along = new Vector3(b.Z - k.Z, 0f, -(b.X - k.X)).Normalized();     // across the mitre line
+                            mitresTried++;
+                            if (OnPave(mid + along * 0.15f) && OnPave(mid - along * 0.15f)) mitresPaved++;
+                        }
+                    }
+                    // the control: the same corner from two lone straights, ending square
+                    var rfK = Field();
+                    var kneeK = new Vector3(0f, 40f, 0f);
+                    int ra = rfK.AddRoadFromPolyline(new List<Vector3> { kneeK + new Vector3(-30f, 0f, 0f), kneeK + new Vector3(-15f, 0f, 0f), kneeK }, 6);
+                    int rb = rfK.AddRoadFromPolyline(new List<Vector3> { kneeK, kneeK + new Vector3(0f, 0f, 15f), kneeK + new Vector3(0f, 0f, 30f) }, 6);
+                    var (bothK, bareK) = Knee(RibbonTop(rfK.RoadMeshOf(ra)), RibbonTop(rfK.RoadMeshOf(rb)), kneeK, new Vector3(1f, 0f, 0f), new Vector3(0f, 0f, 1f), rfK.RoadHalfWidth(ra));
+                    T.Check($"...and every L-turn a hard 90 ({kneesSeen} knees): the two halves' asphalt overlapping at {kneeOverlaps} points of the corner and leaving {kneeBare} of its corners bare, their pavements carrying on across the line they meet on ({mitresPaved} of {mitresTried} sides) -- where two lone straights at the same corner overlap at {bothK} and leave {bareK} bare (control)",
+                            gD.LaneHardCorners && kneesSeen >= 2 && kneeOverlaps == 0 && kneeBare == 0 && mitresPaved == mitresTried && bothK > 0 && bareK > 0);
                     // e. ON ROADS WITH DEPTH, AS THE GAME'S ARE. This rig's roads are flat -- their asphalt is AT the kerb's
                     //    foot -- so here a kerb counted from its foot and one counted from the asphalt read the same, and the
                     //    first lanes passed (c) with kerbs that stood 2 cm UNDER their own road in game, where the asphalt is
@@ -1302,7 +1386,16 @@ namespace UnturnedGodot.Testing
                         float droppedStep = 0f;
                         foreach (var lp in gL.LanePlans) if (lp.A != null) droppedStep = Mathf.Max(droppedStep, lp.A.Edge.Y - lp.Pts[0].Y);
                         gL.FollowTerrain = false;
+                        // ...and the hard-90 toggle, both ways, planned before any lane is built: off, an L is one lane round a
+                        // curve; on (the default), two straight halves meeting at the knee
+                        gL.LaneHardCorners = false;
                         gL.MarkPlots(null, rfL);
+                        int curvedPlans = gL.LanePlans.Count, curvedKnees = gL.LanePlans.FindAll(p => p.KneeA || p.KneeB).Count;
+                        gL.LaneHardCorners = true;
+                        gL.MarkPlots(null, rfL);
+                        int hardPlans = gL.LanePlans.Count, hardKnees = gL.LanePlans.FindAll(p => p.KneeB).Count;
+                        T.Check($"...the alleys' hard 90s an option: off, {curvedPlans} lanes and {curvedKnees} knee ends (each L one lane round a curve); on, {hardPlans} lanes, {hardKnees} of them L-turns as two halves meeting at a hard 90",
+                                curvedKnees == 0 && hardKnees >= 2 && hardPlans == curvedPlans + hardKnees);
                         gL.LaySidewalks(hostL, rfL);            // the streets' own pavements, to hold the lanes' kerbs to
                         gL.BuildLanes(hostL, rfL);
                         var meshesL = new Dictionary<string, MeshInstance3D>();

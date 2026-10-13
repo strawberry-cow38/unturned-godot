@@ -3659,8 +3659,14 @@ namespace UnturnedGodot
         /// <summary>How far the town's kerbs stand over their own asphalt -- a street's, and so a lane's: PavementKerb is
         /// counted from the kerb's foot, and the carriageway's surface stands its material's surface offset over that.</summary>
         public float KerbProud(RoadField roads) => PavementKerb - roads.RoadSurfaceOffsetOfMaterial(_plainStreet >= 0 ? _plainStreet : StreetMaterial);
-        /// <summary>The centreline radius an L-shaped lane turns its corner on, inside its block.</summary>
+        /// <summary>The centreline radius an L-shaped lane turns its corner on, inside its block, when it curves.</summary>
         public float LaneKneeRadius = 8f;
+        /// <summary>⭐ HARD 90s FOR THE ALLEYS (strawberry 2026-10-13: "make hard 90s with both the road and the sidewalks
+        /// possible ... for alleys ... as an option you can toggle on/off"). On: an L-shaped lane is two straight lanes
+        /// meeting at its knee, the asphalt mitred corner to corner (RoadField.CornerMitre) and each pavement ending square
+        /// on the line its kerbs and back edges cross at (EditorSidewalk's mitre). Off -- UG_TOWNLANECURVES=1 -- it turns
+        /// on LaneKneeRadius as before.</summary>
+        public bool LaneHardCorners = System.Environment.GetEnvironmentVariable("UG_TOWNLANECURVES") != "1";
         /// <summary>The lanes' material: the street's, plain tarmac -- no markings at all -- and LaneHalf wide. -1: none.</summary>
         public int LaneMaterial = -1;
 
@@ -3684,7 +3690,13 @@ namespace UnturnedGodot
         }
         /// <summary>A lane to build: its centreline end to end, and the mouth at each end -- null where it could not open
         /// onto a straight run of a street's pavement and stops short (LaneDeadEnds). The road, once built.</summary>
-        public sealed class LanePlan { public List<Vector3> Pts; public LaneMouth A, B; public int Road = -1; }
+        public sealed class LanePlan
+        {
+            public List<Vector3> Pts; public LaneMouth A, B; public int Road = -1;
+            /// <summary>An end that meets the other half of an L at a hard corner (LaneHardCorners): neither a mouth nor
+            /// closed. Partner is that other half, which meets it with its own opposite end.</summary>
+            public bool KneeA, KneeB; public LanePlan Partner;
+        }
         /// <summary>The kerbed ends BuildLanes laid across the lanes that stop short.</summary>
         public int LaneEndsClosed;
         public readonly List<LanePlan> LanePlans = new();
@@ -3740,7 +3752,17 @@ namespace UnturnedGodot
                 // clear -- left as it was, the road just stopped, its end ramping down into the grass
                 var a = mA != null ? mA.Edge : endA - outA * CloseBack(roads, endA, outA);
                 var b = mB != null ? mB.Edge : endB - outB * CloseBack(roads, endB, outB);
-                var line = knee ? RoundedPath(a, kneeAt, b, LaneKneeRadius, 2f) : RoundedPath(a, a, b, 0f, 3f);
+                // a hard 90: the two straights, the knee a corner of the line (split below); otherwise one curve round it
+                bool hard = knee && LaneHardCorners;
+                int kneeIx = -1;
+                List<Vector3> line;
+                if (hard)
+                {
+                    var l1 = RoundedPath(a, a, kneeAt, 0f, 3f); var l2 = RoundedPath(kneeAt, kneeAt, b, 0f, 3f);
+                    line = l1 == null || l2 == null ? null : new List<Vector3>(l1);
+                    if (line != null) { kneeIx = line.Count - 1; line.AddRange(l2.GetRange(1, l2.Count - 1)); }
+                }
+                else line = knee ? RoundedPath(a, kneeAt, b, LaneKneeRadius, 2f) : RoundedPath(a, a, b, 0f, 3f);
                 if (line == null || line.Count < 2) continue;
                 // ⚠⚠ THE STREET'S HEIGHT, NOT THE GROUND'S (strawberry 2026-10-13, twice: "make sure the alleys and their
                 // kerbs arent sinking below the road level", then "they are still sinking below street road level??"). The
@@ -3764,7 +3786,16 @@ namespace UnturnedGodot
                 else for (int q = 0; q < line.Count; q++) line[q] = new Vector3(line[q].X, Y(line[q]), line[q].Z);
                 if (mA != null) LaneMouths.Add(mA);
                 if (mB != null) LaneMouths.Add(mB);
-                LanePlans.Add(new LanePlan { Pts = line, A = mA, B = mB });
+                if (hard)
+                {
+                    // the two halves, each straight, sharing the knee's point -- and its height, the profile having been run
+                    // over the whole L first
+                    var h1 = new LanePlan { Pts = line.GetRange(0, kneeIx + 1), A = mA, KneeB = true };
+                    var h2 = new LanePlan { Pts = line.GetRange(kneeIx, line.Count - kneeIx), B = mB, KneeA = true };
+                    h1.Partner = h2; h2.Partner = h1;
+                    LanePlans.Add(h1); LanePlans.Add(h2);
+                }
+                else LanePlans.Add(new LanePlan { Pts = line, A = mA, B = mB });
             }
         }
 
@@ -3977,12 +4008,28 @@ namespace UnturnedGodot
             parent.AddChild(walk);
             Func<float, float, float> ground = Terrain.Active != null && !EditorSidewalk.NoGround ? (x, z) => Terrain.Active.SampleHeight(x, z) : null;
             float fillSurf = roads.RoadSurfaceOffsetOfMaterial(StreetMaterial) - CornerFillDrop;
-            int walks = 0, corners = 0;
+            int walks = 0, corners = 0, knees = 0;
             foreach (var lp in LanePlans)
             {
-                int road = roads.AddRoadFromPolyline(lp.Pts, LaneMaterial, loop: false, ignoreTerrain: !FollowTerrain);
+                lp.Road = roads.AddRoadFromPolyline(lp.Pts, LaneMaterial, loop: false, ignoreTerrain: !FollowTerrain);
+                if (lp.Road >= 0) LaneRoads.Add(lp.Road);
+            }
+            // ⭐ A HARD 90's TWO HALVES MEET AT A NODE OF THEIR OWN, which is what mitres their asphalt: two road ends, and
+            // only two, at one node is a corner to RoadField, and each end ring then runs corner to corner. The first half is
+            // rebuilt once the second is bound -- it was built when it was alone there
+            foreach (var lp in LanePlans)
+            {
+                if (!lp.KneeB || lp.Partner == null || lp.Road < 0 || lp.Partner.Road < 0) continue;
+                int j = roads.AddJunction(lp.Pts[^1]);
+                roads.BindRoadEnd(lp.Road, true, j);
+                roads.BindRoadEnd(lp.Partner.Road, false, j);
+                roads.RebuildRoad(lp.Road);
+                knees++;
+            }
+            foreach (var lp in LanePlans)
+            {
+                int road = lp.Road;
                 if (road < 0) continue;
-                lp.Road = road; LaneRoads.Add(road);
                 float L = roads.RoadLength(road);
                 // the kerb's height as the pavement builder counts it, from its foot: the lane's asphalt there plus as far
                 // as the streets' kerbs stand over theirs
@@ -3998,12 +4045,32 @@ namespace UnturnedGodot
                 // difference go over its ramp.
                 float CornerY(LaneMouth m, int c) { roads.EvaluateAlong(m.Road, m.StreetArc[c], out var q, out _); return q.Y; }
                 float FootY(float d) { roads.EvaluateAlong(road, Mathf.Clamp(d, 0f, L), out var q, out _); return q.Y; }
+                // a hard knee's end: where this side's kerb and back edge cross the other half's -- the side of the turn this
+                // pavement is on picked by where the point falls, not by a sign convention
+                (Vector3 kerb, Vector3 back)? KneeMitre(bool atEnd, int sd)
+                {
+                    if (atEnd ? !lp.KneeB : !lp.KneeA) return null;
+                    var pp = lp.Partner.Pts;
+                    var knee = atEnd ? lp.Pts[^1] : lp.Pts[0];
+                    var into = atEnd ? lp.Pts[^1] - lp.Pts[^2] : lp.Pts[0] - lp.Pts[1]; into.Y = 0f; into = into.Normalized();
+                    var outp = atEnd ? pp[1] - pp[0] : pp[^2] - pp[^1]; outp.Y = 0f; outp = outp.Normalized();
+                    var t = lp.Pts[^1] - lp.Pts[0]; t.Y = 0f; var right = new Vector3(t.Z, 0f, -t.X).Normalized();
+                    float kOff = LaneHalf + PavementGap, bOff = kOff + LaneWalkWidth;
+                    foreach (int so in new[] { 1, -1 })
+                    {
+                        var k = RoadField.CornerPoint(knee, into, outp, kOff, kOff, so);
+                        if ((k - knee).Dot(right) * sd <= 0f) continue;
+                        return (k, RoadField.CornerPoint(knee, into, outp, bOff, bOff, so));
+                    }
+                    return null;
+                }
                 foreach (var (sd, sideEnum) in new[] { (1, EditorSidewalk.Side.Right), (-1, EditorSidewalk.Side.Left) })
                 {
                     int cA = sd > 0 ? 1 : 0, cB = sd > 0 ? 0 : 1;
-                    // (a closed end's kerb takes the lane's last metre: the pavements stop where it starts)
-                    float fromA = lp.A != null ? lp.A.LaneFrom[cA] : LaneWalkWidth;
-                    float fromB = lp.B != null ? lp.B.LaneFrom[cB] : LaneWalkWidth;
+                    // (a closed end's kerb takes the lane's last metre: the pavements stop where it starts; a hard knee's
+                    // pavement runs to its mitre)
+                    float fromA = lp.A != null ? lp.A.LaneFrom[cA] : lp.KneeA ? 0f : LaneWalkWidth;
+                    float fromB = lp.B != null ? lp.B.LaneFrom[cB] : lp.KneeB ? 0f : LaneWalkWidth;
                     float liftA = lp.A != null ? CornerY(lp.A, cA) - FootY(fromA) : 0f;
                     float liftB = lp.B != null ? CornerY(lp.B, cB) - FootY(L - fromB) : 0f;
                     float Surface(float d)
@@ -4021,12 +4088,13 @@ namespace UnturnedGodot
                         }
                         return h;
                     }
-                    walks += walk.LayAlongRoad(walk, roads, road, sideEnum, null, fromA, fromB, surfaceAt: Surface);
+                    walks += walk.LayAlongRoad(walk, roads, road, sideEnum, null, fromA, fromB, surfaceAt: Surface,
+                                               mitreStart: KneeMitre(false, sd), mitreEnd: KneeMitre(true, sd));
                 }
                 // ⭐ A LANE THAT STOPS SHORT ENDS IN A KERB, NOT A RAMP: a strip of its own pavement straight across the end,
                 // as wide as the lane and both its pavements, standing on the asphalt's last metre -- so the road's own
                 // end ramp lies under it and the lane reads as closed off rather than unfinished
-                foreach (var (closed, atEnd) in new[] { (lp.A == null, false), (lp.B == null, true) })
+                foreach (var (closed, atEnd) in new[] { (lp.A == null && !lp.KneeA, false), (lp.B == null && !lp.KneeB, true) })
                 {
                     if (!closed || !roads.EvaluateAlong(road, atEnd ? L : 0f, out var ep, out var et)) continue;
                     var tn = new Vector3(et.X, 0f, et.Z).Normalized();
@@ -4101,7 +4169,7 @@ namespace UnturnedGodot
                         + $"lane kerb {walk.KerbHeight - laneOff:0.000} m proud of the lane's asphalt, street kerb {PavementKerb - streetOff:0.000} m proud of the street's; "
                         + $"worst step from a street's asphalt down onto its lane's at the mouth {worstSink:0.000} m{(worstSink != 0f ? $" ({sinkAt})" : "")}");
             }
-            Log.Print($"[towngrid] lanes: {LaneRoads.Count} built from {Alleys.Count} alleys, {LaneMouths.Count} mouths opened "
+            Log.Print($"[towngrid] lanes: {LaneRoads.Count} built from {Alleys.Count} alleys ({knees} L-turns as hard 90s), {LaneMouths.Count} mouths opened "
                     + $"({corners} kerb returns), {walks} pavement runs; {LaneDeadEnds} ends could not open onto a street and stop short "
                     + $"({DeadNoStreet} no street beyond, {DeadGlancing} glancing, {DeadNoCorner} no corner, {DeadOffPavement} into a junction's corner, "
                     + $"{DeadOnMouth} onto another lane's mouth{(LaneDeadEnds > 0 ? $"; first at {FirstDeadEnd}" : "")}), {LaneEndsClosed} closed with a kerb");

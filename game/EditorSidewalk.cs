@@ -252,12 +252,17 @@ namespace UnturnedGodot
         /// below it by as much as it would below KerbHeight.</param>
         /// <param name="piece">Optional: tells this side's ribbons apart where one side is laid in pieces (a street
         /// left open where a lane comes in) -- "Sidewalk_R12_p1" for the second piece on road 12's right.</param>
+        /// <param name="mitreStart">Optional, ONE side only: where this pavement's kerb and back edge meet the next road's at
+        /// a hard corner at the road's start (RoadField.CornerPoint) -- the ribbon runs to that line and stops square on
+        /// it, short of the road's end on the inside of the turn and past it on the outside.</param>
+        /// <param name="mitreEnd">The same at the road's end.</param>
         public int LayAlongRoad(Node parent, RoadField roads, int road, Side side, List<Node3D> into = null,
                                 float trimStart = 0f, float trimEnd = 0f,
                                 System.Func<float, float> stepRight = null, System.Func<float, float> stepLeft = null,
                                 IReadOnlyList<float> breaks = null,
                                 System.Func<float, float> backRight = null, System.Func<float, float> backLeft = null,
-                                System.Func<float, float> surfaceAt = null, string piece = null)
+                                System.Func<float, float> surfaceAt = null, string piece = null,
+                                (Vector3 kerb, Vector3 back)? mitreStart = null, (Vector3 kerb, Vector3 back)? mitreEnd = null)
         {
             if (parent == null || roads == null) return 0;
             float total = roads.RoadLength(road);
@@ -317,6 +322,45 @@ namespace UnturnedGodot
 
             int made = 0;
             string tag = piece != null ? "_" + piece : "";
+            // ⭐ A HARD CORNER'S END (strawberry 2026-10-13: "make hard 90s with both the road and the sidewalks possible"):
+            // the stations past the corner's line go, and one goes ON it -- its kerb where the two kerbs meet, its back where
+            // the two back edges do -- so this pavement and the next road's meet along one line, as the road ends mitred do
+            if (side != Side.Both && (mitreStart != null || mitreEnd != null))
+            {
+                var P = side == Side.Right ? rightP : leftP; var O = side == Side.Right ? rightO : leftO;
+                var W = side == Side.Right ? rightW : leftW;
+                if (W == null) { W = new List<float>(P.Count); for (int i = 0; i < P.Count; i++) W.Add(Width); }
+                var K = new List<float>(kerbs); var S = surfaces != null ? new List<float>(surfaces) : null;
+                void Mitre((Vector3 kerb, Vector3 back) m, bool atEnd)
+                {
+                    if (P.Count < 2) return;
+                    var outDir = atEnd ? P[^1] - P[^2] : P[0] - P[1]; outDir.Y = 0f; outDir = outDir.Normalized();
+                    int ix = atEnd ? P.Count - 1 : 0;
+                    float y = P[ix].Y, k = K[ix], sf = S?[ix] ?? KerbHeight;
+                    var across = m.back - m.kerb; across.Y = 0f;
+                    float w = across.Length();
+                    // ⚠ PAST THE LINE AT EITHER EDGE. On the inside of the turn the corner's line runs back across the pavement
+                    // from kerb to back edge, so a station short of it at the kerb can be past it at the back -- its back edge
+                    // then lay over the other half's pavement and the ribbon folded there (the town test caught both).
+                    var nM = new Vector3(-across.Z, 0f, across.X); if (nM.Dot(outDir) < 0f) nM = -nM; nM = nM.Normalized();
+                    while (P.Count > 2)
+                    {
+                        int at = atEnd ? P.Count - 1 : 0;
+                        var kerbAt = P[at] - m.kerb; kerbAt.Y = 0f;
+                        var backAt = P[at] + O[at].Normalized() * W[at] - m.kerb; backAt.Y = 0f;
+                        if (kerbAt.Dot(nM) < -0.05f && backAt.Dot(nM) < -0.05f) break;     // short of the corner's line: keep it
+                        P.RemoveAt(at); O.RemoveAt(at); W.RemoveAt(at); K.RemoveAt(at); S?.RemoveAt(at);
+                    }
+                    var kp = new Vector3(m.kerb.X, y, m.kerb.Z);
+                    if (atEnd) { P.Add(kp); O.Add(across / w); W.Add(w); K.Add(k); S?.Add(sf); }
+                    else { P.Insert(0, kp); O.Insert(0, across / w); W.Insert(0, w); K.Insert(0, k); S?.Insert(0, sf); }
+                }
+                if (mitreStart is { } ms) Mitre(ms, false);
+                if (mitreEnd is { } me) Mitre(me, true);
+                made += Emit(parent, P, O, $"Sidewalk_{(side == Side.Right ? "R" : "L")}{road}{tag}", into, K, W, S);
+                Log.Print($"[sidewalk] road {road}: {made} mitred ribbon(s), {Width:0.00} m wide, kerb {KerbHeight:0.00} m");
+                return made;
+            }
             if (side != Side.Left) made += Emit(parent, rightP, rightO, $"Sidewalk_R{road}{tag}", into, kerbs, rightW, surfaces);
             if (side != Side.Right) made += Emit(parent, leftP, leftO, $"Sidewalk_L{road}{tag}", into, kerbs, leftW, surfaces);
             Log.Print($"[sidewalk] road {road}: {made} ribbon(s) over {to - from:0.#} m of {total:0.#}"

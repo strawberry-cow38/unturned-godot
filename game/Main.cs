@@ -10832,6 +10832,20 @@ namespace UnturnedGodot
                 // the kerb returns, the street's pavement stopping for it, and the lane's low pavements climbing to meet
                 // it (UG_TOWNCLOSE=lnh: the same mouth from high above, to see the lane run off into its block)
                 // (UG_TOWNCLOSE=lnc0 / lnc1: right down on one corner's kerb return -- [0] the left of the way in)
+                // (UG_TOWNCLOSE=lnk: the hard 90 of an L-shaped lane nearest the middle, from above it -- lnk2: from low down)
+                if ((closeEnv == "lnk" || closeEnv == "lnk2") && town.LanePlans.Exists(p => p.KneeB))
+                {
+                    var kp = town.LanePlans.Find(p => p.KneeB);
+                    float bestK = float.MaxValue;
+                    foreach (var p in town.LanePlans) if (p.KneeB) { float d2 = (p.Pts[^1] - site).LengthSquared(); if (d2 < bestK) { bestK = d2; kp = p; } }
+                    var kn = kp.Pts[^1];
+                    var din = kp.Pts[^1] - kp.Pts[^2]; din.Y = 0f; din = din.Normalized();
+                    tcam.GlobalPosition = closeEnv == "lnk" ? kn + new Vector3(0f, 16f, 0f) - din * 6f : kn - din * 9f + new Vector3(0f, 2.5f, 0f);
+                    tcam.Fov = 60f;
+                    tcam.LookAt(kn, Vector3.Up);
+                    Log.Print($"[towngrid] lane knee camera on {kn}");
+                    goto noTown;
+                }
                 // (UG_TOWNCLOSE=lnd: the first lane end that could NOT open onto a street, from above and behind it)
                 if (closeEnv == "lnd" && town.LaneDeadEnds > 0)
                 {

@@ -758,6 +758,9 @@ namespace UnturnedGodot
             if (mi != null && IsInstanceValid(mi)) mi.Visible = visible;
         }
 
+        /// <summary>The road's built ribbon mesh (null before it is built): what is drawn, for a test to measure.</summary>
+        public Mesh RoadMeshOf(int road) => road >= 0 && road < _roads.Count && _roads[road].Mi != null && IsInstanceValid(_roads[road].Mi) ? _roads[road].Mi.Mesh : null;
+
         public bool RoadRibbonVisible(int road) =>
             road >= 0 && road < _roads.Count && _roads[road].Mi != null
             && IsInstanceValid(_roads[road].Mi) && _roads[road].Mi.Visible;
@@ -1258,6 +1261,25 @@ namespace UnturnedGodot
 
             var samples = SampleWalk(r);
             if (samples.Count < 2) return null;
+            // ⭐ A CORNER, NOT A JUNCTION (strawberry 2026-10-13: "make hard 90s with both the road and the sidewalks possible").
+            // Where this road's end meets exactly ONE other road's end at its node, its end ring runs between the two
+            // corners the two roads' edges make (CornerMitre), so the ribbons meet along that line at any angle. Each
+            // used to end square across itself, and two pieces meeting at 90 degrees overlapped on the inside of the turn
+            // (coplanar: a z-fight) and left a square notch out of the outside.
+            int self = _roads.IndexOf(r);
+            bool mitreA = CornerMitre(self, false, halfWidth, out var mA0, out var mA1, out float innerA) && !loop;
+            bool mitreB = CornerMitre(self, true, halfWidth, out var mB0, out var mB1, out float innerB) && !loop;
+            if (mitreA || mitreB)
+            {
+                // no ring inside the corner's inner point, or the quad between it and the mitre folds back on itself
+                var p0 = SplinePos(r, 0, 0f); var p1 = SplinePos(r, jc - 2, 1f);
+                for (int s = samples.Count - 2; s >= 1; s--)
+                {
+                    var q = SplinePos(r, samples[s].idx, samples[s].t);
+                    if (mitreA && new Vector2(q.X - p0.X, q.Z - p0.Z).Length() < innerA + 0.5f
+                        || mitreB && new Vector2(q.X - p1.X, q.Z - p1.Z).Length() < innerB + 0.5f) samples.RemoveAt(s);
+                }
+            }
 
             float invRepeat = mat.Height != 0f ? mat.Height / texHeight : 1f / texHeight;   // src: UV repeats every texture.height/mat.height world units
 
@@ -1278,6 +1300,18 @@ namespace UnturnedGodot
                 // BANK the surface to the terrain at EACH edge so it hugs the cross-slope, instead of lifting the whole strip to the
                 // highest edge (that floated the downhill side on a cross-slope) -- master "horizontal banking issue".
                 Vector3 lp = pos + side * halfWidth, rp = pos - side * halfWidth;   // left/right surface X-Z
+                // the end ring of a mitred corner: from corner to corner, each the one on its own side
+                Vector3 tl = side * verticalSize, tr = -side * verticalSize;
+                if (s == 0 && mitreA || s == samples.Count - 1 && mitreB)
+                {
+                    var (c0, c1) = s == 0 ? (mA0, mA1) : (mB0, mB1);
+                    bool c0Left = (c0 - pos).Dot(side) > 0f;
+                    var l = c0Left ? c0 : c1; var rr = c0Left ? c1 : c0;
+                    lp = new Vector3(l.X, pos.Y, l.Z); rp = new Vector3(rr.X, pos.Y, rr.Z);
+                    // the tapers run out along the mitre too, so the two roads' bevels meet under it as well
+                    var across = new Vector3(lp.X - rp.X, 0f, lp.Z - rp.Z).Normalized();
+                    tl = across * verticalSize * ((lp - pos).Length() / halfWidth); tr = -across * verticalSize * ((rp - pos).Length() / halfWidth);
+                }
                 float lY = ((Terr != null && !ign) ? Terr.SampleHeight(lp.X, lp.Z) : pos.Y - jo) + jo;
                 float rY = ((Terr != null && !ign) ? Terr.SampleHeight(rp.X, rp.Z) : pos.Y - jo) + jo;
                 Vector3 lSurf = new Vector3(lp.X, lY, lp.Z) + normal * (halfVerticalSize + verticalOffset);
@@ -1285,8 +1319,8 @@ namespace UnturnedGodot
                 var cs = new Vector3[4];
                 cs[1] = lSurf;                                                 // road surface left (at the terrain edge)
                 cs[2] = rSurf;                                                 // road surface right (at the terrain edge)
-                cs[0] = lSurf + side * verticalSize - normal * verticalSize;   // outer-left taper (out + down)
-                cs[3] = rSurf - side * verticalSize - normal * verticalSize;   // outer-right taper (out + down)
+                cs[0] = lSurf + tl - normal * verticalSize;   // outer-left taper (out + down)
+                cs[3] = rSurf + tr - normal * verticalSize;   // outer-right taper (out + down)
 
                 if (s > 0) distance += pos.DistanceTo(prevC);
                 prevC = pos;
@@ -1358,6 +1392,69 @@ namespace UnturnedGodot
             var m = new ArrayMesh();
             m.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arr);
             return m;
+        }
+
+        /// <summary>The road whose end shares this end's node when it is the ONLY other road there -- a corner -- and both
+        /// ends really are AT the node (not a town junction's arm, bound to its node but cut back to the kerb), and the
+        /// turn between them is no tighter than 135 degrees. -1 otherwise.</summary>
+        public int CornerPartner(int road, bool atEnd, out bool partnerAtEnd)
+        {
+            partnerAtEnd = false;
+            if (road < 0 || road >= _roads.Count) return -1;
+            var r = _roads[road];
+            int j = atEnd ? r.EndJunction : r.StartJunction;
+            if (j < 0 || r.IsLoop || r.Joints.Count < 2) return -1;
+            var es = JunctionEdges(j);
+            if (es.Count != 2) return -1;
+            var (pr, pe) = es[0].Road == road && es[0].AtEnd == atEnd ? es[1] : es[0];
+            if (pr == road || pr < 0 || pr >= _roads.Count || _roads[pr].IsLoop || _roads[pr].Joints.Count < 2) return -1;
+            var node = JunctionPos(j);
+            var mine = atEnd ? r.Joints[^1].Vertex : r.Joints[0].Vertex;
+            var theirs = pe ? _roads[pr].Joints[^1].Vertex : _roads[pr].Joints[0].Vertex;
+            if (new Vector2(mine.X - node.X, mine.Z - node.Z).Length() > 0.05f || new Vector2(theirs.X - node.X, theirs.Z - node.Z).Length() > 0.05f) return -1;
+            float turn = Mathf.Acos(Mathf.Clamp(-EndAway(r, atEnd).Dot(EndAway(_roads[pr], pe)), -1f, 1f));
+            if (turn > Mathf.DegToRad(135f)) return -1;
+            partnerAtEnd = pe;
+            return pr;
+        }
+
+        /// <summary>The flat unit direction from a road's end INTO the road -- away from the node there.</summary>
+        Vector3 EndAway(RoadData r, bool atEnd)
+        {
+            int last = r.Joints.Count - 2;
+            var d = atEnd ? SplinePos(r, last, 0.98f) - SplinePos(r, last, 1f) : SplinePos(r, 0, 0.02f) - SplinePos(r, 0, 0f);
+            d.Y = 0f;
+            return d.LengthSquared() > 1e-10f ? d.Normalized() : Vector3.Forward;
+        }
+
+        /// <summary>Where two lines offset from a corner's two roads meet: this road's at `mine` off its centreline and its
+        /// partner's at `theirs`, both on the same side of the turn as `sideOf`'s sign (+1 the travel-left of this road
+        /// heading INTO the corner). The point a mitred road edge, kerb or pavement back edge turns at.</summary>
+        public static Vector3 CornerPoint(Vector3 node, Vector3 intoMine, Vector3 outTheirs, float mine, float theirs, int sideOf)
+        {
+            Vector3 Left(Vector3 d) => new Vector3(-d.Z, 0f, d.X);
+            var a = node + Left(intoMine) * (mine * sideOf); var b = node + Left(outTheirs) * (theirs * sideOf);
+            float det = intoMine.X * outTheirs.Z - intoMine.Z * outTheirs.X;
+            if (Mathf.Abs(det) < 1e-5f) return a;                       // straight on: the end is square, and so is the meeting
+            float t = ((b.X - a.X) * outTheirs.Z - (b.Z - a.Z) * outTheirs.X) / det;
+            return new Vector3(a.X + intoMine.X * t, node.Y, a.Z + intoMine.Z * t);
+        }
+
+        /// <summary>A mitred corner's two edge points for THIS road's end ring (CornerPartner), and how far back from the node
+        /// along this road the inner one lies -- no ring of this road may stand closer than that.</summary>
+        bool CornerMitre(int road, bool atEnd, float halfWidth, out Vector3 c0, out Vector3 c1, out float inner)
+        {
+            c0 = c1 = Vector3.Zero; inner = 0f;
+            int pr = CornerPartner(road, atEnd, out bool pe);
+            if (pr < 0) return false;
+            var r = _roads[road];
+            var node = JunctionPos(atEnd ? r.EndJunction : r.StartJunction);
+            var into = -EndAway(r, atEnd); var outp = EndAway(_roads[pr], pe);
+            float theirs = _mats[_roads[pr].Material].Width * WidthScale;
+            c0 = CornerPoint(node, into, outp, halfWidth, theirs, 1);
+            c1 = CornerPoint(node, into, outp, halfWidth, theirs, -1);
+            inner = Mathf.Max(Mathf.Max(0f, -(c0 - node).Dot(into)), Mathf.Max(0f, -(c1 - node).Dot(into)));
+            return true;
         }
 
         // src end cap: 4 verts all at the LOW taper level (-normal*halfVerticalSize), shoved fore/aft by
