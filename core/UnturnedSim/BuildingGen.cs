@@ -44,8 +44,9 @@ namespace UnturnedSim
         public Sides FrontSide, BackSide;
         /// <summary>Sides with no windows on any floor ("as well as specifying which sides cant have windows").</summary>
         public Sides NoWindows;
-        /// <summary>The outline: Auto is mostly rectangles, now and then an L or a T. One storey only for now -- a building
-        /// of more floors is a rectangle, with a note when an L or a T was asked for.</summary>
+        /// <summary>The outline: Auto is mostly rectangles, now and then an L or a T. With floors above, they stand on the
+        /// L's or T's full-depth part and the rest stays one storey (see BuildingGenResult.Wing); one that cannot be laid
+        /// out that way comes out a rectangle, with a note.</summary>
         public FootprintShape Shape;
         /// <summary>Porches outside the front and/or back door: Auto is a house's front door now and then, its back door
         /// less often, a business's front a canopy sometimes.</summary>
@@ -166,7 +167,10 @@ namespace UnturnedSim
         /// All zero for one floor.</summary>
         public (int X0, int Z0, int X1, int Z1) Bay;
         /// <summary>An L or a T: its wing in cells, the part narrower than the rest -- the rest the full CellsX long, the
-        /// wing on its north side as laid out (south, once turned half round). All zero for a rectangle.</summary>
+        /// wing on its north side as laid out (south, once turned half round). All zero for a rectangle. With floors
+        /// above, the wing's columns are the MAIN block: the floor above stands on exactly [Wing.X0, Wing.X1), the full
+        /// depth, and what the full-length row has past it -- an arm at one end of an L, at both ends of a T, Wing.Z0
+        /// deep -- stays one storey under a shed leaning on the main block's end wall.</summary>
         public (int X0, int Z0, int X1, int Z1) Wing;
         public FootprintShape Shape = FootprintShape.Rect;
         /// <summary>Each porch's deck in plan metres, against the outside wall it serves.</summary>
@@ -217,9 +221,12 @@ namespace UnturnedSim
     /// beside it to step off onto -- inside a walk-through room on the ground floor and inside the landing hall above;
     /// with three or more floors the flights alternate between two rows so each lands beside the next one's foot.
     ///
-    /// One storey may be an L or a T (strawberry: "does the layout support non-square footprints"): its north row of
-    /// rooms comes up short of the south one at an end or both, the outside walls follow the outline, and a house's roof
-    /// is a cross gable (CrossGable).
+    /// The ground floor may be an L or a T (strawberry: "does the layout support non-square footprints"): its north row
+    /// of rooms comes up short of the south one at an end or both, and the outside walls follow the outline. One storey,
+    /// a house's roof is a cross gable (CrossGable). With floors above, the north row is exactly the length of the floor
+    /// above and the floors above stand on its columns, the full depth -- the upper-floor plan (a landing hall with rooms
+    /// either side) needs the full depth, and the south row alone is three or four cells -- so the full-length row's
+    /// arm(s) past it stay one storey, roofed like any lower part the floor above leaves uncovered.
     ///
     /// Houses get a gable or a hip roof (the editor's own RoofShapes), businesses a flat one; a lower floor's part that
     /// the floor above does not cover gets a roof of its own -- a shed leaning on the upper wall for a house, flat for a
@@ -588,8 +595,9 @@ namespace UnturnedSim
             // (a block of flats fits itself -- corridor, stairwell and whole flats, not rooms a floor: BuildingGenApartments)
             if (!spec.FitPlot || spec.Width <= 0 || spec.Depth <= 0 || spec.Kind == BuildingKind.Apartment) return GenerateOnce(spec);
             int maxF = Math.Max(1, spec.MaxFloors), minF = Math.Clamp(spec.MinFloors, 1, maxF);
-            // stairs need a bay three rows deep, a hall and two rows north of it: a shallower plot is one storey
-            if (spec.Depth < 6) maxF = minF = 1;
+            // stairs need a bay two rows deep (on a narrow plot; three elsewhere), a hall and two rows north of it: a
+            // shallower plot is one storey
+            if (spec.Depth < 5) maxF = minF = 1;
             int floorRooms = Math.Min(spec.MinRooms, Math.Max(Essentials(spec.Kind).Length, Programme(spec.Kind).Always.Length));
             // the best so far: 0 fits whole; up to Lopsided, fits but rooms came out short of what they need (by how
             // badly); Lopsided, fits with rooms out of proportion; past it, over the plot by that many cells
@@ -800,21 +808,15 @@ namespace UnturnedSim
             if (floors == 1 && floors < maxFloors && rooms.Count >= 5 && rooms.Any(r => T(r).Pref == FloorPref.Upper)
                 && rng.Chance(kind == BuildingKind.Residential ? 50 : 35)) floors = 2;
             floors = Math.Min(floors, maxFloors);
-            // ---- the outline: a rectangle, or (one storey only, for now) an L or a T -- drawn from a stream of its own,
-            // so a rectangle is the same building it was before the outline could be anything else
+            // ---- the outline: a rectangle, or an L or a T -- drawn from a stream of its own, so a rectangle is the same
+            // building it was before the outline could be anything else. With floors above, they stand on the outline's
+            // full-depth part and the rest stays one storey (LtMulti, below).
             var shapeRng = new Rng(unchecked(spec.Seed * 7919 + 0x4C54));
             var shape = spec.Shape;
             if (shape == FootprintShape.Auto)
             {
                 int roll = shapeRng.Int(100);
-                shape = floors > 1 ? FootprintShape.Rect : roll < 25 ? FootprintShape.L : roll < 35 ? FootprintShape.T : FootprintShape.Rect;
-            }
-            // one asked for keeps a building on one floor that only a roll put on two
-            if (shape != FootprintShape.Rect && floors > 1 && minFloors == 1 && rooms.Count <= perFloor) floors = 1;
-            if (shape != FootprintShape.Rect && floors > 1)
-            {
-                res.Notes.Add($"{(shape == FootprintShape.L ? "an L" : "a T")} outline is one storey only for now: {floors} floors came out a rectangle");
-                shape = FootprintShape.Rect;
+                shape = roll < 25 ? FootprintShape.L : roll < 35 ? FootprintShape.T : FootprintShape.Rect;
             }
             res.Floors = floors;
             bool multi = floors > 1;
@@ -824,7 +826,11 @@ namespace UnturnedSim
             // "doesnt have to be a 180 staircase either, can be 90 too" -- three cells by three rows); in a building whose
             // floors are small, and now and then in any. They stack straight up.
             bool compound = multi && (rooms.Sum(r => T(r).Cells) / floors <= SmallFloor || rng.Chance(25));
-            res.StairShape = !compound ? StairShape.Straight : rng.Chance(QuarterTurns) ? StairShape.Quarter : StairShape.Switchback;
+            // (a plot too narrow for a room beside the bay -- FitPlot -- takes a switchback, two rows deep: the hall runs right
+            // behind it, below)
+            // (the roll is drawn exactly where it always was, so every other building keeps its stairs and its stream)
+            bool narrowPlot(int bayLen) => spec.FitPlot && spec.Width > 0 && spec.Width < bayLen + 2;
+            res.StairShape = !compound ? StairShape.Straight : rng.Chance(QuarterTurns) && !narrowPlot(3) ? StairShape.Quarter : StairShape.Switchback;
             int k1 = compound || floors <= 2 ? 1 : 2, L = multi ? (compound ? 3 : 4) : 0;   // the stair bay (see below)
             int bayRows = res.StairShape switch { StairShape.Switchback => 2, StairShape.Quarter => 3, _ => k1 + 1 };
             // A room's share of a row: its target area -- the stair room's grown by the bay it gives over to the stairs
@@ -1043,6 +1049,9 @@ namespace UnturnedSim
             // cells by two rows: the tile at the foot and the tile it arrives on side by side, then its two flights, then
             // the landing.
             int dS = 3, dN = kind == BuildingKind.Industrial ? 4 : 3;   // upper floors: rows south of the hall, and north of it
+            // a plot with no room beside the bay: the row past the stairs would be landing (two thirds of a 12 m house's upper
+            // floor was hall), so the hall runs right behind the stairs and the rooms north of it get the row
+            if (multi && narrowPlot(L) && bayRows < dS) dS = bayRows;
             // a depth asked for: the floors above take it as their north row (south of the hall is the stair bay's); one
             // floor splits it between its two rows -- each at least two cells, so no shallower than five or four
             int wantD = spec.Depth, wantW = spec.Width;
@@ -1079,6 +1088,20 @@ namespace UnturnedSim
                 need = Lu;
             }
 
+            // An L or a T with floors above. They stand on the north row's columns, the full depth (the landing hall and
+            // its rooms either side need it; the south row alone is three or four cells), so the north row -- the wing --
+            // is exactly the length of the floor above, `need`, and starts where that floor does; the full-length south row
+            // runs on past it, one storey, at one end (an L) or both (a T), two cells a side at the least. Ux0: where the
+            // floors above start for a bay at b, as they are placed below; ArmsOk: whether that leaves the arms the shape has.
+            bool LtMulti() => multi && shape != FootprintShape.Rect;
+            int Ux0(int b) => stairsWest ? b : b + L - need;
+            bool ArmsOk(int b, int w)
+            {
+                int west = Ux0(b), east = w - Ux0(b) - need;
+                if (west < 0 || east < 0) return false;
+                return shape == FootprintShape.T ? west >= 2 && east >= 2 : Math.Min(west, east) == 0 && Math.Max(west, east) >= 2;
+            }
+
             // ---- which way round. The plan lays its walk-through rooms along the south side; a front door asked for on a
             // side the plan cannot reach is put on the opposite one and the whole building turned half round after
             var frontAsked = spec.FrontSide;
@@ -1089,6 +1112,19 @@ namespace UnturnedSim
             bool bandsFirst = rng.Chance(bandsChance);
             Grid ground = null;
             int W = 0, D = 0, bx0 = 0;
+            // an L or a T that no layout fits -- with floors above, its wing must be just the floor above's length -- is
+            // drawn again a rectangle, from scratch: what giving up a side or a size said of the L is not true of it
+            int notes0 = res.Notes.Count, wantW0 = wantW, wantD0 = wantD;
+            for (int outline = 0; outline < 2 && ground == null; outline++)
+            {
+            if (outline == 1)
+            {
+                if (shape == FootprintShape.Rect) break;
+                res.Notes.RemoveRange(notes0, res.Notes.Count - notes0);
+                res.Notes.Add($"no {(shape == FootprintShape.L ? "L" : "T")} layout fitted {(multi ? $"{floors} floors" : "its rooms")}: it came out a rectangle");
+                shape = FootprintShape.Rect;
+                frontAsked = spec.FrontSide; wantW = wantW0; wantD = wantD0;
+            }
             // a footprint asked for that no layout fits is let go, said so, and the floor drawn again at its own size
             for (int pass = 0; pass < 3 && ground == null; pass++)
             {
@@ -1104,8 +1140,11 @@ namespace UnturnedSim
                 res.Notes.Add($"no layout fitted the {wantW}x{wantD} cells asked for: sized to its rooms instead");
                 wantW = 0; if (!multi) wantD = 0;
             }
+            // (what a draw that is thrown away said -- two bathrooms it could not part -- goes with it)
+            int passNotes = res.Notes.Count;
             for (int attempt = 0; attempt < 14 && ground == null; attempt++)
             {
+                res.Notes.RemoveRange(passNotes, res.Notes.Count - passNotes);
                 bool bands = attempt < 9 ? bandsFirst : !bandsFirst;
                 var here = new List<RoomKind>(onFloor[0]);
                 wingCut = (0, 0);
@@ -1132,12 +1171,15 @@ namespace UnturnedSim
                     int zj = prs.Where(r => r.X0 < wingCut.X0 || r.X1 > wingCut.X0 + wingCut.Len).Max(r => r.Z1);
                     res.Shape = shape;
                     res.Wing = (wingCut.X0, zj, wingCut.X0 + wingCut.Len, pd);
-                    // a hip has nothing to hip into at the wing: an L or a T is gabled
-                    if (res.Roof == RoofKind.Hip) res.Roof = RoofKind.Gable;
+                    // a hip has nothing to hip into at the wing: an L or a T of one storey is gabled (with floors above,
+                    // the top roof is over the main block, a rectangle, and the arms have sheds of their own)
+                    if (res.Roof == RoofKind.Hip && !multi) res.Roof = RoofKind.Gable;
                 }
                 res.Layout.AddRange(prs);
                 res.Doors.AddRange(doors);
                 onFloor[0] = here;
+            }
+            if (ground == null) res.Notes.RemoveRange(passNotes, res.Notes.Count - passNotes);
             }
             }
             if (ground == null) throw new InvalidOperationException($"BuildingGen: no ground floor connected for {kind} seed {spec.Seed} (min {spec.MinRooms} rooms, {spec.MinFloors}-{spec.MaxFloors} floors, {spec.MaxRoomsPerFloor}/floor): {string.Join(", ", onFloor[0])}");
@@ -1220,27 +1262,36 @@ namespace UnturnedSim
                 }
                 int LenA() => A.Sum(r => Width(r, dA)) + (multi ? HostWidth(host, dA) - Width(host, dA) : 0);
                 int LenB() => B.Sum(r => Width(r, dB));
+                // (the kitchen and dining room stay in band A when anything else can go, and cross together when
+                // nothing else can, so they always share a band and can sit side by side)
+                bool KD(RoomKind r) => r == RoomKind.Kitchen || r == RoomKind.DiningRoom;
+                List<RoomKind> Moving(RoomKind m) { var mv = KD(m) ? A.Where(KD).ToList() : new List<RoomKind> { m }; return mv.Count >= A.Count ? new List<RoomKind> { m } : mv; }
+                // an L or a T with floors above: band B is the wing, just the floor above's length (LtMulti) -- rooms cross
+                // back to A while it is longer than that, and to it while it is short of it and one fits: a wing of one
+                // small room padded out to the floor above's length was two 16-cell bathrooms side by side
+                bool lt = LtMulti();
+                int ends = shape == FootprintShape.T ? 2 : 1;
                 for (int guard = 0; guard < 12; guard++)
                 {
                     int la = LenA(), lb = LenB();
-                    // (the kitchen and dining room stay in band A when anything else can go, and cross together when
-                    // nothing else can, so they always share a band and can sit side by side)
+                    if (lt && lb > need && B.Count > 1) { var m = B[rng.Int(B.Count)]; B.Remove(m); A.Add(m); continue; }
                     var fromA = A.Where(r => r != host || A.Count(x => x == host) > 1).ToList();
                     // (and the garage stays on the entrance side, band A, when anything else can cross: strawberry, "prefer
                     // garage on the front door side of the house")
                     if (fromA.Any(r => r != RoomKind.Garage)) fromA = fromA.Where(r => r != RoomKind.Garage).ToList();
-                    bool KD(RoomKind r) => r == RoomKind.Kitchen || r == RoomKind.DiningRoom;
                     if (fromA.Any(r => !KD(r))) fromA = fromA.Where(r => !KD(r)).ToList();
-                    if ((la > lb + 3 || B.Count == 0) && fromA.Count > 0 && A.Count > 1)
+                    if (lt) fromA = fromA.Where(r => lb + Moving(r).Sum(q => Width(q, dB)) <= need).ToList();
+                    bool toB = (lt ? lb < need - 1 : la > lb + 3) || B.Count == 0;
+                    if (toB && fromA.Count > 0 && A.Count > 1)
                     {
                         var m = fromA[rng.Int(fromA.Count)];
-                        var moving = KD(m) ? A.Where(KD).ToList() : new List<RoomKind> { m };
-                        if (moving.Count >= A.Count) moving = new List<RoomKind> { m };
+                        var moving = Moving(m);
                         // (a dining room holding the stairs stays, and its kitchen with it: band A keeps the stair room)
                         if (multi && moving.Contains(host) && A.Count(x => x == host) <= moving.Count(x => x == host)) break;
                         foreach (var mv in moving) { A.Remove(mv); B.Add(mv); }
+                        continue;
                     }
-                    else if ((lb > la + 3 || A.Count == 0) && B.Count > 1) { var m = B[rng.Int(B.Count)]; B.Remove(m); A.Add(m); }
+                    if (!lt && (lb > la + 3 || A.Count == 0) && B.Count > 1) { var m = B[rng.Int(B.Count)]; B.Remove(m); A.Add(m); }
                     else break;
                 }
                 if (A.Count == 0 || B.Count == 0) return null;
@@ -1270,10 +1321,26 @@ namespace UnturnedSim
                 var rowB = B.Select(r => (k: r, w: Width(r, dB))).ToList();
                 rng.Shuffle(rowB);
                 KitchenBesideDining(rowB);
-                int w = Math.Max(Math.Max(Math.Max(rowA.Sum(x => x.w), rowB.Sum(x => x.w)), Math.Max(need, 4)), wantW);
-                var (bx, bl) = Cut(ref w, rowB.Sum(x => x.w));
+                int w, bx, bl;
+                if (lt)
+                {
+                    // the wing just the floor above's length, where that floor starts (once the bay is placed); the row
+                    // past it the arms' length on at the least, two or three cells a side
+                    if (rowB.Sum(x => x.w) > need) return null;
+                    w = Math.Max(Math.Max(rowA.Sum(x => x.w), need + (2 + shapeRng.Int(2)) * ends), Math.Max(4, wantW));
+                    (bx, bl) = (0, need);
+                }
+                else
+                {
+                    w = Math.Max(Math.Max(Math.Max(rowA.Sum(x => x.w), rowB.Sum(x => x.w)), Math.Max(need, 4)), wantW);
+                    (bx, bl) = Cut(ref w, rowB.Sum(x => x.w));
+                }
                 if (Pad(rowA, w, dA, here, 0, r => AccessOf(r) != Access.Private, multi ? host : RoomKind.Unassigned) > 0) return null;
                 if (Pad(rowB, bl, dB, here, 0, _ => true) > 0) return null;
+                // (a wing whose small rooms had to grow to fill the floor above's length is not one to keep -- it made 12-
+                // and 16-cell bathrooms, which nothing could tuck back: no row neighbour to take a strip and the outside
+                // across from it. A corridor plan's north row has a hall to take the length instead)
+                if (lt && rowB.Any(x => Service(x.k) && x.w > Width(x.k, dB))) return null;
                 ApartBathrooms(rowB);
                 // a business's shop at an end of its row, its end wall the street front, then the rooms you walk through,
                 // then the dead ends; when it holds the stairs, at the end the floors above start from
@@ -1302,11 +1369,19 @@ namespace UnturnedSim
                         // in a shop, at the far end from its street front; a quarter turn in the corner of its room it turns
                         // into (strawberry: "corner stairs need to be up against 2 supporting walls")
                         if (lo <= hi) b = shopEnd && k == RoomKind.Shop ? (shopWest ? hi : lo) : lo + rng.Int(hi - lo + 1);
-                        if (res.StairShape == StairShape.Quarter) { int c = stairsWest ? x : x + wd - L; b = c >= lo && c <= hi ? c : -1; }
+                        int corner = stairsWest ? x : x + wd - L;
+                        if (res.StairShape == StairShape.Quarter) b = corner >= lo && corner <= hi ? corner : -1;
+                        // an L's or a T's floors above stand on the wing: where they start must leave the row its arms
+                        if (lt && b >= 0 && !ArmsOk(b, w))
+                        {
+                            var ok = Enumerable.Range(lo, Math.Max(0, hi - lo + 1)).Where(q => ArmsOk(q, w) && (res.StairShape != StairShape.Quarter || q == corner)).ToList();
+                            b = ok.Count == 0 ? -1 : ok[rng.Int(ok.Count)];
+                        }
                     }
                     x += wd;
                 }
                 if (multi && b < 0) return null;
+                if (lt) { bx = Ux0(b); wingCut = (bx, need); }
                 x = bx;
                 foreach (var (k, wd) in rowB) { rs.Add(new GenRoom { Kind = k, Floor = 0, X0 = x, X1 = x + wd, Z0 = dA, Z1 = dA + dB }); x += wd; }
                 return (rs, w, dA + dB, multi ? b : 0);
@@ -1323,25 +1398,41 @@ namespace UnturnedSim
                     sS = Math.Clamp(sS, 2, wantD - 3); sN = wantD - 1 - sS;
                 }
                 var S = new List<(RoomKind k, int w)>(); var N = new List<(RoomKind k, int w)>();
+                // an L or a T with floors above: the north row is the wing, just the floor above's length (LtMulti), and
+                // the south row has the arms besides
+                bool lt = LtMulti();
+                int ends = shape == FootprintShape.T ? 2 : 1;
                 // (the kitchen and dining room go to one side together, so they can sit side by side)
                 foreach (var r in Seeded(here.Where(r => r != RoomKind.DiningRoom || !here.Contains(RoomKind.Kitchen)), sS))
                 {
                     var pair = r == RoomKind.Kitchen && here.Contains(RoomKind.DiningRoom) ? new[] { r, RoomKind.DiningRoom } : new[] { r };
                     int lenS = L + S.Sum(x => x.w) + pair.Sum(p => Width(p, sS)), lenN = N.Sum(x => x.w) + pair.Sum(p => Width(p, sN));
                     // (a house's garage on the south side, the side its front faces once it is turned to the street)
-                    bool south = lenS <= lenN || (kind == BuildingKind.Residential && r == RoomKind.Garage);
+                    bool south = (lt ? lenS <= lenN + 2 * ends || lenN > need : lenS <= lenN) || (kind == BuildingKind.Residential && r == RoomKind.Garage);
                     foreach (var p in pair) if (south) S.Add((p, Width(p, sS))); else N.Add((p, Width(p, sN)));
                 }
-                int w = Math.Max(Math.Max(Math.Max(L + S.Sum(x => x.w), N.Sum(x => x.w)), Math.Max(need, 4)), wantW);
-                var (nx, nl) = Cut(ref w, N.Sum(x => x.w));
+                int w, nx, nl;
+                if (lt)
+                {
+                    if (N.Sum(x => x.w) > need) return null;
+                    w = Math.Max(Math.Max(L + S.Sum(x => x.w), need + (2 + shapeRng.Int(2)) * ends), Math.Max(4, wantW));
+                    (nx, nl) = (0, need);   // placed once the bay is
+                }
+                else
+                {
+                    w = Math.Max(Math.Max(Math.Max(L + S.Sum(x => x.w), N.Sum(x => x.w)), Math.Max(need, 4)), wantW);
+                    (nx, nl) = Cut(ref w, N.Sum(x => x.w));
+                }
                 int aS = Pad(S, w - L, sS, here, 0, _ => true, hall: true), aN = Pad(N, nl, sN, here, 0, _ => true, hall: true);
                 rng.Shuffle(S);
                 KitchenBesideDining(S); KitchenBesideDining(N);
                 ApartBathrooms(S); ApartBathrooms(N);
                 // a business's shop at an end of its row, its end wall the street front (the south row's at the end away
                 // from the stairs, which go in at the end the floors above start from)
+                // (a T's floors above start past an arm: there the shop is that arm, beyond the stairs, its end wall the
+                // street front still -- and its wall, not the hall, beside a quarter turn's landing)
                 if (kind != BuildingKind.Residential)
-                    foreach (var (row, east) in new[] { (S, stairsWest), (N, rng.Chance(50)) })
+                    foreach (var (row, east) in new[] { (S, lt && shape == FootprintShape.T ? !stairsWest : stairsWest), (N, rng.Chance(50)) })
                     {
                         int si = row.FindIndex(x0 => x0.k == RoomKind.Shop);
                         if (si < 0) continue;
@@ -1362,6 +1453,14 @@ namespace UnturnedSim
                         if (lo > hi) return null;
                         b = lo + rng.Int(hi - lo + 1);
                         if (res.StairShape == StairShape.Quarter) b = stairsWest ? 0 : w - L;   // into the building's corner
+                        // an L's or a T's floors above stand on the wing: where they start must leave the row its arms
+                        if (lt && !ArmsOk(b, w))
+                        {
+                            if (res.StairShape == StairShape.Quarter) return null;
+                            var ok = Enumerable.Range(lo, hi - lo + 1).Where(q => ArmsOk(q, w)).ToList();
+                            if (ok.Count == 0) return null;
+                            b = ok[rng.Int(ok.Count)];
+                        }
                     }
                 }
                 else
@@ -1372,16 +1471,47 @@ namespace UnturnedSim
                     int split = 0;
                     if (multi)
                     {
-                        var splits = safe ? new List<int> { stairsWest ? 0 : S.Count } : Enumerable.Range(0, S.Count + 1).ToList();
-                        // a quarter turn: where the side it turns into is a room's wall or the building's end, not hall
-                        if (res.StairShape == StairShape.Quarter)
-                            splits = splits.Where(i => stairsWest ? i == 0 || S[i - 1].k != RoomKind.Hall : i == S.Count || S[i].k != RoomKind.Hall).ToList();
-                        if (!safe) rng.Shuffle(splits);
-                        split = -1;
-                        foreach (int i in splits)
+                        int Split()
                         {
-                            int at = S.Take(i).Sum(x => x.w);
-                            if (stairsWest ? at + need <= w : at + L >= need) { split = i; b = at; break; }
+                            // (an L's or a T's floors above stand on the wing: any split that leaves the arms, which the
+                            // building's end -- no arm on that side -- would not for a T)
+                            var splits = safe && !lt ? new List<int> { stairsWest ? 0 : S.Count } : Enumerable.Range(0, S.Count + 1).ToList();
+                            // a quarter turn: where the side it turns into is a room's wall or the building's end, not hall
+                            if (res.StairShape == StairShape.Quarter)
+                                splits = splits.Where(i => stairsWest ? i == 0 || S[i - 1].k != RoomKind.Hall : i == S.Count || S[i].k != RoomKind.Hall).ToList();
+                            if (!safe || lt) rng.Shuffle(splits);
+                            foreach (int i in splits)
+                            {
+                                int at = S.Take(i).Sum(x => x.w);
+                                if ((stairsWest ? at + need <= w : at + L >= need) && (!lt || ArmsOk(at, w))) { b = at; return i; }
+                            }
+                            return -1;
+                        }
+                        split = Split();
+                        // a T whose south row leaves it no arm on a side (a business's can be its shop and nothing else):
+                        // the shortest that gives it one, on the side away from a shop at an end of the row, else the
+                        // stairs' side first -- a store room where the floor has space for one more room, else an alcove of
+                        // hall (which a quarter turn, needing a wall on its landing's side, will not take there)
+                        if (split < 0 && lt && shape == FootprintShape.T)
+                        {
+                            bool store = here.Count < perFloor && StoreOk(0, here.Count(k => k == RoomKind.Storage));
+                            // (away from a shop at an end of the row first: it stays at that end, an arm, its end wall the
+                            // street front)
+                            bool shopW = S[0].k == RoomKind.Shop, shopE = S[^1].k == RoomKind.Shop;
+                            foreach (bool west in shopW != shopE ? new[] { shopE, shopW } : new[] { stairsWest, !stairsWest })
+                            {
+                                for (int a = 2; a <= 6 && split < 0; a++)
+                                {
+                                    var arm = (store && a == Width(RoomKind.Storage, sS) ? RoomKind.Storage : RoomKind.Hall, a);
+                                    if (west) S.Insert(0, arm); else S.Add(arm);
+                                    w += a; hall.X1 = w;
+                                    split = Split();
+                                    if (split >= 0) { if (arm.Item1 == RoomKind.Storage) here.Add(RoomKind.Storage); break; }
+                                    if (west) S.RemoveAt(0); else S.RemoveAt(S.Count - 1);
+                                    w -= a; hall.X1 = w;
+                                }
+                                if (split >= 0) break;
+                            }
                         }
                         if (split < 0) return null;
                     }
@@ -1395,6 +1525,7 @@ namespace UnturnedSim
                         x += S[i].w;
                     }
                 }
+                if (lt) { nx = Ux0(b); wingCut = (nx, need); }
                 int xn = nx;
                 foreach (var (k, wd) in N) { rs.Add(new GenRoom { Kind = k, Floor = 0, X0 = xn, X1 = xn + wd, Z0 = sS + 1, Z1 = sS + 1 + sN }); xn += wd; }
                 if (aN > 0) hall.More.Add((xn, sS + 1, nx + nl, sS + 1 + sN));
@@ -1867,17 +1998,19 @@ namespace UnturnedSim
             // the wall of the floor above, rising from its eave at the open end to that wall -- RoofShapes' Shed, so it is
             // the same roof the editor's Shed button builds. Pitched no steeper than lets it meet that wall under its
             // head. Closed as the editor closes one (RoofShapes.ShedInfill): the open end's wall gets a band up to the
-            // eave's underside, and the two side walls a band and a right triangle each over the stretch it covers.
-            void Lower(float xa, float xb, WallPlan endWall, bool westEnd, float head)
+            // eave's underside, and the two side walls a band and a right triangle each over the stretch it covers. Its
+            // north side on the line z = zN: the building's north wall, or an L's or a T's arm's, which is only as deep as
+            // the full-length row (Wing.Z0) -- the arm's roof goes no further north than the arm.
+            void Lower(float xa, float xb, WallPlan endWall, bool westEnd, float head, float zN)
             {
-                if (res.Roof == RoofKind.Flat) { res.Walls.Add(SlabPlan(xa, xb, -he, Dm + he, head + Slab, SurfaceKind.Roof)); return; }
+                if (res.Roof == RoofKind.Flat) { res.Walls.Add(SlabPlan(xa, xb, -he, zN + he, head + Slab, SurfaceKind.Roof)); return; }
                 float minX = westEnd ? xa - RoofOverhang : xa, maxX = westEnd ? xb : xb + RoofOverhang;
                 float run = maxX - minX;
                 float pitch = MathF.Min(res.RoofPitch, MathF.Atan((Storey - 0.6f) / run) * 180f / MathF.PI);
                 var rs = new RoofSpec
                 {
                     Kind = RoofKind.Shed, High = westEnd ? RoofSide.East : RoofSide.West, MinX = minX, MaxX = maxX,
-                    MinZ = -he - RoofOverhang, MaxZ = Dm + he + RoofOverhang, TopY = head, PitchDeg = pitch, Thickness = Slab,
+                    MinZ = -he - RoofOverhang, MaxZ = zN + he + RoofOverhang, TopY = head, PitchDeg = pitch, Thickness = Slab,
                 };
                 foreach (var pl in RoofShapes.Planes(rs))
                     res.Walls.Add(new WallPlan { X = pl.X, Y = pl.Y, Z = pl.Z, Yaw = pl.YawDeg, Pitch = pl.PitchDeg, Length = pl.Length, Height = pl.Height,
@@ -1885,11 +2018,13 @@ namespace UnturnedSim
                 // `into`: run on past the high end, through the upper wall to its inner face -- a side's corner with
                 // that wall, which the editor's corner pass would otherwise grow blind into the wall already standing
                 // there (and on into the room). A hair thinner than that wall, so the overlap hides inside it rather
-                // than fighting its faces.
-                void Close(float x0, float z0, float x1, float z1, float yaw, bool into = false)
+                // than fighting its faces. Where the side meets the upper wall part way along it -- an arm's north side,
+                // a tee, not a corner -- only to its middle: the corner pass grows a tee to the middle, and an end face on
+                // the inner face, with no wall across it there, would fight that face in the room upstairs.
+                void Close(float x0, float z0, float x1, float z1, float yaw, bool into = false, bool tee = false)
                 {
                     var (band, tri, highAtEnd) = RoofShapes.ShedInfill(rs, x0, z0, x1, z1);
-                    float len = MathF.Abs(x1 - x0) + MathF.Abs(z1 - z0), ext = into ? Ext : 0f, thick = into ? Ext - 0.02f : Ext;
+                    float len = MathF.Abs(x1 - x0) + MathF.Abs(z1 - z0), ext = into ? (tee ? he : Ext) : 0f, thick = into ? Ext - 0.02f : Ext;
                     var (yc, ys) = PlanTrig.CosSin(yaw);
                     float dx = yc, dz = -ys;
                     float ox = highAtEnd ? x0 : x0 - dx * ext, oz = highAtEnd ? z0 : z0 - dz * ext;
@@ -1902,7 +2037,7 @@ namespace UnturnedSim
                 var (ec, es) = PlanTrig.CosSin(endWall.Yaw);
                 var e1 = (X: endWall.X + ec * endWall.Length, Z: endWall.Z - es * endWall.Length);
                 Close(endWall.X, endWall.Z, e1.X, e1.Z, endWall.Yaw);   // the open end
-                Close(xa, Dm, xb, Dm, 0f, into: true);                   // the north side, running +X
+                Close(xa, zN, xb, zN, 0f, into: true, tee: zN < Dm - 0.01f);   // the north side, running +X
                 Close(xb, 0f, xa, 0f, 180f, into: true);                 // the south side, running -X
             }
             for (int f = 0; f < floors; f++)
@@ -1997,16 +2132,59 @@ namespace UnturnedSim
                 var fr = res.Front;
                 var frSide = fr == null ? Sides.None : grids[0].Out(fr.AlongX, fr.Line, (int)MathF.Floor(fr.At / Cell));
                 Face Facing(Sides sd) => fr == null ? Face.Side : sd == frSide ? Face.Front : sd == Turned(frSide) ? Face.Back : Face.Side;
-                // an end wall with the floor below's roof leaning on it gets no windows: the roof is in front of them
-                bool westUnder = f > 0 && res.Roof != RoofKind.Flat && res.Footprints[f - 1].X0 < ux0;
-                bool eastUnder = f > 0 && res.Roof != RoofKind.Flat && res.Footprints[f - 1].X1 > ux1;
-                var outside = Runs(g).Where(r => r.B == null).ToList();
-                foreach (var run in outside)
+                // A pitched roof below leaning on this storey's wall (strawberry: the lower roof's "slope from the wall off
+                // the edge") stands in front of it, so no window goes where it does. A run with one the whole way along has
+                // none at all, as an end wall over the uncovered part of the floor below always had; a run it covers part
+                // of -- an L's or a T's end wall, whose arm is only the full-length row deep -- loses that stretch. And no
+                // window anywhere that does not clear every roof below it by WindowOverRoof. All read off the roofs
+                // already laid (the floors below's), just outside the wall's face.
+                var lowRoofs = f > 0 ? res.Walls.Where(w => w.Kind == SurfaceKind.Roof).ToList() : new List<WallPlan>();
+                float y0 = f * Storey;
+                (float X, float Z) Before(Run r, float at, float off)
                 {
-                    if (!run.AlongX && ((run.Line == ux0 && westUnder) || (run.Line == ux1 && eastUnder))) continue;
-                    var room = run.A;
-                    var w = Side(run.AlongX, run.Line, (run.S0 + run.S1) * 0.5f * Cell);
-                    float lo = run.S0 * Cell + g.Meet(run.AlongX, run.Line, run.S0), hi = run.S1 * Cell - g.Meet(run.AlongX, run.Line, run.S1);
+                    var sd = g.Out(r.AlongX, r.Line, r.S0);
+                    float o = he + off, l = r.Line * Cell;
+                    return r.AlongX ? (at, l + (sd == Sides.North ? o : -o)) : (l + (sd == Sides.East ? o : -o), at);
+                }
+                // the stretches of a run with a pitched roof below leaning on this storey's wall in front of them, and
+                // whether that is all of it
+                (List<(float A, float B)> Stretches, bool Whole) Leaned(Run r)
+                {
+                    var st = new List<(float A, float B)>();
+                    bool all = true;
+                    if (lowRoofs.Count == 0) return (st, false);
+                    float a0 = r.S0 * Cell, a1 = r.S1 * Cell;
+                    int n = (int)MathF.Round((a1 - a0) / 0.1f);
+                    for (int i = 0; i <= n; i++)
+                    {
+                        float at = a0 + (a1 - a0) * i / n;
+                        var (px, pz) = Before(r, at, 0.05f);
+                        bool lean = lowRoofs.Any(w => MathF.Abs(w.Pitch + 90f) > 0.01f && SurfaceTopAt(w, px, pz) > y0);
+                        if (!lean) { all = false; continue; }
+                        if (st.Count > 0 && st[^1].B >= at - 0.15f) st[^1] = (st[^1].A, at); else st.Add((at, at));
+                    }
+                    return (st, all);
+                }
+                // does a window of this kind, centred `at` along the run and `wd` wide, clear every roof below by WindowOverRoof
+                bool Clears(Run r, int arch, float at, float wd)
+                {
+                    if (lowRoofs.Count == 0) return true;
+                    float top = float.NegativeInfinity;
+                    for (int i = 0; i <= 8; i++)
+                        foreach (float off in new[] { 0.05f, 0.4f })
+                        {
+                            var (px, pz) = Before(r, at - wd * 0.5f + wd * i / 8f, off);
+                            foreach (var w in lowRoofs) if (SurfaceTopAt(w, px, pz) is float h && h > top) top = h;
+                        }
+                    return top + WindowOverRoof <= y0 + ArchSizes[arch].Sill;
+                }
+                var outside = Runs(g).Where(r => r.B == null).ToList();
+                var leaned = outside.Select(Leaned).ToList();
+                // the free stretches of outside run ri: not where a door went, not behind the flight, not beside a roof below
+                List<(float A, float B)> FreeOf(int ri)
+                {
+                    var run = outside[ri];
+                        float lo = run.S0 * Cell + g.Meet(run.AlongX, run.Line, run.S0), hi = run.S1 * Cell - g.Meet(run.AlongX, run.Line, run.S1);
                     // the free stretches of this run: not where a door went, not behind the flight
                     var cuts = outDoors.Where(o => o.AlongX == run.AlongX && o.Line == run.Line && o.At > lo && o.At < hi)
                                        .Select(o => (o.At - HalfDoor - 0.3f, o.At + HalfDoor + 0.3f)).ToList();
@@ -2018,20 +2196,36 @@ namespace UnturnedSim
                         if (run.AlongX && run.Line == 0) cuts.Add((bay.X0 * Cell - 0.3f, bay.X1 * Cell + 0.3f));
                         if (!run.AlongX && (run.Line == bay.X0 || run.Line == bay.X1)) cuts.Add((bay.Z0 * Cell - 0.3f, bay.Z1 * Cell + 0.3f));
                     }
+                    // and not where a roof below leans on it, nor within WindowBesideRoof of that
+                    cuts.AddRange(leaned[ri].Stretches.Select(q => (q.A - WindowBesideRoof, q.B + WindowBesideRoof)));
                     var free = new List<(float A, float B)> { (lo, hi) };
                     foreach (var (c0, c1) in cuts)
                         free = free.SelectMany(s => s.B <= c0 || s.A >= c1 ? new[] { s } : new (float A, float B)[] { (s.A, Math.Min(s.B, c0)), (Math.Max(s.A, c1), s.B) })
                                    .Where(s => s.B - s.A > 0.1f).ToList();
+                    return free;
+                }
+                for (int ri = 0; ri < outside.Count; ri++)
+                {
+                    var run = outside[ri];
+                    if (leaned[ri].Whole) continue;
+                    var room = run.A;
+                    var w = Side(run.AlongX, run.Line, (run.S0 + run.S1) * 0.5f * Cell);
+                    var free = FreeOf(ri);
                     // (its longest run that may have a window: a side asked to have none never takes the one vent or slit)
                     Sides SideOfRun(Run r) => g.Out(r.AlongX, r.Line, r.S0);
                     // (a garage's: on the front door's own wall where it has a stretch of it, so the vehicle door faces the street)
                     var frontDoor = res.Doors.FirstOrDefault(d => d.Role == DoorRole.Front && d.Floor == 0);
                     bool OnFrontWall(Run r) => room.Kind == RoomKind.Garage && frontDoor != null && r.AlongX == frontDoor.AlongX && r.Line == frontDoor.Line
                                                && (r.S1 - r.S0) * Cell >= ArchSizes[ArchGarage].W;
-                    var mine = outside.Where(r => r.A == room && (r.AlongX || !((r.Line == ux0 && westUnder) || (r.Line == ux1 && eastUnder))))
-                                      .OrderBy(r => (SideOfRun(r) & res.NoWindowSides) != 0 ? 1 : 0)
-                                      .ThenBy(r => OnFrontWall(r) ? 0 : 1)
-                                      .ThenByDescending(r => r.S1 - r.S0).ThenBy(r => r.AlongX ? 0 : 1).First();
+                    // (and a garage's or warehouse's vehicle door on a run with a free stretch it fits: the longest wall can be
+                    // the one the stairs stand against -- a narrow plot's warehouse lost its door that way)
+                    bool vehicleRoom = (room.Kind == RoomKind.Garage || room.Kind == RoomKind.Warehouse) && f == 0;
+                    bool DoorFits(int i) => FreeOf(i).Any(q => q.B - q.A >= ArchSizes[ArchGarage].W);
+                    var mine = outside.Select((r, i) => (r, i)).Where(x => x.r.A == room && !leaned[x.i].Whole)
+                                      .OrderBy(x => (SideOfRun(x.r) & res.NoWindowSides) != 0 ? 1 : 0)
+                                      .ThenBy(x => !vehicleRoom || DoorFits(x.i) ? 0 : 1)
+                                      .ThenBy(x => OnFrontWall(x.r) ? 0 : 1)
+                                      .ThenByDescending(x => x.r.S1 - x.r.S0).ThenBy(x => x.r.AlongX ? 0 : 1).First().r;
                     bool longest = mine.AlongX == run.AlongX && mine.Line == run.Line && mine.S0 == run.S0;
                     var arches = new List<(int Arch, float At, float Width)>();
                     // the vehicle door first, on a garage's or warehouse's longest outside run, then windows round it
@@ -2091,7 +2285,8 @@ namespace UnturnedSim
                                   : side ? 1 : Math.Max(1, (int)((s1 - s0) / (2 * Cell)));
                             arches.AddRange(Spread(s0, s1, Enumerable.Repeat(win, n).ToList(), shopFront ? StoreWindow : 0f));
                         }
-                    foreach (var (arch, at, wd) in arches) w.Openings.Add(Make(arch, U(w, at), wd));
+                    foreach (var (arch, at, wd) in arches)
+                        if (arch == ArchGarage || Clears(run, arch, at, wd)) w.Openings.Add(Make(arch, U(w, at), wd));
                 }
 
                 foreach (var o in outs) res.Walls.Add(o.W);
@@ -2120,35 +2315,37 @@ namespace UnturnedSim
                         res.Walls.Add(cover);
                     }
                 }
-                if (res.Shape != FootprintShape.Rect)   // one storey
-                {
+                // an L's or a T's ground floor is its two slabs (the floors above stand on the main block: rectangles)
+                if (f == 0 && res.Shape != FootprintShape.Rect)
                     foreach (var sl in Slabs(res, y, SurfaceKind.Floor)) { sl.Texel = baseTexel; res.Walls.Add(sl); }
-                    continue;
+                else
+                {
+                    var floorSlab = SlabPlan(x0m - he, x1m + he, -he, Dm + he, y, SurfaceKind.Floor);
+                    floorSlab.Texel = baseTexel;
+                    if (f > 0 && res.StairShape != StairShape.Straight)
+                        foreach (var (hx0, hz0, hx1, hz1) in res.Switchback ? new[] { SwitchbackHole(bay) } : QuarterHole(bay, res.QuarterWest))
+                            floorSlab.Openings.Add(new WallOpening(hx0 - (x0m - he), (Dm + he) - hz1, hx1 - hx0, hz1 - hz0));
+                    res.Walls.Add(floorSlab);
                 }
-                var floorSlab = SlabPlan(x0m - he, x1m + he, -he, Dm + he, y, SurfaceKind.Floor);
-                floorSlab.Texel = baseTexel;
-                if (f > 0 && res.StairShape != StairShape.Straight)
-                    foreach (var (hx0, hz0, hx1, hz1) in res.Switchback ? new[] { SwitchbackHole(bay) } : QuarterHole(bay, res.QuarterWest))
-                        floorSlab.Openings.Add(new WallOpening(hx0 - (x0m - he), (Dm + he) - hz1, hx1 - hx0, hz1 - hz0));
-                res.Walls.Add(floorSlab);
-                // a roof on whatever of this floor the one above leaves uncovered: flat on a business; on a house a gable of
-                // its own, its ridge running into the wall of the floor above (strawberry: "any reason why the 1st floor
-                // section of roof is flat instead of gable? it can be a lower angle gable if required")
+                // a roof on whatever of this floor the one above leaves uncovered: flat on a business; on a house a shed of
+                // its own leaning on the wall of the floor above (Lower). Over an L's or a T's ground floor that is the
+                // full-length row's arm(s) past the main block, only that row deep.
                 if (f + 1 < floors)
                 {
                     var (a0, a1) = res.Footprints[f + 1];
-                    float wallHead = (f + 1) * Storey;
+                    float wallHead = (f + 1) * Storey, zN = f == 0 && res.Shape != FootprintShape.Rect ? res.Wing.Z0 * Cell : Dm;
                     WallPlan End(int line) => outs.First(o => !o.AlongX && o.Line == line).W;
-                    if (a0 > ux0) Lower(x0m - he, a0 * Cell - he, End(ux0), true, wallHead);
-                    if (a1 < ux1) Lower(a1 * Cell + he, x1m + he, End(ux1), false, wallHead);
+                    if (a0 > ux0) Lower(x0m - he, a0 * Cell - he, End(ux0), true, wallHead, zN);
+                    if (a1 < ux1) Lower(a1 * Cell + he, x1m + he, End(ux1), false, wallHead, zN);
                 }
             }
 
             // ---- the top roof: a house's gable (the editor's RoofShapes, eaves past the walls by its overhang, the walls
-            // across the ridge raised into gable ends), a business's flat slab
+            // across the ridge raised into gable ends), a business's flat slab -- over the top floor, a rectangle but for a
+            // one-storey L or T, whose house roof is a cross gable
             var (t0, t1) = res.Footprints[floors - 1];
             float head = floors * Storey;
-            if (res.Shape != FootprintShape.Rect)
+            if (res.Shape != FootprintShape.Rect && floors == 1)
             {
                 if (res.Roof == RoofKind.Flat) res.Walls.AddRange(Slabs(res, head + Slab, SurfaceKind.Roof));
                 else CrossGable(res, head);
@@ -2176,7 +2373,6 @@ namespace UnturnedSim
                 }
             }
             else res.Walls.Add(SlabPlan(t0 * Cell - he, t1 * Cell + he, -he, Dm + he, head + Slab, SurfaceKind.Roof));
-            if (res.Shape != FootprintShape.Rect) return;   // one storey: no stairs
 
             // ---- the stairs: k1 flight rows against the south wall, centred along the bay. One flight climbs east up row
             // 0; with alternating rows, odd floors climb west up row 1, so each lands beside the next one's foot.
@@ -2363,6 +2559,31 @@ namespace UnturnedSim
                 if (float.IsNaN(best) || h > best) best = h;
             }
             return best;
+        }
+
+        /// <summary>How far a window's sill stands over the top face of a roof below it, at the least: a window with a roof
+        /// that close in front of it is behind the roof, and is left out (BuildWalls).</summary>
+        public const float WindowOverRoof = 0.3f;
+        /// <summary>How far along a wall a window keeps from where a roof below leans on it: an arm's shed stands up to
+        /// 3.65 m over its eave at the wall, level with an upper window's head, so a window at its very edge would read as
+        /// tucked under it from any angle but square on.</summary>
+        public const float WindowBesideRoof = 0.6f;
+
+        /// <summary>The top face of one roof surface over a plan point, NaN where it is not over it: a slab's top, or a
+        /// pitched plane's mid-surface (RoofTopAt's height) plus half its thickness, measured square to the slope.</summary>
+        public static float SurfaceTopAt(WallPlan w, float x, float z)
+        {
+            if (MathF.Abs(w.Pitch + 90f) < 0.01f)
+                return x < w.X || x > w.X + w.Length || z < w.Z - w.Height || z > w.Z ? float.NaN : w.Y + w.Thickness * 0.5f;
+            var (c, s) = PlanTrig.CosSin(w.Yaw);
+            float dx = c, dz = -s, ux = dz, uz = -dx;        // along the eave, and up the slope (to its right)
+            float px = x - w.X, pz = z - w.Z, u = px * dx + pz * dz, vp = px * ux + pz * uz;
+            float pitch = (w.Pitch + 90f) * MathF.PI / 180f, Hp = w.Height * MathF.Cos(pitch);
+            if (vp < 0f || vp > Hp) return float.NaN;
+            float t = Hp > 1e-4f ? vp / Hp : 0f;
+            float lo = w.InsetL0 + (w.InsetL1 - w.InsetL0) * t, hi = w.Length - (w.InsetR0 + (w.InsetR1 - w.InsetR0) * t);
+            if (u < lo || u > hi) return float.NaN;
+            return w.Y + vp * MathF.Tan(pitch) + w.Thickness * 0.5f / MathF.Cos(pitch);
         }
 
         /// <summary>The fireplace and chimney: a breast ChimneyWide by ChimneyDeep against an outside wall of the living room,

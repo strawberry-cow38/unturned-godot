@@ -19,11 +19,13 @@ namespace UnturnedSim.Tests
     {
         const float Cell = BuildingGen.Cell, Storey = BuildingGen.Storey;
 
-        // ---- the sweep: every kind, many seeds, and specs that push on each limit
+        // ---- the sweep: every kind, many seeds, and specs that push on each limit (UG_GENSWEEP_SEEDS runs it over more
+        // seeds than the 24 a test run takes, for a one-off wider look; the counts the tests assert are floors, so they hold)
+        static readonly int SweepSeeds = int.TryParse(Environment.GetEnvironmentVariable("UG_GENSWEEP_SEEDS"), out var n) && n > 0 ? n : 24;
         static IEnumerable<BuildingGenSpec> Specs()
         {
             foreach (BuildingKind kind in Enum.GetValues(typeof(BuildingKind)))
-                for (int seed = 0; seed < 24; seed++)
+                for (int seed = 0; seed < SweepSeeds; seed++)
                 {
                     // (a block of flats is five to ten times a house's rooms, and furnishing is most of the time a building
                     // takes: every other seed, and its own specs below on those)
@@ -55,6 +57,11 @@ namespace UnturnedSim.Tests
                     // check here also runs over the compromises FitPlot makes -- smaller rooms, more floors, fewer rooms
                     var (pw, pd) = Plots[seed % Plots.Length];
                     yield return new BuildingGenSpec { Seed = seed, Kind = kind, MinRooms = 5, MaxFloors = 2, MaxRoomsPerFloor = 6, Width = pw, Depth = pd, FitPlot = true };
+                    // an L and a T of more than one storey, asked for: the floors above stand on the wing's columns and the
+                    // arm(s) stay one storey -- so every check here runs over them too, chimneys and porches included
+                    yield return new BuildingGenSpec { Seed = seed, Kind = kind, MinRooms = 7, MinFloors = 2, MaxFloors = 3, MaxRoomsPerFloor = 5,
+                        Shape = seed % 2 == 0 ? FootprintShape.L : FootprintShape.T, Chimney = seed % 3 == 0 ? ChimneyChoice.Yes : ChimneyChoice.Auto,
+                        Porches = seed % 4 == 1 ? PorchChoice.Both : PorchChoice.Auto };
                 }
             // and, as wide as UG_APT_SEEDS asks, blocks of flats of every shape -- through EVERY check here, not only the
             // flats' own (each is a second or so to build and furnish: the default is none)
@@ -801,13 +808,21 @@ namespace UnturnedSim.Tests
             return w.Y + w.Height * Math.Clamp(k, 0f, 1f);
         }
 
-        /// <summary>How much of an outside wall a room has: the length of its stretch of the building's edge on that wall.</summary>
+        /// <summary>How much of an outside wall a room has: the length of its stretch of the building's edge on that wall --
+        /// on the wall's line AND along the wall's run, by more than a wall's thickness. (On the line alone, an L's or a T's
+        /// inner end wall, which stands on the line of a room's edge in the full-length row a cell or more away from it,
+        /// counted as that room's; and an inside corner's wall runs on half its thickness past the corner, along a room
+        /// it does not bound -- which made a bathroom whose one outside wall faces a side asked to have no windows look as if
+        /// it had another.)</summary>
         static float SpanOf(GenRoom g, WallPlan w)
         {
             bool alongX = w.Yaw == 0f || w.Yaw == 180f;
             float line = alongX ? w.Z : w.X;
-            return g.Rects.Sum(r => alongX ? ((MathF.Abs(r.Z0 * Cell - line) < 0.5f || MathF.Abs(r.Z1 * Cell - line) < 0.5f) ? (r.X1 - r.X0) * Cell : 0f)
-                                           : ((MathF.Abs(r.X0 * Cell - line) < 0.5f || MathF.Abs(r.X1 * Cell - line) < 0.5f) ? (r.Z1 - r.Z0) * Cell : 0f));
+            var p = Start(w); var q = At(w, w.Length);
+            float a0 = alongX ? MathF.Min(p.X, q.X) : MathF.Min(p.Z, q.Z), a1 = alongX ? MathF.Max(p.X, q.X) : MathF.Max(p.Z, q.Z);
+            float Along(float b0, float b1) { float o = MathF.Min(b1, a1) - MathF.Max(b0, a0); return o > BuildingGen.Ext ? o : 0f; }
+            return g.Rects.Sum(r => alongX ? ((MathF.Abs(r.Z0 * Cell - line) < 0.5f || MathF.Abs(r.Z1 * Cell - line) < 0.5f) ? Along(r.X0 * Cell, r.X1 * Cell) : 0f)
+                                           : ((MathF.Abs(r.X0 * Cell - line) < 0.5f || MathF.Abs(r.X1 * Cell - line) < 0.5f) ? Along(r.Z0 * Cell, r.Z1 * Cell) : 0f));
         }
 
         // G: the openings suit the room: daylight in every habitable room, a vent or window in a bathroom, a vehicle door
@@ -818,7 +833,7 @@ namespace UnturnedSim.Tests
         public void OpeningsSuitTheRoom()
         {
             var bad = new List<string>();
-            int lit = 0, vented = 0, vehicle = 0, shops = 0, endFronts = 0, blank = 0, stockDoors = 0, clear = 0, shortExcused = 0;
+            int lit = 0, vented = 0, vehicle = 0, shops = 0, endFronts = 0, blank = 0, stockDoors = 0, clear = 0, shortExcused = 0, backFronted = 0;
             foreach (var (spec, res) in All())
             {
                 var outer = res.Walls.Where(w => w.Kind == SurfaceKind.Wall && w.Thickness == BuildingGen.Ext).ToList();
@@ -856,6 +871,16 @@ namespace UnturnedSim.Tests
                         var front = ends.Count > 0 ? ends : ground.Where(w => SpanOf(g, w) >= longest - 0.01f).ToList();
                         // a front side asked for outranks the frontage
                         if (spec.FrontSide != Sides.None) front = ground.Where(w => SpanOf(g, w) > 0.01f && (FaceOf(w) & spec.FrontSide) != 0).ToList();
+                        // and so does a back side asked for, where the frontage faces it: the street door keeps off that side
+                        // where it can go elsewhere (BuildingGen's Door2), so it is in another of the shop's walls -- the
+                        // generator's priority since sides could be asked for. The sweep's 24 seeds never met it; a wider
+                        // one does, in rectangles too: Commercial, min 7, 1-2 floors of 6, back door East -- 99 of 200
+                        // seeds, all rectangles, on the generator before L and T had upper floors
+                        else if (spec.BackSide != Sides.None && ends.Count > 0 && ends.All(w => (FaceOf(w) & spec.BackSide) != 0))
+                        {
+                            front = ground.Where(w => SpanOf(g, w) > 0.01f && (FaceOf(w) & spec.BackSide) == 0).ToList();
+                            backFronted++;
+                        }
                         if (doorWalls.Count == 0) bad.Add($"{n} has no street door");
                         else if (!doorWalls.Any(front.Contains)) bad.Add($"{n}'s doors are not in its frontage ({(ends.Count > 0 ? "an end wall" : "its longest wall")})");
                         else { shops++; if (ends.Count > 0) endFronts++; }
@@ -883,7 +908,7 @@ namespace UnturnedSim.Tests
                         }
                 }
             }
-            TestContext.Progress.WriteLine($"[gen-suit] {lit} habitable rooms lit, {vented} bathrooms vented, {vehicle} vehicle doors, {shops} shopfronts ({endFronts} in an end wall), {blank} closets/stores blank ({stockDoors} stores with only their back door), {clear} outside openings checked clear of flights; {shortExcused} rooms short of a window or vehicle door in plot-fitted buildings that say so; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
+            TestContext.Progress.WriteLine($"[gen-suit] {lit} habitable rooms lit, {vented} bathrooms vented, {vehicle} vehicle doors, {shops} shopfronts ({endFronts} in an end wall, {backFronted} kept off a back side asked for), {blank} closets/stores blank ({stockDoors} stores with only their back door), {clear} outside openings checked clear of flights; {shortExcused} rooms short of a window or vehicle door in plot-fitted buildings that say so; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
             Assert.That(shortExcused, Is.LessThanOrEqualTo(All().Count(x => x.Spec.FitPlot) / 20), "plot-fitted buildings often come out without windows");
             Assert.That(lit, Is.GreaterThan(500));
             Assert.That(vented, Is.GreaterThan(100));
@@ -915,6 +940,9 @@ namespace UnturnedSim.Tests
                     return res.Porches.Any(p => cx > p.X0 - 0.6f && cx < p.X1 + 0.6f && cz > p.Z0 - 0.6f && cz < p.Z1 + 0.6f);
                 }
                 var roofs = res.Walls.Where(w => w.Kind == SurfaceKind.Roof && !OverPorch(w)).ToList();
+                // (an L or a T of one storey has a cross gable; of more, the floors above stand on its main block and the
+                // top roof is over them, a rectangle's, the arm(s) a shed each like any lower part left uncovered)
+                bool cross = res.Shape != FootprintShape.Rect && res.Floors == 1;
                 var slopes = roofs.Where(w => MathF.Abs(w.Pitch + 90f) > 0.5f).ToList();
                 var topSlopes = slopes.Where(w => MathF.Abs(w.Y - res.Floors * Storey) < 0.05f).ToList();
                 bool raised = res.Walls.Any(w => w.Kind == SurfaceKind.Wall && w.GableRise > 0.01f);
@@ -925,7 +953,6 @@ namespace UnturnedSim.Tests
                     // leaves uncovered one shed slope of its own
                     // (an L or a T: a cross gable -- every slope over the top floor, starting at its head or, above an
                     // arm's ridge, higher; the main roof's ends and each arm's raised)
-                    bool cross = res.Shape != FootprintShape.Rect;
                     int raisedEnds = res.Walls.Count(w => w.Kind == SurfaceKind.Wall && w.GableRise > 0.01f);
                     if (cross) topSlopes = slopes.Where(w => w.Y > res.Floors * Storey - 0.05f).ToList();
                     bool topOk = cross ? res.Roof == RoofKind.Gable && topSlopes.Count >= 5 && raisedEnds >= 3
@@ -958,15 +985,19 @@ namespace UnturnedSim.Tests
                     float runW = w.Height * MathF.Cos((w.Pitch + 90f) * MathF.PI / 180f);
                     var xs = new[] { w.X, w.X + dw.X * w.Length, w.X - nw.X * runW, w.X + dw.X * w.Length - nw.X * runW };
                     float sx0 = xs.Min(), sx1 = xs.Max();
+                    // (and along z: the building's depth, or an L's or a T's arm's, the full-length row's -- its sides are
+                    // the walls an overhang in from its edges)
+                    var zs = new[] { w.Z, w.Z + dw.Z * w.Length, w.Z - nw.Z * runW, w.Z + dw.Z * w.Length - nw.Z * runW };
+                    float sz0 = zs.Min(), sz1 = zs.Max(), inset = BuildingGen.Ext * 0.5f + BuildingGen.RoofOverhang;
                     // leaning on the upper wall: highest against it, its eave at the open end
                     var (u0, u1) = res.Footprints[above];
                     bool westPart = sx1 <= u0 * Cell + 0.5f;
-                    float zMid = res.CellsZ * Cell * 0.5f;
+                    float zMid = (sz0 + sz1) * 0.5f;
                     float hWall = RoofHeightAt(w, westPart ? u0 * Cell - 0.6f : u1 * Cell + 0.6f, zMid);
                     float hOpen = RoofHeightAt(w, westPart ? sx0 + 0.6f : sx1 - 0.6f, zMid);
                     if (float.IsNaN(hWall) || float.IsNaN(hOpen) || hWall < hOpen + 0.5f) bad.Add($"{Name(spec)}: the roof over floor {above - 1} does not rise to the wall above it ({hWall:0.00} m there, {hOpen:0.00} at its open end)");
                     else leaning++;
-                    foreach (float zLine in new[] { 0f, res.CellsZ * Cell })
+                    foreach (float zLine in new[] { sz0 + inset, sz1 - inset })
                         for (int t = 1; t < 8; t++)
                         {
                             float x = sx0 + (sx1 - sx0) * t / 8f;
@@ -998,7 +1029,7 @@ namespace UnturnedSim.Tests
                             if (f < top && x >= res.Footprints[f + 1].X0 && x < res.Footprints[f + 1].X1) continue;
                             exposed++;
                             bool covered = res.Roof != RoofKind.Flat
-                                ? slopes.Any(w => (res.Shape != FootprintShape.Rect ? w.Y > (f + 1) * Storey - 0.05f : MathF.Abs(w.Y - (f + 1) * Storey) < 0.05f) && !float.IsNaN(RoofHeightAt(w, px, pz)))
+                                ? slopes.Any(w => (cross ? w.Y > (f + 1) * Storey - 0.05f : MathF.Abs(w.Y - (f + 1) * Storey) < 0.05f) && !float.IsNaN(RoofHeightAt(w, px, pz)))
                                 : roofs.Any(w => MathF.Abs(w.Pitch + 90f) < 0.5f && MathF.Abs(w.Y - (f + 1) * Storey - BuildingGen.Slab * 0.5f) < 0.05f
                                                  && px > w.X && px < w.X + w.Length && pz > w.Z - w.Height && pz < w.Z);
                             if (!covered) bad.Add($"{Name(spec)}: floor {f} cell ({x},{z}) has no roof over it");
@@ -1989,6 +2020,58 @@ namespace UnturnedSim.Tests
                 TestContext.Progress.WriteLine($"[flats-plot] {z.Name} {z.W}x{z.D}: {fits} of {seeds} fit, {closest} the closest instead ({string.Join(", ", sizes.Select(kv => $"{kv.Value} at {kv.Key}"))}); {valid} of {seeds} valid blocks (corridor, stairwell, 2+ flats a floor, 2-4 floors, every flat check); {shortOf} short of furniture; gave up {string.Join(", ", gave.Select(kv => $"{kv.Value} x {kv.Key}"))}");
                 if (z.W >= 11 && z.D >= 9 || z.W >= 19) Assert.That(fits, Is.EqualTo(seeds), $"{z.Name} {z.W}x{z.D}: not every block fits");
             }
+            Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(10)));
+        }
+
+        // R: an L or a T asked for keeps its outline with floors above (strawberry asked for the shapes; "one storey only"
+        // made every L or T of two floors a rectangle, with a note). The floors above stand on exactly the wing's columns,
+        // the full depth; the full-length row runs on past them one storey -- one arm for an L, one each side for a T, two
+        // cells at the least -- and each arm has a roof of its own at the ground floor's head, a shed for a house and a flat
+        // slab for a business. RoofsSuitTheKindAndCoverEverything and the rest of the sweep check those roofs and the walls
+        // round them; this pins that the shape is kept at all.
+        // BREAK IT: make floors > 1 a rectangle again; stand the floor above on the full-length row instead; give an arm no
+        // roof (Lower with the arm's depth left out).
+        [Test]
+        public void ForcedLAndTKeepTheirOutlineWithFloorsAbove()
+        {
+            var bad = new List<string>();
+            var kept = new Dictionary<FootprintShape, (int Kept, int Asked)>();
+            int arms = 0, roofed = 0;
+            foreach (BuildingKind kind in Enum.GetValues(typeof(BuildingKind)))
+                if (kind != BuildingKind.Apartment)   // (a block of flats is a rectangle by design, and says so in a note)
+                foreach (var shape in new[] { FootprintShape.L, FootprintShape.T })
+                    for (int seed = 0; seed < 12; seed++)
+                        foreach (int fl in new[] { 2, 3 })
+                        {
+                            var spec = new BuildingGenSpec { Seed = seed, Kind = kind, MinRooms = 3 * fl + seed % 3, MinFloors = fl, MaxFloors = fl, MaxRoomsPerFloor = 5, Shape = shape };
+                            var r = BuildingGen.Generate(spec);
+                            string n = $"{Name(spec)} {shape}";
+                            var k = kept.GetValueOrDefault(shape); k.Asked++;
+                            if (r.Floors != fl) { bad.Add($"{n}: {r.Floors} floors"); kept[shape] = k; continue; }
+                            if (r.Shape != shape) { bad.Add($"{n} came out {r.Shape}: {string.Join("; ", r.Notes)}"); kept[shape] = k; continue; }
+                            k.Kept++; kept[shape] = k;
+                            var (wx0, wz0, wx1, wz1) = r.Wing;
+                            for (int f = 1; f < r.Floors; f++)
+                                if (r.Footprints[f].X0 < wx0 || r.Footprints[f].X1 > wx1) bad.Add($"{n}: floor {f} [{r.Footprints[f].X0},{r.Footprints[f].X1}) is past the wing's columns [{wx0},{wx1})");
+                            if (r.Footprints[1] != (wx0, wx1)) bad.Add($"{n}: floor 1 is [{r.Footprints[1].X0},{r.Footprints[1].X1}), not the wing's columns [{wx0},{wx1})");
+                            int west = wx0, east = r.CellsX - wx1;
+                            if (shape == FootprintShape.T ? west < 2 || east < 2 : Math.Min(west, east) != 0 || Math.Max(west, east) < 2) bad.Add($"{n}: arms of {west} and {east} cells");
+                            if (r.Notes.Any(x => x.Contains("rectangle") || x.Contains("one storey"))) bad.Add($"{n}: {string.Join("; ", r.Notes)}");
+                            // each arm has its own roof at the ground floor's head, over the middle of it
+                            bool wingNorth = wz1 == r.CellsZ;   // turned half round, the wing is on the south
+                            foreach (var (a0, a1) in new[] { (0, wx0), (wx1, r.CellsX) }.Where(a => a.Item2 > a.Item1))
+                            {
+                                arms++;
+                                float px = (a0 + a1) * 0.5f * Cell, pz = (wingNorth ? wz0 * 0.5f : (wz1 + r.CellsZ) * 0.5f) * Cell;
+                                bool roof = r.Walls.Any(w => w.Kind == SurfaceKind.Roof && (r.Roof == RoofKind.Flat
+                                    ? MathF.Abs(w.Pitch + 90f) < 0.5f && MathF.Abs(w.Y - Storey - BuildingGen.Slab * 0.5f) < 0.05f && px > w.X && px < w.X + w.Length && pz > w.Z - w.Height && pz < w.Z
+                                    : MathF.Abs(w.Pitch + 90f) > 0.5f && MathF.Abs(w.Y - Storey) < 0.05f && !float.IsNaN(RoofHeightAt(w, px, pz))));
+                                if (roof) roofed++; else bad.Add($"{n}: the arm [{a0},{a1}) has no roof of its own over ({px:0.0},{pz:0.0})");
+                            }
+                        }
+            TestContext.Progress.WriteLine($"[gen-ltup] {string.Join(", ", kept.Select(kv => $"{kv.Value.Kept} of {kv.Value.Asked} {kv.Key}s"))} of 2-3 floors kept their outline; {roofed} of {arms} arms roofed at the ground floor's head; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
+            Assert.That(kept[FootprintShape.L].Asked, Is.EqualTo(96));
+            Assert.That(arms, Is.GreaterThan(150));
             Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(10)));
         }
 
