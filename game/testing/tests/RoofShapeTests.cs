@@ -124,6 +124,121 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // THE RIDGE IS CLOSED, in the mesh you see and the collider you stand on (strawberry: "the top of roofs where the
+    // gables meet has a small gap"). Each slope is a slab; cut square to itself, two of them crossed at the ridge's
+    // mid-plane and left a V open to the sky above it -- t/cos(pitch) deep, 266 mm on the 0.5 m slab at 20 degrees --
+    // along every ridge and down every hip. WallSurface cuts a pitched roof's edges plumb instead (RoofShapes.PlumbFaces).
+    //
+    // L0 (RoofShapesJointTests) measures the solid as core describes it; this measures what the engine BUILT: vertical
+    // lines through the real mesh's triangles, and the same lines cast against the colliders, either side of the ridge
+    // and of every hip. They are held to the roof's own definition, not to anything the code computes: a gable or hip is
+    // the LOWEST of its planes over any point, each rising from its own eave at the pitch, and its top face is half a
+    // thickness over that, square to the slope -- t/cos(pitch) straight up.
+    //
+    // BREAK IT: have WallSurface.PlumbShift return false (cut square) -> the V is back, ~259-354 mm deep at every pitch.
+    public class TheRidgeIsClosed : GameTest
+    {
+        public override string Name => "buildtool.roof_ridge_closed";
+
+        public override IEnumerable<Step> Run()
+        {
+            foreach (var kind in new[] { RoofKind.Gable, RoofKind.Hip })
+                foreach (float pitch in new[] { 15f, 20f, 45f })
+                {
+                    var eb = new EditorBuildings();
+                    World.AddChild(eb);
+                    yield return Step.Ticks(1);
+                    RoofProbe.Hall(eb);
+                    yield return Step.Ticks(1);
+                    eb.SolveCorners();
+                    yield return Step.Ticks(1);
+                    var roof = eb.PlaceRoofOverWalls(kind, pitch);
+                    yield return Step.Ticks(2);          // let Jolt take the new shapes
+                    T.Check($"{kind} at {pitch}: placed", roof != null);
+                    if (roof == null) { eb.QueueFree(); continue; }
+
+                    var s = roof.Spec;
+                    float rad = s.Clamped * Mathf.Pi / 180f, tan = Mathf.Tan(rad), lift = s.Thickness * 0.5f / Mathf.Cos(rad);
+                    bool hip = kind == RoofKind.Hip;
+                    float Ideal(float x, float z)
+                    {
+                        float d = Mathf.Min(z - s.MinZ, s.MaxZ - z);
+                        if (hip) d = Mathf.Min(d, Mathf.Min(x - s.MinX, s.MaxX - x));
+                        return s.TopY + d * tan + lift;
+                    }
+
+                    // every triangle of every roof surface, in the world
+                    var tris = new List<(Vector3 A, Vector3 B, Vector3 C)>();
+                    foreach (var w in RoofProbe.Roofs(eb))
+                    {
+                        var mi = w.GetNodeOrNull<MeshInstance3D>("Mesh");
+                        if (mi?.Mesh == null) continue;
+                        for (int surf = 0; surf < mi.Mesh.GetSurfaceCount(); surf++)
+                        {
+                            var arr = mi.Mesh.SurfaceGetArrays(surf);
+                            var v = arr[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+                            var idx = arr[(int)Mesh.ArrayType.Index].AsInt32Array();
+                            var xf = mi.GlobalTransform;
+                            if (idx.Length == 0) for (int k = 0; k + 2 < v.Length; k += 3) tris.Add((xf * v[k], xf * v[k + 1], xf * v[k + 2]));
+                            else for (int k = 0; k + 2 < idx.Length; k += 3) tris.Add((xf * v[idx[k]], xf * v[idx[k + 1]], xf * v[idx[k + 2]]));
+                        }
+                    }
+                    float MeshTop(float x, float z)
+                    {
+                        float best = float.NegativeInfinity;
+                        foreach (var (a, b, c) in tris)
+                        {
+                            float det = (b.X - a.X) * (c.Z - a.Z) - (c.X - a.X) * (b.Z - a.Z);
+                            if (Mathf.Abs(det) < 1e-9f) continue;        // stood on edge: a plumb face
+                            float l1 = ((x - a.X) * (c.Z - a.Z) - (c.X - a.X) * (z - a.Z)) / det;
+                            float l2 = ((b.X - a.X) * (z - a.Z) - (x - a.X) * (b.Z - a.Z)) / det;
+                            if (l1 < -1e-5f || l2 < -1e-5f || l1 + l2 > 1f + 1e-5f) continue;
+                            best = Mathf.Max(best, a.Y + l1 * (b.Y - a.Y) + l2 * (c.Y - a.Y));
+                        }
+                        return best;
+                    }
+                    var space = World.GetWorld3D().DirectSpaceState;
+                    float ColliderTop(float x, float z)
+                    {
+                        var q = new PhysicsRayQueryParameters3D { From = new Vector3(x, s.TopY + 30f, z), To = new Vector3(x, s.TopY - 1f, z), CollisionMask = 1u << 0 };
+                        var hit = space.IntersectRay(q);
+                        return hit.Count > 0 ? ((Vector3)hit["position"]).Y : float.NegativeInfinity;
+                    }
+
+                    // the lines: the ridge, and on a hip the four hips from their eave corners up to it -- each probed
+                    // at points along it and either side, clear of the eaves (cut square on purpose)
+                    float zr = (s.MinZ + s.MaxZ) * 0.5f, end = hip ? s.HalfRun : 0f;
+                    var lines = new List<(Vector2 A, Vector2 B)> { (new Vector2(s.MinX + end, zr), new Vector2(s.MaxX - end, zr)) };
+                    if (hip)
+                        foreach (var (cx, cz, rx) in new[] { (s.MinX, s.MinZ, s.MinX + end), (s.MinX, s.MaxZ, s.MinX + end), (s.MaxX, s.MinZ, s.MaxX - end), (s.MaxX, s.MaxZ, s.MaxX - end) })
+                            lines.Add((new Vector2(cx, cz), new Vector2(rx, zr)));
+                    float meshGap = 0f, meshProud = 0f, colGap = 0f, colProud = 0f;
+                    int n = 0;
+                    foreach (var (a, b) in lines)
+                    {
+                        var across = new Vector2(-(b - a).Y, (b - a).X).Normalized();
+                        for (int k = 1; k < 10; k++)
+                            foreach (float d in new[] { -0.2f, -0.05f, -0.02f, -0.005f, 0.005f, 0.02f, 0.05f, 0.2f })
+                            {
+                                var p = a + (b - a) * (k / 10f) + across * d;
+                                if (Mathf.Min(Mathf.Min(p.X - s.MinX, s.MaxX - p.X), Mathf.Min(p.Y - s.MinZ, s.MaxZ - p.Y)) < 0.5f) continue;
+                                float ideal = Ideal(p.X, p.Y), m = MeshTop(p.X, p.Y), c = ColliderTop(p.X, p.Y);
+                                meshGap = Mathf.Max(meshGap, ideal - m); meshProud = Mathf.Max(meshProud, m - ideal);
+                                colGap = Mathf.Max(colGap, ideal - c); colProud = Mathf.Max(colProud, c - ideal);
+                                n++;
+                            }
+                    }
+                    T.Check($"{kind} at {pitch}: {n} probes over {lines.Count} lines, {tris.Count} triangles", n > 40 * lines.Count && tris.Count > 0);
+                    T.Check($"{kind} at {pitch}: the mesh is closed along its ridge{(hip ? " and hips" : "")} (open {meshGap * 1000f:0.0} mm, proud {meshProud * 1000f:0.0} mm)",
+                            meshGap < 0.002f && meshProud < 0.002f);
+                    T.Check($"{kind} at {pitch}: and so is the collider (open {colGap * 1000f:0.0} mm, proud {colProud * 1000f:0.0} mm)",
+                            colGap < 0.002f && colProud < 0.002f);
+                    eb.QueueFree();
+                    yield return Step.Ticks(1);
+                }
+        }
+    }
+
     // A square hip is a pyramid: the ridge collapses to a point and all four planes meet there. Worth its own
     // case because it is the degenerate end of the same formula, and a guard added "to be safe" would break
     // it into something that is not a pyramid.
