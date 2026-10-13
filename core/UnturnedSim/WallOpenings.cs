@@ -8,6 +8,22 @@ namespace UnturnedSim
     /// it to the DeployableDef (Barricade.DefFor). Names match WindowBarricadeStyle so the save token is legible.</summary>
     public enum WallBarricade { None, Planks, Bars, Plate }
 
+    /// <summary>How a door in an opening moves (strawberry, round 12: "doors can swing either way, some may swing both
+    /// ways, swinging away from the player when they open them", then "sliding pocket doors too"). Engine-free so the
+    /// generator can choose it and WallSave keep it; WallSurface builds it and ObjectDoor moves it.</summary>
+    public enum DoorAction : byte
+    {
+        /// <summary>Swings one way, out of the face DoorOpensFront names, on the jamb DoorHingeAtStart names: every door
+        /// before this.</summary>
+        Swing = 0,
+        /// <summary>Double-acting: swings either way about the same jamb, away from whoever opens it, and shuts back to the
+        /// middle. DoorOpensFront is only the way the leaf is first built.</summary>
+        DoubleSwing = 1,
+        /// <summary>Slides along the wall into its cavity: past the U jamb when DoorHingeAtStart, else past U1. No swing,
+        /// so nothing in front of it is kept for one.</summary>
+        Pocket = 2,
+    }
+
     /// <summary>A rectangular opening in a wall, in the wall's own 2D plane space.
     ///
     /// Everything is a rectangle plus a depth. There is no Door type and no Window type -- an archetype is a
@@ -72,6 +88,9 @@ namespace UnturnedSim
         public bool DoorHingeAtStart;
         /// <summary>The leaf opens out of the wall's front face (+Z) rather than its back (-Z).</summary>
         public bool DoorOpensFront;
+        /// <summary>Swing (the default: every door before round 12b), double-acting, or a pocket door. The two flags above
+        /// keep meaning which jamb and which face; for a pocket door, DoorHingeAtStart is which jamb's wall it slides into.</summary>
+        public DoorAction DoorAction;
 
         // ---- a PRE-BARRICADE in the hole (master 2026-09-01) --------------------------------------------
         // Same optional-per-opening shape as glass + door (the opening owns it, no second list to keep in step):
@@ -86,7 +105,7 @@ namespace UnturnedSim
         public WallOpening(float u, float v, float w, float h, float depth = 999f, int archetype = 0)
         { U = u; V = v; Width = w; Height = h; Depth = depth; Archetype = archetype;
           Glazed = false; GlassTint = 0; GlassHp = 0f; GlassIndestructible = false; GlassBroken = false;
-          DoorProp = null; DoorOpen = false; DoorHingeAtStart = false; DoorOpensFront = false; Barricade = WallBarricade.None; }
+          DoorProp = null; DoorOpen = false; DoorHingeAtStart = false; DoorOpensFront = false; DoorAction = DoorAction.Swing; Barricade = WallBarricade.None; }
 
         /// <summary>This opening moved/resized to (u,v,w,h), keeping EVERYTHING ELSE.
         ///

@@ -7776,7 +7776,8 @@ namespace UnturnedGodot
             // that cannot contradict itself. Null in SP/loopback -> the direct path below is unchanged.
             var lead = d.GroupLead;
             if (lead.NetId != 0 && NetToggleObjectDoor != null) { NetToggleObjectDoor(lead.NetId); return true; }
-            return d.Toggle();
+            // (a double-acting door opens away from where this player stands; over the wire the server reads that itself)
+            return d.ToggleFrom(GlobalPosition);
         }
 
         // A placed door is BARRICADED if a window-barricade panel fills EITHER face of its opening -> it won't open

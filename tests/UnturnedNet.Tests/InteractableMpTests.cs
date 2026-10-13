@@ -212,6 +212,67 @@ namespace UnturnedNet.Tests
                         "the snapshot names it open, not just the event");
         }
 
+        // ---- doors that swing both ways (v61, strawberry round 12b: "some may swing both ways, swinging away from the
+        // player when they open them") ----
+        //
+        // Which way is decided by the SERVER, from where it has the opener standing -- the same position its reach check
+        // reads -- so every screen swings the leaf the same way and no client can choose the side. Built (SwingSide) to swing
+        // toward +Z: opened from the +Z side it must swing the other way, from the -Z side as built; it shuts back to the
+        // middle from whichever side it is on; and a door that swings one way never reverses, wherever you stand.
+
+        const uint SwingDoorId = 811, OneWayDoorId = 812;
+
+        [Test]
+        public void A_Double_Acting_Door_Swings_Away_From_Whoever_Opens_It()
+        {
+            var h = new TransactionalHarness(seed: 93).Connected("alice", "bob");
+            var alice = h.Clients[0]; var bob = h.Clients[1];
+            h.Server.Interactables.RegisterObjectDoor(SwingDoorId, Vector3.zero, swingSide: new Vector3(0f, 0f, 1f));
+            PutPlayerAt(h, bob, new Vector3(3f, 0f, 0f));
+            var heard = new List<ObjectDoorStateEvent>();
+            bob.ObjectDoorState += e => heard.Add(e);
+
+            // from the side it swings to as built: the other way
+            PutPlayerAt(h, alice, new Vector3(0.3f, 0f, 1.5f));
+            alice.SendToggleObjectDoor(SwingDoorId);
+            Assert.That(h.StepUntil(() => heard.Count == 1), Is.True, "bob heard it open");
+            Assert.That((heard[0].Open, heard[0].Reverse), Is.EqualTo((true, true)), "opened from +Z, it swings to -Z: away from alice, on bob's screen");
+            Assert.That(h.StepUntil(() => bob.InteractableState.ObjectDoorReversed(SwingDoorId)), Is.True, "and the snapshot a late joiner reads says so too");
+
+            // shut: back to the middle from the side it is on (the side is kept, so the leaf closes the way it came)
+            alice.SendToggleObjectDoor(SwingDoorId);
+            Assert.That(h.StepUntil(() => heard.Count == 2), Is.True);
+            Assert.That((heard[1].Open, heard[1].Reverse), Is.EqualTo((false, true)));
+
+            // from the other side: as built, away from her again
+            PutPlayerAt(h, alice, new Vector3(-0.3f, 0f, -1.5f));
+            alice.SendToggleObjectDoor(SwingDoorId);
+            Assert.That(h.StepUntil(() => heard.Count == 3), Is.True);
+            Assert.That((heard[2].Open, heard[2].Reverse), Is.EqualTo((true, false)), "opened from -Z, it swings to +Z");
+            Assert.That(h.Server.Interactables.IsObjectDoorReversed(SwingDoorId), Is.False);
+            Assert.That(h.StepUntil(() => !bob.InteractableState.ObjectDoorReversed(SwingDoorId) && bob.InteractableState.ObjectDoorOpen(SwingDoorId)), Is.True);
+        }
+
+        [Test]
+        public void A_Door_That_Swings_One_Way_Never_Reverses()
+        {
+            var h = new TransactionalHarness(seed: 94).Connected("alice", "bob");
+            var alice = h.Clients[0]; var bob = h.Clients[1];
+            h.Server.Interactables.RegisterObjectDoor(OneWayDoorId, Vector3.zero);
+            PutPlayerAt(h, bob, Vector3.zero);
+            var heard = new List<ObjectDoorStateEvent>();
+            bob.ObjectDoorState += e => heard.Add(e);
+            foreach (var z in new[] { 1.5f, -1.5f })
+            {
+                PutPlayerAt(h, alice, new Vector3(0f, 0f, z));
+                alice.SendToggleObjectDoor(OneWayDoorId);
+                Assert.That(h.StepUntil(() => heard.Count > 0 && heard[^1].Open), Is.True);
+                Assert.That(heard[^1].Reverse, Is.False, $"opened from z {z}: a one-way door swings its own way");
+                alice.SendToggleObjectDoor(OneWayDoorId);
+                Assert.That(h.StepUntil(() => !heard[^1].Open), Is.True);
+            }
+        }
+
         // ---- seats (v35): sitting on furniture ----
         //
         // The rules are the vehicle's, one chair at a time, and the reason is the same: two clients each

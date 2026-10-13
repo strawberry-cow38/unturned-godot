@@ -1898,8 +1898,9 @@ namespace UnturnedSim.Tests
                             {
                                 doorZones.Add(box);
                                 // a hung door's leaf swings its own width round its hinge, out of the face the opening says
-                                // it opens to (DoorOpensFront: the wall's front, +Z; else its back)
-                                if (o.HasDoor && o.Archetype != BuildingGen.ArchGarage) doorZones.Add(LeafBox(w, o));
+                                // it opens to (DoorOpensFront: the wall's front, +Z; else its back) -- both faces for a door that
+                                // swings both ways, neither for a pocket door
+                                if (o.HasDoor && o.Archetype != BuildingGen.ArchGarage) doorZones.AddRange(LeafBoxes(w, o));
                                 var c = At(w, o.U + o.Width * 0.5f); float d = w.Thickness * 0.5f + 0.4f;
                                 doorPts.Add((c.X + n.X * d, c.Z + n.Z * d)); doorPts.Add((c.X - n.X * d, c.Z - n.Z * d));
                             }
