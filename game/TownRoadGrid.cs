@@ -2986,7 +2986,11 @@ namespace UnturnedGodot
         /// a 4 x 5 cell small house had no room for a kitchen table in 39 of 40 seeds, and a 4 x 6 shop came out a
         /// thin floor with few shelves in 25. One cell more each -- the small house's out of its backyard, which
         /// leaves the plot and so the layout as it was; the shop's in frontage -- and the small one can go two
-        /// storeys (16/40 complete, from 1) and the shop fits 40/40.</summary>
+        /// storeys (16/40 complete, from 1) and the shop fits 40/40.
+        /// ⚠ AND AN APARTMENT BLOCK IS A CORRIDOR WITH FLATS BOTH SIDES (tiny, 2026-10-13): a flat is at least four
+        /// rooms of two cells side by side, plus the stairwell, and the double-loaded rows need nine deep -- 11 x 9
+        /// fits 60/60 seeds, the old 8 x 7 none. The room comes out of its yards (front 3, back 6, sides 1.5: a block
+        /// fronts its street closely), so the plot is 36 deep like the deepest houses' and no block or lane moves.</summary>
         public static readonly PlotSize[] PlotSizes =
         {
             new(PlotKind.HouseSmall,  15f, 30f, 6f, 6f, 1.5f, new Color(0.98f, 0.86f, 0.30f)),   // house 12 x 18
@@ -2994,7 +2998,7 @@ namespace UnturnedGodot
             new(PlotKind.HouseLarge,  24f, 36f, 6f, 9f, 1.5f, new Color(0.92f, 0.30f, 0.28f)),   // house 21 x 21
             new(PlotKind.Corner,      30f, 30f, 6f, 3f, 3f,   new Color(0.35f, 0.82f, 0.42f)),   // house 21 x 21
             new(PlotKind.Shop,        15f, 27f, 3f, 6f, 0f,   new Color(0.72f, 0.45f, 0.98f)),   // shop 15 x 18
-            new(PlotKind.Apartments,  30f, 36f, 6f, 9f, 3f,   new Color(0.30f, 0.62f, 0.98f)),   // block 24 x 21
+            new(PlotKind.Apartments,  36f, 36f, 3f, 6f, 1.5f, new Color(0.30f, 0.62f, 0.98f)),   // block 33 x 27
         };
         public static PlotSize SizeOf(PlotKind k) { foreach (var p in PlotSizes) if (p.Kind == k) return p; return PlotSizes[0]; }
 
