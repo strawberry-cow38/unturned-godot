@@ -424,17 +424,21 @@ namespace UnturnedSim.Tests
         }
 
         // C: the walls enclose exactly the planned rooms -- found by RoomEnclosure from the wall centrelines, and each
-        // designation resolves to the room of its kind with the planned area (a hall's landing included).
-        // BREAK IT: leave out the partitions between rooms; wall a hall off from its own landing.
+        // designation resolves to the room of its kind with the planned area (a hall's landing included). Open plan does
+        // not change this: the wall between two rooms that open into each other is kept, cut away (OpenPlan below), so
+        // the two stay two rooms to the editor -- the floors with an open span are counted.
+        // BREAK IT: leave out the partitions between rooms; wall a hall off from its own landing; leave an open plan's
+        // wall out instead of cutting it.
         [Test]
         public void WallsEncloseThePlannedRooms()
         {
             var bad = new List<string>();
-            int floors = 0, found = 0;
+            int floors = 0, found = 0, openFloors = 0;
             foreach (var (spec, res) in All())
                 for (int f = 0; f < res.Floors; f++)
                 {
                     floors++;
+                    if (WallsOn(res, f).Any(w => w.Openings.Any(o => OpenSpan(w, o)))) openFloors++;
                     var plan = WallsOn(res, f).Select(w => { var b = At(w, w.Length); return new Seg(w.X, w.Z, b.X, b.Z, -1, w.Thickness); }).ToList();
                     var rooms = RoomEnclosure.Find(plan);
                     var want = res.Layout.Where(g => g.Floor == f).ToList();
@@ -450,9 +454,187 @@ namespace UnturnedSim.Tests
                         if (MathF.Abs(rooms[i].Area - g.Cells * Cell * Cell) > 0.5f) bad.Add($"{Name(spec)}: {g} encloses {rooms[i].Area:0.0} m2, planned {g.Cells * Cell * Cell}");
                     }
                 }
-            TestContext.Progress.WriteLine($"[gen-enclose] {floors} floors, {found} rooms enclosed by the walls; {bad.Count} mismatches{(bad.Count > 0 ? ": " + bad[0] : "")}");
+            TestContext.Progress.WriteLine($"[gen-enclose] {floors} floors ({openFloors} with an open plan's span), {found} rooms enclosed by the walls; {bad.Count} mismatches{(bad.Count > 0 ? ": " + bad[0] : "")}");
             Assert.That(found, Is.GreaterThan(1000));
             Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(10)));
+        }
+
+        // C2: open plan (strawberry, 2026-10-13: "allow buildings to actually omit interior walls, within reason. ie a
+        // kitchen can open into a living room. but not a bathroom into a kitchen or something. both rooms keep their room
+        // definitions, floor paints, but can open into eachother"). Found from the walls, not the generator's list: a cut
+        // in a partition from the floor up, no door hung in it, wider than any doorway (a wide one is at most
+        // WideOpening). Each runs between ONE pair of rooms that may share a space by this test's own list -- a living
+        // room, a kitchen, a dining room, a hall, not two halls -- in a house or inside one flat: never a bedroom,
+        // bathroom, closet, office, garage or store, never across a party wall or into the corridor, never in a business.
+        // Clear of every flight, landing, hole and flight-end tile by a metre. And both rooms keep what they were: the
+        // walls still enclose each on its own (RoomEnclosure, as the editor finds rooms), every designation resolving with
+        // no orphan and each side of the span to its own room's kind; each room's floor the texel of its kind, its cover
+        // inside its own cells.
+        // BREAK IT: let MayOpenPlan take a bedroom; drop its Unit check; open beside the stair bay. And here, on fresh
+        // buildings: a span cut into a bedroom, one across a party wall, and an open plan's wall left out altogether (the
+        // two rooms one enclosure: a designation orphaned) -- each must be caught.
+        static bool SharesASpace(RoomKind k) => k is RoomKind.LivingRoom or RoomKind.Kitchen or RoomKind.DiningRoom or RoomKind.Hall;
+        /// <summary>An open plan's span: in a partition, walkable, no door hung, wider than any doorway.</summary>
+        static bool OpenSpan(WallPlan w, WallOpening o) => w.Thickness < BuildingGen.Ext - 0.01f && Walkable(o) && !o.HasDoor && o.Width > BuildingGen.WideOpening + 0.01f;
+        /// <summary>A wall's footprint less its open spans: the wall that is there to stand a piece against or to see past.</summary>
+        static IEnumerable<(float X0, float Z0, float X1, float Z1)> SolidBoxes(WallPlan w)
+        {
+            var cuts = w.Openings.Where(o => OpenSpan(w, o)).Select(o => (A: o.U, B: o.U1)).OrderBy(c => c.A).ToList();
+            var d = Dir(w); float t = w.Thickness * 0.5f, tx = MathF.Abs(d.Z) * t, tz = MathF.Abs(d.X) * t;
+            (float, float, float, float) Part(float u0, float u1) { var p = At(w, u0); var q = At(w, u1); return (MathF.Min(p.X, q.X) - tx, MathF.Min(p.Z, q.Z) - tz, MathF.Max(p.X, q.X) + tx, MathF.Max(p.Z, q.Z) + tz); }
+            float u = 0f;
+            foreach (var (a, b) in cuts) { if (a > u + 1e-3f) yield return Part(u, a); u = MathF.Max(u, b); }
+            if (w.Length > u + 1e-3f) yield return Part(u, w.Length);
+        }
+
+        static List<string> OpenPlanViolations(BuildingGenResult res, string name, Dictionary<string, int> tally = null)
+        {
+            var bad = new List<string>();
+            void T(string k) { if (tally != null) tally[k] = tally.GetValueOrDefault(k) + 1; }
+            int spans = 0;
+            for (int f = 0; f < res.Floors; f++)
+            {
+                var walls = WallsOn(res, f).ToList();
+                // the stairs on this floor: its flights, landings and holes, and the full tile at a flight's foot or top -- a
+                // span by any of them is a wall the stairs stand against or step off beside
+                var stairs = res.Stairs.Where(s => s.Floor == f).Select(Foot).Concat(res.Walls.Where(w => w.Kind == SurfaceKind.Stairs && FloorOf(w) == f).Select(Plan))
+                                .Concat(Holes(res, f)).ToList();
+                foreach (var st in res.Stairs)
+                {
+                    var (bx, bz) = st.Back; var (rx, rz) = st.Right;
+                    (float, float, float, float) Tile(float ox, float oz, float dir)
+                    {
+                        float ex = ox + bx * Cell * dir + rx * st.Width, ez = oz + bz * Cell * dir + rz * st.Width;
+                        return (MathF.Min(ox, ex), MathF.Min(oz, ez), MathF.Max(ox, ex), MathF.Max(oz, ez));
+                    }
+                    if (st.Floor == f && StartsOnFloor(st)) stairs.Add(Tile(st.X, st.Z, -1f));
+                    if (st.Floor == f - 1 && EndsOnFloor(st)) stairs.Add(Tile(st.X + bx * st.Run, st.Z + bz * st.Run, +1f));
+                }
+                // the rooms as the editor finds them, from the wall centrelines: a wall left out makes two rooms one, and
+                // one of their designations an orphan
+                var rooms = RoomEnclosure.Find(walls.Select(x => { var e = At(x, x.Length); return new Seg(x.X, x.Z, e.X, e.Z, -1, x.Thickness); }).ToList());
+                RoomDesignations.Resolve(rooms, res.Rooms.Where(x => x.Floor == f).ToList(), out var byRoom, out var orphans);
+                if (orphans.Count > 0) bad.Add($"{name} floor {f}: {orphans.Count} designations match no room ({string.Join(", ", orphans.Select(x => x.Kind))})");
+                var checkedFloor = new HashSet<GenRoom>();
+                foreach (var w in walls)
+                    foreach (var o in w.Openings)
+                    {
+                        var mid = At(w, o.U + o.Width * 0.5f);
+                        string at = $"{name} floor {f}: the span at ({mid.X:0.0},{mid.Z:0.0})";
+                        // (the generator's mark for one -- the porch archetype in a partition -- is one by this measure too)
+                        if (w.Thickness < BuildingGen.Ext - 0.01f && o.Archetype == BuildingGen.ArchPorch && !OpenSpan(w, o)) bad.Add($"{at} is cut {o.Width:0.00} x {o.Height:0.00} from {o.V:0.00}, door {o.HasDoor}: not an open span");
+                        if (!OpenSpan(w, o)) continue;
+                        spans++; T("spans");
+                        // the rooms either side, all along it
+                        var n = Normal(w); float d = w.Thickness * 0.5f + 0.3f;
+                        var sides = new HashSet<(GenRoom, GenRoom)>();
+                        for (int i = 0; i <= 8; i++)
+                        {
+                            var c = At(w, o.U + 0.05f + (o.Width - 0.1f) * i / 8f);
+                            sides.Add((RoomAt(res, f, c.X + n.X * d, c.Z + n.Z * d), RoomAt(res, f, c.X - n.X * d, c.Z - n.Z * d)));
+                        }
+                        if (sides.Count != 1) { bad.Add($"{at} runs between {sides.Count} pairs of rooms"); continue; }
+                        var (a, b) = sides.First();
+                        if (a == null || b == null) { bad.Add($"{at} opens onto no room"); continue; }
+                        if (string.CompareOrdinal(a.Kind.ToString(), b.Kind.ToString()) > 0) (a, b) = (b, a);
+                        T($"{res.Kind} {a.Kind}-{b.Kind}");
+                        if (!(res.Kind is BuildingKind.Residential or BuildingKind.Apartment)) bad.Add($"{at}: a {res.Kind} with its {a.Kind} open to its {b.Kind}");
+                        if (!SharesASpace(a.Kind) || !SharesASpace(b.Kind) || (a.Kind == RoomKind.Hall && b.Kind == RoomKind.Hall)) bad.Add($"{at}: {a} is open to {b}");
+                        if (a.Unit != b.Unit) bad.Add($"{at}: {(a.Unit < 0 ? "shared space" : $"flat {a.Unit}")}'s {a.Kind} is open to {(b.Unit < 0 ? "shared space" : $"flat {b.Unit}")}'s {b.Kind}");
+                        else if (res.Kind == BuildingKind.Apartment && a.Unit < 0) bad.Add($"{at}: the shared {a.Kind} is open to the shared {b.Kind}");
+                        // clear of the stairs: a metre either side of the wall along the span meets no flight, landing, hole or end tile
+                        var p0 = At(w, o.U); var p1 = At(w, o.U1); float r = w.Thickness * 0.5f + 1f;
+                        var reach = (MathF.Min(p0.X, p1.X) - MathF.Abs(n.X) * r, MathF.Min(p0.Z, p1.Z) - MathF.Abs(n.Z) * r, MathF.Max(p0.X, p1.X) + MathF.Abs(n.X) * r, MathF.Max(p0.Z, p1.Z) + MathF.Abs(n.Z) * r);
+                        if (stairs.Any(s => Overlap(reach, s))) bad.Add($"{at} is beside the stairs");
+                        // both rooms keep their designations: the walls still enclose each, and each resolves to its kind
+                        (float X, float Z) pa = (mid.X + n.X * d, mid.Z + n.Z * d), pb = (mid.X - n.X * d, mid.Z - n.Z * d);
+                        var (ga, gb) = (RoomAt(res, f, pa.X, pa.Z), RoomAt(res, f, pb.X, pb.Z));
+                        int ia = rooms.FindIndex(x => RoomDesignations.Contains(x.Outline, pa.X, pa.Z)), ib = rooms.FindIndex(x => RoomDesignations.Contains(x.Outline, pb.X, pb.Z));
+                        if (ia < 0 || ib < 0 || ia == ib) bad.Add($"{at}: {ga} and {gb} are {(ia == ib && ia >= 0 ? "one room" : "not enclosed")} to the editor");
+                        else if (byRoom[ia] != ga.Kind || byRoom[ib] != gb.Kind) bad.Add($"{at}: {ga} and {gb} resolve as {byRoom[ia]} and {byRoom[ib]}");
+                        else T("sides keeping their designations");
+                        // and their floors: each the texel of its kind -- a cover of its own, inside its own cells, where its
+                        // kind's is not the building's floor colour; none where it is
+                        if (BuildingGen.FloorTexels.TryGetValue(res.Palette ?? "", out var ft))
+                            foreach (var g in new[] { a, b })
+                            {
+                                if (!checkedFloor.Add(g)) continue;
+                                int want = BuildingGen.FloorTexelFor(res.Palette, g.Kind);
+                                var covers = res.Walls.Where(x => x.Kind == SurfaceKind.Floor && MathF.Abs(x.Thickness - 0.04f) < 0.005f && MathF.Abs(x.Y - f * Storey) < 0.05f)
+                                                      .Where(x => { var pl = Plan(x); return g.Holds((pl.X0 + pl.X1) * 0.5f, (pl.Z0 + pl.Z1) * 0.5f); }).ToList();
+                                float area = 0f;
+                                foreach (var c in covers)
+                                {
+                                    var pl = Plan(c);
+                                    if (!g.Rects.Any(q => Inside(pl, (q.X0 * Cell - 0.01f, q.Z0 * Cell - 0.01f, q.X1 * Cell + 0.01f, q.Z1 * Cell + 0.01f)))) bad.Add($"{at}: {g}'s floor cover runs out of its cells");
+                                    if (c.Texel != want) bad.Add($"{at}: {g}'s floor is texel {c.Texel}, its kind's {want}");
+                                    area += (pl.X1 - pl.X0) * (pl.Z1 - pl.Z0);
+                                }
+                                if (want != ft.Floor && MathF.Abs(area - g.Cells * Cell * Cell) > 0.5f) bad.Add($"{at}: {g}'s cover is {area:0.0} m2 of its {g.Cells * Cell * Cell} (texel {want})");
+                                if (want == ft.Floor && covers.Count > 0) bad.Add($"{at}: {g} has a cover over the building's floor colour");
+                                T("rooms whose floor kept its own colour");
+                            }
+                    }
+            }
+            if (spans > 0) T($"{res.Kind} buildings with a span");
+            return bad;
+        }
+
+        /// <summary>A span cut in a partition of floor 0 between rooms `pick` likes, as open plan cuts one -- for breaking a
+        /// building on purpose. True when one was cut.</summary>
+        static bool CutSpan(BuildingGenResult res, Func<GenRoom, GenRoom, bool> pick)
+        {
+            const float Wd = 5f;
+            foreach (var w in WallsOn(res, 0).Where(w => w.Thickness < BuildingGen.Ext - 0.01f))
+                for (float u = 0.6f; u + Wd + 0.6f <= w.Length; u += 0.25f)
+                {
+                    var n = Normal(w);
+                    var pairs = Enumerable.Range(0, 5).Select(i => At(w, u + Wd * i / 4f)).Select(c => (RoomAt(res, 0, c.X + n.X * 0.6f, c.Z + n.Z * 0.6f), RoomAt(res, 0, c.X - n.X * 0.6f, c.Z - n.Z * 0.6f))).Distinct().ToList();
+                    if (pairs.Count != 1 || pairs[0].Item1 == null || pairs[0].Item2 == null || !(pick(pairs[0].Item1, pairs[0].Item2) || pick(pairs[0].Item2, pairs[0].Item1))) continue;
+                    if (w.Openings.Any(o => o.U < u + Wd + 0.3f && o.U1 > u - 0.3f)) continue;
+                    w.Openings.Add(new WallOpening(u, 0f, Wd, BuildingGen.OpeningTop - BuildingGen.OpenBeam, 999f, BuildingGen.ArchPorch));
+                    return true;
+                }
+            return false;
+        }
+
+        [Test]
+        public void OpenPlanOnlyJoinsRoomsThatShareASpace()
+        {
+            var bad = new List<string>();
+            var tally = new Dictionary<string, int>();
+            int homes = 0;
+            foreach (var (spec, res) in All())
+            {
+                if (spec.Kind is BuildingKind.Residential or BuildingKind.Apartment) homes++;
+                bad.AddRange(OpenPlanViolations(res, Name(spec), tally));
+            }
+            int spans = tally.GetValueOrDefault("spans");
+            TestContext.Progress.WriteLine($"[gen-open] {spans} open spans in {tally.GetValueOrDefault("Residential buildings with a span") + tally.GetValueOrDefault("Apartment buildings with a span")} of {homes} homes ({tally.GetValueOrDefault("Residential buildings with a span")} houses, {tally.GetValueOrDefault("Apartment buildings with a span")} blocks of flats), a span in any other kind of building in {tally.Where(kv => kv.Key.EndsWith("buildings with a span") && !kv.Key.StartsWith("Residential") && !kv.Key.StartsWith("Apartment")).Sum(kv => kv.Value)}; by the rooms either side: {string.Join(", ", tally.Where(kv => kv.Key.Contains('-')).OrderByDescending(kv => kv.Value).Select(kv => $"{kv.Value} {kv.Key}"))}; {tally.GetValueOrDefault("sides keeping their designations")} of {spans} spans with both sides their own room to the editor; {tally.GetValueOrDefault("rooms whose floor kept its own colour")} rooms' floors checked; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
+            Assert.That(spans, Is.GreaterThan(100), "too few open spans to say anything");
+            Assert.That(tally.Where(kv => kv.Key.StartsWith("Apartment ") && kv.Key.Contains('-')).Sum(kv => kv.Value), Is.GreaterThan(10), "flats never open up");
+            Assert.That(tally.GetValueOrDefault("Residential Kitchen-LivingRoom"), Is.GreaterThan(10), "a kitchen never opens into a living room");
+            Assert.That(tally.GetValueOrDefault("sides keeping their designations"), Is.EqualTo(spans));
+            Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(10)));
+
+            // the checks have teeth: each way of breaking it is caught, on a fresh building that has a span and the rooms
+            var probe = Enumerable.Range(0, 60).Select(sd => new BuildingGenSpec { Seed = sd, Kind = BuildingKind.Residential, MinRooms = 7, MaxFloors = 1, MaxRoomsPerFloor = 8 })
+                                  .First(sp => BuildingGen.Generate(sp) is var r && r.OpenPlan.Count > 0 && r.Layout.Any(g => g.Kind == RoomKind.Bedroom && g.Floor == 0));
+            Assert.That(OpenPlanViolations(BuildingGen.Generate(probe), "control"), Is.Empty, "the control house");
+            void Broken(string what, BuildingGenSpec sp, Func<BuildingGenResult, bool> breakIt, string expect)
+            {
+                var r = BuildingGen.Generate(sp);
+                Assert.That(breakIt(r), Is.True, $"{what}: nothing to break");
+                var v = OpenPlanViolations(r, what);
+                TestContext.Progress.WriteLine($"[gen-open] break it: {what} -> {v.Count} violations{(v.Count > 0 ? ": " + v[0] : "")}");
+                Assert.That(v.Any(x => x.Contains(expect)), Is.True, $"{what} was not caught: {string.Join("; ", v)}");
+            }
+            Broken("a span into a bedroom", probe, r => CutSpan(r, (a, b) => a.Kind == RoomKind.Bedroom), "is open to");
+            // (the wall a span is cut in, taken out whole: what open plan would be if it left the wall out)
+            Broken("an open plan's wall left out", probe, r => r.Walls.Remove(WallsOn(r, 0).First(x => x.Openings.Any(o => OpenSpan(x, o)))), "match no room");
+            var flats = Enumerable.Range(0, 40).Select(sd => new BuildingGenSpec { Seed = sd, Kind = BuildingKind.Apartment, MinFloors = 2, MaxFloors = 2, MaxRoomsPerFloor = 16 })
+                                  .First(sp => CutSpan(BuildingGen.Generate(sp), (a, b) => a.Unit >= 0 && b.Unit >= 0 && a.Unit != b.Unit));
+            Broken("a span across a party wall", flats, r => CutSpan(r, (a, b) => a.Unit >= 0 && b.Unit >= 0 && a.Unit != b.Unit), "is open to");
         }
 
         // D: every room can be walked to from outside without walking THROUGH a private room or a store -- through the
@@ -860,13 +1042,21 @@ namespace UnturnedSim.Tests
         // it; the stack is whatever wall stands past that wall's outer face across the breast's span. The stack reaches out
         // half the breast's depth or more, stands on a footing, climbs every storey without a gap and on over the top
         // roof by a metre where it comes through; no opening in any floor's wall behind it; and no porch within 0.3 m.
+        // And it is wider at its foot (strawberry, 2026-10-13: "widen the bottom of a chimney with sloped sections on the
+        // 1st floor" -- her first floor, the ground storey): its lowest piece wider along the wall than its top one by half
+        // a metre or more, its footing as wide; and between them sloped shoulders -- a piece cut in at both sides from its
+        // full width at its foot to a narrower one at its top (the editor's InsetL1/R1), as wide at its foot as the piece it
+        // stands on and at its top as the piece on it, all three on one centre, sloping 30 to 75 degrees, and ending by the
+        // ground storey's head, its wall head (the floor above, or the eaves).
         // BREAK IT: lay the stack inside the footprint, as it was; leave out its footing; stop it at the wall head;
-        // place it where a window or a porch is.
+        // place it where a window or a porch is; the stack one width all the way up, as round 10 laid it; its shoulders
+        // a step (no inset) or narrowing to less than the stack.
         [Test]
         public void ChimneysStandOutOfTheWall()
         {
             var bad = new List<string>();
-            int chimneys = 0;
+            int chimneys = 0, widened = 0;
+            var shape = new List<string>();
             var outs = new List<float>();
             foreach (var (spec, res) in All())
             {
@@ -905,7 +1095,42 @@ namespace UnturnedSim.Tests
                 if (!pieces.Any(w => w.Kind == SurfaceKind.Foundation && w.Y + w.Height >= -0.01f)) bad.Add($"{Name(spec)}: the chimney's stack has no footing");
                 float upTo = pieces.Where(w => w.Kind == SurfaceKind.Wall).Select(w => w.Y).DefaultIfEmpty(1f).Min() > 0.01f ? float.NaN : 0f;
                 foreach (var w in pieces.Where(w => w.Kind == SurfaceKind.Wall)) if (!float.IsNaN(upTo) && w.Y <= upTo + 0.01f) upTo = MathF.Max(upTo, w.Y + w.Height);
-                var sbox = (X0: stack.Min(x => x.B.X0), Z0: stack.Min(x => x.B.Z0), X1: stack.Max(x => x.B.X1), Z1: stack.Max(x => x.B.Z1));
+                // wider at its foot, with sloped shoulders between that and the stack
+                var ws = pieces.Where(w => w.Kind == SurfaceKind.Wall).ToList();
+                if (ws.Count >= 2)
+                {
+                    float TopW(WallPlan w) => w.Length - w.InsetL1 - w.InsetR1;
+                    float Centre(WallPlan w, bool top) { var c = At(w, top ? w.InsetL1 + TopW(w) * 0.5f : w.InsetL0 + (w.Length - w.InsetL0 - w.InsetR0) * 0.5f); return alongX ? c.X : c.Z; }
+                    var foot = ws[0]; var head = ws[^1];
+                    var footing = pieces.FirstOrDefault(w => w.Kind == SurfaceKind.Foundation);
+                    bool wide = foot.Length >= TopW(head) + 0.5f;
+                    if (!wide) bad.Add($"{Name(spec)}: the chimney is {foot.Length:0.00} m wide at its foot and {TopW(head):0.00} at its top: not wider at the foot");
+                    if (footing != null && footing.Length < foot.Length - 0.01f) bad.Add($"{Name(spec)}: the chimney's footing is {footing.Length:0.00} m under a foot {foot.Length:0.00} wide");
+                    var sl = ws.Where(w => w.InsetL1 > 0.05f && w.InsetR1 > 0.05f && w.InsetL0 < 0.01f && w.InsetR0 < 0.01f).ToList();
+                    if (sl.Count == 0) bad.Add($"{Name(spec)}: the chimney has no sloped shoulders ({string.Join(" ", ws.Select(w => $"[y {w.Y:0.00} h {w.Height:0.00} {w.Length:0.00} m]"))})");
+                    else
+                    {
+                        var sh = sl[0];
+                        var under = ws.FirstOrDefault(w => MathF.Abs(w.Y + w.Height - sh.Y) < 0.01f);
+                        var over = ws.FirstOrDefault(w => MathF.Abs(w.Y - sh.Y - sh.Height) < 0.01f);
+                        float deg = MathF.Atan2(sh.Height, MathF.Max(sh.InsetL1, sh.InsetR1)) * 180f / MathF.PI;
+                        if (under == null || MathF.Abs(TopW(under) - sh.Length) > 0.01f) bad.Add($"{Name(spec)}: the chimney's shoulders do not stand on a piece as wide as their foot");
+                        else if (over == null || MathF.Abs(over.Length - TopW(sh)) > 0.01f) bad.Add($"{Name(spec)}: the chimney's shoulders narrow to {TopW(sh):0.00} m under a stack {over?.Length ?? 0f:0.00} wide");
+                        else if (MathF.Abs(Centre(under, true) - Centre(sh, false)) > 0.01f || MathF.Abs(Centre(sh, true) - Centre(over, false)) > 0.01f) bad.Add($"{Name(spec)}: the chimney's shoulders are off its centre");
+                        else if (deg < 30f || deg > 75f) bad.Add($"{Name(spec)}: the chimney's shoulders slope {deg:0} degrees");
+                        else if (sh.Y + sh.Height > Storey + 0.01f) bad.Add($"{Name(spec)}: the chimney's shoulders end at {sh.Y + sh.Height:0.00} m, over the ground storey");
+                        else if (wide)
+                        {
+                            widened++;
+                            if (shape.Count < 3) shape.Add($"{foot.Length:0.00} m to {foot.Y + foot.Height:0.00}, shoulders {sh.Y:0.00}-{sh.Y + sh.Height:0.00} at {deg:0} deg, stack {TopW(head):0.00} m");
+                        }
+                    }
+                }
+                var ubox = (X0: stack.Min(x => x.B.X0), Z0: stack.Min(x => x.B.Z0), X1: stack.Max(x => x.B.X1), Z1: stack.Max(x => x.B.Z1));
+                // (where it comes through the roof: its top piece's footprint -- the foot under it is wider, and nowhere near
+                // the roof)
+                var top = stack.Where(x => x.W.Kind == SurfaceKind.Wall).OrderBy(x => x.W.Y).Last().B;
+                var sbox = (X0: top.X0, Z0: top.Z0, X1: top.X1, Z1: top.Z1);
                 float roof = new[] { (sbox.X0, sbox.Z0), (sbox.X1, sbox.Z0), (sbox.X0, sbox.Z1), (sbox.X1, sbox.Z1), ((sbox.X0 + sbox.X1) * 0.5f, (sbox.Z0 + sbox.Z1) * 0.5f) }
                                  .Select(p => BuildingGen.RoofTopAt(res, p.Item1, p.Item2)).Where(h => !float.IsNaN(h)).DefaultIfEmpty(res.Floors * Storey).Max();
                 if (float.IsNaN(upTo) || upTo < roof + BuildingGen.ChimneyOverRoof - 0.01f) bad.Add($"{Name(spec)}: the chimney's stack climbs to {upTo:0.00} m, the roof it comes through is at {roof:0.00}");
@@ -923,11 +1148,12 @@ namespace UnturnedSim.Tests
                         }
                     }
                 foreach (var q in res.Porches)
-                    if (q.X0 < sbox.X1 + 0.3f && q.X1 > sbox.X0 - 0.3f && q.Z0 < sbox.Z1 + 0.3f && q.Z1 > sbox.Z0 - 0.3f) bad.Add($"{Name(spec)}: a porch runs into the chimney");
+                    if (q.X0 < ubox.X1 + 0.3f && q.X1 > ubox.X0 - 0.3f && q.Z0 < ubox.Z1 + 0.3f && q.Z1 > ubox.Z0 - 0.3f) bad.Add($"{Name(spec)}: a porch runs into the chimney");
             }
             outs.Sort();
-            TestContext.Progress.WriteLine($"[gen-chimney] {chimneys} chimneys; their stacks stand out of the wall {(outs.Count > 0 ? $"{outs[0]:0.00} to {outs[^1]:0.00} m (median {outs[outs.Count / 2]:0.00})" : "-")}; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
+            TestContext.Progress.WriteLine($"[gen-chimney] {chimneys} chimneys; their stacks stand out of the wall {(outs.Count > 0 ? $"{outs[0]:0.00} to {outs[^1]:0.00} m (median {outs[outs.Count / 2]:0.00})" : "-")}; {widened} of {chimneys} wider at the foot with sloped shoulders ({string.Join("; ", shape.Distinct())}); {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
             Assert.That(chimneys, Is.GreaterThan(30));
+            Assert.That(widened, Is.EqualTo(chimneys), "chimneys one width all the way up");
             Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(10)));
         }
 
@@ -1376,7 +1602,7 @@ namespace UnturnedSim.Tests
         public void DiningByTheKitchenAndDoorsOffEachOthersCorners()
         {
             var bad = new List<string>();
-            int pairs = 0, beside = 0, facing = 0, excused = 0, doors = 0, crowded = 0;
+            int pairs = 0, beside = 0, facing = 0, excused = 0, doors = 0, crowded = 0, spansApart = 0;
             foreach (var (spec, res) in All())
             {
                 var k = res.Layout.FirstOrDefault(g => g.Kind == RoomKind.Kitchen);
@@ -1401,7 +1627,11 @@ namespace UnturnedSim.Tests
                 }
                 for (int f = 0; f < res.Floors; f++)
                 {
-                    var ds = Doors(res, f).ToList();
+                    // (an open plan's span is no door: a wall left out has no frame to crowd a corner with -- its piers are
+                    // what is left of the wall; counted apart)
+                    var all = Doors(res, f).ToList();
+                    var ds = all.Where(x => !OpenSpan(x.W, x.O)).ToList();
+                    spansApart += all.Count - ds.Count;
                     doors += ds.Count;
                     // the lattice points within a metre of each door, in cells
                     HashSet<(int, int)> Points((WallPlan W, WallOpening O, GenRoom A, GenRoom B, (float X, float Z) PA, (float X, float Z) PB) x)
@@ -1422,7 +1652,7 @@ namespace UnturnedSim.Tests
                             }
                 }
             }
-            TestContext.Progress.WriteLine($"[gen-corner] {pairs} kitchens with a dining room on their floor: {beside} beside it, {facing} facing it across a hall, {excused} apart with a note; {doors} doors, {crowded} pairs crowding one corner; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
+            TestContext.Progress.WriteLine($"[gen-corner] {pairs} kitchens with a dining room on their floor: {beside} beside it, {facing} facing it across a hall, {excused} apart with a note; {doors} doors ({spansApart} open spans not counted as doors), {crowded} pairs crowding one corner; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
             Assert.That(pairs, Is.GreaterThan(50));
             // the note is the generator's last resort, not a licence: it is excused only when it is rare (none today)
             Assert.That(excused, Is.LessThanOrEqualTo(pairs / 50), "the dining room is often apart from the kitchen, with a note");
@@ -1715,8 +1945,9 @@ namespace UnturnedSim.Tests
                             for (int j = Math.Max(0, (int)MathF.Ceiling((fp.Z0 - O) / G - 0.5f)); j < gnz && O + (j + 0.5f) * G < fp.Z1; j++)
                                 if (FurnitureCatalog.Covers(m.Name, m.X, m.Z, m.Yaw, O + (i + 0.5f) * G, O + (j + 0.5f) * G)) blocked[i, j] = true;
                     }
-                    // exactly, against the boxes: a grid cell whose centre sits on a wall's face is neither in nor out
-                    var wallBoxes = walls.Select(Box).ToList();
+                    // exactly, against the boxes: a grid cell whose centre sits on a wall's face is neither in nor out --
+                    // and only the wall that is there: an open plan's span is no wall to stand a piece against
+                    var wallBoxes = walls.SelectMany(SolidBoxes).ToList();
                     bool WallAt(float x, float z) => wallBoxes.Any(b => x >= b.Item1 && x <= b.Item3 && z >= b.Item2 && z <= b.Item4);
                     foreach (var m in here)
                     {

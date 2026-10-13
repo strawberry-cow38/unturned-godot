@@ -302,7 +302,9 @@ namespace UnturnedSim
                 const float M = WallOpenings.StairHoleMargin;
                 int FloorOf(float y) => (int)MathF.Round(y / Storey);
                 var walls = res.Walls.Where(w => w.Kind == SurfaceKind.Wall && FloorOf(w.Y) == f && w.Height > Storey - 0.01f).ToList();
-                foreach (var w in walls) { Fill(Box(w), Wall); WallRects.Add(Box(w)); }
+                // (a wall left out between two rooms that share one space -- open plan's cut, BuildingGen.OpenPlan -- is floor
+                // there, not wall: nothing stands with its back to it, and you walk across it; its piers and beam stay wall)
+                foreach (var w in walls) foreach (var b in Solid(w)) { Fill(b, Wall); WallRects.Add(b); }
                 // the stairs: flights on this floor, the landings, and the holes in this floor
                 float Rise(StairPlan s) => s.Rise > 0f ? s.Rise : Storey;
                 foreach (var s in res.Stairs.Where(s => s.Floor == f)) Fill(Foot(s), Stair);
@@ -379,6 +381,29 @@ namespace UnturnedSim
                 float ex = w.X + dx * w.Length, ez = w.Z + dz * w.Length;
                 float tx = MathF.Abs(dz) * t, tz = MathF.Abs(dx) * t;   // across the wall only
                 return (MathF.Min(w.X, ex) - tx, MathF.Min(w.Z, ez) - tz, MathF.Max(w.X, ex) + tx, MathF.Max(w.Z, ez) + tz);
+            }
+            /// <summary>The stretch [u0, u1] of a wall's length, as Box makes the whole of it.</summary>
+            static (float, float, float, float) Box(WallPlan w, float u0, float u1)
+            {
+                var (wc, ws) = PlanTrig.CosSin(w.Yaw);
+                float dx = wc, dz = -ws, t = w.Thickness * 0.5f;
+                float ax = w.X + dx * u0, az = w.Z + dz * u0, ex = w.X + dx * u1, ez = w.Z + dz * u1;
+                float tx = MathF.Abs(dz) * t, tz = MathF.Abs(dx) * t;
+                return (MathF.Min(ax, ex) - tx, MathF.Min(az, ez) - tz, MathF.Max(ax, ex) + tx, MathF.Max(az, ez) + tz);
+            }
+            /// <summary>What of a wall stands on the floor: all of it, but for an open plan's cut (an ArchPorch opening from
+            /// the floor up, BuildingGen.OpenPlan) -- the wall left out between two rooms that share one space.</summary>
+            static IEnumerable<(float, float, float, float)> Solid(WallPlan w)
+            {
+                var cuts = w.Openings.Where(o => o.Archetype == ArchPorch && o.V < 0.05f).Select(o => (A: o.U, B: o.U1)).OrderBy(c => c.A).ToList();
+                if (cuts.Count == 0) { yield return Box(w); yield break; }
+                float u = 0f;
+                foreach (var (a, b) in cuts)
+                {
+                    if (a > u + 1e-3f) yield return Box(w, u, a);
+                    u = MathF.Max(u, b);
+                }
+                if (w.Length > u + 1e-3f) yield return Box(w, u, w.Length);
             }
             static (float, float, float, float) Foot(StairPlan s)
             {
