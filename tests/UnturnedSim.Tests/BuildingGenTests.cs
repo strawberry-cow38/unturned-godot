@@ -1354,7 +1354,7 @@ namespace UnturnedSim.Tests
             int wallSets = 0, crts = 0, lKitchens = 0, islands = 0, freeFridges = 0, gondolas = 0, movable = 0, turned = 0, shopsWithShelves = 0, shopsWithRows = 0;
             var missing = new Dictionary<string, int>(); var kinds = new Dictionary<RoomKind, int>(); int shortExcused = 0;
             // the round-9 requirements' counts, and the feng shui given up where a room would not have it
-            int bedWays = 0, doubles = 0, worktops = 0, eatIns = 0, eatInsSeated = 0;
+            int bedWays = 0, doubles = 0, worktops = 0, eatIns = 0, eatInsSeated = 0, flatBeds = 0, flatWorktops = 0, flatEatIns = 0;
             var feng = new Dictionary<string, int>();
             void Feng(string what) => feng[what] = feng.GetValueOrDefault(what) + 1;
             // (a plain counter is worktop, reached along its run: the one in an L's corner is a blind corner)
@@ -1559,15 +1559,16 @@ namespace UnturnedSim.Tests
                                 bool SameWay(FurniturePlan a, FurniturePlan b) => MathF.Abs(((a.Yaw - b.Yaw) % 360f + 360f) % 360f) < 1f;
                                 bool worktop = mine.Any(c => c.Name == "Counter_0" && mine.Any(h => (h.Name == "Counter_1" || h.Name.StartsWith("Oven")) && SameWay(c, h)
                                                                                                        && Overlap(Grown(h.Footprint, 0.15f), c.Footprint, 0f)));
-                                if (worktop) worktops++; else if (ShortBy(res, room.Kind, "counter")) shortExcused++; else bad.Add($"{Name(spec)}: {room} has no plain counter beside its sink or stove");
-                                // ...and where the house eats in its kitchen (a kitchen-diner, or a house with no dining room),
-                                // a table with a chair at it
-                                if (res.KitchenDiner || (res.Kind == BuildingKind.Residential && !res.Layout.Any(g => g.Kind == RoomKind.DiningRoom)))
+                                if (worktop) { worktops++; if (room.Unit >= 0) flatWorktops++; } else if (ShortBy(res, room.Kind, "counter")) shortExcused++; else bad.Add($"{Name(spec)}: {room} has no plain counter beside its sink or stove");
+                                // ...and where the home eats in its kitchen (a kitchen-diner, or a house or flat with no dining
+                                // room of its own), a table with a chair at it
+                                if (res.KitchenDiner || (res.Kind is BuildingKind.Residential or BuildingKind.Apartment
+                                                         && !res.Layout.Any(g => g.Kind == RoomKind.DiningRoom && g.Unit == room.Unit)))
                                 {
                                     eatIns++;
                                     var tables = mine.Where(t => t.Name is "Table_Wood_0" or "Table_Wood_1" or "Table_Wood_3").ToList();
                                     bool seated = tables.Any(t => mine.Any(c => c.Name.StartsWith("Chair") && MathF.Sqrt((t.X - c.X) * (t.X - c.X) + (t.Z - c.Z) * (t.Z - c.Z)) < 3f));
-                                    if (seated) eatInsSeated++;
+                                    if (seated) { eatInsSeated++; if (room.Unit >= 0) flatEatIns++; }
                                     else if (ShortBy(res, room.Kind, "dining table")) shortExcused++;
                                     else bad.Add($"{Name(spec)}: {room} is where the house eats, with {(tables.Count == 0 ? "no table" : "a table and no chair")}");
                                 }
@@ -1658,7 +1659,7 @@ namespace UnturnedSim.Tests
                             }
                             bool dbl = m.Name == "Bed_0";
                             if (dbl) doubles++;
-                            if (ways >= (dbl ? 2 : 1)) bedWays++;
+                            if (ways >= (dbl ? 2 : 1)) { bedWays++; if (room.Unit >= 0) flatBeds++; }
                             else bad.Add($"{Name(spec)}: {m}: a {(dbl ? "double" : "single")} bed with {ways} long side{(ways == 1 ? "" : "s")} to get in at");
                         }
                         foreach (var (what, x, z) in targets.Skip(1))
@@ -1814,7 +1815,7 @@ namespace UnturnedSim.Tests
             Assert.That(turned, Is.GreaterThan(movable / 5), "what gets moved in use all stands square");
             Assert.That(shopsWithRows, Is.GreaterThanOrEqualTo(shopsWithShelves / 2), "shops' gondolas rarely stand in aligned rows");
             // the round-9 requirements held over enough cases to mean it, and the feng shui given up only now and then
-            TestContext.Progress.WriteLine($"[furn-r9] {bedWays} of {beds} beds with their way in ({doubles} doubles, both sides); {worktops} of {kitchens} kitchens with a plain counter at the sink or stove; {eatInsSeated} of {eatIns} kitchens where the house eats with a table and a chair; feng shui given up: {(feng.Count == 0 ? "none" : string.Join(", ", feng.OrderByDescending(kv => kv.Value).Select(kv => $"{kv.Value} {kv.Key}")))}");
+            TestContext.Progress.WriteLine($"[furn-r9] {bedWays} of {beds} beds with their way in ({doubles} doubles, both sides); {worktops} of {kitchens} kitchens with a plain counter at the sink or stove; {eatInsSeated} of {eatIns} kitchens where the house eats with a table and a chair; of these in flats: {flatBeds} beds, {flatWorktops} kitchens with the counter, {flatEatIns} seated; feng shui given up: {(feng.Count == 0 ? "none" : string.Join(", ", feng.OrderByDescending(kv => kv.Value).Select(kv => $"{kv.Value} {kv.Key}")))}");
             Assert.That(doubles, Is.GreaterThan(100), "too few double beds to test their way in");
             Assert.That(eatIns, Is.GreaterThan(50), "too few kitchens where the house eats to test their table");
             foreach (var (what, n) in feng)

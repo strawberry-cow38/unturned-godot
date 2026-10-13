@@ -202,10 +202,12 @@ namespace UnturnedSim
             var l = kitchen as IList<FurniturePlan> ?? kitchen.ToList();
             return l.Any(c => c.Name == "Counter_0" && l.Any(h => h.Name is "Counter_1" or "Oven_0" && Beside(c, h)));
         }
-        /// <summary>Does a building eat in its kitchen -- a house with the dining table there, or with no dining room at all
-        /// (strawberry: "houses without a dining room require at table with at least one chair in the kitchen")?</summary>
-        public static bool EatsInKitchen(BuildingGenResult r)
-            => r.KitchenDiner || (r.Kind == BuildingKind.Residential && !r.Layout.Any(g => g.Kind == RoomKind.DiningRoom));
+        /// <summary>Is a kitchen where its home eats -- a house's or a flat's with the dining table in it, or with no dining
+        /// room of its own at all (strawberry: "houses without a dining room require at table with at least one chair in the
+        /// kitchen"; a flat's dining room would be in its own unit)?</summary>
+        public static bool EatsInKitchen(BuildingGenResult r, GenRoom kitchen)
+            => r.KitchenDiner || (r.Kind is BuildingKind.Residential or BuildingKind.Apartment
+                                  && !r.Layout.Any(g => g.Kind == RoomKind.DiningRoom && g.Unit == kitchen.Unit));
         /// <summary>The kitchen's working triangle, fridge to sink to stove and back, at most this far round. The real rule
         /// is 26 ft (7.9 m) for furniture this game builds about twice the size (a counter 1.5 m wide, a real one 0.6).</summary>
         public const float TriangleRound = 12.5f;
@@ -969,7 +971,8 @@ namespace UnturnedSim
                 // a double where it fits, on a roll (strawberry: "bedrooms may be single or double bed")
                 string bed = minSide >= 4.5f && _area >= 20f && _rng.Chance(60) ? "Bed_0" : "Bed_1";
                 // now and then bunk beds, in a house with a bedroom besides this one
-                if (bed == "Bed_1" && _res.Kind == BuildingKind.Residential && _res.Layout.Count(g => g.Kind == RoomKind.Bedroom) >= 2 && _rng.Chance(25)) bed = "Bed_2";
+                if (bed == "Bed_1" && _res.Kind is BuildingKind.Residential or BuildingKind.Apartment
+                    && _res.Layout.Count(g => g.Kind == RoomKind.Bedroom && g.Unit == _room.Unit) >= 2 && _rng.Chance(25)) bed = "Bed_2";
                 // never the coffin (the door straight past its foot) while anywhere else will do -- the score alone let an
                 // L-shaped room, every wall of which faced the door, pick one
                 bool Coffin(string bd, (float X, float Z, float Yaw) c)
@@ -1406,7 +1409,7 @@ namespace UnturnedSim
                 // a house that eats in its kitchen (strawberry: "houses without a dining room require at table with at least
                 // one chair in the kitchen"): the table, with a chair at it, where an island would stand -- and where it will
                 // not go, the cook's extra counters and the dishwasher make way for it (the counter at the sink stays)
-                if (EatsInKitchen(_res))
+                if (EatsInKitchen(_res, _room))
                 {
                     if (Dining(1) == null)
                     {
@@ -1923,16 +1926,18 @@ namespace UnturnedSim
                 if (_area >= 30f) Put("Couch_1", Against("Couch_1", Side.Back), (x, z, yaw) => NearestDoor(x, z));
             }
 
-            /// <summary>A house's coat stand by the way in (strawberry: "explore more props to place ie coat rack"): in a corner
-            /// within 6 m of the front or back door of the room it opens into, and in a bedroom by its door -- where a
-            /// corner is left once the room's own pieces are in.</summary>
+            /// <summary>A home's coat stand by the way in (strawberry: "explore more props to place ie coat rack"): in a corner
+            /// within 6 m of the front or back door of the room it opens into (a flat's: the room its door opens into off the
+            /// corridor), and in a bedroom by its door -- where a corner is left once the room's own pieces are in.</summary>
             void Coats()
             {
-                if (_res.Kind != BuildingKind.Residential || _mine.Any(m => m.Name == "Coat_0")) return;
+                if (_res.Kind is not (BuildingKind.Residential or BuildingKind.Apartment) || _mine.Any(m => m.Name == "Coat_0")) return;
                 var ways = new List<(float X, float Z)>();
-                foreach (var d in new[] { _res.Front, _res.Back })
-                    if (d != null && d.A == _room && _room.Floor == 0) ways.Add(d.Middle);
-                if (_room.Kind == RoomKind.Bedroom) ways.AddRange(Doors());
+                // (a block's own front and back doors open into its shared corridor, which is nobody's home)
+                if (_res.Kind == BuildingKind.Residential)
+                    foreach (var d in new[] { _res.Front, _res.Back })
+                        if (d != null && d.A == _room && _room.Floor == 0) ways.Add(d.Middle);
+                if ((_room.Unit >= 0 && _room.Entry) || _room.Kind == RoomKind.Bedroom) ways.AddRange(Doors());
                 if (ways.Count == 0) return;
                 double Near(float x, float z) => ways.Min(w => Math.Sqrt((w.X - x) * (w.X - x) + (w.Z - z) * (w.Z - z)));
                 Put("Coat_0", Against("Coat_0", Side.Back).Where(p => Corner("Coat_0", p) && Near(p.X, p.Z) <= 6.0), (x, z, _) => -Near(x, z));

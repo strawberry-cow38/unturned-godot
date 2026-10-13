@@ -679,7 +679,7 @@ namespace UnturnedSim
                         Need(g, "fridge", Has(g, "Fridge")); Need(g, "sink", Has(g, "Counter_1")); Need(g, "stove", Has(g, "Oven"));
                         // a plain counter at the sink or stove; and where the house eats in its kitchen, a table with a chair
                         Need(g, "counter", Worktop(r.Furniture.Where(m => m.Room == g)), 1);
-                        if (EatsInKitchen(r)) Need(g, "dining table", Has(g, "Table_Wood_0", "Table_Wood_1", "Table_Wood_3") && Has(g, "Chair_Wood_0"), 1);
+                        if (EatsInKitchen(r, g)) Need(g, "dining table", Has(g, "Table_Wood_0", "Table_Wood_1", "Table_Wood_3") && Has(g, "Chair_Wood_0"), 1);
                         break;
                     case RoomKind.Bathroom: Need(g, "tub or sink", Has(g, "Tub", "Counter_1")); break;
                     case RoomKind.Office: Need(g, "desk", Has(g, "Table_Wood_2")); break;
