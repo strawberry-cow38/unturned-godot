@@ -514,7 +514,9 @@ namespace UnturnedGodot.Testing
                             if (z1 - z0 > longest) { longest = z1 - z0; longCar = name; }
                             v.Free();
                         }
-                        bool Fits(float depth, float space) => depth - gD.BayEdgeGap - gD.BayLine - 0.03f >= widest + 0.4f && space >= longest + 1f;
+                        // across: kerb to carriageway edge (no line runs down the bay's open side any more); along: the
+                        // space between two of the solid lines across it
+                        bool Fits(float depth, float space) => depth - 0.03f >= widest + 0.4f && space - gD.BayLine >= longest + 1f;
                         int fit = 0;
                         foreach (var bay in bays) if (Fits(bay.Depth, bay.SpaceLength)) fit++;
                         T.Check($"...each sized to the game's own cars: widest {widest:0.00} m ({wideCar}), longest {longest:0.00} m ({longCar}) -- {fit} of {bays.Count} bays hold them ({gD.BayDepth:0.0} m deep, {gD.BaySpace:0.0} m spaces), and a real-world 2.4 x 6 m bay would not (control: {(Fits(2.4f, 6f) ? "FITS" : "does not")})",

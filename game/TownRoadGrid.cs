@@ -3631,7 +3631,7 @@ namespace UnturnedGodot
         public float BayNoneShare = 0.3f, BayOneSideShare = 0.4f;
         /// <summary>The paint: the width of the solid line across each end of a space (and the length of a dot and its
         /// gap, unused since the bays went solid).</summary>
-        public float BayLine = 0.15f, BayDot = 0.5f, BayDotGap = 0.5f;
+        public float BayLine = 0.2875f, BayDot = 0.5f, BayDotGap = 0.5f;     // as thick as the roads' own lines (strawberry: "match the center lines")
         /// <summary>How far the bay's asphalt tucks under the carriageway's edge, how far it runs on under the
         /// kerb, and how far below the road's surface it lies.</summary>
         public float BayTuck = 0.3f, BayUnderKerb = 0.08f, BayDrop = 0.01f;
@@ -4219,9 +4219,11 @@ namespace UnturnedGodot
         /// that repeats every 32 m on road_0, 32 of 64 on road_6). road_0's centre yellow is 8 texels, 0.575 m: the
         /// double yellow keeps that overall width.</summary>
         public float LineWidth = 0.2875f, EdgeLineInset = 0.35f, MedianLineInset = 0.35f, LineDash = 4f, LineGap = 4f;
-        /// <summary>The double yellow: each line's width, and their centres either side of the road's (0.575 m overall,
-        /// road_0's yellow).</summary>
-        public float DoubleYellowLine = 0.2f, DoubleYellowAt = 0.1875f;
+        /// <summary>A main's centre line: ONE solid yellow, road_0's own 8 texels -- 0.575 m. ⚠ It was a double yellow
+        /// (two 0.2 m lines 0.175 m apart), and two lines that close read as one line drawn twice: strawberry 2026-10-13,
+        /// "i still see the duped lines, they are spaced slightly apart, dead center of the junction" -- where a main
+        /// runs through, that is exactly where its centre line crosses the box.</summary>
+        public float CentreYellowWidth = 0.575f;
         /// <summary>Line pieces laid by the last BuildRoadLines.</summary>
         public int RoadLinePieces;
         /// <summary>White edge lines along the kerbs, and a yellow line along each side of a boulevard's median. Both
@@ -4231,11 +4233,11 @@ namespace UnturnedGodot
 
         /// <summary>A road's own lines, in metres off its centreline along the spline's (t.z, 0, -t.x) side: where,
         /// how wide, white (0) or yellow (1), dashed or solid, and whether it is an EDGE line (one that follows a kerb).
-        /// ⚠ CANADIAN, LIKE PEI: yellow only ever on the left of traffic -- the centre of a two-way road and the median
-        /// side of a boulevard -- and white for everything else, edges included.
-        ///   main      a double yellow down the middle, a dashed white between each side's two lanes
+        /// Yellow only down a main's middle; white for everything else -- a street's dashed centre included, as the
+        /// old street texture painted it (strawberry 2026-10-13 chose white over the Canadian yellow for those).
+        ///   main      a solid yellow down the middle, a dashed white between each side's two lanes
         ///   boulevard a dashed white between each side's lanes (the median parts the traffic itself)
-        ///   street    a dashed yellow down the middle
+        ///   street    a dashed white down the middle, as the old street texture had it
         /// (white edges and the median's yellows exist behind EdgeLines and MedianYellow, both off.)</summary>
         public List<(float lat, float width, byte colour, bool dashed, bool edge)> OwnLines(RoadField roads, int road, bool withEdges)
         {
@@ -4248,12 +4250,13 @@ namespace UnturnedGodot
                     t.Add((s * (mh + RoadField.LaneWidth), LineWidth, 0, true, false));
                 }
             else if (IsMain(roads, road))
-                foreach (int s in new[] { -1, 1 })
-                {
-                    t.Add((s * DoubleYellowAt, DoubleYellowLine, 1, false, false));
-                    t.Add((s * RoadField.LaneWidth, LineWidth, 0, true, false));
-                }
-            else t.Add((0f, LineWidth, 1, true, false));
+            {
+                t.Add((0f, CentreYellowWidth, 1, false, false));
+                foreach (int s in new[] { -1, 1 }) t.Add((s * RoadField.LaneWidth, LineWidth, 0, true, false));
+            }
+            // a two-lane street: a dashed WHITE centre, as road_6 painted it (strawberry 2026-10-13: "change the 2 lane
+            // road to use white dotted center lines")
+            else t.Add((0f, LineWidth, 0, true, false));
             if (withEdges && EdgeLines)
                 foreach (int s in new[] { -1, 1 }) t.Add((s * (h - EdgeLineInset), LineWidth, 0, false, true));
             return t;
