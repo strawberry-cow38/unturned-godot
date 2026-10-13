@@ -495,7 +495,9 @@ namespace UnturnedSim
                         {
                             stair = new GenRoom { Kind = RoomKind.Stairwell, Floor = f, X0 = ax, X1 = xs + SW, Z0 = 0, Z1 = dS };
                             rs.Add(stair);
-                            bx0 = landingWest ? xs + SW - L : xs;   // the landing column, if any, on the side away from the bay
+                            // the bay against an end wall of the stairwell, the landing column (if any) and an alcove taken in
+                            // on the other side of it: a quarter turn's landing stands in the corner of that end wall
+                            bx0 = landingWest ? xs + SW - L : ax;
                         }
                         else if (SW > 0) corridor.More.Add((xs, 0, xs + SW, dS));   // one storey: a lobby, part of the corridor
                         xs += SW;
