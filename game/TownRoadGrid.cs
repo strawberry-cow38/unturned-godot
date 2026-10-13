@@ -2469,7 +2469,11 @@ namespace UnturnedGodot
                 if (cosT > Mathf.Sin(Mathf.DegToRad(0.5f)) && sinT > Mathf.Sin(Mathf.DegToRad(20f)))
                 {
                     shear = mu / mr;
-                    d0 = (crossed + CornerKerbRadius * sinT + CrossingInset) / sinT;
+                    // ⚠ THE PULL-IN SCALES WITH THE CORNER: an acute corner's kerb turns in R tan(theta/2), not R (see
+                    // LaySidewalkCorners), so 1.2 m into it is a third of its whole curve -- 61 cm off straight at 45
+                    // degrees, measured. The same fraction of ITS radius keeps it as square as a right angle's.
+                    float pull = CrossingInset < 0f ? CrossingInset * sinT / (1f + cosT) : CrossingInset;
+                    d0 = (crossed + CornerKerbRadius * sinT + pull) / sinT;
                     d1 = d0 + CrossingWidth / sinT;
                     sd0 = d1 + StopGap / sinT; sd1 = sd0 + StopLineWidth / sinT;
                 }
@@ -2785,7 +2789,11 @@ namespace UnturnedGodot
         /// <summary>Zebra bars, or just the two outlines of the walkway.</summary>
         public bool Zebra = true;
         /// <summary>How far the crossing sits outside the carriageway's own edge, and how deep it is.</summary>
-        public float CrossingInset = 1.2f, CrossingWidth = 3f;
+        /// ⚠ NEGATIVE: the crossing starts INSIDE the corner's curve (strawberry 2026-10-13: "bring the crossings (and
+        /// stop lines) closer to the intersection"), 1.2 m in from where the kerb stops turning -- where a 6 m kerb
+        /// return has turned only 12 cm off straight, so the crossing still meets its kerbs square. It was 1.2 m OUT
+        /// past it (strawberry, earlier: "bring them back before the curve"); this is that, pulled in by 2.4 m.
+        public float CrossingInset = -1.2f, CrossingWidth = 3f;
         public float CrossingBar = 0.5f, CrossingGap = 0.5f;
         /// <summary>Gap between the crossing and the stop line behind it, and the line's own depth.</summary>
         public float StopGap = 0.8f, StopLineWidth = 0.5f;
@@ -4135,14 +4143,19 @@ namespace UnturnedGodot
         public float LineWidth = 0.15f, EdgeLineInset = 0.35f, MedianLineInset = 0.35f, LineDash = 3f, LineGap = 6f;
         /// <summary>Line pieces laid by the last BuildRoadLines.</summary>
         public int RoadLinePieces;
+        /// <summary>White edge lines along the kerbs, and a yellow line along each side of a boulevard's median. Both
+        /// OFF (strawberry 2026-10-13: "kill the outside lines and the thin double yellow when we have a median"):
+        /// the kerb and the median's own kerb already say where the road ends.</summary>
+        public bool EdgeLines = false, MedianYellow = false;
 
         /// <summary>A road's own lines, in metres off its centreline along the spline's (t.z, 0, -t.x) side: where,
         /// how wide, white (0) or yellow (1), dashed or solid, and whether it is an EDGE line (one that follows a kerb).
         /// ⚠ CANADIAN, LIKE PEI: yellow only ever on the left of traffic -- the centre of a two-way road and the median
         /// side of a boulevard -- and white for everything else, edges included.
-        ///   main      a double yellow down the middle, a dashed white between each side's two lanes, white edges
-        ///   boulevard a yellow along each side of the median, a dashed white between each side's lanes, white edges
-        ///   street    a dashed yellow down the middle, white edges</summary>
+        ///   main      a double yellow down the middle, a dashed white between each side's two lanes
+        ///   boulevard a dashed white between each side's lanes (the median parts the traffic itself)
+        ///   street    a dashed yellow down the middle
+        /// (white edges and the median's yellows exist behind EdgeLines and MedianYellow, both off.)</summary>
         public List<(float lat, float width, byte colour, bool dashed, bool edge)> OwnLines(RoadField roads, int road, bool withEdges)
         {
             var t = new List<(float, float, byte, bool, bool)>();
@@ -4150,7 +4163,7 @@ namespace UnturnedGodot
             if (mh > 0f)
                 foreach (int s in new[] { -1, 1 })
                 {
-                    t.Add((s * (mh + MedianLineInset), LineWidth, 1, false, false));
+                    if (MedianYellow) t.Add((s * (mh + MedianLineInset), LineWidth, 1, false, false));
                     t.Add((s * (mh + RoadField.LaneWidth), LineWidth, 0, true, false));
                 }
             else if (IsMain(roads, road))
@@ -4160,7 +4173,7 @@ namespace UnturnedGodot
                     t.Add((s * RoadField.LaneWidth, LineWidth, 0, true, false));
                 }
             else t.Add((0f, LineWidth, 1, true, false));
-            if (withEdges)
+            if (withEdges && EdgeLines)
                 foreach (int s in new[] { -1, 1 }) t.Add((s * (h - EdgeLineInset), LineWidth, 0, false, true));
             return t;
         }

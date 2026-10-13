@@ -134,9 +134,29 @@ namespace UnturnedGodot.Testing
                     }
                     return best;
                 }
+                // how far the BUILT kerb on side s has turned away from its straight line, `al` metres out along the arm
+                // (0 where it runs straight, or where no corner piece reaches)
+                float KerbTurn(TownRoadGrid.CrossingLayout c, int s, float al)
+                {
+                    float off = c.Half + walkD.RoadGap, best = float.MaxValue;
+                    var ow = -new Vector3(c.Fwd.X, 0f, c.Fwd.Z).Normalized();
+                    foreach (var (kn, kp) in kerbs)
+                    {
+                        if (new Vector2(kn.X - c.Node.X, kn.Z - c.Node.Z).Length() > 0.5f) continue;
+                        for (int k = 0; k + 1 < kp.Count; k++)
+                        {
+                            var r0 = new Vector3(kp[k].X - c.Node.X, 0f, kp[k].Z - c.Node.Z); var r1 = new Vector3(kp[k + 1].X - c.Node.X, 0f, kp[k + 1].Z - c.Node.Z);
+                            float a0 = r0.Dot(ow), a1 = r1.Dot(ow), l0 = r0.Dot(c.Right), l1 = r1.Dot(c.Right);
+                            if ((al - a0) * (al - a1) > 0f || Mathf.Abs(a1 - a0) < 1e-5f) continue;
+                            float la = Mathf.Lerp(l0, l1, (al - a0) / (a1 - a0));
+                            if (Mathf.Abs(la - s * off) < 4f) best = Mathf.Min(best, Mathf.Abs(la - s * off));
+                        }
+                    }
+                    return best == float.MaxValue ? 0f : best;
+                }
                 float R2 = gD.CornerKerbRadius, inset = gD.CrossingInset;
                 int joining = 0, skewed = 0, gridSquare = 0, gridSkewed = 0, sidesHeld = 0, masts = 0, mastsOff = 0;
-                float worstPar = 0f, worstClear = float.MaxValue, furthest = 0f, worstGridOver = float.MinValue, mastWas = 0f, mastNow = 0f;
+                float worstPar = 0f, worstTurn = 0f, controlTurn = 0f, furthest = 0f, worstGridOver = float.MinValue, mastWas = 0f, mastNow = 0f;
                 for (int j = 0; j < rfD.JunctionCount; j++)
                 {
                     var es = rfD.JunctionEdges(j);
@@ -157,13 +177,15 @@ namespace UnturnedGodot.Testing
                         if (joins.Count == 0) continue;
                         float acute = Mathf.Acos(Mathf.Clamp(Mathf.Abs(joins[0].Dot(outw)), 0f, 1f));
                         if (Mathf.Abs(Mathf.RadToDeg(acute) - 45f) > 2f) continue;
-                        // off the BUILT curve, both sides, whichever way it is laid
+                        // where it starts, the BUILT kerb either side has barely begun to turn: the crossing sits just
+                        // inside the curve (strawberry 2026-10-13: "bring the crossings (and stop lines) closer to the
+                        // intersection"), not out past it, but where its kerbs still meet it square
                         for (int s = -1; s <= 1; s += 2)
                         {
-                            float ce = CurveEnd(cl, s);
-                            if (float.IsNaN(ce)) continue;                 // a tee's straight side: no curve there
+                            if (float.IsNaN(CurveEnd(cl, s))) continue;    // a tee's straight side: no curve there
                             var k = cl.At(cl.D0, s * cl.Half) - cl.Node; k.Y = 0f;
-                            worstClear = Mathf.Min(worstClear, k.Dot(outw) - ce);
+                            worstTurn = Mathf.Max(worstTurn, KerbTurn(cl, s, k.Dot(outw)));
+                            controlTurn = Mathf.Max(controlTurn, KerbTurn(cl, s, k.Dot(outw) - 3f));
                             sidesHeld++;
                         }
                         // the mast (or sign) for this approach stands at its crossing, and nearer than it did
@@ -174,7 +196,9 @@ namespace UnturnedGodot.Testing
                         float was = gD.KerbCurveEnd(rfD, j, road, atEnd, widest, R2) + gD.SignalBeforeCurve;
                         float edgeAtMast = cl.D0 + mlat * cl.Shear;
                         masts++; mastWas += was; mastNow += back;
-                        if (back > was || edgeAtMast - back > inset + 0.01f || back > edgeAtMast) mastsOff++;
+                        // beside its crossing: somewhere along it at the mast's own offset, or within half a metre of it
+                        float farAtMast = cl.D1 + mlat * cl.Shear;
+                        if (back > was || back < edgeAtMast - 0.5f || back > farAtMast + 0.5f) mastsOff++;
                         bool onGrid = Mathf.Abs(outw.Dot(uAx)) > 0.99f || Mathf.Abs(outw.Dot(vAx)) > 0.99f;
                         if (onGrid)
                         {
@@ -202,8 +226,8 @@ namespace UnturnedGodot.Testing
                         joining > 0 && worstPar < 1e-3f);
                 T.Check($"...no further off that road's kerb than a square junction's crossing is (furthest {furthest:0.00} m, square {R2 + inset:0.00} m)",
                         joining > 0 && furthest <= R2 + inset + 0.01f);
-                T.Check($"...and every 45-degree crossing is off the BUILT kerb's curve, both sides ({sidesHeld} kerbs held, closest {worstClear:0.00} m past where it stops turning)",
-                        sidesHeld >= 8 && worstClear > -0.001f);
+                T.Check($"...and every 45-degree crossing starts where its BUILT kerbs have barely begun to turn ({sidesHeld} kerbs; worst {worstTurn * 100f:0} cm off straight) -- where 3 m nearer the node they turn up to {controlTurn:0.00} m (control)",
+                        sidesHeld >= 8 && worstTurn <= 0.35f && controlTurn > 0.5f);
                 T.Check($"...the road it joins is crossed square ({gridSquare} square, {gridSkewed} slanted), no further past the corner than at a right angle ({worstGridOver:0.00} m over)",
                         gridSkewed == 0 && (gridSquare == 0 || worstGridOver < 0.01f));
                 T.Check($"...and each approach's mast stands at its crossing, nearer than before (mean {mastNow / Mathf.Max(1, masts):0.0} m out vs {mastWas / Mathf.Max(1, masts):0.0}; {mastsOff} of {masts} misplaced)",
@@ -1003,8 +1027,9 @@ namespace UnturnedGodot.Testing
                     foreach (int r in boul)
                     {
                         float L = rfD.RoadLength(r);
-                        for (float d = 0f; d <= L; d += 2f)
-                            if (rfD.EvaluateAlong(r, d, out var pc, out var tc, snapTerrain: false))
+                        // every 2 m AND the very end: a median may run right up to a road cut short of its stop line
+                        for (float d = 0f; d <= L + 1.99f; d += 2f)
+                            if (rfD.EvaluateAlong(r, Mathf.Min(d, L), out var pc, out var tc, snapTerrain: false))
                                 boulSamples.Add((pc, new Vector3(tc.X, 0f, tc.Z).Normalized(), r));
                     }
                     var mouths = new List<(Vector3 node, Vector3 dir, float half)>();
@@ -1248,18 +1273,27 @@ namespace UnturnedGodot.Testing
                         }
                     T.Check($"...and none of it runs into a crossing ({lineInCrossing} of {crossingsChecked} approaches painted over the crossing or up to the stop line; control: their lines take up again just past it, {edgePast} of {crossingsChecked})",
                             crossingsChecked > 10 && lineInCrossing == 0 && edgePast == crossingsChecked);
-                    // 3. A PARKING BAY BREAKS THE EDGE LINE IT OPENS OFF -- its own dotted line takes over -- and the edge
-                    //    line is there either side of it (the control)
-                    int baysChecked = 0, edgeInBay = 0, edgeBeside = 0;
-                    foreach (var bay in gD.Bays)
+                    // 3. NO EDGE LINES, AND NO YELLOW ALONG A MEDIAN (strawberry 2026-10-13: "kill the outside lines and the
+                    //    thin double yellow when we have a median"): the strip just in from every kerb is bare all along each
+                    //    road's middle, and so is the strip beside the boulevard's median. The control: the same walk finds
+                    //    the lane lines it should (check 1), so "bare" is not "the probe sees nothing".
+                    int stripsChecked = 0, stripsPainted = 0;
+                    foreach (int r in gD.Built)
                     {
-                        float elat = bay.Side * (rfD.RoadHalfWidth(bay.Road) - gD.EdgeLineInset);
-                        baysChecked++;
-                        for (float d = bay.A + 1f; d <= bay.B - 1f; d += 0.5f) if (PaintAt(On(bay.Road, d, elat)) == 1) { edgeInBay++; break; }
-                        if (PaintAt(On(bay.Road, bay.A - 1f, elat)) == 1 || PaintAt(On(bay.Road, bay.B + 1f, elat)) == 1) edgeBeside++;
+                        float L = rfD.RoadLength(r);
+                        if (L < 40f) continue;
+                        float h = rfD.RoadHalfWidth(r), mhr = rfD.MedianHalfOfMaterial(rfD.RoadMaterialOf(r));
+                        var lats = new List<float> { h - gD.EdgeLineInset, -(h - gD.EdgeLineInset) };
+                        if (mhr > 0f) { lats.Add(mhr + gD.MedianLineInset); lats.Add(-(mhr + gD.MedianLineInset)); }
+                        foreach (float lat in lats)
+                        {
+                            stripsChecked++;
+                            for (float d = L * 0.5f - 4.5f; d <= L * 0.5f + 4.5f; d += 0.25f)
+                                if (PaintAt(On(r, d, lat)) != 0) { stripsPainted++; break; }
+                        }
                     }
-                    T.Check($"...the edge line broken where a parking bay opens off it ({edgeInBay} of {baysChecked} bays painted across) and there either side of it ({edgeBeside} of {baysChecked})",
-                            baysChecked > 0 && edgeInBay == 0 && edgeBeside == baysChecked);
+                    T.Check($"...with no edge lines along the kerbs, nor a yellow along the boulevard's median ({stripsPainted} of {stripsChecked} strips painted)",
+                            stripsChecked > 20 && stripsPainted == 0);
                     lHost.QueueFree(); cxHost.QueueFree();
                 }
                 // determinism: the same town again lays the same plots
