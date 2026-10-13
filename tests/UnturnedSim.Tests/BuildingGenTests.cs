@@ -725,7 +725,8 @@ namespace UnturnedSim.Tests
                             if (WallOpenings.Overlaps(o, w.Openings, i)) bad.Add($"{at}: overlaps a sibling");
                             foreach (var (lo, hi) in bands)
                                 if (o.U < hi - 0.01f && o.U1 > lo + 0.01f) bad.Add($"{at}: crosses a wall meeting it at u {lo:0.00}..{hi:0.00}");
-                            if (o.Glazed && o.Width < BuildingGen.MinWindow - 0.01f) bad.Add($"{at}: a window only {o.Width:0.00} wide");
+                            // (a bathroom's slit is a third of a window's: OpeningsSuitTheRoom holds it to that)
+                            if (o.Glazed && o.Archetype != BuildingGen.ArchSlit && o.Width < BuildingGen.MinWindow - 0.01f) bad.Add($"{at}: a window only {o.Width:0.00} wide");
                         }
                     }
                 }
@@ -785,10 +786,19 @@ namespace UnturnedSim.Tests
         public void OpeningsSuitTheRoom()
         {
             var bad = new List<string>();
-            int lit = 0, vented = 0, vehicle = 0, shops = 0, endFronts = 0, blank = 0, stockDoors = 0, clear = 0, shortExcused = 0, backFronted = 0;
+            int lit = 0, vented = 0, vehicle = 0, shops = 0, endFronts = 0, blank = 0, stockDoors = 0, clear = 0, shortExcused = 0, backFronted = 0, slits = 0;
+            float widest = 0f;
             foreach (var (spec, res) in All())
             {
                 var outer = res.Walls.Where(w => w.Kind == SurfaceKind.Wall && w.Thickness == BuildingGen.Ext).ToList();
+                // a bathroom's slit a third of the 3.5 m it was (strawberry: "make the bathroom window slit 1/3 as wide"),
+                // the 1.5 m least a squeezed window keeps a third of that too
+                foreach (var w in outer)
+                    foreach (var o in w.Openings.Where(o => o.Archetype == BuildingGen.ArchSlit))
+                    {
+                        slits++; widest = MathF.Max(widest, o.Width);
+                        if (o.Width > 3.5f / 3f + 0.01f || o.Width < 1.5f / 3f - 0.01f) bad.Add($"{Name(spec)}: a slit {o.Width:0.00} m wide");
+                    }
                 List<(WallPlan W, WallOpening O)> Of(GenRoom g) => outer.Where(w => FloorOf(w) == g.Floor).SelectMany(w => w.Openings.Select(o => (w, o)))
                     .Where(p => { var c = At(p.w, p.o.U + p.o.Width * 0.5f); var n = Normal(p.w); return g.Holds(c.X - n.X * 1f, c.Z - n.Z * 1f); }).ToList();
                 foreach (var g in res.Layout)
@@ -860,10 +870,11 @@ namespace UnturnedSim.Tests
                         }
                 }
             }
-            TestContext.Progress.WriteLine($"[gen-suit] {lit} habitable rooms lit, {vented} bathrooms vented, {vehicle} vehicle doors, {shops} shopfronts ({endFronts} in an end wall, {backFronted} kept off a back side asked for), {blank} closets/stores blank ({stockDoors} stores with only their back door), {clear} outside openings checked clear of flights; {shortExcused} rooms short of a window or vehicle door in plot-fitted buildings that say so; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
+            TestContext.Progress.WriteLine($"[gen-suit] {slits} bathroom slits, the widest {widest:0.00} m; {lit} habitable rooms lit, {vented} bathrooms vented, {vehicle} vehicle doors, {shops} shopfronts ({endFronts} in an end wall, {backFronted} kept off a back side asked for), {blank} closets/stores blank ({stockDoors} stores with only their back door), {clear} outside openings checked clear of flights; {shortExcused} rooms short of a window or vehicle door in plot-fitted buildings that say so; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
             Assert.That(shortExcused, Is.LessThanOrEqualTo(All().Count(x => x.Spec.FitPlot) / 20), "plot-fitted buildings often come out without windows");
             Assert.That(lit, Is.GreaterThan(500));
             Assert.That(vented, Is.GreaterThan(100));
+            Assert.That(slits, Is.GreaterThan(100), "too few bathroom slits to measure");
             Assert.That(vehicle, Is.GreaterThan(50));
             Assert.That(shops, Is.GreaterThan(20));
             Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(10)));
@@ -1258,12 +1269,20 @@ namespace UnturnedSim.Tests
         // walls, the stairs, the holes, the tiles at a flight's ends and every other piece; a metre and a bit in front of
         // any door is clear (4 m in from a vehicle door); nothing taller than a man in front of a window; and in every room
         // its doors, stair ends and the fronts of the pieces you use are joined by clear floor. Each kind of room has what
-        // makes it one. And the feng shui: a bed's head to a solid wall, not under a window, the door not straight past its
-        // foot; a desk's chair with its back to a wall and the door ahead of it; a couch's back to a wall, its television
-        // facing it; chairs facing their table; the stove never beside the sink, the fridge, sink and stove a short walk
-        // apart. (These are the test's own numbers, looser than the generator's: it keeps 1.3 m before a door, this asks 1.2.)
+        // makes it one -- and these with no tolerance at all (strawberry, 2026-10-12): a bed has a clear strip to get in at
+        // along a long side, both sides of a double ("double beds should require space on either long sides to get in/out
+        // of, single beds need at least one long side free"); a kitchen has a plain counter beside its sink or stove
+        // ("require counters - not just sinks in kitchens"); a house with no dining room has a table with a chair in its
+        // kitchen ("houses without a dining room require at table with at least one chair in the kitchen"). A desk's chair
+        // with its back to a wall and the door ahead of it; a couch's television facing it; chairs facing their table; the
+        // stove never beside the sink. And the feng shui, which is a preference ("feng shui is a suggestion not a
+        // requirement, always preffered where layout allows"), counted and bounded rather than forbidden: a bed's head to a
+        // solid wall, not under a window, the door not straight past its foot; a couch's back to a wall; the fridge, sink and
+        // stove a short walk apart. (These are the test's own numbers, looser than the generator's: it keeps 1.3 m before a
+        // door, this asks 1.2; a bed's strip is 0.8 m deep to 1.0 m short of its head there, 0.75 and 1.1 here.)
         // BREAK IT: drop the door zones; drop the walk check; let tall pieces stand at windows; score beds without the
-        // coffin rule; put the sink beside the stove; turn the chairs round; ignore the desk's door.
+        // coffin rule; put the sink beside the stove; turn the chairs round; ignore the desk's door; let a double into a
+        // corner; drop the kitchen's counters for its appliances; let a kitchen-diner's table go without a chair.
         [Test]
         public void FurnitureFollowsTheRules()
         {
@@ -1272,6 +1291,10 @@ namespace UnturnedSim.Tests
             int pieces = 0, ceilingLights = 0, rooms = 0, walkedRooms = 0, beds = 0, desks = 0, couches = 0, tvs = 0, chairs = 0, kitchensFull = 0, wallPieces = 0, swung = 0;
             int wallSets = 0, crts = 0, lKitchens = 0, islands = 0, freeFridges = 0, gondolas = 0, movable = 0, turned = 0, shopsWithShelves = 0, shopsWithRows = 0;
             var missing = new Dictionary<string, int>(); var kinds = new Dictionary<RoomKind, int>(); int shortExcused = 0;
+            // the round-9 requirements' counts, and the feng shui given up where a room would not have it
+            int bedWays = 0, doubles = 0, worktops = 0, eatIns = 0, eatInsSeated = 0;
+            var feng = new Dictionary<string, int>();
+            void Feng(string what) => feng[what] = feng.GetValueOrDefault(what) + 1;
             // (a plain counter is worktop, reached along its run: the one in an L's corner is a blind corner)
             bool Use(string n) => !(n.StartsWith("Chair") || n.StartsWith("Lamp") || n.StartsWith("Barrel") || n.StartsWith("Crate") || n.StartsWith("Cardboard")
                                     || n.StartsWith("Propane") || n.StartsWith("Pallet") || n.StartsWith("Coat") || n == "Counter_0");
@@ -1468,7 +1491,26 @@ namespace UnturnedSim.Tests
                             case RoomKind.LivingRoom: Need("couch", Has("Couch")); break;
                             case RoomKind.DiningRoom: Need("table", Has("Table")); Need("4 chairs", here.Count(m => m.Room == room && m.Name.StartsWith("Chair")) >= 4); break;
                             case RoomKind.Kitchen: Need("fridge", Has("Fridge")); Need("sink", Has("Counter_1")); Need("stove", Has("Oven")); if (Has("Fridge") && Has("Counter_1") && Has("Oven")) kitchensFull++;
-                                if (res.KitchenDiner) Need("a dining table (a kitchen-diner)", Has("Table_Wood_0", "Table_Wood_1", "Table_Wood_3")); break;
+                            {
+                                // required outright: a plain counter in the run beside the sink or the stove (the same way
+                                // round, within 0.15 m)...
+                                bool SameWay(FurniturePlan a, FurniturePlan b) => MathF.Abs(((a.Yaw - b.Yaw) % 360f + 360f) % 360f) < 1f;
+                                bool worktop = mine.Any(c => c.Name == "Counter_0" && mine.Any(h => (h.Name == "Counter_1" || h.Name.StartsWith("Oven")) && SameWay(c, h)
+                                                                                                       && Overlap(Grown(h.Footprint, 0.15f), c.Footprint, 0f)));
+                                if (worktop) worktops++; else if (ShortBy(res, room.Kind, "counter")) shortExcused++; else bad.Add($"{Name(spec)}: {room} has no plain counter beside its sink or stove");
+                                // ...and where the house eats in its kitchen (a kitchen-diner, or a house with no dining room),
+                                // a table with a chair at it
+                                if (res.KitchenDiner || (res.Kind == BuildingKind.Residential && !res.Layout.Any(g => g.Kind == RoomKind.DiningRoom)))
+                                {
+                                    eatIns++;
+                                    var tables = mine.Where(t => t.Name is "Table_Wood_0" or "Table_Wood_1" or "Table_Wood_3").ToList();
+                                    bool seated = tables.Any(t => mine.Any(c => c.Name.StartsWith("Chair") && MathF.Sqrt((t.X - c.X) * (t.X - c.X) + (t.Z - c.Z) * (t.Z - c.Z)) < 3f));
+                                    if (seated) eatInsSeated++;
+                                    else if (ShortBy(res, room.Kind, "dining table")) shortExcused++;
+                                    else bad.Add($"{Name(spec)}: {room} is where the house eats, with {(tables.Count == 0 ? "no table" : "a table and no chair")}");
+                                }
+                            }
+                                break;
                             case RoomKind.Bathroom: Need("tub or sink", Has("Tub", "Counter_1")); break;
                             case RoomKind.Office: Need("desk", Has("Table_Wood_2")); break;
                             case RoomKind.BreakRoom: Need("table", Has("Table")); Need("sink", Has("Counter_1")); Need("fridge", Has("Fridge")); break;
@@ -1530,6 +1572,33 @@ namespace UnturnedSim.Tests
                             }
                         }
                         bool Reached(float x, float z) { var c = Cell0(x, z); return c != null && seen[c.Value.Item1, c.Value.Item2]; }
+                        // a bed's way in: beside a long side, a strip 0.75 m deep from its foot to 1.1 m short of its head (where
+                        // a lamp stands), every cell of it clear floor of the room, walked to -- both sides of a double
+                        foreach (var m in mine.Where(m => m.Name.StartsWith("Bed")))
+                        {
+                            var s = FurnitureCatalog.Sizes[m.Name]; var (fx, fz) = m.Front; var (rx, rz) = m.Right;
+                            int ways = 0;
+                            foreach (int sgn in new[] { -1, 1 })
+                            {
+                                float side = sgn > 0 ? s.X1 : s.X0;
+                                var cs = new[] { (side + sgn * 0.05f, s.Y0 + 1.1f), (side + sgn * 0.75f, s.Y0 + 1.1f), (side + sgn * 0.05f, s.Y1), (side + sgn * 0.75f, s.Y1) }
+                                    .Select(q => (X: m.X + rx * q.Item1 + fx * q.Item2, Z: m.Z + rz * q.Item1 + fz * q.Item2)).ToList();
+                                float bx0 = cs.Min(q => q.X), bx1 = cs.Max(q => q.X), bz0 = cs.Min(q => q.Z), bz1 = cs.Max(q => q.Z);
+                                bool clearAll = true, got = false; int n = 0;
+                                for (int i = (int)MathF.Ceiling((bx0 - gx0) / 0.1f - 0.5f); gx0 + (i + 0.5f) * 0.1f < bx1; i++)
+                                    for (int j = (int)MathF.Ceiling((bz0 - gz0) / 0.1f - 0.5f); gz0 + (j + 0.5f) * 0.1f < bz1; j++)
+                                    {
+                                        n++;
+                                        if (i < 0 || j < 0 || i >= nx || j >= nz || !open[i, j]) clearAll = false;
+                                        else if (seen[i, j]) got = true;
+                                    }
+                                if (clearAll && got && n > 0) ways++;
+                            }
+                            bool dbl = m.Name == "Bed_0";
+                            if (dbl) doubles++;
+                            if (ways >= (dbl ? 2 : 1)) bedWays++;
+                            else bad.Add($"{Name(spec)}: {m}: a {(dbl ? "double" : "single")} bed with {ways} long side{(ways == 1 ? "" : "s")} to get in at");
+                        }
                         foreach (var (what, x, z) in targets.Skip(1))
                             if (!Reached(x, z)) { bad.Add($"{Name(spec)} floor {f} {room}: {what} cannot be walked to from {targets[0].Item1}"); break; }
                         foreach (var (what, at) in uses)
@@ -1570,21 +1639,21 @@ namespace UnturnedSim.Tests
                             if (m.Name.StartsWith("Bed"))
                             {
                                 beds++;
-                                if (!WallBehind(fp, -fx, -fz)) bad.Add($"{nm}: its head is not to a wall");
+                                if (!WallBehind(fp, -fx, -fz)) Feng("a bed's head not to a wall");
                                 var head = fx > 0.5f ? (fp.X0 - 0.6f, fp.Z0, fp.X0, fp.Z1) : fx < -0.5f ? (fp.X1, fp.Z0, fp.X1 + 0.6f, fp.Z1)
                                          : fz > 0.5f ? (fp.X0, fp.Z0 - 0.6f, fp.X1, fp.Z0) : (fp.X0, fp.Z1, fp.X1, fp.Z1 + 0.6f);
-                                if (windows.Any(z => Overlap(head, z.Box))) bad.Add($"{nm}: its head is under a window");
+                                if (windows.Any(z => Overlap(head, z.Box))) Feng("a bed's head under a window");
                                 foreach (var (dx, dz) in roomDoors)
                                 {
                                     float ahead = (dx - m.X) * fx + (dz - m.Z) * fz, across = (dx - m.X) * rx + (dz - m.Z) * rz;
-                                    if (ahead > s.Y1 && MathF.Abs(across) < (s.X1 - s.X0) * 0.5f) bad.Add($"{nm}: the door is straight past its foot");
+                                    if (ahead > s.Y1 && MathF.Abs(across) < (s.X1 - s.X0) * 0.5f) { Feng("a bed with the door straight past its foot"); break; }
                                 }
                             }
                             // (a living room's couch: a break room's has no set to watch)
                             if (m.Name.StartsWith("Couch") && room.Kind == RoomKind.LivingRoom)
                             {
                                 couches++;
-                                if (!WallBehind(fp, -fx, -fz)) bad.Add($"{nm}: its back is not to a wall");
+                                if (!WallBehind(fp, -fx, -fz)) Feng("a couch's back not to a wall");
                                 // a set it can watch: facing it, near enough for its kind, nothing tall between
                                 bool Watch(FurniturePlan tv)
                                 {
@@ -1652,7 +1721,8 @@ namespace UnturnedSim.Tests
                                 float D(FurniturePlan p, FurniturePlan o) => MathF.Sqrt((p.X - o.X) * (p.X - o.X) + (p.Z - o.Z) * (p.Z - o.Z));
                                 float l1 = D(fr, sk), l2 = D(sk, ov), l3 = D(ov, fr);
                                 // (the real 26 ft, 7.9 m, for furniture about twice real size: 13.5 m)
-                                if (MathF.Min(l1, MathF.Min(l2, l3)) < 1.2f || l1 + l2 + l3 > 13.5f) bad.Add($"{Name(spec)}: {room}'s fridge, sink and stove are {l1:0.0}, {l2:0.0} and {l3:0.0} m apart");
+                                if (MathF.Min(l1, MathF.Min(l2, l3)) < 1.2f) bad.Add($"{Name(spec)}: {room}'s fridge, sink and stove are {l1:0.0}, {l2:0.0} and {l3:0.0} m apart");
+                                else if (l1 + l2 + l3 > 13.5f) Feng("a kitchen's fridge, sink and stove more than 13.5 m round");
                             }
                         }
                     }
@@ -1681,6 +1751,15 @@ namespace UnturnedSim.Tests
             Assert.That(islands, Is.GreaterThan(10), "no kitchen has an island");
             Assert.That(turned, Is.GreaterThan(movable / 5), "what gets moved in use all stands square");
             Assert.That(shopsWithRows, Is.GreaterThanOrEqualTo(shopsWithShelves / 2), "shops' gondolas rarely stand in aligned rows");
+            // the round-9 requirements held over enough cases to mean it, and the feng shui given up only now and then
+            TestContext.Progress.WriteLine($"[furn-r9] {bedWays} of {beds} beds with their way in ({doubles} doubles, both sides); {worktops} of {kitchens} kitchens with a plain counter at the sink or stove; {eatInsSeated} of {eatIns} kitchens where the house eats with a table and a chair; feng shui given up: {(feng.Count == 0 ? "none" : string.Join(", ", feng.OrderByDescending(kv => kv.Value).Select(kv => $"{kv.Value} {kv.Key}")))}");
+            Assert.That(doubles, Is.GreaterThan(100), "too few double beds to test their way in");
+            Assert.That(eatIns, Is.GreaterThan(50), "too few kitchens where the house eats to test their table");
+            foreach (var (what, n) in feng)
+            {
+                int of = what.Contains("bed") ? beds : what.Contains("couch") ? couches : kitchens;
+                Assert.That(n, Is.LessThanOrEqualTo(Math.Max(2, of / 20)), $"{n} of {of}: {what} -- a preference, but given up too often");
+            }
             Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(10)));
         }
 
@@ -1732,6 +1811,95 @@ namespace UnturnedSim.Tests
             TestContext.Progress.WriteLine($"[gen-ltup] {string.Join(", ", kept.Select(kv => $"{kv.Value.Kept} of {kv.Value.Asked} {kv.Key}s"))} of 2-3 floors kept their outline; {roofed} of {arms} arms roofed at the ground floor's head; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
             Assert.That(kept[FootprintShape.L].Asked, Is.EqualTo(96));
             Assert.That(arms, Is.GreaterThan(150));
+            Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(10)));
+        }
+
+        // T: a town house eats in its kitchen when it has no dining room -- at a table with a chair at it (strawberry: "houses
+        // without a dining room require at table with at least one chair in the kitchen") -- and cooks at a counter beside
+        // its sink or stove ("require counters - not just sinks in kitchens"), with no tolerance: over the town plots'
+        // building zones a house is fitted to (cow tools: small 4x6, medium 5x6, large 7x7, the front to the street), where
+        // the rooms come out at their smallest. A fit that says it came out short of one is excused, counted and bounded.
+        // BREAK IT: seat a kitchen-diner's table on its open sides only, keeping it with no chair; take the counters out of
+        // the kitchen's last-resort layout.
+        [Test]
+        public void TownHousesEatAndCookInTheirKitchens()
+        {
+            var bad = new List<string>();
+            int kitchens = 0, eatIns = 0, excused = 0, whole = 0, houses = 0;
+            foreach (var (w, d) in new[] { (4, 6), (5, 6), (7, 7) })
+                for (int seed = 1; seed <= 30; seed++)
+                {
+                    var r = BuildingGen.Generate(new BuildingGenSpec { Kind = BuildingKind.Residential, Seed = seed, MinRooms = 5, MaxFloors = 2, MaxRoomsPerFloor = 6,
+                                                                        Width = w, Depth = d, FitPlot = true, FrontSide = Sides.South });
+                    houses++;
+                    var note = r.Notes.LastOrDefault(x => x.StartsWith("fitted the")) ?? "";
+                    if (!note.Contains("but")) whole++;
+                    string n = $"{w}x{d} seed {seed}";
+                    bool eats = r.KitchenDiner || !r.Layout.Any(g => g.Kind == RoomKind.DiningRoom);
+                    foreach (var k in r.Layout.Where(g => g.Kind == RoomKind.Kitchen))
+                    {
+                        kitchens++;
+                        var mine = r.Furniture.Where(m => m.Room == k && m.On == null && !m.Mounted && !m.Ceiling).ToList();
+                        bool SameWay(FurniturePlan a, FurniturePlan b) => MathF.Abs(((a.Yaw - b.Yaw) % 360f + 360f) % 360f) < 1f;
+                        bool worktop = mine.Any(c => c.Name == "Counter_0" && mine.Any(h => (h.Name == "Counter_1" || h.Name.StartsWith("Oven")) && SameWay(c, h)
+                                                                                               && Overlap(Grown(h.Footprint, 0.15f), c.Footprint, 0f)));
+                        if (!worktop) { if (note.Contains("Kitchen: counter")) excused++; else bad.Add($"{n}: {k} has no plain counter beside its sink or stove"); }
+                        if (!eats) continue;
+                        eatIns++;
+                        var tables = mine.Where(t => t.Name is "Table_Wood_0" or "Table_Wood_1" or "Table_Wood_3").ToList();
+                        bool seated = tables.Any(t => mine.Any(c => c.Name.StartsWith("Chair") && MathF.Sqrt((t.X - c.X) * (t.X - c.X) + (t.Z - c.Z) * (t.Z - c.Z)) < 3f));
+                        if (!seated) { if (note.Contains("Kitchen: dining table")) excused++; else bad.Add($"{n}: {k} is where the house eats, with {(tables.Count == 0 ? "no table" : "a table and no chair")}"); }
+                    }
+                }
+            TestContext.Progress.WriteLine($"[gen-eat] {houses} town houses ({whole} fitted whole), {kitchens} kitchens, {eatIns} where the house eats; {excused} short of a counter or a seated table in fits that say so; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
+            Assert.That(eatIns, Is.GreaterThan(40), "too few kitchens where the house eats to test");
+            Assert.That(excused, Is.LessThanOrEqualTo(houses / 20), "town houses often come out short of a kitchen's counter or table");
+            Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(10)));
+        }
+
+        // S: a storey's floor stops inside its outside walls, and a porch's deck is the house's floor colour (strawberry: "floor
+        // color is adding a floor colored strip to the exterior walls", "give porches floor color"). A slab laid out to a
+        // wall's outer face has its edge flush with that face -- and a surface's edges wear its top's colour (WallSurface),
+        // so the floor's colour showed as a band round the outside between storeys and at the base. No floor slab's edge
+        // stands within 2 cm of the outer face of an outside wall of the storey on it or under it. Every porch's deck wears
+        // the palette's floor texel.
+        // BREAK IT: lay the slabs out to the outer faces (SlabInset 0); leave a deck the wall colour.
+        [Test]
+        public void FloorsStopInsideTheirWallsAndPorchesWearTheFloor()
+        {
+            var bad = new List<string>();
+            int slabs = 0, faces = 0, decks = 0;
+            foreach (var (spec, res) in All())
+            {
+                var outer = res.Walls.Where(w => w.Kind == SurfaceKind.Wall && w.Thickness == BuildingGen.Ext).ToList();
+                int floorTexel = BuildingGen.FloorTexels.TryGetValue(res.Palette ?? "", out var ft) ? ft.Floor : -1;
+                foreach (var sl in res.Walls.Where(w => w.Kind == SurfaceKind.Floor && MathF.Abs(w.Thickness - BuildingGen.Slab) < 0.01f))
+                {
+                    var pl = Plan(sl);
+                    int f = (int)MathF.Round((sl.Y + sl.Thickness * 0.5f) / Storey);
+                    float cx = (pl.X0 + pl.X1) * 0.5f, cz = (pl.Z0 + pl.Z1) * 0.5f;
+                    if (res.Porches.Any(p => cx > p.X0 && cx < p.X1 && cz > p.Z0 && cz < p.Z1))
+                    {
+                        decks++;
+                        if (floorTexel >= 0 && sl.Texel != floorTexel) bad.Add($"{Name(spec)}: a porch deck in texel {sl.Texel}, the floor's is {floorTexel}");
+                        continue;
+                    }
+                    slabs++;
+                    foreach (var w in outer.Where(w => FloorOf(w) == f || FloorOf(w) == f - 1))
+                    {
+                        if (!Overlap(pl, Box(w), 0.01f)) continue;
+                        faces++;
+                        // how far the slab runs the way the wall looks out, against where its outer face stands
+                        var n = Normal(w);
+                        float face = w.X * n.X + w.Z * n.Z + w.Thickness * 0.5f;
+                        float reach = n.X > 0.5f ? pl.X1 : n.X < -0.5f ? -pl.X0 : n.Z > 0.5f ? pl.Z1 : -pl.Z0;
+                        if (MathF.Abs(reach - face) < 0.02f) bad.Add($"{Name(spec)}: floor {f}'s slab runs out flush with the {FaceOf(w)} wall's outer face");
+                    }
+                }
+            }
+            TestContext.Progress.WriteLine($"[gen-floorband] {slabs} floor slabs against {faces} outside walls over or under them, {decks} porch decks; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
+            Assert.That(faces, Is.GreaterThan(2000));
+            Assert.That(decks, Is.GreaterThan(100));
             Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(10)));
         }
 

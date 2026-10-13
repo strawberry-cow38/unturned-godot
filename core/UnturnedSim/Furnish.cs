@@ -42,6 +42,7 @@ namespace UnturnedSim
         {
             ["Bed_0"] = new(-1.52f, 1.52f, -1.94f, 1.94f, 1.67f),          // double; headboard at -Y
             ["Bed_1"] = new(-1.00f, 1.00f, -1.94f, 1.94f, 1.67f),          // single
+            ["Bed_2"] = new(-0.90f, 0.90f, -1.87f, 1.87f, 2.92f),          // bunk beds: a single's way in, a wardrobe's height
             ["Wardrobe_0"] = new(-1.03f, 1.03f, -0.38f, 0.50f, 2.60f),
             ["Wardrobe_1"] = new(-1.03f, 1.03f, -0.38f, 0.50f, 2.60f),
             ["Lamp_1"] = new(-0.37f, 0.37f, -0.37f, 0.37f, 2.30f),         // floor lamp
@@ -72,6 +73,11 @@ namespace UnturnedSim
             ["Dryer_0"] = new(-0.75f, 0.75f, -0.75f, 0.75f, 1.78f),
             ["Files_0"] = new(-0.39f, 0.39f, -0.47f, 0.56f, 2.14f),
             ["Computer_3"] = new(-0.65f, 0.65f, -0.11f, 0.23f, 1.18f),     // a monitor, on a desk
+            ["Lamp_0"] = new(-0.15f, 0.25f, -0.15f, 0.15f, 0.88f),         // a desk lamp, on a desk
+            ["Microwave_0"] = new(-0.68f, 0.68f, -0.35f, 0.39f, 0.80f),    // on a counter
+            ["Coffee_0"] = new(-0.60f, 0.60f, -0.30f, 0.46f, 0.80f),       // a coffee machine, on a counter
+            ["Toaster_0"] = new(-0.29f, 0.29f, -0.47f, 0.54f, 0.63f),      // on a counter
+            ["Clock_0"] = new(-0.50f, 0.50f, 0.00f, 0.13f, 0.50f),         // hung on a wall: origin at its back's middle
             ["Crate_0"] = new(-0.62f, 0.62f, -0.62f, 0.62f, 1.25f),
             ["Crate_3"] = new(-0.94f, 0.94f, -0.94f, 0.94f, 1.88f),
             ["Barrel_0"] = new(-0.54f, 0.54f, -0.54f, 0.54f, 1.28f),
@@ -172,6 +178,34 @@ namespace UnturnedSim
         public const float TvOffAxis = 0.3f;
         /// <summary>A set this close to a flight, a landing or a stair hole is on the wall the stairs run along.</summary>
         public const float StairWallReach = 1.0f;
+        /// <summary>A bed is got into from a long side (strawberry: "double beds should require space on either long sides to
+        /// get in/out of, single beds need at least one long side free"): a strip BedAccess deep beside it, from its foot to
+        /// BedHeadRoom short of its head (the bedhead's sides are for a lamp), clear floor of its room that its doors can walk
+        /// to -- both sides of a double, one of a single, kept clear of what comes after. 0.8 m because the player's capsule
+        /// is 0.7 across (PlayerController: radius 0.35) and binds here, not the furniture: the props are about twice real
+        /// size (Bed_1 is 2.0 x 3.9 m, a real single 1 x 1.9) while the player, 2 m tall, is about real size, so a real
+        /// bedroom's 0.6 m would not let them through.</summary>
+        public const float BedAccess = 0.8f, BedHeadRoom = 1.0f;
+        public static bool IsDoubleBed(string name) => name == "Bed_0";
+
+        /// <summary>Is plain counter c beside h, in its run: square the same way, their sides within 0.12 m.</summary>
+        public static bool Beside(FurniturePlan c, FurniturePlan h)
+        {
+            if (c.On != null || h.On != null || MathF.Abs(((c.Yaw - h.Yaw) % 360f + 360f) % 360f) > 1f) return false;
+            var a = c.Footprint; var b = h.Footprint;
+            return a.X0 < b.X1 + 0.12f && a.X1 > b.X0 - 0.12f && a.Z0 < b.Z1 + 0.12f && a.Z1 > b.Z0 - 0.12f;
+        }
+        /// <summary>Has a kitchen's furniture a plain counter (Counter_0) beside its sink or its stove -- somewhere to put a
+        /// pan down, not just appliances (strawberry: "require counters - not just sinks in kitchens")?</summary>
+        public static bool Worktop(IEnumerable<FurniturePlan> kitchen)
+        {
+            var l = kitchen as IList<FurniturePlan> ?? kitchen.ToList();
+            return l.Any(c => c.Name == "Counter_0" && l.Any(h => h.Name is "Counter_1" or "Oven_0" && Beside(c, h)));
+        }
+        /// <summary>Does a building eat in its kitchen -- a house with the dining table there, or with no dining room at all
+        /// (strawberry: "houses without a dining room require at table with at least one chair in the kitchen")?</summary>
+        public static bool EatsInKitchen(BuildingGenResult r)
+            => r.KitchenDiner || (r.Kind == BuildingKind.Residential && !r.Layout.Any(g => g.Kind == RoomKind.DiningRoom));
         /// <summary>The kitchen's working triangle, fridge to sink to stove and back, at most this far round. The real rule
         /// is 26 ft (7.9 m) for furniture this game builds about twice the size (a counter 1.5 m wide, a real one 0.6).</summary>
         public const float TriangleRound = 12.5f;
@@ -415,6 +449,7 @@ namespace UnturnedSim
                     case RoomKind.Hall: Hall(); break;
                     case RoomKind.BreakRoom: BreakRoom(); break;
                 }
+                Coats();
                 Jitter();
                 CeilingLights();
             }
@@ -426,6 +461,8 @@ namespace UnturnedSim
             /// flight, not in a wall.</summary>
             // (every 6 m hung four to seven pendants in one living room, a grid like an office's)
             const float LightEvery = 9f;
+            /// <summary>How far the pendant hangs below the ceiling (Ceiling_Lamp_Pendant_0, astraclaw).</summary>
+            const float PendantDrop = 0.94f;
             void CeilingLights()
             {
                 bool pendant = _room.Kind is RoomKind.LivingRoom or RoomKind.DiningRoom or RoomKind.Bedroom or RoomKind.BreakRoom
@@ -461,7 +498,11 @@ namespace UnturnedSim
                     var fp = FurnitureCatalog.Footprint(lamp, x, z, 0f);
                     var grown = (fp.X0 - 0.6f, fp.Z0 - 0.6f, fp.X1 + 0.6f, fp.Z1 + 0.6f);
                     if (_p.StairRects.Any(r => Overlaps(grown, r)) || _p.WallRects.Any(r => Overlaps(fp, r))) continue;
-                    var m = new FurniturePlan { Name = lamp, X = x, Y = Ceil(x, z), Z = z, Yaw = 0f, Floor = f, Room = _room, Ceiling = true };
+                    // a pendant over something tall (bunk beds) would hang into it: a flush mount there
+                    string here = lamp == "Ceiling_Lamp_Pendant_0" && _mine.Any(o => o.On == null && !o.Mounted && !o.Ceiling && Overlaps(fp, o.Footprint)
+                                                                               && f * Storey + FurnitureCatalog.Sizes[o.Name].H > Ceil(x, z) - PendantDrop - 0.1f)
+                                  ? "Ceiling_Lamp_Flush_0" : lamp;
+                    var m = new FurniturePlan { Name = here, X = x, Y = Ceil(x, z), Z = z, Yaw = 0f, Floor = f, Room = _room, Ceiling = true };
                     _mine.Add(m);
                     _res.Furniture.Add(m);
                 }
@@ -580,7 +621,17 @@ namespace UnturnedSim
                     if (c.Length == 0) return false;
                     sides.Add(c);
                 }
+                // and a bed's way in: the middle of every strip it keeps clear beside it
+                var musts = new List<int>();
+                foreach (var (m, pts) in _mustReach)
+                    foreach (var (px, pz) in pts)
+                    {
+                        var c = Nearest(px, pz);
+                        if (c < 0) return false;
+                        musts.Add(c);
+                    }
                 if (cells.Count == 0 && sides.Count > 0) cells.Add(sides[0][0]);
+                if (cells.Count == 0 && musts.Count > 0) cells.Add(musts[0]);
                 if (cells.Count == 0) return true;
                 _stamp++;
                 if (_seen == null || _seen.Length != _ni * _nj) { _seen = new int[_ni * _nj]; _queue = new int[_ni * _nj]; }
@@ -600,7 +651,7 @@ namespace UnturnedSim
                         want.Remove(n);
                     }
                 }
-                return want.Count == 0 && sides.All(c => c.Any(i => _seen[i] == _stamp));
+                return want.Count == 0 && sides.All(c => c.Any(i => _seen[i] == _stamp)) && musts.All(i => _seen[i] == _stamp);
             }
             int[] _seen, _queue; int _stamp;
             /// <summary>The clear cell of this room nearest (x, z), within `reach` cells (0.4 m), as an index into the room's
@@ -655,6 +706,38 @@ namespace UnturnedSim
                 return true;
             }
             readonly Dictionary<FurniturePlan, List<(int, int)>> _reserved = new();
+            /// <summary>Points a piece needs walked to (the middles of a bed's access strips), checked by Connected.</summary>
+            readonly Dictionary<FurniturePlan, List<(float X, float Z)>> _mustReach = new();
+
+            /// <summary>A bed's two long sides' access strips (its right, then its left), as boxes: BedAccess deep, from its
+            /// foot to BedHeadRoom short of its head. Square to the walls, as a bed always stands.</summary>
+            static (float X0, float Z0, float X1, float Z1)[] BedSides(string name, float x, float z, float yaw)
+            {
+                var s = FurnitureCatalog.Sizes[name];
+                var (c, sn) = PlanTrig.CosSin(yaw);
+                var outp = new (float, float, float, float)[2];
+                for (int k = 0; k < 2; k++)
+                {
+                    // across (the bed's +X, right) and along (its +Y, toward the foot), in its own frame
+                    float a0 = k == 0 ? s.X1 + 0.02f : s.X0 - 0.02f - BedAccess, a1 = a0 + BedAccess, b0 = s.Y0 + BedHeadRoom, b1 = s.Y1;
+                    // right (c, -sn) * a + front (-sn, -c) * b
+                    float ax = c * a0, bx = c * a1, ay = -sn * b0, by = -sn * b1, az = -sn * a0, bz = -sn * a1, cy = -c * b0, dy = -c * b1;
+                    outp[k] = (x + MathF.Min(ax, bx) + MathF.Min(ay, by), z + MathF.Min(az, bz) + MathF.Min(cy, dy),
+                               x + MathF.Max(ax, bx) + MathF.Max(ay, by), z + MathF.Max(az, bz) + MathF.Max(cy, dy));
+                }
+                return outp;
+            }
+            /// <summary>Which of a bed's long sides at (x, z, yaw) are clear to get in at: this room's floor, nothing solid on
+            /// it -- wall, stairs, hole, a piece -- (a doorway is fine: it is floor you walk on). The ones it keeps: both of a
+            /// double, the one nearer the door of a single; null when it has too few.</summary>
+            List<(float X0, float Z0, float X1, float Z1)> BedWay(string name, float x, float z, float yaw)
+            {
+                var ok = BedSides(name, x, z, yaw).Where(a => SwingClear(a) && !_p.StairRects.Any(r => Overlaps(a, r)) && !_p.WallRects.Any(r => Overlaps(a, r))
+                                                              && !_mine.Any(o => o.On == null && !o.Mounted && !o.Ceiling && Overlaps(a, o.Footprint))).ToList();
+                int need = IsDoubleBed(name) ? 2 : 1;
+                if (ok.Count < need) return null;
+                return ok.OrderBy(a => NearestDoor((a.X0 + a.X1) * 0.5f, (a.Z0 + a.Z1) * 0.5f)).Take(need).ToList();
+            }
 
             /// <summary>Candidates best first, each score nudged by a seeded draw taken here, one per candidate in order (see
             /// Rng.Keyed: never inside a LINQ key selector).</summary>
@@ -685,25 +768,33 @@ namespace UnturnedSim
                     if (_p.WallRects.Any(r => Overlaps(fp, r))) continue;
                     var swing = SwingZone(name, x, z, yaw);
                     if (swing != null && (!SwingClear(swing.Value) || _mine.Any(o => o.On == null && !o.Mounted && Overlaps(swing.Value, o.Footprint)))) continue;
+                    // a bed: a long side (both, a double's) to get in at
+                    var way = name.StartsWith("Bed") ? BedWay(name, x, z, yaw) : null;
+                    if (name.StartsWith("Bed") && way == null) continue;
                     var cells = Under(name, x, z, yaw).Where(c => _p.State[c.I, c.J] == FloorPlan.Free).ToList();
                     foreach (var (i, j) in cells) _p.State[i, j] = FloorPlan.Furn;
                     var m = new FurniturePlan { Name = name, X = x, Y = _room.Floor * Storey + y, Z = z, Yaw = yaw, Floor = _room.Floor, Room = _room };
                     _mine.Add(m);
+                    if (way != null) _mustReach[m] = way.Select(a => ((a.X0 + a.X1) * 0.5f, (a.Z0 + a.Z1) * 0.5f)).ToList();
                     if (Connected())
                     {
                         _res.Furniture.Add(m);
-                        // its swing stays clear: walkable, but nothing else stands in it
-                        if (swing != null)
+                        // its swing stays clear, and a bed's way in: walkable, but nothing else stands in them
+                        var keep = new List<(float, float, float, float)>();
+                        if (swing != null) keep.Add(swing.Value);
+                        if (way != null) keep.AddRange(way);
+                        if (keep.Count > 0)
                         {
                             var held = new List<(int, int)>();
-                            foreach (var (i, j) in _p.Cells(swing.Value)) if (!_p.KeepDoor[i, j]) { _p.KeepDoor[i, j] = true; held.Add((i, j)); }
+                            foreach (var a in keep)
+                                foreach (var (i, j) in _p.Cells(a)) if (!_p.KeepDoor[i, j]) { _p.KeepDoor[i, j] = true; held.Add((i, j)); }
                             _reserved[m] = held;
-                            Recount(swing.Value);
+                            foreach (var a in keep) Recount(a);
                         }
                         Recount(fp);
                         return m;
                     }
-                    _mine.Remove(m);
+                    _mine.Remove(m); _mustReach.Remove(m);
                     foreach (var (i, j) in cells) _p.State[i, j] = FloorPlan.Free;
                 }
                 return null;
@@ -711,7 +802,7 @@ namespace UnturnedSim
 
             /// <summary>Hang a piece on a wall (a flat television): where its back meets wall with no window or door
             /// in that stretch, and nothing hung there already. No floor of its own.</summary>
-            FurniturePlan Hang(string name, IEnumerable<(float X, float Z, float Yaw)> cands, Func<float, float, float, double> score = null)
+            FurniturePlan Hang(string name, IEnumerable<(float X, float Z, float Yaw)> cands, Func<float, float, float, double> score = null, float height = MountHeight)
             {
                 var ranked = Rank(cands, score);
                 foreach (var (x, z, yaw) in ranked)
@@ -722,13 +813,14 @@ namespace UnturnedSim
                     var strip = (fp.X0 - (fx < 0 ? 0.6f : 0f), fp.Z0 - (fz < 0 ? 0.6f : 0f), fp.X1 + (fx > 0 ? 0.6f : 0f), fp.Z1 + (fz > 0 ? 0.6f : 0f));
                     if (_p.Cells(strip).Any(c => _p.KeepTall[c.I, c.J] || (_p.KeepDoor[c.I, c.J] && !_reserved.Values.Any(l => l.Contains(c))))) continue;
                     if (_mine.Any(o => o.Mounted && Overlaps(fp, o.Footprint))) continue;
-                    var m = new FurniturePlan { Name = name, X = x, Y = _room.Floor * Storey + MountHeight, Z = z, Yaw = yaw, Floor = _room.Floor, Room = _room, Mounted = true };
+                    var m = new FurniturePlan { Name = name, X = x, Y = _room.Floor * Storey + height, Z = z, Yaw = yaw, Floor = _room.Floor, Room = _room, Mounted = true };
                     _mine.Add(m); _res.Furniture.Add(m);
                     return m;
                 }
                 return null;
             }
 
+            static (float X0, float Z0, float X1, float Z1) Grow((float X0, float Z0, float X1, float Z1) a, float m) => (a.X0 - m, a.Z0 - m, a.X1 + m, a.Z1 + m);
             static bool Overlaps((float X0, float Z0, float X1, float Z1) a, (float X0, float Z0, float X1, float Z1) b)
                 => a.X0 < b.X1 - 0.005f && a.X1 > b.X0 + 0.005f && a.Z0 < b.Z1 - 0.005f && a.Z1 > b.Z0 + 0.005f;
 
@@ -866,13 +958,18 @@ namespace UnturnedSim
             // ---- the rooms ---------------------------------------------------------------------------------------
 
             /// <summary>The bed in the command position: its head to a solid wall with no door in it and no window over
-            /// it, the door in view across the room but not straight past its foot (the "coffin" position), room to
-            /// get in at a side; then a wardrobe, a lamp at the bedhead, a bookcase in a big room.</summary>
+            /// it, the door in view across the room but not straight past its foot (the "coffin" position); and always
+            /// a way in at a long side (both, a double's: BedAccess). Then a wardrobe, a lamp at the bedhead, a bookcase
+            /// in a big room. The command position is a preference (strawberry: "feng shui is a suggestion not a
+            /// requirement, always preffered where layout allows"): where the room will not have it, a single bed goes
+            /// with the door past its foot, then under a window, then with its long side to a wall -- never no bed.</summary>
             void Bedroom()
             {
                 float minSide = _room.Rects.Min(r => Math.Min(r.X1 - r.X0, r.Z1 - r.Z0)) * Cell;
                 // a double where it fits, on a roll (strawberry: "bedrooms may be single or double bed")
                 string bed = minSide >= 4.5f && _area >= 20f && _rng.Chance(60) ? "Bed_0" : "Bed_1";
+                // now and then bunk beds, in a house with a bedroom besides this one
+                if (bed == "Bed_1" && _res.Kind == BuildingKind.Residential && _res.Layout.Count(g => g.Kind == RoomKind.Bedroom) >= 2 && _rng.Chance(25)) bed = "Bed_2";
                 // never the coffin (the door straight past its foot) while anywhere else will do -- the score alone let an
                 // L-shaped room, every wall of which faced the door, pick one
                 bool Coffin(string bd, (float X, float Z, float Yaw) c)
@@ -881,8 +978,11 @@ namespace UnturnedSim
                     return Doors().Any(d => { float vx = d.X - c.X, vz = d.Z - c.Z; return vx * fx + vz * fz > s0.Y1 && MathF.Abs(vx * rx + vz * rz) < (s0.X1 - s0.X0) * 0.5f; });
                 }
                 var b = Put(bed, Against(bed, Side.Back).Where(c => !UnderWindow(bed, c) && !Coffin(bed, c)), (x, z, yaw) => BedScore(bed, x, z, yaw));
-                if (b == null && bed == "Bed_0") b = Put("Bed_1", Against("Bed_1", Side.Back).Where(c => !UnderWindow("Bed_1", c) && !Coffin("Bed_1", c)), (x, z, yaw) => BedScore("Bed_1", x, z, yaw));
+                if (b == null && bed != "Bed_1") b = Put("Bed_1", Against("Bed_1", Side.Back).Where(c => !UnderWindow("Bed_1", c) && !Coffin("Bed_1", c)), (x, z, yaw) => BedScore("Bed_1", x, z, yaw));
                 if (b == null) b = Put("Bed_1", Against("Bed_1", Side.Back).Where(c => !UnderWindow("Bed_1", c)), (x, z, yaw) => BedScore("Bed_1", x, z, yaw));
+                // (the preferences given up one at a time, the bed's score still ranking what is left)
+                if (b == null) b = Put("Bed_1", Against("Bed_1", Side.Back), (x, z, yaw) => BedScore("Bed_1", x, z, yaw));
+                if (b == null) b = Put("Bed_1", Against("Bed_1", Side.Left).Concat(Against("Bed_1", Side.Right)), (x, z, yaw) => BedScore("Bed_1", x, z, yaw));
                 Put("Wardrobe_0", Against("Wardrobe_0", Side.Back), (x, z, yaw) => NearestDoor(x, z) - (b != null && MathF.Abs(yaw - b.Yaw) < 1f ? 2 : 0));
                 if (b != null)
                 {
@@ -938,27 +1038,44 @@ namespace UnturnedSim
             /// (strawberry: "living room should have a tv (either wall mounted or a crt on top of a table), couch should have
             /// a sight line within a max distance of a tv set, different for both types"): a flat one hung on the wall it
             /// faces, up to <see cref="WallTvReach"/> away, or a CRT on a table up to <see cref="CrtReach"/> -- facing it,
-            /// nothing tall between. The couch moves until one fits. Then a lamp in a corner, a bookcase.</summary>
+            /// nothing tall between. The couch moves until one fits. Then a lamp in a corner, a bookcase. Its back to a wall
+            /// and the big couch are preferences (strawberry: "feng shui is a suggestion not a requirement"): where no set
+            /// will go with the big one, the small one; where neither goes against a wall, one standing free in the room,
+            /// facing the way in -- a living room is never left without its couch.</summary>
             void LivingRoom()
             {
                 string couch = _area >= 18f ? "Couch_0" : "Couch_1";
                 bool crtFirst = _rng.Chance(50);
                 var ranked = Rank(Against(couch, Side.Back), CouchScore);
-                // the seeded kind of set wherever the couch can go first, the other kind after
+                // the seeded kind of set wherever the couch can go first, the other kind after; then the smaller couch
                 FurniturePlan seat = null;
-                foreach (bool crt in new[] { crtFirst, !crtFirst })
+                foreach (var (sofa, cands) in couch == "Couch_0" ? new[] { ("Couch_0", ranked), ("Couch_1", (List<(float X, float Z, float Yaw)>)null) } : new[] { (couch, ranked) })
                 {
-                    foreach (var cand in ranked)
+                    var order = cands ?? Rank(Against(sofa, Side.Back), CouchScore);
+                    foreach (bool crt in new[] { crtFirst, !crtFirst })
                     {
-                        var c = Put(couch, new[] { cand });
-                        if (c == null) continue;
-                        if (crt ? Crt(c) : WallTv(c)) { seat = c; break; }
-                        Remove(c);
+                        foreach (var cand in order)
+                        {
+                            var c = Put(sofa, new[] { cand });
+                            if (c == null) continue;
+                            if (crt ? Crt(c) : WallTv(c)) { seat = c; break; }
+                            Remove(c);
+                        }
+                        if (seat != null) break;
                     }
                     if (seat != null) break;
                 }
-                if (seat == null) Put(couch, ranked);   // no set will go anywhere: the couch at least
-                else
+                if (seat == null)
+                {
+                    // no set will go anywhere: the couch at least, backed to a wall; and failing that standing free, facing
+                    // the way in, with a set if one will go
+                    var alone = Put(couch, ranked) ?? (couch == "Couch_0" ? Put("Couch_1", Against("Couch_1", Side.Back), CouchScore) : null);
+                    if (alone == null)
+                        foreach (var sofa in couch == "Couch_0" ? new[] { "Couch_0", "Couch_1" } : new[] { couch })
+                            if ((alone = Put(sofa, Free(sofa), CouchScore)) != null) break;
+                    if (alone != null && (crtFirst ? Crt(alone) || WallTv(alone) : WallTv(alone) || Crt(alone))) seat = alone;
+                }
+                if (seat != null)
                 {
                     // keep the view: nothing tall goes down between the couch and its set afterwards
                     var set = _res.Furniture.Last(m => m.Name.StartsWith("Television"));
@@ -973,6 +1090,7 @@ namespace UnturnedSim
                 }
                 Put("Lamp_1", Against("Lamp_1", Side.Back).Where(p => Corner("Lamp_1", p)), (x, z, yaw) => NearestDoor(x, z));
                 if (_area >= 24f) Put("Shelf_2", Against("Shelf_2", Side.Back), (x, z, yaw) => NearestDoor(x, z));
+                Clock();
             }
 
             /// <summary>Places on the wall the couch faces, facing it, `near`..`far` in front of it and nearly square to it,
@@ -1058,6 +1176,15 @@ namespace UnturnedSim
                 return 30f;
             }
 
+            /// <summary>Everywhere a piece might stand free in the room, square to it: every 0.25 m, each way round.</summary>
+            IEnumerable<(float X, float Z, float Yaw)> Free(string name)
+            {
+                foreach (var r in _room.Rects)
+                    for (float x = r.X0 * Cell; x <= r.X1 * Cell; x += 0.25f)
+                        for (float z = r.Z0 * Cell; z <= r.Z1 * Cell; z += 0.25f)
+                            for (int k = 0; k < 4; k++) yield return (x, z, k * 90f);
+            }
+
             bool Corner(string name, (float X, float Z, float Yaw) p)
             {
                 var fp = FurnitureCatalog.Footprint(name, p.X, p.Z, p.Yaw);
@@ -1067,34 +1194,59 @@ namespace UnturnedSim
             /// <summary>The table in the middle of the room's clear floor with a metre round it, and dining chairs
             /// (strawberry: "use chair 1 instead of chair 2 for the dining room") facing it: at a long table along its
             /// sides and one at each end, at the round one evenly round its rim (strawberry: "consider the shape of
-            /// furniture when placing stuff around it (the kitchen table)").</summary>
-            void Dining()
+            /// furniture when placing stuff around it (the kitchen table)"). Standing free in the middle is a preference
+            /// ("feng shui is a suggestion not a requirement"): where no table will, one against a wall -- the long one
+            /// along it, the small one at it -- seated on its open sides. A table seating fewer than `minChairs` is taken
+            /// back out and the next place tried (a house that eats in its kitchen: "houses without a dining room require
+            /// a table with at least one chair in the kitchen"). Null when no table goes in.</summary>
+            FurniturePlan Dining(int minChairs = 0)
             {
                 var (cx, cz) = Centre();
                 bool big = _room.Rects.Min(r => Math.Min(r.X1 - r.X0, r.Z1 - r.Z0)) * Cell >= 6.5f;
+                double Mid(float x, float z) => -Math.Sqrt((x - cx) * (x - cx) + (z - cz) * (z - cz));
                 // the round one in a big room, else the long one; tight, the small square one, and then a little less room round
-                // -- down to a chair's depth, in a small house's kitchen-diner with its walk to three doors across it
-                FurniturePlan t = null;
+                // -- down to a chair's depth, in a small house's kitchen-diner with its walk to three doors across it; then
+                // against a wall
+                var ladder = new List<(string Table, Func<IEnumerable<(float X, float Z, float Yaw)>> Cands, Func<float, float, float, double> Score)>();
                 foreach (var (table, room) in new[] { ("Table_Wood_1", 1.0f), ("Table_Wood_0", 1.0f), ("Table_Wood_3", 1.0f), ("Table_Wood_3", 0.8f), ("Table_Wood_3", 0.6f) })
                 {
                     if (table == "Table_Wood_1" && !big) continue;
-                    if ((t = PutWithRoom(table, room, cx, cz)) != null) break;
+                    ladder.Add((table, () => Roomy(table, room), RoomyScore(table, cx, cz)));
                 }
-                // a small kitchen-diner with its doors' walks across the middle: the small table against a wall, seated on
-                // its open sides (the chairs that would face the wall are refused below)
-                if (t == null && _room.Kind == RoomKind.Kitchen) t = Put("Table_Wood_3", Against("Table_Wood_3", Side.Back));
-                if (t == null) return;
-                // each way of seating it in turn, actually placed (a chair the room's walk cannot spare is refused only
-                // then), keeping the first that seats everyone or else the one that seats the most
+                ladder.Add(("Table_Wood_0", () => Against("Table_Wood_0", Side.Left).Concat(Against("Table_Wood_0", Side.Right)), (x, z, _) => Mid(x, z)));
+                ladder.Add(("Table_Wood_3", () => Against("Table_Wood_3", Side.Back), (x, z, _) => Mid(x, z)));
+                foreach (var (table, cands, score) in ladder)
+                {
+                    int tried = 0;
+                    foreach (var c in Rank(cands(), score))
+                    {
+                        var t = Put(table, new[] { c });
+                        if (t == null) continue;
+                        var chairs = Seat(t);
+                        if (chairs.Count >= minChairs) return t;
+                        foreach (var m in chairs) Remove(m);
+                        Remove(t);
+                        if (++tried >= TableTries) break;
+                    }
+                }
+                return null;
+            }
+            /// <summary>How many places a table is tried at, of each kind, for one that seats enough.</summary>
+            const int TableTries = 12;
+
+            /// <summary>Seat a table: each way of seating it in turn, actually placed (a chair the room's walk cannot spare is
+            /// refused only then), keeping the first that seats everyone or else the one that seats the most.</summary>
+            List<FurniturePlan> Seat(FurniturePlan t)
+            {
                 var best = new List<(float X, float Z, float Yaw)>(); int most = -1;
                 foreach (var seats in Seatings(t))
                 {
                     var placed = seats.Select(sp => (sp, m: Put(DiningChair, new[] { sp }))).Where(x => x.m != null).ToList();
-                    if (placed.Count == seats.Count) return;
+                    if (placed.Count == seats.Count) return placed.Select(x => x.m).ToList();
                     if (placed.Count > most) { most = placed.Count; best = placed.Select(x => x.sp).ToList(); }
                     foreach (var (_, m) in placed) Remove(m);
                 }
-                foreach (var sp in best) Put(DiningChair, new[] { sp });
+                return best.Select(sp => Put(DiningChair, new[] { sp })).Where(m => m != null).ToList();
             }
 
             const string DiningChair = "Chair_Wood_0";
@@ -1139,7 +1291,10 @@ namespace UnturnedSim
             static float YawFacing(float fx, float fz) => MathF.Round((MathF.Atan2(-fx, -fz) * 180f / MathF.PI + 360f) % 360f * 1000f) / 1000f % 360f;
 
             /// <summary>Put a free-standing piece as near (cx, cz) as it goes with `room` clear all round it.</summary>
-            FurniturePlan PutWithRoom(string name, float room, float cx, float cz)
+            FurniturePlan PutWithRoom(string name, float room, float cx, float cz) => Put(name, Roomy(name, room), RoomyScore(name, cx, cz));
+
+            /// <summary>Where a free-standing piece has `room` clear all round it.</summary>
+            List<(float X, float Z, float Yaw)> Roomy(string name, float room)
             {
                 var c = new List<(float, float, float)>();
                 var bb = (X0: _room.Rects.Min(r => r.X0) * Cell, Z0: _room.Rects.Min(r => r.Z0) * Cell, X1: _room.Rects.Max(r => r.X1) * Cell, Z1: _room.Rects.Max(r => r.Z1) * Cell);
@@ -1152,7 +1307,14 @@ namespace UnturnedSim
                             var around = (fp.X0 - room, fp.Z0 - room, fp.X1 + room, fp.Z1 + room);
                             if (Clear(around, 0f)) c.Add((x, z, yaw));
                         }
-                return Put(name, c, (x, z, yaw) => -Math.Sqrt((x - cx) * (x - cx) + (z - cz) * (z - cz)) + (yaw == (longX ? 90f : 0f) ? 0.5 : 0));
+                return c;
+            }
+            /// <summary>Nearest (cx, cz) first, lying along the room's length.</summary>
+            Func<float, float, float, double> RoomyScore(string name, float cx, float cz)
+            {
+                var bb = (X0: _room.Rects.Min(r => r.X0) * Cell, Z0: _room.Rects.Min(r => r.Z0) * Cell, X1: _room.Rects.Max(r => r.X1) * Cell, Z1: _room.Rects.Max(r => r.Z1) * Cell);
+                bool longX = bb.X1 - bb.X0 >= bb.Z1 - bb.Z0;
+                return (x, z, yaw) => -Math.Sqrt((x - cx) * (x - cx) + (z - cz) * (z - cz)) + (yaw == (longX ? 90f : 0f) ? 0.5 : 0);
             }
 
             (float, float) Centre()
@@ -1185,35 +1347,73 @@ namespace UnturnedSim
                 if (!freeFridge) tries.Add(() => RunWithOwnFridge(runs));
                 if (!tryL) tries.Add(() => Done(L(runs, false)) || Done(L(runs, true)));
                 tries.Add(() => Pair(runs));
-                // and counter space to work on (strawberry: "require kitchens to have actual counter space"): a layout
-                // counts only with MinPrep plain counters in its run, topped up beside the sink and the stove where the
-                // wall goes on; the plainer layouts get their turn before any kitchen goes without, and only a kitchen
-                // too small for any of them falls back to appliances alone
-                bool strict = true;
+                // and counter space to work on (strawberry: "require kitchens to have actual counter space", then "require
+                // counters - not just sinks in kitchens"): a layout counts only with a plain counter beside its sink or its
+                // stove (Worktop) and MinPrep plain counters in all, topped up beside the sink and the stove where the wall
+                // goes on; the plainer layouts get their turn before any kitchen makes do with the one counter
+                int want = MinPrep;
                 bool Attempt(Func<bool> t)
                 {
                     int n0 = _mine.Count;
                     if (!t()) return false;
-                    if (TopUp() || !strict) return true;
+                    if (TopUp(want) || want == 0) return true;
                     foreach (var m in _mine.Skip(n0).ToList()) Remove(m);
                     return false;
                 }
-                if (!tries.Any(Attempt)) { strict = false; tries.Any(Attempt); }
-                // a kitchen too cut up by its doors for any run (a small house's, with three doors and a back door) still
-                // gets what it is for: the sink, the fridge and the stove, each on whatever wall it fits nearest the others
-                // -- a pace apart at least, the stove never beside the sink, and the three inside a work triangle
                 var three = new[] { "Counter_1", "Fridge_0", "Oven_0" };
+                bool Full() => three.All(n => _mine.Any(m => m.Name == n));
                 static float Dist(FurniturePlan p, float x, float z) => MathF.Sqrt((p.X - x) * (p.X - x) + (p.Z - z) * (p.Z - z));
-                foreach (var a in three)
+                // a kitchen too cut up by its doors for any run (a small house's, with three doors and a back door) still
+                // gets what it is for: the sink with a counter beside it (or failing that the stove with one), then the
+                // fridge and the stove, each on whatever wall it fits nearest the others -- a pace apart at least, the stove
+                // never beside the sink, and the three inside a work triangle where the room allows (a preference: a kitchen
+                // with all three a little far apart beats one without its stove)
+                void Scatter(bool counter)
                 {
-                    if (_mine.Any(m => m.Name == a)) continue;
-                    var placed = three.Select(n => _mine.FirstOrDefault(m => m.Name == n)).Where(p => p != null).ToList();
-                    float Round(float x, float z) => placed.Sum(p => Dist(p, x, z)) + (placed.Count == 2 ? Dist(placed[0], placed[1].X, placed[1].Z) : 0f);
-                    var cands = Against(a, Side.Back).Where(c => placed.All(p => Dist(p, c.X, c.Z) >= 1.8f) && Round(c.X, c.Z) <= (placed.Count == 2 ? 13f : 6.5f)).ToList();
-                    Put(a, cands, (x, z, _) => -Round(x, z));
+                    if (counter && !_mine.Any(m => m.Name is "Counter_1" or "Oven_0")) _ = Row(runs, new[] { "Counter_1", "Counter_0" }) ?? Row(runs, new[] { "Oven_0", "Counter_0" });
+                    foreach (bool triangle in new[] { true, false })
+                        foreach (var a in three)
+                        {
+                            if (_mine.Any(m => m.Name == a)) continue;
+                            var placed = three.Select(n => _mine.FirstOrDefault(m => m.Name == n)).Where(p => p != null).ToList();
+                            float Round(float x, float z) => placed.Sum(p => Dist(p, x, z)) + (placed.Count == 2 ? Dist(placed[0], placed[1].X, placed[1].Z) : 0f);
+                            // (water and fire apart, and the fridge off the stove's side, however far round the three are)
+                            bool Clash((float X, float Z, float Yaw) c) => placed.Any(p => (a == "Oven_0") != (p.Name == "Oven_0")
+                                && Overlaps(Grow(FurnitureCatalog.Footprint(a, c.X, c.Z, c.Yaw), 0.5f), p.Footprint));
+                            var cands = Against(a, Side.Back).Where(c => placed.All(p => Dist(p, c.X, c.Z) >= 1.8f) && !Clash(c) && (!triangle || Round(c.X, c.Z) <= (placed.Count == 2 ? 13f : 6.5f))).ToList();
+                            Put(a, cands, (x, z, _) => -Round(x, z));
+                        }
+                    if (!Worktop(_mine)) TopUp(1);
                 }
-                // a kitchen-diner's table stands where an island would
-                if (_res.KitchenDiner) Dining();
+                // the layouts with two counters, then with the one; then scattered with it; and where even that leaves the
+                // kitchen without a fridge, sink or stove, those come first (the counter weighs less than any of them): the
+                // layouts and the scatter again with the appliances alone, a counter beside them only if one still goes
+                if (!tries.Any(Attempt))
+                {
+                    want = 1;
+                    if (!tries.Any(Attempt))
+                    {
+                        Scatter(true);
+                        if (!Full())
+                        {
+                            foreach (var m in _mine.ToList()) Remove(m);
+                            want = 0;
+                            if (!tries.Any(Attempt)) Scatter(false);
+                            if (!Worktop(_mine)) TopUp(1);
+                        }
+                    }
+                }
+                // a house that eats in its kitchen (strawberry: "houses without a dining room require at table with at least
+                // one chair in the kitchen"): the table, with a chair at it, where an island would stand -- and where it will
+                // not go, the cook's extra counters and the dishwasher make way for it (the counter at the sink stays)
+                if (EatsInKitchen(_res))
+                {
+                    if (Dining(1) == null)
+                    {
+                        Trim();
+                        if (Dining(1) != null) TopUp(MinPrep);
+                    }
+                }
                 else
                 {
                     // a big kitchen fills its floor (a 108 m2 one stood empty with every appliance in one corner): an
@@ -1221,39 +1421,59 @@ namespace UnturnedSim
                     if (_area >= 54f || (_area >= 30f && _rng.Chance(60))) Island();
                     if (_area >= 72f) Dining();
                 }
+                CounterTops();
+                Clock();
             }
 
             const int MinPrep = 2;
 
-            /// <summary>Plain counters (prep space) beside the run: a Counter_0 next to the sink, stove, dishwasher, fridge or
-            /// another counter, on the same wall line, until the kitchen has MinPrep of them. True when it has.</summary>
-            bool TopUp()
+            /// <summary>Plain counters (prep space) beside the run: first one beside the sink or the stove where the kitchen
+            /// has none there (Worktop), then a Counter_0 next to the sink, stove, dishwasher, fridge or another counter, on
+            /// the same wall line, until the kitchen has `want` of them. True when it has, one of them at the sink or
+            /// stove.</summary>
+            bool TopUp(int want)
             {
                 int Prep() => _mine.Count(m => m.Name == "Counter_0");
                 var cs = FurnitureCatalog.Sizes["Counter_0"];
-                for (bool grew = true; grew && Prep() < MinPrep;)
+                // the spots either side of a piece, on its wall line
+                IEnumerable<(float X, float Z, float Yaw)> Sides(FurniturePlan p)
+                {
+                    var ps = FurnitureCatalog.Sizes[p.Name];
+                    var (rx, rz) = RightOf(p.Yaw); var (fx, fz) = FrontOf(p.Yaw);
+                    float back = ps.Y0 - cs.Y0;   // the counter's back on the same wall line as the piece's
+                    foreach (float off in new[] { ps.X1 - cs.X0 + 0.04f, ps.X0 - cs.X1 - 0.04f })
+                        if (Backed("Counter_0", p.X + rx * off + fx * back, p.Z + rz * off + fz * back, p.Yaw))   // (not on past its wall's end)
+                            yield return (p.X + rx * off + fx * back, p.Z + rz * off + fz * back, p.Yaw);
+                }
+                if (!Worktop(_mine))
+                    foreach (var p in _mine.Where(m => m.Name is "Counter_1" or "Oven_0" && m.On == null).OrderBy(m => m.Name == "Counter_1" ? 0 : 1).ToList())
+                        if (Sides(p).Any(c => Put("Counter_0", new[] { c }) != null)) break;
+                for (bool grew = true; grew && Prep() < want;)
                 {
                     grew = false;
                     foreach (var p in _mine.Where(m => m.Name is "Counter_1" or "Oven_0" or "Disher_0" or "Fridge_0" or "Counter_0" && m.On == null).ToList())
-                    {
-                        var ps = FurnitureCatalog.Sizes[p.Name];
-                        var (rx, rz) = RightOf(p.Yaw); var (fx, fz) = FrontOf(p.Yaw);
-                        float back = ps.Y0 - cs.Y0;   // the counter's back on the same wall line as the piece's
-                        foreach (float off in new[] { ps.X1 - cs.X0 + 0.04f, ps.X0 - cs.X1 - 0.04f })
+                        foreach (var c in Sides(p))
                         {
-                            if (Prep() >= MinPrep) return true;
-                            if (Put("Counter_0", new[] { (p.X + rx * off + fx * back, p.Z + rz * off + fz * back, p.Yaw) }) != null) grew = true;
+                            if (Prep() >= want) return Worktop(_mine);
+                            if (Put("Counter_0", new[] { c }) != null) grew = true;
                         }
-                    }
                 }
                 // a run that fills its stretch of wall (doors at both ends) has nothing beside it: then a counter against
                 // whatever wall is free, as near the sink and stove as there is one (within 6 m: across the room is not
                 // counter space)
                 var work = _mine.Where(m => m.Name is "Counter_1" or "Oven_0" or "Disher_0" or "Fridge_0").ToList();
                 double Near(float x, float z) => work.Count == 0 ? 0 : -work.Min(m => MathF.Abs(m.X - x) + MathF.Abs(m.Z - z));
-                while (Prep() < MinPrep && work.Count > 0
+                while (Prep() < want && work.Count > 0
                        && Put("Counter_0", Against("Counter_0", Side.Back).Where(c => Near(c.X, c.Z) > -6.0), (x, z, _) => Near(x, z)) != null) { }
-                return Prep() >= MinPrep;
+                return Prep() >= want && Worktop(_mine);
+            }
+
+            /// <summary>Take out what a kitchen can do without, to make room for its table: the dishwasher, and every plain
+            /// counter but one beside the sink or stove.</summary>
+            void Trim()
+            {
+                var keep = _mine.FirstOrDefault(c => c.Name == "Counter_0" && _mine.Any(h => h.Name is "Counter_1" or "Oven_0" && Beside(c, h)));
+                foreach (var m in _mine.Where(m => m.On == null && (m.Name == "Disher_0" || (m.Name == "Counter_0" && m != keep))).ToList()) Remove(m);
             }
 
             /// <summary>Did a layout put in all three of fridge, sink and stove? If not, take out whatever it did.</summary>
@@ -1493,7 +1713,10 @@ namespace UnturnedSim
                                 {
                                     var cs = FurnitureCatalog.Sizes["Counter_0"];
                                     float along = cur + end * dir * ((end > 0 ? -cs.X0 : cs.X1) + 0.02f);
-                                    var m = Put("Counter_0", new[] { At(along, "Counter_0") });
+                                    var at = At(along, "Counter_0");
+                                    // (not on past the wall's end: onto a partition 0.1 m thinner, it stood off its face)
+                                    if (!Backed("Counter_0", at.Item1, at.Item2, at.Item3)) break;
+                                    var m = Put("Counter_0", new[] { at });
                                     if (m == null) break;
                                     ends.Add(m);
                                     cur = along + end * dir * ((end > 0 ? cs.X1 : -cs.X0) + 0.02f);
@@ -1530,6 +1753,7 @@ namespace UnturnedSim
                     var chair = Put("Chair_Wood_1", new[] { (x, z, yaw) });
                     if (chair == null) { Remove(desk); continue; }
                     On(desk, "Computer_3", 0f, 0.35f, (yaw + 180f) % 360f);   // its screen to the chair
+                    On(desk, "Lamp_0", 0.55f, -0.45f, (yaw + 180f) % 360f);    // a desk lamp at the chair's right hand
                     break;
                 }
                 Put("Files_0", Against("Files_0", Side.Back), (x, z, yaw) => NearestDoor(x, z));
@@ -1556,8 +1780,9 @@ namespace UnturnedSim
                 {
                     foreach (var (i, j) in held) _p.KeepDoor[i, j] = false;
                     _reserved.Remove(m);
-                    if (SwingZone(m.Name, m.X, m.Z, m.Yaw) is { } sz) Recount(sz);
+                    foreach (var b in held.Select(c => c.Item2 - _j0).Where(b => b >= 0 && b < _nj).Distinct()) Recount(b);
                 }
+                _mustReach.Remove(m);
                 foreach (var top in _res.Furniture.Where(t => t.On == m).ToList()) _res.Furniture.Remove(top);
                 _mine.Remove(m); _res.Furniture.Remove(m);
                 Recount(m.Footprint);
@@ -1696,6 +1921,53 @@ namespace UnturnedSim
                 Dining();
                 if (_area >= 30f) Put("Couch_1", Against("Couch_1", Side.Back), (x, z, yaw) => NearestDoor(x, z));
             }
+
+            /// <summary>A house's coat stand by the way in (strawberry: "explore more props to place ie coat rack"): in a corner
+            /// within 6 m of the front or back door of the room it opens into, and in a bedroom by its door -- where a
+            /// corner is left once the room's own pieces are in.</summary>
+            void Coats()
+            {
+                if (_res.Kind != BuildingKind.Residential || _mine.Any(m => m.Name == "Coat_0")) return;
+                var ways = new List<(float X, float Z)>();
+                foreach (var d in new[] { _res.Front, _res.Back })
+                    if (d != null && d.A == _room && _room.Floor == 0) ways.Add(d.Middle);
+                if (_room.Kind == RoomKind.Bedroom) ways.AddRange(Doors());
+                if (ways.Count == 0) return;
+                double Near(float x, float z) => ways.Min(w => Math.Sqrt((w.X - x) * (w.X - x) + (w.Z - z) * (w.Z - z)));
+                Put("Coat_0", Against("Coat_0", Side.Back).Where(p => Corner("Coat_0", p) && Near(p.X, p.Z) <= 6.0), (x, z, _) => -Near(x, z));
+            }
+
+            /// <summary>Small appliances on the kitchen's plain counters (a microwave, a coffee machine or a toaster), one to a
+            /// counter, never on the last bare one: somewhere is left to work.</summary>
+            void CounterTops()
+            {
+                var tops = _mine.Where(m => m.Name == "Counter_0" && m.On == null && !_res.Furniture.Any(t => t.On == m)).ToList();
+                // the one at the sink or stove is the cook's: the others first
+                tops = tops.OrderBy(c => _mine.Any(h => h.Name is "Counter_1" or "Oven_0" && Beside(c, h)) ? 1 : 0).ToList();
+                var small = new[] { "Microwave_0", _rng.Chance(50) ? "Coffee_0" : "Toaster_0" };
+                for (int k = 0; k < small.Length && k < tops.Count - 1; k++)
+                {
+                    // its back 5 cm off the counter's back edge, its front to the room as the counter's
+                    var cs = FurnitureCatalog.Sizes["Counter_0"]; var ss = FurnitureCatalog.Sizes[small[k]];
+                    On(tops[k], small[k], 0f, cs.Y0 + 0.05f - ss.Y0, tops[k].Yaw);
+                }
+            }
+
+            /// <summary>A clock on a kitchen's or living room's wall, high, over nothing taller than a counter: on a stretch
+            /// with no window or door (Hang), off the stairs' wall, nearest the middle of the room.</summary>
+            void Clock()
+            {
+                var (cx, cz) = Centre();
+                float bottom = ClockHeight - FurnitureCatalog.Sizes["Clock_0"].H;
+                Hang("Clock_0", Against("Clock_0", Side.Back).Where(p =>
+                {
+                    var fp = FurnitureCatalog.Footprint("Clock_0", p.X, p.Z, p.Yaw);
+                    var below = (fp.X0 - 0.2f, fp.Z0 - 0.2f, fp.X1 + 0.2f, fp.Z1 + 0.2f);
+                    return !ByStairs("Clock_0", p) && !_mine.Any(o => o.On == null && !o.Mounted && !o.Ceiling && FurnitureCatalog.Sizes[o.Name].H > bottom - 0.1f && Overlaps(below, o.Footprint));
+                }), (x, z, _) => -Math.Sqrt((x - cx) * (x - cx) + (z - cz) * (z - cz)), ClockHeight);
+            }
+            /// <summary>A wall clock's middle stands this high: above a counter's sink, below the ceiling's lights.</summary>
+            const float ClockHeight = 2.5f;
 
             /// <summary>A coat stand by the front door, if the hall has it.</summary>
             void Hall()

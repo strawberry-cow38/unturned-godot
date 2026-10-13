@@ -234,6 +234,11 @@ namespace UnturnedSim
         /// <summary>EditorBuildings.StoreyHeight: a storey is the wall height (retail WALL_HEIGHT).</summary>
         public const float Storey = WallOpenings.DoorHeight;
         public const float Slab = 0.5f;   // EditorBuildings.SlabThickness
+        /// <summary>How far a storey's floor slab stops short of the outside walls' outer faces: its edge sits inside the
+        /// wall, not flush with its face. Flush, the slab's edge (the floor's colour: a surface's edges wear its front face's
+        /// tint, WallSurface) fought the wall's face for the same pixels and showed outside as a floor-coloured band between
+        /// storeys and at the base (strawberry: "floor color is adding a floor colored strip to the exterior walls").</summary>
+        public const float SlabInset = 0.05f;
         /// <summary>EditorBuildings.RoofOverhang: how far a pitched roof's eaves run past the wall face.</summary>
         public const float RoofOverhang = 0.4f;
         /// <summary>No opening reaches higher than this: the floor above occupies the top Slab of every wall.</summary>
@@ -304,9 +309,10 @@ namespace UnturnedSim
             (2.5f, 2.85f, 0f, false), (3.31f, WallOpenings.WindowHeight, WallOpenings.WindowSill, true),
             (2.81f, 2.97f, 0.88f, true), (4.05f, 3.80f, 0f, false), (5.5f, WallOpenings.DoorHeight, 0f, false),
             (1.0f, 1.0f, 2.5f, false),
-            // a bathroom's: wide, shallow, high and glazed (strawberry: "change the bathrooms from using 'vent' windows to
-            // small glass windows, horizontal slit windows", then "widen the bathroom windows horizontally")
-            (3.5f, 0.6f, 2.6f, true),
+            // a bathroom's: shallow, high and glazed (strawberry: "change the bathrooms from using 'vent' windows to small glass
+            // windows, horizontal slit windows", then "widen the bathroom windows horizontally", then "make the bathroom
+            // window slit 1/3 as wide": 3.5 m, now a third of it)
+            (3.5f / 3f, 0.6f, 2.6f, true),
         };
         public const string DefaultDoor = "Door_Pine";
         /// <summary>Percent of the doorways between two walk-through rooms left open, and of those, made wide; and how wide
@@ -626,7 +632,8 @@ namespace UnturnedSim
         }
 
         /// <summary>What a drawn building is short of, as "Kind: need", weighted 2 for what a room is for (a bed, a fridge, a
-        /// window) and 1 for the rest (a table's chairs, a shop's shelves): every room furnished as its kind needs, every
+        /// window) and 1 for the rest (a table's chairs, a shop's shelves, a kitchen's counter at its sink or stove, the table
+        /// and a chair of a house that eats in its kitchen): every room furnished as its kind needs, every
         /// room that needs daylight lit by a window in an outside wall, every ground-floor garage and warehouse with its
         /// vehicle door. (FitPlot's search asks: a room drawn at its least can come out without -- a kitchen-diner with no
         /// floor clear of its three doors' walks for a table, a corner shop whose one street wall is its door.)</summary>
@@ -643,7 +650,9 @@ namespace UnturnedSim
                     case RoomKind.DiningRoom: Need(g, "table", Has(g, "Table")); Need(g, "chairs", r.Furniture.Count(m => m.Room == g && m.Name.StartsWith("Chair")) >= 4, 1); break;
                     case RoomKind.Kitchen:
                         Need(g, "fridge", Has(g, "Fridge")); Need(g, "sink", Has(g, "Counter_1")); Need(g, "stove", Has(g, "Oven"));
-                        if (r.KitchenDiner) Need(g, "dining table", Has(g, "Table_Wood_0", "Table_Wood_1", "Table_Wood_3"), 1);
+                        // a plain counter at the sink or stove; and where the house eats in its kitchen, a table with a chair
+                        Need(g, "counter", Worktop(r.Furniture.Where(m => m.Room == g)), 1);
+                        if (EatsInKitchen(r)) Need(g, "dining table", Has(g, "Table_Wood_0", "Table_Wood_1", "Table_Wood_3") && Has(g, "Chair_Wood_0"), 1);
                         break;
                     case RoomKind.Bathroom: Need(g, "tub or sink", Has(g, "Tub", "Counter_1")); break;
                     case RoomKind.Office: Need(g, "desk", Has(g, "Table_Wood_2")); break;
@@ -1935,9 +1944,13 @@ namespace UnturnedSim
             {
                 int arch = arches[i];
                 float width = ArchSizes[arch].W;
-                if (width > slot - gap)
+                // a bathroom's slit keeps to a third of what a window would: a third of its slot, at the least a third of
+                // MinWindow (strawberry: "make the bathroom window slit 1/3 as wide")
+                float room = slot - gap, least = MinWindow;
+                if (arch == ArchSlit) { room /= 3f; least /= 3f; }
+                if (width > room)
                 {
-                    if ((arch == ArchWindow || arch == ArchTallWindow || arch == ArchSlit) && slot - gap >= MinWindow) width = slot - gap;
+                    if ((arch == ArchWindow || arch == ArchTallWindow || arch == ArchSlit) && room >= least) width = room;
                     else continue;
                 }
                 // a shop window grows to its slot, up to `fill`
@@ -2256,7 +2269,7 @@ namespace UnturnedSim
                                                      Height = WallOpenings.FoundationDepth, Thickness = w.Thickness, Kind = SurfaceKind.Foundation });
                 foreach (var q in inner) res.Walls.Add(q.W);
 
-                // the floor, its top at the storey's base, out to the outside walls' outer faces (the editor's slab) -- over a
+                // the floor, its top at the storey's base, out to just inside the outside walls' outer faces (SlabInset) -- over a
                 // switchback, open above both its flights and its landing: a straight flight's hole the editor cuts as it
                 // lays the flight, but a switchback's first flight and landing stop short of this floor and need headroom
                 // under it all the same. Not past the flights' foot end: the next switchback's foot stands there.
@@ -2279,11 +2292,12 @@ namespace UnturnedSim
                     foreach (var sl in Slabs(res, y, SurfaceKind.Floor)) { sl.Texel = baseTexel; res.Walls.Add(sl); }
                 else
                 {
-                    var floorSlab = SlabPlan(x0m - he, x1m + he, -he, Dm + he, y, SurfaceKind.Floor);
+                    const float si = SlabInset;
+                    var floorSlab = SlabPlan(x0m - he + si, x1m + he - si, -he + si, Dm + he - si, y, SurfaceKind.Floor);
                     floorSlab.Texel = baseTexel;
                     if (f > 0 && res.StairShape != StairShape.Straight)
                         foreach (var (hx0, hz0, hx1, hz1) in res.Switchback ? new[] { SwitchbackHole(bay) } : QuarterHole(bay, res.QuarterWest))
-                            floorSlab.Openings.Add(new WallOpening(hx0 - (x0m - he), (Dm + he) - hz1, hx1 - hx0, hz1 - hz0));
+                            floorSlab.Openings.Add(new WallOpening(hx0 - floorSlab.X, floorSlab.Z - hz1, hx1 - hx0, hz1 - hz0));
                     res.Walls.Add(floorSlab);
                 }
                 // a roof on whatever of this floor the one above leaves uncovered: flat on a business; on a house a shed of
@@ -2389,13 +2403,15 @@ namespace UnturnedSim
         }
 
         /// <summary>An L's or a T's floor, or flat roof, with its top at `top`: the full-length part and the wing, each out
-        /// to the outside walls' outer faces -- the full-length one over the wall between them, so they meet once.</summary>
+        /// to the outside walls' outer faces -- the full-length one over the wall between them, so they meet once. A floor
+        /// stops SlabInset inside those faces (the wing's join moved back with the full-length part's edge, so the two still
+        /// meet); a roof runs out to them.</summary>
         static IEnumerable<WallPlan> Slabs(BuildingGenResult res, float top, SurfaceKind kind)
         {
-            float he = Ext * 0.5f;
+            float he = Ext * 0.5f, i = kind == SurfaceKind.Floor ? SlabInset : 0f;
             var (wx0, zj, wx1, wz1) = res.Wing;
-            yield return SlabPlan(-he, res.CellsX * Cell + he, -he, zj * Cell + he, top, kind);
-            yield return SlabPlan(wx0 * Cell - he, wx1 * Cell + he, zj * Cell + he, wz1 * Cell + he, top, kind);
+            yield return SlabPlan(-he + i, res.CellsX * Cell + he - i, -he + i, zj * Cell + he - i, top, kind);
+            yield return SlabPlan(wx0 * Cell - he + i, wx1 * Cell + he - i, zj * Cell + he - i, wz1 * Cell + he - i, top, kind);
         }
 
         /// <summary>A plan point turned clockwise from above (x east, z north) by a multiple of 90 degrees about the
@@ -2713,7 +2729,10 @@ namespace UnturnedSim
                 var deck = R(a0, a1, face, face + e * depth);
                 if (res.Porches.Any(q => q.X0 < deck.X1 && q.X1 > deck.X0 && q.Z0 < deck.Z1 && q.Z1 > deck.Z0)) continue;
                 res.Porches.Add(deck);
-                res.Walls.Add(SlabPlan(deck.X0, deck.X1, deck.Z0, deck.Z1, 0f, SurfaceKind.Floor));
+                // its deck the house's floor colour (strawberry: "give porches floor color")
+                var deckSlab = SlabPlan(deck.X0, deck.X1, deck.Z0, deck.Z1, 0f, SurfaceKind.Floor);
+                deckSlab.Texel = FloorTexels.TryGetValue(res.Palette ?? "", out var pft) ? pft.Floor : -1;
+                res.Walls.Add(deckSlab);
                 // the roof, and how tall the posts stand to meet its underside over them
                 var top = R(a0 - ovp, a1 + ovp, face, face + e * (depth + ovp));
                 float postH;

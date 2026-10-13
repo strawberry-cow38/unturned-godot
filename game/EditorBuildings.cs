@@ -407,10 +407,11 @@ namespace UnturnedGodot
             new("garage",  4.05f, 3.80f,                          0f,  true),
             new("porch",   5.5f,  WallOpenings.DoorHeight,        0f,   true),
             new("vent",    1.0f,  1.0f,                           2.5f, false),
-            // a bathroom's: wide, shallow and high, glazed -- light without a view in (strawberry: "change the
+            // a bathroom's: shallow and high, glazed -- light without a view in (strawberry: "change the
             // bathrooms from using vent windows to small glass windows, horizontal slit windows", then "widen the
-            // bathroom windows horizontally"); BuildingGen.ArchSlit is this one
-            new("slit",    3.5f,  0.6f,                           2.6f, false, glazed: true),
+            // bathroom windows horizontally", then "make the bathroom window slit 1/3 as wide"); BuildingGen.ArchSlit is
+            // this one
+            new("slit",    3.5f / 3f, 0.6f,                       2.6f, false, glazed: true),
         };
 
         // ---- glazing options applied to NEWLY placed openings ------------------------------------------
