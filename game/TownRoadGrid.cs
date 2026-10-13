@@ -3593,8 +3593,8 @@ namespace UnturnedGodot
         /// for the widest car with 25 cm either side, inside the lane line and the kerb's lap; long enough for the
         /// longest with 1.35 m to pull in and out. The town test builds the cars and holds the bays to them.</summary>
         public float BayDepth = 3.7f, BayTaper = 3.5f, BaySpace = 7.5f;
-        /// <summary>How far inside its first and last plot's frontage a bay's kerb begins to step out. Small enough
-        /// that one 15 m house plot still holds a single space.</summary>
+        /// <summary>The LEAST distance inside its first and last plot's frontage a bay's kerb begins to step out. In
+        /// practice the pavement band's lead sets it (LayParkingBays): 1.7 m for a 4 m pavement.</summary>
         public float BayInset = 0.25f;
         /// <summary>How far past a junction's crossing and stop line a bay may begin: nobody parks in the queue
         /// for the lights.</summary>
@@ -3698,6 +3698,12 @@ namespace UnturnedGodot
             _bayOffered = _bayNoRoom = _bayNearJunction = _bayTooShort = 0;
             if (!Parking || BayDepth <= 0f || BayTaper <= 0f) return 0;
             int stepped = 0;
+            // ⚠⚠ THE KERB STARTS ITS ANGLE THE BAND'S LEAD IN FROM THE PLOTS' EDGE (strawberry 2026-10-13, of a band
+            // clipped square where it met the next plot: "now its like.. notched half sloped half 90 degrees"). The
+            // pavement's back edge turns W·(slant - taper)/depth before its kerb does (BayBack); starting the kerb that
+            // far inside the stepped frontage puts the back edge's turn exactly at the plots' edge -- sloped the whole
+            // way, nothing to clip. It costs length: a single 15 m plot no longer holds a space.
+            float inset = Mathf.Max(BayInset, PavementWidth * (Mathf.Sqrt(BayTaper * BayTaper + BayDepth * BayDepth) - BayTaper) / BayDepth);
             foreach (int r in Built)
             {
                 ulong h = Mix(((ulong)(uint)Seed << 32) ^ Mix((ulong)(uint)r ^ 0xBA75EDUL));
@@ -3708,7 +3714,7 @@ namespace UnturnedGodot
                 bool right = u < mid || u >= both, left = u >= mid;
                 float L = roads.RoadLength(r);
                 float lo = NoParkingFromEnd(roads, r, false), hi = L - NoParkingFromEnd(roads, r, true);
-                if (hi - lo < BaySpace + 2f * (BayTaper + BayInset)) continue;
+                if (hi - lo < BaySpace + 2f * (BayTaper + inset)) continue;
                 foreach (int side in new[] { 1, -1 })
                 {
                     if (side == 1 ? !right : !left) continue;
@@ -3720,8 +3726,8 @@ namespace UnturnedGodot
                     void Close()
                     {
                         if (group.Count == 0) return;
-                        float a = group[0].pl.Arc - group[0].pl.Width * 0.5f + BayInset;
-                        float b = group[^1].pl.Arc + group[^1].pl.Width * 0.5f - BayInset;
+                        float a = group[0].pl.Arc - group[0].pl.Width * 0.5f + inset;
+                        float b = group[^1].pl.Arc + group[^1].pl.Width * 0.5f - inset;
                         float full = b - a - 2f * BayTaper;
                         int n = Mathf.FloorToInt(full / BaySpace + 1e-4f);
                         if (n < 1)
@@ -3733,7 +3739,7 @@ namespace UnturnedGodot
                         {
                             Bays.Add(new ParkingBay { Road = r, Side = side, A = a, B = b, Depth = BayDepth, Taper = BayTaper,
                                                       Spaces = n, SpaceLength = BaySpace, First = a + BayTaper + (full - n * BaySpace) * 0.5f,
-                                                      Front0 = a - BayInset, Front1 = b + BayInset });
+                                                      Front0 = a - inset, Front1 = b + inset });
                             stepped += group.Count;
                         }
                         group.Clear();
