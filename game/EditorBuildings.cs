@@ -568,6 +568,12 @@ namespace UnturnedGodot
         void PositionGrid()
         {
             if (_grid != null) _grid.Position = new Vector3(0f, FloorY, 0f);
+            // UG_EDITNOGRID=1 hides the lattice for a capture. On the render box (llvmpipe, no GPU) this Lines mesh
+            // comes out as flat pale triangles, bars and staircases scattered over the stage -- 7,857 pixels in one
+            // frame, identical run to run, and 0 with the grid hidden (whether a real GPU does it too is unchecked).
+            // They were read as smashed-window shards left by a rebuild, so a capture that is going to be judged
+            // should not carry them.
+            if (_grid != null && System.Environment.GetEnvironmentVariable("UG_EDITNOGRID") == "1") _grid.Visible = false;
         }
 
         public void ChangeFloor(int delta)
