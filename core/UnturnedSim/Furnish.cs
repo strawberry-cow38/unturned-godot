@@ -266,8 +266,16 @@ namespace UnturnedSim
             for (int f = 0; f < res.Floors; f++)
             {
                 var fp = new FloorPlan(res, f);
+                var done = new List<Furnisher>();
                 foreach (var room in res.Layout.Where(r => r.Floor == f))
-                    new Furnisher(res, fp, room, rng) { Seed = seed }.Run();
+                {
+                    var fu = new Furnisher(res, fp, room, rng) { Seed = seed };
+                    fu.Run();
+                    done.Add(fu);
+                }
+                // the wall décor once the whole floor is furnished: what the next room hangs later (a television through a
+                // corner) is there to keep clear of. It draws nothing from rng (FurnishDecor).
+                foreach (var fu in done) fu.Decorate();
             }
         }
 
@@ -517,7 +525,6 @@ namespace UnturnedSim
                 Coats();
                 Jitter();
                 CeilingLights();
-                Decorate();
             }
 
             /// <summary>Ceiling lights (strawberry: "apply ceiling lights to ur layouts"): a pendant in the rooms you sit in

@@ -181,7 +181,7 @@ namespace UnturnedSim.Tests
                     foreach (var m in hung.OrderBy(m => ((int)MathF.Round(m.Yaw / 90f) % 4 + 4) % 4).ThenBy(BackPlane))
                         if (lines.Count > 0 && SameWay(lines[^1][^1], m) && MathF.Abs(BackPlane(lines[^1][^1]) - BackPlane(m)) < 0.3f) lines[^1].Add(m);
                         else lines.Add(new List<FurniturePlan> { m });
-                    // two pieces on one wall: wall behind and the room's floor in front all the way between them
+                    // two pieces on one wall: wall behind and the room's floor in front all the way between them, no jut
                     bool OneWall(FurniturePlan a, FurniturePlan b)
                     {
                         var (fx, fz) = a.Front; float y0 = FurnitureCatalog.Sizes[a.Name].Y0;
@@ -192,6 +192,10 @@ namespace UnturnedSim.Tests
                             float px = ax + (bx - ax) * t / Math.Max(d, 1e-3f), pz = az + (bz - az) * t / Math.Max(d, 1e-3f);
                             if (!boxes.Any(q => px - fx * 0.15f >= q.X0 && px - fx * 0.15f <= q.X1 && pz - fz * 0.15f >= q.Z0 && pz - fz * 0.15f <= q.Z1)) return false;
                             if (!g.Holds(px + fx * 0.3f, pz + fz * 0.3f)) return false;
+                            // (a real jut between them -- 0.5 m deep or more, a chimney breast -- splits the wall: paintings either
+                            // side of a chimney are the classic layout, two walls. The 0.1 m step where an outside wall runs on as
+                            // a thinner partition does not reach 0.45 m out: still one wall)
+                            if (WallAt(px + fx * 0.45f, pz + fz * 0.45f)) return false;
                         }
                         return true;
                     }

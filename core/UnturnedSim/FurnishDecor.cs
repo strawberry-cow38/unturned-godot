@@ -187,12 +187,12 @@ namespace UnturnedSim
             /// <summary>The pieces this room's décor hung, and the row each came from.</summary>
             readonly Dictionary<FurniturePlan, DecorRow> _hung = new();
 
-            /// <summary>Hang the room's wall décor, last of all: its kind's recipe (<see cref="DecorRecipes"/>), slot by slot,
+            /// <summary>Hang the room's wall décor, once its whole floor is furnished (Furnish): its kind's recipe (<see cref="DecorRecipes"/>), slot by slot,
             /// from the rows (<see cref="Decor"/>) the room's kind and the house allow. Its draws are its OWN: an Rng seeded
             /// from the building's seed and this room's key (its floor and first rectangle) -- never the Furnisher's shared
             /// one, every draw from which would move every later room's furniture. It reads the room's furniture and leaves
             /// the floor plan as it found it.</summary>
-            void Decorate()
+            public void Decorate()
             {
                 if (!DecorRecipes.TryGetValue(_room.Kind, out var recipe)) return;
                 var rows = (DecorOverride ?? Decor).Where(r => r.Rooms.Contains(_room.Kind) && FurnitureCatalog.Sizes.ContainsKey(r.Name) && Needs(r)).ToList();
@@ -366,9 +366,11 @@ namespace UnturnedSim
                         if (o.Mounted)
                         {
                             // (on this side of the wall: DecorGap is wider than a 0.5 m partition, and a picture in the next
-                            // room, its back to the same wall, kept this room's side of it bare)
+                            // room, its back to the same wall, kept this room's side of it bare -- but a piece buried in the wall
+                            // to within 0.3 m of this face still counts: a television hung through a corner, its end 0.28 m
+                            // into the partition, had a hall painting 0.22 m from it on the other side)
                             float gap = fixture && IsFixture(o) ? DecorRunGap : DecorGap;
-                            if (s.D1 > -0.15f && s.D0 < depth + gap) cuts.Add((s.A0 - gap, s.A1 + gap));
+                            if (s.D1 > -0.3f && s.D0 < depth + gap) cuts.Add((s.A0 - gap, s.A1 + gap));
                             continue;
                         }
                         // its top over the floor: a piece on another stands on its top; a ceiling light hangs down from the ceiling
