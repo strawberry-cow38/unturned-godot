@@ -3649,9 +3649,14 @@ namespace UnturnedGodot
         /// ⚠ THE KERB RETURN IS THE PAVEMENT'S OWN 1 m. The opening it cuts in the street's pavement is then the lane's
         /// own 6 m and no wider, so the plots either side, and any parking bay in front of them, start at its edge; a
         /// junction's 6 m return here would have run into both.
-        /// ⚠ "SHORT" KERBS: 0.2 m, half the street's 0.4. Where the lane's pavement meets the street's, it climbs to the
-        /// street's height over LaneRamp, clear of the street's own pavement, so the two meet level.</summary>
-        public float LaneHalf = 2f, LaneWalkWidth = 1f, LaneKerb = 0.2f, LaneKerbRadius = 1f, LaneRamp = 2.5f;
+        /// ⚠⚠ "SHORT" KERBS, MEASURED FROM THE LANE'S OWN ASPHALT (strawberry 2026-10-13: "make sure the alleys and their
+        /// kerbs arent sinking below the road level"). LaneKerb is how far the kerb stands PROUD of the carriageway:
+        /// 0.1 m, about half the street's. The street's PavementKerb (0.4) is measured from the kerb's FOOT, and a
+        /// carriageway's surface stands 0.22 m above that foot -- so the street's kerb shows 0.18 m, and the first lanes,
+        /// given 0.2 m from the foot "as half the street's", had kerbs standing 2 cm UNDER their own asphalt. Where the
+        /// lane's pavement meets the street's it climbs to the street's height over LaneRamp, clear of the street's own
+        /// pavement, so the two meet level.</summary>
+        public float LaneHalf = 2f, LaneWalkWidth = 1f, LaneKerb = 0.1f, LaneKerbRadius = 1f, LaneRamp = 2.5f;
         /// <summary>The centreline radius an L-shaped lane turns its corner on, inside its block.</summary>
         public float LaneKneeRadius = 8f;
         /// <summary>The lanes' material: the street's, plain tarmac -- no markings at all -- and LaneHalf wide. -1: none.</summary>
@@ -3890,9 +3895,21 @@ namespace UnturnedGodot
             sA = Mathf.Max(tdist, qA); sB = Mathf.Max(tdist, qB);
             Vector3 Toward(Vector3 d) { var nn = new Vector3(-d.Z, 0f, d.X); return nn.Dot(C - Pk) < 0f ? -nn : nn; }
             var nA = Toward(dA); var nB = Toward(dB);
+            // where the street's own pavement ends square at the curve, its back corner IS Q: take it exactly from there, so
+            // the corner meets that pavement edge to edge (the lane's side then takes it the fan's way, below)
+            var T1back = P + dA * tdist + nA * wA;
+            if (new Vector2(T1back.X - Q.X, T1back.Z - Q.Z).Length() < 0.05f) Q = T1back;
             var ps = new List<Vector3>(); var os = new List<Vector3>(); var ws = new List<float>();
             void Fan(Vector3 at) { var v = Q - at; v.Y = 0f; float l = v.Length(); ps.Add(at); os.Add(l > 1e-4f ? v / l : nA); ws.Add(Mathf.Max(l, 0.01f)); }
-            void Square(Vector3 at, Vector3 o, float w) { ps.Add(at); os.Add(o); ws.Add(w); }
+            // ⚠ A straight's full width that lands on Q is handed Q the fan's way, not its own: worked out separately the two
+            // differ by a millimetre (the corner is never exactly square), and the hair-thin triangle that leaves between
+            // them shaded the whole corner (EditorSidewalk.BuildRibbon drops a triangle only where its corners coincide)
+            void Square(Vector3 at, Vector3 o, float w)
+            {
+                var back = at + o * w; back.Y = 0f;
+                if (new Vector2(back.X - Q.X, back.Z - Q.Z).Length() < 0.05f) { Fan(at); return; }
+                ps.Add(at); os.Add(o); ws.Add(w);
+            }
             var T1 = P + dA * tdist; var T2 = P + dB * tdist;
             if (sA > tdist + 0.01f) Square(P + dA * sA, nA, wA);
             if (tdist >= qA - 1e-3f) Square(T1, nA, wA); else Fan(T1);
@@ -3921,7 +3938,7 @@ namespace UnturnedGodot
         {
             LaneRoads.Clear(); LaneEndsClosed = 0;
             if (parent == null || roads == null || LanePlans.Count == 0 || LaneMaterial < 0) return 0;
-            var walk = new EditorSidewalk { Name = "LaneWalk", Width = LaneWalkWidth, KerbHeight = LaneKerb, RoadGap = PavementGap };
+            var walk = new EditorSidewalk { Name = "LaneWalk", Width = LaneWalkWidth, RoadGap = PavementGap };
             parent.AddChild(walk);
             Func<float, float, float> ground = Terrain.Active != null && !EditorSidewalk.NoGround ? (x, z) => Terrain.Active.SampleHeight(x, z) : null;
             float fillSurf = roads.RoadSurfaceOffsetOfMaterial(StreetMaterial) - CornerFillDrop;
@@ -3932,6 +3949,10 @@ namespace UnturnedGodot
                 if (road < 0) continue;
                 lp.Road = road; LaneRoads.Add(road);
                 float L = roads.RoadLength(road);
+                // the kerb's height as the pavement builder counts it, from its foot: the asphalt's own height there plus
+                // the LaneKerb it stands proud of it
+                float kerb = roads.RoadSurfaceOffset(road) + LaneKerb;
+                walk.KerbHeight = kerb;
                 // the spline runs from end A to end B, so A's Into is its tangent and B's its reverse: the spline's right,
                 // (t.z, 0, -t.x), is the right of A's way in and the left of B's
                 // ⚠⚠ ONE HEIGHT FOR A CORNER, AND THE LANE'S PAVEMENT MEETS IT THERE. Each point of the first corners took the
@@ -3952,16 +3973,16 @@ namespace UnturnedGodot
                     float liftB = lp.B != null ? CornerY(lp.B, cB) - FootY(L - fromB) : 0f;
                     float Surface(float d)
                     {
-                        float h = LaneKerb;
+                        float h = kerb;
                         if (lp.A != null)
                         {
                             float f = Mathf.Clamp((d - fromA) / LaneRamp, 0f, 1f);
-                            h = Mathf.Max(h, Mathf.Lerp(PavementKerb + liftA, LaneKerb, f));
+                            h = Mathf.Max(h, Mathf.Lerp(PavementKerb + liftA, kerb, f));
                         }
                         if (lp.B != null)
                         {
                             float f = Mathf.Clamp((L - fromB - d) / LaneRamp, 0f, 1f);
-                            h = Mathf.Max(h, Mathf.Lerp(PavementKerb + liftB, LaneKerb, f));
+                            h = Mathf.Max(h, Mathf.Lerp(PavementKerb + liftB, kerb, f));
                         }
                         return h;
                     }
@@ -3978,7 +3999,7 @@ namespace UnturnedGodot
                     var across = new Vector3(tn.Z, 0f, -tn.X);
                     float reach = LaneHalf + PavementGap + LaneWalkWidth;
                     var kerbLine = new List<Vector3> { ep - outE * LaneWalkWidth - across * reach, ep - outE * LaneWalkWidth + across * reach };
-                    var mi = EditorSidewalk.BuildRibbon(kerbLine, new List<Vector3> { outE, outE }, LaneWalkWidth + 0.6f, LaneKerb, walk.Skirt,
+                    var mi = EditorSidewalk.BuildRibbon(kerbLine, new List<Vector3> { outE, outE }, LaneWalkWidth + 0.6f, kerb, walk.Skirt,
                                                         $"Sidewalk_LaneEnd_{road}_{(atEnd ? "B" : "A")}", ground);
                     if (mi == null) continue;
                     parent.AddChild(mi);
@@ -4017,6 +4038,36 @@ namespace UnturnedGodot
                         for (int q = 0; q + 1 < cp.Count; q++) _cornerFill.Add((e0, F(cp[q]), F(cp[q + 1])));
                     }
                 }
+            }
+            // HEIGHTS, measured: how far each kerb stands proud of its OWN carriageway, and how far below the street's
+            // asphalt at its mouth each lane's asphalt sinks anywhere along it
+            if (LaneRoads.Count > 0)
+            {
+                float laneOff = roads.RoadSurfaceOffset(LaneRoads[0]), streetOff = Built.Count > 0 ? roads.RoadSurfaceOffset(Built[0]) : 0f;
+                float worstSink = 0f; string sinkAt = "";
+                foreach (var lp in LanePlans)
+                {
+                    if (lp.Road < 0) continue;
+                    float L = roads.RoadLength(lp.Road);
+                    foreach (var m in new[] { lp.A, lp.B })
+                    {
+                        if (m == null) continue;
+                        float edgeArc = (m.From + m.To) * 0.5f;
+                        roads.EvaluateAlong(m.Road, edgeArc, out var sc, out var stg);
+                        var so = new Vector3(stg.Z, 0f, -stg.X).Normalized() * m.Side;
+                        var e = sc + so * roads.RoadHalfWidth(m.Road);
+                        float streetY = (Terrain.Active != null ? Terrain.Active.SampleHeight(e.X, e.Z) : sc.Y) + roads.RoadSurfaceOffset(m.Road);
+                        for (float d = 0f; d <= L; d += 1f)
+                        {
+                            roads.EvaluateAlong(lp.Road, d, out var lq, out _);
+                            float sink = streetY - (lq.Y + roads.RoadSurfaceOffset(lp.Road));
+                            if (sink > worstSink) { worstSink = sink; sinkAt = $"lane {lp.Road} at {d:0} of {L:0} m"; }
+                        }
+                    }
+                }
+                Log.Print($"[towngrid] lane heights: carriageway surface {laneOff:0.000} m over its kerb foot, street's {streetOff:0.000}; "
+                        + $"lane kerb {walk.KerbHeight - laneOff:0.000} m proud of the lane's asphalt, street kerb {PavementKerb - streetOff:0.000} m proud of the street's; "
+                        + $"deepest a lane's asphalt sinks below its street's at the mouth {worstSink:0.000} m{(worstSink > 0f ? $" ({sinkAt})" : "")}");
             }
             Log.Print($"[towngrid] lanes: {LaneRoads.Count} built from {Alleys.Count} alleys, {LaneMouths.Count} mouths opened "
                     + $"({corners} kerb returns), {walks} pavement runs; {LaneDeadEnds} ends could not open onto a street and stop short "

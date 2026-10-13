@@ -144,11 +144,23 @@ namespace UnturnedGodot
             // required to point UP, (along x outward) says which way round the quad has to go. Self-correcting,
             // so a caller handing this a ribbon in any orientation still gets a visible one.
             bool flip = false;
+            // ⚠⚠ NO TRIANGLE WITH TWO CORNERS ON ONE POINT. Where a corner's back edge meets in a point, two of a quad's
+            // corners land there a float's width apart, and the triangle between them is a sliver with no area and a
+            // normal pointing anywhere -- which GenerateNormals NORMALISES before it averages, so it counts as much as a
+            // real face. A lane mouth's flat corner shaded with a dark wedge and a seam line from it (strawberry
+            // 2026-10-13, reviewing "make sure the alleys and their kerbs arent sinking below the road level"); its
+            // heights read level to the millimetre, and flat shading made both vanish, which is what said it was the
+            // normals. Not the lanes' alone: without this the town test finds 53 tipped normals on 37 pavement meshes,
+            // the first a junction's corner. (TownRoadGrid.MouthCorner hands every point that meets there the SAME point.)
+            void Tri(Vector3 a, Vector3 b, Vector3 c)
+            {
+                if ((a - b).LengthSquared() < 1e-8f || (b - c).LengthSquared() < 1e-8f || (a - c).LengthSquared() < 1e-8f) return;
+                st.AddVertex(a); st.AddVertex(b); st.AddVertex(c);
+            }
             void Quad(Vector3 a, Vector3 b, Vector3 c, Vector3 d)
             {
                 if (flip) { (a, b, c, d) = (d, c, b, a); }
-                st.AddVertex(a); st.AddVertex(b); st.AddVertex(c);
-                st.AddVertex(a); st.AddVertex(c); st.AddVertex(d);
+                Tri(a, b, c); Tri(a, c, d);
             }
 
             for (int i = 0; i + 1 < pts.Count; i++)

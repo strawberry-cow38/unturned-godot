@@ -10843,16 +10843,19 @@ namespace UnturnedGodot
                     Log.Print($"[towngrid] lane dead-end camera on {de}");
                     goto noTown;
                 }
-                if ((closeEnv == "ln" || closeEnv == "lnh" || closeEnv == "lnc0" || closeEnv == "lnc1") && town.LaneMouths.Count > 0)
+                if ((closeEnv == "ln" || closeEnv == "lnh" || closeEnv.StartsWith("lnc")) && town.LaneMouths.Count > 0)
                 {
                     var lm = town.LaneMouths[0];
                     float bestLm = float.MaxValue;
                     foreach (var m in town.LaneMouths) { float d2 = (m.Edge - site).LengthSquared(); if (d2 < bestLm) { bestLm = d2; lm = m; } }
                     var across = new Vector3(-lm.Into.Z, 0f, lm.Into.X);
-                    if (closeEnv.StartsWith("lnc") && lm.Kerb[closeEnv == "lnc0" ? 0 : 1] is { Count: > 1 } ck)
+                    if (closeEnv.StartsWith("lnc") && lm.Kerb[closeEnv.StartsWith("lnc0") ? 0 : 1] is { Count: > 1 } ck)
                     {
                         var mid = ck[ck.Count / 2]; mid.Y = lm.Edge.Y;
-                        tcam.GlobalPosition = mid - lm.Into * 4.5f + across * (closeEnv == "lnc0" ? -1.5f : 1.5f) + new Vector3(0f, 2.6f, 0f);
+                        // (lnc0b / lnc1b: the same corner from up the lane, looking back out at the street)
+                        bool fromLane = closeEnv.EndsWith("b");
+                        tcam.GlobalPosition = fromLane ? mid + lm.Into * 7f + new Vector3(0f, 1.6f, 0f)
+                                                       : mid - lm.Into * 4.5f + across * (closeEnv == "lnc0" ? -1.5f : 1.5f) + new Vector3(0f, 2.6f, 0f);
                         tcam.Fov = 60f;
                         tcam.LookAt(mid + new Vector3(0f, 0.2f, 0f), Vector3.Up);
                         Log.Print($"[towngrid] lane corner camera on {mid}");

@@ -1094,6 +1094,44 @@ namespace UnturnedGodot.Testing
                     T.Check($"...and no corner piece folds over itself ({folded} of {cornerPieces} do; control: {foldControl} folded triangles in a {gD.PavementWidth:0.0} m ribbon round a 2.5 m arc)",
                             cornerPieces > 20 && folded == 0 && foldControl > 0);
                     foldMi?.Free();
+                    // 4. EVERY WALKING SURFACE SHADES LEVEL: each corner of a level face carries a normal pointing up (or down, a
+                    //    ribbon wound the other way) -- never tipped. A lane mouth's corner once held a hair-thin triangle wound
+                    //    backwards where its fan met its straight, a millimetre off the fan's point; GenerateNormals normalises
+                    //    every face before it averages, so that sliver tipped the vertices it shared, and a corner whose heights
+                    //    read level to the millimetre shaded with a dark wedge and a seam (strawberry 2026-10-13). The control: a
+                    //    ribbon with one station's outward turned round folds there, and this sees its normals tip.
+                    int Tipped(MeshInstance3D mi)
+                    {
+                        var arr = mi.Mesh.SurfaceGetArrays(0);
+                        var vs = (Vector3[])arr[(int)Mesh.ArrayType.Vertex];
+                        var ns = (Vector3[])arr[(int)Mesh.ArrayType.Normal];
+                        var ix = arr[(int)Mesh.ArrayType.Index].VariantType == Variant.Type.Nil ? null : (int[])arr[(int)Mesh.ArrayType.Index];
+                        int n = ix != null ? ix.Length : vs.Length, bad = 0;
+                        for (int k = 0; k + 2 < n; k += 3)
+                        {
+                            int i0 = ix != null ? ix[k] : k, i1 = ix != null ? ix[k + 1] : k + 1, i2 = ix != null ? ix[k + 2] : k + 2;
+                            var nn = (vs[i1] - vs[i0]).Cross(vs[i2] - vs[i0]);
+                            if (nn.Length() < 1e-3f || Mathf.Abs(nn.Y) < 0.9f * nn.Length()) continue;      // not a level face
+                            foreach (int iv in new[] { i0, i1, i2 }) if (Mathf.Abs(ns[iv].Y) < 0.9f) bad++;
+                        }
+                        return bad;
+                    }
+                    int tipped = 0, tippedMeshes = 0, lanePieces = 0; string firstTipped = "";
+                    foreach (var mi in meshNodes)
+                    {
+                        if (mi.Name.ToString().StartsWith("Sidewalk_Lane")) lanePieces++;
+                        int t = Tipped(mi);
+                        if (t == 0) continue;
+                        tipped += t;
+                        if (tippedMeshes++ == 0) firstTipped = mi.Name.ToString();
+                    }
+                    var tipPts = new List<Vector3>(); var tipOut = new List<Vector3>();
+                    for (int k = 0; k < 5; k++) { tipPts.Add(new Vector3(0f, 0f, k * 1.5f)); tipOut.Add(k == 2 ? Vector3.Left : Vector3.Right); }
+                    var tipMi = EditorSidewalk.BuildRibbon(tipPts, tipOut, 2f, 0.4f, 0.6f, "tip_control");
+                    int tipControl = tipMi != null ? Tipped(tipMi) : 0;
+                    tipMi?.Free();
+                    T.Check($"...and every walking surface shades level ({tipped} tipped normals on {tippedMeshes} of {meshNodes.Count} pavement meshes{(tippedMeshes > 0 ? $", first {firstTipped}" : "")}; {lanePieces} of them the lanes' kerb returns and closed ends) -- where a ribbon folded at one station tips {tipControl} (control)",
+                            tipped == 0 && lanePieces > 20 && tipControl > 0);
                     // ⭐ THE BACK LANES (strawberry 2026-10-13: "replace placeholder alleys with single lane roads with short
                     //    sidewalks/kerbs and no markings"), measured on the meshes BuildLanes built -- which the checks above
                     //    already hold: no lane pavement lies over a street's, no plot stands on one, no kerb return folds.
@@ -1129,9 +1167,13 @@ namespace UnturnedGodot.Testing
                     }
                     T.Check($"...each opening off its street through the pavement ({mouthsOpen} of {gD.LaneMouths.Count} mouths with no pavement across them, {mouthsRoad} road all the way in) -- the street's pavement carrying on either side ({sidesPaved} of {sidesTried})",
                             gD.LaneMouths.Count >= 6 && mouthsOpen == gD.LaneMouths.Count && mouthsRoad == gD.LaneMouths.Count && sidesTried > 0 && sidesPaved == sidesTried);
-                    // c. SHORT KERBS: down the lane its pavement stands LaneKerb over the lane's own kerb foot; each kerb return
-                    //    stands at the street's PavementKerb, level -- within a centimetre -- with the street's pavement on one
-                    //    side of it and the lane's on the other, where the lane's starts before falling to its own height
+                    // c. SHORT KERBS, ABOVE THE ROAD: down the lane its pavement stands LaneKerb PROUD OF THE LANE'S OWN ASPHALT --
+                    //    above it, and lower than the street's kerb stands above the street's; each kerb return stands at the
+                    //    street's PavementKerb, level -- within a centimetre -- with the street's pavement on one side of it and
+                    //    the lane's on the other, where the lane's starts before falling to its own height.
+                    //    ⚠⚠ FROM THE ASPHALT, NOT THE KERB'S FOOT (strawberry 2026-10-13: "make sure the alleys and their kerbs
+                    //    arent sinking below the road level"). This check first measured the pavement over the kerb's foot, which
+                    //    stands 0.22 m BELOW a carriageway's surface -- and passed a lane kerb 2 cm under its own road.
                     static float? LevelAt(List<(Vector3 a, Vector3 b, Vector3 c, float ny)> ts, Vector3 q)
                     {
                         foreach (var (a, b, c, _) in ts)
@@ -1161,19 +1203,23 @@ namespace UnturnedGodot.Testing
                         yield return b;
                         for (int k = 0; k < 8; k++) yield return $"{b}_p{k}";
                     }
-                    int lowOk = 0, lowTried = 0; float worstLow = 0f;
+                    int lowOk = 0, lowTried = 0; float worstLow = 0f, lowestProud = float.MaxValue;
+                    float streetProud = gD.PavementKerb - rfD.RoadSurfaceOffset(gD.Built[0]);
                     foreach (var lp in gD.LanePlans)
                     {
                         float L = rfD.RoadLength(lp.Road);
                         rfD.EvaluateAlong(lp.Road, L * 0.5f, out var mp, out var mt);
                         var rt = new Vector3(mt.Z, 0f, -mt.X).Normalized();
+                        float asphalt = mp.Y + rfD.RoadSurfaceOffset(lp.Road);          // the lane's own surface there
                         foreach (int sgn in new[] { 1, -1 })
                         {
                             lowTried++;
                             var h = LevelOn(SideNames(lp.Road, sgn), mp + rt * sgn * (gD.LaneHalf + walkD.RoadGap + gD.LaneWalkWidth * 0.5f));
                             if (h == null) continue;
-                            worstLow = Mathf.Max(worstLow, Mathf.Abs(h.Value - mp.Y - gD.LaneKerb));
-                            if (Mathf.Abs(h.Value - mp.Y - gD.LaneKerb) < 0.01f) lowOk++;
+                            float proud = h.Value - asphalt;
+                            lowestProud = Mathf.Min(lowestProud, proud);
+                            worstLow = Mathf.Max(worstLow, Mathf.Abs(proud - gD.LaneKerb));
+                            if (Mathf.Abs(proud - gD.LaneKerb) < 0.01f) lowOk++;
                         }
                     }
                     int seams = 0, seamsLevel = 0, atStreetHeight = 0; float worstSeam = 0f;
@@ -1206,14 +1252,64 @@ namespace UnturnedGodot.Testing
                                 if (level) seamsLevel++;
                             }
                         }
-                    T.Check($"...with short kerbs: the lanes' pavements stand {gD.LaneKerb:0.00} m ({lowOk} of {lowTried} measured mid-lane; worst {worstLow * 100f:0.0} cm off), each kerb return at the street's {gD.PavementKerb:0.00} m ({atStreetHeight} of {seams}) and level with the street's pavement and the lane's where they meet ({seamsLevel} of {seams}; worst step {worstSeam * 100f:0.0} cm)",
-                            lowTried >= 12 && lowOk == lowTried && seams == 2 * gD.LaneMouths.Count && atStreetHeight == seams && seamsLevel == seams);
+                    T.Check($"...with short kerbs standing ABOVE the lane's road: its pavements {gD.LaneKerb:0.00} m proud of the lane's own asphalt ({lowOk} of {lowTried} measured mid-lane; lowest {lowestProud * 100f:0.0} cm, worst {worstLow * 100f:0.0} cm off), against the street kerb's {streetProud * 100f:0} cm; each kerb return at the street's {gD.PavementKerb:0.00} m over its foot ({atStreetHeight} of {seams}) and level with the street's pavement and the lane's where they meet ({seamsLevel} of {seams}; worst step {worstSeam * 100f:0.0} cm)",
+                            lowTried >= 12 && lowOk == lowTried && lowestProud > 0.05f && lowestProud < streetProud
+                            && seams == 2 * gD.LaneMouths.Count && atStreetHeight == seams && seamsLevel == seams);
                     // d. a lane end that cannot open onto a street is closed off with a kerb across it, never left as road ending
                     //    in the grass
                     int shortEnds = 0, endKerbs = 0;
                     foreach (var lp in gD.LanePlans) { if (lp.A == null) shortEnds++; if (lp.B == null) shortEnds++; }
                     foreach (var mi in meshNodes) if (mi.Name.ToString().StartsWith("Sidewalk_LaneEnd_")) endKerbs++;
                     T.Check($"...and every lane end that cannot open onto a street closed off with a kerb ({endKerbs} of {shortEnds})", endKerbs == shortEnds);
+                    // e. ON ROADS WITH DEPTH, AS THE GAME'S ARE. This rig's roads are flat -- their asphalt is AT the kerb's
+                    //    foot -- so here a kerb counted from its foot and one counted from the asphalt read the same, and the
+                    //    first lanes passed (c) with kerbs that stood 2 cm UNDER their own road in game, where the asphalt is
+                    //    0.22 m over the foot. So the same town again on a field with that depth: the lane's pavement still
+                    //    stands LaneKerb proud of its asphalt. The control: a pavement laid the old way, 0.2 m over its foot,
+                    //    on the same lane, reads as under it.
+                    {
+                        var rfL = Field();
+                        foreach (int mat in new[] { 0, 1, 6 }) rfL.DebugSetMaterialDepth(mat, 0.22f);
+                        var gL = new TownRoadGrid { Seed = 7, Centre = Vector3.Zero, Extent = 250f, Spacing = 110f,
+                                                    Bearing = 0.3f, SeaLevel = 0f, SeaMargin = 2f, Diagonal = true };
+                        gL.Generate(rfL, flat);
+                        var hostL = new Node3D(); World.AddChild(hostL);
+                        var wL = new EditorSidewalk(); hostL.AddChild(wL);
+                        gL.LaySidewalkCornersOn(rfL, hostL, wL, out _);
+                        gL.MarkPlots(null, rfL);
+                        gL.BuildLanes(hostL, rfL);
+                        var meshesL = new Dictionary<string, MeshInstance3D>();
+                        void GatherL(Node n) { if (n is MeshInstance3D mi && mi.Mesh != null) meshesL[mi.Name.ToString()] = mi; foreach (var ch in n.GetChildren()) GatherL(ch); }
+                        int lane0 = gL.LaneRoads.Count > 0 ? gL.LaneRoads[0] : -1;
+                        float depthL = lane0 >= 0 ? rfL.RoadSurfaceOffset(lane0) : 0f;
+                        var oldWalk = new EditorSidewalk { Width = gL.LaneWalkWidth, KerbHeight = 0.2f, RoadGap = walkD.RoadGap };
+                        hostL.AddChild(oldWalk);
+                        if (lane0 >= 0) oldWalk.LayAlongRoad(oldWalk, rfL, lane0, EditorSidewalk.Side.Right, null, 6f, 6f, piece: "old");
+                        GatherL(hostL);
+                        // how far a ribbon's surface stands over its lane's asphalt, at the lane's middle on the right
+                        float? Proud(string name, int lane)
+                        {
+                            if (!meshesL.TryGetValue(name, out var mi)) return null;
+                            float L = rfL.RoadLength(lane);
+                            rfL.EvaluateAlong(lane, L * 0.5f, out var mp, out var mt);
+                            var rt = new Vector3(mt.Z, 0f, -mt.X).Normalized();
+                            var h = LevelAt(Tops(mi), mp + rt * (gL.LaneHalf + walkD.RoadGap + gL.LaneWalkWidth * 0.5f));
+                            return h == null ? null : h.Value - (mp.Y + rfL.RoadSurfaceOffset(lane));
+                        }
+                        int deepOk = 0, deepTried = 0; float deepLowest = float.MaxValue;
+                        foreach (int lr in gL.LaneRoads)
+                        {
+                            deepTried++;
+                            var pr = Proud($"Sidewalk_R{lr}", lr);
+                            if (pr == null) continue;
+                            deepLowest = Mathf.Min(deepLowest, pr.Value);
+                            if (Mathf.Abs(pr.Value - gL.LaneKerb) < 0.01f) deepOk++;
+                        }
+                        var oldProud = lane0 >= 0 ? Proud($"Sidewalk_R{lane0}_old", lane0) : null;
+                        T.Check($"...and on roads with the game's depth (asphalt {depthL:0.00} m over the kerb's foot) the lanes' kerbs still stand {gL.LaneKerb:0.00} m above their asphalt ({deepOk} of {deepTried}; lowest {deepLowest * 100f:0.0} cm) -- where one laid the old way, 0.2 m over its foot, stands {(oldProud == null ? "NOWHERE" : $"{oldProud.Value * 100f:0.0} cm")} (control)",
+                                depthL > 0.2f && deepTried >= 6 && deepOk == deepTried && deepLowest > 0.05f && oldProud != null && oldProud.Value < 0f);
+                        hostL.QueueFree();
+                    }
                     stHost.QueueFree(); cnHost.QueueFree();
                 }
                 // ⭐ THE BOULEVARD (strawberry 2026-10-13: "a new road type, with a central concrete median/grass +
