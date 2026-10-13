@@ -63,6 +63,16 @@ namespace UnturnedSim
 
         public bool HasDoor => !string.IsNullOrEmpty(DoorProp);
 
+        // ---- which way the door SWINGS (strawberry, round 12: "allow room layouts to decide door swing direction") ----
+        // Both false is the door every opening had before: hinged on the jamb at U1 (Door_Pine's hinge is its mesh's +X
+        // end, and U runs along the wall's +X) and opening its leaf out of the wall's BACK face (-Z). The layout picks the
+        // other jamb and/or the other face (BuildingGen.HangDoors); WallSurface.PlaceDoor builds the leaf that way, and
+        // WallSave keeps it. Two flags rather than one "flipped": hinge side and swing face are independent choices.
+        /// <summary>Hinged on the jamb at U (the opening's start) rather than at U1.</summary>
+        public bool DoorHingeAtStart;
+        /// <summary>The leaf opens out of the wall's front face (+Z) rather than its back (-Z).</summary>
+        public bool DoorOpensFront;
+
         // ---- a PRE-BARRICADE in the hole (master 2026-09-01) --------------------------------------------
         // Same optional-per-opening shape as glass + door (the opening owns it, no second list to keep in step):
         // which window-barricade style, if any, this opening spawns already-boarded. Placed on the OUTSIDE (+Z)
@@ -76,7 +86,7 @@ namespace UnturnedSim
         public WallOpening(float u, float v, float w, float h, float depth = 999f, int archetype = 0)
         { U = u; V = v; Width = w; Height = h; Depth = depth; Archetype = archetype;
           Glazed = false; GlassTint = 0; GlassHp = 0f; GlassIndestructible = false; GlassBroken = false;
-          DoorProp = null; DoorOpen = false; Barricade = WallBarricade.None; }
+          DoorProp = null; DoorOpen = false; DoorHingeAtStart = false; DoorOpensFront = false; Barricade = WallBarricade.None; }
 
         /// <summary>This opening moved/resized to (u,v,w,h), keeping EVERYTHING ELSE.
         ///

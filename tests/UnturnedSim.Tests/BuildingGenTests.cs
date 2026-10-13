@@ -1897,13 +1897,9 @@ namespace UnturnedSim.Tests
                             if (door)
                             {
                                 doorZones.Add(box);
-                                // a hung door's leaf swings its own width into the wall's back side, hinged at the opening's start
-                                if (o.HasDoor && o.Archetype != BuildingGen.ArchGarage)
-                                {
-                                    var p0 = At(w, o.U); var p1 = At(w, o.U1); float back = w.Thickness * 0.5f + o.Width - 0.05f;
-                                    doorZones.Add((MathF.Min(MathF.Min(p0.X, p1.X), MathF.Min(p0.X, p1.X) - n.X * back), MathF.Min(MathF.Min(p0.Z, p1.Z), MathF.Min(p0.Z, p1.Z) - n.Z * back),
-                                                   MathF.Max(MathF.Max(p0.X, p1.X), MathF.Max(p0.X, p1.X) - n.X * back), MathF.Max(MathF.Max(p0.Z, p1.Z), MathF.Max(p0.Z, p1.Z) - n.Z * back)));
-                                }
+                                // a hung door's leaf swings its own width round its hinge, out of the face the opening says
+                                // it opens to (DoorOpensFront: the wall's front, +Z; else its back)
+                                if (o.HasDoor && o.Archetype != BuildingGen.ArchGarage) doorZones.Add(LeafBox(w, o));
                                 var c = At(w, o.U + o.Width * 0.5f); float d = w.Thickness * 0.5f + 0.4f;
                                 doorPts.Add((c.X + n.X * d, c.Z + n.Z * d)); doorPts.Add((c.X - n.X * d, c.Z - n.Z * d));
                             }

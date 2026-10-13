@@ -281,7 +281,7 @@ namespace UnturnedSim
 
         /// <summary>One floor at 0.1 m: what is solid (walls; stairs, landings and holes; furniture as it goes in), and
         /// what must stay clear but can be walked on (doorways, the tiles at the stairs) or seen through (windows).</summary>
-        sealed class FloorPlan
+        sealed partial class FloorPlan
         {
             public const float Step = 0.1f;
             public const byte Free = 0, Wall = 1, Furn = 2, Stair = 3;
@@ -308,6 +308,7 @@ namespace UnturnedSim
                 Nx = (int)MathF.Ceiling((res.CellsX * Cell + 2f) / Step);
                 Nz = (int)MathF.Ceiling((res.CellsZ * Cell + 2f) / Step);
                 State = new byte[Nx, Nz]; KeepDoor = new bool[Nx, Nz]; KeepTall = new bool[Nx, Nz];
+                WinZones = new int[Nx, Nz]; Sight = new bool[Nx, Nz];
                 const float M = WallOpenings.StairHoleMargin;
                 int FloorOf(float y) => (int)MathF.Round(y / Storey);
                 var walls = res.Walls.Where(w => w.Kind == SurfaceKind.Wall && FloorOf(w.Y) == f && w.Height > Storey - 0.01f).ToList();
@@ -340,6 +341,8 @@ namespace UnturnedSim
                         Targets.Add((mx + bx * (s.Run + M + 0.4f), mz + bz * (s.Run + M + 0.4f), null));
                     }
                 }
+                // which way each door swings, decided here, before anything is furnished (HangDoors)
+                HangDoors(walls);
                 // doorways: 1.3 m either side of every opening down to the floor (a vehicle door: 6 m, its lane; a wide
                 // open doorway is still a doorway), the
                 // opening's width and a little; windows: 0.7 m in front of the glass
@@ -348,26 +351,22 @@ namespace UnturnedSim
                     var (wc, ws) = PlanTrig.CosSin(w.Yaw);
                     var (dx, dz) = (wc, -ws);
                     var (nx, nz) = (ws, wc);
-                    foreach (var o in w.Openings)
+                    for (int k = 0; k < w.Openings.Count; k++)
                     {
+                        var o = w.Openings[k];
                         bool door = o.V < 0.05f;
                         if (!door && o.V >= 2.5f) continue;   // a vent or a bathroom's slit: over the tallest piece's head
-                        float pad = door ? 0.3f : 0.1f, deep = door ? (o.Archetype == ArchGarage ? 6f : 1.3f) : 0.7f;
-                        float u0 = o.U - pad, u1 = o.U + o.Width + pad;
-                        float ax = w.X + dx * u0, az = w.Z + dz * u0, bx2 = w.X + dx * u1, bz2 = w.Z + dz * u1;
-                        float t = w.Thickness * 0.5f + deep;
-                        var zone = (MathF.Min(MathF.Min(ax, bx2) - nx * t, MathF.Min(ax, bx2) + nx * t), MathF.Min(MathF.Min(az, bz2) - nz * t, MathF.Min(az, bz2) + nz * t),
-                                    MathF.Max(MathF.Max(ax, bx2) - nx * t, MathF.Max(ax, bx2) + nx * t), MathF.Max(MathF.Max(az, bz2) - nz * t, MathF.Max(az, bz2) + nz * t));
-                        Keep(zone, door ? KeepDoor : KeepTall);
-                        // a hung door's leaf swings through a quarter circle its own width round its hinge, on the wall's
-                        // back side (Door: hinged at the opening's start, opened +90 degrees, toward local -Z): kept clear
-                        // whole, as a box (strawberry: "have stairs block furniture in their footprint ... same for doors")
+                        var zone = door ? OpeningZone(w, o, 0.3f, o.Archetype == ArchGarage ? 6f : 1.3f) : OpeningZone(w, o, 0.1f, 0.7f);
+                        // (a window's zone counted, so the room it lights may move it: FurnishOpenings)
+                        if (door) Keep(zone, KeepDoor); else AddPane(w, k, zone);
+                        // a hung door's leaf swings through a quarter circle its own width round its hinge, into the room
+                        // HangDoors chose (WallOpening.DoorOpensFront; Door_Pine opens 90 degrees): kept clear whole, as a box
+                        // (strawberry: "have stairs block furniture in their footprint ... same for doors")
                         if (door && o.HasDoor && o.Archetype != ArchGarage)
                         {
-                            float s0 = o.U - 0.05f, s1 = o.U + o.Width + 0.05f, back = w.Thickness * 0.5f + o.Width;
-                            float px = w.X + dx * s0, pz = w.Z + dz * s0, qx = w.X + dx * s1, qz = w.Z + dz * s1;
-                            Keep((MathF.Min(MathF.Min(px, qx), MathF.Min(px, qx) - nx * back), MathF.Min(MathF.Min(pz, qz), MathF.Min(pz, qz) - nz * back),
-                                  MathF.Max(MathF.Max(px, qx), MathF.Max(px, qx) - nx * back), MathF.Max(MathF.Max(pz, qz), MathF.Max(pz, qz) - nz * back)), KeepDoor);
+                            var leaf = LeafSweep(w, o);
+                            Keep(leaf, KeepDoor);
+                            LeafRects.Add(leaf);
                         }
                         if (door)
                         {
@@ -763,10 +762,11 @@ namespace UnturnedSim
                 };
             }
 
-            /// <summary>The strip in front of a piece its doors swing through, as a box; nothing when nothing opens.</summary>
+            /// <summary>The strip in front of a piece its doors swing through, or where you stand to use it (a sink's:
+            /// Stand), as a box; nothing when nothing opens.</summary>
             static (float X0, float Z0, float X1, float Z1)? SwingZone(string name, float x, float z, float yaw)
             {
-                float d = Swing(name);
+                float d = MathF.Max(Swing(name), Stand(name));
                 if (d <= 0f) return null;
                 var s = FurnitureCatalog.Sizes[name];
                 var (c, sn) = PlanTrig.CosSin(yaw);
@@ -826,10 +826,10 @@ namespace UnturnedSim
 
             /// <summary>Put a piece at the first candidate (best score first) where it is clear, its doors can open, and
             /// it leaves the room walkable; null when none will do.</summary>
-            FurniturePlan Put(string name, IEnumerable<(float X, float Z, float Yaw)> cands, Func<float, float, float, double> score = null, float y = 0f)
+            FurniturePlan Put(string name, IEnumerable<(float X, float Z, float Yaw)> cands, Func<float, float, float, double> score = null, float y = 0f, Rng rng = null)
             {
                 var s = FurnitureCatalog.Sizes[name];
-                var ranked = Rank(cands, score);
+                var ranked = Rank(cands, score, rng);
                 if (FurnishTrace != null)
                     FurnishTrace(System.FormattableString.Invariant($"put {name} in {_room}: {ranked.Count} candidates, first {(ranked.Count > 0 ? ranked[0].ToString() : "-")}"));
                 foreach (var (x, z, yaw) in ranked)
@@ -844,6 +844,8 @@ namespace UnturnedSim
                     if (_p.WallRects.Any(r => Overlaps(fp, r))) continue;
                     var swing = SwingZone(name, x, z, yaw);
                     if (swing != null && (!SwingClear(swing.Value) || _mine.Any(o => o.On == null && !o.Mounted && Overlaps(swing.Value, o.Footprint)))) continue;
+                    // where you stand at a sink, no door's leaf swings (a doorway's walk is fine: you stand in it)
+                    if (Stand(name) > 0f && swing != null && _p.LeafRects.Any(r => Overlaps(swing.Value, r))) continue;
                     // a bed: a long side (both, a double's) to get in at
                     var way = name.StartsWith("Bed") ? BedWay(name, x, z, yaw) : null;
                     if (name.StartsWith("Bed") && way == null) continue;
@@ -1058,11 +1060,18 @@ namespace UnturnedSim
                 }
                 var b = Put(bed, Against(bed, Side.Back).Where(c => !UnderWindow(bed, c) && !Coffin(bed, c)), (x, z, yaw) => BedScore(bed, x, z, yaw));
                 if (b == null && bed != "Bed_1") b = Put("Bed_1", Against("Bed_1", Side.Back).Where(c => !UnderWindow("Bed_1", c) && !Coffin("Bed_1", c)), (x, z, yaw) => BedScore("Bed_1", x, z, yaw));
+                // the room's own window in the way of its head: the window makes way -- slides, narrows, or goes where the
+                // room has another (strawberry: "allow room layout to alter windows after the fact if necessary") -- before
+                // the bed gives up its head to a wall for the coffin or the window
+                foreach (var bd in bed == "Bed_1" ? new[] { bed } : new[] { bed, "Bed_1" })
+                    if (b == null) b = PutMakingWay(bd, Against(bd, Side.Back).Where(c => UnderWindow(bd, c) && !Coffin(bd, c)), (x, z, yaw) => BedScore(bd, x, z, yaw), head: true);
                 if (b == null) b = Put("Bed_1", Against("Bed_1", Side.Back).Where(c => !UnderWindow("Bed_1", c)), (x, z, yaw) => BedScore("Bed_1", x, z, yaw));
                 // (the preferences given up one at a time, the bed's score still ranking what is left)
                 if (b == null) b = Put("Bed_1", Against("Bed_1", Side.Back), (x, z, yaw) => BedScore("Bed_1", x, z, yaw));
                 if (b == null) b = Put("Bed_1", Against("Bed_1", Side.Left).Concat(Against("Bed_1", Side.Right)), (x, z, yaw) => BedScore("Bed_1", x, z, yaw));
-                Put("Wardrobe_0", Against("Wardrobe_0", Side.Back), (x, z, yaw) => NearestDoor(x, z) - (b != null && MathF.Abs(yaw - b.Yaw) < 1f ? 2 : 0));
+                Func<float, float, float, double> wardrobe = (x, z, yaw) => NearestDoor(x, z) - (b != null && MathF.Abs(yaw - b.Yaw) < 1f ? 2 : 0);
+                // (and where its windows leave it no wall, one of them makes way for it)
+                if (Put("Wardrobe_0", Against("Wardrobe_0", Side.Back), wardrobe) == null) PutMakingWay("Wardrobe_0", Against("Wardrobe_0", Side.Back), wardrobe, head: false);
                 if (b != null)
                 {
                     // a lamp at either side of the bedhead, against the same wall
@@ -1163,7 +1172,7 @@ namespace UnturnedSim
                     for (float t = 0f; t <= d; t += 0.1f)
                     {
                         float x = x0 + (set.X - x0) * t / d, z = z0 + (set.Z - z0) * t / d;
-                        foreach (var (i, j) in _p.Cells((x - 0.3f, z - 0.3f, x + 0.3f, z + 0.3f))) _p.KeepTall[i, j] = true;
+                        foreach (var (i, j) in _p.Cells((x - 0.3f, z - 0.3f, x + 0.3f, z + 0.3f))) _p.KeepTall[i, j] = _p.Sight[i, j] = true;
                     }
                     Recount((MathF.Min(x0, set.X) - 0.4f, MathF.Min(z0, set.Z) - 0.4f, MathF.Max(x0, set.X) + 0.4f, MathF.Max(z0, set.Z) + 0.4f));
                 }
@@ -1501,6 +1510,7 @@ namespace UnturnedSim
                     if (_area >= 54f || (_area >= 30f && _rng.Chance(60))) Island();
                     if (_area >= 72f) Dining();
                 }
+                WindowsOverCounters();
                 CounterTops();
                 Clock();
             }
@@ -1849,6 +1859,7 @@ namespace UnturnedSim
                     Put("Tub_0", Against("Tub_0", Side.Left).Concat(Against("Tub_0", Side.Right)), (x, z, yaw) => (Corner("Tub_0", (x, z, yaw)) ? 10 : 0) + NearestDoor(x, z));
                 Put("Counter_1", Against("Counter_1", Side.Back), (x, z, yaw) => -NearestDoor(x, z));
                 if (_area >= 14f && home) Put("Washer_0", Against("Washer_0", Side.Back), (x, z, yaw) => NearestDoor(x, z));
+                WindowsOverCounters();
             }
 
             /// <summary>The desk in the command position: the chair's back to a wall, facing the door across the desk;
@@ -2033,6 +2044,7 @@ namespace UnturnedSim
                 }
                 Dining();
                 if (_area >= 30f) Put("Couch_1", Against("Couch_1", Side.Back), (x, z, yaw) => NearestDoor(x, z));
+                WindowsOverCounters();
             }
 
             /// <summary>A home's coat stand by the way in (strawberry: "explore more props to place ie coat rack"): in a corner

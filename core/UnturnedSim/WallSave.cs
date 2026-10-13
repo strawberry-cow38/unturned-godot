@@ -66,7 +66,7 @@ namespace UnturnedSim
             var sb = new StringBuilder();
             sb.Append(Header).Append('\n');
             sb.Append("# wall <x> <y> <z> <yawDeg> <length> <thickness> <materialId> [height] [pitchDeg] [kind] [gableRise] [texel] [insetL0 insetL1 insetR0 insetR1] [matBack texelBack]\n");
-            sb.Append("#   open <u> <v> <width> <height> <depth> <archetype> [glazed tint hp indestructible broken] [doorProp doorOpen] [barr <style>]\n");
+            sb.Append("#   open <u> <v> <width> <height> <depth> <archetype> [glazed tint hp indestructible broken] [doorProp doorOpen] [barr <style>] [swing <start|end> <front|back>]\n");
             sb.Append("# building <kind>            -- Residential|Commercial|Industrial|Misc|Apartment (the volume is DERIVED from the walls)\n");
             sb.Append("# room <kind> <x> <z> [floor] -- a designation ANCHORED at a point inside the room it labels\n");
             sb.Append("# door <front|back> <x> <z> [floor] -- a marked door to outside, at the middle of its opening\n");
@@ -131,6 +131,11 @@ namespace UnturnedSim
                         // above warns about). An old reader just skips the two unknown trailing tokens.
                         if (o.HasBarricade)
                             sb.Append(" barr ").Append(o.Barricade.ToString());
+                        // which way its door swings: keyed for the same reason, and written only when it is not the
+                        // default (hinged at U1, opening to the back), so every save from before the choice existed
+                        // reads back as the door it always was, and a default door writes the line it always did
+                        if (o.HasDoor && (o.DoorHingeAtStart || o.DoorOpensFront))
+                            sb.Append(" swing ").Append(o.DoorHingeAtStart ? "start" : "end").Append(' ').Append(o.DoorOpensFront ? "front" : "back");
                         sb.Append('\n');
                     }
                 }
@@ -273,6 +278,14 @@ namespace UnturnedSim
                     // reads back whether or not the glass/door blocks are present); an unknown style -> None.
                     int bi = System.Array.IndexOf(p, "barr");
                     if (bi >= 0 && bi + 1 < p.Length) System.Enum.TryParse(p[bi + 1], true, out op.Barricade);
+                    // door swing: a KEYED "swing <start|end> <front|back>", found the same way; a word it does not know
+                    // leaves that half at its default rather than guessing
+                    int si = System.Array.IndexOf(p, "swing");
+                    if (si >= 0 && si + 2 < p.Length && op.HasDoor)
+                    {
+                        op.DoorHingeAtStart = p[si + 1] == "start";
+                        op.DoorOpensFront = p[si + 2] == "front";
+                    }
                     cur.Openings.Add(op);
                 }
                 // anything else: a newer editor's field. Skip it and keep the building.

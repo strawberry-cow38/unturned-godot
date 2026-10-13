@@ -180,6 +180,13 @@ namespace UnturnedSim
         public List<GenOpening> OpenPlan = new List<GenOpening>();
         /// <summary>What stands in the rooms (BuildingGen.Furnish): retail props by name.</summary>
         public List<FurniturePlan> Furniture = new List<FurniturePlan>();
+        /// <summary>The windows a room's layout changed after the walls were cut (strawberry: "allow room layout to alter
+        /// windows after the fact if necessary"): each written straight into its wall's Openings, so the wall, its glass,
+        /// its collision, the save and the décor all see the window as it now is. This is the record of what changed.</summary>
+        public List<WindowEdit> WindowEdits = new List<WindowEdit>();
+        /// <summary>Where each window was free to be (BuildWalls): its share of its stretch of wall, which a room's layout
+        /// may slide it along (Furnish). The generator's own bookkeeping, in wall U (which TurnHalf keeps).</summary>
+        internal List<WindowSlot> WindowSlots = new List<WindowSlot>();
         public IEnumerable<PropDesignation> Props => Furniture.Select(m => new PropDesignation(m.Name, m.X, m.Y, m.Z, m.Yaw));
         /// <summary>The marked doors: the front one always, the back one when there is one.</summary>
         public GenDoor Front => Doors.FirstOrDefault(d => d.Role == DoorRole.Front);
@@ -2088,6 +2095,7 @@ namespace UnturnedSim
             void Reset()
             {
                 res.Walls.Clear(); res.Stairs.Clear(); res.Porches.Clear(); res.Furniture.Clear();
+                res.WindowEdits.Clear(); res.WindowSlots.Clear();
                 res.Chimney = default;
                 res.Notes.RemoveRange(notes, res.Notes.Count - notes);
                 for (int i = 0; i < doors.Count; i++) { doors[i].At = placed[i].At; doors[i].Width = placed[i].Width; }
@@ -2597,16 +2605,35 @@ namespace UnturnedSim
                     var face = Facing(runSide);
                     bool shopFront = business && face == Face.Front, side = business && face == Face.Side;
                     if (side && room.Kind == RoomKind.Shop) win = -1;
+                    // (and each window's share of its stretch -- its slot, half Spread's gap in from either end -- where a
+                    // room's layout may later slide it: Furnish. Spread lays a window anywhere in its slot as readily as at
+                    // its middle, so anywhere in it is a place BuildWalls itself might have put it.)
+                    var slots = new Dictionary<float, (float A, float B)>();
                     if (win >= 0)
                         foreach (var (s0, s1) in free)
                         {
                             int n = win == ArchVent || win == ArchSlit || room.Circulation ? 1
                                   : shopFront ? Math.Max(1, (int)((s1 - s0) / (1.6f * Cell)))
                                   : side ? 1 : Math.Max(1, (int)((s1 - s0) / (2 * Cell)));
-                            arches.AddRange(Spread(s0, s1, Enumerable.Repeat(win, n).ToList(), shopFront ? StoreWindow : 0f));
+                            var spread = Spread(s0, s1, Enumerable.Repeat(win, n).ToList(), shopFront ? StoreWindow : 0f);
+                            float share = (s1 - s0) / n, half = n > 1 ? 0.15f : 0f;
+                            foreach (var (_, at, _) in spread)
+                            {
+                                int i = Math.Clamp((int)((at - s0) / share), 0, n - 1);
+                                slots[at] = (s0 + share * i + half, s0 + share * (i + 1) - half);
+                            }
+                            arches.AddRange(spread);
                         }
                     foreach (var (arch, at, wd) in arches)
-                        if (arch == ArchGarage || Clears(run, arch, at, wd)) w.Openings.Add(Make(arch, U(w, at), wd));
+                        if (arch == ArchGarage || Clears(run, arch, at, wd))
+                        {
+                            w.Openings.Add(Make(arch, U(w, at), wd));
+                            if (arch == ArchGarage || !slots.TryGetValue(at, out var sl)) continue;
+                            // the whole slot clear of every roof below, or the window stays where it is
+                            if (!Clears(run, arch, (sl.A + sl.B) * 0.5f, sl.B - sl.A)) sl = (at - wd * 0.5f, at + wd * 0.5f);
+                            float ua = U(w, sl.A), ub = U(w, sl.B);
+                            res.WindowSlots.Add(new WindowSlot(w, room, MathF.Min(ua, ub), MathF.Max(ua, ub)));
+                        }
                 }
 
                 foreach (var o in outs) res.Walls.Add(o.W);

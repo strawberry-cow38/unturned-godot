@@ -2790,6 +2790,13 @@ namespace UnturnedGodot
             if (solved.Count > 0) Log.Err($"[editor-buildings] generate: {solved.Count} walls were not corner-solved -- their openings have slid: "
                                           + string.Join("; ", System.Linq.Enumerable.Select(solved, x => $"{x.W.Kind} at {x.W.Position - at} yaw {x.W.RotationDegrees.Y:0} {x.Len:0.00} -> {x.W.Length:0.00} m")));
 
+            // UG_EDITDOORSOPEN=1 (a render's, not a player's): every door the building hangs stands open, so a capture shows
+            // which way each one swings and what it swings over
+            if (System.Environment.GetEnvironmentVariable("UG_EDITDOORSOPEN") == "1")
+            {
+                void Open(Node n) { foreach (var c in n.GetChildren()) { if (c is ObjectDoor d) d.SetInitialState(true); Open(c); } }
+                foreach (var w in _walls) Open(w);
+            }
             DesignatedKind = res.Kind;
             Designations.Clear();
             foreach (var d in res.Rooms) Designations.Add(new RoomDesignation(d.Kind, at.X + d.X, at.Z + d.Z, d.Floor));
@@ -2823,6 +2830,12 @@ namespace UnturnedGodot
                 System.IO.File.WriteAllLines(dump, System.Linq.Enumerable.Select(res.Furniture, m => System.FormattableString.Invariant($"{m.Name} {m.X:0.00} {m.Z:0.00} {m.Yaw:0} {m.Floor} {m.Room.Kind}")));
                 System.IO.File.WriteAllLines(dump + ".walls", System.Linq.Enumerable.Select(res.Walls, w => System.FormattableString.Invariant($"{w.Kind} {w.X:R} {w.Y:R} {w.Z:R} {w.Yaw:R} {w.Length:R} {w.Height:R} {w.Thickness:R} {w.Openings.Count}")));
                 System.IO.File.WriteAllLines(dump + ".trace", trace);
+                // and every opening, so a capture can be checked against where the windows and doors actually are
+                var ops = new List<string>();
+                foreach (var w in res.Walls)
+                    foreach (var o in w.Openings)
+                        ops.Add(System.FormattableString.Invariant($"{w.Kind} {w.X:0.00} {w.Y:0.00} {w.Z:0.00} yaw {w.Yaw:0} | arch {o.Archetype} u {o.U:0.00}..{o.U1:0.00} v {o.V:0.00}..{o.V1:0.00}{(o.HasDoor ? $" door hinge {(o.DoorHingeAtStart ? "start" : "end")} opens {(o.DoorOpensFront ? "front" : "back")}" : "")}{(o.Glazed ? " glazed" : "")}"));
+                System.IO.File.WriteAllLines(dump + ".openings", ops);
             }
             Log.Print($"[editor-buildings] generated {res.Kind} seed {spec.Seed}: {res.Floors} floor(s), {rooms} rooms, "
                      + $"{res.CellsX * BuildingGen.Cell:0} x {res.CellsZ * BuildingGen.Cell:0} m, {res.Walls.Count} surfaces, "

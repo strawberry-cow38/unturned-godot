@@ -298,7 +298,7 @@ namespace UnturnedGodot
         /// <summary>What each live door was built from, so a Rebuild mid-drag can tell "still right, just move
         /// it" from "remake it". Rebuild runs on every mouse move; respawning a door per frame would leave a
         /// trail of them, and QueueFree defers so the stale ones stay hittable for the rest of the frame.</summary>
-        readonly List<(int Op, string Prop, float W, float H)> _doorSpec = new();
+        readonly List<(int Op, string Prop, float W, float H, bool Start, bool Front)> _doorSpec = new();
 
         // ---- a PRE-BARRICADE in an opening (master 2026-09-01) -----------------------------------------
         // Same owns-it-on-the-opening + pooled-so-a-per-mouse-move-Rebuild-doesn't-respawn shape as the doors above.
@@ -328,10 +328,16 @@ namespace UnturnedGodot
             for (int k = 0; k < want.Count; k++)
             {
                 var o = Openings[want[k]];
-                var spec = (want[k], o.DoorProp, o.Width, o.Height);
+                // (which way it swings is part of what it was built as: a door re-hung on its other jamb is a new leaf)
+                var spec = (want[k], o.DoorProp, o.Width, o.Height, o.DoorHingeAtStart, o.DoorOpensFront);
                 if (k < _doors.Count && _doorSpec[k] == spec) { PlaceDoor(_doors[k], o); continue; }
 
-                var made = DoorDeploy.SpawnProp(o.DoorProp, this, Vector3.Zero, 0f, ClearOpeningSize(o));
+                // The swing (WallOpening.DoorHingeAtStart / DoorOpensFront; the generator's layout chooses them). Door_Pine
+                // hinges at its mesh's +X end and opens toward -Z, so as built it hangs on the U1 jamb and opens out of the
+                // wall's back. Turned half round in PlaceDoor it hangs on the U jamb and opens out of the front; its angle
+                // negated, it opens the other way on the same jamb. Both together give the fourth. No mirroring: a negative
+                // scale on an ancestor of the leaf's collider is what physics does not do.
+                var made = DoorDeploy.SpawnProp(o.DoorProp, this, Vector3.Zero, 0f, ClearOpeningSize(o), reverse: o.DoorHingeAtStart != o.DoorOpensFront);
                 if (made == null)
                 {
                     // SAY SO rather than leaving an empty hole that looks like a design choice.
@@ -403,7 +409,9 @@ namespace UnturnedGodot
         void PlaceDoor(Node3D host, WallOpening o)
         {
             if (host == null || !IsInstanceValid(host)) return;
-            host.Transform = new Transform3D(Basis.Identity, new Vector3(o.U + o.Width * 0.5f, o.V, 0f));
+            // hung on the U jamb: the whole door turned half round about the vertical (see RebuildDoors). The measuring
+            // below is of the leaf's geometry in this wall's space, so it centres a turned door as it does a plain one.
+            host.Transform = new Transform3D(o.DoorHingeAtStart ? new Basis(Vector3.Up, Mathf.Pi) : Basis.Identity, new Vector3(o.U + o.Width * 0.5f, o.V, 0f));
 
             // Then align by MEASURING the leaf, on BOTH axes. These meshes are not centred on their own
             // origin: Door_Pine spans x -2.35..+0.10 (centre -1.12, it is anchored at the hinge) and
