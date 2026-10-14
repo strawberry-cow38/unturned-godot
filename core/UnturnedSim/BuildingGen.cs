@@ -524,16 +524,22 @@ namespace UnturnedSim
                   new[] { RoomKind.Office, RoomKind.BreakRoom, RoomKind.Storage, RoomKind.Office }),
         };
 
-        /// <summary>The retail palettes that suit a kind of building (content/wall_palettes.tsv names).</summary>
+        /// <summary>The retail palettes that suit a kind of building (content/wall_palettes.tsv names). A retail business's or
+        /// service's own palette (a fire station's, a mechanic's, a diner's) is for that business (strawberry: "only the
+        /// specified businesses/services should use those palletes, industry opting for apartment pallettes"): a kind
+        /// that is no one business in particular wears the plain apartment block's -- ApartmentPalettes, one line a kind.</summary>
         public static string[] PalettesFor(BuildingKind b) => b switch
         {
             BuildingKind.Residential => new[] { "House_00", "House_01", "House_02", "House_03", "House_04", "House_05", "House_06", "House_07", "House_08", "House_09" },
             // (a house drew from these too until a block of flats was a kind of its own: see Generate)
-            BuildingKind.Apartment => new[] { "Apartment_0", "Apartment_1", "Apartment_2", "Apartment_3" },
+            BuildingKind.Apartment => ApartmentPalettes(),
             BuildingKind.Commercial => new[] { "Cafe_0", "Cafe_1", "Clothes_0", "Clothes_1", "Diner_0", "Diner_1", "Diner_2", "Grocer_0", "Guns_0", "Hardware_0", "Post_0", "Bank_0", "Mall_0", "Library_0" },
-            BuildingKind.Industrial => new[] { "Barn_0", "Barn_1", "Mechanic_0", "Fire_0", "Drill", "Research_0" },
+            BuildingKind.Industrial => ApartmentPalettes(),
             _ => new[] { "Office_0", "Office_1", "Office_2", "Office_3", "Police_0", "Police_1", "Medic_0", "Medic_1", "School_0", "School_1", "Barracks_0" },
         };
+        /// <summary>The apartment block's palettes: a block of flats', and an industrial building's (PalettesFor). Each call
+        /// a fresh array, as every kind's.</summary>
+        static string[] ApartmentPalettes() => new[] { "Apartment_0", "Apartment_1", "Apartment_2", "Apartment_3" };
 
         /// <summary>Each retail palette's floor texels, measured off its own mesh (strawberry: "the floors need the actual
         /// floor colors for the pallete of the building, and we should also do diff materials per room"): Floor, the
