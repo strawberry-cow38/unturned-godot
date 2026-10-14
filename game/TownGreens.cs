@@ -233,6 +233,11 @@ namespace UnturnedGodot
             tPlots = clock.ElapsedMilliseconds - tPlots;
             var shut = new bool[nu, nv];
             for (int i = 0; i < nu; i++) for (int j = 0; j < nv; j++) shut[i, j] = why[i, j] != 0;
+            // (how far each cell is from a street's frontage strip: a piece of dead space lying wholly within the pavements'
+            // reach of one is a sliver the pavement is taken out over -- TownRoadGrid.SliverBack -- not ground to plant)
+            var nearStreet = new float[nu, nv];
+            for (int i = 0; i < nu; i++) for (int j = 0; j < nv; j++) nearStreet[i, j] = why[i, j] == WhyStreet ? 0f : 1e6f;
+            Chamfer(nearStreet, nu, nv);
             // 2. how far each open cell is from ground a lot could not have: a chamfer distance, two passes
             var dt = new float[nu, nv];
             for (int i = 0; i < nu; i++) for (int j = 0; j < nv; j++) dt[i, j] = shut[i, j] ? 0f : 1e6f;
@@ -250,12 +255,12 @@ namespace UnturnedGodot
                     if (shut[si, sj] || seen[si, sj]) continue;
                     var cells = new List<(int, int)>();
                     var st = new Stack<(int, int)>(); st.Push((si, sj)); seen[si, sj] = true;
-                    int ci0 = si, ci1 = si, cj0 = sj, cj1 = sj; float maxDt = 0f;
+                    int ci0 = si, ci1 = si, cj0 = sj, cj1 = sj; float maxDt = 0f, maxStreet = 0f;
                     while (st.Count > 0)
                     {
                         var (i, j) = st.Pop(); cells.Add((i, j));
                         ci0 = Math.Min(ci0, i); ci1 = Math.Max(ci1, i); cj0 = Math.Min(cj0, j); cj1 = Math.Max(cj1, j);
-                        maxDt = Mathf.Max(maxDt, dt[i, j]);
+                        maxDt = Mathf.Max(maxDt, dt[i, j]); maxStreet = Mathf.Max(maxStreet, nearStreet[i, j]);
                         for (int di = -1; di <= 1; di++)
                             for (int dj = -1; dj <= 1; dj++)
                             {
@@ -287,6 +292,16 @@ namespace UnturnedGodot
                             lotTouch++;
                             if (AtLotFront(Plots[lotOf[a, b]], W(a, b))) frontTouch++;
                         }
+                    if (FillSlivers && maxStreet <= SliverMax + 0.5f * Cell)
+                    {
+                        // a sliver behind a pavement, which it is taken out over: nothing planted in it
+                        if (ProbeEverything)
+                        {
+                            var pm0 = Vector3.Zero; foreach (var (i, j) in cells) pm0 += W(i, j); pm0 /= cells.Count;
+                            Log.Print($"[towngrid]   dead space at ({pm0.X:0},{pm0.Z:0}): {cells.Count} m2, {w - 2}x{h - 2} m box -- paved: a sliver behind the pavement");
+                        }
+                        continue;
+                    }
                     if (cells.Count >= ParkMinArea && halfMax >= ParkMinHalfWidth) { PlanPocketPark(roads, on, w, h, Wl, Dl, cells.Count, ref seedH); what = "park"; }
                     else if (lotTouch > 0 && frontTouch >= 0.3f * lotTouch) what = $"left: along lot fronts ({frontTouch} of {lotTouch} lot cells beside it are a front)";
                     else if (2f * halfMax >= RowMinWidth) { what = PlanHedgerows(on, w, h, Wl, Dl, ref seedH); }

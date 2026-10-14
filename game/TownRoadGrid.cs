@@ -2266,6 +2266,7 @@ namespace UnturnedGodot
         {
             if (parent == null || roads == null) return 0;
             var walk = proto ?? new EditorSidewalk();
+            SliverStations = 0; SliverWidest = 0f;
             walk.KerbHeight = PavementKerb;   // ⚠ ONE number for the pavement and for whatever stands on it
             walk.RoadGap = PavementGap;       // ...and one for how it meets the asphalt
             walk.Width = PavementWidth;       // ...and one for how wide it is, which the corners read too
@@ -2310,11 +2311,22 @@ namespace UnturnedGodot
                         if (bk > bay.Front0 + 0.01f && bk < bay.Front1 - 0.01f) breaks.Add(bk);
                 }
                 int road = r;
+                // ⭐ ...and out to the property line wherever what lies between is only a sliver (SliverBack), its back edge
+                // stepping exactly at the plots' corners
+                var near = FillSlivers ? PlotsNearRoad(roads, r) : null;
+                if (near != null && near.Count > 0)
+                {
+                    breaks ??= new List<float>();
+                    foreach (var poly in near)
+                        foreach (var q in poly) { RoadNear(roads, r, q, out float al, out _); breaks.Add(al - 0.01f); breaks.Add(al + 0.01f); }
+                }
+                float half = roads.RoadHalfWidth(r);
+                float Back(int sd, float d) { float b = BayBack(road, sd, d); return b + SliverBack(roads, road, sd, d, half + walk.RoadGap + walk.Width + b, near); }
                 int Lay(EditorSidewalk.Side side, float from, float toEnd, string piece = null, float min = -1f) => breaks == null
                     ? walk.LayAlongRoad(walk, roads, road, side, null, from, toEnd, piece: piece, minLength: min)
                     : walk.LayAlongRoad(walk, roads, road, side, null, from, toEnd,
                                         d => BayExtra(road, 1, d), d => BayExtra(road, -1, d), breaks,
-                                        d => BayBack(road, 1, d), d => BayBack(road, -1, d), piece: piece, minLength: min);
+                                        d => Back(1, d), d => Back(-1, d), piece: piece, minLength: min);
                 // ⭐ OPEN WHERE A LANE COMES IN (BuildLanes): that side is laid in pieces round each mouth, whose kerb
                 // returns pick the pavement up where it stops
                 bool anyMouth = false;
@@ -2336,6 +2348,7 @@ namespace UnturnedGodot
                 }
             }
             walk.Dips.Clear();
+            if (FillSlivers) Log.Print($"[towngrid] slivers: the pavement taken out to the property line at {SliverStations} stations, the widest {SliverWidest:0.00} m (at most {SliverMax:0.0})");
             return made;
         }
 
@@ -2724,6 +2737,7 @@ namespace UnturnedGodot
                          $"far point {(c || !ClearOfRoads(roads, jc + new Vector3(1000f, 0f, 1000f)) ? "inside (WRONG)" : "clear")}");
             }
 
+            var standing = new List<Vector3>();     // the lamps and hydrants on the pavements, which the meters keep clear of
             // ---- STREET LIGHTS, down each street's pavement.
             if (StreetLights)
                 foreach (int r in Built)
@@ -2753,7 +2767,7 @@ namespace UnturnedGodot
                         float yaw = ProcIsland.YawForDir(-right.X * side, right.Z * side);
                         var basis = SplineTiling.SeatedBasis(terr, at, yaw, 6f, out _);
                         var node = objs.Place(StreetLightProp, at, basis);
-                        if (node != null) { into?.Add(node); made++; }
+                        if (node != null) { into?.Add(node); made++; standing.Add(at); }
                     }
                 }
 
@@ -2779,8 +2793,35 @@ namespace UnturnedGodot
                     at.Y = Mathf.Max(pos.Y, terr != null ? terr.SampleHeight(at.X, at.Z) : pos.Y) + PavementKerb;
                     var hb = SplineTiling.SeatedBasis(terr, at, Unit(h, 32) * 360f, 6f, out _);
                     var hn = objs.Place(HydrantProp, at, hb);
-                    if (hn != null) { into?.Add(hn); made++; }
+                    if (hn != null) { into?.Add(hn); made++; standing.Add(at); }
                 }
+
+            // ---- PARKING METERS, one to a space along every paid zone
+            MetersPlaced = MetersCrowded = PaidZones = FreeZones = 0;
+            foreach (var bay in Bays) { if (bay.Paid) PaidZones++; else FreeZones++; }
+            if (ParkingMeters)
+                foreach (var bay in Bays)
+                {
+                    if (!bay.Paid) continue;
+                    for (int k = 0; k < bay.Spaces; k++)
+                    {
+                        float d = bay.First + (k + 0.5f) * bay.SpaceLength;
+                        if (!roads.EvaluateAlong(bay.Road, d, out var pos, out var tan, snapTerrain: false)) continue;
+                        var outw = new Vector3(tan.Z, 0f, -tan.X).Normalized() * bay.Side;     // from the road out to this pavement
+                        var at = pos + outw * (roads.RoadHalfWidth(bay.Road) + BayExtra(bay.Road, bay.Side, d) + RoadGapForLights + MeterSetback);
+                        bool crowded = false;
+                        foreach (var q in standing) if (Flat(q, at) < 1.2f) { crowded = true; break; }
+                        if (crowded) { MetersCrowded++; continue; }
+                        at.Y = Mathf.Max(pos.Y, terr != null ? terr.SampleHeight(at.X, at.Z) : pos.Y) + PavementKerb;
+                        // facing its space: like the lamps' arms, back over the road (its front is local +Y, Z-up as they are)
+                        var mb = SplineTiling.SeatedBasis(terr, at, ProcIsland.YawForDir(-outw.X, outw.Z), 6f, out _);
+                        var mn = objs.Place(ParkingMeterProp, at, mb);
+                        if (mn != null) { into?.Add(mn); made++; if (MetersPlaced++ == 0) FirstMeterAt = at; }
+                    }
+                }
+            if (Bays.Count > 0)
+                GD.Print($"[towngrid] street parking: {PaidZones} zones marked paid, {FreeZones} free; {MetersPlaced} meters, one a space"
+                        + $"{(MetersCrowded > 0 ? $" ({MetersCrowded} spaces left without, a lamp or hydrant already there)" : "")}{(MetersPlaced > 0 ? $"; the first at ({FirstMeterAt.X:0.0},{FirstMeterAt.Z:0.0})" : "")}");
 
             // ---- TRAFFIC SIGNALS, one per approach at a junction that has three or more.
             if (TrafficLights && Junctions != Control.None)
@@ -2855,6 +2896,21 @@ namespace UnturnedGodot
         /// hole in the mesh, or a mast's shadow lying in it".</summary>
         public static bool NoProps = System.Environment.GetEnvironmentVariable("UG_TOWNNOPROPS") == "1";
         public bool StreetLights = !NoProps, TrafficLights = !NoProps;
+        /// <summary>⭐ PARKING METERS (strawberry 2026-10-14: "yes add them, 1 per street parking bay, if the street-parking zone is
+        /// marked paid parking"): astraclaw's Parking_Meter_0 (approved 2026-10-14), one at every space of a paid zone, on the
+        /// pavement this far in from the kerb's face, level with the middle of its space and facing it.</summary>
+        public bool ParkingMeters = !NoProps;
+        public string ParkingMeterProp = "Parking_Meter_0";
+        public float MeterSetback = 0.45f;
+        public int MetersPlaced, PaidZones, FreeZones, MetersCrowded; public Vector3 FirstMeterAt;
+        /// <summary>⭐ PAID OR FREE: a zone on a main street, or in front of a shop or an apartment block, is marked paid -- the
+        /// town centre's kerbside; one in front of houses only, on a side street, parks free.</summary>
+        bool PaidZone(RoadField roads, int r, List<(Plot pl, Vector3 was)> fronting)
+        {
+            if (IsMain(roads, r)) return true;
+            foreach (var (pl, _) in fronting) if (pl.Kind == PlotKind.Shop || pl.Kind == PlotKind.Apartments) return true;
+            return false;
+        }
         /// <summary>Hydrants, and how often a street gets one. Uncommon by default.</summary>
         public bool Hydrants = !NoProps;
         public float HydrantChance = 0.35f;
@@ -6661,6 +6717,8 @@ namespace UnturnedGodot
             public float Depth, Taper;
             /// <summary>The car spaces marked: Spaces of SpaceLength each, the first starting at arc First.</summary>
             public int Spaces; public float First, SpaceLength;
+            /// <summary>Marked paid parking (PaidZone): a meter at every space (PlaceLights).</summary>
+            public bool Paid;
             /// <summary>Arc metres where the plots stepped back behind it begin and end: the pavement's back edge
             /// steps out by Depth over exactly this stretch, to stand where they stand.</summary>
             public float Front0, Front1;
@@ -6727,6 +6785,64 @@ namespace UnturnedGodot
         /// is in front of the next house. So it follows the kerb at its full width wherever the plots behind have
         /// stepped back to make room, and is clipped to the usual line in front of the next plot: a short square
         /// step there, and the angle everywhere else.</summary>
+        /// <summary>⭐ PAVEMENT OUT OVER THE SLIVERS (strawberry 2026-10-14: "have sidewalks try to auto-fill small slivers of
+        /// deadspace"). Behind a pavement there is often a strip of ground nobody has -- the half metre a plot stands back
+        /// from it, the metre more a corner lot is nudged out by, a lot's odd edge -- too narrow for a hedge or a bush, so it
+        /// stayed bare grass between the pavement and the property line. Where the ground behind the pavement's back edge
+        /// is that and nothing else for no more than SliverMax before a plot begins, the pavement runs on out to the plot;
+        /// where it is wider, or opens on nothing, it is left. UG_TOWNNOSLIVERS=1 is the control.</summary>
+        public bool FillSlivers = System.Environment.GetEnvironmentVariable("UG_TOWNNOSLIVERS") != "1";
+        public float SliverMax = 2f;
+        public int SliverStations; public float SliverWidest;
+        /// <summary>Every plot near a road (its outline, in plan), a parking lot's aside -- its front kerb reaches the pavement
+        /// already.</summary>
+        List<Vector3[]> PlotsNearRoad(RoadField roads, int road)
+        {
+            var list = new List<Vector3[]>();
+            float reach = roads.RoadHalfWidth(road) + PavementGap + _walkWidth + BayDepth + SliverMax + 1f;
+            foreach (var pl in Plots)
+            {
+                if (pl.Kind == PlotKind.Parking) continue;
+                var poly = pl.Outline ?? pl.Corners();
+                foreach (var q in poly) { RoadNear(roads, road, q, out _, out float off); if (off <= reach) { list.Add(poly); break; } }
+            }
+            return list;
+        }
+        /// <summary>How much further out the pavement's back edge goes at arc `d` of `road`'s `side`: the sliver between it
+        /// (`back0` from the centreline) and the first plot straight out behind it, if that is all it is -- else 0.</summary>
+        float SliverBack(RoadField roads, int road, int side, float d, float back0, List<Vector3[]> near)
+        {
+            if (!FillSlivers || near == null || near.Count == 0) return 0f;
+            if (!roads.EvaluateAlong(road, d, out var pos, out var tan, snapTerrain: false)) return 0f;
+            var n = new Vector3(tan.Z, 0f, -tan.X).Normalized() * side;
+            var o = pos + n * back0;
+            float best = float.MaxValue;
+            foreach (var poly in near) best = Mathf.Min(best, RayIntoPoly(o, n, poly, SliverMax + 0.05f));
+            if (best > SliverMax || best < 0.02f) return 0f;
+            // ...over ground nobody has: not a lane's, not a road's
+            var mid = o + n * (best * 0.5f);
+            if (LaneAt(mid) || roads.DeepestRoadOverlap(mid, 0f, out _, out _)) return 0f;
+            SliverStations++; SliverWidest = Mathf.Max(SliverWidest, best);
+            return best;
+        }
+        /// <summary>How far along a ray (in plan, from `o` along unit `n`) it first meets a polygon's edge, within `maxT` --
+        /// MaxValue if it does not.</summary>
+        static float RayIntoPoly(Vector3 o, Vector3 n, Vector3[] poly, float maxT)
+        {
+            float best = float.MaxValue;
+            for (int e = 0; e < poly.Length; e++)
+            {
+                var a = poly[e]; var b = poly[(e + 1) % poly.Length];
+                float ex = b.X - a.X, ez = b.Z - a.Z;
+                float den = n.X * ez - n.Z * ex;
+                if (Mathf.Abs(den) < 1e-6f) continue;
+                float ax = a.X - o.X, az = a.Z - o.Z;
+                float t = (ax * ez - az * ex) / den, u = (ax * n.Z - az * n.X) / den;
+                if (t >= -1e-4f && t <= maxT && u >= -1e-4f && u <= 1f + 1e-4f) best = Mathf.Min(best, Mathf.Max(0f, t));
+            }
+            return best;
+        }
+
         public float BayBack(int road, int side, float d)
         {
             float best = 0f;
@@ -6833,7 +6949,7 @@ namespace UnturnedGodot
                         }
                         else
                         {
-                            Bays.Add(new ParkingBay { Road = r, Side = side, A = a, B = b, Depth = BayDepth, Taper = BayTaper,
+                            Bays.Add(new ParkingBay { Road = r, Side = side, A = a, B = b, Depth = BayDepth, Taper = BayTaper, Paid = PaidZone(roads, r, group),
                                                       Spaces = n, SpaceLength = BaySpace, First = a + BayTaper + (full - n * BaySpace) * 0.5f,
                                                       Front0 = a - inset, Front1 = b + inset });
                             stepped += group.Count;
