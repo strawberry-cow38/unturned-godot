@@ -1,0 +1,65 @@
+{
+  "name": "Parking_Meter_0",
+  "guid": "d58deacfeb1f4e82849a07411a160c49",
+  "request_message_id": "1559853055573495829",
+  "art_status": "REVIEW_PENDING",
+  "registered": false,
+  "mount": "ground",
+  "placement_owner": "Cow tools / Tinyclaw",
+  "interaction_status": "Street prop art only; no payment/timer behavior requested or implemented",
+  "placement": {
+    "near": [
+      "kerbside_parking",
+      "parking_lot_pedestrian_edge"
+    ],
+    "avoid": [
+      "vehicle_aisles",
+      "doorways",
+      "driveway_mouths",
+      "pedestrian_route_centre"
+    ],
+    "front_access_m": 0.6,
+    "front": "+Y",
+    "base_origin_z": 0.0
+  },
+  "palette_sources": {
+    "176,176,176": "Chair_Metal_0",
+    "130,130,130": "Street_Light_0",
+    "222,222,222": "Clock_0",
+    "39,39,39": "Clock_0 / Chair_Metal_0"
+  },
+  "units": "metres",
+  "native_up": "+Z",
+  "front": "+Y",
+  "origin": "post centre at ground/base Z=0",
+  "width_x": 0.52,
+  "depth_y": 0.365,
+  "height_z": 2.1,
+  "bounds_native": [
+    [
+      -0.25999999046325684,
+      -0.14000000059604645,
+      0.0
+    ],
+    [
+      0.25999999046325684,
+      0.22500000894069672,
+      2.0999999046325684
+    ]
+  ],
+  "vertices": 116,
+  "triangles": 184,
+  "texture": "Parking_Meter_0_tex.png",
+  "texture_filter": "nearest",
+  "features": [
+    "chunky single analog head",
+    "recessed pale gauge with one needle",
+    "recessed coin slot",
+    "attached turning grip",
+    "eight-sided metal post/base"
+  ],
+  "references_excluded_from_exports": [
+    "Mailbox_0",
+    "Chair_Metal_0"
+  ]
+}
