@@ -1023,6 +1023,7 @@ namespace UnturnedGodot
             Func<float, float, float> groundFn = Terrain.Active != null && !EditorSidewalk.NoGround ? (x, z) => Terrain.Active.SampleHeight(x, z) : null;
             float kerbH = KerbProud(roads);
             _lotKerbH = kerbH;
+            SliverPoints = 0; SliverWidest = 0f;
             foreach (var lot in ParkingLotsLaid) if (lot.FrontY == null) SampleLotFront(lot, roads);
             // each way in's height where it meets the lot: its lane's end, as built -- against the lot's front there
             foreach (var lot in ParkingLotsLaid)
@@ -1106,6 +1107,7 @@ namespace UnturnedGodot
                 // the two showed as a strip. Its foot is at the street's height there (LotSurfaceY), so its top is the
                 // pavement's and the two meet edge to edge, level.
                 float frontW = LotKerbWidth + PlotSetback + p.Setback;
+                var near = SidewalksNear(roads, lot);
                 // the kerb line as one loop: the front left to right, the right side front to back, the back right to left, the
                 // left side back to front -- each leg's way out of the lot and its pavement's width; a point on it by its arc s
                 var legA = new[] { new Vector2(xL, yF), new Vector2(xR, yF), new Vector2(xR, yB), new Vector2(xL, yB) };
@@ -1187,6 +1189,7 @@ namespace UnturnedGodot
                     }
                     marks.Sort((u, v) => u.s.CompareTo(v.s));
                     var pts = new List<Vector3>(); var outs = new List<Vector3>(); var widths = new List<float>();
+                    var kerbsAt = new List<float>(); var surf = new List<float>();
                     for (int k = 0; k + 1 < marks.Count; k++)
                     {
                         int n = Mathf.Max(1, Mathf.CeilToInt((marks[k + 1].s - marks[k].s) / 2f));
@@ -1197,18 +1200,27 @@ namespace UnturnedGodot
                             var (leg, lq) = OnLoop(corner >= 0 ? cum[corner] : sq);
                             var w = At(lq.X, lq.Y);
                             w.Y = LotSurfaceY(lot, w.X, w.Z, Ground(w.X, w.Z));
+                            // ⭐ ...and on across a sliver to another pavement just beyond (FillSlivers): a side or back leg's pavement
+                            // runs over the bare ground between and meets it, its far edge at that pavement's height
+                            (float gap, float top) Merge(int lg) => lg == 0 ? (0f, float.NaN)
+                                : GapToSidewalk(roads, lot, w + Out3(legOut[lg]) * legW[lg], Out3(legOut[lg]), near);
+                            float Top(float t) => float.IsNaN(t) ? kerbH : t - w.Y;
                             if (corner >= 0)
                             {
                                 int prev = (corner + 3) % 4;          // (a rectangle's corners are square)
-                                var back = legOut[prev] * legW[prev] + legOut[corner] * legW[corner];
+                                var (gp, tp) = Merge(prev); var (gc, tc) = Merge(corner);
+                                var back = legOut[prev] * (legW[prev] + gp) + legOut[corner] * (legW[corner] + gc);
                                 pts.Add(w); outs.Add(Out3(back)); widths.Add(back.Length());
+                                kerbsAt.Add(kerbH); surf.Add(Top(gp >= gc ? tp : tc));
                                 continue;
                             }
-                            pts.Add(w); outs.Add(Out3(legOut[leg])); widths.Add(legW[leg]);
+                            var (g, tg) = Merge(leg);
+                            pts.Add(w); outs.Add(Out3(legOut[leg])); widths.Add(legW[leg] + g);
+                            kerbsAt.Add(kerbH); surf.Add(Top(tg));
                         }
                     }
                     if (pts.Count < 2) continue;
-                    var mi = EditorSidewalk.BuildRibbon(pts, outs, LotKerbWidth, kerbH, 0.6f, $"Parking_Kerb_{made}_{kerbs}", groundFn, null, widths);
+                    var mi = EditorSidewalk.BuildRibbon(pts, outs, LotKerbWidth, kerbH, 0.6f, $"Parking_Kerb_{made}_{kerbs}", groundFn, kerbsAt, widths, surf);
                     if (mi != null) Keep(mi);
                 }
                 // ⭐ AND ROUND INTO EACH WAY, CURVED (strawberry 2026-10-14: "add a curve for the sidewalk going into the parking
@@ -1284,10 +1296,99 @@ namespace UnturnedGodot
                 made++;
             }
             int lanes = 0; foreach (var lot in ParkingLotsLaid) foreach (var e in lot.Entrances) if (e.Lane != null && e.Lane.Road >= 0) lanes++;
+            if (FillSlivers) Log.Print($"[towngrid] slivers: lots' kerbs carried across to the pavement beyond at {SliverPoints} points, the widest gap {SliverWidest:0.00} m (at most {SliverMax:0.0})"
+                                     + (SliverPoints > 0 ? $"; the first at ({SliverFirst.X:0.0},{SliverFirst.Z:0.0}), the widest at ({SliverWidestAt.X:0.0},{SliverWidestAt.Z:0.0})" : ""));
             Log.Print($"[towngrid] parking lots built: {ParkingLotsLaid.Count} lots, {kerbs} kerb runs round them, {lanes} ways in built as lanes; "
                     + $"{MouthsNearCorner} kept off a junction's corner ({ParkingWaysNearCorner} lots had to open their only one there)");
             return made + kerbs;
         }
+        /// <summary>The streets and lanes whose pavements run near a lot (within SliverMax and a carriageway of its edge).</summary>
+        (List<int> roads, List<LanePlan> lanes, List<(Vector3 node, List<Vector3> kerb)> corners) SidewalksNear(RoadField roads, ParkingLot lot)
+        {
+            var rs = new List<int>(); var ls = new List<LanePlan>(); var cs = new List<(Vector3, List<Vector3>)>();
+            if (!FillSlivers) return (rs, ls, cs);
+            var c = lot.Lot.Corners();
+            var mid = (c[0] + c[1] + c[2] + c[3]) * 0.25f;
+            float reach = Mathf.Sqrt(lot.Lot.Width * lot.Lot.Width + lot.Lot.Depth * lot.Lot.Depth) * 0.5f + SliverMax + _walkWidth + 12f;
+            foreach (int r in Built) { RoadNear(roads, r, mid, out _, out float off); if (off <= reach) rs.Add(r); }
+            foreach (var lp in LanePlans)
+            {
+                if (lp.Pts == null || lp.Pts.Count < 2 || lp.Road < 0) continue;
+                if (lp.OpenB && lp.Pts.Count > 0 && lot.Entrances.Exists(e => e.Lane == lp)) continue;     // (its own ways)
+                foreach (var q in lp.Pts) if (Flat(q, mid) <= reach) { ls.Add(lp); break; }
+            }
+            // ...and the junctions' corner pavements, kerb line and node
+            foreach (var (node, kerb) in LastCorners)
+                if (kerb != null && kerb.Count >= 2) foreach (var q in kerb) if (Flat(q, mid) <= reach) { cs.Add((node, kerb)); break; }
+            return (rs, ls, cs);
+        }
+
+        /// <summary>⭐ HOW FAR OUT FROM A LOT'S EDGE ANOTHER PAVEMENT BEGINS (`p` on its plot's edge, `n` straight out), over nothing
+        /// but bare ground, within SliverMax -- and that pavement's top there: a street's pavement, a lane's, another lot's kerb.
+        /// (0, NaN) where anything else comes first -- a yard, a carriageway, a way's mouth -- or nothing does.</summary>
+        (float gap, float top) GapToSidewalk(RoadField roads, ParkingLot lot, Vector3 p, Vector3 n, (List<int> roads, List<LanePlan> lanes, List<(Vector3 node, List<Vector3> kerb)> corners) near)
+        {
+            if (!FillSlivers) return (0f, float.NaN);
+            for (float t = 0.05f; t <= SliverMax + 1e-3f; t += 0.1f)
+            {
+                var q = p + n * t;
+                foreach (var o in Plots)
+                {
+                    if (ReferenceEquals(o, lot.Lot) || !InsidePoly(o.Boundary(), q)) continue;
+                    if (o.Kind != PlotKind.Parking) return (0f, float.NaN);            // somebody's yard
+                    var other = ParkingLotsLaid.Find(l => ReferenceEquals(l.Lot, o));
+                    if (other == null) return (0f, float.NaN);
+                    Note(t, q); return (t, LotSurfaceY(other, q.X, q.Z, LotGround(q.X, q.Z)) + _lotKerbH);
+                }
+                foreach (int r in near.roads)
+                {
+                    float sy = RoadNear(roads, r, q, out float along, out float off), half = roads.RoadHalfWidth(r);
+                    if (off < half + PavementGap - 0.05f) return (0f, float.NaN);       // its carriageway
+                    float back = half + PavementGap + _walkWidth + Mathf.Max(BayBack(r, 1, along), BayBack(r, -1, along));
+                    if (off > back + 0.02f) continue;
+                    if (MouthAt(r, 1, along - 0.5f, along + 0.5f) != null || MouthAt(r, -1, along - 0.5f, along + 0.5f) != null) return (0f, float.NaN);
+                    Note(t, q); return (t, sy + PavementKerb);
+                }
+                foreach (var lp in near.lanes)
+                {
+                    float best = float.MaxValue, y = q.Y;
+                    for (int k = 1; k < lp.Pts.Count; k++)
+                    {
+                        var a = lp.Pts[k - 1]; var b = lp.Pts[k];
+                        var ab = new Vector2(b.X - a.X, b.Z - a.Z); float l2 = Mathf.Max(1e-6f, ab.LengthSquared());
+                        float u = Mathf.Clamp(((q.X - a.X) * ab.X + (q.Z - a.Z) * ab.Y) / l2, 0f, 1f);
+                        float d = new Vector2(a.X + ab.X * u - q.X, a.Z + ab.Y * u - q.Z).Length();
+                        if (d < best) { best = d; y = Mathf.Lerp(a.Y, b.Y, u); }
+                    }
+                    float lh = lp.Half > 0f ? lp.Half : LaneHalf;
+                    if (best < lh + PavementGap - 0.05f) return (0f, float.NaN);        // its carriageway
+                    if (best > lh + PavementGap + LaneWalkWidth + 0.02f) continue;
+                    if (lp.OpenB && lp.A != null && lp.EndPlane == null) return (0f, float.NaN);   // (a way in through a front: no pavements)
+                    Note(t, q); return (t, y + PavementKerb);
+                }
+                foreach (var (node, kerb) in near.corners)
+                {
+                    // a corner's pavement: within its width of its kerb line, on the far side of it from the junction
+                    float best = float.MaxValue; var np = kerb[0];
+                    for (int k = 1; k < kerb.Count; k++)
+                    {
+                        var a = kerb[k - 1]; var b = kerb[k];
+                        var ab = new Vector2(b.X - a.X, b.Z - a.Z); float l2 = Mathf.Max(1e-6f, ab.LengthSquared());
+                        float u = Mathf.Clamp(((q.X - a.X) * ab.X + (q.Z - a.Z) * ab.Y) / l2, 0f, 1f);
+                        var c = a.Lerp(b, u);
+                        float d = new Vector2(c.X - q.X, c.Z - q.Z).Length();
+                        if (d < best) { best = d; np = c; }
+                    }
+                    if (best > _walkWidth + 0.02f) continue;
+                    if (Flat(q, node) < Flat(np, node) - 0.05f) return (0f, float.NaN);   // the junction's asphalt
+                    Note(t, q); return (t, np.Y + PavementKerb);
+                }
+            }
+            return (0f, float.NaN);
+        }
+        void Note(float t, Vector3 at) { if (SliverPoints++ == 0) SliverFirst = at; if (t > SliverWidest) { SliverWidest = t; SliverWidestAt = at; } }
+        public Vector3 SliverFirst, SliverWidestAt;
+
         /// <summary>How far a lot's asphalt stands over the ground under it.</summary>
         public float LotLift = 0.04f;
 

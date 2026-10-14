@@ -2266,7 +2266,6 @@ namespace UnturnedGodot
         {
             if (parent == null || roads == null) return 0;
             var walk = proto ?? new EditorSidewalk();
-            SliverStations = 0; SliverWidest = 0f;
             walk.KerbHeight = PavementKerb;   // ⚠ ONE number for the pavement and for whatever stands on it
             walk.RoadGap = PavementGap;       // ...and one for how it meets the asphalt
             walk.Width = PavementWidth;       // ...and one for how wide it is, which the corners read too
@@ -2311,22 +2310,11 @@ namespace UnturnedGodot
                         if (bk > bay.Front0 + 0.01f && bk < bay.Front1 - 0.01f) breaks.Add(bk);
                 }
                 int road = r;
-                // ⭐ ...and out to the property line wherever what lies between is only a sliver (SliverBack), its back edge
-                // stepping exactly at the plots' corners
-                var near = FillSlivers ? PlotsNearRoad(roads, r) : null;
-                if (near != null && near.Count > 0)
-                {
-                    breaks ??= new List<float>();
-                    foreach (var poly in near)
-                        foreach (var q in poly) { RoadNear(roads, r, q, out float al, out _); breaks.Add(al - 0.01f); breaks.Add(al + 0.01f); }
-                }
-                float half = roads.RoadHalfWidth(r);
-                float Back(int sd, float d) { float b = BayBack(road, sd, d); return b + SliverBack(roads, road, sd, d, half + walk.RoadGap + walk.Width + b, near); }
                 int Lay(EditorSidewalk.Side side, float from, float toEnd, string piece = null, float min = -1f) => breaks == null
                     ? walk.LayAlongRoad(walk, roads, road, side, null, from, toEnd, piece: piece, minLength: min)
                     : walk.LayAlongRoad(walk, roads, road, side, null, from, toEnd,
                                         d => BayExtra(road, 1, d), d => BayExtra(road, -1, d), breaks,
-                                        d => Back(1, d), d => Back(-1, d), piece: piece, minLength: min);
+                                        d => BayBack(road, 1, d), d => BayBack(road, -1, d), piece: piece, minLength: min);
                 // ⭐ OPEN WHERE A LANE COMES IN (BuildLanes): that side is laid in pieces round each mouth, whose kerb
                 // returns pick the pavement up where it stops
                 bool anyMouth = false;
@@ -2348,7 +2336,6 @@ namespace UnturnedGodot
                 }
             }
             walk.Dips.Clear();
-            if (FillSlivers) Log.Print($"[towngrid] slivers: the pavement taken out to the property line at {SliverStations} stations, the widest {SliverWidest:0.00} m (at most {SliverMax:0.0})");
             return made;
         }
 
@@ -6785,46 +6772,15 @@ namespace UnturnedGodot
         /// is in front of the next house. So it follows the kerb at its full width wherever the plots behind have
         /// stepped back to make room, and is clipped to the usual line in front of the next plot: a short square
         /// step there, and the angle everywhere else.</summary>
-        /// <summary>⭐ PAVEMENT OUT OVER THE SLIVERS (strawberry 2026-10-14: "have sidewalks try to auto-fill small slivers of
-        /// deadspace"). Behind a pavement there is often a strip of ground nobody has -- the half metre a plot stands back
-        /// from it, the metre more a corner lot is nudged out by, a lot's odd edge -- too narrow for a hedge or a bush, so it
-        /// stayed bare grass between the pavement and the property line. Where the ground behind the pavement's back edge
-        /// is that and nothing else for no more than SliverMax before a plot begins, the pavement runs on out to the plot;
-        /// where it is wider, or opens on nothing, it is left. UG_TOWNNOSLIVERS=1 is the control.</summary>
+        /// <summary>⭐ SIDEWALKS MERGE ACROSS A SLIVER (strawberry 2026-10-14: "have sidewalks try to auto-fill small slivers of
+        /// deadspace" -- then: "not to the property line, should merge with close other sidewalks"). Where one pavement runs
+        /// within SliverMax of another with nothing but bare ground between -- a parking lot's kerb beside a street's
+        /// pavement, or backing onto a lane's -- the lot's pavement runs on across the gap and meets it (BuildParkingLots).
+        /// Never out to a plot's line: ground between a pavement and somebody's yard stays theirs. UG_TOWNNOSLIVERS=1 is
+        /// the control.</summary>
         public bool FillSlivers = System.Environment.GetEnvironmentVariable("UG_TOWNNOSLIVERS") != "1";
         public float SliverMax = 2f;
-        public int SliverStations; public float SliverWidest;
-        /// <summary>Every plot near a road (its outline, in plan), a parking lot's aside -- its front kerb reaches the pavement
-        /// already.</summary>
-        List<Vector3[]> PlotsNearRoad(RoadField roads, int road)
-        {
-            var list = new List<Vector3[]>();
-            float reach = roads.RoadHalfWidth(road) + PavementGap + _walkWidth + BayDepth + SliverMax + 1f;
-            foreach (var pl in Plots)
-            {
-                if (pl.Kind == PlotKind.Parking) continue;
-                var poly = pl.Outline ?? pl.Corners();
-                foreach (var q in poly) { RoadNear(roads, road, q, out _, out float off); if (off <= reach) { list.Add(poly); break; } }
-            }
-            return list;
-        }
-        /// <summary>How much further out the pavement's back edge goes at arc `d` of `road`'s `side`: the sliver between it
-        /// (`back0` from the centreline) and the first plot straight out behind it, if that is all it is -- else 0.</summary>
-        float SliverBack(RoadField roads, int road, int side, float d, float back0, List<Vector3[]> near)
-        {
-            if (!FillSlivers || near == null || near.Count == 0) return 0f;
-            if (!roads.EvaluateAlong(road, d, out var pos, out var tan, snapTerrain: false)) return 0f;
-            var n = new Vector3(tan.Z, 0f, -tan.X).Normalized() * side;
-            var o = pos + n * back0;
-            float best = float.MaxValue;
-            foreach (var poly in near) best = Mathf.Min(best, RayIntoPoly(o, n, poly, SliverMax + 0.05f));
-            if (best > SliverMax || best < 0.02f) return 0f;
-            // ...over ground nobody has: not a lane's, not a road's
-            var mid = o + n * (best * 0.5f);
-            if (LaneAt(mid) || roads.DeepestRoadOverlap(mid, 0f, out _, out _)) return 0f;
-            SliverStations++; SliverWidest = Mathf.Max(SliverWidest, best);
-            return best;
-        }
+        public int SliverPoints; public float SliverWidest;
         /// <summary>How far along a ray (in plan, from `o` along unit `n`) it first meets a polygon's edge, within `maxT` --
         /// MaxValue if it does not.</summary>
         static float RayIntoPoly(Vector3 o, Vector3 n, Vector3[] poly, float maxT)
