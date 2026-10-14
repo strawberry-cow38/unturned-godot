@@ -71,8 +71,10 @@ namespace UnturnedGodot.Testing
             // master has already approved untouched.
             {
                 var rfD = Field();
+                // (a lane in EVERY block here, asked for or not: the lane checks below want lanes all over this town. Lanes
+                // only where a building asks are held on a town of their own, after the plots)
                 var gD = new TownRoadGrid { Seed = 7, Centre = Vector3.Zero, Extent = 250f, Spacing = 110f,
-                                            Bearing = 0.3f, SeaLevel = 0f, SeaMargin = 2f, Diagonal = true };
+                                            Bearing = 0.3f, SeaLevel = 0f, SeaMargin = 2f, Diagonal = true, AlleysOnRequest = false };
                 var repD = gD.Generate(rfD, flat);
                 T.Check($"the diagonal crosses the grid ({repD.DiagonalCrossings} crossings)", repD.DiagonalCrossings >= 4);
                 int n45 = 0, n90 = 0; float worst45 = 0f; bool exact90 = true;
@@ -270,9 +272,10 @@ namespace UnturnedGodot.Testing
                 foreach (var pl in plots)
                 {
                     kindsSeen.Add(pl.Kind);
+                    // (the lot as LAID: GrowPlots then pushes its yards out, and holds its building zone where it was)
                     var want = TownRoadGrid.SizeOf(pl.Kind);
-                    if (pl.Width != want.Width || pl.Depth != want.Depth) offSize++;
-                    if (Mathf.Abs(pl.Width / 3f - Mathf.Round(pl.Width / 3f)) > 1e-4f || Mathf.Abs(pl.Depth / 3f - Mathf.Round(pl.Depth / 3f)) > 1e-4f) offLattice++;
+                    if (Mathf.Abs(pl.BaseWidth - want.Width) > 1e-3f || Mathf.Abs(pl.BaseDepth - want.Depth) > 1e-3f) offSize++;
+                    if (Mathf.Abs(pl.BaseWidth / 3f - Mathf.Round(pl.BaseWidth / 3f)) > 1e-3f || Mathf.Abs(pl.BaseDepth / 3f - Mathf.Round(pl.BaseDepth / 3f)) > 1e-3f) offLattice++;
                 }
                 T.Check($"building plots are marked ({nPlots}, {kindsSeen.Count} of {TownRoadGrid.PlotSizes.Length} kinds)",
                         nPlots >= 20 && kindsSeen.Count >= 5);
@@ -509,7 +512,8 @@ namespace UnturnedGodot.Testing
                     }
                     var rfD3 = Field();
                     var gD3 = new TownRoadGrid { Seed = 7, Centre = Vector3.Zero, Extent = 250f, Spacing = 110f,
-                                                 Bearing = 0.3f, SeaLevel = 0f, SeaMargin = 2f, Diagonal = true, FillShallower = false };
+                                                 Bearing = 0.3f, SeaLevel = 0f, SeaMargin = 2f, Diagonal = true, FillShallower = false,
+                                                 AlleysOnRequest = false, ExpandPlots = false };   // (the lots as laid: grown, they would close the gaps this counts)
                     gD3.Generate(rfD3, flat);
                     var w3 = new EditorSidewalk(); World.AddChild(w3);
                     gD3.LaySidewalkCornersOn(rfD3, World, w3, out _);
@@ -538,12 +542,106 @@ namespace UnturnedGodot.Testing
                         }
                     T.Check($"...and all inside the town's outermost streets ({outside} outside)", outside == 0);
                 }
+                // ⭐ THE LOTS GROW INTO WHAT IS LEFT (strawberry 2026-10-14: "work on filling spaces with more/expanding existing
+                // plots"): only their yards, their fronts on their streets and their building zones where they were laid (the
+                // zone check above holds the zones). Counted on the census's own 5 m cells, against the same town ungrown.
+                {
+                    int grown = 0, badGrow = 0;
+                    foreach (var pl in plots)
+                    {
+                        if (pl.GrowBack > 0f || pl.GrowLeft > 0f || pl.GrowRight > 0f) grown++;
+                        if (pl.GrowBack < -1e-4f || pl.GrowLeft < -1e-4f || pl.GrowRight < -1e-4f
+                            || pl.GrowBack > gD.ExpandMaxBack + 1e-3f || pl.GrowLeft > gD.ExpandMaxSide + 1e-3f || pl.GrowRight > gD.ExpandMaxSide + 1e-3f) badGrow++;
+                    }
+                    var rfU = Field();
+                    var gU = new TownRoadGrid { Seed = 7, Centre = Vector3.Zero, Extent = 250f, Spacing = 110f,
+                                                Bearing = 0.3f, SeaLevel = 0f, SeaMargin = 2f, Diagonal = true, AlleysOnRequest = false, ExpandPlots = false };
+                    gU.Generate(rfU, flat);
+                    var wU = new EditorSidewalk(); World.AddChild(wU);
+                    gU.LaySidewalkCornersOn(rfU, World, wU, out _);
+                    gU.MarkPlots(null, rfU);
+                    T.Check($"lots grow their yards into the ground left round them ({grown} of {plots.Count} grew, {badGrow} outside their limits): "
+                            + $"{gD.ZonedCells} 5 m cells zoned, {gD.UnzonedCells} buildable left -- ungrown, {gU.ZonedCells} and {gU.UnzonedCells} (control)",
+                            grown > plots.Count / 2 && badGrow == 0 && gD.UnzonedCells < gU.UnzonedCells * 0.6f && gD.ZonedCells > gU.ZonedCells);
+
+                    // ⭐ A LANE ONLY WHERE A BUILDING ASKS (strawberry 2026-10-14: "alleys should only be placed at the request of
+                    // a building. ie a shop wants an alley for delivery, house doesnt need it"): the same town again, lanes on
+                    // request. Every lane is in a block with a shop or an apartment block in it, a block of houses has none, and
+                    // there are fewer of them than one a block (this town, gD).
+                    var rfR = Field();
+                    var gR = new TownRoadGrid { Seed = 7, Centre = Vector3.Zero, Extent = 250f, Spacing = 110f,
+                                                Bearing = 0.3f, SeaLevel = 0f, SeaMargin = 2f, Diagonal = true };
+                    gR.Generate(rfR, flat);
+                    var wR = new EditorSidewalk(); World.AddChild(wR);
+                    gR.LaySidewalkCornersOn(rfR, World, wR, out _);
+                    gR.MarkPlots(null, rfR);
+                    var asking = new HashSet<(int, int)>(); var houseOnly = new HashSet<(int, int)>();
+                    foreach (var pl in gR.Plots)
+                    {
+                        var b = gR.BlockOf(pl.Centre);
+                        if (!b.HasValue) continue;
+                        if (pl.Kind == TownRoadGrid.PlotKind.Shop || pl.Kind == TownRoadGrid.PlotKind.Apartments) asking.Add(b.Value);
+                    }
+                    foreach (var pl in gR.Plots) { var b = gR.BlockOf(pl.Centre); if (b.HasValue && !asking.Contains(b.Value)) houseOnly.Add(b.Value); }
+                    int unasked = 0, lanedHouses = 0;
+                    foreach (var al in gR.Alleys)
+                    {
+                        // the block a lane serves: where its middle stands (an L's leg from the knee, its own middle)
+                        var b = gR.BlockOf((al.A + al.B) * 0.5f);
+                        if (!b.HasValue || !asking.Contains(b.Value)) unasked++;
+                        if (b.HasValue && houseOnly.Contains(b.Value)) lanedHouses++;
+                    }
+                    T.Check($"...a back lane only where a shop or apartments asked: {gR.Alleys.Count} lanes in {asking.Count} asking blocks, {unasked} where nothing asked, "
+                            + $"{lanedHouses} in the {houseOnly.Count} blocks of houses -- against {gD.Alleys.Count} with a lane in every block (control)",
+                            gR.Alleys.Count > 0 && unasked == 0 && lanedHouses == 0 && houseOnly.Count > 0 && gR.Alleys.Count < gD.Alleys.Count);
+
+                    // ⭐ YARD FENCES, DESIGNATED (strawberry 2026-10-14: "designating where yard fences should be (not placing
+                    // anything just yet)"): round backyards and side yards, never across a front, one fence where two lots share
+                    // a line -- held to the lots' own corners.
+                    var fences = gR.Fences;
+                    static bool OnLine(Vector3 a, Vector3 b, Vector3 q, float tol)
+                    {
+                        var d = new Vector2(b.X - a.X, b.Z - a.Z); float l2 = d.LengthSquared();
+                        if (l2 < 1e-8f) return false;
+                        float t = ((q.X - a.X) * d.X + (q.Z - a.Z) * d.Y) / l2;
+                        if (t < -1e-3f || t > 1f + 1e-3f) return false;
+                        return new Vector2(a.X + d.X * t - q.X, a.Z + d.Y * t - q.Z).Length() < tol;
+                    }
+                    bool Fenced(Vector3 q) { foreach (var f in fences) if (OnLine(f.A, f.B, q, 0.05f)) return true; return false; }
+                    int acrossFront = 0, backsBare = 0, houses = 0, twice = 0;
+                    foreach (var pl in gR.Plots)
+                    {
+                        var c = pl.Corners();
+                        // a front: no fence along its middle stretch (its ends may meet a neighbour's side fence)
+                        for (float t = 0.2f; t <= 0.8f; t += 0.1f)
+                        {
+                            var q = c[0].Lerp(c[1], t);
+                            bool sideOfOther = false;
+                            foreach (var o in gR.Plots) if (!ReferenceEquals(o, pl)) { var oc = o.Corners(); if (OnLine(oc[1], oc[2], q, 0.05f) || OnLine(oc[2], oc[3], q, 0.05f) || OnLine(oc[3], oc[0], q, 0.05f)) { sideOfOther = true; break; } }
+                            if (!sideOfOther && Fenced(q)) { acrossFront++; break; }
+                        }
+                        if (pl.Kind is TownRoadGrid.PlotKind.HouseSmall or TownRoadGrid.PlotKind.HouseMedium or TownRoadGrid.PlotKind.HouseLarge)
+                        {
+                            houses++;
+                            for (float t = 0.1f; t <= 0.9f; t += 0.2f) if (!Fenced(c[2].Lerp(c[3], t))) { backsBare++; break; }
+                        }
+                    }
+                    for (int x = 0; x < fences.Count; x++)
+                        for (int y = x + 1; y < fences.Count; y++)
+                        {
+                            var fa = fences[x]; var fb = fences[y];
+                            var m = (fb.A + fb.B) * 0.5f;
+                            if (OnLine(fa.A, fa.B, m, 0.03f) && OnLine(fa.A, fa.B, fb.A.Lerp(fb.B, 0.25f), 0.03f) && OnLine(fa.A, fa.B, fb.A.Lerp(fb.B, 0.75f), 0.03f)) twice++;
+                        }
+                    T.Check($"...yard fences designated round the yards: {fences.Count} runs; {acrossFront} across a lot's front, {backsBare} of {houses} houses' backyards unfenced, {twice} laid twice",
+                            fences.Count > 20 && acrossFront == 0 && backsBare == 0 && houses > 5 && twice == 0);
+                }
                 int cornerLots = 0, cornerOff = 0;
                 foreach (var pl in plots)
                 {
                     if (pl.Kind != TownRoadGrid.PlotKind.Corner) continue;
                     cornerLots++;
-                    if (pl.Road2 < 0 || pl.Width != pl.Depth) cornerOff++;
+                    if (pl.Road2 < 0 || Mathf.Abs(pl.BaseWidth - pl.BaseDepth) > 1e-3f) cornerOff++;
                 }
                 T.Check($"...square corner lots at the square corners, fronting both streets ({cornerLots} lots, {cornerOff} not)",
                         cornerLots >= 4 && cornerOff == 0);
@@ -1041,16 +1139,17 @@ namespace UnturnedGodot.Testing
                         for (int x = x0; x <= x1; x++) for (int z = z0; z <= z1; z++)
                         { if (!paveGrid.TryGetValue((x, z), out var l)) paveGrid[(x, z)] = l = new List<int>(); l.Add(k); }
                     }
+                    string paveHit = "";
                     bool OnPave(Vector3 q)
                     {
                         if (!paveGrid.TryGetValue((Mathf.FloorToInt(q.X / 2f), Mathf.FloorToInt(q.Z / 2f)), out var l)) return false;
                         foreach (int k in l)
                         {
-                            var (_, a, b, c) = tris[k];
+                            var (who, a, b, c) = tris[k];
                             float d1 = (q.X - b.X) * (a.Z - b.Z) - (a.X - b.X) * (q.Z - b.Z);
                             float d2 = (q.X - c.X) * (b.Z - c.Z) - (b.X - c.X) * (q.Z - c.Z);
                             float d3 = (q.X - a.X) * (c.Z - a.Z) - (c.X - a.X) * (q.Z - a.Z);
-                            if (d1 > 0f && d2 > 0f && d3 > 0f || d1 < 0f && d2 < 0f && d3 < 0f) return true;
+                            if (d1 > 0f && d2 > 0f && d3 > 0f || d1 < 0f && d2 < 0f && d3 < 0f) { paveHit = $"{meshNodes[who].Name} at {q}"; return true; }
                         }
                         return false;
                     }
@@ -1064,11 +1163,15 @@ namespace UnturnedGodot.Testing
                         }
                         return false;
                     }
-                    int plotsOnPave = 0;
-                    foreach (var pl in plots) if (PlotOnPave(pl.Corners())) plotsOnPave++;
+                    int plotsOnPave = 0; string firstOnPave = "";
+                    foreach (var pl in plots)
+                        if (PlotOnPave(pl.Corners()))
+                        {
+                            if (plotsOnPave++ == 0) firstOnPave = $"; first: a {pl.Kind} grown {pl.GrowLeft:0.0}/{pl.GrowRight:0.0}/{pl.GrowBack:0.0} m (left/right/back), on {paveHit}";
+                        }
                     var slid = plots[0].Corners();
                     for (int k = 0; k < 4; k++) slid[k] += plots[0].Facing * 3f;
-                    T.Check($"...and no plot stands on a built pavement ({plotsOnPave} of {plots.Count} do; control: a plot slid 3 m toward its street {(PlotOnPave(slid) ? "is" : "IS NOT")})",
+                    T.Check($"...and no plot stands on a built pavement ({plotsOnPave} of {plots.Count} do{firstOnPave}; control: a plot slid 3 m toward its street {(PlotOnPave(slid) ? "is" : "IS NOT")})",
                             plotsOnPave == 0 && PlotOnPave(slid));
                     // 3. no corner folds: every level triangle of a corner piece faces the same way. The control is a
                     //    ribbon laid round a 2.5 m arc at the town's width with nothing to stop it folding.
@@ -1373,7 +1476,8 @@ namespace UnturnedGodot.Testing
                         float groundL = 40f;
                         Func<float, float, float> liveL = (x, z) => groundL;
                         var gL = new TownRoadGrid { Seed = 7, Centre = Vector3.Zero, Extent = 250f, Spacing = 110f,
-                                                    Bearing = 0.3f, SeaLevel = 0f, SeaMargin = 2f, Diagonal = true, FollowTerrain = false };
+                                                    Bearing = 0.3f, SeaLevel = 0f, SeaMargin = 2f, Diagonal = true, FollowTerrain = false,
+                                                    AlleysOnRequest = false };
                         gL.Generate(rfL, liveL);
                         groundL = 40f - gL.GradeDrop;
                         var hostL = new Node3D(); World.AddChild(hostL);
@@ -1894,7 +1998,7 @@ namespace UnturnedGodot.Testing
                 {
                     var rfD2 = Field();
                     var gD2 = new TownRoadGrid { Seed = 7, Centre = Vector3.Zero, Extent = 250f, Spacing = 110f,
-                                                 Bearing = 0.3f, SeaLevel = 0f, SeaMargin = 2f, Diagonal = true };
+                                                 Bearing = 0.3f, SeaLevel = 0f, SeaMargin = 2f, Diagonal = true, AlleysOnRequest = false };
                     gD2.Generate(rfD2, flat);
                     var w2 = new EditorSidewalk(); World.AddChild(w2);
                     gD2.LaySidewalkCornersOn(rfD2, World, w2, out _);
