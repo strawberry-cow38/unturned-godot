@@ -7006,10 +7006,6 @@ namespace UnturnedGodot
         {
             MedianPlants.Clear();
             if (roads == null) return 0;
-            // the hedge's own length, off its mesh, so a different hedge prop still lays end to end
-            float hedgeLen = 4.5f;
-            var hm = ContentProvider.ParseObj($"res://content/objects/{HedgeProp}.obj");
-            if (hm != null) hedgeLen = Mathf.Max(1f, hm.GetAabb().Size.X);
             int made = 0;
             foreach (var md in Medians)
             {
@@ -7044,22 +7040,25 @@ namespace UnturnedGodot
                     var turn = new Basis(Vector3.Up, Unit(Mix(h ^ ((ulong)(uint)k * 0x51UL) ^ 0xA5UL), 0) * Mathf.Tau);
                     Plant(tree, at, turn.Scaled(Vector3.One * MedianTreeScale));
                     if (k + 1 >= treeAt.Count) continue;
-                    // hedges end to end between this tree and the next, the leftover split at both ends
+                    // a hedge between this tree and the next, its pieces butted core to core along the median (PiecesAlong: the
+                    // greens' edge-to-edge rule) and stood the way retail stands a hedge (HedgeBasis: it is a Z-up mesh)
                     float g0 = treeAt[k] + MedianTreeClear, g1 = treeAt[k + 1] - MedianTreeClear;
-                    int nh = Mathf.FloorToInt((g1 - g0) / hedgeLen);
-                    float lead = ((g1 - g0) - nh * hedgeLen) * 0.5f;
-                    for (int q = 0; q < nh; q++)
+                    if (g1 - g0 < HedgeCoreLength * 0.75f) continue;
+                    var line = new List<Vector3>();
+                    for (float d = g0; d < g1 + 1e-3f; d += Mathf.Max(0.5f, (g1 - g0) / Mathf.Ceil((g1 - g0) / 2f)))
+                        if (At(Mathf.Min(d, g1), out var lp, out _)) line.Add(new Vector3(lp.X, 0f, lp.Z));
+                    ulong hh = h ^ ((ulong)(uint)k * 0x2545UL);
+                    foreach (var hp in PiecesAlong(line, false, HedgeCoreDepth, ref hh))
                     {
-                        if (!At(g0 + lead + (q + 0.5f) * hedgeLen, out var hat, out float yaw)) continue;
-                        Plant(HedgeProp, hat, new Basis(Vector3.Up, Mathf.DegToRad(yaw + HedgeYaw)));
+                        RoadNear(roads, md.Road, hp.At, out float along, out _);
+                        if (!At(along, out var hat, out _)) continue;
+                        Plant(HedgeProp, new Vector3(hp.At.X, hat.Y, hp.At.Z), HedgeBasis(hp.Dir, hp.Length / HedgeCoreLength, 1f, hp.Flip));
                     }
                 }
             }
             if (made > 0) Log.Print($"[towngrid] median planting: {made} props ({MedianPlants.FindAll(p => p.prop == HedgeProp).Count} hedges) down {Medians.FindAll(m => m.Grass).Count} grass medians");
             return made;
         }
-        /// <summary>The hedge's turn on top of the road's heading, to lay its long side along the median.</summary>
-        public float HedgeYaw = 90f;
 
         /// <summary>One median: on which road, from and to which arc metres (nose to nose), how wide, and which kind.</summary>
         public sealed class Median { public int Road; public float A, B, Width; public bool Grass; }

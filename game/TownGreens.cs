@@ -16,9 +16,10 @@ namespace UnturnedGodot
         /// <summary>⭐ A HEDGE AS A SPLINE: the line it is laid along (plan points, y unused), whether it closes on itself, how
         /// deep its hedge is (metres across), and what it is for ("row" down a strip, "park" round a pocket park).</summary>
         public sealed class HedgeRun { public List<Vector3> Pts = new(); public bool Closed; public float Depth; public string Kind = ""; }
-        /// <summary>One piece of hedge as it stands: its middle on the ground, its heading (degrees, YawForDir), and how long
-        /// and deep it is laid -- the prop stretched to fit, so a run is whole pieces end to end, a little overlapped.</summary>
-        public sealed class HedgePiece { public Vector3 At; public float Yaw; public float Length, Depth; public HedgeRun Run; }
+        /// <summary>One piece of hedge as it stands: the middle of its core on the ground, the way its length runs, how long and
+        /// deep its core is laid (the prop stretched to fit: whole pieces butted end to end), and whether it is turned end for
+        /// end (retail lays a hedge row's pieces both ways round, 90 and 270, so the foliage does not repeat).</summary>
+        public sealed class HedgePiece { public Vector3 At, Dir; public float Length, Depth; public bool Flip; public HedgeRun Run; }
         /// <summary>A pocket park in a piece of dead space too big for a hedgerow, or on an EMPTY LOT (one nothing on the 3 m
         /// lattice fits in, `Lot`): its hedge line (closed; the hedge itself is a run open where the way in is), the way in,
         /// its trees and benches, its area and its middle.</summary>
@@ -26,8 +27,14 @@ namespace UnturnedGodot
         {
             public Vector3 Centre, Entrance; public float Area; public HedgeRun Hedge; public Plot Lot;
             public readonly List<Vector3> Trees = new();
-            public readonly List<(Vector3 at, float yaw)> Benches = new();
+            /// <summary>Where a tree could stand, in the order the seed picked, and how many it gets: chosen after the benches,
+            /// which have first call on open ground.</summary>
+            public readonly List<Vector3> TreeSpots = new(); public int TreeWant;
+            /// <summary>Each bench: where it stands and the way its sitter faces (a plan direction).</summary>
+            public readonly List<(Vector3 at, Vector3 faces)> Benches = new();
         }
+        /// <summary>A bush: where, which, how big.</summary>
+        public readonly List<(Vector3 at, string prop, float scale)> Bushes = new();
         /// <summary>What the last PlanGreens laid.</summary>
         public readonly List<HedgeRun> HedgeRuns = new();
         public readonly List<HedgePiece> HedgePieces = new();
@@ -43,9 +50,21 @@ namespace UnturnedGodot
         /// (m) and a run this long (m) gets a hedgerow; a park's hedge stands this far in from its edge (m), its trees this
         /// far apart (m) and this far in (m).</summary>
         public float ParkMinArea = 250f, ParkMinHalfWidth = 5f, RowMinWidth = 1.2f, RowMinLength = 4.5f;
-        public float ParkHedgeInset = 2f, ParkTreeSpacing = 7f, ParkTreeInset = 4.5f, ParkGateWidth = 3.5f;
-        /// <summary>How deep a hedge may be laid (m): the prop's own depth caps it, a narrow strip squeezes it.</summary>
-        public float HedgeDepthMax = 2f, HedgeDepthMin = 0.9f;
+        public float ParkHedgeInset = 1f, ParkTreeSpacing = 7f, ParkTreeInset = 4.5f, ParkGateWidth = 3.5f;
+        /// <summary>⭐ THE HEDGE'S CORE, MEASURED OFF ITS MESH: Hedge_0 is a solid box from x -2.0 to +2.0 and y -0.5 to +0.5 (its
+        /// leaves hang on out to 2.27 and 0.92), so pieces butt core to core at a 4.0 m pitch -- and that is RETAIL'S pitch
+        /// too: PEI's hedge rows stand 3.86-4.03 m apart, not the 4.57 m the bounding box says. Laid at the bbox, each joint
+        /// was a 0.57 m slot the leaves did not close. ⚠ AND IT IS A Z-UP MESH: retail stands every hedge at 270 degrees about
+        /// X (placements.txt), like the benches -- set down plainly it lay on its side, half under the ground.</summary>
+        public const float HedgeCoreLength = 4f, HedgeCoreDepth = 1f;
+        /// <summary>How deep a hedge's core may be laid (m): a narrow strip squeezes it, never thinner than this.</summary>
+        public float HedgeDepthMax = 1.2f, HedgeDepthMin = 0.6f;
+        /// <summary>Benches go only in parks this big (m2), and only where one has this much room: a pad this wide along the
+        /// bench and this deep (seat and legroom), clear of every hedge, tree and bush by this much (m).</summary>
+        public float BenchMinParkArea = 600f, BenchPadWidth = 3f, BenchPadDepth = 3.2f, BenchClear = 0.8f, BenchTreeClear = 3.5f;
+        public string[] BushProps = { "Bush_0", "Bush_1" };
+        /// <summary>A bush's scale (the stock ones are 6 m across) and its footprint radius at scale 1 (m).</summary>
+        public float BushScale = 0.45f, BushRadius = 2.9f;
         /// <summary>How far from anything a lot could not have (m) a lone tree in a strip stands at the least.</summary>
         public float LoneTreeHalfWidth = 3f;
         public string[] ParkTrees = { "Maple_0", "Maple_1", "Birch_0", "Birch_1" };
@@ -63,7 +82,7 @@ namespace UnturnedGodot
         /// frontage strip, each lane's reach, each slab's margin, each bay's front, each lot and alley.</summary>
         void PlanGreens(RoadField roads)
         {
-            HedgeRuns.Clear(); HedgePieces.Clear(); PocketParks.Clear(); DeadSpaceCells.Clear(); LoneTrees.Clear();
+            HedgeRuns.Clear(); HedgePieces.Clear(); PocketParks.Clear(); DeadSpaceCells.Clear(); LoneTrees.Clear(); Bushes.Clear();
             DeadSpace = DeadSpacePieces = DeadSpaceGreened = 0;
             if (!Greens || roads == null || _frameU1 <= _frameU0 || _frameV1 <= _frameV0) return;
             var clock = System.Diagnostics.Stopwatch.StartNew();
@@ -292,6 +311,38 @@ namespace UnturnedGodot
                         }
                         if (placed > 0) what += $", {placed} tree{(placed > 1 ? "s" : "")}";
                     }
+                    // ...and bushes in the spots a bush fits (3.6 m across), round any lone tree and on their own, clear of hedges
+                    if (what != "park" && halfMax >= 1.8f && !what.StartsWith("left: along lot fronts"))
+                    {
+                        float br = BushRadius * BushScale;
+                        var spots = new List<(int, int)>();
+                        foreach (var (i, j) in cells) if (dt[i, j] - 0.5f >= Mathf.Max(1.8f, br + 0.3f)) spots.Add((i, j));
+                        spots.Sort((x, y) => dt[y.Item1, y.Item2].CompareTo(dt[x.Item1, x.Item2]));
+                        int placed = 0;
+                        foreach (var (i, j) in spots)
+                        {
+                            if (placed >= 3) break;
+                            var q = W(i, j);
+                            bool clear = true;
+                            foreach (var (bq, _, _) in Bushes) if (Flat(bq, q) < 2f * br + 1.5f) { clear = false; break; }
+                            foreach (var t in LoneTrees) if (Flat(t, q) < 2.2f) { clear = false; break; }
+                            for (int rr = runsBefore; rr < HedgeRuns.Count && clear; rr++)
+                            {
+                                var rp = HedgeRuns[rr].Pts;
+                                for (int k = 1; k < rp.Count && clear; k++)
+                                {
+                                    var ab = new Vector2(rp[k].X - rp[k - 1].X, rp[k].Z - rp[k - 1].Z); float l2 = Mathf.Max(1e-6f, ab.LengthSquared());
+                                    var aq = new Vector2(q.X - rp[k - 1].X, q.Z - rp[k - 1].Z);
+                                    if ((aq - ab * Mathf.Clamp(aq.Dot(ab) / l2, 0f, 1f)).Length() < HedgeRuns[rr].Depth * 0.5f + br + 0.3f) clear = false;
+                                }
+                            }
+                            if (!clear) continue;
+                            seedH = Mix(seedH + 0xB0B0UL);
+                            Bushes.Add((q, BushProps[(int)(seedH % (ulong)BushProps.Length)], BushScale * (0.85f + 0.3f * Unit(seedH, 20))));
+                            placed++;
+                        }
+                        if (placed > 0) what += $", {placed} bush{(placed > 1 ? "es" : "")}";
+                    }
                     if (ProbeEverything)
                     {
                         var pm = Vector3.Zero; foreach (var (i, j) in cells) pm += W(i, j); pm /= cells.Count;
@@ -326,8 +377,22 @@ namespace UnturnedGodot
             }
             // 4. the hedges, piece by piece, and how much of the dead space they and the parks now take
             long tLay = clock.ElapsedMilliseconds;
-            float hedgeLen = HedgeLength();
-            foreach (var run in HedgeRuns) LayHedge(run, hedgeLen);
+            foreach (var run in HedgeRuns) LayHedge(run, ref seedH);
+            PlanBenches();
+            // the trees, last: ParkTreeSpacing apart, and out of every bench's lawn -- its pad and BenchTreeClear round it
+            foreach (var pk in PocketParks)
+                foreach (var q in pk.TreeSpots)
+                {
+                    if (pk.Trees.Count >= pk.TreeWant) break;
+                    bool clear = true;
+                    foreach (var t in pk.Trees) if (Flat(t, q) < ParkTreeSpacing) { clear = false; break; }
+                    foreach (var (bq, faces) in pk.Benches)
+                    {
+                        var padMid = bq + faces * (BenchPadDepth * 0.5f - 0.9f);
+                        if (Flat(padMid, q) < Mathf.Max(BenchPadWidth, BenchPadDepth) * 0.5f + BenchTreeClear) { clear = false; break; }
+                    }
+                    if (clear) pk.Trees.Add(q);
+                }
             foreach (var hp in HedgePieces)
             {
                 var uv = UV(hp.At);
@@ -357,7 +422,7 @@ namespace UnturnedGodot
             int trees = 0, benchN = 0, lotParks = 0; foreach (var pk in PocketParks) { trees += pk.Trees.Count; benchN += pk.Benches.Count; if (pk.Lot != null) lotParks++; }
             int loneN = LoneTrees.Count;
             Log.Print($"[towngrid] greens: {DeadSpace} m2 of dead space in {DeadSpacePieces} pieces -- {rows} hedgerows ({rowLen:0} m), "
-                    + $"{PocketParks.Count} pocket parks ({lotParks} on empty lots; {trees} trees, {benchN} benches), {loneN} lone trees, {HedgePieces.Count} hedge pieces; {DeadSpaceGreened} m2 of it greened "
+                    + $"{PocketParks.Count} pocket parks ({lotParks} on empty lots; {trees} trees, {benchN} benches), {loneN} lone trees, {Bushes.Count} bushes, {HedgePieces.Count} hedge pieces; {DeadSpaceGreened} m2 of it greened "
                     + $"({100f * DeadSpaceGreened / Mathf.Max(1, DeadSpace):0}%) ({clock.ElapsedMilliseconds} ms: streets {tStreets}, slabs {tSlab}, lots {tPlots}, "
                     + $"pieces {tPieces - t0 - tStreets - tSlab - tPlots}, laying {tLay})");
         }
@@ -421,12 +486,6 @@ namespace UnturnedGodot
                 }
         }
 
-        /// <summary>The hedge prop's own length (its mesh's long side), so another hedge still lays end to end.</summary>
-        float HedgeLength()
-        {
-            var hm = ContentProvider.ParseObj($"res://content/objects/{HedgeProp}.obj");
-            return hm != null ? Mathf.Max(1f, hm.GetAabb().Size.X) : 4.5f;
-        }
         static float RunLength(HedgeRun run)
         {
             float l = 0f;
@@ -546,8 +605,22 @@ namespace UnturnedGodot
                 float width = widths[widths.Count / 2];
                 if (ProbeEverything && why.Length < 300) why.Append($" {len:0.0}m/{width:0.0}w");
                 if (len < RowMinLength || width < RowMinWidth) continue;
-                HedgeRuns.Add(new HedgeRun { Pts = Simplify(pts, 0.6f), Closed = false, Kind = "row",
-                                             Depth = Mathf.Clamp(width - 0.3f, HedgeDepthMin, HedgeDepthMax) });
+                float depth = Mathf.Clamp(width - 0.5f, HedgeDepthMin, HedgeDepthMax);
+                var sp = Simplify(pts, 0.6f);
+                // its ends: into a junction, on by half a hedge so the arms meeting there close up; at the strip's end, on to
+                // within half a hedge and a little of it -- the skeleton stops a half-width short of the ground's end
+                void Reach(int endIdx, int prevIdx, int pixel)
+                {
+                    var d = new Vector3(sp[endIdx].X - sp[prevIdx].X, 0f, sp[endIdx].Z - sp[prevIdx].Z);
+                    if (d.LengthSquared() < 1e-6f) return;
+                    d = d.Normalized();
+                    var (pi, pj) = line[pixel];
+                    float ext = Deg(pi, pj) >= 3 ? depth * 0.5f : Mathf.Clamp(Dl(pi, pj) - 0.5f - depth * 0.5f - 0.3f, 0f, 2f);
+                    sp[endIdx] += d * ext;
+                }
+                Reach(0, 1, 0);
+                Reach(sp.Count - 1, sp.Count - 2, line.Count - 1);
+                HedgeRuns.Add(new HedgeRun { Pts = sp, Closed = false, Kind = "row", Depth = depth });
             }
             return why.ToString();
         }
@@ -600,23 +673,31 @@ namespace UnturnedGodot
             var run = new HedgeRun { Pts = open, Closed = false, Kind = "park", Depth = HedgeDepthMax };
             HedgeRuns.Add(run);
             var pk = new PocketPark { Centre = mid, Entrance = gateAt, Area = area, Lot = lot, Hedge = new HedgeRun { Pts = pts, Closed = true, Kind = "park-line" } };
-            // a bench or two just inside the way in, facing the middle
-            int benches = area >= 600 ? 2 : 1;
-            var bcand = new List<(int, int)>();
-            foreach (var (a, b) in best)
+            // bushes just inside the hedge, a few metres apart round it, the way in left open
             {
-                float d = Dl(a, b), g = Flat(Wl(a, b), gateAt);
-                if (d >= inset + 2f && d <= inset + 3f && g >= 2.5f && g <= 9f) bcand.Add((a, b));
-            }
-            bcand.Sort((x, y) => Flat(Wl(x.Item1, x.Item2), gateAt).CompareTo(Flat(Wl(y.Item1, y.Item2), gateAt)));
-            foreach (var (a, b) in bcand)
-            {
-                if (pk.Benches.Count >= benches) break;
-                var q = Wl(a, b);
-                bool clear = true; foreach (var (bq, _) in pk.Benches) if (Flat(bq, q) < 4f) { clear = false; break; }
-                if (!clear) continue;
-                var toMid = new Vector3(mid.X - q.X, 0f, mid.Z - q.Z);
-                pk.Benches.Add((q, ProcIsland.YawForDir(toMid.X, toMid.Z)));
+                float br = BushRadius * BushScale;
+                var bc = new List<(int, int)>();
+                foreach (var (a, b) in best) { float d = Dl(a, b); if (d >= inset + 1.5f + br && d <= inset + 2.5f + br) bc.Add((a, b)); }
+                for (int k = bc.Count - 1; k > 0; k--)
+                {
+                    seedH = Mix(seedH + 0x51ED27UL);
+                    int m = (int)(seedH % (ulong)(k + 1));
+                    (bc[k], bc[m]) = (bc[m], bc[k]);
+                }
+                int maxBushes = lot != null ? Mathf.Clamp(area / 80, 1, 3) : Mathf.Clamp(area / 70, 2, 14);
+                int got = 0;
+                foreach (var (a, b) in bc)
+                {
+                    if (got >= maxBushes) break;
+                    var q = Wl(a, b);
+                    if (Flat(q, gateAt) < ParkGateWidth + br + 1f) continue;
+                    bool clear = true;
+                    foreach (var (bq, _, _) in Bushes) if (Flat(bq, q) < 2f * br + 2.5f) { clear = false; break; }
+                    if (!clear) continue;
+                    seedH = Mix(seedH + 0xB05EUL);
+                    Bushes.Add((q, BushProps[(int)(seedH % (ulong)BushProps.Length)], BushScale * (0.85f + 0.3f * Unit(seedH, 20))));
+                    got++;
+                }
             }
             // trees: well inside the hedge, ParkTreeSpacing apart, in an order the seed picks
             var cand = new List<(int, int)>();
@@ -627,16 +708,14 @@ namespace UnturnedGodot
                 int m = (int)(seedH % (ulong)(k + 1));
                 (cand[k], cand[m]) = (cand[m], cand[k]);
             }
-            int maxTrees = Mathf.Clamp(area / 90, 1, 12);
-            if (lot != null) maxTrees = Mathf.Clamp(area / 70, 1, 6);
+            pk.TreeWant = lot != null ? Mathf.Clamp(area / 70, 1, 6) : Mathf.Clamp(area / 90, 1, 12);
             foreach (var (a, b) in cand)
             {
-                if (pk.Trees.Count >= maxTrees) break;
                 var q = Wl(a, b);
                 if (Flat(q, gateAt) < ParkTreeSpacing * 0.6f) continue;           // the way in stays clear
-                bool clear = true; foreach (var t in pk.Trees) if (Flat(t, q) < ParkTreeSpacing) { clear = false; break; }
-                foreach (var (bq, _) in pk.Benches) if (Flat(bq, q) < 3f) { clear = false; break; }
-                if (clear) pk.Trees.Add(q);
+                bool clear = true;
+                foreach (var (bq, _, _) in Bushes) if (Flat(bq, q) < BushRadius * BushScale + 2f) { clear = false; break; }
+                if (clear) pk.TreeSpots.Add(q);
             }
             PocketParks.Add(pk);
         }
@@ -674,30 +753,127 @@ namespace UnturnedGodot
             return outp;
         }
 
-        /// <summary>Lay one hedge run piece by piece: its points smoothed into a spline (SplineTiling.CurveThrough, the curve the
-        /// fence and barrier tools walk), cut into whole pieces as near the prop's own length as fits, each standing on the
-        /// chord of its stretch of curve, headed along it, and stretched 6% so neighbours overlap at a bend instead of opening.</summary>
-        void LayHedge(HedgeRun run, float hedgeLen)
+        /// <summary>⭐ EDGE TO EDGE (strawberry 2026-10-14, of the first hedges: "make sure the spline hedges meet perfectly edge
+        /// to edge with no gap"). One run, piece by piece: its points smoothed into a spline (SplineTiling.CurveThrough, the
+        /// curve the fence and barrier tools walk), cut into whole pieces as near the hedge's 4 m core as fits, each core
+        /// standing on the chord of its stretch of curve -- so on a straight the cores butt face to face, exactly -- and at
+        /// every bend each of the two pieces runs on past the joint by half its depth times tan(half the turn): the
+        /// SplineTiling joint rule. Their OUTER corners then meet where they used to part (a wedge 0.13 m wide at a 30 degree
+        /// bend), and the inner ones bury in each other's leaves.</summary>
+        void LayHedge(HedgeRun run, ref ulong seedH)
         {
-            if (run.Pts.Count < 2) return;
-            var pts = new List<Vector3>(run.Pts);
-            if (run.Closed) pts.Add(run.Pts[0]);
+            foreach (var hp in PiecesAlong(run.Pts, run.Closed, run.Depth, ref seedH)) { hp.Run = run; HedgePieces.Add(hp); }
+        }
+        List<HedgePiece> PiecesAlong(List<Vector3> line, bool closed, float depth, ref ulong seedH)
+        {
+            var outp = new List<HedgePiece>();
+            if (line.Count < 2) return outp;
+            var pts = new List<Vector3>(line);
+            if (closed) pts.Add(line[0]);
             for (int k = 0; k < pts.Count; k++) pts[k] = new Vector3(pts[k].X, 0f, pts[k].Z);
             var curve = SplineTiling.CurveThrough(pts, smooth: true);
             curve.BakeInterval = 0.25f;
             float L = curve.GetBakedLength();
-            if (L < hedgeLen * 0.6f) return;
-            int n = Mathf.Max(1, Mathf.RoundToInt(L / hedgeLen));
+            if (L < HedgeCoreLength * 0.6f) return outp;
+            int n = Mathf.Max(1, Mathf.RoundToInt(L / HedgeCoreLength));
             float step = L / n;
+            var at = new Vector3[n + 1];
+            for (int k = 0; k <= n; k++) at[k] = curve.SampleBaked(Mathf.Min(L, k * step));
+            if (closed) at[n] = at[0];
+            var dir = new Vector3[n];
+            for (int k = 0; k < n; k++) { var d = at[k + 1] - at[k]; d.Y = 0f; dir[k] = d.LengthSquared() > 1e-8f ? d.Normalized() : Vector3.Right; }
+            float half = depth * 0.5f;
+            // how far each piece runs on past joint k (between piece k-1 and piece k): half its depth times tan(half the turn)
+            float Ext(int k)
+            {
+                bool inner = k > 0 && k < n;
+                if (!inner && !closed) return 0f;
+                var a = dir[(k - 1 + n) % n]; var b = dir[k % n];
+                float turn = Mathf.Min(a.AngleTo(b), Mathf.DegToRad(60f));
+                return half * Mathf.Tan(turn * 0.5f);
+            }
             float yAt(float x, float z) => _heightAt != null ? _heightAt(x, z) : Centre.Y;
             for (int k = 0; k < n; k++)
             {
-                var p0 = curve.SampleBaked(k * step); var p1 = curve.SampleBaked(Mathf.Min(L, (k + 1) * step));
-                var d = new Vector3(p1.X - p0.X, 0f, p1.Z - p0.Z);
-                float chord = d.Length();
+                float chord = Flat(at[k], at[k + 1]);
                 if (chord < 0.2f) continue;
-                var at = (p0 + p1) * 0.5f; at.Y = yAt(at.X, at.Z);
-                HedgePieces.Add(new HedgePiece { At = at, Yaw = ProcIsland.YawForDir(d.X, d.Z), Length = chord * 1.06f, Depth = run.Depth, Run = run });
+                float e0 = Ext(k), e1 = Ext(k + 1);
+                var mid = (at[k] + at[k + 1]) * 0.5f + dir[k] * ((e1 - e0) * 0.5f);
+                mid.Y = yAt(mid.X, mid.Z);
+                seedH = Mix(seedH + 0xED6EUL);
+                outp.Add(new HedgePiece { At = mid, Dir = dir[k], Length = chord + e0 + e1, Depth = depth, Flip = (seedH & 1UL) != 0 });
+            }
+            return outp;
+        }
+
+        /// <summary>The basis a hedge piece stands at: Hedge_0 stood up the way retail stands it (270 degrees about X: it is a
+        /// Z-up mesh), its core's length -- local X -- along `dir`, stretched to `lengthScale` of its 4 m and `depthScale` of
+        /// its 1 m; `flip` turns it end for end, as retail's rows are (yaws 90 and 270 both).</summary>
+        public static Basis HedgeBasis(Vector3 dir, float lengthScale, float depthScale, bool flip)
+        {
+            // FromEuler = Y(180 - ey) * X(ex) * Z(-ez): with ex 270, local X lands at (cos p, 0, -sin p), p = 180 - ey
+            float p = Mathf.Atan2(-dir.Z, dir.X) + (flip ? Mathf.Pi : 0f);
+            return EditorObjects.FromEuler(270f, 180f - Mathf.RadToDeg(p), 0f) * Basis.FromScale(new Vector3(lengthScale, depthScale, 1f));
+        }
+
+        /// <summary>⭐ BENCHES ONLY WHERE THERE IS ROOM FOR ONE (strawberry 2026-10-14: "make sure benches have actual space instead
+        /// of just shoving them. most dead space doesnt need benches"). Only a real park gets them -- BenchMinParkArea and up,
+        /// not an empty lot's -- and each needs its whole pad: BenchPadWidth along it, BenchPadDepth from just behind its back to
+        /// the end of the legroom in front, inside the hedge line and BenchClear off every hedge core, tree trunk and bush.
+        /// The nearest such spot to the way in, facing the park's middle; a second only in a park twice that size, 8 m off.</summary>
+        void PlanBenches()
+        {
+            // ⚠ BEFORE THE TREES: a bench placed after them could only squeeze in among the trunks, under the crowns -- the
+            // "shoved" one. Placed first it takes its patch of open lawn by the way in, and the trees keep out of it.
+            foreach (var pk in PocketParks)
+            {
+                if (pk.Lot != null || pk.Area < BenchMinParkArea || pk.Hedge == null) continue;
+                int want = pk.Area >= 2f * BenchMinParkArea ? 2 : 1;
+                var line = pk.Hedge.Pts;
+                float x0 = float.MaxValue, x1 = float.MinValue, z0 = float.MaxValue, z1 = float.MinValue;
+                foreach (var v in line) { x0 = Mathf.Min(x0, v.X); x1 = Mathf.Max(x1, v.X); z0 = Mathf.Min(z0, v.Z); z1 = Mathf.Max(z1, v.Z); }
+                var cand = new List<Vector3>();
+                for (float x = x0; x <= x1; x += 0.5f)
+                    for (float z = z0; z <= z1; z += 0.5f)
+                    {
+                        var q = new Vector3(x, 0f, z);
+                        float g = Flat(q, pk.Entrance);
+                        if (g < 5f || g > 15f || !InsidePark(pk, q)) continue;      // (in from the way in, not across it)
+                        cand.Add(q);
+                    }
+                cand.Sort((a, b) => Flat(a, pk.Entrance).CompareTo(Flat(b, pk.Entrance)));
+                foreach (var q in cand)
+                {
+                    if (pk.Benches.Count >= want) break;
+                    var faces = new Vector3(pk.Centre.X - q.X, 0f, pk.Centre.Z - q.Z);
+                    if (faces.LengthSquared() < 1f) continue;
+                    faces = faces.Normalized();
+                    var along = new Vector3(-faces.Z, 0f, faces.X);
+                    bool ok = true;
+                    foreach (var (bq, _) in pk.Benches) if (Flat(bq, q) < 8f) { ok = false; break; }
+                    // the pad, sampled every half metre: inside the hedge line, clear of everything standing in the park
+                    for (float u = -BenchPadWidth * 0.5f; u <= BenchPadWidth * 0.5f + 1e-3f && ok; u += 0.5f)
+                        for (float v = -0.9f; v <= BenchPadDepth - 0.9f + 1e-3f && ok; v += 0.5f)
+                        {
+                            var s = q + along * u + faces * v;
+                            if (!InsidePark(pk, s)) { ok = false; break; }
+                            foreach (var hp in HedgePieces)
+                            {
+                                if (Flat(hp.At, s) > hp.Length * 0.5f + hp.Depth + BenchClear + 1f) continue;
+                                var rel = new Vector3(s.X - hp.At.X, 0f, s.Z - hp.At.Z);
+                                float a = Mathf.Abs(rel.Dot(hp.Dir)) - hp.Length * 0.5f, c = Mathf.Abs(rel.Dot(new Vector3(-hp.Dir.Z, 0f, hp.Dir.X))) - hp.Depth * 0.5f;
+                                float dd = new Vector2(Mathf.Max(a, 0f), Mathf.Max(c, 0f)).Length();
+                                if (dd < BenchClear + 0.4f) { ok = false; break; }      // (+ its leaves, 0.4 m past the core)
+                            }
+                            if (!ok) break;
+
+                            foreach (var (bq, _, sc) in Bushes) if (Flat(bq, s) < BushRadius * sc + BenchClear) { ok = false; break; }
+                        }
+                    if (ok) pk.Benches.Add((q, faces));
+                }
+                if (ProbeEverything)
+                    Log.Print($"[towngrid]   park at ({pk.Centre.X:0},{pk.Centre.Z:0}), {pk.Area:0} m2, way in at ({pk.Entrance.X:0},{pk.Entrance.Z:0}): {pk.Benches.Count} of {want} benches"
+                            + string.Concat(pk.Benches.ConvertAll(b => $" ({b.at.X:0.0},{b.at.Z:0.0}) facing ({b.faces.X:0.00},{b.faces.Z:0.00})")));
             }
         }
 
@@ -707,27 +883,27 @@ namespace UnturnedGodot
         {
             if (objs == null) return 0;
             int made = 0;
-            var hm = ContentProvider.ParseObj($"res://content/objects/{HedgeProp}.obj");
-            var box = hm != null ? hm.GetAabb() : new Aabb(Vector3.Zero, new Vector3(4.5f, 2f, 2f));
-            float len0 = Mathf.Max(0.5f, box.Size.X), dep0 = Mathf.Max(0.5f, box.Size.Z);
             var terr = Terrain.Active;
-            Basis Stand(Vector3 at, float yawDeg)
+            // onto the ground's slope, up to 8 degrees
+            Basis Tilt(Vector3 at)
             {
-                var b = new Basis(Vector3.Up, Mathf.DegToRad(yawDeg));
-                if (terr == null) return b;
+                if (terr == null) return Basis.Identity;
                 var nrm = terr.NormalAt(at.X, at.Z);
                 var axis = Vector3.Up.Cross(nrm);
-                if (axis.LengthSquared() < 1e-8f) return b;
-                return new Basis(axis.Normalized(), Mathf.Min(Vector3.Up.AngleTo(nrm), Mathf.DegToRad(8f))) * b;
+                if (axis.LengthSquared() < 1e-8f) return Basis.Identity;
+                return new Basis(axis.Normalized(), Mathf.Min(Vector3.Up.AngleTo(nrm), Mathf.DegToRad(8f)));
+            }
+            void Put(string prop, Vector3 at, Basis b)
+            {
+                var node = objs.Place(prop, at, b);
+                if (node == null) return;
+                into?.Add(node); made++;
             }
             foreach (var hp in HedgePieces)
             {
                 var at = hp.At;
                 if (terr != null) at.Y = terr.SampleHeight(at.X, at.Z);
-                var b = Stand(at, hp.Yaw + HedgeYaw) * Basis.FromScale(new Vector3(hp.Length / len0, 1f, hp.Depth / dep0));
-                var node = objs.Place(HedgeProp, at, b);
-                if (node == null) continue;
-                into?.Add(node); made++;
+                Put(HedgeProp, at, Tilt(at) * HedgeBasis(hp.Dir, hp.Length / HedgeCoreLength, hp.Depth / HedgeCoreDepth, hp.Flip));
             }
             ulong h = Mix(((ulong)(uint)Seed << 32) ^ 0x7EE5BEEFUL);
             // (a small park's tree is a smaller one: a full-size maple over a 170 m2 lot roofs all of it)
@@ -735,26 +911,28 @@ namespace UnturnedGodot
             foreach (var pk in PocketParks) foreach (var t in pk.Trees) treesAt.Add((t, pk.Area < 400f ? ParkTreeScale * 0.7f : ParkTreeScale));
             foreach (var t in LoneTrees) treesAt.Add((t, ParkTreeScale * 0.8f));
             foreach (var (t, scale) in treesAt)
-                {
-                    h = Mix(h + 0x9E3779B97F4A7C15UL);
-                    var at = t; at.Y = terr != null ? terr.SampleHeight(t.X, t.Z) : t.Y;
-                    string tree = ParkTrees[(int)(h % (ulong)ParkTrees.Length)];
-                    var b = new Basis(Vector3.Up, Unit(h, 16) * Mathf.Tau).Scaled(Vector3.One * scale * (0.85f + 0.3f * Unit(h, 32)));
-                    var node = objs.Place(tree, at, b);
-                    if (node == null) continue;
-                    into?.Add(node); made++;
-                }
+            {
+                h = Mix(h + 0x9E3779B97F4A7C15UL);
+                var at = t; at.Y = terr != null ? terr.SampleHeight(t.X, t.Z) : t.Y;
+                string tree = ParkTrees[(int)(h % (ulong)ParkTrees.Length)];
+                Put(tree, at, new Basis(Vector3.Up, Unit(h, 16) * Mathf.Tau).Scaled(Vector3.One * scale * (0.85f + 0.3f * Unit(h, 32))));
+            }
+            // the bushes: Y-up meshes, like the trees (retail's resource bushes stand at ~0 about X)
+            foreach (var (bq, prop, scale) in Bushes)
+            {
+                h = Mix(h + 0xB05EUL);
+                var at = bq; at.Y = terr != null ? terr.SampleHeight(bq.X, bq.Z) : bq.Y;
+                Put(prop, at, Tilt(at) * new Basis(Vector3.Up, Unit(h, 8) * Mathf.Tau).Scaled(Vector3.One * scale));
+            }
             foreach (var pk in PocketParks)
-                foreach (var (bq, yaw) in pk.Benches)
+                foreach (var (bq, faces) in pk.Benches)
                 {
                     var at = bq; at.Y = terr != null ? terr.SampleHeight(bq.X, bq.Z) : bq.Y;
-                    // Bench_Wood_0: its back is local -Y and the sitter looks down +Y, the way YawForDir points a prop (see
-                    // ProcIslandSpawn.SpawnLandmarks) -- stood up like the island's viewpoint benches
-                    var node = objs.Place(ParkBench, at, ProcIslandSpawn.RotFor(yaw));
-                    if (node == null) continue;
-                    into?.Add(node); made++;
+                    // Bench_Wood_0: a Z-up mesh stood up at 270 about X; its back is local -Y and its sitter looks down +Y,
+                    // which FromEuler(270, ey, 0) turns to (-sin p, 0, -cos p), p = 180 - ey -- so ey = 180 - YawForDir(faces)
+                    Put(ParkBench, at, Tilt(at) * EditorObjects.FromEuler(270f, 180f - ProcIsland.YawForDir(faces.X, faces.Z), 0f));
                 }
-            if (made > 0) Log.Print($"[towngrid] greens planted: {made} props ({HedgePieces.Count} hedge pieces)");
+            if (made > 0) Log.Print($"[towngrid] greens planted: {made} props ({HedgePieces.Count} hedge pieces, {Bushes.Count} bushes)");
             return made;
         }
 
