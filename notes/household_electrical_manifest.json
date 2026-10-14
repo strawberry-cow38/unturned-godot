@@ -3,7 +3,7 @@
     "name": "Light_Switch_0",
     "guid": "397a9d3cc7eb4a4291dc41ae40a8d12f",
     "interaction_role": "room_ceiling_light_switch",
-    "suggested_origin_height": 1.55,
+    "suggested_origin_height": 1.6,
     "mount": "wall",
     "art_status": "REVIEW_ONLY",
     "registered": true,
@@ -31,11 +31,13 @@
     "network_and_save": "Required; assigned to Tinyclaw, not implemented by this art delta",
     "owner_revision_message_ids": [
       "1559810962108977213",
-      "1559811297565220946"
+      "1559811297565220946",
+      "1559816740542742579",
+      "1559816755126476881"
     ],
     "width_x": 0.32,
     "height_z": 0.54,
-    "depth_y": 0.085638,
+    "depth_y": 0.072344,
     "bounds_native": [
       [
         -0.1599999964237213,
@@ -44,7 +46,7 @@
       ],
       [
         0.1599999964237213,
-        0.08563752472400665,
+        0.07234358787536621,
         0.27000001072883606
       ]
     ],
@@ -65,16 +67,21 @@
       "default_art_pose": "on",
       "rocker_pivot_native": [
         0,
-        0.046,
+        0.04,
         0
       ],
       "rocker_pivot_godot": [
         0,
         0,
-        -0.046
+        -0.04
       ],
-      "on_rotation_x_degrees": -8,
-      "off_rotation_x_degrees": 8,
+      "on_rotation_x_degrees": -5,
+      "off_rotation_x_degrees": 5,
+      "housing_front_native_y": 0.05,
+      "rocker_opening_native_xz": [
+        0.166,
+        0.292
+      ],
       "on_pressed_edge": "bottom (-Z native / -Y Godot)",
       "off_pressed_edge": "top (+Z native / +Y Godot)",
       "rocker_depth_m": 0.04,
@@ -91,7 +98,9 @@
     "body_srgb_hex": "#ababab",
     "revision_request_message_ids": [
       "1559810962108977213",
-      "1559811297565220946"
+      "1559811297565220946",
+      "1559816740542742579",
+      "1559816755126476881"
     ],
     "behavior_status": "Tinyclaw reported working room switch/outlet behavior in 1559809954263859250; this art delta does not implement or verify shared-circuit/network/save behavior."
   },
