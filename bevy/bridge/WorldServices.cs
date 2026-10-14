@@ -14,6 +14,7 @@ public sealed partial class WorldServices
 {
     readonly NetWorldServer _server;
     readonly ContainerNetSync _containers;
+    public ResourceServices Harvesting { get; }
     readonly GasStationServer _fuel = new();
     readonly List<int> _regrown = new();
     readonly Dictionary<int, JsonElement> _drops = new();
@@ -31,9 +32,9 @@ public sealed partial class WorldServices
     }
     public object MapResult { get; private set; }
     public string MapKey { get; private set; }
-    public WorldServices(NetWorldServer server)
+    public WorldServices(NetWorldServer server, Catalog catalog, Action<string, object> emit)
     {
-        _server = server;
+        _server = server; Harvesting = new(server, catalog, emit);
         FarmRegistry.Load(); CropRegistry.Load(); NpcCatalog.Load();
         RegisterCrops(server.Crops.Schema);
         server.Transactions.FuelStations = _fuel;
@@ -58,12 +59,14 @@ public sealed partial class WorldServices
         if (spec.TryGetProperty("survivalDrain", out _)) _server.Vitals.SurvivalDrain = Bool(spec, "survivalDrain");
         if (spec.TryGetProperty("resourceCount", out _))
         {
-            int count = Count(spec, "resourceCount"); _server.Resources.ServerInit(count, tick); _server.ForageHost.ServerInit(count);
+            int count = Count(spec, "resourceCount"); Harvesting.Clear(); _server.Resources.ServerInit(count, tick); _server.ForageHost.ServerInit(count);
         }
         foreach (var r in Entries(spec, "resources"))
         {
             int index = Int(r, "index");
             if (index < 0 || index >= _server.Resources.Count) throw new ArgumentException("Resource index exceeds registered count");
+            Harvesting.Register(r);
+            if (Int(r, "rewardItemId") == 0) continue;
             _server.ForageHost.SetMeta(index, checked((ushort)Int(r, "rewardItemId")), Vec(r, "position"), Ticks(Float(r, "resetSeconds", 1000)));
         }
         if (spec.TryGetProperty("destructibleCount", out _))
@@ -147,7 +150,7 @@ public sealed partial class WorldServices
     {
         long tick = _server.Session.CurrentTick;
         _server.ItemMovers.Step((float)SimClock.FixedDelta);
-        _containers.Tick();
+        _containers.Tick(); Harvesting.Step();
         foreach (int i in Regrown(tick)) _server.Transactions.SetResourceAlive(i, true);
         _server.DestructibleHost.Tick(tick);
         for (int n = 0; n < _server.Destructibles.Count; n++)

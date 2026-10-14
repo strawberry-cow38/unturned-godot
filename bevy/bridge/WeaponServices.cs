@@ -1,0 +1,235 @@
+using SDG.Unturned;
+using UnturnedGodot;
+using UnturnedGodot.Net;
+
+namespace UnturnedBevy;
+
+/// <summary>Original gun inventory rules hosted beside ServerCombat. Every choice
+/// uses the server's owned item, never the client's count or a cloned grid.</summary>
+public sealed class WeaponServices
+{
+    readonly NetWorldServer _server;
+    readonly Catalog _catalog;
+    readonly Action<string, object> _emit;
+    readonly Dictionary<ushort, WeaponState> _states = new();
+    public WeaponServices(NetWorldServer server, Catalog catalog, Action<string, object> emit)
+    {
+        _server = server; _catalog = catalog; _emit = emit;
+        server.Combat.ResolveHeldGunProfile = owner => State(owner).Profile;
+        server.Combat.CanFire = owner => State(owner).CanFire();
+        server.Combat.ShotAccepted = (owner, tick) => State(owner).Shot(tick);
+        server.Combat.TryBeginReload = (owner, tick) => State(owner).BeginReload(tick);
+        server.Combat.CompleteReload = (owner, tick) => State(owner).CompleteReload(tick);
+        server.Combat.ResolveHeldMeleeProfile = (owner, strong) => State(owner).MeleeProfile(strong);
+        server.Combat.CanMelee = (owner, strong) => State(owner).CanMelee(strong);
+        server.Combat.MeleeAccepted = (owner, strong, tick) => State(owner).MeleeUsed(strong, tick);
+    }
+    WeaponState State(ushort owner)
+    {
+        if (!_states.TryGetValue(owner, out var s)) _states[owner] = s = new(_server, _catalog, owner, _emit);
+        s.Bind(); return s;
+    }
+    public bool SetFiremode(ushort owner, NetWorldClient client, int mode) => State(owner).SetFiremode(client, mode);
+    public void Step() { foreach (var player in _server.CombatState.All) State(player.OwnerPlayerId).Step(); }
+    public object Snapshot(ushort owner) => State(owner).Snapshot();
+}
+
+public sealed partial class WeaponState
+{
+    readonly NetWorldServer _server;
+    readonly Catalog _catalog;
+    readonly ushort _owner;
+    readonly Action<string, object> _emit;
+    readonly Random _random = new();
+    PlayerCombatReplication.CombatEntity _combat;
+    Item _heldItem;
+    Item _ownedHeld;
+    GunDef Gun;
+    PlayerInventory Inventory;
+    int _loadedMagId;
+    bool _chambered;
+    string _chamberedAmmoType;
+    bool _reloading, _hammerPending, _hammerActive;
+    long _cycleReadyTick;
+    int _shotCount;
+    float _reloadSpeed = 1;
+    // The linked source's direct branch runs here because this IS the server.
+    bool InventoryIsServerOwned => false;
+    readonly Action<byte, byte, byte, ushort, ushort> NetReloadSwap = null;
+    int Ammo { get => _combat?.Ammo ?? 0; set { if (_combat != null) _combat.Ammo = value; } }
+    public ServerGunProfile Profile { get; private set; }
+
+    public WeaponState(NetWorldServer server, Catalog catalog, ushort owner, Action<string, object> emit)
+    { _server = server; _catalog = catalog; _owner = owner; _emit = emit; }
+    public void Bind()
+    {
+        if (!_server.CombatState.TryGet(_owner, out _combat) || !_server.Inventories.TryGet(_owner, out var inv)) return;
+        Inventory = inv.Inventory;
+        ushort heldId = _server.Players.TryGetHeldInput(_owner, out var input) ? input.HeldItemId : (ushort)0;
+        _ownedHeld = Inventory.items.Take(PlayerInventory.OWNPAGES).SelectMany(p => p.items)
+            .FirstOrDefault(j => j.item.id == heldId)?.item;
+        Item gun = _ownedHeld != null && _catalog.GunDefs.ContainsKey(heldId) ? _ownedHeld : null;
+        if (ReferenceEquals(gun, _heldItem)) return;
+        SaveGunState();
+        _heldItem = gun; Gun = gun == null ? null : _catalog.GunDefs[gun.id];
+        _reloading = _hammerPending = _hammerActive = false; _cycleReadyTick = 0; _shotCount = 0; _combat.ReloadDoneTick = -1;
+        if (Gun == null) { Ammo = 0; Profile = null; return; }
+        var modes = AvailableModes();
+        if (!modes.Contains(gun.gunFiremode)) gun.gunFiremode = modes.Contains(1) ? 1 : modes.Contains(2) ? 2 : modes[0];
+        Ammo = gun.gunAmmo < 0 ? Gun.AmmoMax : gun.gunAmmo;
+        _loadedMagId = gun.gunMagId < 0 ? Gun.MagazineId : gun.gunMagId;
+        _chambered = gun.gunAmmo < 0 ? HasChamber : gun.gunChambered;
+        _chamberedAmmoType = gun.gunAmmo < 0 ? Assets.find((ushort)Gun.MagazineId)?.ammoType : gun.gunChamberedType;
+        // Each owner gets a profile; loaded drums/pellets must not mutate another
+        // player's profile merely because they happen to hold the same asset.
+        var source = _catalog.Guns[gun.id];
+        Profile = new ServerGunProfile();
+        foreach (var field in typeof(ServerGunProfile).GetFields()) field.SetValue(Profile, field.GetValue(source));
+        SaveGunState(); UpdateProfile();
+    }
+    void UpdateProfile()
+    {
+        if (Profile == null) return;
+        Profile.MagCapacity = ChamberedCap; Profile.Pellets = PelletsPerShot;
+    }
+    void SaveGunState()
+    {
+        if (_heldItem == null || Gun == null || _combat == null) return;
+        _heldItem.gunAmmo = Ammo; _heldItem.gunMagId = _loadedMagId;
+        _heldItem.gunChambered = _chambered; _heldItem.gunChamberedType = _chamberedAmmoType;
+        _server.Inventories.ServerMarkDirty(_owner);
+    }
+    int[] AvailableModes()
+    {
+        var modes = new List<int>();
+        if (Gun?.HasSafety == true) modes.Add(0);
+        if (Gun?.HasSemi == true) modes.Add(1);
+        if (Gun?.HasAuto == true) modes.Add(2);
+        if (Gun?.BurstCount > 0) modes.Add(3);
+        if (modes.Count == 0) modes.Add(1);
+        return modes.ToArray();
+    }
+    public bool SetFiremode(NetWorldClient client, int mode)
+    {
+        if (_heldItem == null || Gun == null || !AvailableModes().Contains(mode) || _combat?.Alive != true) return false;
+        for (byte page = 0; page < PlayerInventory.OWNPAGES; page++)
+            foreach (var jar in Inventory.items[page].items) if (ReferenceEquals(jar.item, _heldItem))
+            {
+                var i = _heldItem;
+                // Existing request/validation/owner-echo path. Only the selector is
+                // changed; every other field comes from current authoritative state.
+                return client.SendGunState(page, jar.x, jar.y, i.id, checked((short)Ammo), _chambered,
+                    checked((sbyte)mode), _loadedMagId, i.gunAttach, i.gunSightId, i.gunBarrelId, i.gunGripId, i.gunTacticalId, i.gunAttachSeeded);
+            }
+        return false;
+    }
+    public bool CanFire()
+    {
+        if (Gun == null || _heldItem?.gunFiremode == 0 || _heldItem?.quality == 0 || _server.Session.CurrentTick < _cycleReadyTick) return false;
+        if (_reloading && Gun.ShellReload && Ammo > 0)
+        { _reloading = false; _combat.ReloadDoneTick = -1; _emit("reloadCancelled", new { playerId = _owner }); }
+        UpdateProfile(); return true;
+    }
+    public void Shot(long tick)
+    {
+        if (Gun == null) return;
+        _chambered = HasChamber && Ammo > 0;
+        Durability.UseWeapon(_heldItem, Assets.find(_heldItem.id), _random.NextDouble);
+        if (Gun.RechamberAfterShotCount > 0 && ++_shotCount >= Gun.RechamberAfterShotCount)
+        {
+            _shotCount = 0;
+            double hammer = _catalog.Clip(Profile.AssetName, "_Hammer"); if (hammer <= 0) hammer = .5;
+            _cycleReadyTick = tick + Ticks(Gun.RechamberAfterShotDelay) + Ticks(hammer);
+            _emit("rechamber", new { playerId = _owner, delay = Gun.RechamberAfterShotDelay, seconds = hammer });
+        }
+        SaveGunState();
+    }
+    public bool BeginReload(long tick)
+    {
+        if (Gun == null || _reloading || tick < _cycleReadyTick || Ammo >= ChamberedCap) return false;
+        if (UsesMagItem && (FindBestMag()?.item.amount ?? 0) <= 0) return Dry();
+        if (UsesShells && CountShells() <= 0) return Dry();
+        if (!UsesMagItem && !UsesShells && Gun.Caliber > 0) return Dry();
+        _reloadSpeed = _server.Skills.TryGet(_owner, out var skills) ? skills.Skills.DexterityReloadSpeed() : 1;
+        _reloading = true; _hammerActive = false;
+        _hammerPending = Ammo <= 0 && HasChamber && _catalog.Clip(Profile.AssetName, "_Hammer") > 0 && Profile.AssetName != "sks";
+        double full = _catalog.ReloadSeconds(_heldItem.id) / _reloadSpeed;
+        _combat.ReloadDoneTick = tick + Ticks(Gun.ShellReload ? full / Math.Max(1, Gun.AmmoMax) : full);
+        _emit("reload", new { playerId = _owner, itemId = _heldItem.id, seconds = full, speed = _reloadSpeed, shellByShell = Gun.ShellReload });
+        return true;
+    }
+    bool Dry() { _emit("dryFire", new { playerId = _owner }); return false; }
+    public int? CompleteReload(long tick)
+    {
+        if (!_reloading || Gun == null) { _combat.ReloadDoneTick = -1; return null; }
+        if (_hammerActive) { _hammerActive = false; _reloading = false; }
+        else if (Gun.ShellReload)
+        {
+            if (!UsesShells || ConsumeShells(1) > 0) Ammo = Math.Min(Ammo + 1, Gun.AmmoMax);
+            if (Ammo >= Gun.AmmoMax || (UsesShells && CountShells() <= 0)) _reloading = false;
+            // Original subsequent shell interval deliberately does not repeat the
+            // Dexterity division; retain the existing PlayerController rule.
+            else _combat.ReloadDoneTick = tick + Ticks(_catalog.ReloadSeconds(_heldItem.id) / Math.Max(1, Gun.AmmoMax));
+        }
+        else
+        {
+            if (UsesShells) Ammo += ConsumeShells(Gun.AmmoMax - Ammo);
+            else if (UsesMagItem)
+            {
+                // A bag can change during the animation. Revalidate before the
+                // original swap helper's direct path to avoid its demo fallback.
+                if ((FindBestMag()?.item.amount ?? 0) > 0) DoMagSwap();
+            }
+            else Ammo = HasChamber && Ammo > 0 ? Gun.AmmoMax + 1 : Gun.AmmoMax;
+            if (_hammerPending && Ammo > 0)
+            {
+                _hammerPending = false; _hammerActive = true;
+                double seconds = _catalog.Clip(Profile.AssetName, "_Hammer") / _reloadSpeed;
+                _combat.ReloadDoneTick = tick + Ticks(seconds);
+                _emit("rechamber", new { playerId = _owner, delay = 0, seconds });
+            }
+            else _reloading = false;
+        }
+        _chambered = HasChamber && Ammo > 0;
+        if (!_reloading) { _combat.ReloadDoneTick = -1; _emit("reloadComplete", new { playerId = _owner, ammo = Ammo }); }
+        SaveGunState(); UpdateProfile(); return Ammo;
+    }
+    MeleeDef Melee => _ownedHeld == null ? MeleeDef.Fists : _catalog.MeleeDefs.GetValueOrDefault(_ownedHeld.id);
+    public bool CanMelee(bool strong)
+    {
+        var melee = Melee;
+        if (melee == null || melee.Repeated || _ownedHeld?.quality == 0) return false;
+        if (strong && melee.Stamina > 0 && _server.Vitals.TryGet(_owner, out var vitals) && vitals.Sim.Stamina < melee.Stamina / 100) return false;
+        return true;
+    }
+    public ServerMeleeProfile MeleeProfile(bool strong)
+    {
+        var melee = Melee ?? MeleeDef.Fists;
+        double seconds = _catalog.Clip(melee.Name, strong ? "_Strong" : "_Weak", melee.Name == "fists" ? (strong ? "Punch_Right" : "Punch_Left") : (strong ? "Melee_Strong" : "Melee_Weak"));
+        if (seconds <= .05) seconds = strong ? .75 : .45;
+        float skill = _server.Skills.TryGet(_owner, out var skills) ? skills.Skills.OverkillMeleeMultiplier() : 1;
+        float condition = _ownedHeld == null ? 1 : Durability.DamageMultiplier(_ownedHeld.quality);
+        return new ServerMeleeProfile { AssetName = melee.Name, Range = melee.Range,
+            ZombieDamage = melee.ZombieDamage * skill * condition, PlayerDamage = melee.PlayerDamage * skill * condition,
+            ObjectDamage = melee.ResourceDamage * 4 * condition, VehicleDamage = melee.VehicleDamage * condition,
+            ResourceDamage = melee.ResourceDamage, StrongMult = melee.Strength,
+            CooldownTicks = Ticks(seconds), HitDelayTicks = Ticks(seconds * Math.Clamp(strong ? melee.Strong : melee.Weak, .05f, .95f)) };
+    }
+    public void MeleeUsed(bool strong, long tick)
+    {
+        var melee = Melee;
+        if (strong && melee != null && melee.Stamina > 0 && _server.Vitals.TryGet(_owner, out var vitals))
+        { vitals.Sim.Stamina = Math.Max(0, vitals.Sim.Stamina - melee.Stamina / 100); vitals.Sim.StaminaRegenDelay = 1; }
+        if (_ownedHeld != null) { Durability.UseWeapon(_ownedHeld, Assets.find(_ownedHeld.id), _random.NextDouble); _server.Inventories.ServerMarkDirty(_owner); }
+    }
+    public void Step()
+    {
+        if (_combat == null) return;
+        if (!_combat.Alive) { _reloading = false; _combat.ReloadDoneTick = -1; }
+        if (Gun == null && _heldItem == null) Ammo = 0;
+    }
+    public object Snapshot() => new { reloading = _reloading, rechambering = _server.Session.CurrentTick < _cycleReadyTick,
+        ammo = Gun == null ? 0 : Ammo, capacity = Gun == null ? 0 : MagCapacity, chambered = Gun != null && _chambered,
+        firemode = Gun == null ? -1 : _heldItem.gunFiremode, magazineId = _loadedMagId, shellItemId = UsesShells ? ShellAsset?.id ?? 0 : 0 };
+    static int Ticks(double seconds) => Math.Max(1, (int)Math.Ceiling(seconds / SimClock.FixedDelta));
+}

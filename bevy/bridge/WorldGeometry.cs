@@ -1,4 +1,5 @@
 using SDG.Unturned;
+using UnturnedGodot.Net;
 using UnityEngine;
 
 namespace UnturnedBevy;
@@ -13,7 +14,8 @@ public sealed class WorldGeometry
     Node _terrainRoot;
     public int Count => _triangles.Count;
     public Func<int, bool> DestructibleAlive { get; set; }
-    readonly record struct Triangle(Vector3 A, Vector3 B, Vector3 C, int Destructible);
+    public Func<int, bool> ResourceAlive { get; set; }
+    readonly record struct Triangle(Vector3 A, Vector3 B, Vector3 C, int Destructible, int Resource = -1);
     sealed class Node
     {
         public Vector3 Min, Max;
@@ -21,13 +23,13 @@ public sealed class WorldGeometry
         public Triangle[] Leaf;
     }
     public void Clear() { _triangles.Clear(); _terrainTriangles.Clear(); _root = null; _terrainRoot = null; }
-    public void AddMesh(Vector3[] vertices, int[] indices, int destructible = -1, bool terrain = false)
+    public void AddMesh(Vector3[] vertices, int[] indices, int destructible = -1, bool terrain = false, int resource = -1)
     {
         if (indices.Length % 3 != 0) throw new ArgumentException("Triangle indices must be triples");
         if (indices.Any(i => i < 0 || i >= vertices.Length)) throw new ArgumentException("Triangle index exceeds vertices");
         for (int n = 0; n < indices.Length; n += 3)
         {
-            var triangle = new Triangle(vertices[indices[n]], vertices[indices[n + 1]], vertices[indices[n + 2]], destructible);
+            var triangle = new Triangle(vertices[indices[n]], vertices[indices[n + 1]], vertices[indices[n + 2]], destructible, resource);
             _triangles.Add(triangle);
             if (terrain) _terrainTriangles.Add(triangle);
         }
@@ -68,29 +70,33 @@ public sealed class WorldGeometry
     }
     public bool Ray(Vector3 from, Vector3 to, out Vector3 hit, out int destructible)
     {
-        float nearest = 1f; int index = -1; bool found = false;
-        Visit(_root, from, to - from, ref nearest, ref index, ref found);
-        hit = from + (to - from) * nearest; destructible = index;
-        return found;
+        bool found = RayDetailed(from, to, out var result); hit = result.Point; destructible = result.DestructibleIndex; return found;
+    }
+    public bool RayDetailed(Vector3 from, Vector3 to, out CombatWorldHit hit)
+    {
+        float nearest = 1f; int index = -1, resource = -1; bool found = false;
+        Visit(_root, from, to - from, ref nearest, ref index, ref resource, ref found);
+        hit = new(from + (to - from) * nearest, index, resource); return found;
     }
     public float GroundHeight(float x, float z)
     {
-        float t = 1f; int index = -1; bool hit = false;
-        Visit(_terrainRoot, new(x, 10000, z), new(0, -20000, 0), ref t, ref index, ref hit);
+        float t = 1f; int index = -1, resource = -1; bool hit = false;
+        Visit(_terrainRoot, new(x, 10000, z), new(0, -20000, 0), ref t, ref index, ref resource, ref hit);
         return hit ? 10000 - 20000 * t : 0;
     }
-    void Visit(Node node, Vector3 origin, Vector3 dir, ref float nearest, ref int index, ref bool found)
+    void Visit(Node node, Vector3 origin, Vector3 dir, ref float nearest, ref int index, ref int resource, ref bool found)
     {
         if (node == null || !Box(node.Min, node.Max, origin, dir, nearest)) return;
         if (node.Leaf == null)
         {
-            Visit(node.Left, origin, dir, ref nearest, ref index, ref found);
-            Visit(node.Right, origin, dir, ref nearest, ref index, ref found);
+            Visit(node.Left, origin, dir, ref nearest, ref index, ref resource, ref found);
+            Visit(node.Right, origin, dir, ref nearest, ref index, ref resource, ref found);
             return;
         }
         foreach (var triangle in node.Leaf)
         {
             if (triangle.Destructible >= 0 && DestructibleAlive?.Invoke(triangle.Destructible) == false) continue;
+            if (triangle.Resource >= 0 && ResourceAlive?.Invoke(triangle.Resource) == false) continue;
             var edge1 = triangle.B - triangle.A; var edge2 = triangle.C - triangle.A;
             var p = Vector3.Cross(dir, edge2); float determinant = Vector3.Dot(edge1, p);
             if (MathF.Abs(determinant) < 1e-8f) continue;
@@ -100,7 +106,7 @@ public sealed class WorldGeometry
             if (v < -1e-6f || u + v > 1.000001f) continue;
             float t = inverse * Vector3.Dot(edge2, q);
             if (t < 0 || t > nearest) continue;
-            nearest = t; index = triangle.Destructible; found = true;
+            nearest = t; index = triangle.Destructible; resource = triangle.Resource; found = true;
         }
     }
     static bool Box(Vector3 min, Vector3 max, Vector3 origin, Vector3 dir, float end)

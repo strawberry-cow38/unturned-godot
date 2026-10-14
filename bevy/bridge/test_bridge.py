@@ -159,6 +159,148 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(8, saved['Day'])
             self.assertEqual(1, saved['DayLengthSeconds'])
 
+    def test_ammo_is_owned_persistent_and_reload_conserves_magazines(self):
+        self.call('action', name='fire', args={})
+        self.assertEqual(29, self.pump()['player']['ammo'])
+        self.call('action', name='reload', args={})
+        self.assertFalse(self.pump()['weapon']['reloading'])
+        self.assertEqual(29, self.pump(100)['player']['ammo'], 'no magazine means no free ammo')
+        self.call('worldSpawn', items=[dict(itemId=6, amount=12, position=[0, 0, -1])])
+        item = self.pump()['worldItems'][0]
+        self.call('action', name='pickupItem', args=dict(netId=item['netId']))
+        self.pump()
+        self.call('action', name='reload', args={})
+        self.assertTrue(self.pump()['weapon']['reloading'])
+        state = self.pump(100)
+        self.assertEqual(13, state['player']['ammo'], '12 from magazine plus retained chamber')
+        mags = [j for p in state['inventory']['pages'] for j in p['items'] if j['id'] == 6]
+        self.assertEqual([28], [j['amount'] for j in mags])
+        gun = next(j for p in state['inventory']['pages'] for j in p['items'] if j['id'] == 4)
+        self.assertEqual(13, gun['gunAmmo'])
+        self.call('tick', input=dict(heldItemId=0))
+        self.pump()
+        self.assertEqual(0, self.call('snapshot')['state']['player']['ammo'])
+        before = len([e for e in self.call('snapshot')['state']['events'] if e['kind'] == 'fire'])
+        self.call('action', name='fire', args={})
+        self.assertEqual(before, len([e for e in self.pump()['events'] if e['kind'] == 'fire']))
+        self.call('tick', input=dict(heldItemId=4))
+        self.assertEqual(13, self.pump()['player']['ammo'])
+        with tempfile.TemporaryDirectory() as folder:
+            path = str(Path(folder) / 'ammo.json')
+            self.call('save', path=path)
+            self.call('action', name='fire', args={})
+            self.assertEqual(12, self.pump()['player']['ammo'])
+            self.call('load', path=path)
+            self.assertEqual(13, self.pump()['player']['ammo'])
+
+    def test_resource_geometry_uses_separate_index_and_dead_filter(self):
+        self.call('worldServices', resourceCount=1,
+                  resources=[dict(index=0, rewardItemId=13, position=[0, 0, -1], resetSeconds=1)])
+        self.call('worldGeometry', meshes=[dict(resourceIndex=0,
+                  vertices=[[-2, 0, -2], [2, 0, -2], [0, 4, -2]])])
+        ray = {'from': [0, 1.6, 0], 'to': [0, 1.6, -3]}
+        self.assertTrue(self.call('worldRay', **ray)['result']['hit'])
+        self.call('action', name='forageResource', args=dict(index=0))
+        self.pump()
+        self.assertFalse(self.call('worldRay', **ray)['result']['hit'])
+
+    def test_firemode_validates_modes_roundtrips_and_safety_blocks_shots(self):
+        self.assertEqual(1, self.call('snapshot')['state']['weapon']['firemode'])
+        self.assertFalse(self.call('action', name='setFiremode', args=dict(mode=2))['result']['queued'])
+        self.assertTrue(self.call('action', name='setFiremode', args=dict(mode=0))['result']['queued'])
+        self.assertEqual(0, self.pump()['weapon']['firemode'])
+        self.call('action', name='fire', args={})
+        self.assertEqual(30, self.pump()['weapon']['ammo'])
+        with tempfile.TemporaryDirectory() as folder:
+            path = str(Path(folder) / 'selector.json')
+            self.call('save', path=path)
+            self.call('action', name='setFiremode', args=dict(mode=3))
+            self.assertEqual(3, self.pump()['weapon']['firemode'])
+            self.call('load', path=path)
+            self.assertEqual(0, self.pump()['weapon']['firemode'])
+
+    def test_tree_delays_original_rewards_preserves_timer_and_regrows(self):
+        self.call('worldServices', resourceCount=1, resources=[dict(index=0, kind='tree', name='Birch_0',
+                  position=[0, 0, -1], health=1, resetSeconds=14, trunkLength=8)])
+        self.call('worldGeometry', meshes=[dict(resourceIndex=0,
+                  vertices=[[-2, 0, -1], [2, 0, -1], [0, 4, -1]])])
+        self.call('action', name='fire', args={})
+        state = self.pump()
+        self.assertEqual([0], state['resources']['dead'])
+        self.assertEqual([], state['worldItems'], 'logs wait for original 11-second debris cleanup')
+        self.assertTrue(any(e['kind'] == 'resourceFelled' for e in state['events']))
+        self.pump(250)
+        with tempfile.TemporaryDirectory() as folder:
+            path = str(Path(folder) / 'tree.json')
+            self.call('save', path=path)
+            self.call('load', path=path)
+            state = self.pump(310)
+            self.assertEqual(7, len(state['worldItems']), 'source index-zero Birch reward count')
+            self.assertTrue(all(i['itemId'] in [37, 38] for i in state['worldItems']))
+            self.assertEqual([0], state['resources']['dead'])
+            state = self.pump(160)
+            self.assertEqual([], state['resources']['dead'])
+            self.assertEqual(7, len(state['worldItems']), 'one reward event survives reload, never duplicates')
+
+    def test_ore_ignores_guns_and_fists_uses_pickaxe_resource_damage(self):
+        self.call('worldServices', resourceCount=1, resources=[dict(index=0, kind='ore', name='Metal_0',
+                  position=[0, 0, -1], health=100, resetSeconds=2)])
+        self.call('worldGeometry', meshes=[dict(resourceIndex=0,
+                  vertices=[[-2, 0, -1], [2, 0, -1], [0, 4, -1]])])
+        self.call('action', name='fire', args={})
+        self.assertEqual([], self.pump()['resources']['dead'])
+        self.call('tick', input=dict(heldItemId=0))
+        self.pump()
+        self.call('action', name='melee', args=dict(strong=False, yawDegrees=0))
+        self.assertEqual([], self.pump(30)['resources']['dead'])
+        self.call('worldSpawn', items=[dict(itemId=1198, position=[0, 0, -.5])])
+        item = self.pump()['worldItems'][0]
+        self.call('action', name='pickupItem', args=dict(netId=item['netId']))
+        self.pump()
+        self.call('tick', input=dict(heldItemId=1198))
+        self.pump()
+        self.call('action', name='melee', args=dict(strong=True, yawDegrees=0))
+        state = self.pump(30)
+        self.assertEqual([0], state['resources']['dead'])
+        self.assertEqual([67, 67], [i['itemId'] for i in state['worldItems']])
+        last = [e for e in state['events'] if e['kind'] == 'resourceHit'][-1]
+        self.assertEqual(100, last['data']['damage'], 'ore uses unmultiplied Resource_Damage')
+        self.assertEqual([], self.pump(100)['resources']['dead'])
+
+    def test_vehicle_authority_seats_recovery_and_blocked_exit(self):
+        spec = dict(typeId=0, key='test:0', variant=2, position=[0, 0, -2], yaw=0,
+                    health=4500, fuel=50000, battery=10000, speedMax=35, seatCount=2, hasDoors=True)
+        net_id = self.call('worldVehicles', vehicles=[spec])['result']['vehicles'][0]['netId']
+        same = self.call('worldVehicles', replace=False, vehicles=[spec])['result']['vehicles'][0]['netId']
+        self.assertEqual(net_id, same)
+        self.call('action', name='enterVehicle', args=dict(netId=net_id, seat=0))
+        state = self.pump()
+        self.assertEqual(net_id, state['player']['vehicleNetId'])
+        self.assertEqual(0, state['player']['vehicleSeat'])
+        self.assertEqual(50000, state['vehicles'][0]['fuel'])
+        self.call('action', name='vehicleState', args=dict(vehicleNetId=net_id,
+                  pos=[1000, 0, -2], eulerDegrees=[0, 0, 0], linVel=[0, 0, 0], angVel=[0, 0, 0],
+                  steerDegrees=0, throttle=1, steer=0, handbrake=False, flags=1, recovAck=0))
+        state = self.pump()
+        self.assertLess(abs(state['vehicles'][0]['position'][0]), .1)
+        self.assertGreater(state['vehicles'][0]['recovCounter'], 0)
+        self.assertTrue(any(e['kind'] == 'vehicleRecov' for e in state['events']))
+        self.call('worldVehicleState', vehicles=[dict(netId=net_id, position=[500, 0, 0], fuel=48000)])
+        self.assertLess(abs(self.pump()['vehicles'][0]['position'][0]), .1)
+        self.call('action', name='exitVehicle', args={})
+        self.assertEqual(net_id, self.pump()['player']['vehicleNetId'])
+        self.call('worldVehicleExit', netId=net_id, seat=0, clear=True, position=[2, 0, -2])
+        self.call('action', name='exitVehicle', args={})
+        state = self.pump()
+        self.assertEqual(0, state['player']['vehicleNetId'])
+        self.assertAlmostEqual(2, state['player']['position'][0], places=2)
+        with tempfile.TemporaryDirectory() as folder:
+            path = str(Path(folder) / 'vehicle.json')
+            self.call('save', path=path)
+            self.call('load', path=path)
+            self.assertEqual(1, len(self.pump()['vehicles']))
+            self.assertEqual(48000, self.call('snapshot')['state']['vehicles'][0]['fuel'])
+
     def test_world_services_forage_reach_regrowth_and_save(self):
         self.call('worldServices', resourceCount=2, resources=[
             dict(index=0, rewardItemId=13, position=[0, 0, -1], resetSeconds=.4),

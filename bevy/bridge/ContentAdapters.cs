@@ -28,7 +28,12 @@ namespace Godot
         public void Dispose() => _reader.Dispose();
     }
     public static class GD { public static void PushWarning(string message) => Console.Error.WriteLine(message); }
-    public struct Vector3(float x, float y, float z) { public float X = x, Y = y, Z = z; }
+    public struct Vector3(float x, float y, float z)
+    {
+        public float X = x, Y = y, Z = z;
+        public static Vector3 operator +(Vector3 a, Vector3 b) => new(a.X + b.X, a.Y + b.Y, a.Z + b.Z);
+        public static Vector3 operator *(Vector3 a, float b) => new(a.X * b, a.Y * b, a.Z * b);
+    }
     public struct Color(float r, float g, float b, float a = 1) { public float R = r, G = g, B = b, A = a; }
     // These source callers intentionally use unseeded random streams. Preserve
     // their probability/range contract; portable saves capture the rolled items.

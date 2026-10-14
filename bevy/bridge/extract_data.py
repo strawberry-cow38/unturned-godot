@@ -102,3 +102,36 @@ deadzone = read('game/DeadzoneMap.cs').split('        /// <summary>Load the curr
 resource = read('game/ResourceField.cs')
 reward = resource[resource.index('        public const float ForageResetSeconds'):resource.index('        /// <summary>Trunk radius')]
 (out / 'ResourceData.g.cs').write_text('namespace UnturnedGodot { public static class ResourceField {\n' + reward + match(r'internal const float TreeSink[^;]+;', resource) + '}}\n')
+
+viewmodel = read('game/Viewmodel.cs')
+donor = match(r'public static string AnimationDonorFor\(string gunName\)\s*=>[^;]+;', viewmodel)
+(out / 'WeaponClips.g.cs').write_text('namespace UnturnedGodot { public static class WeaponClips {' + donor + '}}\n')
+
+# Source magazine compatibility, richest-mag selection, chamber retention and
+# loose-round consumption remain verbatim, hosted on authoritative inventories.
+player = read('game/PlayerController.cs')
+parts = [player[player.index('        bool UsesMagItem =>'):player.index('        // infAmmo: refill')],
+         player[player.index('        public SDG.Unturned.ItemAsset HeldGunAsset'):player.index('        // Loose ammo (shotgun shells')],
+         player[player.index('        bool FeedsLooseRounds =>'):player.index('        /// <summary>Put <paramref name="n"/> loose rounds')],
+         player[player.index('        int ConsumeShells(int want)'):player.index('        // --- shotgun ammo-type picker API')]]
+(out / 'WeaponInventory.g.cs').write_text('using Godot; using SDG.Unturned; namespace UnturnedBevy { public sealed partial class WeaponState {\n' + '\n'.join(parts) + '}}\n')
+
+# Harvesting keeps the original species table and deterministic reward methods.
+# Only scene ownership/spawn plumbing is removed from those methods.
+tree_defaults = resource[resource.index('                    bool isMaple ='):resource.index('                    // WIDER TRUNKS')]
+ore = resource[resource.index('    public partial class OreRock'):]
+ore_defaults = [match(r'public float ' + key + r'[^;]+;', ore).replace('public float', 'public const float').replace(key, 'Ore' + key) for key in ['Health', 'Reset']]
+ore_rewards = match(r'public int RewardMin[^;]+;', ore).replace('public int', 'public const int').replace('RewardMin', 'OreRewardMin').replace('RewardMax', 'OreRewardMax')
+parts = ['using Godot; namespace UnturnedBevy { public static class ResourceRules {',
+         'public record TreeDef(float Health, float Reset, int Min, int Max, ushort Log);',
+         'public static TreeDef Tree(string name) {' + tree_defaults + 'return new(treeHp, treeReset, rMin, rMax, logItem);}',
+         *ore_defaults, ore_rewards,
+         match(r'internal static double DebrisLife[^;]+;', resource).replace('internal static', 'public const'),
+         '} public sealed partial class ResourceNode {']
+for method in ['DropRewards', 'DropScrap']:
+    body = match(r'void ' + method + r'\(\)\s*\{.*?\n        \}', resource)
+    body = body.replace('            var parent = GetParent() ?? (Node)this;\n', '').replace('GlobalTransform.Origin', 'Position')
+    body = body.replace('WorldItem.Spawn(parent, ', 'Spawn(')
+    parts.append(body)
+parts.append('}}')
+(out / 'ResourceRules.g.cs').write_text('\n'.join(parts))

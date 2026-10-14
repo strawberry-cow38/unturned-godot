@@ -1,5 +1,4 @@
-// GunDef has exactly two Godot math dependencies. These value-only adapters let the
-// original parser compile unchanged without a Godot SDK, native library or runtime.
+// Value-only adapters let original parsers and pure harvesting methods compile unchanged without a Godot SDK, native library or runtime.
 namespace Godot;
 public static class Mathf
 {

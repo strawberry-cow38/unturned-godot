@@ -9,6 +9,7 @@
   <ItemGroup>
     <ProjectReference Include="../../core/UnturnedNet/UnturnedNet.csproj" />
     <ProjectReference Include="../../core/BugReportCore/BugReportCore.csproj" />
+    <Compile Include="../../game/MeleeDef.cs" Link="Source/MeleeDef.cs" />
     <Compile Include="../../game/GunDef.cs" Link="Source/GunDef.cs" />
     <Compile Include="../../game/inventory/ItemCatalog.cs" Link="Source/ItemCatalog.cs" />
     <Compile Include="../../game/inventory/BlueprintRegistry.cs" Link="Source/BlueprintRegistry.cs" />
@@ -36,6 +37,9 @@
     <Compile Include="$(IntermediateOutputPath)Data/RubbleData.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/DeadzoneData.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/ResourceData.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/ResourceRules.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/WeaponClips.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/WeaponInventory.g.cs" />
   </ItemGroup>
   <Target Name="ExtractOriginalData" BeforeTargets="BeforeCompile">
     <Exec Command="python3 &quot;$(MSBuildProjectDirectory)/extract_data.py&quot; &quot;$(MSBuildProjectDirectory)/$(IntermediateOutputPath)Data&quot;" />

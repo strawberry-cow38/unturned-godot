@@ -101,14 +101,38 @@ public static class MapServices
                 var v = Enumerable.Range(0, 9).Select(_ => reader.ReadSingle()).ToArray();
                 if (v.Any(x => !float.IsFinite(x))) throw new InvalidDataException("Non-finite resource placement");
                 var position = new[] { v[0], v[1], -v[2] };
-                if (ResourceField.IsTree(name))
+                float treeScaleY = 1;
+                bool tree = ResourceField.IsTree(name);
+                if (tree)
                 {
                     var matrix = PlacementMatrix(new[] { v[3], 180 - v[4], -v[5] }, v[6..9]);
-                    float sy = new Vector3(matrix.M21, matrix.M22, matrix.M23).Length();
+                    float sy = new Vector3(matrix.M21, matrix.M22, matrix.M23).Length(); treeScaleY = sy;
                     position[1] -= ResourceField.TreeSink * (sy < .001f ? 1 : sy);
                 }
                 ushort reward = ResourceField.ForageReward(name);
                 resources.Add(new { index = resourceIndex, name, instance = n, position, rewardItemId = reward });
+                if (tree || name.StartsWith("Metal"))
+                {
+                    float trunkLength = 8;
+                    if (tree)
+                    {
+                        string cacheKey = resDir + "/" + name + "_debris";
+                        if (!bounds.TryGetValue(cacheKey, out var debris))
+                        {
+                            for (int part = 0; part < 12; part++)
+                            {
+                                var next = MeshBounds(Path.Combine(resDir, name + "_debris_" + part + ".obj"));
+                                if (next.lo == null) break;
+                                if (debris.lo == null) debris = next;
+                                else for (int axis = 0; axis < 3; axis++)
+                                { debris.lo[axis] = Math.Min(debris.lo[axis], next.lo[axis]); debris.hi[axis] = Math.Max(debris.hi[axis], next.hi[axis]); }
+                            }
+                            bounds[cacheKey] = debris;
+                        }
+                        if (debris.lo != null) trunkLength = Math.Max(1, (debris.hi[1] - debris.lo[1]) * Math.Max(.01f, treeScaleY));
+                    }
+                    resourceMetadata.Add(new { index = resourceIndex, kind = tree ? "tree" : "ore", name, position, trunkLength });
+                }
                 if (reward != 0) resourceMetadata.Add(new { index = resourceIndex, position, rewardItemId = reward, resetSeconds = ResourceField.ForageResetSeconds });
                 resourceIndex++;
             }

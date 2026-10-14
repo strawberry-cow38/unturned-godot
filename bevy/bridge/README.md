@@ -60,7 +60,7 @@ worldRay) omit state by default; `includeState:true` overrides that. Tick recipe
 are emitted only when inventory/skills/knowledge change; snapshot returns them all.
 
 Static geometry accepts `meshes:[{vertices:[[x,y,z],...],indices?:[i0,i1,i2,...],
-terrain?:false,destructibleIndex?:-1}]`; omitted indices mean sequential triples.
+terrain?:false,destructibleIndex?:-1,resourceIndex?:-1}]`; omitted indices mean sequential triples.
 Mark terrain meshes with `terrain:true` so ground-height queries exclude roofs.
 Alternatively use `terrainPatches:[{origin:[x,z],cells,spacing,heights,holes?}]`,
 with (cells+1)² row-major heights and cells² optional hole flags, or
@@ -68,7 +68,7 @@ with (cells+1)² row-major heights and cells² optional hole flags, or
 geometry; use `replace:false` to append chunks. Defer BVH construction with
 `finalize:false`, then finalize the last chunk. Combat rays use this host-owned
 BVH; the player never supplies a claimed hit. `worldRay:{from,to}` is a read-only
-diagnostic returning `{hit,point,destructibleIndex}`.
+diagnostic returning `{hit,point,destructibleIndex,resourceIndex}`.
 
 Coordinates use Bevy/Godot right-handed Y-up, camera forward -Z. Terrain normals are
 flat XYZ floats; layers are integers rather than JSON's base64 byte-array encoding.
@@ -91,6 +91,7 @@ Common actions:
 | `upgradeSkill` | `{speciality,index}` |
 | `fire` | `{origin?:[x,y,z],dir?:[x,y,z]}` |
 | `reload` | `{}` |
+| `setFiremode` | `{mode:0..3}` (Safety, Semi, Auto, Burst) |
 | `melee` | `{strong,yawDegrees}` |
 | `grenade` | `{origin:[x,y,z],velocity:[x,y,z],itemId?:254}` |
 
@@ -106,12 +107,10 @@ source markers that fail on drift. Filesystem/value adapters preserve the small
 Godot API surface those sources use; no Godot engine or SDK is loaded.
 
 Current integration limits: an available client command does not imply its world
-entity or host-side service is registered. Vehicle/animal/zombie physics, resource
-and crop registration, animation and remaining presentation need Bevy adapters.
-Weather timers restart on load as in the original scene lifecycle; clock/day and
-retail loot provenance persist. The original server's default-gun fallback and
-shared per-player ammo behavior remain core semantics rather than being rewritten
-in this bridge.
+entity or host service is registered. Animal/zombie sensing and movement,
+attachment effects, continuous tools and remaining presentation still need host
+adapters. Weather timers restart on load as in the original scene lifecycle;
+clock/day, retail loot provenance and resource timers persist.
 
 `mapServices {mapRoot,mapName,contentRoot?}` registers the whole extracted retail map
 once. PEI currently yields 696 containers, 11 grid/gas fixtures, 1 authored deadzone,
@@ -144,8 +143,37 @@ pylons, rails, crossings, tunnel mouths, holes and decoration model metadata.
 Tree/foliage/boulder positions use region-local X/Z and absolute Y; roads,
 bridges, rail spans, poles, pylons and tunnel mouths use world positions.
 
-Tree/ore health and their game-node harvesting lifecycle still need host adapters;
-the resource table includes them for stable indexing but only original forage
-plants currently have interaction metadata. Container random rolls preserve the
+Tree/ore harvesting uses the original species table and deterministic reward
+methods. Tree logs/sticks spawn after the original 11-second debris timer; ore
+accepts only pickaxe Resource_Damage. The authoritative alive bit disables the
+combat collider until regrowth. Events `resourceHit` and `resourceFelled` carry
+index/name/kind, point/position and fall direction/trunkLength/debrisSeconds for
+native effects. Save extensions retain partial health and pending timers. Container random rolls preserve the
 source's unseeded range/distribution contract through a portable RNG adapter;
 the resulting inventories are saved, rather than rerolled on load.
+
+
+Weapons resolve the actual owned item rather than a global default. Original
+magazine compatibility, richest-mag selection, chamber retention, loose-round
+consumption and animation timing run on the authority. Reloading requires real
+ammunition and returns the spent magazine. Gun ammo/chamber/selector persist on
+the item across moves, drop/pickup and save. `weapon` includes ammo, capacity,
+chambered, magazineId, shellItemId, firemode, reloading and rechambering. Safety
+blocks accepted shots; native input owns Semi/Auto/Burst trigger scheduling.
+`setFiremode` validates available modes and uses the original gun-state request.
+Catalog entries include full original `gun`/`melee` definitions, reloadSeconds,
+consumable effects and fluid metadata. Reload/rechamber events carry source timing.
+
+`worldVehicles` registers `{replace,vehicles:[{typeId,key,variant,position,yaw,
+health,fuel,battery,flags,speedMax,climbMax,fallMax,seatCount,hasDoors,storage}]}`;
+stable keys append idempotently with `replace:false`. The result lists
+`{netId,typeId,key}` in request order. Optional `seatOffsets` determines seat count;
+`storage` carries trunkWidth/Height, gloveboxWidth/Height and seat compartment
+width/height/label. Source envelopes/storage and fuel authority are retained.
+`worldVehicleState {vehicles:[{netId,position,eulerDegrees,linVel,angVel,
+steerDegrees,health,fuel,battery,flags}]}` publishes trusted host bodies;
+transforms of occupied driver vehicles must arrive via original `vehicleState`
+client commands. `worldVehicleExit {netId,seat,clear,position}` publishes a trusted
+Rapier door-clearance probe valid for ten simulation ticks. Enter/exit and vehicle
+recovery stay original server events. Raw source fuel capacities persist locally
+and in saves, while existing remote wire quantization is unchanged.
