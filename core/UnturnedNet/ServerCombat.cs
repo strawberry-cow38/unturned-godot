@@ -12,6 +12,31 @@ namespace UnturnedGodot.Net
     // damage into ServerDestructibles at the same hit that stops it.
     public delegate bool CombatWorldRay(Vector3 from, Vector3 to, out Vector3 hitPoint, out int destructibleIndex);
 
+    /// <summary>Optional richer host ray. Resource and rubble index spaces remain distinct;
+    /// the legacy ray stays the default for existing hosts and wire behavior.</summary>
+    public readonly struct CombatWorldHit
+    {
+        public readonly Vector3 Point;
+        public readonly int DestructibleIndex, ResourceIndex;
+        public CombatWorldHit(Vector3 point, int destructibleIndex = -1, int resourceIndex = -1)
+        { Point = point; DestructibleIndex = destructibleIndex; ResourceIndex = resourceIndex; }
+    }
+    public delegate bool CombatWorldRayDetailed(Vector3 from, Vector3 to, out CombatWorldHit hit);
+    public readonly struct CombatResourceHit
+    {
+        public readonly int Index;
+        public readonly ushort Attacker;
+        public readonly float Damage, ToolDamage;
+        public readonly bool Melee;
+        public readonly string Weapon;
+        public readonly Vector3 Point, Direction;
+        public readonly long Tick;
+        public CombatResourceHit(int index, ushort attacker, float damage, float toolDamage, bool melee,
+            string weapon, Vector3 point, Vector3 direction, long tick)
+        { Index = index; Attacker = attacker; Damage = damage; ToolDamage = toolDamage; Melee = melee;
+          Weapon = weapon; Point = point; Direction = direction; Tick = tick; }
+    }
+
     /// <summary>
     /// The server-side owner of zombie BRAINS (game: ZombieNetSync routing to the real ZombieController;
     /// L0 tests: a mock hp table). ServerCombat resolves the hit against replicated server positions, the
@@ -30,6 +55,7 @@ namespace UnturnedGodot.Net
     {
         public float PlayerDamage = 40f;        // Eaglefire Player_Damage
         public float ZombieDamage = 99f;        // Eaglefire Zombie_Damage (flat vs zombies, like the SP StepBullets path)
+        public float ResourceDamage = 40f;       // host canonical bullet damage against tree trunks
         public float ObjectDamage = 25f;        // Eaglefire Object_Damage -- vs destructible props (rubble)
         // .dat Vehicle_Damage. Barricades (doors/beds) take THIS, not Object_Damage, because that is what the
         // singleplayer bullet path uses on them -- a door that takes 25 per shot in MP and 35 in SP is the
@@ -55,6 +81,8 @@ namespace UnturnedGodot.Net
 
     public sealed class ServerMeleeProfile
     {
+        public string AssetName;
+        public float ResourceDamage = 5f;
         public float PlayerDamage = 40f;
         public float ZombieDamage = 50f;        // Military Knife Zombie_Damage
         public float ObjectDamage = 40f;        // vs destructible props (rubble) -- an axe/knife breaks small props in a few swings
@@ -138,6 +166,8 @@ namespace UnturnedGodot.Net
         readonly Action<ushort, byte[]> _sendTo;
 
         public IZombieHost ZombieHost;
+        public CombatWorldRayDetailed WorldRayDetailed;
+        public Action<CombatResourceHit> DamageResource;
         public CombatWorldRay WorldRay;                       // optional world-geometry occlusion + bullet stops
         // destructible props (rubble): (index, amount, tick) -> destroyed? Set by the host to ServerDestructibles.DamageObject.
         // Null on the L0 default (no world = nothing destructible to hit).
@@ -207,6 +237,7 @@ namespace UnturnedGodot.Net
             public long LandTick;
             public float YawDegrees;
             public bool Strong;
+            public ServerMeleeProfile Profile;
         }
         readonly List<PendingMelee> _pendingMelee = new List<PendingMelee>();
 
@@ -242,6 +273,15 @@ namespace UnturnedGodot.Net
         /// <summary>Optional game-content resolver for an owned held weapon. Existing explicit host/test
         /// overrides win; unregistered content keeps the former default behavior.</summary>
         public Func<ushort, ServerGunProfile> ResolveHeldGunProfile;
+        /// <summary>Optional host equipment adapters. Null retains the existing harness rules.
+        /// All run at the authoritative command/tick boundary; no client verdict is accepted.</summary>
+        public Func<ushort, bool, ServerMeleeProfile> ResolveHeldMeleeProfile;
+        public Func<ushort, bool> CanFire;
+        public Func<ushort, bool, bool> CanMelee;
+        public Action<ushort, long> ShotAccepted;
+        public Action<ushort, bool, long> MeleeAccepted;
+        public Func<ushort, long, bool> TryBeginReload;
+        public Func<ushort, long, int?> CompleteReload;
         public ServerGunProfile GunFor(ushort playerId)
             => _gunByPlayer.TryGetValue(playerId, out var p) ? p : ResolveHeldGunProfile?.Invoke(playerId) ?? DefaultGun;
 
@@ -289,6 +329,7 @@ namespace UnturnedGodot.Net
         {
             if (!_state.TryGet(sender, out var cs) || !cs.Alive || !_players.TryGetByOwner(sender, out var pe))
             { Diag.ShotsRejectedDeadOrMissing++; return; }
+            if (CanFire != null && !CanFire(sender)) return;
             var gun = GunFor(sender);
             if (cs.ReloadDoneTick > tick) { Diag.ShotsRejectedReloading++; return; }
             if (gun.CyclicRateRPM > 0 ? tick < cs.LegacyFireReadyTick || !cs.ShotCadence.CanFire(tick, gun.CyclicRateRPM)
@@ -311,6 +352,7 @@ namespace UnturnedGodot.Net
             }
             cs.LastFireTick = tick;
             cs.Ammo--;
+            ShotAccepted?.Invoke(sender, tick);
             for (int i = 0; i < Math.Max(1, gun.Pellets); i++)
                 _bullets.Add(new Bullet
                 {
@@ -334,6 +376,7 @@ namespace UnturnedGodot.Net
         public void OnReload(ushort sender, in ReloadCommand cmd, long tick)
         {
             if (!_state.TryGet(sender, out var cs) || !cs.Alive) return;
+            if (TryBeginReload != null) { TryBeginReload(sender, tick); return; }
             var gun = GunFor(sender);
             if (cs.Ammo >= gun.MagCapacity || cs.ReloadDoneTick > tick) return;
             cs.ReloadDoneTick = tick + gun.ReloadTicks;
@@ -342,9 +385,12 @@ namespace UnturnedGodot.Net
         public void OnMelee(ushort sender, in MeleeCommand cmd, long tick)
         {
             if (!_state.TryGet(sender, out var cs) || !cs.Alive) { Diag.MeleeRejected++; return; }
-            if (tick < cs.MeleeReadyTick) { Diag.MeleeRejected++; return; }
-            cs.MeleeReadyTick = tick + DefaultMelee.CooldownTicks;
-            _pendingMelee.Add(new PendingMelee { Attacker = sender, Seq = cmd.Seq, LandTick = tick + DefaultMelee.HitDelayTicks, YawDegrees = cmd.YawDegrees, Strong = cmd.Strong });
+            if (tick < cs.MeleeReadyTick || (CanMelee != null && !CanMelee(sender, cmd.Strong))) { Diag.MeleeRejected++; return; }
+            var profile = ResolveHeldMeleeProfile?.Invoke(sender, cmd.Strong);
+            var melee = profile ?? DefaultMelee;
+            cs.MeleeReadyTick = tick + melee.CooldownTicks;
+            _pendingMelee.Add(new PendingMelee { Attacker = sender, Seq = cmd.Seq, LandTick = tick + melee.HitDelayTicks, YawDegrees = cmd.YawDegrees, Strong = cmd.Strong, Profile = profile });
+            MeleeAccepted?.Invoke(sender, cmd.Strong, tick);
             _broadcast(NetMessagePak.Pack(ReplicationIds.EventPlayerMelee, new PlayerMeleeEvent { PlayerId = sender, Strong = cmd.Strong }.Write));   // v25: puppets swing
             Diag.MeleeAccepted++;
         }
@@ -413,7 +459,11 @@ namespace UnturnedGodot.Net
             }
             foreach (var cs in _state.All)
             {
-                if (cs.ReloadDoneTick == tick) cs.Ammo = GunFor(cs.OwnerPlayerId).MagCapacity;
+                if (cs.ReloadDoneTick == tick)
+                {
+                    int? ammo = CompleteReload != null ? CompleteReload(cs.OwnerPlayerId, tick) : GunFor(cs.OwnerPlayerId).MagCapacity;
+                    if (ammo.HasValue) cs.Ammo = ammo.Value;
+                }
                 if (!cs.Alive && cs.RespawnAtTick == tick) Respawn(cs, tick);
             }
             StepBullets(tick);
@@ -471,7 +521,7 @@ namespace UnturnedGodot.Net
                 ZombieReplication.ZombieEntity hitZombie = null;
                 float hitRelY = 0f, hitTop = 0f, hitHeadMin = PlayerHeadMinY, hitTorsoMin = PlayerTorsoMinY;   // per-hit zone splits (stance-adaptive)
                 Vector3 worldPoint = default;
-                int hitDestructible = -1;
+                int hitDestructible = -1, hitResource = -1;
 
                 if (PvPEnabled)
                     foreach (var pe in _players.All)
@@ -490,11 +540,12 @@ namespace UnturnedGodot.Net
                         if (SegmentHitsCylinder(b.Pos, next, ze.Pos, ZombieZoneRadius, top, out float t, out float relY) && t < bestT)
                         { bestT = t; hitKind = 2; hitZombie = ze; hitRelY = relY; hitTop = top; }
                     }
-                if (WorldRay != null && WorldRay(b.Pos, next, out var wp, out int wDest))
+                if (RayWorld(b.Pos, next, out var worldHit))
                 {
+                    var wp = worldHit.Point;
                     float segLen = (next - b.Pos).magnitude;
                     float t = segLen > 1e-4f ? (wp - b.Pos).magnitude / segLen : 0f;
-                    if (t < bestT) { bestT = t; hitKind = 3; worldPoint = wp; hitDestructible = wDest; }
+                    if (t < bestT) { bestT = t; hitKind = 3; worldPoint = wp; hitDestructible = worldHit.DestructibleIndex; hitResource = worldHit.ResourceIndex; }
                 }
 
                 if (hitKind != 0)
@@ -539,7 +590,9 @@ namespace UnturnedGodot.Net
                         case 3:
                             // a destructible prop's collider: whittle its health; the break fx rides the
                             // replicated ObjectDestroyed event (not this local impact), so no double-fx.
-                            if (hitDestructible >= 0) DamageObject?.Invoke(hitDestructible, b.Gun.ObjectDamage, tick);
+                            if (hitResource >= 0) DamageResource?.Invoke(new CombatResourceHit(hitResource, b.Shooter,
+                                b.Gun.ResourceDamage, b.Gun.ResourceDamage, false, b.Gun.AssetName, point, dir, tick));
+                            else if (hitDestructible >= 0) DamageObject?.Invoke(hitDestructible, b.Gun.ObjectDamage, tick);
                             // ...or a barricade (door/bed), which is not in that index space. Same segment,
                             // so a shot that stopped at a door is the shot that damages it.
                             else DamageBarricadeAlong?.Invoke(b.Pos, next, b.Gun.VehicleDamage, tick);
@@ -575,8 +628,9 @@ namespace UnturnedGodot.Net
                 float yawRad = pm.YawDegrees * (Mathf.PI / 180f);
                 var fwd = new Vector3(-Mathf.Sin(yawRad), 0f, -Mathf.Cos(yawRad));
                 var origin = ape.Pos + new Vector3(0f, 1.2f, 0f);
-                float reach = DefaultMelee.Range + 0.5f;
-                float mult = pm.Strong ? DefaultMelee.StrongMult : 1f;
+                var melee = pm.Profile ?? DefaultMelee;
+                float reach = melee.Range + 0.5f;
+                float mult = pm.Strong ? melee.StrongMult : 1f;
 
                 float bestD = float.MaxValue;
                 ushort bestPlayer = 0;
@@ -602,7 +656,7 @@ namespace UnturnedGodot.Net
 
                 if (bestZombie != null)
                 {
-                    float dmg = DefaultMelee.ZombieDamage * mult;
+                    float dmg = melee.ZombieDamage * mult;
                     bool killed = ZombieHost.DamageZombie(bestZombie.NetIdValue, dmg, bestZombie.Pos + new Vector3(0f, 1f, 0f), fwd, pm.Attacker, false);
                     var hitEvt = new ZombieHitEvent { NetId = bestZombie.NetIdValue, Damage = dmg, Shooter = pm.Attacker };
                     _broadcast(NetMessagePak.Pack(ReplicationIds.EventZombieHit, hitEvt.Write));
@@ -617,21 +671,23 @@ namespace UnturnedGodot.Net
                 }
                 else if (bestPlayer != 0)
                 {
-                    float dmg = DefaultMelee.PlayerDamage * mult;
+                    float dmg = melee.PlayerDamage * mult;
                     ApplyPlayerDamage(bestPlayer, dmg, pm.Attacker, tick, out bool killed, sourcePos: ape.Pos,
                                       zone: Durability.Zone.Torso, armor: ArmorKind.Weapon);
                     SendHitConfirm(pm.Attacker, pm.Seq, HitTargetKind.Player, bestPlayer, dmg, killed, false);
                 }
-                else if (WorldRay != null)
+                else if (WorldRay != null || WorldRayDetailed != null)
                 {
                     // no fighter in the cone -> a short forward ray can still land on a destructible prop's
                     // collider (fence/sign/billboard). The break fx rides the replicated ObjectDestroyed event.
                     var to = origin + fwd * reach;
-                    bool hitWorld = WorldRay(origin, to, out _, out int mDest);
-                    if (hitWorld && mDest >= 0) DamageObject?.Invoke(mDest, DefaultMelee.ObjectDamage * mult, tick);
+                    bool hitWorld = RayWorld(origin, to, out var worldHit);
+                    if (hitWorld && worldHit.ResourceIndex >= 0) DamageResource?.Invoke(new CombatResourceHit(worldHit.ResourceIndex,
+                        pm.Attacker, melee.ZombieDamage * mult, melee.ResourceDamage * mult, true, melee.AssetName, worldHit.Point, fwd, tick));
+                    else if (hitWorld && worldHit.DestructibleIndex >= 0) DamageObject?.Invoke(worldHit.DestructibleIndex, melee.ObjectDamage * mult, tick);
                     // ...or a barricade in the same swing. Checked even when the ray found no destructible,
                     // because a door IS the world geometry the ray stopped on.
-                    else if (hitWorld) DamageBarricadeAlong?.Invoke(origin, to, DefaultMelee.VehicleDamage * mult, tick);
+                    else if (hitWorld) DamageBarricadeAlong?.Invoke(origin, to, melee.VehicleDamage * mult, tick);
                 }
             }
         }
@@ -724,11 +780,19 @@ namespace UnturnedGodot.Net
             _broadcast(NetMessagePak.Pack(ReplicationIds.EventGrenadeExploded, evt.Write));
         }
 
+        bool RayWorld(Vector3 from, Vector3 to, out CombatWorldHit hit)
+        {
+            if (WorldRayDetailed != null) return WorldRayDetailed(from, to, out hit);
+            if (WorldRay != null && WorldRay(from, to, out var point, out int index))
+            { hit = new CombatWorldHit(point, index); return true; }
+            hit = default; return false;
+        }
+
         bool Blocked(Vector3 a, Vector3 b)
         {
-            if (WorldRay == null) return false;
+            if (WorldRay == null && WorldRayDetailed == null) return false;
             var up = new Vector3(0f, 0.8f, 0f);   // chest height, like the SP ExplosionBlocked LoS ray
-            return WorldRay(a + up, b + up, out _, out _);
+            return RayWorld(a + up, b + up, out _);
         }
 
         void ApplyPlayerDamage(ushort victim, float damage, ushort attacker, long tick, out bool killed)

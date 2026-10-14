@@ -547,5 +547,75 @@ namespace UnturnedNet.Tests
             Assert.That(aState.Deaths, Is.EqualTo(1));
             Assert.That(aState.Kills, Is.EqualTo(1), "credit for the observer, none for the self-kill");
         }
+        [Test]
+        public void HostReloadAdapter_RejectsWithoutAmmo_AndCompletesWithItsConservedCount()
+        {
+            var h = new Harness(50901).Connected("shooter");
+            var c = h.Clients[0];
+            h.Server.CombatState.TryGet(c.PlayerId, out var combat);
+            combat.Ammo = 2;
+            bool haveAmmo = false; int accepted = 0, completed = 0;
+            h.Server.Combat.TryBeginReload = (owner, tick) => {
+                if (!haveAmmo) return false;
+                accepted++; combat.ReloadDoneTick = tick + 4; return true;
+            };
+            h.Server.Combat.CompleteReload = (owner, tick) => { completed++; haveAmmo = false; return 7; };
+            c.SendReload(); h.Step(10);
+            Assert.That(combat.Ammo, Is.EqualTo(2));
+            Assert.That(accepted, Is.Zero);
+            haveAmmo = true;
+            c.SendReload(); h.Step(10);
+            Assert.That(accepted, Is.EqualTo(1));
+            Assert.That(completed, Is.EqualTo(1));
+            Assert.That(combat.Ammo, Is.EqualTo(7), "host's conserved rounds, not the default magazine capacity");
+        }
+
+        [Test]
+        public void HostResourceRay_UsesDistinctResourceIndex_AndAcceptedGunProfile()
+        {
+            var h = new Harness(50902).Connected("shooter"); var c = h.Clients[0];
+            h.Server.Players.TryGetByOwner(c.PlayerId, out var player);
+            h.Server.Combat.SetGunProfile(c.PlayerId, new ServerGunProfile { ResourceDamage = 73f, ObjectDamage = 11f, AssetName = "testgun" });
+            CombatResourceHit? hit = null; int rubble = 0, shots = 0;
+            h.Server.Combat.WorldRayDetailed = (Vector3 from, Vector3 to, out CombatWorldHit result) => {
+                result = new CombatWorldHit((from + to) * .5f, resourceIndex: 137); return true;
+            };
+            h.Server.Combat.DamageResource = result => hit = result;
+            h.Server.Combat.DamageObject = (index, amount, tick) => { rubble++; return false; };
+            h.Server.Combat.ShotAccepted = (owner, tick) => shots++;
+            h.Server.Combat.CanFire = _ => false;
+            c.SendFire(Eye(player.Pos), Vector3.forward); h.Step(10);
+            Assert.That(shots, Is.Zero); Assert.That(hit, Is.Null);
+            h.Server.Combat.CanFire = _ => true;
+            c.SendFire(Eye(player.Pos), Vector3.forward); h.Step(10);
+            Assert.That(shots, Is.EqualTo(1)); Assert.That(hit.HasValue, Is.True);
+            Assert.That(hit.Value.Index, Is.EqualTo(137)); Assert.That(hit.Value.Damage, Is.EqualTo(73f));
+            Assert.That(hit.Value.Attacker, Is.EqualTo(c.PlayerId)); Assert.That(hit.Value.Weapon, Is.EqualTo("testgun"));
+            Assert.That(hit.Value.Melee, Is.False); Assert.That(rubble, Is.Zero);
+        }
+
+        [Test]
+        public void HostMeleeProfile_IsCapturedAtSwing_AndResourceDamageRemainsTyped()
+        {
+            var h = new Harness(50903).Connected("fighter"); var c = h.Clients[0];
+            CombatResourceHit? hit = null;
+            h.Server.Combat.WorldRayDetailed = (Vector3 from, Vector3 to, out CombatWorldHit result) => {
+                result = new CombatWorldHit((from + to) * .5f, resourceIndex: 5); return true;
+            };
+            h.Server.Combat.DamageResource = result => hit = result;
+            h.Server.Combat.ResolveHeldMeleeProfile = (_, strong) => new ServerMeleeProfile {
+                AssetName = "axe_pick", ZombieDamage = 17f, ResourceDamage = 23f,
+                StrongMult = 2f, CooldownTicks = 9, HitDelayTicks = 3 };
+            h.Server.Combat.CanMelee = (_, strong) => false;
+            c.SendMelee(true, 0); h.Step(10); Assert.That(hit, Is.Null);
+            h.Server.Combat.CanMelee = (_, strong) => true;
+            c.SendMelee(true, 0); h.Step(2);
+            h.Server.Combat.ResolveHeldMeleeProfile = (_, strong) => new ServerMeleeProfile { ZombieDamage = 999 };
+            h.Step(10);
+            Assert.That(hit.HasValue, Is.True); Assert.That(hit.Value.Melee, Is.True);
+            Assert.That(hit.Value.Damage, Is.EqualTo(34f)); Assert.That(hit.Value.ToolDamage, Is.EqualTo(46f));
+            Assert.That(hit.Value.Weapon, Is.EqualTo("axe_pick"));
+        }
+
     }
 }
