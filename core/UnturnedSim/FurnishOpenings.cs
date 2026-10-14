@@ -488,6 +488,41 @@ namespace UnturnedSim
                 return null;
             }
 
+            /// <summary>How narrow a sink's window may go to keep off the stove and the dishwasher beside the sink: most of the
+            /// sink (a window between a dishwasher and a fridge has the sink's 1.5 m less the fridge's pad).</summary>
+            const float SinkWindowShare = 0.8f;
+
+            /// <summary>A sink's window off the stove and the dishwasher before its glass (WindowsOverPieces): the stretch of its
+            /// slot that holds the sink between them -- and between whatever too tall for a window to stand over (a fridge)
+            /// stands along the slot -- the window as wide as it was where that stretch takes it, else as wide as the stretch,
+            /// down to MinWindow or SinkWindowShare of the sink's width, and centred on the sink. False, and nothing changed,
+            /// where it cannot.</summary>
+            bool OffTheHob(FloorPlan.Pane q, (FurniturePlan M, float A, float B) sink, List<(FurniturePlan M, float A, float B)> hot)
+            {
+                var o = q.O;
+                float lo = q.A, hi = q.B;
+                // (and what is too tall to have a window over it, anywhere along the slot)
+                var slot = OpeningZone(q.W, o.MovedTo(q.A, o.V, q.B - q.A, o.Height), 0.1f, 0.7f);
+                var tall = _mine.Where(m => m.On == null && !m.Mounted && !m.Ceiling && FurnitureCatalog.Sizes[m.Name].H > TallFurniture && Overlaps(slot, m.Footprint))
+                                .Select(m => { var fp = m.Footprint; return (M: m, A: MathF.Min(UOf(q.W, fp.X0, fp.Z0), UOf(q.W, fp.X1, fp.Z1)), B: MathF.Max(UOf(q.W, fp.X0, fp.Z0), UOf(q.W, fp.X1, fp.Z1))); });
+                // (the glass off the hot pieces; the window's zone, its 0.1 m pad past the jambs too, off the tall ones)
+                foreach (var (_, a, b) in hot.Select(h => (h.M, h.A, h.B)).Concat(tall.Select(t => (t.M, t.A - 0.1f, t.B + 0.1f))))
+                {
+                    if (b <= sink.A + 0.11f) lo = MathF.Max(lo, b + 0.005f);
+                    else if (a >= sink.B - 0.11f) hi = MathF.Min(hi, a - 0.005f);
+                    else return false;
+                }
+                float wd = MathF.Min(o.Width, hi - lo);
+                if (wd < MathF.Min(MinWindow, (sink.B - sink.A) * SinkWindowShare) - 1e-3f) return false;
+                float u = Math.Clamp((sink.A + sink.B) * 0.5f - wd * 0.5f, lo, MathF.Max(lo, hi - wd));
+                var n = o.MovedTo(u, o.V, wd, o.Height);
+                if (!PaneFits(OpeningZone(q.W, n, 0.1f, 0.7f))) return false;
+                Reshape(q, n);
+                var e = new WindowEdit { Floor = _room.Floor, Room = _room, Wall = q.W, Before = o, After = n, What = wd < o.Width - 1e-3f ? "narrow" : "slide", For = "Counter_1" };
+                _res.WindowEdits.Add(e); FurnishTrace?.Invoke($"window {e}");
+                return true;
+            }
+
             /// <summary>A window over what stands in front of it (strawberry: "allow room layout to alter windows after the
             /// fact if necessary", then round 12b: "anything may alter a window's sil"): where a piece -- a kitchen's run, a
             /// couch, a bed, a desk, a workbench, a washer -- stands in front of one of the room's windows (in the 0.7 m kept
@@ -499,19 +534,40 @@ namespace UnturnedSim
             /// final place (Run); a window already over everything is left as it is.</summary>
             void WindowsOverPieces()
             {
-                foreach (var q in MyPanes())
+                // what stands in front of a window's glass itself (not just its pad), and where along its wall
+                List<(FurniturePlan M, float A, float B)> Before(FloorPlan.Pane q)
                 {
-                    var o = q.O;
-                    if (!o.Glazed) continue;
-                    // what stands in front of the glass itself (not just its pad)
-                    float top = 0f; string by = null;
+                    var l = new List<(FurniturePlan, float, float)>();
                     foreach (var m in _mine)
                     {
                         if (m.On != null || m.Mounted || m.Ceiling) continue;
                         var fp = m.Footprint;
                         if (!Overlaps(q.Zone, fp)) continue;
                         float a = MathF.Min(UOf(q.W, fp.X0, fp.Z0), UOf(q.W, fp.X1, fp.Z1)), b = MathF.Max(UOf(q.W, fp.X0, fp.Z0), UOf(q.W, fp.X1, fp.Z1));
-                        if (b <= o.U + 0.01f || a >= o.U1 - 0.01f) continue;
+                        if (b <= q.O.U + 0.01f || a >= q.O.U1 - 0.01f) continue;
+                        l.Add((m, a, b));
+                    }
+                    return l;
+                }
+                foreach (var q in MyPanes())
+                {
+                    if (!q.O.Glazed) continue;
+                    // a sink's window is the sink's (strawberry, round 12b): where the dishwasher or the stove beside the sink
+                    // stands before the same glass and would raise it to its own top (1.60, 1.64), the window narrows or
+                    // slides off them, over the sink, and keeps the sill the sink's worktop gives it; only where it cannot
+                    // and keep MinWindow does it rise over them as before
+                    var before = Before(q);
+                    var sink = before.FirstOrDefault(p => p.M.Name == "Counter_1");
+                    if (sink.M != null)
+                    {
+                        float sinkTop = TopBefore(sink.M, q.W, q.O);
+                        var hot = before.Where(p => p.M.Name is "Oven_0" or "Disher_0" && TopBefore(p.M, q.W, q.O) > sinkTop + 1e-3f).ToList();
+                        if (hot.Count > 0 && OffTheHob(q, sink, hot)) before = Before(q);
+                    }
+                    var o = q.O;
+                    float top = 0f; string by = null;
+                    foreach (var (m, _, _) in before)
+                    {
                         float h = TopBefore(m, q.W, o);
                         if (h > top) { top = h; by = m.Name; }
                     }

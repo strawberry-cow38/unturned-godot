@@ -1516,9 +1516,26 @@ namespace UnturnedSim
                 bool CornerL(bool ff) => corners && Done(L(runs, ff, true, Keeps));
                 if (tryL) tries.Add(() => Done(L(runs, freeFridge, true)) || Done(L(runs, !freeFridge, true)) || CornerL(freeFridge) || CornerL(!freeFridge) || Done(L(runs, freeFridge)) || Done(L(runs, !freeFridge)));
                 if (freeFridge) tries.Add(() => RunWithOwnFridge(runs));
-                // (its own try, so where it is given up the Row is tried exactly as it always was)
-                if (cornerRun && corners) tries.Add(() => Done(CornerRun(runs, freeFridge)));
-                tries.Add(() => Done(Row(runs, new[] { "Fridge_0", "Counter_1", "Disher_0", "Oven_0" })));
+                // the straight run -- now and then from a corner cabinet instead, but only where the run itself would be kept:
+                // laid and topped up (as Attempt will), taken up, and laid again on the same draws where the corner's will not
+                // go. Tried on its own ahead of the run, it took the place of the L that kitchens reached only because their
+                // straight run went in but left no room for its counters.
+                tries.Add(() =>
+                {
+                    ulong at = _rng.Mark;
+                    int n0 = _mine.Count;
+                    string[] names = { "Fridge_0", "Counter_1", "Disher_0", "Oven_0" };
+                    var row = Row(runs, names);
+                    if (row != null && cornerRun && corners)
+                    {
+                        bool kept = TopUp(want) || want == 0;
+                        foreach (var m in _mine.Skip(n0).ToList()) Remove(m);
+                        if (kept && Done(CornerRun(runs, freeFridge))) return true;
+                        _rng.Rewind(at);
+                        row = Row(runs, names);
+                    }
+                    return Done(row);
+                });
                 if (!freeFridge) tries.Add(() => RunWithOwnFridge(runs));
                 if (!tryL) tries.Add(() => Done(L(runs, false, true)) || Done(L(runs, true, true)) || CornerL(false) || CornerL(true) || Done(L(runs, false)) || Done(L(runs, true)));
                 tries.Add(() => Pair(runs));
