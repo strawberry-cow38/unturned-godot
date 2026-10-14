@@ -2123,6 +2123,8 @@ namespace UnturnedSim
             var doors = res.Doors.ToList();
             var placed = doors.Select(d => (d.At, d.Width)).ToList();
             int notes = res.Notes.Count;
+            // (what a pass makes, Reset clears and Built keeps: one added to either goes in the other too -- a building put
+            // back with the vents of the build it was put back from had them in its doors' swings)
             void Reset()
             {
                 res.Walls.Clear(); res.Stairs.Clear(); res.Porches.Clear(); res.Furniture.Clear(); res.RuntimeDecor.Clear(); res.HvacVents.Clear(); res.Electrical.Clear();
@@ -2144,18 +2146,24 @@ namespace UnturnedSim
             // Reset clears -- to go back to without building it again; and the doors tried single for nothing)
             List<(GenRoom A, GenRoom B)> latched = null; int latchedShortBy = 0; Action builtBoth = null;
             var tried = new HashSet<(GenRoom A, GenRoom B)>();
+            static Action Keep<T>(List<T> list) { var kept = list.ToList(); return () => { list.Clear(); list.AddRange(kept); }; }
             Action Built()
             {
-                var walls = res.Walls.ToList(); var stairs = res.Stairs.ToList(); var porches = res.Porches.ToList(); var furniture = res.Furniture.ToList();
-                var edits = res.WindowEdits.ToList(); var slots = res.WindowSlots.ToList(); var chimney = res.Chimney; var notesNow = res.Notes.ToList();
-                var hung = res.Doors.ToList(); var at = doors.Select(d => (d.At, d.Width)).ToList();
+                var back = new List<Action>
+                {
+                    Keep(res.Walls), Keep(res.Stairs), Keep(res.Porches), Keep(res.Furniture), Keep(res.RuntimeDecor), Keep(res.HvacVents),
+                    Keep(res.Electrical), Keep(res.WindowEdits), Keep(res.WindowSlots), Keep(res.Notes), Keep(res.Doors),
+                    Keep(res.Rooms),   // (their labels carry the rooms' records: LabelRecords)
+                };
+                var chimney = res.Chimney;
+                var records = res.Layout.Select(g => (g, g.Hvac, g.Electrical)).ToList();
+                var at = doors.Select(d => (d.At, d.Width)).ToList();
                 return () =>
                 {
-                    res.Walls.Clear(); res.Walls.AddRange(walls); res.Stairs.Clear(); res.Stairs.AddRange(stairs); res.Porches.Clear(); res.Porches.AddRange(porches);
-                    res.Furniture.Clear(); res.Furniture.AddRange(furniture); res.WindowEdits.Clear(); res.WindowEdits.AddRange(edits);
-                    res.WindowSlots.Clear(); res.WindowSlots.AddRange(slots); res.Chimney = chimney; res.Notes.Clear(); res.Notes.AddRange(notesNow);
+                    foreach (var b in back) b();
+                    res.Chimney = chimney;
+                    foreach (var (g, h, e) in records) { g.Hvac = h; g.Electrical = e; }
                     for (int i = 0; i < doors.Count; i++) (doors[i].At, doors[i].Width) = at[i];
-                    res.Doors.Clear(); res.Doors.AddRange(hung);
                 };
             }
             for (int pass = 0, closes = 0; ; pass++)
