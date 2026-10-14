@@ -1,60 +1,46 @@
-# Household electrical fixtures — model and interaction handoff
+# Household switch/outlet — frame-matched, seated-rocker revision
 
-Owner request `1559691911042957396`: switches for a room's ceiling lights; outlets acting as 1500 W power-I/O fixtures. Tinyclaw accepted **placement, PowerSolver, room-light interaction, networking and saved state** in `1559692182938587189`.
+Owner feedback: `1559810962108977213` and `1559811297565220946`, October 14, 2026. Art-only revision of the already supplied two fixture assets. **Keep their GUIDs/registrations. No extra catalog fixtures, no gameplay code changes here.**
 
-**This delta supplies the art and binding metadata, not that game-behaviour implementation.** The previews are actual engine-rendered models/poses, not a completed power or multiplayer test. Both main fixtures are review-pending/unregistered as of this art handoff.
+## Art changes
 
-## Main assets — preserve these two GUIDs
+- **Power_Outlet_0**: rectangular backplate with square corners instead of the clipped/rounded eight-sided outline. Existing 0.32 m width, 0.54 m height, 0.054 m projection and both recessed three-hole receptacle faces remain. Now 87 geometric vertices / 162 triangles (previously 103 / 194).
+- Both fixtures use the actual screenshot border/frame swatch: **House_09 Reveal, texel 2, sRGB `#ababab`**, from `game/content/wall_palettes.tsv`. `WallSurface.TrimTint` uses `WallMaterials.At(MaterialId).Reveal`; the screenshot's material browser reads `33 House_09`. This matches the source albedo rather than baking the warm lighting/shadow colour sampled from a screenshot into a texture. Body front and sides use the same swatch. Dark recesses remain charcoal.
+- **Light_Switch_0**: rocker depth increased from 0.022 m to **0.040 m**, pivot moved inward from 0.055 m to **0.046 m**. The rocker now extends inside the 0.040 m-deep housing instead of sitting largely in front of it. The blind cavity back is at native Y=0.004 m; the rocker clears it in either pose. 28 geometric vertices / 46 triangles unchanged; overall depth approximately 0.085638 m.
+- **Bottom pressed = ON, top pressed = OFF**. Revised static main OBJ/GLB is staged ON. Local-X rotations are now **ON −8°, OFF +8°** in native coordinates and in the standard Godot conversion. These signs supersede the previous handoff.
 
-| Asset | GUID | Native W × H × projection | Triangles |
-|---|---|---|---:|
-| Light_Switch_0 | `397a9d3cc7eb4a4291dc41ae40a8d12f` | 0.32 × 0.54 × 0.085725 m | 46 |
-| Power_Outlet_0 | `6bc5342b8fe5438b98ad49f4b28ccc5c` | 0.32 × 0.54 × 0.054 m | 194 |
+## Mandatory component integration update
 
-Simple pale wall plates, flat shading and exact stock white/grey/charcoal swatches from Clock_0, Chair_Metal_0 and Counter_2. No lettering, tiny screws, photo textures or realistic micro-detail. Outlet openings are actual blind recesses, not overlapping black decals.
+| Main fixture | Preserved GUID |
+|---|---|
+| Light_Switch_0 | `397a9d3cc7eb4a4291dc41ae40a8d12f` |
+| Power_Outlet_0 | `6bc5342b8fe5438b98ad49f4b28ccc5c` |
 
-Both main native OBJ models: metres, +Z up, front **+Y**, back at **Y=0**, origin at the centre of the back face (X/Z centred). No geometry behind the wall. The standard GLB conversion is Godot Y-up/front −Z. The switch's reserved envelope is the same in both rocker poses.
+For the movable rocker, use the revised **Base + Rocker instead of the complete static OBJ**, not over it:
 
-## Requested behaviour — not passive wall décor
+- New pivot native **(0, 0.046, 0)** m; Godot **(0, 0, −0.046)** m.
+- Rocker OBJ is local about its pivot. Do not translate its mesh vertices a second time.
+- ON local X **−8°**, OFF **+8°**; bottom/top refer to the pressed-in edge, not the protruding edge.
+- Component palette aliases are updated alongside both main palettes.
+- GLB named child remains `Light_Switch_0_Rocker` with its new pivot/default pose.
+- No new GUIDs for Base/Rocker helper meshes.
 
-**Power_Outlet_0**
-- Bind to the existing **PowerSolver/power-I/O** system with **1500 W per placed fixture**.
-- The art has two visible receptacle faces. Do not silently create two extra 1500 W nodes from the faces; the requested model-instance rating is in `power_io_watts_per_fixture`.
-- A power outlet is not a generator. Use the existing solver's supply/connection rules.
-- Socket visual points: native `(0, 0.054, +0.13)` and `(0, 0.054, -0.13)` m. Godot equivalents are in the manifest.
+Main native models remain metres, +Z-up, +Y-front, back Y=0, centred in X/Z. No geometry behind the wall. Standard Godot conversion is Y-up/front −Z.
 
-**Light_Switch_0**
-- A real interactable, bound to the fixture's **own room** and controlling that room's **ceiling-light fixtures** on/off.
-- Do not use this as a whole-house toggle or include other rooms/table/floor lamps by accident.
-- Tinyclaw owns the room key, interaction, power/light state coupling, networking and persistence.
-- Synchronise the rocker pose with the requested switch state if using the separate component. The art does not decide the room's power-availability rules.
+## Behavior / placement handoff to Tinyclaw
 
-## Optional independently movable rocker
+Tiny reported working room-light switching, animated rocker and 1500 W outlet nodes in `1559809954263859250`. This artifact supplies revised art, **not an independent gameplay/network/save verification**.
 
-The complete `Light_Switch_0.obj` already contains its rocker in the default ON art pose. Use it as one mesh if a static visual is enough.
+- Support two switches controlling **one shared room-light circuit**. Tiny owns the interaction and synchronized/persisted control semantics; the art does not choose circuit logic.
+- Raise switch placement slightly. Manifest suggests **1.55 m** rather than the old 1.4 m; Tiny chooses the final height with the current room/door clearance rules.
+- Owner asks for wire-I/O on **both visible receptacles**. Tiny acknowledged in `1559811522354487379` that only the upper currently has a port and that the lower is being added. **Both share one outlet's 1500 W total**, not 1500 W each.
+- Socket connection positions unchanged: native `(0, 0.054, ±0.13)` m; Godot `(0, ±0.13, −0.054)` m.
+- Keep window/fireplace/door-sweep/furniture access exclusions. This art revision changes no solver, room identity, networking, save format or placement code.
 
-For a moving button, use **Light_Switch_0_Base.obj + Light_Switch_0_Rocker.obj**, **instead of** rendering a second rocker over the complete OBJ:
-- Base uses the normal fixture origin/back Y=0.
-- Rocker mesh is local around its own centre/pivot; it is **not a standalone wall-mount prop**.
-- Put its pivot at native `(0, 0.055, 0)` m, or Godot `(0, 0, -0.055)` m.
-- Local X rotation: ON **+8°**, OFF **−8°**. Source is staged ON.
-- Both components use the main switch palette. Matching `_Base_tex.png`/`_Rocker_tex.png` aliases are also supplied for automatic filename-based texture lookup.
-- GLB already contains the named child `Light_Switch_0_Rocker` at the correct pivot.
-- **Do not mint GUIDs/register the component meshes as extra fixtures.** There are only two catalog props in this handoff.
+## Review and delivery
 
-## Placement metadata
+Ten actual standalone Godot captures: both old fixtures front/angle, both revised fixtures front/angle, plus revised switch's other front/angle poses. Four final fixture views and all four revised rocker pose views were visually inspected through the real private Blender viewport. The comparison strip beside each fixture has the same `#ababab` source albedo as the screenshot's window/door frame.
 
-The manifest includes mount, room rule, near/avoid, front access, clearances, suggested heights, interaction role and integration ownership.
-- Switch: accessible wall by the room door, suggested origin height **1.4 m**. Clear door swings/windows/fireplace walls/stairs and tall furniture.
-- Outlet: accessible low wall, suggested origin **0.4 m**. Near a desk/bedside/counter work area rather than hidden behind a wardrobe or fridge.
-- Above-counter alternative: **1.67 m** origin, subject to the actual window/appliance clearance checks. This is a placement suggestion, not a forced height or exemption from the owner's window rules.
-- Suggested unobstructed front access **0.8 m**, local edge margin **0.05 m**. Keep the current generator's stronger exclusions where applicable.
-- These fixtures are **excluded from the parallel bulk passive-doodad catalog**, as agreed in Tinyclaw message `1559694571821203536`.
+**No test suites run.** Art generation, engine renders and visual inspection only. The source was restored after viewing temporary image cards: `Household_Electrical_Fixtures_Revision.blend` contains just one switch root, Base, Rocker and outlet, with two packed palettes, and no review cards.
 
-## Review/source
-
-Five actual Godot 4.6 captures are supplied: switch front ON, switch angled OFF, switch front OFF at the same camera, and outlet front/angle. All final views were visually inspected. The preview lighting was reduced after the initial pass clipped the pale rocker to white; final captures retain its shading. There is no game-behaviour QA claim in this artifact.
-
-The editable `Household_Electrical_Fixtures_First_Review.blend` contains exactly the switch root/base/rocker and the outlet, with two packed palettes. Temporary review cards were not saved. Display staging is separate from the zero-origin exports.
-
-The standalone art branch `Staging-Astra-Household-Electrical` is based on the published `09255d473ab87a55d17713d870c5e365ae351048`. It changes only these model/texture files and notes/manifest, not catalog/core/networking code or other art handoffs. The recipe/config/references are provided for rebuilding in a **separate empty art scene**; the recipe replaces that scene's current objects.
+Bundle branch `Staging-Astra-Household-Electrical-Revision` contains one art revision commit based on `862306c7131ab2a71efd7b8cc45cf4f8fed5249f`. Only the original eight model/texture files plus the two original notes/manifest files change. Tinyclaw owns publication/cherry-picking and integration; this handoff does not claim a remote push.
