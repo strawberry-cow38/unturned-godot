@@ -182,9 +182,10 @@ namespace UnturnedSim
         /// counters only DecorRunGap, side by side -- DecorEnd off a corner (a fixture over a counter in the corner, none), DecorOpenGap off the edge of a window or a
         /// doorway; what stands within DecorClear of one is under it, and must be lower than its bottom by DecorUnder (along
         /// the wall a fixture over a counter keeps only DecorRunGap: it abuts the fridge beside its counter, as in any
-        /// kitchen). A group's pieces hang DecorGroupGap apart; a wall's hung pieces, fixtures aside, take at most DecorFill
+        /// kitchen). DecorRunGap is none: the floor run under them stands edge to edge (the kitchen's Abut, 2 mm), and at the
+        /// 2 cm it was, a cabinet over the counter beside one already hung, or beside the fridge, found no room. A group's pieces hang DecorGroupGap apart; a wall's hung pieces, fixtures aside, take at most DecorFill
         /// of it.</summary>
-        public const float DecorGap = 0.6f, DecorRunGap = 0.02f, DecorEnd = 0.2f, DecorOpenGap = 0.15f, DecorClear = 0.25f, DecorUnder = 0.1f,
+        public const float DecorGap = 0.6f, DecorRunGap = 0f, DecorEnd = 0.2f, DecorOpenGap = 0.15f, DecorClear = 0.25f, DecorUnder = 0.1f,
                            DecorGroupGap = 0.3f, DecorFill = 0.5f;
         /// <summary>No hung piece -- the décor, the clock -- within this of a window, measured in plan from its jambs, at any
         /// height: not beside it, not over or under it (a towel rail under a bathroom's high slit), not round the corner
@@ -268,7 +269,7 @@ namespace UnturnedSim
             /// <summary>The hung counters close up (strawberry: "fix gaps between counters"): each run of them on one wall --
             /// turned the same way, backs on one line, each within CounterRunGap of the next end to end -- laid edge to edge
             /// about the run's middle, so they abut whatever the floor pieces under them leave between their own (a kitchen's
-            /// Row lays them 0.04 m apart), each moved a few centimetres at most and hung again under the ceiling over it
+            /// run's pieces stand 2 mm apart, Abut; others more), each moved a few centimetres at most and hung again under the ceiling over it
             /// (UnderCeiling). A run that would come nearer a window than DecorWindowGap, or onto another hung piece, stays as
             /// it was.</summary>
             void PackCounterRuns()

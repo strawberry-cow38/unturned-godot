@@ -144,8 +144,10 @@ namespace UnturnedSim.Tests
         // out short of what it is for beside one, the door is hung as a plain swing -- kept so only where that leaves the
         // building short of less (BuildOut: SingleSwing). The seed-1 house on a 4x5 plot found it: its 2 x 2-cell kitchen lost
         // the counter beside its sink to the double sweep, and FitPlot's search dropped a bedroom to get it back -- one storey
-        // of four rooms where round 12 built two storeys with two bedrooms. Seed 17's kitchen on the same plot is short of a
-        // table whichever way its door swings, so that door still swings both ways.
+        // of four rooms where round 12 built two storeys with two bedrooms. (Since the runs close up edge to edge its counter
+        // fits beside the double sweep, and the door swings both ways again; the two bedrooms are what is held.) Seed 44's
+        // kitchen on the same plot gets its table only with its door a plain swing; seed 17's is short of a table whichever
+        // way its door swings, so that door still swings both ways.
         // BREAK IT: never hang a double door single; keep one single even where that leaves the building no better.
         [Test]
         public void DoubleDoorsGiveWayToWhatARoomIsFor()
@@ -169,13 +171,15 @@ namespace UnturnedSim.Tests
             int beds = one.Layout.Count(g => g.Kind == RoomKind.Bedroom);
             bool worktop = BuildingGen.Worktop(one.Furniture.Where(m => m.Room == kitchen));
             var oneDoor = Between(one, RoomKind.Kitchen, RoomKind.LivingRoom);
+            var fortyFour = Plot(44);
+            var door44 = Between(fortyFour, RoomKind.Kitchen, RoomKind.LivingRoom);
             var seventeen = Plot(17);
             var door17 = Between(seventeen, RoomKind.Kitchen, RoomKind.LivingRoom);
             TestContext.Progress.WriteLine($"[gen-double-gives-way] seed 1 on a 4x5 plot: {one.Floors} floors, {one.Layout.Count} rooms, {beds} bedrooms, kitchen counter at the sink or stove {worktop}, "
-                                         + $"its door to the living room {oneDoor}; seed 17: {door17} ({seventeen.SingleSwing.Count} hung single); notes: {string.Join(" / ", one.Notes)}");
+                                         + $"its door to the living room {oneDoor}; seed 44: {door44} ({fortyFour.SingleSwing.Count} hung single); seed 17: {door17} ({seventeen.SingleSwing.Count} hung single); notes: {string.Join(" / ", one.Notes)}");
             Assert.That(beds, Is.EqualTo(2), "the seed-1 house on a 4x5 plot dropped a bedroom");
             Assert.That(worktop, Is.True, "its kitchen has no plain counter at the sink or the stove");
-            Assert.That(oneDoor, Is.EqualTo(DoorAction.Swing), "its kitchen door still swings both ways");
+            Assert.That(door44, Is.EqualTo(DoorAction.Swing), "a double door left the room beside it short where a single swing would not");
             Assert.That(door17, Is.EqualTo(DoorAction.DoubleSwing), "a door hung single where that did not help");
         }
 
