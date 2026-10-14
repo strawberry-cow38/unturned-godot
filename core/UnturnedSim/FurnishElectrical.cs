@@ -11,9 +11,12 @@ namespace UnturnedSim
         [ThreadStatic] public static bool NoElectrical;
 
         /// <summary>A light switch's middle and an outlet's over their floor (astraclaw's handoff, notes/household_electrical_
-        /// manifest.json: suggested origins), and an outlet's over a counter run -- its bottom 5 cm over a counter's 1.35 m
+        /// manifest.json: suggested origins -- the switch's raised from 1.4, strawberry: "position light switches a little
+        /// higher on the wall"), and an outlet's, or a switch's, over a counter run -- its bottom 5 cm over a counter's 1.35 m
         /// worktop.</summary>
-        public const float SwitchHeight = 1.4f, OutletHeight = 0.4f, OutletOverCounter = 1.67f;
+        public const float SwitchHeight = 1.6f, OutletHeight = 0.4f, OutletOverCounter = 1.67f;
+        /// <summary>A room's second switch (two-way: RoomElectrical) at another doorway, at least this far from its first.</summary>
+        public const float SecondSwitchApart = 2f;
         /// <summary>What one placed outlet supplies (strawberry, round 12: "the outlets should act as power io outlets 1500w
         /// each"): one rating a fixture, however many receptacles its plate shows.</summary>
         public const float OutletWatts = 1500f;
@@ -46,9 +49,9 @@ namespace UnturnedSim
 
         sealed partial class Furnisher
         {
-            /// <summary>The room's switch and outlets (astraclaw's Light_Switch_0 and Power_Outlet_0), and its electrical
-            /// record: a switch by its door where it has ceiling lights (LightSwitch), its outlets low by what it is used at
-            /// (Outlets). Last of all, on the room's own draws: nothing else moves.</summary>
+            /// <summary>The room's switches and outlets (astraclaw's Light_Switch_0 and Power_Outlet_0), and its electrical
+            /// record: a switch by its door where it has ceiling lights -- two where it has two doorways (LightSwitches) -- and
+            /// its outlets low by what it is used at (Outlets). Last of all, on the room's own draws: nothing else moves.</summary>
             public void Electrical()
             {
                 var rng = OwnRng(0x5E1C);
@@ -61,33 +64,38 @@ namespace UnturnedSim
                     k++;
                 }
                 var placed = new List<FurniturePlan>();
-                if (rec.Lights.Count > 0 && LightSwitch(rng) is { } sw) placed.Add(sw);
+                if (rec.Lights.Count > 0) placed.AddRange(LightSwitches(rng));
                 placed.AddRange(Outlets(rng, OutletsPerRoom.GetValueOrDefault(_room.Kind)));
                 foreach (var m in placed)
                 {
                     bool outlet = m.Name == "Power_Outlet_0";
-                    rec.Add(new ElectricalFixture(outlet ? ElectricalKind.Outlet : ElectricalKind.Switch, _res.Electrical.Count, m.X, m.Y, m.Z, m.Yaw, outlet ? OutletWatts : 0f));
+                    // (the first switch's rocker down, any other's up: an odd number down, the lights on as generated)
+                    rec.Add(new ElectricalFixture(outlet ? ElectricalKind.Outlet : ElectricalKind.Switch, _res.Electrical.Count, m.X, m.Y, m.Z, m.Yaw, outlet ? OutletWatts : 0f),
+                            down: !outlet && rec.Switches.Count == 0);
                     _res.Electrical.Add(m);
                     FurnishTrace?.Invoke($"electrical {m}");
                 }
                 if (rec.HasElectrical) _room.Electrical = rec;
             }
 
-            /// <summary>The room's light switch, by one of its doorways: on a wall of the room -- the doorway's own, or one round
-            /// the corner from it -- its plate's near edge at most SwitchByDoor past DecorOpenGap off the nearest jamb, on the
-            /// latch side first (a door folds back over its hinge's), by a door from a hall, a stairwell or outside first; off
-            /// a window, a fireplace's wall, the stairs and every door's swing, with the floor before it clear (SwitchReach)
+            /// <summary>The room's light switches, by its doorways: the first on a wall of the room -- the doorway's own, or one
+            /// round the corner from it -- its plate's near edge at most SwitchByDoor past DecorOpenGap off the nearest jamb, on
+            /// the latch side first (a door folds back over its hinge's), by a door from a hall, a stairwell or outside first;
+            /// off a window, a fireplace's wall, the stairs and every door's swing, with the floor before it clear (SwitchReach)
             /// and nothing tall before it. Else up to SwitchByDoorFar off, over whatever stands lower than it, or raised over a
-            /// worktop or a basin. None where nothing will do: its ceiling lights stay on.</summary>
-            FurniturePlan LightSwitch(Rng rng)
+            /// worktop or a basin. Then, where the room has another doorway, a second by it the same way, SecondSwitchApart off
+            /// the first (strawberry: "two switches controlling one rooms light"; RoomElectrical's two-way rule). None where
+            /// nothing will do: its ceiling lights stay on.</summary>
+            List<FurniturePlan> LightSwitches(Rng rng)
             {
                 const string name = "Light_Switch_0";
                 var s = FurnitureCatalog.Sizes[name];
                 float half = (s.X1 - s.X0) * 0.5f, bottom = SwitchHeight - s.H, top = SwitchHeight + s.H;
+                var got = new List<FurniturePlan>();
                 // the doorways' jambs, on the room's side of their walls
                 var jambs = Jambs();
-                var cands = new List<(Face F, float T, double Score, float Off)>();
-                if (jambs.Count == 0) return null;
+                if (jambs.Count == 0) return got;
+                var cands = new List<(Face F, float T, double Score, float Off, int Door)>();
                 foreach (var f in AllFaces())
                 {
                     if (FireFace(f)) continue;
@@ -100,32 +108,43 @@ namespace UnturnedSim
                             float off = MathF.Max(0f, MathF.Sqrt((j.X - px) * (j.X - px) + (j.Z - pz) * (j.Z - pz)) - half - DecorOpenGap);
                             if (off > SwitchByDoorFar) continue;
                             // the latch side first (a door folds back over its hinge's), a door from a hall, a stairwell or outside first
-                            cands.Add((f, t, -off - (j.Hinge ? 1.0 : 0.0) + (j.Main ? 1.0 : 0.0) + rng.Int(1000) * 1e-5, off));
+                            cands.Add((f, t, -off - (j.Hinge ? 1.0 : 0.0) + (j.Main ? 1.0 : 0.0) + rng.Int(1000) * 1e-5, off, j.Door));
                         }
                 }
                 var ranked = cands.OrderByDescending(c => c.Score).ToList();
-                // first by the door with the floor before it clear (StandClear)
-                foreach (var (f, t, _, off) in ranked)
+                var first = Seat(ranked, null);
+                if (first == null) return got;
+                got.Add(first.Value.M);
+                // a second by another doorway (two-way switching: RoomElectrical), SecondSwitchApart from the first
+                if (Seat(ranked.Where(c => c.Door != first.Value.Door).ToList(), first.Value.M) is { } second) got.Add(second.M);
+                return got;
+
+                // the best candidate that fits: first by the door with the floor before it clear (StandClear); then a little
+                // further from it (SwitchByDoorFar), over whatever stands lower than it, or raised over a counter run or a basin
+                // (OutletOverCounter, as an outlet there -- clear of a basin's tap, SinkTap either side of its middle): a
+                // bathroom's door often opens beside its basin, a kitchen's beside its counters
+                (FurniturePlan M, int Door)? Seat(List<(Face F, float T, double Score, float Off, int Door)> list, FurniturePlan apart)
                 {
-                    if (off > SwitchByDoor + 1e-3f) continue;
-                    var at = AtFace(name, f, t);
-                    if (at == null) continue;
-                    if (!Fits(name, at.Value, bottom, top, SwitchReach, false)) continue;
-                    if (!StandClear(name, at.Value.X, at.Value.Z, at.Value.Yaw, SwitchReach)) continue;
-                    return Fixture(name, at.Value, SwitchHeight);
+                    bool Far((float X, float Z, float Yaw) at) => apart == null || (at.X - apart.X) * (at.X - apart.X) + (at.Z - apart.Z) * (at.Z - apart.Z) >= SecondSwitchApart * SecondSwitchApart;
+                    foreach (var (f, t, _, off, door) in list)
+                    {
+                        if (off > SwitchByDoor + 1e-3f) continue;
+                        var at = AtFace(name, f, t);
+                        if (at == null || !Far(at.Value)) continue;
+                        if (!Fits(name, at.Value, bottom, top, SwitchReach, false)) continue;
+                        if (!StandClear(name, at.Value.X, at.Value.Z, at.Value.Yaw, SwitchReach)) continue;
+                        return (Fixture(name, at.Value, SwitchHeight), door);
+                    }
+                    foreach (var (f, t, _, _, door) in list)
+                    {
+                        var at = AtFace(name, f, t);
+                        if (at == null || !Far(at.Value)) continue;
+                        if (Fits(name, at.Value, bottom, top, SwitchReach, false)) return (Fixture(name, at.Value, SwitchHeight), door);
+                        if (OverCounter(name, at.Value, true) && ClearOfTap(name, at.Value)
+                            && Fits(name, at.Value, OutletOverCounter - s.H, OutletOverCounter + s.H, 0f, true, true)) return (Fixture(name, at.Value, OutletOverCounter), door);
+                    }
+                    return null;
                 }
-                // then a little further from it (SwitchByDoorFar), over what stands lower than it, or raised over a counter run
-                // or a basin (OutletOverCounter, as an outlet there -- clear of a basin's tap, SinkTap either side of its
-                // middle): a bathroom's door often opens beside its basin, a kitchen's beside its counters
-                foreach (var (f, t, _, _) in ranked)
-                {
-                    var at = AtFace(name, f, t);
-                    if (at == null) continue;
-                    if (Fits(name, at.Value, bottom, top, SwitchReach, false)) return Fixture(name, at.Value, SwitchHeight);
-                    if (OverCounter(name, at.Value, true) && ClearOfTap(name, at.Value)
-                        && Fits(name, at.Value, OutletOverCounter - s.H, OutletOverCounter + s.H, 0f, true, true)) return Fixture(name, at.Value, OutletOverCounter);
-                }
-                return null;
             }
 
             /// <summary>Is a fixture at `at` clear of every basin's tap (Counter_1's, at the middle of its back): SinkTap off its
@@ -250,11 +269,13 @@ namespace UnturnedSim
             }
 
             /// <summary>The ends of this room's doorways, on its side of their walls: each a point at the room's face of the
-            /// wall, whether the door's leaf is hung on it (a pocket door's leaf slides in on that side too: HangDoors), and
-            /// whether the doorway is the room's way in from a hall, a stairwell or outside.</summary>
-            List<(float X, float Z, bool Hinge, bool Main)> Jambs()
+            /// wall, whether the door's leaf is hung on it (a pocket door's leaf slides in on that side too: HangDoors), whether
+            /// the doorway is the room's way in from a hall, a stairwell or outside, and which doorway it is. A closet's doorway
+            /// is none of them.</summary>
+            List<(float X, float Z, bool Hinge, bool Main, int Door)> Jambs()
             {
-                var l = new List<(float, float, bool, bool)>();
+                var l = new List<(float, float, bool, bool, int)>();
+                int door = 0;
                 foreach (var w in RoomWalls())
                 {
                     var (dx, dz) = PlanTrig.CosSin(w.Yaw); dz = -dz;
@@ -266,9 +287,12 @@ namespace UnturnedSim
                         {
                             if (!_room.Holds(cx + sgn * nx * (d + 0.3f), cz + sgn * nz * (d + 0.3f))) continue;
                             var past = _res.Layout.FirstOrDefault(g => g.Floor == _room.Floor && g.Holds(cx - sgn * nx * (d + 0.3f), cz - sgn * nz * (d + 0.3f)));
+                            // (not by a closet's door: nobody switches a room's light on from the wardrobe)
+                            if (past != null && past.Kind == Closet) continue;
                             bool main = past == null || past.Circulation, leaf = o.HasDoor && o.Archetype != ArchGarage;
                             foreach (var (ju, hinge) in new[] { (o.U, o.DoorHingeAtStart), (o.U1, !o.DoorHingeAtStart) })
-                                l.Add((w.X + dx * ju + sgn * nx * d, w.Z + dz * ju + sgn * nz * d, leaf && hinge, main));
+                                l.Add((w.X + dx * ju + sgn * nx * d, w.Z + dz * ju + sgn * nz * d, leaf && hinge, main, door));
+                            door++;
                         }
                     }
                 }

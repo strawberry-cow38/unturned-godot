@@ -22,7 +22,7 @@ namespace UnturnedSim.Tests
         public void ElectricalFixturesFollowTheRules()
         {
             var bad = new List<string>();
-            int buildings = 0, lit = 0, switched = 0, switches = 0, outlets = 0, overCounter = 0, saved = 0;
+            int buildings = 0, lit = 0, switched = 0, switches = 0, outlets = 0, overCounter = 0, saved = 0, twoWay = 0;
             foreach (var spec in Specs().Where(s => s.Seed < 4))
             {
                 var res = BuildingGen.Generate(spec);
@@ -77,6 +77,18 @@ namespace UnturnedSim.Tests
                     if (e.Switches.Count > 0) switched++;
                     if (!e.Lights.SequenceEqual(own)) bad.Add($"{Name(spec)}: {g}'s lights are [{string.Join(",", e.Lights)}], its own [{string.Join(",", own)}]");
                     if (!e.LightsOn) bad.Add($"{Name(spec)}: {g}'s lights are generated off");
+                    // two-way: at most two switches, the first's rocker down and any other's up, two of them apart
+                    if (e.Switches.Count > 2 || e.Down.Count != e.Switches.Count || (e.Switches.Count > 0 && !e.Down[0]) || e.Down.Skip(1).Any(d => d))
+                        bad.Add($"{Name(spec)}: {g}'s switches are {e}");
+                    if (e.Switches.Count == 2)
+                    {
+                        twoWay++;
+                        var (p, q) = (e.Switches[0], e.Switches[1]);
+                        if (MathF.Sqrt((p.X - q.X) * (p.X - q.X) + (p.Z - q.Z) * (p.Z - q.Z)) < BuildingGen.SecondSwitchApart - 0.01f) bad.Add($"{Name(spec)}: {g}'s two switches are side by side");
+                        // the lights follow either: one press flips them, a press of the other flips them back
+                        bool on = e.LightsOn; e.Flip(1); bool off = e.LightsOn; e.Flip(0); bool back = e.LightsOn; e.Flip(0); e.Flip(1);
+                        if (!(on && !off && back)) bad.Add($"{Name(spec)}: {g}'s two-way switching reads {on}/{off}/{back}");
+                    }
                     var ids = e.Fixtures.Select(v => v.Id).OrderBy(i => i).ToList();
                     if (!ids.SequenceEqual(placed.Select(q => q.k))) bad.Add($"{Name(spec)}: {g}'s record names fixtures [{string.Join(",", ids)}], it has [{string.Join(",", placed.Select(q => q.k))}]");
                     foreach (var v in e.Fixtures.Where(v => v.Id >= 0 && v.Id < res.Electrical.Count))
@@ -89,7 +101,7 @@ namespace UnturnedSim.Tests
                 }
                 // a save keeps every room's record, the lights' state with it
                 var flip = res.Rooms.FirstOrDefault(d => d.Electrical != null && d.Electrical.Switches.Count > 0).Electrical;
-                if (flip != null) flip.LightsOn = false;
+                flip?.Flip(0);
                 string text = WallSave.Write(res.Walls, res.Kind, res.Rooms, res.DoorMarks, res.Props);
                 WallSave.Read(text.Split('\n'), out _, out var rooms, out _, out var props);
                 if (props.Count(p => p.Name is "Light_Switch_0" or "Power_Outlet_0") != res.Electrical.Count) bad.Add($"{Name(spec)}: the save lost fixtures");
@@ -100,16 +112,16 @@ namespace UnturnedSim.Tests
                     var x = a.Electrical; var y = b.Electrical;
                     static bool Same(ElectricalFixture u, ElectricalFixture v) => u.Kind == v.Kind && u.Id == v.Id && MathF.Abs(u.X - v.X) < 0.01f && MathF.Abs(u.Y - v.Y) < 0.01f
                                                                                  && MathF.Abs(u.Z - v.Z) < 0.01f && MathF.Abs(u.Yaw - v.Yaw) < 0.01f && u.Watts == v.Watts;
-                    if (y == null || y.LightsOn != x.LightsOn || !y.Lights.SequenceEqual(x.Lights) || y.Fixtures.Count() != x.Fixtures.Count()
+                    if (y == null || y.LightsOn != x.LightsOn || !y.Down.SequenceEqual(x.Down) || !y.Lights.SequenceEqual(x.Lights) || y.Fixtures.Count() != x.Fixtures.Count()
                         || y.Fixtures.Zip(x.Fixtures).Any(t => !Same(t.First, t.Second)))
                         bad.Add($"{Name(spec)}: {a.Kind}'s record did not survive the save: {x} -> {y?.ToString() ?? "none"}");
                 }
-                if (flip != null) flip.LightsOn = true;
+                flip?.Flip(0);
             }
-            TestContext.Progress.WriteLine($"[electrical] {buildings} buildings; {switched} of {lit} rooms with ceiling lights have a switch ({switches} switches), {outlets} outlets "
+            TestContext.Progress.WriteLine($"[electrical] {buildings} buildings; {switched} of {lit} rooms with ceiling lights have a switch ({switches} switches, {twoWay} rooms two-way), {outlets} outlets "
                                            + $"({overCounter} over a worktop); {saved} records through a save; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
             Assert.That(switched, Is.GreaterThan(lit * 9 / 10), "nine rooms in ten with ceiling lights have a switch");
-            Assert.That(new[] { switches, outlets, overCounter, saved }, Has.All.GreaterThan(20));
+            Assert.That(new[] { switches, outlets, overCounter, saved, twoWay }, Has.All.GreaterThan(20));
             Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(20)));
         }
     }

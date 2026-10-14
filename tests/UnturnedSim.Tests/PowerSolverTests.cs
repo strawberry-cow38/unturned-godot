@@ -23,6 +23,25 @@ namespace UnturnedSim.Tests
         }
         static PowerWire Wire(PowerPort src, PowerPort cons) => new PowerWire(src, cons);
 
+        // An outlet (round 12): ONE 1500 W fixture with a port at each receptacle. Its two outputs draw on one pool
+        // (PowerDevice.OutputBudget), not 1500 W each: 1000 W on each socket powers the first and starves the second;
+        // 1000 + 500 powers both.
+        [Test]
+        public void Outlet_Two_Ports_Share_One_Rating()
+        {
+            foreach (var (second, both) in new[] { (1000f, false), (500f, true) })
+            {
+                var outlet = new PowerDevice { Producing = true, OutputBudget = 1500f };
+                var upper = outlet.AddPort(PowerPortKind.Output, 1500f);
+                var lower = outlet.AddPort(PowerPortKind.Output, 1500f);
+                var a = Spotlight(1000f);
+                var b = Spotlight(second);
+                PowerSolver.Solve(new[] { outlet, a.Dev, b.Dev }, new[] { Wire(upper, a.In), Wire(lower, b.In) });
+                Assert.That(a.In.Powered, Is.True, $"the first socket's 1000 W ({second} W on the second)");
+                Assert.That(b.In.Powered, Is.EqualTo(both), $"the second socket's {second} W, after 1000 of the 1500");
+            }
+        }
+
         [Test]
         public void Gen_Powers_Single_Consumer()
         {

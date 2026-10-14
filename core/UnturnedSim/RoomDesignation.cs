@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace UnturnedSim
 {
@@ -70,29 +71,44 @@ namespace UnturnedSim
     /// supplies (BuildingGen.OutletWatts).</summary>
     public readonly record struct ElectricalFixture(ElectricalKind Kind, int Id, float X, float Y, float Z, float Yaw, float Watts = 0f);
 
-    /// <summary>A room's electrical record: its switches and outlets apart, the ceiling lights its switch works (each by its
+    /// <summary>A room's electrical record: its switches and outlets apart, the ceiling lights its switches work (each by its
     /// place among the building's ceiling-light props, Ceiling_Lamp_*, in prop order -- this room's only, never a lamp on a
-    /// table or the next room's), and whether they are on. What the stage's switch toggles and a power net reads.</summary>
+    /// table or the next room's), and each switch's rocker. What the stage's switches toggle and a power net reads.
+    ///
+    /// Two-way switching (strawberry, round 12: "add support for two switches controlling one rooms light"): each switch's
+    /// rocker is down (its bottom pressed in) or up, a press flips that switch's own, and the lights are on while an ODD
+    /// number of the room's rockers are down -- so one switch alone reads down = on, and either of two works the light
+    /// from wherever it was left. A room with no switch has its lights on.</summary>
     public sealed class RoomElectrical
     {
         public readonly List<ElectricalFixture> Switches = new List<ElectricalFixture>();
+        /// <summary>Each switch's rocker, by its place in Switches: down (bottom pressed in) or up.</summary>
+        public readonly List<bool> Down = new List<bool>();
         public readonly List<ElectricalFixture> Outlets = new List<ElectricalFixture>();
         public readonly List<int> Lights = new List<int>();
-        /// <summary>The room's ceiling lights are on (its switch is up). On as generated.</summary>
-        public bool LightsOn = true;
+        /// <summary>The room's ceiling lights are on: an odd number of its rockers down (or no switch at all).</summary>
+        public bool LightsOn => Switches.Count == 0 || Down.Count(d => d) % 2 == 1;
         public bool HasElectrical => Switches.Count + Outlets.Count > 0;
         public IEnumerable<ElectricalFixture> Fixtures { get { foreach (var v in Switches) yield return v; foreach (var v in Outlets) yield return v; } }
-        public void Add(ElectricalFixture v) => (v.Kind == ElectricalKind.Switch ? Switches : Outlets).Add(v);
+        /// <summary>Add a fixture; a switch with its rocker `down`.</summary>
+        public void Add(ElectricalFixture v, bool down = false)
+        {
+            if (v.Kind == ElectricalKind.Switch) { Switches.Add(v); Down.Add(down); }
+            else Outlets.Add(v);
+        }
+        /// <summary>Press switch `k` (its place in Switches): its rocker flips, and with it the lights.</summary>
+        public void Flip(int k) { if (k >= 0 && k < Down.Count) Down[k] = !Down[k]; }
         /// <summary>The same record with every fixture moved, or turned (x, z) -> (W - x, D - z) and half round.</summary>
         public RoomElectrical Map(Func<ElectricalFixture, ElectricalFixture> f)
         {
-            var r = new RoomElectrical { LightsOn = LightsOn };
-            foreach (var v in Fixtures) r.Add(f(v));
+            var r = new RoomElectrical();
+            for (int k = 0; k < Switches.Count; k++) r.Add(f(Switches[k]), Down[k]);
+            foreach (var v in Outlets) r.Add(f(v));
             r.Lights.AddRange(Lights);
             return r;
         }
         public RoomElectrical Moved(float dx, float dy, float dz) => Map(v => v with { X = v.X + dx, Y = v.Y + dy, Z = v.Z + dz });
-        public override string ToString() => $"electrical: {Switches.Count} switch(es) for {Lights.Count} ceiling light(s) {(LightsOn ? "on" : "off")}, {Outlets.Count} outlet(s)";
+        public override string ToString() => $"electrical: {Switches.Count} switch(es) [{string.Join(" ", Down.Select(d => d ? "down" : "up"))}] for {Lights.Count} ceiling light(s) {(LightsOn ? "on" : "off")}, {Outlets.Count} outlet(s)";
     }
 
     /// <summary>Which kind of HVAC vent a room has: a register on the floor, a grille high on a wall.</summary>

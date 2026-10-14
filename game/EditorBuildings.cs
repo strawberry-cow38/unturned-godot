@@ -2801,12 +2801,16 @@ namespace UnturnedGodot
             {
                 var e = d.Electrical;
                 if (e == null) continue;
-                var sws = new List<RoomLightSwitch>();
-                foreach (var f in e.Switches)
-                    if (f.Id >= 0 && f.Id < electrical.Count && electrical[f.Id] is RoomLightSwitch sw) sws.Add(sw);
+                var sws = new List<(RoomLightSwitch Sw, int Index)>();
+                for (int i = 0; i < e.Switches.Count; i++)
+                {
+                    var f = e.Switches[i];
+                    if (f.Id >= 0 && f.Id < electrical.Count && electrical[f.Id] is RoomLightSwitch sw) sws.Add((sw, i));
+                }
                 var lamps = new List<LampLight>();
                 foreach (int k in e.Lights) if (k >= 0 && k < _ceilingLights.Count && _ceilingLights[k] != null) lamps.Add(_ceilingLights[k]);
-                foreach (var sw in sws) sw.Bind(e, lamps, sws);
+                var all = new List<RoomLightSwitch>(); foreach (var q in sws) all.Add(q.Sw);
+                foreach (var (sw, i) in sws) sw.Bind(e, i, lamps, all);
             }
         }
 
@@ -2824,12 +2828,15 @@ namespace UnturnedGodot
 
         /// <summary>An outlet on the stage: a power I/O source of BuildingGen.OutletWatts fed by the mains (GridPowerSource,
         /// the breaker box's own node at an outlet's rating: wires take power from it while the grid is live, and the solver
-        /// caps what they draw at its watts), its port in front of the upper receptacle, and a small look-at body so the
-        /// look-ray focuses it as it does the breaker box.</summary>
+        /// caps what they draw at its watts), a port before each receptacle sharing that one rating, and a small look-at body
+        /// so the look-ray focuses it as it does the breaker box.</summary>
         GridPowerSource BuildOutlet(PropDesignation m, MeshInstance3D mi, Mesh mesh)
         {
             var basis = EditorObjects.Upright(m.Yaw);
             var src = GridPowerSource.Attach(this, new Vector3(m.X, m.Y, m.Z), basis, OutletPort, BuildingGen.OutletWatts, "Outlet", mesh);
+            // and one before the lower receptacle (strawberry: "do both outlet holes have a wire io connection?"), on the same
+            // 1500 W: one budget for the fixture's two ports (GridPowerSource.PowerOutputBudget)
+            src.AddOutputPort(OutletPortLower, "Outlet");
             src.GlobalTransform = new Transform3D(basis, new Vector3(m.X, m.Y, m.Z));
             var body = new StaticBody3D { Name = "OutletLook", CollisionLayer = 1u << 6, CollisionMask = 0, Position = new Vector3(0f, 0.04f, 0f) };
             body.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(0.34f, 0.08f, 0.56f) } });
@@ -2837,9 +2844,9 @@ namespace UnturnedGodot
             src.AddChild(body);
             return src;
         }
-        /// <summary>An outlet's power port, in its native frame: before the upper receptacle (the handoff's socket point,
-        /// (0, 0.054, 0.13)), clear of the plate.</summary>
-        static readonly Vector3 OutletPort = new Vector3(0f, 0.11f, 0.13f);
+        /// <summary>An outlet's power ports, in its native frame: before each receptacle (the handoff's socket points,
+        /// (0, 0.054, +-0.13)), clear of the plate.</summary>
+        static readonly Vector3 OutletPort = new Vector3(0f, 0.11f, 0.13f), OutletPortLower = new Vector3(0f, 0.11f, -0.13f);
 
         /// <summary>The furniture's preview nodes as built, in Furniture's order but for any that built nothing -- with a ceiling
         /// lamp's light, a switch (RoomLightSwitch) and an outlet's power source among them (the in-engine test reads the

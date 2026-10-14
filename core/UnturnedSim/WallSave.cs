@@ -173,21 +173,22 @@ namespace UnturnedSim
             return sb.ToString();
         }
 
-        /// <summary>A room's electrical block: "elec", whether its lights are on, its switches and its outlets (each counted,
-        /// then id x y z yaw -- an outlet's watts after), its ceiling lights' ids (counted).</summary>
+        /// <summary>A room's electrical block: "elec", its switches (counted, then id x y z yaw and its rocker, 1 down or 0
+        /// up -- the lights' state is theirs: RoomElectrical.LightsOn), its outlets (counted, id x y z yaw watts), its ceiling
+        /// lights' ids (counted).</summary>
         static string Elec(RoomElectrical e)
         {
-            var sb = new StringBuilder(" elec ").Append(e.LightsOn ? '1' : '0');
-            foreach (var l in new[] { e.Switches, e.Outlets })
+            var sb = new StringBuilder(" elec ").Append(e.Switches.Count.ToString(CultureInfo.InvariantCulture));
+            for (int k = 0; k < e.Switches.Count; k++)
             {
-                sb.Append(' ').Append(l.Count.ToString(CultureInfo.InvariantCulture));
-                foreach (var v in l)
-                {
-                    sb.Append(' ').Append(v.Id.ToString(CultureInfo.InvariantCulture)).Append(' ').Append(F(v.X)).Append(' ').Append(F(v.Y)).Append(' ').Append(F(v.Z))
-                      .Append(' ').Append(F(v.Yaw));
-                    if (v.Kind == ElectricalKind.Outlet) sb.Append(' ').Append(F(v.Watts));
-                }
+                var v = e.Switches[k];
+                sb.Append(' ').Append(v.Id.ToString(CultureInfo.InvariantCulture)).Append(' ').Append(F(v.X)).Append(' ').Append(F(v.Y)).Append(' ').Append(F(v.Z))
+                  .Append(' ').Append(F(v.Yaw)).Append(' ').Append(e.Down[k] ? '1' : '0');
             }
+            sb.Append(' ').Append(e.Outlets.Count.ToString(CultureInfo.InvariantCulture));
+            foreach (var v in e.Outlets)
+                sb.Append(' ').Append(v.Id.ToString(CultureInfo.InvariantCulture)).Append(' ').Append(F(v.X)).Append(' ').Append(F(v.Y)).Append(' ').Append(F(v.Z))
+                  .Append(' ').Append(F(v.Yaw)).Append(' ').Append(F(v.Watts));
             sb.Append(' ').Append(e.Lights.Count.ToString(CultureInfo.InvariantCulture));
             foreach (int k in e.Lights) sb.Append(' ').Append(k.ToString(CultureInfo.InvariantCulture));
             return sb.ToString();
@@ -203,17 +204,22 @@ namespace UnturnedSim
             int at = i + 1;
             bool Int(out int v) { v = 0; return at < p.Length && int.TryParse(p[at++], NumberStyles.Integer, CultureInfo.InvariantCulture, out v); }
             bool Num(out float v) { v = 0f; return at < p.Length && N(p[at++], out v); }
-            if (!Int(out int on) || on is not (0 or 1)) return null;
-            e.LightsOn = on == 1;
             foreach (var kind in new[] { ElectricalKind.Switch, ElectricalKind.Outlet })
             {
                 if (!Int(out int n) || n < 0 || n > 64) return null;
                 for (int k = 0; k < n; k++)
                 {
                     if (!Int(out int id) || !Num(out float x) || !Num(out float y) || !Num(out float z) || !Num(out float yaw)) return null;
-                    float watts = 0f;
-                    if (kind == ElectricalKind.Outlet && !Num(out watts)) return null;
-                    e.Add(new ElectricalFixture(kind, id, x, y, z, yaw, watts));
+                    if (kind == ElectricalKind.Switch)
+                    {
+                        if (!Int(out int down) || down is not (0 or 1)) return null;
+                        e.Add(new ElectricalFixture(kind, id, x, y, z, yaw), down == 1);
+                    }
+                    else
+                    {
+                        if (!Num(out float watts)) return null;
+                        e.Add(new ElectricalFixture(kind, id, x, y, z, yaw, watts));
+                    }
                 }
             }
             if (!Int(out int lights) || lights < 0 || lights > 256) return null;
