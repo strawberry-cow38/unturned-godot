@@ -13,13 +13,14 @@ namespace UnturnedSim.Tests
     public partial class BuildingGenTests
     {
         /// <summary>A storey's ceiling over a point: the floor above's underside, a flat roof's (it sits on the wall heads), or
-        /// a pitched roof's plane less its whole thickness.</summary>
+        /// under a pitched roof the lower of the wall heads and its underside (its plane less half its thickness along the
+        /// slope: a surface is built about its plane) -- a top storey has no ceiling under its roof but its walls' heads.</summary>
         static float CeilingAt(BuildingGenResult r, int f, float x, float z)
         {
             if (f < r.Floors - 1) return (f + 1) * Storey - BuildingGen.Slab;
             if (r.Roof == RoofKind.Flat) return (f + 1) * Storey;
             float h = BuildingGen.RoofTopAt(r, x, z);
-            return float.IsNaN(h) ? (f + 1) * Storey : h - BuildingGen.Slab;
+            return float.IsNaN(h) ? (f + 1) * Storey : MathF.Min((f + 1) * Storey, h - BuildingGen.Slab * 0.5f / MathF.Cos(r.RoofPitch * MathF.PI / 180f));
         }
 
         /// <summary>A curtain's run along its wall and out of it, as it hangs: its rail end to end, from the wall to its

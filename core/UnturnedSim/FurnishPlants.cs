@@ -48,6 +48,9 @@ namespace UnturnedSim
         /// one beside the couch stands at most PlantBeside off its side. A top plant stands PlantInset in from its top's
         /// edges and off whatever else is on it.</summary>
         public const float PlantClear = 0.1f, PlantBeside = 0.5f, PlantInset = 0.05f;
+        /// <summary>A plant keeps this far sideways off a window's opening, 0.7 m into the room (strawberry, round 12: "widen
+        /// it slightly"; it was the floor plan's 0.1).</summary>
+        public const float PlantWindowGap = 0.3f;
 
         /// <summary>Testing only: furnish with no potted plants on this thread.</summary>
         [ThreadStatic] public static bool NoPlants;
@@ -130,8 +133,8 @@ namespace UnturnedSim
 
             /// <summary>Does a floor plant's footprint stand in a window's zone or the fire's: the floor plan's (the windows
             /// it was laid with, and the view from the couch to its set), and the windows as they stand now (Windows) --
-            /// across the opening and 0.1 m either side, 0.7 m into the room, as the floor plan lays one -- but for a vent or a
-            /// bathroom's slit, over the tallest plant's head.</summary>
+            /// across the opening and PlantWindowGap either side, 0.7 m into the room -- but for a vent or a bathroom's slit,
+            /// over the tallest plant's head.</summary>
             bool BlocksWindow((float X0, float Z0, float X1, float Z1) fp)
             {
                 if (_p.Cells(fp).Any(c => _p.KeepTall[c.I, c.J])) return true;
@@ -140,7 +143,7 @@ namespace UnturnedSim
                     if (o.V >= 2.5f) continue;
                     var (dx, dz) = PlanTrig.CosSin(w.Yaw); dz = -dz;
                     float nx = -dz * side, nz = dx * side, t = w.Thickness * 0.5f + 0.7f;
-                    float ax = w.X + dx * (o.U - 0.1f), az = w.Z + dz * (o.U - 0.1f), bx = w.X + dx * (o.U1 + 0.1f), bz = w.Z + dz * (o.U1 + 0.1f);
+                    float ax = w.X + dx * (o.U - PlantWindowGap), az = w.Z + dz * (o.U - PlantWindowGap), bx = w.X + dx * (o.U1 + PlantWindowGap), bz = w.Z + dz * (o.U1 + PlantWindowGap);
                     var zone = (MathF.Min(MathF.Min(ax, bx), MathF.Min(ax, bx) + nx * t), MathF.Min(MathF.Min(az, bz), MathF.Min(az, bz) + nz * t),
                                 MathF.Max(MathF.Max(ax, bx), MathF.Max(ax, bx) + nx * t), MathF.Max(MathF.Max(az, bz), MathF.Max(az, bz) + nz * t));
                     if (Overlaps(fp, zone)) return true;
@@ -149,10 +152,12 @@ namespace UnturnedSim
             }
 
             /// <summary>Is anything hung on this floor (the television, a clock) within PlantClear of a plant standing to
-            /// `top` over the floor, and lower than that top and PlantClear?</summary>
+            /// `top` over the floor, and lower than that top and PlantClear -- or hanging from the ceiling (a light: a tall plant
+            /// twice its drawn size, 3.4 m, reaches a flush mount's 3.47 m under a storey's ceiling)?</summary>
             bool UnderHung((float X0, float Z0, float X1, float Z1) fp, float top)
-                => _res.Furniture.Any(o => o.Mounted && o.Floor == _room.Floor && Overlaps(Grow(fp, PlantClear), o.Footprint)
-                                           && o.Y - FurnitureCatalog.Sizes[o.Name].H < _room.Floor * Storey + top + PlantClear);
+                => _res.Furniture.Any(o => o.Floor == _room.Floor && Overlaps(Grow(fp, PlantClear), o.Footprint)
+                                           && (o.Mounted ? o.Y - FurnitureCatalog.Sizes[o.Name].H : o.Ceiling ? o.Y - (o.Name.Contains("Pendant") ? PendantDrop : 0.28f) : float.MaxValue)
+                                              < _room.Floor * Storey + top + PlantClear);
 
             /// <summary>Would a floor piece at p stand within PlantClear of another standing in the room?</summary>
             bool Crowds(string name, (float X, float Z, float Yaw) p)

@@ -48,10 +48,11 @@ namespace UnturnedSim
     /// Beside -- pieces by name prefix, "Couch" is both couches); how many hang side by side (Group: 2..Group of them, the
     /// row's look-alikes taking turns; 1 alone); and whether it is a room's big focal piece, of which a wall holds one
     /// (Focal: the television is one). Tags are the manifest's, for the record. Stand: a piece you stand before (the
-    /// full-height mirror, down to the floor) wants that much clear floor of its room in front of it, across its width.</summary>
+    /// full-height mirror, down to the floor) wants that much clear floor of its room in front of it, across its width.
+    /// UnderCeiling: it hangs with its top flush under the ceiling over its spot, whatever the storey's (Height unused).</summary>
     public sealed record DecorRow(string Name, RoomKind[] Rooms, float Height, string Slot, int Weight = 10, int Max = 1, DecorNeed Need = DecorNeed.None,
                                   DecorSpot Spot = DecorSpot.Wall, string[] Over = null, string[] Beside = null, int Group = 1, bool Focal = false,
-                                  string Tags = "", float Stand = 0f)
+                                  string Tags = "", float Stand = 0f, bool UnderCeiling = false)
     {
         public bool Fills(string slot) => (" " + Slot + " ").Contains(" " + slot + " ");
     }
@@ -124,11 +125,13 @@ namespace UnturnedSim
             // (Coat_Hooks_1, the rack with a coat on it, was dropped -- VoX: "might be confusing to players, a coat they can't
             // use"; astraclaw's replacement is the sunburst, with the lesser art below)
             new("Key_Rack_0", In(Hall), 1.8f, "keys", Weight: 6, Need: DecorNeed.OuterDoor | DecorNeed.Home, Spot: DecorSpot.Door, Tags: "entry front_door"),
-            // fixtures, over what they serve: upper cabinets over the counters, sink and dishwasher (wood over the wood set,
-            // grey over the grey set's Counter_2 -- which the furnisher does not place yet, so the grey waits), a utensil
-            // rail over the stove, a medicine cabinet over the basin, a towel rail by the tub or the basin
-            new("Wall_Cabinet_0", In(Kitchen), 2.9f, "cabinets", Max: 8, Spot: DecorSpot.Over, Over: new[] { "Counter_0", "Counter_1", "Disher_0" }, Tags: "upper_cabinet wood counter_0"),
-            new("Wall_Cabinet_1", In(Kitchen), 2.9f, "cabinets", Max: 8, Spot: DecorSpot.Over, Over: new[] { "Counter_2" }, Tags: "upper_cabinet grey counter_2"),
+            // fixtures, over what they serve: upper cabinets over the counters, sink and dishwasher -- the counter itself, hung
+            // upside down from the ceiling (strawberry, round 12: "replace the custom wall cabinets with counters hung upside
+            // down", Upper_Counter_0 = Counter_0 turned over its front axis, tools/derive_prop.py), its top flush under the
+            // ceiling: 1.35 m deep, so 1.05 m over the worktop under a storey's 3.75 m ceiling; Wall_Cabinet_0 and the grey
+            // Wall_Cabinet_1 are no longer hung -- a utensil rail over the stove, a medicine cabinet over the basin, a towel
+            // rail by the tub or the basin
+            new("Upper_Counter_0", In(Kitchen), 0f, "cabinets", Max: 8, Spot: DecorSpot.Over, Over: new[] { "Counter_0", "Counter_1", "Disher_0" }, UnderCeiling: true, Tags: "upper_cabinet wood counter_0"),
             new("Utensil_Rail_0", In(Kitchen), 2.15f, "rail", Spot: DecorSpot.Over, Over: new[] { "Oven_0", "Counter_0" }, Tags: "counter cooking"),
             new("Medicine_Cabinet_0", In(Bathroom), 2.5f, "sink", Weight: 8, Spot: DecorSpot.Over, Over: new[] { "Counter_1" }, Tags: "mirror sink"),
             new("Towel_Rail_0", In(Bathroom), 1.6f, "towel", Beside: new[] { "Tub", "Counter_1" }, Tags: "towel wash"),
@@ -196,11 +199,12 @@ namespace UnturnedSim
         /// <summary>How far from its door a hook or a key rack hangs, at most.</summary>
         public const float DecorDoorReach = 3f;
 
-        /// <summary>A décor row's piece, hung at its height: its bottom and top over the floor.</summary>
+        /// <summary>A décor row's piece, hung at its height: its bottom and top over the floor. (One hung under the ceiling: under
+        /// the lowest a room has, OpeningTop -- a storey under another -- the most of the room it can take.)</summary>
         public static (float Bottom, float Top) DecorSpan(DecorRow row)
         {
             float h = FurnitureCatalog.Sizes[row.Name].H;
-            return (row.Height - h, row.Height + h);
+            return row.UnderCeiling ? (OpeningTop - 2f * h, OpeningTop) : (row.Height - h, row.Height + h);
         }
 
         sealed partial class Furnisher
@@ -462,11 +466,16 @@ namespace UnturnedSim
             /// fireplace's wall (FireFace)? For a piece hung by a room's own recipe (the clock), which takes no stretches.</summary>
             bool HangRefused(string name, float x, float z, float yaw)
             {
+                var f = BackFace(name, x, z, yaw);
+                return FireFace(f) || WindowCuts(f).Any(c => c.A < f.Hi && c.B > f.Lo);
+            }
+
+            /// <summary>The face a piece hung at (x, z, yaw) has its back on: turned its way, at its back, along its width.</summary>
+            Face BackFace(string name, float x, float z, float yaw)
+            {
                 var fp = FurnitureCatalog.Footprint(name, x, z, yaw);
                 var (fx, fz) = FrontOf(yaw);
-                // the face its back is on: turned its way, at its back, along its width
-                var f = fx != 0 ? new Face(fx, 0, fx > 0 ? fp.X0 : fp.X1, fp.Z0, fp.Z1) : new Face(0, fz, fz > 0 ? fp.Z0 : fp.Z1, fp.X0, fp.X1);
-                return FireFace(f) || WindowCuts(f).Any(c => c.A < f.Hi && c.B > f.Lo);
+                return fx != 0 ? new Face(fx, 0, fx > 0 ? fp.X0 : fp.X1, fp.Z0, fp.Z1) : new Face(0, fz, fz > 0 ? fp.Z0 : fp.Z1, fp.X0, fp.X1);
             }
 
             List<(float X0, float Z0, float X1, float Z1, int Nx, int Nz, bool Own)> _fires;
@@ -568,6 +577,15 @@ namespace UnturnedSim
                 return c;
             }
 
+            /// <summary>The height a piece hangs at, over its floor, to meet the ceiling over it with its top: under the lowest of
+            /// the ceiling over its four corners (a pitched roof's slopes).</summary>
+            float UnderCeiling(string name, (float X, float Z, float Yaw) at)
+            {
+                var fp = FurnitureCatalog.Footprint(name, at.X, at.Z, at.Yaw);
+                float ceiling = new[] { (fp.X0, fp.Z0), (fp.X1, fp.Z0), (fp.X0, fp.Z1), (fp.X1, fp.Z1) }.Min(p => CeilingOver(p.Item1, p.Item2));
+                return ceiling - _room.Floor * Storey - FurnitureCatalog.Sizes[name].H;
+            }
+
             /// <summary>Is there floor to stand on before a piece hung at (x, z, yaw): `depth` of this room's clear floor in
             /// front of its face, across its width -- no piece, wall or stair on it, not the tile at a flight's end (where you
             /// step off the stairs), no door's leaf swinging through it? (The stairs and tiles exactly, as Put has them: the
@@ -666,7 +684,7 @@ namespace UnturnedSim
                     {
                         var at = AtFace(names[k], f, t - half + w * 0.5f + k * (w + DecorGroupGap));
                         string name = names[k];
-                        var m = at == null ? null : Hang(name, new[] { at.Value }, null, row.Height, rng, DecorReach,
+                        var m = at == null ? null : Hang(name, new[] { at.Value }, null, row.UnderCeiling ? UnderCeiling(name, at.Value) : row.Height, rng, DecorReach,
                                                          row.Stand > 0f ? (x, z, yaw) => !StandClear(name, x, z, yaw, row.Stand) : null);
                         if (at == null) offWall++; else if (m == null) refused++;
                         if (m == null) break;

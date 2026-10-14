@@ -1977,7 +1977,14 @@ namespace UnturnedSim.Tests
                             // (the wall décor's heights, and the openings at them, are its rows' own, held to the piece's own span by
                             // WallDecorFollowsTheRules: an upper cabinet at 2.9, a key rack under a bathroom's high slit)
                             bool decor = BuildingGen.Decor.Any(r => r.Name == m.Name);
-                            if ((m.Y < f * Storey + 1.8f || m.Y > f * Storey + 2.6f) && !decor) bad.Add($"{nm} hangs at {m.Y - f * Storey:0.00} m");
+                            // (a clock near the top of the wall, strawberry round 12: "hang them much higher on the walls" -- its
+                            // face's top within 0.1-0.3 m of the lowest ceiling a room has, the floor above's underside)
+                            if (m.Name == "Clock_0")
+                            {
+                                float clockTop = m.Y - f * Storey + FurnitureCatalog.Sizes[m.Name].H, under = Storey - BuildingGen.Slab - clockTop;
+                                if (under < 0.1f || under > 0.3f) bad.Add($"{nm}: its face's top {under:0.00} m under a storey's ceiling");
+                            }
+                            else if ((m.Y < f * Storey + 1.8f || m.Y > f * Storey + 2.6f) && !decor) bad.Add($"{nm} hangs at {m.Y - f * Storey:0.00} m");
                             var (bx, bz) = m.Front;
                             var behind = walls.Where(w => { var b = Box(w); var c = (X: m.X - bx * 0.3f, Z: m.Z - bz * 0.3f); return c.X > b.Item1 - 0.05f && c.X < b.Item3 + 0.05f && c.Z > b.Item2 - 0.05f && c.Z < b.Item4 + 0.05f; }).ToList();
                             if (behind.Count == 0) bad.Add($"{nm} hangs on no wall");

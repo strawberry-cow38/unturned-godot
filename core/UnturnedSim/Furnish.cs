@@ -118,6 +118,9 @@ namespace UnturnedSim
             ["Wall_Shelf_4"] = new(-0.800f, 0.800f, 0f, 0.330f, 0.325f),
             ["Wall_Shelf_5"] = new(-1.050f, 1.050f, 0f, 0.220f, 0.080f),
             ["Wall_Cabinet_0"] = new(-0.750f, 0.750f, 0f, 0.520f, 0.500f),
+            // Counter_0 hung upside down (tools/derive_prop.py --hang): turned over its front axis, backed at Y 0, centred up
+            // and down -- 1.35 m deep, so H 0.675, its worktop now its underside
+            ["Upper_Counter_0"] = new(-0.750f, 0.750f, 0f, 1.125f, 0.675f),
             ["Wall_Cabinet_1"] = new(-0.750f, 0.750f, 0f, 0.520f, 0.500f),
             ["Utensil_Rail_0"] = new(-0.600f, 0.600f, 0f, 0.100f, 0.250f),
             ["Calendar_0"] = new(-0.250f, 0.250f, 0f, 0.020f, 0.400f),
@@ -133,11 +136,14 @@ namespace UnturnedSim
             // the deer's head on its plaque (astraclaw, from the stock deer; approved by strawberry): 0.76 m out of the wall
             ["Deer_Wall_Trophy_0"] = new(-0.732f, 0.732f, 0f, 0.763f, 0.667f),
             // astraclaw's potted plants, the four strawberry approved (2026-10-12; Potted_Plant_Floor_0 was not): origin at the
-            // middle of the pot's base. The two small ones go on a top, the two big ones on the floor (FurnishPlants)
-            ["Potted_Plant_Table_0"] = new(-0.161f, 0.161f, -0.139f, 0.139f, 0.401f),
-            ["Potted_Flowers_0"] = new(-0.222f, 0.222f, -0.192f, 0.192f, 0.368f),
-            ["Potted_Plant_Upright_0"] = new(-0.215f, 0.215f, -0.186f, 0.186f, 0.852f),
-            ["Potted_Plant_Tall_0"] = new(-0.697f, 0.697f, -0.603f, 0.603f, 1.701f),     // its leaves 1.39 x 1.21 m across
+            // middle of the pot's base. The two small ones go on a top, the two big ones on the floor (FurnishPlants). Twice
+            // the size they were drawn (strawberry, round 12: "scale ALL four up by at least 2x"; the OBJs themselves,
+            // tools/derive_prop.py --scale 2, so every consumer sees one size): the tall one's 3.40 m stands 0.35 m under a
+            // storey's 3.75 m ceiling, so none needed capping
+            ["Potted_Plant_Table_0"] = new(-0.322f, 0.322f, -0.278f, 0.278f, 0.802f),
+            ["Potted_Flowers_0"] = new(-0.444f, 0.444f, -0.384f, 0.384f, 0.736f),
+            ["Potted_Plant_Upright_0"] = new(-0.430f, 0.430f, -0.372f, 0.372f, 1.704f),
+            ["Potted_Plant_Tall_0"] = new(-1.394f, 1.394f, -1.206f, 1.206f, 3.402f),     // its leaves 2.79 x 2.41 m across
             ["Crate_0"] = new(-0.62f, 0.62f, -0.62f, 0.62f, 1.25f),
             ["Crate_3"] = new(-0.94f, 0.94f, -0.94f, 0.94f, 1.88f),
             ["Barrel_0"] = new(-0.54f, 0.54f, -0.54f, 0.54f, 1.28f),
@@ -1238,10 +1244,13 @@ namespace UnturnedSim
                 var near = (fp.X0 - StairWallReach, fp.Z0 - StairWallReach, fp.X1 + StairWallReach, fp.Z1 + StairWallReach);
                 return _p.StairRects.Any(r => Overlaps(near, r));
             }
+            /// <summary>A flat television on the wall the couch faces -- never a fireplace's wall (strawberry, round 12: the
+            /// wall décor's rule, FireFace, now the set's too), refused once ranked as the clock is.</summary>
             bool WallTv(FurniturePlan c)
             {
                 var (rx, rz) = c.Right;
-                return Hang("Television_0", Facing(c, "Television_0", WallTvReach), (x, z, _) => -MathF.Abs((x - c.X) * rx + (z - c.Z) * rz)) != null;
+                return Hang("Television_0", Facing(c, "Television_0", WallTvReach), (x, z, _) => -MathF.Abs((x - c.X) * rx + (z - c.Z) * rz),
+                            refuse: (x, z, yaw) => FireFace(BackFace("Television_0", x, z, yaw))) != null;
             }
             bool Crt(FurniturePlan c)
             {
@@ -2123,7 +2132,10 @@ namespace UnturnedSim
             void Clock()
             {
                 var (cx, cz) = Centre();
-                float bottom = ClockHeight - FurnitureCatalog.Sizes["Clock_0"].H;
+                // what may stand under it is judged as it was when the clock hung at ClockClearedAt: the spots that pass are
+                // ranked on the Furnisher's shared draws, one each, so a looser test -- the higher clock clears a fridge -- would
+                // hand every later room different draws. It only ever keeps off more than it needs to.
+                float bottom = ClockClearedAt - FurnitureCatalog.Sizes["Clock_0"].H;
                 Hang("Clock_0", Against("Clock_0", Side.Back).Where(p =>
                 {
                     var fp = FurnitureCatalog.Footprint("Clock_0", p.X, p.Z, p.Yaw);
@@ -2131,8 +2143,12 @@ namespace UnturnedSim
                     return !ByStairs("Clock_0", p) && !_mine.Any(o => o.On == null && !o.Mounted && !o.Ceiling && FurnitureCatalog.Sizes[o.Name].H > bottom - 0.1f && Overlaps(below, o.Footprint));
                 }), (x, z, _) => -Math.Sqrt((x - cx) * (x - cx) + (z - cz) * (z - cz)), ClockHeight, refuse: (x, z, yaw) => HangRefused("Clock_0", x, z, yaw));
             }
-            /// <summary>A wall clock's middle stands this high: above a counter's sink, below the ceiling's lights.</summary>
-            const float ClockHeight = 2.5f;
+            /// <summary>A wall clock's middle stands this high (strawberry, round 12: "hang them much higher on the walls"): its
+            /// 1 m face's top 0.15 m under the lowest ceiling a room has -- a storey under another, whose floor's slab comes
+            /// down to OpeningTop, 3.75 m -- so 3.1, its face 2.6-3.6 m. It was 2.5, its middle at a standing player's eye.</summary>
+            const float ClockHeight = OpeningTop - 0.15f - 0.5f;
+            /// <summary>The height the clock's clearance over what stands under it is judged at (Clock): where it hung before.</summary>
+            const float ClockClearedAt = 2.5f;
 
             /// <summary>A coat stand by the front door, if the hall has it.</summary>
             void Hall()

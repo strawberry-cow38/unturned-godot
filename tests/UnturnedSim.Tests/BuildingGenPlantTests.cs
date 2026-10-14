@@ -126,18 +126,22 @@ namespace UnturnedSim.Tests
         {
             var byName = BuildingGen.Decor.ToDictionary(r => r.Name);
             var bad = new List<string>();
-            int houses = 0, fires = 0, fireRooms = 0, fireRoomPieces = 0, props = 0, clocks = 0, nearWindow = 0;
+            int houses = 0, fires = 0, fireRooms = 0, fireRoomPieces = 0, props = 0, clocks = 0, nearWindow = 0, fireTvs = 0;
             foreach (var (spec, res) in All())
             {
                 var fp = Fireplaces(res);
                 if (fp.Count > 0) houses++;
                 fires += fp.Count;
                 var hung = res.Furniture.Where(m => m.Mounted && (byName.ContainsKey(m.Name) || m.Name == "Clock_0")).ToList();
+                // (and the flat television, round 12: off the fireplace's wall too -- it keeps the floor plan's window zones, not
+                // the décor's 0.6 m, so it is not in the window check below)
+                var tvs = res.Furniture.Where(m => m.Mounted && m.Name == "Television_0").ToList();
                 foreach (var fire in fp)
                 {
                     fireRooms += fire.Rooms.Count;
                     fireRoomPieces += hung.Count(m => fire.Rooms.Contains(m.Room));
-                    foreach (var m in hung.Where(m => OnFireWall(m, fire, byName.TryGetValue(m.Name, out var row) && row.Spot == DecorSpot.Over)))
+                    fireTvs += tvs.Count(m => fire.Rooms.Contains(m.Room));
+                    foreach (var m in hung.Concat(tvs).Where(m => OnFireWall(m, fire, byName.TryGetValue(m.Name, out var row) && row.Spot == DecorSpot.Over)))
                         bad.Add($"{Name(spec)}: {m} is on the fireplace's wall");
                 }
                 foreach (var m in hung)
@@ -147,12 +151,32 @@ namespace UnturnedSim.Tests
                 }
             }
             TestContext.Progress.WriteLine($"[wall-props] {props} hung props ({clocks} clocks) over {All().Count} buildings; {fires} fireplaces in {houses} houses, "
-                                           + $"{fireRoomPieces} props in the {fireRooms} rooms whose wall one is; {nearWindow} within {WindowBerth} m of a window; "
+                                           + $"{fireRoomPieces} props and {fireTvs} wall televisions in the {fireRooms} rooms whose wall one is; {nearWindow} within {WindowBerth} m of a window; "
                                            + $"{bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
             Assert.That(houses, Is.GreaterThan(30), "fireplaces were there to keep off");
             Assert.That(fireRoomPieces, Is.GreaterThan(houses), "the rooms with a fireplace still hang their props, on their other walls");
             Assert.That(clocks, Is.GreaterThan(500));
+            Assert.That(fireTvs, Is.GreaterThan(10), "wall televisions hang in rooms with a fireplace, on their other walls");
             Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(20)));
+        }
+
+        // W2: the flat television keeps off a fireplace's wall too (strawberry, round 12: "it now falls under the fireplace
+        // rule"). The sweep never puts one there -- 162 wall televisions in 765 fireplace houses, a search of 800 specs found
+        // one, and it is this house: its set hung on the house wall the breast stands against. Here it goes elsewhere, and
+        // the living room still has a set it can watch (Facing: on a wall, or a CRT on a table).
+        // BREAK IT: drop WallTv's refuse.
+        [Test]
+        public void WallTelevisionKeepsOffTheFireplace()
+        {
+            var spec = new BuildingGenSpec { Seed = 113, Kind = BuildingKind.Residential, Chimney = ChimneyChoice.Yes, MinRooms = 7, MaxFloors = 1, MaxRoomsPerFloor = 8 };
+            var res = BuildingGen.Generate(spec);
+            var fires = Fireplaces(res);
+            var living = res.Layout.Single(g => g.Kind == RoomKind.LivingRoom);
+            Assert.That(fires.Any(f => f.Rooms.Contains(living)), "the case's living room has the fireplace");
+            var sets = res.Furniture.Where(m => m.Room == living && m.Name.StartsWith("Television")).ToList();
+            TestContext.Progress.WriteLine($"[tv-fire] {Name(spec)}: {string.Join(", ", sets)}");
+            Assert.That(sets.Count, Is.EqualTo(1), "a set to watch");
+            foreach (var m in sets.Where(m => m.Mounted)) Assert.That(fires.Any(f => OnFireWall(m, f, false)), Is.False, $"{m} is on the fireplace's wall");
         }
 
         /// <summary>The floor of a room as a body walks it -- blocked at 0.1 m by walls, stairs and holes, other rooms and
@@ -239,7 +263,8 @@ namespace UnturnedSim.Tests
                     if (!BuildingGen.PlantRecipes.ContainsKey(g.Key.Kind)) bad.Add($"{Name(spec)}: a plant in a {g.Key.Kind}");
                     kinds[g.Key.Kind] = kinds.GetValueOrDefault(g.Key.Kind) + g.Count();
                 }
-                // out of the windows' zones -- and the fire's: an opening off the floor under a vent's height, across it and 0.6 m in
+                // out of the windows' zones -- and the fire's: an opening off the floor under a vent's height, across it and 0.25 m
+                // either side of it (round 12: "widen it slightly"; the generator's PlantWindowGap is 0.3), 0.6 m in
                 void InFrontOfWindow(FurniturePlan m, string nm)
                 {
                     foreach (var w in WallsOn(res, m.Floor))
@@ -247,7 +272,7 @@ namespace UnturnedSim.Tests
                         var n = Normal(w); float t = w.Thickness * 0.5f + 0.6f;
                         foreach (var o in w.Openings.Where(o => o.V >= 0.05f && o.V < 2.5f))
                         {
-                            var p = At(w, o.U + 0.05f); var q = At(w, o.U1 - 0.05f);
+                            var p = At(w, o.U - 0.25f); var q = At(w, o.U1 + 0.25f);
                             var zone = (MathF.Min(MathF.Min(p.X, q.X) - n.X * t, MathF.Min(p.X, q.X) + n.X * t), MathF.Min(MathF.Min(p.Z, q.Z) - n.Z * t, MathF.Min(p.Z, q.Z) + n.Z * t),
                                         MathF.Max(MathF.Max(p.X, q.X) - n.X * t, MathF.Max(p.X, q.X) + n.X * t), MathF.Max(MathF.Max(p.Z, q.Z) - n.Z * t, MathF.Max(p.Z, q.Z) + n.Z * t));
                             if (Overlap(m.Footprint, zone, 0.005f)) bad.Add($"{nm} stands in front of {(o.Glazed ? "a window" : $"an opening (archetype {o.Archetype}, {o.V:0.00} m up)")}");

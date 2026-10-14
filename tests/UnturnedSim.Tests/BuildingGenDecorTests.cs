@@ -151,7 +151,17 @@ namespace UnturnedSim.Tests
                     if (stairs.Any(st => Overlap(Grown(fp, BuildingGen.StairWallReach - 0.05f), st, 0f))) bad.Add($"{nm} hangs on a wall the stairs run along");
                     // at a height: over a sill, under the ceiling -- but for a piece you stand before, down to the floor (the
                     // full-height mirror: TallMirrorAndTrophyKeepTheirSpace holds the floor before it), just off it
-                    if (bottom < (row.Stand > 0f ? 0.05f : 1.0f) || top > ceiling - 0.05f) bad.Add($"{nm} spans {bottom:0.00}-{top:0.00} m");
+                    // -- and for one hung under the ceiling (the upside-down counter), its top flush under the lowest ceiling over it,
+                    // within 2 cm
+                    // -- and, whatever "the ceiling" computes to, its bottom within reach over the worktop it serves: 2.3-3.0 m up,
+                    // 0.95-1.65 m over the counters' 1.35 (a check of the ceiling's own, which the flush check cannot be: it agreed
+                    // with counters hung under a gable's ridge, 6 m up, because it computed the same ceiling)
+                    if (row.UnderCeiling)
+                    {
+                        float over = new[] { (fp.X0, fp.Z0), (fp.X1, fp.Z0), (fp.X0, fp.Z1), (fp.X1, fp.Z1) }.Min(q => CeilingAt(res, f, q.Item1, q.Item2)) - f * Storey;
+                        if (MathF.Abs(top - over) > 0.02f || bottom < 2.3f || bottom > 3.0f) bad.Add($"{nm} spans {bottom:0.00}-{top:0.00} m, the ceiling over it {over:0.00}");
+                    }
+                    else if (bottom < (row.Stand > 0f ? 0.05f : 1.0f) || top > ceiling - 0.05f) bad.Add($"{nm} spans {bottom:0.00}-{top:0.00} m");
                     // apart from every other hung piece, the clock and the television too: fixtures over a run of counters side by
                     // side, the rest not crowding
                     foreach (var o in here.Where(o => o != m && o.Mounted))
@@ -252,7 +262,7 @@ namespace UnturnedSim.Tests
                 openRooms += opened.Count;
                 openRoomPieces += res.Furniture.Count(m => opened.Contains(m.Room) && byName.ContainsKey(m.Name));
                 // the cabinets, and how many of them have a fridge beside them (side by side is right; over it, the rule above)
-                foreach (var c in res.Furniture.Where(m => m.Name.StartsWith("Wall_Cabinet")))
+                foreach (var c in res.Furniture.Where(m => m.Name.StartsWith("Upper_Counter")))
                 {
                     cabinets++;
                     if (res.Furniture.Any(o => o.Room == c.Room && o.Name.StartsWith("Fridge") && SameWay(o, c) && Overlap(Grown(c.Footprint, 0.1f), o.Footprint, 0f))) cabinetsByFridge++;
@@ -384,7 +394,10 @@ namespace UnturnedSim.Tests
                 byGuid.TryAdd(p[0], p[1]);
             var bad = want.Where(kv => byGuid.GetValueOrDefault(kv.Value) != kv.Key).Select(kv => $"{kv.Key}: its GUID {kv.Value} loads {byGuid.GetValueOrDefault(kv.Value) ?? "NOTHING"}").ToList();
             // and every live row is one of them, or the retail poster
-            bad.AddRange(BuildingGen.Decor.Where(r => r.Name != "Poster_0" && !want.ContainsKey(r.Name)).Select(r => $"{r.Name}: a live row not in the kit"));
+            // (or a piece derived from a retail one, under the GUID registered for it: the counter hung upside down, round 12)
+            var derived = new Dictionary<string, string> { ["Upper_Counter_0"] = "d08869c027b8431382bd9db59baa5628" };
+            bad.AddRange(derived.Where(kv => byGuid.GetValueOrDefault(kv.Value) != kv.Key).Select(kv => $"{kv.Key}: its GUID {kv.Value} loads {byGuid.GetValueOrDefault(kv.Value) ?? "NOTHING"}"));
+            bad.AddRange(BuildingGen.Decor.Where(r => r.Name != "Poster_0" && !want.ContainsKey(r.Name) && !derived.ContainsKey(r.Name)).Select(r => $"{r.Name}: a live row not in the kit"));
             TestContext.Progress.WriteLine($"[decor-guids] {want.Count} kit pieces held to their manifest GUIDs, {BuildingGen.Decor.Count} live rows; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
             Assert.That(bad, Is.Empty, string.Join("\n", bad));
         }
