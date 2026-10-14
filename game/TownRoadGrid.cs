@@ -7044,9 +7044,10 @@ namespace UnturnedGodot
                     // greens' edge-to-edge rule) and stood the way retail stands a hedge (HedgeBasis: it is a Z-up mesh)
                     float g0 = treeAt[k] + MedianTreeClear, g1 = treeAt[k + 1] - MedianTreeClear;
                     if (g1 - g0 < HedgeCoreLength * 0.75f) continue;
+                    // (one straight side, tree to tree: the boulevard runs straight, and a hedge is laid in straight sides)
                     var line = new List<Vector3>();
-                    for (float d = g0; d < g1 + 1e-3f; d += Mathf.Max(0.5f, (g1 - g0) / Mathf.Ceil((g1 - g0) / 2f)))
-                        if (At(Mathf.Min(d, g1), out var lp, out _)) line.Add(new Vector3(lp.X, 0f, lp.Z));
+                    if (At(g0, out var lp0, out _)) line.Add(new Vector3(lp0.X, 0f, lp0.Z));
+                    if (At(g1, out var lp1, out _)) line.Add(new Vector3(lp1.X, 0f, lp1.Z));
                     ulong hh = h ^ ((ulong)(uint)k * 0x2545UL);
                     foreach (var hp in PiecesAlong(line, false, HedgeCoreDepth, ref hh))
                     {

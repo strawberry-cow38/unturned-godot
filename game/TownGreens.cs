@@ -63,6 +63,13 @@ namespace UnturnedGodot
         /// bench and this deep (seat and legroom), clear of every hedge, tree and bush by this much (m).</summary>
         public float BenchMinParkArea = 600f, BenchPadWidth = 3f, BenchPadDepth = 3.2f, BenchClear = 0.8f, BenchTreeClear = 3.5f;
         public string[] BushProps = { "Bush_0", "Bush_1" };
+        /// <summary>⭐ HEDGES WHERE THEY MAKE SENSE, NOT EVERYWHERE (strawberry 2026-10-14: "dont *require* hedges everywhere"): the
+        /// chance a park is left open (no hedge at all, bushes round its edge), and the chance a strip gets a hedgerow rather
+        /// than a line of bushes. A park that does get one has it only along its STREET side -- where it backs onto yards,
+        /// they are fenced already.</summary>
+        public float ParkOpenChance = 0.3f, RowHedgeChance = 0.55f;
+        /// <summary>A park's edge is its street side when it runs within this far (m) of a street's frontage line.</summary>
+        public float ParkStreetReach = 4f;
         /// <summary>A bush's scale (the stock ones are 6 m across) and its footprint radius at scale 1 (m).</summary>
         public float BushScale = 0.45f, BushRadius = 2.9f;
         /// <summary>How far from anything a lot could not have (m) a lone tree in a strip stands at the least.</summary>
@@ -282,7 +289,7 @@ namespace UnturnedGodot
                         }
                     if (cells.Count >= ParkMinArea && halfMax >= ParkMinHalfWidth) { PlanPocketPark(roads, on, w, h, Wl, Dl, cells.Count, ref seedH); what = "park"; }
                     else if (lotTouch > 0 && frontTouch >= 0.3f * lotTouch) what = $"left: along lot fronts ({frontTouch} of {lotTouch} lot cells beside it are a front)";
-                    else if (2f * halfMax >= RowMinWidth) { what = PlanHedgerows(on, w, h, Wl, Dl); }
+                    else if (2f * halfMax >= RowMinWidth) { what = PlanHedgerows(on, w, h, Wl, Dl, ref seedH); }
                     // ...and a tree in each spot of it wide enough to stand one (6 m across), clear of any hedge laid down it
                     if (what != "park" && halfMax >= LoneTreeHalfWidth)
                     {
@@ -508,7 +515,7 @@ namespace UnturnedGodot
         /// thinning leaves at every corner pruned, and what is left traced into lines from end to end and junction to
         /// junction -- each line, simplified to the few points that hold its shape, one hedge run, as deep as the strip
         /// is wide along it.</summary>
-        string PlanHedgerows(bool[,] on, int w, int h, Func<int, int, Vector3> Wl, Func<int, int, float> Dl)
+        string PlanHedgerows(bool[,] on, int w, int h, Func<int, int, Vector3> Wl, Func<int, int, float> Dl, ref ulong seedH)
         {
             var sk = (bool[,])on.Clone();
             Thin(sk, w, h);
@@ -620,9 +627,124 @@ namespace UnturnedGodot
                 }
                 Reach(0, 1, 0);
                 Reach(sp.Count - 1, sp.Count - 2, line.Count - 1);
-                HedgeRuns.Add(new HedgeRun { Pts = sp, Closed = false, Kind = "row", Depth = depth });
+                // straight, with hard corners square to the grid (strawberry 2026-10-14: "try to have them do 90s instead of
+                // curves, since the hedges are square")
+                sp = Rectify(sp, false);
+                seedH = Mix(seedH + 0x4ED6E5UL);
+                if (Unit(seedH, 8) < RowHedgeChance) { HedgeRuns.Add(new HedgeRun { Pts = sp, Closed = false, Kind = "row", Depth = depth }); continue; }
+                // ...or, as often, a line of bushes down it instead -- as big as the strip lets them be
+                float bs = Mathf.Clamp((width - 0.4f) / (2f * BushRadius), 0.25f, BushScale);
+                if (bs * BushRadius * 2f < 1f) continue;
+                BushesAlong(sp, false, bs, bs * BushRadius * 2f + 2.5f, ref seedH);
+                if (ProbeEverything) why.Append(" (bushes)");
             }
             return why.ToString();
+        }
+
+        /// <summary>Bushes down a line, `spacing` apart from half a spacing in, clear of the bushes and trees already stood.</summary>
+        void BushesAlong(List<Vector3> line, bool closed, float scale, float spacing, ref ulong seedH)
+        {
+            var pts = new List<Vector3>(line); if (closed && line.Count > 2) pts.Add(line[0]);
+            float total = 0f; for (int k = 1; k < pts.Count; k++) total += Flat(pts[k - 1], pts[k]);
+            for (float t = spacing * 0.5f; t <= total + 1e-3f; t += spacing)
+            {
+                float left = t; var q = pts[^1];
+                for (int k = 1; k < pts.Count; k++)
+                {
+                    float l = Flat(pts[k - 1], pts[k]);
+                    if (left <= l) { q = pts[k - 1].Lerp(pts[k], left / Mathf.Max(1e-4f, l)); break; }
+                    left -= l;
+                }
+                bool clear = true;
+                foreach (var (bq, _, sc) in Bushes) if (Flat(bq, q) < (sc + scale) * BushRadius + 0.5f) { clear = false; break; }
+                foreach (var t2 in LoneTrees) if (Flat(t2, q) < 2.5f) { clear = false; break; }
+                if (!clear) continue;
+                seedH = Mix(seedH + 0xB0B0UL);
+                Bushes.Add((q, BushProps[(int)(seedH % (ulong)BushProps.Length)], scale * (0.85f + 0.3f * Unit(seedH, 20))));
+            }
+        }
+
+        /// <summary>A plan direction's angle in the GRID's frame (radians, 0 along its streets' u axis), and back.</summary>
+        float GridAngle(Vector3 d) { float c = Mathf.Cos(Bearing), s = Mathf.Sin(Bearing); return Mathf.Atan2(-d.X * s + d.Z * c, d.X * c + d.Z * s); }
+        Vector3 FromGridAngle(float a) { float c = Mathf.Cos(Bearing), s = Mathf.Sin(Bearing), u = Mathf.Cos(a), v = Mathf.Sin(a); return new Vector3(u * c - v * s, 0f, u * s + v * c); }
+
+        /// <summary>⭐ A LINE SQUARED UP (strawberry 2026-10-14: "try to have them do 90s instead of curves, since the hedges are
+        /// square"). Simplified to its few straight sides; each side within 15 degrees of the grid's streets or the 45-degree
+        /// avenue turned onto it; sides that end up parallel and touching merged into one; jogs under 1.5 m taken out; and
+        /// the corners where the squared sides meet -- 90 degrees between the grid's, 45 where the avenue's come in. The
+        /// raster's line back as it was if squaring would move a corner more than 2.5 m off it.</summary>
+        List<Vector3> Rectify(List<Vector3> pts, bool closed)
+        {
+            var sp = Simplify(pts, 0.8f, closed);
+            // (a side under 1.5 m is a stair, not a side: its two ends become one point)
+            for (int pass = 0; pass < 3 && sp.Count > (closed ? 3 : 2); pass++)
+            {
+                bool any = false;
+                int segs = closed ? sp.Count : sp.Count - 1;
+                for (int k = 0; k < segs && sp.Count > (closed ? 3 : 2); k++)
+                {
+                    int k2 = (k + 1) % sp.Count;
+                    if (Flat(sp[k], sp[k2]) >= 1.5f) continue;
+                    if (!closed && (k == 0 || k2 == sp.Count - 1)) continue;     // (a line's ends stay where they are)
+                    sp[k] = (sp[k] + sp[k2]) * 0.5f; sp.RemoveAt(k2); any = true; break;
+                }
+                if (!any) break;
+            }
+            int m = sp.Count;
+            if (m < 2 || closed && m < 3) return sp;
+            var lines = new List<(Vector3 p, Vector3 d, float len)>();
+            int n = closed ? m : m - 1;
+            for (int k = 0; k < n; k++)
+            {
+                var a = sp[k]; var b = sp[(k + 1) % m];
+                var d = new Vector3(b.X - a.X, 0f, b.Z - a.Z); float len = d.Length();
+                if (len < 1e-3f) continue;
+                float ang = GridAngle(d), snapped = Mathf.Round(ang / (Mathf.Pi * 0.25f)) * (Mathf.Pi * 0.25f);
+                var dir = Mathf.Abs(Mathf.AngleDifference(ang, snapped)) < Mathf.DegToRad(15f) ? FromGridAngle(snapped) : d / len;
+                var mid = (a + b) * 0.5f; mid.Y = 0f;
+                if (lines.Count > 0 && lines[^1].d.Dot(dir) > 0.999f)
+                {
+                    var pv = lines[^1]; var nrm = new Vector3(-dir.Z, 0f, dir.X);
+                    float off = (pv.p.Dot(nrm) * pv.len + mid.Dot(nrm) * len) / (pv.len + len);
+                    lines[^1] = (pv.p + nrm * (off - pv.p.Dot(nrm)), dir, pv.len + len);
+                }
+                else lines.Add((mid, dir, len));
+            }
+            if (closed && lines.Count > 2 && lines[^1].d.Dot(lines[0].d) > 0.999f)
+            {
+                var pv = lines[^1]; var f = lines[0]; var nrm = new Vector3(-f.d.Z, 0f, f.d.X);
+                float off = (pv.p.Dot(nrm) * pv.len + f.p.Dot(nrm) * f.len) / (pv.len + f.len);
+                lines[0] = (f.p + nrm * (off - f.p.Dot(nrm)), f.d, pv.len + f.len);
+                lines.RemoveAt(lines.Count - 1);
+            }
+            if (lines.Count < (closed ? 3 : 1)) return sp;
+            Vector3 Onto(Vector3 q, (Vector3 p, Vector3 d, float len) l) => l.p + l.d * (q - l.p).Dot(l.d);
+            var outp = new List<Vector3>();
+            if (!closed) outp.Add(Onto(sp[0], lines[0]));
+            int corners = closed ? lines.Count : lines.Count - 1;
+            for (int k = 0; k < corners; k++)
+            {
+                var l1 = lines[k]; var l2 = lines[(k + 1) % lines.Count];
+                float den = l1.d.X * l2.d.Z - l1.d.Z * l2.d.X;
+                if (Mathf.Abs(den) < 0.05f) { outp.Add(Onto(l2.p - l2.d * (l2.len * 0.5f), l1)); continue; }
+                var wv = l2.p - l1.p;
+                outp.Add(l1.p + l1.d * ((wv.X * l2.d.Z - wv.Z * l2.d.X) / den));
+            }
+            if (!closed) outp.Add(Onto(sp[^1], lines[^1]));
+            // (squaring must not wander off the ground it was traced on)
+            foreach (var v in outp)
+            {
+                float best = float.MaxValue;
+                for (int k = 0; k < (closed ? sp.Count : sp.Count - 1); k++)
+                {
+                    var a = sp[k]; var b = sp[(k + 1) % sp.Count];
+                    var ab = new Vector2(b.X - a.X, b.Z - a.Z); float l2s = Mathf.Max(1e-6f, ab.LengthSquared());
+                    var av = new Vector2(v.X - a.X, v.Z - a.Z);
+                    best = Mathf.Min(best, (av - ab * Mathf.Clamp(av.Dot(ab) / l2s, 0f, 1f)).Length());
+                }
+                if (best > 2.5f) return sp;
+            }
+            return outp;
         }
 
         /// <summary>⭐ A POCKET PARK in a piece of dead space big enough to stand in: a hedge round it ParkHedgeInset in from its
@@ -655,48 +777,103 @@ namespace UnturnedGodot
             var loop = TraceOutline(keepMask, w, h);
             if (loop == null || loop.Count < 8) return;
             var pts = new List<Vector3>(); foreach (var (a, b) in loop) pts.Add(Wl(a, b));
-            pts = Simplify(pts, 0.7f, closed: true);
+            pts = Rectify(pts, true);
             if (pts.Count < 3) return;                     // (a triangle lot's park line is a triangle)
             var mid = Vector3.Zero; foreach (var (a, b) in best) mid += Wl(a, b); mid /= best.Count;
-            // its way in: the point of the hedge line nearest a street's frontage
-            int gate = 0; float gateOff = float.MaxValue;
-            for (int k = 0; k < pts.Count; k++)
+            float twice = 0f; for (int k = 0; k < pts.Count; k++) { var a = pts[k]; var b = pts[(k + 1) % pts.Count]; twice += a.X * b.Z - b.X * a.Z; }
+            // which sides are its STREET side: along a street's frontage, within ParkStreetReach of it
+            float FrontageGap(Vector3 q)
+            {
+                float g = float.MaxValue;
                 foreach (int r in Built)
                 {
-                    RoadNear(roads, r, pts[k], out _, out float off);
-                    float o = off - (roads.RoadHalfWidth(r) + PavementGap + _walkWidth + PlotSetback);
-                    if (o < gateOff) { gateOff = o; gate = k; }
+                    RoadNear(roads, r, q, out _, out float off);
+                    g = Mathf.Min(g, off - (roads.RoadHalfWidth(r) + PavementGap + _walkWidth + PlotSetback));
                 }
-            var gateAt = pts[gate];
-            // the hedge, opened ParkGateWidth across the gate: walk the loop from just past the gate round to just before it
-            var open = OpenLoopAt(pts, gate, ParkGateWidth);
-            var run = new HedgeRun { Pts = open, Closed = false, Kind = "park", Depth = HedgeDepthMax };
-            HedgeRuns.Add(run);
-            var pk = new PocketPark { Centre = mid, Entrance = gateAt, Area = area, Lot = lot, Hedge = new HedgeRun { Pts = pts, Closed = true, Kind = "park-line" } };
-            // bushes just inside the hedge, a few metres apart round it, the way in left open
+                return g;
+            }
+            int sides = pts.Count;
+            var street = new bool[sides];
+            int longest = -1; float longestLen = 0f;
+            for (int k = 0; k < sides; k++)
             {
-                float br = BushRadius * BushScale;
-                var bc = new List<(int, int)>();
-                foreach (var (a, b) in best) { float d = Dl(a, b); if (d >= inset + 1.5f + br && d <= inset + 2.5f + br) bc.Add((a, b)); }
-                for (int k = bc.Count - 1; k > 0; k--)
+                var a = pts[k]; var b = pts[(k + 1) % sides];
+                var g = new[] { FrontageGap(a.Lerp(b, 0.25f)), FrontageGap(a.Lerp(b, 0.5f)), FrontageGap(a.Lerp(b, 0.75f)) };
+                System.Array.Sort(g);
+                street[k] = g[1] <= ParkStreetReach;
+                if (street[k] && Flat(a, b) > longestLen) { longestLen = Flat(a, b); longest = k; }
+            }
+            // its way in: the middle of its longest street side (no street side: the side nearest one)
+            if (longest < 0)
+            {
+                float bestGap = float.MaxValue;
+                for (int k = 0; k < sides; k++) { float g = FrontageGap(pts[k].Lerp(pts[(k + 1) % sides], 0.5f)); if (g < bestGap) { bestGap = g; longest = k; } }
+            }
+            var ga = pts[longest]; var gb = pts[(longest + 1) % sides];
+            var gateAt = ga.Lerp(gb, 0.5f);
+            seedH = Mix(seedH + 0x09E7UL);
+            bool open = Unit(seedH, 12) < ParkOpenChance;
+            float depthHere = lot != null ? HedgeDepthMin + 0.2f : HedgeCoreDepth;
+            if (!open)
+            {
+                // each run of street sides, one hedge, cut open across the way in
+                var runs = new List<List<Vector3>>();
+                bool all = true; for (int k = 0; k < sides; k++) if (!street[k]) all = false;
+                var dirG = (gb - ga).Normalized();
+                float hw = Mathf.Max(0.5f, Mathf.Min(ParkGateWidth * 0.5f, Flat(ga, gb) * 0.5f - 0.5f));
+                if (all)
                 {
-                    seedH = Mix(seedH + 0x51ED27UL);
-                    int m = (int)(seedH % (ulong)(k + 1));
-                    (bc[k], bc[m]) = (bc[m], bc[k]);
+                    // (street all round: one hedge from just past the way in, round every corner, to just before it)
+                    var c = new List<Vector3> { gateAt + dirG * hw };
+                    for (int q = 1; q <= sides; q++) c.Add(pts[(longest + q) % sides]);
+                    c.Add(gateAt - dirG * hw);
+                    runs.Add(c);
                 }
-                int maxBushes = lot != null ? Mathf.Clamp(area / 80, 1, 3) : Mathf.Clamp(area / 70, 2, 14);
-                int got = 0;
-                foreach (var (a, b) in bc)
+                else
                 {
-                    if (got >= maxBushes) break;
-                    var q = Wl(a, b);
-                    if (Flat(q, gateAt) < ParkGateWidth + br + 1f) continue;
-                    bool clear = true;
-                    foreach (var (bq, _, _) in Bushes) if (Flat(bq, q) < 2f * br + 2.5f) { clear = false; break; }
-                    if (!clear) continue;
-                    seedH = Mix(seedH + 0xB05EUL);
-                    Bushes.Add((q, BushProps[(int)(seedH % (ulong)BushProps.Length)], BushScale * (0.85f + 0.3f * Unit(seedH, 20))));
-                    got++;
+                    int s0 = 0; while (street[s0]) s0++;
+                    List<Vector3> cur = null;
+                    for (int q = 1; q <= sides; q++)
+                    {
+                        int k = (s0 + q) % sides;
+                        if (!street[k]) { if (cur != null) { runs.Add(cur); cur = null; } continue; }
+                        if (k == longest)
+                        {
+                            // the way in: this chain ends just before it, the next begins just past it
+                            cur ??= new List<Vector3> { pts[k] };
+                            cur.Add(gateAt - dirG * hw); runs.Add(cur);
+                            cur = new List<Vector3> { gateAt + dirG * hw, pts[(k + 1) % sides] };
+                            continue;
+                        }
+                        cur ??= new List<Vector3> { pts[k] };
+                        cur.Add(pts[(k + 1) % sides]);
+                    }
+                    if (cur != null) runs.Add(cur);
+                }
+                foreach (var c in runs)
+                    if (c.Count >= 2 && RunLength(new HedgeRun { Pts = c }) >= 2f) HedgeRuns.Add(new HedgeRun { Pts = c, Kind = "park", Depth = depthHere });
+            }
+            var pk = new PocketPark { Centre = mid, Entrance = gateAt, Area = area, Lot = lot, Hedge = new HedgeRun { Pts = pts, Closed = true, Kind = "park-line" } };
+            // bushes round its edge, a little in from it: in front of the hedge where there is one, along the open sides
+            // where there is not -- the way in left clear
+            {
+                float bsc = lot != null ? BushScale * 0.8f : BushScale;
+                float br = BushRadius * bsc;
+                int before = Bushes.Count, cap = lot != null ? Mathf.Clamp(area / 80, 1, 4) : Mathf.Clamp(area / 60, 2, 16);
+                for (int k = 0; k < sides && Bushes.Count - before < cap; k++)
+                {
+                    var a = pts[k]; var b = pts[(k + 1) % sides];
+                    var d = (b - a); float len = d.Length(); if (len < 2f) continue;
+                    d /= len;
+                    var inN = twice > 0f ? new Vector3(-d.Z, 0f, d.X) : new Vector3(d.Z, 0f, -d.X);
+                    float inBy = (street[k] && !open ? depthHere * 0.5f + 0.4f : 0f) + br + 0.3f;
+                    var line = new List<Vector3> { a + d * Mathf.Min(2.5f, len * 0.3f) + inN * inBy, b - d * Mathf.Min(2.5f, len * 0.3f) + inN * inBy };
+                    int got0 = Bushes.Count;
+                    BushesAlong(line, false, bsc, 2f * br + (street[k] && !open ? 5f : 3.5f), ref seedH);
+                    // (none in the way in, none outside the park line)
+                    for (int q = Bushes.Count - 1; q >= got0; q--)
+                        if (Flat(Bushes[q].at, gateAt) < ParkGateWidth * 0.5f + br + 1.5f || !InsidePark(new PocketPark { Hedge = new HedgeRun { Pts = pts } }, Bushes[q].at)) Bushes.RemoveAt(q);
+                    while (Bushes.Count - before > cap) Bushes.RemoveAt(Bushes.Count - 1);
                 }
             }
             // trees: well inside the hedge, ParkTreeSpacing apart, in an order the seed picks
@@ -720,46 +897,12 @@ namespace UnturnedGodot
             PocketParks.Add(pk);
         }
 
-        /// <summary>A closed loop opened `gap` metres across point `at`: the points from just past the gap round to just before it.</summary>
-        static List<Vector3> OpenLoopAt(List<Vector3> loop, int at, float gap)
-        {
-            int n = loop.Count;
-            // arc length round the loop, starting at `at`
-            var outp = new List<Vector3>();
-            float half = gap * 0.5f;
-            // forward from `at` until half the gap is used up: the run starts there
-            Vector3 Cut(int from, int dir, out int next)
-            {
-                float left = half; int k = from;
-                while (true)
-                {
-                    int k2 = ((k + dir) % n + n) % n;
-                    float seg = Flat(loop[k], loop[k2]);
-                    if (seg >= left) { next = k2; return loop[k].Lerp(loop[k2], left / Mathf.Max(1e-4f, seg)); }
-                    left -= seg; k = k2;
-                    if (k == from) { next = k2; return loop[k]; }
-                }
-            }
-            var start = Cut(at, 1, out int sNext);
-            var end = Cut(at, -1, out int eNext);
-            outp.Add(start);
-            for (int k = sNext; ; k = (k + 1) % n)
-            {
-                outp.Add(loop[k]);
-                if (k == eNext) break;
-                if (outp.Count > n + 2) break;
-            }
-            outp.Add(end);
-            return outp;
-        }
-
         /// <summary>⭐ EDGE TO EDGE (strawberry 2026-10-14, of the first hedges: "make sure the spline hedges meet perfectly edge
-        /// to edge with no gap"). One run, piece by piece: its points smoothed into a spline (SplineTiling.CurveThrough, the
-        /// curve the fence and barrier tools walk), cut into whole pieces as near the hedge's 4 m core as fits, each core
-        /// standing on the chord of its stretch of curve -- so on a straight the cores butt face to face, exactly -- and at
-        /// every bend each of the two pieces runs on past the joint by half its depth times tan(half the turn): the
-        /// SplineTiling joint rule. Their OUTER corners then meet where they used to part (a wedge 0.13 m wide at a 30 degree
-        /// bend), and the inner ones bury in each other's leaves.</summary>
+        /// to edge with no gap" -- then "try to have them do 90s instead of curves, since the hedges are square"). One run,
+        /// side by side: each straight side cut into whole pieces as near the hedge's 4 m core as fits, butted face to face
+        /// -- and at every corner the pieces either side run on past it by half their depth times tan(half the turn): the
+        /// SplineTiling joint rule, which at a square corner is half the depth each way, so the two cores between them fill
+        /// the corner's square exactly instead of leaving its outer notch open.</summary>
         void LayHedge(HedgeRun run, ref ulong seedH)
         {
             foreach (var hp in PiecesAlong(run.Pts, run.Closed, run.Depth, ref seedH)) { hp.Run = run; HedgePieces.Add(hp); }
@@ -767,41 +910,37 @@ namespace UnturnedGodot
         List<HedgePiece> PiecesAlong(List<Vector3> line, bool closed, float depth, ref ulong seedH)
         {
             var outp = new List<HedgePiece>();
-            if (line.Count < 2) return outp;
-            var pts = new List<Vector3>(line);
-            if (closed) pts.Add(line[0]);
-            for (int k = 0; k < pts.Count; k++) pts[k] = new Vector3(pts[k].X, 0f, pts[k].Z);
-            var curve = SplineTiling.CurveThrough(pts, smooth: true);
-            curve.BakeInterval = 0.25f;
-            float L = curve.GetBakedLength();
-            if (L < HedgeCoreLength * 0.6f) return outp;
-            int n = Mathf.Max(1, Mathf.RoundToInt(L / HedgeCoreLength));
-            float step = L / n;
-            var at = new Vector3[n + 1];
-            for (int k = 0; k <= n; k++) at[k] = curve.SampleBaked(Mathf.Min(L, k * step));
-            if (closed) at[n] = at[0];
-            var dir = new Vector3[n];
-            for (int k = 0; k < n; k++) { var d = at[k + 1] - at[k]; d.Y = 0f; dir[k] = d.LengthSquared() > 1e-8f ? d.Normalized() : Vector3.Right; }
+            var pts = new List<Vector3>();
+            foreach (var v in line) if (pts.Count == 0 || Flat(pts[^1], v) > 0.05f) pts.Add(new Vector3(v.X, 0f, v.Z));
+            if (closed && pts.Count > 2 && Flat(pts[0], pts[^1]) < 0.05f) pts.RemoveAt(pts.Count - 1);
+            int m = pts.Count;
+            if (m < 2) return outp;
+            int sides = closed ? m : m - 1;
+            var dir = new Vector3[sides];
+            for (int k = 0; k < sides; k++) dir[k] = (pts[(k + 1) % m] - pts[k]).Normalized();
             float half = depth * 0.5f;
-            // how far each piece runs on past joint k (between piece k-1 and piece k): half its depth times tan(half the turn)
+            // how far the pieces run on past corner k (the start of side k)
             float Ext(int k)
             {
-                bool inner = k > 0 && k < n;
-                if (!inner && !closed) return 0f;
-                var a = dir[(k - 1 + n) % n]; var b = dir[k % n];
-                float turn = Mathf.Min(a.AngleTo(b), Mathf.DegToRad(60f));
-                return half * Mathf.Tan(turn * 0.5f);
+                if (!closed && (k == 0 || k == sides)) return 0f;
+                var a = dir[(k - 1 + sides) % sides]; var b = dir[k % sides];
+                return half * Mathf.Tan(Mathf.Min(a.AngleTo(b), Mathf.DegToRad(100f)) * 0.5f);
             }
             float yAt(float x, float z) => _heightAt != null ? _heightAt(x, z) : Centre.Y;
-            for (int k = 0; k < n; k++)
+            for (int k = 0; k < sides; k++)
             {
-                float chord = Flat(at[k], at[k + 1]);
-                if (chord < 0.2f) continue;
-                float e0 = Ext(k), e1 = Ext(k + 1);
-                var mid = (at[k] + at[k + 1]) * 0.5f + dir[k] * ((e1 - e0) * 0.5f);
-                mid.Y = yAt(mid.X, mid.Z);
-                seedH = Mix(seedH + 0xED6EUL);
-                outp.Add(new HedgePiece { At = mid, Dir = dir[k], Length = chord + e0 + e1, Depth = depth, Flip = (seedH & 1UL) != 0 });
+                var a = pts[k]; var b = pts[(k + 1) % m];
+                float len = Flat(a, b);
+                if (len < 0.3f) continue;
+                int n = Mathf.Max(1, Mathf.RoundToInt(len / HedgeCoreLength));
+                float step = len / n, e0 = Ext(k), e1 = Ext(k + 1);
+                for (int q = 0; q < n; q++)
+                {
+                    float x0 = q * step - (q == 0 ? e0 : 0f), x1 = (q + 1) * step + (q == n - 1 ? e1 : 0f);
+                    var mid = a + dir[k] * ((x0 + x1) * 0.5f); mid.Y = yAt(mid.X, mid.Z);
+                    seedH = Mix(seedH + 0xED6EUL);
+                    outp.Add(new HedgePiece { At = mid, Dir = dir[k], Length = x1 - x0, Depth = depth, Flip = (seedH & 1UL) != 0 });
+                }
             }
             return outp;
         }
