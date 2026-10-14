@@ -69,3 +69,8 @@ game/content/resources_island_*/
 game/override.cfg
 override.cfg
 .shots/
+
+# Bevy build products and local verification output.
+/bevy/target/
+/bevy/artifacts/
+/bevy/.local/
