@@ -568,6 +568,7 @@ namespace UnturnedSim
             // and inside a flat, now and then its living room open to its kitchen or its vestibule (OpenPlan: never the
             // corridor, never a party wall)
             BuildOut(res, grids, k1, L, spec, spec.Porches == PorchChoice.Auto ? PorchChoice.None : spec.Porches, chimney: false);
+            SolveCorners(res.Walls, RoofShapes.AddParapets(res.Walls).Contains);   // last: parapets, as BuildingGen's (see there)
             // on a plot: what its rooms came out short of, said as the house fit says it
             if (fit && Shortfall(res) is var miss && miss.Count > 0)
             {

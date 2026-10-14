@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace UnturnedSim
 {
@@ -306,6 +307,120 @@ namespace UnturnedSim
 
         /// <summary>Height of the ridge above the eaves. Zero for a flat roof.</summary>
         public static float RidgeHeight(RoofSpec s) => s.Kind == RoofKind.Flat ? 0f : s.Rise;
+
+        /// <summary>How far a flat roof's parapet stands over the roof's surface. Measured off the retail flat-roofed
+        /// buildings (their meshes read as BuildingImport reads them): 1.00 m on Cafe_0/1, Clothes_0/1, Diner_0, Hardware_0,
+        /// Guns_0, Bank_0, Fire_0, Medic_0/2, Mall_0, Apartment_1/2, Police_1 and the top roofs of Office_0..3 -- the
+        /// exceptions are false fronts (Grocer_0 2.01 on three sides, Diner_1 2.13, Post_0 1.5, part of Medic_1 2.0), and
+        /// Diner_2, Mechanic_0 and Apartment_3 have none.</summary>
+        public const float ParapetHeight = 1.0f;
+
+        /// <summary>Stand a parapet round every flat roof in `walls`, the way retail builds one (strawberry: "in retail
+        /// unturned, flat roof buildings have a short border wall stub around the 'roof'").
+        ///
+        /// Retail's parapet is the outside wall carried on up: on every model measured its outer face is the facade's own
+        /// plane from the footing to the parapet's top, its inner face the wall's own inner plane, so it is exactly the
+        /// wall's thickness (0.50 there), flush on both sides, painted the wall's texel inside and out and on its flat top
+        /// -- no coping, no cap, no inset -- and the roof runs between the inner faces, ParapetHeight under its top. So
+        /// here: on each wall whose head a flat roof sits on, with its outer face on that roof's edge, a wall of its
+        /// thickness and paint from its head to ParapetHeight over the roof, along the stretch of it under that roof; and
+        /// the roof slab gives the parapets their strip, so that the two do not fill the same space (the slab's edge and
+        /// the parapet's face would fight in one plane) and the facade reads one colour to the top, as retail's does.
+        ///
+        /// Every tier of a stepped building is its own slab on its own walls, so each gets one; where a lower roof meets
+        /// the wall of a taller part there is no wall under that edge whose head the roof sits on -- the taller wall
+        /// stands on it, and runs on up -- so that edge gets none. Engine-free and placement-only: nothing here moves a
+        /// wall, a room, a door or a piece of furniture; it adds parapets and shrinks the slabs they stand in. Returns the
+        /// parapets, laid along the roof's edges and no further: where one meets a taller part, joining it there is the
+        /// caller's corner pass.</summary>
+        public static List<WallPlan> AddParapets(List<WallPlan> walls)
+        {
+            var parapets = new List<WallPlan>();
+            var replaced = new List<(WallPlan Slab, List<WallPlan> With)>();
+            foreach (var s in walls)
+            {
+                if (s.Kind != SurfaceKind.Roof || MathF.Abs(s.Pitch + 90f) > 0.01f || MathF.Abs(s.Yaw) > 0.01f || s.Openings.Count > 0) continue;
+                float x0 = s.X, x1 = s.X + s.Length, z0 = s.Z - s.Height, z1 = s.Z;
+                float bottom = s.Y - s.Thickness * 0.5f, top = s.Y + s.Thickness * 0.5f;
+                var strips = new List<(float X0, float Z0, float X1, float Z1)>();
+                foreach (var w in walls)
+                {
+                    if (w.Kind != SurfaceKind.Wall || w.Pitch != 0f || MathF.Abs(w.Y + w.Height - bottom) > 0.01f) continue;
+                    var (c, sn) = PlanTrig.CosSin(w.Yaw);
+                    float dx = c, dz = -sn, h = w.Thickness * 0.5f;
+                    bool alongX = MathF.Abs(dz) < 1e-3f;
+                    if (!alongX && MathF.Abs(dx) > 1e-3f) continue;               // not square to the roof
+                    float d = alongX ? dx : dz, a = alongX ? w.X : w.Z, b = a + d * w.Length;
+                    float lo = MathF.Max(MathF.Min(a, b), alongX ? x0 : z0), hi = MathF.Min(MathF.Max(a, b), alongX ? x1 : z1);
+                    if (hi - lo < 0.05f) continue;                                 // not under this roof
+                    // its outer face on one of the roof's edges, the wall itself inside: an outside wall the roof sits on
+                    float line = alongX ? w.Z : w.X, e0 = alongX ? z0 : x0, e1 = alongX ? z1 : x1;
+                    if (MathF.Abs(line - (e0 + h)) > 0.01f && MathF.Abs(line - (e1 - h)) > 0.01f) continue;
+                    float u = MathF.Min((lo - a) / d, (hi - a) / d);
+                    parapets.Add(new WallPlan
+                    {
+                        X = w.X + dx * u, Y = bottom, Z = w.Z + dz * u, Yaw = w.Yaw, Length = hi - lo,
+                        Height = top - bottom + ParapetHeight, Thickness = w.Thickness, Kind = SurfaceKind.Wall,
+                        Material = w.Material, Texel = w.Texel,
+                    });
+                    strips.Add(alongX ? (lo, line - h, hi, line + h) : (line - h, lo, line + h, hi));
+                }
+                if (strips.Count > 0) replaced.Add((s, Less(s, strips)));
+            }
+            foreach (var (slab, with) in replaced)
+            {
+                int i = walls.IndexOf(slab);
+                walls.RemoveAt(i);
+                walls.InsertRange(i, with);
+            }
+            walls.AddRange(parapets);
+            return parapets;
+        }
+
+        /// <summary>A flat slab less some rectangles of it, as rectangles: the grid every cut's edges make, the cells no cut
+        /// covers, run together along X in each band and down Z where a band's run carries on from the one before.</summary>
+        static List<WallPlan> Less(WallPlan s, List<(float X0, float Z0, float X1, float Z1)> cut)
+        {
+            float x0 = s.X, x1 = s.X + s.Length, z0 = s.Z - s.Height, z1 = s.Z;
+            static List<float> Breaks(float lo, float hi, IEnumerable<float> at)
+            {
+                var all = at.Where(v => v > lo && v < hi).Append(lo).Append(hi).OrderBy(v => v).ToList();
+                var outp = new List<float>();
+                foreach (var v in all) if (outp.Count == 0 || v - outp[^1] > 1e-3f) outp.Add(v);
+                outp[^1] = hi;
+                return outp;
+            }
+            var xs = Breaks(x0, x1, cut.SelectMany(q => new[] { q.X0, q.X1 }));
+            var zs = Breaks(z0, z1, cut.SelectMany(q => new[] { q.Z0, q.Z1 }));
+            var rects = new List<(float X0, float Z0, float X1, float Z1)>();
+            var open = new List<(float X0, float X1, float Z0)>();
+            for (int j = 0; j + 1 < zs.Count; j++)
+            {
+                float zm = (zs[j] + zs[j + 1]) * 0.5f;
+                var runs = new List<(float X0, float X1)>();
+                for (int i = 0; i + 1 < xs.Count; i++)
+                {
+                    float xm = (xs[i] + xs[i + 1]) * 0.5f;
+                    if (cut.Any(q => xm > q.X0 && xm < q.X1 && zm > q.Z0 && zm < q.Z1)) continue;
+                    if (runs.Count > 0 && runs[^1].X1 == xs[i]) runs[^1] = (runs[^1].X0, xs[i + 1]);
+                    else runs.Add((xs[i], xs[i + 1]));
+                }
+                var next = new List<(float X0, float X1, float Z0)>();
+                foreach (var o in open)
+                    if (runs.Contains((o.X0, o.X1))) next.Add(o);
+                    else rects.Add((o.X0, o.Z0, o.X1, zs[j]));
+                foreach (var r in runs)
+                    if (!open.Any(o => o.X0 == r.X0 && o.X1 == r.X1)) next.Add((r.X0, r.X1, zs[j]));
+                open = next;
+            }
+            foreach (var o in open) rects.Add((o.X0, o.Z0, o.X1, zs[^1]));
+            return rects.Select(r => new WallPlan
+            {
+                X = r.X0, Y = s.Y, Z = r.Z1, Yaw = 0f, Pitch = -90f, Length = r.X1 - r.X0, Height = r.Z1 - r.Z0,
+                Thickness = s.Thickness, Kind = s.Kind, Material = s.Material, Texel = s.Texel,
+                MaterialBack = s.MaterialBack, TexelBack = s.TexelBack,
+            }).ToList();
+        }
 
         /// <summary>Length of the ridge line. A hip shortens it by one run at each end, so a square hip has
         /// no ridge at all and is a pyramid -- which is correct, not a degenerate case to guard against.</summary>

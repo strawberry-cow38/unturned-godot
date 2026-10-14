@@ -1390,6 +1390,9 @@ namespace UnturnedSim
             res.NoWindowSides = turn ? Turned(spec.NoWindows) : spec.NoWindows;
             // walls, porches, the chimney, furniture -- and now and then the wall between two of them left out altogether
             BuildOut(res, grids, k1, L, spec, spec.Porches, chimney: true);
+            // last: a parapet on each flat roof as built, after everything that reads the walls -- joined where it meets a
+            // taller part, as the editor's corner pass would join it
+            SolveCorners(res.Walls, RoofShapes.AddParapets(res.Walls).Contains);
             if (turn) TurnHalf(res);
             return res;
 
@@ -3477,8 +3480,9 @@ namespace UnturnedSim
         /// out of both). Where a hall turns round a room's corner the partitions met at their centrelines and left that
         /// square open. Short walls -- a roof's infills, standing on a wall head -- are laid joined and left alone: grown
         /// blind they ran on through the upper wall already filling the corner. Openings keep their place when a wall
-        /// grows at its start. Returns how many walls grew.</summary>
-        static int SolveCorners(List<WallPlan> all)
+        /// grows at its start. Returns how many walls grew. With `grows`, only the walls it picks may grow, short or not: a
+        /// parapet laid after the pass, which the editor's pass would otherwise run on into the taller wall it meets.</summary>
+        static int SolveCorners(List<WallPlan> all, Func<WallPlan, bool> grows = null)
         {
             const float MaxGrow = 1.6f;
             var ws = all.Where(w => w.Kind == SurfaceKind.Wall || w.Kind == SurfaceKind.Foundation).ToList();
@@ -3487,7 +3491,7 @@ namespace UnturnedSim
             for (int i = 0; i < ws.Count; i++)
             {
                 var a = ws[i];
-                if (a.Kind == SurfaceKind.Wall && a.Height < Storey - 0.01f) continue;
+                if (grows != null ? !grows(a) : a.Kind == SurfaceKind.Wall && a.Height < Storey - 0.01f) continue;
                 var ad = Dir(a);
                 for (int j = 0; j < ws.Count; j++)
                 {
