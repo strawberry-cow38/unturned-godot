@@ -24,10 +24,10 @@ namespace UnturnedGodot
     /// pressed and the map saved comes back pressed.</summary>
     public partial class RoomLightSwitch : StaticBody3D
     {
-        /// <summary>astraclaw's rocker convention (notes/household_electrical_handoff.md, revision 979c422c6): pivot native
-        /// (0, 0.046, 0) -- Godot (0, 0, -0.046) -- and local X -8 degrees with the bottom pressed in, +8 with the top.</summary>
-        public static readonly Vector3 RockerPivot = new Vector3(0f, 0.046f, 0f);
-        public const float RockerDownDegrees = -8f, RockerUpDegrees = 8f;
+        /// <summary>astraclaw's rocker convention (notes/household_electrical_handoff.md, seated revision 1049dc1de): pivot
+        /// native (0, 0.040, 0) -- Godot (0, 0, -0.040) -- and local X -5 degrees with the bottom pressed in, +5 with the top.</summary>
+        public static readonly Vector3 RockerPivot = new Vector3(0f, 0.040f, 0f);
+        public const float RockerDownDegrees = -5f, RockerUpDegrees = 5f;
 
         MeshInstance3D _base, _rocker;
         Node3D _pivot;
