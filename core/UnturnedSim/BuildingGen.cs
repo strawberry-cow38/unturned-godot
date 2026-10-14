@@ -22,8 +22,8 @@ namespace UnturnedSim
 
     /// <summary>What a shop sells (strawberry: "shops should use the pallette of the shop they are, ie donuts, hardware etc
     /// etc"): one of the retail shops, whose palettes it wears (BuildingGen.ShopPalettes). None: not a shop -- or, asked of
-    /// a Commercial spec, any of them, a seeded draw. There is no Donuts: no retail building is a donut shop (the
-    /// doughnut is a baked food item, nothing sells it), so none has a palette to wear.</summary>
+    /// a Commercial spec, any of them, a seeded draw. A doughnut shop is a Cafe (strawberry: "so if its not doughnuts its a
+    /// cafe pallette"): no retail building is a donut shop, so there is no palette of its own to wear.</summary>
     public enum Business { None, Cafe, Clothes, Diner, Grocer, Guns, Hardware, Botanist }
 
     /// <summary>What to generate: a building from a seed (strawberry 2026-10-11: "make the map editor buildings tool
