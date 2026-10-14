@@ -28,7 +28,7 @@ namespace UnturnedGodot
     /// be two surfaces overlapping, with nothing a router could read. Splitting at every node is what makes an
     /// interior crossing a real 4-way node. The cost is more roads and a tangent that is independent either
     /// side of a junction, which is correct anyway: a crossroads IS a kink, not a smooth curve.</summary>
-    public sealed class TownRoadGrid
+    public sealed partial class TownRoadGrid
     {
         public int Seed = 1;
         public Vector3 Centre;
@@ -4346,6 +4346,7 @@ namespace UnturnedGodot
             PlaceTriangleLots(roads);
             PlanFences(roads);
             CensusZoning(roads);
+            PlanGreens(roads);
             var counts = new System.Text.StringBuilder();
             foreach (var ps in PlotSizes)
             {
@@ -4558,6 +4559,14 @@ namespace UnturnedGodot
                 foreach (var c in TriangleGapCells)
                     Fill(gs, new[] { c + new Vector3(-0.45f, 0f, -0.45f), c + new Vector3(0.45f, 0f, -0.45f), c + new Vector3(0.45f, 0f, 0.45f), c + new Vector3(-0.45f, 0f, 0.45f) }, Lift * 1.5f, Centre.Y);
                 Commit(gs, "Plots_TriangleGaps", new Color(0.95f, 0.15f, 0.10f, 0.75f));
+            }
+            // (UG_TOWNPROBES=1: the dead space PlanGreens found, magenta)
+            if (DeadSpaceCells.Count > 0)
+            {
+                var ds = new SurfaceTool(); ds.Begin(Mesh.PrimitiveType.Triangles);
+                foreach (var c in DeadSpaceCells)
+                    Fill(ds, new[] { c + new Vector3(-0.4f, 0f, -0.4f), c + new Vector3(0.4f, 0f, -0.4f), c + new Vector3(0.4f, 0f, 0.4f), c + new Vector3(-0.4f, 0f, 0.4f) }, Lift * 1.6f, Centre.Y);
+                Commit(ds, "Plots_DeadSpace", new Color(0.9f, 0.2f, 0.9f, 0.7f));
             }
             // the yard fences, designated: a dark line along each run, over the lot lines
             if (Fences.Count > 0)

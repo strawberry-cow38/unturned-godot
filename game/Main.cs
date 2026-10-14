@@ -10686,6 +10686,9 @@ namespace UnturnedGodot
             // the building plots, marked on the ground (strawberry 2026-10-12: "have the grid system mark plots for
             // buildings, with fixed sizes and shapes"), and the parking bays paved and painted -- as planned above
             int plots = noWalk ? 0 : town.MarkPlots(editor, rf, plan: false);
+            // the dead space the plots left, filled (strawberry 2026-10-14: "procedural filling for dead space / empty lots /
+            // parks. using hedges as splines"): hedgerows down the strips, pocket parks in the bigger pieces
+            if (!noWalk) town.PlantGreens(rf, editor.Objects);
             // UG_TOWNPARKED=1: a car in every parking space -- the game's own cars, dropped in and left to settle on
             // their wheels -- so a render SHOWS whether the bays fit them (strawberry 2026-10-12: "make sure they're
             // scaled to fit the vehicles in game"). Against the kerb, nosed the way the lane beside them runs:
