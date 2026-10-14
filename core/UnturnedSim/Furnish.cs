@@ -2143,17 +2143,20 @@ namespace UnturnedSim
                 // ranked on the Furnisher's shared draws, one each, so a looser test -- the higher clock clears a fridge -- would
                 // hand every later room different draws. It only ever keeps off more than it needs to.
                 float bottom = ClockClearedAt - FurnitureCatalog.Sizes["Clock_0"].H;
-                Hang("Clock_0", Against("Clock_0", Side.Back).Where(p =>
+                var m = Hang("Clock_0", Against("Clock_0", Side.Back).Where(p =>
                 {
                     var fp = FurnitureCatalog.Footprint("Clock_0", p.X, p.Z, p.Yaw);
                     var below = (fp.X0 - 0.2f, fp.Z0 - 0.2f, fp.X1 + 0.2f, fp.Z1 + 0.2f);
                     return !ByStairs("Clock_0", p) && !_mine.Any(o => o.On == null && !o.Mounted && !o.Ceiling && FurnitureCatalog.Sizes[o.Name].H > bottom - 0.1f && Overlaps(below, o.Footprint));
-                }), (x, z, _) => -Math.Sqrt((x - cx) * (x - cx) + (z - cz) * (z - cz)), ClockHeight, refuse: (x, z, yaw) => HangRefused("Clock_0", x, z, yaw));
+                }), (x, z, _) => -Math.Sqrt((x - cx) * (x - cx) + (z - cz) * (z - cz)), refuse: (x, z, yaw) => HangRefused("Clock_0", x, z, yaw));
+                // then up the wall it was ranked on, to the ceiling over it (UnderCeiling), less ClockUnderCeiling
+                if (m != null) m.Y = _room.Floor * Storey + UnderCeiling("Clock_0", (m.X, m.Z, m.Yaw)) - ClockUnderCeiling;
             }
-            /// <summary>A wall clock's middle stands this high (strawberry, round 12: "hang them much higher on the walls"): its
-            /// 1 m face's top 0.15 m under the lowest ceiling a room has -- a storey under another, whose floor's slab comes
-            /// down to OpeningTop, 3.75 m -- so 3.1, its face 2.6-3.6 m. It was 2.5, its middle at a standing player's eye.</summary>
-            const float ClockHeight = OpeningTop - 0.15f - 0.5f;
+            /// <summary>A wall clock's 1 m face has its top this far under the ceiling over it (strawberry, round 12: "hang them
+            /// much higher on the walls"; the lead: top storeys as the rest), on every storey: its middle 3.1 m up under a
+            /// storey's 3.75 m ceiling (the floor above's slab), 3.6 under a top storey's 4.25 m wall heads, lower where a
+            /// pitched roof comes down nearer. It was 2.5 m, its middle at a standing player's eye.</summary>
+            const float ClockUnderCeiling = 0.15f;
             /// <summary>The height the clock's clearance over what stands under it is judged at (Clock): where it hung before.</summary>
             const float ClockClearedAt = 2.5f;
 

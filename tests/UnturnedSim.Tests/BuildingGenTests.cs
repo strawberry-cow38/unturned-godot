@@ -1851,6 +1851,7 @@ namespace UnturnedSim.Tests
             const float DoorClear = 1.2f, LaneClear = 4f, Tall = 1.9f, Sill = 0.5f;
             var bad = new List<string>();
             int pieces = 0, ceilingLights = 0, rooms = 0, walkedRooms = 0, beds = 0, desks = 0, couches = 0, tvs = 0, chairs = 0, kitchensFull = 0, wallPieces = 0, swung = 0;
+            int topClocks = 0;   // clocks under a top storey's ceiling higher than a lower storey's
             int wallSets = 0, crts = 0, lKitchens = 0, islands = 0, freeFridges = 0, gondolas = 0, movable = 0, turned = 0, shopsWithShelves = 0, shopsWithRows = 0;
             var missing = new Dictionary<string, int>(); var kinds = new Dictionary<RoomKind, int>(); int shortExcused = 0;
             // the round-9 requirements' counts, and the feng shui given up where a room would not have it
@@ -1978,11 +1979,15 @@ namespace UnturnedSim.Tests
                             // WallDecorFollowsTheRules: an upper cabinet at 2.9, a key rack under a bathroom's high slit)
                             bool decor = BuildingGen.Decor.Any(r => r.Name == m.Name);
                             // (a clock near the top of the wall, strawberry round 12: "hang them much higher on the walls" -- its
-                            // face's top within 0.1-0.3 m of the lowest ceiling a room has, the floor above's underside)
+                            // face's top within 0.1-0.3 m of the ceiling over it, the lowest over its outline's corners: the floor
+                            // above's underside, a top storey's wall heads or roof -- the same gap on every storey)
                             if (m.Name == "Clock_0")
                             {
-                                float clockTop = m.Y - f * Storey + FurnitureCatalog.Sizes[m.Name].H, under = Storey - BuildingGen.Slab - clockTop;
-                                if (under < 0.1f || under > 0.3f) bad.Add($"{nm}: its face's top {under:0.00} m under a storey's ceiling");
+                                var cf = m.Footprint;
+                                float clockTop = m.Y + FurnitureCatalog.Sizes[m.Name].H;
+                                float over = new[] { (cf.X0, cf.Z0), (cf.X1, cf.Z0), (cf.X0, cf.Z1), (cf.X1, cf.Z1) }.Min(q => CeilingAt(res, f, q.Item1, q.Item2)), under = over - clockTop;
+                                if (under < 0.1f || under > 0.3f) bad.Add($"{nm}: its face's top {under:0.00} m under the ceiling over it, {over - f * Storey:0.00} m up");
+                                if (f == res.Floors - 1 && over - f * Storey > Storey - BuildingGen.Slab + 0.1f) topClocks++;
                             }
                             else if ((m.Y < f * Storey + 1.8f || m.Y > f * Storey + 2.6f) && !decor) bad.Add($"{nm} hangs at {m.Y - f * Storey:0.00} m");
                             var (bx, bz) = m.Front;
@@ -2306,6 +2311,8 @@ namespace UnturnedSim.Tests
             Assert.That(pieces, Is.GreaterThan(3000));
             Assert.That(ceilingLights, Is.GreaterThan(1000), "rooms get ceiling lights");
             Assert.That(wallPieces, Is.GreaterThan(3000));
+            TestContext.Progress.WriteLine($"[furn-clock] {topClocks} clocks under a top storey's higher ceiling, held to the same gap");
+            Assert.That(topClocks, Is.GreaterThan(100), "top-storey clocks were there to check");
             // a room without what makes it one is a room the furnisher gave up on: a few that are too small for it, no more
             foreach (var (what, n) in missing)
             {
