@@ -3,61 +3,11 @@
     "name": "Light_Switch_0",
     "guid": "397a9d3cc7eb4a4291dc41ae40a8d12f",
     "interaction_role": "room_ceiling_light_switch",
-    "suggested_origin_height": 1.4,
+    "suggested_origin_height": 1.55,
     "mount": "wall",
     "art_status": "REVIEW_ONLY",
-    "registered": false,
+    "registered": true,
     "target": "All ceiling lights belonging to the fixture\u2019s own room, not neighbouring rooms or table/floor lamps",
-    "width_x": 0.32,
-    "height_z": 0.54,
-    "depth_y": 0.085725,
-    "bounds_native": [
-      [
-        -0.1599999964237213,
-        0.0,
-        -0.27000001072883606
-      ],
-      [
-        0.1599999964237213,
-        0.08572511374950409,
-        0.27000001072883606
-      ]
-    ],
-    "vertices": 28,
-    "triangles": 46,
-    "native_up": "+Z",
-    "front": "+Y",
-    "wall_plane": "Y=0",
-    "mount_origin_native": [
-      0,
-      0,
-      0
-    ],
-    "units": "metres",
-    "texture": "Light_Switch_0_tex.png",
-    "texture_filter": "nearest",
-    "features": {
-      "default_art_pose": "on",
-      "rocker_pivot_native": [
-        0,
-        0.055,
-        0
-      ],
-      "rocker_pivot_godot": [
-        0,
-        0,
-        -0.055
-      ],
-      "on_rotation_x_degrees": 8,
-      "off_rotation_x_degrees": -8,
-      "base_component": "Light_Switch_0_Base.obj",
-      "rocker_component": "Light_Switch_0_Rocker.obj",
-      "component_texture": "Light_Switch_0_tex.png",
-      "main_obj_contains_rocker": true,
-      "glb_rocker_node": "Light_Switch_0_Rocker",
-      "component_registration": "Do not register component OBJs as extra fixtures or mint GUIDs for them."
-    },
-    "behavior_status": "Requested game behavior assigned to Tinyclaw; art package does not implement or verify solver/network/save behavior.",
     "placement": {
       "mount": "interior_wall",
       "room_rule": "room with ceiling lamps",
@@ -78,7 +28,72 @@
     },
     "integration_assignment_message_id": "1559692182938587189",
     "owner_request_message_id": "1559691911042957396",
-    "network_and_save": "Required; assigned to Tinyclaw, not implemented by this art delta"
+    "network_and_save": "Required; assigned to Tinyclaw, not implemented by this art delta",
+    "owner_revision_message_ids": [
+      "1559810962108977213",
+      "1559811297565220946"
+    ],
+    "width_x": 0.32,
+    "height_z": 0.54,
+    "depth_y": 0.085638,
+    "bounds_native": [
+      [
+        -0.1599999964237213,
+        0.0,
+        -0.27000001072883606
+      ],
+      [
+        0.1599999964237213,
+        0.08563752472400665,
+        0.27000001072883606
+      ]
+    ],
+    "vertices": 28,
+    "triangles": 46,
+    "native_up": "+Z",
+    "front": "+Y",
+    "wall_plane": "Y=0",
+    "mount_origin_native": [
+      0,
+      0,
+      0
+    ],
+    "units": "metres",
+    "texture": "Light_Switch_0_tex.png",
+    "texture_filter": "nearest",
+    "features": {
+      "default_art_pose": "on",
+      "rocker_pivot_native": [
+        0,
+        0.046,
+        0
+      ],
+      "rocker_pivot_godot": [
+        0,
+        0,
+        -0.046
+      ],
+      "on_rotation_x_degrees": -8,
+      "off_rotation_x_degrees": 8,
+      "on_pressed_edge": "bottom (-Z native / -Y Godot)",
+      "off_pressed_edge": "top (+Z native / +Y Godot)",
+      "rocker_depth_m": 0.04,
+      "well_back_native_y": 0.004,
+      "shared_control_contract": "Multiple switches reference one room-light circuit; interaction/state binding owned by Tinyclaw",
+      "base_component": "Light_Switch_0_Base.obj",
+      "rocker_component": "Light_Switch_0_Rocker.obj",
+      "component_texture": "Light_Switch_0_tex.png",
+      "main_obj_contains_rocker": true,
+      "glb_rocker_node": "Light_Switch_0_Rocker",
+      "component_registration": "Do not register component OBJs as extra fixtures or mint GUIDs for them."
+    },
+    "body_palette_source": "House_09 reveal texel 2 from game/content/wall_palettes.tsv",
+    "body_srgb_hex": "#ababab",
+    "revision_request_message_ids": [
+      "1559810962108977213",
+      "1559811297565220946"
+    ],
+    "behavior_status": "Tinyclaw reported working room switch/outlet behavior in 1559809954263859250; this art delta does not implement or verify shared-circuit/network/save behavior."
   },
   "Power_Outlet_0": {
     "name": "Power_Outlet_0",
@@ -87,8 +102,36 @@
     "suggested_origin_height": 0.4,
     "mount": "wall",
     "art_status": "REVIEW_ONLY",
-    "registered": false,
+    "registered": true,
     "power_io_watts_per_fixture": 1500,
+    "placement": {
+      "mount": "interior_wall",
+      "room_rule": "occupied room with a clear accessible wall",
+      "near": [
+        "desk",
+        "bedside",
+        "counter_run"
+      ],
+      "avoid": [
+        "windows",
+        "fireplace_walls",
+        "door_sweeps",
+        "stairs",
+        "behind_tall_furniture"
+      ],
+      "front_access_m": 0.8,
+      "edge_clearance_m": 0.05,
+      "rarity": "functional_fixture_not_passive_decor",
+      "placement_owner": "Tinyclaw",
+      "above_counter_origin_height_m": 1.67
+    },
+    "integration_assignment_message_id": "1559692182938587189",
+    "owner_request_message_id": "1559691911042957396",
+    "network_and_save": "Required; assigned to Tinyclaw, not implemented by this art delta",
+    "owner_revision_message_ids": [
+      "1559810962108977213",
+      "1559811297565220946"
+    ],
     "width_x": 0.32,
     "height_z": 0.54,
     "depth_y": 0.054,
@@ -104,8 +147,8 @@
         0.27000001072883606
       ]
     ],
-    "vertices": 103,
-    "triangles": 194,
+    "vertices": 87,
+    "triangles": 162,
     "native_up": "+Z",
     "front": "+Y",
     "wall_plane": "Y=0",
@@ -119,6 +162,9 @@
     "texture_filter": "nearest",
     "features": {
       "receptacles": 2,
+      "backplate_outline": "rectangular, square corners",
+      "wire_connection_points": 2,
+      "wire_port_budget": "both receptacle ports share one fixture 1500 W rating",
       "recessed_openings_per_receptacle": 3,
       "socket_front_native_y": 0.054,
       "socket_points_native": [
@@ -147,30 +193,12 @@
       ],
       "notes": "One placed fixture is rated 1500 W; the two visible receptacle faces do not automatically mint two 1500 W solver nodes."
     },
-    "behavior_status": "Requested game behavior assigned to Tinyclaw; art package does not implement or verify solver/network/save behavior.",
-    "placement": {
-      "mount": "interior_wall",
-      "room_rule": "occupied room with a clear accessible wall",
-      "near": [
-        "desk",
-        "bedside",
-        "counter_run"
-      ],
-      "avoid": [
-        "windows",
-        "fireplace_walls",
-        "door_sweeps",
-        "stairs",
-        "behind_tall_furniture"
-      ],
-      "front_access_m": 0.8,
-      "edge_clearance_m": 0.05,
-      "rarity": "functional_fixture_not_passive_decor",
-      "placement_owner": "Tinyclaw",
-      "above_counter_origin_height_m": 1.67
-    },
-    "integration_assignment_message_id": "1559692182938587189",
-    "owner_request_message_id": "1559691911042957396",
-    "network_and_save": "Required; assigned to Tinyclaw, not implemented by this art delta"
+    "body_palette_source": "House_09 reveal texel 2 from game/content/wall_palettes.tsv",
+    "body_srgb_hex": "#ababab",
+    "revision_request_message_ids": [
+      "1559810962108977213",
+      "1559811297565220946"
+    ],
+    "behavior_status": "Tinyclaw reported working room switch/outlet behavior in 1559809954263859250; this art delta does not implement or verify shared-circuit/network/save behavior."
   }
 }
