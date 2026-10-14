@@ -740,3 +740,10 @@ Mode (master 2026-07-08): keep moving autonomously, don't stop until commanded; 
 - Added native Rapier suspension/drivetrain/tracked steering, original voxel boat buoyancy, source map spawn tiers, body/parts/wheels/panes, existing convex hull bake loading and asynchronous decomposition, and own-door exit clearance.
 - Verified real native acceleration/braking/right-turn physics and buoyant recovery, source IDs/tiers, blocked-door/player clearance, null passenger blocks, hull composition and glass asset resolution. Actual PEI render caught and fixed nested-compound and missing visibility-parent failures; smoke now renders with eight authoritative vehicles settled.
 - Full shell parity remains in progress; exact implemented/pending coverage is recorded in bevy/docs/VEHICLE_PORT.md. Flight, damage lifecycle, towing, storage UI and remote presentation remain separate adapters, not implied complete by the fleet-data export.
+
+
+### 2026-10-14 — vehicle passenger authority made reachable
+
+- Native seating integration exposed source core gaps: occupied-driver vehicles rejected every passenger, exit validation accepted only drivers, and reliable passenger-enter events temporarily stole the driver slot. The seat-index protocol already existed; no packet format changed.
+- Entry now validates the requested free seat, exit accepts all real occupants, and reliable facts update the matching seat. The authority follows/ejects all occupants and uses IsSeated for on-foot claims, MoveInput and console-teleport gates; vehicle input and transform authority remain driver-only.
+- Added three regression tests over the real MemTransport server/client stack and event application. All three failed against the old code; after the fix 40 targeted vehicle/owner-authority tests pass, including existing one-seat entry races and recovery checks. New assertions cover rejection of a second passenger claimant, preserved driver identity at reliable-event delivery, blocked-door refusal, replicated exit, and passenger movement/control restrictions.

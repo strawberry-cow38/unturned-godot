@@ -355,7 +355,7 @@ namespace UnturnedGodot.Net
             // mp-clientauth-foot (v9): the owner's on-foot transform stream -- envelope-validated, then
             // adopted through ServerDrive (the entity goes ExternallyDriven; ServerStep never integrates
             // a client-driven owner). Seated peers' walk claims drop at the choke point like MoveInput's.
-            PlayerHost = new ServerPlayerAuthority(Players, CombatState, VehicleHost.IsDriver,
+            PlayerHost = new ServerPlayerAuthority(Players, CombatState, VehicleHost.IsSeated,
                                                    () => Session.CurrentTick, SendEventTo);
             PlayerHost.Register(Commands);
             // P3a (SP/MP-unify): a server respawn of a client-authoritative owner must ride the recov/
@@ -406,7 +406,7 @@ namespace UnturnedGodot.Net
             // same way the singleplayer respawn does, so they land on the bed rather than inside it.
             Combat.RespawnPositionOf = pid =>
                 Interactables.TryGetSpawn(pid, out var bedSpawn, out _) ? bedSpawn + Vector3.up * 0.5f : (Vector3?)null;
-            Transactions.IsSeated = VehicleHost.IsDriver;   // console teleport rejects seated senders (the seat teleport owns the entity, #27)
+            Transactions.IsSeated = VehicleHost.IsSeated;   // console teleport rejects seated senders (the seat teleport owns the entity, #27)
             Combat.KillCredited = killer => { if (KillExperience > 0) Transactions.AwardXp(killer, KillExperience); };
             // DEATH DROPS EVERYTHING (strawberry 2026-09-02). The one death path in ServerCombat had never
             // touched the inventory, so a corpse kept its bag and stood back up with it. Wired in core so
@@ -560,9 +560,9 @@ namespace UnturnedGodot.Net
                 // strictly-increasing-seq guard drops the entries an earlier datagram already delivered,
                 // so the redundant backfill is idempotent and a queue hole now needs 3 consecutive losses
                 (sender, pkt) => { for (int i = 0; i < pkt.Count; i++) Players.ServerQueueInput(sender, pkt.Get(i)); },
-                // a corpse's inputs drop at the choke point; so do a DRIVER's (the seat teleport owns the
+                // a corpse's inputs drop at the choke point; so do any OCCUPANT's (the seat teleport owns the
                 // avatar while driving -- walked positions must not fight it, §3.6)
-                validate: (sender, pkt) => CombatState.IsAlive(sender) && !VehicleHost.IsDriver(sender));
+                validate: (sender, pkt) => CombatState.IsAlive(sender) && !VehicleHost.IsSeated(sender));
             Commands.Register<FireCommand>(ReplicationIds.CommandFire, FireCommand.TryRead,
                 (sender, cmd) => Combat.OnFire(sender, cmd, Session.CurrentTick));
             Commands.Register<MeleeCommand>(ReplicationIds.CommandMelee, MeleeCommand.TryRead,

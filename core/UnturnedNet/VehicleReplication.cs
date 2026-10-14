@@ -367,12 +367,16 @@ namespace UnturnedGodot.Net
         // ---- client-side event application (idempotent -- a delta snapshot may carry the same state) ----
 
         public void ApplyEntered(VehicleEnteredEvent evt, long tick)
-            => ServerSetDriver(new NetId(evt.NetId), evt.PlayerId, tick);
+            => ServerSetSeat(new NetId(evt.NetId), evt.Seat, evt.PlayerId, tick);
 
         public void ApplyExited(VehicleExitedEvent evt, long tick)
         {
-            if (_vehicles.TryGet(new NetId(evt.NetId), out var e) && e.DriverPlayerId == evt.PlayerId)
-                ServerSetDriver(new NetId(evt.NetId), 0, tick);
+            var id = new NetId(evt.NetId);
+            if (!_vehicles.TryGet(id, out var e)) return;
+            if (e.DriverPlayerId == evt.PlayerId) ServerSetDriver(id, 0, tick);
+            if (e.Passengers != null)
+                for (int i = 0; i < e.Passengers.Length; i++)
+                    if (e.Passengers[i] == evt.PlayerId) ServerSetSeat(id, i + 1, 0, tick);
         }
 
         // ---- IReplicatedSystem ----
@@ -1142,11 +1146,11 @@ namespace UnturnedGodot.Net
 
             commands.Register<EnterVehicleCommand>(ReplicationIds.CommandEnterVehicle, EnterVehicleCommand.TryRead,
                 (sender, cmd) => ServerEnter(sender, cmd.NetId, cmd.Seat),
-                validate: (sender, cmd) => CanEnter(sender, cmd.NetId));
+                validate: (sender, cmd) => CanEnter(sender, cmd.NetId, cmd.Seat));
 
             commands.Register<ExitVehicleCommand>(ReplicationIds.CommandExitVehicle, ExitVehicleCommand.TryRead,
                 (sender, cmd) => ServerRequestExit(sender),   // a REQUEST: the one exit that may be refused (a blocked door)
-                validate: (sender, cmd) => IsDriver(sender));
+                validate: (sender, cmd) => IsSeated(sender));
 
             commands.Register<DriveInputCommand>(ReplicationIds.CommandDriveInput, DriveInputCommand.TryRead,
                 (sender, cmd) => _vehicles.ServerQueueInput(cmd.NetId, in cmd),
@@ -1257,17 +1261,35 @@ namespace UnturnedGodot.Net
         }
 
         public bool IsDriver(ushort playerId) => _drivenByPlayer.ContainsKey(playerId);
+        /// <summary>All occupants are seated; only seat zero owns the vehicle's transform stream.</summary>
+        public bool IsSeated(ushort playerId) => _seatByPlayer.ContainsKey(playerId);
 
         public bool TryGetDriven(ushort playerId, out uint vehicleNetId) => _drivenByPlayer.TryGetValue(playerId, out vehicleNetId);
 
-        public bool CanEnter(ushort sender, uint netId)
+        public bool CanEnter(ushort sender, uint netId, byte wantSeat = EnterVehicleCommand.AnySeat)
         {
             if (!_vehicles.TryGet(new NetId(netId), out var v)) return false;
-            if (v.DriverPlayerId != 0 || v.Exploded) return false;   // one driver per vehicle; wrecks aren't seats
+            if (v.Exploded) return false;
             if (IsDriver(sender)) return false;
             if (!_combat.IsAlive(sender)) return false;
             if (!_players.TryGetByOwner(sender, out var p)) return false;
-            return (v.Pos - p.Pos).magnitude <= EnterReach;
+            if ((v.Pos - p.Pos).magnitude > EnterReach) return false;
+            var id = new NetId(netId);
+            int seats = _vehicles.SeatsOn(id);
+            // The request names a seat, not an entire empty vehicle. Preserve the
+            // original AnySeat/out-of-range fallback while rejecting a claimed slot
+            // at the command choke point (including a one-seat entry race).
+            if (wantSeat < seats)
+            {
+                ushort occupant = _vehicles.SeatOccupant(id, wantSeat);
+                return occupant == 0 || occupant == sender;
+            }
+            for (int i = 0; i < seats; i++)
+            {
+                ushort occupant = _vehicles.SeatOccupant(id, i);
+                if (occupant == 0 || occupant == sender) return true;
+            }
+            return false;
         }
 
         void ServerEnter(ushort sender, uint netId, byte wantSeat)
@@ -1398,15 +1420,15 @@ namespace UnturnedGodot.Net
         public void OnPeerDisconnected(ushort playerId) => ServerExit(playerId);
 
         /// <summary>Per-tick housekeeping (inside TickSimulation, after command dispatch + player step):
-        /// the driver's avatar rides the vehicle (entity teleport, like SP's GlobalPosition follow), and a
-        /// driver who died in the seat is force-exited.</summary>
+        /// every occupant's avatar rides the vehicle (entity teleport, like SP's GlobalPosition follow), and an
+        /// occupant who died in a seat is force-exited.</summary>
         public void Step(long tick)
         {
             List<ushort> exits = null;
-            foreach (var kv in _drivenByPlayer)
+            foreach (var kv in _seatByPlayer)
             {
                 if (!_combat.IsAlive(kv.Key)) { (exits ??= new List<ushort>()).Add(kv.Key); continue; }
-                if (_vehicles.TryGet(new NetId(kv.Value), out var v))
+                if (_vehicles.TryGet(new NetId(kv.Value.NetId), out var v))
                     _players.ServerTeleport(kv.Key, v.Pos, tick);
             }
             if (exits != null) foreach (ushort p in exits) ServerExit(p);

@@ -21,6 +21,7 @@ Rules of the road:
 
 | I need to… | Use | Do **not** |
 |---|---|---|
+| Decide whether a player's on-foot transform/teleport is allowed while riding a vehicle | `ServerVehicles.IsSeated(playerId)` in `core/UnturnedNet/VehicleReplication.cs`; `IsDriver` is only for vehicle control authority | Treat a passenger as on foot because they do not own the steering/transform stream |
 | damage falling off from a blast | `ExplosionMath.Linear/Squared` (`core/UnturnedSim/CombatMath.cs:12`/`:15`) | write `1 - dist/r` inline (`game/Deployable.cs:318` does; it is the one straggler) |
 | decide if a fall hurts / how much / breaks legs | `FallMath.Hurts/Damage/BreaksLegs` (`core/UnturnedSim/CombatMath.cs:30`–`:36`) | compare against 22 yourself |
 | know how far a zombie can sense a player | `StealthDetection.Radius/DrivingRadius` (`core/UnturnedSim/CombatMath.cs:53`/`:66`) | rebuild the stance table |
