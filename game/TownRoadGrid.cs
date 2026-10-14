@@ -2240,14 +2240,17 @@ namespace UnturnedGodot
             // ...and under the back lanes, as under the streets (planned before this runs: Main), out to their pavements' backs
             if (LanePlans.Count > 0)
             {
-                var lanes = new List<List<Vector3>>(LanePlans.Count);
+                // (each width its own pass: the back lanes', and a parking lot's wider ways in)
+                var byHalf = new Dictionary<float, List<List<Vector3>>>();
                 foreach (var lp in LanePlans)
                 {
                     var one = new List<Vector3>(lp.Pts.Count);
                     foreach (var q in lp.Pts) one.Add(new Vector3(q.X, q.Y - GradeDrop, q.Z));
+                    float h = lp.Half > 0f ? lp.Half : LaneHalf;
+                    if (!byHalf.TryGetValue(h, out var lanes)) byHalf[h] = lanes = new List<List<Vector3>>();
                     lanes.Add(one);
                 }
-                terr.ConformToPolylines(lanes, LaneHalf + LaneWalkWidth + 0.5f, GradeFeather * 0.5f);
+                foreach (var (h, lanes) in byHalf) terr.ConformToPolylines(lanes, h + LaneWalkWidth + 0.5f, GradeFeather * 0.5f);
             }
             return true;
         }
@@ -2305,36 +2308,29 @@ namespace UnturnedGodot
                         if (bk > bay.Front0 + 0.01f && bk < bay.Front1 - 0.01f) breaks.Add(bk);
                 }
                 int road = r;
-                int Lay(EditorSidewalk.Side side, float from, float toEnd, string piece = null) => breaks == null
-                    ? walk.LayAlongRoad(walk, roads, road, side, null, from, toEnd, piece: piece)
+                int Lay(EditorSidewalk.Side side, float from, float toEnd, string piece = null, float min = -1f) => breaks == null
+                    ? walk.LayAlongRoad(walk, roads, road, side, null, from, toEnd, piece: piece, minLength: min)
                     : walk.LayAlongRoad(walk, roads, road, side, null, from, toEnd,
                                         d => BayExtra(road, 1, d), d => BayExtra(road, -1, d), breaks,
-                                        d => BayBack(road, 1, d), d => BayBack(road, -1, d), piece: piece);
+                                        d => BayBack(road, 1, d), d => BayBack(road, -1, d), piece: piece, minLength: min);
                 // ⭐ OPEN WHERE A LANE COMES IN (BuildLanes): that side is laid in pieces round each mouth, whose kerb
                 // returns pick the pavement up where it stops
                 bool anyMouth = false;
                 foreach (var m in LaneMouths) if (m.Road == r) anyMouth = true;
-                // ⭐ ...and ACROSS A PARKING LOT'S WAY IN, KEPT (strawberry 2026-10-14: "roads should branch into them with a tiny
-                // connecting road (keeping the sidewalks)"): the pavement runs on over it, its kerb dropped the width of the
-                // way in, as a driveway's is -- that side only, so each side is laid with its own dips
-                bool anyEntrance = false;
-                foreach (var lot in ParkingLotsLaid) foreach (var e in lot.Entrances) if (e.Road == r) anyEntrance = true;
-                if (!anyMouth && !anyEntrance) { made += Lay(EditorSidewalk.Side.Both, t0, t1); continue; }
-                var crossingDips = new List<(float at, float length)>(walk.Dips);
+                // (a parking lot's way in is one of these too: a short lane of its own -- TownParking.PlanParkingEntrances)
+                if (!anyMouth) { made += Lay(EditorSidewalk.Side.Both, t0, t1); continue; }
                 float Lr = roads.RoadLength(r);
                 foreach (var (sd, sideEnum) in new[] { (1, EditorSidewalk.Side.Right), (-1, EditorSidewalk.Side.Left) })
                 {
-                    walk.Dips.Clear();
-                    foreach (var dp in crossingDips) walk.Dips.Add(dp);
-                    foreach (var lot in ParkingLotsLaid)
-                        foreach (var e in lot.Entrances)
-                            if (e.Road == r && e.Side == sd) walk.AddDip(e.From - walk.DipRamp, (e.To - e.From) + 2f * walk.DipRamp);
                     var cuts = new List<LaneMouth>();
                     foreach (var m in LaneMouths) if (m.Road == r && m.Side == sd) cuts.Add(m);
                     cuts.Sort((x, y) => x.From.CompareTo(y.From));
+                    // ⚠ HOWEVER SHORT: a piece between a junction's corner and a mouth, or between two mouths, is pavement a
+                    // kerb return picks up -- a parking lot's two-lane way in, opening 1.5 m nearer the corner than a back
+                    // lane, left 2.6 m of it, under the two stations a run needs, and that showed as a square of grass
                     float at = t0; int k = 0;
-                    foreach (var m in cuts) { made += Lay(sideEnum, at, Lr - m.From, $"p{k++}"); at = m.To; }
-                    made += Lay(sideEnum, at, t1, cuts.Count > 0 ? $"p{k}" : null);
+                    foreach (var m in cuts) { made += Lay(sideEnum, at, Lr - m.From, $"p{k++}", 0.05f); at = m.To; }
+                    made += Lay(sideEnum, at, t1, cuts.Count > 0 ? $"p{k}" : null, cuts.Count > 0 ? 0.05f : -1f);
                 }
             }
             walk.Dips.Clear();
@@ -4371,6 +4367,7 @@ namespace UnturnedGodot
                 if (!again) break;                // nobody asked: the first layout stands
             }
             PlanLanes(roads);
+            PlanParkingEntrances(roads);
             int stepped = LayParkingBays(roads);
             GrowPlots(roads);
             PlaceTriangleLots(roads);
@@ -5815,6 +5812,12 @@ namespace UnturnedGodot
         public sealed class LanePlan
         {
             public List<Vector3> Pts; public LaneMouth A, B; public int Road = -1;
+            /// <summary>End B opens into a parking lot's asphalt (TownParking): neither a mouth nor closed -- its pavements run
+            /// to the end and meet the lot's own.</summary>
+            public bool OpenB;
+            /// <summary>Its own carriageway, where it is not a back lane's single track (a parking lot's two-lane way in):
+            /// the material it is built from, and its half-width. -1 / 0: LaneMaterial, LaneHalf.</summary>
+            public int Material = -1; public float Half;
             /// <summary>An end that meets the other half of an L at a hard corner (LaneHardCorners): neither a mouth nor
             /// closed. Partner is that other half, which meets it with its own opposite end.</summary>
             public bool KneeA, KneeB; public LanePlan Partner;
@@ -5839,6 +5842,8 @@ namespace UnturnedGodot
         /// opening off the pavement the street lays (into a junction's corner), or onto another lane's -- and where the
         /// first of them is, for a camera.</summary>
         public int DeadNoStreet, DeadGlancing, DeadNoCorner, DeadOffPavement, DeadOnMouth;
+        /// <summary>Mouths refused for opening within their clearOfCorner of a junction's corner (a parking lot's ways in).</summary>
+        public int MouthsNearCorner;
         public Vector3 FirstDeadEnd;
         Func<float, float, float> _heightAt;
 
@@ -5854,7 +5859,7 @@ namespace UnturnedGodot
         void PlanLanes(RoadField roads)
         {
             LanePlans.Clear(); LaneMouths.Clear(); LaneDeadEnds = 0;
-            DeadNoStreet = DeadGlancing = DeadNoCorner = DeadOffPavement = DeadOnMouth = 0; FirstDeadEnd = Vector3.Zero;
+            DeadNoStreet = DeadGlancing = DeadNoCorner = DeadOffPavement = DeadOnMouth = MouthsNearCorner = 0; FirstDeadEnd = Vector3.Zero;
             if (!BuildBackLanes || roads == null || Alleys.Count == 0) return;
             float Y(Vector3 q) => _heightAt != null ? _heightAt(q.X, q.Z) : q.Y;
             var taken = new bool[Alleys.Count];
@@ -6152,8 +6157,9 @@ namespace UnturnedGodot
         /// <summary>Open a lane's mouth onto the street its end comes out at: `end` is where the lane's strip stops
         /// (the back of the street's pavement), `w` the way out of it. Null where there is no straight run of a
         /// street's pavement to open -- a junction's corner, a slab, another lane's mouth.</summary>
-        LaneMouth OpenMouth(RoadField roads, Vector3 end, Vector3 w)
+        LaneMouth OpenMouth(RoadField roads, Vector3 end, Vector3 w, float laneHalf = 0f, float clearOfCorner = 0f)
         {
+            float lh = laneHalf > 0f ? laneHalf : LaneHalf;
             // the street: the first of OUR carriageways the lane's line runs into, walking on out of its end
             int r = -1;
             for (float t = 0.25f; t <= 16f && r < 0; t += 0.25f)
@@ -6190,7 +6196,7 @@ namespace UnturnedGodot
             for (int c = 0; c < 2; c++)
             {
                 var lat = c == 0 ? left : -left;
-                var b0 = edge + lat * (LaneHalf + PavementGap);          // on the lane's kerb line
+                var b0 = edge + lat * (lh + PavementGap);                // on the lane's kerb line
                 var a0 = pos + n * (half + PavementGap);                 // on the street's
                 var dA = t0.Dot(lat) > 0f ? t0 : -t0;                    // along the street, away from the lane
                 if (!MouthCorner(a0, dA, b0, into, LaneKerbRadius, _walkWidth, LaneWalkWidth,
@@ -6215,6 +6221,7 @@ namespace UnturnedGodot
             // the opening has to fall on pavement the street actually lays, clear of its junctions' corners
             float lo = TrimFor(roads, r, false, CornerRadius) + 0.25f, hi = L - TrimFor(roads, r, true, CornerRadius) - 0.25f;
             if (from < lo || to > hi) { DeadOffPavement++; return null; }
+            if (from < lo + clearOfCorner || to > hi - clearOfCorner) { MouthsNearCorner++; return null; }
             if (MouthAt(r, side, from - 0.5f, to + 0.5f) != null) { DeadOnMouth++; return null; }
             return m;
         }
@@ -6289,7 +6296,7 @@ namespace UnturnedGodot
         public int BuildLanes(Node3D parent, RoadField roads)
         {
             LaneRoads.Clear(); LaneEndsClosed = 0; ReturnJog = 0f;
-            if (parent == null || roads == null || LanePlans.Count == 0 || LaneMaterial < 0) return 0;
+            if (parent == null || roads == null || LanePlans.Count == 0) return 0;
             var walk = new EditorSidewalk { Name = "LaneWalk", Width = LaneWalkWidth, RoadGap = PavementGap };
             parent.AddChild(walk);
             Func<float, float, float> ground = Terrain.Active != null && !EditorSidewalk.NoGround ? (x, z) => Terrain.Active.SampleHeight(x, z) : null;
@@ -6297,7 +6304,9 @@ namespace UnturnedGodot
             int walks = 0, corners = 0, knees = 0;
             foreach (var lp in LanePlans)
             {
-                lp.Road = roads.AddRoadFromPolyline(lp.Pts, LaneMaterial, loop: false, ignoreTerrain: !FollowTerrain);
+                int mat = lp.Material >= 0 ? lp.Material : LaneMaterial;
+                if (mat < 0) continue;
+                lp.Road = roads.AddRoadFromPolyline(lp.Pts, mat, loop: false, ignoreTerrain: !FollowTerrain);
                 if (lp.Road >= 0) LaneRoads.Add(lp.Road);
             }
             // ⭐ A HARD 90's TWO HALVES MEET AT A NODE OF THEIR OWN, which is what mitres their asphalt: two road ends, and
@@ -6315,11 +6324,12 @@ namespace UnturnedGodot
             // ⚠ EACH MOUTH'S END RING ON THE STREET'S SLOPE (strawberry 2026-10-13, "follow gentle hills and slopes"): the lane
             // is level from side to side and the street's edge it ends on climbs along it, so one corner of every mouth on a
             // hill stood proud of the street (11 cm, measured below). The ring now takes the street's surface at both corners.
-            // UG_TOWNNOLANEBANK=1 is the control.
+            // UG_TOWNNOLANEBANK=1 is the control. (A parking lot's way in takes its street's plane at its open end too: the
+            // lot's front is the street's height along the street -- BuildParkingLots -- so it meets the lot square.)
             foreach (var lp in LanePlans)
             {
                 if (lp.Road < 0 || lp.A == null && lp.B == null || NoLaneBank) continue;
-                foreach (var (m, atEnd) in new[] { (lp.A, false), (lp.B, true) })
+                foreach (var (m, atEnd) in new[] { (lp.A, false), (lp.OpenB ? lp.A : lp.B, true) })
                 {
                     if (m == null || !roads.EvaluateAlong(m.Road, m.EdgeArc, out var sq, out var stn, snapTerrain: false)) continue;
                     var h = new Vector3(stn.X, 0f, stn.Z); float hl = h.Length();
@@ -6391,7 +6401,7 @@ namespace UnturnedGodot
                     // (a closed end's kerb takes the lane's last metre: the pavements stop where it starts; a hard knee's
                     // pavement runs to its mitre)
                     float fromA = lp.A != null ? lp.A.LaneFrom[cA] : lp.KneeA ? 0f : LaneWalkWidth;
-                    float fromB = lp.B != null ? lp.B.LaneFrom[cB] : lp.KneeB ? 0f : LaneWalkWidth;
+                    float fromB = lp.B != null ? lp.B.LaneFrom[cB] : lp.KneeB || lp.OpenB ? 0f : LaneWalkWidth;
                     // (the return's end on the lane side is the lane's kerb at LaneFrom, and its foot is on the mouth's plane)
                     float LaneSideFoot(LaneMouth m, int c)
                     {
@@ -6434,13 +6444,16 @@ namespace UnturnedGodot
                         }
                         return h;
                     }
+                    // (a parking lot's way in has no pavements of its own: the mouth's returns run to the back of the street's
+                    // pavement, and the lot's kerb curves round to meet them there -- BuildParkingLots)
+                    if (lp.OpenB) continue;
                     walks += walk.LayAlongRoad(walk, roads, road, sideEnum, null, fromA, fromB, surfaceAt: Surface,
                                                mitreStart: KneeMitre(false, sd), mitreEnd: KneeMitre(true, sd));
                 }
                 // ⭐ A LANE THAT STOPS SHORT ENDS IN A KERB, NOT A RAMP: a strip of its own pavement straight across the end,
                 // as wide as the lane and both its pavements, standing on the asphalt's last metre -- so the road's own
                 // end ramp lies under it and the lane reads as closed off rather than unfinished
-                foreach (var (closed, atEnd) in new[] { (lp.A == null && !lp.KneeA, false), (lp.B == null && !lp.KneeB, true) })
+                foreach (var (closed, atEnd) in new[] { (lp.A == null && !lp.KneeA, false), (lp.B == null && !lp.KneeB && !lp.OpenB, true) })
                 {
                     if (!closed || !roads.EvaluateAlong(road, atEnd ? L : 0f, out var ep, out var et)) continue;
                     var tn = new Vector3(et.X, 0f, et.Z).Normalized();
@@ -6555,7 +6568,7 @@ namespace UnturnedGodot
                             var c = vs[ix != null && ix.Length >= 3 ? ix[3 * t + 2] : 3 * t + 2];
                             foreach (var m in new[] { lp.A, lp.B })
                             {
-                                if (m == null || Flat(a, m.Edge) > LaneHalf + 3f) continue;
+                                if (m == null || Flat(a, m.Edge) > roads.RoadHalfWidth(lp.Road) + 3f) continue;
                                 for (int u = 0; u <= 6; u++)
                                     for (int w = 0; u + w <= 6; w++)
                                     {
@@ -6976,7 +6989,7 @@ namespace UnturnedGodot
         /// road's painted width and the centre line becomes a yellow edge line along each side of the median.</summary>
         void MakeBoulevardMaterial(RoadField roads)
         {
-            BoulevardMaterial = -1; _plainMain = _plainStreet = -1; LaneMaterial = -1;
+            BoulevardMaterial = -1; _plainMain = _plainStreet = -1; LaneMaterial = -1; ParkingEntranceMaterial = -1;
             // ⭐ THE TOWN'S ROADS ARE PLAIN TARMAC AND ITS LINES ARE PAINTED SEPARATELY (strawberry 2026-10-13: "it
             // might be better to rip the line etc decals and apply them ourselves instead of adjusting the existing
             // spline thing. the spline becomes just the tarmac road, decals are a separate thing"). Baked into the
@@ -7003,6 +7016,8 @@ namespace UnturnedGodot
             }
             // the back lanes' single track: the street's surface, plain whatever the streets wear -- a lane has no paint
             if (BuildBackLanes && plain != null && LaneHalf > 0f) LaneMaterial = roads.AddDerivedMaterial(StreetMaterial, LaneHalf, plain, 0f);
+            // ...and a parking lot's way in, the same tarmac two lanes wide
+            if (ParkingLots && plain != null && ParkingEntranceHalf > 0f) ParkingEntranceMaterial = roads.AddDerivedMaterial(StreetMaterial, ParkingEntranceHalf, plain, 0f);
             if (!Boulevards || MainMaterial == StreetMaterial || MedianWidth <= 0f) return;
             float half = roads.RoadHalfWidthOfMaterial(MainMaterial);
             if (half <= 0f) return;

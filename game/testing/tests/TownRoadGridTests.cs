@@ -1414,11 +1414,18 @@ namespace UnturnedGodot.Testing
                     //    sidewalks/kerbs and no markings"), measured on the meshes BuildLanes built -- which the checks above
                     //    already hold: no lane pavement lies over a street's, no plot stands on one, no kerb return folds.
                     // a. one single-lane road per lane, LaneHalf a side, a lane and not a street
-                    int laneRoadsOk = 0;
-                    foreach (int lr in gD.LaneRoads)
-                        if (Mathf.Abs(rfD.RoadHalfWidth(lr) - gD.LaneHalf) < 0.01f && !gD.IsMain(rfD, lr) && !gD.Built.Contains(lr)) laneRoadsOk++;
-                    T.Check($"the alleys are single-lane roads now ({gD.LaneRoads.Count} lanes from {gD.Alleys.Count} alleys, {laneRoadsOk} of them {gD.LaneHalf * 2f:0.0} m of carriageway)",
-                            gD.LaneRoads.Count >= 6 && gD.LaneRoads.Count == gD.LanePlans.Count && laneRoadsOk == gD.LaneRoads.Count);
+                    //    (a parking lot's way in is built as one too -- two lanes wide, open into the lot at its far end, with no
+                    //    pavements of its own: the lot's kerb curves round to meet its mouth's returns. TownParking.)
+                    int laneRoadsOk = 0, waysIn = 0, waysInOk = 0;
+                    foreach (var lp in gD.LanePlans)
+                    {
+                        int lr = lp.Road;
+                        if (lr < 0 || gD.IsMain(rfD, lr) || gD.Built.Contains(lr)) continue;
+                        if (lp.OpenB) { waysIn++; if (Mathf.Abs(rfD.RoadHalfWidth(lr) - gD.ParkingEntranceHalf) < 0.01f) waysInOk++; }
+                        else if (Mathf.Abs(rfD.RoadHalfWidth(lr) - gD.LaneHalf) < 0.01f) laneRoadsOk++;
+                    }
+                    T.Check($"the alleys are single-lane roads now ({gD.LaneRoads.Count} lanes from {gD.Alleys.Count} alleys, {laneRoadsOk} of them {gD.LaneHalf * 2f:0.0} m of carriageway; {waysInOk} of {waysIn} parking lots' ways in {gD.ParkingEntranceHalf * 2f:0.0} m)",
+                            gD.LaneRoads.Count >= 6 && gD.LaneRoads.Count == gD.LanePlans.Count && laneRoadsOk + waysIn == gD.LaneRoads.Count && waysInOk == waysIn);
                     // b. each opens off its street THROUGH the street's pavement: along its centreline, from the asphalt's edge
                     //    to where its own pavements begin, there is no pavement at all and it is road all the way -- while the
                     //    street's pavement carries on either side of the opening (2 m past each end of the cut, the control)
@@ -1499,6 +1506,7 @@ namespace UnturnedGodot.Testing
                     streetProud = streetsMeasured > 0 ? streetProud / streetsMeasured : float.NaN;
                     foreach (var lp in gD.LanePlans)
                     {
+                        if (lp.OpenB) continue;                    // (a parking lot's way in has no pavements of its own)
                         float L = rfD.RoadLength(lp.Road);
                         rfD.EvaluateAlong(lp.Road, L * 0.5f, out var mp, out var mt);
                         var rt = new Vector3(mt.Z, 0f, -mt.X).Normalized();
@@ -1534,10 +1542,11 @@ namespace UnturnedGodot.Testing
                                 var lat = new Vector3(-m.Into.Z, 0f, m.Into.X) * (c == 0 ? 1f : -1f) * (gD.LaneHalf + walkD.RoadGap + gD.LaneWalkWidth * 0.5f);
                                 var hlc = LevelAt(TopsOf(corner), m.Edge + m.Into * (m.LaneFrom[c] - 0.05f) + lat);
                                 var hll = LevelOn(SideNames(lp.Road, 1).Concat(SideNames(lp.Road, -1)), m.Edge + m.Into * (m.LaneFrom[c] + 0.05f) + lat);
-                                bool level = hc != null && hs != null && hlc != null && hll != null;
+                                // (a parking lot's way in: no lane pavement up it -- its return meets the lot's kerb curve there)
+                                bool level = hc != null && hs != null && (lp.OpenB || hlc != null && hll != null);
                                 if (level)
                                 {
-                                    float step = Mathf.Max(Mathf.Abs(hc.Value - hs.Value), Mathf.Abs(hlc.Value - hll.Value));
+                                    float step = Mathf.Max(Mathf.Abs(hc.Value - hs.Value), lp.OpenB ? 0f : Mathf.Abs(hlc.Value - hll.Value));
                                     worstSeam = Mathf.Max(worstSeam, step);
                                     level = step < 0.01f;
                                 }
@@ -1550,7 +1559,7 @@ namespace UnturnedGodot.Testing
                     // d. a lane end that cannot open onto a street is closed off with a kerb across it, never left as road ending
                     //    in the grass
                     int shortEnds = 0, endKerbs = 0;
-                    foreach (var lp in gD.LanePlans) { if (lp.A == null && !lp.KneeA) shortEnds++; if (lp.B == null && !lp.KneeB) shortEnds++; }
+                    foreach (var lp in gD.LanePlans) { if (lp.A == null && !lp.KneeA) shortEnds++; if (lp.B == null && !lp.KneeB && !lp.OpenB) shortEnds++; }
                     foreach (var mi in meshNodes) if (mi.Name.ToString().StartsWith("Sidewalk_LaneEnd_")) endKerbs++;
                     T.Check($"...and every lane end that cannot open onto a street closed off with a kerb ({endKerbs} of {shortEnds})", endKerbs == shortEnds);
                     // d2. HARD 90s FOR THE ALLEYS (strawberry 2026-10-13: "make hard 90s with both the road and the sidewalks
@@ -1713,8 +1722,11 @@ namespace UnturnedGodot.Testing
                         }
                         streetProudL = streetsL > 0 ? streetProudL / streetsL : float.NaN;
                         int deepOk = 0, deepTried = 0; float deepLowest = float.MaxValue;
+                        var waysInL = new HashSet<int>();
+                        foreach (var lp in gL.LanePlans) if (lp.OpenB) waysInL.Add(lp.Road);
                         foreach (int lr in gL.LaneRoads)
                         {
+                            if (waysInL.Contains(lr)) continue;    // (a parking lot's way in has no pavements of its own)
                             deepTried++;
                             var pr = Proud($"Sidewalk_R{lr}", lr);
                             if (pr == null) continue;

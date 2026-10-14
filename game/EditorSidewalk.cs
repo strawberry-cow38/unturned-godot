@@ -256,13 +256,16 @@ namespace UnturnedGodot
         /// a hard corner at the road's start (RoadField.CornerPoint) -- the ribbon runs to that line and stops square on
         /// it, short of the road's end on the inside of the turn and past it on the outside.</param>
         /// <param name="mitreEnd">The same at the road's end.</param>
+        /// <param name="minLength">Optional: the shortest run it lays, where not two stations (3 m) -- a piece of a street's
+        /// pavement between a junction's corner and a lane's mouth is real pavement however short it is.</param>
         public int LayAlongRoad(Node parent, RoadField roads, int road, Side side, List<Node3D> into = null,
                                 float trimStart = 0f, float trimEnd = 0f,
                                 System.Func<float, float> stepRight = null, System.Func<float, float> stepLeft = null,
                                 IReadOnlyList<float> breaks = null,
                                 System.Func<float, float> backRight = null, System.Func<float, float> backLeft = null,
                                 System.Func<float, float> surfaceAt = null, string piece = null,
-                                (Vector3 kerb, Vector3 back)? mitreStart = null, (Vector3 kerb, Vector3 back)? mitreEnd = null)
+                                (Vector3 kerb, Vector3 back)? mitreStart = null, (Vector3 kerb, Vector3 back)? mitreEnd = null,
+                                float minLength = -1f)
         {
             if (parent == null || roads == null) return 0;
             float total = roads.RoadLength(road);
@@ -275,7 +278,7 @@ namespace UnturnedGodot
             // the gap left behind IS the corner. A span shorter than the two trims is all intersection and
             // gets no pavement at all, which is correct: there is no pavement there to walk on.
             float from = Mathf.Max(0f, trimStart), to = total - Mathf.Max(0f, trimEnd);
-            if (to - from < Step * 2f) return 0;
+            if (to - from < (minLength >= 0f ? Mathf.Max(0.05f, minLength) : Step * 2f)) return 0;
 
             int n = Mathf.FloorToInt((to - from) / Step);
             var leftP = new List<Vector3>(n + 1); var leftO = new List<Vector3>(n + 1);
