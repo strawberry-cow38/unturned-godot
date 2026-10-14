@@ -2314,10 +2314,21 @@ namespace UnturnedGodot
                 // returns pick the pavement up where it stops
                 bool anyMouth = false;
                 foreach (var m in LaneMouths) if (m.Road == r) anyMouth = true;
-                if (!anyMouth) { made += Lay(EditorSidewalk.Side.Both, t0, t1); continue; }
+                // ⭐ ...and ACROSS A PARKING LOT'S WAY IN, KEPT (strawberry 2026-10-14: "roads should branch into them with a tiny
+                // connecting road (keeping the sidewalks)"): the pavement runs on over it, its kerb dropped the width of the
+                // way in, as a driveway's is -- that side only, so each side is laid with its own dips
+                bool anyEntrance = false;
+                foreach (var lot in ParkingLotsLaid) foreach (var e in lot.Entrances) if (e.Road == r) anyEntrance = true;
+                if (!anyMouth && !anyEntrance) { made += Lay(EditorSidewalk.Side.Both, t0, t1); continue; }
+                var crossingDips = new List<(float at, float length)>(walk.Dips);
                 float Lr = roads.RoadLength(r);
                 foreach (var (sd, sideEnum) in new[] { (1, EditorSidewalk.Side.Right), (-1, EditorSidewalk.Side.Left) })
                 {
+                    walk.Dips.Clear();
+                    foreach (var dp in crossingDips) walk.Dips.Add(dp);
+                    foreach (var lot in ParkingLotsLaid)
+                        foreach (var e in lot.Entrances)
+                            if (e.Road == r && e.Side == sd) walk.AddDip(e.From - walk.DipRamp, (e.To - e.From) + 2f * walk.DipRamp);
                     var cuts = new List<LaneMouth>();
                     foreach (var m in LaneMouths) if (m.Road == r && m.Side == sd) cuts.Add(m);
                     cuts.Sort((x, y) => x.From.CompareTo(y.From));
@@ -2735,6 +2746,7 @@ namespace UnturnedGodot
                         // a runway; staggering them is what a real street does and halves the count.
                         int side = (k % 2 == 0) ? 1 : -1;
                         if (MouthAt(r, side, d - 1f, d + 1f) != null) continue;      // the lane's way in
+                        if (EntranceAt(r, side, d - 1.5f, d + 1.5f) != null) continue;   // a parking lot's
                         // ...on the pavement wherever it is, which round a parking bay is a bay's depth further out
                         var at = pos + right * (side * (half + BayExtra(r, side, d) + RoadGapForLights + LampSetback));
                         if (!PushClear(roads, ref at, right * side)) continue;
@@ -3808,7 +3820,7 @@ namespace UnturnedGodot
         // ==============================================================================================
 
         /// <summary>What a plot is for.</summary>
-        public enum PlotKind { HouseSmall, HouseMedium, HouseLarge, Corner, Shop, Apartments, Triangle }
+        public enum PlotKind { HouseSmall, HouseMedium, HouseLarge, Corner, Shop, Apartments, Triangle, Parking }
 
         /// <summary>One entry of the plot catalogue: a kind, its frontage and depth, its yards, and the colour it is
         /// marked in. The building stands in what the yards leave: (Width - 2 SideYard) x (Depth - FrontYard -
@@ -3846,6 +3858,9 @@ namespace UnturnedGodot
             new(PlotKind.Corner,      30f, 30f, 6f, 3f, 3f,   new Color(0.35f, 0.82f, 0.42f)),   // house 21 x 21
             new(PlotKind.Shop,        15f, 27f, 3f, 6f, 0f,   new Color(0.72f, 0.45f, 0.98f)),   // shop 15 x 18
             new(PlotKind.Apartments,  36f, 36f, 3f, 6f, 1.5f, new Color(0.30f, 0.62f, 0.98f)),   // block 33 x 27
+            // (a parking lot: solved to what its building asked for -- TownParking -- so this size is only a nominal one; no
+            // catalogue fill offers it)
+            new(PlotKind.Parking,     17f, 20f, 0f, 0f, 0f,   new Color(0.55f, 0.55f, 0.58f)),
         };
         public static PlotSize SizeOf(PlotKind k) { foreach (var p in PlotSizes) if (p.Kind == k) return p; return PlotSizes[0]; }
 
@@ -4026,7 +4041,7 @@ namespace UnturnedGodot
         {
             if (roads == null) return 0;
             if (plan) PlanPlots(roads);
-            if (parent != null) { BuildPlotMarks(parent); BuildParking(parent, roads); }
+            if (parent != null) { BuildPlotMarks(parent); BuildParking(parent, roads); BuildParkingLots(parent, roads); }
             return Plots.Count;
         }
 
@@ -4046,6 +4061,8 @@ namespace UnturnedGodot
             // building -- and the layout is done again with lanes in just those blocks. A block of houses keeps no lane, and
             // its backyards grow into the middle instead (GrowPlots). UG_TOWNALLALLEYS=1: a lane in every block, as before.
             HashSet<(int, int)> laneBlocks = AlleysOnRequest ? new HashSet<(int, int)>() : null;
+            List<(Plot pl, int n)> parkingAsks = null;
+            ParkingLotsLaid.Clear(); ParkingAsked = ParkingSpacesAsked = ParkingSpacesLaid = ParkingRefused = 0;
             int corners = 0;
             for (int layout = 0; layout < 2; layout++)
             {
@@ -4212,6 +4229,10 @@ namespace UnturnedGodot
                     }
                 }
 
+                // ---- the buildings that asked for a parking lot on the first pass, back where they stood, and each one's lot
+                // solved and laid beside it -- before the frontages fill, which then fill round them (TownParking)
+                if (layout == 1 && parkingAsks != null) PlaceRequestedParking(roads, parkingAsks);
+
                 // ---- frontages: mains first, then streets, each side walked from end to end
                 var order = new List<int>(Built);
                 order.Sort((x, y) => { int mx = IsMain(roads, x) ? 0 : 1, my = IsMain(roads, y) ? 0 : 1; return mx != my ? mx.CompareTo(my) : x.CompareTo(y); });
@@ -4330,15 +4351,24 @@ namespace UnturnedGodot
                         }
                     }
                 }
-                if (laneBlocks == null || layout == 1) break;
-                LaneRequests = 0;
-                foreach (var pl in Plots)
+                if (layout == 1) break;
+                // what the first layout's buildings ask for: a lane (a block with a shop or apartments in it), a parking lot
+                bool again = false;
+                if (laneBlocks != null)
                 {
-                    if (pl.Kind != PlotKind.Shop && pl.Kind != PlotKind.Apartments) continue;
-                    var blk = BlockOf(pl.Centre);
-                    if (blk.HasValue && laneBlocks.Add(blk.Value)) LaneRequests++;
+                    LaneRequests = 0;
+                    foreach (var pl in Plots)
+                    {
+                        if (pl.Kind != PlotKind.Shop && pl.Kind != PlotKind.Apartments) continue;
+                        var blk = BlockOf(pl.Centre);
+                        if (blk.HasValue && laneBlocks.Add(blk.Value)) LaneRequests++;
+                    }
+                    again |= laneBlocks.Count > 0;
                 }
-                if (laneBlocks.Count == 0) break;                // nobody asked: the lane-less layout stands
+                parkingAsks = new List<(Plot, int)>();
+                if (ParkingLots) foreach (var pl in Plots) { int n = ParkingFor(pl); if (n > 0) parkingAsks.Add((pl, n)); }
+                again |= parkingAsks.Count > 0;
+                if (!again) break;                // nobody asked: the first layout stands
             }
             PlanLanes(roads);
             int stepped = LayParkingBays(roads);
@@ -4354,6 +4384,14 @@ namespace UnturnedGodot
                 counts.Append($" {ps.Kind} {n} ({ps.Width:0}x{ps.Depth:0});");
             }
             counts.Append($" Triangle {TrianglesLaid} ({TrianglesZoned} zoned);");
+            if (ProbeEverything)
+                foreach (var lot in ParkingLotsLaid)
+                    foreach (var o in Plots)
+                        if (!ReferenceEquals(o, lot.Lot) && (o.Outline != null ? QuadsOverlap(lot.Lot.Corners(), o.Outline, 0.01f) : PlotsOverlap(lot.Lot, o, 0.01f)))
+                            Log.Print($"[towngrid]   ⚠ parking lot at ({lot.Lot.Front.X:0},{lot.Lot.Front.Z:0}) overlaps a {o.Kind} at ({o.Front.X:0},{o.Front.Z:0})");
+            if (ParkingAsked > 0)
+                Log.Print($"[towngrid] parking lots: {ParkingAsked} buildings asked ({ParkingSpacesAsked} spaces), {ParkingLotsLaid.Count} lots laid beside them "
+                        + $"({ParkingSpacesLaid} stalls, {ParkingWaysIn} ways in), {ParkingCornersTaken} corner lots given way to them, {ParkingRefused} refused (no room on the frontage)");
             float area = 0f;
             foreach (var pl in Plots)
             {
@@ -4515,6 +4553,7 @@ namespace UnturnedGodot
                     if (pl.Kind != ps.Kind) continue;
                     any++;
                     Outline(lots, pl.Corners(), 0.45f, Lift, pl.Front.Y);
+                    if (pl.Kind == PlotKind.Parking) continue;      // (its asphalt and stripes are its marks: BuildParkingLots)
                     Fill(tint, pl.Corners(), Lift * 0.5f, pl.Front.Y);
                     Fill(zone, pl.BuildArea(), Lift * 0.7f, pl.Front.Y);
                     Outline(zoneLine, pl.BuildArea(), 0.25f, Lift * 0.9f, pl.Front.Y);
@@ -4727,7 +4766,7 @@ namespace UnturnedGodot
                 {
                     int i = round % 2 == 0 ? n : Plots.Count - 1 - n;            // each way in turn: no lot always first
                     var pl = Plots[i];
-                    if (pl.Outline != null) continue;                             // a triangle lot is already all it can be
+                    if (pl.Outline != null || pl.Kind == PlotKind.Parking) continue;   // a triangle lot is already all it can be; a lot is solved
                     for (int s = 0; s < 3; s++)
                     {
                         if (!open[i, s]) continue;
@@ -5660,6 +5699,7 @@ namespace UnturnedGodot
                     }
                     continue;
                 }
+                if (pl.Kind == PlotKind.Parking) continue;                 // (a car park is open ground)
                 var c = pl.Corners();                   // front-left, front-right, back-right, back-left
                 segs.Add((c[2], c[3], pl, "back"));
                 if (pl.Kind == PlotKind.Shop) continue;
@@ -6782,6 +6822,8 @@ namespace UnturnedGodot
                         // ...nor in front of a plot whose frontage a lane's mouth takes a piece of (a lane meeting the
                         // street at an angle opens wider than its own strip on the sharp side)
                         if (MouthAt(r, side, p0 + 0.05f, p1 - 0.05f) != null) { _bayAtLane++; Close(); continue; }
+                        // ...nor in front of a parking lot, whose ways in cross the kerb there
+                        if (pl.Kind == PlotKind.Parking) { Close(); continue; }
                         // step it back, and keep it there only if it still fits
                         var was = pl.Front;
                         int at = Plots.IndexOf(pl);
