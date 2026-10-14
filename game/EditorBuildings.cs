@@ -2734,10 +2734,19 @@ namespace UnturnedGodot
             foreach (var n in _furnitureNodes) if (IsInstanceValid(n)) n.QueueFree();
             _furnitureNodes.Clear();
             var objects = _editor?.Objects;
-            if (objects == null) return;
             foreach (var m in Furniture)
             {
-                var mesh = objects.PreviewMesh(m.Name);
+                // a curtain, a rug: built from the inputs it was saved with -- no OBJ, so no object catalog either
+                if (m.Gen != null)
+                {
+                    var built = RuntimeDecorNode(m);
+                    if (built == null) continue;
+                    AddChild(built);
+                    built.GlobalTransform = RuntimeDecorTransform(m);
+                    _furnitureNodes.Add(built);
+                    continue;
+                }
+                var mesh = objects?.PreviewMesh(m.Name);
                 if (mesh == null) continue;
                 var mi = new MeshInstance3D { Name = "Furniture_" + m.Name, Mesh = mesh, MaterialOverride = objects.PreviewMaterial(m.Name) };
                 AddChild(mi);
@@ -2745,6 +2754,50 @@ namespace UnturnedGodot
                 _furnitureNodes.Add(mi);
             }
         }
+
+        /// <summary>The furniture's preview nodes as built, in Furniture's order but for any that built nothing (the in-engine
+        /// test reads the meshes a generated building's curtains and rugs actually made).</summary>
+        public IReadOnlyList<Node3D> FurnitureNodes => _furnitureNodes;
+
+        /// <summary>A runtime-built piece (PropDesignation.Gen: a curtain, a rug) as a mesh, made by astraclaw's factories
+        /// (RuntimeDecorGenerators) from its saved inputs. The factories cache what they return, so it is used as given and
+        /// never changed. Null for inputs no factory builds (a kind or a style this build does not know is saved by name, and
+        /// a size the factory refuses), said in the log -- a missing curtain, not a missing building.</summary>
+        public static MeshInstance3D RuntimeDecorNode(PropDesignation m)
+        {
+            var g = m.Gen;
+            ArrayMesh mesh = null;
+            try
+            {
+                if (g.Kind == RuntimeDecorKind.Curtain) mesh = RuntimeDecorGenerators.CreateCurtainMesh(g.Width, g.Height, g.Open, CurtainTint(g.Style));
+                else if (g.Kind == RuntimeDecorKind.Rug && System.Enum.TryParse<RuntimeDecorGenerators.RugStyle>(g.Style, true, out var style))
+                    mesh = RuntimeDecorGenerators.CreateRugMesh(g.Width, g.Height, style);
+            }
+            catch (System.ArgumentOutOfRangeException e) { Log.Err($"[editor-buildings] {g.Kind} {g.Width} x {g.Height} not built: {e.Message}"); }
+            if (mesh == null) return null;
+            return new MeshInstance3D { Name = "Furniture_" + m.Name, Mesh = mesh, Transform = RuntimeDecorTransform(m) };
+        }
+
+        /// <summary>Where a runtime-built piece's mesh goes. The factories build it Godot Y-up, front -Z, already stood up, so it
+        /// is only turned -- about Up by the yaw, which takes -Z to the piece's Front (-sin, -cos), as Upright takes an OBJ's +Y
+        /// there. A rug's mesh lies on its origin, the floor. A curtain's is centred on its own middle; the piece's origin is
+        /// its back at the RAIL's height, so the mesh goes down by the factory's own CurtainRailY: the rail lands where the
+        /// generator put it over the window.</summary>
+        public static Transform3D RuntimeDecorTransform(PropDesignation m)
+        {
+            float y = m.Gen.Kind == RuntimeDecorKind.Curtain ? m.Y - RuntimeDecorGenerators.CurtainRailY(m.Gen.Width, m.Gen.Height) : m.Y;
+            return new Transform3D(new Basis(Vector3.Up, Mathf.DegToRad(m.Yaw)), new Vector3(m.X, y, m.Z));
+        }
+
+        /// <summary>A curtain tint by name (RuntimeDecor.CurtainTints): the factory's own linen, and three of the palette's
+        /// muted ones. Null (the factory's default) for any it does not know.</summary>
+        public static Color? CurtainTint(string name) => name switch
+        {
+            "Sage" => new Color(0.60f, 0.66f, 0.54f),
+            "Slate" => new Color(0.50f, 0.56f, 0.63f),
+            "Rust" => new Color(0.66f, 0.42f, 0.32f),
+            _ => null,
+        };
 
         public BuildingGenResult Generate(BuildingGenSpec spec)
         {
@@ -2803,7 +2856,7 @@ namespace UnturnedGodot
             DoorMarks.Clear();
             foreach (var d in res.DoorMarks) DoorMarks.Add(new DoorDesignation(d.Role, at.X + d.X, at.Z + d.Z, d.Floor));
             Furniture.Clear();
-            foreach (var m in res.Props) Furniture.Add(new PropDesignation(m.Name, at.X + m.X, at.Y + m.Y, at.Z + m.Z, m.Yaw));
+            foreach (var m in res.Props) Furniture.Add(new PropDesignation(m.Name, at.X + m.X, at.Y + m.Y, at.Z + m.Z, m.Yaw, m.Gen));
             ShowFurniture();
             ActiveMaterial = mat;
             _selWall = null; _selOpening = -1;
@@ -2827,7 +2880,9 @@ namespace UnturnedGodot
             var dump = System.Environment.GetEnvironmentVariable("UG_EDITDUMP");
             if (!string.IsNullOrEmpty(dump))
             {
-                System.IO.File.WriteAllLines(dump, System.Linq.Enumerable.Select(res.Furniture, m => System.FormattableString.Invariant($"{m.Name} {m.X:0.00} {m.Z:0.00} {m.Yaw:0} {m.Floor} {m.Room.Kind}")));
+                // (the curtains and rugs after the props, each with what it is built from)
+                System.IO.File.WriteAllLines(dump, System.Linq.Enumerable.Select(System.Linq.Enumerable.Concat(res.Furniture, res.RuntimeDecor), m => System.FormattableString.Invariant(
+                    $"{m.Name} {m.X:0.00} {m.Z:0.00} {m.Yaw:0} {m.Floor} {m.Room.Kind}{(m.Gen == null ? "" : $" gen {m.Gen.Kind} {m.Gen.Width:0.00} x {m.Gen.Height:0.00} y {m.Y:0.00} {(m.Gen.Open ? "open" : "closed")} {m.Gen.Style}")}")));
                 System.IO.File.WriteAllLines(dump + ".walls", System.Linq.Enumerable.Select(res.Walls, w => System.FormattableString.Invariant($"{w.Kind} {w.X:R} {w.Y:R} {w.Z:R} {w.Yaw:R} {w.Length:R} {w.Height:R} {w.Thickness:R} {w.Openings.Count}")));
                 System.IO.File.WriteAllLines(dump + ".trace", trace);
                 // and every opening, so a capture can be checked against where the windows and doors actually are

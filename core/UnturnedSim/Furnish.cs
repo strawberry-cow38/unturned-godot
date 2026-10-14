@@ -22,9 +22,13 @@ namespace UnturnedSim
         /// <summary>Hung from the ceiling (a ceiling light), its origin at the ceiling's underside and the piece below it:
         /// no floor of its own, nothing it stands in the way of.</summary>
         public bool Ceiling;
+        /// <summary>Built at load from these inputs (a curtain, a rug: game/RuntimeDecorGenerators) rather than read off an
+        /// OBJ by Name: null for every prop. Such a piece is in BuildingGenResult.RuntimeDecor, never in Furniture -- it has
+        /// no FurnitureCatalog size, and every rule that reads Furniture reads it as solid pieces of the catalog's.</summary>
+        public RuntimeDecor Gen;
         public (float X, float Z) Front { get { var (c, s) = PlanTrig.CosSin(Yaw); return (-s, -c); } }
         public (float X, float Z) Right { get { var (c, s) = PlanTrig.CosSin(Yaw); return (c, -s); } }
-        public (float X0, float Z0, float X1, float Z1) Footprint => FurnitureCatalog.Footprint(Name, X, Z, Yaw);
+        public (float X0, float Z0, float X1, float Z1) Footprint => Gen != null ? FurnitureCatalog.Footprint(Gen.Size, X, Z, Yaw) : FurnitureCatalog.Footprint(Name, X, Z, Yaw);
         public override string ToString() => $"{Name} at ({X:0.00},{Z:0.00}) yaw {Yaw:0} in {Room}";
     }
 
@@ -99,16 +103,26 @@ namespace UnturnedSim
             ["Poster_Tall_2"] = new(-0.500f, 0.500f, 0f, 0.020f, 0.750f),
             ["Poster_Tall_3"] = new(-0.500f, 0.500f, 0f, 0.020f, 0.750f),
             ["Mirror_0"] = new(-0.500f, 0.500f, 0f, 0.060f, 0.700f),
+            // astraclaw's décor expansion (decor_expansion_manifest.json, measured off the OBJs): the full-height mirror, hung
+            // like the rest -- so its 2.8 m runs from Height - 1.4 to Height + 1.4 -- but with floor to stand on before it
+            // (DecorRow.Stand)
+            ["Mirror_1"] = new(-0.600f, 0.600f, 0f, 0.090f, 1.400f),
             ["Coat_Hooks_0"] = new(-0.750f, 0.750f, 0f, 0.161f, 0.135f),
             ["Key_Rack_0"] = new(-0.200f, 0.200f, 0f, 0.081f, 0.144f),
-            ["Wall_Shelf_0"] = new(-0.800f, 0.800f, 0f, 0.350f, 0.075f),
-            ["Wall_Shelf_1"] = new(-0.800f, 0.800f, 0f, 0.350f, 0.330f),
+            // (the expansion's thicker boards: 0.10 m, was 0.04 -- the same GUIDs, so the stock on the 1 rose with them)
+            ["Wall_Shelf_0"] = new(-0.800f, 0.800f, 0f, 0.350f, 0.115f),
+            ["Wall_Shelf_1"] = new(-0.800f, 0.800f, 0f, 0.350f, 0.370f),
+            // and its four new shelves: a short utility one, a two-tier, twin cubbies, a picture ledge
+            ["Wall_Shelf_2"] = new(-0.450f, 0.450f, 0f, 0.420f, 0.115f),
+            ["Wall_Shelf_3"] = new(-0.850f, 0.850f, 0f, 0.360f, 0.425f),
+            ["Wall_Shelf_4"] = new(-0.800f, 0.800f, 0f, 0.330f, 0.325f),
+            ["Wall_Shelf_5"] = new(-1.050f, 1.050f, 0f, 0.220f, 0.080f),
             ["Wall_Cabinet_0"] = new(-0.750f, 0.750f, 0f, 0.520f, 0.500f),
             ["Wall_Cabinet_1"] = new(-0.750f, 0.750f, 0f, 0.520f, 0.500f),
             ["Utensil_Rail_0"] = new(-0.600f, 0.600f, 0f, 0.100f, 0.250f),
             ["Calendar_0"] = new(-0.250f, 0.250f, 0f, 0.020f, 0.400f),
             ["Towel_Rail_0"] = new(-0.500f, 0.500f, 0f, 0.126f, 0.195f),
-            ["Medicine_Cabinet_0"] = new(-0.400f, 0.400f, 0f, 0.204f, 0.500f),
+            ["Medicine_Cabinet_0"] = new(-0.400f, 0.400f, 0f, 0.221f, 0.500f),
             ["Whiteboard_0"] = new(-1.200f, 1.200f, 0f, 0.089f, 0.700f),
             ["Corkboard_0"] = new(-0.800f, 0.800f, 0f, 0.060f, 0.550f),
             ["Certificate_0"] = new(-0.300f, 0.300f, 0f, 0.040f, 0.400f),
@@ -116,6 +130,8 @@ namespace UnturnedSim
             ["Pegboard_0"] = new(-1.200f, 1.200f, 0f, 0.150f, 0.600f),
             ["Antlers_0"] = new(-0.453f, 0.453f, 0f, 0.483f, 0.410f),
             ["Wall_Sunburst_0"] = new(-0.600f, 0.600f, 0f, 0.121f, 0.600f),   // astraclaw's replacement for the dropped Coat_Hooks_1
+            // the deer's head on its plaque (astraclaw, from the stock deer; approved by strawberry): 0.76 m out of the wall
+            ["Deer_Wall_Trophy_0"] = new(-0.732f, 0.732f, 0f, 0.763f, 0.667f),
             // astraclaw's potted plants, the four strawberry approved (2026-10-12; Potted_Plant_Floor_0 was not): origin at the
             // middle of the pot's base. The two small ones go on a top, the two big ones on the floor (FurnishPlants)
             ["Potted_Plant_Table_0"] = new(-0.161f, 0.161f, -0.139f, 0.139f, 0.401f),
@@ -187,9 +203,10 @@ namespace UnturnedSim
 
         /// <summary>A prop's footprint in plan at (x, z) turned by yaw, as the axis-aligned box round it (exact at right
         /// angles; round it when turned or round -- <see cref="Covers"/> is the outline).</summary>
-        public static (float X0, float Z0, float X1, float Z1) Footprint(string name, float x, float z, float yaw)
+        public static (float X0, float Z0, float X1, float Z1) Footprint(string name, float x, float z, float yaw) => Footprint(Sizes[name], x, z, yaw);
+        /// <summary>The same, for extents of a piece's own (a runtime-built one's: RuntimeDecor.Size).</summary>
+        public static (float X0, float Z0, float X1, float Z1) Footprint(Size s, float x, float z, float yaw)
         {
-            var s = Sizes[name];
             var (c, sn) = PlanTrig.CosSin(yaw);
             // right (c, -sn) * mx + front (-sn, -c) * my, at the box's corners
             float ax = c * s.X0, bx = c * s.X1, ay = -sn * s.Y0, by = -sn * s.Y1;   // x from mx, x from my
@@ -284,6 +301,10 @@ namespace UnturnedSim
                 // of. Neither draws from rng (FurnishPlants, FurnishDecor).
                 if (!NoPlants) foreach (var fu in done) fu.Plants();
                 foreach (var fu in done) fu.Decorate();
+                // and last the soft furnishings, built at load (FurnishTextiles): curtains at the windows, a rug under the couch
+                // or the bed. After the décor, which never sees them -- a curtain belongs to its window, and is not a piece
+                // the 0.6 m window rule keeps off it -- and on their own draws, so nothing else in the building moves.
+                if (!NoRuntimeDecor) foreach (var fu in done) { fu.Curtains(); fu.Rugs(); }
             }
         }
 

@@ -47,10 +47,11 @@ namespace UnturnedSim
     /// centred on its origin up and down, so it spans Height +- its Sizes H); where on the wall it goes (Spot, Over,
     /// Beside -- pieces by name prefix, "Couch" is both couches); how many hang side by side (Group: 2..Group of them, the
     /// row's look-alikes taking turns; 1 alone); and whether it is a room's big focal piece, of which a wall holds one
-    /// (Focal: the television is one). Tags are the manifest's, for the record.</summary>
+    /// (Focal: the television is one). Tags are the manifest's, for the record. Stand: a piece you stand before (the
+    /// full-height mirror, down to the floor) wants that much clear floor of its room in front of it, across its width.</summary>
     public sealed record DecorRow(string Name, RoomKind[] Rooms, float Height, string Slot, int Weight = 10, int Max = 1, DecorNeed Need = DecorNeed.None,
                                   DecorSpot Spot = DecorSpot.Wall, string[] Over = null, string[] Beside = null, int Group = 1, bool Focal = false,
-                                  string Tags = "")
+                                  string Tags = "", float Stand = 0f)
     {
         public bool Fills(string slot) => (" " + Slot + " ").Contains(" " + slot + " ");
     }
@@ -58,7 +59,7 @@ namespace UnturnedSim
     public static partial class BuildingGen
     {
         static RoomKind[] In(params RoomKind[] k) => k;
-        static readonly string[] CouchOrDouble = { "Couch", "Bed_0" }, CouchOrBed = { "Couch", "Bed_0", "Bed_1" };
+        static readonly string[] CouchOrDouble = { "Couch", "Bed_0" }, CouchOrBed = { "Couch", "Bed_0", "Bed_1" }, Couch = { "Couch" }, Wardrobe = { "Wardrobe" };
 
         /// <summary>The wall décor (VoX: "needs more wall doo dads like posters and art and clocks and coat hooks", then of
         /// astraclaw's kit: "start integrating these intelligently into the interior proc gen system"), one row per model.
@@ -94,10 +95,25 @@ namespace UnturnedSim
             new("Painting_Small_1", In(LivingRoom, DiningRoom, Hall, Bedroom, Office), 2.6f, "wall", Weight: 4, Group: 3, Over: CouchOrBed, Tags: "small groupable neutral"),
             new("Painting_Small_2", In(LivingRoom, DiningRoom, Hall, Bedroom, Office), 2.6f, "wall", Weight: 4, Group: 3, Over: CouchOrBed, Tags: "small groupable neutral"),
             new("Photo_Frames_0", In(LivingRoom, Bedroom, Hall), 2.6f, "wall", Weight: 8, Need: DecorNeed.Home | DecorNeed.DoubleBed, Over: CouchOrDouble, Tags: "family adult"),
-            new("Wall_Shelf_0", In(LivingRoom, Bedroom, Office), 2.5f, "shelf", Weight: 5, Over: new[] { "Couch" }, Tags: "shelf neutral"),
-            new("Wall_Shelf_1", In(LivingRoom, Bedroom, Office), 2.7f, "shelf", Weight: 5, Over: new[] { "Couch" }, Tags: "shelf books plant clutter"),
-            new("Mirror_0", In(Bathroom, Hall, Bedroom), 2.65f, "sink mirror", Weight: 8, Need: DecorNeed.Wardrobe, Over: new[] { "Counter_1" }, Beside: new[] { "Wardrobe" }, Tags: "mirror wardrobe"),
+            new("Wall_Shelf_0", In(LivingRoom, Bedroom, Office), 2.5f, "shelf", Weight: 5, Over: Couch, Tags: "shelf neutral"),
+            new("Wall_Shelf_1", In(LivingRoom, Bedroom, Office), 2.7f, "shelf", Weight: 5, Over: Couch, Tags: "shelf books plant clutter"),
+            // astraclaw's expansion, the alternatives in the same slot (decor_expansion_manifest.json, its heights): the short
+            // utility shelf and the cubbies in a kitchen and a store room too, the two-tier in a store room, the picture
+            // ledge where pictures go
+            new("Wall_Shelf_2", In(LivingRoom, Bedroom, Office, Storage, Kitchen), 2.5f, "shelf", Weight: 3, Tags: "shelf short_utility"),
+            new("Wall_Shelf_3", In(LivingRoom, Bedroom, Office, Storage), 2.5f, "shelf", Weight: 4, Over: Couch, Tags: "shelf two_tier"),
+            new("Wall_Shelf_4", In(LivingRoom, Bedroom, Office, Storage, Kitchen), 2.5f, "shelf", Weight: 3, Tags: "shelf cubbies"),
+            new("Wall_Shelf_5", In(LivingRoom, Bedroom, Office), 2.5f, "shelf", Weight: 3, Over: Couch, Tags: "shelf display_ledge"),
+            new("Mirror_0", In(Bathroom, Hall, Bedroom), 2.65f, "sink mirror", Weight: 8, Need: DecorNeed.Wardrobe, Over: new[] { "Counter_1" }, Beside: Wardrobe, Tags: "mirror wardrobe"),
+            // the full-height one, 0.1 m off the floor to 2.9 (the manifest's 1.5): beside the wardrobe, in a hall, rarely a
+            // bathroom; with BedAccess of clear floor before it -- the depth the player's capsule needs to get anywhere
+            new("Mirror_1", In(Bedroom, Hall, Bathroom), 1.5f, "mirror", Weight: 5, Beside: Wardrobe, Stand: BedAccess, Tags: "mirror full_height wardrobe hall"),
             new("Antlers_0", In(LivingRoom, Hall), 2.9f, "trophy", Weight: 1, Need: DecorNeed.Home, Tags: "rustic rural rare"),
+            // the deer's head (strawberry approved it; astraclaw: "a rare rustic accent"): a home's living room, hall or den,
+            // in the antlers' rare slot. 2.85, not the handoff's 2.1: at 2.1 its head, 0.76 m out of the wall, came down to
+            // 1.43 m -- a 2 m player's face -- and at 2.85 it spans 2.18-3.52, over the player and under a storey's 3.75 ceiling.
+            // A big piece, one to a wall
+            new("Deer_Wall_Trophy_0", In(LivingRoom, Hall, Office), 2.85f, "trophy", Weight: 1, Need: DecorNeed.Home, Focal: true, Tags: "rustic trophy rare"),
             new("Wall_Sunburst_0", In(LivingRoom, Hall), 2.7f, "wall", Weight: 4, Tags: "decorative rustic playful"),
             // work: notes and certificates
             new("Calendar_0", In(Kitchen, Office, BreakRoom), 2.2f, "notes", Weight: 5, Tags: "work household"),
@@ -124,17 +140,18 @@ namespace UnturnedSim
         /// wall (DecorEvery); every piece by its wall (one focal piece, DecorFill of its length).</summary>
         public static readonly IReadOnlyDictionary<RoomKind, (string Slot, int Chance)[]> DecorRecipes = new Dictionary<RoomKind, (string, int)[]>
         {
-            [Kitchen] = new[] { ("cabinets", 100), ("rail", 70), ("notes", 60) },
+            // (a slot added for the expansion goes LAST in its recipe: the room's draws for the slots before it are as they were)
+            [Kitchen] = new[] { ("cabinets", 100), ("rail", 70), ("notes", 60), ("shelf", 35) },
             [LivingRoom] = new[] { ("focal", 100), ("wall", 70), ("shelf", 40), ("trophy", 8) },
             [DiningRoom] = new[] { ("focal", 100), ("wall", 50) },
             [Bedroom] = new[] { ("focal", 100), ("wall", 60), ("mirror", 40), ("shelf", 25) },
             [Hall] = new[] { ("hooks", 100), ("keys", 60), ("focal", 70), ("mirror", 35), ("wall", 35), ("trophy", 5) },
-            [Bathroom] = new[] { ("sink", 100), ("towel", 75) },
-            [Office] = new[] { ("focal", 100), ("notes", 70), ("certs", 50), ("wall", 30), ("shelf", 30) },
+            [Bathroom] = new[] { ("sink", 100), ("towel", 75), ("mirror", 20) },
+            [Office] = new[] { ("focal", 100), ("notes", 70), ("certs", 50), ("wall", 30), ("shelf", 30), ("trophy", 5) },
             [BreakRoom] = new[] { ("focal", 100), ("notes", 70) },
             [Garage] = new[] { ("focal", 100), ("hooks", 60), ("wall", 40) },
             [Workshop] = new[] { ("focal", 100), ("wall", 50) },
-            [Storage] = new[] { ("focal", 60) },
+            [Storage] = new[] { ("focal", 60), ("shelf", 50) },
             [Shop] = new[] { ("focal", 100) },
         };
         /// <summary>The slots of fixtures, not art: they go with what they serve, outside the room's art budget.</summary>
@@ -551,6 +568,20 @@ namespace UnturnedSim
                 return c;
             }
 
+            /// <summary>Is there floor to stand on before a piece hung at (x, z, yaw): `depth` of this room's clear floor in
+            /// front of its face, across its width -- no piece, wall or stair on it, not the tile at a flight's end (where you
+            /// step off the stairs), no door's leaf swinging through it? (The stairs and tiles exactly, as Put has them: the
+            /// grid's cell centres miss a sliver.)</summary>
+            bool StandClear(string name, float x, float z, float yaw, float depth)
+            {
+                var s = FurnitureCatalog.Sizes[name];
+                var (fx, fz) = FrontOf(yaw); var (rx, rz) = RightOf(yaw);
+                float ax = x + rx * s.X0 + fx * s.Y1, az = z + rz * s.X0 + fz * s.Y1, bx = x + rx * s.X1 + fx * (s.Y1 + depth), bz = z + rz * s.X1 + fz * (s.Y1 + depth);
+                var zone = (MathF.Min(ax, bx), MathF.Min(az, bz), MathF.Max(ax, bx), MathF.Max(az, bz));
+                foreach (var (i, j) in _p.Cells(zone)) if (!InRoom(i, j) || _p.State[i, j] != FloorPlan.Free) return false;
+                return !_p.LeafRects.Concat(_p.StairRects).Concat(_p.TileRects).Any(r => Overlaps(zone, r));
+            }
+
             /// <summary>A group's pieces, first to last: the row's own, then its look-alikes in the table (the same mesh size,
             /// the name but for its number) taking turns -- three small paintings, not one three times.</summary>
             List<string> GroupNames(DecorRow row, int n, IReadOnlyList<DecorRow> rows)
@@ -634,7 +665,9 @@ namespace UnturnedSim
                     for (int k = 0; k < n; k++)
                     {
                         var at = AtFace(names[k], f, t - half + w * 0.5f + k * (w + DecorGroupGap));
-                        var m = at == null ? null : Hang(names[k], new[] { at.Value }, null, row.Height, rng, DecorReach);
+                        string name = names[k];
+                        var m = at == null ? null : Hang(name, new[] { at.Value }, null, row.Height, rng, DecorReach,
+                                                         row.Stand > 0f ? (x, z, yaw) => !StandClear(name, x, z, yaw, row.Stand) : null);
                         if (at == null) offWall++; else if (m == null) refused++;
                         if (m == null) break;
                         placed.Add(m);

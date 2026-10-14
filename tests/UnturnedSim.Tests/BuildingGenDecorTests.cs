@@ -149,8 +149,9 @@ namespace UnturnedSim.Tests
                     if (doorZones.Any(z => Overlap(fp, z))) bad.Add($"{nm} hangs in a doorway's walk or a door's swing");
                     // off the stairs' wall
                     if (stairs.Any(st => Overlap(Grown(fp, BuildingGen.StairWallReach - 0.05f), st, 0f))) bad.Add($"{nm} hangs on a wall the stairs run along");
-                    // at a height: over a sill, under the ceiling
-                    if (bottom < 1.0f || top > ceiling - 0.05f) bad.Add($"{nm} spans {bottom:0.00}-{top:0.00} m");
+                    // at a height: over a sill, under the ceiling -- but for a piece you stand before, down to the floor (the
+                    // full-height mirror: TallMirrorAndTrophyKeepTheirSpace holds the floor before it), just off it
+                    if (bottom < (row.Stand > 0f ? 0.05f : 1.0f) || top > ceiling - 0.05f) bad.Add($"{nm} spans {bottom:0.00}-{top:0.00} m");
                     // apart from every other hung piece, the clock and the television too: fixtures over a run of counters side by
                     // side, the rest not crowding
                     foreach (var o in here.Where(o => o != m && o.Mounted))
@@ -370,6 +371,10 @@ namespace UnturnedSim.Tests
                 ["Corkboard_0"] = "f0e010853da94220897d1732bc3b2c44", ["Certificate_0"] = "184611e0903f449a870760ffe08b6e89",
                 ["Wall_Map_0"] = "91281d896ec949e584718b60edd53916", ["Pegboard_0"] = "2ea6760b40124eafa70f49436862b201",
                 ["Antlers_0"] = "1c731cb8c97844c7a7c1ac9e405941dc", ["Wall_Sunburst_0"] = "ef0e6c14a98645a88623ba40c269a4d4",
+                // round 12c: astraclaw's expansion (decor_expansion_manifest.json) and the deer's head (deer_wall_trophy_manifest.json)
+                ["Wall_Shelf_2"] = "59f3ee2231f04ebaafbc4562d085cdb5", ["Wall_Shelf_3"] = "6c3344eee91149ba9e0edde5e998eedf",
+                ["Wall_Shelf_4"] = "a4189c24f4154ce28670e812788e215e", ["Wall_Shelf_5"] = "93c0dd72c58845009fd89a8c99d92768",
+                ["Mirror_1"] = "8874b447897e4ddf908733d9d4a09852", ["Deer_Wall_Trophy_0"] = "5675fbbc6be24c03ad46f40459907a02",
             };
             string dir = Objects();
             Assert.That(dir, Is.Not.Null, "game/content/objects not found");

@@ -180,6 +180,10 @@ namespace UnturnedSim
         public List<GenOpening> OpenPlan = new List<GenOpening>();
         /// <summary>What stands in the rooms (BuildingGen.Furnish): retail props by name.</summary>
         public List<FurniturePlan> Furniture = new List<FurniturePlan>();
+        /// <summary>The pieces built at load from their inputs rather than read off an OBJ (FurniturePlan.Gen): curtains and
+        /// rugs (FurnishTextiles). Kept out of Furniture, which every placement rule reads as solid catalog props -- a rug
+        /// lies under the couch, a curtain hangs in the window's own berth -- and saved with it (Props).</summary>
+        public List<FurniturePlan> RuntimeDecor = new List<FurniturePlan>();
         /// <summary>The windows a room's layout changed after the walls were cut (strawberry: "allow room layout to alter
         /// windows after the fact if necessary"): each written straight into its wall's Openings, so the wall, its glass,
         /// its collision, the save and the décor all see the window as it now is. This is the record of what changed.</summary>
@@ -187,7 +191,7 @@ namespace UnturnedSim
         /// <summary>Where each window was free to be (BuildWalls): its share of its stretch of wall, which a room's layout
         /// may slide it along (Furnish). The generator's own bookkeeping, in wall U (which TurnHalf keeps).</summary>
         internal List<WindowSlot> WindowSlots = new List<WindowSlot>();
-        public IEnumerable<PropDesignation> Props => Furniture.Select(m => new PropDesignation(m.Name, m.X, m.Y, m.Z, m.Yaw));
+        public IEnumerable<PropDesignation> Props => Furniture.Concat(RuntimeDecor).Select(m => new PropDesignation(m.Name, m.X, m.Y, m.Z, m.Yaw, m.Gen));
         /// <summary>The marked doors: the front one always, the back one when there is one.</summary>
         public GenDoor Front => Doors.FirstOrDefault(d => d.Role == DoorRole.Front);
         public GenDoor Back => Doors.FirstOrDefault(d => d.Role == DoorRole.Back);
@@ -319,7 +323,7 @@ namespace UnturnedSim
                 w.X = W - w.X; w.Z = D - w.Z; w.Yaw = Y(w.Yaw);
             }
             for (int i = 0; i < res.Stairs.Count; i++) { var st = res.Stairs[i]; st.X = W - st.X; st.Z = D - st.Z; st.Yaw = Y(st.Yaw); res.Stairs[i] = st; }
-            foreach (var m in res.Furniture) { m.X = W - m.X; m.Z = D - m.Z; m.Yaw = Y(m.Yaw); }
+            foreach (var m in res.Furniture.Concat(res.RuntimeDecor)) { m.X = W - m.X; m.Z = D - m.Z; m.Yaw = Y(m.Yaw); }
             for (int i = 0; i < res.Rooms.Count; i++) { var r = res.Rooms[i]; res.Rooms[i] = new RoomDesignation(r.Kind, W - r.X, D - r.Z, r.Floor); }
             foreach (var g in res.Layout)
             {
@@ -2094,7 +2098,7 @@ namespace UnturnedSim
             int notes = res.Notes.Count;
             void Reset()
             {
-                res.Walls.Clear(); res.Stairs.Clear(); res.Porches.Clear(); res.Furniture.Clear();
+                res.Walls.Clear(); res.Stairs.Clear(); res.Porches.Clear(); res.Furniture.Clear(); res.RuntimeDecor.Clear();
                 res.WindowEdits.Clear(); res.WindowSlots.Clear();
                 res.Chimney = default;
                 res.Notes.RemoveRange(notes, res.Notes.Count - notes);

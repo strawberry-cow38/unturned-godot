@@ -66,12 +66,54 @@ namespace UnturnedSim
     }
 
     /// <summary>A piece of furniture in a building: a prop by name (game/content/objects), its OBJ origin at (X, Y, Z),
-    /// stood up and turned as EditorObjects.Upright(Yaw) does it (BuildingGen's FurniturePlan, saved).</summary>
+    /// stood up and turned as EditorObjects.Upright(Yaw) does it (BuildingGen's FurniturePlan, saved) -- or, with Gen, a
+    /// piece built at load from those inputs (a curtain, a rug), which has no OBJ to read.</summary>
     public struct PropDesignation
     {
         public string Name;
         public float X, Y, Z, Yaw;
-        public PropDesignation(string name, float x, float y, float z, float yaw) { Name = name; X = x; Y = y; Z = z; Yaw = yaw; }
+        public RuntimeDecor Gen;
+        public PropDesignation(string name, float x, float y, float z, float yaw, RuntimeDecor gen = null) { Name = name; X = x; Y = y; Z = z; Yaw = yaw; Gen = gen; }
+    }
+
+    /// <summary>What builds a runtime piece: game/RuntimeDecorGenerators' factory of that name. Saved BY NAME, never
+    /// ordinal, as every other kind in a save is.</summary>
+    public enum RuntimeDecorKind { Curtain, Rug }
+
+    /// <summary>The inputs a runtime-built piece is made from (astraclaw's decor_expansion_handoff: "FurniturePlan should save
+    /// generator type/version, the two dimensions, state and any selected style/tint. Rebuild on loading"): there is no mesh
+    /// on disk, so these ARE the piece, and a save that dropped one would load a piece of nothing.
+    /// A curtain: Width its fabric's coverage (the rail runs CurtainRailOver past it each side), Height its cloth's drop, Open
+    /// whether it is drawn back to the sides, Style its cloth's tint (RuntimeDecor.CurtainTints). Its piece's origin is the
+    /// middle of its back, where the rail's supports meet the wall, at the rail's height; its front faces the piece's Front.
+    /// A rug: Width along its piece's Right, Height along its Front -- the floor's two ways, not a thickness -- and Style its
+    /// pattern (RugStyles); its piece's origin is its middle, on the floor. Version is the generator's, for a factory that
+    /// one day builds the same inputs differently.</summary>
+    public sealed record RuntimeDecor(RuntimeDecorKind Kind, int Version, float Width, float Height, bool Open = false, string Style = "")
+    {
+        /// <summary>The factory version this generator writes.</summary>
+        public const int CurrentVersion = 1;
+        /// <summary>The curtain's rail and its fittings past each end of the fabric (RuntimeDecorGenerators: "rail adds 0.28 m"),
+        /// how far the rail's middle stands over the cloth's top, its end caps' top over that, and how far the curtain stands
+        /// out of the wall at most (an open one's tieback). The factory's own geometry, at its full scale -- it scales
+        /// fittings down only for a curtain under 1 m either way, which the generator never asks for (CurtainMin) -- read
+        /// off RuntimeDecorGenerators.CreateCurtainMesh and held to the built mesh by the in-engine test
+        /// (decor.runtime_curtains_and_rugs).</summary>
+        public const float CurtainRailOver = 0.14f, CurtainRailOverCloth = 0.09f, CurtainCapOverRail = 0.04f, CurtainDepth = 0.25f;
+        /// <summary>No curtain narrower or shorter than this: the factory's fittings stay full size from 1 m up.</summary>
+        public const float CurtainMin = 1f;
+        /// <summary>A rug's quad lies this far over its floor (RuntimeDecorGenerators.CreateRugMesh).</summary>
+        public const float RugLift = 0.015f;
+        /// <summary>The cloth tints a room's curtains are drawn from (the game maps each name to a colour; the first is the
+        /// factory's own default) and the rug patterns (RuntimeDecorGenerators.RugStyle, by name).</summary>
+        public static readonly string[] CurtainTints = { "Linen", "Sage", "Slate", "Rust" };
+        public static readonly string[] RugStyles = { "Bordered", "Diamond", "Striped", "Checker" };
+
+        /// <summary>Its extents about its piece's origin, as FurnitureCatalog's (x across, y out of the front, H the top): a
+        /// curtain from the wall to its tieback, its rail's ends across, its drop and fittings up; a rug flat, centred.</summary>
+        public FurnitureCatalog.Size Size => Kind == RuntimeDecorKind.Curtain
+            ? new(-Width * 0.5f - CurtainRailOver, Width * 0.5f + CurtainRailOver, 0f, CurtainDepth, CurtainCapOverRail)
+            : new(-Width * 0.5f, Width * 0.5f, -Height * 0.5f, Height * 0.5f, RugLift);
     }
 
     /// <summary>Framework for building/room designation. NO placement logic -- strawberry_cow: "we dont have

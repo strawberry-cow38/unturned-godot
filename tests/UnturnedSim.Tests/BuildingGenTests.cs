@@ -2772,7 +2772,8 @@ namespace UnturnedSim.Tests
             var res = BuildingGen.Generate(new BuildingGenSpec { Seed = 3, Kind = BuildingKind.Residential, MinRooms = 8, MinFloors = 2, MaxFloors = 3, MaxRoomsPerFloor = 4 });
             string text = WallSave.Write(res.Walls, res.Kind, res.Rooms, res.DoorMarks, res.Props);
             var walls = WallSave.Read(text.Split('\n'), out var kind, out var rooms, out var marks, out var props);
-            Assert.That(props.Count, Is.EqualTo(res.Furniture.Count).And.GreaterThan(0), "the furniture survives the save");
+            // (the props, then the curtains and rugs: RuntimeDecorSurvivesASave holds those)
+            Assert.That(props.Count, Is.EqualTo(res.Furniture.Count + res.RuntimeDecor.Count).And.GreaterThan(0), "the furniture survives the save");
             Assert.That(props.Zip(res.Furniture).All(t => t.First.Name == t.Second.Name && MathF.Abs(t.First.X - t.Second.X) < 0.01f && MathF.Abs(t.First.Y - t.Second.Y) < 0.01f
                                                            && MathF.Abs(t.First.Z - t.Second.Z) < 0.01f && MathF.Abs(t.First.Yaw - t.Second.Yaw) < 0.01f), "each piece as it was");
             Assert.That(marks.Select(m => (m.Role, m.X, m.Floor)), Is.EqualTo(res.DoorMarks.Select(m => (m.Role, MathF.Round(m.X * 1000f) / 1000f, m.Floor))).Using<(DoorRole, float, int)>((a, b) => a.Item1 == b.Item1 && MathF.Abs(a.Item2 - b.Item2) < 0.01f && a.Item3 == b.Item3),

@@ -70,7 +70,7 @@ namespace UnturnedSim
             sb.Append("# building <kind>            -- Residential|Commercial|Industrial|Misc|Apartment (the volume is DERIVED from the walls)\n");
             sb.Append("# room <kind> <x> <z> [floor] -- a designation ANCHORED at a point inside the room it labels\n");
             sb.Append("# door <front|back> <x> <z> [floor] -- a marked door to outside, at the middle of its opening\n");
-            sb.Append("# prop <name> <x> <y> <z> <yawDeg> -- a piece of furniture, a prop by name stood up and turned as the editor does\n");
+            sb.Append("# prop <name> <x> <y> <z> <yawDeg> [gen <curtain|rug> <version> <width> <height> <open> <style>] -- a piece of furniture, a prop by name stood up and turned as the editor does; gen: built at load from these inputs\n");
             // Kinds by NAME, never ordinal: the enums can gain or reorder members without re-labelling
             // every existing save.
             if (building.HasValue) sb.Append("building ").Append(building.Value.ToString()).Append('\n');
@@ -87,8 +87,18 @@ namespace UnturnedSim
             if (props != null)
                 foreach (var m in props)
                     if (!string.IsNullOrEmpty(m.Name) && m.Name.IndexOf(' ') < 0)
+                    {
                         sb.Append("prop ").Append(m.Name).Append(' ').Append(F(m.X)).Append(' ').Append(F(m.Y)).Append(' ').Append(F(m.Z))
-                          .Append(' ').Append(F(m.Yaw)).Append('\n');
+                          .Append(' ').Append(F(m.Yaw));
+                        // a piece built at load (a curtain, a rug): a KEYED trailing block, as "barr" and "swing" are, written only
+                        // when there is one -- so every prop saves the line it always did, and an older reader takes the first six
+                        // tokens and skips the rest (it loads a name with no mesh: the curtain is lost, the building is not)
+                        if (m.Gen != null)
+                            sb.Append(" gen ").Append(m.Gen.Kind.ToString().ToLowerInvariant()).Append(' ').Append(m.Gen.Version.ToString(CultureInfo.InvariantCulture))
+                              .Append(' ').Append(F(m.Gen.Width)).Append(' ').Append(F(m.Gen.Height)).Append(' ').Append(m.Gen.Open ? '1' : '0')
+                              .Append(' ').Append(string.IsNullOrEmpty(m.Gen.Style) ? "-" : m.Gen.Style);
+                        sb.Append('\n');
+                    }
             if (walls != null)
                 foreach (var w in walls)
                 {
@@ -210,7 +220,22 @@ namespace UnturnedSim
                 {
                     // a malformed number drops THAT piece, not the building
                     if (props != null && N(p[2], out float px) && N(p[3], out float py) && N(p[4], out float pz) && N(p[5], out float pyaw))
-                        props.Add(new PropDesignation(p[1], px, py, pz, pyaw));
+                    {
+                        // built at load: "gen <kind> <version> <width> <height> <open> <style>", found by its key. A block that
+                        // will not parse -- a kind this build has no factory for, a size that is not a size -- drops the piece:
+                        // there is no mesh to fall back on, and a name with nothing to build is not a piece
+                        int gi = System.Array.IndexOf(p, "gen", 6);
+                        RuntimeDecor gen = null;
+                        if (gi >= 0)
+                        {
+                            if (gi + 6 >= p.Length || !System.Enum.TryParse<RuntimeDecorKind>(p[gi + 1], true, out var gk) || int.TryParse(p[gi + 1], out _)
+                                || !int.TryParse(p[gi + 2], NumberStyles.Integer, CultureInfo.InvariantCulture, out int gv)
+                                || !N(p[gi + 3], out float gw) || !N(p[gi + 4], out float gh) || !(gw > 0f && gh > 0f && float.IsFinite(gw) && float.IsFinite(gh))
+                                || (p[gi + 5] != "0" && p[gi + 5] != "1")) continue;
+                            gen = new RuntimeDecor(gk, gv, gw, gh, p[gi + 5] == "1", p[gi + 6] == "-" ? "" : p[gi + 6]);
+                        }
+                        props.Add(new PropDesignation(p[1], px, py, pz, pyaw, gen));
+                    }
                     continue;
                 }
                 if (p[0] == "room" && p.Length >= 4)
