@@ -1,0 +1,13 @@
+# Environment and audio adapter
+
+`environment.rs` consumes the actual `worldClock` and `weather` client state from the C# host. It does not advance a separate gameplay clock. `UG_TIME` and `UG_NOFOG` retain the original render overrides.
+
+The source `DayNightCycle.cs` four-key PEI gradients, sun elevation/azimuth/energy curve, horizon fog density, overcast multiplier, rain-intensity storm targets and cloud cover/detail/motion are ported directly. `sky.wesl` ports the original projected Clouds/Stars textures, sun disc and ray-sphere moon. Cloud coordinates are integrated velocities, so changing weather bends their path without teleporting the texture. Sun/ambient colors remain unaffected by rain, as explicitly required by the source. Lighting color interpolation stays in the original sRGB space and converts to linear shader values once.
+
+Bevy uses physical illuminance rather than Godot's unitless light energy. The initial renderer calibration is 18,000 lux per source sun-energy unit, with 350 ambient brightness. Those are renderer conversions, not source gameplay constants. Visual comparison is required when adjusting them. The original water plane is owned by `world.rs`; the environment creates no duplicate ocean.
+
+The map ambience adapter resolves the original map-named day/night audio, falling back to PEI exactly as `AmbienceAudio.cs`. It preserves the original dawn/night crossfade, birds stopping at 19:00, bird rain suppression, -9 dB full bed and 0.5×dt decibel fade. The original `fire` event selects the actual gun clip, with Eaglefire fallback for the owner and Nykorev for remote fire. Own shots use the source -3 dB, remote reports +9 dB and original 40 ms per-gun report cap. Bevy spatial scaling uses the source 34 m unit size; the engine's attenuation curve differs from Godot's. Live volume changes update both queued playback settings and existing audio sinks.
+
+Pending presentation parity: sheltered ambience/rain occlusion, the complete layered rain/wind/snow soundscape, rain/snow particles, lightning and delayed thunder, volumetric fog/sun shafts, underwater effects, the source water shader and waves, wetness/puddles and snow surface rendering, localized weather/indoor zones, eclipse/blackout details and per-map lighting data beyond the source default PEI gradients. These are explicit remaining ports; the clear/storm sky slice does not claim to implement them.
+
+Native tests cover source gradient keys/interpolation/wrapping, storm isolation from sunlight/ambient, fog endpoints, source bird/rain boundaries and continuous cloud motion when weather changes. Shader correctness additionally requires a real Vulkan render and image inspection.

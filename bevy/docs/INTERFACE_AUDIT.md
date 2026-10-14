@@ -19,7 +19,7 @@ The bridge needs simulation/environment adapters for combat rays, ground height,
 | Main menu | `MainMenu*`, `MenuNavbar`, `MenuSwoop` | Play/map selection, advanced world options, direct connection validation, server query/browser/sorting/MOTD, offline mode, profile, settings and exit |
 | Inventory | `inventory/InventoryUI`, `GridPanel`, `ItemTool` | Real-size grid items; rotation; drag/drop; split/merge; hotbar 1–10; clothing; 3D paperdoll; nearby items; multiple storage compartments; hold transfer; tooltips and item actions |
 | Crafting | `inventory/CraftingMenu` | Catalog-derived recipes, ingredient/tool/skill/knowledge requirements, queue/cancel, selected item “uses” and “recipes” views |
-| Skills | `inventory/SkillsUI` | Authoritative XP and upgrades, no local grant |
+| Skills | `inventory/SkillsUI`, `SkillTree.cs` | Skill graph/pillars, authoritative XP and upgrades, no local grant |
 | HUD | `HUD`, `HitmarkerHUD` | Vitals, oxygen/temperature, stance, weapon/ammo/fire mode, reticle/ADS, damage/hit/kill feedback, driving/flying instruments, interaction prompts, death/respawn |
 | Weapons/devices | `AttachmentMenu`, `ItemDevicePanel`, `MechanicsPanel`, `WalkiePanel`, `FluidElectricalPanel` | Attachment mounts and magazine management, tire/carjack actions, device filters and power/fluid interactions, radio controls |
 | World screens | `MapUI`, `DialogueUI`, `TradeUI`, `QuestLogPanel` | Map markers, NPC dialogue choices, wallet-based trades and quest state |
@@ -49,3 +49,9 @@ High-risk acceptance cases from the existing suite:
 8. Existing reliable-channel tests: ordered delivery under loss/reordering/duplication, 100 kB fragmentation and oversized-message refusal. Preserve byte-format tests when retaining the wire protocol.
 
 Visual verification remains manual render → inspect PNG, with no golden-image gate. Render menu, HUD, inventory with actual items/compartments, crafting, chat/console, pause/settings, death, vehicle and first/third-person views. Verify readable contrast, clipping at smaller resolutions, correct atlas UVs and cursor capture. Maintain an explicit list of pending screens until each is wired and visually reviewed.
+
+## Implemented native interface slice
+
+The Bevy interface now includes map selection/menu, HUD vitals/ammo/notices, the replicated 22-page inventory grid with real icons and rotation/move/drop/consume/equip intents, catalog-derived crafting, console/chat, pause/save/load, persisted mouse/FOV/audio/vsync controls and contextual key bindings. Death is a modal view driven by the replicated `player.alive`; respawn submits the existing host's authoritative respawn request and waits for the replicated revival. The source server's automatic respawn clock remains intact. This slice does **not** imply parity for the other rows above.
+
+A visual run caught that Bevy's default camera selection includes inactive cameras: the inactive first-person camera absorbed the menu UI. A dedicated `Camera2d` with `IsDefaultUiCamera` now renders the interface after the world and gun passes; the regression test exercises Bevy's real default-camera selector. Button tests verify that actions leave replicated inventory untouched, and death tests verify that Escape cannot bypass the modal or revive the player locally.

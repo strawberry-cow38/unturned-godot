@@ -66,6 +66,7 @@ pub struct UiModel {
     pub connected: bool,
     pub map_name: String,
     pub health: f32,
+    pub alive: bool,
     pub food: f32,
     pub water: f32,
     pub stamina: f32,
@@ -87,6 +88,7 @@ impl Default for UiModel {
             connected: false,
             map_name: String::new(),
             health: 0.0,
+            alive: true,
             food: 0.0,
             water: 0.0,
             stamina: 0.0,
@@ -115,6 +117,7 @@ impl UiModel {
         self.connected = snapshot["connected"].as_bool().unwrap_or(false);
         let p = &snapshot["player"];
         self.health = number(&p["hp"]);
+        self.alive = p["alive"].as_bool().unwrap_or(true);
         self.food = number(&p["food"]);
         self.water = number(&p["water"]);
         self.stamina = number(&p["stamina"]);
@@ -186,6 +189,7 @@ pub enum Screen {
     MainMenu,
     Playing,
     Paused,
+    Dead,
     Inventory,
     Crafting,
     Settings,
@@ -235,6 +239,7 @@ impl UiState {
         self.screen = match self.screen {
             Screen::Settings => self.settings_return,
             Screen::MainMenu => Screen::MainMenu,
+            Screen::Dead => Screen::Dead,
             _ => Screen::Playing,
         };
         self.capturing = None;
@@ -268,6 +273,7 @@ enum UiButton {
     Bind(GameAction),
     BindingPage(i32),
     ResetBindings,
+    Respawn,
 }
 
 #[derive(Component)]
@@ -297,10 +303,17 @@ impl Plugin for GameUiPlugin {
             .init_resource::<UiModel>()
             .init_resource::<Settings>()
             .add_message::<UiIntent>()
+            .add_systems(Startup, spawn_ui_camera)
             .add_systems(Startup, spawn_hud)
             .add_systems(
                 Update,
-                (keyboard_ui, rebuild_overlay, update_hud, button_appearance)
+                (
+                    follow_life_state,
+                    keyboard_ui,
+                    rebuild_overlay,
+                    update_hud,
+                    button_appearance,
+                )
                     .chain()
                     .in_set(UiUpdate),
             )
@@ -308,9 +321,25 @@ impl Plugin for GameUiPlugin {
     }
 }
 
+// Bevy's automatic UI target includes inactive cameras. The viewmodel camera is
+// inactive on the menu, but its order would still steal the UI's render target.
+// An explicit UI camera also keeps overlays above the first-person gun pass.
+fn spawn_ui_camera(mut commands: Commands) {
+    commands.spawn((
+        Name::new("Interface camera"),
+        Camera2d,
+        Camera {
+            order: 2,
+            clear_color: ClearColorConfig::None,
+            ..default()
+        },
+        IsDefaultUiCamera,
+    ));
+}
+
 fn text(value: impl Into<String>, size: f32, color: Color) -> impl Bundle {
     (
-        Text::new(value),
+        Text::new(value.into().replace(" · ", " | ").replace(" — ", " - ")),
         TextFont {
             font_size: FontSize::Px(size),
             ..default()
@@ -473,6 +502,16 @@ fn update_hud(
     }
 }
 
+fn follow_life_state(model: Res<UiModel>, mut state: ResMut<UiState>) {
+    if model.connected && !model.alive && state.screen != Screen::MainMenu {
+        state.screen = Screen::Dead;
+        state.selected_item = None;
+        state.capturing = None;
+    } else if model.connected && model.alive && state.screen == Screen::Dead {
+        state.screen = Screen::Playing;
+    }
+}
+
 fn keyboard_ui(
     mut state: ResMut<UiState>,
     mut settings: ResMut<Settings>,
@@ -611,6 +650,12 @@ fn activate_button(
         UiButton::Play => {
             intents.write(UiIntent::Play {
                 map: state.map.clone(),
+            });
+        }
+        UiButton::Respawn => {
+            intents.write(UiIntent::Action {
+                name: "respawn".into(),
+                args: json!({}),
             });
         }
         UiButton::Quit => {
@@ -804,6 +849,7 @@ fn rebuild_overlay(
             .with_children(|panel| match state.screen {
                 Screen::MainMenu => menu_panel(panel, &state, &model, &assets),
                 Screen::Paused => pause_panel(panel),
+                Screen::Dead => death_panel(panel),
                 Screen::Inventory => inventory_panel(panel, &state, &model, &assets),
                 Screen::Crafting => crafting_panel(panel, &state, &model),
                 Screen::Settings => settings_panel(panel, &state, &settings),
@@ -827,7 +873,7 @@ fn menu_panel(
             button(
                 p,
                 if state.map == map {
-                    format!("● {map}")
+                    format!("* {map}")
                 } else {
                     map.into()
                 },
@@ -839,8 +885,9 @@ fn menu_panel(
         panel.spawn((
             ImageNode::new(assets.load(format!("menu/mapicon_{}.png", state.map.to_lowercase()))),
             Node {
-                width: px(120),
-                height: px(120),
+                width: px(240),
+                height: px(90),
+                flex_shrink: 0.0,
                 ..default()
             },
         ));
@@ -850,6 +897,15 @@ fn menu_panel(
         button(p, "Play", UiButton::Play);
         button(p, "Settings", UiButton::Open(Screen::Settings));
         button(p, "Quit", UiButton::Quit);
+    });
+}
+
+fn death_panel(panel: &mut ChildSpawnerCommands) {
+    panel.spawn(text("You died", 32.0, TEXT));
+    panel.spawn(text("Respawn now to return to the world.", 15.0, DIM));
+    panel.spawn(row()).with_children(|p| {
+        button(p, "Respawn", UiButton::Respawn);
+        button(p, "Leave world", UiButton::Disconnect);
     });
 }
 
@@ -880,15 +936,15 @@ fn inventory_panel(
     });
     let pages = visible_pages(model);
     if pages.is_empty() {
-        panel.spawn(text("Waiting for inventory…", 16.0, DIM));
+        panel.spawn(text("Waiting for inventory...", 16.0, DIM));
         return;
     }
     let page = pages[state.page % pages.len()];
     panel.spawn(row()).with_children(|p| {
-        button(p, "‹", UiButton::Page(-1));
+        button(p, "<", UiButton::Page(-1));
         p.spawn(text(
             format!(
-                "{}  ·  {} × {}",
+                "{}  |  {} x {}",
                 page_name(page.index),
                 page.width,
                 page.height
@@ -896,7 +952,7 @@ fn inventory_panel(
             18.0,
             ACCENT,
         ));
-        button(p, "›", UiButton::Page(1));
+        button(p, ">", UiButton::Page(1));
     });
     let cell = (650.0 / f32::from(page.width.max(1)))
         .min(40.0)
@@ -979,7 +1035,7 @@ fn inventory_panel(
                             })),
                         ));
                         p.spawn((
-                            text(format!("×{}", item.amount), 11.0, TEXT),
+                            text(format!("x{}", item.amount), 11.0, TEXT),
                             Node {
                                 position_type: PositionType::Absolute,
                                 right: px(2),
@@ -989,7 +1045,7 @@ fn inventory_panel(
                             BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.7)),
                         ));
                     } else {
-                        p.spawn(text(format!("{}\n×{}", item.name, item.amount), 11.0, TEXT));
+                        p.spawn(text(format!("{}\nx{}", item.name, item.amount), 11.0, TEXT));
                     }
                 });
             }
@@ -1008,7 +1064,7 @@ fn inventory_panel(
         {
             panel.spawn(text(
                 format!(
-                    "{}  ·  {}% condition  ·  {}°",
+                    "{}  |  {}% condition  |  {} deg",
                     item.name,
                     item.quality,
                     u16::from(state.rotation) * 90
@@ -1037,13 +1093,13 @@ fn crafting_panel(panel: &mut ChildSpawnerCommands, state: &UiState, model: &UiM
     }
     let count = model.recipes.len().div_ceil(7);
     panel.spawn(row()).with_children(|p| {
-        button(p, "‹", UiButton::Recipes(-1));
+        button(p, "<", UiButton::Recipes(-1));
         p.spawn(text(
             format!("Page {} / {}", state.recipe_page % count + 1, count),
             14.0,
             DIM,
         ));
-        button(p, "›", UiButton::Recipes(1));
+        button(p, ">", UiButton::Recipes(1));
     });
     for recipe in model
         .recipes
@@ -1056,7 +1112,7 @@ fn crafting_panel(panel: &mut ChildSpawnerCommands, state: &UiState, model: &UiM
             .with_children(|p| {
                 p.spawn((
                     text(
-                        format!("{}  ·  {:.1}s", recipe.name, recipe.seconds),
+                        format!("{}  |  {:.1}s", recipe.name, recipe.seconds),
                         15.0,
                         TEXT,
                     ),
@@ -1094,7 +1150,7 @@ fn settings_panel(panel: &mut ChildSpawnerCommands, state: &UiState, settings: &
             15.0,
             TEXT,
         ));
-        button(p, "−", UiButton::Sensitivity(-0.02));
+        button(p, "-", UiButton::Sensitivity(-0.02));
         button(p, "+", UiButton::Sensitivity(0.02));
         button(
             p,
@@ -1108,11 +1164,11 @@ fn settings_panel(panel: &mut ChildSpawnerCommands, state: &UiState, settings: &
     });
     panel.spawn(row()).with_children(|p| {
         p.spawn(text(
-            format!("Field of view  {:.0}°", settings.field_of_view),
+            format!("Field of view  {:.0} deg", settings.field_of_view),
             15.0,
             TEXT,
         ));
-        button(p, "−", UiButton::Fov(-5.0));
+        button(p, "-", UiButton::Fov(-5.0));
         button(p, "+", UiButton::Fov(5.0));
         button(
             p,
@@ -1130,13 +1186,13 @@ fn settings_panel(panel: &mut ChildSpawnerCommands, state: &UiState, settings: &
             15.0,
             TEXT,
         ));
-        button(p, "−", UiButton::Volume(-0.1));
+        button(p, "-", UiButton::Volume(-0.1));
         button(p, "+", UiButton::Volume(0.1));
     });
     panel.spawn(row()).with_children(|p| {
         p.spawn(text("KEY BINDS", 17.0, ACCENT));
-        button(p, "‹", UiButton::BindingPage(-1));
-        button(p, "›", UiButton::BindingPage(1));
+        button(p, "<", UiButton::BindingPage(-1));
+        button(p, ">", UiButton::BindingPage(1));
         button(p, "Reset", UiButton::ResetBindings);
     });
     for (action, binding) in settings
@@ -1156,7 +1212,7 @@ fn settings_panel(panel: &mut ChildSpawnerCommands, state: &UiState, settings: &
             button(
                 p,
                 if state.capturing == Some(*action) {
-                    "Press a key…".into()
+                    "Press a key...".into()
                 } else {
                     binding.label()
                 },
@@ -1189,7 +1245,7 @@ fn console_panel(panel: &mut ChildSpawnerCommands, state: &UiState, model: &UiMo
         panel.spawn(text(line, 14.0, DIM));
     }
     panel.spawn((
-        text(format!("> {}▏", state.console_input), 16.0, ACCENT),
+        text(format!("> {}_", state.console_input), 16.0, ACCENT),
         Node {
             min_height: px(36),
             padding: UiRect::all(px(8)),
@@ -1197,7 +1253,7 @@ fn console_panel(panel: &mut ChildSpawnerCommands, state: &UiState, model: &UiMo
         },
         BackgroundColor(Color::srgb(0.08, 0.08, 0.09)),
     ));
-    panel.spawn(text("Enter sends  ·  Esc closes", 12.0, DIM));
+    panel.spawn(text("Enter sends  |  Esc closes", 12.0, DIM));
 }
 
 fn button_appearance(
@@ -1225,6 +1281,56 @@ fn button_appearance(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn death_blocks_input_until_authoritative_respawn() {
+        let mut app = App::new();
+        app.insert_resource(UiState {
+            screen: Screen::Inventory,
+            ..default()
+        });
+        app.insert_resource(UiModel {
+            connected: true,
+            alive: false,
+            ..default()
+        });
+        app.add_systems(Update, follow_life_state);
+        app.update();
+        let mut state = app.world_mut().resource_mut::<UiState>();
+        assert_eq!(state.screen, Screen::Dead);
+        state.close_overlay();
+        assert_eq!(state.screen, Screen::Dead);
+        assert!(state.captures_input());
+        app.world_mut().resource_mut::<UiModel>().alive = true;
+        app.update();
+        assert_eq!(app.world().resource::<UiState>().screen, Screen::Playing);
+    }
+
+    #[test]
+    fn inactive_viewmodel_camera_cannot_steal_interface_target() {
+        let mut app = App::new();
+        app.add_systems(Startup, spawn_ui_camera);
+        app.world_mut().spawn((
+            Camera3d::default(),
+            Camera {
+                order: 1,
+                is_active: false,
+                ..default()
+            },
+        ));
+        app.update();
+        let expected = app
+            .world_mut()
+            .query_filtered::<Entity, With<IsDefaultUiCamera>>()
+            .single(app.world())
+            .unwrap();
+        let mut system =
+            bevy::ecs::system::SystemState::<bevy::ui::DefaultUiCamera>::new(app.world_mut());
+        assert_eq!(system.get(app.world()).unwrap().get(), Some(expected));
+        let camera = app.world().get::<Camera>(expected).unwrap();
+        assert!(camera.is_active);
+        assert!(camera.order > 1);
+    }
 
     #[test]
     fn snapshot_keeps_compartment_and_item_state() {
