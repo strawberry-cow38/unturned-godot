@@ -312,7 +312,7 @@ namespace UnturnedGodot
         /// <summary>What each live door was built from, so a Rebuild mid-drag can tell "still right, just move
         /// it" from "remake it". Rebuild runs on every mouse move; respawning a door per frame would leave a
         /// trail of them, and QueueFree defers so the stale ones stay hittable for the rest of the frame.</summary>
-        readonly List<(int Op, string Prop, float W, float H, bool Start, bool Front)> _doorSpec = new();
+        readonly List<(int Op, string Prop, float W, float H, bool Start, bool Front, DoorAction Action)> _doorSpec = new();
 
         // ---- a PRE-BARRICADE in an opening (master 2026-09-01) -----------------------------------------
         // Same owns-it-on-the-opening + pooled-so-a-per-mouse-move-Rebuild-doesn't-respawn shape as the doors above.
@@ -343,7 +343,7 @@ namespace UnturnedGodot
             {
                 var o = Openings[want[k]];
                 // (which way it swings is part of what it was built as: a door re-hung on its other jamb is a new leaf)
-                var spec = (want[k], o.DoorProp, o.Width, o.Height, o.DoorHingeAtStart, o.DoorOpensFront);
+                var spec = (want[k], o.DoorProp, o.Width, o.Height, o.DoorHingeAtStart, o.DoorOpensFront, o.DoorAction);
                 if (k < _doors.Count && _doorSpec[k] == spec) { PlaceDoor(_doors[k], o); continue; }
 
                 // The swing (WallOpening.DoorHingeAtStart / DoorOpensFront; the generator's layout chooses them). Door_Pine
@@ -358,6 +358,17 @@ namespace UnturnedGodot
                     Log.Err($"[door] opening {want[k]}: '{o.DoorProp}' has no catalog entry -- no door built");
                     continue;
                 }
+                // How it moves (WallOpening.DoorAction, round 12b): a double-acting leaf swings either way about the same
+                // hinge, away from whoever opens it; a pocket door's leaf slides toward its hinge end, into the wall past that
+                // jamb -- the U one when DoorHingeAtStart, which PlaceDoor turns it to face -- its hitbox kept just proud of both
+                // faces so the slid-in leaf can still be looked at and shut.
+                if (o.DoorAction != DoorAction.Swing)
+                    foreach (var c in made.GetChildren())
+                        if (c is ObjectDoor od)
+                        {
+                            if (o.DoorAction == DoorAction.DoubleSwing) od.MakeDoubleActing();
+                            else od.MakePocket(Thickness + 0.02f);
+                        }
                 if (k < _doors.Count)
                 {
                     var old2 = _doors[k];

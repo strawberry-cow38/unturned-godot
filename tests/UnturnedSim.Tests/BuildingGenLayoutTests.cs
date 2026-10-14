@@ -21,6 +21,15 @@ namespace UnturnedSim.Tests
                     MathF.Max(bx + s * n.X * from, bx + s * n.X * back), MathF.Max(bz + s * n.Z * from, bz + s * n.Z * back));
         }
 
+        /// <summary>Every floor a hung door's leaf sweeps, as LeafBox: the side it opens to for a swing door, both sides for a
+        /// double-acting one, none for a pocket door (it slides into its wall).</summary>
+        static IEnumerable<(float X0, float Z0, float X1, float Z1)> LeafBoxes(WallPlan w, WallOpening o)
+        {
+            if (o.DoorAction == DoorAction.Pocket) yield break;
+            yield return LeafBox(w, o);
+            if (o.DoorAction == DoorAction.DoubleSwing) { var p = o; p.DoorOpensFront = !o.DoorOpensFront; yield return LeafBox(w, p); }
+        }
+
         /// <summary>What stands in the way on floor f: the flights, landings and holes, and the tiles at the flights' ends.</summary>
         static List<(float X0, float Z0, float X1, float Z1)> StairsAndTiles(BuildingGenResult res, int f)
         {
@@ -53,7 +62,7 @@ namespace UnturnedSim.Tests
         public void DoorsSwingIntoTheRoomsTheyServe()
         {
             var bad = new List<string>();
-            int doors = 0, fronts = 0, starts = 0, intoPrivate = 0, offCirculation = 0, toOutside = 0, excused = 0, cornered = 0;
+            int doors = 0, fronts = 0, starts = 0, intoPrivate = 0, offCirculation = 0, toOutside = 0, excused = 0, cornered = 0, others = 0;
             foreach (var (spec, res) in All())
                 for (int f = 0; f < res.Floors; f++)
                 {
@@ -62,6 +71,8 @@ namespace UnturnedSim.Tests
                     foreach (var w in walls)
                         foreach (var o in w.Openings.Where(o => o.V < 0.05f && o.HasDoor && o.Archetype != BuildingGen.ArchGarage))
                         {
+                            // (a door that swings both ways or slides has its own rules: DoorsSwingBothWaysOrSlideWhereTheyShould)
+                            if (o.DoorAction != DoorAction.Swing) { others++; continue; }
                             doors++;
                             if (o.DoorOpensFront) fronts++;
                             if (o.DoorHingeAtStart) starts++;
@@ -105,7 +116,7 @@ namespace UnturnedSim.Tests
                             }
                         }
                 }
-            TestContext.Progress.WriteLine($"[gen-swing] {doors} hung doors: {fronts} open to their wall's front, {starts} hinged at their start; {intoPrivate} into a private room, {offCirculation} off a hall or stairwell into a room, {toOutside} from outside in; {cornered} by a wall across one jamb, hung on that one; {excused} excused (the side they should open to cannot take a leaf); {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
+            TestContext.Progress.WriteLine($"[gen-swing] {doors} hung doors that swing one way ({others} more swing both ways or slide): {fronts} open to their wall's front, {starts} hinged at their start; {intoPrivate} into a private room, {offCirculation} off a hall or stairwell into a room, {toOutside} from outside in; {cornered} by a wall across one jamb, hung on that one; {excused} excused (the side they should open to cannot take a leaf); {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
             Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(10)));
             Assert.That(doors, Is.GreaterThan(2000));
             Assert.That(intoPrivate, Is.GreaterThan(500));
@@ -119,20 +130,28 @@ namespace UnturnedSim.Tests
 
         // The swing is the opening's, so it saves: every combination of jamb and face writes and reads back, a door hung as
         // they always were writes no token at all (an old save is the same text), and a generated building's doors come
-        // back from a save exactly as they were hung.
-        // BREAK IT: drop the swing token from Write, or from Read.
+        // back from a save exactly as they were hung. And so does how it moves (round 12b): a door that swings both ways or
+        // slides writes an "action" token and reads back as it was; a swing door writes none, so an old save -- which has
+        // none -- reads back as swing doors; and a token it does not know is a swing door.
+        // BREAK IT: drop the swing token from Write, or from Read; drop the action token from Write, or from Read.
         [Test]
         public void DoorSwingSurvivesASave()
         {
-            var plan = new WallPlan { Length = 18f };
-            foreach (var (start, front, u) in new[] { (false, false, 0.5f), (true, false, 4.5f), (false, true, 8.5f), (true, true, 12.5f) })
-                plan.Openings.Add(new WallOpening(u, 0f, 2.5f, 2.85f) { DoorProp = "Door_Pine", DoorHingeAtStart = start, DoorOpensFront = front });
+            var plan = new WallPlan { Length = 30f };
+            foreach (var (start, front, u, act) in new[] { (false, false, 0.5f, DoorAction.Swing), (true, false, 4.5f, DoorAction.Swing), (false, true, 8.5f, DoorAction.Swing),
+                                                             (true, true, 12.5f, DoorAction.Swing), (false, true, 16.5f, DoorAction.DoubleSwing), (true, false, 20.5f, DoorAction.Pocket),
+                                                             (false, false, 24.5f, DoorAction.Pocket) })
+                plan.Openings.Add(new WallOpening(u, 0f, 2.5f, 2.85f) { DoorProp = "Door_Pine", DoorHingeAtStart = start, DoorOpensFront = front, DoorAction = act });
             string text = WallSave.Write(new[] { plan });
             var back = WallSave.Read(text.Split('\n'))[0].Openings;
-            Assert.That(back.Select(o => (o.DoorHingeAtStart, o.DoorOpensFront)), Is.EqualTo(plan.Openings.Select(o => (o.DoorHingeAtStart, o.DoorOpensFront))));
-            Assert.That(text.Split('\n').Count(l => l.Contains(" swing ")), Is.EqualTo(3), "the default door writes no swing token");
+            Assert.That(back.Select(o => (o.DoorHingeAtStart, o.DoorOpensFront, o.DoorAction)), Is.EqualTo(plan.Openings.Select(o => (o.DoorHingeAtStart, o.DoorOpensFront, o.DoorAction))));
+            Assert.That(text.Split('\n').Count(l => l.Contains(" swing ")), Is.EqualTo(5), "the default door writes no swing token");
+            Assert.That(text.Split('\n').Count(l => l.Contains(" action ")), Is.EqualTo(3), "a swing door writes no action token");
+            // a save from before the choice existed, and one from a newer editor
+            Assert.That(WallSave.Read(new[] { WallSave.Header, "wall 0 0 0 0 9 0.5 0", "  open 1 0 2.5 2.85 999 0 0 0 0 0 0 Door_Pine 0 swing start front" })[0].Openings[0].DoorAction, Is.EqualTo(DoorAction.Swing));
+            Assert.That(WallSave.Read(new[] { WallSave.Header, "wall 0 0 0 0 9 0.5 0", "  open 1 0 2.5 2.85 999 0 0 0 0 0 0 Door_Pine 0 action revolving" })[0].Openings[0].DoorAction, Is.EqualTo(DoorAction.Swing));
 
-            int doors = 0, swung = 0;
+            int doors = 0, swung = 0, acted = 0;
             foreach (var (spec, res) in All().Where(x => x.Spec.Kind is BuildingKind.Residential or BuildingKind.Apartment).Take(60))
             {
                 var walls = res.Walls.Where(w => w.Kind == SurfaceKind.Wall).ToList();
@@ -143,12 +162,13 @@ namespace UnturnedSim.Tests
                     {
                         var a = walls[i].Openings[k]; var b = read[i].Openings[k];
                         if (!a.HasDoor) continue;
-                        doors++; if (a.DoorHingeAtStart || a.DoorOpensFront) swung++;
-                        Assert.That((b.DoorHingeAtStart, b.DoorOpensFront), Is.EqualTo((a.DoorHingeAtStart, a.DoorOpensFront)), $"{Name(spec)}: a door's swing changed in a save");
+                        doors++; if (a.DoorHingeAtStart || a.DoorOpensFront) swung++; if (a.DoorAction != DoorAction.Swing) acted++;
+                        Assert.That((b.DoorHingeAtStart, b.DoorOpensFront, b.DoorAction), Is.EqualTo((a.DoorHingeAtStart, a.DoorOpensFront, a.DoorAction)), $"{Name(spec)}: a door's swing changed in a save");
                     }
             }
-            TestContext.Progress.WriteLine($"[gen-swing-save] {doors} doors through a save, {swung} of them not hung the old way");
+            TestContext.Progress.WriteLine($"[gen-swing-save] {doors} doors through a save, {swung} of them not hung the old way, {acted} swinging both ways or sliding");
             Assert.That(swung, Is.GreaterThan(50));
+            Assert.That(acted, Is.GreaterThan(20));
         }
 
         // A sink has room to stand at (strawberry: "make sure the sink has adequate standing space in front of it"): the
@@ -168,7 +188,7 @@ namespace UnturnedSim.Tests
                 {
                     var walls = WallsOn(res, f).ToList();
                     var stairs = StairsAndTiles(res, f);
-                    var leaves = walls.SelectMany(w => w.Openings.Where(o => o.V < 0.05f && o.HasDoor && o.Archetype != BuildingGen.ArchGarage).Select(o => LeafBox(w, o))).ToList();
+                    var leaves = walls.SelectMany(w => w.Openings.Where(o => o.V < 0.05f && o.HasDoor && o.Archetype != BuildingGen.ArchGarage).SelectMany(o => LeafBoxes(w, o))).ToList();
                     var pieces = res.Furniture.Where(m => m.Floor == f && m.On == null && !m.Mounted && !m.Ceiling).ToList();
                     foreach (var s in pieces.Where(m => m.Name == "Counter_1"))
                     {
@@ -236,15 +256,22 @@ namespace UnturnedSim.Tests
                     bad.Add($"{Name(spec)}: a wall with a changed window does not come back from a save as it is");
         }
 
-        // Windows altered for the layout (strawberry: "allow room layout to alter windows after the fact if necessary"):
-        // a kitchen's run never stands with its back to glass that comes down below its top -- the window is over the
-        // counter -- and every window a room changed keeps the rules (CheckWindowEdits).
-        // BREAK IT: skip WindowsOverCounters (the run stands in front of the glass).
+        // Windows altered for the layout (strawberry: "allow room layout to alter windows after the fact if necessary", then
+        // round 12b: "anything may alter a window's sil, but sink counters push up to a regular counter's height, not counting
+        // its faucet"): nothing standing in front of a window -- in the 0.7 m before its glass, along the glass -- rises over
+        // its sill: not a kitchen's run, nor a couch, a bed, a desk, a workbench, a washer. Counted at what stands in front of
+        // the glass, read here off the meshes (WindowTopsMatchTheMeshes): a sink at a plain counter's top, its faucet left out;
+        // a bed at its pillows, 1.20, unless its headboard is before the glass; a chair, pulled up to a table and
+        // moved in use, not at all. A window whose tallest piece is a sink (or a plain counter, the same height) sits at that
+        // and 0.1 -- 1.45, not over the faucet's 1.83. And every window a room changed keeps the rules (CheckWindowEdits).
+        // BREAK IT: raise sills only over a kitchen's run (couches, beds, desks before the glass); count the sink's faucet.
         [Test]
-        public void WindowsSitOverTheCounterRun()
+        public void WindowsSitOverWhatStandsBeforeThem()
         {
+            float counter = FurnitureCatalog.Sizes["Counter_0"].H;
             var bad = new List<string>();
-            int runs = 0, overGlass = 0, edits = 0, sills = 0, slides = 0, narrows = 0, removes = 0, wardrobes = 0, bedrooms = 0;
+            int edits = 0, sills = 0, slides = 0, narrows = 0, removes = 0, overGlass = 0, sinkWindows = 0, headboards = 0;
+            var before = new Dictionary<string, int>();
             foreach (var (spec, res) in All())
             {
                 var outer = res.Walls.Where(w => w.Kind == SurfaceKind.Wall && w.Thickness == BuildingGen.Ext).ToList();
@@ -256,34 +283,61 @@ namespace UnturnedSim.Tests
                 CheckWindowEdits(spec, res, bad);
                 for (int f = 0; f < res.Floors; f++)
                 {
-                    var pieces = res.Furniture.Where(m => m.Floor == f && m.On == null && !m.Mounted && !m.Ceiling).ToList();
-                    foreach (var g in res.Layout.Where(g => g.Floor == f && g.Kind == RoomKind.Bedroom)) { bedrooms++; if (pieces.Any(m => m.Room == g && m.Name.StartsWith("Wardrobe"))) wardrobes++; }
-                    foreach (var m in pieces.Where(m => m.Room.Kind is RoomKind.Kitchen or RoomKind.BreakRoom
-                                                       && m.Name is "Counter_0" or "Counter_1" or "Oven_0" or "Disher_0" or "Corner_Cabinet_0_Solid"))
-                    {
-                        runs++;
-                        float top = f * Storey + FurnitureCatalog.Sizes[m.Name].H;
-                        // the strip 0.6 m behind its back, across its width: into the wall it stands against
-                        var fp = m.Footprint; var (bfx, bfz) = m.Front;
-                        var behind = MathF.Abs(bfx) > 0.5f ? (bfx > 0 ? (fp.X0 - 0.6f, fp.Z0, fp.X0, fp.Z1) : (fp.X1, fp.Z0, fp.X1 + 0.6f, fp.Z1))
-                                                          : (bfz > 0 ? (fp.X0, fp.Z0 - 0.6f, fp.X1, fp.Z0) : (fp.X0, fp.Z1, fp.X1, fp.Z1 + 0.6f));
-                        foreach (var w in outer.Where(w => FloorOf(w) == f))
-                            foreach (var o in w.Openings.Where(o => o.Glazed && o.V > 0.05f))
+                    var pieces = res.Furniture.Where(m => m.Floor == f && m.On == null && !m.Mounted && !m.Ceiling && !m.Name.StartsWith("Chair")).ToList();
+                    foreach (var w in outer.Where(w => FloorOf(w) == f))
+                        foreach (var o in w.Openings.Where(o => o.Glazed && o.V > 0.05f))
+                        {
+                            float sill = w.Y + o.V - f * Storey, tallest = 0f; string by = null;
+                            foreach (float side in new[] { 1f, -1f })
                             {
-                                // the glass in plan, through the wall's thickness
-                                var p = At(w, o.U); var q = At(w, o.U1); var n = Normal(w); float t = w.Thickness * 0.5f;
-                                var glass = (MathF.Min(p.X, q.X) - MathF.Abs(n.X) * t, MathF.Min(p.Z, q.Z) - MathF.Abs(n.Z) * t, MathF.Max(p.X, q.X) + MathF.Abs(n.X) * t, MathF.Max(p.Z, q.Z) + MathF.Abs(n.Z) * t);
-                                if (!Overlap(behind, glass, 0.02f)) continue;
-                                overGlass++;
-                                if (w.Y + o.V < top) bad.Add($"{Name(spec)} floor {f}: {m} stands in front of glass down to {o.V:0.00} m, its top at {top - f * Storey:0.00}");
+                                var zone = SideBox(w, o, side > 0, w.Thickness * 0.5f, w.Thickness * 0.5f + 0.7f, 0.1f);
+                                var dir = Dir(w);
+                                foreach (var m in pieces)
+                                {
+                                    var fp = m.Footprint;
+                                    if (!Overlap(zone, fp, 0.005f)) continue;
+                                    // along the glass itself, not only its pad
+                                    float a = float.MaxValue, b = float.MinValue;
+                                    foreach (var (x, z) in new[] { (fp.X0, fp.Z0), (fp.X1, fp.Z0), (fp.X0, fp.Z1), (fp.X1, fp.Z1) })
+                                    { float u = (x - w.X) * dir.X + (z - w.Z) * dir.Z; a = MathF.Min(a, u); b = MathF.Max(b, u); }
+                                    if (b <= o.U + 0.01f || a >= o.U1 - 0.01f) continue;
+                                    float top = FurnitureCatalog.Sizes[m.Name].H;
+                                    if (m.Name == "Counter_1") top = counter;
+                                    else if (m.Name is "Bed_0" or "Bed_1")
+                                    {
+                                        // its headboard: the 0.25 m at its head (-Y), along the wall
+                                        var s0 = FurnitureCatalog.Sizes[m.Name]; var (rx, rz) = m.Right; var (fx, fz) = m.Front;
+                                        float ha = float.MaxValue, hb = float.MinValue;
+                                        foreach (var (x, y) in new[] { (s0.X0, s0.Y0), (s0.X1, s0.Y0), (s0.X0, s0.Y0 + 0.25f), (s0.X1, s0.Y0 + 0.25f) })
+                                        { float u = (m.X + rx * x + fx * y - w.X) * dir.X + (m.Z + rz * x + fz * y - w.Z) * dir.Z; ha = MathF.Min(ha, u); hb = MathF.Max(hb, u); }
+                                        bool head = hb > o.U + 0.01f && ha < o.U1 - 0.01f;
+                                        if (head) headboards++;
+                                        top = head ? s0.H : 1.20f;
+                                    }
+                                    overGlass++;
+                                    before[m.Name] = before.GetValueOrDefault(m.Name) + 1;
+                                    if (top > tallest + 1e-4f) { tallest = top; by = m.Name; }
+                                    if (sill < top - 1e-3f) bad.Add($"{Name(spec)} floor {f}: {m} stands in front of glass down to {sill:0.00} m, its top at {top:0.00}");
+                                }
                             }
-                    }
+                            // over a sink and plain counters only: a counter's height and 0.1, the faucet left out
+                            if (by is "Counter_1" or "Counter_0" && MathF.Abs(tallest - counter) < 1e-3f && sill > 1.0f && sill < 2.5f)
+                            {
+                                if (by == "Counter_1") sinkWindows++;
+                                if (MathF.Abs(sill - (counter + BuildingGen.SillOverCounter)) > 0.01f) bad.Add($"{Name(spec)} floor {f}: a window over a {by} sits at {sill:0.00}, not {counter + BuildingGen.SillOverCounter:0.00}");
+                            }
+                        }
                 }
             }
-            TestContext.Progress.WriteLine($"[gen-windows] {edits} windows altered ({sills} sills raised over a counter, {slides} slid, {narrows} narrowed, {removes} taken out); {runs} kitchen run pieces, {overGlass} of them under a window; {wardrobes} of {bedrooms} bedrooms with a wardrobe; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
+            TestContext.Progress.WriteLine($"[gen-windows] {edits} windows altered ({sills} sills raised over what stands before them, {slides} slid, {narrows} narrowed, {removes} taken out); "
+                                         + $"{overGlass} pieces before a window ({string.Join(", ", before.OrderByDescending(k => k.Value).Select(k => $"{k.Value} {k.Key}"))}), {headboards} beds with their headboard there; "
+                                         + $"{sinkWindows} windows whose tallest piece is a sink, at a counter's height; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
             Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(10)));
-            Assert.That(sills, Is.GreaterThan(300), "too few windows raised over a counter");
-            Assert.That(overGlass, Is.GreaterThan(500), "too few counters under a window to measure");
+            Assert.That(sills, Is.GreaterThan(300), "too few windows raised");
+            Assert.That(overGlass, Is.GreaterThan(500), "too few pieces before a window to measure");
+            Assert.That(before.GetValueOrDefault("Couch_0") + before.GetValueOrDefault("Couch_1"), Is.GreaterThan(100), "too few couches before a window to measure");
+            Assert.That(before.GetValueOrDefault("Bed_1"), Is.GreaterThan(12), "too few beds before a window to measure");
+            Assert.That(sinkWindows, Is.GreaterThan(30), "too few windows over a sink to measure");
         }
 
         // A bed or a wardrobe that wants the wall a window is on (strawberry: "allow room layout to alter windows after the

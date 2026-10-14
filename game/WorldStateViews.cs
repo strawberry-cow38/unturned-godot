@@ -156,7 +156,7 @@ namespace UnturnedGodot
             // v37: prop doors -- the join answer. A client that connected after somebody opened a shipping
             // container would otherwise draw it shut and walk into a leaf nobody else can see.
             foreach (var kv in Client.InteractableState.ReplicaObjectDoors)
-                if (ObjectDoor.TryGetByNetId(kv.Key, out var od)) od.ApplyReplicatedOpen(kv.Value);
+                if (ObjectDoor.TryGetByNetId(kv.Key, out var od)) od.ApplyReplicatedOpen(kv.Value, Client.InteractableState.ObjectDoorReversed(kv.Key));
             foreach (var kv in Client.InteractableState.ReplicaSeats)
                 if (PropSeat.TryGetByNetId(kv.Key, out var seat))
                 {

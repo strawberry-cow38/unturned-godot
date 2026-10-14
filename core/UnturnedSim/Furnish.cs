@@ -292,6 +292,10 @@ namespace UnturnedSim
         /// so furnishing never moves a wall.</summary>
         /// <summary>Debugging only: told each placement decision as it is made (null: nothing is traced).</summary>
         public static Action<string> FurnishTrace;
+        /// <summary>Testing only: more pieces each room asks for once its recipe is done, each put against a wall the way
+        /// the recipe puts its own -- so a test can ask what a later recipe would get, and that the furnisher's own limits
+        /// (one wardrobe to a bedroom) hold whoever asks (null: nothing more).</summary>
+        public static Func<GenRoom, IEnumerable<string>> FurnishAlso;
 
         static void Furnish(BuildingGenResult res, int seed)
         {
@@ -403,13 +407,14 @@ namespace UnturnedSim
                         if (door) Keep(zone, KeepDoor); else AddPane(w, k, zone);
                         // a hung door's leaf swings through a quarter circle its own width round its hinge, into the room
                         // HangDoors chose (WallOpening.DoorOpensFront; Door_Pine opens 90 degrees): kept clear whole, as a box
-                        // (strawberry: "have stairs block furniture in their footprint ... same for doors")
+                        // (strawberry: "have stairs block furniture in their footprint ... same for doors"). A double-acting
+                        // door's into both rooms; a pocket door's into neither: it slides into its wall.
                         if (door && o.HasDoor && o.Archetype != ArchGarage)
-                        {
-                            var leaf = LeafSweep(w, o);
-                            Keep(leaf, KeepDoor);
-                            LeafRects.Add(leaf);
-                        }
+                            foreach (var leaf in LeafSweeps(w, o))
+                            {
+                                Keep(leaf, KeepDoor);
+                                LeafRects.Add(leaf);
+                            }
                         if (door)
                         {
                             float cx = w.X + dx * (o.U + o.Width * 0.5f), cz = w.Z + dz * (o.U + o.Width * 0.5f), d = w.Thickness * 0.5f + 0.5f;
@@ -563,8 +568,12 @@ namespace UnturnedSim
                     case RoomKind.Hall: Hall(); break;
                     case RoomKind.BreakRoom: BreakRoom(); break;
                 }
+                // (testing only: what a later recipe might also ask for, put the way any piece is)
+                if (FurnishAlso != null) foreach (var n in FurnishAlso(_room)) Put(n, Against(n, Side.Back));
                 Coats();
                 Jitter();
+                // (every room's windows over what now stands in front of them, where each piece finally is)
+                WindowsOverPieces();
                 CeilingLights();
             }
 
@@ -872,6 +881,8 @@ namespace UnturnedSim
             FurniturePlan Put(string name, IEnumerable<(float X, float Z, float Yaw)> cands, Func<float, float, float, double> score = null, float y = 0f,
                               Rng rng = null)
             {
+                // one wardrobe to a bedroom (strawberry, round 12b: "limit 1 wardrobe per bedroom"), whichever recipe asks
+                if (_room.Kind == RoomKind.Bedroom && name.StartsWith("Wardrobe") && _mine.Any(m => m.Name.StartsWith("Wardrobe"))) return null;
                 var s = FurnitureCatalog.Sizes[name];
                 var ranked = Rank(cands, score, rng);
                 if (FurnishTrace != null)
@@ -1562,7 +1573,7 @@ namespace UnturnedSim
                     if (_area >= 54f || (_area >= 30f && _rng.Chance(60))) Island();
                     if (_area >= 72f) Dining();
                 }
-                WindowsOverCounters();
+                WindowsOverPieces();
                 CounterTops();
                 Clock();
             }
@@ -1911,7 +1922,7 @@ namespace UnturnedSim
                     Put("Tub_0", Against("Tub_0", Side.Left).Concat(Against("Tub_0", Side.Right)), (x, z, yaw) => (Corner("Tub_0", (x, z, yaw)) ? 10 : 0) + NearestDoor(x, z));
                 Put("Counter_1", Against("Counter_1", Side.Back), (x, z, yaw) => -NearestDoor(x, z));
                 if (_area >= 14f && home) Put("Washer_0", Against("Washer_0", Side.Back), (x, z, yaw) => NearestDoor(x, z));
-                WindowsOverCounters();
+                WindowsOverPieces();
             }
 
             /// <summary>The desk in the command position: the chair's back to a wall, facing the door across the desk;
@@ -2096,7 +2107,7 @@ namespace UnturnedSim
                 }
                 Dining();
                 if (_area >= 30f) Put("Couch_1", Against("Couch_1", Side.Back), (x, z, yaw) => NearestDoor(x, z));
-                WindowsOverCounters();
+                WindowsOverPieces();
             }
 
             /// <summary>A home's coat stand by the way in (strawberry: "explore more props to place ie coat rack"): in a corner

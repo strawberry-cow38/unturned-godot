@@ -2844,10 +2844,18 @@ namespace UnturnedGodot
                                           + string.Join("; ", System.Linq.Enumerable.Select(solved, x => $"{x.W.Kind} at {x.W.Position - at} yaw {x.W.RotationDegrees.Y:0} {x.Len:0.00} -> {x.W.Length:0.00} m")));
 
             // UG_EDITDOORSOPEN=1 (a render's, not a player's): every door the building hangs stands open, so a capture shows
-            // which way each one swings and what it swings over
-            if (System.Environment.GetEnvironmentVariable("UG_EDITDOORSOPEN") == "1")
+            // which way each one swings and what it swings over; =2, a door that swings both ways stands open the other way
+            string doorsOpen = System.Environment.GetEnvironmentVariable("UG_EDITDOORSOPEN");
+            if (doorsOpen is "1" or "2")
             {
-                void Open(Node n) { foreach (var c in n.GetChildren()) { if (c is ObjectDoor d) d.SetInitialState(true); Open(c); } }
+                void Open(Node n)
+                {
+                    foreach (var c in n.GetChildren())
+                    {
+                        if (c is ObjectDoor d) { if (doorsOpen == "2" && d.DoubleActing) d.ApplyReplicatedOpen(true, reverse: true); d.SetInitialState(true); }
+                        Open(c);
+                    }
+                }
                 foreach (var w in _walls) Open(w);
             }
             DesignatedKind = res.Kind;
@@ -2889,7 +2897,7 @@ namespace UnturnedGodot
                 var ops = new List<string>();
                 foreach (var w in res.Walls)
                     foreach (var o in w.Openings)
-                        ops.Add(System.FormattableString.Invariant($"{w.Kind} {w.X:0.00} {w.Y:0.00} {w.Z:0.00} yaw {w.Yaw:0} | arch {o.Archetype} u {o.U:0.00}..{o.U1:0.00} v {o.V:0.00}..{o.V1:0.00}{(o.HasDoor ? $" door hinge {(o.DoorHingeAtStart ? "start" : "end")} opens {(o.DoorOpensFront ? "front" : "back")}" : "")}{(o.Glazed ? " glazed" : "")}"));
+                        ops.Add(System.FormattableString.Invariant($"{w.Kind} {w.X:0.00} {w.Y:0.00} {w.Z:0.00} yaw {w.Yaw:0} | arch {o.Archetype} u {o.U:0.00}..{o.U1:0.00} v {o.V:0.00}..{o.V1:0.00}{(o.HasDoor ? $" door hinge {(o.DoorHingeAtStart ? "start" : "end")} opens {(o.DoorOpensFront ? "front" : "back")} {o.DoorAction}" : "")}{(o.Glazed ? " glazed" : "")}"));
                 System.IO.File.WriteAllLines(dump + ".openings", ops);
             }
             Log.Print($"[editor-buildings] generated {res.Kind} seed {spec.Seed}: {res.Floors} floor(s), {rooms} rooms, "

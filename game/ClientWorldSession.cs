@@ -346,7 +346,7 @@ namespace UnturnedGodot
             // shell, which is what ApplySeatOccupied's `me` argument decides.
             // v37: a prop door swung. Applied to the group LEAD, whose SetOpen brings the rest of the
             // assembly along -- so a container's two leaves can never disagree.
-            Client.ObjectDoorState += e => { if (ObjectDoor.TryGetByNetId(e.NetId, out var od)) od.ApplyReplicatedOpen(e.Open); };
+            Client.ObjectDoorState += e => { if (ObjectDoor.TryGetByNetId(e.NetId, out var od)) od.ApplyReplicatedOpen(e.Open, e.Reverse); };
             Client.SeatOccupied += e =>
             {
                 if (Shell != null && IsInstanceValid(Shell)) Shell.ApplySeatOccupied(e.NetId, e.Occupant, Client.PlayerId);
