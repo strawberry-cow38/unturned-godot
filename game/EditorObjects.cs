@@ -248,6 +248,9 @@ namespace UnturnedGodot
                     for (int i = 3; i < data.Length; i += 4) if (data[i] < 200) tr++;
                     if (tr > data.Length / 400) { mm.Transparency = BaseMaterial3D.TransparencyEnum.AlphaScissor; mm.AlphaScissorThreshold = 0.5f; }
                 }
+                // ...unless its handoff says the alpha is GLASS (WantsTranslucent): the doodad kit's jars are a 4x4 palette with
+                // one swatch at alpha 112, which a scissor at 0.5 throws away -- the glass simply vanishes
+                if (WantsTranslucent(name)) mm.Transparency = BaseMaterial3D.TransparencyEnum.AlphaDepthPrePass;
                 bool palette = img.GetWidth() <= 16 && img.GetHeight() <= 16;
                 if (!palette) img.GenerateMipmaps();
                 mm.AlbedoTexture = ImageTexture.CreateFromImage(img);
@@ -271,32 +274,46 @@ namespace UnturnedGodot
         ///
         /// ⚠ ONE SCAN, CACHED, AND A MISSING OR MALFORMED FILE JUST MEANS "no overrides" -- a prop whose
         /// filter note cannot be read must still load, looking slightly wrong, rather than not load at all.</summary>
-        static System.Collections.Generic.HashSet<string> _linearProps;
+        static System.Collections.Generic.HashSet<string> _linearProps, _translucentProps;
         static bool WantsLinear(string name)
         {
-            if (_linearProps == null)
+            LoadMaterialOverrides();
+            return _linearProps.Contains(name);
+        }
+        /// <summary>Props whose handoff says their texture's alpha is translucency, not a cutout (`"translucent": true` in a
+        /// `*_materials.json`: the doodad kit's glass jars). Public because WorldBuilder.MatFor reads the same sidecars -- a
+        /// second list would rot the way the comment above says the first one would.</summary>
+        public static bool WantsTranslucent(string name)
+        {
+            LoadMaterialOverrides();
+            return _translucentProps.Contains(name);
+        }
+        static void LoadMaterialOverrides()
+        {
+            if (_linearProps != null) return;
+            _linearProps = new System.Collections.Generic.HashSet<string>();
+            _translucentProps = new System.Collections.Generic.HashSet<string>();
+            try
             {
-                _linearProps = new System.Collections.Generic.HashSet<string>();
-                try
+                foreach (var jf in System.IO.Directory.GetFiles(Dir, "*_materials.json"))
                 {
-                    foreach (var jf in System.IO.Directory.GetFiles(Dir, "*_materials.json"))
+                    var parsed = Json.ParseString(System.IO.File.ReadAllText(jf));
+                    if (parsed.VariantType != Variant.Type.Dictionary) continue;
+                    foreach (var key in (Godot.Collections.Dictionary)parsed)
                     {
-                        var parsed = Json.ParseString(System.IO.File.ReadAllText(jf));
-                        if (parsed.VariantType != Variant.Type.Dictionary) continue;
-                        foreach (var key in (Godot.Collections.Dictionary)parsed)
-                        {
-                            var row = key.Value.AsGodotDictionary();
-                            if (row == null) continue;
-                            var f = row.TryGetValue("foliage_texture_filter", out var fv) ? fv.AsString() : null;
-                            if (!string.IsNullOrEmpty(f) && f.ToLowerInvariant().StartsWith("linear"))
-                                _linearProps.Add(key.Key.AsString());
-                        }
+                        var row = key.Value.AsGodotDictionary();
+                        if (row == null) continue;
+                        var f = row.TryGetValue("foliage_texture_filter", out var fv) ? fv.AsString() : null;
+                        if (!string.IsNullOrEmpty(f) && f.ToLowerInvariant().StartsWith("linear"))
+                            _linearProps.Add(key.Key.AsString());
+                        if (row.TryGetValue("translucent", out var tv) && tv.VariantType == Variant.Type.Bool && tv.AsBool())
+                            _translucentProps.Add(key.Key.AsString());
                     }
                 }
-                catch (System.Exception e) { Log.Print($"[objects] material overrides unreadable: {e.Message}"); }
-                if (_linearProps.Count > 0) Log.Print($"[objects] {_linearProps.Count} props ask for linear filtering");
             }
-            return _linearProps.Contains(name);
+            catch (System.Exception e) { Log.Print($"[objects] material overrides unreadable: {e.Message}"); }
+            if (_linearProps.Count > 0) Log.Print($"[objects] {_linearProps.Count} props ask for linear filtering");
+            if (_translucentProps.Count > 0) Log.Print($"[objects] {_translucentProps.Count} props ask for translucency");
         }
 
         // upright placement basis: meshes are authored lying down, pitch ex=270 stands them up; yaw about world-up
@@ -338,7 +355,7 @@ namespace UnturnedGodot
             if (name == LaneSignName) return PlaceLaneSigns(pos, rot);
             if (name == PylonName) return PlacePylon(pos, rot);
             var mesh = MeshFor(name);
-            if (mesh == null) return null;
+            if (mesh == null) return DoodadKitView.Has(name) ? PlaceStockOnly(name, pos, rot) : null;
             var root = new Node3D { Transform = new Transform3D(rot, pos) };
             root.SetMeta("obj_name", name);
             root.SetMeta("guid", _nameToGuid.TryGetValue(name, out var g) ? g : "");   // for the placements save
@@ -346,6 +363,7 @@ namespace UnturnedGodot
             var mat = MatFor(string.IsNullOrEmpty(materialName) ? name : materialName);
             var mainMi = new MeshInstance3D { Mesh = mesh, MaterialOverride = mat };
             root.AddChild(mainMi);   // FIRST: PositionMarkers reads child 0 for the selection outline's bounds
+            DoodadKitView.Attach(mainMi, name);   // a kit doodad's stock children (the bowl under the fruit), in its native frame
 
             // SMART PROPS (strawberry: "make all 'smart' props (tvs, clocks, lights, doors, etc etc) functional
             // in the editor and editor play mode"). A prop placed here used to be a dead mesh: the clock's hands
@@ -382,6 +400,31 @@ namespace UnturnedGodot
                 _pickToObj[body.GetRid()] = root;
             }
             else _world.AddChild(root);
+            _placed.Add(root);
+            return root;
+        }
+
+        /// <summary>A kit doodad with no art of its own (the mug pair, the plate stack, the garden tools): its stock children
+        /// on the root, and -- as child 0, which PositionMarkers reads for the selection's bounds -- an unseen box of its
+        /// composed extents (FurnitureCatalog.Sizes, the kit's bounds), with a box collider the same, so it is picked, moved and
+        /// saved like any prop.</summary>
+        Node3D PlaceStockOnly(string name, Vector3 pos, Basis rot)
+        {
+            if (!UnturnedSim.FurnitureCatalog.Sizes.TryGetValue(name, out var sz)) return null;
+            var root = new Node3D { Transform = new Transform3D(rot, pos) };
+            root.SetMeta("obj_name", name);
+            root.SetMeta("guid", _nameToGuid.TryGetValue(name, out var g) ? g : "");
+            var size = new Vector3(sz.X1 - sz.X0, sz.Y1 - sz.Y0, sz.H);
+            var centre = new Vector3((sz.X0 + sz.X1) * 0.5f, (sz.Y0 + sz.Y1) * 0.5f, sz.H * 0.5f);
+            var bounds = new MeshInstance3D { Mesh = new BoxMesh { Size = size }, Position = centre, Visible = false };
+            root.AddChild(bounds);
+            DoodadKitView.Attach(root, name);
+            var body = new StaticBody3D { CollisionLayer = PickLayer | (1u << 6), CollisionMask = 0 };
+            body.SetMeta(PlayerController.SurfMeta, (int)PropSurfaces.SurfForProp(name));
+            body.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = size }, Position = centre });
+            root.AddChild(body);
+            _world.AddChild(root);
+            _pickToObj[body.GetRid()] = root;
             _placed.Add(root);
             return root;
         }

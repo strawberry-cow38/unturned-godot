@@ -1,0 +1,17 @@
+{
+  "Canister_Trio_0": {
+    "translucent": true,
+    "transparency": "AlphaDepthPrePass",
+    "note": "the kit's glass swatch is RGBA alpha 112: an alpha-SCISSOR material (the RGBA default) would cut it away"
+  },
+  "Spice_Caddy_0": {
+    "translucent": true,
+    "transparency": "AlphaDepthPrePass",
+    "note": "the kit's glass swatch is RGBA alpha 112: an alpha-SCISSOR material (the RGBA default) would cut it away"
+  },
+  "Screw_Jar_0": {
+    "translucent": true,
+    "transparency": "AlphaDepthPrePass",
+    "note": "the kit's glass swatch is RGBA alpha 112: an alpha-SCISSOR material (the RGBA default) would cut it away"
+  }
+}

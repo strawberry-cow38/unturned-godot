@@ -385,6 +385,9 @@ namespace UnturnedSim.Tests
                 ["Wall_Shelf_2"] = "59f3ee2231f04ebaafbc4562d085cdb5", ["Wall_Shelf_3"] = "6c3344eee91149ba9e0edde5e998eedf",
                 ["Wall_Shelf_4"] = "a4189c24f4154ce28670e812788e215e", ["Wall_Shelf_5"] = "93c0dd72c58845009fd89a8c99d92768",
                 ["Mirror_1"] = "8874b447897e4ddf908733d9d4a09852", ["Deer_Wall_Trophy_0"] = "5675fbbc6be24c03ad46f40459907a02",
+                // strawberry's doodad kit's indoor wall pieces (doodad_placement.tsv, review @ 836625e)
+                ["Toilet_Roll_Holder_0"] = "bb80ff87d5ff4de88239f2ac7ce873ba", ["Wall_Plate_Rack_0"] = "31b95b6c567a4a0bb08e009b0e38e828",
+                ["Recreation_Dartboard_0"] = "e524f569be9a48d7abcc925cd3efff6f", ["Wall_Woven_Basket_0"] = "8e7ea8c14a4b44b78ae4c340c1675bc4",
             };
             string dir = Objects();
             Assert.That(dir, Is.Not.Null, "game/content/objects not found");

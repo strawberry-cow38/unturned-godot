@@ -2774,11 +2774,21 @@ namespace UnturnedGodot
                 {
                     if (lamp) _ceilingLights.Add(null);
                     if (plate) electrical.Add(null);
+                    // a kit doodad with no art of its own (the mug pair) is nothing but its stock children
+                    if (DoodadKitView.Has(m.Name))
+                    {
+                        var holder = new Node3D { Name = "Furniture_" + m.Name };
+                        AddChild(holder);
+                        holder.GlobalTransform = new Transform3D(EditorObjects.Upright(m.Yaw), new Vector3(m.X, m.Y, m.Z));
+                        DoodadKitView.Attach(holder, m.Name);
+                        _furnitureNodes.Add(holder);
+                    }
                     continue;
                 }
                 var mi = new MeshInstance3D { Name = "Furniture_" + m.Name, Mesh = mesh, MaterialOverride = objects.PreviewMaterial(m.Name) };
                 AddChild(mi);
                 mi.GlobalTransform = new Transform3D(EditorObjects.Upright(m.Yaw), new Vector3(m.X, m.Y, m.Z));
+                DoodadKitView.Attach(mi, m.Name);   // a kit doodad's stock children (the knives in the block), in its native frame
                 _furnitureNodes.Add(mi);
                 if (lamp)
                 {
@@ -2983,8 +2993,8 @@ namespace UnturnedGodot
             if (!string.IsNullOrEmpty(dump))
             {
                 // (the curtains and rugs after the props, each with what it is built from)
-                System.IO.File.WriteAllLines(dump, System.Linq.Enumerable.Select(System.Linq.Enumerable.Concat(System.Linq.Enumerable.Concat(System.Linq.Enumerable.Concat(res.Furniture, res.RuntimeDecor), res.HvacVents), res.Electrical), m => System.FormattableString.Invariant(
-                    $"{m.Name} {m.X:0.00} {m.Z:0.00} {m.Yaw:0} {m.Floor} {m.Room.Kind}{(m.Gen == null ? "" : $" gen {m.Gen.Kind} {m.Gen.Width:0.00} x {m.Gen.Height:0.00} y {m.Y:0.00} {(m.Gen.Open ? "open" : "closed")} {m.Gen.Style}")}")));
+                System.IO.File.WriteAllLines(dump, System.Linq.Enumerable.Select(System.Linq.Enumerable.Concat(System.Linq.Enumerable.Concat(System.Linq.Enumerable.Concat(System.Linq.Enumerable.Concat(res.Furniture, res.RuntimeDecor), res.HvacVents), res.Electrical), res.Doodads), m => System.FormattableString.Invariant(
+                    $"{m.Name} {m.X:0.00} {m.Z:0.00} {m.Yaw:0} {m.Floor} {(m.Room == null ? "Outside" : m.Room.Kind.ToString())}{(m.Gen == null ? "" : $" gen {m.Gen.Kind} {m.Gen.Width:0.00} x {m.Gen.Height:0.00} y {m.Y:0.00} {(m.Gen.Open ? "open" : "closed")} {m.Gen.Style}")}")));
                 System.IO.File.WriteAllLines(dump + ".walls", System.Linq.Enumerable.Select(res.Walls, w => System.FormattableString.Invariant($"{w.Kind} {w.X:R} {w.Y:R} {w.Z:R} {w.Yaw:R} {w.Length:R} {w.Height:R} {w.Thickness:R} {w.Openings.Count}")));
                 System.IO.File.WriteAllLines(dump + ".trace", trace);
                 // and every opening, so a capture can be checked against where the windows and doors actually are

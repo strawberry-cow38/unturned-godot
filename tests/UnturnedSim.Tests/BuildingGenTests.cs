@@ -1798,23 +1798,61 @@ namespace UnturnedSim.Tests
             return null;
         }
 
+        /// <summary>The doodad kit's stock children (game/content/objects/doodad_kit_children.json): each doodad's item rips
+        /// as the kit composes them -- (x, y, z) -> (x, -z, y), scaled, turned Rz Ry Rx, moved -- read here independently of
+        /// the game's DoodadKitView, as vertices in the doodad's native frame.</summary>
+        static Dictionary<string, List<float[]>> DoodadChildVerts(string objects)
+        {
+            var d = new Dictionary<string, List<float[]>>();
+            string path = Path.Combine(objects, "doodad_kit_children.json");
+            if (!File.Exists(path)) return d;
+            using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(path));
+            foreach (var row in doc.RootElement.EnumerateObject())
+            {
+                if (row.Name.StartsWith("_")) continue;
+                var l = d[row.Name] = new List<float[]>();
+                foreach (var c in row.Value.EnumerateArray())
+                {
+                    float[] F(string k) => c.GetProperty(k).EnumerateArray().Select(e => (float)e.GetDouble()).ToArray();
+                    var p = F("position"); var r = F("rotation_deg").Select(a => a * MathF.PI / 180f).ToArray(); float sc = (float)c.GetProperty("scale").GetDouble();
+                    float cx = MathF.Cos(r[0]), sx = MathF.Sin(r[0]), cy = MathF.Cos(r[1]), sy = MathF.Sin(r[1]), cz = MathF.Cos(r[2]), sz = MathF.Sin(r[2]);
+                    string rip = Path.Combine(objects, "..", "items", c.GetProperty("item").GetInt32() + ".txt");
+                    foreach (var line in File.ReadLines(rip).Where(q => q.StartsWith("v ")))
+                    {
+                        var t = line.Split(' ', StringSplitOptions.RemoveEmptyEntries).Skip(1).Take(3).Select(q => float.Parse(q, System.Globalization.CultureInfo.InvariantCulture)).ToArray();
+                        // the rip turned into the native frame, then Rx, Ry, Rz, then scaled and moved
+                        float x = t[0], y = -t[2], z = t[1];
+                        (y, z) = (cx * y - sx * z, sx * y + cx * z);
+                        (x, z) = (cy * x + sy * z, -sy * x + cy * z);
+                        (x, y) = (cz * x - sz * y, sz * x + cz * y);
+                        l.Add(new[] { x * sc + p[0], y * sc + p[1], z * sc + p[2] });
+                    }
+                }
+            }
+            return d;
+        }
+
         // Q: the furnisher's sizes are the meshes' own (each OBJ's extents, to a centimetre), and every prop it uses has a
-        // GUID -- EditorObjects.Save writes a placement by GUID and skips one without.
-        // BREAK IT: a wrong extent in the table (a bed 0.3 m short); a prop with no GUID (Workbench_0).
+        // GUID -- EditorObjects.Save writes a placement by GUID and skips one without. A doodad of the kit is its art AND
+        // its stock children, composed (three of them are nothing but children: no OBJ of their own).
+        // BREAK IT: a wrong extent in the table (a bed 0.3 m short); a prop with no GUID (Workbench_0); a child's turn
+        // dropped from the composition.
         [Test]
         public void FurnitureCatalogMatchesTheMeshes()
         {
             string dir = Objects();
             Assert.That(dir, Is.Not.Null, "game/content/objects not found");
             var guids = new HashSet<string>(File.ReadAllLines(Path.Combine(dir, "guid_mesh.txt")).Select(l => l.Split(' ', StringSplitOptions.RemoveEmptyEntries)).Where(p => p.Length >= 2).Select(p => p[1]));
+            var kids = DoodadChildVerts(dir);
             var bad = new List<string>();
             foreach (var (name, sz) in FurnitureCatalog.Sizes)
             {
                 if (!guids.Contains(name)) bad.Add($"{name} has no GUID: a save would drop it");
                 string obj = Path.Combine(dir, name + ".obj");
-                if (!File.Exists(obj)) { bad.Add($"{name}.obj is missing"); continue; }
-                var v = File.ReadLines(obj).Where(l => l.StartsWith("v ")).Select(l => l.Split(' ', StringSplitOptions.RemoveEmptyEntries).Skip(1).Take(3)
+                if (!File.Exists(obj) && !kids.ContainsKey(name)) { bad.Add($"{name}.obj is missing"); continue; }
+                var v = (File.Exists(obj) ? File.ReadLines(obj) : Enumerable.Empty<string>()).Where(l => l.StartsWith("v ")).Select(l => l.Split(' ', StringSplitOptions.RemoveEmptyEntries).Skip(1).Take(3)
                             .Select(t => float.Parse(t, System.Globalization.CultureInfo.InvariantCulture)).ToArray()).ToList();
+                if (kids.TryGetValue(name, out var cv)) v.AddRange(cv);
                 var got = (v.Min(p => p[0]), v.Max(p => p[0]), v.Min(p => p[1]), v.Max(p => p[1]), v.Max(p => p[2]));
                 var want = (sz.X0, sz.X1, sz.Y0, sz.Y1, sz.H);
                 if (MathF.Abs(got.Item1 - want.X0) > 0.015f || MathF.Abs(got.Item2 - want.X1) > 0.015f || MathF.Abs(got.Item3 - want.Y0) > 0.015f

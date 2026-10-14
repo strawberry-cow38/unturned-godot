@@ -167,6 +167,58 @@ namespace UnturnedSim
             ["Cooler_0"] = new(-0.75f, 0.75f, -0.50f, 0.50f, 2.50f),
             ["Ice_Box_0"] = new(-1.00f, 1.00f, -0.50f, 0.50f, 2.47f),
             ["Craft_01"] = new(-0.87f, 0.87f, -0.65f, 0.65f, 1.76f),
+            // BEGIN doodad kit sizes (tools/import_doodads.py)
+            // strawberry's doodad kit (review @ 836625e, lane-trash @ 9db46cf): its composed bounds, the art and its stock children
+            ["Fruit_Bowl_0"] = new(-0.307f, 0.307f, -0.307f, 0.307f, 0.324f),
+            ["Canister_Trio_0"] = new(-0.420f, 0.420f, -0.130f, 0.130f, 0.450f),
+            ["Knife_Block_0"] = new(-0.250f, 0.250f, -0.212f, 0.212f, 0.651f),
+            ["Dish_Rack_0"] = new(-0.360f, 0.360f, -0.280f, 0.280f, 0.705f),
+            ["Paper_Towel_Holder_0"] = new(-0.180f, 0.180f, -0.180f, 0.180f, 0.690f),
+            ["Ceramic_Teapot_0"] = new(-0.373f, 0.373f, -0.220f, 0.220f, 0.408f),
+            ["Mug_Pair_0"] = new(-0.343f, 0.343f, -0.106f, 0.106f, 0.250f),
+            ["Spice_Caddy_0"] = new(-0.310f, 0.310f, -0.170f, 0.170f, 0.500f),
+            ["Plate_Stack_0"] = new(-0.325f, 0.325f, -0.325f, 0.325f, 0.122f),
+            ["Napkin_Holder_0"] = new(-0.215f, 0.215f, -0.125f, 0.125f, 0.280f),
+            ["Coaster_Set_0"] = new(-0.239f, 0.239f, -0.151f, 0.151f, 0.060f),
+            ["Desk_Organizer_0"] = new(-0.305f, 0.305f, -0.205f, 0.205f, 0.325f),
+            ["Toothbrush_Cup_0"] = new(-0.143f, 0.143f, -0.106f, 0.106f, 0.460f),
+            ["Toiletry_Tray_0"] = new(-0.310f, 0.310f, -0.185f, 0.185f, 0.447f),
+            ["Hand_Towel_Stack_0"] = new(-0.350f, 0.350f, -0.250f, 0.250f, 0.330f),
+            ["Toy_Car_0"] = new(-0.237f, 0.237f, -0.133f, 0.133f, 0.229f),
+            ["Building_Blocks_0"] = new(-0.215f, 0.215f, -0.110f, 0.110f, 0.590f),
+            ["Crayon_Cup_0"] = new(-0.143f, 0.143f, -0.106f, 0.106f, 0.460f),
+            ["Parts_Bins_0"] = new(-0.393f, 0.393f, -0.213f, 0.213f, 0.185f),
+            ["Bench_Oil_Can_0"] = new(-0.216f, 0.216f, -0.113f, 0.113f, 0.613f),
+            ["Screw_Jar_0"] = new(-0.120f, 0.120f, -0.120f, 0.120f, 0.330f),
+            ["Bud_Vase_0"] = new(-0.132f, 0.132f, -0.114f, 0.114f, 0.360f),
+            ["Bird_Figurine_0"] = new(-0.250f, 0.250f, -0.085f, 0.085f, 0.355f),
+            ["Umbrella_Stand_0"] = new(-0.314f, 0.314f, -0.272f, 0.272f, 0.960f),
+            ["Twig_Floor_Vase_0"] = new(-0.260f, 0.260f, -0.225f, 0.225f, 2.050f),
+            ["Hearth_Tool_Set_0"] = new(-0.260f, 0.260f, -0.190f, 0.190f, 1.310f),
+            ["Floor_Speaker_0"] = new(-0.375f, 0.375f, -0.343f, 0.343f, 1.238f),
+            ["Laundry_Hamper_0"] = new(-0.466f, 0.466f, -0.373f, 0.373f, 1.350f),
+            ["Toy_Dump_Truck_0"] = new(-0.360f, 0.360f, -0.450f, 0.450f, 0.720f),
+            ["Pet_Travel_Carrier_0"] = new(-0.370f, 0.370f, -0.530f, 0.530f, 0.880f),
+            ["Indoor_Waste_Basket_0"] = new(-0.358f, 0.358f, -0.310f, 0.310f, 0.725f),
+            ["Canvas_Floor_Easel_0"] = new(-0.579f, 0.579f, -0.394f, 0.394f, 2.376f),
+            ["Floor_Toolbox_0"] = new(-0.430f, 0.430f, -0.272f, 0.272f, 0.680f),
+            ["Toilet_Roll_Holder_0"] = new(-0.270f, 0.270f, 0.000f, 0.490f, 0.170f),
+            ["Wall_Plate_Rack_0"] = new(-1.180f, 1.180f, 0.000f, 0.320f, 0.415f),
+            ["Recreation_Dartboard_0"] = new(-0.450f, 0.450f, 0.000f, 0.110f, 0.450f),
+            ["Wall_Woven_Basket_0"] = new(-0.380f, 0.380f, 0.000f, 0.490f, 0.225f),
+            ["Porch_Wind_Chime_0"] = new(-0.300f, 0.300f, -0.065f, 0.065f, 0.000f),
+            ["Hanging_Bird_Feeder_0"] = new(-0.440f, 0.440f, -0.381f, 0.381f, 0.000f),
+            ["Wall_Nesting_Box_0"] = new(-0.370f, 0.370f, 0.000f, 0.760f, 0.445f),
+            ["Garden_Birdbath_0"] = new(-0.580f, 0.580f, -0.580f, 0.580f, 1.370f),
+            ["Lawn_Flamingo_Pair_0"] = new(-0.656f, 0.656f, -0.576f, 0.576f, 1.665f),
+            ["Leaning_Garden_Tools_0"] = new(-0.624f, 0.624f, 0.000f, 0.422f, 1.223f),
+            ["Garden_Stepping_Stones_0"] = new(-0.440f, 0.440f, -1.195f, 1.195f, 0.100f),
+            ["Slatted_Compost_Bin_0"] = new(-0.770f, 0.770f, -0.710f, 0.710f, 1.560f),
+            ["Garden_Dog_Kennel_0"] = new(-0.775f, 0.775f, -0.800f, 0.800f, 1.400f),
+            ["Childs_Tricycle_0"] = new(-0.460f, 0.460f, -0.820f, 0.820f, 1.080f),
+            ["Garden_Sandbox_Frame_0"] = new(-1.200f, 1.200f, -1.200f, 1.200f, 0.300f),
+            ["Bound_Cardboard_Stack_0"] = new(-0.825f, 0.825f, -0.550f, 0.550f, 0.340f),
+            // END doodad kit sizes
         };
 
         /// <summary>Props that are round in plan: a disc of this radius about the origin, however turned.</summary>
@@ -305,6 +357,7 @@ namespace UnturnedSim
         static void Furnish(BuildingGenResult res, int seed)
         {
             var rng = new Rng(seed ^ 0x51ED);
+            var all = new List<Furnisher>();
             for (int f = 0; f < res.Floors; f++)
             {
                 var fp = new FloorPlan(res, f);
@@ -319,6 +372,9 @@ namespace UnturnedSim
                 // television through a corner) is there to keep clear of, and a plant is floor furniture the décor keeps clear
                 // of. Neither draws from rng (FurnishPlants, FurnishDecor).
                 if (!NoPlants) foreach (var fu in done) fu.Plants();
+                // the doodad kit's floor pieces with them (FurnishDoodads): before the décor, which keeps clear of them as of
+                // any piece standing, and before the rugs, which lie round them -- on their own draws
+                if (!NoDoodads) foreach (var fu in done) fu.FloorDoodads();
                 foreach (var fu in done) fu.Decorate();
                 // and last the soft furnishings, built at load (FurnishTextiles): curtains at the windows, a rug under the couch
                 // or the bed. After the décor, which never sees them -- a curtain belongs to its window, and is not a piece
@@ -328,6 +384,14 @@ namespace UnturnedSim
                 if (!NoHvac) foreach (var fu in done) fu.Vents();
                 // and the light switches and outlets (FurnishElectrical), last: on their own draws, off everything hung
                 if (!NoElectrical) foreach (var fu in done) fu.Electrical();
+                all.AddRange(done);
+            }
+            // and the kit's small pieces on the tops and the sills, then outside, once every storey is in: a child's bedroom
+            // upstairs is the living room's to know of. Into Doodads, on their own draws, so nothing furnished moves
+            if (!NoDoodads)
+            {
+                foreach (var fu in all) fu.TopDoodads();
+                Outdoors(res, seed);
             }
             LabelRecords(res);
         }

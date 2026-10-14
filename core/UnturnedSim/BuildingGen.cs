@@ -222,7 +222,13 @@ namespace UnturnedSim
         /// <summary>Where each window was free to be (BuildWalls): its share of its stretch of wall, which a room's layout
         /// may slide it along (Furnish). The generator's own bookkeeping, in wall U (which TurnHalf keeps).</summary>
         internal List<WindowSlot> WindowSlots = new List<WindowSlot>();
-        public IEnumerable<PropDesignation> Props => Furniture.Concat(RuntimeDecor).Concat(HvacVents).Concat(Electrical).Select(m => new PropDesignation(m.Name, m.X, m.Y, m.Z, m.Yaw, m.Gen));
+        /// <summary>strawberry's doodad kit's small pieces where the furniture's rules do not reach (FurnishDoodads): on a top
+        /// -- a counter, a table, a shelf's tier, a basin's counter, a windowsill -- and outside, in the yard, on the porch and
+        /// on the house's outside walls (Room null). The kit's floor pieces are in Furniture, its indoor wall pieces are wall
+        /// décor (Decor); these are kept out of it, as the vents are -- every rule that reads Furniture reads it as pieces
+        /// standing on the floor or on a catalog top -- and saved with it (Props).</summary>
+        public List<FurniturePlan> Doodads = new List<FurniturePlan>();
+        public IEnumerable<PropDesignation> Props => Furniture.Concat(RuntimeDecor).Concat(HvacVents).Concat(Electrical).Concat(Doodads).Select(m => new PropDesignation(m.Name, m.X, m.Y, m.Z, m.Yaw, m.Gen));
         /// <summary>The marked doors: the front one always, the back one when there is one.</summary>
         public GenDoor Front => Doors.FirstOrDefault(d => d.Role == DoorRole.Front);
         public GenDoor Back => Doors.FirstOrDefault(d => d.Role == DoorRole.Back);
@@ -354,7 +360,7 @@ namespace UnturnedSim
                 w.X = W - w.X; w.Z = D - w.Z; w.Yaw = Y(w.Yaw);
             }
             for (int i = 0; i < res.Stairs.Count; i++) { var st = res.Stairs[i]; st.X = W - st.X; st.Z = D - st.Z; st.Yaw = Y(st.Yaw); res.Stairs[i] = st; }
-            foreach (var m in res.Furniture.Concat(res.RuntimeDecor).Concat(res.HvacVents).Concat(res.Electrical)) { m.X = W - m.X; m.Z = D - m.Z; m.Yaw = Y(m.Yaw); }
+            foreach (var m in res.Furniture.Concat(res.RuntimeDecor).Concat(res.HvacVents).Concat(res.Electrical).Concat(res.Doodads)) { m.X = W - m.X; m.Z = D - m.Z; m.Yaw = Y(m.Yaw); }
             for (int i = 0; i < res.Rooms.Count; i++) { var r = res.Rooms[i]; res.Rooms[i] = new RoomDesignation(r.Kind, W - r.X, D - r.Z, r.Floor); }
             foreach (var g in res.Layout) g.Hvac = g.Hvac?.Map(v => v with { X = W - v.X, Z = D - v.Z, Yaw = Y(v.Yaw) });
             foreach (var g in res.Layout) g.Electrical = g.Electrical?.Map(v => v with { X = W - v.X, Z = D - v.Z, Yaw = Y(v.Yaw) });
@@ -2171,6 +2177,7 @@ namespace UnturnedSim
             void Reset()
             {
                 res.Walls.Clear(); res.Stairs.Clear(); res.Porches.Clear(); res.Furniture.Clear(); res.RuntimeDecor.Clear(); res.HvacVents.Clear(); res.Electrical.Clear();
+                res.Doodads.Clear();
                 foreach (var g in res.Layout) { g.Hvac = null; g.Electrical = null; }
                 res.WindowEdits.Clear(); res.WindowSlots.Clear();
                 res.Chimney = default;
@@ -2195,7 +2202,7 @@ namespace UnturnedSim
                 var back = new List<Action>
                 {
                     Keep(res.Walls), Keep(res.Stairs), Keep(res.Porches), Keep(res.Furniture), Keep(res.RuntimeDecor), Keep(res.HvacVents),
-                    Keep(res.Electrical), Keep(res.WindowEdits), Keep(res.WindowSlots), Keep(res.Notes), Keep(res.Doors),
+                    Keep(res.Electrical), Keep(res.Doodads), Keep(res.WindowEdits), Keep(res.WindowSlots), Keep(res.Notes), Keep(res.Doors),
                     Keep(res.Rooms),   // (their labels carry the rooms' records: LabelRecords)
                 };
                 var chimney = res.Chimney;

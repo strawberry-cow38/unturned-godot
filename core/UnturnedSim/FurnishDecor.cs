@@ -135,6 +135,16 @@ namespace UnturnedSim
             new("Utensil_Rail_0", In(Kitchen), 2.15f, "rail", Spot: DecorSpot.Over, Over: new[] { "Oven_0", "Counter_0" }, Tags: "counter cooking"),
             new("Medicine_Cabinet_0", In(Bathroom), 2.5f, "sink", Weight: 8, Spot: DecorSpot.Over, Over: new[] { "Counter_1" }, Tags: "mirror sink"),
             new("Towel_Rail_0", In(Bathroom), 1.6f, "towel", Beside: new[] { "Tub", "Counter_1" }, Tags: "towel wash"),
+            // strawberry's doodad kit's indoor wall pieces (doodad_placement.tsv: suggested_origin_height and room_kinds; their
+            // slots' odds the kit's rarity, DoodadCommon and DoodadUncommon; clearance_front as Stand where it is floor you
+            // stand on before them): the toilet-roll holder by the basin -- the kit's "near Toilet", and the generator places
+            // no toilet -- with 0.625 m before it; a plate rack in a home's kitchen or dining room; the dartboard, its 4.8 m
+            // throw clear before it; the woven basket by a door, the kit's "near ExteriorDoor" (DecorSpot.Door: the one out
+            // where the room has it). A home's but the dartboard, which a business's break room or garage takes too
+            new("Toilet_Roll_Holder_0", In(Bathroom), 0.9f, "toilet", Need: DecorNeed.Home, Beside: new[] { "Counter_1" }, Stand: 0.625f, Tags: "doodad bathroom"),
+            new("Wall_Plate_Rack_0", In(Kitchen, DiningRoom), 2.8f, "plates", Need: DecorNeed.Home, Tags: "doodad kitchen dining"),
+            new("Recreation_Dartboard_0", In(Garage, LivingRoom, BreakRoom), 2.2f, "game", Stand: 4.8f, Tags: "doodad recreation"),
+            new("Wall_Woven_Basket_0", In(Hall, Bedroom, Garage), 2.5625f, "basket", Need: DecorNeed.Home, Spot: DecorSpot.Door, Tags: "doodad woven"),
         };
 
         /// <summary>What each kind of room hangs, in order (VoX's brief, "coherent per room, not random"): its slots, each
@@ -144,21 +154,22 @@ namespace UnturnedSim
         public static readonly IReadOnlyDictionary<RoomKind, (string Slot, int Chance)[]> DecorRecipes = new Dictionary<RoomKind, (string, int)[]>
         {
             // (a slot added for the expansion goes LAST in its recipe: the room's draws for the slots before it are as they were)
-            [Kitchen] = new[] { ("cabinets", 100), ("rail", 70), ("notes", 60), ("shelf", 35) },
-            [LivingRoom] = new[] { ("focal", 100), ("wall", 70), ("shelf", 40), ("trophy", 8) },
-            [DiningRoom] = new[] { ("focal", 100), ("wall", 50) },
-            [Bedroom] = new[] { ("focal", 100), ("wall", 60), ("mirror", 40), ("shelf", 25) },
-            [Hall] = new[] { ("hooks", 100), ("keys", 60), ("focal", 70), ("mirror", 35), ("wall", 35), ("trophy", 5) },
-            [Bathroom] = new[] { ("sink", 100), ("towel", 75), ("mirror", 20) },
+            [Kitchen] = new[] { ("cabinets", 100), ("rail", 70), ("notes", 60), ("shelf", 35), ("plates", DoodadCommon) },
+            [LivingRoom] = new[] { ("focal", 100), ("wall", 70), ("shelf", 40), ("trophy", 8), ("game", DoodadUncommon) },
+            [DiningRoom] = new[] { ("focal", 100), ("wall", 50), ("plates", DoodadCommon) },
+            [Bedroom] = new[] { ("focal", 100), ("wall", 60), ("mirror", 40), ("shelf", 25), ("basket", DoodadCommon) },
+            [Hall] = new[] { ("hooks", 100), ("keys", 60), ("focal", 70), ("mirror", 35), ("wall", 35), ("trophy", 5), ("basket", DoodadCommon) },
+            [Bathroom] = new[] { ("sink", 100), ("towel", 75), ("mirror", 20), ("toilet", DoodadCommon) },
             [Office] = new[] { ("focal", 100), ("notes", 70), ("certs", 50), ("wall", 30), ("shelf", 30), ("trophy", 5) },
-            [BreakRoom] = new[] { ("focal", 100), ("notes", 70) },
-            [Garage] = new[] { ("focal", 100), ("hooks", 60), ("wall", 40) },
+            [BreakRoom] = new[] { ("focal", 100), ("notes", 70), ("game", DoodadUncommon) },
+            [Garage] = new[] { ("focal", 100), ("hooks", 60), ("wall", 40), ("game", DoodadUncommon), ("basket", DoodadCommon) },
             [Workshop] = new[] { ("focal", 100), ("wall", 50) },
             [Storage] = new[] { ("focal", 60), ("shelf", 50) },
             [Shop] = new[] { ("focal", 100) },
         };
-        /// <summary>The slots of fixtures, not art: they go with what they serve, outside the room's art budget.</summary>
-        public static readonly IReadOnlyCollection<string> DecorFixtures = new HashSet<string> { "cabinets", "rail", "sink", "towel", "hooks", "keys" };
+        /// <summary>The slots of fixtures, not art: they go with what they serve, outside the room's art budget. (And the doodad
+        /// kit's slots: its pieces' own rarity is their budget, and the art a room hangs does not crowd them out.)</summary>
+        public static readonly IReadOnlyCollection<string> DecorFixtures = new HashSet<string> { "cabinets", "rail", "sink", "towel", "hooks", "keys", "toilet", "plates", "game", "basket" };
 
         /// <summary>Testing only: a table to hang in place of <see cref="Decor"/> on this thread (null: Decor).</summary>
         [ThreadStatic] public static IReadOnlyList<DecorRow> DecorOverride;
