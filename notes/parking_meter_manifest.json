@@ -25,15 +25,15 @@
   "palette_sources": {
     "176,176,176": "Chair_Metal_0",
     "130,130,130": "Street_Light_0",
-    "222,222,222": "Clock_0",
-    "39,39,39": "Clock_0 / Chair_Metal_0"
+    "unused lower row": "Clock_0 pale/charcoal retained in same 2x2 texture"
   },
+  "revision_request_message_id": "1559859409117511702",
   "units": "metres",
   "native_up": "+Z",
   "front": "+Y",
   "origin": "post centre at ground/base Z=0",
   "width_x": 0.52,
-  "depth_y": 0.365,
+  "depth_y": 0.28,
   "height_z": 2.1,
   "bounds_native": [
     [
@@ -43,20 +43,20 @@
     ],
     [
       0.25999999046325684,
-      0.22500000894069672,
+      0.14000000059604645,
       2.0999999046325684
     ]
   ],
-  "vertices": 116,
-  "triangles": 184,
+  "vertices": 24,
+  "triangles": 40,
   "texture": "Parking_Meter_0_tex.png",
   "texture_filter": "nearest",
   "features": [
-    "chunky single analog head",
-    "recessed pale gauge with one needle",
-    "recessed coin slot",
-    "attached turning grip",
-    "eight-sided metal post/base"
+    "unchanged eight-corner head silhouette",
+    "plain blank face: no dial, coin slots or hardware",
+    "square .14 x .14 m post",
+    "no foot or base",
+    "post bottom at ground Z=0"
   ],
   "references_excluded_from_exports": [
     "Mailbox_0",
