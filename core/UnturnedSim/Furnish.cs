@@ -144,6 +144,10 @@ namespace UnturnedSim
             ["Potted_Flowers_0"] = new(-0.444f, 0.444f, -0.384f, 0.384f, 0.736f),
             ["Potted_Plant_Upright_0"] = new(-0.430f, 0.430f, -0.372f, 0.372f, 1.704f),
             ["Potted_Plant_Tall_0"] = new(-1.394f, 1.394f, -1.206f, 1.206f, 3.402f),     // its leaves 2.79 x 2.41 m across
+            // astraclaw's HVAC covers (hvac_vent_covers_manifest.json), FurnishHvac: a floor register, origin at the middle of
+            // its base; a wall grille, the Clock_0 convention (back at Y 0, centred up and down)
+            ["Floor_Vent_0"] = new(-0.500f, 0.500f, -0.250f, 0.250f, 0.035f),
+            ["Wall_Vent_0"] = new(-0.500f, 0.500f, 0f, 0.055f, 0.300f),
             ["Crate_0"] = new(-0.62f, 0.62f, -0.62f, 0.62f, 1.25f),
             ["Crate_3"] = new(-0.94f, 0.94f, -0.94f, 0.94f, 1.88f),
             ["Barrel_0"] = new(-0.54f, 0.54f, -0.54f, 0.54f, 1.28f),
@@ -311,7 +315,10 @@ namespace UnturnedSim
                 // or the bed. After the décor, which never sees them -- a curtain belongs to its window, and is not a piece
                 // the 0.6 m window rule keeps off it -- and on their own draws, so nothing else in the building moves.
                 if (!NoRuntimeDecor) foreach (var fu in done) { fu.Curtains(); fu.Rugs(); }
+                // and the HVAC vents (FurnishHvac), once everything they keep clear of is in: on their own draws too
+                if (!NoHvac) foreach (var fu in done) fu.Vents();
             }
+            LabelHvac(res);
         }
 
         /// <summary>One floor at 0.1 m: what is solid (walls; stairs, landings and holes; furniture as it goes in), and

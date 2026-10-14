@@ -87,6 +87,9 @@ namespace UnturnedSim
         /// <summary>A flat's way in: the one room of it that may have a door to shared space (its living room, or its own
         /// entry hall), and only from the corridor.</summary>
         public bool Entry;
+        /// <summary>The room's HVAC record (FurnishHvac): its vents, null for a room with none. The same record its label in
+        /// BuildingGenResult.Rooms carries, and the save keeps.</summary>
+        public RoomHvac Hvac;
         public readonly List<(int X0, int Z0, int X1, int Z1)> More = new List<(int, int, int, int)>();
         public IEnumerable<(int X0, int Z0, int X1, int Z1)> Rects
         { get { yield return (X0, Z0, X1, Z1); foreach (var r in More) yield return r; } }
@@ -184,6 +187,13 @@ namespace UnturnedSim
         /// rugs (FurnishTextiles). Kept out of Furniture, which every placement rule reads as solid catalog props -- a rug
         /// lies under the couch, a curtain hangs in the window's own berth -- and saved with it (Props).</summary>
         public List<FurniturePlan> RuntimeDecor = new List<FurniturePlan>();
+        /// <summary>The HVAC vents (FurnishHvac): a floor register and a wall grille a room, in the order their Ids number them.
+        /// Props of the catalog's, kept out of Furniture as the runtime pieces are -- a register is a cover you walk over, not
+        /// a piece standing in the way -- and saved with it (Props).</summary>
+        public List<FurniturePlan> HvacVents = new List<FurniturePlan>();
+        /// <summary>The HVAC record of the room a building-local plan point is in on a storey, or null (no room there, or one
+        /// with no vents). RoomDesignations.HvacAt asks the same of a saved layout.</summary>
+        public RoomHvac HvacAt(float x, float z, int floor) => Layout.FirstOrDefault(g => g.Floor == floor && g.Holds(x, z))?.Hvac is { HasHvac: true } h ? h : null;
         /// <summary>The windows a room's layout changed after the walls were cut (strawberry: "allow room layout to alter
         /// windows after the fact if necessary"): each written straight into its wall's Openings, so the wall, its glass,
         /// its collision, the save and the décor all see the window as it now is. This is the record of what changed.</summary>
@@ -191,7 +201,7 @@ namespace UnturnedSim
         /// <summary>Where each window was free to be (BuildWalls): its share of its stretch of wall, which a room's layout
         /// may slide it along (Furnish). The generator's own bookkeeping, in wall U (which TurnHalf keeps).</summary>
         internal List<WindowSlot> WindowSlots = new List<WindowSlot>();
-        public IEnumerable<PropDesignation> Props => Furniture.Concat(RuntimeDecor).Select(m => new PropDesignation(m.Name, m.X, m.Y, m.Z, m.Yaw, m.Gen));
+        public IEnumerable<PropDesignation> Props => Furniture.Concat(RuntimeDecor).Concat(HvacVents).Select(m => new PropDesignation(m.Name, m.X, m.Y, m.Z, m.Yaw, m.Gen));
         /// <summary>The marked doors: the front one always, the back one when there is one.</summary>
         public GenDoor Front => Doors.FirstOrDefault(d => d.Role == DoorRole.Front);
         public GenDoor Back => Doors.FirstOrDefault(d => d.Role == DoorRole.Back);
@@ -323,8 +333,9 @@ namespace UnturnedSim
                 w.X = W - w.X; w.Z = D - w.Z; w.Yaw = Y(w.Yaw);
             }
             for (int i = 0; i < res.Stairs.Count; i++) { var st = res.Stairs[i]; st.X = W - st.X; st.Z = D - st.Z; st.Yaw = Y(st.Yaw); res.Stairs[i] = st; }
-            foreach (var m in res.Furniture.Concat(res.RuntimeDecor)) { m.X = W - m.X; m.Z = D - m.Z; m.Yaw = Y(m.Yaw); }
+            foreach (var m in res.Furniture.Concat(res.RuntimeDecor).Concat(res.HvacVents)) { m.X = W - m.X; m.Z = D - m.Z; m.Yaw = Y(m.Yaw); }
             for (int i = 0; i < res.Rooms.Count; i++) { var r = res.Rooms[i]; res.Rooms[i] = new RoomDesignation(r.Kind, W - r.X, D - r.Z, r.Floor); }
+            foreach (var g in res.Layout) g.Hvac = g.Hvac?.Map(v => v with { X = W - v.X, Z = D - v.Z, Yaw = Y(v.Yaw) });
             foreach (var g in res.Layout)
             {
                 (g.X0, g.X1, g.Z0, g.Z1) = (cx - g.X1, cx - g.X0, cz - g.Z1, cz - g.Z0);
@@ -337,6 +348,7 @@ namespace UnturnedSim
             if (res.Shape != FootprintShape.Rect) res.Wing = (cx - res.Wing.X1, cz - res.Wing.Z1, cx - res.Wing.X0, cz - res.Wing.Z0);
             for (int i = 0; i < res.Porches.Count; i++) { var q = res.Porches[i]; res.Porches[i] = (W - q.X1, D - q.Z1, W - q.X0, D - q.Z0); }
             if (res.Chimney.X1 > res.Chimney.X0) res.Chimney = (W - res.Chimney.X1, D - res.Chimney.Z1, W - res.Chimney.X0, D - res.Chimney.Z0);
+            LabelHvac(res);
             res.NoWindowSides = Turned(res.NoWindowSides);
         }
 
@@ -2098,7 +2110,8 @@ namespace UnturnedSim
             int notes = res.Notes.Count;
             void Reset()
             {
-                res.Walls.Clear(); res.Stairs.Clear(); res.Porches.Clear(); res.Furniture.Clear(); res.RuntimeDecor.Clear();
+                res.Walls.Clear(); res.Stairs.Clear(); res.Porches.Clear(); res.Furniture.Clear(); res.RuntimeDecor.Clear(); res.HvacVents.Clear();
+                foreach (var g in res.Layout) g.Hvac = null;
                 res.WindowEdits.Clear(); res.WindowSlots.Clear();
                 res.Chimney = default;
                 res.Notes.RemoveRange(notes, res.Notes.Count - notes);

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Text;
 
 namespace UnturnedSim
@@ -68,7 +69,7 @@ namespace UnturnedSim
             sb.Append("# wall <x> <y> <z> <yawDeg> <length> <thickness> <materialId> [height] [pitchDeg] [kind] [gableRise] [texel] [insetL0 insetL1 insetR0 insetR1] [matBack texelBack]\n");
             sb.Append("#   open <u> <v> <width> <height> <depth> <archetype> [glazed tint hp indestructible broken] [doorProp doorOpen] [barr <style>] [swing <start|end> <front|back>]\n");
             sb.Append("# building <kind>            -- Residential|Commercial|Industrial|Misc|Apartment (the volume is DERIVED from the walls)\n");
-            sb.Append("# room <kind> <x> <z> [floor] -- a designation ANCHORED at a point inside the room it labels\n");
+            sb.Append("# room <kind> <x> <z> [floor] [hvac <n> (<floor|wall> <id> <x> <y> <z> <yawDeg>) x n] -- a designation ANCHORED at a point inside the room it labels; hvac: its vents\n");
             sb.Append("# door <front|back> <x> <z> [floor] -- a marked door to outside, at the middle of its opening\n");
             sb.Append("# prop <name> <x> <y> <z> <yawDeg> [gen <curtain|rug> <version> <width> <height> <open> <style>] -- a piece of furniture, a prop by name stood up and turned as the editor does; gen: built at load from these inputs\n");
             // Kinds by NAME, never ordinal: the enums can gain or reorder members without re-labelling
@@ -79,7 +80,10 @@ namespace UnturnedSim
                     sb.Append("room ").Append(r.Kind.ToString()).Append(' ')
                       .Append(F(r.X)).Append(' ').Append(F(r.Z))
                       // only when it is not the ground, so a single-storey save reads exactly as it always did
-                      .Append(r.Floor != 0 ? " " + r.Floor.ToString(CultureInfo.InvariantCulture) : "").Append('\n');
+                      .Append(r.Floor != 0 ? " " + r.Floor.ToString(CultureInfo.InvariantCulture) : "")
+                      // an HVAC room's vents: a KEYED trailing block, written only for one -- a room with none writes the line it
+                      // always did, and an older reader skips the tokens (the room's label survives; its vents' record does not)
+                      .Append(r.Hvac != null && r.Hvac.HasHvac ? Hvac(r.Hvac) : "").Append('\n');
             if (doors != null)
                 foreach (var d in doors)
                     sb.Append("door ").Append(d.Role.ToString().ToLowerInvariant()).Append(' ').Append(F(d.X)).Append(' ').Append(F(d.Z))
@@ -150,6 +154,33 @@ namespace UnturnedSim
                     }
                 }
             return sb.ToString();
+        }
+
+        static string Hvac(RoomHvac h)
+        {
+            var sb = new StringBuilder(" hvac ").Append(h.Vents.Count().ToString(CultureInfo.InvariantCulture));
+            foreach (var v in h.Vents)
+                sb.Append(' ').Append(v.Kind == HvacVentKind.FloorRegister ? "floor" : "wall").Append(' ').Append(v.Id.ToString(CultureInfo.InvariantCulture))
+                  .Append(' ').Append(F(v.X)).Append(' ').Append(F(v.Y)).Append(' ').Append(F(v.Z)).Append(' ').Append(F(v.Yaw));
+            return sb.ToString();
+        }
+
+        /// <summary>A room line's HVAC block (Hvac), or null: none, or one that will not read -- which loses the record, not
+        /// the room's label.</summary>
+        static RoomHvac ReadHvac(string[] p)
+        {
+            int hi = Array.IndexOf(p, "hvac", 4);
+            if (hi < 0 || hi + 1 >= p.Length || !int.TryParse(p[hi + 1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int n) || n < 1
+                || n > (p.Length - hi - 2) / 6) return null;
+            var h = new RoomHvac();
+            for (int k = 0; k < n; k++)
+            {
+                int b = hi + 2 + k * 6;
+                if (b + 5 >= p.Length || (p[b] != "floor" && p[b] != "wall") || !int.TryParse(p[b + 1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int id)
+                    || !N(p[b + 2], out float x) || !N(p[b + 3], out float y) || !N(p[b + 4], out float z) || !N(p[b + 5], out float yaw)) return null;
+                h.Add(new HvacVent(p[b] == "floor" ? HvacVentKind.FloorRegister : HvacVentKind.WallGrille, id, x, y, z, yaw));
+            }
+            return h;
         }
 
         public static List<WallPlan> Read(IEnumerable<string> lines)
@@ -245,7 +276,7 @@ namespace UnturnedSim
                     if (float.TryParse(p[2], NumberStyles.Float, CultureInfo.InvariantCulture, out float rx)
                         && float.TryParse(p[3], NumberStyles.Float, CultureInfo.InvariantCulture, out float rz))
                         rooms.Add(new RoomDesignation(RoomDesignations.ParseRoom(p[1]), rx, rz,
-                            p.Length >= 5 && int.TryParse(p[4], NumberStyles.Integer, CultureInfo.InvariantCulture, out int rf) ? rf : 0));
+                            p.Length >= 5 && int.TryParse(p[4], NumberStyles.Integer, CultureInfo.InvariantCulture, out int rf) ? rf : 0, ReadHvac(p)));
                     continue;
                 }
                 if (p[0] == "wall" && p.Length >= 8)

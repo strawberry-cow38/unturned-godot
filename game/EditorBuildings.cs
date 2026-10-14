@@ -2852,7 +2852,7 @@ namespace UnturnedGodot
             }
             DesignatedKind = res.Kind;
             Designations.Clear();
-            foreach (var d in res.Rooms) Designations.Add(new RoomDesignation(d.Kind, at.X + d.X, at.Z + d.Z, d.Floor));
+            foreach (var d in res.Rooms) Designations.Add(new RoomDesignation(d.Kind, at.X + d.X, at.Z + d.Z, d.Floor, d.Hvac?.Moved(at.X, at.Y, at.Z)));
             DoorMarks.Clear();
             foreach (var d in res.DoorMarks) DoorMarks.Add(new DoorDesignation(d.Role, at.X + d.X, at.Z + d.Z, d.Floor));
             Furniture.Clear();
@@ -2881,7 +2881,7 @@ namespace UnturnedGodot
             if (!string.IsNullOrEmpty(dump))
             {
                 // (the curtains and rugs after the props, each with what it is built from)
-                System.IO.File.WriteAllLines(dump, System.Linq.Enumerable.Select(System.Linq.Enumerable.Concat(res.Furniture, res.RuntimeDecor), m => System.FormattableString.Invariant(
+                System.IO.File.WriteAllLines(dump, System.Linq.Enumerable.Select(System.Linq.Enumerable.Concat(System.Linq.Enumerable.Concat(res.Furniture, res.RuntimeDecor), res.HvacVents), m => System.FormattableString.Invariant(
                     $"{m.Name} {m.X:0.00} {m.Z:0.00} {m.Yaw:0} {m.Floor} {m.Room.Kind}{(m.Gen == null ? "" : $" gen {m.Gen.Kind} {m.Gen.Width:0.00} x {m.Gen.Height:0.00} y {m.Y:0.00} {(m.Gen.Open ? "open" : "closed")} {m.Gen.Style}")}")));
                 System.IO.File.WriteAllLines(dump + ".walls", System.Linq.Enumerable.Select(res.Walls, w => System.FormattableString.Invariant($"{w.Kind} {w.X:R} {w.Y:R} {w.Z:R} {w.Yaw:R} {w.Length:R} {w.Height:R} {w.Thickness:R} {w.Openings.Count}")));
                 System.IO.File.WriteAllLines(dump + ".trace", trace);
@@ -3159,10 +3159,12 @@ namespace UnturnedGodot
         /// CENTRELINES, and only walls -- slabs, foundations and stair treads are all WallSurfaces too, and
         /// feeding a floor in as a wall would have the floor you just placed enclose a "room" of its own.
         /// Source carries the index into _walls so a room can be mapped back to the surfaces bounding it.</summary>
-        public List<RoomEnclosure.PlanSegment> PlanOfActiveFloor()
+        public List<RoomEnclosure.PlanSegment> PlanOfActiveFloor() => PlanOfFloorAt(ActiveFloorY);
+
+        /// <summary>The wall centrelines of the storey whose walls stand at `y` (world), as PlanOfActiveFloor.</summary>
+        public List<RoomEnclosure.PlanSegment> PlanOfFloorAt(float y)
         {
             var plan = new List<RoomEnclosure.PlanSegment>();
-            float y = ActiveFloorY;
             for (int i = 0; i < _walls.Count; i++)
             {
                 var w = _walls[i];
@@ -3174,6 +3176,12 @@ namespace UnturnedGodot
             }
             return plan;
         }
+
+        /// <summary>The HVAC record of the room a stage point is in on storey `floor` (round 12: the hook a room temperature
+        /// system reads), or null: the storey's rooms found from its walls as they stand (RoomEnclosure), and the label
+        /// anchored in the same room (RoomDesignations.HvacAt) -- so it answers for a loaded layout as for a generated one.</summary>
+        public RoomHvac HvacAt(float x, float z, int floor)
+            => RoomDesignations.HvacAt(RoomEnclosure.Find(PlanOfFloorAt(StageOrigin.Y + GroundClearance + floor * StoreyHeight)), Designations, x, z, floor);
 
         /// <summary>Where the base of a wall on the active storey sits, in world space.</summary>
         public float ActiveFloorY => StageOrigin.Y + FloorY + GroundClearance;

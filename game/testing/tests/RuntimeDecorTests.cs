@@ -56,6 +56,34 @@ namespace UnturnedGodot.Testing
             }
             T.Check($"curtains with their rail over the window ({above}) and at the ceiling of a storey under another ({ceilinged})", above > 0 && ceilinged > 0);
 
+            // the HVAC record a room temperature system reads (round 12): asked of the stage as the editor holds it -- the rooms
+            // found from the walls standing there, the labels anchored in them -- from the middle of every room, before the save
+            // and after it
+            var hvacRes = tool.Generate(new BuildingGenSpec { Kind = BuildingKind.Residential, Seed = 16 });
+            yield return Ticks(1);
+            var hat = EditorBuildings.StageOrigin + new Vector3(-Mathf.Floor(hvacRes.CellsX * 0.5f) * BuildingGen.Cell, EditorBuildings.GroundClearance,
+                                                                -Mathf.Floor(hvacRes.CellsZ * 0.5f) * BuildingGen.Cell);
+            string Ids(RoomHvac h) => h == null ? "none" : string.Join(",", h.Vents.Select(v => $"{v.Kind}#{v.Id}"));
+            var asked = hvacRes.Layout.Select(g => (G: g, X: hat.X + (g.X0 + g.X1) * 0.5f * BuildingGen.Cell, Z: hat.Z + (g.Z0 + g.Z1) * 0.5f * BuildingGen.Cell)).ToList();
+            int rightBefore = asked.Count(q => Ids(tool.HvacAt(q.X, q.Z, q.G.Floor)) == Ids(q.G.Hvac));
+            T.Check($"the stage answers HvacAt with each room's own record ({rightBefore} of {asked.Count} rooms, {asked.Count(q => q.G.Hvac != null)} with HVAC)",
+                    rightBefore == asked.Count && asked.Any(q => q.G.Hvac != null));
+            var vent = hvacRes.Layout.First(g => g.Hvac != null).Hvac.Vents.First();
+            var got = tool.HvacAt(asked.First(q => q.G.Hvac != null).X, asked.First(q => q.G.Hvac != null).Z, 0)?.Vents.First() ?? default;
+            T.Check($"...its vents where the stage stands them ({got.X - hat.X:0.00},{got.Z - hat.Z:0.00} for {vent.X:0.00},{vent.Z:0.00})",
+                    Mathf.Abs(got.X - (hat.X + vent.X)) < 1e-3f && Mathf.Abs(got.Z - (hat.Z + vent.Z)) < 1e-3f);
+            T.Check("saved with the HVAC records", tool.Save() > 0);
+            var tool3 = new EditorBuildings();
+            World.AddChild(tool3);
+            tool3.Setup(ed, null, null);
+            yield return Ticks(1);
+            int rightAfter = asked.Count(q => Ids(tool3.HvacAt(q.X, q.Z, q.G.Floor)) == Ids(q.G.Hvac));
+            T.Check($"...and a load answers it the same ({rightAfter} of {asked.Count})", rightAfter == asked.Count);
+            tool3.QueueFree();
+            // (back to the two-storey building the save and load below are of)
+            tool.Generate(new BuildingGenSpec { Kind = BuildingKind.Residential, Seed = 23 });
+            yield return Ticks(1);
+
             // saved, and loaded into a second tool as opening the map again would: the same pieces, the same meshes
             var before = tool.Furniture.Where(p => p.Gen != null).ToList();
             var sizes = before.Select(p => Node(tool, p)?.GetAabb().Size ?? Vector3.Zero).ToList();

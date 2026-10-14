@@ -48,8 +48,42 @@ namespace UnturnedSim
         /// <summary>Which storey: 0 the ground. The plan point alone cannot say, and a generated building has a
         /// bedroom right over its living room -- two anchors at the same X, Z.</summary>
         public int Floor;
+        /// <summary>The room's heating and ventilation (round 12, strawberry: "rooms that get vents must be marked internally
+        /// as HVAC rooms, so room temperature and then player temperature can hook into it later"): null for a room with none.
+        /// Saved with the label, on its line.</summary>
+        public RoomHvac Hvac;
 
-        public RoomDesignation(RoomKind kind, float x, float z, int floor = 0) { Kind = kind; X = x; Z = z; Floor = floor; }
+        public RoomDesignation(RoomKind kind, float x, float z, int floor = 0, RoomHvac hvac = null) { Kind = kind; X = x; Z = z; Floor = floor; Hvac = hvac; }
+    }
+
+    /// <summary>Which kind of HVAC vent a room has: a register on the floor, a grille high on a wall.</summary>
+    public enum HvacVentKind { FloorRegister, WallGrille }
+
+    /// <summary>One vent: its kind; its Id -- its place among the building's vents, which is their order among its pieces
+    /// (BuildingGenResult.HvacVents, and the vent props of a saved layout in the order they were saved); and where its prop's
+    /// origin stands (building-local, or the stage's once the editor has placed the building) and which way it is turned.</summary>
+    public readonly record struct HvacVent(HvacVentKind Kind, int Id, float X, float Y, float Z, float Yaw);
+
+    /// <summary>A room's HVAC record: whether it is an HVAC room, and its vents, floor registers and wall grilles apart. What
+    /// a temperature system reads -- BuildingGenResult.HvacAt, RoomDesignations.HvacAt -- rather than scanning the décor.
+    /// No temperature logic here: the record is the hook.</summary>
+    public sealed class RoomHvac
+    {
+        public readonly List<HvacVent> FloorRegisters = new List<HvacVent>();
+        public readonly List<HvacVent> WallGrilles = new List<HvacVent>();
+        /// <summary>An HVAC room: one with a vent of either kind.</summary>
+        public bool HasHvac => FloorRegisters.Count + WallGrilles.Count > 0;
+        public IEnumerable<HvacVent> Vents { get { foreach (var v in FloorRegisters) yield return v; foreach (var v in WallGrilles) yield return v; } }
+        public void Add(HvacVent v) => (v.Kind == HvacVentKind.FloorRegister ? FloorRegisters : WallGrilles).Add(v);
+        /// <summary>The same record with every vent moved, or turned (x, z) -> (W - x, D - z) and half round.</summary>
+        public RoomHvac Map(Func<HvacVent, HvacVent> f)
+        {
+            var r = new RoomHvac();
+            foreach (var v in Vents) r.Add(f(v));
+            return r;
+        }
+        public RoomHvac Moved(float dx, float dy, float dz) => Map(v => v with { X = v.X + dx, Y = v.Y + dy, Z = v.Z + dz });
+        public override string ToString() => $"HVAC: {FloorRegisters.Count} floor register(s), {WallGrilles.Count} wall grille(s)";
     }
 
     /// <summary>What a door to outside is for: the way in, or the way out the back. Inside doors are not marked.</summary>
@@ -173,6 +207,26 @@ namespace UnturnedSim
                 byRoom[hit] = d.Kind;
             }
         }
+
+        /// <summary>The HVAC record of the room a plan point is in, or null (no room there, no label for it on that storey, or
+        /// a room with no vents): the room the point is in among `rooms` (RoomEnclosure.Find of that storey's walls), and the
+        /// label on that storey anchored in the same room. A temperature system asks this, not the décor.</summary>
+        public static RoomHvac HvacAt(IReadOnlyList<RoomEnclosure.Room> rooms, IReadOnlyList<RoomDesignation> stored, float x, float z, int floor = 0)
+        {
+            if (rooms == null || stored == null) return null;
+            foreach (var r in rooms)
+            {
+                if (!Contains(r.Outline, x, z)) continue;
+                foreach (var d in stored)
+                    if (d.Floor == floor && Contains(r.Outline, d.X, d.Z)) return d.Hvac != null && d.Hvac.HasHvac ? d.Hvac : null;
+                return null;
+            }
+            return null;
+        }
+
+        /// <summary>Does the room a plan point is in have HVAC (HvacAt)?</summary>
+        public static bool HasHvacAt(IReadOnlyList<RoomEnclosure.Room> rooms, IReadOnlyList<RoomDesignation> stored, float x, float z, int floor = 0)
+            => HvacAt(rooms, stored, x, z, floor) != null;
 
         /// <summary>Where to anchor a NEW designation for a room: its centroid, nudged onto the room if the
         /// centroid falls outside.
