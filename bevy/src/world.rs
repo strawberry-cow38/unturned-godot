@@ -1,8 +1,10 @@
 //! Original map/content assembly. Missing retail terrain is reported explicitly.
 use crate::content::{ContentCache, ContentError, ObjData, load_guid_map};
+mod foliage;
 mod procedural;
 mod procedural_roads;
 mod roads;
+mod tunnels;
 mod wires;
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::{Collider, RigidBody};
@@ -24,6 +26,8 @@ pub struct WorldConfig {
     pub map_name: String,
     pub spawn_center: Option<Vec3>,
     pub spawn_radius: f32,
+    /// Original UG_INF_CAM absolute XYZ and yaw/pitch in degrees.
+    pub fixed_camera: Option<(Vec3, f32, f32)>,
     /// JSON exported from the original engine-independent InfiniteTerrain generator.
     pub procedural_path: Option<PathBuf>,
     pub foliage: bool,
@@ -37,6 +41,9 @@ impl Default for WorldConfig {
             map_name: "PEI".into(),
             spawn_center: None,
             spawn_radius: 180.,
+            fixed_camera: std::env::var("UG_INF_CAM")
+                .ok()
+                .and_then(|s| parse_capture_camera(&s)),
             procedural_path: None,
             foliage: true,
         }
@@ -61,7 +68,8 @@ pub struct WorldReady;
 pub struct WorldPlugin;
 impl Plugin for WorldPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<WorldConfig>()
+        app.add_plugins(foliage::FoliagePlugin)
+            .init_resource::<WorldConfig>()
             .init_resource::<WorldState>()
             .init_resource::<WorldGeometry>()
             .init_resource::<WorldSourceCache>()
@@ -84,11 +92,30 @@ fn world_needs_reload(
     if !state.ready {
         return true;
     }
+    if let Some((position, _, _)) = config.fixed_camera {
+        return stream_due(position, geometry.stream_anchor, config.spawn_radius);
+    }
     ui.screen != crate::ui::Screen::MainMenu
         && players
             .iter()
             .next()
             .is_some_and(|p| stream_due(p.translation, geometry.stream_anchor, config.spawn_radius))
+}
+fn parse_csv(source: &str) -> Option<Vec<f32>> {
+    source
+        .split(',')
+        .map(|s| s.trim().parse::<f32>().ok().filter(|v| v.is_finite()))
+        .collect()
+}
+fn parse_capture_camera(source: &str) -> Option<(Vec3, f32, f32)> {
+    let values = parse_csv(source)?;
+    (values.len() >= 3).then(|| {
+        (
+            Vec3::new(values[0], values[1], values[2]),
+            values.get(3).copied().unwrap_or(0.),
+            values.get(4).copied().unwrap_or(-20.),
+        )
+    })
 }
 fn stream_due(player: Vec3, anchor: Vec3, radius: f32) -> bool {
     player.xz().distance(anchor.xz()) > (radius * 0.4).clamp(32., 96.)
@@ -491,6 +518,17 @@ fn build_world(
     for entity in &existing {
         commands.entity(entity).despawn();
     }
+    let procedural_start = config
+        .procedural_path
+        .as_ref()
+        .and_then(|_| std::env::var("UG_INF_AT").ok())
+        .and_then(|s| parse_csv(&s))
+        .filter(|v| v.len() >= 2);
+    let explicit_center = config
+        .fixed_camera
+        .map(|c| c.0)
+        .or(config.spawn_center)
+        .or_else(|| procedural_start.as_ref().map(|v| Vec3::new(v[0], 0., v[1])));
     let streaming = state.ready;
     let old_spawn = state.spawn;
     let old_yaw = state.spawn_yaw;
@@ -516,14 +554,16 @@ fn build_world(
     };
     let mut proc_regions = Vec::new();
     if let Some(path) = &config.procedural_path {
-        let center = if streaming {
+        let center = if let Some((position, _, _)) = config.fixed_camera {
+            position
+        } else if streaming {
             players
                 .iter()
                 .next()
                 .map(|p| p.translation)
                 .unwrap_or(old_spawn)
         } else {
-            config.spawn_center.unwrap_or(Vec3::new(128., 0., 128.))
+            explicit_center.unwrap_or(Vec3::new(128., 0., 128.))
         };
         match procedural::regions(
             &bridge,
@@ -591,7 +631,7 @@ fn build_world(
                         .map(|p| p.translation.x)
                         .unwrap_or(old_spawn.x)
                 } else {
-                    config.spawn_center.map_or(0., |p| p.x)
+                    explicit_center.map_or(0., |p| p.x)
                 },
                 sea,
                 if streaming {
@@ -601,7 +641,7 @@ fn build_world(
                         .map(|p| p.translation.z)
                         .unwrap_or(old_spawn.z)
                 } else {
-                    config.spawn_center.map_or(0., |p| p.z)
+                    explicit_center.map_or(0., |p| p.z)
                 },
             ),
         ));
@@ -639,14 +679,16 @@ fn build_world(
             }
         }
     };
-    let center = if streaming {
+    let center = if let Some((position, _, _)) = config.fixed_camera {
+        position
+    } else if streaming {
         players
             .iter()
             .next()
             .map(|p| p.translation)
             .unwrap_or(old_spawn)
     } else {
-        config.spawn_center.unwrap_or_else(|| {
+        explicit_center.unwrap_or_else(|| {
             if let Some(patch) = geometry
                 .terrain
                 .first()
@@ -708,7 +750,13 @@ fn build_world(
     } else {
         None
     };
-    let (spawn_point, yaw) = player_spawn.unwrap_or((center, 0.));
+    let (spawn_point, yaw) = player_spawn.unwrap_or((
+        center,
+        procedural_start
+            .as_ref()
+            .and_then(|v| v.get(2).copied())
+            .unwrap_or(0.),
+    ));
     state.spawn = Vec3::new(
         spawn_point.x,
         geometry
@@ -730,7 +778,11 @@ fn build_world(
     };
     geometry.loaded_center = center;
     geometry.loaded_radius = render_radius + 48.;
-    geometry.stream_anchor = if streaming { center } else { state.spawn };
+    geometry.stream_anchor = if streaming || config.fixed_camera.is_some() {
+        center
+    } else {
+        state.spawn
+    };
     geometry.revision = geometry.revision.wrapping_add(1);
     if !state.terrain_available {
         state.description = format!(
@@ -1063,6 +1115,7 @@ fn build_world(
                 commands.spawn((
                     Name::new(format!("Foliage {name}")),
                     WorldFoliage,
+                    foliage::FoliageSurface(160.),
                     Mesh3d(meshes.add(merged.mesh())),
                     MeshMaterial3d(material),
                 ));
@@ -1181,6 +1234,70 @@ fn build_world(
             if let Some(shape) = shape {
                 entity.insert((RigidBody::Fixed, shape));
             }
+        }
+    }
+    if proc_regions
+        .iter()
+        .any(|r| procedural::rows(r, "tunnels").next().is_some())
+    {
+        let path = config.content_root.join("objects/Tunnel_Line_0.obj");
+        match cache.load_mesh(&path, &mut meshes) {
+            Ok((_, profile)) => {
+                for (kind, data) in tunnels::build(&proc_regions, &profile) {
+                    if data.positions.is_empty() {
+                        continue;
+                    }
+                    let material = if let Some(layer) = kind
+                        .strip_prefix("terrain:")
+                        .and_then(|s| s.parse::<usize>().ok())
+                    {
+                        let dir = if matches!(layer, 0 | 3 | 6 | 7) {
+                            "terrain_yukon"
+                        } else {
+                            "terrain"
+                        };
+                        cache.material(
+                            Some(&format!("{dir}/layer{layer}.png")),
+                            false,
+                            &assets,
+                            &mut materials,
+                        )
+                    } else {
+                        cache
+                            .materials
+                            .entry(format!("generated:{kind}"))
+                            .or_insert_with(|| {
+                                materials.add(StandardMaterial {
+                                    base_color: if kind == "floor" {
+                                        Color::srgb(0.40, 0.39, 0.37)
+                                    } else {
+                                        Color::srgb(0.60, 0.55, 0.47)
+                                    },
+                                    perceptual_roughness: 1.,
+                                    double_sided: true,
+                                    cull_mode: None,
+                                    ..default()
+                                })
+                            })
+                            .clone()
+                    };
+                    let shape = trimesh_collider(&data);
+                    let mesh = meshes.add(data.mesh());
+                    geometry
+                        .objects
+                        .push(collider(Arc::new(data), Transform::IDENTITY));
+                    let mut e = commands.spawn((
+                        Name::new(format!("Generated tunnel {kind}")),
+                        WorldTerrain,
+                        Mesh3d(mesh),
+                        MeshMaterial3d(material),
+                    ));
+                    if let Some(shape) = shape {
+                        e.insert((RigidBody::Fixed, shape));
+                    }
+                }
+            }
+            Err(e) => state.missing_assets.push(e.to_string()),
         }
     }
     let wire_mesh = if config.procedural_path.is_some() {
@@ -1302,12 +1419,20 @@ fn build_world(
             cache.materials.insert(key, m.clone());
             m
         };
-        commands.spawn((
-            Name::new(name),
+        let needs_up_normal = name.starts_with("foliage/");
+        let mut entity = commands.spawn((
+            Name::new(name.clone()),
             WorldFoliage,
             Mesh3d(meshes.add(merged.mesh())),
             MeshMaterial3d(material),
         ));
+        if needs_up_normal {
+            entity.insert(foliage::FoliageSurface(if name.contains("pebble") {
+                100.
+            } else {
+                160.
+            }));
+        }
     }
     state.missing_assets.sort();
     state.missing_assets.dedup();
@@ -1620,6 +1745,19 @@ mod tests {
             Vec3::new(-1000., 0., 500.),
             180.
         ));
+    }
+    #[test]
+    fn original_fixed_camera_knob_preserves_degrees_and_rejects_nonfinite_values() {
+        assert_eq!(
+            parse_capture_camera("-12916,70,-19678,88,-10"),
+            Some((Vec3::new(-12916., 70., -19678.), 88., -10.))
+        );
+        assert_eq!(
+            parse_capture_camera("1,2,3"),
+            Some((Vec3::new(1., 2., 3.), 0., -20.))
+        );
+        assert!(parse_capture_camera("1,2").is_none());
+        assert!(parse_capture_camera("NaN,2,3").is_none());
     }
     #[test]
     fn resource_collision_export_preserves_source_scaled_trunk_and_ore_bounds() {

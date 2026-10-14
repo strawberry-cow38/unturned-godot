@@ -14,7 +14,7 @@ use bevy::{
     render::render_resource::PrimitiveTopology,
 };
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt, fs,
     path::{Path, PathBuf},
     sync::Arc,
@@ -23,7 +23,8 @@ use std::{
 pub struct ContentPlugin;
 impl Plugin for ContentPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<ContentCache>();
+        app.init_resource::<ContentCache>()
+            .add_systems(Update, build_pending_mipmaps);
     }
 }
 
@@ -166,7 +167,7 @@ pub fn parse_obj(source: &str) -> Result<ObjData, ContentError> {
                     let v = index(p[0], vertices.len())?;
                     let uv = p
                         .get(1)
-                        .filter(|s| !s.is_empty())
+                        .filter(|s| !s.is_empty() && !uvs.is_empty())
                         .map(|s| index(s, uvs.len()))
                         .transpose()?;
                     let n = p
@@ -221,6 +222,7 @@ pub struct ContentCache {
     pub meshes: HashMap<PathBuf, Handle<Mesh>>,
     pub materials: HashMap<String, Handle<StandardMaterial>>,
     alpha_cutouts: HashMap<PathBuf, bool>,
+    pending_mipmaps: HashSet<AssetId<Image>>,
 }
 impl ContentCache {
     pub fn load_mesh(
@@ -280,21 +282,44 @@ impl ContentCache {
         if let Some(m) = self.materials.get(&key) {
             return m.clone();
         }
+        let base_color_texture = texture.map(|path| {
+            // Source Terrain, FoliageField and ResourceField generate mipmaps and
+            // explicitly retain linear filtering; palette props remain nearest.
+            let linear = path.starts_with("terrain")
+                || path.starts_with("foliage")
+                || path.starts_with("resources");
+            let handle = assets
+                .load_builder()
+                .with_settings(move |settings: &mut ImageLoaderSettings| {
+                    settings.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+                        address_mode_u: ImageAddressMode::Repeat,
+                        address_mode_v: ImageAddressMode::Repeat,
+                        mag_filter: if linear {
+                            ImageFilterMode::Linear
+                        } else {
+                            ImageFilterMode::Nearest
+                        },
+                        min_filter: if linear {
+                            ImageFilterMode::Linear
+                        } else {
+                            ImageFilterMode::Nearest
+                        },
+                        mipmap_filter: if linear {
+                            ImageFilterMode::Linear
+                        } else {
+                            ImageFilterMode::Nearest
+                        },
+                        ..default()
+                    });
+                })
+                .load(path.to_owned());
+            if linear {
+                self.pending_mipmaps.insert(handle.id());
+            }
+            handle
+        });
         let material = materials.add(StandardMaterial {
-            base_color_texture: texture.map(|path| {
-                assets
-                    .load_builder()
-                    .with_settings(|settings: &mut ImageLoaderSettings| {
-                        settings.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
-                            address_mode_u: ImageAddressMode::Repeat,
-                            address_mode_v: ImageAddressMode::Repeat,
-                            mag_filter: ImageFilterMode::Nearest,
-                            min_filter: ImageFilterMode::Nearest,
-                            ..default()
-                        });
-                    })
-                    .load(path.to_owned())
-            }),
+            base_color_texture,
             perceptual_roughness: 0.95,
             alpha_mode: if alpha_cutout {
                 AlphaMode::Mask(0.4)
@@ -312,6 +337,62 @@ impl ContentCache {
         self.materials.insert(key, material.clone());
         material
     }
+}
+
+/// Generate the source's 2×2 RGBA box mip chain. Bevy's PNG loader keeps only
+/// level zero; setting a mip sampler alone cannot prevent minification aliasing.
+fn build_pending_mipmaps(mut cache: ResMut<ContentCache>, mut images: ResMut<Assets<Image>>) {
+    cache.pending_mipmaps.retain(|id| {
+        let Some(mut image) = images.get_mut(*id) else {
+            return true;
+        };
+        if image.texture_descriptor.mip_level_count > 1 {
+            return false;
+        }
+        if let Some(mut rgba) =
+            image.convert(bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb)
+        {
+            rgba.sampler = image.sampler.clone();
+            let Some(data) = rgba.data.take() else {
+                return false;
+            };
+            let (data, levels) = mip_chain(data, rgba.width() as usize, rgba.height() as usize);
+            rgba.data = Some(data);
+            rgba.texture_descriptor.mip_level_count = levels;
+            *image = rgba;
+        }
+        false
+    });
+}
+fn mip_chain(mut level: Vec<u8>, mut width: usize, mut height: usize) -> (Vec<u8>, u32) {
+    let mut all = level.clone();
+    let mut levels = 1;
+    while width > 1 || height > 1 {
+        let (w, h) = ((width / 2).max(1), (height / 2).max(1));
+        let mut next = vec![0; w * h * 4];
+        for y in 0..h {
+            for x in 0..w {
+                for channel in 0..4 {
+                    let mut total = 0_u16;
+                    for oy in 0..2 {
+                        for ox in 0..2 {
+                            total += level[(((y * 2 + oy).min(height - 1) * width
+                                + (x * 2 + ox).min(width - 1))
+                                * 4)
+                                + channel] as u16;
+                        }
+                    }
+                    next[(y * w + x) * 4 + channel] = (total / 4) as u8;
+                }
+            }
+        }
+        all.extend_from_slice(&next);
+        level = next;
+        width = w;
+        height = h;
+        levels += 1;
+    }
+    (all, levels)
 }
 
 /// Original GUID → extracted basename mapping used by all three bundled retail maps.
@@ -332,6 +413,20 @@ pub fn load_guid_map(root: &Path) -> Result<HashMap<String, String>, ContentErro
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn mipmaps_include_all_levels_and_average_rgba_without_losing_base_pixels() {
+        let original = vec![
+            0, 0, 0, 0, 255, 255, 255, 255, 0, 0, 0, 0, 255, 255, 255, 255,
+        ];
+        let (data, count) = mip_chain(original.clone(), 2, 2);
+        assert_eq!(count, 2);
+        assert_eq!(&data[..16], &original);
+        assert_eq!(&data[16..], &[127; 4]);
+        let (data, count) = mip_chain(vec![255; 4 * 8], 1, 8);
+        assert_eq!(count, 4);
+        assert_eq!(data.len(), (8 + 4 + 2 + 1) * 4);
+        assert!(data.iter().all(|v| *v == 255));
+    }
     #[test]
     fn preserves_geometry_and_flips_uv_origin() {
         let m =
@@ -392,6 +487,9 @@ mod tests {
             "jeep_body.txt",
             "objects/Fence_Wood_0.obj",
             "foliage/grass_00.obj",
+            // This untextured source OBJ still writes v/vt/vn corner indices;
+            // ObjMesh.Load uses UV zero when the complete vt channel is absent.
+            "foliage/pebble_00.obj",
         ] {
             let mesh = ObjData::load(&root.join(relative)).unwrap();
             assert!(!mesh.positions.is_empty());

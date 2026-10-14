@@ -11,7 +11,10 @@ original source formats and remain the content replacement seam.
   Wavefront V coordinates, and shared mesh/material caches. Triangle winding is
   normalized to Bevy's counter-clockwise convention using authored normals. Mesh
   coordinates themselves are retained. JSON rig UVs are already converted and
-  are deliberately not flipped a second time.
+  are deliberately not flipped a second time. Original pebble meshes without a
+  UV channel retain the source's zero-UV fallback. Terrain, resource and foliage
+  textures receive runtime mip chains and linear filtering; palette assets keep
+  their nearest filtering.
 - `world.rs`: GUID mappings and PEI/Washington/Yukon object placements; original
   placement orientation `Y(180-ey) * X(ex) * Z(-ez)` and Z-negated positions;
   original map heightmaps and splatmap dominant layers; original resource and
@@ -47,6 +50,17 @@ original source formats and remain the content replacement seam.
   endpoints, 3.5% sag, fourteen samples and nine-centimetre tube width. Optional
   retail editor wire saves resolve endpoints against original pole origins.
   No substitute procedural terrain formula is introduced.
+- Generated tunnels sweep the original kit's measured arch contours along the
+  source centerline frames, including twin highway bores, portal headwalls,
+  floors and replacement portal terrain. The bridge exports its source tunnel
+  profiles and dimensions, avoiding a second set of hard-coded bore formulas.
+  These surfaces supply the same meshes to rendering and fixed collision.
+- Ground cover uses the original upward fragment normals, alpha cutoff and
+  distance fade in a Bevy material extension. This keeps double-sided grass
+  from developing black backfaces. Source wind displacement remains separate.
+- Original `UG_INF_AT=x,z[,yaw]` and `UG_INF_CAM=x,y,z[,yaw[,pitch]]` diagnostics
+  support repeatable generated-world captures. A fixed camera also selects the
+  region streaming focus, including distant tunnels and other source landmarks.
 - `rig.rs`: original human and animal skeletons, inverse bind matrices, joint
   weights, body/arms meshes and original keyed animation clips. The human rig has
   17 bones and 711 clips. Animation supports looping, non-looping holds, masked
@@ -70,10 +84,10 @@ props, resources and foliage, without restarting the session or changing spawn.
 Parsed placements and instance arrays are cached; retired render entities and
 colliders are removed. A geometry revision informs the authoritative host of
 changes. This synchronous rebuild can hitch; async chunk jobs, original LOD
-thresholds, distance fades and floating origin still need Bevy systems. Generated
-regions currently use LOD0; far-landmark rings are not yet reproduced. Tunnel
-shells and portal terrain, bridge roadway overlays and rail crossing infill
-remain separate from the implemented generated road/rail/bridge/pylon geometry.
+thresholds, non-foliage distance fades and floating origin still need Bevy systems.
+Generated regions currently use LOD0; far-landmark rings and bridge roadway
+overlays are not yet reproduced. Generated buildings come from a separate source
+building/editor pipeline and are not produced by the terrain generator alone.
 
 Terrain currently uses the strongest splat layer per cell with the original
 layer texture and original sixteen-metre world texture repeat. The source's
@@ -123,3 +137,10 @@ one machine's Steam installation. Rendering tests should use the real local map
 when available and state explicitly when only the asset viewer was exercised.
 Screenshots must be opened and inspected. The deleted visual-golden gate is not
 reintroduced.
+
+The tunnel/foliage milestone passed 74 Rust tests. Inspected captures include
+`artifacts/bevy-procedural-foliage.png` (source grass lighting and mip filtering),
+`artifacts/bevy-procedural-tunnel.png` (seed 1337 twin highway tunnel near
+−12916, −19678), and `artifacts/godot-eaglefire/rig_00.png` (original Godot hip
+viewmodel at frame 60 for camera/framing comparison). The capture paths are
+evidence from the development environment, not a visual-golden test gate.
