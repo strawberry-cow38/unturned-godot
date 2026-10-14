@@ -26,16 +26,17 @@ namespace UnturnedSim
         /// <summary>A wall grille keeps this far off a curtain, in plan.</summary>
         public const float GrilleOffCurtain = 0.3f;
 
-        /// <summary>Hand each room's HVAC record to its label in res.Rooms (the one anchored in it, its kind, on its storey):
-        /// the label is what a save keeps and what reaches the editor. Done when the rooms are furnished, and again when the
-        /// building is turned half round (TurnHalf makes the labels afresh).</summary>
-        static void LabelHvac(BuildingGenResult res)
+        /// <summary>Hand each room's HVAC and electrical records to its label in res.Rooms (the one anchored in it, its kind,
+        /// on its storey): the label is what a save keeps and what reaches the editor. Done when the rooms are furnished, and
+        /// again when the building is turned half round (TurnHalf makes the labels afresh).</summary>
+        static void LabelRecords(BuildingGenResult res)
         {
             for (int i = 0; i < res.Rooms.Count; i++)
             {
                 var d = res.Rooms[i];
                 var g = res.Layout.FirstOrDefault(r => r.Floor == d.Floor && r.Kind == d.Kind && r.Holds(d.X, d.Z));
                 d.Hvac = g?.Hvac;
+                d.Electrical = g?.Electrical;
                 res.Rooms[i] = d;
             }
         }

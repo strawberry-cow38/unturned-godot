@@ -7797,6 +7797,10 @@ namespace UnturnedGodot
                     });
                 }
                 else if (buildings.Walls.Count == 0) DrawDemoBuilding(buildings);
+                // UG_EDITLIGHTS=off flips every room's light switch off after the building is up, so a capture can show the
+                // same room with its ceiling lights on and off (RoomLightSwitch: the rocker turns with them)
+                if (System.Environment.GetEnvironmentVariable("UG_EDITLIGHTS") == "off")
+                    foreach (var sw in buildings.LightSwitches) if (sw.On) sw.Press();
                 // UG_EDITCUT=y hides every surface but the stairs whose origin stands more than y over the stage, so a
                 // capture can look down into a building -- at its stairs, which nothing else shows from outside
                 // ⚠ it hides FURNITURE by its origin too: at 3.0 every wall cabinet (origin 2.9 over the floor + the stage's

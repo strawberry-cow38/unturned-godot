@@ -453,6 +453,10 @@ namespace UnturnedGodot
 
         // F while looking at a standing/desk lamp flips its manual on/off (grid power is still required to actually emit).
         public void Toggle() { _on = !_on; ApplyEffective(); }
+        /// <summary>Set the manual on/off from outside -- a room's wall switch (RoomLightSwitch) working its ceiling lights.
+        /// Grid power is still required to emit, as for Toggle.</summary>
+        public void SetSwitched(bool on) { if (_on == on) return; _on = on; ApplyEffective(); }
+        public bool SwitchedOn => _on;
 
         // Whole-lamp white silhouette while looked at (mirrors ObjectDoor/GasPump/TVDevice's SetLookFocused).
         public void SetLookFocused(bool on) { if (_outline != null && IsInstanceValid(_outline)) OutlineOverlay.ShowOutline(on, Colors.White, _outline); }

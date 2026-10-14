@@ -216,7 +216,8 @@ namespace UnturnedSim.Tests
                 }
             }
             var lines = text.Split('\n').Where(l => l.StartsWith("room ")).ToList();
-            Assert.That(lines.Where(l => !l.Contains(" hvac ")).All(l => l.Split(' ').Length <= 5), "a label with no vents saves the line it always did");
+            // (but for its switch and outlets, which follow keyed: ElectricalFixturesFollowTheRules)
+            Assert.That(lines.Where(l => !l.Contains(" hvac ")).All(l => l.Split(" elec ")[0].Split(' ').Length <= 5), "a label with no vents saves the line it always did");
             // the query over the saved layout, from the storeys' own walls
             int asked = 0, found = 0;
             for (int f = 0; f < res.Floors; f++)

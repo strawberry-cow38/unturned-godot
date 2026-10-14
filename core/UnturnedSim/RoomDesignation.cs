@@ -52,8 +52,47 @@ namespace UnturnedSim
         /// as HVAC rooms, so room temperature and then player temperature can hook into it later"): null for a room with none.
         /// Saved with the label, on its line.</summary>
         public RoomHvac Hvac;
+        /// <summary>The room's light switch, outlets and ceiling lights (round 12, strawberry: "light switches should function
+        /// to switch on/off the ceiling lights within a room"; "the outlets should act as power io outlets 1500w each"):
+        /// null for a room with neither fixture. Saved with the label, on its line -- the switch's state with it.</summary>
+        public RoomElectrical Electrical;
 
-        public RoomDesignation(RoomKind kind, float x, float z, int floor = 0, RoomHvac hvac = null) { Kind = kind; X = x; Z = z; Floor = floor; Hvac = hvac; }
+        public RoomDesignation(RoomKind kind, float x, float z, int floor = 0, RoomHvac hvac = null, RoomElectrical electrical = null)
+        { Kind = kind; X = x; Z = z; Floor = floor; Hvac = hvac; Electrical = electrical; }
+    }
+
+    /// <summary>Which electrical fixture: a light switch by the door, an outlet on the wall.</summary>
+    public enum ElectricalKind { Switch, Outlet }
+
+    /// <summary>One switch or outlet: its kind; its Id -- its place among the building's switches and outlets, which is their
+    /// order among its pieces (BuildingGenResult.Electrical, and the Light_Switch_0/Power_Outlet_0 props of a saved layout in
+    /// the order they were saved); where its prop's origin stands and which way it is turned; and, for an outlet, what it
+    /// supplies (BuildingGen.OutletWatts).</summary>
+    public readonly record struct ElectricalFixture(ElectricalKind Kind, int Id, float X, float Y, float Z, float Yaw, float Watts = 0f);
+
+    /// <summary>A room's electrical record: its switches and outlets apart, the ceiling lights its switch works (each by its
+    /// place among the building's ceiling-light props, Ceiling_Lamp_*, in prop order -- this room's only, never a lamp on a
+    /// table or the next room's), and whether they are on. What the stage's switch toggles and a power net reads.</summary>
+    public sealed class RoomElectrical
+    {
+        public readonly List<ElectricalFixture> Switches = new List<ElectricalFixture>();
+        public readonly List<ElectricalFixture> Outlets = new List<ElectricalFixture>();
+        public readonly List<int> Lights = new List<int>();
+        /// <summary>The room's ceiling lights are on (its switch is up). On as generated.</summary>
+        public bool LightsOn = true;
+        public bool HasElectrical => Switches.Count + Outlets.Count > 0;
+        public IEnumerable<ElectricalFixture> Fixtures { get { foreach (var v in Switches) yield return v; foreach (var v in Outlets) yield return v; } }
+        public void Add(ElectricalFixture v) => (v.Kind == ElectricalKind.Switch ? Switches : Outlets).Add(v);
+        /// <summary>The same record with every fixture moved, or turned (x, z) -> (W - x, D - z) and half round.</summary>
+        public RoomElectrical Map(Func<ElectricalFixture, ElectricalFixture> f)
+        {
+            var r = new RoomElectrical { LightsOn = LightsOn };
+            foreach (var v in Fixtures) r.Add(f(v));
+            r.Lights.AddRange(Lights);
+            return r;
+        }
+        public RoomElectrical Moved(float dx, float dy, float dz) => Map(v => v with { X = v.X + dx, Y = v.Y + dy, Z = v.Z + dz });
+        public override string ToString() => $"electrical: {Switches.Count} switch(es) for {Lights.Count} ceiling light(s) {(LightsOn ? "on" : "off")}, {Outlets.Count} outlet(s)";
     }
 
     /// <summary>Which kind of HVAC vent a room has: a register on the floor, a grille high on a wall.</summary>
@@ -219,6 +258,21 @@ namespace UnturnedSim
                 if (!Contains(r.Outline, x, z)) continue;
                 foreach (var d in stored)
                     if (d.Floor == floor && Contains(r.Outline, d.X, d.Z)) return d.Hvac != null && d.Hvac.HasHvac ? d.Hvac : null;
+                return null;
+            }
+            return null;
+        }
+
+        /// <summary>The electrical record of the room a plan point is in, or null (no room there, no label for it, or a room
+        /// with no switch or outlet), as HvacAt.</summary>
+        public static RoomElectrical ElectricalAt(IReadOnlyList<RoomEnclosure.Room> rooms, IReadOnlyList<RoomDesignation> stored, float x, float z, int floor = 0)
+        {
+            if (rooms == null || stored == null) return null;
+            foreach (var r in rooms)
+            {
+                if (!Contains(r.Outline, x, z)) continue;
+                foreach (var d in stored)
+                    if (d.Floor == floor && Contains(r.Outline, d.X, d.Z)) return d.Electrical != null && d.Electrical.HasElectrical ? d.Electrical : null;
                 return null;
             }
             return null;

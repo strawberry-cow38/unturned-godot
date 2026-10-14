@@ -274,7 +274,7 @@ namespace UnturnedSim.Tests
             Assert.That(res.RuntimeDecor.Select(m => m.Gen.Open).Distinct().Count(), Is.EqualTo(2), "and curtains open and closed");
             string text = WallSave.Write(res.Walls, res.Kind, res.Rooms, res.DoorMarks, res.Props);
             WallSave.Read(text.Split('\n'), out _, out _, out _, out var props);
-            var want = res.Furniture.Concat(res.RuntimeDecor).Concat(res.HvacVents).ToList();
+            var want = res.Furniture.Concat(res.RuntimeDecor).Concat(res.HvacVents).Concat(res.Electrical).ToList();
             Assert.That(props.Count, Is.EqualTo(want.Count), "every piece comes back");
             for (int i = 0; i < want.Count; i++)
             {

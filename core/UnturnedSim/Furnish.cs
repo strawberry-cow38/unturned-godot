@@ -148,6 +148,10 @@ namespace UnturnedSim
             // its base; a wall grille, the Clock_0 convention (back at Y 0, centred up and down)
             ["Floor_Vent_0"] = new(-0.500f, 0.500f, -0.250f, 0.250f, 0.035f),
             ["Wall_Vent_0"] = new(-0.500f, 0.500f, 0f, 0.055f, 0.300f),
+            // astraclaw's household electrical (notes/household_electrical_manifest.json), FurnishElectrical: wall plates, the
+            // Clock_0 convention (back at Y 0, centred up and down) -- the switch to its rocker's face in either pose
+            ["Light_Switch_0"] = new(-0.160f, 0.160f, 0f, 0.086f, 0.270f),
+            ["Power_Outlet_0"] = new(-0.160f, 0.160f, 0f, 0.054f, 0.270f),
             ["Crate_0"] = new(-0.62f, 0.62f, -0.62f, 0.62f, 1.25f),
             ["Crate_3"] = new(-0.94f, 0.94f, -0.94f, 0.94f, 1.88f),
             ["Barrel_0"] = new(-0.54f, 0.54f, -0.54f, 0.54f, 1.28f),
@@ -321,8 +325,10 @@ namespace UnturnedSim
                 if (!NoRuntimeDecor) foreach (var fu in done) { fu.Curtains(); fu.Rugs(); }
                 // and the HVAC vents (FurnishHvac), once everything they keep clear of is in: on their own draws too
                 if (!NoHvac) foreach (var fu in done) fu.Vents();
+                // and the light switches and outlets (FurnishElectrical), last: on their own draws, off everything hung
+                if (!NoElectrical) foreach (var fu in done) fu.Electrical();
             }
-            LabelHvac(res);
+            LabelRecords(res);
         }
 
         /// <summary>One floor at 0.1 m: what is solid (walls; stairs, landings and holes; furniture as it goes in), and

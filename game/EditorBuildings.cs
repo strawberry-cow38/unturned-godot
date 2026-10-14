@@ -2729,13 +2729,36 @@ namespace UnturnedGodot
                 if (IsInstanceValid(n) && n.GlobalPosition.Y - StageOrigin.Y > y) n.Visible = false;
         }
 
+        /// <summary>The stage's light switches (RoomLightSwitch), as ShowFurniture built them -- for a capture to flip, and a
+        /// test to press.</summary>
+        public IReadOnlyList<RoomLightSwitch> LightSwitches => _switches;
+        readonly List<RoomLightSwitch> _switches = new();
+        /// <summary>The stage's ceiling lights, in prop order -- RoomElectrical.Lights' ids.</summary>
+        public IReadOnlyList<LampLight> CeilingLights => _ceilingLights;
+        readonly List<LampLight> _ceilingLights = new();
+        /// <summary>The stage's outlets, each a mains-fed 1500 W power source (GridPowerSource), in prop order.</summary>
+        public IReadOnlyList<GridPowerSource> Outlets => _outlets;
+        readonly List<GridPowerSource> _outlets = new();
+
         void ShowFurniture()
         {
             foreach (var n in _furnitureNodes) if (IsInstanceValid(n)) n.QueueFree();
             _furnitureNodes.Clear();
+            _switches.Clear(); _ceilingLights.Clear(); _outlets.Clear();
             var objects = _editor?.Objects;
+            // the switches and outlets by their place among the electrical props (ElectricalFixture.Id), the ceiling lights by
+            // theirs among the ceiling lights (RoomElectrical.Lights) -- a slot kept for one that built nothing, so the ids hold
+            var electrical = new List<Node3D>();
             foreach (var m in Furniture)
             {
+                bool lamp = m.Name != null && m.Name.StartsWith("Ceiling_Lamp"), plate = m.Name is "Light_Switch_0" or "Power_Outlet_0";
+                if (m.Name == "Light_Switch_0")
+                {
+                    var sw = BuildSwitch(m, objects);
+                    electrical.Add(sw);
+                    if (sw != null) { _switches.Add(sw); _furnitureNodes.Add(sw); }
+                    continue;
+                }
                 // a curtain, a rug: built from the inputs it was saved with -- no OBJ, so no object catalog either
                 if (m.Gen != null)
                 {
@@ -2747,16 +2770,80 @@ namespace UnturnedGodot
                     continue;
                 }
                 var mesh = objects?.PreviewMesh(m.Name);
-                if (mesh == null) continue;
+                if (mesh == null)
+                {
+                    if (lamp) _ceilingLights.Add(null);
+                    if (plate) electrical.Add(null);
+                    continue;
+                }
                 var mi = new MeshInstance3D { Name = "Furniture_" + m.Name, Mesh = mesh, MaterialOverride = objects.PreviewMaterial(m.Name) };
                 AddChild(mi);
                 mi.GlobalTransform = new Transform3D(EditorObjects.Upright(m.Yaw), new Vector3(m.X, m.Y, m.Z));
                 _furnitureNodes.Add(mi);
+                if (lamp)
+                {
+                    // a ceiling lamp lights the room (LampLight: mains-fed, its manual switch the room's wall switch); the whole
+                    // fixture glows when lit -- these two have no separate lens in their palette
+                    var light = LampLight.Make(mi.GlobalTransform * mesh.GetAabb().GetCenter(), mi, LampLight.Kind.Generic);
+                    AddChild(light);
+                    _ceilingLights.Add(light);
+                    _furnitureNodes.Add(light);
+                }
+                else if (plate)
+                {
+                    var src = BuildOutlet(m, mi, mesh);
+                    electrical.Add(src);
+                    if (src != null) { _outlets.Add(src); _furnitureNodes.Add(src); }
+                }
+            }
+            // each room's switch to its record, and to the ceiling lights the record names: the record holds the state
+            foreach (var d in Designations)
+            {
+                var e = d.Electrical;
+                if (e == null) continue;
+                var sws = new List<RoomLightSwitch>();
+                foreach (var f in e.Switches)
+                    if (f.Id >= 0 && f.Id < electrical.Count && electrical[f.Id] is RoomLightSwitch sw) sws.Add(sw);
+                var lamps = new List<LampLight>();
+                foreach (int k in e.Lights) if (k >= 0 && k < _ceilingLights.Count && _ceilingLights[k] != null) lamps.Add(_ceilingLights[k]);
+                foreach (var sw in sws) sw.Bind(e, lamps, sws);
             }
         }
 
-        /// <summary>The furniture's preview nodes as built, in Furniture's order but for any that built nothing (the in-engine
-        /// test reads the meshes a generated building's curtains and rugs actually made).</summary>
+        /// <summary>A room's light switch on the stage: astraclaw's base and rocker (RoomLightSwitch), placed as the prop is.</summary>
+        RoomLightSwitch BuildSwitch(PropDesignation m, EditorObjects objects)
+        {
+            var baseMesh = ContentProvider.ParseObj("res://content/objects/Light_Switch_0_Base.obj");
+            var rocker = ContentProvider.ParseObj("res://content/objects/Light_Switch_0_Rocker.obj");
+            if (baseMesh == null || rocker == null) return null;
+            var sw = RoomLightSwitch.Make(baseMesh, rocker, objects?.PreviewMaterial(m.Name));
+            AddChild(sw);
+            sw.GlobalTransform = new Transform3D(EditorObjects.Upright(m.Yaw), new Vector3(m.X, m.Y, m.Z));
+            return sw;
+        }
+
+        /// <summary>An outlet on the stage: a power I/O source of BuildingGen.OutletWatts fed by the mains (GridPowerSource,
+        /// the breaker box's own node at an outlet's rating: wires take power from it while the grid is live, and the solver
+        /// caps what they draw at its watts), its port in front of the upper receptacle, and a small look-at body so the
+        /// look-ray focuses it as it does the breaker box.</summary>
+        GridPowerSource BuildOutlet(PropDesignation m, MeshInstance3D mi, Mesh mesh)
+        {
+            var basis = EditorObjects.Upright(m.Yaw);
+            var src = GridPowerSource.Attach(this, new Vector3(m.X, m.Y, m.Z), basis, OutletPort, BuildingGen.OutletWatts, "Outlet", mesh);
+            src.GlobalTransform = new Transform3D(basis, new Vector3(m.X, m.Y, m.Z));
+            var body = new StaticBody3D { Name = "OutletLook", CollisionLayer = 1u << 6, CollisionMask = 0, Position = new Vector3(0f, 0.04f, 0f) };
+            body.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(0.34f, 0.08f, 0.56f) } });
+            body.SetMeta("gridpower", src);
+            src.AddChild(body);
+            return src;
+        }
+        /// <summary>An outlet's power port, in its native frame: before the upper receptacle (the handoff's socket point,
+        /// (0, 0.054, 0.13)), clear of the plate.</summary>
+        static readonly Vector3 OutletPort = new Vector3(0f, 0.11f, 0.13f);
+
+        /// <summary>The furniture's preview nodes as built, in Furniture's order but for any that built nothing -- with a ceiling
+        /// lamp's light, a switch (RoomLightSwitch) and an outlet's power source among them (the in-engine test reads the
+        /// meshes a generated building's curtains and rugs actually made).</summary>
         public IReadOnlyList<Node3D> FurnitureNodes => _furnitureNodes;
 
         /// <summary>A runtime-built piece (PropDesignation.Gen: a curtain, a rug) as a mesh, made by astraclaw's factories
@@ -2860,7 +2947,7 @@ namespace UnturnedGodot
             }
             DesignatedKind = res.Kind;
             Designations.Clear();
-            foreach (var d in res.Rooms) Designations.Add(new RoomDesignation(d.Kind, at.X + d.X, at.Z + d.Z, d.Floor, d.Hvac?.Moved(at.X, at.Y, at.Z)));
+            foreach (var d in res.Rooms) Designations.Add(new RoomDesignation(d.Kind, at.X + d.X, at.Z + d.Z, d.Floor, d.Hvac?.Moved(at.X, at.Y, at.Z), d.Electrical?.Moved(at.X, at.Y, at.Z)));
             DoorMarks.Clear();
             foreach (var d in res.DoorMarks) DoorMarks.Add(new DoorDesignation(d.Role, at.X + d.X, at.Z + d.Z, d.Floor));
             Furniture.Clear();
@@ -2889,7 +2976,7 @@ namespace UnturnedGodot
             if (!string.IsNullOrEmpty(dump))
             {
                 // (the curtains and rugs after the props, each with what it is built from)
-                System.IO.File.WriteAllLines(dump, System.Linq.Enumerable.Select(System.Linq.Enumerable.Concat(System.Linq.Enumerable.Concat(res.Furniture, res.RuntimeDecor), res.HvacVents), m => System.FormattableString.Invariant(
+                System.IO.File.WriteAllLines(dump, System.Linq.Enumerable.Select(System.Linq.Enumerable.Concat(System.Linq.Enumerable.Concat(System.Linq.Enumerable.Concat(res.Furniture, res.RuntimeDecor), res.HvacVents), res.Electrical), m => System.FormattableString.Invariant(
                     $"{m.Name} {m.X:0.00} {m.Z:0.00} {m.Yaw:0} {m.Floor} {m.Room.Kind}{(m.Gen == null ? "" : $" gen {m.Gen.Kind} {m.Gen.Width:0.00} x {m.Gen.Height:0.00} y {m.Y:0.00} {(m.Gen.Open ? "open" : "closed")} {m.Gen.Style}")}")));
                 System.IO.File.WriteAllLines(dump + ".walls", System.Linq.Enumerable.Select(res.Walls, w => System.FormattableString.Invariant($"{w.Kind} {w.X:R} {w.Y:R} {w.Z:R} {w.Yaw:R} {w.Length:R} {w.Height:R} {w.Thickness:R} {w.Openings.Count}")));
                 System.IO.File.WriteAllLines(dump + ".trace", trace);

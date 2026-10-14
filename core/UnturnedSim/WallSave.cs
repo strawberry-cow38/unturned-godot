@@ -83,7 +83,10 @@ namespace UnturnedSim
                       .Append(r.Floor != 0 ? " " + r.Floor.ToString(CultureInfo.InvariantCulture) : "")
                       // an HVAC room's vents: a KEYED trailing block, written only for one -- a room with none writes the line it
                       // always did, and an older reader skips the tokens (the room's label survives; its vents' record does not)
-                      .Append(r.Hvac != null && r.Hvac.HasHvac ? Hvac(r.Hvac) : "").Append('\n');
+                      .Append(r.Hvac != null && r.Hvac.HasHvac ? Hvac(r.Hvac) : "")
+                      // and its switch, outlets and ceiling lights, the same way (after the vents: a reader of the vents alone
+                      // stops at their count)
+                      .Append(r.Electrical != null && r.Electrical.HasElectrical ? Elec(r.Electrical) : "").Append('\n');
             if (doors != null)
                 foreach (var d in doors)
                     sb.Append("door ").Append(d.Role.ToString().ToLowerInvariant()).Append(' ').Append(F(d.X)).Append(' ').Append(F(d.Z))
@@ -168,6 +171,54 @@ namespace UnturnedSim
                 sb.Append(' ').Append(v.Kind == HvacVentKind.FloorRegister ? "floor" : "wall").Append(' ').Append(v.Id.ToString(CultureInfo.InvariantCulture))
                   .Append(' ').Append(F(v.X)).Append(' ').Append(F(v.Y)).Append(' ').Append(F(v.Z)).Append(' ').Append(F(v.Yaw));
             return sb.ToString();
+        }
+
+        /// <summary>A room's electrical block: "elec", whether its lights are on, its switches and its outlets (each counted,
+        /// then id x y z yaw -- an outlet's watts after), its ceiling lights' ids (counted).</summary>
+        static string Elec(RoomElectrical e)
+        {
+            var sb = new StringBuilder(" elec ").Append(e.LightsOn ? '1' : '0');
+            foreach (var l in new[] { e.Switches, e.Outlets })
+            {
+                sb.Append(' ').Append(l.Count.ToString(CultureInfo.InvariantCulture));
+                foreach (var v in l)
+                {
+                    sb.Append(' ').Append(v.Id.ToString(CultureInfo.InvariantCulture)).Append(' ').Append(F(v.X)).Append(' ').Append(F(v.Y)).Append(' ').Append(F(v.Z))
+                      .Append(' ').Append(F(v.Yaw));
+                    if (v.Kind == ElectricalKind.Outlet) sb.Append(' ').Append(F(v.Watts));
+                }
+            }
+            sb.Append(' ').Append(e.Lights.Count.ToString(CultureInfo.InvariantCulture));
+            foreach (int k in e.Lights) sb.Append(' ').Append(k.ToString(CultureInfo.InvariantCulture));
+            return sb.ToString();
+        }
+
+        /// <summary>A room line's electrical block (Elec), or null: none, or one that will not read -- which loses the record,
+        /// not the room's label.</summary>
+        static RoomElectrical ReadElec(string[] p)
+        {
+            int i = Array.IndexOf(p, "elec", 4);
+            if (i < 0) return null;
+            var e = new RoomElectrical();
+            int at = i + 1;
+            bool Int(out int v) { v = 0; return at < p.Length && int.TryParse(p[at++], NumberStyles.Integer, CultureInfo.InvariantCulture, out v); }
+            bool Num(out float v) { v = 0f; return at < p.Length && N(p[at++], out v); }
+            if (!Int(out int on) || on is not (0 or 1)) return null;
+            e.LightsOn = on == 1;
+            foreach (var kind in new[] { ElectricalKind.Switch, ElectricalKind.Outlet })
+            {
+                if (!Int(out int n) || n < 0 || n > 64) return null;
+                for (int k = 0; k < n; k++)
+                {
+                    if (!Int(out int id) || !Num(out float x) || !Num(out float y) || !Num(out float z) || !Num(out float yaw)) return null;
+                    float watts = 0f;
+                    if (kind == ElectricalKind.Outlet && !Num(out watts)) return null;
+                    e.Add(new ElectricalFixture(kind, id, x, y, z, yaw, watts));
+                }
+            }
+            if (!Int(out int lights) || lights < 0 || lights > 256) return null;
+            for (int k = 0; k < lights; k++) { if (!Int(out int id)) return null; e.Lights.Add(id); }
+            return e;
         }
 
         /// <summary>A room line's HVAC block (Hvac), or null: none, or one that will not read -- which loses the record, not
@@ -281,7 +332,7 @@ namespace UnturnedSim
                     if (float.TryParse(p[2], NumberStyles.Float, CultureInfo.InvariantCulture, out float rx)
                         && float.TryParse(p[3], NumberStyles.Float, CultureInfo.InvariantCulture, out float rz))
                         rooms.Add(new RoomDesignation(RoomDesignations.ParseRoom(p[1]), rx, rz,
-                            p.Length >= 5 && int.TryParse(p[4], NumberStyles.Integer, CultureInfo.InvariantCulture, out int rf) ? rf : 0, ReadHvac(p)));
+                            p.Length >= 5 && int.TryParse(p[4], NumberStyles.Integer, CultureInfo.InvariantCulture, out int rf) ? rf : 0, ReadHvac(p), ReadElec(p)));
                     continue;
                 }
                 if (p[0] == "wall" && p.Length >= 8)
