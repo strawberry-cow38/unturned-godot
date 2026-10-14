@@ -112,3 +112,40 @@ Weather timers restart on load as in the original scene lifecycle; clock/day and
 retail loot provenance persist. The original server's default-gun fallback and
 shared per-player ammo behavior remain core semantics rather than being rewritten
 in this bridge.
+
+`mapServices {mapRoot,mapName,contentRoot?}` registers the whole extracted retail map
+once. PEI currently yields 696 containers, 11 grid/gas fixtures, 1 authored deadzone,
+1,733 destructible slots and 1,886 resources. Its `objects` table maps original,
+zero-based placement **line numbers** (`sourceIndex`) to `containerNetId`,
+`fixtureNetId`, and/or `destructibleIndex`. `resources` gives the original active
+manifest + binary instance order (`index`, `name`, `instance`, `position`,
+`rewardItemId`). Holiday filtering follows the original source. A repeated call
+for the same map is idempotent. Save/load restores registrations before applying
+world state and retains the mapping.
+
+`worldServices` is the lower-level host registration seam, supporting
+`hasWater`, `seaLevel`, `survivalDrain`, `resourceCount`, `resources`,
+`destructibleCount`, `destructibles`, `deadzones`, `taps`, `fixtures`, and
+`containers`. This runs the original crop schema, forage validation/regrowth,
+rubble damage/regrowth/drop rules, stock generation, cooking/freezing, shared
+station tanks and NPC catalogs. `npcCatalog` returns the original character,
+dialogue, quest and vendor data. Crops/containers/resource and destructible alive
+bits are published in snapshots. A reliable full snapshot follows registration;
+this is required because bitmap deltas cannot resize their index space.
+
+`action respawn {}` requests the original server respawn. Death/respawn, melee,
+crop, forage, rubble and storage events follow the retained event queue. Owner
+respawn clears movement and increments `correctionVersion`; the position comes
+from the original authority recovery event. Ray queries skip destroyed rubble
+and resume colliding when the authoritative regrowth timer restores it.
+
+Terrain output also includes original road patches/markings, bridges, poles,
+pylons, rails, crossings, tunnel mouths, holes and decoration model metadata.
+Tree/foliage/boulder positions use region-local X/Z and absolute Y; roads,
+bridges, rail spans, poles, pylons and tunnel mouths use world positions.
+
+Tree/ore health and their game-node harvesting lifecycle still need host adapters;
+the resource table includes them for stable indexing but only original forage
+plants currently have interaction metadata. Container random rolls preserve the
+source's unseeded range/distribution contract through a portable RNG adapter;
+the resulting inventories are saved, rather than rerolled on load.

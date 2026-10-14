@@ -12,6 +12,7 @@ public sealed class WorldGeometry
     readonly List<Triangle> _terrainTriangles = new();
     Node _terrainRoot;
     public int Count => _triangles.Count;
+    public Func<int, bool> DestructibleAlive { get; set; }
     readonly record struct Triangle(Vector3 A, Vector3 B, Vector3 C, int Destructible);
     sealed class Node
     {
@@ -78,7 +79,7 @@ public sealed class WorldGeometry
         Visit(_terrainRoot, new(x, 10000, z), new(0, -20000, 0), ref t, ref index, ref hit);
         return hit ? 10000 - 20000 * t : 0;
     }
-    static void Visit(Node node, Vector3 origin, Vector3 dir, ref float nearest, ref int index, ref bool found)
+    void Visit(Node node, Vector3 origin, Vector3 dir, ref float nearest, ref int index, ref bool found)
     {
         if (node == null || !Box(node.Min, node.Max, origin, dir, nearest)) return;
         if (node.Leaf == null)
@@ -89,6 +90,7 @@ public sealed class WorldGeometry
         }
         foreach (var triangle in node.Leaf)
         {
+            if (triangle.Destructible >= 0 && DestructibleAlive?.Invoke(triangle.Destructible) == false) continue;
             var edge1 = triangle.B - triangle.A; var edge2 = triangle.C - triangle.A;
             var p = Vector3.Cross(dir, edge2); float determinant = Vector3.Dot(edge1, p);
             if (MathF.Abs(determinant) < 1e-8f) continue;

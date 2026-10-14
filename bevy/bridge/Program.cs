@@ -7,6 +7,7 @@ var host = new BridgeHost();
 var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, IncludeFields = true, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
 options.Converters.Add(new JsonStringEnumConverter());
 options.Converters.Add(new VectorJson());
+options.Converters.Add(new ByteArrayJson());
 string line;
 while ((line = Console.ReadLine()) != null)
 {

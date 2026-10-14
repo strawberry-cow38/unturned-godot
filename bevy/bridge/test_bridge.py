@@ -159,6 +159,57 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(8, saved['Day'])
             self.assertEqual(1, saved['DayLengthSeconds'])
 
+    def test_world_services_forage_reach_regrowth_and_save(self):
+        self.call('worldServices', resourceCount=2, resources=[
+            dict(index=0, rewardItemId=13, position=[0, 0, -1], resetSeconds=.4),
+            dict(index=1, rewardItemId=13, position=[50, 0, 0], resetSeconds=.4)])
+        self.call('action', name='forageResource', args=dict(index=1))
+        self.assertEqual([], self.pump()['resources']['dead'])
+        self.call('action', name='forageResource', args=dict(index=0))
+        state = self.pump()
+        self.assertEqual([0], state['resources']['dead'])
+        self.assertTrue(any(e['kind'] == 'resourceHarvested' for e in state['events']))
+        self.assertEqual([], self.pump(25)['resources']['dead'])
+        with tempfile.TemporaryDirectory() as folder:
+            path = str(Path(folder) / 'services.json')
+            self.call('save', path=path)
+            self.call('load', path=path)
+            self.call('action', name='forageResource', args=dict(index=0))
+            self.assertEqual([0], self.pump()['resources']['dead'])
+
+    def test_destructible_bullet_damage_removes_authoritative_occlusion(self):
+        self.call('worldServices', destructibleCount=1,
+                  destructibles=[dict(index=0, health=25, resetSeconds=.6)])
+        self.call('worldGeometry', meshes=[dict(destructibleIndex=0,
+                  vertices=[[-2, 0, -2], [2, 0, -2], [0, 4, -2]])])
+        self.call('action', name='fire', args={})
+        self.assertEqual([0], self.pump()['destructibles']['dead'])
+        ray = {'from': [0, 1.6, 0], 'to': [0, 1.6, -3]}
+        self.assertFalse(self.call('worldRay', **ray)['result']['hit'])
+        self.assertEqual([], self.pump(40)['destructibles']['dead'])
+        self.assertTrue(self.call('worldRay', **ray)['result']['hit'])
+
+    def test_real_map_services_register_all_and_do_not_duplicate_after_load(self):
+        request = dict(mapName='PEI', mapRoot='')
+        result = self.call('mapServices', **request)['result']
+        self.assertEqual(696, result['containerCount'])
+        self.assertEqual(11, result['fixtureCount'])
+        self.assertEqual(1, result['deadzoneCount'])
+        self.assertEqual(len(result['resources']), result['resourceCount'])
+        self.assertGreater(result['destructibleCount'], 1000)
+        self.assertEqual(result, self.call('mapServices', **request)['result'])
+        state = self.pump(10)
+        self.assertEqual(result['containerCount'], len(state['containers']))
+        containers = [o for o in result['objects'] if 'containerNetId' in o]
+        self.assertEqual(result['containerCount'], len(containers))
+        with tempfile.TemporaryDirectory() as folder:
+            path = str(Path(folder) / 'world.json')
+            self.call('save', path=path)
+            self.call('load', path=path)
+            restored = self.call('mapServices', **request)['result']
+            self.assertEqual(result['containerCount'], restored['containerCount'])
+            self.assertEqual(result['containerCount'], len(self.pump(10)['containers']))
+
     def test_loot_save_load_preserves_taken_points_and_streaming(self):
         # Minimal real retail binary format, so this exercises the original table
         # parser/roll and adapter lifecycle without requiring a Steam install.

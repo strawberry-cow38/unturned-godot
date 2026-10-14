@@ -30,6 +30,14 @@ namespace Godot
     public static class GD { public static void PushWarning(string message) => Console.Error.WriteLine(message); }
     public struct Vector3(float x, float y, float z) { public float X = x, Y = y, Z = z; }
     public struct Color(float r, float g, float b, float a = 1) { public float R = r, G = g, B = b, A = a; }
+    // These source callers intentionally use unseeded random streams. Preserve
+    // their probability/range contract; portable saves capture the rolled items.
+    public sealed class RandomNumberGenerator
+    {
+        readonly Random _random = new();
+        public float Randf() => _random.NextSingle();
+        public int RandiRange(int from, int to) => _random.Next(from, checked(to + 1));
+    }
 }
 namespace UnturnedGodot
 {

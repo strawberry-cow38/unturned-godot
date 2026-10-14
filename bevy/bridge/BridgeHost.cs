@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using SDG.NetTransport.Mem;
+using SDG.NetPak;
 using SDG.Unturned;
 using UnturnedGodot;
 using UnturnedGodot.Net;
@@ -30,8 +31,11 @@ public sealed class BridgeHost : IDisposable
     PlayerStanceSim _stance = new();
     RetailLootStreamer _loot;
     WorldEnvironment _environment;
+    WorldServices _services;
+    readonly List<JsonElement> _serviceSpecs = new();
     int _seed = 1337;
-    sealed record BridgeSave(int Seed, RetailLootStreamer.SaveData Loot);
+    bool _worldChanged;
+    sealed record BridgeSave(int Seed, RetailLootStreamer.SaveData Loot, JsonElement[] Services);
     public sealed record BridgeEvent(long Seq, string Kind, object Data);
     void Emit(string kind, object data) => _events.Add(new(++_eventSequence, kind, data));
     static readonly JsonSerializerOptions JsonOptions = new() { IncludeFields = true, PropertyNameCaseInsensitive = true, Converters = { new VectorJson() } };
@@ -50,7 +54,7 @@ public sealed class BridgeHost : IDisposable
         switch (op)
         {
             case "init":
-                Dispose(); _geometry.Clear();
+                Dispose(); _geometry.Clear(); _serviceSpecs.Clear();
                 _catalog.Load(Text(r, "contentRoot", Path.GetFullPath("game/content")));
                 _name = Text(r, "name", "Survivor"); _map = Text(r, "mapId", "bevy");
                 _seed = Int(r, "seed", 1337);
@@ -61,7 +65,7 @@ public sealed class BridgeHost : IDisposable
                 for (int n = 0; n < 6; n++) Tick();
                 return new { protocolVersion = 1, fixedDelta = SimClock.FixedDelta, catalogItems = _catalog.Count,
                     recipes = _catalog.Recipes.Count, movementHeights = new { stand = PlayerMovementDef.HEIGHT_STAND, crouch = PlayerMovementDef.HEIGHT_CROUCH, prone = PlayerMovementDef.HEIGHT_PRONE }, capabilities = new[] { "movement", "memSession", "inventory", "vitals", "combat", "crafting", "save", "terrain", "catalog", "worldGeometry", "worldLoot", "worldClock", "weather", "eventAck" },
-                    actions = Actions.Keys.Order().ToArray() };
+                    actions = Actions.Keys.Append("respawn").Order().ToArray() };
             case "simulate":
                 RequireSession();
                 return Simulate(r.TryGetProperty("input", out var input) ? input : r);
@@ -78,7 +82,24 @@ public sealed class BridgeHost : IDisposable
                 }
                 Tick(); return new { fixedDelta = SimClock.FixedDelta };
             case "snapshot": RequireSession(); return null;
-            case "catalog": RequireSession(); return new { items = _catalog.Metadata(), deployables = DeployableDef.All };
+            case "catalog": RequireSession(); return new { items = _catalog.Metadata(), deployables = DeployableDef.All, containers = ContainerSchema.All,
+                crops = FarmRegistry.All.Select(d => new { seedId = d.Id, growthSeconds = d.Growth, yieldItemId = d.Grow, name = CropRegistry.TryBySeed(d.Id, out string name) ? name : null }).ToArray() };
+            case "npcCatalog": RequireSession(); return new { characters = NpcCatalog.Characters, dialogues = NpcCatalog.Dialogues, vendors = NpcCatalog.Vendors, quests = NpcCatalog.Quests };
+            case "mapServices":
+                RequireSession();
+                string mapKey = Text(r, "mapName", "PEI") + "|" + Text(r, "mapRoot");
+                if (_services.MapKey == mapKey) return _services.MapResult;
+                if (_services.MapKey != null) throw new InvalidOperationException("A different map requires init");
+                var parsed = MapServices.Parse(r);
+                var mapSpec = JsonNode.Parse(parsed.Spec.GetRawText());
+                mapSpec["mapKey"] = mapKey;
+                mapSpec["mapObjects"] = JsonSerializer.SerializeToNode(parsed.Objects);
+                mapSpec["mapResources"] = JsonSerializer.SerializeToNode(parsed.Resources);
+                var persistedSpec = JsonSerializer.SerializeToElement(mapSpec);
+                var mapResult = _services.Register(persistedSpec); _serviceSpecs.Add(persistedSpec); _worldChanged = true; return mapResult;
+            case "worldServices":
+                RequireSession();
+                var registration = _services.Register(r); _serviceSpecs.Add(r.Clone()); _worldChanged = true; return registration;
             case "action":
                 RequireSession();
                 return Action(Text(r, "name"), r.TryGetProperty("args", out var args) ? args : default);
@@ -89,7 +110,7 @@ public sealed class BridgeHost : IDisposable
                 string path = Path.GetFullPath(Text(r, "path"));
                 Directory.CreateDirectory(Path.GetDirectoryName(path)!);
                 var saveJson = JsonNode.Parse(save.ToJson());
-                saveJson["BevyBridge"] = JsonSerializer.SerializeToNode(new BridgeSave(_seed, _loot?.Capture()));
+                saveJson["BevyBridge"] = JsonSerializer.SerializeToNode(new BridgeSave(_seed, _loot?.Capture(), _serviceSpecs.ToArray()));
                 File.WriteAllText(path + ".tmp", saveJson.ToJsonString()); File.Move(path + ".tmp", path, true);
                 _server.PendingSave = save;
                 return new { path, version = save.Version };
@@ -99,6 +120,7 @@ public sealed class BridgeHost : IDisposable
                 if (!WorldSave.TryParse(loadJson, _map, out var loaded, out var error)) throw new InvalidDataException(error);
                 var extra = JsonNode.Parse(loadJson)?["BevyBridge"]?.Deserialize<BridgeSave>();
                 if (extra != null) _seed = extra.Seed;
+                _serviceSpecs.Clear(); if (extra?.Services != null) _serviceSpecs.AddRange(extra.Services);
                 Dispose(); Start(loaded);
                 if (extra?.Loot != null)
                 {
@@ -115,7 +137,12 @@ public sealed class BridgeHost : IDisposable
                 return new { origin_x = coord.MinX, origin_z = coord.MinZ, cells = region.Cells, spacing = region.Spacing,
                     heights = region.Heights, normals = region.Normals, layers = region.Layers.Select(b => (int)b).ToArray(),
                     trees = region.Trees, roads = region.Roads, foliage = region.Foliage, boulders = region.Boulders,
-                    seaLevel = InfiniteTerrain.SeaLevel };
+                    roadClear = region.RoadClear, roadPatches = region.RoadPatches, roadMarks = region.RoadMarks, stopSigns = region.StopSigns,
+                    poles = region.Poles, pylons = region.Pylons, bridges = region.Bridges, rails = region.Rails, levelCrossings = region.LevelCrossings,
+                    crossingSigns = region.CrossingSigns, tunnels = region.Tunnels, tunnelMouths = region.TunnelMouths, holes = region.Holes,
+                    overTunnel = region.OverTunnel, tunnelRocks = region.TunnelRocks,
+                    treeModels = Enum.GetValues<InfiniteTerrain.TreeKind>().Select(k => Enumerable.Range(0, InfiniteTerrain.TreeVariants(k)).Select(v => InfiniteTerrain.TreeModel(k, v)).ToArray()).ToArray(),
+                    boulderModels = InfiniteTerrain.BoulderKit.Select(b => new { name = b.Name, radius = b.Radius, bottom = b.Bottom, height = b.Height }), seaLevel = InfiniteTerrain.SeaLevel };
             case "worldGeometry":
                 if (Bool(r, "replace", true)) _geometry.Clear();
                 if (r.TryGetProperty("terrain", out var terrainSpec))
@@ -163,30 +190,54 @@ public sealed class BridgeHost : IDisposable
 
     void Start(WorldSave save = null)
     {
+        _worldChanged = false;
         _network = new MemNetwork(); _movement = new PlayerMovementSim(); _stance = new PlayerStanceSim(); _recov = 0; _events.Clear(); _velocity = Vector3.zero; _lastRecipeState = null; _cachedRecipes = null;
         _server = new NetWorldServer(new MemServerTransport(_network));
         _environment = new WorldEnvironment(_server, _seed, save);
         _server.SpawnProvider = _ => _position;
+        _geometry.DestructibleAlive = i => i >= _server.Destructibles.Count || _server.Destructibles.IsAlive(i);
         _server.Combat.WorldRay = _geometry.Ray;
         _server.Combat.GroundHeight = _geometry.GroundHeight;
         _server.Combat.ResolveHeldGunProfile = owner =>
             _server.Players.TryGetHeldInput(owner, out var held) && _catalog.Guns.TryGetValue(held.HeldItemId, out var gun)
                 && _server.Inventories.TryGet(owner, out var owned) && owned.Inventory.getItemCount(held.HeldItemId) > 0 ? gun : null;
         DeployableNetSchema.RegisterAll(_server.Deployables.Schema);
+        _services = new WorldServices(_server);
+        _server.Vitals.SurvivalDrain = true;
+        foreach (var spec in _serviceSpecs) _services.Register(spec);
         _server.Transactions.Blueprints = _catalog.Recipes;
         _server.PendingSave = save;
         save?.ApplyWorld(_server, 0);
+        _services.AdoptSavedBits();
         _client = new NetWorldClient(new MemClientTransport(_network), _name);
         DeployableNetSchema.RegisterAll(_client.Deployables.Schema);
+        WorldServices.RegisterCrops(_client.Crops.Schema);
         _client.PlayerRecov += e => { _position = e.Pos; _velocity = e.Vel; _recov = e.RecovCounter; _movement.Velocity = WorldToLocal(_velocity, _yaw); _correctionVersion++; };
         _client.ConsoleResult += e => Emit("console", e);
         _client.HitConfirmed += e => Emit("hit", e);
         _client.CraftQueue_ += e => Emit("craftQueue", e);
         _client.PlayerFired += e => Emit("fire", e);
+        _client.PlayerMeleed += e => Emit("melee", e);
+        _client.PlayerGestured += e => Emit("gesture", e);
+        _client.StorageClosed += e => Emit("storageClosed", e);
         _client.ChatMessage += e => Emit("chat", e);
         _client.ImpactFx += e => Emit("impact", e);
-        _client.PlayerDied += e => Emit("death", e);
-        _client.PlayerRespawned += e => Emit("respawn", e);
+        _client.PlayerDied += e => { if (e.Victim == _client.PlayerId) _client.ClearCombatRing(); Emit("death", e); };
+        _client.PlayerRespawned += e => {
+            if (e.PlayerId == _client.PlayerId) { _client.ClearCombatRing(); _movement = new(); _stance = new(); _velocity = Vector3.zero; _held = 0; _correctionVersion++; }
+            Emit("respawn", e);
+        };
+        _client.CropPlanted += e => Emit("cropPlanted", e);
+        _client.CropHarvested += e => Emit("cropHarvested", e);
+        _client.ResourceHarvested += e => Emit("resourceHarvested", e);
+        _client.ResourceRespawned += e => Emit("resourceRespawned", e);
+        _client.ObjectDestroyed += e => Emit("objectDestroyed", e);
+        _client.ObjectRestored += e => Emit("objectRestored", e);
+        _client.NpcState += e => Emit("npcState", e);
+        _client.StorageOpened += e => Emit("storageOpened", e);
+        _client.CookerState += e => Emit("cookerState", e);
+        _client.ItemPickupDenied += e => Emit("pickupDenied", e);
+        _client.PlayerHurt += e => Emit("hurt", e);
         _client.Connect();
         for (int n = 0; n < 100 && _client.State != NetSessionState.Connected; n++) Tick();
         if (_client.State != NetSessionState.Connected) throw new InvalidOperationException("Local server handshake did not complete");
@@ -219,12 +270,32 @@ public sealed class BridgeHost : IDisposable
     {
         if (_client.State == NetSessionState.Connected)
             _client.SendPlayerState(_position, _yaw, _pitch, _velocity, (byte)(StanceCode(_movement.Stance) << 1), _grounded, _recov, _held);
-        _network.Tick(); _client.Tick(); _server.TickSimulation(); _loot?.Step(); _environment.Step(_server); _server.TickReplication();
+        _network.Tick(); _client.Tick(); _server.TickSimulation(); _loot?.Step(); _services.Step(); _environment.Step(_server);
+        if (_worldChanged)
+        {
+            // Map registration happens after the local client joins. Bitmap deltas
+            // cannot change their index space and large fixture blocks cannot fit
+            // an unreliable datagram. Reuse the original reliable join framing,
+            // after all mutation and before ordinary replication.
+            foreach (var peer in _server.Session.Peers)
+            {
+                _server.Composer.ForgetClient(peer.PlayerId);
+                var at = _server.Players.TryGetByOwner(peer.PlayerId, out var player) ? player.Pos : Vector3.zero;
+                byte[] snapshot = _server.Composer.Compose(_server.Session.CurrentTick, peer.PlayerId, at,
+                    maxBytes: NetProtocol.MaxReliableMessageBytes / 2);
+                peer.SendReliable(NetMessagePak.Pack(ReplicationIds.EventJoinSnapshot, w => {
+                    w.WriteUInt32((uint)snapshot.Length); w.WriteBytes(snapshot, 0, snapshot.Length);
+                }, bufferSize: snapshot.Length + 8));
+            }
+            _worldChanged = false;
+        }
+        _server.TickReplication();
         if (_client.Players.TryGetByOwner(_client.PlayerId, out var own)) _client.AckCombat(own.LastProcessedCombatSeq);
     }
 
     object Action(string name, JsonElement args)
     {
+        if (name == "respawn") return new { queued = _server.Combat.ServerRequestRespawn(_client.PlayerId, _server.Session.CurrentTick) };
         if (!Actions.TryGetValue(name, out var method)) throw new ArgumentException($"Unknown client action: {name}");
         var parameters = method.GetParameters(); var values = new object[parameters.Length];
         for (int n = 0; n < parameters.Length; n++)
@@ -282,6 +353,7 @@ public sealed class BridgeHost : IDisposable
                 stance = _movement.Stance.ToString().ToLowerInvariant(), hp = combat?.Health ?? 100, alive = combat?.Alive ?? true,
                 food = vitals?.Sim.Food ?? 1, water = vitals?.Sim.Water ?? 1, stamina = vitals?.Sim.Stamina ?? 1,
                 infection = vitals?.Sim.Infection ?? 0, oxygen = vitals?.Sim.Oxygen ?? 1,
+                bleeding = vitals?.Bleeding ?? false, broken = vitals?.Broken ?? false, radiation = vitals?.Sim.Radiation ?? 0,
                 ammo = _server.Combat.AmmoOf(_client.PlayerId), heldItemId = _held, correctionVersion = _correctionVersion },
             inventory = new { pages = inv?.items.Select(p => new { index = p.page, width = p.width, height = p.height,
                 items = p.items.Select(j => new { id = j.item.id, name = Assets.find(j.item.id)?.itemName ?? $"Item {j.item.id}",
@@ -296,6 +368,10 @@ public sealed class BridgeHost : IDisposable
             deployables = _client.Deployables.All.Select(e => new { netId = e.NetIdValue, defId = e.DefId, position = Array(e.Pos), yaw = e.YawDegrees, health = e.Health, fuel = e.Fuel, toggledOn = e.ToggledOn }).ToArray(),
             vehicles = _client.Vehicles.All.Select(e => new { netId = e.NetIdValue, position = Array(e.Pos), yaw = e.YawDegrees, typeId = e.TypeId }).ToArray(),
             zombies = _client.Zombies.All.Select(e => new { netId = e.NetIdValue, position = Array(e.Pos), yaw = e.YawDegrees, animState = e.AnimState, speciality = e.Speciality }).ToArray(),
+            crops = _client.Crops.All.Select(e => new { netId = e.NetIdValue, seedId = e.SeedId, position = Array(e.Pos), grown = _client.Crops.IsGrown(e, _client.Applier.LastAppliedServerTick), plantedAtTick = e.PlantedAtTick }).ToArray(),
+            resources = new { count = _client.Resources.Count, dead = Enumerable.Range(0, _client.Resources.Count).Where(i => !_client.Resources.IsAlive(i)).ToArray() },
+            destructibles = new { count = _client.Destructibles.Count, dead = Enumerable.Range(0, _client.Destructibles.Count).Where(i => !_client.Destructibles.IsAlive(i)).ToArray() },
+            containers = _client.Containers.All.Select(e => new { netId = e.NetIdValue, kindId = e.KindId, position = Array(e.Pos), yaw = e.YawDegrees, width = e.Width, height = e.Height, display = e.Display, doorsOpen = e.DoorsOpen, cookerOn = e.CookerOn }).ToArray(),
             events };
     }
 
@@ -314,12 +390,12 @@ public sealed class BridgeHost : IDisposable
     static Vector3 LocalToWorld(Vector3 v, float yaw) { float c = MathF.Cos(yaw * Mathf.Deg2Rad), s = MathF.Sin(yaw * Mathf.Deg2Rad); return new(c * v.x - s * v.z, v.y, -s * v.x - c * v.z); }
     static Vector3 WorldToLocal(Vector3 v, float yaw) => LocalToWorld(v, yaw); // orthogonal reflection is its own inverse
     static float[] Array(Vector3 v) => [v.x, v.y, v.z];
-    static string Text(JsonElement r, string key, string fallback = "") => r.ValueKind == JsonValueKind.Object && r.TryGetProperty(key, out var v) ? v.GetString() ?? fallback : fallback;
-    static int Int(JsonElement r, string key, int fallback = 0) => r.ValueKind == JsonValueKind.Object && r.TryGetProperty(key, out var v) ? v.GetInt32() : fallback;
-    static float Float(JsonElement r, string key, float fallback = 0) { var f = r.ValueKind == JsonValueKind.Object && r.TryGetProperty(key, out var v) ? v.GetSingle() : fallback; return float.IsFinite(f) ? f : throw new ArgumentException($"{key} must be finite"); }
-    static bool Bool(JsonElement r, string key, bool fallback = false) => r.ValueKind == JsonValueKind.Object && r.TryGetProperty(key, out var v) ? v.GetBoolean() : fallback;
-    static Vector3 Vec(JsonElement r, string key, Vector3 fallback = default) => r.TryGetProperty(key, out var v) ? Vec(v) : fallback;
-    static Vector3 Vec(JsonElement v) { if (v.GetArrayLength() != 3) throw new ArgumentException("Expected [x,y,z]"); var a = v.EnumerateArray().Select(e => e.GetSingle()).ToArray(); if (a.Any(f => !float.IsFinite(f))) throw new ArgumentException("Vector must be finite"); return new(a[0], a[1], a[2]); }
+    internal static string Text(JsonElement r, string key, string fallback = "") => r.ValueKind == JsonValueKind.Object && r.TryGetProperty(key, out var v) ? v.GetString() ?? fallback : fallback;
+    internal static int Int(JsonElement r, string key, int fallback = 0) => r.ValueKind == JsonValueKind.Object && r.TryGetProperty(key, out var v) ? v.GetInt32() : fallback;
+    internal static float Float(JsonElement r, string key, float fallback = 0) { var f = r.ValueKind == JsonValueKind.Object && r.TryGetProperty(key, out var v) ? v.GetSingle() : fallback; return float.IsFinite(f) ? f : throw new ArgumentException($"{key} must be finite"); }
+    internal static bool Bool(JsonElement r, string key, bool fallback = false) => r.ValueKind == JsonValueKind.Object && r.TryGetProperty(key, out var v) ? v.GetBoolean() : fallback;
+    internal static Vector3 Vec(JsonElement r, string key, Vector3 fallback = default) => r.TryGetProperty(key, out var v) ? Vec(v) : fallback;
+    internal static Vector3 Vec(JsonElement v) { if (v.GetArrayLength() != 3) throw new ArgumentException("Expected [x,y,z]"); var a = v.EnumerateArray().Select(e => e.GetSingle()).ToArray(); if (a.Any(f => !float.IsFinite(f))) throw new ArgumentException("Vector must be finite"); return new(a[0], a[1], a[2]); }
     InfiniteTerrain Terrain(int seed) { if (!_terrains.TryGetValue(seed, out var source)) _terrains[seed] = source = new InfiniteTerrain(seed); return source; }
     void RequireSession() { if (_server == null) throw new InvalidOperationException("Send init first"); }
     public void Dispose() { _loot = null; _client?.Disconnect(); _server?.TearDown(); _client = null; _server = null; }

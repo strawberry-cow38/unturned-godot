@@ -1,7 +1,18 @@
 // GunDef has exactly two Godot math dependencies. These value-only adapters let the
 // original parser compile unchanged without a Godot SDK, native library or runtime.
 namespace Godot;
-public static class Mathf { public static int CeilToInt(float v) => (int)MathF.Ceiling(v); public static int Clamp(int v, int min, int max) => Math.Clamp(v, min, max); public static float Clamp(float v, float min, float max) => Math.Clamp(v, min, max); public static int Max(int a, int b) => Math.Max(a, b); }
+public static class Mathf
+{
+    public static int CeilToInt(float v) => (int)MathF.Ceiling(v);
+    public static int FloorToInt(float v) => (int)MathF.Floor(v);
+    public static int RoundToInt(float v) => (int)MathF.Round(v);
+    public static int Clamp(int v, int min, int max) => Math.Clamp(v, min, max);
+    public static float Clamp(float v, float min, float max) => Math.Clamp(v, min, max);
+    public static int Max(int a, int b) => Math.Max(a, b);
+    public static float Max(float a, float b) => Math.Max(a, b);
+    public static float Cos(float v) => MathF.Cos(v);
+    public static float Sin(float v) => MathF.Sin(v);
+}
 public struct Vector2(float x, float y)
 {
     public float X = x, Y = y;

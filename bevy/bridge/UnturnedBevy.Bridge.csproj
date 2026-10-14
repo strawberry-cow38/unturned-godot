@@ -19,6 +19,23 @@
     <Compile Include="$(IntermediateOutputPath)Data/RetailLootData.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/WorldDefaults.g.cs" />
     <Compile Include="../../game/LevelSpawns.cs" Link="Source/LevelSpawns.cs" />
+    <Compile Include="../../game/inventory/FarmDef.cs" Link="Source/FarmDef.cs" />
+    <Compile Include="../../game/NpcCatalog.cs" Link="Source/NpcCatalog.cs" />
+    <Compile Include="../../game/GasStationServer.cs" Link="Source/GasStationServer.cs" />
+    <Compile Include="../../game/StationFuel.cs" Link="Source/StationFuel.cs" />
+    <Compile Include="../../game/inventory/ContainerSchema.cs" Link="Source/ContainerSchema.cs" />
+    <Compile Include="../../game/inventory/LootTables.cs" Link="Source/LootTables.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/CropData.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/FluidTankData.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/FoodSpoilData.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/ShelfData.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/ContainerKinds.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/ContainerNetSync.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/HolidayData.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/DestructibleDrops.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/RubbleData.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/DeadzoneData.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/ResourceData.g.cs" />
   </ItemGroup>
   <Target Name="ExtractOriginalData" BeforeTargets="BeforeCompile">
     <Exec Command="python3 &quot;$(MSBuildProjectDirectory)/extract_data.py&quot; &quot;$(MSBuildProjectDirectory)/$(IntermediateOutputPath)Data&quot;" />
