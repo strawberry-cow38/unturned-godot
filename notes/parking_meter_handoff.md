@@ -1,25 +1,32 @@
-# Parking meter — simplified revision
+# Parking meter — approved uniform-grey version
 
-Strawberry feedback1559859409117511702 (October14,2026): remove dial/slots, keep shape, square post, no post base. This replaces the first-review art in cefd4866 (cefd4866553bbe4d6fba02d199dad28e09670481). Approval/registration still pending.
+Strawberry's approval message `1559862625376927745`, October 14, 2026: keep the revised shape and apply the post's uniform grey throughout, then approved. **That colour condition is applied in this version.** Registration/publication is still a separate integration step.
 
-## Current asset
-Parking_Meter_0 keeps proposedGUIDd58deacfeb1f4e82849a07411a160c49. **24 geometric vertices /40 triangles**, one flat-shaded mesh/one opaque2x2nearest palette. **.52mW x .28mD x2.10mH**.
+## Final asset
 
-- Exact original eight-corner head outline and .28m head depth retained.
-- Face is completely blank: dial, marks, needle, coin-slot plate/recess and turning hardware removed.
-- Post is a plain **.14x.14m square**, from groundZ=0 to1.48m; it enters the head8cm.
-- Foot/base removed completely.
-- Metal greys176RGB fromChair_Metal_0 and130RGB fromStreet_Light_0 retained. Same2x2palette file; old pale/black lower-row texels now unused.
-- Native metres,+Zup,+Yfront,postXYcentre/baseZ0. StandardGodotconversionYup/front-Z. **Already upright: do NOT apply retailhedge/bench270degX correction.**
+- `Parking_Meter_0`, preserved GUID **`d58deacfeb1f4e82849a07411a160c49`**.
+- **24 geometric vertices / 40 triangles**, one flat-shaded mesh and one opaque 2×2 nearest-filter palette.
+- **0.52 m wide × 0.28 m deep × 2.10 m high**.
+- Blank original eight-corner head, square 0.14 × 0.14 m post, no dial/slots/hardware, **no foot or base**. Post goes from ground Z=0 to 1.48 m, entering the head by 0.08 m.
+- Every palette texel is now **sRGB (130,130,130)**, the exact post-grey swatch from `Street_Light_0`. No lighter head colour or baked per-face tint remains; ordinary lighting still shades the faces.
+- **Geometry OBJ is byte-for-byte unchanged from `99b15b46`**. This is a texture/status/documentation update only, not another silhouette change.
 
-Overall depth decreased.365->.28m because the front hardware is gone; the actual housing dimensions/silhouette are unchanged. No new GUID, no renamedprop. ReferencesMailbox_0/Chair_Metal_0 are real native-scale stock art, excluded from mainOBJ/GLB and registration.
+Native metres, **+Z up, +Y front**, post centred in X/Y, bottom/base at Z=0. Standard Godot conversion is Y-up/front −Z. **Already upright: do not apply the retail hedge/bench 270° X correction.** No new GUID or prop name.
 
 ## Integration
-Art-only revision: no catalog/registry, town placement, core/protocol or payment/timer code. Cow/Tiny own registration/placement AFTERapproval. Same requested kerbside/parking-pedestrian-edge metadata, avoiddriveways/doorways/aisles/throughroutes. Frontaccess.6m is an art placement suggestion, not a legal/accessibility rule. Do not use the superseded184triangleface-detailed first-review OBJ.
 
-## Review/source
-Three actualGodotcapturesfront/angle with native1xstockreferences +headclose; allfinalviewsvisuallyinspected throughMCP. Clean source restored afterward, noQAimagecards. No test suites run.
+Approved for registration/placement by Cow tools / Tinyclaw. The main game files are `Parking_Meter_0.obj` and the **latest uniform-grey** `Parking_Meter_0_tex.png`; do not pair the final model with the older two-tone palette or use the first face-detailed model.
 
-Editable Parking_Meter_Simple_Revision.blend has3meshes:meter+2REFERENCE__stockprops,3packedpalettes. Recipe/config/OBJ/GLB/nativeJSON/manifest and reproducibleGodotreview supplied. Recipe replacescurrentBlender scene: use separateemptyartscene.
+This delta implements **no** catalog/registry edits, road/parking placement, payment/timer interaction, core/protocol or save changes. Registration remains false in the art manifest until the integrator actually adds it. Suitable for kerbside parking or the pedestrian edge of a parking lot, controls/front toward accessible pavement, clear of doorways, driveway mouths, vehicle aisles and through-pedestrian routes. The 0.6 m front-access metadata is a placement suggestion, not a legal/accessibility rule.
 
-BranchStaging-Astra-Parking-Meter-Simple is basedcefd4866553bbe4d6fba02d199dad28e09670481; latestdelta ONLYMeterOBJ+2notes/manifestfiles. Bundleincludesfirstreviewcommittoo, requirespublished862306c7131ab2a71efd7b8cc45cf4f8fed5249f. No remote push or approval claimed.
+`REFERENCE__Mailbox_0` and `REFERENCE__Chair_Metal_0` are actual native-size stock scale references. They are excluded from the main OBJ/GLB and must not become new registered props.
+
+## Source and visual review
+
+Editable `Parking_Meter_Approved.blend` contains the approved meter plus those two clearly named reference-only props, three packed palettes, no temporary image cards. Recipe/config/native OBJ/GLB/JSON/manifest and a reproducible standalone Godot art-review project are supplied. Rebuild only in a separate empty Blender scene: the recipe replaces its current objects.
+
+Three actual Godot captures—full-height front, full-height angle, and head detail—were visually inspected through the private Blender viewport. Clean source restored after inspection. **No test suites run**; model/material edits, engine renders and visual art checks only.
+
+The first colour edit applied successfully but its GLB export hit an immediate context error after opening a Blender file. The current scene/material were inspected (uniform 130 grey, unchanged 24 vertices / 40 triangles); only the pending export/save was completed under an explicit viewport context. The scene edit was not blindly replayed.
+
+Art-only branch `Staging-Astra-Parking-Meter-Approved` is based on `99b15b4613d81e8a218ec6ffca0336e56636073c`. The latest delta changes only the palette plus notes/manifest. Bundle includes the preceding meter commits and requires published `862306c7131ab2a71efd7b8cc45cf4f8fed5249f`. No remote push or game registration is claimed by this handoff.
