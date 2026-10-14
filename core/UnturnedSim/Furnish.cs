@@ -73,6 +73,7 @@ namespace UnturnedSim
             // the solid corner cabinet (astraclaw; strawberry: "the solid one"): a 1.75 m square, its back corner at -X/-Y,
             // the diagonal front facing +X/+Y, the counters' own 1.35 m (Corner_Cabinet_1_Solid is the grey, Counter_2's)
             ["Corner_Cabinet_0_Solid"] = new(-0.875f, 0.875f, -0.875f, 0.875f, 1.35f),
+            ["Corner_Cabinet_1_Solid"] = new(-0.875f, 0.875f, -0.875f, 0.875f, 1.35f),
             ["Counter_1"] = new(-0.75f, 0.75f, -0.50f, 0.62f, 1.83f),       // the sink
             ["Disher_0"] = new(-0.75f, 0.75f, -0.75f, 0.62f, 1.50f),
             ["Tub_0"] = new(-0.85f, 0.85f, -1.67f, 1.60f, 1.73f),
@@ -1500,26 +1501,39 @@ namespace UnturnedSim
                     foreach (var (face, lo, hi) in Faces(nx, nz)) runs.Add((nx, nz, face, lo, hi));
                 runs = _rng.Keyed(runs).OrderByDescending(x => x.Item.Hi - x.Item.Lo).ThenBy(x => x.Key).Select(x => x.Item).ToList();
                 bool freeFridge = _rng.Chance(40), tryL = _rng.Chance(55);
+                // (and now and then the straight run starts from a corner cabinet: on the corner's own draws, CornerRng)
+                bool cornerRun = CornerRng.Chance(CornerRunChance), corners = true;
+                ulong mark = _rng.Mark;
+            lay:
                 // the seeded layouts first, then the plainer ones; each leaves the kitchen complete or as it found it
+                int want = MinPrep;
+                // (an L that keeps its cabinet without its second leg is topped up there and then: given up, the L
+                // goes on to its next corner)
+                bool Keeps() => TopUp(want) || want == 0;
                 var tries = new List<Func<bool>>();
-                // (an L with the corner cabinet in its corner, at any corner and either fridge, before a plain one)
-                if (tryL) tries.Add(() => Done(L(runs, freeFridge, true)) || Done(L(runs, !freeFridge, true)) || Done(L(runs, freeFridge)) || Done(L(runs, !freeFridge)));
+                // (an L with the corner cabinet in its corner, at any corner and either fridge, before a plain one -- and where
+                // no corner takes both its legs, one keeping its cabinet and its first leg, CornerL)
+                bool CornerL(bool ff) => corners && Done(L(runs, ff, true, Keeps));
+                if (tryL) tries.Add(() => Done(L(runs, freeFridge, true)) || Done(L(runs, !freeFridge, true)) || CornerL(freeFridge) || CornerL(!freeFridge) || Done(L(runs, freeFridge)) || Done(L(runs, !freeFridge)));
                 if (freeFridge) tries.Add(() => RunWithOwnFridge(runs));
+                // (its own try, so where it is given up the Row is tried exactly as it always was)
+                if (cornerRun && corners) tries.Add(() => Done(CornerRun(runs, freeFridge)));
                 tries.Add(() => Done(Row(runs, new[] { "Fridge_0", "Counter_1", "Disher_0", "Oven_0" })));
                 if (!freeFridge) tries.Add(() => RunWithOwnFridge(runs));
-                if (!tryL) tries.Add(() => Done(L(runs, false, true)) || Done(L(runs, true, true)) || Done(L(runs, false)) || Done(L(runs, true)));
+                if (!tryL) tries.Add(() => Done(L(runs, false, true)) || Done(L(runs, true, true)) || CornerL(false) || CornerL(true) || Done(L(runs, false)) || Done(L(runs, true)));
                 tries.Add(() => Pair(runs));
                 // and counter space to work on (strawberry: "require kitchens to have actual counter space", then "require
                 // counters - not just sinks in kitchens"): a layout counts only with a plain counter beside its sink or its
                 // stove (Worktop) and MinPrep plain counters in all, topped up beside the sink and the stove where the wall
-                // goes on; the plainer layouts get their turn before any kitchen makes do with the one counter
-                int want = MinPrep;
+                // goes on; the plainer layouts get their turn before any kitchen makes do with the one counter (want, above)
                 bool Attempt(Func<bool> t)
                 {
                     int n0 = _mine.Count;
+                    _cornered = false;
                     if (!t()) return false;
                     if (TopUp(want) || want == 0) return true;
                     foreach (var m in _mine.Skip(n0).ToList()) Remove(m);
+                    _cornered = false;
                     return false;
                 }
                 var three = new[] { "Counter_1", "Fridge_0", "Oven_0" };
@@ -1572,6 +1586,16 @@ namespace UnturnedSim
                 {
                     if (Dining(1) == null)
                     {
+                        // (a layout only round 12b lays -- a corner cabinet that only it puts in -- is a nicety, and the table
+                        // is not: where it would cost the table, the kitchen is laid again as it always was, drawing as if
+                        // the corner had never been tried)
+                        if (_cornered)
+                        {
+                            FurnishTrace?.Invoke($"corner cabinet in {_room}: given up for the table, the kitchen laid again as before");
+                            foreach (var m in _mine.ToList()) Remove(m);
+                            _rng.Rewind(mark); _cornered = false; corners = false;
+                            goto lay;
+                        }
                         Trim();
                         if (Dining(1) != null) TopUp(MinPrep);
                     }
@@ -1583,6 +1607,8 @@ namespace UnturnedSim
                     if (_area >= 54f || (_area >= 30f && _rng.Chance(60))) Island();
                     if (_area >= 72f) Dining();
                 }
+                // a corner left free may take a lone corner cabinet, once the kitchen has what it needs
+                LoneCorner(runs);
                 WindowsOverPieces();
                 CounterTops();
                 Clock();
@@ -1610,7 +1636,7 @@ namespace UnturnedSim
                 }
                 if (!Worktop(_mine))
                     foreach (var p in _mine.Where(m => m.Name is "Counter_1" or "Oven_0" && m.On == null).OrderBy(m => m.Name == "Counter_1" ? 0 : 1).ToList())
-                        if (Sides(p).Any(c => Put("Counter_0", new[] { c }) != null)) break;
+                        if (Sides(p).Any(c => Put("Counter_0", new[] { c }, null, 0f, TopUpRng) != null)) break;
                 for (bool grew = true; grew && Prep() < want;)
                 {
                     grew = false;
@@ -1618,7 +1644,7 @@ namespace UnturnedSim
                         foreach (var c in Sides(p))
                         {
                             if (Prep() >= want) return Worktop(_mine);
-                            if (Put("Counter_0", new[] { c }) != null) grew = true;
+                            if (Put("Counter_0", new[] { c }, null, 0f, TopUpRng) != null) grew = true;
                         }
                 }
                 // a run that fills its stretch of wall (doors at both ends) has nothing beside it: then a counter against
@@ -1627,7 +1653,7 @@ namespace UnturnedSim
                 var work = _mine.Where(m => m.Name is "Counter_1" or "Oven_0" or "Disher_0" or "Fridge_0").ToList();
                 double Near(float x, float z) => work.Count == 0 ? 0 : -work.Min(m => MathF.Abs(m.X - x) + MathF.Abs(m.Z - z));
                 while (Prep() < want && work.Count > 0
-                       && Put("Counter_0", Against("Counter_0", Side.Back).Where(c => Near(c.X, c.Z) > -6.0), (x, z, _) => Near(x, z)) != null) { }
+                       && Put("Counter_0", Against("Counter_0", Side.Back).Where(c => Near(c.X, c.Z) > -6.0), (x, z, _) => Near(x, z), 0f, TopUpRng) != null) { }
                 return Prep() >= want && Worktop(_mine);
             }
 
@@ -1696,9 +1722,12 @@ namespace UnturnedSim
             /// <summary>An L round an inside corner of the room: a counter in the corner, the sink and the dishwasher on
             /// that leg (the fridge closing it, unless it stands free); the other leg starting past the first's depth with a
             /// counter and the stove.</summary>
-            List<FurniturePlan> L(List<(int Nx, int Nz, float Face, float Lo, float Hi)> runs, bool freeFridge, bool corner = false)
+            List<FurniturePlan> L(List<(int Nx, int Nz, float Face, float Lo, float Hi)> runs, bool freeFridge, bool corner = false, Func<bool> keeps = null)
             {
                 const float Near = 0.15f;
+                // (given `keeps`, the pass only round 12b makes, after every corner has been tried as it always was: on the
+                // corner's own draws throughout, so where it is given up the kitchen goes on drawing as it always did)
+                var rng = keeps != null ? CornerRng : null;
                 foreach (var a in runs)
                     foreach (var b in runs)
                     {
@@ -1711,29 +1740,58 @@ namespace UnturnedSim
                         // pool"), both legs laid on from its sides; else the plain L, leg A's first piece in the corner
                         {
                             FurniturePlan cab = null;
-                            if (corner && (cab = CornerCabinet(a, b)) == null) continue;   // (the next corner)
+                            // (a corner its walls do not back is refused once the L stands, as the L it would have been is
+                            // given up: until then it draws as it always did -- in the corner pass, up front)
+                            if (corner && (cab = CornerCabinet(a, b, CornerCabinetFor(new[] { "Counter_0" }), rng, backing: rng != null)) == null) continue;   // (the next corner)
                             float off = CornerSide + 0.05f;
                             // (the cabinet IS the corner's counter: leg A starts at the sink beside it)
                             var legA = corner ? new List<string> { "Counter_1", "Disher_0" } : new List<string> { "Counter_0", "Counter_1", "Disher_0" };
                             if (!freeFridge) legA.Add("Fridge_0");
-                            var placed = Leg(a, (endA < 0 ? a.Lo : a.Hi) - (corner ? endA * off : 0f), -endA, legA, corner ? 2 : 3);
+                            var placed = Leg(a, (endA < 0 ? a.Lo : a.Hi) - (corner ? endA * off : 0f), -endA, legA, corner ? 2 : 3, rng);
                             if (placed == null) { if (cab != null) Remove(cab); continue; }
                             var cs = FurnitureCatalog.Sizes["Counter_0"];
                             float startB = (endB < 0 ? b.Lo : b.Hi) - endB * (corner ? off : cs.Y1 - cs.Y0 + 0.05f);
                             // (with the cabinet the corner is counter already: leg B needs only its stove, a counter after it
                             // where the wall goes on)
-                            var legB = corner ? Leg(b, startB, -endB, new List<string> { "Oven_0", "Counter_0" }, 1)
-                                              : Leg(b, startB, -endB, new List<string> { "Counter_0", "Oven_0", "Counter_0" }, 2);
+                            var legB = corner ? Leg(b, startB, -endB, new List<string> { "Oven_0", "Counter_0" }, 1, rng)
+                                              : Leg(b, startB, -endB, new List<string> { "Counter_0", "Oven_0", "Counter_0" }, 2, rng);
                             var sink = placed.FirstOrDefault(m => m.Name == "Counter_1"); var oven = legB?.FirstOrDefault(m => m.Name == "Oven_0");
                             var fridge = placed.FirstOrDefault(m => m.Name == "Fridge_0");
-                            if (legB != null && sink != null && oven != null && fridge == null && freeFridge)
+                            // a second leg that will not lay no longer costs the corner (strawberry, round 12b: "allow corner
+                            // cabinets even if there arent 2 cabinets connecting a corner"): the cabinet and leg A stay, the
+                            // stove against whichever wall keeps the triangle (on along leg A's where it has room) -- on the
+                            // corner's own draws, so a kitchen where that will not go either is laid as it always was
+                            bool fallback = keeps != null && corner && legB == null && sink != null;
+                            if (fallback)
                             {
-                                // the fridge on a wall of its own, keeping the triangle
-                                fridge = Put("Fridge_0", Against("Fridge_0", Side.Back).Where(c => Triangle(oven, sink, ("Fridge_0", c.X, c.Z, c.Yaw))), (x, z, _) => -MathF.Abs(D(x, z, sink) - 2.5f));
+                                // (the sink has the cabinet one side and the dishwasher the other: the counter to work at goes
+                                // beside the stove, so the stove goes only where one does)
+                                legB = StoveWithCounter(Against("Oven_0", Side.Back).Where(c => Triangle(fridge, sink, ("Oven_0", c.X, c.Z, c.Yaw)))
+                                                        .OrderBy(c => MathF.Abs(D(c.X, c.Z, sink) - 2.5f)));
+                                oven = legB?[0];
+                            }
+                            if (legB != null && sink != null && oven != null && fridge == null && (freeFridge || fallback))
+                            {
+                                // the fridge on a wall of its own, keeping the triangle (and in the L that keeps its cabinet,
+                                // wherever leg A had no room for it)
+                                fridge = Put("Fridge_0", Against("Fridge_0", Side.Back).Where(c => Triangle(oven, sink, ("Fridge_0", c.X, c.Z, c.Yaw))), (x, z, _) => -MathF.Abs(D(x, z, sink) - 2.5f),
+                                             0f, rng);
                                 if (fridge != null) legB.Add(fridge);
                             }
-                            if (legB != null && sink != null && oven != null && fridge != null && Triangle(fridge, sink, ("Oven_0", oven.X, oven.Z, oven.Yaw)))
-                                return placed.Concat(legB).Concat(cab != null ? new[] { cab } : Array.Empty<FurniturePlan>()).ToList();
+                            if (legB != null && sink != null && oven != null && fridge != null && Triangle(fridge, sink, ("Oven_0", oven.X, oven.Z, oven.Yaw))
+                                && (cab == null || CornerBacked(a, b)))
+                            {
+                                if (keeps == null) return placed.Concat(legB).Concat(cab != null ? new[] { cab } : Array.Empty<FurniturePlan>()).ToList();
+                                _cornered = true;
+                                int n1 = _mine.Count;
+                                if (keeps())
+                                {
+                                    if (fallback) FurnishTrace?.Invoke($"corner cabinet in {_room}: L kept without its second leg, the stove where it keeps the triangle");
+                                    return placed.Concat(legB).Concat(new[] { cab }).ToList();
+                                }
+                                foreach (var m in _mine.Skip(n1).ToList()) Remove(m);
+                                _cornered = false;
+                            }
                             foreach (var m in (legB ?? new List<FurniturePlan>()).Concat(placed)) Remove(m);
                             if (cab != null) Remove(cab);
                         }
@@ -1741,29 +1799,9 @@ namespace UnturnedSim
                 return null;
             }
 
-            const float CornerSide = 1.75f;
-            /// <summary>The corner cabinet in the inside corner where runs a and b meet: its back corner in the room's, a back
-            /// to each wall (its local -Y to one, -X to the other), the diagonal front to the room.</summary>
-            FurniturePlan CornerCabinet((int Nx, int Nz, float Face, float Lo, float Hi) a, (int Nx, int Nz, float Face, float Lo, float Hi) b)
-            {
-                const string Name = "Corner_Cabinet_0_Solid";
-                float cx = a.Nx != 0 ? a.Face : b.Face, cz = a.Nx != 0 ? b.Face : a.Face;
-                float off = CornerSide * 0.5f + 0.03f;
-                float x = cx + (a.Nx + b.Nx) * off, z = cz + (a.Nz + b.Nz) * off;
-                for (int k = 0; k < 4; k++)
-                {
-                    float yaw = k * 90f;
-                    var (fx, fz) = FrontOf(yaw); var (rx, rz) = RightOf(yaw);
-                    // front into the room off one wall, right off the other: its back corner is then the room's
-                    bool fits = (fx == a.Nx && fz == a.Nz && rx == b.Nx && rz == b.Nz) || (fx == b.Nx && fz == b.Nz && rx == a.Nx && rz == a.Nz);
-                    if (fits) return Put(Name, new[] { (x, z, yaw) });
-                }
-                return null;
-            }
-
             /// <summary>Pieces side by side along a wall run from `start`, laid in direction `dir` (+1/-1 along the run's
             /// axis); null (and nothing left standing) when fewer than `need` of them go in.</summary>
-            List<FurniturePlan> Leg((int Nx, int Nz, float Face, float Lo, float Hi) run, float start, int dir, List<string> names, int need)
+            List<FurniturePlan> Leg((int Nx, int Nz, float Face, float Lo, float Hi) run, float start, int dir, List<string> names, int need, Rng rng = null)
             {
                 float yaw = YawFacing(run.Nx, run.Nz);
                 var (rx, rz) = RightOf(yaw);
@@ -1781,7 +1819,7 @@ namespace UnturnedSim
                     if (MathF.Min(o + rsign * sz.X0, o + rsign * sz.X1) < run.Lo - 0.01f || MathF.Max(o + rsign * sz.X0, o + rsign * sz.X1) > run.Hi + 0.01f) break;
                     var at = run.Nx != 0 ? (across, o, yaw) : (o, across, yaw);
                     if (!Backed(name, at.Item1, at.Item2, at.Item3)) break;
-                    var m = Put(name, new[] { at });
+                    var m = Put(name, new[] { at }, null, 0f, rng);
                     if (m == null) break;
                     placed.Add(m);
                     c = far + dir * 0.04f;

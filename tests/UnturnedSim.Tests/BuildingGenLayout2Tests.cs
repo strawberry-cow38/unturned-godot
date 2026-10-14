@@ -182,6 +182,111 @@ namespace UnturnedSim.Tests
             Assert.That(livingWardrobes, Is.GreaterThan(livings / 2), "the extra ask placed nothing anywhere: the bedroom limit would be untested");
         }
 
+        /// <summary>A corner cabinet's place in its kitchen, read off what stands beside it: "L" with run pieces (a counter,
+        /// the sink, the stove, the dishwasher, the fridge) against both its free sides, "straight" against one, "lone" none.</summary>
+        static string CornerKind(FurniturePlan cab, IEnumerable<FurniturePlan> mine)
+        {
+            var fp = cab.Footprint; var axes = new HashSet<int>();
+            foreach (var m in mine.Where(m => m != cab && m.On == null && !m.Mounted && !m.Ceiling && (m.Name.StartsWith("Counter") || m.Name is "Oven_0" or "Disher_0" or "Fridge_0")))
+            {
+                var o = m.Footprint;
+                if ((MathF.Abs(o.X0 - fp.X1) < 0.15f || MathF.Abs(fp.X0 - o.X1) < 0.15f) && o.Z0 < fp.Z1 - 0.1f && o.Z1 > fp.Z0 + 0.1f) axes.Add(0);
+                if ((MathF.Abs(o.Z0 - fp.Z1) < 0.15f || MathF.Abs(fp.Z0 - o.Z1) < 0.15f) && o.X0 < fp.X1 - 0.1f && o.X1 > fp.X0 + 0.1f) axes.Add(1);
+            }
+            return axes.Count == 2 ? "L" : axes.Count == 1 ? "straight" : "lone";
+        }
+
+        // Corner cabinets wherever a kitchen has a corner for one (strawberry, round 12b: "allow corner cabinets even if there
+        // arent 2 cabinets connecting a corner. if the cabinet is in a corner, allow it to be a corner cabinet regardless of
+        // its connecting cabinets"). Every one, however it came: its back corner in an inside corner of its kitchen, both its
+        // backs against wall for the whole 1.75 m -- no doorway in either -- and nothing of it in a doorway's walk or a door's
+        // swing; the palette its counters' (the grey with Counter_2, the wood otherwise); and a lone one -- no run beside it
+        // -- crowds nothing of the work triangle: 0.9 m (where you stand at a counter) clear of the fridge, the sink and the
+        // stove, and not inside the triangle they make. And they come all three ways: in an L, at the end of a straight run,
+        // and alone -- and an L whose second leg would not lay keeps its cabinet and first leg, the stove going elsewhere.
+        // BREAK IT: drop the straight run from the kitchen's layouts; drop the lone cabinet; drop the L's fallback; let a lone
+        // one stand anywhere (no triangle check); let the cabinet go where a wall does not back it.
+        [Test]
+        public void CornerCabinetsStandInCorners()
+        {
+            var bad = new List<string>();
+            int kitchens = 0, withCab = 0;
+            var kinds = new Dictionary<string, int>();
+            foreach (var (spec, res) in All())
+                for (int f = 0; f < res.Floors; f++)
+                {
+                    var walls = WallsOn(res, f).ToList();
+                    var doorZones = new List<(float X0, float Z0, float X1, float Z1)>();
+                    foreach (var w in walls)
+                        foreach (var o in w.Openings.Where(o => o.V < 0.05f))
+                        {
+                            doorZones.Add(SideBox(w, o, true, -(w.Thickness * 0.5f + 1.2f), w.Thickness * 0.5f + 1.2f, 0f));
+                            if (o.HasDoor && o.Archetype != BuildingGen.ArchGarage) doorZones.AddRange(LeafBoxes(w, o));
+                        }
+                    // what is wall, standing: a wall's solid run less its doorways and open spans
+                    bool Wall(float x, float z) => walls.Any(w =>
+                    {
+                        var b = Box(w);
+                        if (x < b.X0 || x > b.X1 || z < b.Z0 || z > b.Z1) return false;
+                        var d = Dir(w); float u = (x - w.X) * d.X + (z - w.Z) * d.Z;
+                        return !w.Openings.Any(o => o.V < 0.05f && u > o.U - 0.01f && u < o.U1 + 0.01f);
+                    });
+                    foreach (var g in res.Layout.Where(g => g.Floor == f && g.Kind == RoomKind.Kitchen))
+                    {
+                        kitchens++;
+                        var mine = res.Furniture.Where(m => m.Room == g && m.On == null && !m.Mounted && !m.Ceiling).ToList();
+                        var cabs = mine.Where(m => m.Name.StartsWith("Corner_Cabinet")).ToList();
+                        if (cabs.Count > 0) withCab++;
+                        foreach (var cab in cabs)
+                        {
+                            string at = $"{Name(spec)} floor {f}: {cab}";
+                            string kind = CornerKind(cab, mine);
+                            kinds[kind] = kinds.GetValueOrDefault(kind) + 1;
+                            // its two backs: local -Y and -X, 0.875 m from its middle; each against wall all along, 0.1 m behind it
+                            var (rx, rz) = cab.Right; var (fx, fz) = cab.Front;
+                            foreach (var (bx, by, ax, ay) in new[] { (0f, -1f, 1f, 0f), (-1f, 0f, 0f, 1f) })
+                                for (float t = -0.8f; t <= 0.8f + 1e-3f; t += 0.2f)
+                                {
+                                    float lx = bx * 0.975f + ax * t, ly = by * 0.975f + ay * t;
+                                    float px = cab.X + rx * lx + fx * ly, pz = cab.Z + rz * lx + fz * ly;
+                                    if (!Wall(px, pz)) { bad.Add($"{at}: its back is not against wall at ({px:0.00},{pz:0.00})"); goto nextCab; }
+                                }
+                            if (doorZones.Any(z => Overlap(z, cab.Footprint))) bad.Add($"{at}: stands in a doorway's walk or a door's swing");
+                            string want = mine.Any(m => m.Name == "Counter_2") ? "Corner_Cabinet_1_Solid" : "Corner_Cabinet_0_Solid";
+                            if (cab.Name != want) bad.Add($"{at}: {cab.Name} with this kitchen's counters, not {want}");
+                            if (kind == "lone")
+                            {
+                                var three = mine.Where(m => m.Name is "Fridge_0" or "Counter_1" or "Oven_0").ToList();
+                                var grown = Grown(cab.Footprint, 0.9f);
+                                foreach (var t in three) if (Overlap(grown, t.Footprint)) bad.Add($"{at}: a lone one within 0.9 m of the {t.Name}");
+                                if (three.Count == 3)
+                                {
+                                    float S(FurniturePlan p, FurniturePlan q) => (q.X - p.X) * (cab.Z - p.Z) - (q.Z - p.Z) * (cab.X - p.X);
+                                    float s0 = S(three[0], three[1]), s1 = S(three[1], three[2]), s2 = S(three[2], three[0]);
+                                    if ((s0 > 0 && s1 > 0 && s2 > 0) || (s0 < 0 && s1 < 0 && s2 < 0)) bad.Add($"{at}: a lone one inside the work triangle");
+                                }
+                            }
+                        nextCab:;
+                        }
+                    }
+                }
+            // and an L whose second leg would not lay: told by the trace, on a sample (tracing every piece is slow)
+            int fallbacks = 0;
+            try
+            {
+                BuildingGen.FurnishTrace = t => { if (t.StartsWith("corner cabinet") && t.Contains("second leg")) fallbacks++; };
+                foreach (var spec in Specs().Where(s => s.Kind is BuildingKind.Residential or BuildingKind.Apartment && !s.FitPlot).Take(80)) BuildingGen.Generate(spec);
+            }
+            finally { BuildingGen.FurnishTrace = null; }
+            TestContext.Progress.WriteLine($"[gen-corner-cabinet] {withCab} of {kitchens} kitchens with a corner cabinet ({string.Join(", ", kinds.OrderBy(k => k.Key).Select(k => $"{k.Value} {k.Key}"))}); "
+                                         + $"{fallbacks} Ls in a sample of 80 homes kept theirs without their second leg; {bad.Count} problems{(bad.Count > 0 ? ": " + bad[0] : "")}");
+            Assert.That(bad, Is.Empty, string.Join("\n", bad.Take(10)));
+            Assert.That(kinds.GetValueOrDefault("L"), Is.GreaterThan(100), "too few corner cabinets in an L");
+            Assert.That(kinds.GetValueOrDefault("straight"), Is.GreaterThan(30), "too few at the end of a straight run");
+            Assert.That(kinds.GetValueOrDefault("lone"), Is.GreaterThan(30), "too few lone ones");
+            Assert.That(fallbacks, Is.GreaterThan(0), "no L kept its cabinet when its second leg would not lay");
+        }
+
         // What a sill is raised over, held to the meshes rather than to the generator's constants: a sink's worktop is a
         // plain counter's height (Counter_1's highest point in its front half, where you stand, is Counter_0's top; only the
         // faucet at its back stands higher), and a bed stands no higher than BedFoot past BedHeadboard from its head -- its

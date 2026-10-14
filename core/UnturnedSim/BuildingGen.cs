@@ -620,6 +620,9 @@ namespace UnturnedSim
             public List<(T Item, ulong Key)> Keyed<T>(IEnumerable<T> items) { var l = new List<(T, ulong)>(); foreach (var x in items) l.Add((x, Next())); return l; }
             public bool Chance(int percent) => Int(100) < percent;
             public void Shuffle<T>(IList<T> list) { for (int i = list.Count - 1; i > 0; i--) { int j = Int(i + 1); (list[i], list[j]) = (list[j], list[i]); } }
+            /// <summary>Where the stream is, and back to there: so a room can try a layout and, giving it up, draw as if it never had.</summary>
+            public ulong Mark => _s;
+            public void Rewind(ulong mark) => _s = mark;
         }
 
         /// <summary>One floor's cells: which room owns each, inside the floor's extent [Ux0, Ux1) x [0, D).</summary>
