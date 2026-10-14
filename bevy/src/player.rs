@@ -1,0 +1,709 @@
+//! One collision body, driven by the original movement simulation. Its resolved
+//! position is sent to the existing server authority after each Rapier step.
+use crate::{
+    LaunchOptions,
+    bridge::CoreBridge,
+    settings::{GameAction, Settings},
+    ui::{Screen, UiIntent, UiModel, UiState},
+    world::{WorldReady, WorldState},
+};
+use bevy::{
+    app::AppExit,
+    input::mouse::AccumulatedMouseMotion,
+    prelude::*,
+    window::{CursorGrabMode, CursorOptions, PrimaryWindow},
+};
+use bevy_rapier3d::prelude::*;
+use serde_json::{Value, json};
+
+pub struct PlayerPlugin;
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PlayerUpdate;
+impl Plugin for PlayerPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<Session>()
+            .init_resource::<PlayerInput>()
+            .init_resource::<GameSnapshot>()
+            .add_systems(Startup, spawn_player.after(WorldReady))
+            .add_systems(
+                Update,
+                (initialize_session, ui_intents, read_input, camera_follow)
+                    .chain()
+                    .in_set(PlayerUpdate)
+                    .after(crate::ui::UiUpdate)
+                    .after(WorldReady),
+            )
+            .add_systems(FixedUpdate, simulate.before(PhysicsSet::SyncBackend))
+            .add_systems(FixedUpdate, publish_body.after(PhysicsSet::Writeback));
+    }
+}
+
+#[derive(Resource, Default)]
+pub struct GameSnapshot(pub Value);
+
+#[derive(Resource)]
+struct Session {
+    initialized: bool,
+    failed: bool,
+    correction_version: u64,
+    heights: StanceHeights,
+}
+
+impl Default for Session {
+    fn default() -> Self {
+        Self {
+            initialized: false,
+            failed: false,
+            correction_version: 0,
+            heights: default(),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct StanceHeights {
+    stand: f32,
+    crouch: f32,
+    prone: f32,
+}
+impl Default for StanceHeights {
+    fn default() -> Self {
+        Self {
+            stand: 2.0,
+            crouch: 1.2,
+            prone: 0.8,
+        }
+    }
+}
+impl StanceHeights {
+    fn for_stance(self, stance: &str) -> f32 {
+        match stance {
+            "crouch" => self.crouch,
+            "prone" => self.prone,
+            _ => self.stand,
+        }
+    }
+    fn from_reply(value: &Value) -> Self {
+        let base = Self::default();
+        Self {
+            stand: valid_height(&value["stand"]).unwrap_or(base.stand),
+            crouch: valid_height(&value["crouch"]).unwrap_or(base.crouch),
+            prone: valid_height(&value["prone"]).unwrap_or(base.prone),
+        }
+    }
+}
+fn valid_height(value: &Value) -> Option<f32> {
+    value
+        .as_f64()
+        .filter(|v| v.is_finite() && *v >= 0.6 && *v <= 3.0)
+        .map(|v| v as f32)
+}
+
+#[derive(Resource, Default)]
+struct PlayerInput {
+    movement: Vec2,
+    jump: bool,
+    fire: bool,
+    reload: bool,
+    yaw: f32,
+    pitch: f32,
+    crouch_toggle: bool,
+    prone: bool,
+    stance: String,
+    held_item_id: u16,
+}
+
+#[derive(Component)]
+pub struct PlayerBody {
+    velocity: Vec3,
+    grounded: bool,
+    height: f32,
+    stance: String,
+    eye_height: f32,
+}
+#[derive(Component)]
+pub struct PlayerCamera;
+
+fn capsule(height: f32) -> Collider {
+    let radius = 0.3;
+    Collider::capsule(Vec3::Y * radius, Vec3::Y * (height - radius), radius)
+}
+
+fn spawn_player(mut commands: Commands, world: Res<WorldState>) {
+    commands.spawn((
+        Name::new("Local player body"),
+        PlayerBody {
+            velocity: Vec3::ZERO,
+            grounded: false,
+            height: 2.0,
+            stance: "stand".into(),
+            eye_height: 1.75,
+        },
+        Transform::from_translation(world.spawn),
+        RigidBody::KinematicPositionBased,
+        capsule(2.0),
+        KinematicCharacterController {
+            offset: CharacterLength::Absolute(0.015),
+            autostep: Some(CharacterAutostep {
+                max_height: CharacterLength::Absolute(0.35),
+                min_width: CharacterLength::Absolute(0.15),
+                include_dynamic_bodies: false,
+            }),
+            snap_to_ground: Some(CharacterLength::Absolute(0.2)),
+            max_slope_climb_angle: 50.0_f32.to_radians(),
+            min_slope_slide_angle: 55.0_f32.to_radians(),
+            ..default()
+        },
+    ));
+    commands.spawn((
+        Name::new("Player camera"),
+        Camera3d::default(),
+        PlayerCamera,
+        Projection::Perspective(PerspectiveProjection {
+            far: 2500.0,
+            ..default()
+        }),
+        Transform::from_translation(world.focus + Vec3::new(26.0, 17.0, 30.0))
+            .looking_at(world.focus, Vec3::Y),
+        DistanceFog {
+            color: Color::srgb(0.58, 0.72, 0.84),
+            falloff: FogFalloff::Linear {
+                start: 130.0,
+                end: 800.0,
+            },
+            ..default()
+        },
+    ));
+}
+
+fn initialize_session(
+    bridge: Res<CoreBridge>,
+    options: Res<LaunchOptions>,
+    world: Res<WorldState>,
+    mut session: ResMut<Session>,
+    mut model: ResMut<UiModel>,
+    mut ui: ResMut<UiState>,
+    mut snapshot: ResMut<GameSnapshot>,
+    mut input: ResMut<PlayerInput>,
+    mut bodies: Query<(
+        &mut Transform,
+        &mut PlayerBody,
+        &mut Collider,
+        &mut KinematicCharacterController,
+    )>,
+) {
+    if session.initialized || session.failed || !world.ready {
+        return;
+    }
+    model.map_name = options.0.map.clone();
+    ui.map = options.0.map.clone();
+    match bridge.request("init", json!({"contentRoot":options.0.content,"name":"Survivor","mapId":options.0.map,"spawn":world.spawn.to_array()})) {
+        Ok(response) if response["result"]["protocolVersion"] == 1 => {
+            model.reset_session();
+            model.adopt_snapshot(&response["state"]); snapshot.0 = response["state"].clone();
+            model.status = format!("{} · {} objects", world.description, world.object_count);
+            session.initialized = true;
+            session.correction_version=response["state"]["player"]["correctionVersion"].as_u64().unwrap_or(0);
+            session.heights=StanceHeights::from_reply(&response["result"]["movementHeights"]);
+            *input=PlayerInput {yaw:world.spawn_yaw,stance:"stand".into(),..default()};
+            for (mut transform, mut body,mut collider,mut controller) in &mut bodies {
+                transform.translation = world.spawn; body.velocity = Vec3::ZERO; body.grounded = false;
+                body.height=session.heights.stand;body.stance="stand".into();body.eye_height=1.75;
+                *collider=capsule(body.height);controller.translation=None;
+            }
+            if options.0.play { ui.screen = Screen::Playing; }
+        }
+        Ok(_) => fail(&mut session, &mut model, "Unsupported core bridge protocol".into()),
+        Err(error) => fail(&mut session, &mut model, error.to_string()),
+    }
+}
+
+fn fail(session: &mut Session, model: &mut UiModel, error: String) {
+    session.failed = true;
+    model.connected = false;
+    model.status = error.clone();
+    model.notice(error.clone());
+    error!("{error}");
+}
+
+fn ui_intents(
+    mut intents: MessageReader<UiIntent>,
+    bridge: Res<CoreBridge>,
+    mut options: ResMut<LaunchOptions>,
+    mut ui: ResMut<UiState>,
+    mut model: ResMut<UiModel>,
+    mut snapshot: ResMut<GameSnapshot>,
+    mut exit: MessageWriter<AppExit>,
+    mut player: Query<(&mut Transform, &mut PlayerBody)>,
+    mut config: ResMut<crate::world::WorldConfig>,
+    mut world: ResMut<WorldState>,
+    mut session: ResMut<Session>,
+) {
+    for intent in intents.read() {
+        let result = match intent {
+            UiIntent::Play { map } => {
+                if map != &options.0.map {
+                    if map.eq_ignore_ascii_case("procedural") {
+                        match bridge.request(
+                            "terrain",
+                            json!({"seed":options.0.seed,"x":0,"z":0,"lod":0}),
+                        ) {
+                            Ok(response) => {
+                                let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                                    .join(".local/terrain-selected.json");
+                                let saved = std::fs::create_dir_all(path.parent().unwrap())
+                                    .and_then(|_| {
+                                        std::fs::write(&path, response["result"].to_string())
+                                    });
+                                if let Err(error) = saved {
+                                    model.notice(error.to_string());
+                                    continue;
+                                }
+                                config.procedural_path = Some(path);
+                            }
+                            Err(error) => {
+                                model.notice(error.to_string());
+                                continue;
+                            }
+                        }
+                    } else {
+                        config.procedural_path = None;
+                    }
+                    config.map_name = map.clone();
+                    config.map_root = options
+                        .0
+                        .unturned
+                        .as_ref()
+                        .map(|p| p.join("Maps").join(map));
+                    options.0.map = map.clone();
+                    options.0.play = true;
+                    world.ready = false;
+                    session.initialized = false;
+                    session.failed = false;
+                    model.status = format!("Loading {map}");
+                    ui.screen = Screen::MainMenu;
+                } else if model.connected {
+                    ui.screen = Screen::Playing;
+                }
+                continue;
+            }
+            UiIntent::Resume => {
+                continue;
+            }
+            UiIntent::Quit => {
+                exit.write(AppExit::Success);
+                continue;
+            }
+            UiIntent::Disconnect => {
+                ui.screen = Screen::MainMenu;
+                continue;
+            }
+            UiIntent::Save => bridge.request("save", json!({"path":save_path(&options.0.map)})),
+            UiIntent::Load => bridge.request("load", json!({"path":save_path(&options.0.map)})),
+            UiIntent::Action { name, args } => {
+                bridge.request("action", json!({"name":name,"args":args}))
+            }
+        };
+        match result {
+            Ok(response) => {
+                if matches!(intent, UiIntent::Load) {
+                    if let Some(position) = vector(&response["state"]["player"]["position"]) {
+                        for (mut transform, mut body) in &mut player {
+                            transform.translation = position;
+                            body.velocity = Vec3::ZERO;
+                            body.grounded = false;
+                        }
+                    }
+                    model.notice("World loaded");
+                } else if matches!(intent, UiIntent::Save) {
+                    model.notice("World saved");
+                }
+                model.adopt_snapshot(&response["state"]);
+                snapshot.0 = response["state"].clone();
+            }
+            Err(error) => model.notice(error.to_string()),
+        }
+    }
+}
+
+fn save_path(map: &str) -> std::path::PathBuf {
+    let base = std::env::var_os("UG_BEVY_SAVES")
+        .or_else(|| std::env::var_os("UG_SAVE_DIR"))
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            Settings::path()
+                .parent()
+                .unwrap_or(std::path::Path::new("."))
+                .join("saves")
+        });
+    base.join(format!(
+        "{}.json",
+        map.chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+            .collect::<String>()
+    ))
+}
+
+fn read_input(
+    keys: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    motion: Res<AccumulatedMouseMotion>,
+    settings: Res<Settings>,
+    ui: Res<UiState>,
+    model: Res<UiModel>,
+    mut input: ResMut<PlayerInput>,
+    mut windows: Query<(&mut CursorOptions, &mut Window), With<PrimaryWindow>>,
+) {
+    let playing = !ui.captures_input() && model.connected;
+    for (mut cursor, mut window) in &mut windows {
+        cursor.visible = !playing;
+        cursor.grab_mode = if playing {
+            CursorGrabMode::Locked
+        } else {
+            CursorGrabMode::None
+        };
+        window.present_mode = if settings.vsync {
+            bevy::window::PresentMode::AutoVsync
+        } else {
+            bevy::window::PresentMode::AutoNoVsync
+        };
+    }
+    if !playing {
+        input.movement = Vec2::ZERO;
+        input.fire = false;
+        input.jump = false;
+        input.reload = false;
+        return;
+    }
+    let held = |action| settings.pressed(action, &keys, &mouse);
+    let pressed = |action| settings.just_pressed(action, &keys, &mouse);
+    input.movement = Vec2::new(
+        (held(GameAction::MoveRight) as i32 - held(GameAction::MoveLeft) as i32) as f32,
+        (held(GameAction::MoveForward) as i32 - held(GameAction::MoveBack) as i32) as f32,
+    );
+    input.jump |= pressed(GameAction::Jump);
+    input.fire = held(GameAction::Fire);
+    input.reload |= pressed(GameAction::Reload);
+    if pressed(GameAction::CrouchToggle) {
+        input.crouch_toggle = !input.crouch_toggle;
+        input.prone = false;
+    }
+    if pressed(GameAction::Prone) {
+        input.prone = !input.prone;
+        input.crouch_toggle = false;
+    }
+    input.stance = if input.prone {
+        "prone"
+    } else if held(GameAction::Crouch) || input.crouch_toggle {
+        "crouch"
+    } else if held(GameAction::Sprint) && model.stamina > 0.0 {
+        "sprint"
+    } else {
+        "stand"
+    }
+    .into();
+    input.yaw = (input.yaw - motion.delta.x * settings.mouse_sensitivity).rem_euclid(360.0);
+    let sign = if settings.invert_look_y { 1.0 } else { -1.0 };
+    input.pitch =
+        (input.pitch + motion.delta.y * settings.mouse_sensitivity * sign).clamp(-89.0, 89.0);
+    for (action, slot) in [(GameAction::Hotbar1, 0), (GameAction::Hotbar2, 1)] {
+        if pressed(action) {
+            input.held_item_id = model
+                .pages
+                .iter()
+                .find(|page| page.index == slot)
+                .and_then(|page| page.items.first())
+                .map_or(0, |item| item.id);
+        }
+    }
+}
+
+fn simulate(
+    bridge: Res<CoreBridge>,
+    ui: Res<UiState>,
+    mut session: ResMut<Session>,
+    mut input: ResMut<PlayerInput>,
+    mut model: ResMut<UiModel>,
+    context: ReadRapierContext,
+    mut bodies: Query<(
+        Entity,
+        &Transform,
+        &mut PlayerBody,
+        &mut Collider,
+        &mut KinematicCharacterController,
+    )>,
+) {
+    if !session.initialized || session.failed || simulation_paused(&ui) {
+        return;
+    }
+    let Ok((entity, transform, mut body, mut collider, mut controller)) = bodies.single_mut()
+    else {
+        return;
+    };
+    let desired_height = session.heights.for_stance(&input.stance);
+    let headroom = desired_height <= body.height
+        || context.single().is_ok_and(|context| {
+            has_headroom(
+                &context,
+                entity,
+                transform.translation,
+                body.height,
+                desired_height,
+            )
+        });
+    let response = bridge.request("simulate",json!({"input":{
+        "moveX":input.movement.x,"moveY":input.movement.y,"jump":input.jump,"grounded":body.grounded,
+        "stance":input.stance,"yaw":input.yaw,"pitch":input.pitch,"velocity":body.velocity.to_array(),"heldItemId":input.held_item_id,
+        "headroom":headroom,"capsuleHeight":body.height
+    }}));
+    input.jump = false;
+    match response {
+        Ok(response) => {
+            let Some(velocity) = vector(&response["result"]["velocity"]) else {
+                fail(
+                    &mut session,
+                    &mut model,
+                    "Core returned invalid movement velocity".into(),
+                );
+                return;
+            };
+            let Some(height) = valid_height(&response["result"]["height"]) else {
+                fail(
+                    &mut session,
+                    &mut model,
+                    "Core returned invalid capsule height".into(),
+                );
+                return;
+            };
+            body.stance = response["result"]["stance"]
+                .as_str()
+                .unwrap_or(&input.stance)
+                .to_owned();
+            body.eye_height = response["result"]["eyeHeight"]
+                .as_f64()
+                .map(|v| v as f32)
+                .filter(|v| v.is_finite() && *v > 0.0 && *v <= height)
+                .unwrap_or_else(|| eye_height(&body.stance));
+            if (height - body.height).abs() > 0.001 {
+                *collider = capsule(height);
+                body.height = height;
+            }
+            body.velocity = velocity;
+            let mut translation = velocity * 0.02;
+            if body.grounded && velocity.y <= 0.0 {
+                translation.y = -0.025;
+            }
+            controller.translation = Some(translation);
+            if input.fire && input.held_item_id != 0 {
+                let eye = body.eye_height;
+                let direction = Quat::from_euler(
+                    EulerRot::YXZ,
+                    input.yaw.to_radians(),
+                    input.pitch.to_radians(),
+                    0.0,
+                ) * Vec3::NEG_Z;
+                if let Err(error) = bridge.request("action",json!({"name":"fire","args":{"origin":(transform.translation+Vec3::Y*eye).to_array(),"dir":direction.to_array()}})) { model.notice(error.to_string()); }
+            }
+            if input.reload {
+                input.reload = false;
+                if let Err(error) = bridge.request("action", json!({"name":"reload","args":{}})) {
+                    model.notice(error.to_string());
+                }
+            }
+        }
+        Err(error) => fail(&mut session, &mut model, error.to_string()),
+    }
+}
+
+fn publish_body(
+    bridge: Res<CoreBridge>,
+    ui: Res<UiState>,
+    input: Res<PlayerInput>,
+    mut session: ResMut<Session>,
+    mut model: ResMut<UiModel>,
+    mut snapshot: ResMut<GameSnapshot>,
+    mut bodies: Query<(
+        &mut Transform,
+        &mut PlayerBody,
+        Option<&KinematicCharacterControllerOutput>,
+    )>,
+) {
+    if !session.initialized || session.failed || simulation_paused(&ui) {
+        return;
+    }
+    let Ok((mut transform, mut body, output)) = bodies.single_mut() else {
+        return;
+    };
+    if let Some(output) = output {
+        body.grounded = output.grounded;
+        body.velocity = output.effective_translation / 0.02;
+        if body.grounded && body.velocity.y < 0.0 {
+            body.velocity.y = 0.0;
+        }
+    }
+    match bridge.request("tick",json!({"input":{"position":transform.translation.to_array(),"velocity":body.velocity.to_array(),"grounded":body.grounded,"yaw":input.yaw,"pitch":input.pitch,"stance":body.stance,"heldItemId":input.held_item_id}})) {
+        Ok(response) => {
+            let state = &response["state"];
+            let version = state["player"]["correctionVersion"].as_u64().unwrap_or(0);
+            if version != session.correction_version {
+                if let Some(position) = vector(&state["player"]["position"]) { transform.translation = position; body.velocity = Vec3::ZERO; body.grounded = false; }
+                session.correction_version = version;
+            }
+            model.adopt_snapshot(state); snapshot.0 = state.clone();
+        }
+        Err(error) => fail(&mut session,&mut model,error.to_string()),
+    }
+}
+
+fn camera_follow(
+    settings: Res<Settings>,
+    ui: Res<UiState>,
+    input: Res<PlayerInput>,
+    world: Res<WorldState>,
+    body: Query<(&Transform, &PlayerBody), Without<PlayerCamera>>,
+    mut camera: Query<(&mut Transform, &mut Projection), (With<PlayerCamera>, Without<PlayerBody>)>,
+) {
+    let Ok((body, posture)) = body.single() else {
+        return;
+    };
+    for (mut transform, mut projection) in &mut camera {
+        if let Projection::Perspective(p) = &mut *projection {
+            p.fov = settings.field_of_view.to_radians();
+        }
+        if ui.screen != Screen::MainMenu
+            && !(ui.screen == Screen::Settings && ui.settings_return == Screen::MainMenu)
+        {
+            transform.translation = body.translation + Vec3::Y * posture.eye_height;
+            transform.rotation = Quat::from_euler(
+                EulerRot::YXZ,
+                input.yaw.to_radians(),
+                input.pitch.to_radians(),
+                0.0,
+            );
+        } else {
+            *transform = Transform::from_translation(world.focus + Vec3::new(26.0, 17.0, 30.0))
+                .looking_at(world.focus, Vec3::Y);
+        }
+    }
+}
+
+fn simulation_paused(ui: &UiState) -> bool {
+    matches!(ui.screen, Screen::MainMenu | Screen::Paused)
+        || (ui.screen == Screen::Settings
+            && matches!(ui.settings_return, Screen::MainMenu | Screen::Paused))
+}
+
+fn has_headroom(
+    context: &RapierContext<'_>,
+    owner: Entity,
+    feet: Vec3,
+    current_height: f32,
+    wanted_height: f32,
+) -> bool {
+    if wanted_height <= current_height {
+        return true;
+    }
+    // Probe the space swept by the head as the capsule grows. Keeping the probe
+    // above the old lower hemisphere avoids treating the supporting floor as a ceiling.
+    let probe = Collider::capsule(
+        Vec3::Y * (current_height - 0.3),
+        Vec3::Y * (wanted_height - 0.3),
+        0.295,
+    );
+    let mut blocked = false;
+    context.intersect_shape(
+        feet,
+        Quat::IDENTITY,
+        &probe,
+        QueryFilter::default()
+            .exclude_collider(owner)
+            .exclude_sensors(),
+        |_, _| {
+            blocked = true;
+            false
+        },
+    );
+    !blocked
+}
+fn eye_height(stance: &str) -> f32 {
+    match stance {
+        "crouch" => 1.2,
+        "prone" => 0.35,
+        _ => 1.75,
+    }
+}
+fn vector(value: &Value) -> Option<Vec3> {
+    let array: [f32; 3] = serde_json::from_value(value.clone()).ok()?;
+    let vector = Vec3::from_array(array);
+    vector.is_finite().then_some(vector)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn settings_keeps_the_parent_pause_state() {
+        let mut ui = UiState {
+            screen: Screen::Settings,
+            settings_return: Screen::Paused,
+            ..default()
+        };
+        assert!(simulation_paused(&ui));
+        ui.settings_return = Screen::MainMenu;
+        assert!(simulation_paused(&ui));
+        ui.screen = Screen::Inventory;
+        assert!(!simulation_paused(&ui));
+    }
+
+    #[test]
+    fn headroom_probe_rejects_ceiling_but_ignores_own_body_and_supporting_floor() {
+        use bevy::ecs::system::SystemState;
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            TransformPlugin,
+            RapierPhysicsPlugin::<NoUserData>::default(),
+        ));
+        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            std::time::Duration::from_millis(20),
+        ));
+        let owner = app
+            .world_mut()
+            .spawn((
+                RigidBody::KinematicPositionBased,
+                capsule(1.2),
+                Transform::default(),
+            ))
+            .id();
+        app.world_mut().spawn((
+            Collider::cuboid(5.0, 0.1, 5.0),
+            Transform::from_xyz(0.0, -0.1, 0.0),
+        ));
+        let ceiling = app
+            .world_mut()
+            .spawn((
+                Collider::cuboid(2.0, 0.1, 2.0),
+                Transform::from_xyz(0.0, 1.6, 0.0),
+            ))
+            .id();
+        for _ in 0..3 {
+            app.update();
+        }
+        {
+            let mut state = SystemState::<ReadRapierContext>::new(app.world_mut());
+            let read = state.get(app.world()).unwrap();
+            let context = read.single().unwrap();
+            assert!(!has_headroom(&context, owner, Vec3::ZERO, 1.2, 2.0));
+            assert!(has_headroom(&context, owner, Vec3::ZERO, 1.2, 0.8));
+        }
+        app.world_mut().despawn(ceiling);
+        for _ in 0..2 {
+            app.update();
+        }
+        let mut state = SystemState::<ReadRapierContext>::new(app.world_mut());
+        let read = state.get(app.world()).unwrap();
+        let context = read.single().unwrap();
+        assert!(has_headroom(&context, owner, Vec3::ZERO, 1.2, 2.0));
+    }
+}

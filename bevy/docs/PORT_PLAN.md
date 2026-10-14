@@ -71,7 +71,9 @@ not make its features playable.
 ## Known dependencies
 
 Retail map heightmaps and bundles referenced by the source are not all in Git.
-`UG_UNTURNED_DIR` or an explicit map path supplies them. The user has been asked
-for any local installation path; bundled content and procedural code remain
-available independently. Migration completion must not claim those absent assets
-were tested.
+`UG_UNTURNED_DIR` or an explicit map path supplies them. The user supplied
+`C:\Program Files (x86)\Steam\steamapps\common\Unturned`, accessible here under
+`/mnt/c/Program Files (x86)/Steam/steamapps/common/Unturned`. PEI terrain, foliage
+and player/loot spawns have been exercised from that install. Other maps and the
+remaining systems still require their own checks. See `VALIDATION.md` for
+baseline failures and the inspected capture evidence.
