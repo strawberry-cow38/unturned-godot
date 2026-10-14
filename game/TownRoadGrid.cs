@@ -3968,6 +3968,9 @@ namespace UnturnedGodot
             public Vector3 A, B; public float Width;
             /// <summary>A starts at the knee of an L inside its block, not at a street.</summary>
             public bool FromKnee;
+            /// <summary>A is where it stops on purpose, just past the last building that asked for it (TrimAlleysToRequests):
+            /// closed with a kerb, not a street end that could not open.</summary>
+            public bool Stub;
             public Vector3[] Corners()
             {
                 var d = B - A; d.Y = 0f;
@@ -3977,6 +3980,98 @@ namespace UnturnedGodot
         }
         /// <summary>The alleys the last MarkPlots laid.</summary>
         public readonly List<Alley> Alleys = new();
+        /// <summary>⭐ AN ALLEY ONLY AS FAR AS THE BUILDING THAT ASKED FOR IT (strawberry 2026-10-14: "have alleys only extend to the
+        /// building that requested them"). A block with a shop or an apartment block in it asks for a lane, and the layout is
+        /// done again with one laid right across the block, street to street (or an L) -- the plots fill round it. Then it is
+        /// cut back: each shop or apartment block beside it is reached from the street end nearer it, out to a pavement's
+        /// width past its far edge, and the lane runs only that far, its inner end closed with a kerb (Alley.Stub). Lanes
+        /// nobody beside them asked for go altogether, and what they leave is ground the plots' yards grow into (GrowPlots).
+        /// UG_TOWNFULLALLEYS=1 keeps them street to street.</summary>
+        public bool AlleysToRequester = System.Environment.GetEnvironmentVariable("UG_TOWNFULLALLEYS") != "1";
+        public float AlleyStubMin = 8f;
+        public int AlleysTrimmed, AlleysDropped; public float AlleyLengthFreed;
+        void TrimAlleysToRequests(RoadField roads)
+        {
+            AlleysTrimmed = AlleysDropped = 0; AlleyLengthFreed = 0f;
+            if (!AlleysOnRequest || !AlleysToRequester || Alleys.Count == 0) return;
+            // each shop or apartment block is the lane's in its own block -- the nearest leg of it, where it is an L. (Not
+            // only those backing straight onto it: the lane runs a deep plot's depth in from the frontages it parallels, so
+            // a shop's yard lies between.)
+            var mine = new List<Plot>[Alleys.Count];
+            for (int i = 0; i < Alleys.Count; i++) mine[i] = new List<Plot>();
+            var blockOf = new (int, int)?[Alleys.Count];
+            for (int i = 0; i < Alleys.Count; i++) blockOf[i] = BlockOf((Alleys[i].A + Alleys[i].B) * 0.5f);
+            foreach (var pl in Plots)
+            {
+                if (pl.Kind != PlotKind.Shop && pl.Kind != PlotKind.Apartments) continue;
+                var blk = BlockOf(pl.Centre);
+                if (!blk.HasValue) continue;
+                int best = -1; float bestD = float.MaxValue;
+                for (int i = 0; i < Alleys.Count; i++)
+                {
+                    if (!blockOf[i].HasValue || blockOf[i].Value != blk.Value) continue;
+                    var a = Alleys[i].A; var b = Alleys[i].B;
+                    var ab = new Vector2(b.X - a.X, b.Z - a.Z); float l2 = Mathf.Max(1e-6f, ab.LengthSquared());
+                    float u = Mathf.Clamp(((pl.Centre.X - a.X) * ab.X + (pl.Centre.Z - a.Z) * ab.Y) / l2, 0f, 1f);
+                    float d = new Vector2(a.X + ab.X * u - pl.Centre.X, a.Z + ab.Y * u - pl.Centre.Z).Length();
+                    if (d < bestD) { bestD = d; best = i; }
+                }
+                if (best >= 0) mine[best].Add(pl);
+            }
+            var keep = new List<Alley>();
+            for (int ai = 0; ai < Alleys.Count; ai++)
+            {
+                var al = Alleys[ai];
+                var d = al.B - al.A; d.Y = 0f; float L = d.Length();
+                if (L < 1f) continue;
+                d /= L;
+                var nrm = new Vector3(-d.Z, 0f, d.X);
+                // how far in from A a stub from A has to run, and from where (as arc from A) a stub from B has to start
+                float reachA = -1f, reachB = L + 1f;
+                // ⚠ ONLY FROM AN END THAT OPENS. An end on a diagonal street, or into a junction's corner, closes with a kerb
+                // (PlanLanes); a stub kept from there and cut short of the other was shut at both ends, a lane going nowhere.
+                // So each end is tried as PlanLanes will try it (the counters it bumps put back).
+                var dead = (DeadNoStreet, DeadGlancing, DeadNoCorner, DeadOffPavement, DeadOnMouth);
+                bool Opens(Vector3 end, Vector3 from) { var w = end - from; w.Y = 0f; return roads != null && OpenMouth(roads, end, w.Normalized()) != null; }
+                bool aOpens = !al.FromKnee && !al.Stub && Opens(al.A, al.B), bOpens = Opens(al.B, al.A);
+                (DeadNoStreet, DeadGlancing, DeadNoCorner, DeadOffPavement, DeadOnMouth) = dead;
+                if (!aOpens && !bOpens) { keep.Add(al); continue; }          // (neither opens: left as PlanLanes finds it)
+                bool aIsStreet = aOpens;
+                foreach (var pl in mine[ai])
+                {
+                    float lo = float.MaxValue, hi = float.MinValue;
+                    foreach (var q in pl.Boundary())
+                    {
+                        var r = q - al.A; r.Y = 0f;
+                        float sAt = r.Dot(d);
+                        lo = Mathf.Min(lo, sAt); hi = Mathf.Max(hi, sAt);
+                    }
+                    if (hi < 0f || lo > L) continue;
+                    lo = Mathf.Clamp(lo, 0f, L); hi = Mathf.Clamp(hi, 0f, L);
+                    bool fromA = aIsStreet && (!bOpens || (lo + hi) * 0.5f < L * 0.5f);
+                    if (fromA) reachA = Mathf.Max(reachA, hi + LaneWalkWidth);
+                    else reachB = Mathf.Min(reachB, lo - LaneWalkWidth);
+                }
+                if (reachA < 0f && reachB > L)
+                {
+                    AlleysDropped++; AlleyLengthFreed += L;                    // nobody beside it asked
+                    if (ProbeEverything) Log.Print($"[towngrid]   alley ({al.A.X:0},{al.A.Z:0})-({al.B.X:0},{al.B.Z:0}): {L:0} m, no shop or apartments along it -- dropped");
+                    continue;
+                }
+                if (reachA >= 0f) reachA = Mathf.Max(reachA, AlleyStubMin);
+                if (reachB <= L) reachB = Mathf.Min(reachB, L - AlleyStubMin);
+                if (reachA >= reachB - 1e-3f || (reachB <= 0f && !aIsStreet)) { keep.Add(al); continue; }   // (the stubs meet: all of it)
+                float kept = 0f;
+                if (reachA >= 0f) { keep.Add(new Alley { A = al.A + d * reachA, B = al.A, Width = al.Width, Stub = true }); kept += reachA; }
+                if (reachB <= L) { keep.Add(new Alley { A = al.A + d * Mathf.Max(0f, reachB), B = al.B, Width = al.Width, Stub = true }); kept += L - Mathf.Max(0f, reachB); }
+                AlleysTrimmed++; AlleyLengthFreed += L - kept;
+                if (ProbeEverything)
+                    Log.Print($"[towngrid]   alley ({al.A.X:0},{al.A.Z:0})-({al.B.X:0},{al.B.Z:0}): {L:0} m cut to {kept:0} m -- "
+                            + $"{(reachA >= 0f ? $"{reachA:0} m in from ({al.A.X:0},{al.A.Z:0})" : "")}{(reachA >= 0f && reachB <= L ? " and " : "")}{(reachB <= L ? $"{L - Mathf.Max(0f, reachB):0} m in from ({al.B.X:0},{al.B.Z:0})" : "")}");
+            }
+            Alleys.Clear(); Alleys.AddRange(keep);
+            Log.Print($"[towngrid] alleys to the buildings that asked: {AlleysTrimmed} cut back, {AlleysDropped} dropped (no shop or apartments along them), {AlleyLengthFreed:0} m of lane given back to the yards");
+        }
         /// <summary>How wide a back lane is, kerb to kerb of its two pavements: two 3 m cells. ⚠ DERIVED from the lane
         /// that is built in it (LaneHalf, LaneWalkWidth), so the strip the plots are kept off and the road laid down it
         /// cannot drift apart.</summary>
@@ -4411,6 +4506,7 @@ namespace UnturnedGodot
                 again |= parkingAsks.Count > 0;
                 if (!again) break;                // nobody asked: the first layout stands
             }
+            TrimAlleysToRequests(roads);
             PlanLanes(roads);
             int stepped = LayParkingBays(roads);
             GrowPlots(roads);
@@ -5926,7 +6022,7 @@ namespace UnturnedGodot
                         if (!taken[k] && Alleys[k].FromKnee && Flat(Alleys[k].A, al.A) < 0.1f) { partner = k; break; }
                 Vector3 endA, endB, kneeAt = Vector3.Zero; bool streetA, knee = partner >= 0;
                 if (knee) { taken[partner] = true; endA = al.B; kneeAt = al.A; endB = Alleys[partner].B; streetA = true; }
-                else { endA = al.A; endB = al.B; streetA = !al.FromKnee; }
+                else { endA = al.A; endB = al.B; streetA = !al.FromKnee && !al.Stub; }
                 Vector3 OutAt(Vector3 end, Vector3 from) { var d = end - from; d.Y = 0f; return d.Normalized(); }
                 var outA = OutAt(endA, knee ? kneeAt : endB);
                 var outB = OutAt(endB, knee ? kneeAt : endA);
