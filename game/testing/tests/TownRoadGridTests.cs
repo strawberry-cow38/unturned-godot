@@ -658,6 +658,10 @@ namespace UnturnedGodot.Testing
                     float diagFront = 0f;
                     foreach (int r in gD.DiagonalRoads) diagFront = Mathf.Max(diagFront, rfD.RoadHalfWidth(r) + walkD.RoadGap + walkW + gD.PlotSetback);
                     int notConvex = 0, onLand = 0, intoLots = 0, zoned = 0, zoneOut = 0, offLatticeT = 0, notFronting = 0;
+                    // ...and its WHOLE building area into the wedge's corners ("make sure it fills right to the corners"): the
+                    // outline brought in by the yard, and the 3 m cells that fit in it -- more than the rectangle holds
+                    int areaShort = 0, areaOut = 0, cellsOut = 0, cellsShort = 0; float fillWorst = float.MaxValue;
+                    static float AreaOf(Vector3[] c) { float t2 = 0f; for (int k = 0; k < c.Length; k++) { var a = c[k]; var b = c[(k + 1) % c.Length]; t2 += a.X * b.Z - b.X * a.Z; } return Mathf.Abs(t2) * 0.5f; }
                     foreach (var t in tris)
                     {
                         var ol = t.Outline;
@@ -672,6 +676,35 @@ namespace UnturnedGodot.Testing
                         if (PlotTouches(ol)) onLand++;
                         foreach (var o in plots)
                             if (!ReferenceEquals(o, t) && TownRoadGrid.QuadsOverlap(ol, o.Boundary(), 0.02f)) { intoLots++; break; }
+                        if (t.BuildOutline != null)
+                        {
+                            foreach (var q in t.BuildOutline)
+                            {
+                                if (!TownRoadGrid.InsidePoly(ol, q)) { areaOut++; break; }
+                                float edgeDist = float.MaxValue;
+                                for (int e = 0; e < ol.Length; e++)
+                                {
+                                    var a = ol[e]; var b = ol[(e + 1) % ol.Length];
+                                    var ab = new Vector2(b.X - a.X, b.Z - a.Z);
+                                    float u = Mathf.Clamp(((q.X - a.X) * ab.X + (q.Z - a.Z) * ab.Y) / Mathf.Max(1e-6f, ab.LengthSquared()), 0f, 1f);
+                                    edgeDist = Mathf.Min(edgeDist, new Vector2(a.X + ab.X * u - q.X, a.Z + ab.Y * u - q.Z).Length());
+                                }
+                                if (edgeDist < gD.TriangleYard - 0.02f) { areaOut++; break; }
+                            }
+                            float fill = AreaOf(t.BuildOutline) / Mathf.Max(1f, t.Width * t.Depth);
+                            if (t.Width > 0f && fill < 1.2f) areaShort++;
+                            if (t.Width > 0f) fillWorst = Mathf.Min(fillWorst, fill);
+                            if (t.BuildCells != null && t.Width > 0f)
+                            {
+                                var fl = t.Front - t.Along * (t.Width * 0.5f);
+                                foreach (var (ci, cj) in t.BuildCells)
+                                    foreach (var (di, dj) in new[] { (0, 0), (1, 0), (1, 1), (0, 1) })
+                                        if (!TownRoadGrid.InsidePoly(t.BuildOutline, fl + t.Along * (3f * (ci + di)) - t.Facing * (3f * (cj + dj)))) { cellsOut++; goto nextCells; }
+                                nextCells:
+                                if (t.BuildCells.Count < Mathf.RoundToInt(t.Width / 3f) * Mathf.RoundToInt(t.Depth / 3f)) cellsShort++;
+                            }
+                        }
+                        else areaShort++;
                         if (t.Width > 0f && t.Depth > 0f)
                         {
                             zoned++;
@@ -704,6 +737,9 @@ namespace UnturnedGodot.Testing
                     gT0.LaySidewalkCornersOn(rfT0, World, wT0, out _);
                     gT0.MarkPlots(null, rfT0);
                     int tris0 = 0; foreach (var pl in gT0.Plots) if (pl.Outline != null) tris0++;
+                    T.Check($"...each with its whole building area into its corners: {areaOut} outside its wedge or inside its yard, {areaShort} holding no more than its rectangle "
+                            + $"(the least {fillWorst:0.00}x it), {cellsOut} with 3 m cells outside it, {cellsShort} with fewer cells than the rectangle",
+                            tris.Count >= 2 && areaOut == 0 && areaShort == 0 && cellsOut == 0 && cellsShort == 0);
                     T.Check($"triangle lots in the avenue's wedges: {tris.Count} laid ({zoned} with a building zone); {notConvex} not convex, {onLand} on a road/pavement/slab, "
                             + $"{intoLots} into another lot, {zoneOut} zones outside their wedge, {offLatticeT} off the 3 m lattice, {notFronting} not fronting the avenue -- "
                             + $"{gD.UnzonedCells} buildable cells left, against {gT0.UnzonedCells} with none ({tris0} laid: control)",
