@@ -66,7 +66,7 @@ namespace UnturnedSim
             var sb = new StringBuilder();
             sb.Append(Header).Append('\n');
             sb.Append("# wall <x> <y> <z> <yawDeg> <length> <thickness> <materialId> [height] [pitchDeg] [kind] [gableRise] [texel] [insetL0 insetL1 insetR0 insetR1] [matBack texelBack]\n");
-            sb.Append("#   open <u> <v> <width> <height> <depth> <archetype> [glazed tint hp indestructible broken] [doorProp doorOpen] [barr <style>] [swing <start|end> <front|back>]\n");
+            sb.Append("#   open <u> <v> <width> <height> <depth> <archetype> [glazed tint hp indestructible broken] [doorProp doorOpen] [barr <style>] [swing <start|end> <front|back>] [action <double|pocket>]\n");
             sb.Append("# building <kind>            -- Residential|Commercial|Industrial|Misc|Apartment (the volume is DERIVED from the walls)\n");
             sb.Append("# room <kind> <x> <z> [floor] -- a designation ANCHORED at a point inside the room it labels\n");
             sb.Append("# door <front|back> <x> <z> [floor] -- a marked door to outside, at the middle of its opening\n");
@@ -136,6 +136,11 @@ namespace UnturnedSim
                         // reads back as the door it always was, and a default door writes the line it always did
                         if (o.HasDoor && (o.DoorHingeAtStart || o.DoorOpensFront))
                             sb.Append(" swing ").Append(o.DoorHingeAtStart ? "start" : "end").Append(' ').Append(o.DoorOpensFront ? "front" : "back");
+                        // how it moves (round 12b): keyed, and only for a door that does not simply swing, so a swing
+                        // door -- every door before this -- writes the line it always did, and an older reader, which
+                        // skips what it does not know, loads a double-acting or pocket door as the swing door it was hung as
+                        if (o.HasDoor && o.DoorAction != DoorAction.Swing)
+                            sb.Append(" action ").Append(o.DoorAction == DoorAction.Pocket ? "pocket" : "double");
                         sb.Append('\n');
                     }
                 }
@@ -286,6 +291,10 @@ namespace UnturnedSim
                         op.DoorHingeAtStart = p[si + 1] == "start";
                         op.DoorOpensFront = p[si + 2] == "front";
                     }
+                    // how it moves: a KEYED "action <double|pocket>"; no token, or a word it does not know, is a swing door
+                    int ai = System.Array.IndexOf(p, "action");
+                    if (ai >= 0 && ai + 1 < p.Length && op.HasDoor)
+                        op.DoorAction = p[ai + 1] switch { "double" => DoorAction.DoubleSwing, "pocket" => DoorAction.Pocket, _ => DoorAction.Swing };
                     cur.Openings.Add(op);
                 }
                 // anything else: a newer editor's field. Skip it and keep the building.

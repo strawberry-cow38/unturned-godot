@@ -154,6 +154,79 @@ namespace UnturnedGodot.Testing
     }
 
     /// <summary>
+    /// A door that swings both ways (round 12b, strawberry: "swinging away from the player when they open them") over a REAL
+    /// client/server pair: a wall's double-acting door in the world the dedicated server builds, opened by a client's intent
+    /// from one side and then the other. The SERVER decides which way, from where it has that player standing, and its own
+    /// leaf swings that way -- away from them -- and the client hears the same side in the event and the snapshot, so every
+    /// screen agrees. Then the server's leaf shuts back to the middle.
+    /// </summary>
+    public class NetDoubleDoorRoundTrip : GameTest
+    {
+        public override string Name => "net.double_door_roundtrip";
+        public override double TimeoutSimSeconds => 30;
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                syncLoad: true, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready", world.Ready);
+
+            // a wall with a double-acting door, built as round 12b's generator hangs one, in the world before the server
+            // registers what is in it -- its middle at the origin, the wall's front (+Z) its front
+            var wall = new WallSurface { Length = 8f, Height = UnturnedSim.WallOpenings.DoorHeight, Thickness = UnturnedSim.WallOpenings.InteriorThickness, Position = new Vector3(-4f, 0f, 0f) };
+            World.AddChild(wall);
+            wall.Openings.Add(new UnturnedSim.WallOpening(2.75f, 0f, 2.5f, 2.85f) { DoorProp = "Door_Pine", DoorAction = UnturnedSim.DoorAction.DoubleSwing });
+            wall.Rebuild();
+            ObjectDoor door = null; Node3D host = null;
+            foreach (var c in wall.GetChildren()) if (c is Node3D h && wall.OpeningIndexForDoorHost(h) == 0) { host = h; foreach (var d in h.GetChildren()) if (d is ObjectDoor od) door = od; }
+            T.Check("the wall built its double-acting door", door != null && door.DoubleActing);
+            if (door == null) yield break;
+
+            var net = new MemNetwork(7074);
+            var a = new NetWorldClient(new MemClientTransport(net), "opener", contentHash: NetContent.Hash);
+            var pump = new DelegateSimStep((t, dt) => { net.Tick(); a.Tick(); }, "l1.clientpump");
+            world.Sim.Sim.Add(pump);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), WorldRoot = World };
+            World.AddChild(ded);
+            a.Connect();
+            yield return Until(() => a.State == NetSessionState.Connected, 5);
+            T.Check("client joined", a.State == NetSessionState.Connected);
+            T.Check($"the wall's door was registered as server-authoritative (net id {door.NetId})", door.NetId != 0);
+
+            var heard = new List<ObjectDoorStateEvent>();
+            a.ObjectDoorState += e => heard.Add(e);
+            foreach (float side in new[] { 1f, -1f })
+            {
+                // stand on that side -- where the SERVER has the player is what decides
+                ded.Server.Players.ServerTeleport(a.PlayerId, new UVector3(0.4f, 0f, side * 1.8f), ded.Server.Session.CurrentTick);
+                int had = heard.Count;
+                T.Check("the intent went out", a.SendToggleObjectDoor(door.NetId));
+                yield return Until(() => heard.Count > had, 5);
+                bool rev = heard.Count > had && heard[^1].Reverse;
+                T.Check($"from {(side > 0 ? "+Z" : "-Z")}, the client heard it open{(heard.Count > had ? $", reverse {heard[^1].Reverse}" : "")}", heard.Count > had && heard[^1].Open);
+                yield return Until(() => door.IsOpen && door.DebugSwing >= 0.999f, 5);
+                var l = BuildToolDoorSwing.LeafIn(wall, host);
+                bool away = side > 0 ? l.Z1 < 0.5f && l.Z0 < -1.5f : l.Z0 > -0.5f && l.Z1 > 1.5f;
+                T.Check($"the SERVER's own leaf swung away from the opener at {(side > 0 ? "+Z" : "-Z")}: z {l.Z0:0.00}..{l.Z1:0.00}", away);
+                T.Check($"...the side the client was told (reverse {rev} == the node's {door.Reversed})", rev == door.Reversed);
+                yield return Until(() => a.InteractableState.ObjectDoorOpen(door.NetId) && a.InteractableState.ObjectDoorReversed(door.NetId) == rev, 5);
+                T.Check("...and the snapshot a late joiner reads carries the same side", a.InteractableState.ObjectDoorOpen(door.NetId) && a.InteractableState.ObjectDoorReversed(door.NetId) == rev);
+
+                had = heard.Count;
+                a.SendToggleObjectDoor(door.NetId);
+                yield return Until(() => heard.Count > had && !door.IsOpen && door.DebugSwing <= 0.001f, 5);
+                l = BuildToolDoorSwing.LeafIn(wall, host);
+                T.Check($"...and it shut back to the middle: z {l.Z0:0.00}..{l.Z1:0.00}", !door.IsOpen && l.Z0 > -0.4f && l.Z1 < 0.4f);
+            }
+
+            world.Sim.Sim.Remove(pump);
+            a.Disconnect();
+        }
+    }
+
+    /// <summary>
     /// A door broken on the server STOPS EXISTING on a client. Both halves, because either alone is useless.
     ///
     /// Found in review (cow tools) and worse than reported: the server had no barricade damage path at all,

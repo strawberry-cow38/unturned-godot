@@ -1071,9 +1071,10 @@ namespace UnturnedGodot.Net
 
         void OnToggleObjectDoor(ushort sender, ToggleObjectDoorCommand cmd)
         {
-            if (!_interactables.ToggleObjectDoor(cmd.NetId, out bool open)) return;
+            // (v61: from where the sender stands, so a double-acting door swings away from them on every screen)
+            if (!_interactables.ToggleObjectDoor(cmd.NetId, TryGetSenderPos(sender, out var at) ? at : (Vector3?)null, out bool open, out bool reverse)) return;
             _broadcast(NetMessagePak.Pack(ReplicationIds.EventObjectDoorState,
-                new ObjectDoorStateEvent { NetId = cmd.NetId, Open = open }.Write));
+                new ObjectDoorStateEvent { NetId = cmd.NetId, Open = open, Reverse = reverse }.Write));
         }
 
         void OnSitSeat(ushort sender, SitSeatCommand cmd)

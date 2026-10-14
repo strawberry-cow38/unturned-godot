@@ -144,18 +144,23 @@ namespace UnturnedGodot.Net
     }
 
     /// <summary>A prop door's open bit. No lock, because a prop door has none -- that is the whole reason
-    /// this is not DoorStateEvent.</summary>
+    /// this is not DoorStateEvent. v61: and which way it swung -- a double-acting door (a wall's door the building
+    /// generator hangs between a kitchen and its dining room, a shop and its stock room) opens AWAY from whoever opened
+    /// it, which the server decides from where that player stands (ServerInteractables.ToggleObjectDoor), so every
+    /// screen swings it the same way. Always false for a door that swings one way.</summary>
     public struct ObjectDoorStateEvent
     {
         public uint NetId;
         public bool Open;
-        public void Write(NetPakWriter w) { w.WriteUInt32(NetId); w.WriteBit(Open); }
+        public bool Reverse;
+        public void Write(NetPakWriter w) { w.WriteUInt32(NetId); w.WriteBit(Open); w.WriteBit(Reverse); }
         public static bool TryRead(NetPakReader r, out ObjectDoorStateEvent e)
         {
             e = default;
             if (!r.ReadUInt32(out uint id)) return false;
             if (!r.ReadBit(out bool open)) return false;
-            e = new ObjectDoorStateEvent { NetId = id, Open = open };
+            if (!r.ReadBit(out bool reverse)) return false;
+            e = new ObjectDoorStateEvent { NetId = id, Open = open, Reverse = reverse };
             return true;
         }
     }
@@ -198,6 +203,10 @@ namespace UnturnedGodot.Net
             public uint NetId;
             public Vector3 Pos;
             public bool Open;
+            /// <summary>v61: a double-acting door (zero SwingSide: one that swings one way): SwingSide is the way its leaf
+            /// goes when it swings as built, and Reverse is set when it swung the other way -- away from its opener.</summary>
+            public Vector3 SwingSide;
+            public bool Reverse;
         }
 
         readonly Dictionary<uint, ServerObjectDoor> _objectDoors = new Dictionary<uint, ServerObjectDoor>();
@@ -313,13 +322,18 @@ namespace UnturnedGodot.Net
 
         public int ObjectDoorCount => _objectDoors.Count;
 
-        public void RegisterObjectDoor(uint netId, Vector3 pos, bool open = false)
+        /// <summary>(`swingSide`: a double-acting door's -- the way its leaf goes when it swings as built; null for a door
+        /// that swings one way.)</summary>
+        public void RegisterObjectDoor(uint netId, Vector3 pos, bool open = false, Vector3? swingSide = null)
         {
             if (netId == 0) return;
             if (_objectDoors.TryGetValue(netId, out var had)) { had.Pos = pos; _objectDoors[netId] = had; return; }   // a re-register must not slam a door someone opened
-            _objectDoors[netId] = new ServerObjectDoor { NetId = netId, Pos = pos, Open = open };
+            _objectDoors[netId] = new ServerObjectDoor { NetId = netId, Pos = pos, Open = open, SwingSide = swingSide ?? Vector3.zero };
             Stamp();
         }
+
+        /// <summary>Did this double-acting door swing the other way from as built (always false for one that swings one way)?</summary>
+        public bool IsObjectDoorReversed(uint netId) => _objectDoors.TryGetValue(netId, out var d) && d.Reverse;
 
         public void RemoveObjectDoor(uint netId) { if (_objectDoors.Remove(netId)) Stamp(); }
 
@@ -343,13 +357,23 @@ namespace UnturnedGodot.Net
         public bool CanToggleObjectDoor(uint netId, Vector3 senderPos)
             => _objectDoors.TryGetValue(netId, out var d) && (d.Pos - senderPos).magnitude <= InteractReach;
 
-        public bool ToggleObjectDoor(uint netId, out bool open)
+        public bool ToggleObjectDoor(uint netId, out bool open) => ToggleObjectDoor(netId, null, out open, out _);
+
+        /// <summary>Toggle as a player standing at `opener` (v61). A double-acting door OPENS AWAY from them (strawberry,
+        /// round 12b: "some may swing both ways, swinging away from the player when they open them"): decided here, from
+        /// the server's idea of where they stand -- the same place the reach check reads -- rather than by each client,
+        /// so every screen swings it the same way and a client cannot pick the side. It SHUTS back to the middle from
+        /// whichever side it is on, so a close keeps the side. A player standing exactly in the door's plane gets the side
+        /// it was built to swing to.</summary>
+        public bool ToggleObjectDoor(uint netId, Vector3? opener, out bool open, out bool reverse)
         {
-            open = false;
+            open = false; reverse = false;
             if (!_objectDoors.TryGetValue(netId, out var d)) return false;
             d.Open = !d.Open;
+            if (d.Open && opener is Vector3 at && d.SwingSide != Vector3.zero)
+                d.Reverse = Vector3.Dot(at - d.Pos, d.SwingSide) > 0f;   // standing where it would swing: the other way
             _objectDoors[netId] = d;
-            open = d.Open;
+            open = d.Open; reverse = d.Reverse;
             Stamp();
             return true;
         }
@@ -550,6 +574,7 @@ namespace UnturnedGodot.Net
         readonly Dictionary<uint, ushort> _bedOwners = new Dictionary<uint, ushort>();
         readonly Dictionary<uint, ushort> _seatOccupants = new Dictionary<uint, ushort>();
         readonly Dictionary<uint, bool> _objectDoors = new Dictionary<uint, bool>();
+        readonly HashSet<uint> _objectDoorsReversed = new HashSet<uint>();   // v61: the double-acting doors swung the other way
 
         public struct DoorView { public bool Open, Locked; }
 
@@ -565,6 +590,7 @@ namespace UnturnedGodot.Net
         public IEnumerable<KeyValuePair<uint, ushort>> ReplicaSeats => _seatOccupants;
         public int ObjectDoorCount => _objectDoors.Count;
         public bool ObjectDoorOpen(uint netId) => _objectDoors.TryGetValue(netId, out var o) && o;
+        public bool ObjectDoorReversed(uint netId) => _objectDoorsReversed.Contains(netId);
         public IEnumerable<KeyValuePair<uint, bool>> ReplicaObjectDoors => _objectDoors;
         public IEnumerable<KeyValuePair<uint, DoorView>> ReplicaDoors => _doors;
         public IEnumerable<KeyValuePair<uint, ushort>> ReplicaBeds => _bedOwners;
@@ -617,6 +643,7 @@ namespace UnturnedGodot.Net
             {
                 w.WriteUInt32(d.Key);
                 w.WriteBit(d.Value);
+                w.WriteBit(Source.IsObjectDoorReversed(d.Key));   // v61: which way a double-acting one swung
             }
         }
 
@@ -655,12 +682,14 @@ namespace UnturnedGodot.Net
                 _seatOccupants[netId] = who;
             }
             if (!r.ReadUInt16(out ushort odoorCount)) return;
-            _objectDoors.Clear();
+            _objectDoors.Clear(); _objectDoorsReversed.Clear();
             for (int i = 0; i < odoorCount; i++)
             {
                 if (!r.ReadUInt32(out uint netId)) return;
                 if (!r.ReadBit(out bool open)) return;
+                if (!r.ReadBit(out bool reverse)) return;
                 _objectDoors[netId] = open;
+                if (reverse) _objectDoorsReversed.Add(netId);
             }
             Version++;
         }
@@ -677,7 +706,7 @@ namespace UnturnedGodot.Net
                 foreach (var st in Source.SeatOccupants)
                     h = NetHash.MixUInt32(h, st.Key ^ ((uint)st.Value << 16));   // <<16, not <<8: a bed and a seat sharing a NetId space must not hash alike
                 foreach (var d in Source.ObjectDoors)
-                    h = NetHash.MixUInt32(h, d.Key ^ (d.Value ? 0x4000u : 0u));   // its own bit again, for the same reason
+                    h = NetHash.MixUInt32(h, d.Key ^ (d.Value ? 0x4000u : 0u) ^ (Source.IsObjectDoorReversed(d.Key) ? 0x8000u : 0u));   // its own bits again, for the same reason
                 return h;
             }
             var doorIds = new List<uint>(_doors.Keys); doorIds.Sort();
@@ -691,7 +720,7 @@ namespace UnturnedGodot.Net
                 h = NetHash.MixUInt32(h, id ^ ((uint)_seatOccupants[id] << 16));
             var odoorIds = new List<uint>(_objectDoors.Keys); odoorIds.Sort();
             foreach (var id in odoorIds)
-                h = NetHash.MixUInt32(h, id ^ (_objectDoors[id] ? 0x4000u : 0u));
+                h = NetHash.MixUInt32(h, id ^ (_objectDoors[id] ? 0x4000u : 0u) ^ (_objectDoorsReversed.Contains(id) ? 0x8000u : 0u));
             return h;
         }
     }

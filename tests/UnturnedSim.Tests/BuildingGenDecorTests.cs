@@ -56,7 +56,7 @@ namespace UnturnedSim.Tests
                         doorZones.Add((MathF.Min(p.X, q.X) - MathF.Abs(nrm.X) * d, MathF.Min(p.Z, q.Z) - MathF.Abs(nrm.Z) * d,
                                        MathF.Max(p.X, q.X) + MathF.Abs(nrm.X) * d, MathF.Max(p.Z, q.Z) + MathF.Abs(nrm.Z) * d));
                         // (out of the face the door opens to: DoorOpensFront, BuildingGenLayoutTests.LeafBox)
-                        if (o.HasDoor && o.Archetype != BuildingGen.ArchGarage) doorZones.Add(LeafBox(w, o));
+                        if (o.HasDoor && o.Archetype != BuildingGen.ArchGarage) doorZones.AddRange(LeafBoxes(w, o));
                     }
                 }
                 var here = res.Furniture.Where(m => m.Floor == f).ToList();

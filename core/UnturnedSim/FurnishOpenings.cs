@@ -42,13 +42,39 @@ namespace UnturnedSim
         /// (<see cref="Swing"/>): a sink's.</summary>
         public static float Stand(string name) => name == "Counter_1" ? SinkStand : 0f;
 
-        /// <summary>A window raised over a counter run keeps its sill this far above the tallest piece in front of it.</summary>
+        /// <summary>A window raised over what stands in front of it keeps its sill this far above the tallest of it.</summary>
         public const float SillOverCounter = 0.1f;
         /// <summary>A window raised over a counter keeps at least this much glass; less and it is not raised (a room with
         /// another window loses it instead).</summary>
         public const float LeastGlass = 0.6f;
-        /// <summary>What a kitchen's run is made of: what stands with its back to the wall at worktop height.</summary>
-        static bool CounterRun(string name) => name is "Counter_0" or "Counter_1" or "Counter_2" or "Oven_0" or "Disher_0" or "Corner_Cabinet_0_Solid" or "Corner_Cabinet_1_Solid";
+        /// <summary>A bed in front of a window rises to BedFoot -- its pillows; the mattress and footboard are lower -- but for
+        /// the headboard at its head: in Bed_0's and Bed_1's OBJs nothing more than BedHeadboard in from the head end (the
+        /// headboard is 0.243 m deep) stands over 1.195 m, and the headboard is their full 1.67.</summary>
+        public const float BedFoot = 1.20f, BedHeadboard = 0.25f;
+
+        /// <summary>How high a piece stands in front of the window `o` of wall `w` (strawberry, round 12b: "anything may alter a
+        /// window's sil, but sink counters push up to a regular counter's height, not counting its faucet"): its top, but a
+        /// sink is a plain counter's height -- Counter_1's worktop is Counter_0's 1.35, and only its faucet, at the back, rises
+        /// to 1.83 -- and a bed is BedFoot unless its headboard is in front of the glass. A chair is not furniture standing
+        /// against a window: it is pulled up to a desk or a table and moves when used, and a sill raised over its back would
+        /// make the window round it.</summary>
+        public static float TopBefore(FurniturePlan m, WallPlan w, WallOpening o)
+        {
+            if (m.Name.StartsWith("Chair")) return 0f;
+            if (m.Name == "Counter_1") return FurnitureCatalog.Sizes["Counter_0"].H;
+            var s = FurnitureCatalog.Sizes[m.Name];
+            if (m.Name is not ("Bed_0" or "Bed_1")) return s.H;
+            // the headboard, in plan, along the wall
+            var (rx, rz) = m.Right; var (fx, fz) = m.Front;
+            var (c, sn) = PlanTrig.CosSin(w.Yaw);
+            float a = float.MaxValue, b = float.MinValue;
+            foreach (var (x, y) in new[] { (s.X0, s.Y0), (s.X1, s.Y0), (s.X0, s.Y0 + BedHeadboard), (s.X1, s.Y0 + BedHeadboard) })
+            {
+                float px = m.X + rx * x + fx * y, pz = m.Z + rz * x + fz * y, u = (px - w.X) * c - (pz - w.Z) * sn;
+                a = MathF.Min(a, u); b = MathF.Max(b, u);
+            }
+            return b > o.U + 0.01f && a < o.U1 - 0.01f ? s.H : BedFoot;
+        }
 
         /// <summary>The floor in front of an opening, both sides of its wall: `deep` past either face, `pad` past either end.
         /// A window's is where nothing tall stands (FloorPlan.KeepTall), a doorway's where nothing stands.</summary>
@@ -81,12 +107,41 @@ namespace UnturnedSim
                     MathF.Max(bx + nx * near, bx + nx * far), MathF.Max(bz + nz * near, bz + nz * far));
         }
 
+        /// <summary>Every floor a hung door's leaf sweeps (LeafSweep): its one side for a swing door, both for a double-acting
+        /// one, none for a pocket door.</summary>
+        public static IEnumerable<(float X0, float Z0, float X1, float Z1)> LeafSweeps(WallPlan w, WallOpening o, float from = 0f)
+        {
+            if (o.DoorAction == DoorAction.Pocket) yield break;
+            yield return LeafSweep(w, o, from);
+            if (o.DoorAction == DoorAction.DoubleSwing) { var other = o; other.DoorOpensFront = !o.DoorOpensFront; yield return LeafSweep(w, other, from); }
+        }
+
         /// <summary>How far a hung door's leaf reaches off its wall's mid-plane, open: the leaf is fitted to the clear span
         /// inside the frame (WallSurface.ClearOpeningSize: the opening less a TrimProfile at each jamb) and swings about its
         /// thickness's middle, which stands on the mid-plane (WallSurface.PlaceDoor) -- so a 2.5 m doorway's leaf reaches
         /// 2.1 m, not the 2.85 the furniture keeps clear past the wall's face. What a door can open into is what the leaf
         /// meets, not the room kept for the furniture.</summary>
         public static float LeafReach(WallOpening o) => o.Width - 2f * WallOpenings.TrimProfile;
+
+        /// <summary>The floor kept beyond an open leaf's edge to walk past it: the player's capsule and 0.1, as BedAccess. A
+        /// swing that leaves less -- a door opening into a hall one cell wide, whose far wall stands 2.75 m off the door's
+        /// mid-plane against a 2.1 m leaf -- is cramped, and a pocket door goes there where its wall takes one (HangDoors).</summary>
+        public const float PassBy = BedAccess;
+
+        /// <summary>Which doors swing both ways (strawberry, round 12b: "some may swing both ways"): the doors food and stock
+        /// are carried through. In a home, between its kitchen, dining room and living room; in a business, between the shop
+        /// floor and the back of house (the stock room, the back hall, a warehouse or workshop), and between the working rooms
+        /// of an industrial one (warehouse, workshop, storage, garage). Never a bedroom's, a bathroom's, a closet's or an
+        /// office's: those are shut for privacy, and a door that swings back to the middle does not stay shut against you.
+        /// Both its sides must take the leaf with room to walk past it (HangDoors).</summary>
+        public static bool DoubleActing(BuildingKind building, RoomKind a, RoomKind b)
+        {
+            static bool Serving(RoomKind k) => k is RoomKind.Kitchen or RoomKind.DiningRoom or RoomKind.LivingRoom;
+            static bool BackOfHouse(RoomKind k) => k is RoomKind.Storage or RoomKind.Hall or RoomKind.Warehouse or RoomKind.Workshop;
+            static bool Working(RoomKind k) => k is RoomKind.Warehouse or RoomKind.Workshop or RoomKind.Storage or RoomKind.Garage;
+            if (building is BuildingKind.Residential or BuildingKind.Apartment) return Serving(a) && Serving(b);
+            return (a == RoomKind.Shop && BackOfHouse(b)) || (b == RoomKind.Shop && BackOfHouse(a)) || (building == BuildingKind.Industrial && Working(a) && Working(b));
+        }
 
         sealed partial class FloorPlan
         {
@@ -142,8 +197,12 @@ namespace UnturnedSim
             /// a stairwell into the room, a door to outside into the house), never over the stairs or the tiles at a flight's
             /// ends, never into a wall (a corridor too narrow for the leaf), clear of another door's leaf and doorway where it
             /// can be; and hinged on the jamb nearer a wall standing across its way, so the open leaf folds flat against that
-            /// wall rather than standing out into the room. Before anything is furnished: the furniture keeps out of the
-            /// sweep it chose (LeafRects, KeepDoor). No draws: a door is hung the same way every time.</summary>
+            /// wall rather than standing out into the room. Then how it moves (round 12b): a door between rooms DoubleActing
+            /// names swings both ways where both sides take its leaf with PassBy to spare; a closet's door, or one whose swing
+            /// is cramped (no PassBy past the open leaf, the stairs or a wall in its way, across another door's leaf or
+            /// doorway), slides into its wall where the wall takes the leaf (PocketFits); every other door swings as chosen.
+            /// Before anything is furnished: the furniture keeps out of the sweeps it chose (LeafRects, KeepDoor). No draws: a
+            /// door is hung the same way every time.</summary>
             void HangDoors(List<WallPlan> walls)
             {
                 var swept = new List<(float, float, float, float)>();
@@ -207,10 +266,69 @@ namespace UnturnedSim
                             }
                         }
                         o.DoorOpensFront = best.Front; o.DoorHingeAtStart = best.Start;
+
+                        // How it moves (strawberry, round 12b: "doors can swing either way, some may swing both ways,
+                        // swinging away from the player when they open them", then "sliding pocket doors too").
+                        // Can a leaf open to that side at all: off the stairs and their tiles, not into a wall, not into the
+                        // sweep of a door already hung. And is a swing there cramped: that, or no room to walk past the open
+                        // leaf's edge (PassBy beyond its reach meets a wall or the stairs), or the leaf sweeps across another
+                        // doorway.
+                        bool Takes(bool front)
+                        {
+                            var p = o; p.DoorOpensFront = front;
+                            var leaf = LeafSweep(w, p, t + 0.02f, 0.05f, LeafReach(o)); var inner = LeafSweep(w, p, t + 0.02f, -0.05f, LeafReach(o));
+                            return !StairRects.Any(r => Over(leaf, r)) && !TileRects.Any(r => Over(leaf, r))
+                                   && !WallRects.Any(r => !own.Contains(r) && Over(inner, r)) && !swept.Any(r => Over(LeafSweep(w, p, t + 0.02f), r));
+                        }
+                        bool Cramped(bool front)
+                        {
+                            if (!Takes(front)) return true;
+                            var p = o; p.DoorOpensFront = front;
+                            var pass = LeafSweep(w, p, t + 0.02f, -0.05f, LeafReach(o) + PassBy);
+                            return WallRects.Any(r => !own.Contains(r) && Over(pass, r)) || StairRects.Any(r => Over(pass, r)) || TileRects.Any(r => Over(pass, r))
+                                   || ways.Any(x => (x.W != w || MathF.Abs(x.O.U - o.U) > 0.01f) && Over(LeafSweep(w, p, t + 0.02f), x.Box));
+                        }
+                        // (only a door inside one home or one business: a flat's front door, a door to the stairwell and a
+                        // door to outside are the building's doors, and stay plain swing doors that latch)
+                        GenRoom fa = Side(1f), fb = Side(-1f);
+                        bool within = fa != null && fb != null && fa.Unit == fb.Unit && fa.Kind != RoomKind.Stairwell && fb.Kind != RoomKind.Stairwell;
+                        if (within && DoubleActing(_res.Kind, fa.Kind, fb.Kind) && !Cramped(true) && !Cramped(false))
+                        {
+                            // swings both ways about one jamb: the jamb whose leaf folds nearer a wall, both sides counted
+                            o.DoorAction = DoorAction.DoubleSwing;
+                            o.DoorHingeAtStart = Fold(1f, -1) + Fold(-1f, -1) < Fold(1f, 1) + Fold(-1f, 1) - 1e-3f;
+                        }
+                        else if (within && (fa.Kind == RoomKind.Closet || fb.Kind == RoomKind.Closet || Cramped(o.DoorOpensFront))
+                                 && (PocketFits(w, k, false) || PocketFits(w, k, true)))
+                        {
+                            // slides into its wall: past U1 where that wall takes it, else past U
+                            o.DoorAction = DoorAction.Pocket;
+                            o.DoorHingeAtStart = !PocketFits(w, k, false);
+                        }
                         w.Openings[k] = o;
-                        swept.Add(LeafSweep(w, o, t));
+                        swept.AddRange(LeafSweeps(w, o, t));
                     }
                 }
+            }
+
+            /// <summary>Will the wall take a pocket door's leaf past this jamb (U when `start`, else U1)? It slides its own
+            /// width (LeafReach: from the frame's inside face to the far side of the wall's frame), so the wall must run on solid
+            /// that far: within its own length, no other opening or its frame there, and no wall meeting it there on either
+            /// face -- a partition standing across the cavity is where the leaf would come out.</summary>
+            bool PocketFits(WallPlan w, int k, bool start)
+            {
+                var o = w.Openings[k];
+                float need = LeafReach(o), a = start ? o.U - need : o.U1, b = start ? o.U : o.U1 + need;
+                if (a < 0f || b > w.Length) return false;
+                for (int i = 0; i < w.Openings.Count; i++)
+                    if (i != k && w.Openings[i].U < b + WallOpenings.TrimProfile && w.Openings[i].U1 > a - WallOpenings.TrimProfile) return false;
+                var own = Solid(w).ToList();
+                var (wc, ws) = PlanTrig.CosSin(w.Yaw);
+                float t = w.Thickness * 0.5f + 0.05f;
+                float ax = w.X + wc * a, az = w.Z - ws * a, bx = w.X + wc * b, bz = w.Z - ws * b;
+                (float X0, float Z0, float X1, float Z1) cavity = (MathF.Min(ax, bx) - MathF.Abs(ws) * t, MathF.Min(az, bz) - MathF.Abs(wc) * t,
+                                                                    MathF.Max(ax, bx) + MathF.Abs(ws) * t, MathF.Max(az, bz) + MathF.Abs(wc) * t);
+                return !WallRects.Any(r => !own.Contains(r) && r.X0 < cavity.X1 && r.X1 > cavity.X0 && r.Z0 < cavity.Z1 && r.Z1 > cavity.Z0);
             }
         }
 
@@ -350,27 +468,31 @@ namespace UnturnedSim
                 return null;
             }
 
-            /// <summary>A window over the counter (strawberry: "allow room layout to alter windows after the fact if
-            /// necessary"; a kitchen run wants the wall a window comes down to): where the run -- a counter, the sink, the
-            /// stove, the dishwasher, a corner cabinet -- stands with its back to one of the room's windows and rises over its
-            /// sill, the sill goes up to SillOverCounter above the tallest of them, its head where it was. Where that would
-            /// leave less than LeastGlass, it is taken out instead if the room has another window, else left.</summary>
-            void WindowsOverCounters()
+            /// <summary>A window over what stands in front of it (strawberry: "allow room layout to alter windows after the
+            /// fact if necessary", then round 12b: "anything may alter a window's sil"): where a piece -- a kitchen's run, a
+            /// couch, a bed, a desk, a workbench, a washer -- stands in front of one of the room's windows (in the 0.7 m kept
+            /// in front of its glass, and along the glass itself) and rises over its sill, the sill goes up to SillOverCounter
+            /// above the tallest of them (TopBefore: a sink at a plain counter's height, a bed off its headboard at BedFoot),
+            /// its head where it was. Where that would leave less than LeastGlass, it is taken out instead if the room has
+            /// another window, else left. (Nothing taller than TallFurniture stands there: such a piece goes to another wall,
+            /// or the window makes way, PutMakingWay.) Run where a room's recipe ends, and again once every piece has its
+            /// final place (Run); a window already over everything is left as it is.</summary>
+            void WindowsOverPieces()
             {
                 foreach (var q in MyPanes())
                 {
                     var o = q.O;
                     if (!o.Glazed) continue;
-                    // the run in front of the glass itself (not just its pad), backed to this wall
+                    // what stands in front of the glass itself (not just its pad)
                     float top = 0f; string by = null;
                     foreach (var m in _mine)
                     {
-                        if (m.On != null || m.Mounted || m.Ceiling || !CounterRun(m.Name)) continue;
+                        if (m.On != null || m.Mounted || m.Ceiling) continue;
                         var fp = m.Footprint;
                         if (!Overlaps(q.Zone, fp)) continue;
                         float a = MathF.Min(UOf(q.W, fp.X0, fp.Z0), UOf(q.W, fp.X1, fp.Z1)), b = MathF.Max(UOf(q.W, fp.X0, fp.Z0), UOf(q.W, fp.X1, fp.Z1));
                         if (b <= o.U + 0.01f || a >= o.U1 - 0.01f) continue;
-                        float h = FurnitureCatalog.Sizes[m.Name].H;
+                        float h = TopBefore(m, q.W, o);
                         if (h > top) { top = h; by = m.Name; }
                     }
                     if (by == null || q.W.Y + o.V >= _room.Floor * Storey + top + SillOverCounter - 1e-3f) continue;
