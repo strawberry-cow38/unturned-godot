@@ -228,7 +228,12 @@ fn cap(f: &Frame, sign: f32, half_width: f32, depth: f32, offset: f32, v: f32) -
         v,
     }
 }
-fn triangle(out: &mut ObjData, mut p: [Vec3; 3], mut uv: [[f32; 2]; 3], mut n: [Vec3; 3]) {
+pub(super) fn triangle(
+    out: &mut ObjData,
+    mut p: [Vec3; 3],
+    mut uv: [[f32; 2]; 3],
+    mut n: [Vec3; 3],
+) {
     let cross = (p[1] - p[0]).cross(p[2] - p[0]);
     if cross.length_squared() < 1e-12 {
         return;
@@ -237,6 +242,10 @@ fn triangle(out: &mut ObjData, mut p: [Vec3; 3], mut uv: [[f32; 2]; 3], mut n: [
         p.swap(1, 2);
         uv.swap(1, 2);
         n.swap(1, 2);
+    }
+    if out.positions.is_empty() {
+        out.min = Vec3::splat(f32::INFINITY);
+        out.max = Vec3::splat(f32::NEG_INFINITY);
     }
     for i in 0..3 {
         out.positions.push(p[i].to_array());

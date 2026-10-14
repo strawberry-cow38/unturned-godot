@@ -1,9 +1,14 @@
 //! Original map/content assembly. Missing retail terrain is reported explicitly.
 use crate::content::{ContentCache, ContentError, ObjData, load_guid_map};
+mod procedural;
+mod procedural_roads;
 mod roads;
+mod wires;
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::{Collider, RigidBody};
-use serde::Deserialize;
+#[cfg(test)]
+use procedural::ProceduralTree;
+use procedural::{ProceduralRegion, procedural_tree_name, procedural_tree_transform};
 use std::{
     collections::HashMap,
     fs,
@@ -80,7 +85,6 @@ fn world_needs_reload(
         return true;
     }
     ui.screen != crate::ui::Screen::MainMenu
-        && config.procedural_path.is_none()
         && players
             .iter()
             .next()
@@ -94,6 +98,7 @@ struct WorldSourceCache {
     placements: HashMap<PathBuf, Arc<Vec<Placement>>>,
     resources: HashMap<PathBuf, Arc<Vec<Transform>>>,
     foliage: HashMap<PathBuf, Arc<Vec<(Transform, bool)>>>,
+    procedural: HashMap<(i32, i32, i32), Arc<ProceduralRegion>>,
 }
 
 #[derive(Component)]
@@ -111,8 +116,15 @@ pub struct RoadSurface {
 pub struct WorldTerrain;
 #[derive(Component)]
 pub struct WorldFoliage;
+#[derive(Component, Clone)]
+pub struct WorldResource {
+    pub name: String,
+    /// Row in this resource's original .bin, before distance culling.
+    pub instance_index: usize,
+}
 #[derive(Clone, Debug)]
 pub struct Placement {
+    pub source_index: usize,
     pub guid: String,
     pub name: String,
     pub material: String,
@@ -167,6 +179,7 @@ pub fn parse_placements(
             }
         }
         result.push(Placement {
+            source_index: line_no,
             guid,
             name: name.clone(),
             material: fields.get(10).copied().unwrap_or(name).into(),
@@ -188,6 +201,7 @@ pub struct TerrainPatch {
     pub spacing: f32,
     pub heights: Vec<f32>,
     pub layers: Vec<u8>,
+    pub normals: Vec<[f32; 3]>,
     pub holes: Vec<bool>,
 }
 impl TerrainPatch {
@@ -215,6 +229,9 @@ impl TerrainPatch {
     }
     pub fn normal(&self, x: usize, z: usize) -> Vec3 {
         let s = self.cells + 1;
+        if let Some(n) = self.normals.get(z * s + x) {
+            return Vec3::from_array(*n);
+        }
         let x0 = x.saturating_sub(1);
         let x1 = (x + 1).min(self.cells);
         let z0 = z.saturating_sub(1);
@@ -256,7 +273,7 @@ impl TerrainPatch {
                         .positions
                         .push([wx, self.heights[vz * stride + vx], wz]);
                     out[layer].normals.push(self.normal(vx, vz).to_array());
-                    out[layer].uvs.push([wx / 8., wz / 8.]);
+                    out[layer].uvs.push([wx / 16., wz / 16.]);
                     out[layer].colors.push([1.; 4]);
                 }
             }
@@ -293,6 +310,7 @@ pub fn decode_retail_heightmap(
         heights,
         layers: vec![2; S * S],
         holes: Vec::new(),
+        normals: Vec::new(),
     })
 }
 fn load_retail_terrain(root: &Path) -> Result<Vec<TerrainPatch>, ContentError> {
@@ -342,6 +360,8 @@ fn load_retail_terrain(root: &Path) -> Result<Vec<TerrainPatch>, ContentError> {
 
 #[derive(Clone)]
 pub struct ObjectCollider {
+    pub source_index: Option<usize>,
+    pub resource_key: Option<(String, usize)>,
     pub min: Vec3,
     pub max: Vec3,
     pub transform: Mat4,
@@ -442,6 +462,8 @@ fn collider(data: Arc<ObjData>, transform: Transform) -> ObjectCollider {
         }
     }
     ObjectCollider {
+        source_index: None,
+        resource_key: None,
         min,
         max,
         transform: matrix,
@@ -450,115 +472,11 @@ fn collider(data: Arc<ObjData>, transform: Transform) -> ObjectCollider {
     }
 }
 
-#[derive(Deserialize)]
-struct ProceduralRegion {
-    #[serde(alias = "Cells")]
-    cells: usize,
-    #[serde(alias = "Spacing")]
-    spacing: f32,
-    #[serde(alias = "Heights")]
-    heights: Vec<f32>,
-    #[serde(default, alias = "Layers")]
-    layers: Vec<u8>,
-    #[serde(default, alias = "Holes")]
-    holes: Option<Vec<bool>>,
-    #[serde(default)]
-    origin_x: f32,
-    #[serde(default)]
-    origin_z: f32,
-    #[serde(default, alias = "Trees")]
-    trees: Vec<ProceduralTree>,
-}
-#[derive(Deserialize)]
-struct ProceduralTree {
-    #[serde(alias = "X")]
-    x: f32,
-    #[serde(alias = "Y")]
-    y: f32,
-    #[serde(alias = "Z")]
-    z: f32,
-    #[serde(alias = "Yaw")]
-    yaw: f32,
-    #[serde(alias = "Scale")]
-    scale: f32,
-    #[serde(alias = "Kind")]
-    kind: u8,
-    #[serde(alias = "Variant")]
-    variant: u8,
-}
-fn procedural_tree_name(kind: u8, variant: u8) -> Option<String> {
-    const CACTUS: [&str; 14] = [
-        "Cactus_Column_0",
-        "Cactus_Column_1",
-        "Cactus_Column_2",
-        "Cactus_Branched_0",
-        "Cactus_Branched_1",
-        "Cactus_Branched_2",
-        "Cactus_Barrel_0",
-        "Cactus_Barrel_2",
-        "Cactus_Cluster_0",
-        "Cactus_Cluster_1",
-        "Cactus_Cluster_2",
-        "Cactus_Paddles_0",
-        "Cactus_Paddles_1",
-        "Cactus_Paddles_2",
-    ];
-    match kind {
-        0..=2 if variant < 2 => Some(format!(
-            "{}_{}",
-            ["Pine", "Birch", "Maple"][kind as usize],
-            variant
-        )),
-        3 if variant < 3 => Some(format!("Redwood_{variant}")),
-        4 => CACTUS.get(variant as usize).map(|n| n.to_string()),
-        _ => None,
-    }
-}
-fn procedural_tree_transform(tree: &ProceduralTree, origin: Vec2) -> Transform {
-    // RegionStreamer.BuildMesh: generated trees are already in runtime coordinates;
-    // retail placement's Euler/Z conversion would turn these upright assets sideways.
-    let sink = if tree.kind == 4 { 0.05 } else { 0.5 };
-    Transform {
-        translation: Vec3::new(
-            origin.x + tree.x,
-            tree.y - sink * tree.scale,
-            origin.y + tree.z,
-        ),
-        rotation: Quat::from_rotation_y(tree.yaw.to_radians()),
-        scale: Vec3::splat(tree.scale),
-    }
-}
-fn read_procedural(path: &Path) -> Result<(TerrainPatch, Vec<ProceduralTree>), ContentError> {
-    let data: ProceduralRegion =
-        serde_json::from_slice(&fs::read(path)?).map_err(|e| ContentError(e.to_string()))?;
-    let count = (data.cells + 1)
-        .checked_mul(data.cells + 1)
-        .ok_or_else(|| ContentError("terrain size overflow".into()))?;
-    if data.cells == 0
-        || data.cells > 1024
-        || data.heights.len() != count
-        || data.spacing <= 0.
-        || !data.spacing.is_finite()
-        || data.heights.iter().any(|h| !h.is_finite())
-    {
-        return Err(ContentError("invalid procedural height grid".into()));
-    }
-    Ok((
-        TerrainPatch {
-            origin: Vec2::new(data.origin_x, data.origin_z),
-            cells: data.cells,
-            spacing: data.spacing,
-            heights: data.heights,
-            layers: data.layers,
-            holes: data.holes.unwrap_or_default(),
-        },
-        data.trees,
-    ))
-}
-
 fn build_world(
     mut commands: Commands,
     config: Res<WorldConfig>,
+    options: Res<crate::LaunchOptions>,
+    bridge: Res<crate::bridge::CoreBridge>,
     mut state: ResMut<WorldState>,
     mut geometry: ResMut<WorldGeometry>,
     mut cache: ResMut<ContentCache>,
@@ -567,6 +485,7 @@ fn build_world(
     assets: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
     existing: Query<Entity, Or<(With<WorldObject>, With<WorldTerrain>, With<WorldFoliage>)>>,
 ) {
     for entity in &existing {
@@ -595,25 +514,41 @@ fn build_world(
         "_Yukon" => "terrain_yukon",
         _ => "terrain",
     };
-    let mut proc_trees = Vec::new();
-    if streaming {
-        // Heightfields persist across render-region rebuilds.
-    } else if let Some(path) = &config.procedural_path {
-        match read_procedural(path) {
-            Ok((patch, trees)) => {
-                geometry.terrain.push(patch);
-                proc_trees = trees;
+    let mut proc_regions = Vec::new();
+    if let Some(path) = &config.procedural_path {
+        let center = if streaming {
+            players
+                .iter()
+                .next()
+                .map(|p| p.translation)
+                .unwrap_or(old_spawn)
+        } else {
+            config.spawn_center.unwrap_or(Vec3::new(128., 0., 128.))
+        };
+        match procedural::regions(
+            &bridge,
+            options.0.seed,
+            center,
+            config.spawn_radius + 48.,
+            path,
+            &mut sources.procedural,
+        ) {
+            Ok(regions) => {
+                geometry.terrain = regions.iter().filter_map(|r| r.patch().ok()).collect();
+                proc_regions = regions;
                 state.description = "Original procedural terrain generator".into();
             }
             Err(e) => state.missing_assets.push(e.to_string()),
         }
-    } else if let Some(root) = &config.map_root {
-        match load_retail_terrain(root) {
-            Ok(patches) => {
-                geometry.terrain = patches;
-                state.description = format!("{} — original retail terrain", config.map_name);
+    } else if !streaming {
+        if let Some(root) = &config.map_root {
+            match load_retail_terrain(root) {
+                Ok(patches) => {
+                    geometry.terrain = patches;
+                    state.description = format!("{} — original retail terrain", config.map_name);
+                }
+                Err(e) => state.missing_assets.push(e.to_string()),
             }
-            Err(e) => state.missing_assets.push(e.to_string()),
         }
     }
     state.terrain_available = !geometry.terrain.is_empty();
@@ -648,7 +583,27 @@ fn build_world(
             WorldTerrain,
             Mesh3d(mesh),
             MeshMaterial3d(material),
-            Transform::from_xyz(0., sea, 0.),
+            Transform::from_xyz(
+                if streaming {
+                    players
+                        .iter()
+                        .next()
+                        .map(|p| p.translation.x)
+                        .unwrap_or(old_spawn.x)
+                } else {
+                    config.spawn_center.map_or(0., |p| p.x)
+                },
+                sea,
+                if streaming {
+                    players
+                        .iter()
+                        .next()
+                        .map(|p| p.translation.z)
+                        .unwrap_or(old_spawn.z)
+                } else {
+                    config.spawn_center.map_or(0., |p| p.z)
+                },
+            ),
         ));
     }
 
@@ -719,7 +674,19 @@ fn build_world(
                 .unwrap_or(Vec3::ZERO)
         })
     };
-    state.focus = if streaming { old_focus } else { center };
+    state.focus = if streaming {
+        old_focus
+    } else if config.procedural_path.is_some() {
+        Vec3::new(
+            center.x,
+            geometry
+                .terrain_height(center.x, center.z)
+                .unwrap_or(center.y),
+            center.z,
+        )
+    } else {
+        center
+    };
     let player_spawn = if streaming {
         Some((old_spawn, old_yaw))
     } else if config.spawn_center.is_none() && config.procedural_path.is_none() {
@@ -780,7 +747,12 @@ fn build_world(
             if data.positions.is_empty() {
                 continue;
             }
-            let texture = format!("{terrain_dir}/layer{layer}.png");
+            let dir = if config.procedural_path.is_some() && matches!(layer, 0 | 3 | 6 | 7) {
+                "terrain_yukon"
+            } else {
+                terrain_dir
+            };
+            let texture = format!("{dir}/layer{layer}.png");
             let material = cache.material(Some(&texture), false, &assets, &mut materials);
             let shape = trimesh_collider(&data);
             let mut entity = commands.spawn((
@@ -795,10 +767,9 @@ fn build_world(
         }
     }
     let within = |p: Vec3| Vec2::new(p.x - center.x, p.z - center.z).length() <= render_radius;
-    for (source_index, p) in placements
+    for p in placements
         .iter()
-        .enumerate()
-        .filter(|(_, p)| within(p.transform.translation))
+        .filter(|p| within(p.transform.translation))
     {
         let path = config.content_root.join(format!("objects/{}.obj", p.name));
         let Ok((mesh, data)) = cache.load_mesh(&path, &mut meshes) else {
@@ -844,9 +815,23 @@ fn build_world(
             handle
         };
         let solid = !is_walk_through(&p.name);
-        let shape = if solid { trimesh_collider(&data) } else { None };
+        let collision_data = if p.name.starts_with("Ladder_") {
+            Arc::new(ladder_box_geometry(&data))
+        } else {
+            data.clone()
+        };
+        let shape = if !solid {
+            None
+        } else if p.name.starts_with("Ladder_") {
+            let half = (data.max - data.min) * 0.5;
+            Some(Collider::cuboid(half.x, half.y, half.z))
+        } else {
+            trimesh_collider(&data)
+        };
         if solid {
-            geometry.objects.push(collider(data, p.transform));
+            let mut body = collider(collision_data, p.transform);
+            body.source_index = Some(p.source_index);
+            geometry.objects.push(body);
         }
         let mut entity = commands.spawn((
             Name::new(p.name.clone()),
@@ -856,7 +841,7 @@ fn build_world(
             WorldObject {
                 guid: p.guid.clone(),
                 asset_name: p.name.clone(),
-                source_index,
+                source_index: p.source_index,
             },
         ));
         if let Some(shape) = shape {
@@ -949,19 +934,30 @@ fn build_world(
                     sources.resources.insert(path, t.clone());
                     t
                 };
-                for mut transform in transforms.iter().copied().filter(|t| within(t.translation)) {
+                for (instance_index, mut transform) in transforms
+                    .iter()
+                    .copied()
+                    .enumerate()
+                    .filter(|(_, t)| within(t.translation))
+                {
+                    let resource = WorldResource {
+                        name: f[0].to_string(),
+                        instance_index,
+                    };
                     if is_tree(f[0]) {
                         transform.translation.y -= 0.5 * transform.scale.y.abs();
-                        let radius = tree_radius(f[0])
-                            * transform.scale.x.abs().max(transform.scale.z.abs());
+                    }
+                    if let Some((shape, data, body_transform)) = resource_shape(f[0], transform) {
+                        let mut exported = collider(Arc::new(data), body_transform);
+                        exported.resource_key = Some((f[0].to_string(), instance_index));
+                        geometry.objects.push(exported);
                         commands.spawn((
-                            Name::new(format!("{} trunk", f[0])),
+                            Name::new(format!("{} resource body", f[0])),
                             WorldFoliage,
+                            resource.clone(),
                             RigidBody::Fixed,
-                            Collider::cylinder(4. * transform.scale.y.abs(), radius),
-                            Transform::from_translation(
-                                transform.translation + Vec3::Y * 2.5 * transform.scale.y.abs(),
-                            ),
+                            shape,
+                            body_transform,
                         ));
                     }
                     for part in 0..parts {
@@ -990,6 +986,7 @@ fn build_world(
                             MeshMaterial3d(material),
                             transform,
                             WorldFoliage,
+                            resource.clone(),
                         ));
                         state.foliage_count += 1;
                     }
@@ -1050,23 +1047,7 @@ fn build_world(
                     if name.starts_with("pebble") {
                         transform.scale *= 0.75;
                     }
-                    let matrix = transform.to_matrix();
-                    let normal_matrix = matrix.inverse().transpose();
-                    for i in 0..source.positions.len() {
-                        merged.positions.push(
-                            matrix
-                                .transform_point3(Vec3::from_array(source.positions[i]))
-                                .to_array(),
-                        );
-                        merged.normals.push(
-                            normal_matrix
-                                .transform_vector3(Vec3::from_array(source.normals[i]))
-                                .normalize_or_zero()
-                                .to_array(),
-                        );
-                        merged.uvs.push(source.uvs[i]);
-                        merged.colors.push(source.colors[i]);
-                    }
+                    merged.append_transformed(&source, transform);
                     state.foliage_count += 1;
                 }
                 if merged.positions.is_empty() {
@@ -1088,16 +1069,24 @@ fn build_world(
             }
         }
     }
-    if let Some(patch) = geometry
-        .terrain
-        .first()
-        .filter(|_| config.procedural_path.is_some())
-    {
-        for tree in proc_trees {
-            let Some(name) = procedural_tree_name(tree.kind, tree.variant) else {
+    for region in &proc_regions {
+        let origin = Vec2::new(region.origin_x, region.origin_z);
+        for tree in &region.trees {
+            let name = region
+                .structures
+                .get("treeModels")
+                .and_then(|k| k.get(tree.kind as usize))
+                .and_then(|k| k.get(tree.variant as usize))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+                .or_else(|| procedural_tree_name(tree.kind, tree.variant));
+            let Some(name) = name else {
                 continue;
             };
-            let transform = procedural_tree_transform(&tree, patch.origin);
+            let transform = procedural_tree_transform(tree, origin);
+            if !within(transform.translation) {
+                continue;
+            }
             let height = if tree.kind == 3 {
                 14.
             } else if tree.kind == 4 {
@@ -1154,6 +1143,172 @@ fn build_world(
             }
         }
     }
+    for region in &proc_regions {
+        for (texture, road) in procedural_roads::build(region) {
+            if road.visible.positions.is_empty() {
+                continue;
+            }
+            let material = match procedural_roads::material(
+                &texture,
+                &config.content_root,
+                &mut cache,
+                &assets,
+                &mut materials,
+                &mut images,
+            ) {
+                Ok(m) => m,
+                Err(e) => {
+                    state.missing_assets.push(e.to_string());
+                    continue;
+                }
+            };
+            let shape = if road.solid.positions.is_empty() {
+                None
+            } else {
+                trimesh_collider(&road.solid)
+            };
+            if !road.solid.positions.is_empty() {
+                geometry
+                    .objects
+                    .push(collider(Arc::new(road.solid), Transform::IDENTITY));
+            }
+            let mut entity = commands.spawn((
+                Name::new(format!("Generated {texture}")),
+                WorldTerrain,
+                Mesh3d(meshes.add(road.visible.mesh())),
+                MeshMaterial3d(material),
+            ));
+            if let Some(shape) = shape {
+                entity.insert((RigidBody::Fixed, shape));
+            }
+        }
+    }
+    let wire_mesh = if config.procedural_path.is_some() {
+        wires::generated(&proc_regions, center, render_radius)
+    } else {
+        fs::read_to_string(
+            config
+                .content_root
+                .join(format!("powerlines/editor_{}_wires.txt", config.map_name)),
+        )
+        .map(|source| wires::saved(&source, &placements, center, render_radius))
+        .unwrap_or_default()
+    };
+    if !wire_mesh.positions.is_empty() {
+        let material = cache
+            .materials
+            .entry("powerline_wire".into())
+            .or_insert_with(|| {
+                materials.add(StandardMaterial {
+                    base_color: Color::srgb(0.055, 0.055, 0.062),
+                    perceptual_roughness: 0.55,
+                    reflectance: 0.35,
+                    double_sided: true,
+                    cull_mode: None,
+                    ..default()
+                })
+            })
+            .clone();
+        commands.spawn((
+            Name::new("Power conductors"),
+            WorldFoliage,
+            Mesh3d(meshes.add(wire_mesh.mesh())),
+            MeshMaterial3d(material),
+            bevy::light::NotShadowCaster,
+        ));
+    }
+    let mut ground_cover: HashMap<String, (ObjData, Color)> = HashMap::new();
+    for region in &proc_regions {
+        for (index, instance) in procedural::instances(region).into_iter().enumerate() {
+            let distance = instance.transform.translation.xz().distance(center.xz());
+            let range = if instance.mesh.contains("pebble") {
+                100.
+            } else if instance.mesh.contains("Bush_") {
+                320.
+            } else if instance.foliage {
+                160.
+            } else {
+                render_radius
+            };
+            if distance > range {
+                continue;
+            }
+            let path = config.content_root.join(format!("{}.obj", instance.mesh));
+            let Ok((mesh, data)) = cache.load_mesh(&path, &mut meshes) else {
+                state.missing_assets.push(path.display().to_string());
+                continue;
+            };
+            if instance.foliage {
+                let group = ground_cover
+                    .entry(instance.mesh)
+                    .or_insert_with(|| (ObjData::default(), instance.tint));
+                group.0.append_transformed(&data, instance.transform);
+                state.foliage_count += 1;
+                continue;
+            }
+            let texture = format!("{}_tex.png", instance.mesh);
+            let texture = config
+                .content_root
+                .join(&texture)
+                .is_file()
+                .then_some(texture);
+            let alpha = texture
+                .as_ref()
+                .is_some_and(|t| cache.has_cutout_alpha(&config.content_root.join(t)));
+            let material = cache.material(texture.as_deref(), alpha, &assets, &mut materials);
+            let shape = instance.solid.then(|| trimesh_collider(&data)).flatten();
+            if instance.solid {
+                geometry.objects.push(collider(data, instance.transform));
+            }
+            let mut entity = commands.spawn((
+                Name::new(instance.mesh.clone()),
+                WorldObject {
+                    guid: String::new(),
+                    asset_name: instance.mesh.trim_start_matches("objects/").into(),
+                    source_index: index,
+                },
+                Mesh3d(mesh),
+                MeshMaterial3d(material),
+                instance.transform,
+            ));
+            if let Some(shape) = shape {
+                entity.insert((RigidBody::Fixed, shape));
+            }
+            state.object_count += 1;
+        }
+    }
+    for (name, (merged, tint)) in ground_cover {
+        let texture = format!("{name}_tex.png");
+        let texture = config
+            .content_root
+            .join(&texture)
+            .is_file()
+            .then_some(texture);
+        let base = cache.material(
+            texture.as_deref(),
+            texture.is_some(),
+            &assets,
+            &mut materials,
+        );
+        let key = format!("proc_foliage:{name}");
+        let material = if let Some(m) = cache.materials.get(&key) {
+            m.clone()
+        } else {
+            let mut material = materials.get(&base).unwrap().clone();
+            material.base_color = tint;
+            material.double_sided = true;
+            material.cull_mode = None;
+            let m = materials.add(material);
+            cache.materials.insert(key, m.clone());
+            m
+        };
+        commands.spawn((
+            Name::new(name),
+            WorldFoliage,
+            Mesh3d(meshes.add(merged.mesh())),
+            MeshMaterial3d(material),
+        ));
+    }
     state.missing_assets.sort();
     state.missing_assets.dedup();
     state.ready = true;
@@ -1202,6 +1357,112 @@ pub fn is_walk_through(name: &str) -> bool {
     ]
     .iter()
     .any(|p| name.starts_with(p))
+}
+/// WorldBuilder's solid ladder box: raw rungs contain centre-line gaps and cannot
+/// serve the source's continuous 0.75m attach/hold ray.
+fn ladder_box_geometry(mesh: &ObjData) -> ObjData {
+    let h = (mesh.max - mesh.min) * 0.5;
+    let mut out = ObjData {
+        min: -h,
+        max: h,
+        ..default()
+    };
+    for (n, u, v) in [
+        (Vec3::X, Vec3::Y, Vec3::Z),
+        (Vec3::NEG_X, Vec3::Z, Vec3::Y),
+        (Vec3::Y, Vec3::Z, Vec3::X),
+        (Vec3::NEG_Y, Vec3::X, Vec3::Z),
+        (Vec3::Z, Vec3::X, Vec3::Y),
+        (Vec3::NEG_Z, Vec3::Y, Vec3::X),
+    ] {
+        for (a, b) in [
+            (-1., -1.),
+            (1., -1.),
+            (1., 1.),
+            (-1., -1.),
+            (1., 1.),
+            (-1., 1.),
+        ] {
+            out.positions.push(((n + u * a + v * b) * h).to_array());
+            out.normals.push(n.to_array());
+            out.uvs.push([0.; 2]);
+            out.colors.push([1.; 4]);
+        }
+    }
+    out
+}
+/// Original ResourceField collider dimensions on an orthonormal body. The
+/// authority consumes the same bounds as native physics, with cylinders exported
+/// as closed 64-sided meshes (at most 0.12% radial deviation from the analytic body).
+fn resource_shape(name: &str, transform: Transform) -> Option<(Collider, ObjData, Transform)> {
+    let radial = transform.scale.x.abs().max(transform.scale.z.abs());
+    let vertical = transform.scale.y.abs();
+    let (shape, data, local_center) = if is_tree(name) {
+        let (radius, half_height) = (tree_radius(name) * radial, 4. * vertical);
+        let mut data = ObjData::default();
+        for i in 0..64 {
+            let a = std::f32::consts::TAU * i as f32 / 64.;
+            let b = std::f32::consts::TAU * (i + 1) as f32 / 64.;
+            let (na, nb) = (
+                Vec3::new(a.cos(), 0., a.sin()),
+                Vec3::new(b.cos(), 0., b.sin()),
+            );
+            let (pa, pb) = (na * radius, nb * radius);
+            let (top, bottom) = (Vec3::Y * half_height, Vec3::NEG_Y * half_height);
+            roads::triangle(
+                &mut data,
+                [pa + bottom, pb + bottom, pa + top],
+                [[0.; 2]; 3],
+                [na, nb, na],
+            );
+            roads::triangle(
+                &mut data,
+                [pb + bottom, pb + top, pa + top],
+                [[0.; 2]; 3],
+                [nb, nb, na],
+            );
+            roads::triangle(
+                &mut data,
+                [top, pa + top, pb + top],
+                [[0.; 2]; 3],
+                [Vec3::Y; 3],
+            );
+            roads::triangle(
+                &mut data,
+                [bottom, pa + bottom, pb + bottom],
+                [[0.; 2]; 3],
+                [Vec3::NEG_Y; 3],
+            );
+        }
+        (
+            Collider::cylinder(half_height, radius),
+            data,
+            Vec3::Y * (2.5 * vertical),
+        )
+    } else if name.starts_with("Metal") {
+        let half = Vec3::new(1.3 * radial, 1.2 * vertical, 1.3 * radial);
+        let data = ladder_box_geometry(&ObjData {
+            min: -half,
+            max: half,
+            ..default()
+        });
+        (
+            Collider::cuboid(half.x, half.y, half.z),
+            data,
+            Vec3::Y * (1.1 * vertical),
+        )
+    } else {
+        return None;
+    };
+    Some((
+        shape,
+        data,
+        Transform {
+            translation: transform.translation + transform.rotation * local_center,
+            rotation: transform.rotation,
+            ..default()
+        },
+    ))
 }
 fn trimesh_collider(data: &ObjData) -> Option<Collider> {
     let vertices = data
@@ -1318,6 +1579,37 @@ pub fn decode_resource_instances(bytes: &[u8]) -> Result<Vec<Transform>, Content
 mod tests {
     use super::*;
     #[test]
+    fn placement_authority_identity_survives_unknown_guids_and_comments() {
+        let names = HashMap::from([("known".to_string(), "House_0".to_string())]);
+        let p = parse_placements(
+            "unknown 0 0 0 0 0 0 1 1 1\n# comment\nknown 1 2 3 4 5 6 1 1 1",
+            &names,
+        )
+        .unwrap();
+        assert_eq!(p.len(), 1);
+        assert_eq!(p[0].source_index, 2);
+    }
+    #[test]
+    fn real_ladder_collision_covers_rung_gaps() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../game/content/objects/Ladder_Metal_0.obj");
+        let mesh = Arc::new(ObjData::load(&root).unwrap());
+        let origin = Vec3::new(0., -1., 0.37);
+        let mut world = WorldGeometry::default();
+        world
+            .objects
+            .push(collider(mesh.clone(), Transform::IDENTITY));
+        assert!(
+            world.raycast(origin, Vec3::Y, 2.).is_none(),
+            "fixture ray must pass through a real rung gap"
+        );
+        world.objects[0] = collider(Arc::new(ladder_box_geometry(&mesh)), Transform::IDENTITY);
+        let hit = world
+            .raycast(origin, Vec3::Y, 2.)
+            .expect("solid source ladder box must hold between rungs");
+        assert!((hit.0 - 0.925).abs() < 0.0001);
+    }
+    #[test]
     fn streaming_recenters_before_player_reaches_unloaded_collision() {
         assert!(!stream_due(Vec3::new(60., 100., 0.), Vec3::ZERO, 180.));
         assert!(stream_due(Vec3::new(73., 0., 0.), Vec3::ZERO, 180.));
@@ -1328,6 +1620,22 @@ mod tests {
             Vec3::new(-1000., 0., 500.),
             180.
         ));
+    }
+    #[test]
+    fn resource_collision_export_preserves_source_scaled_trunk_and_ore_bounds() {
+        let transform = Transform {
+            translation: Vec3::new(10., 20., 30.),
+            scale: Vec3::new(2., 3., 1.),
+            ..default()
+        };
+        let (_, trunk, body) = resource_shape("Pine_0", transform).unwrap();
+        assert_eq!(trunk.min, Vec3::new(-1.6, -12., -1.6));
+        assert_eq!(trunk.max, Vec3::new(1.6, 12., 1.6));
+        assert_eq!(body.translation, Vec3::new(10., 27.5, 30.));
+        let (_, ore, body) = resource_shape("Metal_0", transform).unwrap();
+        assert!((ore.max - Vec3::new(2.6, 3.6, 2.6)).length() < 1e-6);
+        assert!((body.translation - Vec3::new(10., 23.3, 30.)).length() < 1e-5);
+        assert!(resource_shape("Bush_0", transform).is_none());
     }
     #[test]
     fn procedural_trees_keep_source_runtime_axes_and_sink() {
@@ -1377,6 +1685,7 @@ mod tests {
             heights: vec![0., 4., 8., 12.],
             layers: vec![],
             holes: vec![],
+            normals: vec![],
         };
         assert_eq!(p.sample(2., 2.), Some(6.));
         assert_eq!(p.sample(5., 2.), None);

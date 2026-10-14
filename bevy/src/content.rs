@@ -51,6 +51,34 @@ pub struct ObjData {
     pub max: Vec3,
 }
 impl ObjData {
+    /// Merge instances without changing source UVs or lighting normals. Reflected
+    /// instances reverse winding so their outward surface remains front-facing.
+    pub fn append_transformed(&mut self, source: &Self, transform: Transform) {
+        let matrix = transform.to_matrix();
+        let normal = matrix.inverse().transpose();
+        let mirrored = matrix.determinant() < 0.;
+        if self.positions.is_empty() {
+            self.min = Vec3::splat(f32::INFINITY);
+            self.max = Vec3::splat(f32::NEG_INFINITY);
+        }
+        for tri in (0..source.positions.len()).step_by(3) {
+            for corner in if mirrored { [0, 2, 1] } else { [0, 1, 2] } {
+                let i = tri + corner;
+                let p = matrix.transform_point3(Vec3::from_array(source.positions[i]));
+                self.positions.push(p.to_array());
+                self.normals.push(
+                    normal
+                        .transform_vector3(Vec3::from_array(source.normals[i]))
+                        .normalize_or_zero()
+                        .to_array(),
+                );
+                self.uvs.push(source.uvs[i]);
+                self.colors.push(source.colors[i]);
+                self.min = self.min.min(p);
+                self.max = self.max.max(p);
+            }
+        }
+    }
     pub fn mesh(&self) -> Mesh {
         Mesh::new(
             PrimitiveTopology::TriangleList,
@@ -320,6 +348,30 @@ mod tests {
             let p: Vec<_> = m.positions.iter().map(|p| Vec3::from_array(*p)).collect();
             assert!((p[1] - p[0]).cross(p[2] - p[0]).z > 0.);
         }
+    }
+    #[test]
+    fn merged_reflected_instances_keep_outward_normals_and_uv_corners() {
+        let source =
+            parse_obj("v 0 0 0\nv 1 0 0\nv 0 1 1\nvt 0 0\nvt 1 0\nvt 0 1\nf 1/1 2/2 3/3").unwrap();
+        let mut mesh = ObjData::default();
+        mesh.append_transformed(
+            &source,
+            Transform {
+                translation: Vec3::new(10., 20., 30.),
+                scale: Vec3::new(-2., 3., 4.),
+                ..default()
+            },
+        );
+        let p: Vec<_> = mesh
+            .positions
+            .iter()
+            .map(|p| Vec3::from_array(*p))
+            .collect();
+        let normal = Vec3::from_array(mesh.normals[0]);
+        assert!((p[1] - p[0]).cross(p[2] - p[0]).normalize().dot(normal) > 0.9999);
+        assert_eq!(mesh.min, Vec3::new(8., 20., 30.));
+        assert_eq!(mesh.max, Vec3::new(10., 23., 34.));
+        assert_eq!(mesh.uvs, vec![source.uvs[0], source.uvs[2], source.uvs[1]]);
     }
     #[test]
     fn triangulates_negative_index_quad() {

@@ -25,7 +25,10 @@ original source formats and remain the content replacement seam.
   bilinear expression. Out-of-range samples return `None`, not zero metres.
 - Terrain and solid prop meshes receive fixed Rapier colliders. The original
   explicit pass-through vegetation list is retained. Tree cylinders use the
-  original species radii, height, offset and half-metre visual sink.
+  original species radii, height, offset and half-metre visual sink. Ladders use
+  the original solid bounding box rather than a climb ray slipping through rungs.
+  Object source indices retain raw placement line numbers; resource instances
+  retain their name and original binary row before distance culling.
 - The player starts at an actual non-alternate `Spawns/Players.dat` location,
   excluding the source's origin placeholder rows. The deterministic initial
   choice is the authored spawn nearest the selected town focus. Terrain controls
@@ -35,8 +38,15 @@ original source formats and remain the content replacement seam.
   suppresses it (Yukon has water volumes instead). Its current Bevy material is a
   static transparent surface; this is not yet the source ocean shader.
 - The original `InfiniteTerrain.Generate` output can be rendered through the
-  engine-independent C# bridge's JSON export: row-major heights, layers, holes
-  and tree placements. No substitute procedural terrain formula is introduced.
+  engine-independent C# bridge's JSON export: row-major heights, authored normals,
+  layers, holes and all placement metadata. Moving regions request the original
+  generator, retain a small warm cache and unload retired meshes/colliders.
+  Generated trees, ground cover, boulders, roads, junction paint, poles, pylons,
+  bridge kit, rail kit and signs use the source geometry, placement bases and
+  textures. Power conductors preserve measured insulator anchors, paired pylon
+  endpoints, 3.5% sag, fourteen samples and nine-centimetre tube width. Optional
+  retail editor wire saves resolve endpoints against original pole origins.
+  No substitute procedural terrain formula is introduced.
 - `rig.rs`: original human and animal skeletons, inverse bind matrices, joint
   weights, body/arms meshes and original keyed animation clips. The human rig has
   17 bones and 711 clips. Animation supports looping, non-looping holds, masked
@@ -60,12 +70,15 @@ props, resources and foliage, without restarting the session or changing spawn.
 Parsed placements and instance arrays are cached; retired render entities and
 colliders are removed. A geometry revision informs the authoritative host of
 changes. This synchronous rebuild can hitch; async chunk jobs, original LOD
-thresholds, distance fades, floating origin and procedural-region streaming still
-need Bevy systems. Generated road/rail/bridge/tunnel/pylon structures are also
-separate from the retail road splines.
+thresholds, distance fades and floating origin still need Bevy systems. Generated
+regions currently use LOD0; far-landmark rings are not yet reproduced. Tunnel
+shells and portal terrain, bridge roadway overlays and rail crossing infill
+remain separate from the implemented generated road/rail/bridge/pylon geometry.
 
 Terrain currently uses the strongest splat layer per cell with the original
-layer texture. Eight-layer shader blending, paint-edge noise, terrain sculpting,
+layer texture and original sixteen-metre world texture repeat. The source's
+current terrain shader selects a winning layer per pixel from interpolated
+splat weights with edge noise; that finer selection and noise, terrain sculpting,
 editor overlays, analytic river cuts, terrain-hole sidecars, and shoreline
 geometry are not yet reproduced. Retail Paths.dat road splines now retain the
 source cubic curves, five-metre sampling, cross-slope banking, per-joint offsets,
@@ -73,8 +86,8 @@ material width/depth, texture repeat, end ramps and sealed collision underside.
 Source road editor operations and lane AI bindings remain separate work.
 
 The existing custom shaders still require WGSL ports: ocean normal ripples and shoreline
-foam, planar reflections (the latest source intentionally keeps geometry flat), underwater rendering, sky/clouds/stars/day-night,
-wind/grass displacement, rain shelter/wetness/puddles/glass/impacts, caustics,
+foam, planar reflections (the latest source intentionally keeps geometry flat), underwater rendering,
+wind/grass/wire displacement, rain shelter/wetness/puddles/glass/impacts, caustics,
 vehicle palette painting, character clothing/wear, flags, outlines and effects.
 The source water-volume implementation is itself incomplete and should not be
 mistaken for an already-solved upstream feature.
@@ -83,8 +96,10 @@ Static prop appearance is loaded, but special prop behaviors are not all wired:
 doors, light fixtures, signals, destruction/debris, power taps, readable notes,
 seats, sinks, shop/container overlays and furniture-specific materials. A raw
 prop mesh is not proof that its corresponding interaction works. Exact source
-nonuniform world-axis scaling, ladder collider special cases and source layer
-masks also need explicit parity checks beyond the current ordinary transforms.
+nonuniform world-axis scaling and source layer masks also need explicit parity
+checks beyond the current ordinary transforms. Ladder box collision has an
+actual bundled-rung-gap regression test; other special shapes require their
+own source comparisons.
 
 Rigs draw and sample source clips, but the full gameplay animation state machine,
 ragdoll bodies/joints, clothing composition, faces, wearable attachments and
