@@ -528,6 +528,11 @@ namespace UnturnedGodot
             _genKind = new OptionButton { CustomMinimumSize = new Vector2(120, 0), FocusMode = FocusModeEnum.None };
             foreach (BuildingKind k in System.Enum.GetValues(typeof(BuildingKind))) _genKind.AddItem(k.ToString(), (int)k);
             g1.AddChild(_genKind);
+            // a Commercial building's shop, whose palettes it wears (BuildingGen.ShopPalettes): "any" draws one from the seed
+            _genShop = new OptionButton { CustomMinimumSize = new Vector2(96, 0), FocusMode = FocusModeEnum.None, TooltipText = "the shop a Commercial building is (its palettes)" };
+            _genShop.AddItem("any shop", (int)Business.None);
+            foreach (var b in BuildingGen.Shops) _genShop.AddItem(b.ToString(), (int)b);
+            g1.AddChild(_genShop);
             _genSeed = Spin(0, 999999, 1, 70);
             _genSeed.TooltipText = "seed";
             g1.AddChild(_genSeed);
@@ -615,7 +620,7 @@ namespace UnturnedGodot
 
         LineEdit _name;
         Label _bakeMsg;
-        OptionButton _genKind;
+        OptionButton _genKind, _genShop;
         SpinBox _genSeed, _genMinRooms, _genPerFloor, _genMinFloors, _genMaxFloors, _genWidth, _genDepth;
         OptionButton _genFront, _genBack, _genShape, _genPorch, _genChimney;
         CheckBox _genFit;
@@ -631,6 +636,7 @@ namespace UnturnedGodot
             {
                 Seed = (int)_genSeed.Value,
                 Kind = (BuildingKind)_genKind.GetSelectedId(),
+                Business = (Business)_genShop.GetSelectedId(),
                 MinRooms = (int)_genMinRooms.Value,
                 MinFloors = (int)_genMinFloors.Value,
                 MaxFloors = System.Math.Max((int)_genMinFloors.Value, (int)_genMaxFloors.Value),
@@ -651,7 +657,7 @@ namespace UnturnedGodot
             foreach (var g in res.Layout) if (!g.Circulation) rooms++;
             // the notes go to the log in full; the panel says only that there are some, so a long one cannot
             // stretch the panel across the screen
-            Say($"{res.Kind} #{spec.Seed}: {res.Floors} floor(s), {rooms} rooms, {res.Palette}"
+            Say($"{res.Kind}{(res.Business != Business.None ? $" ({res.Business})" : "")} #{spec.Seed}: {res.Floors} floor(s), {rooms} rooms, {res.Palette}"
                 + (res.Notes.Count > 0 ? $" — {res.Notes.Count} note(s) in the log" : " — Ctrl+Z to undo"));
         }
         Label _pitchLbl;

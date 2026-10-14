@@ -20,6 +20,12 @@ namespace UnturnedSim
     /// <summary>Whether a house's living room gets a fireplace and a chimney up through the roof. Auto for a seeded choice.</summary>
     public enum ChimneyChoice { Auto, None, Yes }
 
+    /// <summary>What a shop sells (strawberry: "shops should use the pallette of the shop they are, ie donuts, hardware etc
+    /// etc"): one of the retail shops, whose palettes it wears (BuildingGen.ShopPalettes). None: not a shop -- or, asked of
+    /// a Commercial spec, any of them, a seeded draw. There is no Donuts: no retail building is a donut shop (the
+    /// doughnut is a baked food item, nothing sells it), so none has a palette to wear.</summary>
+    public enum Business { None, Cafe, Clothes, Diner, Grocer, Guns, Hardware, Botanist }
+
     /// <summary>What to generate: a building from a seed (strawberry 2026-10-11: "make the map editor buildings tool
     /// procgen. to make buildings from a seed. certain min number of rooms, min number of each type, max number per floor,
     /// max number of floors, consider the building's type, what colors it should use. which openings are relevant, which
@@ -66,6 +72,8 @@ namespace UnturnedSim
         /// <summary>No garage among the rooms added to reach MinRooms or drawn as an extra: FitPlot's last compromise for a
         /// house whose garage -- two cells by three, for a car -- leaves its plot no whole plan.</summary>
         internal bool NoGarage;
+        /// <summary>A Commercial building's shop (its palettes are that shop's); None for a seeded one.</summary>
+        public Business Business;
 
         internal BuildingGenSpec Copy()
         {
@@ -173,6 +181,8 @@ namespace UnturnedSim
         public string Plan;
         /// <summary>The retail palette its walls wear (content/wall_palettes.tsv, by NAME: the editor resolves the index).</summary>
         public string Palette;
+        /// <summary>What a Commercial building sells, which chose its palette (BuildingGen.ShopPalettes); None for every other kind.</summary>
+        public Business Business;
         public RoofKind Roof;
         public float RoofPitch;
         /// <summary>Walls with their openings, footings, a floor per storey and the roofs, in building-local metres: the
@@ -526,16 +536,36 @@ namespace UnturnedSim
 
         /// <summary>The retail palettes that suit a kind of building (content/wall_palettes.tsv names). A retail business's or
         /// service's own palette (a fire station's, a mechanic's, a diner's) is for that business (strawberry: "only the
-        /// specified businesses/services should use those palletes, industry opting for apartment pallettes"): a kind
-        /// that is no one business in particular wears the plain apartment block's -- ApartmentPalettes, one line a kind.</summary>
+        /// specified businesses/services should use those palletes, industry opting for apartment pallettes", then "office
+        /// should use office pallette, shops should use the pallette of the shop they are"): industry wears the plain
+        /// apartment block's (ApartmentPalettes), an office building an office's, and a shop its own shop's -- every shop's
+        /// here, one shop's with its Business (ShopPalettes). Never a bank's, a post office's, a library's or a mall's: those
+        /// are services and landmarks, not shops; nor a police station's, a clinic's, a school's or a barracks'.</summary>
         public static string[] PalettesFor(BuildingKind b) => b switch
         {
             BuildingKind.Residential => new[] { "House_00", "House_01", "House_02", "House_03", "House_04", "House_05", "House_06", "House_07", "House_08", "House_09" },
             // (a house drew from these too until a block of flats was a kind of its own: see Generate)
             BuildingKind.Apartment => ApartmentPalettes(),
-            BuildingKind.Commercial => new[] { "Cafe_0", "Cafe_1", "Clothes_0", "Clothes_1", "Diner_0", "Diner_1", "Diner_2", "Grocer_0", "Guns_0", "Hardware_0", "Post_0", "Bank_0", "Mall_0", "Library_0" },
+            BuildingKind.Commercial => Shops.SelectMany(ShopPalettes).ToArray(),
             BuildingKind.Industrial => ApartmentPalettes(),
-            _ => new[] { "Office_0", "Office_1", "Office_2", "Office_3", "Police_0", "Police_1", "Medic_0", "Medic_1", "School_0", "School_1", "Barracks_0" },
+            _ => new[] { "Office_0", "Office_1", "Office_2", "Office_3" },
+        };
+        /// <summary>A kind's palettes, a shop's its own business's: what Generate draws a building's from.</summary>
+        public static string[] PalettesFor(BuildingKind b, Business shop) => b == BuildingKind.Commercial && shop != Business.None ? ShopPalettes(shop) : PalettesFor(b);
+        /// <summary>The shops a Commercial building may be, drawn among when its spec names none.</summary>
+        public static readonly Business[] Shops = { Business.Cafe, Business.Clothes, Business.Diner, Business.Grocer, Business.Guns, Business.Hardware, Business.Botanist };
+        /// <summary>Each shop's own palettes, measured off its retail buildings (Botanist_0: a storefront under a "Botanist"
+        /// sign with planters at its windows -- a plant shop).</summary>
+        public static string[] ShopPalettes(Business shop) => shop switch
+        {
+            Business.Cafe => new[] { "Cafe_0", "Cafe_1" },
+            Business.Clothes => new[] { "Clothes_0", "Clothes_1" },
+            Business.Diner => new[] { "Diner_0", "Diner_1", "Diner_2" },
+            Business.Grocer => new[] { "Grocer_0" },
+            Business.Guns => new[] { "Guns_0" },
+            Business.Hardware => new[] { "Hardware_0" },
+            Business.Botanist => new[] { "Botanist_0" },
+            _ => Array.Empty<string>(),
         };
         /// <summary>The apartment block's palettes: a block of flats', and an industrial building's (PalettesFor). Each call
         /// a fresh array, as every kind's.</summary>
@@ -820,7 +850,11 @@ namespace UnturnedSim
             var rng = new Rng(spec.Seed);
             var kind = spec.Kind;
             var res = new BuildingGenResult { Kind = kind };
-            var pals = PalettesFor(kind);
+            // a shop is one kind of shop, and wears its palettes: the one asked for, else one drawn on a stream of its own
+            // (so the draw below, and everything after it, stays where it was)
+            if (kind == BuildingKind.Commercial)
+                res.Business = spec.Business != Business.None ? spec.Business : Shops[new Rng(unchecked(spec.Seed * 7919 + 0x5409)).Int(Shops.Length)];
+            var pals = PalettesFor(kind, res.Business);
             // A house drew from fourteen palettes, its ten and the four apartment ones, until a block of flats became a
             // kind of its own (strawberry: "apartments should function differently from houses"). The same draw over the
             // same fourteen keeps every house that drew a house palette exactly as it was; one that drew an apartment's

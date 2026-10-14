@@ -2996,7 +2996,7 @@ namespace UnturnedGodot
             }
             Log.Print($"[editor-buildings] generated {res.Kind} seed {spec.Seed}: {res.Floors} floor(s), {rooms} rooms, "
                      + $"{res.CellsX * BuildingGen.Cell:0} x {res.CellsZ * BuildingGen.Cell:0} m, {res.Walls.Count} surfaces, "
-                     + $"{res.Stairs.Count} flight(s), {res.Furniture.Count} pieces of furniture, {res.Plan} plan, {res.Roof.ToString().ToLowerInvariant()} roof, palette {res.Palette}"
+                     + $"{res.Stairs.Count} flight(s), {res.Furniture.Count} pieces of furniture, {res.Plan} plan, {res.Roof.ToString().ToLowerInvariant()} roof, palette {res.Palette}{(res.Business != UnturnedSim.Business.None ? $" ({res.Business})" : "")}"
                      + (res.Notes.Count > 0 ? " -- " + string.Join("; ", res.Notes) : ""));
             return res;
         }

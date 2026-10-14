@@ -7756,9 +7756,9 @@ namespace UnturnedGodot
                 // be LOOKED at. The L1 test proves its numbers are wall-shaped; only a render shows whether
                 // the building it rebuilt is the building it read.
                 string imp = System.Environment.GetEnvironmentVariable("UG_EDITIMPORT");
-                // UG_EDITGEN=kind,seed[,minRooms,maxFloors,perFloor[,width,depth[,front,back,nowin[,shape[,porch[,chimney[,fit]]]]]]] (sides
+                // UG_EDITGEN=kind,seed[,minRooms,maxFloors,perFloor[,width,depth[,front,back,nowin[,shape[,porch[,chimney[,fit[,shop]]]]]]]]] (sides
                 // as NESW letters, shape R/L/T, porch N/F/B/FB, chimney N/Y, anything else auto; fit F: width x depth is a plot to fit
-                // inside, BuildingGenSpec.FitPlot) generates a building from a seed instead
+                // inside, BuildingGenSpec.FitPlot; shop a Business name, Cafe/Hardware/...) generates a building from a seed instead
                 // (BuildingGen), so a generated one can be looked at the same way. Frame it with UG_EDITCAM.
                 string gen = System.Environment.GetEnvironmentVariable("UG_EDITGEN");
                 if (!string.IsNullOrEmpty(imp)) buildings.ImportRetail(imp);
@@ -7794,6 +7794,7 @@ namespace UnturnedGodot
                             "N" => UnturnedSim.ChimneyChoice.None, "Y" => UnturnedSim.ChimneyChoice.Yes, _ => UnturnedSim.ChimneyChoice.Auto,
                         } : UnturnedSim.ChimneyChoice.Auto,
                         FitPlot = g.Length > 13 && g[13].ToUpperInvariant() == "F",
+                        Business = g.Length > 14 && System.Enum.TryParse<UnturnedSim.Business>(g[14], true, out var shop) ? shop : UnturnedSim.Business.None,
                     });
                 }
                 else if (buildings.Walls.Count == 0) DrawDemoBuilding(buildings);
