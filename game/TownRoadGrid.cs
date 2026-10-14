@@ -2252,6 +2252,8 @@ namespace UnturnedGodot
                 }
                 foreach (var (h, lanes) in byHalf) terr.ConformToPolylines(lanes, h + LaneWalkWidth + 0.5f, GradeFeather * 0.5f);
             }
+            // ...and under each parking lot, one smooth surface (TownParking)
+            GradeLots(terr, roads);
             return true;
         }
 

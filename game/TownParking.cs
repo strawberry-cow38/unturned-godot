@@ -20,16 +20,26 @@ namespace UnturnedGodot
         /// Block_Parking_0 is a 3 x 0.5 x 0.5 m block, one per stall, at its head. So a stall is 4 m wide and 5 m deep, the
         /// stripes 0.5 m. (The game's cars are 3 m across their tyres -- see BayDepth -- which is why it is a generous 4.)</summary>
         public const float StallWidth = 4f, StallDepth = 5f, StallStripe = 0.5f;
-        /// <summary>A two-way aisle between two rows of stalls, the asphalt in front of the first stall -- the way in's throat,
-        /// where it comes down off the pavement's height (LotRamp), so no stall sits on the slope -- and behind the last.</summary>
-        public float LotAisle = 7f, LotFrontApron = 4f, LotBackMargin = 1.5f;
+        /// <summary>⭐ EVERY ROAD IN A LOT IS TWO LANES (strawberry 2026-10-14: "make the internal 'road' of the parking lot two
+        /// lanes"): an aisle between rows of stalls, and the cross road along the front that ties a lot's aisles together,
+        /// both this wide -- a lane each way, as the way in is. (The aisles were tied together by a 4 m apron: one lane.)</summary>
+        public float LotAisle = 7f;
+        /// <summary>From a row's end stripe (its middle) to the kerb or the road the row ends at: the stripe and half a metre of
+        /// asphalt, room for a car door and no more.</summary>
+        public float RowEndGap = 0.75f;
         /// <summary>⭐ A LOT HAS ITS OWN KERB (strawberry 2026-10-14: "the parking lot needs a kerb/sidewalk"): a pavement this
         /// wide round the inside of its edge, open only where its ways in come through.</summary>
         public float LotKerbWidth = 1.5f;
-        /// <summary>⭐ THE BLOCK JUST PAST THE STRIPES' ENDS, WITH A SMALL GAP (strawberry 2026-10-14) -- which is where retail has
-        /// it: PEI's blocks stand 0.4 m past the end of their Line_Parking_0 stripes, their middles. So a row's heads have
-        /// a strip this deep behind them, between the stripes' ends and the lot's kerb, that the blocks stand in.</summary>
+        /// <summary>⚠ NO PARKING BLOCKS (strawberry 2026-10-14: "kill blocks"). In the US and Canada a wheel stop goes only where
+        /// a car's nose would overhang something it must not -- a narrow sidewalk, a building, a property line -- and they
+        /// are a trip hazard and the snowploughs' enemy everywhere else; a lot's kerb stops a tyre itself. So the stalls run
+        /// right up to the kerb and the strip the blocks stood in is gone. UG_TOWNLOTBLOCKS=1 puts them back, with that strip
+        /// -- retail's: the block 0.4 m past the end of its stripes, PEI's Line_Parking_0 / Block_Parking_0 measured -- at the
+        /// heads that face the lot's kerb only, never where two rows meet nose to nose.</summary>
+        public bool ParkingBlocks = System.Environment.GetEnvironmentVariable("UG_TOWNLOTBLOCKS") == "1";
         public float LotHeadStrip = 0.9f, BlockPast = 0.4f;
+        /// <summary>The strip between a row's heads and the kerb they face: the blocks', when there are blocks.</summary>
+        float HeadStrip => ParkingBlocks ? LotHeadStrip : 0f;
         /// <summary>⭐ A TWO-LANE WAY IN (strawberry 2026-10-14: "2 lane road going in"): its carriageway this wide a side -- a
         /// lane in and a lane out, as wide as the aisle it leads to -- not a back lane's single track.</summary>
         public float ParkingEntranceHalf = 3.5f;
@@ -43,7 +53,13 @@ namespace UnturnedGodot
         public int ParkingEntranceMaterial = -1;
         /// <summary>What the town's buildings ask for when nothing else says: an apartment block its residents' spaces, and
         /// a shop -- some shops -- its customers'.</summary>
-        public int ApartmentParking = 14, ShopParking = 8;
+        public int ApartmentParking = AskEnv(0, 14), ShopParking = AskEnv(1, 8);
+        /// <summary>UG_TOWNLOTASK=<apartments>[,<shops>]: what they ask for instead -- to see the bigger plans laid.</summary>
+        static int AskEnv(int i, int dflt)
+        {
+            var parts = (System.Environment.GetEnvironmentVariable("UG_TOWNLOTASK") ?? "").Split(',');
+            return i < parts.Length && int.TryParse(parts[i], out int v) && v >= 0 ? v : dflt;
+        }
         public float ShopParkingChance = 0.4f;
         /// <summary>⭐ A BUILDING'S OWN REQUEST: how many spaces the building on this plot wants (0: none). Whatever builds on
         /// the plots sets it; null asks the defaults above. Any size: the lot is solved to fit it.</summary>
@@ -63,11 +79,13 @@ namespace UnturnedGodot
         }
 
         /// <summary>A parking lot: the plot it is laid on (kind Parking), the plot whose building asked for it, the spaces asked
-        /// and laid, and its layout -- each stall (its middle, the way across it, the way in from its aisle to its head), each
-        /// stripe (its centre line), each way in from the street.</summary>
+        /// and laid, its plan, and its layout -- each stall (its middle, the way across it, the way in from its aisle to its
+        /// head), each stripe (its centre line), each of its two-lane roads (in the lot's own frame: x along the street from
+        /// the front's middle, y back from the front -- x0, y0, x1, y1), each way in from the street.</summary>
         public sealed class ParkingLot
         {
-            public Plot Lot, For; public int Wanted, Spaces, Aisles; public bool OneSided;
+            public Plot Lot, For; public int Wanted, Spaces; public LotPlan Plan;
+            public readonly List<(float x0, float y0, float x1, float y1)> Roads = new();
             public readonly List<(Vector3 at, Vector3 across, Vector3 into)> Stalls = new();
             public readonly List<(Vector3 a, Vector3 b)> Stripes = new();
             /// <summary>Each block: its middle, and the way its 3 m length runs (across its stall).</summary>
@@ -84,6 +102,10 @@ namespace UnturnedGodot
                 int i = Mathf.Min((int)f, FrontY.Length - 2);
                 return Mathf.Lerp(FrontY[i], FrontY[i + 1], f - i);
             }
+            /// <summary>Graded (TownParking.GradeLots): the ground's line along its back edge, BackA + BackB u -- its surface
+            /// runs straight from its street's height at the front kerb to that.</summary>
+            public bool Graded; public float BackA, BackB;
+            public float BackAt(float u) => BackA + BackB * u;
         }
         /// <summary>A way into a parking lot from its street (Road, Side; From..To the stretch of the street's pavement it takes,
         /// arc metres), Mouth where it meets the lot's front edge, Into the way into the lot.</summary>
@@ -101,50 +123,159 @@ namespace UnturnedGodot
         public int ParkingAsked, ParkingSpacesAsked, ParkingSpacesLaid, ParkingRefused, ParkingCornersTaken;
         public int ParkingWaysIn { get { int n = 0; foreach (var l in ParkingLotsLaid) n += l.Entrances.Count; return n; } }
 
-        /// <summary>⭐ SOLVE: `n` spaces into a lot no deeper than `maxDepth` -- aisles running back from the street, a row of
-        /// stalls down each side; the fewest aisles that hold them, then the shallowest lot; or, for a few, one row down one
-        /// side of a single aisle if that is the smaller lot. False if not even one stall fits that deep.</summary>
-        public bool SolveParking(int n, float maxDepth, out int aisles, out int perSide, out bool oneSided, out float width, out float depth, int shape = 0)
+        /// <summary>⭐ A LOT'S PLAN (strawberry 2026-10-14: "optimize the layout for the most accessable spaces as it can" --
+        /// "yes drive to"): every stall on a two-lane road, and as many as the lot holds. Stalls square to a two-way aisle,
+        /// a row down each side of it, is the densest a lot is laid (90 degrees, double-loaded: about 26 m2 a stall here), so
+        /// both arrangements are that: ACROSS -- aisles running back from the street side by side, their rows nose to nose
+        /// between them, two or more tied together by a cross road along the front (and, if it pays, a row along the front
+        /// kerb facing that road); ALONG -- one aisle along the street, a row behind it and, if it pays, one in front of it,
+        /// cut where the way in comes through. PerRow: the stalls in each across row, or in the along lot's back row.</summary>
+        public sealed class LotPlan
         {
-            aisles = perSide = 0; oneSided = false; width = depth = 0f;
-            if (n < 1) return false;
-            int maxPer = Mathf.FloorToInt((maxDepth - 2f * LotKerbWidth - LotFrontApron - LotBackMargin) / StallWidth + 1e-4f);
-            if (maxPer < 1) return false;
-            aisles = Mathf.CeilToInt(n / (2f * maxPer));
-            perSide = Mathf.CeilToInt(n / (2f * aisles));
-            width = 2f * LotKerbWidth + aisles * (2f * (StallDepth + LotHeadStrip) + LotAisle);
-            depth = 2f * LotKerbWidth + LotFrontApron + perSide * StallWidth + LotBackMargin;
-            bool canOne = n <= maxPer;
-            float w1 = 2f * LotKerbWidth + StallDepth + LotHeadStrip + LotAisle, d1 = 2f * LotKerbWidth + LotFrontApron + n * StallWidth + LotBackMargin;
-            // shape 0: the smaller lot; 1: one row down one side only (the narrowest frontage, for a tight street); 2: two rows
-            bool one = shape == 1 ? canOne : shape == 2 ? false : canOne && w1 * d1 < width * depth;
-            if (shape == 1 && !canOne) return false;
-            if (one) { aisles = 1; perSide = n; oneSided = true; width = w1; depth = d1; }
-            return true;
+            public bool Along, FrontRow; public int Aisles = 1, PerRow; public float Width, Depth; public int Stalls;
+            public override string ToString() => Along
+                ? $"one aisle along the street, {(FrontRow ? "a row each side" : "a row behind it")}"
+                : $"{Aisles} aisle{(Aisles > 1 ? "s" : "")} across{(Aisles > 1 ? ", a cross road along the front" : "")}{(FrontRow ? " and a row facing it" : "")}";
         }
 
         /// <summary>How far along its street (m, each way) a building and its lot may slide to find room for both.</summary>
         public float ParkingSlide = 60f;
+        /// <summary>The lot's front kerb left between its corner and an along lot's way in, where that comes in at an end.</summary>
+        public float WayInEndStub = 1f;
+        Dictionary<int, List<LotPlan>> _lotPlans;
 
-        /// <summary>The plot a lot of `n` spaces would take beside `forPlot` on its frontage (`dir` -1 its left, +1 its right),
-        /// as deep as the street's deepest plots at most -- null if none does.</summary>
-        Plot ParkingPlotBeside(RoadField roads, Plot forPlot, int n, int dir, out int aisles, out int perSide, out bool oneSided)
+        /// <summary>⭐ EVERY PLAN THAT HOLDS `n` IN A LOT NO DEEPER THAN `maxDepth`, the smallest first (and of two the same size,
+        /// the one holding more): across with 1 to 5 aisles, a row along the front or not, each the shallowest that holds
+        /// n; along, a row in front or not, each the narrowest. Their stalls counted the way they will be laid, ways in
+        /// where they cut the fewest (where they come in is only known once the lot is placed -- ParkingLotBeside).</summary>
+        List<LotPlan> LotPlansFor(int n, float maxDepth)
         {
-            aisles = perSide = 0; oneSided = false;
-            float deepest = 0f; foreach (var ps in PlotSizes) if (ps.Kind != PlotKind.Parking) deepest = Mathf.Max(deepest, ps.Depth);
-            // the deepest that fits there first, a stall row at a time shallower until one does
-            for (float maxD = deepest; maxD >= 2f * LotKerbWidth + LotFrontApron + StallWidth + LotBackMargin - 1e-3f; maxD -= StallWidth)
-            foreach (int shape in new[] { 0, 1 })
+            _lotPlans ??= new Dictionary<int, List<LotPlan>>();
+            if (_lotPlans.TryGetValue(n, out var cached)) return cached;
+            var list = new List<LotPlan>();
+            float Wk = LotKerbWidth, H = HeadStrip, Sd = StallDepth, Sw = StallWidth, A = LotAisle;
+            for (int k = 1; k <= 5 && n >= 1; k++)
+                foreach (bool front in k >= 2 ? new[] { false, true } : new[] { false })
+                {
+                    var plan = new LotPlan { Aisles = k, FrontRow = front, Width = 2f * Wk + 2f * H + k * (2f * Sd + A) };
+                    float cross = k >= 2 ? (front ? H + Sd : 0f) + A : 0f;
+                    // the rows hold the rest of what the front row does not (counted with no rows behind it)
+                    plan.PerRow = 0; plan.Depth = 2f * Wk + cross + 2f * RowEndGap;
+                    int frontStalls = front ? CountStalls(plan) : 0;
+                    plan.PerRow = Mathf.Max(1, Mathf.CeilToInt((n - frontStalls) / (2f * k)));
+                    plan.Depth = 2f * Wk + cross + 2f * RowEndGap + plan.PerRow * Sw;
+                    if (plan.Depth > maxDepth + 1e-3f) continue;
+                    plan.Stalls = CountStalls(plan);
+                    if (plan.Stalls >= n) list.Add(plan);
+                }
+            foreach (bool front in new[] { true, false })
             {
-                if (!SolveParking(n, maxD, out aisles, out perSide, out oneSided, out float w, out float d, shape)) { if (shape == 0) return null; continue; }
+                float depth = 2f * Wk + (front ? H + Sd : 0f) + A + Sd + H;
+                if (depth > maxDepth + 1e-3f) continue;
+                // (wide enough for its way in at an end: the stub, the kerb's curve, the way in, the curve, the stub)
+                float minInner = 2f * (WayInEndStub + Mathf.Max(LaneKerbRadius, LaneWalkWidth)) + 2f * ParkingEntranceHalf;
+                for (int per = 1; per <= 80; per++)
+                {
+                    var plan = new LotPlan { Along = true, FrontRow = front, PerRow = per, Depth = depth, Width = 2f * Wk + per * Sw + 2f * RowEndGap };
+                    if (plan.Width - 2f * Wk < minInner) continue;
+                    plan.Stalls = CountStalls(plan);
+                    if (plan.Stalls >= n) { list.Add(plan); break; }
+                }
+            }
+            list.Sort((x, y) =>
+            {
+                int c = (x.Width * x.Depth).CompareTo(y.Width * y.Depth);
+                return c != 0 ? c : y.Stalls.CompareTo(x.Stalls);
+            });
+            _lotPlans[n] = list;
+            return list;
+        }
+
+        /// <summary>The stalls a plan holds, laid on a plot of its size by itself, its ways in where it would prefer them.</summary>
+        int CountStalls(LotPlan plan)
+        {
+            var p = new Plot { Kind = PlotKind.Parking, Width = plan.Width, Depth = plan.Depth, Along = Vector3.Right, Facing = Vector3.Back, Road = -1, Arc = -1f };
+            var lot = new ParkingLot { Lot = p, Plan = plan };
+            LayOutLot(lot, plan, ChooseWaysIn(null, plan, p, null));
+            return lot.Spaces;
+        }
+
+        /// <summary>Where a way in may come into a lot (m along its front from the middle), best first: an across lot's at its
+        /// aisles, the middle ones first; an along lot's at an end -- the end away from the building first, so it is driven
+        /// past the stalls to them -- or else the middle.</summary>
+        List<float> WayInSpots(LotPlan plan, Plot p, Plot forPlot)
+        {
+            var spots = new List<float>();
+            float xL = -p.Width * 0.5f + LotKerbWidth, xR = p.Width * 0.5f - LotKerbWidth;
+            if (plan.Along)
+            {
+                float inset = WayInEndStub + Mathf.Max(LaneKerbRadius, LaneWalkWidth) + ParkingEntranceHalf + PavementGap;
+                bool forOnLeft = forPlot != null && (forPlot.Front - p.Front).Dot(p.Along) < 0f;
+                spots.Add(forOnLeft ? xR - inset : xL + inset);
+                spots.Add(forOnLeft ? xL + inset : xR - inset);
+                spots.Add(0f);
+                return spots;
+            }
+            for (int i = 0; i < plan.Aisles; i++) spots.Add(xL + HeadStrip + StallDepth + LotAisle * 0.5f + i * (2f * StallDepth + LotAisle));
+            spots.Sort((u, v) => Mathf.Abs(u).CompareTo(Mathf.Abs(v)));
+            return spots;
+        }
+
+        /// <summary>The ways in a lot placed here gets: as many as it wants (one; two for four aisles or more, the cross road
+        /// tying the rest together) of its spots, best first, that can open (WayInOpens; with no street, every spot can).</summary>
+        List<float> ChooseWaysIn(RoadField roads, LotPlan plan, Plot p, Plot forPlot)
+        {
+            int want = !plan.Along && plan.Aisles >= 4 ? 2 : 1;
+            var ways = new List<float>();
+            foreach (float xe in WayInSpots(plan, p, forPlot))
+            {
+                if (ways.Count >= want) break;
+                if (roads == null || p.Road < 0 || WayInOpens(roads, p, xe)) ways.Add(xe);
+            }
+            return ways;
+        }
+
+        /// <summary>⚠ WHETHER A WAY IN AT `xe` (m along the lot's front from its middle) COULD OPEN -- OpenMouth's own test,
+        /// ahead of time: its mouth on the street's pavement, clear of the junctions' corners by ParkingCornerClear. A two-lane
+        /// way in opens 9 m of the street's pavement, and a lot beside a corner (its plot clear of the corner's pavement, its
+        /// middle not) had none that could -- a lot with no way in. The solve moves on until one can.</summary>
+        bool WayInOpens(RoadField roads, Plot lotPlot, float xe)
+        {
+            int r = lotPlot.Road;
+            if (lotPlot.Arc < 0f || r < 0) return true;                // (nothing to measure along: OpenMouth decides)
+            float L = roads.RoadLength(r);
+            if (!roads.EvaluateAlong(r, Mathf.Clamp(lotPlot.Arc, 0f, L), out _, out var tan, snapTerrain: false)) return true;
+            float sgn = new Vector3(tan.X, 0f, tan.Z).Dot(lotPlot.Along) >= 0f ? 1f : -1f;
+            float lo = TrimFor(roads, r, false, CornerRadius) + 0.25f + ParkingCornerClear;
+            float hi = L - TrimFor(roads, r, true, CornerRadius) - 0.25f - ParkingCornerClear;
+            // (each corner's kerb leaves the street's the fillet's tangent length past the way in's kerb line -- or the
+            // return's width, whichever is more: MouthCorner's sA, square on)
+            float reach = ParkingEntranceHalf + PavementGap + Mathf.Max(LaneKerbRadius, LaneWalkWidth);
+            float a = lotPlot.Arc + sgn * xe;
+            return a - reach >= lo && a + reach <= hi;
+        }
+
+        /// <summary>⭐ THE LOT `n` SPACES WANT BESIDE `forPlot` on its frontage (`dir` -1 its left, +1 its right), as deep as the
+        /// street's deepest plots at most: the smallest plan that fits there, has a way in that can open, and laid that way
+        /// still holds n. Null if none does.</summary>
+        ParkingLot ParkingLotBeside(RoadField roads, Plot forPlot, int n, int dir)
+        {
+            float deepest = 0f; foreach (var ps in PlotSizes) if (ps.Kind != PlotKind.Parking) deepest = Mathf.Max(deepest, ps.Depth);
+            foreach (var plan in LotPlansFor(n, deepest))
+            {
                 var pl = new Plot
                 {
-                    Kind = PlotKind.Parking, Width = w, Depth = d, Along = forPlot.Along, Facing = forPlot.Facing, Road = forPlot.Road,
-                    Front = forPlot.Front + forPlot.Along * (dir * (forPlot.Width * 0.5f + w * 0.5f)),
-                    Arc = forPlot.Arc >= 0f ? forPlot.Arc + dir * (forPlot.Width * 0.5f + w * 0.5f) : -1f,
+                    Kind = PlotKind.Parking, Width = plan.Width, Depth = plan.Depth, Along = forPlot.Along, Facing = forPlot.Facing, Road = forPlot.Road,
+                    Front = forPlot.Front + forPlot.Along * (dir * (forPlot.Width * 0.5f + plan.Width * 0.5f)),
+                    Arc = forPlot.Arc >= 0f ? forPlot.Arc + dir * (forPlot.Width * 0.5f + plan.Width * 0.5f) : -1f,
                     RoadSide = forPlot.RoadSide, Straight = forPlot.Straight
                 };
-                if (PlotFits(roads, pl) && LotCanOpen(roads, pl, aisles, oneSided, forPlot)) return pl;
+                if (!PlotFits(roads, pl)) continue;
+                var ways = ChooseWaysIn(roads, plan, pl, forPlot);
+                if (ways.Count == 0) continue;
+                var lot = new ParkingLot { Lot = pl, For = forPlot, Wanted = n, Plan = plan };
+                LayOutLot(lot, plan, ways);
+                if (lot.Spaces >= n) return lot;
             }
             return null;
         }
@@ -157,6 +288,7 @@ namespace UnturnedGodot
         {
             ParkingLotsLaid.Clear();
             ParkingAsked = ParkingSpacesAsked = ParkingSpacesLaid = ParkingRefused = ParkingCornersTaken = 0;
+            _lotPlans = null;
             if (!ParkingLots || asks == null) return;
             foreach (var (was, n) in asks)
             {
@@ -167,7 +299,7 @@ namespace UnturnedGodot
                 // a time each way, out to ParkingSlide -- until both fit; only if nowhere on that frontage takes all it asked
                 // does it take less, the most that fits beside it where it stood. (The frontages are not filled yet: what is
                 // in the way is a corner lot, a lane, a junction, another building that asked and its lot.)
-                Plot pl = null, lotPlot = null; int aisles = 0, perSide = 0; bool oneSided = false;
+                Plot pl = null; ParkingLot lot = null;
                 Plot Shifted(float by) => new Plot
                 {
                     Kind = was.Kind, Width = was.Width, Depth = was.Depth, Along = was.Along, Facing = was.Facing, Road = was.Road, Road2 = was.Road2,
@@ -177,19 +309,15 @@ namespace UnturnedGodot
                 float reach = was.Straight && was.Road2 < 0 ? ParkingSlide : 0f;
                 void Slide()
                 {
-                    for (float k = 0f; k <= reach && lotPlot == null; k += 1f)
+                    for (float k = 0f; k <= reach && lot == null; k += 1f)
                         foreach (float by in k == 0f ? new[] { 0f } : new[] { k, -k })
                         {
                             var cand = Shifted(by);
                             if (!PlotFits(roads, cand)) continue;
                             Plots.Add(cand);
                             foreach (int dir in new[] { first, -first })
-                            {
-                                lotPlot = ParkingPlotBeside(roads, cand, n, dir, out aisles, out perSide, out oneSided);
-                                if (lotPlot != null && aisles * perSide * (oneSided ? 1 : 2) >= n) break;
-                                lotPlot = null;
-                            }
-                            if (lotPlot != null) { pl = cand; break; }
+                                if ((lot = ParkingLotBeside(roads, cand, n, dir)) != null) break;
+                            if (lot != null) { pl = cand; break; }
                             Plots.RemoveAt(Plots.Count - 1);
                         }
                 }
@@ -197,7 +325,7 @@ namespace UnturnedGodot
                 // ...and if its frontage is too short between its two corner lots, those corner lots give way -- a car park
                 // on a street corner, reached from both streets, is the commonest kind there is; the frontage fill puts
                 // houses back in whatever the pair leaves
-                if (lotPlot == null && reach > 0f)
+                if (lot == null && reach > 0f)
                 {
                     var gave = new List<Plot>();
                     foreach (var cl in Plots)
@@ -208,128 +336,156 @@ namespace UnturnedGodot
                     }
                     foreach (var cl in gave) Plots.Remove(cl);
                     Slide();
-                    if (lotPlot == null) Plots.AddRange(gave);
+                    if (lot == null) Plots.AddRange(gave);
                     else
                     {
                         // (only the ones the pair actually needed: any it does not touch go back -- asked with the LOT in place too,
                         // or a corner the lot sits on came straight back over it)
-                        foreach (var cl in gave) if (PlotFits(roads, cl) && !PlotsOverlap(cl, lotPlot)) Plots.Add(cl); else ParkingCornersTaken++;
+                        foreach (var cl in gave) if (PlotFits(roads, cl) && !PlotsOverlap(cl, lot.Lot)) Plots.Add(cl); else ParkingCornersTaken++;
                     }
                 }
-                if (lotPlot == null && PlotFits(roads, was))
+                if (lot == null && PlotFits(roads, was))
                 {
                     // the most that fits beside it where it stood
                     pl = was; Plots.Add(pl);
-                    for (int want = n - 1; want >= 1 && lotPlot == null; want = want > 8 ? want - 2 : want - 1)
+                    for (int want = n - 1; want >= 1 && lot == null; want = want > 8 ? want - 2 : want - 1)
                         foreach (int dir in new[] { first, -first })
-                            if ((lotPlot = ParkingPlotBeside(roads, pl, want, dir, out aisles, out perSide, out oneSided)) != null) break;
+                            if ((lot = ParkingLotBeside(roads, pl, want, dir)) != null) break;
                 }
-                if (lotPlot == null)
+                if (lot == null)
                 {
                     ParkingRefused++;
                     if (ProbeEverything) Log.Print($"[towngrid]   parking lot for the {was.Kind} at ({was.Front.X:0},{was.Front.Z:0}): asked {n} -- no room on its frontage");
                     continue;
                 }
-                Plots.Add(lotPlot);
-                var lot = new ParkingLot { Lot = lotPlot, For = pl, Wanted = n, Aisles = aisles, OneSided = oneSided };
-                LayOutLot(roads, lot, perSide);
+                lot.For = pl; lot.Wanted = n;
+                Plots.Add(lot.Lot);
                 ParkingLotsLaid.Add(lot);
                 ParkingSpacesLaid += lot.Spaces;
                 if (ProbeEverything)
-                    Log.Print($"[towngrid]   parking lot for the {pl.Kind} at ({pl.Front.X:0},{pl.Front.Z:0}): asked {n}, laid {lot.Spaces} "
-                            + $"({lot.Aisles} aisle{(lot.Aisles > 1 ? "s" : "")}{(lot.OneSided ? ", one-sided" : "")}), {lotPlot.Width:0}x{lotPlot.Depth:0} m at ({lotPlot.Front.X:0},{lotPlot.Front.Z:0})");
+                {
+                    var lp = lot.Lot;
+                    Log.Print($"[towngrid]   parking lot for the {pl.Kind} at ({pl.Front.X:0},{pl.Front.Z:0}): asked {n}, laid {lot.Spaces} -- {lot.Plan}, "
+                            + $"{lp.Width:0.0}x{lp.Depth:0.0} m ({lp.Width * lp.Depth / Mathf.Max(1, lot.Spaces):0} m2 a stall) at ({lp.Front.X:0},{lp.Front.Z:0}); "
+                            + $"{StallsReachable(lot)} of {lot.Spaces} stalls reachable on its {lot.Roads.Count} two-lane roads from {lot.Entrances.Count} way{(lot.Entrances.Count > 1 ? "s" : "")} in");
+                }
             }
         }
-
-        /// <summary>Where along a lot's front (m from its middle, along Along) each aisle -- and so each way in -- comes out:
-        /// aisles side by side from its left kerb, each a row of stalls either side of it (a one-sided lot's on the side
-        /// away from the building beside it).</summary>
-        List<float> AisleMids(Plot p, int aisles, bool oneSided, bool forOnLeft)
-        {
-            float module = oneSided ? StallDepth + LotHeadStrip + LotAisle : 2f * (StallDepth + LotHeadStrip) + LotAisle;
-            var mids = new List<float>(aisles);
-            for (int i = 0; i < aisles; i++)
-            {
-                float x0 = -p.Width * 0.5f + LotKerbWidth + i * module;
-                mids.Add(oneSided && forOnLeft ? x0 + LotAisle * 0.5f : x0 + LotHeadStrip + StallDepth + LotAisle * 0.5f);
-            }
-            return mids;
-        }
-
-        /// <summary>⚠ WHETHER A LOT HERE COULD OPEN A WAY IN -- OpenMouth's own test, ahead of time: at least one aisle's mouth
-        /// on its street's pavement, clear of the junctions' corners by ParkingCornerClear. A two-lane way in opens 9 m of
-        /// the street's pavement, and a lot beside a corner (its plot clear of the corner's pavement, its middle not) had
-        /// none that could -- a lot with no way in. The solve slides on until one can.</summary>
-        bool LotCanOpen(RoadField roads, Plot lotPlot, int aisles, bool oneSided, Plot forPlot)
-        {
-            int r = lotPlot.Road;
-            if (lotPlot.Arc < 0f || r < 0) return true;                // (nothing to measure along: OpenMouth decides)
-            float L = roads.RoadLength(r);
-            if (!roads.EvaluateAlong(r, Mathf.Clamp(lotPlot.Arc, 0f, L), out _, out var tan, snapTerrain: false)) return true;
-            float sgn = new Vector3(tan.X, 0f, tan.Z).Dot(lotPlot.Along) >= 0f ? 1f : -1f;
-            float lo = TrimFor(roads, r, false, CornerRadius) + 0.25f + ParkingCornerClear;
-            float hi = L - TrimFor(roads, r, true, CornerRadius) - 0.25f - ParkingCornerClear;
-            // (each corner's kerb leaves the street's the fillet's tangent length past the way in's kerb line -- or the
-            // return's width, whichever is more: MouthCorner's sA, square on)
-            float reach = ParkingEntranceHalf + PavementGap + Mathf.Max(LaneKerbRadius, LaneWalkWidth);
-            bool forOnLeft = forPlot != null && (forPlot.Front - lotPlot.Front).Dot(lotPlot.Along) < 0f;
-            foreach (float xe in AisleMids(lotPlot, aisles, oneSided, forOnLeft))
-            {
-                float a = lotPlot.Arc + sgn * xe;
-                if (a - reach >= lo && a + reach <= hi) return true;
-            }
-            return false;
-        }
-
-        /// <summary>A lot's layout, from its plot: each aisle running back from the street, a row of stalls each side of it
-        /// (one side for a one-sided lot, the side away from the building that asked), the stripes between and either end of
-        /// each row, and a way in at the front of each aisle.</summary>
-        void LayOutLot(RoadField roads, ParkingLot lot, int perSide)
+        /// <summary>⭐ A LOT LAID OUT TO ITS PLAN, its ways in at `ways` (m along its front from the middle). In its own frame
+        /// (x along the street from the front's middle, y back from the front edge), inside its kerb (xL..xR, yF..yB):
+        /// ACROSS -- from the left kerb, module after module of [row | aisle | row], each 2 x 5 + 7 m, the right row of one
+        /// nose to nose with the left row of the next; the rows running back from just behind the cross road (or the front
+        /// kerb, for one aisle) to just short of the back kerb; the cross road along the front, behind the front row if
+        /// there is one. ALONG -- the front row (if any) with its heads at the front kerb, cut where each way in comes
+        /// through, the aisle behind it, and the back row with its heads at the back kerb.</summary>
+        void LayOutLot(ParkingLot lot, LotPlan plan, List<float> ways)
         {
             var p = lot.Lot;
             Vector3 At(float x, float y) => p.Front + p.Along * x - p.Facing * y;      // x along the street, y back from it
-            float module = lot.OneSided ? StallDepth + LotHeadStrip + LotAisle : 2f * (StallDepth + LotHeadStrip) + LotAisle;
-            float y0 = LotKerbWidth + LotFrontApron;                                     // the first stall's front stripe
-            // a one-sided lot's stalls on the side away from the building beside it
-            bool forOnLeft = lot.For != null && (lot.For.Front - p.Front).Dot(p.Along) < 0f;
-            var mids = AisleMids(p, lot.Aisles, lot.OneSided, forOnLeft);
-            for (int i = 0; i < lot.Aisles; i++)
+            float xL = -p.Width * 0.5f + LotKerbWidth, xR = p.Width * 0.5f - LotKerbWidth, yF = LotKerbWidth, yB = p.Depth - LotKerbWidth;
+            float H = HeadStrip, Sd = StallDepth, A = LotAisle, th = ParkingEntranceHalf;
+            lot.Stalls.Clear(); lot.Stripes.Clear(); lot.Blocks.Clear(); lot.Entrances.Clear(); lot.Roads.Clear();
+            // a row of stalls: along x (or y), as many as fit between stripe middles a..b, centred; its heads on the line `head`
+            // across it and its open side -- the road's edge -- on `open`; a block at each head that faces the lot's kerb
+            void Row(bool alongX, float a, float b, float head, float open, bool kerbAhead)
             {
-                float x0 = -p.Width * 0.5f + LotKerbWidth + i * module;
-                // the rows: the head end and the aisle end across the street's way, and which way is in from the aisle to the head
-                var rows = new List<(float head, float aisleEnd, float into)>();
-                if (lot.OneSided)
+                int n = Mathf.FloorToInt((b - a) / StallWidth + 1e-4f);
+                if (n < 1) return;
+                float s0 = a + (b - a - n * StallWidth) * 0.5f, into = Mathf.Sign(head - open), mid = (head + open) * 0.5f;
+                Vector3 P(float run, float acr) => alongX ? At(run, acr) : At(acr, run);
+                var runDir = alongX ? p.Along : -p.Facing;
+                var intoDir = alongX ? -p.Facing * into : p.Along * into;
+                for (int k = 0; k < n; k++)
                 {
-                    if (forOnLeft) rows.Add((x0 + module - LotHeadStrip, x0 + LotAisle, 1f));
-                    else rows.Add((x0 + LotHeadStrip, x0 + LotHeadStrip + StallDepth, -1f));
+                    float c = s0 + (k + 0.5f) * StallWidth;
+                    lot.Stalls.Add((P(c, mid), runDir, intoDir));
+                    if (kerbAhead && ParkingBlocks) lot.Blocks.Add((P(c, head + into * BlockPast), runDir));
                 }
-                else
-                {
-                    rows.Add((x0 + LotHeadStrip, x0 + LotHeadStrip + StallDepth, -1f));
-                    rows.Add((x0 + module - LotHeadStrip, x0 + module - LotHeadStrip - StallDepth, 1f));
-                }
-                foreach (var (head, aisleEnd, into) in rows)
-                {
-                    float mid = (head + aisleEnd) * 0.5f;
-                    for (int k = 0; k < perSide; k++)
-                    {
-                        float y = y0 + (k + 0.5f) * StallWidth;
-                        lot.Stalls.Add((At(mid, y), -p.Facing, p.Along * into));
-                        // its block: just past the end of its stripes, the small gap retail leaves
-                        lot.Blocks.Add((At(head + into * BlockPast, y), -p.Facing));
-                    }
-                    for (int k = 0; k <= perSide; k++)
-                    {
-                        float y = y0 + k * StallWidth;
-                        lot.Stripes.Add((At(head, y), At(aisleEnd, y)));
-                    }
-                }
-                lot.Entrances.Add(new ParkingEntrance { Road = p.Road, Side = p.RoadSide, Mouth = At(mids[i], 0f), Into = -p.Facing,
-                                                        Width = 2f * ParkingEntranceHalf, Lot = lot });
+                for (int k = 0; k <= n; k++) { float sx = s0 + k * StallWidth; lot.Stripes.Add((P(sx, head), P(sx, open))); }
             }
+            // a row along the front kerb, cut where each way in comes through it -- and the way in's road on through it
+            void FrontRow(float roadFrom)
+            {
+                var cuts = new List<float>(ways); cuts.Sort();
+                float a = xL + RowEndGap, cut = th + StallStripe * 0.5f;
+                foreach (float xe in cuts)
+                {
+                    Row(true, a, xe - cut, yF + H, yF + H + Sd, true);
+                    a = xe + cut;
+                    lot.Roads.Add((xe - th, yF, xe + th, roadFrom));
+                }
+                Row(true, a, xR - RowEndGap, yF + H, yF + H + Sd, true);
+            }
+            if (!plan.Along)
+            {
+                float y0 = yF + RowEndGap;
+                if (plan.Aisles >= 2)
+                {
+                    float roadFrom = yF + (plan.FrontRow ? H + Sd : 0f);
+                    if (plan.FrontRow) FrontRow(roadFrom);
+                    lot.Roads.Add((xL, roadFrom, xR, roadFrom + A));          // the cross road
+                    y0 = roadFrom + A + RowEndGap;
+                }
+                float y1 = y0 + plan.PerRow * StallWidth, x = xL + H;
+                for (int i = 0; i < plan.Aisles; i++)
+                {
+                    Row(false, y0, y1, x, x + Sd, i == 0);
+                    lot.Roads.Add((x + Sd, yF, x + Sd + A, yB));
+                    Row(false, y0, y1, x + 2f * Sd + A, x + Sd + A, i == plan.Aisles - 1);
+                    x += 2f * Sd + A;
+                }
+            }
+            else
+            {
+                float aisle0 = yF + (plan.FrontRow ? H + Sd : 0f);
+                if (plan.FrontRow) FrontRow(aisle0);
+                lot.Roads.Add((xL, aisle0, xR, aisle0 + A));
+                Row(true, xL + RowEndGap, xR - RowEndGap, aisle0 + A + Sd, aisle0 + A, true);
+            }
+            foreach (float xe in ways)
+                lot.Entrances.Add(new ParkingEntrance { Road = p.Road, Side = p.RoadSide, Mouth = At(xe, 0f), Into = -p.Facing,
+                                                        Width = 2f * ParkingEntranceHalf, Lot = lot });
             lot.Spaces = lot.Stalls.Count;
         }
 
+        /// <summary>⭐ MEASURED: how many of a lot's stalls can be driven to -- the asphalt in front of each (half a metre out of
+        /// its open side) on one of its two-lane roads, and that road joined, road to road, to a way in at the front kerb. A
+        /// stall whose open side faces no road, or a road nothing joins, is a space nobody can reach.</summary>
+        int StallsReachable(ParkingLot lot)
+        {
+            var p = lot.Lot;
+            (float x, float y) Local(Vector3 q) { var r = q - p.Front; return (r.Dot(p.Along), -r.Dot(p.Facing)); }
+            var roads = lot.Roads;
+            bool Touch((float x0, float y0, float x1, float y1) a, (float x0, float y0, float x1, float y1) b)
+                => a.x0 <= b.x1 + 0.01f && b.x0 <= a.x1 + 0.01f && a.y0 <= b.y1 + 0.01f && b.y0 <= a.y1 + 0.01f;
+            var reached = new bool[roads.Count];
+            var queue = new Queue<int>();
+            float yF = LotKerbWidth;
+            for (int i = 0; i < roads.Count; i++)
+                foreach (var e in lot.Entrances)
+                {
+                    var (xe, _) = Local(e.Mouth);
+                    var r = roads[i];
+                    if (!reached[i] && r.y0 <= yF + 0.01f && r.x0 <= xe && xe <= r.x1) { reached[i] = true; queue.Enqueue(i); }
+                }
+            while (queue.Count > 0)
+            {
+                int i = queue.Dequeue();
+                for (int j = 0; j < roads.Count; j++)
+                    if (!reached[j] && Touch(roads[i], roads[j])) { reached[j] = true; queue.Enqueue(j); }
+            }
+            int n = 0;
+            foreach (var (at, _, into) in lot.Stalls)
+            {
+                var (x, y) = Local(at - into * (StallDepth * 0.5f + 0.5f));
+                for (int i = 0; i < roads.Count; i++)
+                {
+                    var r = roads[i];
+                    if (reached[i] && r.x0 - 0.01f <= x && x <= r.x1 + 0.01f && r.y0 - 0.01f <= y && y <= r.y1 + 0.01f) { n++; break; }
+                }
+            }
+            return n;
+        }
         /// <summary>⭐ EACH WAY IN, A ROAD (strawberry 2026-10-14: "a real road connection, not just a dipped kerb"; "2 lane road
         /// going in"): opened off the street the way a back lane is (OpenMouth: the street's pavement cut, a kerb returning
         /// round each corner) but two lanes wide, and run in through the lot's own kerb to its asphalt, where it stops OPEN
@@ -369,6 +525,70 @@ namespace UnturnedGodot
         /// <summary>Lots whose only way in had to open nearer a junction's corner than ParkingCornerClear.</summary>
         public int ParkingWaysNearCorner;
 
+        /// <summary>Each lot's street's height along its front, a metre apart and past each end as far as its grading reaches:
+        /// its asphalt across from there, which is its pavement's top less a kerb (so the lot's front kerb stands exactly as
+        /// high).</summary>
+        void SampleLotFront(ParkingLot lot, RoadField roads)
+        {
+            var p = lot.Lot;
+            float kerbH = KerbProud(roads), reach = Terrain.GridUnit + 2f;
+            int n = Mathf.CeilToInt(p.Width + 2f * reach) + 1;
+            lot.FrontU0 = -p.Width * 0.5f - reach;
+            lot.FrontY = new float[n];
+            for (int k = 0; k < n; k++)
+                lot.FrontY[k] = RoadNear(roads, p.Road, p.Front + p.Along * (lot.FrontU0 + k), out _, out _) + PavementKerb - kerbH;
+        }
+
+        /// <summary>How far under a graded lot's asphalt the ground is cut, and how far round it the cut eases back out.</summary>
+        public float LotGradeDrop = 0.12f, LotGradeFeather = 6f;
+        /// <summary>⭐ EACH LOT GRADED, ONE SMOOTH SURFACE (UG_TOWNHILLS: the ground showed through the asphalt in patches). A lot
+        /// laid on the ground took the ground's height at each metre, and the terrain between its 4 m samples is the mesh's
+        /// own triangles -- a hump a few centimetres over the lot's surface, on any slope, and the grass came up through the
+        /// stalls. A real lot is graded: its surface runs straight from its street's height at the front kerb to the ground's
+        /// line along its back (fitted, so a bump there is not copied), and the ground under it is cut or filled to just below
+        /// that (LotGradeDrop) -- and beside it only ever cut, never raised: a grid cell past its sides and back, so no mesh
+        /// triangle reaches up through its kerb, easing back out over LotGradeFeather (raising that ground too lifted the
+        /// neighbours' yards through their plot marks) -- never toward its street, which the street's grading has, nor under a street or a lane (graded
+        /// already, to their own profiles, and not yet built for a road test to see).</summary>
+        void GradeLots(Terrain terr, RoadField roads)
+        {
+            if (terr == null || roads == null) return;
+            int graded = 0; float worstCut = 0f, worstFill = 0f;
+            foreach (var lot in ParkingLotsLaid)
+            {
+                var p = lot.Lot;
+                SampleLotFront(lot, roads);
+                // the ground's line along the back edge: least squares over a sample a metre
+                double su = 0, sy = 0, suu = 0, suy = 0; int ns = 0;
+                for (float u = -p.Width * 0.5f; u <= p.Width * 0.5f + 1e-3f; u += 1f)
+                {
+                    var q = p.Front + p.Along * u - p.Facing * p.Depth;
+                    float gy = terr.SampleHeight(q.X, q.Z);
+                    su += u; sy += gy; suu += (double)u * u; suy += (double)u * gy; ns++;
+                }
+                if (ns < 2) continue;
+                double den = ns * suu - su * su;
+                lot.BackB = den > 1e-6 ? (float)((ns * suy - su * sy) / den) : 0f;
+                lot.BackA = (float)(sy / ns) - lot.BackB * (float)(su / ns);
+                lot.Graded = true;
+                // (measured: how far the surface stands off the ground it replaces, at the lot's middle row of samples)
+                for (float u = -p.Width * 0.5f; u <= p.Width * 0.5f; u += 2f)
+                    for (float y = 0f; y <= p.Depth; y += 2f)
+                    {
+                        var q = p.Front + p.Along * u - p.Facing * y;
+                        float off = LotSurfaceY(lot, q.X, q.Z, 0f) - LotGradeDrop - terr.SampleHeight(q.X, q.Z);
+                        worstFill = Mathf.Max(worstFill, off); worstCut = Mathf.Min(worstCut, off);
+                    }
+                terr.ConformToSurface(p.Front, p.Along, -p.Facing, -p.Width * 0.5f, p.Width * 0.5f, -(PlotSetback + p.Setback), p.Depth,
+                                      (x, z) => LotSurfaceY(lot, x, z, 0f) - LotGradeDrop, Terrain.GridUnit, LotGradeFeather, beforeV0: false,
+                                      keepOut: (x, z) => roads.DeepestRoadOverlap(new Vector3(x, 0f, z), 1f, out _, out _) || LaneAt(new Vector3(x, 0f, z)));
+                graded++;
+            }
+            if (graded > 0)
+                Log.Print($"[towngrid] parking lots graded: {graded}, each one smooth surface from its street's height to the ground's line at its back; "
+                        + $"the ground cut up to {-worstCut:0.00} m and filled up to {worstFill:0.00} m to sit {LotGradeDrop:0.00} m under it");
+        }
+
         /// <summary>How long a lot's asphalt takes to come from its street's height at its front kerb to the ground (m).</summary>
         public float LotRamp = 3.5f;
         /// <summary>⚠⚠ THE LOT'S FRONT IS AT ITS STREET'S HEIGHT, ALL ALONG IT. Its ways in come off the street level, a kerb's
@@ -384,6 +604,8 @@ namespace UnturnedGodot
             var p = lot.Lot;
             float dx = x - p.Front.X, dz = z - p.Front.Z;
             float u = dx * p.Along.X + dz * p.Along.Z, y = -(dx * p.Facing.X + dz * p.Facing.Z);
+            // graded: one smooth surface, the street's height at the front kerb straight to the ground's line at the back
+            if (lot.Graded) return Mathf.Lerp(lot.FrontAt(u), lot.BackAt(u), Mathf.Clamp((y - LotKerbWidth) / Mathf.Max(1f, p.Depth - LotKerbWidth), 0f, 1f));
             float t = Mathf.Clamp((y - LotKerbWidth) / Mathf.Max(0.1f, LotRamp), 0f, 1f);
             return Mathf.Lerp(g, lot.FrontAt(u), 1f - t * t * (3f - 2f * t));
         }
@@ -414,17 +636,7 @@ namespace UnturnedGodot
             float Ground(float x, float z) => Terrain.Active != null ? Terrain.Active.SampleHeight(x, z) : (_heightAt != null ? _heightAt(x, z) : Centre.Y);
             Func<float, float, float> groundFn = Terrain.Active != null && !EditorSidewalk.NoGround ? (x, z) => Terrain.Active.SampleHeight(x, z) : null;
             float kerbH = KerbProud(roads);
-            // each lot's street's height along its front, a metre apart and a couple past each end: its asphalt across from
-            // there, which is its pavement's top less a kerb (so the lot's front kerb stands exactly as high)
-            foreach (var lot in ParkingLotsLaid)
-            {
-                var p = lot.Lot;
-                int n = Mathf.CeilToInt(p.Width + 4f) + 1;
-                lot.FrontU0 = -p.Width * 0.5f - 2f;
-                lot.FrontY = new float[n];
-                for (int k = 0; k < n; k++)
-                    lot.FrontY[k] = RoadNear(roads, p.Road, p.Front + p.Along * (lot.FrontU0 + k), out _, out _) + PavementKerb - kerbH;
-            }
+            foreach (var lot in ParkingLotsLaid) if (lot.FrontY == null) SampleLotFront(lot, roads);
             // each way in's height where it meets the lot: its lane's end, as built -- against the lot's front there
             foreach (var lot in ParkingLotsLaid)
                 foreach (var e in lot.Entrances)

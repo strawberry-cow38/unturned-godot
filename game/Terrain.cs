@@ -1087,6 +1087,56 @@ void fragment() {
             }
         }
 
+        /// <summary>⭐ The ground under a rectangle set to a surface, cut or filled: every sample inside it (origin + u along
+        /// axisU, v along axisV -- unit, in plan -- u0..u1 by v0..v1) takes target(x, z) there. Outside it the ground is only
+        /// ever CUT, never raised -- to the target at the rectangle's nearest point, out to `grow`, then easing back to what it
+        /// was over `feather` -- so no slope beside it stands up through its edge, and nobody else's ground is lifted. Not
+        /// beyond v0 when beforeV0 is false (a parking lot's street side, which the street's own grading has). A sample
+        /// keepOut says is someone else's (a carriageway) is left alone. One rebuild, collider included
+        /// (ConformToPolylines' reasons: nobody flushes a generation edit's colliders afterwards).</summary>
+        public void ConformToSurface(Vector3 origin, Vector3 axisU, Vector3 axisV, float u0, float u1, float v0, float v1,
+                                     System.Func<float, float, float> target, float grow, float feather, bool beforeV0 = true,
+                                     System.Func<float, float, bool> keepOut = null)
+        {
+            float outer = grow + feather;
+            if (_grid == null || target == null || u1 <= u0 || v1 <= v0) return;
+            var du = new Vector2(axisU.X, axisU.Z).Normalized(); var dv = new Vector2(axisV.X, axisV.Z).Normalized();
+            float minWX = float.MaxValue, maxWX = float.MinValue, minWZ = float.MaxValue, maxWZ = float.MinValue;
+            foreach (float uu in new[] { u0 - outer, u1 + outer })
+                foreach (float vv in new[] { v0 - outer, v1 + outer })
+                {
+                    float x = origin.X + du.X * uu + dv.X * vv, z = origin.Z + du.Y * uu + dv.Y * vv;
+                    minWX = Mathf.Min(minWX, x); maxWX = Mathf.Max(maxWX, x); minWZ = Mathf.Min(minWZ, z); maxWZ = Mathf.Max(maxWZ, z);
+                }
+            int gx0 = Mathf.Clamp(Mathf.FloorToInt((minWX - _bx) / UNIT), 0, _gw - 1), gx1 = Mathf.Clamp(Mathf.CeilToInt((maxWX - _bx) / UNIT), 0, _gw - 1);
+            int gy0 = Mathf.Clamp(Mathf.FloorToInt((-maxWZ - _bz) / UNIT), 0, _gh - 1), gy1 = Mathf.Clamp(Mathf.CeilToInt((-minWZ - _bz) / UNIT), 0, _gh - 1);
+            int minX = int.MaxValue, maxX = int.MinValue, minY = int.MaxValue, maxY = int.MinValue;
+            for (int gx = gx0; gx <= gx1; gx++)
+                for (int gy = gy0; gy <= gy1; gy++)
+                {
+                    float wx = gx * UNIT + _bx, wz = -(gy * UNIT + _bz);
+                    float ru = (wx - origin.X) * du.X + (wz - origin.Z) * du.Y, rv = (wx - origin.X) * dv.X + (wz - origin.Z) * dv.Y;
+                    if (!beforeV0 && rv < v0) continue;
+                    float cu = Mathf.Clamp(ru, u0, u1), cv = Mathf.Clamp(rv, v0, v1);
+                    float d = Mathf.Sqrt((ru - cu) * (ru - cu) + (rv - cv) * (rv - cv));
+                    if (d > outer) continue;
+                    if (ProcIsland.InsideAnyTownPad(wx, -wz)) continue;     // (the pad is levelled exactly: ConformToPolylines)
+                    if (keepOut != null && keepOut(wx, wz)) continue;
+                    float want = target(origin.X + du.X * cu + dv.X * cv, origin.Z + du.Y * cu + dv.Y * cv);
+                    float tn = (want + TILE_HEIGHT / 2f) / TILE_HEIGHT;
+                    float w = d <= grow ? 1f : 1f - Mathf.SmoothStep(grow, outer, d);
+                    float nv = Mathf.Lerp(_grid[gx, gy], tn, w);
+                    if (d > 1e-4f) nv = Mathf.Min(nv, _grid[gx, gy]);       // outside: cut only
+                    JournalH(gx, gy);
+                    _grid[gx, gy] = Mathf.Clamp(nv, 0f, 1f);
+                    if (gx < minX) minX = gx; if (gx > maxX) maxX = gx;
+                    if (gy < minY) minY = gy; if (gy > maxY) maxY = gy;
+                }
+            if (minX > maxX) return;
+            _dirty = true;
+            RebuildChunksIn(minX, maxX, minY, maxY, withCollider: true);
+        }
+
         public void ConformToPolyline(System.Collections.Generic.IReadOnlyList<Vector3> pts, float radius, float feather)
         {
             if (_grid == null || pts == null || pts.Count < 2) return;
