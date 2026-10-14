@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 import subprocess
+import struct
 import tempfile
 import unittest
 
@@ -73,6 +74,58 @@ class BridgeTests(unittest.TestCase):
         self.assertGreater(state['player']['correctionVersion'], 0)
         self.assertLess(abs(state['player']['position'][0]), 1)
 
+    def test_events_survive_result_only_calls_and_ack(self):
+        self.call('action', name='console', args=dict(text='xp 5'))
+        events = self.pump()['events']
+        self.assertTrue(any(e['kind'] == 'console' for e in events))
+        last = events[-1]['seq']
+        self.call('simulate', input=dict(moveY=0, grounded=True))
+        self.assertEqual(events, self.call('snapshot')['state']['events'])
+        self.assertEqual([], self.call('snapshot', ackEvents=last)['state']['events'])
+
+    def test_headroom_uses_original_stance_gate(self):
+        self.call('simulate', input=dict(stance='crouch', grounded=True))
+        result = self.call('simulate', input=dict(stance='stand', grounded=True, capsuleHeight=1.2, headroom=False))['result']
+        self.assertEqual('crouch', result['stance'])
+        self.assertAlmostEqual(1.2, result['height'])
+
+    def test_authoritative_bullet_hits_registered_wall(self):
+        self.call('worldGeometry', meshes=[dict(vertices=[[-2, 0, -2], [2, 0, -2], [0, 4, -2]])])
+        self.call('action', name='fire', args={})
+        state = self.pump()
+        impacts = [e for e in state['events'] if e['kind'] == 'impact']
+        self.assertTrue(impacts, state['events'])
+        self.assertAlmostEqual(-2, impacts[0]['data']['pos']['z'], places=2)
+        self.assertEqual(29, state['player']['ammo'])
+
+    def test_heightfield_hole_and_nearest_triangle(self):
+        self.call('worldGeometry', terrainPatches=[dict(origin=[0, 0], cells=1, spacing=2, heights=[1, 1, 1, 1])])
+        hit = self.call('worldRay', **{'from': [1, 5, 1], 'to': [1, -2, 1]})['result']
+        self.assertTrue(hit['hit'])
+        self.assertAlmostEqual(1, hit['point'][1])
+        self.call('worldGeometry', terrainPatches=[dict(origin=[0, 0], cells=1, spacing=2, heights=[1, 1, 1, 1], holes=[True])])
+        self.assertFalse(self.call('worldRay', **{'from': [1, 5, 1], 'to': [1, -2, 1]})['result']['hit'])
+
+    def test_original_catalog_overrides_and_generated_recipes(self):
+        catalog = self.call('catalog')['result']['items']
+        water = next(i for i in catalog if i['id'] == 14)
+        guns = [i for i in catalog if i.get('mesh', '').endswith('_gun.txt')]
+        source_guns = [p for p in (ROOT / 'game/content').glob('*.dat')
+                       if p.with_name(p.stem + '_gun.txt').exists()]
+        self.assertGreater(len(source_guns), 50)
+        self.assertEqual(len(source_guns), len(guns))
+        eaglefire = next(i for i in guns if i['id'] == 4)
+        self.assertEqual('eaglefire', eaglefire['asset'])
+        self.assertEqual(30, eaglefire['gunAmmoMax'])
+        self.assertEqual(9, len([i for i in guns if i['movementMultiplier'] < .999]))
+        self.assertTrue(water['isFluidContainer'])
+        self.assertTrue(water['icon'].startswith('items/icons/'))
+        recipes = self.call('snapshot')['state']['recipes']
+        self.assertTrue(any(r['name'].startswith('Split ') for r in recipes))
+        self.assertTrue(any(r['name'].startswith('Salvage ') for r in recipes))
+        steady = self.call('tick')['state']
+        self.assertNotIn('recipes', steady)
+
     def test_save_uses_original_format_and_restores_inventory(self):
         with tempfile.TemporaryDirectory() as folder:
             path = str(Path(folder) / 'world.json')
@@ -86,6 +139,64 @@ class BridgeTests(unittest.TestCase):
             self.pump()
             self.call('load', path=path)
             self.assertEqual(before, self.pump()['inventory'])
+
+    def test_clock_replication_restores_day_and_duration(self):
+        initial = self.call('snapshot')['state']['worldClock']
+        self.assertEqual(1440, initial['dayLengthSeconds'])
+        self.assertAlmostEqual(.35, initial['timeOfDay'], places=3)
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'clock.json'
+            self.call('save', path=str(path))
+            saved = json.loads(path.read_text())
+            saved.update(Day=7, TimeOfDay01=.999, DayLengthSeconds=1)
+            path.write_text(json.dumps(saved))
+            self.call('load', path=str(path))
+            state = self.pump()['worldClock']
+            self.assertEqual(8, state['day'])
+            self.assertEqual(1, state['dayLengthSeconds'])
+            self.call('save', path=str(path))
+            saved = json.loads(path.read_text())
+            self.assertEqual(8, saved['Day'])
+            self.assertEqual(1, saved['DayLengthSeconds'])
+
+    def test_loot_save_load_preserves_taken_points_and_streaming(self):
+        # Minimal real retail binary format, so this exercises the original table
+        # parser/roll and adapter lifecycle without requiring a Steam install.
+        with tempfile.TemporaryDirectory() as folder:
+            spawns = Path(folder) / 'Spawns'
+            spawns.mkdir()
+            table = bytes([4, 1, 255, 255, 255, 4]) + b'Food'
+            table += struct.pack('<HBB', 0, 1, 4) + b'Food'
+            table += struct.pack('<fBH', 1., 1, 13)
+            (spawns / 'Items.dat').write_bytes(table)
+            points = [(0., 0., 1.), (1., 0., 1.), (1000., 0., 0.)]
+            jars = bytes([1]) + struct.pack('<H', len(points))
+            jars += b''.join(struct.pack('<Bfff', 0, *p) for p in points)
+            jars += bytes(2 * (64 * 64 - 1))
+            (spawns / 'Jars.dat').write_bytes(jars)
+            # Roof is combat-solid, while loot settles against terrain only.
+            self.call('worldGeometry', meshes=[
+                dict(terrain=True, vertices=[[-10, .5, -10], [10, .5, -10], [0, .5, 10]]),
+                dict(vertices=[[-10, 10, -10], [10, 10, -10], [0, 10, 10]])])
+            self.assertEqual(2, self.call('worldLoot', mapRoot=folder)['result']['live'])
+            state = self.pump()
+            self.assertEqual(2, len(state['worldItems']))
+            self.assertAlmostEqual(.55, state['worldItems'][0]['position'][1], places=2)
+            self.call('action', name='pickupItem', args=dict(netId=state['worldItems'][0]['netId']))
+            self.assertEqual(1, len(self.pump()['worldItems']))
+            path = str(Path(folder) / 'saved.json')
+            self.call('save', path=path)
+            self.call('load', path=path)
+            self.assertEqual(1, len(self.pump(25)['worldItems']))
+            self.assertEqual(1, self.call('worldLoot', mapRoot=folder)['result']['live'])
+            self.call('action', name='console', args=dict(text='teleport 1000 0 0'))
+            far = self.pump(25)['worldItems']
+            self.assertEqual(1, len(far))
+            self.assertAlmostEqual(1000, far[0]['position'][0])
+            self.call('action', name='console', args=dict(text='teleport 0 0 0'))
+            near = self.pump(25)['worldItems']
+            self.assertEqual(1, len(near))
+            self.assertAlmostEqual(1, near[0]['position'][0])
 
 
 if __name__ == '__main__':

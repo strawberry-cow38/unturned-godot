@@ -4,8 +4,9 @@ using UnturnedBevy;
 
 // stdout is a protocol channel. Diagnostics go to stderr, including content loaders.
 var host = new BridgeHost();
-var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, IncludeFields = true };
+var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, IncludeFields = true, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
 options.Converters.Add(new JsonStringEnumConverter());
+options.Converters.Add(new VectorJson());
 string line;
 while ((line = Console.ReadLine()) != null)
 {
@@ -19,7 +20,10 @@ while ((line = Console.ReadLine()) != null)
         var op = request.GetProperty("op").GetString();
         var result = host.Handle(op, request);
         shutdown = op == "shutdown";
-        Console.WriteLine(JsonSerializer.Serialize(new { id, ok = true, result, state = host.State() }, options));
+        bool includeState = request.TryGetProperty("includeState", out var stateFlag) ? stateFlag.GetBoolean()
+            : op is "init" or "tick" or "snapshot" or "action" or "save" or "load";
+        bool includeRecipes = request.TryGetProperty("includeRecipes", out var recipeFlag) ? recipeFlag.GetBoolean() : op != "tick";
+        Console.WriteLine(JsonSerializer.Serialize(new { id, ok = true, result, state = includeState ? host.State(includeRecipes) : null }, options));
     }
     catch (Exception error)
     {

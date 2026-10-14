@@ -11,13 +11,15 @@ Requests have `{id,op,...}`; replies have `{id,ok,result,state}` or
 the actual outcome appears in subsequent replicated state.
 
 - `init`: `contentRoot` is an absolute content directory; optional `name`, `mapId`,
-  `spawn:[x,y,z]`, `starterKit:false`. Returns protocol version, capabilities and
+  `spawn:[x,y,z]`, `yaw`, `seed:1337`, `starterKit:false`. Returns protocol version, capabilities and
   action names. The explicit starter kit is a development fixture seeded by the
   authority; normal starts have empty inventories.
 - `simulate`: `input:{moveX,moveY,jump,grounded,stance,yaw,pitch,velocity?,heldItemId}`.
   Calls the original movement sim once at 0.02 seconds. Stance is `stand`, `sprint`,
   `crouch` or `prone`. Yaw/pitch are degrees. Returns world-space `velocity`, capsule
-  `height`, and `jumpLocked`. Run before Bevy collision; it advances no server tick.
+  `height`, accepted `stance`, `eyeHeight`, and `jumpLocked`. Optional `headroom`
+  and current `capsuleHeight` feed the original stance gate; call exactly once per
+  fixed step. Run before Bevy collision; it advances no server tick.
 - `tick`: `input:{position:[x,y,z],velocity:[x,y,z],grounded,yaw,pitch,stance,heldItemId}`.
   Supply the resolved Bevy body after physics. Sends the existing client state
   command, pumps transport/client/server, then publishes replication. No second
@@ -27,8 +29,46 @@ the actual outcome appears in subsequent replicated state.
 - `action`: `name` and `args`, as below. Commands go through `NetWorldClient` and
   the existing server command validators. Most effects appear within 2–4 ticks.
 - `save` / `load`: `path`, using original versioned `WorldSave` format and map gate.
+  An optional `BevyBridge` extension preserves world seed and retail loot point
+  provenance while leaving the original v2 data readable by the old game.
 - `terrain`: `seed,x,z,lod`, even before `init`; original `InfiniteTerrain` output.
+- `catalog`: original item metadata, existing mesh/texture/icon paths, and full
+  deployable definitions. Paths are relative to `contentRoot`; absent files are null.
+- `worldGeometry`: host static collision triangles, described below.
+- `worldLoot`: `mapRoot` points to the real map containing `Spawns/Items.dat` and
+  `Spawns/Jars.dat`. Original parsers and weighted rolls feed server-owned loot;
+  spawning follows all players at the original 95/125m thresholds and 600-item cap.
+- `worldSpawns`: `mapRoot`; original player spawn parser returns `{players:[{x,z,yaw}]}`.
+- `worldSpawn`: `items:[{itemId,amount:1,quality:100,position:[x,y,z]}]`; trusted host
+  scene registration, not a player command. Creates real authoritative world items.
 - `shutdown`: reply and exit.
+
+State includes replicated inventory, vitals, skills, world-items, deployables,
+vehicles, zombies, `worldClock:{day,timeOfDay,dayLengthSeconds}`, and weather
+conditions from original `WeatherSim`/`WeatherOutlook`. The initial clock is the
+source's 24-minute day at .35. Weather has the source's PEI/variant/snow schedules,
+seasonal outlook, snow accumulation and temperature-dependent melt; `UG_WEATHER`,
+`UG_WEATHER_FREQ` and `UG_WEATHER_DUR` retain their original meanings. Visual rain,
+snow, lighting, wind and audio remain Bevy responsibilities.
+
+`state.events` contains `{seq,kind,data}` and remains available until the consumer
+acknowledges it with `ackEvents:<lastConsumedSeq>` on any request. Consumers must
+deduplicate and acknowledge only after processing. Events include console, chat,
+fire, hit, impact, crafting queue, death and respawn. Result-only operations
+(simulate, terrain, catalog, worldGeometry, worldLoot, worldSpawns, worldSpawn,
+worldRay) omit state by default; `includeState:true` overrides that. Tick recipes
+are emitted only when inventory/skills/knowledge change; snapshot returns them all.
+
+Static geometry accepts `meshes:[{vertices:[[x,y,z],...],indices?:[i0,i1,i2,...],
+terrain?:false,destructibleIndex?:-1}]`; omitted indices mean sequential triples.
+Mark terrain meshes with `terrain:true` so ground-height queries exclude roofs.
+Alternatively use `terrainPatches:[{origin:[x,z],cells,spacing,heights,holes?}]`,
+with (cells+1)² row-major heights and cells² optional hole flags, or
+`terrain:{seed,x,z,lod}` for the original generator. `replace:true` clears previous
+geometry; use `replace:false` to append chunks. Defer BVH construction with
+`finalize:false`, then finalize the last chunk. Combat rays use this host-owned
+BVH; the player never supplies a claimed hit. `worldRay:{from,to}` is a read-only
+diagnostic returning `{hit,point,destructibleIndex}`.
 
 Coordinates use Bevy/Godot right-handed Y-up, camera forward -Z. Terrain normals are
 flat XYZ floats; layers are integers rather than JSON's base64 byte-array encoding.
@@ -59,9 +99,16 @@ prefix removed and camel case. Parameters retain their original method names;
 `craft.index` and `equipItem.page` are the two aliases listed above. Unknown actions
 and missing/invalid arguments fail instead of creating substitute behavior.
 
-Current integration limits: terrain/body collision must be supplied by Bevy;
-static combat ray callbacks, host-side entity scene registration and full
-presentation are separate integration work. An available command does not imply
-its required world entity has been registered. Initial catalog loading covers
-shipping TSV metadata and gun `.dat` parsing; game-specific catalog overrides and
-generated recipe tables are being migrated next.
+Catalog, blueprint registry, gun parser, deployable schema and level-spawn parser
+are linked from their original C# source. `extract_data.py` copies only data and
+engine-free parsing portions from mixed Godot files at build time, with explicit
+source markers that fail on drift. Filesystem/value adapters preserve the small
+Godot API surface those sources use; no Godot engine or SDK is loaded.
+
+Current integration limits: an available client command does not imply its world
+entity or host-side service is registered. Vehicle/animal/zombie physics, resource
+and crop registration, animation and remaining presentation need Bevy adapters.
+Weather timers restart on load as in the original scene lifecycle; clock/day and
+retail loot provenance persist. The original server's default-gun fallback and
+shared per-player ammo behavior remain core semantics rather than being rewritten
+in this bridge.
