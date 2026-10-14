@@ -184,6 +184,9 @@ namespace UnturnedSim
         public List<GenDoor> Doors = new List<GenDoor>();
         /// <summary>The walls cut away between rooms that open into each other (BuildingGen.OpenPlan): an open plan.</summary>
         public List<GenOpening> OpenPlan = new List<GenOpening>();
+        /// <summary>Pairs of rooms whose door swings one way only, though it might swing both: one of them came out short of
+        /// what it is for beside the double sweep, and the building was built again with the door a plain swing (BuildOut).</summary>
+        public List<(GenRoom A, GenRoom B)> SingleSwing = new List<(GenRoom A, GenRoom B)>();
         /// <summary>What stands in the rooms (BuildingGen.Furnish): retail props by name.</summary>
         public List<FurniturePlan> Furniture = new List<FurniturePlan>();
         /// <summary>The pieces built at load from their inputs rather than read off an OBJ (FurniturePlan.Gen): curtains and
@@ -2137,6 +2140,24 @@ namespace UnturnedSim
             (bool AlongX, int Line, float P)? spot = null;
             bool mayMove = true;
             HashSet<GenRoom> unlitBefore = null;
+            // (the doors last hung single, how short the building was with them both ways, and that building as built -- what
+            // Reset clears -- to go back to without building it again; and the doors tried single for nothing)
+            List<(GenRoom A, GenRoom B)> latched = null; int latchedShortBy = 0; Action builtBoth = null;
+            var tried = new HashSet<(GenRoom A, GenRoom B)>();
+            Action Built()
+            {
+                var walls = res.Walls.ToList(); var stairs = res.Stairs.ToList(); var porches = res.Porches.ToList(); var furniture = res.Furniture.ToList();
+                var edits = res.WindowEdits.ToList(); var slots = res.WindowSlots.ToList(); var chimney = res.Chimney; var notesNow = res.Notes.ToList();
+                var hung = res.Doors.ToList(); var at = doors.Select(d => (d.At, d.Width)).ToList();
+                return () =>
+                {
+                    res.Walls.Clear(); res.Walls.AddRange(walls); res.Stairs.Clear(); res.Stairs.AddRange(stairs); res.Porches.Clear(); res.Porches.AddRange(porches);
+                    res.Furniture.Clear(); res.Furniture.AddRange(furniture); res.WindowEdits.Clear(); res.WindowEdits.AddRange(edits);
+                    res.WindowSlots.Clear(); res.WindowSlots.AddRange(slots); res.Chimney = chimney; res.Notes.Clear(); res.Notes.AddRange(notesNow);
+                    for (int i = 0; i < doors.Count; i++) (doors[i].At, doors[i].Width) = at[i];
+                    res.Doors.Clear(); res.Doors.AddRange(hung);
+                };
+            }
             for (int pass = 0, closes = 0; ; pass++)
             {
                 BuildWalls(res, grids, k1, L, keep);
@@ -2166,12 +2187,33 @@ namespace UnturnedSim
                     }
                 }
                 Furnish(res, spec.Seed);
-                if (res.OpenPlan.Count == 0) return;
-                var unfurnished = new HashSet<GenRoom>(); Shortfall(res, unfurnished);
-                int before = res.OpenPlan.Count;
-                if (++closes > 3) res.OpenPlan.Clear();
-                else res.OpenPlan.RemoveAll(o => unfurnished.Contains(o.A) || unfurnished.Contains(o.B));
-                if (res.OpenPlan.Count == before) return;
+                var unfurnished = new HashSet<GenRoom>(); int shortBy = Shortfall(res, unfurnished).Sum(x => x.Weight);
+                if (res.OpenPlan.Count > 0)
+                {
+                    int before = res.OpenPlan.Count;
+                    if (++closes > 3) res.OpenPlan.Clear();
+                    else res.OpenPlan.RemoveAll(o => unfurnished.Contains(o.A) || unfurnished.Contains(o.B));
+                    if (res.OpenPlan.Count != before) { latched = null; builtBoth = null; Reset(); continue; }   // (doors hung single stay so)
+                }
+                // a door that swings both ways is a nicety (strawberry, round 12b: "some may swing both ways"), and its
+                // second sweep is floor a room loses: where a room it opens into comes out short of what it is for, the door
+                // is hung as a plain swing and the building built again -- kept so only where that leaves the building short
+                // of less, else it swings both ways again (a kitchen of 2 x 2 cells lost the counter beside its sink to one,
+                // and FitPlot's search dropped a bedroom from the seed-1 house on a 4x5 plot to get it back)
+                if (latched != null)
+                {
+                    if (shortBy >= latchedShortBy)
+                    {
+                        // no better for it: the doors swing both ways again, in the building as it was
+                        res.SingleSwing.RemoveAll(latched.Contains); tried.UnionWith(latched);
+                        builtBoth();
+                        return;
+                    }
+                    latched = null; builtBoth = null;
+                }
+                var single = DoubleSwingDoors(res).Where(p => (unfurnished.Contains(p.A) || unfurnished.Contains(p.B)) && !tried.Contains(p)).Distinct().ToList();
+                if (single.Count == 0) return;
+                res.SingleSwing.AddRange(single); latched = single; latchedShortBy = shortBy; builtBoth = Built();
                 Reset();
             }
         }

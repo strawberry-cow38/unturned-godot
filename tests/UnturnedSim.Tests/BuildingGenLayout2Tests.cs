@@ -140,6 +140,45 @@ namespace UnturnedSim.Tests
             Assert.That(crampedPockets, Is.GreaterThan(5));
         }
 
+        // A door that swings both ways is a nicety, and its second sweep is floor the room beside it loses: where a room comes
+        // out short of what it is for beside one, the door is hung as a plain swing -- kept so only where that leaves the
+        // building short of less (BuildOut: SingleSwing). The seed-1 house on a 4x5 plot found it: its 2 x 2-cell kitchen lost
+        // the counter beside its sink to the double sweep, and FitPlot's search dropped a bedroom to get it back -- one storey
+        // of four rooms where round 12 built two storeys with two bedrooms. Seed 17's kitchen on the same plot is short of a
+        // table whichever way its door swings, so that door still swings both ways.
+        // BREAK IT: never hang a double door single; keep one single even where that leaves the building no better.
+        [Test]
+        public void DoubleDoorsGiveWayToWhatARoomIsFor()
+        {
+            static BuildingGenResult Plot(int seed) => BuildingGen.Generate(new BuildingGenSpec { Seed = seed, Kind = BuildingKind.Residential, MinRooms = 5, MaxFloors = 2,
+                                                                                                   MaxRoomsPerFloor = 6, Width = 4, Depth = 5, FitPlot = true });
+            // how the door between two rooms of the ground floor moves
+            static DoorAction Between(BuildingGenResult res, RoomKind a, RoomKind b)
+            {
+                foreach (var w in WallsOn(res, 0))
+                    foreach (var o in w.Openings.Where(o => o.V < 0.05f && o.HasDoor))
+                    {
+                        var n = Normal(w); var c = At(w, o.U + o.Width * 0.5f); float d = w.Thickness * 0.5f + 0.3f;
+                        var fr = RoomAt(res, 0, c.X + n.X * d, c.Z + n.Z * d); var bk = RoomAt(res, 0, c.X - n.X * d, c.Z - n.Z * d);
+                        if (fr != null && bk != null && ((fr.Kind == a && bk.Kind == b) || (fr.Kind == b && bk.Kind == a))) return o.DoorAction;
+                    }
+                throw new AssertionException($"no door between the {a} and the {b}");
+            }
+            var one = Plot(1);
+            var kitchen = one.Layout.Single(g => g.Kind == RoomKind.Kitchen);
+            int beds = one.Layout.Count(g => g.Kind == RoomKind.Bedroom);
+            bool worktop = BuildingGen.Worktop(one.Furniture.Where(m => m.Room == kitchen));
+            var oneDoor = Between(one, RoomKind.Kitchen, RoomKind.LivingRoom);
+            var seventeen = Plot(17);
+            var door17 = Between(seventeen, RoomKind.Kitchen, RoomKind.LivingRoom);
+            TestContext.Progress.WriteLine($"[gen-double-gives-way] seed 1 on a 4x5 plot: {one.Floors} floors, {one.Layout.Count} rooms, {beds} bedrooms, kitchen counter at the sink or stove {worktop}, "
+                                         + $"its door to the living room {oneDoor}; seed 17: {door17} ({seventeen.SingleSwing.Count} hung single); notes: {string.Join(" / ", one.Notes)}");
+            Assert.That(beds, Is.EqualTo(2), "the seed-1 house on a 4x5 plot dropped a bedroom");
+            Assert.That(worktop, Is.True, "its kitchen has no plain counter at the sink or the stove");
+            Assert.That(oneDoor, Is.EqualTo(DoorAction.Swing), "its kitchen door still swings both ways");
+            Assert.That(door17, Is.EqualTo(DoorAction.DoubleSwing), "a door hung single where that did not help");
+        }
+
         // One wardrobe to a bedroom (strawberry, round 12b: "limit 1 wardrobe per bedroom"). No bedroom over the sweep has
         // two -- and none had before either: the bedroom's recipe asks for one. So the limit is held as the FURNISHER's, which
         // is where it was asked for: with every room asking for two more wardrobes once its recipe is done

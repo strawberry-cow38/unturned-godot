@@ -128,12 +128,31 @@ namespace UnturnedSim
         /// mid-plane against a 2.1 m leaf -- is cramped, and a pocket door goes there where its wall takes one (HangDoors).</summary>
         public const float PassBy = BedAccess;
 
+        /// <summary>The rooms either side of every door hung to swing both ways, as HangDoors found them.</summary>
+        static IEnumerable<(GenRoom A, GenRoom B)> DoubleSwingDoors(BuildingGenResult res)
+        {
+            foreach (var w in res.Walls.Where(w => w.Kind == SurfaceKind.Wall))
+            {
+                int f = (int)MathF.Round(w.Y / Storey);
+                var (wc, ws) = PlanTrig.CosSin(w.Yaw);
+                float t = w.Thickness * 0.5f;
+                foreach (var o in w.Openings.Where(o => o.DoorAction == DoorAction.DoubleSwing))
+                {
+                    float um = o.U + o.Width * 0.5f, cx = w.X + wc * um, cz = w.Z - ws * um;
+                    GenRoom Side(float s) => res.Layout.FirstOrDefault(g => g.Floor == f && g.Holds(cx + ws * s * (t + 0.3f), cz + wc * s * (t + 0.3f)));
+                    GenRoom a = Side(1f), b = Side(-1f);
+                    if (a != null && b != null) yield return (a, b);
+                }
+            }
+        }
+
         /// <summary>Which doors swing both ways (strawberry, round 12b: "some may swing both ways"): the doors food and stock
         /// are carried through. In a home, between its kitchen, dining room and living room; in a business, between the shop
         /// floor and the back of house (the stock room, the back hall, a warehouse or workshop), and between the working rooms
         /// of an industrial one (warehouse, workshop, storage, garage). Never a bedroom's, a bathroom's, a closet's or an
         /// office's: those are shut for privacy, and a door that swings back to the middle does not stay shut against you.
-        /// Both its sides must take the leaf with room to walk past it (HangDoors).</summary>
+        /// Both its sides must take the leaf with room to walk past it (HangDoors), and neither come out short of what it is
+        /// for beside its second sweep (BuildOut: SingleSwing).</summary>
         public static bool DoubleActing(BuildingKind building, RoomKind a, RoomKind b)
         {
             static bool Serving(RoomKind k) => k is RoomKind.Kitchen or RoomKind.DiningRoom or RoomKind.LivingRoom;
@@ -292,7 +311,8 @@ namespace UnturnedSim
                         // door to outside are the building's doors, and stay plain swing doors that latch)
                         GenRoom fa = Side(1f), fb = Side(-1f);
                         bool within = fa != null && fb != null && fa.Unit == fb.Unit && fa.Kind != RoomKind.Stairwell && fb.Kind != RoomKind.Stairwell;
-                        if (within && DoubleActing(_res.Kind, fa.Kind, fb.Kind) && !Cramped(true) && !Cramped(false))
+                        if (within && DoubleActing(_res.Kind, fa.Kind, fb.Kind) && !Cramped(true) && !Cramped(false)
+                            && !_res.SingleSwing.Contains((fa, fb)) && !_res.SingleSwing.Contains((fb, fa)))
                         {
                             // swings both ways about one jamb: the jamb whose leaf folds nearer a wall, both sides counted
                             o.DoorAction = DoorAction.DoubleSwing;
