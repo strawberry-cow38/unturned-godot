@@ -4369,9 +4369,12 @@ namespace UnturnedGodot
                 if (!again) break;                // nobody asked: the first layout stands
             }
             PlanLanes(roads);
-            PlanParkingEntrances(roads);
             int stepped = LayParkingBays(roads);
             GrowPlots(roads);
+            // the parking lots over whatever room the plots' yards left beside them, and only then their ways in -- a lot laid
+            // again may come in somewhere else (TownParking)
+            StretchLots(roads);
+            PlanParkingEntrances(roads);
             PlaceTriangleLots(roads);
             PlanFences(roads);
             CensusZoning(roads);
@@ -5817,6 +5820,9 @@ namespace UnturnedGodot
             /// <summary>End B opens into a parking lot's asphalt (TownParking): neither a mouth nor closed -- its pavements run
             /// to the end and meet the lot's own.</summary>
             public bool OpenB;
+            /// <summary>The plane an open end B's ring lies in (a surface point, its rise per metre in plan): a parking lot's
+            /// surface where a way comes through its side -- level across, the end met the lot in a step either side.</summary>
+            public (Vector3 origin, Vector3 grad)? EndPlane;
             /// <summary>Its own carriageway, where it is not a back lane's single track (a parking lot's two-lane way in):
             /// the material it is built from, and its half-width. -1 / 0: LaneMaterial, LaneHalf.</summary>
             public int Material = -1; public float Half;
@@ -6331,7 +6337,10 @@ namespace UnturnedGodot
             foreach (var lp in LanePlans)
             {
                 if (lp.Road < 0 || lp.A == null && lp.B == null || NoLaneBank) continue;
-                foreach (var (m, atEnd) in new[] { (lp.A, false), (lp.OpenB ? lp.A : lp.B, true) })
+                // (a way that climbs to meet a lot through its side or back keeps its own end, level across, at the lot's height)
+                bool openOnPlane = lp.OpenB && Mathf.Abs(lp.Pts[^1].Y - lp.Pts[0].Y) < 0.005f;
+                if (lp.OpenB && lp.EndPlane.HasValue) roads.SetEndPlane(lp.Road, true, lp.EndPlane.Value.origin, lp.EndPlane.Value.grad);
+                foreach (var (m, atEnd) in new[] { (lp.A, false), (lp.OpenB ? (openOnPlane ? lp.A : null) : lp.B, true) })
                 {
                     if (m == null || !roads.EvaluateAlong(m.Road, m.EdgeArc, out var sq, out var stn, snapTerrain: false)) continue;
                     var h = new Vector3(stn.X, 0f, stn.Z); float hl = h.Length();
@@ -6403,7 +6412,9 @@ namespace UnturnedGodot
                     // (a closed end's kerb takes the lane's last metre: the pavements stop where it starts; a hard knee's
                     // pavement runs to its mitre)
                     float fromA = lp.A != null ? lp.A.LaneFrom[cA] : lp.KneeA ? 0f : LaneWalkWidth;
-                    float fromB = lp.B != null ? lp.B.LaneFrom[cB] : lp.KneeB || lp.OpenB ? 0f : LaneWalkWidth;
+                    // (an open end -- a parking lot's way -- stops its pavements a pavement's width short: the lot's kerb curves in
+                    // from there)
+                    float fromB = lp.B != null ? lp.B.LaneFrom[cB] : lp.KneeB ? 0f : LaneWalkWidth;
                     // (the return's end on the lane side is the lane's kerb at LaneFrom, and its foot is on the mouth's plane)
                     float LaneSideFoot(LaneMouth m, int c)
                     {
@@ -6446,11 +6457,12 @@ namespace UnturnedGodot
                         }
                         return h;
                     }
-                    // (a parking lot's way in has no pavements of its own: the mouth's returns run to the back of the street's
-                    // pavement, and the lot's kerb curves round to meet them there -- BuildParkingLots)
-                    if (lp.OpenB) continue;
+                    // ⚠ A PARKING LOT'S WAY: its pavements only where there is way left between the mouth's returns and the lot's
+                    // kerb curve (BuildParkingLots) -- none through a lot's front, whose returns run to the back of the street's
+                    // pavement and the curve takes the last metre; down a way out through a side, across the grass to the street,
+                    // however short (LayAlongRoad would refuse under two stations)
                     walks += walk.LayAlongRoad(walk, roads, road, sideEnum, null, fromA, fromB, surfaceAt: Surface,
-                                               mitreStart: KneeMitre(false, sd), mitreEnd: KneeMitre(true, sd));
+                                               mitreStart: KneeMitre(false, sd), mitreEnd: KneeMitre(true, sd), minLength: lp.OpenB ? 0.05f : -1f);
                 }
                 // ⭐ A LANE THAT STOPS SHORT ENDS IN A KERB, NOT A RAMP: a strip of its own pavement straight across the end,
                 // as wide as the lane and both its pavements, standing on the asphalt's last metre -- so the road's own

@@ -40,6 +40,18 @@ namespace UnturnedGodot
         public float LotHeadStrip = 0.9f, BlockPast = 0.4f;
         /// <summary>The strip between a row's heads and the kerb they face: the blocks', when there are blocks.</summary>
         float HeadStrip => ParkingBlocks ? LotHeadStrip : 0f;
+        /// <summary>⭐ A SIDEWALK BETWEEN BACK-TO-BACK ROWS (strawberry 2026-10-14: "add sidewalk dividers between back to back
+        /// parking lines"): where two rows meet nose to nose, a raised island this wide runs between their heads, from the
+        /// cross road to the back kerb -- the lot's own pavement, kerbed both sides, a rounded nose at the road.</summary>
+        public float LotDividerWidth = 1.5f;
+        /// <summary>⭐ A LOT FILLS THE ROOM IT HAS (strawberry 2026-10-14: "parking lots should try fill the space they reserved
+        /// (within reason)"): once the town's plots have taken their yards, each lot stretches over what is left beside and
+        /// behind it -- at most this far a side and this far back -- is laid again for the most stalls that holds, and keeps
+        /// up to LotSliver of what it does not use (a strip too narrow for anything else) rather than leave it as grass.</summary>
+        public float LotStretchSide = 8f, LotStretchBack = 12f, LotSliver = 4f;
+        /// <summary>⭐ STREET LIGHTS IN A LOT (strawberry 2026-10-14: "add streetlight support for parking lots too"): the
+        /// street's own lamp, along its dividers, else along the kerbs its rows face, about this far apart.</summary>
+        public float LotLampSpacing = 18f;
         /// <summary>⭐ A TWO-LANE WAY IN (strawberry 2026-10-14: "2 lane road going in"): its carriageway this wide a side -- a
         /// lane in and a lane out, as wide as the aisle it leads to -- not a back lane's single track.</summary>
         public float ParkingEntranceHalf = 3.5f;
@@ -86,6 +98,12 @@ namespace UnturnedGodot
         {
             public Plot Lot, For; public int Wanted, Spaces; public LotPlan Plan;
             public readonly List<(float x0, float y0, float x1, float y1)> Roads = new();
+            /// <summary>Its sidewalk dividers between back-to-back rows, in its own frame: x0..x1 across, y0 (the nose, at the
+            /// cross road) to y1 (the back kerb).</summary>
+            public readonly List<(float x0, float y0, float x1, float y1)> Dividers = new();
+            /// <summary>Its ways out other than through the front: the edge, and where along it (lot frame) -- each one cuts the
+            /// row it comes through (LayOutLot).</summary>
+            public readonly List<(int edge, float at)> Exits = new();
             public readonly List<(Vector3 at, Vector3 across, Vector3 into)> Stalls = new();
             public readonly List<(Vector3 a, Vector3 b)> Stripes = new();
             /// <summary>Each block: its middle, and the way its 3 m length runs (across its stall).</summary>
@@ -112,6 +130,8 @@ namespace UnturnedGodot
         public sealed class ParkingEntrance
         {
             public int Road, Side; public float From, To; public Vector3 Mouth, Into; public float Width, TopY; public ParkingLot Lot;
+            /// <summary>Which of the lot's edges it comes through: 0 its front, 1 its right (+Along), 2 its back, 3 its left.</summary>
+            public int Edge;
             /// <summary>⭐ THE WAY IN IS A ROAD (strawberry 2026-10-14: "a real road connection, not just a dipped kerb"): a short
             /// two-lane road from the street to the lot -- its mouth cut through the street's pavement with a kerb round each
             /// corner, the lot's kerb curving round to meet those -- built by BuildLanes like a back lane, its far end open
@@ -144,6 +164,17 @@ namespace UnturnedGodot
         public float WayInEndStub = 1f;
         Dictionary<int, List<LotPlan>> _lotPlans;
 
+        /// <summary>The width an across plan's aisles take: each a row, the aisle, a row; a divider between each two (their rows
+        /// meet nose to nose there); a head strip at each end.</summary>
+        float AcrossUsed(int k) => 2f * HeadStrip + k * (2f * StallDepth + LotAisle) + (k - 1) * LotDividerWidth;
+        float AcrossPitch => 2f * StallDepth + LotAisle + LotDividerWidth;
+        /// <summary>Where an across lot's first row's heads are (lot frame x): its aisles centred in whatever width it has.</summary>
+        float AcrossX0(LotPlan plan, float width)
+        {
+            float xL = -width * 0.5f + LotKerbWidth, wi = width - 2f * LotKerbWidth;
+            return xL + HeadStrip + Mathf.Max(0f, (wi - AcrossUsed(plan.Aisles)) * 0.5f);
+        }
+
         /// <summary>⭐ EVERY PLAN THAT HOLDS `n` IN A LOT NO DEEPER THAN `maxDepth`, the smallest first (and of two the same size,
         /// the one holding more): across with 1 to 5 aisles, a row along the front or not, each the shallowest that holds
         /// n; along, a row in front or not, each the narrowest. Their stalls counted the way they will be laid, ways in
@@ -157,7 +188,7 @@ namespace UnturnedGodot
             for (int k = 1; k <= 5 && n >= 1; k++)
                 foreach (bool front in k >= 2 ? new[] { false, true } : new[] { false })
                 {
-                    var plan = new LotPlan { Aisles = k, FrontRow = front, Width = 2f * Wk + 2f * H + k * (2f * Sd + A) };
+                    var plan = new LotPlan { Aisles = k, FrontRow = front, Width = 2f * Wk + AcrossUsed(k) };
                     float cross = k >= 2 ? (front ? H + Sd : 0f) + A : 0f;
                     // the rows hold the rest of what the front row does not (counted with no rows behind it)
                     plan.PerRow = 0; plan.Depth = 2f * Wk + cross + 2f * RowEndGap;
@@ -216,7 +247,8 @@ namespace UnturnedGodot
                 spots.Add(0f);
                 return spots;
             }
-            for (int i = 0; i < plan.Aisles; i++) spots.Add(xL + HeadStrip + StallDepth + LotAisle * 0.5f + i * (2f * StallDepth + LotAisle));
+            float x0 = AcrossX0(plan, p.Width);
+            for (int i = 0; i < plan.Aisles; i++) spots.Add(x0 + StallDepth + LotAisle * 0.5f + i * AcrossPitch);
             spots.Sort((u, v) => Mathf.Abs(u).CompareTo(Mathf.Abs(v)));
             return spots;
         }
@@ -275,9 +307,130 @@ namespace UnturnedGodot
                 if (ways.Count == 0) continue;
                 var lot = new ParkingLot { Lot = pl, For = forPlot, Wanted = n, Plan = plan };
                 LayOutLot(lot, plan, ways);
+                SetFrontEntrances(lot, ways);
                 if (lot.Spaces >= n) return lot;
             }
             return null;
+        }
+
+        /// <summary>The plan holding the most stalls in a lot `width` x `depth` (of two holding as many, the smaller), at its own
+        /// size: across with each number of aisles that fits the width, its rows as long as the depth allows, a row facing the
+        /// cross road or not; along, a row in front or not, as long as the width allows. Null if none holds a stall.</summary>
+        LotPlan BestPlanIn(float width, float depth)
+        {
+            LotPlan best = null;
+            float Wk = LotKerbWidth, H = HeadStrip, Sd = StallDepth, Sw = StallWidth, A = LotAisle;
+            void Consider(LotPlan plan)
+            {
+                if (plan.Width > width + 1e-3f || plan.Depth > depth + 1e-3f) return;
+                plan.Stalls = CountStalls(plan);
+                if (plan.Stalls < 1) return;
+                if (best == null || plan.Stalls > best.Stalls || plan.Stalls == best.Stalls && plan.Width * plan.Depth < best.Width * best.Depth) best = plan;
+            }
+            for (int k = 1; k <= 6; k++)
+            {
+                float w = 2f * Wk + AcrossUsed(k);
+                if (w > width + 1e-3f) break;
+                foreach (bool front in k >= 2 ? new[] { false, true } : new[] { false })
+                {
+                    float cross = k >= 2 ? (front ? H + Sd : 0f) + A : 0f;
+                    int per = Mathf.FloorToInt((depth - 2f * Wk - cross - 2f * RowEndGap) / Sw + 1e-4f);
+                    if (per >= 1) Consider(new LotPlan { Aisles = k, FrontRow = front, PerRow = per, Width = w, Depth = 2f * Wk + cross + 2f * RowEndGap + per * Sw });
+                }
+            }
+            float minInner = 2f * (WayInEndStub + Mathf.Max(LaneKerbRadius, LaneWalkWidth)) + 2f * ParkingEntranceHalf;
+            foreach (bool front in new[] { true, false })
+            {
+                int per = Mathf.FloorToInt((width - 2f * Wk - 2f * RowEndGap) / Sw + 1e-4f);
+                float w = 2f * Wk + per * Sw + 2f * RowEndGap;
+                if (per >= 1 && w - 2f * Wk >= minInner)
+                    Consider(new LotPlan { Along = true, FrontRow = front, PerRow = per, Width = w, Depth = 2f * Wk + (front ? H + Sd : 0f) + A + Sd + H });
+            }
+            return best;
+        }
+
+        /// <summary>Lots stretched over leftover room, and the stalls that gained them.</summary>
+        public int LotsStretched, StallsGainedByStretch;
+        /// <summary>⭐ EACH LOT OVER THE ROOM LEFT BESIDE AND BEHIND IT (strawberry 2026-10-14: "parking lots should try fill the
+        /// space they reserved (within reason) like pic 4 could stretch further over that lil sliver of grass"). After the
+        /// plots have grown their yards (GrowPlots), each lot grows the same way -- half a metre at a time, left, right and
+        /// back, while its new edge is buildable and it overlaps nothing -- out to LotStretchSide / LotStretchBack; is planned
+        /// again for the most stalls that room holds (BestPlanIn); then gives back whatever of the room that plan leaves
+        /// over, unless it is no more than LotSliver -- a strip nothing else could use, which it keeps as margin rather than
+        /// leave as grass. Never fewer stalls, never without a way in that can open: else it is put back as it was.</summary>
+        void StretchLots(RoadField roads)
+        {
+            LotsStretched = StallsGainedByStretch = 0;
+            if (!ParkingLots || roads == null || ParkingLotsLaid.Count == 0) return;
+            float deepest = 0f; foreach (var ps in PlotSizes) if (ps.Kind != PlotKind.Parking) deepest = Mathf.Max(deepest, ps.Depth);
+            const float step = 0.5f;
+            foreach (var lot in ParkingLotsLaid)
+            {
+                var pl = lot.Lot;
+                float w0 = pl.Width, d0 = pl.Depth, arc0 = pl.Arc; var f0 = pl.Front;
+                float sgn = 1f;
+                if (pl.Arc >= 0f && pl.Road >= 0 && roads.EvaluateAlong(pl.Road, Mathf.Clamp(pl.Arc, 0f, roads.RoadLength(pl.Road)), out _, out var tan, snapTerrain: false))
+                    sgn = new Vector3(tan.X, 0f, tan.Z).Dot(pl.Along) >= 0f ? 1f : -1f;
+                void Shift(float by) { pl.Front += pl.Along * by; if (pl.Arc >= 0f) pl.Arc += sgn * by; }
+                bool Clear(Vector3 a, Vector3 b)
+                {
+                    // GrowPlots' test: the new edge on buildable ground, off every bay and lane, and the lot over nobody
+                    int n = Mathf.Max(1, Mathf.CeilToInt(Flat(a, b) / 1.5f));
+                    for (int k = 0; k <= n; k++) { var q = a.Lerp(b, (float)k / n); if (!Buildable(roads, q) || BayFrontAt(roads, q) || LaneAt(q)) return false; }
+                    var c = pl.Corners();
+                    foreach (var o in Plots) if (!ReferenceEquals(o, pl) && (o.Outline != null ? QuadsOverlap(c, o.Outline) : PlotsOverlap(pl, o))) return false;
+                    foreach (var al in Alleys) if (QuadsOverlap(c, al.Corners())) return false;
+                    return true;
+                }
+                float gl = 0f, gr = 0f, gb = 0f;
+                for (bool any = true; any;)
+                {
+                    any = false;
+                    for (int sd = 0; sd < 3; sd++)
+                    {
+                        if (sd == 0 && (gb + step > LotStretchBack + 1e-3f || pl.Depth + step > deepest + 1e-3f)) continue;
+                        if (sd == 1 && gl + step > LotStretchSide + 1e-3f || sd == 2 && gr + step > LotStretchSide + 1e-3f) continue;
+                        if (sd == 0) pl.Depth += step; else { pl.Width += step; Shift(sd == 1 ? -step * 0.5f : step * 0.5f); }
+                        var c = pl.Corners();          // front-left, front-right, back-right, back-left
+                        var (ea, eb) = sd == 0 ? (c[2], c[3]) : sd == 1 ? (c[3], c[0]) : (c[1], c[2]);
+                        if (Clear(ea, eb)) { any = true; if (sd == 0) gb += step; else if (sd == 1) gl += step; else gr += step; continue; }
+                        if (sd == 0) pl.Depth -= step; else { pl.Width -= step; Shift(sd == 1 ? step * 0.5f : -step * 0.5f); }
+                    }
+                }
+                void PutBack() { pl.Width = w0; pl.Depth = d0; pl.Front = f0; pl.Arc = arc0; }
+                if (gl + gr + gb < 1e-3f) continue;
+                var plan = BestPlanIn(pl.Width, pl.Depth);
+                if (plan == null || plan.Stalls < lot.Spaces) { PutBack(); continue; }
+                // give back the room the plan does not use, unless it is only a sliver: the side that grew the most first
+                float spareW = pl.Width - plan.Width, spareD = pl.Depth - plan.Depth;
+                if (spareW > LotSliver + 1e-3f)
+                {
+                    float give = Mathf.Min(spareW, gl + gr);
+                    float fromL = gl + gr > 1e-4f ? give * gl / (gl + gr) : 0f, fromR = give - fromL;
+                    pl.Width -= fromL + fromR; Shift(fromL * 0.5f - fromR * 0.5f);
+                    gl -= fromL; gr -= fromR;
+                }
+                if (spareD > LotSliver + 1e-3f) { float give = Mathf.Min(spareD, gb); pl.Depth -= give; gb -= give; }
+                if (Mathf.Abs(pl.Width - w0) < 1e-3f && Mathf.Abs(pl.Depth - d0) < 1e-3f) { PutBack(); continue; }   // (all of it given back)
+                var ways = ChooseWaysIn(roads, plan, pl, lot.For);
+                if (ways.Count == 0) { PutBack(); continue; }
+                int before = lot.Spaces;
+                var oldPlan = lot.Plan;
+                lot.Plan = plan;
+                LayOutLot(lot, plan, ways);
+                if (lot.Spaces < before)
+                {
+                    PutBack(); lot.Plan = oldPlan;
+                    var oldWays = ChooseWaysIn(roads, oldPlan, pl, lot.For);
+                    LayOutLot(lot, oldPlan, oldWays); SetFrontEntrances(lot, oldWays);
+                    continue;
+                }
+                SetFrontEntrances(lot, ways);
+                LotsStretched++; StallsGainedByStretch += lot.Spaces - before; ParkingSpacesLaid += lot.Spaces - before;
+                if (ProbeEverything)
+                    Log.Print($"[towngrid]   parking lot at ({f0.X:0},{f0.Z:0}) stretched {gl:0.0} m left, {gr:0.0} m right, {gb:0.0} m back to {pl.Width:0.0}x{pl.Depth:0.0} m: "
+                            + $"{before} -> {lot.Spaces} stalls, {plan}; {StallsReachable(lot)} of {lot.Spaces} reachable");
+            }
         }
 
         /// <summary>⭐ THE BUILDINGS THAT ASKED, AND A LOT BESIDE EACH. Laid on the second layout pass, after the corner lots and
@@ -378,16 +531,24 @@ namespace UnturnedGodot
         /// kerb, for one aisle) to just short of the back kerb; the cross road along the front, behind the front row if
         /// there is one. ALONG -- the front row (if any) with its heads at the front kerb, cut where each way in comes
         /// through, the aisle behind it, and the back row with its heads at the back kerb.</summary>
-        void LayOutLot(ParkingLot lot, LotPlan plan, List<float> ways)
+        void LayOutLot(ParkingLot lot, LotPlan plan, List<float> ways, List<(int edge, float at)> exits = null)
         {
             var p = lot.Lot;
             Vector3 At(float x, float y) => p.Front + p.Along * x - p.Facing * y;      // x along the street, y back from it
             float xL = -p.Width * 0.5f + LotKerbWidth, xR = p.Width * 0.5f - LotKerbWidth, yF = LotKerbWidth, yB = p.Depth - LotKerbWidth;
-            float H = HeadStrip, Sd = StallDepth, A = LotAisle, th = ParkingEntranceHalf;
-            lot.Stalls.Clear(); lot.Stripes.Clear(); lot.Blocks.Clear(); lot.Entrances.Clear(); lot.Roads.Clear();
-            // a row of stalls: along x (or y), as many as fit between stripe middles a..b, centred; its heads on the line `head`
-            // across it and its open side -- the road's edge -- on `open`; a block at each head that faces the lot's kerb
-            void Row(bool alongX, float a, float b, float head, float open, bool kerbAhead)
+            float H = HeadStrip, Sd = StallDepth, A = LotAisle, th = ParkingEntranceHalf, cut = th + StallStripe * 0.5f;
+            lot.Stalls.Clear(); lot.Stripes.Clear(); lot.Blocks.Clear(); lot.Roads.Clear(); lot.Dividers.Clear();
+            // the stretches of a row's run a way out through `edge` takes (its middles, cut half-width either side)
+            List<(float lo, float hi)> Cuts(int edge)
+            {
+                var c = new List<(float, float)>();
+                if (exits != null) foreach (var (e, at) in exits) if (e == edge) c.Add((at - cut, at + cut));
+                return c;
+            }
+            // a row of stalls: along x (or y), as many as fit between stripe middles a..b, centred, less any a way out takes; its
+            // heads on the line `head` across it and its open side -- the road's edge -- on `open`; a block at each head that
+            // faces the lot's kerb
+            void Row(bool alongX, float a, float b, float head, float open, bool kerbAhead, List<(float lo, float hi)> skip = null)
             {
                 int n = Mathf.FloorToInt((b - a) / StallWidth + 1e-4f);
                 if (n < 1) return;
@@ -395,19 +556,25 @@ namespace UnturnedGodot
                 Vector3 P(float run, float acr) => alongX ? At(run, acr) : At(acr, run);
                 var runDir = alongX ? p.Along : -p.Facing;
                 var intoDir = alongX ? -p.Facing * into : p.Along * into;
+                var stripes = new SortedSet<int>();
                 for (int k = 0; k < n; k++)
                 {
-                    float c = s0 + (k + 0.5f) * StallWidth;
+                    float c0 = s0 + k * StallWidth, c1 = c0 + StallWidth;
+                    bool taken = false;
+                    if (skip != null) foreach (var (lo, hi) in skip) if (c0 < hi && lo < c1) { taken = true; break; }
+                    if (taken) continue;
+                    float c = (c0 + c1) * 0.5f;
                     lot.Stalls.Add((P(c, mid), runDir, intoDir));
                     if (kerbAhead && ParkingBlocks) lot.Blocks.Add((P(c, head + into * BlockPast), runDir));
+                    stripes.Add(k); stripes.Add(k + 1);
                 }
-                for (int k = 0; k <= n; k++) { float sx = s0 + k * StallWidth; lot.Stripes.Add((P(sx, head), P(sx, open))); }
+                foreach (int k in stripes) { float sx = s0 + k * StallWidth; lot.Stripes.Add((P(sx, head), P(sx, open))); }
             }
             // a row along the front kerb, cut where each way in comes through it -- and the way in's road on through it
             void FrontRow(float roadFrom)
             {
                 var cuts = new List<float>(ways); cuts.Sort();
-                float a = xL + RowEndGap, cut = th + StallStripe * 0.5f;
+                float a = xL + RowEndGap;
                 foreach (float xe in cuts)
                 {
                     Row(true, a, xe - cut, yF + H, yF + H + Sd, true);
@@ -426,13 +593,20 @@ namespace UnturnedGodot
                     lot.Roads.Add((xL, roadFrom, xR, roadFrom + A));          // the cross road
                     y0 = roadFrom + A + RowEndGap;
                 }
-                float y1 = y0 + plan.PerRow * StallWidth, x = xL + H;
+                float y1 = y0 + plan.PerRow * StallWidth, x = AcrossX0(plan, p.Width);
                 for (int i = 0; i < plan.Aisles; i++)
                 {
-                    Row(false, y0, y1, x, x + Sd, i == 0);
+                    // (the outermost rows face the lot's sides: a way out through a side comes through its row there, onto the aisle)
+                    Row(false, y0, y1, x, x + Sd, true, i == 0 ? Cuts(3) : null);
                     lot.Roads.Add((x + Sd, yF, x + Sd + A, yB));
-                    Row(false, y0, y1, x + 2f * Sd + A, x + Sd + A, i == plan.Aisles - 1);
-                    x += 2f * Sd + A;
+                    Row(false, y0, y1, x + 2f * Sd + A, x + Sd + A, true, i == plan.Aisles - 1 ? Cuts(1) : null);
+                    if (i == 0) foreach (var (lo, hi) in Cuts(3)) lot.Roads.Add((xL, lo + StallStripe * 0.5f, x + Sd, hi - StallStripe * 0.5f));
+                    if (i == plan.Aisles - 1) foreach (var (lo, hi) in Cuts(1)) lot.Roads.Add((x + Sd + A, lo + StallStripe * 0.5f, xR, hi - StallStripe * 0.5f));
+                    // ...and between this aisle's right row and the next one's left, nose to nose, the divider: from just
+                    // short of the first stall (its nose at the cross road) to the back kerb
+                    if (i + 1 < plan.Aisles)
+                        lot.Dividers.Add((x + 2f * Sd + A, y0 - RowEndGap + 0.25f, x + 2f * Sd + A + LotDividerWidth, yB));
+                    x += AcrossPitch;
                 }
             }
             else
@@ -440,12 +614,21 @@ namespace UnturnedGodot
                 float aisle0 = yF + (plan.FrontRow ? H + Sd : 0f);
                 if (plan.FrontRow) FrontRow(aisle0);
                 lot.Roads.Add((xL, aisle0, xR, aisle0 + A));
-                Row(true, xL + RowEndGap, xR - RowEndGap, aisle0 + A + Sd, aisle0 + A, true);
+                // (a way out through the back comes through the back row, onto the aisle)
+                Row(true, xL + RowEndGap, xR - RowEndGap, aisle0 + A + Sd, aisle0 + A, true, Cuts(2));
+                foreach (var (lo, hi) in Cuts(2)) lot.Roads.Add((lo + StallStripe * 0.5f, aisle0 + A, hi - StallStripe * 0.5f, yB));
             }
-            foreach (float xe in ways)
-                lot.Entrances.Add(new ParkingEntrance { Road = p.Road, Side = p.RoadSide, Mouth = At(xe, 0f), Into = -p.Facing,
-                                                        Width = 2f * ParkingEntranceHalf, Lot = lot });
             lot.Spaces = lot.Stalls.Count;
+        }
+
+        /// <summary>A lot's ways in through its front, at `ways` (m along it from the middle).</summary>
+        void SetFrontEntrances(ParkingLot lot, List<float> ways)
+        {
+            var p = lot.Lot;
+            lot.Entrances.Clear();
+            foreach (float xe in ways)
+                lot.Entrances.Add(new ParkingEntrance { Road = p.Road, Side = p.RoadSide, Mouth = p.Front + p.Along * xe, Into = -p.Facing,
+                                                        Width = 2f * ParkingEntranceHalf, Lot = lot });
         }
 
         /// <summary>⭐ MEASURED: how many of a lot's stalls can be driven to -- the asphalt in front of each (half a metre out of
@@ -460,13 +643,13 @@ namespace UnturnedGodot
                 => a.x0 <= b.x1 + 0.01f && b.x0 <= a.x1 + 0.01f && a.y0 <= b.y1 + 0.01f && b.y0 <= a.y1 + 0.01f;
             var reached = new bool[roads.Count];
             var queue = new Queue<int>();
-            float yF = LotKerbWidth;
             for (int i = 0; i < roads.Count; i++)
                 foreach (var e in lot.Entrances)
                 {
-                    var (xe, _) = Local(e.Mouth);
+                    // (where the way comes through the lot's kerb line)
+                    var (xe, ye) = Local(e.Mouth + e.Into * LotKerbWidth);
                     var r = roads[i];
-                    if (!reached[i] && r.y0 <= yF + 0.01f && r.x0 <= xe && xe <= r.x1) { reached[i] = true; queue.Enqueue(i); }
+                    if (!reached[i] && r.x0 - 0.01f <= xe && xe <= r.x1 + 0.01f && r.y0 - 0.01f <= ye && ye <= r.y1 + 0.01f) { reached[i] = true; queue.Enqueue(i); }
                 }
             while (queue.Count > 0)
             {
@@ -495,21 +678,61 @@ namespace UnturnedGodot
         void PlanParkingEntrances(RoadField roads)
         {
             if (!ParkingLots || roads == null || ParkingEntranceMaterial < 0) return;
-            ParkingWaysNearCorner = 0;
-            bool Open(ParkingEntrance e, float clear)
+            ParkingWaysNearCorner = ParkingExtraExits = 0;
+            // each lot's surface first: the height every way in comes in at
+            foreach (var lot in ParkingLotsLaid) DesignLotSurface(lot, roads);
+            float laneSurf = roads.RoadSurfaceOffsetOfMaterial(ParkingEntranceMaterial);
+            LaneMouth Try(ParkingEntrance e, float clear)
             {
+                _tryWhy = "too far, or across a plot";
                 var m = OpenMouth(roads, e.Mouth, -e.Into, ParkingEntranceHalf, clear);
-                if (m == null) return false;
+                if (m == null) return null;
+                if (e.Edge != 0)
+                {
+                    // ...a side or back way only to a street right there, and across nobody's plot to it
+                    if (Flat(m.Edge, e.Mouth) > _walkWidth + PlotSetback + LotWayReach) { _tryWhy = $"too far ({Flat(m.Edge, e.Mouth):0.0} m to the street)"; return null; }
+                    var lat = new Vector3(-e.Into.Z, 0f, e.Into.X) * ParkingEntranceHalf;
+                    var quad = new[] { m.Edge - lat, m.Edge + lat, e.Mouth + lat, e.Mouth - lat };
+                    foreach (var o in Plots)
+                        if (!ReferenceEquals(o, e.Lot.Lot) && (o.Outline != null ? QuadsOverlap(quad, o.Outline) : QuadsOverlap(quad, o.Corners()))) { _tryWhy = $"across a {o.Kind} at ({o.Front.X:0},{o.Front.Z:0})"; return null; }
+                    foreach (var al in Alleys) if (QuadsOverlap(quad, al.Corners())) { _tryWhy = "across an alley"; return null; }
+                }
+                return m;
+            }
+            bool Commit(ParkingEntrance e, LaneMouth m)
+            {
                 var end = e.Mouth + e.Into * LotKerbWidth;        // through the lot's kerb, onto its asphalt
                 var line = RoundedPath(m.Edge, m.Edge, end, 0f, 2f);
                 if (line == null || line.Count < 2) return false;
-                for (int q = 0; q < line.Count; q++) line[q] = new Vector3(line[q].X, m.Edge.Y, line[q].Z);
+                // the street's height at its mouth, the lot's where it comes in: level through the front, where the lot's front
+                // IS its street's height; graded like a lane's through a side or the back, which the lot meets wherever it is
+                float ya = m.Edge.Y, yb = LotSurfaceY(e.Lot, end.X, end.Z, LotGround(end.X, end.Z)) - laneSurf;
+                if (e.Edge == 0) yb = ya;
+                // (graded to the lot's height by the plot's edge, and level from there over the lot's own ground -- graded up to
+                // the kerb line, a way climbing to a lot stood under the lot's ground where it crossed the plot's edge)
+                float run = Mathf.Max(0.1f, (e.Mouth - m.Edge).Dot(e.Into));
+                for (int q = 0; q < line.Count; q++)
+                {
+                    float t = Mathf.Clamp((line[q] - m.Edge).Dot(e.Into) / run, 0f, 1f);
+                    line[q] = new Vector3(line[q].X, Mathf.Lerp(ya, yb, t), line[q].Z);
+                }
                 LaneMouths.Add(m);
                 e.Lane = new LanePlan { Pts = line, A = m, OpenB = true, Material = ParkingEntranceMaterial, Half = ParkingEntranceHalf };
+                if (e.Edge != 0)
+                {
+                    // ...its end ring in the lot's own surface there: the lot slopes front to back, which is across a way through
+                    // its side, and a level end met it 17 cm high one side and low the other (the side-way probe)
+                    float S(Vector3 q) => LotSurfaceY(e.Lot, q.X, q.Z, LotGround(q.X, q.Z));
+                    float sy = S(end);
+                    var grad = new Vector3(S(end + Vector3.Right * 0.5f) - S(end - Vector3.Right * 0.5f), 0f,
+                                           S(end + Vector3.Back * 0.5f) - S(end - Vector3.Back * 0.5f));
+                    e.Lane.EndPlane = (new Vector3(end.X, sy, end.Z), grad);
+                }
                 LanePlans.Add(e.Lane);
-                e.From = m.From; e.To = m.To;
+                e.From = m.From; e.To = m.To; e.Road = m.Road; e.Side = m.Side;
                 return true;
             }
+            bool Open(ParkingEntrance e, float clear) { var m = Try(e, clear); return m != null && Commit(e, m); }
             foreach (var lot in ParkingLotsLaid)
             {
                 int opened = 0;
@@ -521,9 +744,157 @@ namespace UnturnedGodot
                 order.Sort((x, y) => Flat(x.Mouth, mid).CompareTo(Flat(y.Mouth, mid)));
                 foreach (var e in order) if (Open(e, 0f)) { ParkingWaysNearCorner++; break; }
             }
+            // ⭐ AND OUT ANY OTHER SIDE A STREET IS ON (strawberry 2026-10-14: "gimme an example of one with exits on multiple
+            // sides"): a lot beside a cross street, or one through to the street behind, opens onto that too -- where its
+            // roads run out to that edge without crossing a stall: an across lot's aisles out its back, its cross road out
+            // its sides; an along lot's aisle out its sides. One a side, the middle-most first, wherever OpenMouth finds a
+            // street's straight pavement within reach of that edge and clear of its corners. (Its tries that find no street
+            // are not dead ends: the lanes' counters are put back.)
+            var dead = (DeadNoStreet, DeadGlancing, DeadNoCorner, DeadOffPavement, DeadOnMouth, MouthsNearCorner);
+            float rEst = Mathf.Max(LaneKerbRadius, LaneWalkWidth);
+            foreach (var lot in ParkingLotsLaid)
+            {
+                lot.Exits.Clear();
+                if (lot.Entrances.Count == 0 || lot.Entrances.TrueForAll(e => e.Lane == null)) continue;
+                var p = lot.Lot;
+                foreach (var spots in ExitSpots(lot))
+                    foreach (var (edge, at0) in spots)
+                    {
+                        float at = at0;
+                        var e = ExitAt(lot, edge, at);
+                        var why = (DeadNoStreet, DeadGlancing, DeadNoCorner, DeadOffPavement, DeadOnMouth, MouthsNearCorner);
+                        var m = Try(e, ParkingCornerClear);
+                        // a side way at the back end of its row: if the kerb's curve into it is wider than allowed for (more grass
+                        // to cross to the street), it comes in that much further forward, so the curve still clears the corner
+                        if (m != null && !lot.Plan.Along && (edge == 1 || edge == 3))
+                        {
+                            float r = CurveRadius(lot, e, m);
+                            if (r > rEst + 0.05f)
+                            {
+                                at -= r - rEst;
+                                e = ExitAt(lot, edge, at);
+                                m = Try(e, ParkingCornerClear);
+                            }
+                        }
+                        bool ok = m != null && Commit(e, m);
+                        if (ProbeEverything)
+                        {
+                            string res = ok ? "OPENED" : DeadNoStreet > why.Item1 ? "no street within reach" : DeadGlancing > why.Item2 ? "glancing"
+                                       : DeadNoCorner > why.Item3 ? "no corner" : DeadOffPavement > why.Item4 ? "into a junction's corner"
+                                       : DeadOnMouth > why.Item5 ? "onto another mouth" : MouthsNearCorner > why.Item6 ? "too near a corner" : _tryWhy;
+                            Log.Print($"[towngrid]   lot at ({p.Front.X:0},{p.Front.Z:0}): a way out its {(edge == 2 ? "back" : edge == 1 ? "right side" : "left side")} at ({e.Mouth.X:0.0},{e.Mouth.Z:0.0}) -- {res}");
+                        }
+                        if (!ok) continue;
+                        lot.Entrances.Add(e); lot.Exits.Add((edge, at)); ParkingExtraExits++;
+                        break;
+                    }
+                if (lot.Exits.Count > 0)
+                {
+                    // laid again round its ways out: the stalls they come through go
+                    var front = new List<float>();
+                    foreach (var e in lot.Entrances) if (e.Edge == 0) front.Add((e.Mouth - p.Front).Dot(p.Along));
+                    int before = lot.Spaces;
+                    LayOutLot(lot, lot.Plan, front, lot.Exits);
+                    ParkingSpacesLaid += lot.Spaces - before;
+                    if (ProbeEverything)
+                        Log.Print($"[towngrid]   lot at ({p.Front.X:0},{p.Front.Z:0}) laid again round {lot.Exits.Count} way{(lot.Exits.Count > 1 ? "s" : "")} out: {before} -> {lot.Spaces} stalls, "
+                                + $"{StallsReachable(lot)} of {lot.Spaces} reachable from its {lot.Entrances.Count} ways");
+                }
+            }
+            (DeadNoStreet, DeadGlancing, DeadNoCorner, DeadOffPavement, DeadOnMouth, MouthsNearCorner) = dead;
         }
-        /// <summary>Lots whose only way in had to open nearer a junction's corner than ParkingCornerClear.</summary>
-        public int ParkingWaysNearCorner;
+        string _tryWhy = "";
+        /// <summary>How much grass a way out through a lot's side or back may cross to its street, past the street's pavement
+        /// (m): its own little road, pavements down both sides.</summary>
+        public float LotWayReach = 14f;
+        /// <summary>Lots whose only way in had to open nearer a junction's corner than ParkingCornerClear; ways out other
+        /// than the front ones.</summary>
+        public int ParkingWaysNearCorner, ParkingExtraExits;
+
+        /// <summary>Where else a lot's ways may run out through its edges, a list per edge, best first (edge 1 its right, 2 its
+        /// back, 3 its left; `at` along that edge, lot frame): an across lot's aisles straight out its back, and out each side
+        /// through its outer row at the back end -- as far from its front street's junction as it can be; an along lot's
+        /// aisle out each side, and out its back through the back row.</summary>
+        List<List<(int edge, float at)>> ExitSpots(ParkingLot lot)
+        {
+            var plan = lot.Plan; var p = lot.Lot;
+            var all = new List<List<(int, float)>>();
+            float yF = LotKerbWidth, yB = p.Depth - LotKerbWidth;
+            float inset = WayInEndStub + Mathf.Max(LaneKerbRadius, LaneWalkWidth) + ParkingEntranceHalf + PavementGap;
+            if (plan.Along)
+            {
+                float y = yF + (plan.FrontRow ? HeadStrip + StallDepth : 0f) + LotAisle * 0.5f;
+                all.Add(new List<(int, float)> { (1, y) }); all.Add(new List<(int, float)> { (3, y) });
+                all.Add(new List<(int, float)> { (2, 0f) });
+                return all;
+            }
+            var back = new List<(int, float)>();
+            float x0 = AcrossX0(plan, p.Width);
+            for (int i = 0; i < plan.Aisles; i++) back.Add((2, x0 + StallDepth + LotAisle * 0.5f + i * AcrossPitch));
+            back.Sort((u, v) => Mathf.Abs(u.Item2).CompareTo(Mathf.Abs(v.Item2)));
+            all.Add(back);
+            all.Add(new List<(int, float)> { (1, yB - inset) }); all.Add(new List<(int, float)> { (3, yB - inset) });
+            return all;
+        }
+
+        /// <summary>The radius the lot's kerb turns into way `e` on, given its mouth: what is left of the way between the end of
+        /// the mouth's kerb return and the lot's kerb line (BuildParkingLots' curve) -- the larger of its two sides.</summary>
+        float CurveRadius(ParkingLot lot, ParkingEntrance e, LaneMouth m)
+        {
+            float r = 0f;
+            for (int c = 0; c < 2; c++)
+            {
+                var kp = m.Kerb[c];
+                if (kp == null || kp.Count == 0) continue;
+                var end = (kp[0] - m.Edge).Dot(m.Into) > (kp[^1] - m.Edge).Dot(m.Into) ? kp[0] : kp[^1];
+                float inn = (end - e.Mouth).Dot(e.Into);
+                r = Mathf.Max(r, Mathf.Clamp(LotKerbWidth - inn, 0.3f, Mathf.Max(0.3f, LaneWalkWidth)));
+            }
+            return r;
+        }
+
+        /// <summary>A way through edge `edge` of a lot, `at` along it: its middle on the plot's edge, and the way in.</summary>
+        ParkingEntrance ExitAt(ParkingLot lot, int edge, float at)
+        {
+            var p = lot.Lot;
+            Vector3 At(float x, float y) => p.Front + p.Along * x - p.Facing * y;
+            var (pt, inward) = edge switch
+            {
+                1 => (At(p.Width * 0.5f, at), -p.Along),
+                2 => (At(at, p.Depth), p.Facing),
+                3 => (At(-p.Width * 0.5f, at), p.Along),
+                _ => (At(at, 0f), -p.Facing),
+            };
+            return new ParkingEntrance { Road = -1, Side = 0, Mouth = pt, Into = inward, Width = 2f * ParkingEntranceHalf, Lot = lot, Edge = edge };
+        }
+
+        /// <summary>The ground under a lot, before it is graded: the terrain's, or the town's own height function's.</summary>
+        float LotGround(float x, float z) => Terrain.Active != null ? Terrain.Active.SampleHeight(x, z) : _heightAt != null ? _heightAt(x, z) : Centre.Y;
+
+        /// <summary>⭐ EACH LOT'S SURFACE, DESIGNED BEFORE ANYTHING MEETS IT: its street's height along its front, and -- where the
+        /// town grades its site (GradeSite), which GradeLots then cuts the ground to -- the ground's fitted line along its
+        /// back, its surface running straight between the two. The ways in that come through its sides or back are graded
+        /// to meet it there.</summary>
+        void DesignLotSurface(ParkingLot lot, RoadField roads)
+        {
+            var p = lot.Lot;
+            SampleLotFront(lot, roads);
+            lot.Graded = false;
+            if (!GradeSite) return;
+            // the ground's line along the back edge: least squares over a sample a metre
+            double su = 0, sy = 0, suu = 0, suy = 0; int ns = 0;
+            for (float u = -p.Width * 0.5f; u <= p.Width * 0.5f + 1e-3f; u += 1f)
+            {
+                var q = p.Front + p.Along * u - p.Facing * p.Depth;
+                float gy = LotGround(q.X, q.Z);
+                su += u; sy += gy; suu += (double)u * u; suy += (double)u * gy; ns++;
+            }
+            if (ns < 2) return;
+            double den = ns * suu - su * su;
+            lot.BackB = den > 1e-6 ? (float)((ns * suy - su * sy) / den) : 0f;
+            lot.BackA = (float)(sy / ns) - lot.BackB * (float)(su / ns);
+            lot.Graded = true;
+        }
 
         /// <summary>Each lot's street's height along its front, a metre apart and past each end as far as its grading reaches:
         /// its asphalt across from there, which is its pavement's top less a kerb (so the lot's front kerb stands exactly as
@@ -557,20 +928,8 @@ namespace UnturnedGodot
             foreach (var lot in ParkingLotsLaid)
             {
                 var p = lot.Lot;
-                SampleLotFront(lot, roads);
-                // the ground's line along the back edge: least squares over a sample a metre
-                double su = 0, sy = 0, suu = 0, suy = 0; int ns = 0;
-                for (float u = -p.Width * 0.5f; u <= p.Width * 0.5f + 1e-3f; u += 1f)
-                {
-                    var q = p.Front + p.Along * u - p.Facing * p.Depth;
-                    float gy = terr.SampleHeight(q.X, q.Z);
-                    su += u; sy += gy; suu += (double)u * u; suy += (double)u * gy; ns++;
-                }
-                if (ns < 2) continue;
-                double den = ns * suu - su * su;
-                lot.BackB = den > 1e-6 ? (float)((ns * suy - su * sy) / den) : 0f;
-                lot.BackA = (float)(sy / ns) - lot.BackB * (float)(su / ns);
-                lot.Graded = true;
+                if (!lot.Graded || lot.FrontY == null) DesignLotSurface(lot, roads);
+                if (!lot.Graded) continue;
                 // (measured: how far the surface stands off the ground it replaces, at the lot's middle row of samples)
                 for (float u = -p.Width * 0.5f; u <= p.Width * 0.5f; u += 2f)
                     for (float y = 0f; y <= p.Depth; y += 2f)
@@ -579,9 +938,36 @@ namespace UnturnedGodot
                         float off = LotSurfaceY(lot, q.X, q.Z, 0f) - LotGradeDrop - terr.SampleHeight(q.X, q.Z);
                         worstFill = Mathf.Max(worstFill, off); worstCut = Mathf.Min(worstCut, off);
                     }
+                // (where a way comes through a side or the back, the ground over the plot's edge is under the way too: level across
+                // there, it is lower than the lot's tilted surface on one side)
+                var sideWays = new List<(Vector3 at, Vector3 into, float surf)>();
+                foreach (var e in lot.Entrances)
+                    if (e.Edge != 0 && e.Lane?.Pts != null && e.Lane.Pts.Count > 0)
+                        sideWays.Add((e.Mouth, e.Into, e.Lane.Pts[^1].Y + roads.RoadSurfaceOffsetOfMaterial(ParkingEntranceMaterial) - 0.2f));
+                float Target(float x, float z)
+                {
+                    float t = LotSurfaceY(lot, x, z, 0f);
+                    foreach (var (at, into, surf) in sideWays)
+                    {
+                        var r = new Vector3(x - at.X, 0f, z - at.Z);
+                        float inn = r.Dot(into), lat = Mathf.Abs(r.Dot(new Vector3(-into.Z, 0f, into.X)));
+                        if (inn > -1f && inn < LotKerbWidth + 1f && lat < ParkingEntranceHalf + LaneWalkWidth + 1f) t = Mathf.Min(t, surf);
+                    }
+                    return t - LotGradeDrop;
+                }
                 terr.ConformToSurface(p.Front, p.Along, -p.Facing, -p.Width * 0.5f, p.Width * 0.5f, -(PlotSetback + p.Setback), p.Depth,
-                                      (x, z) => LotSurfaceY(lot, x, z, 0f) - LotGradeDrop, Terrain.GridUnit, LotGradeFeather, beforeV0: false,
-                                      keepOut: (x, z) => roads.DeepestRoadOverlap(new Vector3(x, 0f, z), 1f, out _, out _) || LaneAt(new Vector3(x, 0f, z)));
+                                      Target, Terrain.GridUnit, LotGradeFeather, beforeV0: false,
+                                      keepOut: (x, z) =>
+                                      {
+                                          // (the lot's own ground is its own, its ways' ends included; outside it the ground is only ever cut, which
+                                          // harms nothing -- a lane or a pavement beside it is laid to whatever is there, skirt and all -- except under a
+                                          // street's asphalt, which is laid already. Keeping the lanes' ground out too left a back lane's bank standing
+                                          // over the lot's back corner, through its asphalt.)
+                                          float dx = x - p.Front.X, dz = z - p.Front.Z;
+                                          float u = dx * p.Along.X + dz * p.Along.Z, y = -(dx * p.Facing.X + dz * p.Facing.Z);
+                                          if (Mathf.Abs(u) <= p.Width * 0.5f && y >= -(PlotSetback + p.Setback) && y <= p.Depth) return false;
+                                          return roads.DeepestRoadOverlap(new Vector3(x, 0f, z), 0.5f, out _, out _);
+                                      });
                 graded++;
             }
             if (graded > 0)
@@ -636,6 +1022,7 @@ namespace UnturnedGodot
             float Ground(float x, float z) => Terrain.Active != null ? Terrain.Active.SampleHeight(x, z) : (_heightAt != null ? _heightAt(x, z) : Centre.Y);
             Func<float, float, float> groundFn = Terrain.Active != null && !EditorSidewalk.NoGround ? (x, z) => Terrain.Active.SampleHeight(x, z) : null;
             float kerbH = KerbProud(roads);
+            _lotKerbH = kerbH;
             foreach (var lot in ParkingLotsLaid) if (lot.FrontY == null) SampleLotFront(lot, roads);
             // each way in's height where it meets the lot: its lane's end, as built -- against the lot's front there
             foreach (var lot in ParkingLotsLaid)
@@ -649,9 +1036,30 @@ namespace UnturnedGodot
                     {
                         float planned = 0f; for (int k = 1; k < e.Lane.Pts.Count; k++) planned += Flat(e.Lane.Pts[k - 1], e.Lane.Pts[k]);
                         roads.EvaluateAlong(e.Lane.Road, 0f, out var q0, out _, snapTerrain: false);
-                        float front = lot.FrontAt((e.Mouth - lot.Lot.Front).Dot(lot.Lot.Along));
+                        var at = e.Mouth + e.Into * LotKerbWidth;
+                        float front = LotSurfaceY(lot, at.X, at.Z, Ground(at.X, at.Z));
+                        if (e.Edge != 0 && Terrain.Active != null)
+                        {
+                            // MEASURED: the ground against the way's asphalt and the lot's surface, across its last metres
+                            var lat = new Vector3(-e.Into.Z, 0f, e.Into.X);
+                            float off = roads.RoadSurfaceOffset(e.Lane.Road);
+                            var sb = new System.Text.StringBuilder();
+                            foreach (float inn in new[] { -3f, -2f, -1f, 0f, 0.5f, 1f, 1.4f })
+                            {
+                                float worst = float.MinValue, lotAt = 0f, laneAt = 0f;
+                                foreach (float la in new[] { -3.3f, -2f, 0f, 2f, 3.3f })
+                                {
+                                    var w = e.Mouth + e.Into * inn + lat * la;
+                                    float gy = Terrain.Active.SampleHeight(w.X, w.Z);
+                                    float lane = RoadNear(roads, e.Lane.Road, w, out _, out _) + off;
+                                    if (gy - lane > worst) { worst = gy - lane; lotAt = LotSurfaceY(lot, w.X, w.Z, gy); laneAt = lane; }
+                                }
+                                sb.Append($" {inn:0.0}:{worst * 100f:+0;-0}cm(lane {laneAt:0.00} lot {lotAt:0.00})");
+                            }
+                            Log.Print($"[towngrid]   way through a side at ({e.Mouth.X:0.0},{e.Mouth.Z:0.0}): ground over its asphalt, by metres in from the plot's edge:{sb}; planned {e.Lane.Pts[0].Y:0.00} -> {e.Lane.Pts[^1].Y:0.00}");
+                        }
                         Log.Print($"[towngrid]   way in at ({e.Mouth.X:0.0},{e.Mouth.Z:0.0}): {2f * roads.RoadHalfWidth(e.Lane.Road):0.0} m wide, planned {planned:0.00} m from ({e.Lane.Pts[0].X:0.0},{e.Lane.Pts[0].Z:0.0}) to ({e.Lane.Pts[^1].X:0.0},{e.Lane.Pts[^1].Z:0.0}); built {L:0.00} m from ({q0.X:0.0},{q0.Z:0.0}) to ({q.X:0.0},{q.Z:0.0}); "
-                                + $"its end {e.TopY:0.000} against the lot's front {front:0.000} -- a step of {(e.TopY - front) * 100f:0.0} cm");
+                                + $"its end {e.TopY:0.000} against the lot there {front:0.000} -- a step of {(e.TopY - front) * 100f:0.0} cm{(e.Edge != 0 ? $" (through its {(e.Edge == 2 ? "back" : "side")})" : "")}");
                     }
                 }
             var ground = new SurfaceTool(); ground.Begin(Mesh.PrimitiveType.Triangles);
@@ -698,50 +1106,66 @@ namespace UnturnedGodot
                 // the two showed as a strip. Its foot is at the street's height there (LotSurfaceY), so its top is the
                 // pavement's and the two meet edge to edge, level.
                 float frontW = LotKerbWidth + PlotSetback + p.Setback;
-                // ...open across each way in, from where the kerb curves round into it on one side to the other: each mouth's
-                // return ends up the way in's kerb line (its far end), and from there the kerb turns a quarter circle onto
-                // the front kerb's line, its radius what is left of the way in -- in lot coordinates, the return's end, the
-                // curve's centre, its radius, and which way along the front is away from the way in
-                var throats = new List<(float a, float b)>();
-                var curves = new List<(Vector2 end, Vector2 centre, float r, float away)>();
+                // the kerb line as one loop: the front left to right, the right side front to back, the back right to left, the
+                // left side back to front -- each leg's way out of the lot and its pavement's width; a point on it by its arc s
+                var legA = new[] { new Vector2(xL, yF), new Vector2(xR, yF), new Vector2(xR, yB), new Vector2(xL, yB) };
+                var legB = new[] { new Vector2(xR, yF), new Vector2(xR, yB), new Vector2(xL, yB), new Vector2(xL, yF) };
+                var legOut = new[] { new Vector2(0f, -1f), new Vector2(1f, 0f), new Vector2(0f, 1f), new Vector2(-1f, 0f) };
+                var legW = new[] { frontW, LotKerbWidth, LotKerbWidth, LotKerbWidth };
+                var cum = new float[5];
+                for (int k = 0; k < 4; k++) cum[k + 1] = cum[k] + (legB[k] - legA[k]).Length();
+                float perim = cum[4];
+                (int leg, Vector2 q) OnLoop(float sArc)
+                {
+                    sArc = Mathf.PosMod(sArc, perim);
+                    for (int k = 0; k < 4; k++)
+                        if (sArc <= cum[k + 1] + 1e-4f)
+                            return (k, legA[k].Lerp(legB[k], Mathf.Clamp((sArc - cum[k]) / Mathf.Max(1e-4f, cum[k + 1] - cum[k]), 0f, 1f)));
+                    return (3, legB[3]);
+                }
+                float ArcOf(int leg, Vector2 q) => cum[leg] + (q - legA[leg]).Dot((legB[leg] - legA[leg]).Normalized());
+                Vector3 Out3(Vector2 o) => (p.Along * o.X - p.Facing * o.Y).Normalized();
+                Vector2 Loc(Vector3 w) { var r = w - p.Front; return new Vector2(r.Dot(p.Along), -r.Dot(p.Facing)); }
+                // ...open across each way in or out, from where the kerb curves round into it on one side to the other: each
+                // mouth's return ends up the way's kerb line (its far end), and from there the kerb turns a quarter circle onto
+                // the lot's kerb line, its radius what is left of the way past the return -- worked in the way's own frame (lat
+                // across it, inn into the lot from the plot's edge): the return's end, the curve's centre, its radius, and which
+                // way along the edge is away from the way
+                var gaps = new List<(float a, float b)>();
+                var curves = new List<(Vector2 c0, Vector2 nIn, Vector2 tLat, Vector2 end, Vector2 centre, float r, float away)>();
                 foreach (var e in lot.Entrances)
                 {
                     var m = e.Lane?.A;
-                    if (m == null || e.Lane.Road < 0) continue;            // (no way in built: the kerb stays shut)
-                    float xe = (e.Mouth - p.Front).Dot(p.Along), ta = xe, tb = xe;
+                    if (m == null || e.Lane.Road < 0) continue;            // (no way built: the kerb stays shut)
+                    var c0 = Loc(e.Mouth);
+                    var nIn = new Vector2(e.Into.Dot(p.Along), -e.Into.Dot(p.Facing)).Normalized();
+                    var tLat = new Vector2(-nIn.Y, nIn.X);
+                    float sa = float.MaxValue, sb = float.MinValue;
                     for (int c = 0; c < 2; c++)
                     {
                         var kp = m.Kerb[c];
                         if (kp == null || kp.Count == 0) continue;
                         var end = (kp[0] - m.Edge).Dot(m.Into) > (kp[^1] - m.Edge).Dot(m.Into) ? kp[0] : kp[^1];
-                        var rel = end - p.Front;
-                        float ux = rel.Dot(p.Along), uy = -rel.Dot(p.Facing), away = ux < xe ? -1f : 1f;
-                        float r = Mathf.Max(0.3f, yF - uy);
-                        curves.Add((new Vector2(ux, uy), new Vector2(ux + away * r, uy), r, away));
-                        if (away < 0f) ta = ux - r; else tb = ux + r;
+                        var rel = Loc(end) - c0;
+                        float lat = rel.Dot(tLat), inn = rel.Dot(nIn), away = lat < 0f ? -1f : 1f;
+                        // (no wider than the way's own pavement, which runs down to it where the way is longer than the returns)
+                        float r = Mathf.Clamp(LotKerbWidth - inn, 0.3f, Mathf.Max(0.3f, LaneWalkWidth));
+                        curves.Add((c0, nIn, tLat, new Vector2(lat, LotKerbWidth - r), new Vector2(lat + away * r, LotKerbWidth - r), r, away));
+                        float sg = ArcOf(e.Edge, c0 + tLat * (lat + away * r) + nIn * LotKerbWidth);   // where the curve meets the kerb line
+                        sa = Mathf.Min(sa, sg); sb = Mathf.Max(sb, sg);
                     }
-                    throats.Add((ta, tb));
+                    if (sb > sa) gaps.Add((sa, sb));
                 }
-                throats.Sort((u, v) => u.a.CompareTo(v.a));
-                // the kerb line as runs of (x, y) corners, each run one ribbon: from the last throat round the back to the
-                // first, and the front between the throats
-                var runs = new List<List<Vector2>>();
-                if (throats.Count == 0)
-                    runs.Add(new List<Vector2> { new(xL, yF), new(xR, yF), new(xR, yB), new(xL, yB), new(xL, yF) });
+                gaps.Sort((u, v) => u.a.CompareTo(v.a));
+                // the kerb as runs round the loop between the gaps (with none, one run all the way round, from the back's middle)
+                var runs = new List<(float a, float b)>();
+                if (gaps.Count == 0) { float s0 = (cum[2] + cum[3]) * 0.5f; runs.Add((s0, s0 + perim)); }
                 else
-                {
-                    runs.Add(new List<Vector2> { new(throats[^1].b, yF), new(xR, yF), new(xR, yB), new(xL, yB), new(xL, yF), new(throats[0].a, yF) });
-                    for (int k = 0; k + 1 < throats.Count; k++) runs.Add(new List<Vector2> { new(throats[k].b, yF), new(throats[k + 1].a, yF) });
-                }
-                Vector3 OutOf(Vector2 a, Vector2 b)
-                {
-                    // the side of a kerb run away from the lot's middle
-                    var d = b - a; var n = new Vector2(-d.Y, d.X).Normalized();
-                    var mid = (a + b) * 0.5f; var c = new Vector2((xL + xR) * 0.5f, (yF + yB) * 0.5f);
-                    if (n.Dot(mid - c) < 0f) n = -n;
-                    return (p.Along * n.X - p.Facing * n.Y).Normalized();
-                }
-                float WidthOf(Vector2 a, Vector2 b) => Mathf.Abs(a.Y - yF) < 1e-3f && Mathf.Abs(b.Y - yF) < 1e-3f ? frontW : LotKerbWidth;
+                    for (int k = 0; k < gaps.Count; k++)
+                    {
+                        float a = gaps[k].b, b = k + 1 < gaps.Count ? gaps[k + 1].a : gaps[0].a + perim;
+                        if (b - a > 0.05f) runs.Add((a, b));
+                    }
                 void Keep(MeshInstance3D mi)
                 {
                     parent.AddChild(mi);
@@ -751,61 +1175,92 @@ namespace UnturnedGodot
                     mi.AddChild(body);
                     kerbs++;
                 }
-                foreach (var run in runs)
+                foreach (var (ra, rb) in runs)
                 {
-                    // every 2 m along it, so the kerb follows the ground; each point's way out of the lot -- at a corner, out to
-                    // where the two legs' back edges cross (the front's wider than the sides)
-                    var pts = new List<Vector3>(); var outs = new List<Vector3>(); var widths = new List<float>();
-                    for (int k = 0; k + 1 < run.Count; k++)
+                    // every 2 m along it and on each corner it turns, so the kerb follows the ground; each point's way out of the
+                    // lot -- at a corner, out to where the two legs' back edges cross (the front's wider than the sides)
+                    var marks = new List<(float s, int corner)> { (ra, -1), (rb, -1) };
+                    for (int j = 0; j < 8; j++)
                     {
-                        var a = run[k]; var b = run[k + 1];
-                        float len = (b - a).Length(); if (len < 0.05f) continue;
-                        var o = OutOf(a, b); float wd = WidthOf(a, b);
-                        int n = Mathf.Max(1, Mathf.CeilToInt(len / 2f));
-                        for (int q = (pts.Count == 0 ? 0 : 1); q <= n; q++)
+                        float cb = cum[j % 4] + (j / 4) * perim;
+                        if (cb > ra + 1e-3f && cb < rb - 1e-3f) marks.Add((cb, j % 4));
+                    }
+                    marks.Sort((u, v) => u.s.CompareTo(v.s));
+                    var pts = new List<Vector3>(); var outs = new List<Vector3>(); var widths = new List<float>();
+                    for (int k = 0; k + 1 < marks.Count; k++)
+                    {
+                        int n = Mathf.Max(1, Mathf.CeilToInt((marks[k + 1].s - marks[k].s) / 2f));
+                        for (int q = (k == 0 ? 0 : 1); q <= n; q++)
                         {
-                            var v = a.Lerp(b, (float)q / n);
-                            var w = At(v.X, v.Y);
+                            float sq = Mathf.Lerp(marks[k].s, marks[k + 1].s, (float)q / n);
+                            int corner = q == n ? marks[k + 1].corner : q == 0 ? marks[k].corner : -1;
+                            var (leg, lq) = OnLoop(corner >= 0 ? cum[corner] : sq);
+                            var w = At(lq.X, lq.Y);
                             w.Y = LotSurfaceY(lot, w.X, w.Z, Ground(w.X, w.Z));
-                            if (q == n && k + 2 < run.Count)
+                            if (corner >= 0)
                             {
-                                var back = o * wd + OutOf(run[k + 1], run[k + 2]) * WidthOf(run[k + 1], run[k + 2]);   // (a rectangle's corners are square)
-                                pts.Add(w); outs.Add(back.Normalized()); widths.Add(back.Length());
+                                int prev = (corner + 3) % 4;          // (a rectangle's corners are square)
+                                var back = legOut[prev] * legW[prev] + legOut[corner] * legW[corner];
+                                pts.Add(w); outs.Add(Out3(back)); widths.Add(back.Length());
                                 continue;
                             }
-                            pts.Add(w); outs.Add(o); widths.Add(wd);
+                            pts.Add(w); outs.Add(Out3(legOut[leg])); widths.Add(legW[leg]);
                         }
                     }
                     if (pts.Count < 2) continue;
                     var mi = EditorSidewalk.BuildRibbon(pts, outs, LotKerbWidth, kerbH, 0.6f, $"Parking_Kerb_{made}_{kerbs}", groundFn, null, widths);
                     if (mi != null) Keep(mi);
                 }
-                // ⭐ AND ROUND INTO EACH WAY IN, CURVED (strawberry 2026-10-14: "add a curve for the sidewalk going into the parking
-                // lot"): a quarter disc of pavement fanned onto its centre, from the mouth's return's end round onto the front
-                // kerb's line. Its radius is what is left of the way in past the return -- the lot's kerb, less the return's
-                // metre past the back of the street's pavement -- which is the return's own width, so the return, the curve and
-                // the front kerb meet square and tile the corner. The asphalt it curves away from is filled under it.
+                // ⭐ AND ROUND INTO EACH WAY, CURVED (strawberry 2026-10-14: "add a curve for the sidewalk going into the parking
+                // lot"): a quarter disc of pavement fanned onto its centre, from the way's kerb round onto the lot's kerb line,
+                // as wide as the way's own pavement. Through the front that is exactly what is left past the mouth's return
+                // (the lot's kerb, less the return's metre past the back of the street's pavement), so the return, the curve and
+                // the front kerb meet square and tile the corner; through a side, across grass, the way's own pavements run down
+                // to it (BuildLanes). The asphalt it curves away from is filled under it.
                 int steps = Mathf.Max(4, Mathf.CeilToInt(90f / ArcFacetDegrees));
-                foreach (var (end, centre, r, away) in curves)
+                foreach (var (c0, nIn, tLat, end, centre, r, away) in curves)
                 {
-                    var C = At(centre.X, centre.Y);
-                    float top = LotSurfaceY(lot, C.X, C.Z, Ground(C.X, C.Z)) + kerbH;      // the fan's one apex, one height
+                    Vector3 FromWay(float la, float inn) { var q = c0 + tLat * la + nIn * inn; var w = At(q.X, q.Y); w.Y = LotSurfaceY(lot, w.X, w.Z, Ground(w.X, w.Z)); return w; }
+                    var C = FromWay(centre.X, centre.Y);
+                    float top = C.Y + kerbH;                               // the fan's one apex, one height
                     var pts = new List<Vector3>(); var outs = new List<Vector3>(); var widths = new List<float>();
                     var kerbsAt = new List<float>(); var surf = new List<float>();
                     for (int i = 0; i <= steps; i++)
                     {
                         float ang = Mathf.Pi * 0.5f * i / steps;
-                        var w = At(centre.X - away * r * Mathf.Cos(ang), centre.Y + r * Mathf.Sin(ang));
-                        w.Y = LotSurfaceY(lot, w.X, w.Z, Ground(w.X, w.Z));
+                        var w = FromWay(centre.X - away * r * Mathf.Cos(ang), centre.Y + r * Mathf.Sin(ang));
                         var toC = new Vector3(C.X - w.X, 0f, C.Z - w.Z); float l = toC.Length();
                         pts.Add(w); outs.Add(l > 1e-4f ? toC / l : -p.Facing); widths.Add(Mathf.Max(l, 0.01f));
                         kerbsAt.Add(kerbH); surf.Add(top - w.Y);
                     }
                     var mi = EditorSidewalk.BuildRibbon(pts, outs, r, kerbH, 0.6f, $"Parking_KerbCurve_{made}_{kerbs}", groundFn, kerbsAt, widths, surf);
                     if (mi != null) Keep(mi);
-                    // the asphalt outside the curve, fanned from the corner it rounds off -- a hair under the way in's own
-                    var K = At(end.X, yF); K.Y = LotSurfaceY(lot, K.X, K.Z, Ground(K.X, K.Z)) - 0.005f;
+                    // the asphalt outside the curve, fanned from the corner it rounds off -- a hair under the way's own
+                    var K = FromWay(end.X, LotKerbWidth); K.Y -= 0.005f;
                     for (int i = 0; i + 1 < pts.Count; i++) Tri(ground, K, pts[i] - Vector3.Up * 0.005f, pts[i + 1] - Vector3.Up * 0.005f, null);
+                }
+                // ⭐ THE DIVIDERS between back-to-back rows: an island of the lot's pavement, kerbed both sides, from its rounded
+                // nose at the cross road to the back kerb, which it joins -- one ribbon up its left side, round the nose and down
+                // its right, each point's surface reaching to the island's middle line (the nose fanned onto its centre)
+                foreach (var (dx0, dy0, dx1, dy1) in lot.Dividers)
+                {
+                    float cx = (dx0 + dx1) * 0.5f, rr = (dx1 - dx0) * 0.5f, ny = dy0 + rr;
+                    var pts = new List<Vector3>(); var outs = new List<Vector3>(); var widths = new List<float>();
+                    var kerbsAt = new List<float>(); var surf = new List<float>();
+                    void Add(float x, float y, float bx, float by)
+                    {
+                        var w = At(x, y); w.Y = LotSurfaceY(lot, w.X, w.Z, Ground(w.X, w.Z));
+                        var b = At(bx, by); float bTop = LotSurfaceY(lot, b.X, b.Z, Ground(b.X, b.Z)) + kerbH;
+                        var d = new Vector3(b.X - w.X, 0f, b.Z - w.Z); float l = d.Length();
+                        pts.Add(w); outs.Add(l > 1e-4f ? d / l : -p.Facing); widths.Add(Mathf.Max(l, 0.01f)); kerbsAt.Add(kerbH); surf.Add(bTop - w.Y);
+                    }
+                    int ns = Mathf.Max(1, Mathf.CeilToInt((dy1 - ny) / 2f));
+                    for (int k = 0; k <= ns; k++) { float y = Mathf.Lerp(dy1, ny, (float)k / ns); Add(dx0, y, cx, y); }
+                    int na = Mathf.Max(6, Mathf.CeilToInt(180f / ArcFacetDegrees));
+                    for (int k = 1; k < na; k++) { float ang = Mathf.Pi * k / na; Add(cx - rr * Mathf.Cos(ang), ny - rr * Mathf.Sin(ang), cx, ny); }
+                    for (int k = 0; k <= ns; k++) { float y = Mathf.Lerp(ny, dy1, (float)k / ns); Add(dx1, y, cx, y); }
+                    var mi = EditorSidewalk.BuildRibbon(pts, outs, rr, kerbH, 0.6f, $"Parking_Divider_{made}_{kerbs}", groundFn, kerbsAt, widths, surf);
+                    if (mi != null) Keep(mi);
                 }
             }
             var gm = ground.Commit();
@@ -836,24 +1291,83 @@ namespace UnturnedGodot
         /// <summary>How far a lot's asphalt stands over the ground under it.</summary>
         public float LotLift = 0.04f;
 
-        /// <summary>The blocks: retail's Block_Parking_0, one at the head of every stall, a little in from its end, square
-        /// across it. A Z-up mesh stood up at 270 about X like every vanilla prop, its 3 m length (local X) across the stall.</summary>
-        public int PlaceParkingBlocks(EditorObjects objs, List<Node3D> into = null)
+        /// <summary>The lots' props: their blocks, if they have any -- retail's Block_Parking_0 at the head of a stall, a Z-up
+        /// mesh stood up at 270 about X like every vanilla prop, its 3 m length (local X) across the stall -- and ⭐ THEIR
+        /// STREET LIGHTS (strawberry 2026-10-14: "add streetlight support for parking lots too"): the streets' own lamp,
+        /// down the middle of each divider, its arm over one aisle then the other, and along the kerbs its outer rows face --
+        /// an across lot's sides, an along lot's back -- their arms over the stalls toward the aisle.
+        /// About LotLampSpacing apart, on the kerb's pavement a metre out from its edge, never in a way in's opening.</summary>
+        public int PlaceParkingProps(EditorObjects objs, List<Node3D> into = null)
         {
             if (objs == null) return 0;
-            int made = 0;
+            int blocks = 0, lamps = 0;
             var terr = Terrain.Active;
+            float Ground(float x, float z) => terr != null ? terr.SampleHeight(x, z) : (_heightAt != null ? _heightAt(x, z) : Centre.Y);
             foreach (var lot in ParkingLotsLaid)
                 foreach (var (at, along) in lot.Blocks)
                 {
                     var q = at;
-                    q.Y = LotSurfaceY(lot, q.X, q.Z, terr != null ? terr.SampleHeight(q.X, q.Z) : at.Y);
+                    q.Y = LotSurfaceY(lot, q.X, q.Z, Ground(q.X, q.Z));
                     var node = objs.Place("Block_Parking_0", q, HedgeBasis(along, 1f, 1f, false));
                     if (node == null) continue;
-                    into?.Add(node); made++;
+                    into?.Add(node); blocks++;
                 }
-            if (made > 0) Log.Print($"[towngrid] parking blocks: {made} placed in {ParkingLotsLaid.Count} lots");
-            return made;
+            if (StreetLights)
+                foreach (var lot in ParkingLotsLaid)
+                {
+                    var p = lot.Lot;
+                    Vector3 At(float x, float y) => p.Front + p.Along * x - p.Facing * y;
+                    float xL = -p.Width * 0.5f + LotKerbWidth, xR = p.Width * 0.5f - LotKerbWidth, yF = LotKerbWidth, yB = p.Depth - LotKerbWidth;
+                    // each way's opening, by edge and middle, to keep the lamps out of
+                    var ways = new List<(int edge, float at)>();
+                    foreach (var e in lot.Entrances)
+                    {
+                        if (e.Lane == null || e.Lane.Road < 0) continue;
+                        var r = e.Mouth - p.Front; float lx = r.Dot(p.Along), ly = -r.Dot(p.Facing);
+                        ways.Add((e.Edge, e.Edge == 0 || e.Edge == 2 ? lx : ly));
+                    }
+                    bool InOpening(int edge, float at) { foreach (var w in ways) if (w.edge == edge && Mathf.Abs(w.at - at) < ParkingEntranceHalf + 4f) return true; return false; }
+                    // spots along a line, evenly, about LotLampSpacing apart
+                    IEnumerable<float> Spots(float a, float b)
+                    {
+                        float len = b - a; if (len < 1f) yield break;
+                        int n = Mathf.Max(1, Mathf.RoundToInt(len / LotLampSpacing));
+                        for (int k = 0; k < n; k++) yield return a + (k + 0.5f) * len / n;
+                    }
+                    var spots = new List<(float x, float y, Vector2 arm)>();
+                    foreach (var (dx0, dy0, dx1, dy1) in lot.Dividers)
+                    {
+                        float cx = (dx0 + dx1) * 0.5f; int k = 0;
+                        foreach (float y in Spots(dy0 + (dx1 - dx0) * 0.5f + 1f, dy1 - 1f)) spots.Add((cx, y, new Vector2((k++ % 2 == 0) ? -1f : 1f, 0f)));
+                    }
+                    if (!lot.Plan.Along)
+                    {
+                        // an across lot's outer rows face its sides
+                        float inset = Mathf.Min(1f, LotKerbWidth * 0.66f), y0 = yF + (lot.Plan.Aisles >= 2 ? LotAisle : 0f);
+                        foreach (float y in Spots(y0, yB)) { if (!InOpening(3, y)) spots.Add((xL - inset, y, new Vector2(1f, 0f))); if (!InOpening(1, y)) spots.Add((xR + inset, y, new Vector2(-1f, 0f))); }
+                    }
+                    else
+                    {
+                        // an along lot's back row faces its back
+                        float inset = Mathf.Min(1f, LotKerbWidth * 0.66f);
+                        foreach (float x in Spots(xL, xR)) if (!InOpening(2, x)) spots.Add((x, yB + inset, new Vector2(0f, -1f)));
+                    }
+                    foreach (var (x, y, arm) in spots)
+                    {
+                        var at = At(x, y);
+                        at.Y = LotSurfaceY(lot, at.X, at.Z, Ground(at.X, at.Z)) + _lotKerbH;
+                        var armW = (p.Along * arm.X - p.Facing * arm.Y).Normalized();
+                        float yaw = ProcIsland.YawForDir(armW.X, -armW.Z);
+                        var basis = SplineTiling.SeatedBasis(terr, at, yaw, 6f, out _);
+                        var node = objs.Place(StreetLightProp, at, basis);
+                        if (node == null) continue;
+                        into?.Add(node); lamps++;
+                    }
+                }
+            if (blocks + lamps > 0) Log.Print($"[towngrid] parking lot props: {lamps} street lights, {blocks} blocks in {ParkingLotsLaid.Count} lots");
+            return blocks + lamps;
         }
+        /// <summary>The lots' kerbs' height over their asphalt, as BuildParkingLots built them.</summary>
+        float _lotKerbH = 0.18f;
     }
 }
