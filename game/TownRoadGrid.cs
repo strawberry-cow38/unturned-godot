@@ -3876,13 +3876,6 @@ namespace UnturnedGodot
             /// boundary, a convex polygon in plan. Its building zone is then the rectangle Corners() gives (no yards: the
             /// rest of the polygon is its yard), and null if nothing on the 3 m lattice fits in it.</summary>
             public Vector3[] Outline;
-            /// <summary>⭐ A triangle lot's WHOLE building area (strawberry 2026-10-14: "make sure it fills right to the corners"):
-            /// its outline brought in by TriangleYard on every side -- into the wedge's corners, where the rectangle Corners()
-            /// gives stops well short of them. And the same as the 3 m building cells that fit inside it, squared to that
-            /// rectangle and counted from its front-left corner (i across, j back), filling the wedge as a staircase -- for a
-            /// generator that builds in cells.</summary>
-            public Vector3[] BuildOutline;
-            public List<(int i, int j)> BuildCells;
             /// <summary>The lot's boundary whatever its shape: the outline of a triangle lot, the corners of any other.</summary>
             public Vector3[] Boundary() => Outline ?? Corners();
             public float BaseWidth => Width - GrowLeft - GrowRight;
@@ -4544,13 +4537,7 @@ namespace UnturnedGodot
                     any++;
                     OutlinePoly(lots, pl.Outline, 0.45f, Lift, pl.Front.Y);
                     FillPoly(tint, pl.Outline, Lift * 0.5f, pl.Front.Y);
-                    if (pl.BuildOutline != null)
-                    {
-                        // the whole building area, into the corners -- what the lot can be built on
-                        FillPoly(zone, pl.BuildOutline, Lift * 0.7f, pl.Front.Y);
-                        OutlinePoly(zoneLine, pl.BuildOutline, 0.25f, Lift * 0.9f, pl.Front.Y);
-                    }
-                    else if (pl.Width > 0f && pl.Depth > 0f)
+                    if (pl.Width > 0f && pl.Depth > 0f)
                     {
                         Fill(zone, pl.BuildArea(), Lift * 0.7f, pl.Front.Y);
                         Outline(zoneLine, pl.BuildArea(), 0.25f, Lift * 0.9f, pl.Front.Y);
@@ -4563,6 +4550,14 @@ namespace UnturnedGodot
                     Commit(zone, "Plots_Triangle_Building", new Color(TriangleColour.R, TriangleColour.G, TriangleColour.B, 0.45f));
                     Commit(zoneLine, "Plots_Triangle_BuildingLine", new Color(1f, 1f, 0.95f, 0.85f));
                 }
+            }
+            // (UG_TOWNPROBES=1: the ground the triangle lots left near them, red)
+            if (TriangleGapCells.Count > 0)
+            {
+                var gs = new SurfaceTool(); gs.Begin(Mesh.PrimitiveType.Triangles);
+                foreach (var c in TriangleGapCells)
+                    Fill(gs, new[] { c + new Vector3(-0.45f, 0f, -0.45f), c + new Vector3(0.45f, 0f, -0.45f), c + new Vector3(0.45f, 0f, 0.45f), c + new Vector3(-0.45f, 0f, 0.45f) }, Lift * 1.5f, Centre.Y);
+                Commit(gs, "Plots_TriangleGaps", new Color(0.95f, 0.15f, 0.10f, 0.75f));
             }
             // the yard fences, designated: a dark line along each run, over the lot lines
             if (Fences.Count > 0)
@@ -4674,7 +4669,12 @@ namespace UnturnedGodot
                     if (k == 1 && lp.KneeA) a -= d * laneReach;              // out past the knee, to its square corner
                     if (k == pts.Count - 1 && lp.KneeB) b += d * laneReach;
                     var ab = new Vector2(b.X - a.X, b.Z - a.Z);
-                    float t = Mathf.Clamp(((q.X - a.X) * ab.X + (q.Z - a.Z) * ab.Y) / Mathf.Max(1e-6f, ab.LengthSquared()), 0f, 1f);
+                    float t = ((q.X - a.X) * ab.X + (q.Z - a.Z) * ab.Y) / Mathf.Max(1e-6f, ab.LengthSquared());
+                    // ⚠ ...and ends SQUARE there. Clamped like the rest, the run past the knee ended in a half-disc reaching
+                    // laneReach beyond the square corner it is there to cover -- 3 m out over grass no pavement is on, which
+                    // a triangle lot's corner came up against and stopped
+                    if (t < 0f && k == 1 && lp.KneeA || t > 1f && k == pts.Count - 1 && lp.KneeB) continue;
+                    t = Mathf.Clamp(t, 0f, 1f);
                     if (new Vector2(a.X + ab.X * t - q.X, a.Z + ab.Y * t - q.Z).Length() < laneReach) return true;
                 }
             }
@@ -4760,11 +4760,14 @@ namespace UnturnedGodot
         /// <summary>What the last PlaceTriangleLots did: lots laid, how many of them with a building zone, and the
         /// leftovers it passed over (too small, or not a wedge: an L round a lot's corner).</summary>
         public int TrianglesLaid, TrianglesZoned, TrianglesPassed;
-        /// <summary>UG_TOWNTRICORNERS=0: wedge outlines as they come off the raster, their tips cut short -- the control.</summary>
+        /// <summary>UG_TOWNTRICORNERS=0: wedge outlines as they come off the raster, their points cut off -- the control.</summary>
         public bool FillCorners = System.Environment.GetEnvironmentVariable("UG_TOWNTRICORNERS") != "0";
-        /// <summary>Square metres of ground a lot could still have within 4 m of a triangle lot, after the last
-        /// PlaceTriangleLots: what its corners did not reach.</summary>
-        public int TriangleCornerGap;
+        /// <summary>After the last PlaceTriangleLots: square metres of ground a lot could still have (inside every frontage
+        /// line, off the paving, in no lot) within 4 m of a triangle lot; and the triangle lots' sides that stop short of what
+        /// bounds them -- a point cut off square, ground a lot could have just past it (SidesShort).</summary>
+        public int TriangleCornerGap, TriangleSidesShort;
+        /// <summary>(UG_TOWNPROBES=1) that ground, a metre square at a time: drawn red over the plots.</summary>
+        public readonly List<Vector3> TriangleGapCells = new();
         public static readonly Color TriangleColour = new Color(0.20f, 0.78f, 0.78f);
 
         /// <summary>⭐ THE DIAGONAL'S WEDGES BECOME LOTS. A 45-degree avenue across a square grid cuts every block it crosses
@@ -4782,6 +4785,7 @@ namespace UnturnedGodot
         {
             TrianglesLaid = TrianglesZoned = TrianglesPassed = 0;
             if (!TriangleLots || DiagonalRoads.Count == 0 || roads == null) return;
+            var clock = System.Diagnostics.Stopwatch.StartNew();
             _roadSamples.Clear();
             // the avenue as one straight line: its pieces lie along it
             var all = new List<Vector3>();
@@ -4812,32 +4816,6 @@ namespace UnturnedGodot
                 foreach (var al in Alleys) if (InsidePoly(al.Corners(), q)) return true;
                 return false;
             }
-            // (a point ON another lot's line is free: a wedge snapped onto its neighbour's side shares that line)
-            bool InRectStrict(Plot pl, Vector3 q, float inset)
-            {
-                var rel = q - pl.Front;
-                float a = rel.X * pl.Along.X + rel.Z * pl.Along.Z, f = -(rel.X * pl.Facing.X + rel.Z * pl.Facing.Z);
-                return Mathf.Abs(a) < pl.Width * 0.5f - inset && f > inset && f < pl.Depth - inset;
-            }
-            bool InPolyStrict(Vector3[] c, Vector3 q, float inset)
-            {
-                if (!InsidePoly(c, q)) return false;
-                for (int e = 0; e < c.Length; e++)
-                {
-                    var a = c[e]; var b = c[(e + 1) % c.Length];
-                    var ab = new Vector2(b.X - a.X, b.Z - a.Z);
-                    float u = Mathf.Clamp(((q.X - a.X) * ab.X + (q.Z - a.Z) * ab.Y) / Mathf.Max(1e-6f, ab.LengthSquared()), 0f, 1f);
-                    if (new Vector2(a.X + ab.X * u - q.X, a.Z + ab.Y * u - q.Z).Length() < inset) return false;
-                }
-                return true;
-            }
-            bool TakenStrict(Vector3 q)
-            {
-                foreach (var pl in Plots) if (pl.Outline != null ? InPolyStrict(pl.Outline, q, 0.03f) : InRectStrict(pl, q, 0.03f)) return true;
-                foreach (var al in Alleys) if (InPolyStrict(al.Corners(), q, 0.03f)) return true;
-                return false;
-            }
-            bool Free(Vector3 q) => !TakenStrict(q) && Buildable(roads, q) && !BayFrontAt(roads, q) && !LaneAt(q);
             // 1. the free ground within reach of the avenue, a metre square at a time
             var free = new HashSet<(int, int)>();
             int x0 = int.MaxValue, x1 = int.MinValue, z0 = int.MaxValue, z1 = int.MinValue;
@@ -5030,16 +5008,24 @@ namespace UnturnedGodot
                 if (!Fronts(chosen)) { Passed("cut clear of the lot beside it, it no longer reaches the avenue"); continue; }
                 outline = chosen;
                 // ⭐ RIGHT INTO ITS CORNERS (strawberry 2026-10-14, of the first triangle lots: "make sure it fills right to the
-                // corners"). Off the raster, a wedge's sharp tips came out cut off -- the cells there are too few to survive
-                // the erosion, and the hull of what is left ends in a short staircase edge metres short of the point. So the
-                // outline is rebuilt from its LONG sides alone -- the lines that really bound it, the avenue's frontage, the
-                // street's, the next lot's side -- which meet in the wedge's true corners; and each corner that lands on
-                // ground a lot cannot have (a corner pavement, a slab's margin) is cut back square across its point, just as
-                // far as it has to be.
+                // corners" -- and of a building zone that then did: "i meant the plot, not the actual building"). Off the metre
+                // raster every point of a wedge came out CUT OFF SQUARE, by a side 2-5 m long that lies on nothing (measured:
+                // all 15 lots, all their points); the lines that really bound it -- the avenue's frontage, the street's, the
+                // next lot's side -- meet metres further on. ⚠ The first try kept every side 2.5 m and longer as a line, and
+                // those cuts ARE 2.5 m and longer: it moved no corner of 11 lots by more than a hair. So the outline is rebuilt
+                // from the sides that lie ON such a line, and each corner that lands on ground a lot cannot have (a corner
+                // pavement, a slab's margin) is cut back only as far as that ground comes, the cut following its edge.
                 if (FillCorners)
                 {
-                    var full = FillToCorners(outline, Free);
-                    if (ProbeEverything) Log.Print($"[towngrid]   wedge corners: {(full != null ? $"filled, {PolyArea(outline):0} -> {PolyArea(full):0} m2" : "left -- " + _fillWhy)}");
+                    var mid0 = Vector3.Zero; foreach (var v in outline) mid0 += v; mid0 /= outline.Length;
+                    float rad0 = 0f; foreach (var v in outline) rad0 = Mathf.Max(rad0, Flat(v, mid0));
+                    var streets = StreetsNear(roads, mid0, rad0 + 12f);
+                    var full = FillToCorners(outline, q => LotCouldHave(roads, q, streets),
+                                             (Vector3 a, Vector3 b, out Vector3 lp, out Vector3 ld) => BoundingLine(roads, a, b, out lp, out ld));
+                    if (full != null)
+                        foreach (var other in Plots)
+                            if (QuadsOverlap(full, other.Boundary(), 0.01f)) { _fillWhy = "it would overlap another lot"; full = null; break; }
+                    if (ProbeEverything) Log.Print($"[towngrid]   wedge corners: {(full != null ? $"filled, {PolyArea(outline):0} -> {PolyArea(full):0} m2{(_fillWhy.Length > 0 ? " (" + _fillWhy + ")" : "")}" : "left -- " + _fillWhy)}");
                     if (full != null) outline = full;
                 }
                 for (int k = 0; k < outline.Length; k++) outline[k].Y = yAt(outline[k].X, outline[k].Z);
@@ -5072,48 +5058,33 @@ namespace UnturnedGodot
                 {
                     pl.Facing = toward; pl.Along = new Vector3(-toward.Z, 0f, toward.X); pl.Front = mid; pl.Front.Y = yAt(mid.X, mid.Z);
                 }
-                // the whole building area: the outline in by the yard all round (each side's line moved in, the polygon
-                // clipped to it), and the 3 m cells of the zone's own lattice that fit inside that
-                pl.BuildOutline = InsetPoly(outline, TriangleYard);
-                if (pl.BuildOutline != null)
-                {
-                    for (int k = 0; k < pl.BuildOutline.Length; k++) pl.BuildOutline[k].Y = yAt(pl.BuildOutline[k].X, pl.BuildOutline[k].Z);
-                    if (pl.Width > 0f && pl.Depth > 0f)
-                    {
-                        pl.BuildCells = new List<(int, int)>();
-                        var fl = pl.Front - pl.Along * (pl.Width * 0.5f);               // the zone's front-left corner
-                        var backDir = -pl.Facing;
-                        float reachC = 0f; foreach (var v in outline) reachC = Mathf.Max(reachC, Flat(v, fl));
-                        int span = Mathf.CeilToInt(reachC / 3f) + 1;
-                        for (int ci = -span; ci <= span; ci++)
-                            for (int cj = -span; cj <= span; cj++)
-                            {
-                                bool inside = true;
-                                foreach (var (di, dj) in new[] { (0, 0), (1, 0), (1, 1), (0, 1) })
-                                {
-                                    var q = fl + pl.Along * (3f * (ci + di)) + backDir * (3f * (cj + dj));
-                                    if (!InsidePoly(pl.BuildOutline, q)) { inside = false; break; }
-                                }
-                                if (inside) pl.BuildCells.Add((ci, cj));
-                            }
-                    }
-                }
                 Plots.Add(pl);
                 TrianglesLaid++;
                 if (ProbeEverything)
                     Log.Print($"[towngrid]   triangle lot at {mid}: {cells.Count} m2, {outline.Length} corners, zone {(best.area > 0f ? $"{pl.Width:0}x{pl.Depth:0} m" : "none")}");
             }
-            // MEASURED: the ground a lot could still have, within 4 m of a triangle lot -- what its corners leave
-            TriangleCornerGap = 0;
-            var tris = new List<Plot>(); foreach (var pl in Plots) if (pl.Outline != null) tris.Add(pl);
-            if (tris.Count > 0)
-                foreach (var c in free)
-                {
-                    var q = new Vector3(c.Item1 + 0.5f, 0f, c.Item2 + 0.5f);
-                    if (Taken(q)) continue;
-                    foreach (var t in tris)
+            // MEASURED: the triangle lots' sides that stop short of what bounds them, and (UG_TOWNPROBES=1) the ground a
+            // lot could still have within 4 m of one, patch by patch
+            TriangleCornerGap = 0; TriangleSidesShort = 0; TriangleGapCells.Clear();
+            var gapSeen = new HashSet<(int, int)>();
+            foreach (var t in Plots)
+            {
+                if (t.Kind != PlotKind.Triangle || t.Outline == null) continue;
+                var ol = t.Outline;
+                var shortAt = new List<Vector3>();
+                TriangleSidesShort += SidesShort(roads, t, shortAt);
+                if (!ProbeEverything) continue;
+                var tm = Vector3.Zero; foreach (var v in ol) tm += v; tm /= ol.Length;
+                float trad = 0f, bx0 = float.MaxValue, bx1 = float.MinValue, bz0 = float.MaxValue, bz1 = float.MinValue;
+                foreach (var v in ol) { trad = Mathf.Max(trad, Flat(v, tm)); bx0 = Mathf.Min(bx0, v.X); bx1 = Mathf.Max(bx1, v.X); bz0 = Mathf.Min(bz0, v.Z); bz1 = Mathf.Max(bz1, v.Z); }
+                var streets = StreetsNear(roads, tm, trad + 6f);
+                var near = new HashSet<(int, int)>();
+                for (int x = Mathf.FloorToInt(bx0 - 4f); x <= Mathf.CeilToInt(bx1 + 4f); x++)
+                    for (int z = Mathf.FloorToInt(bz0 - 4f); z <= Mathf.CeilToInt(bz1 + 4f); z++)
                     {
-                        float nearest = float.MaxValue; var ol = t.Outline;
+                        var q = new Vector3(x + 0.5f, 0f, z + 0.5f);
+                        if (InsidePoly(ol, q)) continue;
+                        float nearest = float.MaxValue;
                         for (int e = 0; e < ol.Length; e++)
                         {
                             var a = ol[e]; var b = ol[(e + 1) % ol.Length];
@@ -5121,13 +5092,184 @@ namespace UnturnedGodot
                             float u = Mathf.Clamp(((q.X - a.X) * ab.X + (q.Z - a.Z) * ab.Y) / Mathf.Max(1e-6f, ab.LengthSquared()), 0f, 1f);
                             nearest = Mathf.Min(nearest, new Vector2(a.X + ab.X * u - q.X, a.Z + ab.Y * u - q.Z).Length());
                         }
-                        if (nearest < 4f) { TriangleCornerGap++; break; }
+                        if (nearest >= 4f || !LotCouldHave(roads, q, streets)) continue;
+                        near.Add((x, z));
+                        if (gapSeen.Add((x, z))) { TriangleCornerGap++; TriangleGapCells.Add(q); }
                     }
+                var sb = new System.Text.StringBuilder();
+                sb.Append($"[towngrid]   triangle lot at ({tm.X:0},{tm.Z:0}), {PolyArea(ol):0} m2, corners");
+                foreach (var v in ol) sb.Append($" ({v.X:0.0},{v.Z:0.0})");
+                sb.Append($": {near.Count} m2 a lot could have within 4 m; {shortAt.Count} sides short of what bounds it, at");
+                foreach (var v in shortAt) sb.Append($" ({v.X:0.0},{v.Z:0.0})");
+                var seenN = new HashSet<(int, int)>();
+                foreach (var s0 in near)
+                {
+                    if (!seenN.Add(s0)) continue;
+                    var patch = new List<(int, int)>(); var st = new Stack<(int, int)>(); st.Push(s0);
+                    while (st.Count > 0)
+                    {
+                        var c = st.Pop(); patch.Add(c);
+                        foreach (var nb in new[] { (c.Item1 + 1, c.Item2), (c.Item1 - 1, c.Item2), (c.Item1, c.Item2 + 1), (c.Item1, c.Item2 - 1) })
+                            if (near.Contains(nb) && seenN.Add(nb)) st.Push(nb);
+                    }
+                    if (patch.Count < 2) continue;
+                    float px = 0f, pz = 0f; foreach (var c in patch) { px += c.Item1 + 0.5f; pz += c.Item2 + 0.5f; }
+                    var pm = new Vector3(px / patch.Count, 0f, pz / patch.Count);
+                    int vk = 0; float vd = float.MaxValue;
+                    for (int k = 0; k < ol.Length; k++) { float d2 = Flat(ol[k], pm); if (d2 < vd) { vd = d2; vk = k; } }
+                    sb.Append($"\n[towngrid]     patch {patch.Count} m2 at ({pm.X:0.0},{pm.Z:0.0}), {vd:0.0} m from corner {vk}");
                 }
+                Log.Print(sb.ToString());
+            }
             Log.Print($"[towngrid] triangle lots: {TrianglesLaid} laid in the wedges the diagonal leaves ({TrianglesZoned} with a building zone of whole 3 m cells), "
                     + $"{TrianglesPassed} leftovers passed over (too small, not a wedge, or not on the avenue); "
-                    + $"{TriangleCornerGap} m2 of ground a lot could have left within 4 m of them{(FillCorners ? "" : " (UG_TOWNTRICORNERS=0)")}");
+                    + $"{TriangleSidesShort} of their sides stop short of what bounds them{(FillCorners ? "" : " (UG_TOWNTRICORNERS=0)")}"
+                    + (ProbeEverything ? $", {TriangleCornerGap} m2 a lot could have left within 4 m of them" : "") + $" ({clock.ElapsedMilliseconds} ms)");
         }
+        // (a point ON another lot's line is not in it: a wedge snapped onto its neighbour's side shares that line)
+        static bool InRectStrict(Plot pl, Vector3 q, float inset)
+        {
+            var rel = q - pl.Front;
+            float a = rel.X * pl.Along.X + rel.Z * pl.Along.Z, f = -(rel.X * pl.Facing.X + rel.Z * pl.Facing.Z);
+            return Mathf.Abs(a) < pl.Width * 0.5f - inset && f > inset && f < pl.Depth - inset;
+        }
+        static bool InPolyStrict(Vector3[] c, Vector3 q, float inset)
+        {
+            if (!InsidePoly(c, q)) return false;
+            for (int e = 0; e < c.Length; e++)
+            {
+                var a = c[e]; var b = c[(e + 1) % c.Length];
+                var ab = new Vector2(b.X - a.X, b.Z - a.Z);
+                float u = Mathf.Clamp(((q.X - a.X) * ab.X + (q.Z - a.Z) * ab.Y) / Mathf.Max(1e-6f, ab.LengthSquared()), 0f, 1f);
+                if (new Vector2(a.X + ab.X * u - q.X, a.Z + ab.Y * u - q.Z).Length() < inset) return false;
+            }
+            return true;
+        }
+        bool TakenStrict(Vector3 q)
+        {
+            foreach (var pl in Plots) if (pl.Outline != null ? InPolyStrict(pl.Outline, q, 0.03f) : InRectStrict(pl, q, 0.03f)) return true;
+            foreach (var al in Alleys) if (InPolyStrict(al.Corners(), q, 0.03f)) return true;
+            return false;
+        }
+        /// <summary>The streets that pass within `reach` of a spot's frontage, each with how far from its centreline a lot's
+        /// front stands -- the lines a lot near there may not cross.</summary>
+        List<(int r, float front)> StreetsNear(RoadField roads, Vector3 at, float reach)
+        {
+            var list = new List<(int, float)>();
+            foreach (int r in Built)
+            {
+                RoadNear(roads, r, at, out _, out float off);
+                float front = roads.RoadHalfWidth(r) + PavementGap + _walkWidth + PlotSetback;
+                if (off < reach + front + 1f) list.Add((r, front));
+            }
+            return list;
+        }
+        /// <summary>⭐ Could a lot have this spot? Off the paving and every slab's margin (Buildable), BEHIND every street's
+        /// frontage line (to 5 cm: a lot leaves the strip between it and the pavement), off a parking bay's front and a back
+        /// lane, and in no lot -- a spot on another lot's line is not in it. `streets` (StreetsNear) narrows the frontage
+        /// test to the streets near; null asks every street.</summary>
+        public bool LotCouldHave(RoadField roads, Vector3 q, List<(int r, float front)> streets = null)
+        {
+            if (TakenStrict(q)) return false;
+            if (streets != null)
+            {
+                foreach (var (r, front) in streets) { RoadNear(roads, r, q, out _, out float off); if (off < front - 0.05f) return false; }
+            }
+            else
+                foreach (int r in Built)
+                {
+                    RoadNear(roads, r, q, out _, out float off);
+                    if (off < roads.RoadHalfWidth(r) + PavementGap + _walkWidth + PlotSetback - 0.05f) return false;
+                }
+            return Buildable(roads, q) && !BayFrontAt(roads, q) && !LaneAt(q);
+        }
+        /// <summary>The line that really bounds a lot's side a-b, if there is one: a street's frontage line or the side of another
+        /// lot it runs beside. 1: the side lies ON it (to 30 cm and 3.5 degrees); 2: it lies just OUTSIDE the side (out to
+        /// 2.5 m, within 15 degrees) -- the raster's side, standing short of what bounds it -- and `p`, `d` are that line,
+        /// `d` the side's way; 0: neither, a side the raster made (the square cut across a wedge's point, a stair on its
+        /// slant, a chord across a pocket). `self`: the lot whose side it is, if it is laid already -- not a line to itself.</summary>
+        int BoundingLine(RoadField roads, Vector3 a, Vector3 b, out Vector3 p, out Vector3 d, Plot self = null)
+        {
+            p = a; d = Vector3.Zero;
+            var sd = new Vector3(b.X - a.X, 0f, b.Z - a.Z); float len = sd.Length();
+            if (len < 0.5f) return 0;
+            sd /= len; d = sd;
+            var m = (a + b) * 0.5f;
+            const float Tol = 0.3f, Par = 0.998f, Near = 2.5f, Loose = 0.966f;
+            int kind = 0; float bestOut = float.MaxValue;
+            foreach (int r in Built)
+            {
+                RoadNear(roads, r, m, out float along, out float off);
+                float front = roads.RoadHalfWidth(r) + PavementGap + _walkWidth + PlotSetback;
+                float stand = off - front;                                     // how far the side stands back from the line
+                if (stand < -Tol || stand > Near) continue;
+                if (!roads.EvaluateAlong(r, along, out var rp, out var rt, snapTerrain: false)) continue;
+                var rd = new Vector3(rt.X, 0f, rt.Z).Normalized();
+                float par = Mathf.Abs(rd.Dot(sd));
+                if (Mathf.Abs(stand) <= Tol && par >= Par) { p = a; d = sd; return 1; }
+                if (stand <= Tol || par < Loose || stand >= bestOut || len < 3f) continue;
+                var right = new Vector3(rd.Z, 0f, -rd.X);
+                float sign = (m - rp).Dot(right) > 0f ? 1f : -1f;
+                bestOut = stand; kind = 2; p = rp + right * (front * sign); p.Y = 0f; d = rd.Dot(sd) > 0f ? rd : -rd;
+            }
+            foreach (var pl in Plots)
+            {
+                if (ReferenceEquals(pl, self)) continue;
+                var c = pl.Boundary();
+                var pc = Vector3.Zero; foreach (var v in c) pc += v; pc /= c.Length;
+                for (int k = 0; k < c.Length; k++)
+                {
+                    var p0 = c[k]; var p1 = c[(k + 1) % c.Length];
+                    var e = new Vector3(p1.X - p0.X, 0f, p1.Z - p0.Z); float el = e.Length();
+                    if (el < 0.5f) continue;
+                    e /= el;
+                    float par = Mathf.Abs(e.Dot(sd));
+                    if (par < Loose) continue;
+                    float t0 = (a - p0).Dot(e), t1 = (b - p0).Dot(e);
+                    if (Mathf.Max(t0, t1) < 0.5f || Mathf.Min(t0, t1) > el - 0.5f) continue;     // only a side it runs beside
+                    var nrm = new Vector3(-e.Z, 0f, e.X);
+                    float sm = (m - p0).Dot(nrm), sc = (pc - p0).Dot(nrm);
+                    float stand = Mathf.Abs(sm);
+                    if (stand <= Tol && par >= Par) { p = a; d = sd; return 1; }
+                    if (stand <= Tol || stand > Near || stand >= bestOut || sm * sc > 0f || len < 3f) continue;   // (that lot beyond it)
+                    bestOut = stand; kind = 2; p = new Vector3(p0.X, 0f, p0.Z); d = e.Dot(sd) > 0f ? e : -e;
+                }
+            }
+            return kind;
+        }
+        delegate int LineOfSide(Vector3 a, Vector3 b, out Vector3 p, out Vector3 d);
+        /// <summary>⭐ The sides of a triangle lot that STOP SHORT of what bounds it -- what a point cut off square is: a side on
+        /// no line that bounds it (a street's frontage, the side of a lot it runs beside: BoundingLine) with ground a lot could
+        /// have (LotCouldHave) just outside it, 60 cm out anywhere along it. A side that reaches is on such a line, or has
+        /// nothing a lot could have past it. Each one's middle into `at`, if given.</summary>
+        public int SidesShort(RoadField roads, Plot t, List<Vector3> at = null)
+        {
+            var ol = t?.Outline;
+            if (ol == null || ol.Length < 3) return 0;
+            float twice = 0f;
+            for (int k = 0; k < ol.Length; k++) { var a = ol[k]; var b = ol[(k + 1) % ol.Length]; twice += a.X * b.Z - b.X * a.Z; }
+            var m = Vector3.Zero; foreach (var v in ol) m += v; m /= ol.Length;
+            float rad = 0f; foreach (var v in ol) rad = Mathf.Max(rad, Flat(v, m));
+            var streets = StreetsNear(roads, m, rad + 2f);
+            int n = 0;
+            for (int k = 0; k < ol.Length; k++)
+            {
+                var a = new Vector3(ol[k].X, 0f, ol[k].Z); var b = new Vector3(ol[(k + 1) % ol.Length].X, 0f, ol[(k + 1) % ol.Length].Z);
+                float len = Flat(a, b);
+                if (len < 0.05f) continue;
+                var d = (b - a) / len;
+                var outN = twice > 0f ? new Vector3(d.Z, 0f, -d.X) : new Vector3(-d.Z, 0f, d.X);    // (the outside: right of a counter-clockwise side)
+                bool open = false;
+                int ns = Mathf.Max(2, Mathf.CeilToInt(len / 0.5f));
+                for (int u = 1; u < ns && !open; u++) open = LotCouldHave(roads, a + d * (len * u / ns) + outN * 0.6f, streets);
+                // ⚠ NOT ITS OWN SIDE: laid, the lot is in Plots, and every side of it lies exactly on a side of a lot -- itself.
+                // Asked without `self` this said 0 for the control too, whose points are all cut off.
+                if (!open || BoundingLine(roads, a, b, out _, out _, t) == 1) continue;
+                n++; at?.Add((a + b) * 0.5f);
+            }
+            return n;
+        }
+
         /// <summary>⚠ A WEDGE'S EDGES ON THE LINES ROUND IT. Its outline comes off a metre raster, so each side stands up to a
         /// metre short of what bounds it -- a sliver of grass between it and the next lot, two fences side by side, a front
         /// not on its street's frontage. Each side lying along a street's frontage line or a neighbouring lot's edge, near
@@ -5219,11 +5361,15 @@ namespace UnturnedGodot
             }
             return !(neg && pos);
         }
-        /// <summary>A wedge's outline rebuilt from its long sides (2.5 m and more) so it meets in its true corners, each corner
-        /// that lands where `free` says no cut square across its point just as far as it must. Null if it cannot be done
-        /// cleanly (fewer than three long sides, or an edge of the result crossing ground that is not free).</summary>
+        /// <summary>A wedge's outline taken out to its TRUE CORNERS. Its LINES are the lines that really bound it: each side on
+        /// one, each standing just short of one (moved out onto it), and each long side on nothing with no ground a lot could
+        /// have outside it (the edge of a curved pavement's back, a lane); the rest of its sides are the raster's. Each two
+        /// lines that follow one another meet in a corner, and the outline goes out to it -- cut back, where it lands on
+        /// ground `free` says no to, just as far as that ground comes, the cut following its edge. Corner by corner: one that
+        /// cannot be had cleanly (its lines meet far off, or every pull-back still leaves an edge across ground it cannot
+        /// have) keeps the outline it had there, and costs the others nothing. Null if no corner could be filled.</summary>
         static string _fillWhy = "";
-        static Vector3[] FillToCorners(Vector3[] poly, Func<Vector3, bool> free)
+        static Vector3[] FillToCorners(Vector3[] poly, Func<Vector3, bool> free, LineOfSide bounding)
         {
             _fillWhy = "";
             if (poly == null || poly.Length < 3) { _fillWhy = "no outline"; return null; }
@@ -5232,77 +5378,138 @@ namespace UnturnedGodot
             for (int k = 0; k < poly.Length; k++) { var a = poly[k]; var b = poly[(k + 1) % poly.Length]; twice += a.X * b.Z - b.X * a.Z; }
             var pg = new List<Vector3>(poly);
             if (twice < 0f) pg.Reverse();
-            var lines = new List<(Vector3 p, Vector3 d)>();
-            for (int k = 0; k < pg.Count; k++)
+            int n = pg.Count;
+            for (int k = 0; k < n; k++) pg[k] = new Vector3(pg[k].X, 0f, pg[k].Z);
+            var lines = new List<(Vector3 p, Vector3 d, int side, int kind)>();
+            int onLine = 0, moved = 0, gone = 0;
+            for (int k = 0; k < n; k++)
             {
-                var a = pg[k]; var b = pg[(k + 1) % pg.Count];
+                var a = pg[k]; var b = pg[(k + 1) % n];
                 float len = Flat(a, b);
-                if (len >= 2.5f) lines.Add((a, new Vector3(b.X - a.X, 0f, b.Z - a.Z) / len));
-            }
-            if (lines.Count < 3) { _fillWhy = $"only {lines.Count} long sides"; return null; }
-            var m = Vector3.Zero; foreach (var v in pg) m += v; m /= pg.Count;
-            var P = new List<Vector3> { m + new Vector3(-400f, 0f, -400f), m + new Vector3(400f, 0f, -400f), m + new Vector3(400f, 0f, 400f), m + new Vector3(-400f, 0f, 400f) };
-            List<Vector3> Keep(List<Vector3> poly2, Vector3 p0, Vector3 nIn)
-            {
-                var outp = new List<Vector3>();
-                for (int k = 0; k < poly2.Count; k++)
+                if (len < 0.05f) continue;
+                var d0 = new Vector3(b.X - a.X, 0f, b.Z - a.Z) / len;
+                int kind = bounding(a, b, out var lp, out var ld);
+                if (kind == 1) { lines.Add((a, d0, k, 1)); onLine++; continue; }
+                if (kind == 2) { lines.Add((lp, ld, k, 2)); onLine++; moved++; continue; }
+                if (len >= 3f)
                 {
-                    var a = poly2[k]; var b = poly2[(k + 1) % poly2.Count];
-                    float da = (a - p0).Dot(nIn), db = (b - p0).Dot(nIn);
-                    if (da >= 0f) outp.Add(a);
-                    if (da >= 0f != db >= 0f) outp.Add(a + (b - a) * (da / (da - db)));
+                    var outN = new Vector3(d0.Z, 0f, -d0.X);                 // (counter-clockwise: the outside is on the right)
+                    bool open = false;
+                    int ns = Mathf.Max(2, Mathf.CeilToInt(len));
+                    for (int u = 1; u < ns && !open; u++) open = free(a + d0 * (len * u / ns) + outN * 0.6f);
+                    if (!open) { lines.Add((a, d0, k, 0)); continue; }
                 }
-                return outp;
+                gone++;
             }
-            // (the square is laid out clockwise in x-z; its winding does not matter to the clip)
-            foreach (var (p0, d) in lines) { P = Keep(P, p0, new Vector3(-d.Z, 0f, d.X)); if (P.Count < 3) { _fillWhy = "its sides enclose nothing"; return null; } }
-            // the outline then reaches into each of those corners as far as the ground lets it: the corner itself where a lot
-            // can have it, else each of its two sides walked in from the corner to the first point a lot can have -- each side
-            // on its own, so a corner pavement bulging across one side does not cost the other -- and the lot is the hull of
-            // its old outline and all of those. Where the cut between two such points still crosses the bulge, both are
-            // pulled back a little more until it does not.
-            float[] back = new float[P.Count];
-            for (int tries = 0; tries < 12; tries++)
+            if (onLine < 2 || lines.Count < 3) { _fillWhy = $"only {onLine} of its sides by a line that bounds it"; return null; }
+            if (gone == 0 && moved == 0) { _fillWhy = "no raster side: its corners are where its lines meet"; return null; }
+            // on or inside the outline it had (to 10 cm): ground already its own, which the edge tests need not ask about again
+            bool Within(Vector3 q)
             {
-                var ptsX = new List<Vector2>();
-                foreach (var v in pg) ptsX.Add(new Vector2(v.X, v.Z));
-                for (int k = 0; k < P.Count; k++)
+                for (int k = 0; k < n; k++)
                 {
-                    var c = P[k];
-                    if (back[k] <= 0f && free(c)) { ptsX.Add(new Vector2(c.X, c.Z)); continue; }
-                    foreach (var nb in new[] { P[(k + P.Count - 1) % P.Count], P[(k + 1) % P.Count] })
+                    var a = pg[k]; var b = pg[(k + 1) % n];
+                    float l = Flat(a, b); if (l < 1e-4f) continue;
+                    if (((b.X - a.X) * (q.Z - a.Z) - (b.Z - a.Z) * (q.X - a.X)) / l < -0.1f) return false;
+                }
+                return true;
+            }
+            List<Vector2> HullWith(IEnumerable<Vector3> extra)
+            {
+                var pts = new List<Vector2>(); foreach (var v in pg) pts.Add(new Vector2(v.X, v.Z)); foreach (var v in extra) pts.Add(new Vector2(v.X, v.Z));
+                return Hull2(pts);
+            }
+            // every edge of hull(outline + extra), where it leaves the outline, on ground a lot can have
+            bool Clean(IEnumerable<Vector3> extra, out Vector3 badAt)
+            {
+                badAt = Vector3.Zero;
+                var h = HullWith(extra);
+                for (int k = 0; k < h.Count; k++)
+                {
+                    var a = new Vector3(h[k].X, 0f, h[k].Y); var b = new Vector3(h[(k + 1) % h.Count].X, 0f, h[(k + 1) % h.Count].Y);
+                    int ns = Mathf.Max(1, Mathf.CeilToInt(Flat(a, b) / 0.2f));
+                    for (int u = 0; u <= ns; u++) { var q = a.Lerp(b, (float)u / ns); if (!Within(q) && !free(q)) { badAt = q; return false; } }
+                }
+                return true;
+            }
+            // one corner, where line I meets line J
+            string why = "";
+            List<Vector3> Corner((Vector3 p, Vector3 d, int side, int kind) I, (Vector3 p, Vector3 d, int side, int kind) J)
+            {
+                float den = I.d.X * J.d.Z - I.d.Z * J.d.X;
+                if (Mathf.Abs(den) < 0.05f) { why = "its lines there run near parallel"; return null; }
+                var w = J.p - I.p;
+                var c = I.p + I.d * ((w.X * J.d.Z - w.Z * J.d.X) / den); c.Y = 0f;
+                // (the outline it stands for: from where side I ends to where side J begins)
+                float near = float.MaxValue;
+                for (int k = (I.side + 1) % n; ; k = (k + 1) % n) { near = Mathf.Min(near, Flat(c, pg[k])); if (k == J.side) break; }
+                if (near > 12f) { why = $"its lines meet {near:0} m off"; return null; }
+                for (float back = 0f; back <= 6f; back += 0.4f)
+                {
+                    var got = new List<Vector3>();
+                    if (back <= 0f && free(c)) got.Add(c);
+                    else
                     {
-                        float len = Flat(c, nb);
-                        var dir = new Vector3(nb.X - c.X, 0f, nb.Z - c.Z) / Mathf.Max(1e-4f, len);
-                        for (float t = back[k]; t < len * 0.5f; t += 0.25f)
-                        {
-                            var q = c + dir * t;
-                            if (free(q)) { ptsX.Add(new Vector2(q.X, q.Z)); break; }
-                        }
+                        // each of its two lines walked in from the corner to the first spot a lot can have -- each on its own, so a
+                        // corner pavement bulging across one does not cost the other
+                        Vector3? A = null, B = null;
+                        for (float s0 = back; s0 < 12f; s0 += 0.2f) { var q = c - I.d * s0; if (free(q)) { A = q; break; } }
+                        for (float s0 = back; s0 < 12f; s0 += 0.2f) { var q = c + J.d * s0; if (free(q)) { B = q; break; } }
+                        if (A != null) got.Add(A.Value);
+                        if (B != null) got.Add(B.Value);
+                        // ...and between those two, out toward the corner as far as the ground goes: the cut follows a curved
+                        // pavement's back instead of squaring it off
+                        if (A != null && B != null)
+                            for (int f = 1; f < 4; f++)
+                            {
+                                var s1 = A.Value.Lerp(B.Value, f / 4f);
+                                if (!free(s1)) continue;
+                                var toC = new Vector3(c.X - s1.X, 0f, c.Z - s1.Z); float lc = toC.Length();
+                                if (lc < 0.3f) continue;
+                                toC /= lc;
+                                float reach = 0f;
+                                for (float s2 = 0.2f; s2 < lc - back; s2 += 0.2f) { if (!free(s1 + toC * s2)) break; reach = s2; }
+                                if (reach > 0f) got.Add(s1 + toC * reach);
+                            }
                     }
+                    if (got.Count == 0) { why = "no ground a lot can have toward its corner"; return null; }
+                    if (Clean(got, out var bad)) return got;
+                    // (round ground bulging INTO the corner -- a lane's end -- is crossed by the chords between the spots that
+                    // follow its edge: the two walked in along its lines alone, before giving any of that up)
+                    if (got.Count > 2 && Clean(got.GetRange(0, 2), out _)) return got.GetRange(0, 2);
+                    why = $"an edge crosses ground it cannot have at ({bad.X:0.0},{bad.Z:0.0})";
                 }
-                var hullX = SimplifyHull(Hull2(ptsX), 3f);
-                var cand = new Vector3[hullX.Count];
-                for (int k = 0; k < hullX.Count; k++) cand[k] = new Vector3(hullX[k].X, 0f, hullX[k].Y);
-                // every edge on free ground; where one is not, the corner it is nearest pulls back half a metre more
-                Vector3? badAt = null;
-                for (int k = 0; k < cand.Length && badAt == null; k++)
-                {
-                    var a = cand[k]; var b = cand[(k + 1) % cand.Length];
-                    int n = Mathf.Max(1, Mathf.CeilToInt(Flat(a, b) / 0.5f));
-                    for (int u = 0; u <= n; u++) { var q = a.Lerp(b, (float)u / n); if (!free(q)) { badAt = q; break; } }
-                }
-                if (badAt == null) { P = new List<Vector3>(cand); _fillWhy = ""; goto filled; }
-                int vi = 0; float vd = float.MaxValue;
-                for (int k = 0; k < P.Count; k++) { float d2 = Flat(P[k], badAt.Value); if (d2 < vd) { vd = d2; vi = k; } }
-                back[vi] += 0.5f;
-                _fillWhy = $"an edge crosses ground it cannot have at {badAt.Value}";
+                return null;
             }
-            return null;
-            filled:
-            float before = PolyArea(poly), after = PolyArea(P.ToArray());
-            if (after < before * 0.98f || after > before * 2.5f) { _fillWhy = $"area {before:0} -> {after:0}"; return null; }
-            return P.ToArray();
+            var perCorner = new List<List<Vector3>>();
+            int kept = 0;
+            for (int q = 0; q < lines.Count; q++)
+            {
+                var I = lines[q]; var J = lines[(q + 1) % lines.Count];
+                if ((I.side + 1) % n == J.side && I.kind != 2 && J.kind != 2) continue;     // its own corner: its two sides meet there
+                var got = Corner(I, J);
+                if (got != null) perCorner.Add(got);
+                else { kept++; _fillWhy += (_fillWhy.Length > 0 ? "; " : "") + why; }
+            }
+            // ...and all of them at once: where two together still cross ground it cannot have, the one nearest gives way
+            while (perCorner.Count > 0)
+            {
+                var all = new List<Vector3>(); foreach (var g in perCorner) all.AddRange(g);
+                if (Clean(all, out var badAll)) break;
+                int worst = 0; float wd = float.MaxValue;
+                for (int g = 0; g < perCorner.Count; g++) foreach (var v in perCorner[g]) { float d2 = Flat(v, badAll); if (d2 < wd) { wd = d2; worst = g; } }
+                perCorner.RemoveAt(worst); kept++;
+                _fillWhy += (_fillWhy.Length > 0 ? "; " : "") + $"two corners together cross ground it cannot have at ({badAll.X:0.0},{badAll.Z:0.0})";
+            }
+            if (perCorner.Count == 0) { if (_fillWhy.Length == 0) _fillWhy = "no corner to fill"; return null; }
+            var extraAll = new List<Vector3>(); foreach (var g in perCorner) extraAll.AddRange(g);
+            var hullAll = SimplifyHull(HullWith(extraAll), 1f);
+            var outl = new Vector3[hullAll.Count];
+            for (int k = 0; k < hullAll.Count; k++) outl[k] = new Vector3(hullAll[k].X, 0f, hullAll[k].Y);
+            float before = PolyArea(poly), after = PolyArea(outl);
+            if (after > before * 2.5f) { _fillWhy = $"area {before:0} -> {after:0}"; return null; }
+            if (kept > 0) _fillWhy = $"{kept} corner(s) left -- " + _fillWhy;
+            return outl;
         }
 
         /// <summary>A convex polygon brought in by `d` on every side: clipped to each side's line moved in by `d`. Null if

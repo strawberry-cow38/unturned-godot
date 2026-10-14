@@ -658,10 +658,86 @@ namespace UnturnedGodot.Testing
                     float diagFront = 0f;
                     foreach (int r in gD.DiagonalRoads) diagFront = Mathf.Max(diagFront, rfD.RoadHalfWidth(r) + walkD.RoadGap + walkW + gD.PlotSetback);
                     int notConvex = 0, onLand = 0, intoLots = 0, zoned = 0, zoneOut = 0, offLatticeT = 0, notFronting = 0;
-                    // ...and its WHOLE building area into the wedge's corners ("make sure it fills right to the corners"): the
-                    // outline brought in by the yard, and the 3 m cells that fit in it -- more than the rectangle holds
-                    int areaShort = 0, areaOut = 0, cellsOut = 0, cellsShort = 0; float fillWorst = float.MaxValue;
-                    static float AreaOf(Vector3[] c) { float t2 = 0f; for (int k = 0; k < c.Length; k++) { var a = c[k]; var b = c[(k + 1) % c.Length]; t2 += a.X * b.Z - b.X * a.Z; } return Mathf.Abs(t2) * 0.5f; }
+                    // ...and RIGHT INTO ITS CORNERS (strawberry 2026-10-14: "make sure it fills right to the corners" -- "i meant the
+                    // plot, not the actual building"): every side of it lies on what bounds it -- a street's frontage line, or the
+                    // side of a lot it runs beside -- or has no open ground just outside it. A point the metre raster cut off square
+                    // is a side on neither, with the rest of the point just past it. Open ground: off every road, pavement, slab and
+                    // corner pavement (this test's own OnSomething), behind every frontage line, in no lot. ⚠ AND OPEN TO THE
+                    // GENERATOR TOO (LotCouldHave): it keeps lots off ground this test has no model of -- an alley's strip, a lane's
+                    // square knee, a bay's front, a slab's clearance -- and those were 6 of the first 7 "short" this test found.
+                    // The control: the same town with its points as the raster leaves them.
+                    float frontKeep = keepOff + gD.PlotSetback - 0.05f;
+                    var shortWhere = new List<string>();
+                    // the frontage line of each street, as the test sees it: its road sampled every metre
+                    var streetPts = new List<(int r, Vector3[] p)>();
+                    foreach (int r in gD.Built)
+                    {
+                        float L = rfD.RoadLength(r); var ps = new List<Vector3>();
+                        for (float d = 0f; d <= L; d += 1f) if (rfD.EvaluateAlong(r, d, out var q, out _, snapTerrain: false)) ps.Add(new Vector3(q.X, 0f, q.Z));
+                        if (ps.Count >= 2) streetPts.Add((r, ps.ToArray()));
+                    }
+                    bool OnBound(Vector3 a, Vector3 b, List<TownRoadGrid.Plot> among, TownRoadGrid.Plot self)
+                    {
+                        var sd = new Vector3(b.X - a.X, 0f, b.Z - a.Z); float len = sd.Length(); if (len < 0.5f) return false; sd /= len;
+                        var m = (a + b) * 0.5f; m.Y = 0f;
+                        foreach (var (r, ps) in streetPts)
+                        {
+                            float front = rfD.RoadHalfWidth(r) + walkD.RoadGap + walkW + gD.PlotSetback, best = float.MaxValue; Vector3 tan = Vector3.Zero;
+                            for (int k = 0; k + 1 < ps.Length; k++)
+                            {
+                                var e = ps[k + 1] - ps[k]; float el = e.Length(); if (el < 1e-4f) continue;
+                                float u = Mathf.Clamp((m - ps[k]).Dot(e) / (el * el), 0f, 1f);
+                                float dd = (ps[k] + e * u - m).Length();
+                                if (dd < best) { best = dd; tan = e / el; }
+                            }
+                            if (Mathf.Abs(best - front) <= 0.3f && Mathf.Abs(tan.Dot(sd)) >= 0.998f) return true;
+                        }
+                        foreach (var o in among)
+                        {
+                            if (ReferenceEquals(o, self)) continue;
+                            var c = o.Boundary();
+                            for (int k = 0; k < c.Length; k++)
+                            {
+                                var p0 = new Vector3(c[k].X, 0f, c[k].Z); var p1 = new Vector3(c[(k + 1) % c.Length].X, 0f, c[(k + 1) % c.Length].Z);
+                                var e = p1 - p0; float el = e.Length(); if (el < 0.5f) continue; e /= el;
+                                if (Mathf.Abs(e.Dot(sd)) < 0.998f || Mathf.Abs((m - p0).Dot(new Vector3(-e.Z, 0f, e.X))) > 0.3f) continue;
+                                float t0 = (a - p0).Dot(e), t1 = (b - p0).Dot(e);
+                                if (Mathf.Max(t0, t1) >= 0.5f && Mathf.Min(t0, t1) <= el - 0.5f) return true;
+                            }
+                        }
+                        return false;
+                    }
+                    int SidesShortOf(TownRoadGrid gen, List<TownRoadGrid.Plot> lots, List<TownRoadGrid.Plot> among, out int sides)
+                    {
+                        int nShort = 0; sides = 0; shortWhere.Clear();
+                        foreach (var t in lots)
+                        {
+                            var ol = t.Outline;
+                            float tw = 0f; for (int k = 0; k < ol.Length; k++) { var a = ol[k]; var b = ol[(k + 1) % ol.Length]; tw += a.X * b.Z - b.X * a.Z; }
+                            for (int k = 0; k < ol.Length; k++)
+                            {
+                                var a = new Vector3(ol[k].X, 0f, ol[k].Z); var b = new Vector3(ol[(k + 1) % ol.Length].X, 0f, ol[(k + 1) % ol.Length].Z);
+                                float len = (b - a).Length(); if (len < 0.05f) continue;
+                                sides++;
+                                var d = (b - a) / len;
+                                var outN = tw > 0f ? new Vector3(d.Z, 0f, -d.X) : new Vector3(-d.Z, 0f, d.X);
+                                bool open = false;
+                                int ns = Mathf.Max(2, Mathf.CeilToInt(len / 0.5f));
+                                for (int u = 1; u < ns && !open; u++)
+                                {
+                                    var q = a + d * (len * u / ns) + outN * 0.6f;
+                                    if (OnSomething(q) || rfD.DeepestRoadOverlap(q, frontKeep, out _, out _)) continue;
+                                    bool inLot = false;
+                                    foreach (var o in among) if (!ReferenceEquals(o, t) && TownRoadGrid.InsidePoly(o.Boundary(), q)) { inLot = true; break; }
+                                    open = !inLot && gen.LotCouldHave(rfD, q);
+                                }
+                                if (!open || OnBound(a, b, among, t)) continue;
+                                nShort++;
+                                if (shortWhere.Count < 10) shortWhere.Add($"({(a.X + b.X) * 0.5f:0.0},{(a.Z + b.Z) * 0.5f:0.0}) {len:0.0} m");
+                            }
+                        }
+                        return nShort;
+                    }
                     foreach (var t in tris)
                     {
                         var ol = t.Outline;
@@ -676,35 +752,6 @@ namespace UnturnedGodot.Testing
                         if (PlotTouches(ol)) onLand++;
                         foreach (var o in plots)
                             if (!ReferenceEquals(o, t) && TownRoadGrid.QuadsOverlap(ol, o.Boundary(), 0.02f)) { intoLots++; break; }
-                        if (t.BuildOutline != null)
-                        {
-                            foreach (var q in t.BuildOutline)
-                            {
-                                if (!TownRoadGrid.InsidePoly(ol, q)) { areaOut++; break; }
-                                float edgeDist = float.MaxValue;
-                                for (int e = 0; e < ol.Length; e++)
-                                {
-                                    var a = ol[e]; var b = ol[(e + 1) % ol.Length];
-                                    var ab = new Vector2(b.X - a.X, b.Z - a.Z);
-                                    float u = Mathf.Clamp(((q.X - a.X) * ab.X + (q.Z - a.Z) * ab.Y) / Mathf.Max(1e-6f, ab.LengthSquared()), 0f, 1f);
-                                    edgeDist = Mathf.Min(edgeDist, new Vector2(a.X + ab.X * u - q.X, a.Z + ab.Y * u - q.Z).Length());
-                                }
-                                if (edgeDist < gD.TriangleYard - 0.02f) { areaOut++; break; }
-                            }
-                            float fill = AreaOf(t.BuildOutline) / Mathf.Max(1f, t.Width * t.Depth);
-                            if (t.Width > 0f && fill < 1.2f) areaShort++;
-                            if (t.Width > 0f) fillWorst = Mathf.Min(fillWorst, fill);
-                            if (t.BuildCells != null && t.Width > 0f)
-                            {
-                                var fl = t.Front - t.Along * (t.Width * 0.5f);
-                                foreach (var (ci, cj) in t.BuildCells)
-                                    foreach (var (di, dj) in new[] { (0, 0), (1, 0), (1, 1), (0, 1) })
-                                        if (!TownRoadGrid.InsidePoly(t.BuildOutline, fl + t.Along * (3f * (ci + di)) - t.Facing * (3f * (cj + dj)))) { cellsOut++; goto nextCells; }
-                                nextCells:
-                                if (t.BuildCells.Count < Mathf.RoundToInt(t.Width / 3f) * Mathf.RoundToInt(t.Depth / 3f)) cellsShort++;
-                            }
-                        }
-                        else areaShort++;
                         if (t.Width > 0f && t.Depth > 0f)
                         {
                             zoned++;
@@ -737,9 +784,26 @@ namespace UnturnedGodot.Testing
                     gT0.LaySidewalkCornersOn(rfT0, World, wT0, out _);
                     gT0.MarkPlots(null, rfT0);
                     int tris0 = 0; foreach (var pl in gT0.Plots) if (pl.Outline != null) tris0++;
-                    T.Check($"...each with its whole building area into its corners: {areaOut} outside its wedge or inside its yard, {areaShort} holding no more than its rectangle "
-                            + $"(the least {fillWorst:0.00}x it), {cellsOut} with 3 m cells outside it, {cellsShort} with fewer cells than the rectangle",
-                            tris.Count >= 2 && areaOut == 0 && areaShort == 0 && cellsOut == 0 && cellsShort == 0);
+                    // (the control for the corners: this town again, each wedge's points left as the raster cut them)
+                    var rfC0 = Field();
+                    var gC0 = new TownRoadGrid { Seed = 7, Centre = Vector3.Zero, Extent = 250f, Spacing = 110f,
+                                                 Bearing = 0.3f, SeaLevel = 0f, SeaMargin = 2f, Diagonal = true, AlleysOnRequest = false, FillCorners = false };
+                    gC0.Generate(rfC0, flat);
+                    var wC0 = new EditorSidewalk(); World.AddChild(wC0);
+                    gC0.LaySidewalkCornersOn(rfC0, World, wC0, out _);
+                    gC0.MarkPlots(null, rfC0);
+                    var trisC0 = new List<TownRoadGrid.Plot>(); foreach (var pl in gC0.Plots) if (pl.Outline != null) trisC0.Add(pl);
+                    float areaT = 0f, areaC0 = 0f;
+                    static float AreaOf(Vector3[] c) { float t2 = 0f; for (int k = 0; k < c.Length; k++) { var a = c[k]; var b = c[(k + 1) % c.Length]; t2 += a.X * b.Z - b.X * a.Z; } return Mathf.Abs(t2) * 0.5f; }
+                    foreach (var t in tris) areaT += AreaOf(t.Outline);
+                    foreach (var t in trisC0) areaC0 += AreaOf(t.Outline);
+                    int shortT = SidesShortOf(gD, tris, plots, out int sidesT);
+                    var shortTWhere = string.Join(" ", shortWhere);
+                    int shortC0 = SidesShortOf(gC0, trisC0, gC0.Plots, out int sidesC0);
+                    if (shortT > 0) Log.Print($"[towngrid test] sides short of what bounds them: {shortTWhere}");
+                    T.Check($"...each one right into its corners: {shortT} of {sidesT} sides stop short of what bounds them, {areaT:0} m2 in all "
+                            + $"(control, points as the raster cut them: {shortC0} of {sidesC0} short, {areaC0:0} m2)",
+                            tris.Count >= 2 && shortT == 0 && shortC0 > 0 && areaT > areaC0);
                     T.Check($"triangle lots in the avenue's wedges: {tris.Count} laid ({zoned} with a building zone); {notConvex} not convex, {onLand} on a road/pavement/slab, "
                             + $"{intoLots} into another lot, {zoneOut} zones outside their wedge, {offLatticeT} off the 3 m lattice, {notFronting} not fronting the avenue -- "
                             + $"{gD.UnzonedCells} buildable cells left, against {gT0.UnzonedCells} with none ({tris0} laid: control)",

@@ -10963,6 +10963,25 @@ namespace UnturnedGodot
                         goto noTown;
                     }
                 }
+                // UG_TOWNCLOSE=top:<x>,<z>[,<size>]: straight down on a point, orthographic, square to the grid -- a site
+                // plan of one corner of town (size: metres across, 60 if not given)
+                if (closeEnv != null && closeEnv.StartsWith("top:"))
+                {
+                    var topParts = closeEnv.Substring(4).Split(',');
+                    var ic = System.Globalization.CultureInfo.InvariantCulture;
+                    if (topParts.Length >= 2 && float.TryParse(topParts[0], System.Globalization.NumberStyles.Float, ic, out float topX)
+                        && float.TryParse(topParts[1], System.Globalization.NumberStyles.Float, ic, out float topZ))
+                    {
+                        float topS = topParts.Length >= 3 && float.TryParse(topParts[2], System.Globalization.NumberStyles.Float, ic, out float ts) ? ts : 60f;
+                        var topP = new Vector3(topX, terrain.SampleHeight(topX, topZ), topZ);
+                        tcam.Projection = Camera3D.ProjectionType.Orthogonal;
+                        tcam.Size = topS;
+                        tcam.GlobalPosition = topP + new Vector3(0f, 120f, 0f);
+                        tcam.LookAt(topP, new Vector3(-Mathf.Sin(town.Bearing), 0f, Mathf.Cos(town.Bearing)) * -1f);
+                        Log.Print($"[towngrid] plan camera on {topP}, {topS:0} m across");
+                        goto noTown;
+                    }
+                }
                 // UG_TOWNCLOSE=p: the prop the clearance pass pushed FURTHEST off paving -- the census says how
                 // far, this shows where it ended up
                 if (closeEnv == "p" && town.FurthestPush > 0f)
