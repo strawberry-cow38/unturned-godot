@@ -271,6 +271,7 @@ namespace UnturnedGodot.Testing
                 int offSize = 0, offLattice = 0;
                 foreach (var pl in plots)
                 {
+                    if (pl.Outline != null) continue;             // a triangle lot is the shape it found, not a catalogue lot
                     kindsSeen.Add(pl.Kind);
                     // (the lot as LAID: GrowPlots then pushes its yards out, and holds its building zone where it was)
                     var want = TownRoadGrid.SizeOf(pl.Kind);
@@ -340,19 +341,29 @@ namespace UnturnedGodot.Testing
                 }
                 bool PlotTouches(Vector3[] c)
                 {
-                    for (int e = 0; e < 4; e++)
+                    for (int e = 0; e < c.Length; e++)
                     {
-                        var a = c[e]; var b = c[(e + 1) % 4];
+                        var a = c[e]; var b = c[(e + 1) % c.Length];
                         int n = Mathf.Max(1, Mathf.CeilToInt(new Vector2(b.X - a.X, b.Z - a.Z).Length() / 0.75f));
                         for (int k = 0; k <= n; k++) if (OnSomething(a.Lerp(b, (float)k / n))) return true;
                     }
-                    for (float u = 0.125f; u < 1f; u += 0.125f)
-                        for (float v = 0.125f; v < 1f; v += 0.125f)
-                            if (OnSomething(c[0].Lerp(c[1], u).Lerp(c[3].Lerp(c[2], u), v))) return true;
+                    if (c.Length == 4)
+                    {
+                        for (float u = 0.125f; u < 1f; u += 0.125f)
+                            for (float v = 0.125f; v < 1f; v += 0.125f)
+                                if (OnSomething(c[0].Lerp(c[1], u).Lerp(c[3].Lerp(c[2], u), v))) return true;
+                        return false;
+                    }
+                    // (a triangle lot's outline: fanned from its middle)
+                    var m = Vector3.Zero; foreach (var q in c) m += q; m /= c.Length;
+                    for (int e = 0; e < c.Length; e++)
+                        for (float u = 0.125f; u < 1f; u += 0.125f)
+                            for (float v = 0.125f; u + v < 1f; v += 0.125f)
+                                if (OnSomething(m + (c[e] - m) * u + (c[(e + 1) % c.Length] - m) * v)) return true;
                     return false;
                 }
                 int touching = 0;
-                foreach (var pl in plots) if (PlotTouches(pl.Corners())) touching++;
+                foreach (var pl in plots) if (PlotTouches(pl.Boundary())) touching++;
                 // the control: the same check on a plot slid 3 m toward its own street must see the pavement
                 var toward = new Vector3[4];
                 for (int k = 0; k < 4; k++) toward[k] = c0[k] + plots[0].Facing * 3f;
@@ -362,6 +373,7 @@ namespace UnturnedGodot.Testing
                 int offFront = 0; float worstFront = 0f;
                 foreach (var pl in plots)
                 {
+                    if (pl.Outline != null) continue;             // (a triangle lot's front is its outline's, held with the rest of it)
                     float want = rfD.RoadHalfWidth(pl.Road) + walkD.RoadGap + walkW + gD.PlotSetback + pl.Setback;
                     float best = float.MaxValue; Vector3 nearest = Vector3.Zero;
                     float L = rfD.RoadLength(pl.Road);
@@ -384,6 +396,7 @@ namespace UnturnedGodot.Testing
                 int zoneOff = 0;
                 foreach (var pl in plots)
                 {
+                    if (pl.Outline != null) continue;
                     var ps = TownRoadGrid.SizeOf(pl.Kind);
                     float wantW = pl.Kind == TownRoadGrid.PlotKind.Corner ? ps.Width - ps.FrontYard - ps.SideYard : ps.Width - 2f * ps.SideYard;
                     float wantD = ps.Depth - ps.FrontYard - ps.BackYard;
@@ -635,6 +648,67 @@ namespace UnturnedGodot.Testing
                         }
                     T.Check($"...yard fences designated round the yards: {fences.Count} runs; {acrossFront} across a lot's front, {backsBare} of {houses} houses' backyards unfenced, {twice} laid twice",
                             fences.Count > 20 && acrossFront == 0 && backsBare == 0 && houses > 5 && twice == 0);
+
+                    // ⭐ TRIANGLE LOTS (strawberry 2026-10-14: "add support for stuff to be built in triangular plots"): the wedges
+                    // the 45-degree avenue cuts off the blocks become lots of their own shape, each with a building zone of whole
+                    // 3 m cells inside it -- on free ground, clear of every other lot, off the avenue's pavement, fronting it.
+                    // Held on this town (gD), whose avenue makes them; the control is the same town without them.
+                    var tris = new List<TownRoadGrid.Plot>();
+                    foreach (var pl in plots) if (pl.Outline != null) tris.Add(pl);
+                    float diagFront = 0f;
+                    foreach (int r in gD.DiagonalRoads) diagFront = Mathf.Max(diagFront, rfD.RoadHalfWidth(r) + walkD.RoadGap + walkW + gD.PlotSetback);
+                    int notConvex = 0, onLand = 0, intoLots = 0, zoned = 0, zoneOut = 0, offLatticeT = 0, notFronting = 0;
+                    foreach (var t in tris)
+                    {
+                        var ol = t.Outline;
+                        bool neg = false, pos = false;
+                        for (int k = 0; k < ol.Length; k++)
+                        {
+                            var a = ol[k]; var b = ol[(k + 1) % ol.Length]; var c = ol[(k + 2) % ol.Length];
+                            float x = (b.X - a.X) * (c.Z - b.Z) - (b.Z - a.Z) * (c.X - b.X);
+                            if (x < -1e-3f) neg = true; else if (x > 1e-3f) pos = true;
+                        }
+                        if (ol.Length < 3 || neg && pos) notConvex++;
+                        if (PlotTouches(ol)) onLand++;
+                        foreach (var o in plots)
+                            if (!ReferenceEquals(o, t) && TownRoadGrid.QuadsOverlap(ol, o.Boundary(), 0.02f)) { intoLots++; break; }
+                        if (t.Width > 0f && t.Depth > 0f)
+                        {
+                            zoned++;
+                            foreach (var q in t.BuildArea()) if (!TownRoadGrid.InsidePoly(ol, q)) { zoneOut++; break; }
+                            if (Mathf.Abs(t.Width / 3f - Mathf.Round(t.Width / 3f)) > 1e-3f || Mathf.Abs(t.Depth / 3f - Mathf.Round(t.Depth / 3f)) > 1e-3f) offLatticeT++;
+                        }
+                        // fronting the avenue: some point of its outline's edges within reach of the avenue's frontage line
+                        float nearest = float.MaxValue;
+                        var edgePts = new List<Vector3>();
+                        for (int k = 0; k < ol.Length; k++)
+                        {
+                            var a = ol[k]; var b = ol[(k + 1) % ol.Length];
+                            int nn = Mathf.Max(1, Mathf.CeilToInt(new Vector2(b.X - a.X, b.Z - a.Z).Length()));
+                            for (int u = 0; u <= nn; u++) edgePts.Add(a.Lerp(b, (float)u / nn));
+                        }
+                        foreach (int r in gD.DiagonalRoads)
+                        {
+                            float L = rfD.RoadLength(r);
+                            for (float d = 0f; d <= L; d += 1f)
+                                if (rfD.EvaluateAlong(r, d, out var rq, out _, snapTerrain: false))
+                                    foreach (var q in edgePts) nearest = Mathf.Min(nearest, new Vector2(rq.X - q.X, rq.Z - q.Z).Length());
+                        }
+                        if (nearest > diagFront + 1.5f) notFronting++;
+                    }
+                    var rfT0 = Field();
+                    var gT0 = new TownRoadGrid { Seed = 7, Centre = Vector3.Zero, Extent = 250f, Spacing = 110f,
+                                                 Bearing = 0.3f, SeaLevel = 0f, SeaMargin = 2f, Diagonal = true, AlleysOnRequest = false, TriangleLots = false };
+                    gT0.Generate(rfT0, flat);
+                    var wT0 = new EditorSidewalk(); World.AddChild(wT0);
+                    gT0.LaySidewalkCornersOn(rfT0, World, wT0, out _);
+                    gT0.MarkPlots(null, rfT0);
+                    int tris0 = 0; foreach (var pl in gT0.Plots) if (pl.Outline != null) tris0++;
+                    T.Check($"triangle lots in the avenue's wedges: {tris.Count} laid ({zoned} with a building zone); {notConvex} not convex, {onLand} on a road/pavement/slab, "
+                            + $"{intoLots} into another lot, {zoneOut} zones outside their wedge, {offLatticeT} off the 3 m lattice, {notFronting} not fronting the avenue -- "
+                            + $"{gD.UnzonedCells} buildable cells left, against {gT0.UnzonedCells} with none ({tris0} laid: control)",
+                            tris.Count >= 2 && zoned >= 1 && notConvex == 0 && onLand == 0 && intoLots == 0 && zoneOut == 0 && offLatticeT == 0
+                            && notFronting == 0 && tris0 == 0 && gD.UnzonedCells < gT0.UnzonedCells);
                 }
                 int cornerLots = 0, cornerOff = 0;
                 foreach (var pl in plots)
@@ -860,6 +934,7 @@ namespace UnturnedGodot.Testing
                     int onBay = 0, stepped = 0, unsteppedOn = 0;
                     foreach (var pl in plots)
                     {
+                        if (pl.Outline != null) continue;
                         if (PlotOnBay(pl.Corners())) onBay++;
                         if (pl.Setback < gD.BayDepth - 1e-3f || pl.Kind == TownRoadGrid.PlotKind.Corner) continue;
                         stepped++;
@@ -1155,9 +1230,9 @@ namespace UnturnedGodot.Testing
                     }
                     bool PlotOnPave(Vector3[] c)
                     {
-                        for (int e = 0; e < 4; e++)
+                        for (int e = 0; e < c.Length; e++)
                         {
-                            var a = c[e]; var b = c[(e + 1) % 4];
+                            var a = c[e]; var b = c[(e + 1) % c.Length];
                             int n = Mathf.Max(1, Mathf.CeilToInt(new Vector2(b.X - a.X, b.Z - a.Z).Length() / 0.5f));
                             for (int k = 0; k <= n; k++) if (OnPave(a.Lerp(b, (float)k / n))) return true;
                         }
@@ -1165,7 +1240,7 @@ namespace UnturnedGodot.Testing
                     }
                     int plotsOnPave = 0; string firstOnPave = "";
                     foreach (var pl in plots)
-                        if (PlotOnPave(pl.Corners()))
+                        if (PlotOnPave(pl.Boundary()))
                         {
                             if (plotsOnPave++ == 0) firstOnPave = $"; first: a {pl.Kind} grown {pl.GrowLeft:0.0}/{pl.GrowRight:0.0}/{pl.GrowBack:0.0} m (left/right/back), on {paveHit}";
                         }
