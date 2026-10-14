@@ -353,7 +353,8 @@ namespace UnturnedSim.Tests
                 for (int f = 0; f < res.Floors; f++)
                 {
                     var stairs = StairsAndTiles(res, f);
-                    var leaves = WallsOn(res, f).SelectMany(w => w.Openings.Where(o => o.V < 0.05f && o.HasDoor && o.Archetype != BuildingGen.ArchGarage).Select(o => LeafBox(w, o))).ToList();
+                    // (every floor a leaf sweeps, LeafBoxes: both sides of a double-acting door, none of a pocket door's)
+                    var leaves = WallsOn(res, f).SelectMany(w => w.Openings.Where(o => o.V < 0.05f && o.HasDoor && o.Archetype != BuildingGen.ArchGarage).SelectMany(o => LeafBoxes(w, o))).ToList();
                     var standing = res.Furniture.Where(o => o.Floor == f && !o.Mounted && !o.Ceiling && o.On == null).ToList();
                     foreach (var m in res.Furniture.Where(m => m.Floor == f && m.Mounted && byName.ContainsKey(m.Name)))
                     {

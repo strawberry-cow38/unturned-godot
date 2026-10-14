@@ -597,6 +597,9 @@ namespace UnturnedSim
                 float ax = x + rx * s.X0 + fx * s.Y1, az = z + rz * s.X0 + fz * s.Y1, bx = x + rx * s.X1 + fx * (s.Y1 + depth), bz = z + rz * s.X1 + fz * (s.Y1 + depth);
                 var zone = (MathF.Min(ax, bx), MathF.Min(az, bz), MathF.Max(ax, bx), MathF.Max(az, bz));
                 foreach (var (i, j) in _p.Cells(zone)) if (!InRoom(i, j) || _p.State[i, j] != FloorPlan.Free) return false;
+                // (and the pieces' own outlines: one reaching a few cm into the zone marks no cell of it -- a washer turned
+                // side-on beside the mirror's wall)
+                if (_res.Furniture.Any(o => o.Floor == _room.Floor && o.On == null && !o.Mounted && !o.Ceiling && Overlaps(zone, o.Footprint))) return false;
                 return !_p.LeafRects.Concat(_p.StairRects).Concat(_p.TileRects).Any(r => Overlaps(zone, r));
             }
 

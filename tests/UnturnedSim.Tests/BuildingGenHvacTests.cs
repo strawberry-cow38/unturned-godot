@@ -72,7 +72,8 @@ namespace UnturnedSim.Tests
                     var stairs = StairsAndTiles(res, f);
                     // (the stairs' wall: the flights, landings and holes, as the wall décor's -- not a flight's end tile, floor)
                     var flights = res.Stairs.Where(st => st.Floor == f).Select(Foot).Concat(res.Walls.Where(w => w.Kind == SurfaceKind.Stairs && FloorOf(w) == f).Select(Plan)).Concat(Holes(res, f)).ToList();
-                    var leaves = walls.SelectMany(w => w.Openings.Where(o => o.V < 0.05f && o.HasDoor && o.Archetype != BuildingGen.ArchGarage).Select(o => LeafBox(w, o))).ToList();
+                    // (every floor a leaf sweeps, LeafBoxes: both sides of a double-acting door, none of a pocket door's)
+                    var leaves = walls.SelectMany(w => w.Openings.Where(o => o.V < 0.05f && o.HasDoor && o.Archetype != BuildingGen.ArchGarage).SelectMany(o => LeafBoxes(w, o))).ToList();
                     var standing = res.Furniture.Where(o => o.Floor == f && o.On == null && !o.Mounted && !o.Ceiling).ToList();
                     var rugs = res.RuntimeDecor.Where(o => o.Floor == f && o.Gen.Kind == RuntimeDecorKind.Rug).ToList();
                     var curtains = res.RuntimeDecor.Where(o => o.Floor == f && o.Gen.Kind == RuntimeDecorKind.Curtain).ToList();
