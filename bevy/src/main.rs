@@ -3,11 +3,13 @@ mod cli;
 mod content;
 mod entities;
 mod environment;
+mod locomotion;
 mod player;
 mod rig;
 mod settings;
 mod ui;
 mod viewmodel;
+mod vehicle;
 mod world;
 
 use anyhow::Result;
@@ -106,6 +108,7 @@ fn main() -> Result<()> {
             viewmodel::ViewmodelPlugin,
             ui::GameUiPlugin,
             player::PlayerPlugin,
+            vehicle::VehiclePlugin,
         ))
         .add_systems(Update, capture_frame)
         .run();
@@ -117,13 +120,14 @@ fn capture_frame(
     options: Res<LaunchOptions>,
     world: Res<world::WorldState>,
     snapshot: Res<player::GameSnapshot>,
+    keys: Res<ButtonInput<KeyCode>>,
     mut frames: Local<u32>,
 ) {
     if !world.ready {
         return;
     }
     *frames += 1;
-    if *frames != options.0.screenshot_frame {
+    if *frames != options.0.screenshot_frame && !keys.just_pressed(KeyCode::F12) {
         return;
     }
     let Some(path) = &options.0.screenshot else {

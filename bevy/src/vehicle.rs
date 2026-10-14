@@ -1,0 +1,587 @@
+//! Native single-body vehicle host. Seating and owner state use the original wire commands.
+mod collision;
+pub mod data;
+mod dynamics;
+mod exit;
+mod render;
+mod spawns;
+#[cfg(test)]
+mod tests;
+
+use crate::{
+    bridge::CoreBridge,
+    content::ContentCache,
+    player::{GameSnapshot, PlayerCamera, PlayerUpdate},
+    settings::{GameAction, Settings},
+    ui::{UiModel, UiState},
+    world::{WorldConfig, WorldGeometry, WorldState},
+};
+use bevy::prelude::*;
+use bevy_rapier3d::prelude::*;
+use dynamics::{Buoyancy, Controls, Drivetrain};
+use serde::Deserialize;
+use serde_json::json;
+use std::collections::{HashMap, HashSet};
+
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct VehicleUpdate;
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct VehiclePublish;
+#[derive(Resource, Default)]
+pub struct Occupancy {
+    pub seat: Option<OccupiedSeat>,
+}
+#[derive(Clone, Copy, Debug)]
+pub struct OccupiedSeat {
+    pub vehicle: Entity,
+    pub net_id: u32,
+    pub seat: u8,
+    pub body_pose: Transform,
+    pub eye_pose: Transform,
+    pub velocity: Vec3,
+    pub driver: bool,
+}
+#[derive(Component)]
+pub struct VehicleBody {
+    pub net_id: u32,
+    pub type_id: u8,
+    pub variant: u8,
+    pub flags: u8,
+    pub fuel: f32,
+    pub health: f32,
+    pub battery: f32,
+    pub driver_player_id: u32,
+    pub passengers: Vec<u32>,
+    recov_counter: u8,
+    pub controls: Controls,
+    drivetrain: Drivetrain,
+    buoyancy: Buoyancy,
+}
+#[derive(Resource, Default)]
+struct Vehicles {
+    map: String,
+    points: Vec<spawns::SpawnPoint>,
+    registered: HashSet<usize>,
+    entities: HashMap<u32, Entity>,
+    tick: u64,
+}
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+struct Replica {
+    net_id: u32,
+    type_id: u8,
+    variant: u8,
+    position: [f32; 3],
+    euler_degrees: [f32; 3],
+    lin_vel: [f32; 3],
+    ang_vel: [f32; 3],
+    flags: u8,
+    fuel: f32,
+    health: f32,
+    battery: f32,
+    driver_player_id: u32,
+    passengers: Option<Vec<u32>>,
+    recov_counter: u8,
+}
+pub struct VehiclePlugin;
+impl Plugin for VehiclePlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<Occupancy>()
+            .init_resource::<Vehicles>()
+            .init_resource::<collision::Hulls>()
+            .add_systems(
+                Update,
+                (
+                    register_spawns,
+                    sync_vehicles,
+                    adopt_occupancy,
+                    render::animate_wheels,
+                    collision::update,
+                )
+                    .chain()
+                    .in_set(VehicleUpdate)
+                    .after(PlayerUpdate),
+            )
+            .add_systems(
+                Update,
+                read_controls
+                    .in_set(crate::entities::CollectInteractions)
+                    .after(crate::player::PlayerCameraUpdate),
+            )
+            .add_systems(FixedUpdate, step_bodies.before(PhysicsSet::SyncBackend))
+            .add_systems(
+                FixedUpdate,
+                publish_bodies
+                    .after(PhysicsSet::Writeback)
+                    .in_set(VehiclePublish),
+            );
+    }
+}
+fn register_spawns(
+    bridge: Res<CoreBridge>,
+    config: Res<WorldConfig>,
+    world: Res<WorldState>,
+    geometry: Res<WorldGeometry>,
+    model: Res<UiModel>,
+    snapshot: Res<GameSnapshot>,
+    mut vehicles: ResMut<Vehicles>,
+    mut commands: Commands,
+    mut occupancy: ResMut<Occupancy>,
+) {
+    if !world.ready || !model.connected {
+        return;
+    }
+    let tick = snapshot.0["tick"].as_u64().unwrap_or(0);
+    if vehicles.map != config.map_name || tick < vehicles.tick {
+        for (_, entity) in vehicles.entities.drain() {
+            commands.entity(entity).despawn();
+        }
+        vehicles.registered.clear();
+        occupancy.seat = None;
+        vehicles.points = config
+            .map_root
+            .as_ref()
+            .and_then(|p| std::fs::read(p.join("Spawns/Vehicles.dat")).ok())
+            .and_then(|b| match spawns::decode(&b) {
+                Ok(p) => Some(p),
+                Err(e) => {
+                    warn!("Vehicle spawn file: {e}");
+                    None
+                }
+            })
+            .unwrap_or_default();
+        vehicles.map = config.map_name.clone();
+    }
+    vehicles.tick = tick;
+    let mut indices = Vec::new();
+    let mut requests = Vec::new();
+    for point in &vehicles.points {
+        if vehicles.registered.contains(&point.index) {
+            continue;
+        }
+        // Only live terrain has native collision; later streamed regions add their original points.
+        if point.position.xz().distance(geometry.loaded_center.xz()) > geometry.loaded_radius {
+            continue;
+        }
+        let height = if point.water {
+            world.sea_level.map(|s| s + 0.5)
+        } else {
+            geometry
+                .terrain_height(point.position.x, point.position.z)
+                .map(|h| h + 1.2)
+        };
+        let Some(height) = height else {
+            continue;
+        };
+        let d = data::definition(point.type_id).unwrap();
+        let s = &d.spec;
+        let trunk = d.access.iter().any(|a| a.kind == "Trunk");
+        let hood = d.access.iter().any(|a| a.kind == "Hood");
+        let labels = d.seat_labels();
+        let seats: Vec<_> = (0..d.seats.len())
+            .take(12)
+            .map(
+                |i| json!({"width":if hood{4}else{0},"height":if hood{2}else{0},"label":labels[i]}),
+            )
+            .collect();
+        requests.push(json!({"key":format!("{}:vehicle:{}",config.map_name,point.index),"typeId":point.type_id,"variant":point.index as u8,
+            "position":[point.position.x,height,point.position.z],"yaw":point.yaw,"health":s.health*10.,"fuel":s.fuel,"battery":10000,
+            "speedMax":s.speed_max(),"climbMax":s.heli_climb_max,"fallMax":s.heli_fall_max,"seatCount":d.seats.len(),"seatOffsets":d.seats,"hasDoors":true,
+            "storage":{"trunkWidth":if trunk{6}else{0},"trunkHeight":if trunk{4}else{0},"gloveboxWidth":if hood{3}else{0},"gloveboxHeight":if hood{2}else{0},"seats":seats}}));
+        indices.push(point.index);
+    }
+    if requests.is_empty() {
+        return;
+    }
+    match bridge.request(
+        "worldVehicles",
+        json!({"replace":false,"vehicles":requests}),
+    ) {
+        Ok(_) => {
+            vehicles.registered.extend(indices);
+        }
+        Err(e) => {
+            warn!("Vehicle registration: {e}");
+        }
+    }
+}
+fn sync_vehicles(
+    mut commands: Commands,
+    snapshot: Res<GameSnapshot>,
+    model: Res<UiModel>,
+    config: Res<WorldConfig>,
+    mut vehicles: ResMut<Vehicles>,
+    mut query: Query<(&mut VehicleBody, &mut Transform, &mut Velocity)>,
+    mut cache: ResMut<ContentCache>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
+    assets: Res<AssetServer>,
+    mut intents: MessageReader<crate::ui::UiIntent>,
+) {
+    let restored = intents
+        .read()
+        .any(|intent| matches!(intent, crate::ui::UiIntent::Load));
+    if !model.connected {
+        return;
+    }
+    let rows: Vec<Replica> =
+        serde_json::from_value(snapshot.0["vehicles"].clone()).unwrap_or_default();
+    let local_player = snapshot.0["playerId"].as_u64().unwrap_or(0) as u32;
+    let live: HashSet<_> = rows.iter().map(|v| v.net_id).collect();
+    vehicles.entities.retain(|id, e| {
+        if live.contains(id) {
+            true
+        } else {
+            commands.entity(*e).despawn();
+            false
+        }
+    });
+    for row in rows {
+        let Some(d) = data::definition(row.type_id) else {
+            continue;
+        };
+        if let Some(entity) = vehicles.entities.get(&row.net_id) {
+            if let Ok((mut body, mut transform, mut velocity)) = query.get_mut(*entity) {
+                // Owner ignition/light intent is streamed with its physical pose. A stale
+                // replica arriving before the next fixed tick must not cancel that intent.
+                if row.driver_player_id != local_player
+                    || body.driver_player_id != local_player
+                    || restored
+                    || row.flags & 32 != 0
+                {
+                    body.flags = row.flags;
+                }
+                body.fuel = row.fuel;
+                body.health = row.health;
+                body.battery = row.battery;
+                body.driver_player_id = row.driver_player_id;
+                body.passengers = row.passengers.clone().unwrap_or_default();
+                // Normal replicas never fight the one host physics body. Only recovery teleports it.
+                if body.recov_counter != row.recov_counter || restored {
+                    *transform = replica_pose(&row);
+                    velocity.linear = Vec3::from_array(row.lin_vel);
+                    velocity.angular = Vec3::from_array(row.ang_vel);
+                    body.recov_counter = row.recov_counter;
+                }
+            }
+            continue;
+        }
+        let pose = replica_pose(&row);
+        let spec = &d.spec;
+        let entity = commands
+            .spawn((
+                Name::new(format!("Vehicle {} #{}", d.key, row.net_id)),
+                VehicleBody {
+                    net_id: row.net_id,
+                    type_id: row.type_id,
+                    variant: row.variant,
+                    flags: row.flags,
+                    fuel: row.fuel,
+                    health: row.health,
+                    battery: row.battery,
+                    driver_player_id: row.driver_player_id,
+                    passengers: row.passengers.unwrap_or_default(),
+                    recov_counter: row.recov_counter,
+                    controls: default(),
+                    drivetrain: Drivetrain::new(spec),
+                    buoyancy: Buoyancy::new(spec),
+                },
+                pose,
+                Visibility::default(),
+                RigidBody::Dynamic,
+                Velocity {
+                    linear: Vec3::from_array(row.lin_vel),
+                    angular: Vec3::from_array(row.ang_vel),
+                },
+                mass_properties(spec),
+                ExternalForce::default(),
+                ExternalImpulse::default(),
+                Ccd::enabled(),
+                Damping {
+                    linear_damping: 0.1,
+                    angular_damping: 0.1,
+                },
+                spec.controller(),
+            ))
+            .id();
+        render::build(
+            &mut commands,
+            entity,
+            d,
+            row.variant,
+            &config.content_root,
+            &mut cache,
+            &mut meshes,
+            &mut materials,
+            &mut images,
+            &assets,
+        );
+        vehicles.entities.insert(row.net_id, entity);
+    }
+}
+fn replica_pose(r: &Replica) -> Transform {
+    Transform::from_translation(Vec3::from_array(r.position)).with_rotation(Quat::from_euler(
+        EulerRot::YXZ,
+        r.euler_degrees[1].to_radians(),
+        r.euler_degrees[0].to_radians(),
+        r.euler_degrees[2].to_radians(),
+    ))
+}
+fn mass_properties(spec: &data::VehicleSpec) -> AdditionalMassProperties {
+    let b = Vec3::from_array(spec.box_size);
+    let m = spec.mass();
+    let inertia = if spec.heli || spec.plane {
+        Vec3::splat(m * 0.9)
+    } else {
+        Vec3::new(
+            b.y * b.y + b.z * b.z,
+            b.x * b.x + b.z * b.z,
+            b.x * b.x + b.y * b.y,
+        ) * (m / 12.)
+    };
+    AdditionalMassProperties::MassProperties(MassProperties {
+        local_center_of_mass: spec.center_of_mass().0,
+        mass: m,
+        principal_inertia: inertia.max(Vec3::splat(0.01)),
+        principal_inertia_local_frame: Quat::IDENTITY,
+    })
+}
+fn adopt_occupancy(
+    snapshot: Res<GameSnapshot>,
+    query: Query<(Entity, &VehicleBody, &Transform, &Velocity)>,
+    mut occupancy: ResMut<Occupancy>,
+) {
+    let player = snapshot.0["playerId"].as_u64().unwrap_or(0) as u32;
+    occupancy.seat = None;
+    if player == 0 {
+        return;
+    }
+    for (entity, body, pose, velocity) in &query {
+        let seat = if body.driver_player_id == player {
+            Some(0)
+        } else {
+            body.passengers
+                .iter()
+                .position(|p| *p == player)
+                .map(|n| n + 1)
+        };
+        let Some(seat) = seat else {
+            continue;
+        };
+        let d = data::definition(body.type_id).unwrap();
+        let Some(seat_offset) = d.seats.get(seat) else {
+            continue;
+        };
+        let body_offset = d.body_seats.get(seat).unwrap_or(seat_offset);
+        // Prefab seat empties are seat-pan height. Preserve PlayerController's
+        // explicit fallback until the native seated skull pose is available.
+        let eye = if seat == 0 {
+            if d.spec.driver_eye != [0.; 3] {
+                Vec3::from_array(d.spec.driver_eye)
+            } else {
+                Vec3::new(-0.4, 1.85, 0.4)
+            }
+        } else {
+            Vec3::from_array(*seat_offset) + Vec3::Y * 1.05
+        };
+        occupancy.seat = Some(OccupiedSeat {
+            vehicle: entity,
+            net_id: body.net_id,
+            seat: seat as u8,
+            driver: seat == 0,
+            velocity: velocity.linear,
+            eye_pose: Transform::from_translation(pose.transform_point(eye))
+                .with_rotation(pose.rotation),
+            body_pose: Transform::from_translation(
+                pose.transform_point(Vec3::from_array(*body_offset)),
+            )
+            .with_rotation(pose.rotation),
+        });
+        break;
+    }
+}
+fn read_controls(
+    settings: Res<Settings>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    ui: Res<UiState>,
+    model: Res<UiModel>,
+    occupancy: Res<Occupancy>,
+    bridge: Res<CoreBridge>,
+    camera: Query<&Transform, With<PlayerCamera>>,
+    mut query: Query<(Entity, &mut VehicleBody, &Transform)>,
+    mut focus: ResMut<crate::entities::InteractionFocus>,
+    context: ReadRapierContext,
+    players: Query<Entity, With<crate::player::PlayerBody>>,
+    cache: Res<ContentCache>,
+    config: Res<WorldConfig>,
+) {
+    let active = ui.screen == crate::ui::Screen::Playing && model.alive;
+    let pressed = |action| settings.pressed(action, &keys, &mouse);
+    let edge = |action| settings.just_pressed(action, &keys, &mouse);
+    for (_, mut body, _) in &mut query {
+        body.controls = Controls {
+            engine: body.flags & 1 != 0,
+            ..default()
+        };
+    }
+    if !active {
+        return;
+    }
+    if let Some(seat) = occupancy.seat {
+        if edge(GameAction::Interact) {
+            if let (Ok((_, body, pose)), Ok(context), Ok(player)) =
+                (query.get(seat.vehicle), context.single(), players.single())
+            {
+                let d = data::definition(body.type_id).unwrap();
+                let doors = exit::doors(d, seat.seat as usize, pose, &cache, &config.content_root);
+                let (clear, position) = exit::probe(
+                    &context,
+                    seat.vehicle,
+                    player,
+                    pose,
+                    Vec3::from_array(d.seats[seat.seat as usize]),
+                    &doors,
+                );
+                if bridge.request("worldVehicleExit",json!({"netId":seat.net_id,"seat":seat.seat,"clear":clear,"position":position.to_array()})).is_ok() {
+                    let _=bridge.request("action",json!({"name":"exitVehicle","args":{}}));
+                }
+            }
+            return;
+        }
+        if seat.driver {
+            if let Ok((_, mut body, _)) = query.get_mut(seat.vehicle) {
+                if edge(GameAction::VehicleIgnition) {
+                    body.flags ^= 1;
+                }
+                if edge(GameAction::VehicleLights) {
+                    body.flags ^= 2;
+                }
+                body.controls = Controls {
+                    throttle: pressed(GameAction::MoveForward) as u8 as f32
+                        - pressed(GameAction::MoveBack) as u8 as f32,
+                    steer: pressed(GameAction::MoveRight) as u8 as f32
+                        - pressed(GameAction::MoveLeft) as u8 as f32,
+                    handbrake: pressed(GameAction::VehicleHandbrake),
+                    engine: body.flags & 1 != 0,
+                    ..default()
+                };
+            }
+        }
+        return;
+    }
+    let Ok(eye) = camera.single() else {
+        return;
+    };
+    let mut nearest = None;
+    let mut distance = 3.5;
+    for (_, body, pose) in &query {
+        let d = data::definition(body.type_id).unwrap();
+        let local = pose
+            .compute_affine()
+            .inverse()
+            .transform_point3(eye.translation);
+        let direction = pose.rotation.inverse() * (*eye.forward());
+        for zone in &d.access {
+            if zone.kind != "Door" {
+                continue;
+            }
+            let center = Vec3::from_array(zone.center);
+            let half = Vec3::from_array(zone.size) * 0.5;
+            if let Some(hit) = ray_box(local, direction, center - half, center + half, distance) {
+                distance = hit;
+                nearest = Some((body.net_id, zone.seat.max(0) as u8, d.spec.name.clone()));
+            }
+        }
+    }
+    if let Some((id, seat, name)) = nearest {
+        focus.offer(
+            distance,
+            format!("Enter {name}"),
+            "enterVehicle",
+            json!({"netId":id,"seat":seat}),
+            false,
+        );
+    }
+}
+fn ray_box(origin: Vec3, dir: Vec3, min: Vec3, max: Vec3, limit: f32) -> Option<f32> {
+    let mut near = 0f32;
+    let mut far = limit;
+    for i in 0..3 {
+        if dir[i].abs() < 1e-7 {
+            if origin[i] < min[i] || origin[i] > max[i] {
+                return None;
+            }
+            continue;
+        }
+        let a = (min[i] - origin[i]) / dir[i];
+        let b = (max[i] - origin[i]) / dir[i];
+        near = near.max(a.min(b));
+        far = far.min(a.max(b));
+        if near > far {
+            return None;
+        }
+    }
+    Some(near)
+}
+fn step_bodies(
+    world: Res<WorldState>,
+    mut query: Query<(
+        &mut VehicleBody,
+        &Transform,
+        &mut Velocity,
+        &mut RayCastVehicleController,
+        &mut ExternalForce,
+        &mut ExternalImpulse,
+    )>,
+) {
+    for (mut body, pose, mut velocity, mut wheels, mut force, mut impulse) in &mut query {
+        let spec = &data::definition(body.type_id).unwrap().spec;
+        let controls = body.controls;
+        let (f, i) = body
+            .drivetrain
+            .step(spec, &mut wheels, pose, &velocity, controls, 0.02);
+        *force = f;
+        *impulse = i;
+        if spec.water == "Boat" {
+            if let Some(sea) = world.sea_level {
+                let (water, _) = body
+                    .buoyancy
+                    .step(spec, pose, &mut velocity, controls, sea, 0.02);
+                force.force += water.force;
+                force.torque += water.torque;
+            }
+        }
+    }
+}
+fn publish_bodies(
+    bridge: Res<CoreBridge>,
+    model: Res<UiModel>,
+    occupancy: Res<Occupancy>,
+    query: Query<(&VehicleBody, &Transform, &Velocity)>,
+) {
+    if !model.connected {
+        return;
+    }
+    let mut unattended = Vec::new();
+    for (body, pose, velocity) in &query {
+        let (yaw, pitch, roll) = pose.rotation.to_euler(EulerRot::YXZ);
+        let angles = [pitch.to_degrees(), yaw.to_degrees(), roll.to_degrees()];
+        if occupancy
+            .seat
+            .is_some_and(|s| s.driver && s.net_id == body.net_id)
+        {
+            if let Err(e)=bridge.request("action",json!({"name":"vehicleState","args":{"vehicleNetId":body.net_id,"pos":pose.translation.to_array(),"eulerDegrees":angles,
+                "linVel":velocity.linear.to_array(),"angVel":velocity.angular.to_array(),"steerDegrees":body.drivetrain.steering,"throttle":body.controls.throttle,"steer":body.controls.steer,"handbrake":body.controls.handbrake,"flags":body.flags,"recovAck":body.recov_counter}})) {warn!("Vehicle state: {e}");}
+        } else {
+            unattended.push(json!({"netId":body.net_id,"position":pose.translation.to_array(),"eulerDegrees":angles,"linVel":velocity.linear.to_array(),"angVel":velocity.angular.to_array(),
+            "steerDegrees":body.drivetrain.steering,"fuel":body.fuel,"health":body.health,"battery":body.battery,"flags":body.flags}));
+        }
+    }
+    if !unattended.is_empty() {
+        if let Err(e) = bridge.request("worldVehicleState", json!({"vehicles":unattended})) {
+            warn!("Host vehicle states: {e}");
+        }
+    }
+}
