@@ -945,12 +945,15 @@ namespace UnturnedSim
             /// vehicle lane does not keep a poster off the side walls beside it. `refuse`: places it may not go, asked of
             /// the candidates once they are ranked, so the draws Rank takes are the same however many it refuses.)</summary>
             FurniturePlan Hang(string name, IEnumerable<(float X, float Z, float Yaw)> cands, Func<float, float, float, double> score = null, float height = MountHeight, Rng rng = null, float reach = 0.6f,
-                               Func<float, float, float, bool> refuse = null)
+                               Func<float, float, float, bool> refuse = null, Func<(float X, float Z, float Yaw), (float X, float Z, float Yaw)?> seat = null)
             {
                 var ranked = Rank(cands, score, rng);
-                foreach (var (x, z, yaw) in ranked)
+                foreach (var c in ranked)
                 {
+                    var (x, z, yaw) = c;
                     if (refuse != null && refuse(x, z, yaw)) continue;
+                    // (`seat`: where a ranked candidate actually hangs, or null where it cannot -- the set onto the wall's real face)
+                    if (seat != null) { if (seat(c) is not { } at) continue; (x, z, yaw) = at; }
                     var fp = FurnitureCatalog.Footprint(name, x, z, yaw);
                     // the wall behind it: no window's glass and no doorway along its span
                     var (fx, fz) = FrontOf(yaw);
@@ -1269,12 +1272,13 @@ namespace UnturnedSim
                 return _p.StairRects.Any(r => Overlaps(near, r));
             }
             /// <summary>A flat television on the wall the couch faces -- never a fireplace's wall (strawberry, round 12: the
-            /// wall décor's rule, FireFace, now the set's too), refused once ranked as the clock is.</summary>
+            /// wall décor's rule, FireFace, now the set's too), refused once ranked as the clock is -- and the whole of it on the
+            /// wall (strawberry: "make sure the full wall tv is supported by the wall its on, not hanging off"; OnWall).</summary>
             bool WallTv(FurniturePlan c)
             {
                 var (rx, rz) = c.Right;
                 return Hang("Television_0", Facing(c, "Television_0", WallTvReach), (x, z, _) => -MathF.Abs((x - c.X) * rx + (z - c.Z) * rz),
-                            refuse: (x, z, yaw) => FireFace(BackFace("Television_0", x, z, yaw))) != null;
+                            refuse: (x, z, yaw) => FireFace(BackFace("Television_0", x, z, yaw)), seat: p => OnWall("Television_0", p, MountHeight)) != null;
             }
             bool Crt(FurniturePlan c)
             {
@@ -2170,10 +2174,10 @@ namespace UnturnedSim
                 if (m != null) m.Y = _room.Floor * Storey + UnderCeiling("Clock_0", (m.X, m.Z, m.Yaw)) - ClockUnderCeiling;
             }
             /// <summary>A wall clock's 1 m face has its top this far under the ceiling over it (strawberry, round 12: "hang them
-            /// much higher on the walls"; the lead: top storeys as the rest), on every storey: its middle 3.1 m up under a
-            /// storey's 3.75 m ceiling (the floor above's slab), 3.6 under a top storey's 4.25 m wall heads, lower where a
-            /// pitched roof comes down nearer. It was 2.5 m, its middle at a standing player's eye.</summary>
-            const float ClockUnderCeiling = 0.15f;
+            /// much higher on the walls", then "bring clocks down slightly" from 0.15; the lead: top storeys as the rest), on
+            /// every storey: its middle 2.85 m up under a storey's 3.75 m ceiling (the floor above's slab), 3.35 under a top
+            /// storey's 4.25 m wall heads, lower where a pitched roof comes down nearer. It was 2.5 m, at a standing player's eye.</summary>
+            const float ClockUnderCeiling = 0.4f;
             /// <summary>The height the clock's clearance over what stands under it is judged at (Clock): where it hung before.</summary>
             const float ClockClearedAt = 2.5f;
 

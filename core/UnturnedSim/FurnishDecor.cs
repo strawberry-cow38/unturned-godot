@@ -192,6 +192,8 @@ namespace UnturnedSim
         /// the piece's height). The berth one hung piece gives another, DecorGap: a window is the biggest thing on its
         /// wall, and a picture nearer to it than to the next picture reads as crowding it.</summary>
         public const float DecorWindowGap = DecorGap;
+        /// <summary>Hung counters this far apart end to end, or nearer, are one run, closed up edge to edge (PackCounterRuns).</summary>
+        public const float CounterRunGap = 0.2f;
         /// <summary>A hung piece's back stands this far off the wall's face; Hang looks this far past its face for a
         /// window's or a doorway's zone (the television's 0.6 m kept every poster off a garage's side walls, the whole
         /// 6 m of its vehicle lane).</summary>
@@ -255,8 +257,49 @@ namespace UnturnedSim
                             count[pick] = count.GetValueOrDefault(pick) + 1; n++;
                             if (pick.Spot != DecorSpot.Over) break;
                         }
+                        // the hung counters closed up, before anything else is hung beside them
+                        if (n > 0 && pick.Name == "Upper_Counter_0") PackCounterRuns();
                         if (n > 0) { if (!fixture) art++; break; }
                         cands.Remove(pick);
+                    }
+                }
+            }
+
+            /// <summary>The hung counters close up (strawberry: "fix gaps between counters"): each run of them on one wall --
+            /// turned the same way, backs on one line, each within CounterRunGap of the next end to end -- laid edge to edge
+            /// about the run's middle, so they abut whatever the floor pieces under them leave between their own (a kitchen's
+            /// Row lays them 0.04 m apart), each moved a few centimetres at most and hung again under the ceiling over it
+            /// (UnderCeiling). A run that would come nearer a window than DecorWindowGap, or onto another hung piece, stays as
+            /// it was.</summary>
+            void PackCounterRuns()
+            {
+                const string name = "Upper_Counter_0";
+                var s = FurnitureCatalog.Sizes[name];
+                float w = s.X1 - s.X0;
+                foreach (var line in _mine.Where(m => m.Name == name && m.Mounted).GroupBy(m => (MathF.Round(m.Yaw), MathF.Round((FrontOf(m.Yaw).X != 0 ? m.X : m.Z) * 20f))))
+                {
+                    int fx = FrontOf(line.First().Yaw).X;
+                    float Along(FurniturePlan m) => fx != 0 ? m.Z : m.X;
+                    var sorted = line.OrderBy(Along).ToList();
+                    var run = new List<FurniturePlan> { sorted[0] };
+                    for (int i = 1; i <= sorted.Count; i++)
+                    {
+                        if (i < sorted.Count && Along(sorted[i]) - Along(run[^1]) <= w + CounterRunGap) { run.Add(sorted[i]); continue; }
+                        if (run.Count > 1)
+                        {
+                            float start = (Along(run[0]) + Along(run[^1])) * 0.5f - (run.Count - 1) * w * 0.5f;
+                            var was = run.Select(m => (m.X, m.Y, m.Z)).ToList();
+                            for (int k = 0; k < run.Count; k++)
+                            {
+                                var m = run[k];
+                                if (fx != 0) m.Z = start + k * w; else m.X = start + k * w;
+                                m.Y = _room.Floor * Storey + UnderCeiling(m.Name, (m.X, m.Z, m.Yaw));
+                            }
+                            bool ok = run.All(m => { var f = BackFace(m.Name, m.X, m.Z, m.Yaw); return !WindowCuts(f).Any(c => c.A < f.Hi && c.B > f.Lo); })
+                                      && run.All(m => !_res.Furniture.Any(o => o.Mounted && o.Floor == m.Floor && !run.Contains(o) && Overlaps(m.Footprint, o.Footprint)));
+                            if (!ok) for (int k = 0; k < run.Count; k++) (run[k].X, run[k].Y, run[k].Z) = was[k];
+                        }
+                        if (i < sorted.Count) run = new List<FurniturePlan> { sorted[i] };
                     }
                 }
             }
@@ -575,6 +618,44 @@ namespace UnturnedSim
                 fp = FurnitureCatalog.Footprint(name, c.X, c.Z, yaw);
                 if (Flush(fp, f.Nx, f.Nz) < 0.9 || !Backed(name, c.X, c.Z, yaw) || ByStairs(name, c)) return null;
                 return c;
+            }
+
+            /// <summary>Where a piece hung at `p` actually goes: onto the real face of the wall behind it (AtFace: its back
+            /// DecorWallGap off it, flush and backed, off the stairs' wall), and only where the WHOLE of it is on that wall --
+            /// every 0.05 m of its back edge, end to end, over solid wall full storey high (not past the wall's end into a
+            /// doorway or round a corner, not where a thinner wall carries on -- a step behind it), no opening there over its
+            /// height `height` +- its H, and none of it into a wall. Null where not. (The candidates hung pieces are ranked from
+            /// are the floor plan's faces: a 0.1 m grid on which a cell a wall's end only touches counts as wall, and whose
+            /// face stands up to a cell in front of the wall's -- so a 3.8 m television ran a quarter metre past a wall's end,
+            /// 8 cm off its face.)</summary>
+            (float X, float Z, float Yaw)? OnWall(string name, (float X, float Z, float Yaw) p, float height)
+            {
+                var f = BackFace(name, p.X, p.Z, p.Yaw);
+                var at = AtFace(name, f, (f.Lo + f.Hi) * 0.5f);
+                if (at == null) return null;
+                var s = FurnitureCatalog.Sizes[name];
+                var fp = FurnitureCatalog.Footprint(name, at.Value.X, at.Value.Z, at.Value.Yaw);
+                if (_p.WallRects.Any(r => Overlaps(fp, r))) return null;
+                var (fx, fz) = FrontOf(at.Value.Yaw);
+                var (rx, rz) = RightOf(at.Value.Yaw);
+                float bottom = height - s.H, top = height + s.H, floorY = _room.Floor * Storey;
+                var walls = RoomWalls();
+                for (float u = s.X0 + 0.02f; u <= s.X1 - 0.02f + 1e-3f; u += 0.05f)
+                {
+                    // 3 cm behind its back: in the wall, whose face is DecorWallGap behind it
+                    float px = at.Value.X + rx * u + fx * (s.Y0 - 0.03f), pz = at.Value.Z + rz * u + fz * (s.Y0 - 0.03f);
+                    bool held = false;
+                    foreach (var w in walls)
+                    {
+                        var (c, sn) = PlanTrig.CosSin(w.Yaw);
+                        float wu = (px - w.X) * c - (pz - w.Z) * sn, wv = (px - w.X) * sn + (pz - w.Z) * c;
+                        if (wu < 0f || wu > w.Length || MathF.Abs(wv) > w.Thickness * 0.5f) continue;
+                        if (w.Openings.Any(o => wu > o.U - 0.01f && wu < o.U1 + 0.01f && w.Y + o.V - floorY < top && w.Y + o.V + o.Height - floorY > bottom)) return null;
+                        held = true;
+                    }
+                    if (!held) return null;
+                }
+                return at;
             }
 
             /// <summary>The height a piece hangs at, over its floor, to meet the ceiling over it with its top: under the lowest of

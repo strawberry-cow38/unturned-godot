@@ -1979,15 +1979,16 @@ namespace UnturnedSim.Tests
                             // (the wall décor's heights, and the openings at them, are its rows' own, held to the piece's own span by
                             // WallDecorFollowsTheRules: an upper cabinet at 2.9, a key rack under a bathroom's high slit)
                             bool decor = BuildingGen.Decor.Any(r => r.Name == m.Name);
-                            // (a clock near the top of the wall, strawberry round 12: "hang them much higher on the walls" -- its
-                            // face's top within 0.1-0.3 m of the ceiling over it, the lowest over its outline's corners: the floor
-                            // above's underside, a top storey's wall heads or roof -- the same gap on every storey)
+                            // (a clock near the top of the wall, strawberry round 12: "hang them much higher on the walls", then
+                            // "bring clocks down slightly" -- its face's top within 0.3-0.5 m of the ceiling over it, the lowest over
+                            // its outline's corners: the floor above's underside, a top storey's wall heads or roof -- the same gap
+                            // on every storey)
                             if (m.Name == "Clock_0")
                             {
                                 var cf = m.Footprint;
                                 float clockTop = m.Y + FurnitureCatalog.Sizes[m.Name].H;
                                 float over = new[] { (cf.X0, cf.Z0), (cf.X1, cf.Z0), (cf.X0, cf.Z1), (cf.X1, cf.Z1) }.Min(q => CeilingAt(res, f, q.Item1, q.Item2)), under = over - clockTop;
-                                if (under < 0.1f || under > 0.3f) bad.Add($"{nm}: its face's top {under:0.00} m under the ceiling over it, {over - f * Storey:0.00} m up");
+                                if (under < 0.3f || under > 0.5f) bad.Add($"{nm}: its face's top {under:0.00} m under the ceiling over it, {over - f * Storey:0.00} m up");
                                 if (f == res.Floors - 1 && over - f * Storey > Storey - BuildingGen.Slab + 0.1f) topClocks++;
                             }
                             else if ((m.Y < f * Storey + 1.8f || m.Y > f * Storey + 2.6f) && !decor) bad.Add($"{nm} hangs at {m.Y - f * Storey:0.00} m");
