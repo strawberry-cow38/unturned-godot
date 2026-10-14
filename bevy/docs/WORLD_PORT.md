@@ -53,16 +53,24 @@ original source formats and remain the content replacement seam.
 This is an engine migration in progress. Loading a source asset or preserving an
 engine-independent class does not establish gameplay or visual parity.
 
-The initial world build is a bounded region around the town and player spawn.
-It retains the full heightfield for sampling, but only meshes and colliders in
-that region are materialized. Streaming a moving player across the complete map,
-original LOD thresholds, distance fades, floating-origin streaming and generated
-road/rail/bridge/tunnel/pylon structures still need Bevy systems.
+Retail worlds retain the full heightfield for sampling while rendering a bounded
+region around the town and player spawn. Moving 40% of the view radius (capped at
+96 metres) rebuilds the region at the player's current position, including roads,
+props, resources and foliage, without restarting the session or changing spawn.
+Parsed placements and instance arrays are cached; retired render entities and
+colliders are removed. A geometry revision informs the authoritative host of
+changes. This synchronous rebuild can hitch; async chunk jobs, original LOD
+thresholds, distance fades, floating origin and procedural-region streaming still
+need Bevy systems. Generated road/rail/bridge/tunnel/pylon structures are also
+separate from the retail road splines.
 
 Terrain currently uses the strongest splat layer per cell with the original
 layer texture. Eight-layer shader blending, paint-edge noise, terrain sculpting,
 editor overlays, analytic river cuts, terrain-hole sidecars, and shoreline
-geometry are not yet reproduced. Road spline geometry is not yet assembled.
+geometry are not yet reproduced. Retail Paths.dat road splines now retain the
+source cubic curves, five-metre sampling, cross-slope banking, per-joint offsets,
+material width/depth, texture repeat, end ramps and sealed collision underside.
+Source road editor operations and lane AI bindings remain separate work.
 
 The existing custom shaders still require WGSL ports: ocean normal ripples and shoreline
 foam, planar reflections (the latest source intentionally keeps geometry flat), underwater rendering, sky/clouds/stars/day-night,

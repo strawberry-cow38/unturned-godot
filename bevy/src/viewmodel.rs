@@ -152,8 +152,9 @@ fn build_viewmodel(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut active_cameras: Query<&mut Camera, With<ViewmodelCamera>>,
 ) {
-    let visible =
-        ui.screen != Screen::MainMenu && snapshot.0["connected"].as_bool().unwrap_or(false);
+    let visible = !matches!(ui.screen, Screen::MainMenu | Screen::Dead)
+        && snapshot.0["connected"].as_bool().unwrap_or(false)
+        && snapshot.0["player"]["alive"].as_bool().unwrap_or(true);
     for mut camera in &mut active_cameras {
         camera.is_active = visible;
     }
