@@ -24,10 +24,43 @@ pub struct ItemVisual {
     pub mesh: Option<String>,
     pub texture: Option<String>,
     pub icon: Option<String>,
+    #[serde(default)]
+    pub gun: Value,
+    #[serde(default)]
+    pub melee: Value,
+    #[serde(default)]
+    pub is_consumable: bool,
+    #[serde(default)]
+    pub is_fluid_container: bool,
+    #[serde(default)]
+    pub is_deployable: bool,
 }
 #[derive(Resource, Default)]
 pub struct ItemCatalog {
     pub items: HashMap<u16, ItemVisual>,
+}
+#[derive(Resource, Default)]
+pub struct ServiceManifest {
+    pub map: String,
+    pub objects: HashMap<usize, Value>,
+    pub resources: HashMap<(String, usize), Value>,
+}
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CollectInteractions;
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ApplyInteractions;
+#[derive(Resource, Default)]
+pub struct InteractionFocus {
+    candidate: Option<InteractionCandidate>,
+}
+struct InteractionCandidate {
+    distance: f32, label: String, action: String, args: Value, open_storage: bool,
+}
+impl InteractionFocus {
+    pub fn offer(&mut self, distance: f32, label: impl Into<String>, action: impl Into<String>, args: Value, open_storage: bool) {
+        if !distance.is_finite() || distance < 0. || self.candidate.as_ref().is_some_and(|c| c.distance <= distance) { return; }
+        self.candidate = Some(InteractionCandidate {distance,label:label.into(),action:action.into(),args,open_storage});
+    }
 }
 #[derive(Resource, Default)]
 struct Replicas {
@@ -53,6 +86,8 @@ pub struct EntityPlugin;
 impl Plugin for EntityPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ItemCatalog>()
+            .init_resource::<ServiceManifest>()
+            .init_resource::<InteractionFocus>()
             .init_resource::<Replicas>()
             .add_message::<CoreEvent>()
             .add_systems(
@@ -60,13 +95,17 @@ impl Plugin for EntityPlugin {
                 (
                     load_catalog,
                     register_world_geometry,
+                    sync_static_life,
                     sync_world_items,
                     forward_events,
-                    interact_items,
                 )
                     .chain()
-                    .after(crate::player::PlayerUpdate),
-            );
+                    .after(crate::player::PlayerUpdate)
+                    .before(CollectInteractions),
+            )
+            .add_systems(Update, reset_focus.after(crate::player::PlayerUpdate).before(CollectInteractions))
+            .add_systems(Update, interact_items.in_set(CollectInteractions).after(crate::player::PlayerCameraUpdate))
+            .add_systems(Update, apply_interaction.in_set(ApplyInteractions).after(CollectInteractions));
     }
 }
 
@@ -110,6 +149,7 @@ fn register_world_geometry(
     geometry: Res<WorldGeometry>,
     mut replicas: ResMut<Replicas>,
     mut model: ResMut<UiModel>,
+    mut services: ResMut<ServiceManifest>,
 ) {
     if !world.ready
         || !model.connected
@@ -119,6 +159,35 @@ fn register_world_geometry(
         return;
     }
     let result = (|| -> anyhow::Result<()> {
+        if services.map != config.map_name {
+            services.objects.clear();
+            services.resources.clear();
+            if config.procedural_path.is_none() {
+                if let Some(root) = &config.map_root {
+                    let reply = bridge.request("mapServices", json!({"mapRoot":root,"mapName":config.map_name,"contentRoot":config.content_root}))?;
+                    let result = &reply["result"];
+                    for object in result["objects"].as_array().into_iter().flatten() {
+                        if let Some(index) = object["sourceIndex"].as_u64() {
+                            services.objects.insert(index as usize, object.clone());
+                        }
+                    }
+                    for resource in result["resources"].as_array().into_iter().flatten() {
+                        if let (Some(name), Some(index)) =
+                            (resource["name"].as_str(), resource["instance"].as_u64())
+                        {
+                            services
+                                .resources
+                                .insert((name.to_owned(), index as usize), resource.clone());
+                        }
+                    }
+                    info!(
+                        "Original map services: {} containers, {} fixtures, {} resources",
+                        result["containerCount"], result["fixtureCount"], result["resourceCount"]
+                    );
+                }
+            }
+            services.map = config.map_name.clone();
+        }
         bridge.request(
             "worldGeometry",
             json!({"replace":true,"finalize":false,"meshes":[]}),
@@ -146,7 +215,18 @@ fn register_world_geometry(
                                 .to_array()
                         })
                         .collect();
-                    json!({"vertices":vertices})
+                    let destructible = object
+                        .source_index
+                        .and_then(|index| services.objects.get(&index))
+                        .and_then(|row| row["destructibleIndex"].as_i64())
+                        .unwrap_or(-1);
+                    let resource = object
+                        .resource_key
+                        .as_ref()
+                        .and_then(|key| services.resources.get(key))
+                        .and_then(|row| row["index"].as_i64())
+                        .unwrap_or(-1);
+                    json!({"vertices":vertices,"destructibleIndex":destructible,"resourceIndex":resource})
                 })
                 .collect();
             bridge.request(
@@ -159,6 +239,9 @@ fn register_world_geometry(
             "Registered authoritative world geometry: {}",
             result["result"]
         );
+        if replicas.geometry_map != config.map_name {
+            bridge.request("worldServices", json!({"hasWater":world.sea_level.is_some(),"seaLevel":world.sea_level.unwrap_or(0.)}))?;
+        }
         if config.procedural_path.is_none() && replicas.geometry_map != config.map_name {
             if let Some(path) = &config.map_root {
                 let loot = bridge.request("worldLoot", json!({"mapRoot":path}))?;
@@ -177,6 +260,96 @@ fn register_world_geometry(
             model.notice(error.to_string());
             model.connected = false;
         }
+    }
+}
+
+fn sync_static_life(
+    mut commands: Commands,
+    snapshot: Res<GameSnapshot>,
+    services: Res<ServiceManifest>,
+    mut objects: Query<
+        (
+            Entity,
+            &crate::world::WorldObject,
+            &mut Visibility,
+            Option<&bevy_rapier3d::prelude::ColliderDisabled>,
+        ),
+        Without<crate::world::WorldResource>,
+    >,
+    mut resources: Query<
+        (
+            Entity,
+            &crate::world::WorldResource,
+            &mut Visibility,
+            Option<&bevy_rapier3d::prelude::ColliderDisabled>,
+        ),
+        Without<crate::world::WorldObject>,
+    >,
+) {
+    let dead = |key: &str| {
+        snapshot.0[key]["dead"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_u64)
+            .collect::<HashSet<_>>()
+    };
+    let broken = dead("destructibles");
+    let taken = dead("resources");
+    for (entity, object, mut visibility, disabled) in &mut objects {
+        let Some(index) = services
+            .objects
+            .get(&object.source_index)
+            .and_then(|row| row["destructibleIndex"].as_u64())
+        else {
+            continue;
+        };
+        set_alive(
+            &mut commands,
+            entity,
+            &mut visibility,
+            disabled.is_some(),
+            !broken.contains(&index),
+        );
+    }
+    for (entity, resource, mut visibility, disabled) in &mut resources {
+        let Some(index) = services
+            .resources
+            .get(&(resource.name.clone(), resource.instance_index))
+            .and_then(|row| row["index"].as_u64())
+        else {
+            continue;
+        };
+        set_alive(
+            &mut commands,
+            entity,
+            &mut visibility,
+            disabled.is_some(),
+            !taken.contains(&index),
+        );
+    }
+}
+fn set_alive(
+    commands: &mut Commands,
+    entity: Entity,
+    visibility: &mut Visibility,
+    disabled: bool,
+    alive: bool,
+) {
+    *visibility = if alive {
+        Visibility::Inherited
+    } else {
+        Visibility::Hidden
+    };
+    if alive && disabled {
+        commands
+            .entity(entity)
+            .remove::<bevy_rapier3d::prelude::ColliderDisabled>();
+    }
+    if !alive && !disabled {
+        commands
+            .entity(entity)
+            .insert(bevy_rapier3d::prelude::ColliderDisabled);
     }
 }
 
@@ -287,19 +460,19 @@ fn forward_events(
 }
 
 fn interact_items(
-    bridge: Res<CoreBridge>,
     ui: Res<UiState>,
-    settings: Res<Settings>,
-    keys: Res<ButtonInput<KeyCode>>,
-    mouse: Res<ButtonInput<MouseButton>>,
     catalog: Res<ItemCatalog>,
     camera: Query<&Transform, With<PlayerCamera>>,
     items: Query<(&Transform, &WorldItemReplica)>,
-    geometry: Res<WorldGeometry>,
-    mut model: ResMut<UiModel>,
+    mut focus: ResMut<InteractionFocus>,
+    context: bevy_rapier3d::prelude::ReadRapierContext,
+    player: Query<Entity, With<crate::player::PlayerBody>>,
+    objects: Query<&crate::world::WorldObject>,
+    resources: Query<&crate::world::WorldResource>,
+    services: Res<ServiceManifest>,
+    occupancy: Option<Res<crate::vehicle::Occupancy>>,
 ) {
-    if ui.captures_input() {
-        model.interaction.clear();
+    if ui.captures_input() || occupancy.is_some_and(|o| o.seat.is_some()) {
         return;
     }
     let Ok(camera) = camera.single() else {
@@ -307,9 +480,19 @@ fn interact_items(
     };
     let origin = camera.translation;
     let direction = *camera.forward();
-    let wall_distance = geometry
-        .raycast(origin, direction, 6.0)
-        .map_or(6.0, |hit| hit.0);
+    let (Ok(context), Ok(player)) = (context.single(), player.single()) else {
+        return;
+    };
+    let obstacle = context.cast_ray(
+        origin,
+        direction,
+        6.,
+        true,
+        bevy_rapier3d::prelude::QueryFilter::default()
+            .exclude_collider(player)
+            .exclude_sensors(),
+    );
+    let wall_distance = obstacle.map_or(6.0, |hit| hit.1);
     let nearest = items
         .iter()
         .filter_map(|(transform, item)| {
@@ -319,28 +502,56 @@ fn interact_items(
             (along >= 0.0 && along < wall_distance && off_ray < 0.6).then_some((along, item))
         })
         .min_by(|a, b| a.0.total_cmp(&b.0));
-    if let Some((_, item)) = nearest {
+    if let Some((distance, item)) = nearest {
         let name = catalog
             .items
             .get(&item.item_id)
             .map_or("Item", |item| item.name.as_str());
-        model.interaction = format!(
-            "[{}] Pick up {name}",
-            settings
-                .bindings
-                .get(&GameAction::Interact)
-                .map(|b| b.label())
-                .unwrap_or_default()
-        );
-        if settings.just_pressed(GameAction::Interact, &keys, &mouse) {
-            if let Err(error) = bridge.request(
-                "action",
-                json!({"name":"pickupItem","args":{"netId":item.net_id}}),
-            ) {
-                model.notice(error.to_string());
+        focus.offer(distance, format!("Pick up {name}"), "pickupItem", json!({"netId":item.net_id}), false);
+    } else {
+        let Some((entity, _)) = obstacle else {
+            return;
+        };
+        if let Ok(object) = objects.get(entity) {
+            if let Some(id) = services
+                .objects
+                .get(&object.source_index)
+                .and_then(|row| row["containerNetId"].as_u64())
+            {
+                focus.offer(wall_distance, format!("Open {}", object.asset_name.replace('_', " ")), "openStorage", json!({"netId":id}), true);
             }
         }
-    } else {
-        model.interaction.clear();
+        if let Ok(resource) = resources.get(entity) {
+            if let Some(row) = services
+                .resources
+                .get(&(resource.name.clone(), resource.instance_index))
+            {
+                if row["rewardItemId"].as_u64().unwrap_or(0) > 0 {
+                    focus.offer(wall_distance, format!("Harvest {}", resource.name.replace('_', " ")), "forageResource", json!({"index":row["index"]}), false);
+                }
+            }
+        }
+    }
+}
+
+fn reset_focus(mut focus: ResMut<InteractionFocus>) { focus.candidate = None; }
+fn apply_interaction(
+    bridge: Res<CoreBridge>, focus: Res<InteractionFocus>, settings: Res<Settings>,
+    keys: Res<ButtonInput<KeyCode>>, mouse: Res<ButtonInput<MouseButton>>,
+    mut ui: ResMut<UiState>, mut model: ResMut<UiModel>,
+) {
+    model.interaction.clear();
+    if ui.captures_input() { return; }
+    let Some(candidate) = &focus.candidate else { return; };
+    model.interaction = format!("[{}] {}", settings.bindings[&GameAction::Interact].label(), candidate.label);
+    if !settings.just_pressed(GameAction::Interact, &keys, &mouse) { return; }
+    match bridge.request("action", json!({"name":candidate.action,"args":candidate.args})) {
+        Ok(_) if candidate.open_storage => {
+            ui.page = model.pages.iter().filter(|p| p.index < 7 && p.width > 0 && p.height > 0).count();
+            ui.screen = crate::ui::Screen::Inventory;
+            ui.selected_item = None;
+        }
+        Err(error) => model.notice(error.to_string()),
+        _ => {}
     }
 }

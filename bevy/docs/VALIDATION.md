@@ -62,3 +62,36 @@ Artifacts are ignored by Git. Each new native capture writes a companion JSON
 authority snapshot for checking the actual player's position and world state.
 Audio can be loaded and controlled in this environment, but its missing audio
 device prevents an audible listening test.
+
+## Native movement, interactions and vehicle integration
+
+- Native suite: 66 passed after swimming, ladder attach/mantle, real vehicle
+  suspension/acceleration/braking/steering, buoyancy and blocked exit checks.
+- Source combat adapter changes: 618 UnturnedNet tests passed, including three
+  new memory-transport regressions. Optional callbacks retain existing defaults.
+- Peer review corrected the player capsule radius to the original 0.35 m and
+  ladder colliders to the source solid backing box. A real collision test
+  exercises attach, single entry snap, top hold and a flush-roof mantle.
+- Vehicle seat review found persistent controller output replacing seated
+  velocity with an old walking step. Seated players now ignore that output;
+  physics also pauses with the menu/pause state.
+- Native rendered vehicle smoke exposed nested compound colliders from async
+  decomposition. The vehicle adapter flattens these into leaf hulls and tests
+  the mixed decomposed/authored collision case. The subsequent rendered smoke
+  reached tick 452 with eight authoritative cars and no panic.
+- Real keyboard and mouse journey: F1, `give 4`, Enter, inventory, select AR-15,
+  Equip, close, hotbar 1. `bevy-inventory.png` shows the original item icon and
+  grid footprint. `bevy-equipment-before-animation.png` and its JSON confirm the
+  weapon moved from page 2 to slot 0, heldItemId=4, gunAmmo=30, and original
+  arms/weapon geometry rendered. Console spaces initially disappeared because
+  winit supplies Key::Space separately from Key::Character. Fixed and covered by
+  a real KeyboardInput-message regression.
+- Short synthetic mouse clicks can land entirely between software-rendered
+  frames; the test holds the button for 0.5 seconds to exercise the visible UI.
+- Full-map services retain source placement indices, resource lifecycles and
+  containers. Nearest visible item, container, forage resource and vehicle door
+  now share one interaction selector, preventing one F press from firing
+  several competing commands. Leaving storage releases its server lock.
+
+Weapon animation/ADS, detailed vehicle views, procedural structures, source
+foliage shading and the remaining parity ledger still need further validation.

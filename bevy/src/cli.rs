@@ -100,7 +100,7 @@ Usage: bevy/run.sh [options]\n\
   --headless --ticks 250   Exercise the core bridge without a renderer\n\
   --shot PATH              Capture the rendered window and exit\n\
   --shot-frame 90          Wait this many rendered frames before capture\n\
-  --stay                   Keep running after capture\n\
+  --stay                   Keep running; F12 repeats the capture\n\
   --help                   Show this help";
 
 #[cfg(test)]

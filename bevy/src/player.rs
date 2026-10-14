@@ -19,6 +19,8 @@ use serde_json::{Value, json};
 pub struct PlayerPlugin;
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PlayerUpdate;
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PlayerCameraUpdate;
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Session>()
@@ -27,14 +29,15 @@ impl Plugin for PlayerPlugin {
             .add_systems(Startup, spawn_player.after(WorldReady))
             .add_systems(
                 Update,
-                (initialize_session, ui_intents, read_input, camera_follow)
+                (initialize_session, ui_intents, close_storage_on_exit, read_input, physics_configuration)
                     .chain()
                     .in_set(PlayerUpdate)
                     .after(crate::ui::UiUpdate)
                     .after(WorldReady),
             )
+            .add_systems(Update, (sync_seated_body, camera_follow).chain().in_set(PlayerCameraUpdate).after(crate::vehicle::VehicleUpdate).after(PlayerUpdate))
             .add_systems(FixedUpdate, simulate.before(PhysicsSet::SyncBackend))
-            .add_systems(FixedUpdate, publish_body.after(PhysicsSet::Writeback));
+            .add_systems(FixedUpdate, publish_body.after(PhysicsSet::Writeback).after(crate::vehicle::VehiclePublish));
     }
 }
 
@@ -103,6 +106,7 @@ fn valid_height(value: &Value) -> Option<f32> {
 struct PlayerInput {
     movement: Vec2,
     jump: bool,
+    jump_held: bool,
     fire: bool,
     reload: bool,
     yaw: f32,
@@ -111,6 +115,8 @@ struct PlayerInput {
     prone: bool,
     stance: String,
     held_item_id: u16,
+    in_vehicle: bool,
+    vehicle_yaw: f32,
 }
 
 #[derive(Component)]
@@ -120,12 +126,13 @@ pub struct PlayerBody {
     height: f32,
     stance: String,
     eye_height: f32,
+    locomotion: crate::locomotion::Locomotion,
 }
 #[derive(Component)]
 pub struct PlayerCamera;
 
 fn capsule(height: f32) -> Collider {
-    let radius = 0.3;
+    let radius = 0.35;
     Collider::capsule(Vec3::Y * radius, Vec3::Y * (height - radius), radius)
 }
 
@@ -138,6 +145,7 @@ fn spawn_player(mut commands: Commands, world: Res<WorldState>) {
             height: 2.0,
             stance: "stand".into(),
             eye_height: 1.75,
+            locomotion: default(),
         },
         Transform::from_translation(world.spawn),
         RigidBody::KinematicPositionBased,
@@ -145,12 +153,12 @@ fn spawn_player(mut commands: Commands, world: Res<WorldState>) {
         KinematicCharacterController {
             offset: CharacterLength::Absolute(0.015),
             autostep: Some(CharacterAutostep {
-                max_height: CharacterLength::Absolute(0.35),
+                max_height: CharacterLength::Absolute(0.5),
                 min_width: CharacterLength::Absolute(0.15),
                 include_dynamic_bodies: false,
             }),
-            snap_to_ground: Some(CharacterLength::Absolute(0.2)),
-            max_slope_climb_angle: 50.0_f32.to_radians(),
+            snap_to_ground: Some(CharacterLength::Absolute(0.5)),
+            max_slope_climb_angle: 55.0_f32.to_radians(),
             min_slope_slide_angle: 55.0_f32.to_radians(),
             ..default()
         },
@@ -197,7 +205,7 @@ fn initialize_session(
     }
     model.map_name = options.0.map.clone();
     ui.map = options.0.map.clone();
-    match bridge.request("init", json!({"contentRoot":options.0.content,"name":"Survivor","mapId":options.0.map,"spawn":world.spawn.to_array()})) {
+    match bridge.request("init", json!({"contentRoot":options.0.content,"name":"Survivor","mapId":options.0.map,"spawn":world.spawn.to_array(),"yaw":world.spawn_yaw,"seed":options.0.seed})) {
         Ok(response) if response["result"]["protocolVersion"] == 1 => {
             model.reset_session();
             model.adopt_snapshot(&response["state"]); snapshot.0 = response["state"].clone();
@@ -209,6 +217,7 @@ fn initialize_session(
             for (mut transform, mut body,mut collider,mut controller) in &mut bodies {
                 transform.translation = world.spawn; body.velocity = Vec3::ZERO; body.grounded = false;
                 body.height=session.heights.stand;body.stance="stand".into();body.eye_height=1.75;
+                body.locomotion=default();
                 *collider=capsule(body.height);controller.translation=None;
             }
             if options.0.play { ui.screen = Screen::Playing; }
@@ -238,6 +247,7 @@ fn ui_intents(
     mut config: ResMut<crate::world::WorldConfig>,
     mut world: ResMut<WorldState>,
     mut session: ResMut<Session>,
+    mut input: ResMut<PlayerInput>,
 ) {
     for intent in intents.read() {
         let result = match intent {
@@ -312,9 +322,13 @@ fn ui_intents(
                             transform.translation = position;
                             body.velocity = Vec3::ZERO;
                             body.grounded = false;
+                            body.locomotion = default();
                         }
                     }
                     model.notice("World loaded");
+                    input.yaw = response["state"]["player"]["yaw"].as_f64().unwrap_or(0.) as f32;
+                    input.pitch = response["state"]["player"]["pitch"].as_f64().unwrap_or(0.) as f32;
+                    input.held_item_id = response["state"]["player"]["heldItemId"].as_u64().unwrap_or(0) as u16;
                 } else if matches!(intent, UiIntent::Save) {
                     model.notice("World saved");
                 }
@@ -324,6 +338,15 @@ fn ui_intents(
             Err(error) => model.notice(error.to_string()),
         }
     }
+}
+
+fn close_storage_on_exit(bridge: Res<CoreBridge>, ui: Res<UiState>, model: Res<UiModel>, mut previous: Local<Screen>) {
+    if model.connected && *previous == Screen::Inventory && ui.screen != Screen::Inventory {
+        if let Err(error) = bridge.request("action", json!({"name":"closeStorage","args":{}})) {
+            warn!("Closing storage: {error}");
+        }
+    }
+    *previous = ui.screen;
 }
 
 fn save_path(map: &str) -> std::path::PathBuf {
@@ -372,6 +395,7 @@ fn read_input(
         input.movement = Vec2::ZERO;
         input.fire = false;
         input.jump = false;
+        input.jump_held = false;
         input.reload = false;
         return;
     }
@@ -382,6 +406,7 @@ fn read_input(
         (held(GameAction::MoveForward) as i32 - held(GameAction::MoveBack) as i32) as f32,
     );
     input.jump |= pressed(GameAction::Jump);
+    input.jump_held = held(GameAction::Jump);
     input.fire = held(GameAction::Fire);
     input.reload |= pressed(GameAction::Reload);
     if pressed(GameAction::CrouchToggle) {
@@ -425,9 +450,12 @@ fn simulate(
     mut input: ResMut<PlayerInput>,
     mut model: ResMut<UiModel>,
     context: ReadRapierContext,
+    world: Res<WorldState>,
+    occupancy: Option<Res<crate::vehicle::Occupancy>>,
+    ladders: Query<(&crate::world::WorldObject, &GlobalTransform, &Collider), Without<PlayerBody>>,
     mut bodies: Query<(
         Entity,
-        &Transform,
+        &mut Transform,
         &mut PlayerBody,
         &mut Collider,
         &mut KinematicCharacterController,
@@ -436,11 +464,52 @@ fn simulate(
     if !session.initialized || session.failed || simulation_paused(&ui) {
         return;
     }
-    let Ok((entity, transform, mut body, mut collider, mut controller)) = bodies.single_mut()
+    let Ok((entity, mut transform, mut body, mut collider, mut controller)) = bodies.single_mut()
     else {
         return;
     };
-    let desired_height = session.heights.for_stance(&input.stance);
+    if occupancy.is_some_and(|o| o.seat.is_some()) || !model.alive {
+        controller.translation = None;
+        return;
+    }
+    let special = context.single().ok().and_then(|physics| {
+        body.locomotion.step(
+            &physics,
+            entity,
+            |id| {
+                let (object, transform, collider) = ladders.get(id).ok()?;
+                if !object.asset_name.starts_with("Ladder_") {
+                    return None;
+                }
+                let transform = transform.compute_transform();
+                Some(crate::locomotion::LadderGeometry {
+                    origin: transform.translation,
+                    face: transform.rotation * Vec3::Y,
+                    top: collider
+                        .aabb(transform.translation, transform.rotation)
+                        .max
+                        .y,
+                })
+            },
+            &mut transform.translation,
+            input.yaw.to_radians(),
+            input.pitch.to_radians(),
+            input.movement,
+            input.jump_held,
+            world.sea_level,
+            0.02,
+        )
+    });
+    let wading = world
+        .sea_level
+        .is_some_and(|sea| transform.translation.y < sea);
+    let wanted_stance =
+        if special.is_some() || (wading && matches!(input.stance.as_str(), "crouch" | "prone")) {
+            "stand"
+        } else {
+            &input.stance
+        };
+    let desired_height = session.heights.for_stance(wanted_stance);
     let headroom = desired_height <= body.height
         || context.single().is_ok_and(|context| {
             has_headroom(
@@ -453,13 +522,13 @@ fn simulate(
         });
     let response = bridge.request("simulate",json!({"input":{
         "moveX":input.movement.x,"moveY":input.movement.y,"jump":input.jump,"grounded":body.grounded,
-        "stance":input.stance,"yaw":input.yaw,"pitch":input.pitch,"velocity":body.velocity.to_array(),"heldItemId":input.held_item_id,
+        "stance":wanted_stance,"yaw":input.yaw,"pitch":input.pitch,"velocity":body.velocity.to_array(),"heldItemId":input.held_item_id,
         "headroom":headroom,"capsuleHeight":body.height
     }}));
     input.jump = false;
     match response {
         Ok(response) => {
-            let Some(velocity) = vector(&response["result"]["velocity"]) else {
+            let Some(mut velocity) = vector(&response["result"]["velocity"]) else {
                 fail(
                     &mut session,
                     &mut model,
@@ -484,13 +553,22 @@ fn simulate(
                 .map(|v| v as f32)
                 .filter(|v| v.is_finite() && *v > 0.0 && *v <= height)
                 .unwrap_or_else(|| eye_height(&body.stance));
+            if let Some(special) = &special {
+                velocity = special.velocity;
+                body.stance = special.stance.into();
+                body.eye_height = 1.75;
+                body.grounded = special.stance == "climb";
+                if special.teleported {
+                    controller.translation = None;
+                }
+            }
             if (height - body.height).abs() > 0.001 {
                 *collider = capsule(height);
                 body.height = height;
             }
             body.velocity = velocity;
             let mut translation = velocity * 0.02;
-            if body.grounded && velocity.y <= 0.0 {
+            if body.grounded && velocity.y <= 0.0 && special.is_none() {
                 translation.y = -0.025;
             }
             controller.translation = Some(translation);
@@ -534,7 +612,9 @@ fn publish_body(
     let Ok((mut transform, mut body, output)) = bodies.single_mut() else {
         return;
     };
-    if let Some(output) = output {
+    // A disabled seated capsule retains its last on-foot controller output.
+    // Reading it would replace the vehicle velocity with an old walking step.
+    if let Some(output) = output.filter(|_| !input.in_vehicle && model.alive) {
         body.grounded = output.grounded;
         body.velocity = output.effective_translation / 0.02;
         if body.grounded && body.velocity.y < 0.0 {
@@ -546,7 +626,7 @@ fn publish_body(
             let state = &response["state"];
             let version = state["player"]["correctionVersion"].as_u64().unwrap_or(0);
             if version != session.correction_version {
-                if let Some(position) = vector(&state["player"]["position"]) { transform.translation = position; body.velocity = Vec3::ZERO; body.grounded = false; }
+                if let Some(position) = vector(&state["player"]["position"]) { transform.translation = position; body.velocity = Vec3::ZERO; body.grounded = false; body.locomotion=default(); }
                 session.correction_version = version;
             }
             model.adopt_snapshot(state); snapshot.0 = state.clone();
@@ -555,11 +635,48 @@ fn publish_body(
     }
 }
 
+fn sync_seated_body(
+    mut commands: Commands,
+    occupancy: Option<Res<crate::vehicle::Occupancy>>,
+    snapshot: Res<GameSnapshot>,
+    mut input: ResMut<PlayerInput>,
+    mut bodies: Query<(Entity, &mut Transform, &mut PlayerBody, &mut KinematicCharacterController, Option<&ColliderDisabled>)>,
+) {
+    let seat = occupancy.as_ref().and_then(|o| o.seat);
+    for (entity, mut transform, mut body, mut controller, disabled) in &mut bodies {
+        if let Some(seat) = seat {
+            let yaw = seat.eye_pose.rotation.to_euler(EulerRot::YXZ).0.to_degrees();
+            if !input.in_vehicle { input.yaw = (input.yaw - yaw).rem_euclid(360.); }
+            input.in_vehicle = true;
+            input.vehicle_yaw = yaw;
+            *transform = seat.body_pose;
+            body.velocity = seat.velocity;
+            body.grounded = false;
+            body.stance = if seat.driver {"driving"} else {"sitting"}.into();
+            body.locomotion = default();
+            controller.translation = None;
+            if disabled.is_none() { commands.entity(entity).insert(ColliderDisabled); }
+        } else if input.in_vehicle {
+            input.in_vehicle = false;
+            input.yaw = (input.yaw + input.vehicle_yaw).rem_euclid(360.);
+            if let Some(position) = vector(&snapshot.0["player"]["position"]) { transform.translation = position; }
+            transform.rotation = Quat::IDENTITY;
+            body.velocity = Vec3::ZERO;
+            body.grounded = false;
+            body.stance = "stand".into();
+            controller.translation = None;
+            commands.entity(entity).remove::<ColliderDisabled>();
+        }
+    }
+}
+
 fn camera_follow(
     settings: Res<Settings>,
+    config: Res<crate::world::WorldConfig>,
     ui: Res<UiState>,
     input: Res<PlayerInput>,
     world: Res<WorldState>,
+    occupancy: Option<Res<crate::vehicle::Occupancy>>,
     body: Query<(&Transform, &PlayerBody), Without<PlayerCamera>>,
     mut camera: Query<(&mut Transform, &mut Projection), (With<PlayerCamera>, Without<PlayerBody>)>,
 ) {
@@ -570,16 +687,28 @@ fn camera_follow(
         if let Projection::Perspective(p) = &mut *projection {
             p.fov = settings.field_of_view.to_radians();
         }
+        if let Some((position, yaw, pitch)) = config.fixed_camera {
+            *transform = Transform::from_translation(position).with_rotation(
+                Quat::from_euler(EulerRot::YXZ, yaw.to_radians(), pitch.to_radians(), 0.),
+            );
+            continue;
+        }
         if ui.screen != Screen::MainMenu
             && !(ui.screen == Screen::Settings && ui.settings_return == Screen::MainMenu)
         {
-            transform.translation = body.translation + Vec3::Y * posture.eye_height;
-            transform.rotation = Quat::from_euler(
+            let look = Quat::from_euler(
                 EulerRot::YXZ,
                 input.yaw.to_radians(),
                 input.pitch.to_radians(),
                 0.0,
             );
+            if let Some(seat) = occupancy.as_ref().and_then(|o| o.seat) {
+                transform.translation = seat.eye_pose.translation;
+                transform.rotation = seat.eye_pose.rotation * look;
+            } else {
+                transform.translation = body.translation + Vec3::Y * posture.eye_height;
+                transform.rotation = look;
+            }
         } else {
             *transform = Transform::from_translation(world.focus + Vec3::new(26.0, 17.0, 30.0))
                 .looking_at(world.focus, Vec3::Y);
@@ -593,6 +722,13 @@ fn simulation_paused(ui: &UiState) -> bool {
             && matches!(ui.settings_return, Screen::MainMenu | Screen::Paused))
 }
 
+fn physics_configuration(ui: Res<UiState>, mut configs: Query<&mut RapierConfiguration>) {
+    for mut config in &mut configs {
+        config.gravity = Vec3::new(0., -9.8, 0.);
+        config.physics_pipeline_active = !simulation_paused(&ui);
+    }
+}
+
 fn has_headroom(
     context: &RapierContext<'_>,
     owner: Entity,
@@ -603,12 +739,12 @@ fn has_headroom(
     if wanted_height <= current_height {
         return true;
     }
-    // Probe the space swept by the head as the capsule grows. Keeping the probe
-    // above the old lower hemisphere avoids treating the supporting floor as a ceiling.
+    // Original HeadroomFor: omit the bottom 0.25m and slim to radius 0.30m,
+    // so the supporting floor is not mistaken for a ceiling.
     let probe = Collider::capsule(
-        Vec3::Y * (current_height - 0.3),
+        Vec3::Y * 0.55,
         Vec3::Y * (wanted_height - 0.3),
-        0.295,
+        0.3,
     );
     let mut blocked = false;
     context.intersect_shape(

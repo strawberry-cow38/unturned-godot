@@ -38,14 +38,14 @@ not make its features playable.
 | 0 | Source audit, branch, reproducible toolchains and original test baseline | In progress |
 | 1 | Engine boot, real mesh/material/map loading, capture harness | In progress |
 | 2 | Core bridge, fixed simulation, single local body, input/camera, server loopback | In progress |
-| 3 | Player stances, water/ladders, vitals, death/respawn, skills, appearance | Pending |
-| 4 | Inventory, equipment, loot, attachments, weapons/ballistics/melee/grenades, viewmodels | Pending |
-| 5 | World saves, UDP multiplayer, replicas, reconnection, server browser and moderation | Pending |
-| 6 | All vehicle types, suspension, seats/storage, tow/hitch, crane/turrets, damage | Pending |
-| 7 | Deployables, building, power, fluids, appliances, crops, resource interactions | Pending |
-| 8 | Terrain/foliage/roads, procedural worlds/buildings, streaming, weather/water/audio | Pending |
-| 9 | NPCs, quests, trading, animals and remaining current gameplay | Pending |
-| 10 | Full menus/settings/HUD/chat/map/console, editor and authoring tools | Pending |
+| 3 | Player stances, water/ladders, vitals, death/respawn, skills, appearance | In progress; remaining parity below |
+| 4 | Inventory, equipment, loot, attachments, weapons/ballistics/melee/grenades, viewmodels | In progress; remaining parity below |
+| 5 | World saves, UDP multiplayer, replicas, reconnection, server browser and moderation | In progress; remaining parity below |
+| 6 | All vehicle types, suspension, seats/storage, tow/hitch, crane/turrets, damage | In progress; remaining parity below |
+| 7 | Deployables, building, power, fluids, appliances, crops, resource interactions | In progress; remaining parity below |
+| 8 | Terrain/foliage/roads, procedural worlds/buildings, streaming, weather/water/audio | In progress; remaining parity below |
+| 9 | NPCs, quests, trading, animals and remaining current gameplay | In progress; remaining parity below |
+| 10 | Full menus/settings/HUD/chat/map/console, editor and authoring tools | In progress; remaining parity below |
 | 11 | Regression migration, gameplay journeys, reviewed visual captures, packaging | Pending |
 
 ## Parallel ownership
@@ -77,3 +77,16 @@ Retail map heightmaps and bundles referenced by the source are not all in Git.
 and player/loot spawns have been exercised from that install. Other maps and the
 remaining systems still require their own checks. See `VALIDATION.md` for
 baseline failures and the inspected capture evidence.
+
+## Current integration boundary
+
+Native player walk/stance collision, swimming, ladder attach/mantle, local
+server commands, inventory/crafting screens, console/chat, saves, map services,
+resource visibility/regrowth, road/procedural streaming and vehicle seats/physics
+are implemented to varying levels and tested at their boundaries. These are
+not completed parity stages. Native input and rendering still need the complete
+weapon/attachment/use-item flows, third-person appearance, lean/free-look, all
+vehicle specializations, dynamic deployables and utility networks, NPC/animal
+presentation, multiplayer connection/replica flows, the editor and authoring UI.
+Procedural infinite terrain and the separate finite island/building generators
+are distinct systems; porting the former does not complete the latter.

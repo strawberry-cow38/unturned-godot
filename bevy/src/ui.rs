@@ -451,6 +451,7 @@ fn spawn_hud(mut commands: Commands) {
 fn update_hud(
     state: Res<UiState>,
     model: Res<UiModel>,
+    catalog: Res<crate::entities::ItemCatalog>,
     mut roots: Query<&mut Visibility, With<HudRoot>>,
     mut labels: ParamSet<(
         Query<&mut Text, With<VitalsText>>,
@@ -480,8 +481,12 @@ fn update_hud(
         };
     }
     for mut t in &mut labels.p1() {
-        **t = if model.ammo >= 0 {
-            format!("{}  /  {}", model.held_item_id, model.ammo)
+        **t = if let Some(item) = catalog.items.get(&model.held_item_id) {
+            if item.item_type == "gun" && model.ammo >= 0 {
+                format!("{}  /  {}", item.name, model.ammo)
+            } else {
+                item.name.clone()
+            }
         } else {
             String::new()
         };
@@ -569,6 +574,11 @@ fn keyboard_ui(
             match &input.logical_key {
                 Key::Backspace => {
                     state.console_input.pop();
+                }
+                Key::Space => {
+                    if state.console_input.len() < 2048 {
+                        state.console_input.push(' ');
+                    }
                 }
                 Key::Enter => {
                     let command = std::mem::take(&mut state.console_input);
@@ -1281,6 +1291,45 @@ fn button_appearance(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn console_keeps_named_space_keys_in_real_command_messages() {
+        let mut app = App::new();
+        app.init_resource::<Settings>()
+            .insert_resource(UiState {
+                screen: Screen::Console,
+                ..default()
+            })
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<ButtonInput<MouseButton>>()
+            .add_message::<KeyboardInput>()
+            .add_message::<UiIntent>()
+            .add_systems(Update, keyboard_ui);
+        for logical_key in [
+            Key::Character("give".into()),
+            Key::Space,
+            Key::Character("4".into()),
+            Key::Enter,
+        ] {
+            app.world_mut().write_message(KeyboardInput {
+                key_code: KeyCode::Unidentified(bevy::input::keyboard::NativeKeyCode::Unidentified),
+                logical_key,
+                state: bevy::input::ButtonState::Pressed,
+                text: None,
+                repeat: false,
+                window: Entity::PLACEHOLDER,
+            });
+        }
+        app.update();
+        let messages: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Messages<UiIntent>>()
+            .drain()
+            .collect();
+        assert!(
+            matches!(&messages[..], [UiIntent::Action {name,args}] if name == "console" && args["text"] == "give 4")
+        );
+    }
 
     #[test]
     fn death_blocks_input_until_authoritative_respawn() {
