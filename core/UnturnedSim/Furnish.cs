@@ -1623,17 +1623,8 @@ namespace UnturnedSim
             bool TopUp(int want)
             {
                 int Prep() => _mine.Count(m => m.Name == "Counter_0");
-                var cs = FurnitureCatalog.Sizes["Counter_0"];
                 // the spots either side of a piece, on its wall line
-                IEnumerable<(float X, float Z, float Yaw)> Sides(FurniturePlan p)
-                {
-                    var ps = FurnitureCatalog.Sizes[p.Name];
-                    var (rx, rz) = RightOf(p.Yaw); var (fx, fz) = FrontOf(p.Yaw);
-                    float back = ps.Y0 - cs.Y0;   // the counter's back on the same wall line as the piece's
-                    foreach (float off in new[] { ps.X1 - cs.X0 + 0.04f, ps.X0 - cs.X1 - 0.04f })
-                        if (Backed("Counter_0", p.X + rx * off + fx * back, p.Z + rz * off + fz * back, p.Yaw))   // (not on past its wall's end)
-                            yield return (p.X + rx * off + fx * back, p.Z + rz * off + fz * back, p.Yaw);
-                }
+                IEnumerable<(float X, float Z, float Yaw)> Sides(FurniturePlan p) => Abutting(p, "Counter_0");
                 if (!Worktop(_mine))
                     foreach (var p in _mine.Where(m => m.Name is "Counter_1" or "Oven_0" && m.On == null).OrderBy(m => m.Name == "Counter_1" ? 0 : 1).ToList())
                         if (Sides(p).Any(c => Put("Counter_0", new[] { c }, null, 0f, TopUpRng) != null)) break;
@@ -1696,7 +1687,8 @@ namespace UnturnedSim
                 var sink = pair.First(m => m.Name == "Counter_1"); var fr = pair.First(m => m.Name == "Fridge_0");
                 var oven = Put("Oven_0", Against("Oven_0", Side.Back).Where(c => Triangle(fr, sink, ("Oven_0", c.X, c.Z, c.Yaw))), (x, z, _) => -MathF.Abs(D(x, z, sink) - 2.5f));
                 if (oven == null) { foreach (var m in pair) Remove(m); return false; }
-                Put("Disher_0", Against("Disher_0", Side.Back).Where(c => D(c.X, c.Z, sink) < 1.6f));
+                // (beside the sink, edge to edge, where it goes; else near it)
+                if (Put("Disher_0", Abutting(sink, "Disher_0")) == null) Put("Disher_0", Against("Disher_0", Side.Back).Where(c => D(c.X, c.Z, sink) < 1.6f));
                 return true;
             }
 
@@ -1743,18 +1735,17 @@ namespace UnturnedSim
                             // (a corner its walls do not back is refused once the L stands, as the L it would have been is
                             // given up: until then it draws as it always did -- in the corner pass, up front)
                             if (corner && (cab = CornerCabinet(a, b, CornerCabinetFor(new[] { "Counter_0" }), rng, backing: rng != null)) == null) continue;   // (the next corner)
-                            float off = CornerSide + 0.05f;
-                            // (the cabinet IS the corner's counter: leg A starts at the sink beside it)
+                            // (the cabinet IS the corner's counter: leg A starts at the sink beside it, against its side)
                             var legA = corner ? new List<string> { "Counter_1", "Disher_0" } : new List<string> { "Counter_0", "Counter_1", "Disher_0" };
                             if (!freeFridge) legA.Add("Fridge_0");
-                            var placed = Leg(a, (endA < 0 ? a.Lo : a.Hi) - (corner ? endA * off : 0f), -endA, legA, corner ? 2 : 3, rng);
+                            var placed = corner ? Leg(a, Edge(cab, a, -endA), -endA, legA, 2, rng, Abut) : Leg(a, endA < 0 ? a.Lo : a.Hi, -endA, legA, 3, rng);
                             if (placed == null) { if (cab != null) Remove(cab); continue; }
-                            var cs = FurnitureCatalog.Sizes["Counter_0"];
-                            float startB = (endB < 0 ? b.Lo : b.Hi) - endB * (corner ? off : cs.Y1 - cs.Y0 + 0.05f);
-                            // (with the cabinet the corner is counter already: leg B needs only its stove, a counter after it
-                            // where the wall goes on)
-                            var legB = corner ? Leg(b, startB, -endB, new List<string> { "Oven_0", "Counter_0" }, 1, rng)
-                                              : Leg(b, startB, -endB, new List<string> { "Counter_0", "Oven_0", "Counter_0" }, 2, rng);
+                            // (leg B against what stands in the corner: the cabinet's other side, or the front of leg A's
+                            // counter; with the cabinet the corner is counter already, so leg B needs only its stove, a counter
+                            // after it where the wall goes on)
+                            float startB = Edge(cab ?? placed[0], b, -endB);
+                            var legB = corner ? Leg(b, startB, -endB, new List<string> { "Oven_0", "Counter_0" }, 1, rng, Abut)
+                                              : Leg(b, startB, -endB, new List<string> { "Counter_0", "Oven_0", "Counter_0" }, 2, rng, Abut);
                             var sink = placed.FirstOrDefault(m => m.Name == "Counter_1"); var oven = legB?.FirstOrDefault(m => m.Name == "Oven_0");
                             var fridge = placed.FirstOrDefault(m => m.Name == "Fridge_0");
                             // a second leg that will not lay no longer costs the corner (strawberry, round 12b: "allow corner
@@ -1799,15 +1790,41 @@ namespace UnturnedSim
                 return null;
             }
 
+            /// <summary>How far apart the neighbouring pieces of a run stand (strawberry, round 12b: "fix gaps between
+            /// counters"): edge to edge, a hair apart so no floor cell's middle is under both. 4 cm stood between every pair
+            /// before, and 5 between a corner piece and the leg off its side.</summary>
+            const float Abut = 0.002f;
+
+            /// <summary>Where a piece's footprint ends along a wall run's axis, on the side `dir` (+1/-1) points to: where the
+            /// next piece of a leg laid off it starts.</summary>
+            static float Edge(FurniturePlan p, (int Nx, int Nz, float Face, float Lo, float Hi) run, int dir)
+            {
+                var fp = p.Footprint;
+                return run.Nx != 0 ? (dir > 0 ? fp.Z1 : fp.Z0) : (dir > 0 ? fp.X1 : fp.X0);
+            }
+
+            /// <summary>The spots for `name` either side of a piece, edge to edge with it (Abut) and its back on the piece's
+            /// wall line -- not on past its wall's end.</summary>
+            IEnumerable<(float X, float Z, float Yaw)> Abutting(FurniturePlan p, string name)
+            {
+                var ps = FurnitureCatalog.Sizes[p.Name]; var ns = FurnitureCatalog.Sizes[name];
+                var (rx, rz) = RightOf(p.Yaw); var (fx, fz) = FrontOf(p.Yaw);
+                float back = ps.Y0 - ns.Y0;
+                foreach (float off in new[] { ps.X1 - ns.X0 + Abut, ps.X0 - ns.X1 - Abut })
+                    if (Backed(name, p.X + rx * off + fx * back, p.Z + rz * off + fz * back, p.Yaw))
+                        yield return (p.X + rx * off + fx * back, p.Z + rz * off + fz * back, p.Yaw);
+            }
+
             /// <summary>Pieces side by side along a wall run from `start`, laid in direction `dir` (+1/-1 along the run's
-            /// axis); null (and nothing left standing) when fewer than `need` of them go in.</summary>
-            List<FurniturePlan> Leg((int Nx, int Nz, float Face, float Lo, float Hi) run, float start, int dir, List<string> names, int need, Rng rng = null)
+            /// axis), the first `lead` past it (off a wall, 3 cm; off a piece, Abut) and each after it edge to edge; null (and
+            /// nothing left standing) when fewer than `need` of them go in.</summary>
+            List<FurniturePlan> Leg((int Nx, int Nz, float Face, float Lo, float Hi) run, float start, int dir, List<string> names, int need, Rng rng = null, float lead = 0.03f)
             {
                 float yaw = YawFacing(run.Nx, run.Nz);
                 var (rx, rz) = RightOf(yaw);
                 int rsign = run.Nx != 0 ? rz : rx, n = run.Nx != 0 ? run.Nx : run.Nz;
                 var placed = new List<FurniturePlan>();
-                float c = start + dir * 0.03f;
+                float c = start + dir * lead;
                 foreach (var name in names)
                 {
                     var sz = FurnitureCatalog.Sizes[name];
@@ -1822,7 +1839,7 @@ namespace UnturnedSim
                     var m = Put(name, new[] { at }, null, 0f, rng);
                     if (m == null) break;
                     placed.Add(m);
-                    c = far + dir * 0.04f;
+                    c = far + dir * Abut;
                 }
                 if (placed.Count >= need) return placed;
                 foreach (var m in placed) Remove(m);
@@ -1897,7 +1914,8 @@ namespace UnturnedSim
             /// run that takes them all (and then counters at both ends while there is wall); null when none does.</summary>
             List<FurniturePlan> Row(List<(int Nx, int Nz, float Face, float Lo, float Hi)> runs, string[] names)
             {
-                float width = names.Sum(n => FurnitureCatalog.Sizes[n].X1 - FurnitureCatalog.Sizes[n].X0) + 0.04f * names.Length;
+                // (2 cm off the run's ends, the pieces edge to edge between)
+                float width = names.Sum(n => FurnitureCatalog.Sizes[n].X1 - FurnitureCatalog.Sizes[n].X0) + 0.04f + Abut * (names.Length - 1);
                 foreach (var run in runs.Where(r => r.Hi - r.Lo >= width))
                 {
                     float yaw = YawFacing(run.Nx, run.Nz);
@@ -1916,13 +1934,13 @@ namespace UnturnedSim
                         {
                             // all of it clear first, then each piece in
                             var spots = new List<(string N, (float, float, float) P)>();
-                            float c = c0;
+                            float c = c0, gap = 0.02f;
                             foreach (var n in order)
                             {
                                 var sz = FurnitureCatalog.Sizes[n];
-                                float along = c - dir * sz.X0 + dir * 0.02f;
+                                float along = c - dir * sz.X0 + dir * gap;
                                 spots.Add((n, At(along, n)));
-                                c = along + dir * (sz.X1 + 0.02f);
+                                c = along + dir * sz.X1; gap = Abut;
                             }
                             if (!spots.All(sp => Clear(FurnitureCatalog.Footprint(sp.N, sp.P.Item1, sp.P.Item2, sp.P.Item3), FurnitureCatalog.Sizes[sp.N].H)
                                                  && Backed(sp.N, sp.P.Item1, sp.P.Item2, sp.P.Item3))) continue;
@@ -1941,18 +1959,18 @@ namespace UnturnedSim
                             {
                                 var edge = end > 0 ? placed[^1] : placed[0];
                                 var es = FurnitureCatalog.Sizes[edge.Name];
-                                float cur = (run.Nx != 0 ? edge.Z : edge.X) + end * dir * ((end > 0 ? es.X1 : -es.X0) + 0.02f);
+                                float cur = (run.Nx != 0 ? edge.Z : edge.X) + end * dir * (end > 0 ? es.X1 : -es.X0);
                                 for (int k = 0; k < 2; k++)
                                 {
                                     var cs = FurnitureCatalog.Sizes["Counter_0"];
-                                    float along = cur + end * dir * ((end > 0 ? -cs.X0 : cs.X1) + 0.02f);
+                                    float along = cur + end * dir * ((end > 0 ? -cs.X0 : cs.X1) + Abut);
                                     var at = At(along, "Counter_0");
                                     // (not on past the wall's end: onto a partition 0.1 m thinner, it stood off its face)
                                     if (!Backed("Counter_0", at.Item1, at.Item2, at.Item3)) break;
                                     var m = Put("Counter_0", new[] { at });
                                     if (m == null) break;
                                     ends.Add(m);
-                                    cur = along + end * dir * ((end > 0 ? cs.X1 : -cs.X0) + 0.02f);
+                                    cur = along + end * dir * (end > 0 ? cs.X1 : -cs.X0);
                                 }
                             }
                             return placed.Concat(ends).ToList();

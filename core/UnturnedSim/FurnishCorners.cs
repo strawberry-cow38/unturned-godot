@@ -91,7 +91,7 @@ namespace UnturnedSim
                     if (cab == null) continue;
                     var names = new List<string> { "Counter_1", "Disher_0", "Oven_0" };
                     if (!freeFridge) names.AddRange(new[] { "Counter_0", "Fridge_0" });
-                    var placed = Leg(a, (endA < 0 ? a.Lo : a.Hi) - endA * (CornerSide + 0.05f), -endA, names, 3, CornerRng);
+                    var placed = Leg(a, Edge(cab, a, -endA), -endA, names, 3, CornerRng, Abut);
                     if (placed == null) { Remove(cab); continue; }
                     var sink = placed.First(m => m.Name == "Counter_1"); var oven = placed.First(m => m.Name == "Oven_0");
                     var fridge = placed.FirstOrDefault(m => m.Name == "Fridge_0");
@@ -118,19 +118,12 @@ namespace UnturnedSim
             /// the corner's draws: [stove, counter], or null and nothing left standing.</summary>
             List<FurniturePlan> StoveWithCounter(IEnumerable<(float X, float Z, float Yaw)> cands)
             {
-                var cs = FurnitureCatalog.Sizes["Counter_0"]; var os = FurnitureCatalog.Sizes["Oven_0"];
                 foreach (var c in cands)
                 {
                     var oven = Put("Oven_0", new[] { c }, null, 0f, CornerRng);
                     if (oven == null) continue;
-                    var (rx, rz) = RightOf(oven.Yaw); var (fx, fz) = FrontOf(oven.Yaw);
-                    float back = os.Y0 - cs.Y0;   // (the counter's back on the stove's wall line)
-                    foreach (float off in new[] { os.X1 - cs.X0 + 0.04f, os.X0 - cs.X1 - 0.04f })
-                    {
-                        float x = oven.X + rx * off + fx * back, z = oven.Z + rz * off + fz * back;
-                        if (Backed("Counter_0", x, z, oven.Yaw) && Put("Counter_0", new[] { (x, z, oven.Yaw) }, null, 0f, CornerRng) is { } counter)
-                            return new List<FurniturePlan> { oven, counter };
-                    }
+                    foreach (var at in Abutting(oven, "Counter_0"))
+                        if (Put("Counter_0", new[] { at }, null, 0f, CornerRng) is { } counter) return new List<FurniturePlan> { oven, counter };
                     Remove(oven);
                 }
                 return null;
