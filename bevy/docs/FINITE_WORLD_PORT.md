@@ -10,8 +10,10 @@ The source contains three separate systems:
 - Core `BuildingGen`: room, wall, roof, stair and furniture plans, materialized
   through `EditorBuildings`. It does not replace finite-island town prefabs.
 
-The finite path currently has no native generation or saved-editor-map consumer.
-The native retail loader and endless generator cannot be treated as substitutes.
+The finite path now has a bounded local native CLI entry for original generation
+and saved-editor-map reopening. Retail and endless generation remain separate.
+The authored generator data, terrain/road/prop/scatter rendering and collision
+are linked; editor UI, generated populations and BuildingGen runtime are pending.
 The original finite sequence is height/POIs, links and snapped gates, monument
 tiles and prefab placement, exact town flattening, routes/junctions, trails/camps,
 landmarks, followed by `ProcIslandSpawn` scene/road conformity, ground painting,
@@ -216,3 +218,68 @@ than baking river cuts into a coarse interpolation. Each cache file is written
 to a unique temporary file and atomically replaced, so concurrent openers never
 observe a truncated writer. Native descriptor/decoder/streaming/authority and
 rendered finite-world validation are still in progress.
+
+
+## Native local entry and authored-map reopening
+
+`--new-island DIR --island-name NAME --island-tiles 1x1 --seed 1234`
+now runs the original generator through `finiteMap`, persists the original
+editor files, and starts the normal native player/local authority session.
+`--island DIR` reopens those authored files. The default is the source 3×3 grid;
+this entry accepts 1–3 tiles per axis inside the existing shared coordinate
+range. Generation requires the original PEI Environment/Roads.dat through the
+retail install path. Ambiguous Infinite/finite arguments, remote sessions and
+the core-only headless entry fail explicitly. UDP descriptor negotiation and
+menu/editor entry remain separate work.
+
+The runtime consumes the extracted source 48-cell chunks with exact quad holes,
+river subdivisions, normals and UVs. Coarse metadata supports layer sampling
+and shared services; rendering, Rapier and the authority triangle upload use the
+exact chunk meshes. The analytic river sampler remains separate from coarse
+vertex interpolation. Streaming retires old chunk bodies, including completely
+dug chunks, while retaining the original spawn/focus. Source negative-Z splat
+rows and source prop bases/materials are preserved. Finite editor props use the
+original mesh collision and do not inherit retail holiday or ladder-box rules.
+Reopen invalidates only the finite directory's cached placement/scatter data.
+
+The source EditorObjects reader now supplies an atomic disposable props handoff,
+so malformed rows, first GUID aliases and zero-scale repair are resolved once
+by the original parser. Fresh generation retains its original unquantized live
+bases; reopening intentionally uses the source three-decimal saved transforms.
+Parsed maps are request-local and are not retained across sessions. Original
+RGB chart bytes are encoded into a PNG without a color transform; an existing
+PNG is kept unchanged for the source Rebind behavior.
+
+Verification on `native-finite-world-tests-v3`: four focused finite regressions
+and all 129 world tests pass (two opt-in render fixtures excluded). The focused
+cases compare source fractional river samples, reject malformed/truncated mesh
+transports, use actual Rapier rays through original chunks and authored holes,
+retire/refill/stream those bodies, reload edited props and preserve chart pixel
+bytes. Six CLI cases pass. Six managed file/mesh cases pass after the unused
+map-retention removal; source prop transport is checked against every live basis
+and the original malformed-row/scale behavior.
+
+Actual Vulkan `native-finite-main-v1` generated a 1×1 seed1234 map, entered the
+normal player session and uploaded 84,575 authority triangles. Opened
+`bevy-finite-play-initial.png`, `bevy-finite-play-walk.png` and
+`bevy-finite-reopened.png` show the original road, terrain, trees and ground
+cover, with 215 streamed props, 12,848 foliage instances and zero missing assets.
+The real W input moves accepted X299→301.4299 on the road, HP100 and correction
+version1 unchanged. Pause→Save world records the accepted owner position;
+Pause→Quit exits cleanly. A separate `--island` process reopens the map and exits
+cleanly after capture. All 244 authored files remain byte-identical, including
+the chart PNG. Root independently opened all three views and reviewed the
+source/streaming boundary. These are inspected scenes and source-data checks,
+not pixel goldens. The full gameplay save is separate from the authored map;
+the reopen capture starts a new owner rather than claiming a Load-world journey.
+
+Remaining finite scope includes source spawn/respawn pool selection (the current
+entry chooses a nearby authored spawn and grounds it), generated loot/fauna/
+zombie/vehicle population and resource/fixture authority registration, original
+editor interactions and custom sidecars, river-water/wet-cell ocean geometry,
+Information chart projection and menu entry, and remote descriptor negotiation.
+Existing generator town/route metadata is intentionally not reconstructed on
+saved-map reopen. Separate BuildingGen plans still need their original
+EditorBuildings geometry, openings, stairs, furniture, interaction and saves.
+The playable terrain entry is a verified intermediate milestone, not complete
+finite-world or building-generator parity.

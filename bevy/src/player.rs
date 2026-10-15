@@ -482,12 +482,18 @@ fn ui_intents(
                         config.procedural_path = None;
                     }
                     let map_changed = options.0.map != *map;
+                    let finite = config.finite_path.is_some() && config.map_name == *map;
+                    if !finite {
+                        config.finite_path = None;
+                        options.0.island = None;
+                        options.0.new_island = None;
+                    }
                     config.map_name = map.clone();
-                    config.map_root = options
+                    config.map_root = if finite { None } else { options
                         .0
                         .unturned
                         .as_ref()
-                        .map(|p| p.join("Maps").join(map));
+                        .map(|p| p.join("Maps").join(map)) };
                     options.0.map = map.clone();
                     options.0.play = true;
                     if map_changed {

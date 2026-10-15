@@ -78,6 +78,7 @@ public sealed partial class BridgeHost : IDisposable
             case "serverProbePoll": return _serverProbe.Poll(r.GetProperty("token").GetInt64());
             case "serverProbeCancel": return _serverProbe.Cancel(r.GetProperty("token").GetInt64());
             case "localProfile": return ReadLocalProfile(r);
+            case "finiteMap": return ReadFiniteMap(r);
             case "setLocalFace": return SetLocalFace(r);
             case "profileRules": return ReadProfileRules(r);
             case "profileAvatar": RequireSession(); return ReadProfileAvatar(r);

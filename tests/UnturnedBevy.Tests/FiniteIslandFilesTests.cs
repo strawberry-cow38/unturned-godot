@@ -46,6 +46,26 @@ public sealed class FiniteIslandFilesTests
                 Assert.That(reader.ReadUInt32(),Is.EqualTo(0x43464755u));Assert.That(reader.ReadInt32(),Is.EqualTo(1));
                 Assert.That(reader.ReadInt32(),Is.EqualTo(49*49));Assert.That(reader.ReadInt32(),Is.EqualTo((48*48-1)*6));
             }
+            generated.PrepareRuntime();
+            var live=JsonNode.Parse(File.ReadAllText(Path.Combine(destination,".native","props.json"))).AsArray();
+            Assert.That(live.Count,Is.EqualTo(generated.Objects.Placements.Count));
+            for(int i=0;i<live.Count;i++)
+            {
+                var p=generated.Objects.Placements[i];
+                Assert.That(live[i]["sourceIndex"].GetValue<int>(),Is.EqualTo(i));
+                Assert.That(live[i]["position"][0].GetValue<float>(),Is.EqualTo(p.Position.X));
+                Assert.That(live[i]["basis"][2][1].GetValue<float>(),Is.EqualTo(p.Basis.Z.Y),"keep original full basis before saved-file quantization");
+            }
+            File.WriteAllText(generated.PropsPath,"ignored malformed row\ncb0d8bf87fca47e3b73f634959a9f523 1 2 3 27 55 -12 0 invalid -2\n");
+            var repaired=FiniteIslandFiles.Open(content,destination);repaired.PrepareRuntime();
+            var rows=JsonNode.Parse(File.ReadAllText(Path.Combine(destination,".native","props.json"))).AsArray();
+            Assert.That(rows.Count,Is.EqualTo(1));
+            Assert.That(rows[0]["position"][2].GetValue<float>(),Is.EqualTo(-3));
+            var basis=repaired.Objects.Placements[0].Basis;
+            Assert.That(basis.X.Length(),Is.EqualTo(1).Within(1e-6));
+            Assert.That(basis.Y.Length(),Is.EqualTo(1).Within(1e-6));
+            Assert.That(basis.Z.Length(),Is.EqualTo(2).Within(1e-6));
+            Assert.That(rows[0]["name"].GetValue<string>(),Is.EqualTo("Crate_0"));
             Assert.Throws<IOException>(()=>FiniteIslandFiles.Generate(content,temp,destination,"Island 1234",1234,1,1));
             Assert.That(Directory.GetDirectories(temp,".island-*"),Is.Empty);
             var descriptor=JsonNode.Parse(File.ReadAllText(Path.Combine(destination,"finite.json")));

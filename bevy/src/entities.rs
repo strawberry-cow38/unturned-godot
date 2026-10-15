@@ -375,12 +375,18 @@ fn register_world_geometry(
             "worldGeometry",
             json!({"replace":true,"finalize":false,"meshes":[],"terrainLayers":crate::world::layers::authority_grids(&geometry.terrain)}),
         )?;
-        for patch in &geometry.terrain {
-            for data in patch.mesh_by_layer(geometry.loaded_center, geometry.loaded_radius) {
-                if data.positions.is_empty() {
-                    continue;
-                }
+        if geometry.finite.is_some() {
+            for data in &geometry.exact_terrain {
                 bridge.request("worldGeometry",json!({"replace":false,"finalize":false,"meshes":[{"vertices":data.positions,"terrain":true}]}))?;
+            }
+        } else {
+            for patch in &geometry.terrain {
+                for data in patch.mesh_by_layer(geometry.loaded_center, geometry.loaded_radius) {
+                    if data.positions.is_empty() {
+                        continue;
+                    }
+                    bridge.request("worldGeometry",json!({"replace":false,"finalize":false,"meshes":[{"vertices":data.positions,"terrain":true}]}))?;
+                }
             }
         }
         for chunk in geometry.objects.chunks(32) {

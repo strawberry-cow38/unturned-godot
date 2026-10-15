@@ -2,6 +2,7 @@
 use crate::content::{ContentCache, ContentError, ObjData, load_guid_map};
 pub(crate) mod beds;
 mod demo_door;
+pub(crate) mod finite;
 mod foliage;
 mod holiday;
 pub mod interactables;
@@ -44,6 +45,8 @@ pub struct WorldConfig {
     pub fixed_camera: Option<(DVec3, f32, f32)>,
     /// JSON exported from the original engine-independent InfiniteTerrain generator.
     pub procedural_path: Option<PathBuf>,
+    /// Original editor-map descriptor and source-derived native chunk cache.
+    pub finite_path: Option<PathBuf>,
     pub foliage: bool,
 }
 impl Default for WorldConfig {
@@ -60,6 +63,7 @@ impl Default for WorldConfig {
                 .ok()
                 .and_then(|s| parse_capture_camera(&s)),
             procedural_path: None,
+            finite_path: None,
             foliage: true,
         }
     }
@@ -180,7 +184,8 @@ struct WorldSourceCache {
 pub struct WorldObject {
     pub guid: String,
     pub asset_name: String,
-    /// Stable row in the source placement file, independent of streaming region.
+    /// Stable source placement identity, independent of streaming region: retail
+    /// file row, or original EditorObjects placed-list index for finite maps.
     pub source_index: usize,
 }
 #[derive(Component)]
@@ -465,10 +470,16 @@ pub struct WorldGeometry {
     pub loaded_radius: f32,
     stream_anchor: Vec3,
     pub terrain: Vec<TerrainPatch>,
+    pub finite: Option<Arc<finite::FiniteWorld>>,
+    /// Source finite meshes; coarse metadata patches must not replace river/hole collision.
+    pub exact_terrain: Vec<Arc<ObjData>>,
     pub objects: Vec<ObjectCollider>,
 }
 impl WorldGeometry {
     pub fn terrain_height(&self, x: f32, z: f32) -> Option<f32> {
+        if let Some(finite) = &self.finite {
+            return Some(finite.surface.sample(x, z));
+        }
         self.terrain.iter().find_map(|t| t.sample(x, z))
     }
     /// Exact mesh segment cast; broad phase rejects bounds before triangle work.
@@ -618,8 +629,17 @@ fn build_world(
     let old_description = state.description.clone();
     if !streaming {
         geometry.terrain.clear();
+        geometry.finite = None;
+        // Editor maps are authored files. Reopening must see edited placements
+        // and repainted/rebaked instances instead of a previous session's cache.
+        if let Some(root) = &config.finite_path {
+            sources.placements.retain(|path, _| !path.starts_with(root));
+            sources.resources.retain(|path, _| !path.starts_with(root));
+            sources.foliage.retain(|path, _| !path.starts_with(root));
+        }
     }
     geometry.objects.clear();
+    geometry.exact_terrain.clear();
     *state = WorldState::default();
     if streaming {
         state.description = old_description;
@@ -635,7 +655,23 @@ fn build_world(
         _ => "terrain",
     };
     let mut proc_regions = Vec::new();
-    if let Some(path) = &config.procedural_path {
+    if let Some(path) = &config.finite_path {
+        if !streaming {
+            match finite::FiniteWorld::load(path) {
+                Ok(finite) => {
+                    geometry.terrain = finite.patches();
+                    state.description = format!("{} — original finite island", finite.descriptor.name);
+                    geometry.finite = Some(Arc::new(finite));
+                }
+                Err(error) => {
+                    state.description = "Finite editor map failed to load".into();
+                    state.missing_assets.push(error.to_string());
+                    state.ready = true;
+                    return;
+                }
+            }
+        }
+    } else if let Some(path) = &config.procedural_path {
         let center = if let Some((position, _, _)) = config.fixed_camera {
             origin.local(position)
         } else if streaming {
@@ -680,6 +716,9 @@ fn build_world(
     } else {
         None
     };
+    if let Some(finite) = &geometry.finite {
+        state.sea_level = finite.descriptor.water.then_some(finite.descriptor.sea_level);
+    }
     if let Some(root) = &config.map_root {
         if let Ok(bytes) = fs::read(root.join("Environment/Lighting.dat")) {
             if bytes.len() >= 22 {
@@ -729,16 +768,17 @@ fn build_world(
     let placements = if config.procedural_path.is_some() {
         Arc::new(Vec::new())
     } else {
-        let path = config
+        let path = geometry.finite.as_ref().map(|f| f.props_path()).unwrap_or_else(||config
             .content_root
-            .join(format!("objects/placements{suffix}.txt"));
+            .join(format!("objects/placements{suffix}.txt")));
         if let Some(p) = sources.placements.get(&path) {
             p.clone()
         } else {
-            match fs::read_to_string(&path)
-                .map_err(ContentError::from)
-                .and_then(|t| parse_placements(&t, &names))
-            {
+            let loaded = if let Some(finite)=&geometry.finite {finite.placements()} else {
+                fs::read_to_string(&path).map_err(ContentError::from)
+                    .and_then(|t|parse_placements(&t,&names))
+            };
+            match loaded {
                 Ok(p) => {
                     let p = Arc::new(p);
                     sources.placements.insert(path, p.clone());
@@ -803,6 +843,9 @@ fn build_world(
     };
     let player_spawn = if streaming {
         Some((old_spawn, old_yaw))
+    } else if let Some(finite) = &geometry.finite {
+        finite.players().ok().and_then(|points| points.into_iter().min_by(|(a,_),(b,_)|
+            a.xz().distance_squared(center.xz()).total_cmp(&b.xz().distance_squared(center.xz()))))
     } else if config.spawn_center.is_none() && config.procedural_path.is_none() {
         config
             .map_root
@@ -863,11 +906,29 @@ fn build_world(
             config.map_name
         );
     }
-    for patch in &geometry.terrain {
-        let mut data = ObjData::default();
-        for layer in patch.mesh_by_layer(center, render_radius + 48.) {
-            data.append_transformed(&layer, Transform::IDENTITY);
+    let mut terrain_meshes = Vec::new();
+    if let Some(finite) = geometry.finite.clone() {
+        for (x,z) in finite.chunks_near(center, render_radius + 48.) {
+            match finite.chunk(x,z) {
+                Ok(data) => {
+                    if data.positions.is_empty() {continue;}
+                    let data=Arc::new(data);
+                    geometry.exact_terrain.push(data.clone());
+                    terrain_meshes.push((data,finite.splat.clone()));
+                }
+                Err(error) => state.missing_assets.push(error.to_string()),
+            }
         }
+    } else {
+        for patch in &geometry.terrain {
+            let mut data = ObjData::default();
+            for layer in patch.mesh_by_layer(center, render_radius + 48.) {
+                data.append_transformed(&layer, Transform::IDENTITY);
+            }
+            terrain_meshes.push((Arc::new(data),terrain::SplatField::for_patch(patch)));
+        }
+    }
+    for (data,splat) in terrain_meshes {
         if data.positions.is_empty() {
             continue;
         }
@@ -884,7 +945,7 @@ fn build_world(
             Mesh3d(meshes.add(data.mesh())),
             MeshMaterial3d(fallback),
             terrain::TerrainSurface {
-                splat: terrain::SplatField::for_patch(patch),
+                splat,
                 root: config.content_root.clone(),
                 directories: std::array::from_fn(|layer| {
                     if config.procedural_path.is_some() && matches!(layer, 0 | 3 | 6 | 7) {
@@ -906,11 +967,13 @@ fn build_world(
     }
     let within = |p: Vec3| Vec2::new(p.x - center.x, p.z - center.z).length() <= render_radius;
     let holidays = holiday::restrictions(&config.content_root);
+    let editor_prop = geometry.finite.is_some();
     for p in placements
         .iter()
         .filter(|p| {
             within(p.transform.translation)
-                && holiday::prop_allowed(&holidays, &p.guid, &config.holiday)
+                && (editor_prop
+                    || holiday::prop_allowed(&holidays, &p.guid, &config.holiday))
         })
     {
         let path = config.content_root.join(format!("objects/{}.obj", p.name));
@@ -956,15 +1019,18 @@ fn build_world(
             cache.materials.insert(prop_key, handle.clone());
             handle
         };
-        let solid = !is_walk_through(&p.name);
-        let collision_data = if p.name.starts_with("Ladder_") {
+        // EditorObjects.Place always uses the original mesh for its pickable,
+        // walkable body. Retail's foliage exclusions/ladder box do not apply.
+        let solid = editor_prop || !is_walk_through(&p.name);
+        let ladder_box = !editor_prop && p.name.starts_with("Ladder_");
+        let collision_data = if ladder_box {
             Arc::new(ladder_box_geometry(&data))
         } else {
             data.clone()
         };
         let shape = if !solid {
             None
-        } else if p.name.starts_with("Ladder_") {
+        } else if ladder_box {
             let half = (data.max - data.min) * 0.5;
             Some(Collider::cuboid(half.x, half.y, half.z))
         } else {
@@ -995,12 +1061,17 @@ fn build_world(
         state.object_count += 1;
     }
     if config.procedural_path.is_none() {
-        if let Some(root) = &config.map_root {
+        if config.map_root.is_some() || geometry.finite.is_some() {
             let load_roads = || -> Result<_, ContentError> {
-                let env = root.join("Environment");
+                let (env,paths) = if let Some(finite) = &geometry.finite {
+                    (finite.root.join("roads"),finite.roads_path())
+                } else {
+                    let env=config.map_root.as_ref().unwrap().join("Environment");
+                    (env.clone(),env.join("Paths.dat"))
+                };
                 Ok((
                     roads::decode_materials(&fs::read(env.join("Roads.dat"))?)?,
-                    roads::decode_paths(&fs::read(env.join("Paths.dat"))?)?,
+                    if paths.exists() {roads::decode_paths(&fs::read(paths)?)?} else {Vec::new()},
                 ))
             };
             match load_roads() {
@@ -1046,13 +1117,16 @@ fn build_world(
         }
     }
     if config.foliage && config.procedural_path.is_none() {
-        let resource_dir = match suffix {
+        let resource_art = match suffix {
             "_Washington" => "resources_washington",
             "_Yukon" => "resources_yukon",
             _ => "resources",
         };
+        let finite_data=geometry.finite.clone();
+        let source_root=finite_data.as_ref().map_or(&config.content_root,|f|&f.root);
+        let resource_dir=finite_data.as_ref().and_then(|f|f.descriptor.resources.as_deref()).unwrap_or(resource_art);
         if let Ok(manifest) =
-            fs::read_to_string(config.content_root.join(resource_dir).join("resources.txt"))
+            fs::read_to_string(source_root.join(resource_dir).join("resources.txt"))
         {
             for line in manifest.lines() {
                 let f: Vec<_> = line.split_whitespace().collect();
@@ -1064,8 +1138,7 @@ fn build_world(
                 let Ok(parts) = f[1].parse::<usize>() else {
                     continue;
                 };
-                let path = config
-                    .content_root
+                let path = source_root
                     .join(resource_dir)
                     .join(format!("{}.bin", f[0]));
                 let transforms = if let Some(t) = sources.resources.get(&path) {
@@ -1109,8 +1182,7 @@ fn build_world(
                     }
                     for part in 0..parts {
                         let name = format!("{}_{}", f[0], part);
-                        let path = config
-                            .content_root
+                        let path = source_root
                             .join(resource_dir)
                             .join(format!("{name}.obj"));
                         if !path.is_file() {
@@ -1119,7 +1191,7 @@ fn build_world(
                         let Ok((mesh, _)) = cache.load_mesh(&path, &mut meshes) else {
                             continue;
                         };
-                        let texture = format!("{resource_dir}/{name}_tex.png");
+                        let texture = format!("{resource_art}/{name}_tex.png");
                         let tex = config
                             .content_root
                             .join(&texture)
@@ -1146,12 +1218,15 @@ fn build_world(
         }
     }
     if config.foliage && config.procedural_path.is_none() {
-        let foliage_dir = match suffix {
+        let foliage_art = match suffix {
             "_Washington" => "foliage_washington",
             "_Yukon" => "foliage_yukon",
             _ => "foliage",
         };
-        if let Ok(entries) = fs::read_dir(config.content_root.join(foliage_dir)) {
+        let finite_data=geometry.finite.clone();
+        let source_root=finite_data.as_ref().map_or(&config.content_root,|f|&f.root);
+        let foliage_dir=finite_data.as_ref().and_then(|f|f.descriptor.foliage.as_deref()).unwrap_or(foliage_art);
+        if let Ok(entries) = fs::read_dir(source_root.join(foliage_dir)) {
             let mut files: Vec<_> = entries
                 .filter_map(Result::ok)
                 .map(|e| e.path())
@@ -1204,7 +1279,7 @@ fn build_world(
                 if merged.data.positions.is_empty() {
                     continue;
                 }
-                let texture = format!("{foliage_dir}/{name}_tex.png");
+                let texture = format!("{foliage_art}/{name}_tex.png");
                 let tex = config
                     .content_root
                     .join(&texture)

@@ -7,6 +7,10 @@ pub struct Options {
     pub unturned: Option<PathBuf>,
     pub map: String,
     pub seed: i32,
+    pub island: Option<PathBuf>,
+    pub new_island: Option<PathBuf>,
+    pub island_name: String,
+    pub island_tiles: [usize; 2],
     pub network: crate::network::Target,
     pub player_name: String,
     pub network_ready: bool,
@@ -30,6 +34,10 @@ impl Default for Options {
             unturned: detect_retail_install(),
             map: "PEI".into(),
             seed: 1337,
+            island: None,
+            new_island: None,
+            island_name: "Island".into(),
+            island_tiles: [3, 3],
             network: crate::network::Target::Local,
             player_name: std::env::var("UG_USERNAME").unwrap_or_else(|_| "Survivor".into()),
             network_ready: false,
@@ -75,6 +83,16 @@ impl Options {
                 "--stay" => options.exit_after_capture = false,
                 "--map" => options.map = value()?,
                 "--seed" => options.seed = value()?.parse()?,
+                "--island" => options.island = Some(value()?.into()),
+                "--new-island" => options.new_island = Some(value()?.into()),
+                "--island-name" => options.island_name = value()?,
+                "--island-tiles" => {
+                    let text = value()?;
+                    let (x, z) = text
+                        .split_once('x')
+                        .ok_or_else(|| anyhow::anyhow!("--island-tiles requires XxZ"))?;
+                    options.island_tiles = [x.parse()?, z.parse()?];
+                }
                 "--listen" => listen = Some(value()?.parse::<u16>()?),
                 "--connect" => connect = Some(value()?),
                 "--port" => port = value()?.parse()?,
@@ -117,6 +135,28 @@ impl Options {
         }
         if options.network.networked() && options.map.eq_ignore_ascii_case("Procedural") {
             bail!("UDP sessions require a retail map inside the original shared coordinate range");
+        }
+        if options.island.is_some() && options.new_island.is_some() {
+            bail!("--island and --new-island are mutually exclusive");
+        }
+        if options.island_tiles.iter().any(|n| !(1..=3).contains(n)) {
+            bail!(
+                "Native finite islands currently support 1..3 tiles per axis inside the shared wire frame"
+            );
+        }
+        if options.island.is_some() || options.new_island.is_some() {
+            if options.map.eq_ignore_ascii_case("Procedural") {
+                bail!("Finite islands and the endless Procedural map are distinct entries");
+            }
+            if options.network.networked() {
+                bail!(
+                    "Finite UDP descriptor negotiation is not linked yet; use the local source map entry"
+                );
+            }
+            if options.headless {
+                bail!("Finite maps require the native world; --headless checks the core only");
+            }
+            options.play = true;
         }
         if options.headless && options.network.networked() {
             bail!(
@@ -175,6 +215,9 @@ Usage: bevy/run.sh [options]\n\
   --unturned PATH          Retail install root (also UG_UNTURNED_DIR)\n\
   --content PATH           Bundled game/content directory\n\
   --seed 1337              Procedural world seed\n\
+  --new-island DIR         Generate original finite editor map in a new directory\n\
+  --island DIR             Reopen that map without regenerating authored files\n\
+  --island-name NAME --island-tiles 3x3  Finite generation settings\n\
   --vehicle jeep          Spawn an original vehicle beside the player for testing\n\
   --demo-furniture        Original fallback bed at source map anchor (diagnostic)\n\
   --headless --ticks 250   Exercise the core bridge without a renderer\n\
@@ -188,6 +231,34 @@ Usage: bevy/run.sh [options]\n\
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn finite_entry_preserves_authored_directory_and_rejects_ambiguous_worlds() {
+        let options = Options::parse(
+            [
+                "--new-island=/tmp/My Island",
+                "--island-name=My Island",
+                "--island-tiles=2x3",
+                "--seed=17",
+            ]
+            .map(str::to_owned),
+        )
+        .unwrap();
+        assert_eq!(options.new_island, Some(PathBuf::from("/tmp/My Island")));
+        assert_eq!(options.island_name, "My Island");
+        assert_eq!(options.island_tiles, [2, 3]);
+        assert_eq!(options.seed, 17);
+        assert!(options.play);
+        for args in [
+            vec!["--island=a", "--new-island=b"],
+            vec!["--island=a", "--map=Procedural"],
+            vec!["--island=a", "--connect=localhost"],
+            vec!["--island=a", "--headless"],
+            vec!["--new-island=a", "--island-tiles=0x3"],
+            vec!["--new-island=a", "--island-tiles=4x3"],
+        ] {
+            assert!(Options::parse(args.into_iter().map(str::to_owned)).is_err());
+        }
+    }
     #[test]
     fn render_fixed_fps_is_explicit_and_rejects_zero() {
         assert_eq!(

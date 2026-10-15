@@ -2663,3 +2663,23 @@ BUS_DOOR_PORT.md for the exact evidence and test-setup limitations.
 - Shared `ui::input_order` records event-time per-window keys, pointer positions and mouse buttons once for independent search/Inventory consumers. A coalesced Ctrl/press/move/release/Ctrl-up regression proves source copy behavior even with final Ctrl released; focus loss and popup ownership cancel live text-drag capture without deletion. A popup-open/release/dismiss/move regression prevents stale captures from reviving. An original-target guard fixes duplicate bubbled Undo, with the three actual focused-keyboard dispatcher regressions still passing.
 - Verification: 12 focused search tests and two ordered-input tests pass; combined UI 146 pass/16 ignored. Actual normal and primary X11 clipboard tests pass. The seven-stage real X11/Vulkan pointer journey preserves one field identity and updates Browse through popup Copy, primary paste, double click, selected-text move and Undo; all four `bevy-search-pointer-*.png` images were opened and independently reviewed. This is an isolated original field fixture, not a new playable-world transaction claim.
 - Text-writing-direction/control-character submenus, external or cross-field drops, and Windows click recognition remain separate pending scope. No claim of unified ordering for arbitrary keyboard edits interleaved with pointer operations in one OS batch.
+
+
+### 2026-10-15 — Native original finite-island terrain entry
+
+The local CLI now generates and reopens original finite editor maps through the
+engine-free source adapter. Native streaming uses original chunk geometry,
+quad holes/river subdivision, analytic heights, road meshes and source prop/
+scatter records; Rapier and authority receive those same exact terrain triangles.
+Existing PEI and endless paths remain distinct. Reopen preserves authored files,
+invalidates finite caches and retains the original chart PNG. The unused parsed
+map cache was removed after peer review.
+
+Four finite regressions, all129 world tests (two opt-in fixtures excluded), six
+CLI cases and six managed mesh/file cases pass. Actual Vulkan generation, real
+walking, Save world, clean Quit and a second-process map reopen were captured and
+opened; root independently reviewed the scenes and source. All244 authored files
+are byte-identical on reopen, zero missing art, 215 streamed props/12,848 foliage
+instances. Source populations/fixture registration, spawn-pool fidelity, editor
+UI/custom sidecars, chart UI and separate BuildingGen materialization remain
+open; this does not mark full finite parity complete. See FINITE_WORLD_PORT.md.

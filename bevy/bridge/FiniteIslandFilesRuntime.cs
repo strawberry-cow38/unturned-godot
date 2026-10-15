@@ -23,6 +23,7 @@ public sealed partial class FiniteIslandFiles
             });
         }
         WriteCache(Path.Combine(cache,"surface.bin"),Surface.WriteNativeSurface);
+        WriteCache(Path.Combine(cache,"props.json"),w=>w.Write(Objects.NativePlacements()));
         var spawns=new FiniteIslandPlayerSpawns();spawns.Load(PlayersPath);
         var points=spawns.Points.Select(p=>new { position=new[]{p.Pos.X,p.Pos.Y,p.Pos.Z},yaw=p.Yaw,alt=p.IsAlt,
             type=p.Type,ground=Surface.SampleHeight(p.Pos.X,p.Pos.Z) }).ToArray();
@@ -38,6 +39,19 @@ public sealed partial class FiniteIslandFiles
         }
         finally { if(File.Exists(temporary)) File.Delete(temporary); }
     }
+}
+
+public sealed partial class FiniteIslandObjects
+{
+    // The original reader owns zero-scale repair, ignored rows and first GUID
+    // aliases. Fresh generation also retains its full, unquantized live basis.
+    // Native must consume these records instead of reinterpreting retail text.
+    internal byte[] NativePlacements() => System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(
+        placements.Select((p,index)=>new { sourceIndex=index,name=p.Name,
+            guid=nameToGuid.GetValueOrDefault(p.Name,""),material=p.Material??p.Name,
+            position=new[]{p.Position.X,p.Position.Y,p.Position.Z},
+            basis=new[]{new[]{p.Basis.X.X,p.Basis.X.Y,p.Basis.X.Z},
+                new[]{p.Basis.Y.X,p.Basis.Y.Y,p.Basis.Y.Z},new[]{p.Basis.Z.X,p.Basis.Z.Y,p.Basis.Z.Z}} }).ToArray());
 }
 
 public sealed partial class FiniteIslandSurface
