@@ -52,6 +52,19 @@ fn approx(a: f32, b: f32) {
 }
 
 #[test]
+fn zero_delta_at_the_start_keeps_opening_and_closing_alive() {
+    let mut clock = Clock::default();
+    clock.step(true, 0.);
+    assert_eq!(clock.direction, 1, "Bevy's first frame has zero delta");
+    clock.step(true, SECONDS);
+    assert_eq!(clock.alpha(), 1.);
+    clock.step(false, 0.);
+    assert_eq!(clock.direction, -1);
+    clock.step(false, SECONDS);
+    assert_eq!(clock.alpha(), 0.);
+}
+
+#[test]
 fn original_85ms_easing_and_reversal_keep_the_existing_clock() {
     let mut clock = Clock::default();
     clock.step(true, SECONDS * 0.5);

@@ -2361,3 +2361,28 @@ with the shared source graph. The broad 127 JSONL run passes 124; only the three
 separately tracked world-round slug/condition/falloff regressions fail on this
 earlier immutable candidate. Native graph UI remains the next checkpoint. See
 `bevy/docs/SKILLS_PORT.md`.
+
+### Original Skills graph dashboard and accepted Learn presentation
+
+The native Skills tab now presents the original main/advanced graph, all
+prerequisite edges, detail descriptions and accepted Learn verdicts. J and the
+shared original dashboard tabs reach it; learning sends an intent and waits for
+the accepted XP/learned snapshot. Selection and manual pan survive ordinary
+replica refreshes, drag hit tests follow the moving Swoop panel, and resize,
+death and session teardown retain the existing dashboard input/layer rules.
+The original Open Sans font now has a tiny licensed check/cross fallback matching
+the actual Godot TextServer choice. Rendering also exposed a shared zero-delta
+first-frame Swoop stall; the source destination-only endpoint guard fixes it with
+a regression.
+
+Five Skills and seven Swoop tests pass on the final executable. The earlier full
+UI run passes 88 with 9 renderer cases ignored, excluding the separately diagnosed
+mouse picker tests. The final Vulkan journey passes and all eight images were
+opened: 500 XP becomes 480, 440, 380 after accepted nodes; a missing Sharpening
+prerequisite blocks Improvised Armour; legal pan, 1024x768 resize, visible check/
+cross symbols and close-to-zero-roots are verified. The original Godot Skills
+harness was also rendered and opened. Independent source/code/image review
+passed. This is an integrated-authority widget journey plus the separate UDP/
+save/rejoin authority coverage; a complete playable-map Skills journey remains
+uncaptured. No gameplay grant effects are invented. See
+`bevy/docs/SKILLS_PORT.md`.

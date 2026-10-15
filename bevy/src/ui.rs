@@ -22,6 +22,8 @@ pub(crate) mod layers;
 mod low_health;
 mod map;
 mod network_menu;
+mod navbar;
+mod skills;
 mod swoop;
 pub(crate) use map::MapDiagnostics;
 pub(crate) mod npc;
@@ -241,6 +243,7 @@ pub enum Screen {
     Dead,
     Inventory,
     Crafting,
+    Skills,
     Information,
     Dialogue,
     Trade,
@@ -412,6 +415,7 @@ impl Plugin for GameUiPlugin {
                 vehicle_controls::VehicleControlsPlugin,
                 storage::StoragePlugin,
             ))
+            .add_plugins((navbar::NavbarPlugin, skills::SkillsPlugin))
             .add_systems(Startup, spawn_ui_camera)
             .add_systems(
                 PreUpdate,
@@ -749,7 +753,7 @@ fn keyboard_ui(
     { return; }
     if matches!(
         state.screen,
-        Screen::Playing | Screen::Inventory | Screen::Crafting | Screen::Information
+        Screen::Playing | Screen::Inventory | Screen::Crafting | Screen::Skills | Screen::Information
     ) {
         let dashboard = if settings.just_pressed(GameAction::Inventory, &keys, &mouse)
             || keys.just_pressed(KeyCode::Tab)
@@ -757,6 +761,8 @@ fn keyboard_ui(
             Some(Screen::Inventory)
         } else if settings.just_pressed(GameAction::Craft, &keys, &mouse) {
             Some(Screen::Crafting)
+        } else if settings.just_pressed(GameAction::Skills, &keys, &mouse) {
+            Some(Screen::Skills)
         } else if settings.just_pressed(GameAction::Map, &keys, &mouse)
             && world
                 .as_ref()
@@ -1014,6 +1020,7 @@ fn rebuild_overlay(
             | Screen::Trade
             | Screen::Quests
             | Screen::Information
+            | Screen::Skills
     ) {
         return;
     }
@@ -1089,7 +1096,8 @@ fn rebuild_overlay(
                 | Screen::Dialogue
                 | Screen::Trade
                 | Screen::Quests
-                | Screen::Information => {}
+                | Screen::Information
+                | Screen::Skills => {}
             });
         });
 }
@@ -1196,6 +1204,7 @@ fn inventory_panel(
     panel.spawn(row()).with_children(|p| {
         p.spawn(text("INVENTORY", 26.0, TEXT));
         button(p, "Crafting", UiButton::Open(Screen::Crafting));
+        button(p, "Skills", UiButton::Open(Screen::Skills));
         if map::available(&model.map_name) {
             button(p, "Information", UiButton::Open(Screen::Information));
         }
@@ -1376,6 +1385,7 @@ fn crafting_panel(panel: &mut ChildSpawnerCommands, state: &UiState, model: &UiM
     panel.spawn(row()).with_children(|p| {
         p.spawn(text("CRAFTING", 26.0, TEXT));
         button(p, "Inventory", UiButton::Open(Screen::Inventory));
+        button(p, "Skills", UiButton::Open(Screen::Skills));
         if map::available(&model.map_name) {
             button(p, "Information", UiButton::Open(Screen::Information));
         }

@@ -5,7 +5,7 @@ use bevy::{picking::Pickable, prelude::*, ui_widgets::Button};
 
 const SECONDS: f32 = 0.085;
 const RISE: f32 = 54.;
-const SCREENS: [Screen; 3] = [Screen::Inventory, Screen::Crafting, Screen::Information];
+const SCREENS: [Screen; 4] = [Screen::Inventory, Screen::Crafting, Screen::Information, Screen::Skills];
 
 #[derive(Component, Clone, Copy)]
 pub(super) struct Swoop(pub Screen);
@@ -28,7 +28,7 @@ impl Clock {
         }
         if self.direction != 0 {
             self.t = (self.t + self.direction as f32 * delta / SECONDS).clamp(0., 1.);
-            if self.t == 0. || self.t == 1. {
+            if (self.direction < 0 && self.t == 0.) || (self.direction > 0 && self.t == 1.) {
                 self.direction = 0;
             }
         }
@@ -43,7 +43,7 @@ impl Clock {
     }
 }
 #[derive(Resource, Default)]
-struct Clocks([Clock; 3], bool);
+struct Clocks([Clock; 4], bool);
 
 pub(super) struct SwoopPlugin;
 impl Plugin for SwoopPlugin {

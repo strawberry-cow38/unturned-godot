@@ -103,71 +103,6 @@ fn pip(p: &mut ChildSpawnerCommands, norm: Vec2, size: f32, color: Color, peer: 
         Pickable::IGNORE,
     ));
 }
-fn navbar(p: &mut ChildSpawnerCommands, width: f32, settings: &Settings) {
-    p.spawn((
-        at(Vec2::ZERO, Vec2::new(width, 60.)),
-        BackgroundColor(Color::srgba(0.16, 0.16, 0.16, 0.96)),
-    ))
-    .with_children(|p| {
-        let w = (width - 24. - 24.) / 4.;
-        for (i, (label, action, target)) in [
-            ("Inventory", GameAction::Inventory, Some(Screen::Inventory)),
-            ("Craft", GameAction::Craft, Some(Screen::Crafting)),
-            ("Skills", GameAction::Skills, None),
-            ("Information", GameAction::Map, Some(Screen::Information)),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            let active = target == Some(Screen::Information);
-            let bg = if active {
-                Color::srgba(0.30, 0.31, 0.33, 0.96)
-            } else {
-                Color::srgba(1., 1., 1., 0.03)
-            };
-            let mut tab = p.spawn((
-                Node {
-                    align_items: AlignItems::Center,
-                    justify_content: JustifyContent::Center,
-                    border_radius: BorderRadius::all(px(4)),
-                    ..at(Vec2::new(12. + i as f32 * (w + 8.), 8.), Vec2::new(w, 44.))
-                },
-                BackgroundColor(bg),
-                ButtonBaseColor(bg),
-                Hovered::default(),
-            ));
-            if let Some(screen) = target {
-                tab.insert((Button, UiButton::Open(screen)));
-            }
-            tab.with_children(|p| {
-                p.spawn(text(
-                    format!(
-                        "{label} [{}]",
-                        settings
-                            .bindings
-                            .get(&action)
-                            .map(Binding::label)
-                            .unwrap_or_default()
-                    ),
-                    32.,
-                    if target.is_some() { TEXT } else { DIM },
-                ));
-                if active {
-                    p.spawn((
-                        Node {
-                            position_type: PositionType::Absolute,
-                            bottom: px(0),
-                            width: percent(100),
-                            height: px(3),
-                            ..default()
-                        },
-                        BackgroundColor(ACCENT),
-                    ));
-                }
-            });
-        }
-    });
-}
 pub(super) fn build(
     mut commands: Commands,
     roots: Query<(Entity, Option<&crate::ui::swoop::Swoop>), With<Root>>,
@@ -177,6 +112,7 @@ pub(super) fn build(
     art: Res<MapAssets>,
     quests: Res<npc::Menu>,
     settings: Res<Settings>,
+    font: Res<crate::character::nameplate::OriginalFont>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut cached: Local<String>,
 ) {
@@ -236,7 +172,7 @@ pub(super) fn build(
                 },
                 BackgroundColor(Color::srgba(0.22, 0.22, 0.23, 0.9)),
             ));
-            navbar(p, vp.x, &settings);
+            crate::ui::navbar::build(p, vp.x, &settings, Screen::Information, true, &font.0);
             p.spawn((
                 at(Vec2::new(16., 80.), Vec2::new(vp.x - 32., 30.)),
                 BackgroundColor(PANEL),
