@@ -2995,8 +2995,10 @@ namespace UnturnedGodot
                 // covers the landing too), so they only want their ramps
                 float rise = s.Rise > 0f ? s.Rise : StoreyHeight;
                 int steps = WallOpenings.StairSteps(rise);
+                // (a basement hatch's flight is concrete: the palette's concrete texel)
+                int treads = s.Concrete && BuildingGen.FloorTexels.TryGetValue(res.Palette ?? "", out var ft) ? ft.Concrete : -1;
                 foreach (var p in StairTreadOrigins(o, s.Yaw, s.Run, s.Width, rise))
-                    SpawnWall(p, s.Yaw, s.Width, WallOpenings.StairTreadThickness, mat, null, s.Run / steps, -90f, SurfaceKind.Stairs);
+                    SpawnWall(p, s.Yaw, s.Width, WallOpenings.StairTreadThickness, mat, null, s.Run / steps, -90f, SurfaceKind.Stairs, 0f, treads);
                 FitStairsToStructure(o, s.Yaw, s.Run, s.Width, rise, cutFloor: rise >= StoreyHeight - 0.01f);
             }
             var solved = SolveCorners();

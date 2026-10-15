@@ -507,9 +507,9 @@ namespace UnturnedSim
                 int entry = (alongX ? s.X : s.Z) + (dir > 0 ? 0 : 1), row = alongX ? s.Z : s.X;
                 var ground = new Grid(W, D, 0, W);
                 foreach (var r in res.Layout.Where(r => r.Floor == 0)) ground.Paint(r);
-                float Half(int x, int z) => ground.At(x, z) == null ? Ext * 0.5f : Inner * 0.5f;
-                float lowFace = row * Cell + (alongX ? Half(s.X, row - 1) : Half(row - 1, s.Z));
-                float highFace = (row + 1) * Cell - (alongX ? Half(s.X, row + 1) : Half(row + 1, s.Z));
+                // (each side's wall at its thickest along the room: an outside wall's stretch of it, or a partition's)
+                float Half(int k) => Enumerable.Range(0, 3).Max(i => (alongX ? ground.At(s.X + s.DX * i, row + k) : ground.At(row + k, s.Z + s.DZ * i)) == null ? Ext * 0.5f : Inner * 0.5f);
+                float lowFace = row * Cell + Half(-1), highFace = (row + 1) * Cell - Half(1);
                 float m = WallOpenings.StairHoleMargin, width = highFace - lowFace - 2 * m;
                 float foot = entry * Cell + dir * StairStripFoot;
                 res.Stairs.Add(Flight(alongX, -dir, foot, lowFace + m, width, y, WallOpenings.StairDefaultRun(Storey), 0f));
@@ -559,7 +559,9 @@ namespace UnturnedSim
             var (sx, sz) = WellAt(h, 0f, WallOpenings.StairHoleMargin);
             var (ex, ez) = WellAt(h, 0f, WallOpenings.StairHoleMargin + StairWidth);
             float side = h.AlongX ? MathF.Min(sz, ez) : MathF.Min(sx, ex);
-            res.Stairs.Add(Flight(h.AlongX, h.Up, foot, side, StairWidth, y, run, Storey + Grade));
+            var flight = Flight(h.AlongX, h.Up, foot, side, StairWidth, y, run, Storey + Grade);
+            flight.Concrete = true;
+            res.Stairs.Add(flight);
             // the cover, from the landing's end to the opening
             float openAt = (h.Up > 0 ? h.A0 + len : h.A0) - h.Up * HatchOpen;
             var (cx0, cz0, cx1, cz1) = Box(WellAt(h, h.Up > 0 ? h.A0 - WellWall : h.A0 + len + WellWall, 0f), WellAt(h, openAt, WellClear + WellWall));

@@ -186,6 +186,9 @@ namespace UnturnedSim
         public float X, Y, Z, Yaw, Run, Width; public int Floor;
         /// <summary>How far it climbs: a storey, or half of one for a switchback's flights. 0 reads as a storey.</summary>
         public float Rise;
+        /// <summary>Cast concrete (a basement hatch's, outdoors), its treads the palette's concrete texel; else the building's
+        /// own colour, as every flight was.</summary>
+        public bool Concrete;
         /// <summary>Unit vectors in plan: the way it climbs, and the way its width runs (AddStairs' back and right).</summary>
         public (float X, float Z) Back { get { var (c, s) = PlanTrig.CosSin(Yaw); return (-s, -c); } }
         public (float X, float Z) Right { get { var (c, s) = PlanTrig.CosSin(Yaw); return (c, -s); } }
