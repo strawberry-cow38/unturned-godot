@@ -196,6 +196,9 @@ namespace UnturnedGodot
             SetEditorUiVisible(false);
 
             UpdateButtonVisibility();   // hidden while _playing
+            // (a generated town is never written -- Editor.NotSaved -- so the banner does not claim it was)
+            _hint.Text = _editor.NotSaved != null ? "PLAYTEST  —  generated town (not saved: play the seed again) · press Esc to return to the editor"
+                                                  : "PLAYTEST  —  map saved · press Esc to return to the editor";
             _hint.Visible = true;
         }
 
