@@ -60,12 +60,55 @@ shadow-opacity fade uses50–75m: Vehicle sets begin60/length25 but leaves the
 Godot `DistanceFadeShadow` default50. The common PBR and spot-shadow shader seams
 consume camera-to-light distance, so scope/reflection views do not inherit a
 fade calculated for the player's camera. Water reflection copies carry the same
-profile and remove it when the source component disappears. Native shadow bias remains the Bevy
-default in this checkpoint. Godot's `.03` spot bias becomes `.0003` added to
-homogeneous shadow Z before perspective division, whereas Bevy displaces the
-world-space receiver; simply dividing the native scalar is not equivalent.
-Godot also includes a grazing-angle factor in its normal bias. A marked source
-shadow-bias equation adapter remains separate work.
+profile and remove it when the source component disappears.
+
+Marked headlights also use the original shadow receiver bias. `Vehicle.cs`
+authors `.03`; Godot divides spot bias by100, then multiplies by the default
+ShadowBlur1 and positional SOFT_LOW filter radius2. The resulting `.0006` is
+added to homogeneous shadow Z before perspective division. The source normal
+offset is `normal * radial_distance * 10 / shadow_resolution * grazing`, where
+`grazing = 1 - abs(dot(normal, direction_to_light))`. The adapter reads the actual
+native shadow texture dimensions; Bevy's similarly named
+`SPOT_SHADOW_TEXEL_SIZE` is a filter tuning constant and is not the resolution.
+
+Godot uses a finite reverse-Z projection with near `nG=min(.025,range)` and far
+`f=range`; Bevy uses infinite reverse-Z with its native near `nB`. Affinely mapping
+the source depth comparison into native depth yields
+`(nB + .0006*nB*(f-nG)/(nG*f)) / axial_distance`. This preserves the occlusion
+threshold rather than copying a scalar with different units. Only the marked
+spotlight path changes; ordinary spots keep their native receiver/depth equations,
+and directional/point shadow functions remain untouched.
+
+Source references: [bias upload and filtering multiplier](https://raw.githubusercontent.com/godotengine/godot/4.6-stable/servers/rendering/renderer_rd/storage_rd/light_storage.cpp),
+[spot receiver and homogeneous offset](https://raw.githubusercontent.com/godotengine/godot/4.6-stable/servers/rendering/renderer_rd/shaders/scene_forward_lights_inc.glsl),
+[near/far projection](https://raw.githubusercontent.com/godotengine/godot/4.6-stable/servers/rendering/renderer_scene_cull.cpp),
+[light defaults](https://raw.githubusercontent.com/godotengine/godot/4.6-stable/scene/3d/light_3d.cpp),
+[default positional filter quality](https://raw.githubusercontent.com/godotengine/godot/4.6-stable/servers/rendering/rendering_server.cpp),
+and [filter radius](https://raw.githubusercontent.com/godotengine/godot/4.6-stable/servers/rendering/renderer_rd/renderer_scene_render_rd.cpp).
+Native shadow allocation/resolution, PCF filter topology and the native near
+clipping plane remain renderer differences; this is a bias equation adapter,
+not a replacement shadow renderer.
+
+Seven focused CPU tests pass. The bias GPU test compares eight shader evaluations
+against independent double-precision finite-projection matrices and unchanged
+native receiver equations, covering multiple near/far planes and map resolutions.
+Two simultaneous views render the same blockers: toggling the source profile
+changes 1,110 pixels in the marked view while the ordinary spotlight stays exactly
+unchanged. Restoring the profile reproduces the original marked image. Opened
+artifacts: `bevy-headlight-shadow-{0,1,2}.png` and
+`bevy-headlight-shadow.json`. The existing mixed-light profile/fade GPU regression
+also passes after this change. Gameplay independently reviewed the equations and
+integration; root reviewed the implementation and all three images. These are
+same-run comparisons, not stored goldens.
+
+```sh
+env -u WAYLAND_DISPLAY WINIT_UNIX_BACKEND=x11 WGPU_BACKEND=vulkan \
+  VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json \
+  UG_SHADOW_BIAS_SHOT=/tmp/bevy-headlight-shadow xvfb-run -a \
+  cargo test --manifest-path bevy/Cargo.toml \
+  hdr::light_units::shadow_tests::gpu_shadow_bias_matches_source_projection_and_leaves_unmarked_lights_unchanged \
+  -- --ignored --exact --nocapture
+```
 
 Six focused CPU tests pass. The opt-in GPU fixture reads actual clustered records
 before/after the production compute pass and calls the adapted shader functions

@@ -1,5 +1,5 @@
 //! Source local-light exponents in the pinned Bevy clustered-light record.
-//! Bevy0.20 reserves bits0..6 for its flags. A compute pass preserves bits0..6, uses bit7 for source headlight fading,
+//! Bevy0.20 reserves bits0..6 for its flags. A compute pass preserves bits0..6, uses bit7 for source headlight fading/bias,
 //! and fills the remaining24bits with two twelve-bit decimal exponents.
 //! It uses Bevy's own shader struct, leaving shadow data, clustering, textures,
 //! and all material/view bindings intact. No CPU layout offsets are duplicated.
@@ -37,7 +37,8 @@ impl SourceFalloff {
         Self((encode(distance) << 8) | (encode(cone) << 20))
     }
 
-    /// Original headlights: energy fades60→85m, shadow opacity50→75m.
+    /// Original headlights: energy fades60→85m, shadow opacity50→75m,
+    /// and source homogeneous/normal shadow bias in the marked spot path.
     /// Evaluation is per view, so mirrors and scope cameras keep their own fade.
     pub(crate) fn with_headlight_fade(mut self) -> Self {
         self.0 |= 128;

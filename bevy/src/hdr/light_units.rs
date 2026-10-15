@@ -4,12 +4,16 @@
 //! sampling, light textures and material paths. Authored per-light exponents
 //! travel in unused bits of the pinned renderer's clustered-light flags.
 mod metadata;
-use bevy::{asset::AssetEventSystems, prelude::*, shader::Source};
+use bevy::{
+    asset::AssetEventSystems,
+    prelude::*,
+    shader::{Source, load_shader_library},
+};
 pub(crate) use metadata::SourceFalloff;
 
 const SHADER_PATH: &str = "embedded://bevy_pbr/render/pbr_lighting.wesl";
 const SHADOW_PATH: &str = "embedded://bevy_pbr/render/shadows.wesl";
-const SHADOW_MARKER: &str = "// UNTURNED_SOURCE_HEADLIGHT_SHADOW_FADE_V1\n";
+const SHADOW_MARKER: &str = "// UNTURNED_SOURCE_HEADLIGHT_SHADOW_FADE_BIAS_V2\n";
 const MARKER: &str = "// UNTURNED_SOURCE_LOCAL_LIGHT_FALLOFF_V3\n";
 const SIGNATURE: &str =
     "fn getDistanceAttenuation(distanceSquare: f32, inverseRangeSquared: f32) -> f32 {";
@@ -23,6 +27,10 @@ const SOURCE_ANGLE: &str = "// Godot spot rim uses the outer angle directly, ind
 const RADIANCE: &str = "rangeAttenuation * texture_sample;";
 const SOURCE_RADIANCE: &str = "rangeAttenuation * texture_sample * source_headlight_fade((*light).flags, length(view_bindings::view.world_position - (*light).position_radius.xyz), 60.0);";
 const SHADOW_SIGNATURE: &str = "fn fetch_spot_shadow(";
+const SHADOW_RECEIVER: &str = "let offset_position =\n        -surface_to_light\n        + ((*light).shadow_depth_bias * normalize(surface_to_light))\n        + (surface_normal.xyz * (*light).shadow_normal_bias) * distance_to_light;";
+const SOURCE_SHADOW_RECEIVER: &str = "let offset_position = headlight_shadow_receiver(surface_to_light, surface_normal.xyz, fwd, (*light).shadow_depth_bias, (*light).shadow_normal_bias, 1.0 / f32(textureDimensions(view_bindings::directional_shadow_textures).x), (*light).flags);";
+const SHADOW_DEPTH: &str = "let depth = near_z / -projected_position.z;";
+const SOURCE_SHADOW_DEPTH: &str = "let depth = headlight_shadow_depth(-projected_position.z, near_z, (*light).range, (*light).flags);";
 const SHADOW_WRAPPER: &str = r#"
 fn fetch_spot_shadow(light_id: u32, frag_position: vec4<f32>, surface_normal: vec3<f32>, near_z: f32, frag_coord_xy: vec2<f32>) -> f32 {
     let light = &view_bindings::clustered_lights.data[light_id];
@@ -36,6 +44,7 @@ fn fetch_spot_shadow(light_id: u32, frag_position: vec4<f32>, surface_normal: ve
 struct SourceLightShader(Handle<Shader>, Handle<Shader>);
 
 pub(super) fn install(app: &mut App) {
+    load_shader_library!(app, "light_units/shadow_bias.wesl");
     metadata::install(app);
     let shader = app.world().resource::<AssetServer>().load(SHADER_PATH);
     let shadows = app.world().resource::<AssetServer>().load(SHADOW_PATH);
@@ -73,12 +82,21 @@ fn adapt_shadows(source: &str) -> Result<Option<String>, &'static str> {
     if source.starts_with(SHADOW_MARKER) {
         return Ok(None);
     }
-    if source.matches(SHADOW_SIGNATURE).count() != 1 {
-        return Err("upstream spot shadow signature changed");
+    for (fragment, reason) in [
+        (SHADOW_SIGNATURE, "upstream spot shadow signature changed"),
+        (SHADOW_RECEIVER, "upstream spot shadow receiver changed"),
+        (SHADOW_DEPTH, "upstream spot shadow depth changed"),
+    ] {
+        if source.matches(fragment).count() != 1 {
+            return Err(reason);
+        }
     }
     Ok(Some(format!(
-        "{SHADOW_MARKER}import bevy_pbr::render::pbr_lighting::source_headlight_fade;\n{}{SHADOW_WRAPPER}",
-        source.replacen(SHADOW_SIGNATURE, "fn source_fetch_spot_shadow_unfaded(", 1)
+        "{SHADOW_MARKER}import bevy_pbr::render::pbr_lighting::source_headlight_fade;\nimport unturned_bevy::hdr::light_units::shadow_bias::{{headlight_shadow_receiver, headlight_shadow_depth}};\n{}{SHADOW_WRAPPER}",
+        source
+            .replacen(SHADOW_SIGNATURE, "fn source_fetch_spot_shadow_unfaded(", 1)
+            .replacen(SHADOW_RECEIVER, SOURCE_SHADOW_RECEIVER, 1)
+            .replacen(SHADOW_DEPTH, SOURCE_SHADOW_DEPTH, 1)
     )))
 }
 
@@ -177,8 +195,10 @@ mod tests {
 
     #[test]
     fn headlight_shadow_wrapper_preserves_sampling_and_rejects_upstream_drift() {
-        let source = "// upstream sampling\nfn fetch_spot_shadow(light_id: u32) -> f32 { return source_sampler(light_id); }";
-        let adapted = adapt_shadows(source).unwrap().unwrap();
+        let source = format!(
+            "// upstream sampling\nfn fetch_spot_shadow(light_id: u32) -> f32 {{{SHADOW_RECEIVER}\n{SHADOW_DEPTH}\n return source_sampler(light_id); }}"
+        );
+        let adapted = adapt_shadows(&source).unwrap().unwrap();
         assert!(adapted.contains("return source_sampler(light_id);"));
         assert!(adapted.contains("source_headlight_fade((*light).flags, distance, 50.0)"));
         assert!(adapted.contains("mix(1.0, source_fetch_spot_shadow_unfaded"));
@@ -186,6 +206,10 @@ mod tests {
         assert!(SOURCE_SIGNATURE.contains("smoothstep(0.0, 1.0, 1.0 - (distance - begin) / 25.0)"));
         assert!(adapt_shadows(&adapted).unwrap().is_none());
         assert!(adapt_shadows("renamed_upstream_shadow").is_err());
+        assert!(adapt_shadows(&source.replace(SHADOW_RECEIVER, "changed")).is_err());
+        assert!(adapt_shadows(&source.replace(SHADOW_DEPTH, "changed")).is_err());
+        assert!(adapted.contains(SOURCE_SHADOW_RECEIVER));
+        assert!(adapted.contains(SOURCE_SHADOW_DEPTH));
         assert!(adapt_shadows(&format!("{source}{source}")).is_err());
     }
 
@@ -206,3 +230,6 @@ mod tests {
         assert!(cone(outer - 0.1).abs() < 1e-7);
     }
 }
+
+#[cfg(test)]
+mod shadow_tests;

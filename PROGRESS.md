@@ -2009,3 +2009,23 @@ images and JSON; root independently reviewed the code and all three images.
 Source shadow bias remains explicit follow-up: Godot offsets homogeneous shadow
 Z, while Bevy moves the receiver in world space, so copying/dividing the source
 scalar would be incorrect. See `bevy/docs/HDR_NIGHTVISION_PORT.md`.
+
+
+### Bevy source headlight shadow-bias projection adapter (2026-10-15)
+
+Marked headlights now use the source radial/grazing normal offset and homogeneous
+shadow bias. Exact Godot4.6 source shows authored .03 is divided100 and multiplied
+by the default positional PCF radius2; the resulting .0006 must be mapped from
+Godot's finite reverse-Z projection to Bevy's infinite projection, not copied into
+Bevy's world-space depth-bias scalar. The native shader adapter uses actual shadow
+texture resolution and leaves ordinary spotlight and point/directional equations
+unchanged. Native allocation, filtering topology and near clipping remain explicit
+renderer differences.
+
+Seven CPU tests and two actual Vulkan GPU tests pass. Independent full-matrix
+readback covers eight marked/unmarked cases; the real shadow fixture changes 1,110
+pixels only in the marked view, keeps the ordinary view exactly stable and restores
+the marked frame after re-enabling its profile. All three shadow captures were
+opened; the existing mixed-light/fade GPU regression also passes. Gameplay's
+independent source/code review and root's three-image/implementation review passed. Details and reproduction are in
+`bevy/docs/HDR_NIGHTVISION_PORT.md`; artifacts are `bevy-headlight-shadow-*`.
