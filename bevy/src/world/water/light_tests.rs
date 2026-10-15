@@ -197,3 +197,36 @@ fn reflection_obeys_hidden_ancestor_even_for_explicitly_visible_light() {
     app.update();
     assert!(app.world().get_entity(copy).is_err());
 }
+
+#[test]
+fn reflection_tracks_source_light_profiles_through_updates_removal_and_despawn() {
+    use crate::hdr::SourceFalloff;
+    let mut app = app();
+    camera(&mut app, REFLECTION_LAYER);
+    let original = SourceFalloff::new(1., 1.3).with_headlight_fade();
+    let source = app
+        .world_mut()
+        .spawn((
+            SpotLight::default(),
+            original,
+            Transform::from_xyz(0., 0., -2.),
+        ))
+        .id();
+    app.update();
+    let copy = app
+        .world_mut()
+        .query_filtered::<Entity, With<ReflectionLight>>()
+        .single(app.world())
+        .unwrap();
+    assert_eq!(app.world().get::<SourceFalloff>(copy), Some(&original));
+    let changed = SourceFalloff::new(1.5, 0.6);
+    app.world_mut().entity_mut(source).insert(changed);
+    app.update();
+    assert_eq!(app.world().get::<SourceFalloff>(copy), Some(&changed));
+    app.world_mut().entity_mut(source).remove::<SourceFalloff>();
+    app.update();
+    assert!(app.world().get::<SourceFalloff>(copy).is_none());
+    app.world_mut().despawn(source);
+    app.update();
+    assert!(app.world().get_entity(copy).is_err());
+}

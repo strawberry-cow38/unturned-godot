@@ -1,5 +1,6 @@
 //! Independent source world/viewmodel HDR pipelines and non-HDR canvas composite.
 mod light_units;
+pub(crate) use light_units::SourceFalloff;
 pub(crate) mod layers;
 mod render;
 pub(crate) mod viewport;

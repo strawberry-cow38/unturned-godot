@@ -45,9 +45,49 @@ and outer-cone rim profile. The common quartic range cutoff, material BRDF,
 shadow sampling and texture-light behavior remain in the upstream module.
 The adapter runs before shader asset publication, retains its canonical import
 identity, and rejects changed upstream equations rather than partially patching
-them. All currently materialized native local lights use the source default
-exponents. Nondefault siren/headlight/streetlight exponents need per-light GPU
-metadata when those renderers are integrated.
+them. `SourceFalloff` now carries exact authored distance/cone exponents in
+reserved clustered-light flag bits: native bits0..6 remain intact, bit7 marks
+source headlights, and the upper24 bits contain two twelve-bit decimal values
+(default1 uses zero). The compute pass uses Bevy's own WGSL record type after
+`prepare_lights`, preserving every position, color, shadow and range field.
+Its profile buffer includes an explicit logical count: real GPU testing found
+that shrinking an encase runtime array retained trailing scratch entries, which
+otherwise applied removed profiles to newly reordered lights. Default values,
+component removal and despawn restore freshly prepared native records each frame.
+
+Headlight energy uses the source per-view smoothstep over60–85m. Its separate
+shadow-opacity fade uses50–75m: Vehicle sets begin60/length25 but leaves the
+Godot `DistanceFadeShadow` default50. The common PBR and spot-shadow shader seams
+consume camera-to-light distance, so scope/reflection views do not inherit a
+fade calculated for the player's camera. Water reflection copies carry the same
+profile and remove it when the source component disappears. Native shadow bias remains the Bevy
+default in this checkpoint. Godot's `.03` spot bias becomes `.0003` added to
+homogeneous shadow Z before perspective division, whereas Bevy displaces the
+world-space receiver; simply dividing the native scalar is not equivalent.
+Godot also includes a grazing-angle factor in its normal bias. A marked source
+shadow-bias equation adapter remains separate work.
+
+Six focused CPU tests pass. The opt-in GPU fixture reads actual clustered records
+before/after the production compute pass and calls the adapted shader functions
+for distance, cone and both fade curves. It verifies mixed point/spot lights,
+profile changes, array shrink4→1, zero/default/removal, live entity index reorder,
+original shadow bits and unchanged native fields. Three simultaneous orthographic
+views visibly fade only the flagged light; after removing every profile, the
+views agree. No stored pixel golden is used. Opened artifacts are
+`bevy-light-profiles-{0,1,2}.png` and `bevy-light-profiles.json`; root independently
+reviewed all three and the production changes. The initial GPU run also caught
+WESL's reserved `patch` entry name; the shipping entry is `apply_profiles`.
+
+Reproduce with an actual Vulkan display (never the dummy renderer):
+
+```sh
+env -u WAYLAND_DISPLAY WINIT_UNIX_BACKEND=x11 WGPU_BACKEND=vulkan \
+  VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json \
+  UG_LIGHT_PROFILE_SHOT=/tmp/bevy-light-profiles xvfb-run -a \
+  cargo test --manifest-path bevy/Cargo.toml \
+  hdr::light_units::metadata::visual::gpu_profiles_preserve_native_records_across_changes_removal_and_reordering \
+  -- --ignored --exact --nocapture
+```
 
 The source Forward+ glow chain is adapted from Godot4.6 `copy.glsl`: four
 half-resolution mip levels use the original nine-tap separable Gaussian,
@@ -155,6 +195,7 @@ The Godot and upstream BakingLab MIT notices are in
 - [Godot tone mapping and bicubic reconstruction](https://github.com/godotengine/godot/blob/4.6-stable/servers/rendering/renderer_rd/shaders/effects/tonemap.glsl)
 - [Godot environment defaults](https://github.com/godotengine/godot/blob/4.6-stable/scene/resources/environment.cpp)
 - [Godot nonphysical light units](https://github.com/godotengine/godot/blob/4.6-stable/servers/rendering/renderer_rd/storage_rd/light_storage.cpp)
+- [Godot default light fade distances](https://github.com/godotengine/godot/blob/4.6-stable/scene/3d/light_3d.h)
 - [Godot local-light attenuation](https://github.com/godotengine/godot/blob/4.6-stable/servers/rendering/renderer_rd/shaders/scene_forward_lights_inc.glsl)
 
 The viewmodel adapter now supplies the source camera-space sunlight, two

@@ -252,6 +252,7 @@ fn sync_lights(
             Option<&PointLight>,
             Option<&SpotLight>,
             Option<&RenderLayers>,
+            Option<&crate::hdr::SourceFalloff>,
         ),
         (
             Without<ReflectionLight>,
@@ -266,12 +267,12 @@ fn sync_lights(
     for (entity, id) in &copies {
         if source
             .get(id.0)
-            .map_or(true, |(_, _, _, _, _, layers)| !scene_light(layers))
+            .map_or(true, |(_, _, _, _, _, layers, _)| !scene_light(layers))
         {
             commands.entity(entity).despawn();
         }
     }
-    for (source_entity, pose, directional, point, spot, layers) in &source {
+    for (source_entity, pose, directional, point, spot, layers, falloff) in &source {
         if !scene_light(layers) {
             continue;
         }
@@ -289,6 +290,11 @@ fn sync_lights(
                     .id()
             });
         let mut copy = commands.entity(entity);
+        if let Some(profile) = falloff {
+            copy.insert(*profile);
+        } else {
+            copy.remove::<crate::hdr::SourceFalloff>();
+        }
         // This runs after propagation, so publish both forms before extraction.
         copy.insert((
             pose.compute_transform(),

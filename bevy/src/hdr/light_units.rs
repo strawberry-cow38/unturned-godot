@@ -1,25 +1,45 @@
 //! Source local-light falloff applied at Bevy's shared PBR shader seam.
 //!
-//! The source omni/spot lights currently materialized by the native adapters all
-//! use decay1 and cone attenuation1. Keeping the rest of Bevy's imported module
-//! intact preserves its BRDF, shadow sampling, light textures and material paths.
-//! Nondefault source siren/headlight/streetlight exponents need additional
-//! per-light GPU metadata when those renderers are integrated.
+//! Keeping the rest of Bevy's imported module intact preserves its BRDF, shadow
+//! sampling, light textures and material paths. Authored per-light exponents
+//! travel in unused bits of the pinned renderer's clustered-light flags.
+mod metadata;
 use bevy::{asset::AssetEventSystems, prelude::*, shader::Source};
+pub(crate) use metadata::SourceFalloff;
 
 const SHADER_PATH: &str = "embedded://bevy_pbr/render/pbr_lighting.wesl";
-const MARKER: &str = "// UNTURNED_SOURCE_LOCAL_LIGHT_FALLOFF_V1\n";
+const SHADOW_PATH: &str = "embedded://bevy_pbr/render/shadows.wesl";
+const SHADOW_MARKER: &str = "// UNTURNED_SOURCE_HEADLIGHT_SHADOW_FADE_V1\n";
+const MARKER: &str = "// UNTURNED_SOURCE_LOCAL_LIGHT_FALLOFF_V3\n";
+const SIGNATURE: &str =
+    "fn getDistanceAttenuation(distanceSquare: f32, inverseRangeSquared: f32) -> f32 {";
+const SOURCE_SIGNATURE: &str = "fn source_light_exponent(code: u32) -> f32 {\n    return select(f32(code) * 0.001, 1.0, code == 0u);\n}\nfn source_headlight_fade(flags: u32, distance: f32, begin: f32) -> f32 {\n    return select(1.0, smoothstep(0.0, 1.0, 1.0 - (distance - begin) / 25.0), (flags & 128u) != 0u);\n}\nfn source_spot_attenuation(cd: f32, cos_outer: f32, decay: f32) -> f32 {\n    let rim = max(0.0001, (1.0 - max(cd, cos_outer)) / (1.0 - cos_outer));\n    return 1.0 - pow(rim, decay);\n}\nfn getDistanceAttenuation(distanceSquare: f32, inverseRangeSquared: f32, decay: f32) -> f32 {";
+const CALL: &str = "getDistanceAttenuation(distance_square, (*light).color_inverse_square_range.w)";
+const SOURCE_CALL: &str = "getDistanceAttenuation(distance_square, (*light).color_inverse_square_range.w, source_light_exponent(((*light).flags >> 8u) & 4095u))";
 const DISTANCE: &str = "return getRangeFalloff(distanceSquare, inverseRangeSquared) * 1.0 / max(distanceSquare, 0.0001);";
-const SOURCE_DISTANCE: &str = "return getRangeFalloff(distanceSquare, inverseRangeSquared) / max(sqrt(max(distanceSquare, 0.0)), 0.0001);";
+const SOURCE_DISTANCE: &str = "return getRangeFalloff(distanceSquare, inverseRangeSquared) * pow(max(sqrt(max(distanceSquare, 0.0)), 0.0001), -decay);";
 const ANGLE: &str = "let spot_attenuation = attenuation * attenuation;";
-const SOURCE_ANGLE: &str = "// Godot spot rim uses the outer angle directly, independent of an inner cone.\n    let source_cos_outer = -(*light).light_custom_data.w / (*light).light_custom_data.z;\n    let source_rim = max(0.0001, (1.0 - max(cd, source_cos_outer)) / (1.0 - source_cos_outer));\n    let spot_attenuation = 1.0 - source_rim;";
+const SOURCE_ANGLE: &str = "// Godot spot rim uses the outer angle directly, independent of an inner cone.\n    let source_cos_outer = -(*light).light_custom_data.w / (*light).light_custom_data.z;\n    let spot_attenuation = source_spot_attenuation(cd, source_cos_outer, source_light_exponent(((*light).flags >> 20u) & 4095u));";
+const RADIANCE: &str = "rangeAttenuation * texture_sample;";
+const SOURCE_RADIANCE: &str = "rangeAttenuation * texture_sample * source_headlight_fade((*light).flags, length(view_bindings::view.world_position - (*light).position_radius.xyz), 60.0);";
+const SHADOW_SIGNATURE: &str = "fn fetch_spot_shadow(";
+const SHADOW_WRAPPER: &str = r#"
+fn fetch_spot_shadow(light_id: u32, frag_position: vec4<f32>, surface_normal: vec3<f32>, near_z: f32, frag_coord_xy: vec2<f32>) -> f32 {
+    let light = &view_bindings::clustered_lights.data[light_id];
+    let distance = length(view_bindings::view.world_position - (*light).position_radius.xyz);
+    let fade = source_headlight_fade((*light).flags, distance, 50.0);
+    return mix(1.0, source_fetch_spot_shadow_unfaded(light_id, frag_position, surface_normal, near_z, frag_coord_xy), fade);
+}
+"#;
 
 #[derive(Resource)]
-struct SourceLightShader(Handle<Shader>);
+struct SourceLightShader(Handle<Shader>, Handle<Shader>);
 
 pub(super) fn install(app: &mut App) {
+    metadata::install(app);
     let shader = app.world().resource::<AssetServer>().load(SHADER_PATH);
-    app.insert_resource(SourceLightShader(shader))
+    let shadows = app.world().resource::<AssetServer>().load(SHADOW_PATH);
+    app.insert_resource(SourceLightShader(shader, shadows))
         .add_systems(PostUpdate, adapt_loaded_shader.before(AssetEventSystems));
 }
 
@@ -27,20 +47,39 @@ pub(super) fn install(app: &mut App) {
 /// unadapted first load or hot reload. It changes the existing asset in place:
 /// imports retain their canonical path and dependent pipelines recompile once.
 fn adapt_loaded_shader(shader: Res<SourceLightShader>, mut shaders: ResMut<Assets<Shader>>) {
-    let Some(asset) = shaders.get(&shader.0) else {
-        return;
-    };
-    let Source::Wesl(source) = &asset.source else {
-        panic!("{SHADER_PATH} is no longer WESL; review the source light adapter");
-    };
-    let Some(source) = adapt_source(source).unwrap_or_else(|reason| {
-        panic!(
-            "{SHADER_PATH}: {reason}; review hdr/light_units.rs against the pinned Bevy renderer"
-        )
-    }) else {
-        return;
-    };
-    shaders.get_mut(&shader.0).unwrap().source = Source::Wesl(source.into());
+    for (handle, path, adapt) in [
+        (
+            &shader.0,
+            SHADER_PATH,
+            adapt_source as fn(&str) -> Result<Option<String>, &'static str>,
+        ),
+        (&shader.1, SHADOW_PATH, adapt_shadows),
+    ] {
+        let Some(asset) = shaders.get(handle) else {
+            continue;
+        };
+        let Source::Wesl(source) = &asset.source else {
+            panic!("{path} is no longer WESL");
+        };
+        if let Some(source) = adapt(source)
+            .unwrap_or_else(|reason| panic!("{path}: {reason}; review source light adapter"))
+        {
+            shaders.get_mut(handle).unwrap().source = Source::Wesl(source.into());
+        }
+    }
+}
+
+fn adapt_shadows(source: &str) -> Result<Option<String>, &'static str> {
+    if source.starts_with(SHADOW_MARKER) {
+        return Ok(None);
+    }
+    if source.matches(SHADOW_SIGNATURE).count() != 1 {
+        return Err("upstream spot shadow signature changed");
+    }
+    Ok(Some(format!(
+        "{SHADOW_MARKER}import bevy_pbr::render::pbr_lighting::source_headlight_fade;\n{}{SHADOW_WRAPPER}",
+        source.replacen(SHADOW_SIGNATURE, "fn source_fetch_spot_shadow_unfaded(", 1)
+    )))
 }
 
 fn adapt_source(source: &str) -> Result<Option<String>, &'static str> {
@@ -48,17 +87,25 @@ fn adapt_source(source: &str) -> Result<Option<String>, &'static str> {
         return Ok(None);
     }
     // Do not silently retain a changed upstream equation or partially adapt it.
-    if source.matches(DISTANCE).count() != 1 {
-        return Err("the upstream distance equation changed");
-    }
-    if source.matches(ANGLE).count() != 1 {
-        return Err("the upstream spot equation changed");
+    for (fragment, error) in [
+        (SIGNATURE, "the upstream distance signature changed"),
+        (CALL, "the upstream distance call changed"),
+        (DISTANCE, "the upstream distance equation changed"),
+        (ANGLE, "the upstream spot equation changed"),
+        (RADIANCE, "the upstream point radiance return changed"),
+    ] {
+        if source.matches(fragment).count() != 1 {
+            return Err(error);
+        }
     }
     Ok(Some(format!(
         "{MARKER}{}",
         source
+            .replacen(SIGNATURE, SOURCE_SIGNATURE, 1)
+            .replacen(CALL, SOURCE_CALL, 1)
             .replacen(DISTANCE, SOURCE_DISTANCE, 1)
             .replacen(ANGLE, SOURCE_ANGLE, 1)
+            .replacen(RADIANCE, SOURCE_RADIANCE, 1)
     )))
 }
 
@@ -67,7 +114,9 @@ mod tests {
     use super::*;
 
     fn original() -> String {
-        format!("// retained upstream BRDF and imports\n{DISTANCE}\n{ANGLE}\n// retained shadows")
+        format!(
+            "// retained upstream BRDF and imports\n{SIGNATURE}\n{DISTANCE}\n}}\n{CALL}\n{ANGLE}\n{RADIANCE}\n// retained shadows"
+        )
     }
 
     #[test]
@@ -78,9 +127,13 @@ mod tests {
         assert!(result.ends_with("// retained shadows"));
         assert!(result.contains(SOURCE_DISTANCE));
         assert!(result.contains(SOURCE_ANGLE));
+        assert!(result.contains(SOURCE_SIGNATURE));
+        assert!(result.contains(SOURCE_CALL));
         assert!(adapt_source(&result).unwrap().is_none());
         assert!(adapt_source(&original().replace(DISTANCE, "changed")).is_err());
         assert!(adapt_source(&original().replace(ANGLE, "changed")).is_err());
+        assert!(adapt_source(&original().replace(CALL, "changed")).is_err());
+        assert!(adapt_source(&original().replace(SIGNATURE, "changed")).is_err());
         assert!(adapt_source(&format!("{}{DISTANCE}", original())).is_err());
     }
 
@@ -93,7 +146,7 @@ mod tests {
             .world_mut()
             .resource_mut::<Assets<Shader>>()
             .add(Shader::from_wesl(original(), SHADER_PATH));
-        app.insert_resource(SourceLightShader(handle.clone()))
+        app.insert_resource(SourceLightShader(handle.clone(), Handle::default()))
             .add_systems(PostUpdate, adapt_loaded_shader.before(AssetEventSystems));
         app.update();
         let import = {
@@ -120,6 +173,20 @@ mod tests {
             "all material imports retain the same shader"
         );
         assert!(matches!(&asset.source, Source::Wesl(s) if s.starts_with(MARKER)));
+    }
+
+    #[test]
+    fn headlight_shadow_wrapper_preserves_sampling_and_rejects_upstream_drift() {
+        let source = "// upstream sampling\nfn fetch_spot_shadow(light_id: u32) -> f32 { return source_sampler(light_id); }";
+        let adapted = adapt_shadows(source).unwrap().unwrap();
+        assert!(adapted.contains("return source_sampler(light_id);"));
+        assert!(adapted.contains("source_headlight_fade((*light).flags, distance, 50.0)"));
+        assert!(adapted.contains("mix(1.0, source_fetch_spot_shadow_unfaded"));
+        assert!(SOURCE_RADIANCE.contains("60.0"));
+        assert!(SOURCE_SIGNATURE.contains("smoothstep(0.0, 1.0, 1.0 - (distance - begin) / 25.0)"));
+        assert!(adapt_shadows(&adapted).unwrap().is_none());
+        assert!(adapt_shadows("renamed_upstream_shadow").is_err());
+        assert!(adapt_shadows(&format!("{source}{source}")).is_err());
     }
 
     #[test]

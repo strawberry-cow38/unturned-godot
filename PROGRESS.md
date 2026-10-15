@@ -1987,3 +1987,25 @@ Native light/audio/glass rendering is a separate in-progress checkpoint. The
 actual source aircraft early-return behavior is retained; trailer coupling and
 manual horn networking remain explicit follow-ups, not invented electrical
 state. Contract, source details and limits: `bevy/docs/VEHICLE_LIGHTING_AUTHORITY.md`.
+
+
+### Bevy per-light source attenuation and view-dependent headlight fade (2026-10-15)
+
+The shared light adapter now preserves authored distance/cone exponents through
+Bevy's actual clustered-light records, without copying CPU field offsets or
+replacing material bindings. Native flag bits0–6 and all shadow/color/position
+fields remain intact. Bit7 selects original headlight energy60–85m and separate
+shadow50–75m smoothstep fades, evaluated independently by each view. Water
+reflection light copies inherit profile changes and removals.
+
+Actual GPU readback and three simultaneous rendered views caught two issues that
+CPU checks could not: `patch` is a reserved WESL entry name, and a shrinking
+serialized runtime array retained stale profile rows. The entry is renamed and
+the buffer now carries a logical count. The same real-GPU regression passes
+profile changes, shrink4→1, default/removal, entity-index reorder, exact source
+curve samples and native-field preservation. Six CPU checks and the focused
+reflection lifecycle coverage accompany opened `bevy-light-profiles-{0,1,2}`
+images and JSON; root independently reviewed the code and all three images.
+Source shadow bias remains explicit follow-up: Godot offsets homogeneous shadow
+Z, while Bevy moves the receiver in world space, so copying/dividing the source
+scalar would be incorrect. See `bevy/docs/HDR_NIGHTVISION_PORT.md`.
