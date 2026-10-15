@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Godot;
 
 namespace UnturnedGodot
@@ -54,6 +55,20 @@ namespace UnturnedGodot
         PlayerController _player;
         bool _playing;
 
+        /// <summary>⭐ ENTERED TO PLAY, NOT TO TEST AN EDIT (strawberry 2026-10-15: "why does the town test zone play completely
+        /// different to normal play mode?"). Set by the builder for everything the MENU launches to play -- Generate Town,
+        /// Generate Island, a saved island, Workshop's Play -- and they get the real game's rules where the playtest had the
+        /// editor's: Esc opens the pause menu (the shell's) instead of dropping you into the map editor, the day is the
+        /// game's 24 minutes instead of the editor's 5, and the weather runs. The editor's own Playtest button leaves it off:
+        /// that one IS a test of what you were editing, and Esc straight back to it is the point.</summary>
+        public bool PlayOnly;
+        float _editorDayLength = -1f;
+        WeatherManager _weather;
+        /// <summary>The editor's own UI layers (its dashboard and panels) as they were before the game's shell went on, and the
+        /// editor tools EnterPlay stopped listening to input -- with what each was listening to, to give back on the way out.</summary>
+        readonly List<CanvasLayer> _editorLayers = new();
+        readonly List<(Node node, bool input, bool unhandled, bool key)> _mutedTools = new();
+
         public void Setup(Editor editor, EditorBuildings buildings, Camera3D flyCam)
         {
             _editor = editor;
@@ -105,6 +120,31 @@ namespace UnturnedGodot
             // moment to lose them.
             _editor.Save();
 
+            // ⚠⚠ THE EDITOR STOPS LISTENING WHILE YOU PLAY (strawberry 2026-10-15: "why does the town test zone play completely
+            // different to normal play mode?"). Only its UI was hidden: every tool kept its input handler running under the
+            // game. The dashboard took Escape for ITS pause menu on top of the game's, and F1-F3 hid the objects, roads and
+            // foliage; the default Level tab left object picking live, so a click selected a prop and E -- interact -- moved it;
+            // Shift+J/P/F/K toggled editor tools. Every Editor* node in the tree is muted for the length of the game.
+            _editorLayers.Clear();
+            foreach (var c in _editor.GetChildren()) if (c is CanvasLayer cl) _editorLayers.Add(cl);   // BEFORE the shell adds its own
+            _mutedTools.Clear();
+            void Mute(Node n)
+            {
+                foreach (var c in n.GetChildren())
+                {
+                    if (c == this) continue;                      // (Esc back to the editor is this node's own)
+                    string tn = c.GetType().Name;
+                    if ((tn.StartsWith("Editor") || tn == nameof(NpcEditorUI))
+                        && (c.IsProcessingInput() || c.IsProcessingUnhandledInput() || c.IsProcessingUnhandledKeyInput()))
+                    {
+                        _mutedTools.Add((c, c.IsProcessingInput(), c.IsProcessingUnhandledInput(), c.IsProcessingUnhandledKeyInput()));
+                        c.SetProcessInput(false); c.SetProcessUnhandledInput(false); c.SetProcessUnhandledKeyInput(false);
+                    }
+                    Mute(c);
+                }
+            }
+            Mute(_editor);
+
             _player = new PlayerController { CaptureMouse = true };
             _editor.AddChild(_player);
             _player.GlobalPosition = ComputeSpawn();   // _Ready makes its FP camera Current + captures the mouse
@@ -147,6 +187,18 @@ namespace UnturnedGodot
             // the same LinkWorldLighting call the real path makes, and for the same reason it was added there.
             if (_sun != null && _env != null) _player.LinkWorldLighting(_sun, _env);
             if (_dayNight != null) _dayNight.VisualsEnabled = true;   // the editor builds it with visuals OFF
+            if (PlayOnly)
+            {
+                // the game's day (DayNightCycle.DefaultDayLength, as WorldBuilder's), not the editor's quick preview of one
+                if (_dayNight != null) { _editorDayLength = _dayNight.DayLength; _dayNight.DayLength = DayNightCycle.DefaultDayLength; }
+                // ...and its weather: the same WeatherManager the real path attaches once the world is up (Main), against
+                // this world's clock. Never a second one.
+                if (_dayNight != null && WeatherManager.Current == null)
+                {
+                    _weather = WeatherManager.Attach(_editor, null, _dayNight);
+                    _weather.ApplyEnvOverride();
+                }
+            }
 
             // Discord: playing, not editing. ⚠ TICKED rather than pushed once, because the day counter MOVES --
             // the same DiscordPresenceTicker the real singleplayer path uses, and the push is dropped unless a
@@ -199,7 +251,10 @@ namespace UnturnedGodot
             // (a generated town is never written -- Editor.NotSaved -- so the banner does not claim it was)
             _hint.Text = _editor.NotSaved != null ? "PLAYTEST  —  generated town (not saved: play the seed again) · press Esc to return to the editor"
                                                   : "PLAYTEST  —  map saved · press Esc to return to the editor";
-            _hint.Visible = true;
+            _hint.Visible = !PlayOnly;      // (playing, not testing: no banner, and Esc is the pause menu's)
+            Log.Print($"[playmode] {(PlayOnly ? "PLAY (the game's rules)" : "playtest")}: {_mutedTools.Count} editor tool(s) muted, {_editorLayers.Count} editor UI layer(s) hidden, "
+                    + $"day {(_dayNight != null ? $"{_dayNight.DayLength:0} s" : "none")}, weather {(WeatherManager.Current != null ? "on" : "off")}, "
+                    + $"Esc {(PlayOnly ? "pauses" : "returns to the editor")}");
         }
 
         void ExitPlay()
@@ -227,11 +282,17 @@ namespace UnturnedGodot
             if (GodotObject.IsInstanceValid(_player)) _player.QueueFree();
             _player = null;
             if (_dayNight != null) _dayNight.VisualsEnabled = false;
+            if (_dayNight != null && _editorDayLength > 0f) { _dayNight.DayLength = _editorDayLength; _editorDayLength = -1f; }
+            if (GodotObject.IsInstanceValid(_weather)) _weather.QueueFree();
+            _weather = null;
             Input.MouseMode = Input.MouseModeEnum.Visible;
 
             if (_flyCam != null) { _flyCam.SetProcess(true); _flyCam.SetProcessUnhandledInput(true); _flyCam.Current = true; }
             if (_buildings != null) _buildings.Active = true;
             SetEditorUiVisible(true);
+            foreach (var (node, input, unhandled, key) in _mutedTools)
+                if (GodotObject.IsInstanceValid(node)) { node.SetProcessInput(input); node.SetProcessUnhandledInput(unhandled); node.SetProcessUnhandledKeyInput(key); }
+            _mutedTools.Clear();
 
             UpdateButtonVisibility();   // the button comes back
             _hint.Visible = false;
@@ -239,7 +300,7 @@ namespace UnturnedGodot
 
         public override void _Input(InputEvent ev)
         {
-            if (_playing && ev is InputEventKey k && k.Pressed && !k.Echo && k.Keycode == Key.Escape)
+            if (_playing && !PlayOnly && ev is InputEventKey k && k.Pressed && !k.Echo && k.Keycode == Key.Escape)
             {
                 ExitPlay();
                 GetViewport().SetInputAsHandled();
@@ -252,8 +313,10 @@ namespace UnturnedGodot
         void SetEditorUiVisible(bool on)
         {
             if (_editor == null) return;
-            foreach (var c in _editor.GetChildren())
-                if (c is CanvasLayer cl) cl.Visible = on;
+            // ⚠ ONLY THE EDITOR'S OWN, captured before the game's shell went on: walking every CanvasLayer under the editor here
+            // also hid the HUD's, the FPS counter's, the dev console's and the hitmarkers' -- the shell is CanvasLayers too
+            foreach (var cl in _editorLayers)
+                if (GodotObject.IsInstanceValid(cl)) cl.Visible = on;
         }
 
         /// <summary>The spawn point, without entering play. Exposed so a test can check WHERE it lands without

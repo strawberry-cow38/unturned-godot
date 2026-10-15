@@ -7192,7 +7192,8 @@ namespace UnturnedGodot
                 }
             }
             DiscordPresence.SetEditor(mapName);
-            if (autoPlay) play.CallDeferred(nameof(EditorPlayMode.EnterPlay));
+            // (launched to PLAY -- the menu's Generate Town/Island, a saved island, Workshop's Play: the real game's rules)
+            if (autoPlay) { play.PlayOnly = true; play.CallDeferred(nameof(EditorPlayMode.EnterPlay)); }
             _worldReady = true;
             Log.Print(genSeed.HasValue
                 ? $"[editor] custom map '{mapName}' (GENERATED island, seed {genSeed.Value}) up"
