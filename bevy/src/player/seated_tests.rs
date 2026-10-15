@@ -127,6 +127,7 @@ pub(super) fn fixture(vehicle: Option<bool>) -> (App, Entity) {
             .resource_mut::<crate::world::interactables::PropOccupancy>()
             .seat = Some(crate::world::interactables::OccupiedPropSeat {
             net_id,
+            recline: false,
             body_pose: Transform::IDENTITY,
             eye_pose: camera,
             anchor: Vec3::ZERO,
@@ -223,4 +224,48 @@ fn prop_seat_can_fire_and_melee_while_its_only_body_stays_fixed() {
             .translation
             .is_none()
     );
+}
+
+#[test]
+fn reclined_accepted_seat_keeps_controller_upright_and_camera_at_head_then_restores_collision() {
+    let (mut app, body) = fixture(Some(false));
+    app.add_plugins((TransformPlugin, RapierPhysicsPlugin::<NoUserData>::default()))
+        .init_resource::<crate::world::origin::WorldOrigin>()
+        .init_resource::<crate::world::WorldConfig>()
+        .init_resource::<Settings>()
+        .add_systems(Update, sync_seated_body.before(simulate))
+        .add_systems(Update, camera_follow.after(simulate));
+    app.insert_resource(PlayerInput::with_view(90., 20.));
+    let camera = app.world_mut().query_filtered::<Entity, With<PlayerCamera>>().single(app.world()).unwrap();
+    app.world_mut().entity_mut(camera).insert(Projection::Perspective(default()));
+    let yaw = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+    let pose = Transform::from_xyz(0., 0.45, 1.).with_rotation(yaw);
+    let eye = pose.transform_point(Vec3::new(0., 0.25, -1.5));
+    app.world_mut().resource_mut::<crate::world::interactables::PropOccupancy>().seat = Some(
+        crate::world::interactables::OccupiedPropSeat {
+            net_id: 900, recline: true, body_pose: pose,
+            eye_pose: Transform::from_translation(eye).with_rotation(yaw),
+            anchor: pose.translation, exit_position: Vec3::X * 2.,
+        });
+    for _ in 0..3 { app.update(); }
+    assert_eq!(*app.world().get::<Transform>(body).unwrap(), pose);
+    assert!(app.world().get::<ColliderDisabled>(body).is_some());
+    assert_eq!(app.world().get::<PlayerBody>(body).unwrap().stance, "sitting");
+    let actual = app.world().get::<Transform>(camera).unwrap();
+    assert!((actual.translation-eye).length() < 1e-5);
+    assert!(actual.rotation.abs_diff_eq(yaw * Quat::from_rotation_x(20_f32.to_radians()), 1e-5));
+    assert!(app.world().get::<KinematicCharacterController>(body).unwrap().translation.is_none());
+    app.world_mut().resource_mut::<crate::avatar::Perspective>().first_person = false;
+    app.update();
+    let pivot = pose.translation + Vec3::Y * app.world().resource::<crate::avatar::Perspective>().pivot_height;
+    let third = app.world().get::<Transform>(camera).unwrap();
+    assert!(((third.translation-pivot).length()-2.).abs() < 1e-4, "furniture keeps the source shoulder orbit in third person");
+    assert!(third.rotation.abs_diff_eq(Quat::from_rotation_y(85_f32.to_radians()) * Quat::from_rotation_x(20_f32.to_radians()), 1e-5));
+    app.world_mut().resource_mut::<crate::avatar::Perspective>().first_person = true;
+    app.update();
+    assert!((app.world().get::<Transform>(camera).unwrap().translation-eye).length() < 1e-5);
+    app.world_mut().resource_mut::<crate::world::interactables::PropOccupancy>().seat = None;
+    app.update();
+    assert!(app.world().get::<ColliderDisabled>(body).is_none());
+    assert!(!app.world().resource::<PlayerInput>().in_seat);
 }

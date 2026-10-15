@@ -24,10 +24,22 @@ pub struct PropOccupancy {
 #[derive(Clone, Copy, Debug)]
 pub struct OccupiedPropSeat {
     pub net_id: u32,
+    pub recline: bool,
     pub body_pose: Transform,
     pub eye_pose: Transform,
     pub anchor: Vec3,
     pub exit_position: Vec3,
+}
+impl OccupiedPropSeat {
+    /// The collision/controller root remains upright. Only the visual body is
+    /// laid flat, with its feet at the authored bed anchor (PropSeat.LieTransform).
+    pub fn avatar_pose(&self) -> Transform {
+        let mut pose = self.body_pose;
+        if self.recline {
+            pose.rotation *= Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
+        }
+        pose
+    }
 }
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -63,6 +75,8 @@ struct SeatDefinition {
     position: [f32; 3],
     face: [f32; 3],
     ground_y: f32,
+    #[serde(default)]
+    recline: bool,
 }
 #[derive(Component)]
 struct DoorLeaf {
@@ -162,13 +176,16 @@ fn seat_pose(seat: &SeatDefinition) -> OccupiedPropSeat {
     let forward = Vec3::new(seat.face[0], 0., seat.face[2])
         .try_normalize()
         .unwrap_or(Vec3::NEG_Z);
-    let body_pose =
-        Transform::from_translation(anchor - Vec3::Y * 0.422).looking_to(forward, Vec3::Y);
+    let body_pose = Transform::from_translation(
+        if seat.recline { anchor } else { anchor - Vec3::Y * 0.422 },
+    ).looking_to(forward, Vec3::Y);
+    let eye_local = if seat.recline { Vec3::new(0., 0.25, -1.5) } else { Vec3::Y * 1.6 };
     OccupiedPropSeat {
         net_id: seat.net_id,
+        recline: seat.recline,
         body_pose,
         eye_pose: Transform {
-            translation: body_pose.translation + Vec3::Y * 1.6,
+            translation: body_pose.transform_point(eye_local),
             ..body_pose
         },
         anchor,

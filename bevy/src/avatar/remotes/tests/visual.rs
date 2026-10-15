@@ -21,6 +21,7 @@ fn render_remote_pose_fixture() {
     let held = std::env::var_os("UG_REMOTE_POSE_HELD").is_some();
     let lamps = std::env::var("UG_REMOTE_POSE_LAMPS").ok();
     let profiles = std::env::var_os("UG_REMOTE_POSE_PROFILES").is_some();
+    let beds = std::env::var_os("UG_REMOTE_POSE_BEDS").is_some();
     for (i, stance) in [0, 2, 3, 4].into_iter().enumerate() {
         let mut peer = row(i as u16 + 2, Vec3::new((i as f32 - 1.5) * 2., 0., 0.));
         peer["stance"] = json!(stance);
@@ -41,8 +42,21 @@ fn render_remote_pose_fixture() {
             peer["worn"]["hat"] = json!(0);
             peer["profile"]["face"] = json!(0);
         }
+        if beds && i < 2 {
+            let yaw = i as f32 * std::f32::consts::FRAC_PI_2;
+            let base = Vec3::new((i as f32 - 1.5) * 2., 0., 0.);
+            peer["position"] = json!((base + Quat::from_rotation_y(yaw) * Vec3::new(0., 0.45, 1.)).to_array());
+            peer["yaw"] = json!(yaw.to_degrees());
+            peer["stance"] = json!(4);
+            peer["worn"]["hat"] = json!(0);
+        }
         players.push(peer);
     }
+    let mut services = crate::entities::ServiceManifest::default();
+    let seats = if beds {
+        services.seats = vec![json!({"netId":9,"recline":true}), json!({"netId":10,"recline":true})];
+        json!([{"netId":9,"occupant":2},{"netId":10,"occupant":3}])
+    } else { json!([]) };
     let mut app = App::new();
     app.insert_resource(Shot(path.clone()))
         .insert_resource(ClearColor(Color::srgb(0.12, 0.15, 0.19)))
@@ -73,8 +87,9 @@ fn render_remote_pose_fixture() {
         .insert_resource(config)
         .init_resource::<WorldSessionEpoch>()
         .insert_resource(source_catalog())
+        .insert_resource(services)
         .insert_resource(GameSnapshot(json!({"connected":true,"playerId":1,
-            "players":players,"vehicles":[]})))
+            "players":players,"vehicles":[],"interactables":{"seats":seats}})))
         .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
             std::time::Duration::from_millis(20),
         ))
@@ -137,6 +152,18 @@ fn scene(
             MeshMaterial3d(materials.add(Color::srgb(0.3, 0.35, 0.4))),
             Transform::from_xyz(3., 2.2, -0.65),
         ));
+    }
+    if std::env::var_os("UG_REMOTE_POSE_BEDS").is_some() {
+        // Original Bed.cs fixture, not the unrelated retail Bed_* prop art.
+        let mesh = meshes.add(Cuboid::new(1., 0.45, 2.));
+        let material = materials.add(StandardMaterial {
+            base_color: Color::srgb(0.55, 0.52, 0.60), perceptual_roughness: 1., ..default()
+        });
+        for i in 0..2 {
+            commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()),
+                Transform::from_xyz((i as f32 - 1.5) * 2., 0.225, 0.)
+                    .with_rotation(Quat::from_rotation_y(i as f32 * std::f32::consts::FRAC_PI_2))));
+        }
     }
 }
 

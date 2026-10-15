@@ -37,6 +37,7 @@ impl Plugin for RemotePlayersPlugin {
                     .chain()
                     .in_set(RemotePlayersUpdate)
                     .after(PlayerUpdate)
+                    .after(crate::entities::WorldServicesReady)
                     .before(RigAnimation),
             )
             .add_systems(
@@ -218,6 +219,7 @@ fn update(
     snapshot: Res<GameSnapshot>,
     time: Res<Time>,
     catalog: Res<ItemCatalog>,
+    services: Option<Res<crate::entities::ServiceManifest>>,
     mut puppets: Query<
         (
             &mut Transform,
@@ -230,6 +232,14 @@ fn update(
     mut hulls: Query<&mut Transform, (With<RemoteHull>, Without<RemotePlayer>)>,
 ) {
     let rows: HashMap<_, _> = replicas(&snapshot.0).collect();
+    // Source RemotePlayers joins accepted seat occupants with authored bed
+    // metadata. The stance alone cannot distinguish a chair from a bed.
+    let beds: HashSet<_> = services.as_ref().into_iter().flat_map(|s| &s.seats)
+        .filter(|s| s["recline"].as_bool() == Some(true))
+        .filter_map(|s| s["netId"].as_u64()).collect();
+    let reclined: HashSet<_> = snapshot.0["interactables"]["seats"].as_array()
+        .into_iter().flatten().filter(|s| s["netId"].as_u64().is_some_and(|id| beds.contains(&id)))
+        .filter_map(|s| s["occupant"].as_u64()).collect();
     let mut seated = HashSet::new();
     for car in snapshot.0["vehicles"].as_array().into_iter().flatten() {
         if let Some(id) = car["driverPlayerId"].as_u64() {
@@ -268,6 +278,12 @@ fn update(
         }
         player.alive = row["alive"].as_bool().unwrap_or(true);
         let stance = stance(row);
+        let lying = stance == "sitting" && reclined.contains(&(player.id as u64));
+        if lying {
+            // Reconstruct from this frame's accepted yaw; never accumulate a
+            // quarter turn on last frame's already reclined rotation.
+            transform.rotation *= Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
+        }
         let is_seated = stance == "sitting" || seated.contains(&player.id);
         player.foot_motion = FootMotion {
             speed: player.speed,
@@ -298,7 +314,9 @@ fn update(
             }
             player.seated = is_seated;
         }
-        let clip = if stance == "sitting" && rig.data.anims.contains_key("Idle_Sit") {
+        let clip = if lying {
+            "Idle_Stand"
+        } else if stance == "sitting" && rig.data.anims.contains_key("Idle_Sit") {
             "Idle_Sit"
         } else {
             super::locomotion(player.speed, stance)

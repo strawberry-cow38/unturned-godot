@@ -338,10 +338,10 @@ fn update(
                 lean: 0.,
             };
         } else if let Some(seat) = prop.seat {
-            *transform = seat.body_pose;
-            rig.play("Idle_Sit", true);
+            *transform = seat.avatar_pose();
+            rig.play(if seat.recline { "Idle_Stand" } else { "Idle_Sit" }, true);
             *pose = pose::TorsoPose {
-                pitch: input.pitch(),
+                pitch: if seat.recline { 0. } else { input.pitch() },
                 ..default()
             };
         } else {

@@ -177,8 +177,10 @@ voice pause/session cleanup also run (see [FOOTSTEPS_PORT.md](FOOTSTEPS_PORT.md)
 Actual listening remains unverified without an audio output device. Nameplates
 now consume accepted profile names and separately arriving pictures, with the
 original font, world depth and distance rules; see [NAMEPLATE_PORT.md](NAMEPLATE_PORT.md).
-Reclined seats and muzzle effects remain presentation work; this checkpoint does
-not establish complete multiplayer.
+Reclined seat body/eye poses now use accepted occupancy and authored bed metadata;
+see [PROP_SEATS_PORT.md](PROP_SEATS_PORT.md) for the original fallback-only fixture
+scope. Muzzle effects remain presentation work; this checkpoint does not
+establish complete multiplayer.
 
 Accepted remote worn/held light flags now use the same original brightest-colour
 emission masks as local equipment. Headlamp/NVG lenses and held torch bulbs glow;

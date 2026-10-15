@@ -1372,3 +1372,21 @@ were rendered/opened and peer-reviewed. The visual journey caught a pregame
 camera jump, fixed for Appearance/browser/direct/host subpanels with the same
 regression. Both processes quit cleanly. Evidence and remaining launcher/menu-
 diorama scope are recorded in bevy/docs/PROFILE_PORT.md.
+
+### Bevy reclined prop-seat body and camera parity (2026-10-15)
+
+Local and remote bed occupants now use the original standing clip pitched -90°
+about the seat X axis, while the controller remains upright and non-colliding.
+The original foot anchor and first-person head offset rotate with the seat;
+local look pitch/lean clears, remote pose requires accepted sitting occupancy
+plus authored recline metadata, and rotations cannot accumulate. Furniture also
+retains the source third-person shoulder camera and collision sweep instead of
+remaining at the first-person eye when perspective changes.
+
+Four focused tests and the combined 385-test native suite pass (three manual
+render fixtures ignored), using immutable profile-config-49. Opened front/side
+Vulkan renders and independent source/code review pass. The exact source pose
+retains its face-down/mattress intersection; no guessed offset was added. The
+original Bed is fallback/CI furniture, not a retail Bed_* prop interaction. Its
+separate native registration/claim/sit fixture is still in progress; these images
+use fixed accepted replicas. See bevy/docs/PROP_SEATS_PORT.md.

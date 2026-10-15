@@ -194,6 +194,10 @@ impl PlayerInput {
             ..default()
         }
     }
+    #[cfg(test)]
+    pub(crate) fn with_view(yaw: f32, pitch: f32) -> Self {
+        Self { yaw, pitch, ..default() }
+    }
     pub(crate) fn yaw(&self) -> f32 {
         self.yaw
     }
@@ -1393,6 +1397,17 @@ fn camera_follow(
                     .and_then(|s| vehicles.follow(s, &perspective, context.single().ok().as_ref()))
                 {
                     *transform = pose;
+                    continue;
+                }
+                if let Some(seat) = prop_occupancy.as_ref().and_then(|o| o.seat) {
+                    // Furniture keeps the original on-foot shoulder camera in
+                    // third person; only first person sits at the seat's eye.
+                    *transform = crate::avatar::camera::follow(
+                        &mut perspective, context.single().ok().as_ref(), entity,
+                        seat.body_pose.translation, eye_height("sitting"),
+                        StanceHeights::default().for_stance("sitting"),
+                        input.seat_yaw + input.yaw, input.pitch, 0., time.delta_secs(),
+                    );
                     continue;
                 }
             }

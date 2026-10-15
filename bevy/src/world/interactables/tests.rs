@@ -85,6 +85,7 @@ fn chair_pelvis_matches_original_idle_sit_animation_instead_of_rest_height() {
         .unwrap() as f32;
     let seat = SeatDefinition {
         net_id: 7,
+        recline: false,
         source_index: 10,
         name: "Bench_Wood_0".into(),
         position: [3., 0.72, 9.],
@@ -105,6 +106,24 @@ fn container_and_object_door_ids_do_not_share_replica_or_geometry_state() {
     assert_eq!(door_state(&snapshot, 1, false, false), Some((false, true)));
     assert_eq!(door_state(&snapshot, 2, false, false), None);
     assert_ne!(dynamic_key((true, 1)), dynamic_key((false, 1)));
+}
+
+#[test]
+fn reclined_bed_keeps_feet_on_mattress_and_rotates_eye_to_head_for_every_yaw() {
+    // Bed.cs creates this anchor independently of ordinary furniture seats.
+    for forward in [Vec3::NEG_Z, Vec3::X, Vec3::Z, Vec3::NEG_X] {
+        let seat = SeatDefinition {
+            net_id: 9, source_index: 0, name: "Bed".into(),
+            position: [4., 0.45, 7.], face: forward.to_array(), ground_y: 0., recline: true,
+        };
+        let posed = seat_pose(&seat);
+        assert_eq!(posed.body_pose.translation, Vec3::new(4., 0.45, 7.));
+        assert!((*posed.body_pose.up() - Vec3::Y).length() < 1e-5);
+        assert!((posed.eye_pose.translation - (posed.anchor + forward * 1.5 + Vec3::Y * 0.25)).length() < 1e-5);
+        assert!((*posed.avatar_pose().up() - forward).length() < 1e-5);
+        assert!((*posed.avatar_pose().forward() - Vec3::NEG_Y).length() < 1e-5);
+        assert_eq!(posed.avatar_pose().translation, posed.anchor);
+    }
 }
 
 #[test]

@@ -212,3 +212,35 @@ fn remote_capsule_is_solid_to_the_local_player_but_does_not_stop_vehicles() {
     }
     assert_eq!(app.world().resource::<Hits>().0, [false, false]);
 }
+
+#[test]
+fn reclined_remote_requires_accepted_seat_and_late_bed_metadata_and_never_accumulates_pitch() {
+    let mut app = app();
+    let root = body(&app);
+    let hull = app.world().get::<RemotePlayer>(root).unwrap().hull;
+    app.insert_resource(crate::entities::ServiceManifest::default());
+    {
+        let mut snapshot = app.world_mut().resource_mut::<GameSnapshot>();
+        snapshot.0["players"][1]["stance"] = json!(4);
+        snapshot.0["players"][1]["yaw"] = json!(90);
+        snapshot.0["interactables"] = json!({"seats":[{"netId":9,"occupant":2}]});
+    }
+    app.update();
+    assert_eq!(app.world().get::<RigPlayback>(root).unwrap().clip, "Idle_Sit");
+    app.world_mut().resource_mut::<crate::entities::ServiceManifest>().seats = vec![json!({"netId":9,"recline":true})];
+    let rotation = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2)
+        * Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
+    for _ in 0..20 {
+        app.update();
+        assert!(app.world().get::<Transform>(root).unwrap().rotation.abs_diff_eq(rotation, 1e-5));
+        assert_eq!(app.world().get::<RigPlayback>(root).unwrap().clip, "Idle_Stand");
+        assert!(app.world().get::<ColliderDisabled>(hull).is_some());
+    }
+    app.world_mut().resource_mut::<GameSnapshot>().0["interactables"]["seats"][0]["occupant"] = json!(3);
+    app.update();
+    assert_eq!(app.world().get::<RigPlayback>(root).unwrap().clip, "Idle_Sit");
+    assert!((*app.world().get::<Transform>(root).unwrap().up() - Vec3::Y).length() < 1e-5);
+    app.world_mut().resource_mut::<GameSnapshot>().0["players"][1]["stance"] = json!(0);
+    app.update();
+    assert!(app.world().get::<ColliderDisabled>(hull).is_none());
+}

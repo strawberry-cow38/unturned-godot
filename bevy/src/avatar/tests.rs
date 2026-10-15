@@ -525,6 +525,7 @@ fn accepted_lean_rotates_real_spine_without_tilting_root_or_walking_legs_and_cle
         .resource_mut::<crate::world::interactables::PropOccupancy>()
         .seat = Some(crate::world::interactables::OccupiedPropSeat {
         net_id: 44,
+        recline: false,
         body_pose: Transform::IDENTITY,
         eye_pose: Transform::IDENTITY,
         anchor: Vec3::ZERO,
@@ -536,4 +537,27 @@ fn accepted_lean_rotates_real_spine_without_tilting_root_or_walking_legs_and_cle
         0.,
         "sitting never carries the old walking lean into the chair pose"
     );
+}
+
+#[test]
+fn reclined_local_uses_standing_rig_without_look_pitch_or_crouched_knees_and_restores_chair() {
+    let mut app = avatar_app();
+    let root = app.world().resource::<AvatarState>().root.unwrap();
+    let seat = crate::world::interactables::OccupiedPropSeat {
+        net_id: 9, recline: true,
+        body_pose: Transform::from_xyz(4., 0.45, 7.).with_rotation(Quat::from_rotation_y(0.7)),
+        eye_pose: Transform::IDENTITY, anchor: Vec3::new(4., 0.45, 7.), exit_position: Vec3::ZERO,
+    };
+    app.insert_resource(PlayerInput::with_view(0., 65.));
+    app.world_mut().resource_mut::<crate::world::interactables::PropOccupancy>().seat = Some(seat);
+    for _ in 0..10 { app.update(); }
+    assert_eq!(*app.world().get::<Transform>(root).unwrap(), seat.avatar_pose());
+    assert_eq!(app.world().get::<RigPlayback>(root).unwrap().clip, "Idle_Stand");
+    let pose = app.world().get::<pose::TorsoPose>(root).unwrap();
+    assert_eq!((pose.pitch, pose.lean), (0., 0.));
+    app.world_mut().resource_mut::<crate::world::interactables::PropOccupancy>().seat.as_mut().unwrap().recline = false;
+    app.update();
+    assert_eq!(*app.world().get::<Transform>(root).unwrap(), seat.body_pose);
+    assert_eq!(app.world().get::<RigPlayback>(root).unwrap().clip, "Idle_Sit");
+    assert_eq!(app.world().get::<pose::TorsoPose>(root).unwrap().pitch, 65.);
 }
