@@ -14,6 +14,11 @@ anyhow = "1"
 fastnoise-lite = "=1.1.1"
 bevy_rapier3d = { version = "=0.37.0", default-features = false, features = ["dim3"] }
 
+# Mouse clicks use this frame's hit; vanished touch pointers retain the original
+# previous-frame behavior. See vendor/bevy_picking/PATCHES.md and UI regressions.
+[patch.crates-io]
+bevy_picking = { path = "vendor/bevy_picking" }
+
 [profile.dev]
 opt-level = 1
 debug = 0

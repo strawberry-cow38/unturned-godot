@@ -1368,8 +1368,6 @@ dependencies = [
 [[package]]
 name = "bevy_picking"
 version = "0.20.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "47a04fb644c62a57a4f338f5cd8b61519c569139742eafe87dccb523e4b7cf2e"
 dependencies = [
  "bevy_app",
  "bevy_asset",

@@ -2386,3 +2386,24 @@ passed. This is an integrated-authority widget journey plus the separate UDP/
 save/rejoin authority coverage; a complete playable-map Skills journey remains
 uncaptured. No gameplay grant effects are invented. See
 `bevy/docs/SKILLS_PORT.md`.
+
+### Native fast mouse clicks preserve release and capture semantics
+
+Pinned Bevy 0.20.0 sent mouse presses to the current hit but click/releases to
+last frame's hit. The original picker fails both newly-hovered fast clicks and
+move-off releases; queued ButtonPlugin events alone were already correct.
+The narrowly patched vendored crate now uses the current mouse hit, retains an
+explicit auto-released capture until dispatch consumes it once, and leaves
+touch/custom previous-hit behavior and slider cleanup intact. Both original
+licenses and published package provenance are retained. Final-frame hit testing
+is still the upstream limit; no per-event geometric query is claimed.
+
+Twelve focused input regressions, all 22 upstream picking tests and 101 native UI
+tests pass. The initial mouse-only correction also failed the new capture test,
+which the final retained-capture seam fixes. Actual xdotool 12 ms clicks during
+500 ms frame pauses reached production Select, Equip and Respawn handlers once
+each; the sidecar proves all three movement/press/release batches shared their
+respective frame and emitted the exact two intents. The Vulkan image was opened
+and independently reviewed, as was the source patch. No authority or wire
+behavior changes. See `bevy/docs/UI_POINTER_INPUT_PORT.md` and
+`bevy/artifacts/bevy-fast-buttons.{png,json}`.

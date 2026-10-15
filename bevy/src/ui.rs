@@ -11,6 +11,9 @@ use bevy::{
 use serde::{Deserialize, Deserializer};
 use serde_json::{Value, json};
 
+#[cfg(test)]
+mod button_input_tests;
+
 mod appearance;
 pub(crate) mod backdrop;
 mod attachments;
