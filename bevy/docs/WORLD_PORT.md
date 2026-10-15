@@ -198,3 +198,10 @@ nonlocal creature overlap gates, pane health/shards, powered appliance interior
 lights, toaster/vending/elevator special motion, NPC dialogue, and generated
 building fixtures. The cooler pane currently renders the source tint, alpha and
 roughness; shared authoritative pane damage remains separate work.
+
+The corrected native outside-door journey was rendered and inspected in
+`artifacts/bevy-door-closed.png` and `artifacts/bevy-door-open.png`. From player
+position (−476.445, 32.5, −111.1), F toggles PEI shipping-container door 18; the
+saved authority snapshot records `open:true`, and both original leaves visibly
+swing 90 degrees. The regression checks that this visible pose agrees with
+Rapier, rather than accepting a moving collider with a displaced mesh.
