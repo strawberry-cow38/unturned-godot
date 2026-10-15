@@ -497,3 +497,6 @@ hit=hit.replace('                SetCollisionLayerValue(1, false);', '          
 # Vehicle lighting keeps the original electrical/alarm bodies; native owns lamps.
 from extract_vehicle_lights import extract as extract_vehicle_lights
 extract_vehicle_lights(read, out, match, method)
+
+from extract_vehicle_maintenance import extract as extract_vehicle_maintenance
+extract_vehicle_maintenance(read, out, match, method)

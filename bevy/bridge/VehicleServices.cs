@@ -12,6 +12,7 @@ public sealed class VehicleServices
 {
     readonly NetWorldServer _server;
     public VehicleLightingServices Lighting;
+    public VehicleMaintenanceServices Maintenance;
     public bool HasEngineHealth(uint id) => _parts.TryGetValue(id, out var parts) && parts.EngineMax > 0;
     readonly Dictionary<uint, VehicleStorageShape> _storage = new();
     readonly Dictionary<(uint, int), (long tick, bool clear, Vector3 pos)> _exits = new();
@@ -65,7 +66,7 @@ public sealed class VehicleServices
     public string HitPart(uint id, Vector3 point, string reported)
     {
         if (!_bodySpecs.TryGetValue(id, out var spec) || !_server.Vehicles.TryGet(id, out var e)) return reported ?? "hull";
-        if (reported?.StartsWith("glass:") == true) return reported;
+        if (Maintenance?.ResolveGlass(id, point) is int pane && pane >= 0) return "glass:" + pane;
         if (Lighting?.ResolveLamp(id, point) is int lamp && lamp >= 0) return "lamp:" + lamp;
         if (reported?.StartsWith("tire:") == true && int.TryParse(reported.AsSpan(5), out int tire) && tire is >= 0 and < 8 && (e.PoppedTireMask & (1 << tire)) == 0) return reported;
         var rotation = System.Numerics.Quaternion.CreateFromYawPitchRoll(e.YawDegrees * Mathf.Deg2Rad, e.PitchDegrees * Mathf.Deg2Rad, e.RollDegrees * Mathf.Deg2Rad);

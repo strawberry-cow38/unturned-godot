@@ -129,6 +129,7 @@ Rules of the road:
 | render an accepted mounted muzzle report | `vehicle::turrets::fx::MountedEffectsPlugin`, `fx::voices` | original flash/audio/light/smoke from deduplicated mountShot; player cannon scale2.2 and local spring; source NPC scale1; native effects never launch authority |
 | present original helicopter door crew | `vehicle::turrets::crew::CrewPlugin`, `vehicle::damage::WreckMaterial::handle` | accepted crewAlive and catalog appearance only; hull-local GunnerAt, original bind pose and +90Z hook gun, no native health/collider; live wreck crew stays visible and charred; ancestor marker excludes every crew mesh from hull BVH uploads |
 | preserve original vehicle battery, beam switches, alarm and shootable lamps | `VehicleLightingServices`, extracted `VehicleLightState`, `VehicleLightingCommand`/`VehicleLightingEvent` | protocol68 protects light/alarm flags from body streams; use current swamped, not permanent engineDrowned; lamp centers stay hull-local |
+| preserve shootable vehicle glazing, free indexed repairs and manual horns | `VehicleMaintenanceServices`, `VehicleMaintenanceCommand`/`VehicleMaintenanceEvent` | protocol69 canonical pane/tire masks; current hull-local pane transforms; broken triangles stop blocking immediately; source horn gates and one authority hearing alert |
 | render accepted source vehicle beams, navigation lamps and lightbar clocks | `vehicle::lighting::{geometry,presentation,state}` | split original lenses once; catalog beam constants; accepted flags/masks only; 50 Hz siren and rotor beacon clocks; source material alias and repair behavior |
 | render accepted glass feedback across reordered snapshots/events | `particles::glass::GlassShards`, `vehicle::lighting::breaks::BreakColors` | source untextured flat shards and original sound; bounded per-lamp color history; never compare process-local tick to accepted server tick; no effects on late-join masks |
 | split original vehicle lamp geometry and reuse its source emitter locations | `vehicle::lighting::geometry::{build,BuiltLighting}`, `ObjData::split_where` (`bevy/src/content.rs`) | triangle attributes/winding preserved; original side/zone branch order, material aliases, Kelvin hull classification and aircraft lens clusters; hidden amplifier is not a visible collider |
@@ -227,6 +228,7 @@ listed so you can *read* a packet, not so you can retune one.
 | damage | `ClampedFloat(9,4)` | ±512 HP, 1/16 |
 | yaw / pitch | `Degrees(11)` | wraps to `[0,360)` — **wraps, not clamps** |
 | deployable health/fuel | `ClampedFloat(12,2)` | max 4095.75, ¼ |
+| vehicle fuel / hull health | `ClampedFloat(20,1)` / `(17,1)` | protocol69 max 524287.5 mL / 65535.5 HP; original fleet requires 300000 mL / 40000 HP |
 | vitals (food/water/stamina/infection) | `UnsignedNormalized(8)` | 0..1 |
 | time of day | `UnsignedNormalized(16)` | ~1.3 s of a PEI day |
 | string | 1 bit null/empty + 11 bit len + UTF-8 | max 2048 **bytes**; oversized writes as EMPTY; **not thread-safe** (shared static buffer) |

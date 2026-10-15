@@ -766,3 +766,11 @@ replayed. The held-weapon cosmetic/warhead gaps remain separate. See the mounted
 document above for bounds, timing and actual UDP regression evidence.
 
 Vehicle electrical authority is documented in [VEHICLE_LIGHTING_AUTHORITY.md](../docs/VEHICLE_LIGHTING_AUTHORITY.md). Protocol68 adds accepted beam/pattern/lamp state, driver switch intents and alarm/lamp effect facts; `worldVehicleLighting` registers original host mesh centers.
+
+Vehicle pane damage, free indexed mechanics repairs and manual horn authority are
+documented in [VEHICLE_MAINTENANCE_PORT.md](../docs/VEHICLE_MAINTENANCE_PORT.md).
+Protocol69 adds canonical glass/tire availability, accepted repair/horn facts and
+full original fleet fuel/health ranges. Host `worldVehicleGlazing` registers
+current source pane transforms; clients use `action vehicleMaintenance` with
+`{netId,action:"RepairGlass"|"RepairTire"|"Horn",index}`. Damaged panes leave the
+server ray geometry immediately and stay broken across metadata refresh/save.

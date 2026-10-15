@@ -2071,3 +2071,24 @@ and closing restores the baseline exactly. Source/schedule review passed; actual
 vehicle radial integration follows in the UI checkpoint. Lower source layer11
 inventory/map backdrops remain separate. Details and reproduction are in
 `bevy/docs/MODAL_BACKDROP_PORT.md`.
+
+
+### Bevy protocol69 vehicle maintenance authority
+
+Ported original pane hit classification, damage masks, free indexed glass/tire
+repairs and manual horn gates into the shared authority. Current transformed pane
+bounds retain source order and nearest ties; accepted broken panes immediately
+stop blocking authoritative rays. Normal shots can still break intact wreck
+glass. Horns require the accepted driver, battery and source cooldown/alarm gates,
+then emit one accepted sound/hearing fact. Saved damage, pane transforms, tire
+availability and remaining cooldown survive reload; late joins receive state
+without replayed effects. Explicit version69 also fixes measured signed fuel/HP
+wire limits for the 300000mL/40000HP source fleet.
+
+The immutable final candidate passes 130 managed tests, 693 core tests and all
+121 JSONL journeys. Three negative controls reproduce stale solid glass, rejected
+wreck glass and 2047.5mL fuel truncation; an additional health-only control
+reproduces 32767.5HP ship truncation. Independent source/wire review passed after
+fixing the wreck contact order and null saved-pane validation. Native glazing,
+repair controls and accepted horn presentation remain separate integration work;
+see `bevy/docs/VEHICLE_MAINTENANCE_PORT.md`.

@@ -20,6 +20,7 @@ public sealed partial class WorldGeometry
     public Func<int, bool> DestructibleAlive { get; set; }
     public Func<int, bool> ResourceAlive { get; set; }
     public Func<uint, bool> VehicleExists { get; set; }
+    public Func<uint, string, bool> VehiclePartSolid { get; set; }
     public Func<uint, bool> DeployableExists { get; set; }
     public Func<string, bool> DynamicAlive { get; set; }
     readonly record struct Triangle(Vector3 A, Vector3 B, Vector3 C, int Destructible, int Resource = -1, uint Vehicle = 0, uint Deployable = 0, string Part = null, bool Thin = false, bool Water = false);
@@ -194,7 +195,7 @@ public sealed partial class WorldGeometry
             if (worldOnly && (triangle.Vehicle != 0 || triangle.Deployable != 0)) continue;
             if (triangle.Destructible >= 0 && DestructibleAlive?.Invoke(triangle.Destructible) == false) continue;
             if (triangle.Resource >= 0 && ResourceAlive?.Invoke(triangle.Resource) == false) continue;
-            if (triangle.Vehicle != 0 && VehicleExists?.Invoke(triangle.Vehicle) == false) continue;
+            if (triangle.Vehicle != 0 && (VehicleExists?.Invoke(triangle.Vehicle) == false || VehiclePartSolid?.Invoke(triangle.Vehicle, triangle.Part) == false)) continue;
             if (triangle.Deployable != 0 && DeployableExists?.Invoke(triangle.Deployable) == false) continue;
             var edge1 = triangle.B - triangle.A; var edge2 = triangle.C - triangle.A;
             var p = Vector3.Cross(dir, edge2); float determinant = Vector3.Dot(edge1, p);

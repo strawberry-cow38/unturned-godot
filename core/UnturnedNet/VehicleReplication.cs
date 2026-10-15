@@ -32,10 +32,10 @@ namespace UnturnedGodot.Net
         /// whoever happened to walk past it.</summary>
         public const byte FlagAlarming = 1 << 7;
 
-        // scalar wire ranges (WriteClampedFloat int/frac bits) -- generous vs the .dat maxima
-        // (fuel <= 3000, health <= 40000 since the 10x, battery <= 10000; see Vehicle.cs specs)
-        const int FuelIntBits = 12, FuelFracBits = 1;
-        const int HealthIntBits = 16, HealthFracBits = 1;   // v24: was 10 (max 1023) -- the tank/ship 4000 was ALREADY clipped on the wire; 10x hp (strawberry 2026-09-03) needs up to 40000
+        // v69 signed ranges include their sign bit: original fleet fuel reaches300000
+        // and ship hull health40000;12/16 integer bits clipped those to2047.5/32767.5.
+        const int FuelIntBits = 20, FuelFracBits = 1;
+        const int HealthIntBits = 17, HealthFracBits = 1;
         const int BatteryIntBits = 15, BatteryFracBits = 0; // v68: signed14 clipped original BatteryMax10000 to8191
         public const int SteerBits = 9;   // steer wraps [0,360) like every degree field; real range is +-~35deg (public: VehicleStateCommand rides the same encoding)
 
@@ -98,6 +98,9 @@ namespace UnturnedGodot.Net
             public byte LightbarPattern { get; internal set; }
             public byte LampMask { get; internal set; }
             public byte BrokenLampMask { get; internal set; }
+            public uint GlassMask { get; internal set; }
+            public uint BrokenGlassMask { get; internal set; }
+            public byte TireMask { get; internal set; }
             // A6 rope tow (published by the disjoint ServerPublishTow writer, never the transform/vitals paths):
             public uint TowedNetId { get; internal set; }   // the vehicle THIS entity tows (0 = not towing). "Am I towed" is DERIVED client-side (being someone else's TowedNetId) -- NEVER replicated (a redundant TowedByNetId would be a hash-divergence footgun).
             public float TowRestLen { get; internal set; }  // the tow rope's rest length (quantized via QuantizeClampedFloat); cosmetic sag on the client rope. 0 when not towing.
@@ -515,6 +518,7 @@ namespace UnturnedGodot.Net
                 h = NetHash.MixByte(h, e.LightbarPattern);
                 h = NetHash.MixByte(h, e.LampMask);
                 h = NetHash.MixByte(h, e.BrokenLampMask);
+                h = NetHash.MixUInt32(h, e.GlassMask); h = NetHash.MixUInt32(h, e.BrokenGlassMask); h = NetHash.MixByte(h, e.TireMask);
             }
             return h;
         }
@@ -564,6 +568,7 @@ namespace UnturnedGodot.Net
             if (anyFlat) w.WriteUInt8(e.PoppedTireMask);
             w.WriteBit(e.HighBeam); w.WriteBits(e.LightbarPattern, 2);
             w.WriteBits(e.LampMask, 7); w.WriteBits(e.BrokenLampMask, 7);
+            w.WriteBits(e.GlassMask,18); w.WriteBits(e.BrokenGlassMask,18); w.WriteUInt8(e.TireMask);
         }
 
         static bool ReadEntity(NetPakReader r, out VehicleEntity e)
@@ -605,8 +610,11 @@ namespace UnturnedGodot.Net
             if (!r.ReadBit(out bool highBeam) || !r.ReadBits(2, out uint pattern) || pattern > 2
                 || !r.ReadBits(7, out uint lampMask) || !r.ReadBits(7, out uint brokenMask)
                 || (brokenMask & ~lampMask) != 0 || (highBeam && (flags & FlagHeadlights) == 0)) return false;
+            if (!r.ReadBits(18, out uint glassMask) || !r.ReadBits(18, out uint brokenGlass) || (brokenGlass & ~glassMask) != 0
+                || !r.ReadUInt8(out byte tireMask)) return false;
             e = new VehicleEntity
             {
+                GlassMask = glassMask, BrokenGlassMask = brokenGlass, TireMask = tireMask,
                 HighBeam = highBeam, LightbarPattern = (byte)pattern, LampMask = (byte)lampMask, BrokenLampMask = (byte)brokenMask,
                 NetIdValue = id, TypeId = typeId, Variant = variant, DriverPlayerId = driver,
                 Pos = pos, YawDegrees = yaw, PitchDegrees = pitch, RollDegrees = roll,

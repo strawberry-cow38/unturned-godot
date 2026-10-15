@@ -535,7 +535,11 @@ namespace UnturnedNet.Tests
             // is the one above rather than whatever the code happens to emit.
             // v68 DERIVED: battery offset283 changes14 ones to15-bit biased26384;
             // retain57 original tail bits; append17 defaultlightingbits.354->372bits,45->47bytes.
-            Assert.That(ToHex(bytes), Is.EqualTo("E803000000000000092F00010009000000050200000C10302040F80306100E8E6F0220308120004220C09EBB6109823817000000001000000000"));
+            // v69 DERIVED: keep first253 bits; fuel1500 becomes biased525788 in20+1
+            // bits; health600 becomes biased66136 in17+1. Keep prior89-bit tail
+            // beginning at oldbattery offset283; append44 zero pane/tire bits.
+            // 253+21+18+89+44=425bits =>54bytes (0x36), replacing47bytes.
+            Assert.That(ToHex(bytes), Is.EqualTo("E803000000000000093600010009000000050200000C10302040F80306100E8E6F0220308120004220C09EBB00610904712E000000002000000000000000000000"));
         }
 
         static ushort Driver(Harness h, uint veh)

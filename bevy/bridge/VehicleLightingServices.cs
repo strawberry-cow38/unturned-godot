@@ -65,6 +65,7 @@ public sealed class VehicleLightingServices
         entry.State.Battery = Math.Clamp(Float(source, "battery"), 0, BatteryMax);
         Publish(id, entry);
     }
+    public bool CanHonk(uint id) { var e=Ensure(id);return e!=null&&e.HasHorn&&e.State.Battery>0&&e.State._alarmTimer<=0; }
     public float BatteryFor(uint id, float fallback) => _states.TryGetValue(id, out var s) ? s.State.Battery : fallback;
     public void BodyState(uint id, JsonElement state)
     {
