@@ -275,7 +275,7 @@ namespace UnturnedGodot.Net
             public uint NetIdValue;
             public ushort Owner;
             public Vector3 Pos, Vel;
-            public long ExplodeTick;
+            public long SpawnTick, ExplodeTick;
             public ushort ItemId;          // v27: which throwable, so Explode can look up what it actually does
             public ThrowableDef Def;       // resolved ONCE at accept time -- never re-derived from client input later
         }
@@ -463,10 +463,9 @@ namespace UnturnedGodot.Net
             // burning flare, so the server flies it for the whole burn and retires it at the end. That is what
             // lets a joined client light it the moment the entity appears (ProjectileReplicaView reads the kind
             // byte) instead of three seconds after it lands. Explosives and smoke end on the fuse.
-            long endTick = tick + Throwables.FuseTicks
-                         + (def.Kind == EThrowableKind.Flare ? (long)(def.EffectSeconds * 50f) : 0L);
+            long endTick = tick + ProjectileLifetimeTicks(def);
             _grenades.Add(new GrenadeEntity { NetIdValue = id.Value, Owner = sender, Pos = cmd.Origin, Vel = cmd.Velocity,
-                                              ExplodeTick = endTick, ItemId = def.Id, Def = def });
+                                              SpawnTick = tick, ExplodeTick = endTick, ItemId = def.Id, Def = def });
             _projectiles.ServerSpawn(id, KindOf(def), cmd.Origin, tick);
             Diag.GrenadesAccepted++;
             ThrowAccepted?.Invoke(sender, def.Id, id.Value, tick);

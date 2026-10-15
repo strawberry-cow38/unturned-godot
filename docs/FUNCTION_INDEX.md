@@ -36,6 +36,7 @@ Rules of the road:
 | parse `"x,y,z"` from a `.dat` | `UnityDatEx.TryParseVector3` | `Split(',')` + `float.Parse` — **five** hand-rolled copies exist, one of which (`game/CropNode.cs:26`) *throws* instead of defaulting |
 | quantize a world position | `PlayerReplication.Quantize` (`core/UnturnedNet/PlayerReplication.cs:458`) | pick your own bit budget; this is THE grid every entity shares |
 | rebase an integrated world without teleporting or restarting clocks | `WorldRebase.Translate` + `NetWorldServer/Client.PollNetwork` (`core/UnturnedNet/WorldRebase.cs`; managed barrier `bevy/bridge/OriginServices.cs`) | drain every peer first; shift native physics/geometry too; this does not negotiate a remote UDP epoch |
+| inspect/save a live throwable's exact age and deadline | `ServerCombat.ProjectileFlights` / `TryGetProjectileFlight` / `ServerRestoreProjectile` (`core/UnturnedNet/ProjectileFlight.cs`) | restore remaining ticks, not a fresh throw; original packet format remains unchanged |
 | write a pos/dir/vel/damage to the wire | `NetWire.WritePos/WriteDir/WriteVel/WriteDamage` (`core/UnturnedNet/CombatReplication.cs:339`+) | choose bit widths yourself — golden byte tests lock these |
 | hash replicated state | `NetHash.Mix*` / `HashString` (`core/UnturnedNet/NetHash.cs`) | `string.GetHashCode` (not stable across processes) |
 | put an item in a bag | `PlayerInventory.tryAddItem` (`core/UnturnedSim/PlayerInventory.cs:107`) | walk pages yourself |

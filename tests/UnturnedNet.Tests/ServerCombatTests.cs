@@ -665,5 +665,36 @@ namespace UnturnedNet.Tests
             Assert.That(accepted, Is.EqualTo(2)); Assert.That(blasts.Count, Is.EqualTo(1));
         }
 
+        [Test]
+        public void RestoredProjectile_RetainsFlightDeadline_WithoutSpendingOrReplayingThrow()
+        {
+            var h = new Harness(50906).Connected("thrower"); var c = h.Clients[0];
+            int spent = 0, accepted = 0;
+            h.Server.Combat.SpendThrowable = (_, _) => { spent++; return true; };
+            h.Server.Combat.ThrowAccepted = (_, _, _, _) => accepted++;
+            long tick = h.Server.Session.CurrentTick; var id = h.Server.Ids.Mint();
+            Assert.That(h.Server.Combat.ServerRestoreProjectile(id, c.PlayerId, 255, new Vector3(0, 2, 0), Vector3.zero, tick, 12, 3438), Is.True);
+            Assert.That(h.Server.Combat.ServerRestoreProjectile(id, c.PlayerId, 255, Vector3.zero, Vector3.zero, tick, 12, 3438), Is.False, "duplicate IDs cannot duplicate the flight");
+            Assert.That(h.Server.Combat.TryGetProjectileFlight(id.Value, out var flight), Is.True);
+            Assert.That(flight.ItemId, Is.EqualTo(255)); Assert.That(flight.SpawnTick, Is.EqualTo(tick - 3438));
+            Assert.That(flight.RetireTick, Is.EqualTo(tick + 12));
+            h.Step(6); Assert.That(c.Projectiles.Count, Is.EqualTo(1));
+            h.Step(12); Assert.That(h.Server.Projectiles.Count, Is.Zero); Assert.That(c.Projectiles.Count, Is.Zero);
+            Assert.That(spent, Is.Zero); Assert.That(accepted, Is.Zero);
+        }
+
+        [Test]
+        public void RestoredProjectile_RejectsUnknownExpiredAndNonfiniteFlights()
+        {
+            var h = new Harness(50907).Connected("thrower"); ushort owner = h.Clients[0].PlayerId;
+            bool Restore(ushort item, Vector3 pos, long remaining, long elapsed) => h.Server.Combat.ServerRestoreProjectile(
+                h.Server.Ids.Mint(), owner, item, pos, Vector3.zero, h.Server.Session.CurrentTick, remaining, elapsed);
+            Assert.That(Restore(65535, Vector3.zero, 10, 0), Is.False);
+            Assert.That(Restore(254, Vector3.zero, 0, 150), Is.False);
+            Assert.That(Restore(254, Vector3.zero, 10, -1), Is.False);
+            Assert.That(Restore(254, new Vector3(float.NaN, 0, 0), 10, 0), Is.False);
+            Assert.That(h.Server.Projectiles.Count, Is.Zero);
+        }
+
     }
 }
