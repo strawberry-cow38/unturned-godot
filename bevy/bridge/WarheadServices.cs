@@ -15,11 +15,20 @@ public sealed class WarheadServices
     readonly NetWorldServer _server;
     readonly Action<string,object> _emit;
     readonly Dictionary<uint,Pose> _stuck=new();
-    public WarheadServices(NetWorldServer server,WeaponServices weapons,Action<string,object> emit)
+    public WarheadServices(NetWorldServer server,WeaponServices weapons,CosmeticBulletServices cosmetic,Action<string,object> emit)
     {
         _server=server;_emit=emit;
         server.Combat.CaptureBulletContext=owner=>weapons.CaptureWarhead(owner);
         server.Combat.BulletImpact=Impact;
+        server.Combat.ContinueBullet=Continue;
+        var previousRay=server.Combat.WorldRayDetailed;
+        server.Combat.BulletRayDetailed=(Vector3 from,Vector3 to,out CombatWorldHit hit)=>{
+            bool found=previousRay(from,to,out hit);
+            if(cosmetic.RayWater(from,to,out var point,out var normal)
+                &&(!found||(point-from).sqrMagnitude<(hit.Point-from).sqrMagnitude))
+            {hit=new(point,normal:normal,water:true);return true;}
+            return found;
+        };
     }
     void Impact(CombatBulletImpact hit)
     {
@@ -31,6 +40,25 @@ public sealed class WarheadServices
             _emit("bulletExplosion",new{playerId=hit.Shooter,sequence=hit.Sequence,pellet=hit.Pellet,
                 itemId=payload.ItemId,gun=payload.Gun,position=Array(hit.Point),radius=payload.Radius});
         }
+    }
+    CombatBulletContinuation? Continue(CombatBulletImpact hit)
+    {
+        if(hit.Context is not Payload payload)return null;
+        // Exact source order: direct impact/damage, warhead, piercing, final stick.
+        // Thin metadata is opt-in; no production prop is guessed to be penetrable.
+        if(payload.Radius<=0&&hit.Pierced<CosmeticRules.MaxPierce&&(hit.Thin||hit.Water))
+        {
+            float velocity=hit.Thin?CosmeticRules.ThinVelKeep:CosmeticRules.WaterVelKeep;
+            float damage=hit.Thin?CosmeticRules.ThinDmgKeep:CosmeticRules.WaterDmgKeep;
+            _emit("bulletPierced",new{playerId=hit.Shooter,sequence=hit.Sequence,pellet=hit.Pellet,
+                position=Array(hit.Point),normal=hit.Normal.HasValue?Array(hit.Normal.Value):null,
+                water=hit.Water,thin=hit.Thin,pierced=hit.Pierced+1,velocityKeep=velocity,damageKeep=damage});
+            return new(velocity,damage,CosmeticRules.PierceExit);
+        }
+        Stick(hit,payload);return null;
+    }
+    void Stick(CombatBulletImpact hit,Payload payload)
+    {
         // The old approximate core actor ray has no surface normal. Do not invent an
         // attachment pose. Every Bevy triangle and current animal/zombie capsule supplies it.
         if(payload.StickItemId==0||hit.Normal is not Vector3 normal)return;

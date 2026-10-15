@@ -73,13 +73,13 @@ class CosmeticBulletTests(unittest.TestCase):
         catalog=self.call('catalog')['result']['bulletVisuals'];self.assertEqual('rocket_projectile.txt',catalog['rocketMesh'])
         self.assertEqual([-90,0,0],catalog['rocketMeshRotation']);self.assertEqual(16,catalog['segments']);self.assertEqual(10,catalog['maxLength'])
 
-    def test_thin_surfaces_reduce_only_cosmetic_velocity_and_stop_at_original_pierce_cap(self):
+    def test_thin_surfaces_match_authority_velocity_and_stop_at_original_pierce_cap(self):
         self.call('worldGeometry',meshes=[dict(thin=True,vertices=[[-100,-100,z],[100,-100,z],[0,100,z]]) for z in [-5,-10,-15]])
         state,_=self.launch();initial=state['bullets'][0];state=self.call('tick')['state'];first=state['bullets'][0]
         self.assertEqual(1,first['pierced']);self.assertAlmostEqual(initial['velocity'][2]*.75,first['velocity'][2],places=3)
         state=self.pump(10);self.assertEqual([],state['bullets'])
         retired=next(e['data'] for e in state['events'] if e['kind']=='bulletRetired');self.assertAlmostEqual(-15,retired['position'][2],places=3)
-        self.assertEqual(1,sum(e['kind']=='impact' for e in state['events']),'existing authority still stops at its first surface')
+        self.assertEqual(3,sum(e['kind']=='impact' for e in state['events']),'one authoritative impact per surface; cosmetics add none')
 
     def test_water_uses_source_splash_slab_and_pierces_once_from_outside(self):
         self.call('worldCosmeticGeometry',waterBoxes=[dict(center=[0,0,0],size=[100,.2,100])])
@@ -90,7 +90,8 @@ class CosmeticBulletTests(unittest.TestCase):
         first=state['bullets'][0];after=self.call('tick')['state']['bullets'][0]
         self.assertEqual(1,after['pierced']);self.assertAlmostEqual(first['velocity'][2]*.45,after['velocity'][2],places=3)
         after=self.call('tick')['state']['bullets'][0];self.assertEqual(1,after['pierced'],'starting inside splash slab must not hit its back face')
-        self.assertFalse(any(e['kind']=='impact' for e in state['events']),'a cosmetic-only water probe cannot emit authority impact')
+        state=self.pump(4)  # accepted impact is reliable and arrives after the immediate cosmetic step
+        self.assertEqual(1,sum(e['kind']=='impact' for e in state['events']),'trusted water metadata now feeds one authoritative contact, never a second cosmetic impact')
 
     def test_origin_barrier_translates_live_flight_and_unprocessed_anchor_without_aging(self):
         self.call('init',starterKit=True,spawn=[1025,0,0])

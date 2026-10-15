@@ -73,4 +73,34 @@ public class BulletImpactAdapterTests
         h.Server.Combat.ServerDetonateAt(new(0, 0, -100), 1, 1, h.Server.Session.CurrentTick);
         h.Step(10); Assert.That(grenadeFacts, Is.EqualTo(1), "existing grenade/microwave fact remains unchanged");
     }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void Optional_continuation_spends_steps_reduces_damage_and_skips_gravity_on_contact(bool enabled)
+    {
+        var h = new Harness(); var combat = h.Server.Combat;
+        combat.DefaultGun.MuzzleVelocity = 100; combat.DefaultGun.BallisticSteps = 2;
+        combat.DefaultGun.GravityMultiplier = 10;
+        var contacts = new List<CombatBulletImpact>(); var damage = new List<float>();
+        combat.WorldRayDetailed = (Vector3 from, Vector3 to, out CombatWorldHit hit) => {
+            int plane = from.z > -1 ? 1 : from.z > -2 ? 2 : 3;
+            hit = new(new Vector3(0, 1.5f, -plane), plane, normal: new Vector3(0, 0, 1), thin: true);
+            return to.z <= -plane;
+        };
+        combat.BulletImpact = contacts.Add;
+        combat.DamageObject = (_, amount, _) => { damage.Add(amount); return false; };
+        if (enabled) combat.ContinueBullet = _ => new CombatBulletContinuation(.75f, .7f, .06f);
+        h.Client.SendFire(new(0, 1.5f, 0), new(0, 0, -1)); h.Step(10);
+        Assert.That(contacts.Count, Is.EqualTo(enabled ? 2 : 1));
+        Assert.That(combat.LiveBullets, Is.Zero);
+        Assert.That(damage[0], Is.EqualTo(25));
+        if (enabled)
+        {
+            Assert.That(damage[1], Is.EqualTo(17.5f));
+            Assert.That(contacts[1].Velocity.z, Is.EqualTo(-75));
+            Assert.That(contacts[1].Velocity.y, Is.Zero, "source piercing spends a step without applying gravity");
+            Assert.That(contacts[1].Pierced, Is.EqualTo(1));
+            Assert.That(combat.Diag.BulletsExpired, Is.EqualTo(1));
+        }
+    }
 }

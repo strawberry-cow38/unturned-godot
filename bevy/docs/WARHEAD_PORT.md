@@ -54,7 +54,39 @@ world-frozen behavior, vertical spawn pose, and the nailgun exclusion. The new
 crossbow journey fails against the previous executable because no arrow exists.
 
 Native warhead FX and stuck-item pose rendering remain a follow-up after the
-current renderer checkpoint. Authority still stops ordinary rounds at the first
-contact: original thin-surface/water piercing remains a separate task, and
-ordinary dropped-item physics has not been generalized by this change. In-flight
+current renderer checkpoint. Original thin-surface/water piercing is now handled by an optional continuation
+adapter described below. Ordinary dropped-item physics has not been generalized
+by this change. In-flight
 bullets remain transient across saves, as before.
+
+
+## Surface continuation
+
+`ServerCombat.ContinueBullet` is null by default. Its optional response resumes
+an accepted round after direct damage and the warhead callback. The bridge copies
+the original `PierceCost` ordering: at most two surfaces; explosive rounds stop;
+a `thin` tag wins over water; everything else stops. Thin surfaces keep75% velocity
+and70% damage; water keeps45% velocity and50% damage. All damage channels retain
+the cumulative multiplier. The round resumes0.06m beyond the contact, consumes a
+ballistic step and skips that tick's ordinary gravity update. It can expire on a
+pierce, without gaining extra range or spawning a premature recovered projectile.
+
+The rendered ocean's trusted0.2m box metadata participates only in bullet rays.
+The shared box query supplies its entry normal and ignores queries starting
+inside the slab, so a pierced round does not immediately hit the back face.
+Movement and explosion shelter still use ordinary world geometry. The historical
+`worldCosmeticGeometry` operation and `CosmeticWater` save key remain compatible;
+their trusted host metadata now serves both flight paths. No production source
+prop sets `ThinMeta` (only the original wallbang harness does), so production
+materials have not been guessed to be thin.
+
+The retained `bulletPierced` fact identifies the accepted player/sequence/pellet,
+position/normal, water/thin flags, cumulative surface count and current velocity/
+damage retention. It is diagnostic presentation data, not a second damage source.
+Core tests verify default stopping, exact damage/velocity costs, contact ordering,
+step exhaustion and skipped gravity. Actual-host journeys prove a vehicle behind
+a sheet now receives reduced damage where only its cosmetic tracer previously
+continued; they also cover water costs/no back-face hit, two-surface cap, ordinary
+solid stopping, arrow recovery only at the final contact, and rocket detonation
+at the water surface. The pre-continuation executable fails the behind-sheet
+vehicle test with health1000 instead of975.5.

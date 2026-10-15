@@ -109,7 +109,8 @@ public sealed partial class WorldGeometry
         bool found=RayTriangle(from,to,out var point,out var triangle);
         var normal=Vector3.Cross(triangle.B-triangle.A,triangle.C-triangle.A).normalized;
         if(Vector3.Dot(normal,to-from)>0)normal=-normal;
-        hit=found?new(point,triangle.Destructible,triangle.Resource,triangle.Vehicle,triangle.Deployable,triangle.Part,normal:normal):new(to);
+        hit=found?new(point,triangle.Destructible,triangle.Resource,triangle.Vehicle,triangle.Deployable,triangle.Part,
+            normal:normal,thin:triangle.Thin,water:triangle.Water):new(to);
         return found;
     }
     public bool RayCosmetic(Vector3 from,Vector3 to,out Vector3 point,out bool thin,out bool water)

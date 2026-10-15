@@ -297,7 +297,7 @@ public sealed partial class BridgeHost : IDisposable
         _zombies.RainIntensity=()=>_environment.Sim.BlendAlpha*_environment.Severity;
         _weapons = new WeaponServices(_server, _catalog, Emit);
         _cosmetic = new CosmeticBulletServices(_server,_geometry,_weapons,Emit);
-        _warheads = new WarheadServices(_server,_weapons,Emit);
+        _warheads = new WarheadServices(_server,_weapons,_cosmetic,Emit);
         _weapons.Noise=(owner,radius)=>{if(_server.Players.TryGetByOwner(owner,out var p))_zombies.Noise(p.Pos,radius);};
         _movingInput=false;_footNoiseTimer=0;
         _bodies.RepairRate = _weapons.RepairRate;

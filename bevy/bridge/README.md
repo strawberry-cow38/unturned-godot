@@ -34,6 +34,10 @@ the actual outcome appears in subsequent replicated state.
   warheads emit `bulletExplosion` (`position`, `radius`, original `gun`/`itemId`);
   cosmetic bullet retirement never authorizes damage. See
   [WARHEAD_PORT](../docs/WARHEAD_PORT.md).
+- `diagnostics`: read-only live authoritative bullet and retained stuck-pose counts.
+- `worldCosmeticGeometry`: trusted rendered `waterBoxes` (`center`,`size`), shared
+  by authoritative and cosmetic bullet rays only; excludes movement/blast shelter.
+  The historical operation name remains compatible.
 - `action`: `name` and `args`, as below. Commands go through `NetWorldClient` and
   the existing server command validators. Most effects appear within 2–4 ticks.
 - `save` / `load`: `path`, using original versioned `WorldSave` format and map gate.

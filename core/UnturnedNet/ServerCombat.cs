@@ -20,13 +20,15 @@ namespace UnturnedGodot.Net
         /// <summary>Actual host surface normal, when the ray provider can supply one.
         /// Null deliberately means unknown (the legacy closest-approach actor test is not a surface hit).</summary>
         public readonly Vector3? Normal;
+        public readonly bool Thin, Water;
         public readonly int DestructibleIndex, ResourceIndex;
         public readonly uint VehicleNetId, DeployableNetId, AnimalNetId, ZombieNetId;
         public readonly string BodyPart;
         public CombatWorldHit(Vector3 point, int destructibleIndex = -1, int resourceIndex = -1,
-            uint vehicleNetId = 0, uint deployableNetId = 0, string bodyPart = null, uint animalNetId = 0, uint zombieNetId = 0, Vector3? normal = null)
+            uint vehicleNetId = 0, uint deployableNetId = 0, string bodyPart = null, uint animalNetId = 0, uint zombieNetId = 0, Vector3? normal = null,
+            bool thin = false, bool water = false)
         { Point = point; DestructibleIndex = destructibleIndex; ResourceIndex = resourceIndex;
-          VehicleNetId = vehicleNetId; DeployableNetId = deployableNetId; BodyPart = bodyPart; AnimalNetId = animalNetId; ZombieNetId = zombieNetId; Normal = normal; }
+          VehicleNetId = vehicleNetId; DeployableNetId = deployableNetId; BodyPart = bodyPart; AnimalNetId = animalNetId; ZombieNetId = zombieNetId; Normal = normal; Thin = thin; Water = water; }
     }
     public delegate bool CombatWorldRayDetailed(Vector3 from, Vector3 to, out CombatWorldHit hit);
     /// <summary>Damage resolved by the server's world ray, never a client hit claim.
@@ -198,6 +200,9 @@ namespace UnturnedGodot.Net
 
         public IZombieHost ZombieHost;
         public CombatWorldRayDetailed WorldRayDetailed;
+        /// <summary>Optional bullet-only geometry (for example the source water splash slab).
+        /// Melee and blast shelter retain WorldRayDetailed; null uses that existing ray.</summary>
+        public CombatWorldRayDetailed BulletRayDetailed;
         public Action<CombatResourceHit> DamageResource;
         public Action<CombatBodyHit> DamageBody;
         public Action<CombatBlast> DamageHostBlast;
@@ -262,6 +267,8 @@ namespace UnturnedGodot.Net
             public float AnimalDamage;   // source ShotDamage captured before shells/equipment can change
             public object HostContext;
             public int Pellet;
+            public int Pierced;
+            public float DamageScale = 1f;
             // PlayerController.Bullet.FalloffAt: distance from this shot's original
             // position, not from the shooter after they move or change weapons.
             public float FalloffAt(Vector3 point)
@@ -339,6 +346,7 @@ namespace UnturnedGodot.Net
         /// <summary>Authoritative contact AFTER direct damage, before retiring the round.
         /// No client hit claims or wire changes; null preserves existing host behavior.</summary>
         public Action<CombatBulletImpact> BulletImpact;
+        public Func<CombatBulletImpact, CombatBulletContinuation?> ContinueBullet;
         public Action<ushort, bool, long> MeleeAccepted;
         public Func<ushort, long, bool> TryBeginReload;
         public Func<ushort, long, int?> CompleteReload;
@@ -610,7 +618,9 @@ namespace UnturnedGodot.Net
                         if (SegmentHitsCylinder(b.Pos, next, ze.Pos, ZombieZoneRadius, top, out float t, out float relY) && t < bestT)
                         { bestT = t; hitKind = 2; hitZombie = ze; hitRelY = relY; hitTop = top; }
                     }
-                if (RayWorld(b.Pos, next, out var worldHit))
+                CombatWorldHit worldHit;
+                bool hitWorld = BulletRayDetailed != null ? BulletRayDetailed(b.Pos, next, out worldHit) : RayWorld(b.Pos, next, out worldHit);
+                if (hitWorld)
                 {
                     var wp = worldHit.Point;
                     float segLen = (next - b.Pos).magnitude;
@@ -628,7 +638,7 @@ namespace UnturnedGodot.Net
                         {
                             float mult = hitRelY >= hitHeadMin ? b.Gun.HeadMult : (hitRelY >= hitTorsoMin ? b.Gun.TorsoMult : b.Gun.LegMult);
                             var zone = hitRelY >= hitHeadMin ? Durability.Zone.Head : (hitRelY >= hitTorsoMin ? Durability.Zone.Torso : Durability.Zone.Legs);
-                            float dmg = b.Gun.PlayerDamage * mult * b.Condition;   // a worn gun hits softer (Durability.DamageMultiplier)
+                            float dmg = b.Gun.PlayerDamage * mult * b.Condition * b.DamageScale;   // a worn gun hits softer (Durability.DamageMultiplier)
                             // b.Pos, not the impact point: the indicator has to say which way to turn and face
                             // the shooter, not mark where the bullet happened to end its flight.
                             ApplyPlayerDamage(hitPlayer, dmg, b.Shooter, tick, out bool killed, sourcePos: b.Pos, weaponName: b.Gun.AssetName,
@@ -641,7 +651,7 @@ namespace UnturnedGodot.Net
                         case 2:
                         {
                             bool head = hitRelY > hitTop * ZombieHeadFrac;
-                            float dmg = b.Gun.ZombieDamage;   // flat vs zombies -- the SP StepBullets model
+                            float dmg = b.Gun.ZombieDamage * b.DamageScale;   // flat vs zombies -- the SP StepBullets model
                             bool killed = ZombieHost.DamageZombie(hitZombie.NetIdValue, dmg, point, dir, b.Shooter, head);
                             var hitEvt = new ZombieHitEvent { NetId = hitZombie.NetIdValue, Damage = dmg, Shooter = b.Shooter };
                             _broadcast(NetMessagePak.Pack(ReplicationIds.EventZombieHit, hitEvt.Write));
@@ -661,21 +671,32 @@ namespace UnturnedGodot.Net
                             // a destructible prop's collider: whittle its health; the break fx rides the
                             // replicated ObjectDestroyed event (not this local impact), so no double-fx.
                             if (bodyHit.AnimalNetId != 0 || bodyHit.ZombieNetId != 0)
-                                DamageBody?.Invoke(new CombatBodyHit(bodyHit, b.Shooter, b.AnimalDamage * b.Condition * b.FalloffAt(point), false, dir, tick));
+                                DamageBody?.Invoke(new CombatBodyHit(bodyHit, b.Shooter, b.AnimalDamage * b.Condition * b.FalloffAt(point) * b.DamageScale, false, dir, tick));
                             else if (bodyHit.VehicleNetId != 0 || bodyHit.DeployableNetId != 0)
-                                DamageBody?.Invoke(new CombatBodyHit(bodyHit, b.Shooter, b.Gun.VehicleDamage, false, dir, tick));
+                                DamageBody?.Invoke(new CombatBodyHit(bodyHit, b.Shooter, b.Gun.VehicleDamage * b.DamageScale, false, dir, tick));
                             else if (hitResource >= 0) DamageResource?.Invoke(new CombatResourceHit(hitResource, b.Shooter,
-                                b.Gun.ResourceDamage, b.Gun.ResourceDamage, false, b.Gun.AssetName, point, dir, tick));
-                            else if (hitDestructible >= 0) DamageObject?.Invoke(hitDestructible, b.Gun.ObjectDamage, tick);
+                                b.Gun.ResourceDamage * b.DamageScale, b.Gun.ResourceDamage * b.DamageScale, false, b.Gun.AssetName, point, dir, tick));
+                            else if (hitDestructible >= 0) DamageObject?.Invoke(hitDestructible, b.Gun.ObjectDamage * b.DamageScale, tick);
                             // ...or a barricade (door/bed), which is not in that index space. Same segment,
                             // so a shot that stopped at a door is the shot that damages it.
-                            else DamageBarricadeAlong?.Invoke(b.Pos, next, b.Gun.VehicleDamage, tick);
+                            else if (!bodyHit.Water) DamageBarricadeAlong?.Invoke(b.Pos, next, b.Gun.VehicleDamage * b.DamageScale, tick);
                             BroadcastImpact(point, bodyHit.AnimalNetId != 0 || bodyHit.ZombieNetId != 0 ? ImpactSurface.Flesh : ImpactSurface.World);
                             Diag.BulletHitsWorld++;
                             break;
                     }
-                    BulletImpact?.Invoke(new CombatBulletImpact(b.Shooter, b.Seq, b.Pellet, point,
-                        hitKind == 3 ? bodyHit.Normal : null, b.Vel, b.HostContext, tick));
+                    var contact = new CombatBulletImpact(b.Shooter, b.Seq, b.Pellet, point,
+                        hitKind == 3 ? bodyHit.Normal : null, b.Vel, b.HostContext, tick,
+                        hitKind == 3 && bodyHit.Thin, hitKind == 3 && bodyHit.Water, b.Pierced);
+                    BulletImpact?.Invoke(contact);
+                    var continuation = ContinueBullet?.Invoke(contact);
+                    if (continuation.HasValue)
+                    {
+                        var response = continuation.Value;
+                        b.Pos = point + dir * response.ExitDistance;
+                        b.Vel *= response.VelocityKeep; b.DamageScale *= response.DamageKeep; b.Pierced++;
+                        if (--b.StepsLeft <= 0) { _bullets.RemoveAt(i); Diag.BulletsExpired++; }
+                        continue;
+                    }
                     _bullets.RemoveAt(i);
                     continue;
                 }

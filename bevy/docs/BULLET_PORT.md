@@ -27,9 +27,10 @@ This preserves the input color convention; it does not establish equal global
 HDR/glow/exposure between engines.
 
 The actual rendered `OceanBox` is registered through `worldCosmeticGeometry`.
-Its source0.2m slab affects visual piercing only and never becomes a solid
-physics collider or authoritative combat obstruction. Cosmetic water/thin
-piercing remains separate from authoritative server hit truth.
+Its source0.2m slab feeds both cosmetic flight and the trusted host bullet ray.
+It never becomes a movement collider or explosion-shelter surface. Authority and
+cosmetics apply the same source continuation costs; cosmetics never apply damage.
+The operation retains its historical name and save key for compatibility.
 
 ## Verification
 
@@ -65,10 +66,10 @@ second and a rifle flight can otherwise finish between rendered frames.
 ## Remaining source boundaries
 
 Per-bone corpse geometry is not yet exported to the managed cosmetic collision
-world. Authoritative rocket splash and recoverable arrow behavior remain limited
-by the existing server combat implementation. The original unified listen-host
-also exits its `Bullet.Cosmetic` branch before the legacy direct path calls
-`Explode`/`StickProjectile`, so these are direct-path-only source behaviors, not
-an authority implementation this renderer omitted. This renderer does not create
-a second damage path to conceal those gaps. Remote multiplayer cosmetic launches
-need equivalent local visual context when a real external client is integrated.
+world. Original direct-path rocket splash, recoverable ammunition and piercing
+now have authoritative host adapters; see [WARHEAD_PORT](WARHEAD_PORT.md). Native
+blast presentation and frozen projectile poses still need their accepted-fact
+consumers. Remote multiplayer cosmetic launches need equivalent local visual
+context when a real external client is integrated. Shotgun/cone scatter is still
+cosmetic: the existing server launches its pellets along the accepted center aim,
+so shared authoritative scatter remains a distinct fidelity task.
