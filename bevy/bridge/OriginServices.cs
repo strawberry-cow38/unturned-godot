@@ -34,6 +34,7 @@ public sealed partial class BridgeHost
         _loot?.TranslateWorld(delta);
         _wildlife.TranslateWorld(delta);
         _zombies.TranslateWorld(delta);
+        _cosmetic.TranslateWorld(delta);
         for (int i = 0; i < _serviceSpecs.Count; i++) _serviceSpecs[i] = CoordinateJson.ServiceSpec(_serviceSpecs[i], delta);
         for (int i = 0; i < _events.Count; i++)
         {
@@ -135,7 +136,7 @@ internal static class CoordinateJson
     {
         var node = JsonSerializer.SerializeToNode(data, Options);
         if (node is JsonObject obj)
-            foreach (string key in new[] { "pos", "position", "point", "sourcePos", "origin" }) Move(obj, key, d);
+            foreach (string key in new[] { "pos", "position", "point", "sourcePos", "origin", "muzzleAnchor" }) Move(obj, key, d);
         return JsonSerializer.SerializeToElement(node);
     }
 }

@@ -18,7 +18,7 @@ public sealed partial class WorldGeometry
     public Func<int, bool> ResourceAlive { get; set; }
     public Func<uint, bool> VehicleExists { get; set; }
     public Func<uint, bool> DeployableExists { get; set; }
-    readonly record struct Triangle(Vector3 A, Vector3 B, Vector3 C, int Destructible, int Resource = -1, uint Vehicle = 0, uint Deployable = 0, string Part = null);
+    readonly record struct Triangle(Vector3 A, Vector3 B, Vector3 C, int Destructible, int Resource = -1, uint Vehicle = 0, uint Deployable = 0, string Part = null, bool Thin = false, bool Water = false);
     sealed class Node
     {
         public Vector3 Min, Max;
@@ -48,13 +48,13 @@ public sealed partial class WorldGeometry
         if (string.IsNullOrWhiteSpace(key)) throw new ArgumentException("Dynamic geometry requires a stable key");
         if (geometry._root == null) _dynamic.Remove(key); else _dynamic[key] = geometry._root;
     }
-    public void AddMesh(Vector3[] vertices, int[] indices, int destructible = -1, bool terrain = false, int resource = -1, uint vehicle = 0, uint deployable = 0, string bodyPart = null)
+    public void AddMesh(Vector3[] vertices, int[] indices, int destructible = -1, bool terrain = false, int resource = -1, uint vehicle = 0, uint deployable = 0, string bodyPart = null, bool thin = false, bool water = false)
     {
         if (indices.Length % 3 != 0) throw new ArgumentException("Triangle indices must be triples");
         if (indices.Any(i => i < 0 || i >= vertices.Length)) throw new ArgumentException("Triangle index exceeds vertices");
         for (int n = 0; n < indices.Length; n += 3)
         {
-            var triangle = new Triangle(vertices[indices[n]], vertices[indices[n + 1]], vertices[indices[n + 2]], destructible, resource, vehicle, deployable, bodyPart);
+            var triangle = new Triangle(vertices[indices[n]], vertices[indices[n + 1]], vertices[indices[n + 2]], destructible, resource, vehicle, deployable, bodyPart, thin, water);
             _triangles.Add(triangle);
             if (terrain) _terrainTriangles.Add(triangle);
         }
@@ -97,13 +97,22 @@ public sealed partial class WorldGeometry
     {
         bool found = RayDetailed(from, to, out var result); hit = result.Point; destructible = result.DestructibleIndex; return found;
     }
+    bool RayTriangle(Vector3 from,Vector3 to,out Vector3 point,out Triangle triangle)
+    {
+        float nearest=1f;triangle=default;bool found=false;
+        Visit(_root,from,to-from,ref nearest,ref triangle,ref found);
+        foreach(var tree in _dynamic.Values)Visit(tree,from,to-from,ref nearest,ref triangle,ref found);
+        point=found?from+(to-from)*nearest:to;return found;
+    }
     public bool RayDetailed(Vector3 from, Vector3 to, out CombatWorldHit hit)
     {
-        float nearest = 1f; Triangle triangle = default; bool found = false;
-        Visit(_root, from, to - from, ref nearest, ref triangle, ref found);
-        foreach (var tree in _dynamic.Values) Visit(tree, from, to - from, ref nearest, ref triangle, ref found);
-        hit = found ? new(from + (to - from) * nearest, triangle.Destructible, triangle.Resource, triangle.Vehicle, triangle.Deployable, triangle.Part)
-                    : new(to); return found;
+        bool found=RayTriangle(from,to,out var point,out var triangle);
+        hit=found?new(point,triangle.Destructible,triangle.Resource,triangle.Vehicle,triangle.Deployable,triangle.Part):new(to);
+        return found;
+    }
+    public bool RayCosmetic(Vector3 from,Vector3 to,out Vector3 point,out bool thin,out bool water)
+    {
+        bool found=RayTriangle(from,to,out point,out var triangle);thin=triangle.Thin;water=triangle.Water;return found;
     }
     public bool BlastBlocked(Vector3 from, Vector3 to)
     {

@@ -49,6 +49,7 @@ namespace Godot
     {
         readonly Random _random = new();
         public float Randf() => _random.NextSingle();
+        public float RandfRange(float from,float to) => from + (to-from)*_random.NextSingle();
         public int RandiRange(int from, int to) => _random.Next(from, checked(to + 1));
     }
 }

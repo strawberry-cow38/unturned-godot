@@ -9,6 +9,11 @@ public static class Mathf
     public static float Clamp(float v, float min, float max) => Math.Clamp(v, min, max);
     public static int Max(int a, int b) => Math.Max(a, b);
     public static float Max(float a, float b) => Math.Max(a, b);
+    public const float Tau = MathF.Tau;
+    public static float DegToRad(float v) => v * (MathF.PI / 180f);
+    public static float Lerp(float a,float b,float weight) => a + (b-a)*weight;
+    public static float Tan(float v) => MathF.Tan(v);
+    public static float Abs(float v) => MathF.Abs(v);
     public static float Cos(float v) => MathF.Cos(v);
     public static float Sin(float v) => MathF.Sin(v);
     public static float Min(float a, float b) => Math.Min(a, b);

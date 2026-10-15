@@ -464,3 +464,35 @@ source's bare-barrel flash on intrinsically suppressed guns. Accepted `melee.dat
 adds `itemId`, `repeated`, and `acceptedTick`, captured before wear or switching,
 so delayed native animation/audio consumers never identify an old swing by the
 currently selected weapon. Neither addition changes the network packet format.
+
+
+`state.bullets` is the original client-only cosmetic flight, separate from the
+server's damage flight. Accepted `fire` intents can include `args.visual` with
+`aimAlpha`, optional `patternShot`, and optional world-space `muzzleAnchor`. The
+bridge joins that context to the actual accepted combat sequence, captures the
+shot's original gun/round/condition before wear or bottle break, and extracts the
+source cone/pattern scatter. Rejected or replayed requests never launch visuals.
+The source per-axis pattern branch overwrites the initial cone direction; this
+preserves the executed source despite its additive wording.
+
+Each bullet row contains `id`, `shotId`, `playerId`, `sequence`, `pellet`, `itemId`,
+`gun`, `origin`, `position`, `velocity`, `gravity`, `remainingSteps`, `launchTick`,
+`silenced`, `tracerWidth`, HDR `tracerColor`, `rocket`, `pierced`, and optional
+`muzzleAnchor`. Retained `bulletLaunched` records the accepted launch identity,
+context and per-pellet velocities; `bulletRetired` records impact/expiry. Neither
+event creates damage, blood, surface impacts, hitmarkers, or recoverable items.
+Only the existing combat authority owns those facts. `catalog.bulletVisuals`
+provides source tracer texture/shape constants and the original rocket model,
+orientation, color and flight sound. Native should follow these flight rows
+rather than extrapolate a second projectile simulation.
+
+`worldCosmeticGeometry {waterBoxes:[{center:[x,y,z],size:[x,y,z]}]}` replaces the
+cosmetic-only ocean splash shapes. The original ocean has a 0.2m box; these boxes
+never enter solid-world combat geometry. Optional `thin`/`water` tags on existing
+world meshes affect only cosmetic piercing. Original thin/water velocity loss,
+two-pierce maximum, exit offset, warhead stop and hit-from-inside behavior remain.
+Geometry and flights shift atomically with origin; water metadata survives load
+while temporary bullets clear, matching the source. Per-bone corpse colliders
+are not exported yet. Authoritative rocket splash/recoverable arrow behavior is
+still limited by the existing server combat implementation; cosmetic retirement
+does not bypass that authority boundary.

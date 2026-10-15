@@ -38,13 +38,14 @@ public sealed partial class BridgeHost : IDisposable
     VehicleServices _vehicles;
     BodyCombatServices _bodies;
     WeaponServices _weapons;
+    CosmeticBulletServices _cosmetic;
     readonly Dictionary<uint, byte> _vehicleRecov = new();
     readonly List<JsonElement> _serviceSpecs = new();
     WildlifeServices _wildlife;
     ZombieServices _zombies;
     int _seed = 1337;
     bool _worldChanged;
-    sealed record BridgeSave(int Seed, RetailLootStreamer.SaveData Loot, JsonElement[] Services, ResourceServices.Saved[] Resources = null, WorldServices.PropDoorSaved[] ObjectDoors = null, BodyCombatServices.Saved[] Bodies = null, VehicleServices.PartsSaved[] VehicleParts = null, double OriginX = 0, double OriginZ = 0, SavedProjectile[] Projectiles = null, WildlifeServices.Saved Wildlife = null, ZombieServices.Saved Zombies = null, WeaponServices.Saved[] Weapons = null);
+    sealed record BridgeSave(int Seed, RetailLootStreamer.SaveData Loot, JsonElement[] Services, ResourceServices.Saved[] Resources = null, WorldServices.PropDoorSaved[] ObjectDoors = null, BodyCombatServices.Saved[] Bodies = null, VehicleServices.PartsSaved[] VehicleParts = null, double OriginX = 0, double OriginZ = 0, SavedProjectile[] Projectiles = null, WildlifeServices.Saved Wildlife = null, ZombieServices.Saved Zombies = null, WeaponServices.Saved[] Weapons = null, CosmeticBulletServices.WaterSaved[] CosmeticWater = null);
     public sealed record BridgeEvent(long Seq, string Kind, object Data, long Tick);
     void Emit(string kind, object data) => _events.Add(new(++_eventSequence, kind, data, _server?.Session.CurrentTick ?? 0));
     static readonly JsonSerializerOptions JsonOptions = new() { IncludeFields = true, PropertyNameCaseInsensitive = true, Converters = { new VectorJson(), new ByteArrayJson() } };
@@ -101,7 +102,7 @@ public sealed partial class BridgeHost : IDisposable
                 }
                 Tick(); return new { fixedDelta = SimClock.FixedDelta };
             case "snapshot": RequireSession(); return null;
-            case "catalog": RequireSession(); return new { items = _catalog.Metadata(), wildlife = WildlifeServices.Catalog(), throwMotion = new {
+            case "catalog": RequireSession(); return new { items = _catalog.Metadata(), wildlife = WildlifeServices.Catalog(), bulletVisuals = CosmeticBulletServices.Metadata(), throwMotion = new {
                 speed = HandRules.ThrowSpeed, lift = HandRules.ThrowLift, weakScale = HandRules.WeakThrowScale,
                 releaseFraction = HandRules.ThrowReleaseFraction, cooldown = HandRules.ThrowCooldown,
                 clearProbe = HandRules.ThrowClearProbe, clearGap = HandRules.ThrowClearGap,
@@ -142,7 +143,7 @@ public sealed partial class BridgeHost : IDisposable
                 string path = Path.GetFullPath(Text(r, "path"));
                 Directory.CreateDirectory(Path.GetDirectoryName(path)!);
                 var saveJson = JsonNode.Parse(save.ToJson());
-                saveJson["BevyBridge"] = JsonSerializer.SerializeToNode(new BridgeSave(_seed, _loot?.Capture(), _serviceSpecs.ToArray(), _services.Harvesting.Capture(), _services.CapturePropDoors(), _bodies.Capture(), _vehicles.CaptureParts(), _originX, _originZ, CaptureProjectiles(), _wildlife.Capture(), _zombies.Capture(), _weapons.Capture()));
+                saveJson["BevyBridge"] = JsonSerializer.SerializeToNode(new BridgeSave(_seed, _loot?.Capture(), _serviceSpecs.ToArray(), _services.Harvesting.Capture(), _services.CapturePropDoors(), _bodies.Capture(), _vehicles.CaptureParts(), _originX, _originZ, CaptureProjectiles(), _wildlife.Capture(), _zombies.Capture(), _weapons.Capture(), _cosmetic.CaptureWater()));
                 File.WriteAllText(path + ".tmp", saveJson.ToJsonString()); File.Move(path + ".tmp", path, true);
                 _server.PendingSave = save;
                 return new { path, version = save.Version };
@@ -162,6 +163,7 @@ public sealed partial class BridgeHost : IDisposable
                 _wildlife.Restore(extra?.Wildlife);
                 _zombies.Restore(extra?.Zombies);
                 _weapons.Restore(extra?.Weapons);
+                _cosmetic.RestoreWater(extra?.CosmeticWater);
                 _services.Harvesting.Restore(extra?.Resources);
                 _services.RestorePropDoors(extra?.ObjectDoors); _bodies.Restore(extra?.Bodies); _vehicles.RestoreParts(extra?.VehicleParts);
                 if (extra?.Loot != null)
@@ -208,7 +210,7 @@ public sealed partial class BridgeHost : IDisposable
                 if (r.TryGetProperty("terrainLayers", out var layerPatches)) foreach (var patch in layerPatches.EnumerateArray()) _geometry.AddLayers(patch);
                 if (r.TryGetProperty("meshes", out var meshes)) foreach (var mesh in meshes.EnumerateArray())
                     _geometry.AddMesh(mesh.GetProperty("vertices").EnumerateArray().Select(Vec).ToArray(),
-                        mesh.TryGetProperty("indices", out var ix) ? ix.EnumerateArray().Select(v => v.GetInt32()).ToArray() : Enumerable.Range(0, mesh.GetProperty("vertices").GetArrayLength()).ToArray(), Int(mesh, "destructibleIndex", -1), Bool(mesh, "terrain"), Int(mesh, "resourceIndex", -1), vehicle: checked((uint)Int(mesh, "vehicleNetId")), deployable: checked((uint)Int(mesh, "deployableNetId")), bodyPart: Text(mesh, "bodyPart", "hull"));
+                        mesh.TryGetProperty("indices", out var ix) ? ix.EnumerateArray().Select(v => v.GetInt32()).ToArray() : Enumerable.Range(0, mesh.GetProperty("vertices").GetArrayLength()).ToArray(), Int(mesh, "destructibleIndex", -1), Bool(mesh, "terrain"), Int(mesh, "resourceIndex", -1), vehicle: checked((uint)Int(mesh, "vehicleNetId")), deployable: checked((uint)Int(mesh, "deployableNetId")), bodyPart: Text(mesh, "bodyPart", "hull"), thin: Bool(mesh,"thin"), water: Bool(mesh,"water"));
                 if (Bool(r, "finalize", true)) _geometry.Build();
                 return new { triangles = _geometry.Count };
             case "worldLoot":
@@ -222,6 +224,7 @@ public sealed partial class BridgeHost : IDisposable
                 _loot.Step(force: true);
                 return new { points = _loot.PointCount, live = _loot.LiveCount };
             case "worldWildlife": RequireSession(); return _wildlife.Register(r, _originX, _originZ);
+            case "worldCosmeticGeometry": RequireSession(); return _cosmetic.RegisterGeometry(r);
             case "worldZombies": RequireSession(); return _zombies.Register(r, _originX, _originZ);
             case "worldZombieState": RequireSession(); return _zombies.Publish(r);
             case "worldZombieNoise": RequireSession(); _zombies.Noise(Vec(r,"position"),Float(r,"radius")); return new{queued=true};
@@ -248,7 +251,7 @@ public sealed partial class BridgeHost : IDisposable
                     var verts = mesh.GetProperty("vertices").EnumerateArray().Select(Vec).ToArray();
                     dynamicGeometry.AddMesh(verts, mesh.TryGetProperty("indices", out var dynamicIx)
                         ? dynamicIx.EnumerateArray().Select(v => v.GetInt32()).ToArray() : Enumerable.Range(0, verts.Length).ToArray(),
-                        Int(mesh, "destructibleIndex", -1), resource: Int(mesh, "resourceIndex", -1), vehicle: checked((uint)Int(mesh, "vehicleNetId")), deployable: checked((uint)Int(mesh, "deployableNetId")), bodyPart: Text(mesh, "bodyPart", "hull"));
+                        Int(mesh, "destructibleIndex", -1), resource: Int(mesh, "resourceIndex", -1), vehicle: checked((uint)Int(mesh, "vehicleNetId")), deployable: checked((uint)Int(mesh, "deployableNetId")), bodyPart: Text(mesh, "bodyPart", "hull"), thin: Bool(mesh,"thin"), water: Bool(mesh,"water"));
                 }
                 dynamicGeometry.Build(); _geometry.SetDynamic(Text(r, "key"), dynamicGeometry);
                 return new { key = Text(r, "key"), triangles = dynamicGeometry.Count };
@@ -286,6 +289,7 @@ public sealed partial class BridgeHost : IDisposable
         _zombies = new ZombieServices(_server, _geometry, Emit);
         _zombies.RainIntensity=()=>_environment.Sim.BlendAlpha*_environment.Severity;
         _weapons = new WeaponServices(_server, _catalog, Emit);
+        _cosmetic = new CosmeticBulletServices(_server,_geometry,_weapons,Emit);
         _weapons.Noise=(owner,radius)=>{if(_server.Players.TryGetByOwner(owner,out var p))_zombies.Noise(p.Pos,radius);};
         _movingInput=false;_footNoiseTimer=0;
         _bodies.RepairRate = _weapons.RepairRate;
@@ -389,7 +393,7 @@ public sealed partial class BridgeHost : IDisposable
             && life.RespawnAtTick == _server.Session.CurrentTick + 1) PrepareRespawnFrame();
         if (_client.State == NetSessionState.Connected && !_client.Vehicles.All.Any(v => v.DriverPlayerId == _client.PlayerId || (v.Passengers?.Contains(_client.PlayerId) ?? false)))
             _client.SendPlayerState(_position, _yaw, _pitch, _velocity, (byte)(StanceCode(_movement.Stance) << 1), _grounded, _recov, _held);
-        _network.Tick(); _client.Tick(); _server.TickSimulation(); _weapons.Step();
+        _network.Tick(); _client.Tick(); _server.TickSimulation(); _weapons.Step(); _cosmetic.Step();
         if (_weapons.TakeSelectionChange(_client.PlayerId) is ushort selected) _held = selected;
         if(_server.CombatState.TryGet(_client.PlayerId,out var living)&&living.Alive&&!_server.VehicleHost.IsSeated(_client.PlayerId))
         {
@@ -446,7 +450,9 @@ public sealed partial class BridgeHost : IDisposable
             else if (name == "fire" && key == "dir") values[n] = new Vector3(-MathF.Sin(_yaw * Mathf.Deg2Rad), 0, -MathF.Cos(_yaw * Mathf.Deg2Rad));
             else throw new ArgumentException($"Action {name} requires {key}");
         }
+        var visual = name == "fire" ? CosmeticBulletServices.ReadContext(args) : null;
         var result = method.Invoke(_client, values);
+        if (name == "fire" && result is ushort sequence) _cosmetic.Queue(_client.PlayerId,sequence,visual);
         return new { queued = result is not bool boolean || boolean, value = result };
     }
 
@@ -507,6 +513,7 @@ public sealed partial class BridgeHost : IDisposable
             worldItems = _client.WorldItems.All.Select(e => new { netId = e.NetIdValue, itemId = e.ItemId, amount = e.Amount,
                 quality = e.Quality, position = Array(e.Pos), settled = e.Settled }).ToArray(),
             projectiles = ProjectileSnapshots(),
+            bullets = _cosmetic.Snapshots(),
             animals = _wildlife.Snapshots(_client),
             deployables = _client.Deployables.All.Select(e => new { netId = e.NetIdValue, defId = e.DefId, position = Array(e.Pos), yaw = e.YawDegrees, health = e.Health, fuel = e.Fuel, onFire = e.OnFire, burnSeconds = _bodies.BurnSeconds(false, e.NetIdValue), wreckSalvageable = _bodies.Salvageable(false, e.NetIdValue), toggledOn = e.ToggledOn }).ToArray(),
             vehicles = _client.Vehicles.All.Select(e => new { netId = e.NetIdValue, typeId = e.TypeId, variant = e.Variant,

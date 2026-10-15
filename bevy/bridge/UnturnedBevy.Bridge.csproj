@@ -57,6 +57,8 @@
     <Compile Include="$(IntermediateOutputPath)Data/AttachmentTransaction.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/GunVisualData.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/ItemRarity.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/CosmeticRules.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/CosmeticScatter.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/WeaponAmmoActions.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/NoiseRules.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/ClothingData.g.cs" />

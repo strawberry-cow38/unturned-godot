@@ -16,6 +16,9 @@ public sealed class WeaponServices
     readonly Dictionary<ushort, Queue<MeleeFacts>> _melees = new();
     public sealed record MeleeFacts(ushort ItemId, bool Repeated, bool Strong, long Tick);
     public Action<ushort,float> Noise;
+    public sealed record ShotFlight(ShotFacts Facts,GunDef Gun,int Pellets,int Steps,float Gravity);
+    readonly Dictionary<ushort,ShotFlight> _acceptedFlights = new();
+    public Action<ushort,FireCommand,ShotFlight> CosmeticLaunch;
     public sealed record ShotFacts(string Gun, ushort ItemId, byte Quality, float HandlingPenalty, float RecoilMultiplier, long SelectionVersion, long Tick,
         int BarrelId,bool Silenced,bool BarrelSilenced,string ShootClip,float ShotVolume,float MuzzleVelocity,bool BarrelBroken);
     public WeaponServices(NetWorldServer server, Catalog catalog, Action<string, object> emit)
@@ -26,6 +29,7 @@ public sealed class WeaponServices
         server.Combat.CanFire = owner => State(owner).CanFire();
         server.Combat.ShotAccepted = (owner, tick) => {
             var state=State(owner); var facts=state.CaptureShot(tick);
+            _acceptedFlights[owner]=state.CaptureFlight(facts);
             if(!state.Suppressed)Noise?.Invoke(owner,NoiseRules.Gunshot);
             if(facts!=null)
             {
@@ -33,6 +37,9 @@ public sealed class WeaponServices
                 queue.Enqueue(facts);
             }
             state.Shot(tick);
+        };
+        server.Combat.ShotCommandAccepted = (owner,command,tick) => {
+            if(_acceptedFlights.Remove(owner,out var flight)&&flight?.Facts!=null)CosmeticLaunch?.Invoke(owner,command,flight);
         };
         server.Combat.TryBeginReload = (owner, tick) => State(owner).BeginReload(tick);
         server.Combat.CompleteReload = (owner, tick) => State(owner).CompleteReload(tick);
@@ -270,6 +277,7 @@ public sealed partial class WeaponState
         return new(Profile.AssetName,_heldItem.id,quality,handling,handling*skill,_selectionVersion,tick,
             barrelId,Suppressed,barrel.Silenced,clip,barrel.Volume,Profile.MuzzleVelocity,AttachmentNoise.BreaksOnShot(barrelId));
     }
+    public WeaponServices.ShotFlight CaptureFlight(WeaponServices.ShotFacts facts) => Gun==null?null:new(facts,Gun,Profile.Pellets,Profile.BallisticSteps,-9.81f*Profile.GravityMultiplier);
     static int BarrelMask=>1<<System.Array.IndexOf(AttachmentNoise.Slots,"Barrel");
     public bool Suppressed => (Gun?.IntegrallySuppressed??false)
         || (_heldItem?.gunBarrelId>0?AttachmentNoise.IsSilencer(_heldItem.gunBarrelId):_heldItem?.gunAttach>=0&&(_heldItem.gunAttach&BarrelMask)!=0);

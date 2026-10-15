@@ -3,6 +3,7 @@ namespace Godot;
 public partial struct Vector3
 {
     public static Vector3 Zero => new();
+    public static Vector3 Right => new(1,0,0);
     public static Vector3 Up => new(0,1,0);
     public static Vector3 Forward => new(0,0,-1);
     public static Vector3 operator -(Vector3 a, Vector3 b) => new(a.X-b.X,a.Y-b.Y,a.Z-b.Z);

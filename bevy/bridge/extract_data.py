@@ -294,6 +294,8 @@ parts = attachment[attachment.index('    public static class AttachmentFit'):att
 parts = parts.replace('public static class AttachmentFit', 'public static class AttachmentNoise')
 parts += attachment[attachment.index('        public readonly struct BarrelDef'):attachment.index('        public static string MeshFor')]
 parts += match(r'static string Snd[^\n]+;', read('game/Viewmodel.cs')).replace('static string Snd', 'public static string Snd')
+parts += attachment[attachment.index('        static readonly System.Collections.Generic.Dictionary<ushort, string> Textures'):attachment.index('        public static Godot.Texture2D TexFor')]
+parts += attachment[attachment.index('        public static string MeshFor'):attachment.rfind('    }')]
 (out / 'AttachmentNoise.g.cs').write_text('using SDG.Unturned; using Godot; namespace UnturnedBevy {' + parts + '}}')
 noise = read('game/SoundBus.cs')
 constants = '\n'.join(re.findall(r'public const float \w+\s*=\s*[0-9.]+f;', noise))
@@ -355,3 +357,29 @@ rarity=read('game/inventory/ItemTool.cs')
 rarity=rarity[:rarity.index('        // ItemTool.getQualityColor')]+'}}'
 rarity=rarity.replace('Godot.Colors.White','new Godot.Color(1,1,1)')
 (out / 'ItemRarity.g.cs').write_text(rarity)
+
+# Cosmetic-only flight shares the real source integration and per-shot scatter;
+# no damage path is generated here. Source currently replaces the symmetric cone
+# with per-axis scatter when a pattern is active, despite the comment above it.
+start=player.index('            float spread = Gun != null && Gun.SpreadAngleDegrees > 0f')
+end=player.index('            int pellets = PelletsPerShot;',start)
+scatter=player[start:end]
+start=player.index('            for (int i = 0; i < pellets; i++)',end)
+end=player.index('            // AlertTool point-noise:',start)
+loop=player[start:end]
+loop=loop.replace('Basis sb = Basis.LookingAt(aim, Vector3.Up);','var (right, up) = LookAxes(aim);')
+loop=loop.replace('sb.X','right').replace('sb.Y','up')
+loop=re.sub(r'SpawnBullet\(bulletOrigin, dir \* muzzleVel[^;]+;', 'yield return dir;',loop)
+body='IEnumerable<Vector3> Directions(GunDef Gun,Vector3 aim,float aimA,float sharp,int _patternShot,int pellets) {\n'+scatter+loop+'}\n'
+body+=method(player,'Vector3 DeviateInCone(Vector3 dir, float spread)')
+(out/'CosmeticScatter.g.cs').write_text('using Godot; using UnturnedGodot; namespace UnturnedBevy { public sealed partial class CosmeticBulletServices {\n'+body+'}}')
+constants=[]
+for key in ['TracerBaseW','MuzzleAnchorDepth','PatternResetSeconds','WaterVelKeep','WaterDmgKeep','ThinVelKeep','ThinDmgKeep','PierceExit']:
+    constants.append(f'public const float {key} = '+number(r'\b'+key+r'\s*=\s*([0-9.]+f)',player)+';')
+constants.append('public const int MaxPierce = '+number(r'const int MaxPierce = (\d+)',player)+';')
+tracer=method(player,'void UpdateTracer(Bullet b)')
+for key in ['MaxLen','tHead']:
+    constants.append(f'public const float {key} = '+number(r'\b'+key+r'\s*=\s*([0-9.]+f)',tracer)+';')
+constants.append('public const int Segments = '+number(r'const int N = (\d+)',tracer)+';')
+constants.append(match(r'public static readonly Vector3 RocketMeshFix = new\([^;]+;',read('game/SamMissile.cs')))
+(out/'CosmeticRules.g.cs').write_text('using Godot; namespace UnturnedBevy { public static class CosmeticRules {\n'+'\n'.join(constants)+'}}')
