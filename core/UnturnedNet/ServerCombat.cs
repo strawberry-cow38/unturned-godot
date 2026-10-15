@@ -110,6 +110,7 @@ namespace UnturnedGodot.Net
         /// pick the right report and tracer. Lowercase [a-z0-9_] only; the receiving client refuses anything
         /// else rather than opening it, because it lands in a res:// path.</summary>
         public string AssetName = "eaglefire";
+        internal ServerGunProfile Copy() => (ServerGunProfile)MemberwiseClone();
     }
 
     public sealed class ServerMeleeProfile
@@ -268,6 +269,8 @@ namespace UnturnedGodot.Net
             public object HostContext;
             public int Pellet;
             public int Pierced;
+            public bool Npc;
+            public bool Mounted;
             public float DamageScale = 1f;
             // PlayerController.Bullet.FalloffAt: distance from this shot's original
             // position, not from the shooter after they move or change weapons.
@@ -616,7 +619,7 @@ namespace UnturnedGodot.Net
                 int hitDestructible = -1, hitResource = -1;
                 CombatWorldHit bodyHit = default;
 
-                if (PvPEnabled)
+                if (PvPEnabled || b.Npc)
                     foreach (var pe in _players.All)
                     {
                         if (pe.OwnerPlayerId == b.Shooter) continue;
@@ -651,12 +654,12 @@ namespace UnturnedGodot.Net
                     {
                         case 1:
                         {
-                            float mult = hitRelY >= hitHeadMin ? b.Gun.HeadMult : (hitRelY >= hitTorsoMin ? b.Gun.TorsoMult : b.Gun.LegMult);
-                            var zone = hitRelY >= hitHeadMin ? Durability.Zone.Head : (hitRelY >= hitTorsoMin ? Durability.Zone.Torso : Durability.Zone.Legs);
+                            float mult = b.Npc ? b.FalloffAt(point) : hitRelY >= hitHeadMin ? b.Gun.HeadMult : (hitRelY >= hitTorsoMin ? b.Gun.TorsoMult : b.Gun.LegMult);
+                            var zone = b.Npc ? Durability.Zone.None : hitRelY >= hitHeadMin ? Durability.Zone.Head : (hitRelY >= hitTorsoMin ? Durability.Zone.Torso : Durability.Zone.Legs);
                             float dmg = b.Gun.PlayerDamage * mult * b.Condition * b.DamageScale;   // a worn gun hits softer (Durability.DamageMultiplier)
                             // b.Pos, not the impact point: the indicator has to say which way to turn and face
                             // the shooter, not mark where the bullet happened to end its flight.
-                            ApplyPlayerDamage(hitPlayer, dmg, b.Shooter, tick, out bool killed, sourcePos: b.Pos, weaponName: b.Gun.AssetName,
+                            ApplyPlayerDamage(hitPlayer, dmg, b.Shooter, tick, out bool killed, sourcePos: b.Npc ? b.Origin : b.Pos, weaponName: b.Gun.AssetName,
                                               zone: zone, armor: ArmorKind.Weapon);
                             SendHitConfirm(b.Shooter, b.Seq, HitTargetKind.Player, hitPlayer, dmg, killed, hitRelY >= hitHeadMin);
                             BroadcastImpact(point, ImpactSurface.Flesh);
@@ -666,7 +669,7 @@ namespace UnturnedGodot.Net
                         case 2:
                         {
                             bool head = hitRelY > hitTop * ZombieHeadFrac;
-                            float dmg = b.Gun.ZombieDamage * b.DamageScale;   // flat vs zombies -- the SP StepBullets model
+                            float dmg = b.Gun.ZombieDamage * b.DamageScale * (b.Mounted ? b.FalloffAt(point) : 1f);
                             bool killed = ZombieHost.DamageZombie(hitZombie.NetIdValue, dmg, point, dir, b.Shooter, head);
                             var hitEvt = new ZombieHitEvent { NetId = hitZombie.NetIdValue, Damage = dmg, Shooter = b.Shooter };
                             _broadcast(NetMessagePak.Pack(ReplicationIds.EventZombieHit, hitEvt.Write));
@@ -690,7 +693,7 @@ namespace UnturnedGodot.Net
                             else if (bodyHit.VehicleNetId != 0 || bodyHit.DeployableNetId != 0)
                                 DamageBody?.Invoke(new CombatBodyHit(bodyHit, b.Shooter, b.Gun.VehicleDamage * b.DamageScale, false, dir, tick));
                             else if (hitResource >= 0) DamageResource?.Invoke(new CombatResourceHit(hitResource, b.Shooter,
-                                b.Gun.ResourceDamage * b.DamageScale, b.Gun.ResourceDamage * b.DamageScale, false, b.Gun.AssetName, point, dir, tick));
+                                b.Gun.ResourceDamage * b.DamageScale * (b.Mounted ? b.FalloffAt(point) : 1f), b.Gun.ResourceDamage * b.DamageScale, false, b.Gun.AssetName, point, dir, tick));
                             else if (hitDestructible >= 0) DamageObject?.Invoke(hitDestructible, b.Gun.ObjectDamage * b.DamageScale, tick);
                             // ...or a barricade (door/bed), which is not in that index space. Same segment,
                             // so a shot that stopped at a door is the shot that damages it.
@@ -850,15 +853,15 @@ namespace UnturnedGodot.Net
         /// <summary>Trusted host warhead impact, sharing grenade damage/armor/occlusion without inventing
         /// a throwable event or item id. The host publishes its own accepted visual identity.</summary>
         public void ServerDetonateWeaponAt(Vector3 pos, float radius, float playerDamage, float zombieDamage,
-            float vehicleDamage, ushort owner, long tick)
+            float vehicleDamage, ushort owner, long tick, bool npc = false)
         {
             if (!(radius > 0) || !float.IsFinite(radius)) return;
             Explode(new GrenadeEntity { Owner = owner, Pos = pos,
                 Def = new ThrowableDef { Kind = EThrowableKind.Explosive, Radius = radius,
-                    PlayerDamage = playerDamage, ZombieDamage = zombieDamage, VehicleDamage = vehicleDamage } }, tick, false);
+                    PlayerDamage = playerDamage, ZombieDamage = zombieDamage, VehicleDamage = vehicleDamage } }, tick, false, npc);
         }
 
-        void Explode(GrenadeEntity g, long tick, bool broadcast = true)
+        void Explode(GrenadeEntity g, long tick, bool broadcast = true, bool npc = false)
         {
             // Smoke and flares do NO damage -- their retail .dats carry no damage keys and no `Explosive` flag
             // at all. They still broadcast, because every client has to be told to build the cloud or light the
@@ -893,7 +896,7 @@ namespace UnturnedGodot.Net
                         _broadcast(NetMessagePak.Pack(ReplicationIds.EventZombieDied, died.Write));
                     }
                 }
-            if (PvPEnabled)
+            if (PvPEnabled || npc)
                 foreach (var pe in _players.All)
                 {
                     if (_state.TryGet(pe.OwnerPlayerId, out var vs) && !vs.Alive) continue;
@@ -1004,6 +1007,7 @@ namespace UnturnedGodot.Net
 
         void SendHitConfirm(ushort shooter, ushort seq, HitTargetKind kind, uint targetId, float damage, bool killed, bool headshot)
         {
+            if (shooter == 0) return; // trusted NPC weapons have no owning client
             var evt = new HitConfirmEvent { Seq = seq, TargetKind = (byte)kind, TargetId = targetId, Damage = damage, Killed = killed, Headshot = headshot };
             _sendTo(shooter, NetMessagePak.Pack(ReplicationIds.EventHitConfirm, evt.Write));
         }

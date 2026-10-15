@@ -94,11 +94,11 @@ namespace UnturnedNet.Tests
         public void Version62IsRefusedInsteadOfSilentlyDroppingResourceContacts()
         {
             Assert.That(ReplicationIds.EventResourceContact, Is.EqualTo(54));
-            Assert.That(NetProtocol.Version, Is.EqualTo(63));
+            Assert.That(NetProtocol.Version, Is.GreaterThanOrEqualTo(63));
             var world = new NetSimHarness(seed: 7631); var old = world.AddClient("old resource view", version: 62); old.Connect();
             Assert.That(world.StepUntil(() => old.State == NetSessionState.Disconnected, 100), Is.True);
             Assert.That(old.RejectReason, Is.EqualTo(NetRejectReason.VersionMismatch));
-            Assert.That(old.RejectServerVersion, Is.EqualTo(63)); Assert.That(world.Server.Peers, Is.Empty);
+            Assert.That(old.RejectServerVersion, Is.EqualTo(NetProtocol.Version)); Assert.That(world.Server.Peers, Is.Empty);
         }
     }
 }

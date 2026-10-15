@@ -7,6 +7,7 @@
     <AssemblyName>UnturnedBevy.Bridge</AssemblyName>
   </PropertyGroup>
   <ItemGroup>
+    <EmbeddedResource Include="../data/vehicles.json" LogicalName="UnturnedBevy.VehicleSpecs.json" />
     <ProjectReference Include="../../core/UnturnedNet/UnturnedNet.csproj" />
     <ProjectReference Include="../../core/BugReportCore/BugReportCore.csproj" />
     <Compile Include="../../game/ToolDef.cs" Link="Source/ToolDef.cs" />

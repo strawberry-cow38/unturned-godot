@@ -740,3 +740,13 @@ unchanged correction counter. Their diagnostic camera stays fixed; the PNGs
 verify interaction/weapon state and the JSON sidecars establish owner position
 and correction stability. This repairs authority wiring omitted by the
 original integrated path; it does not relax movement validation.
+
+Mounted weapons use `action mountInput` with accepted vehicle ID, source operator
+slot, `aimMode` (`none`/`look`/`point`), look degrees or target point, held `trigger`
+and tank `headOut`. The host reads original vehicle/gun definitions and owns
+mount angles, finite belts and cooldowns independently of held inventory.
+`state.vehicleMounts` and retained `mountShot` facts work over integrated and real
+UDP sessions. Protocol64 adds IDs20/74/55; old peers are explicitly refused.
+`worldMountedInput` is the separate trusted AI lane and is unavailable remotely.
+See [MOUNTED_WEAPONS.md](../docs/MOUNTED_WEAPONS.md) for fields, source rules,
+validation, persistence and the remaining remote cosmetic flight work.

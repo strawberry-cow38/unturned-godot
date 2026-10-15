@@ -142,7 +142,7 @@ namespace UnturnedGodot.Net
                                                                       Skills, Deployables, Inventories, WorldItems,
                                                                       Vehicles, Clock, Crops, Resources,
                                                                       Vitals, Containers, Animals, Destructibles,
-                                                                      InteractableState, Profiles, Equipment });   // wave 2 (v11): 13/14/15; v13: Destructibles(16); v14: InteractableState(17); v17: Profiles(18) last, ascending
+                                                                      InteractableState, Profiles, Equipment, VehicleMounts });   // wave 2 (v11): 13/14/15; v13: Destructibles(16); v14: InteractableState(17); v17: Profiles(18) last, ascending
             Composer.CurrentTick = () => Session.CurrentTick;   // review L1: rejects acks of future ticks
             Composer.RegisterAck(Commands);
             Combat = new ServerCombat(Players, CombatState, Zombies, Projectiles, Ids, BroadcastEvent, SendEventTo);
@@ -342,6 +342,7 @@ namespace UnturnedGodot.Net
 
             Transactions.Register(Commands);
             RegisterEquipmentCommands();
+            RegisterMountedCommands();
             VehicleHost = new ServerVehicles(Vehicles, Players, CombatState, () => Session.CurrentTick, BroadcastEvent, SendEventTo);
             // The respray seam: ServerVehicles owns the car and the reach, ServerTransactions owns the bag and
             // the content table. One hook rather than each growing a copy of the other's half.
@@ -1050,8 +1051,9 @@ namespace UnturnedGodot.Net
                                                                     Skills, Deployables, Inventories, WorldItems,
                                                                     Vehicles, Clock, Crops, Resources,
                                                                     Vitals, Containers, Animals, Destructibles,
-                                                                    InteractableState, Profiles, Equipment });   // wave 2 (v11): 13/14/15; v13: Destructibles(16); v14: InteractableState(17); v17: Profiles(18) -- symmetric with the server Composer
+                                                                    InteractableState, Profiles, Equipment, VehicleMounts });   // wave 2 (v11): 13/14/15; v13: Destructibles(16); v14: InteractableState(17); v17: Profiles(18) -- symmetric with the server Composer
             RegisterEquipmentEvents();
+            RegisterMountedEvents();
             RegisterResourceContactEvents();
             Applier.DesyncDetected += report => DesyncDetected?.Invoke(report);   // (already NetLog'd in the applier)
             Events.Register(ReplicationIds.EventJoinSnapshot, reader =>

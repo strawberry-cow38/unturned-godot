@@ -1706,3 +1706,25 @@ reticle stays fixed as the diagnostic 3D wall magnifies, and HUD stays above the
 housing. Source and independent image reviews passed; no shader errors occurred.
 These are presentation fixtures with injected seating, not playable mounted
 firing evidence. See bevy/docs/TANK_OPTICS_PORT.md for remaining integration.
+
+### Bevy: authoritative source vehicle weapons over UDP
+
+Protocol64 adds source-ordered mounted gun replicas, accepted input and shot
+facts. The host resolves original gun/belt/cycle/muzzle metadata from the accepted
+fleet type; look and point aiming retain source limits, slew and parent-yaw-only
+frames. Driver fallback yields immediately to an actual gunner. Human belts stay
+finite, separate from held inventory; the explicitly trusted NPC lane retains
+source flat/falloff player damage with PvP disabled and emits no owner hitmarker.
+Save/load preserves idle belts and cooldowns, rebase shifts queued targets and
+retained muzzles, and late joins receive current state without old gunfire.
+
+The immutable mounted-authority-v64-final candidate passes83 managed and121
+JSONL tests; the core suite passes666. Real UDP tests cover takeover, returned
+control, replay rejection and late joins. Negative controls fail when the host
+step is disconnected and when fully idle restored belts use the old snapshot
+stamp. Atomic truncation tests, bounded tombstone-churn replacement and maximum
+registry reliable-snapshot recovery cover wire limits. Independent source review
+passed. Original native mount geometry was verified earlier; playable mounted
+input/HUD/FX and accepted occupant anchors still need their separate native
+integration/visual checkpoint. Remote cosmetic mounted flights and original NPC
+flight/crew logic remain queued. See bevy/docs/MOUNTED_WEAPONS.md.

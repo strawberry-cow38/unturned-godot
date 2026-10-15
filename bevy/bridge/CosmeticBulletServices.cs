@@ -112,6 +112,15 @@ public sealed partial class CosmeticBulletServices
             silenced=facts.Silenced,tracerWidth=CosmeticRules.TracerBaseW*GunDef.TracerScale(gun.CaliberName),tracerColor=tint,
             rocket=gun.Action=="Rocket",muzzleAnchor=context.MuzzleAnchor.HasValue?Array(context.MuzzleAnchor.Value):null,bullets=launched});
     }
+    public void LaunchMounted(ushort owner,ushort sequence,UVector origin,UVector direction,GunDef gun,string gunId,ServerGunProfile profile,float radius)
+    {
+        var color=GunDef.TracerColor(gun?.CaliberName);float[] tint=[color.r,color.g,color.b];
+        var bullet=new Bullet{Id=Interlocked.Increment(ref _nextBullet),ShotId=Interlocked.Increment(ref _nextShot),LaunchTick=Tick,
+            Owner=owner,Sequence=sequence,Gun=gunId,Position=origin,Origin=origin,Velocity=direction*profile.MuzzleVelocity,
+            StepsLeft=profile.BallisticSteps,Gravity=0,Width=CosmeticRules.TracerBaseW*GunDef.TracerScale(gun?.CaliberName),
+            Color=tint,Rocket=gun?.Action=="Rocket",BlastRadius=radius};
+        _bullets.Add(bullet);
+    }
     public void Step()
     {
         foreach(var key in _contexts.Where(p=>p.Value.Until<Tick).Select(p=>p.Key).ToArray())_contexts.Remove(key);

@@ -45,6 +45,7 @@ namespace UnturnedNet.Tests
             ["SystemVitals"] = 13,       ["SystemContainers"] = 14,   ["SystemAnimals"] = 15,
             ["SystemDestructibles"] = 16, ["SystemInteractables"] = 17, ["SystemProfiles"] = 18,
             ["SystemOwnerEquipment"] = 19, // v62 owner-only selected instance and weapon clocks
+            ["SystemVehicleMounts"] = 20, // v64 accepted mount angles/belts/cooldowns
             ["SystemSyncCheck"] = 255,
         };
 
@@ -135,6 +136,7 @@ namespace UnturnedNet.Tests
             "ProjectileReplication = 4 (SystemProjectiles)",
             "ResourceReplication = 12 (SystemResources)",
             "SkillsReplication = 5 (SystemSkills)",
+            "VehicleMountReplication = 20 (SystemVehicleMounts)",
             "VehicleReplication = 9 (SystemVehicles)",
             "WorldClockReplication = 10 (SystemWorldClock)",
             "WorldItemReplication = 8 (SystemWorldItems)",

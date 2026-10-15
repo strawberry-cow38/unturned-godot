@@ -9,7 +9,7 @@ namespace UnturnedBevy;
 /// fed only by authoritative accepted-round contacts. Cosmetic bullets never enter here.</summary>
 public sealed class WarheadServices
 {
-    public sealed record Payload(ushort ItemId,string Gun,float Radius,float PlayerDamage,float ZombieDamage,float VehicleDamage,ushort StickItemId);
+    public sealed record Payload(ushort ItemId,string Gun,float Radius,float PlayerDamage,float ZombieDamage,float VehicleDamage,ushort StickItemId,bool Npc=false);
     public sealed record Pose(float[] Direction,float[] Normal,float[] Euler);
     public sealed record Saved(int WorldItemIndex,ushort ItemId,Pose Pose);
     readonly NetWorldServer _server;
@@ -41,7 +41,7 @@ public sealed class WarheadServices
         if(payload.Radius>0)
         {
             _server.Combat.ServerDetonateWeaponAt(hit.Point,payload.Radius,payload.PlayerDamage,
-                payload.ZombieDamage,payload.VehicleDamage,hit.Shooter,hit.Tick);
+                payload.ZombieDamage,payload.VehicleDamage,hit.Shooter,hit.Tick,payload.Npc);
             _emit("bulletExplosion",new{playerId=hit.Shooter,sequence=hit.Sequence,pellet=hit.Pellet,
                 itemId=payload.ItemId,gun=payload.Gun,position=Array(hit.Point),radius=payload.Radius});
         }

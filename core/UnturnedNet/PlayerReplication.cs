@@ -35,6 +35,7 @@ namespace UnturnedGodot.Net
         public const byte SystemInteractables = 17; // doors + beds: open/locked/owner state, server-authoritative (InteractableReplication.cs). Deadzones need no system -- their effect is damage the server already replicates through SystemVitals(13).
         public const byte SystemProfiles = 18;      // display name + avatar hash per player (ProfileReplication.cs). Everyone-visible, unlike skills: the point is that other players see it. The avatar BYTES do not ride the snapshot -- only a 64-bit content hash does, and the image goes out once per (peer, hash) as EventAvatarData.
         public const byte SystemOwnerEquipment = 19; // v62: owner-only accepted held instance and weapon clocks
+        public const byte SystemVehicleMounts = 20; // v64: accepted source vehicle gun angles/belts/cooldowns
         public const byte SystemSyncCheck = 255;    // hardening: rolling per-system StateHash block for desync detection, composed LAST
                                                     // when SnapshotComposer.EnableSyncCheck is on; never a real system id (reserved)
 
@@ -243,6 +244,7 @@ namespace UnturnedGodot.Net
         public const byte CommandSelectHeld = 71;
         public const byte CommandWeaponIntent = 72;
         public const byte CommandAttachmentOptions = 73;
+        public const byte CommandMountedInput = 74; // v64: accepted operator aim/trigger intent
 
         public const byte CommandToggleObjectDoor = 47;   // v37: swing a PROP's door -- a shipping container, a crossing gate arm. Distinct from CommandToggleDoor(32), which is a player-built Door with an owner, a lock and DoorLogic; a prop door has none of those and is a plain toggle with a reach check.
         public const byte CommandSitSeat = 46;       // v35: sit on a piece of furniture, or stand up (NetId 0 = stand). The client asks; the server owns who is in which seat, because two clients each deciding they took the same chair is exactly the "multiple people can't get in a car" failure that CommandEnterVehicle's occupancy check was added to stop. NOTE: 45 was taken by CommandTakeFromStorage in the same wave; ids are append-only and this one moved to 46 rather than either of us reusing a byte.
@@ -304,6 +306,7 @@ namespace UnturnedGodot.Net
         public const byte EventAttachmentOptions = 52; // v62: bounded owner-only source menu options
         public const byte EventEquipmentFact = 53; // v62: accepted/refused owner weapon transitions
         public const byte EventResourceContact = 54; // v63: accepted tree/ore hit and fall presentation facts
+        public const byte EventMountedShot = 55; // v64: actual mounted muzzle/barrel and launch identity
         public const byte EventObjectDoorState = 43;   // v37: a prop door's open bit. Its own event rather than reusing EventDoorState(34): that one carries a LOCK and is keyed into Door's id space, and two id spaces sharing one message is how a container's door ends up swinging a player's front door.
         public const byte EventSeatOccupied = 42;      // v35: a furniture seat's occupant changed (0 = freed) -- the EventBedClaimed(35) shape for seats, broadcast so everyone can pose the puppet before the next snapshot lands
         public const byte EventCraftQueue = 41;        // v31: to the OWNER only -- their pending craft jobs, so a timed server-side craft is visible at all. Before this the MP client showed NOTHING while a craft was in flight (NetCraft fires and the local queue is skipped), so an 8 s recipe read as "nothing happened".       // v29: to the OPENER only -- an appliance's on-bit and how much of its current fuel item is left, so the fuel progress bar counts down live rather than only at open (strawberry 2026-09-06: "as each fuel item burns, show a progress bar before its consumed"). Unicast because it is UI for the person standing at the oven; a burning campfire is not worth a broadcast.       // v25: a melee swing was accepted -- attacker + weak/strong, broadcast so puppets animate it (strawberry 2026-09-03)

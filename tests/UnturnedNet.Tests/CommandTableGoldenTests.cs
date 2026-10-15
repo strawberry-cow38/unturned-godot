@@ -121,7 +121,8 @@ namespace UnturnedNet.Tests
             [69] = "CommandDrinkFluid",             // v59: drink the held bottle on the server's copy
             [71] = "CommandSelectHeld",             // v62: authoritative instance selection
             [72] = "CommandWeaponIntent",           // v62: atomic source attachment/selector requests
-            [73] = "CommandAttachmentOptions",      // v62: owner-only source menu query
+            [73] = "CommandAttachmentOptions", // v62: owner-only source menu query
+            [74] = "CommandMountedInput", // v64 source vehicle gun aim/held-trigger intent
             [70] = "CommandFillAtTap",              // v59: fill a bottle with clean water at a sink / bathtub
         };
 

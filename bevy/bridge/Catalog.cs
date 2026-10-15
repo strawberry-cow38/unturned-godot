@@ -6,6 +6,8 @@ namespace UnturnedBevy;
 
 public sealed class Catalog
 {
+    MountedWeaponCatalog _mounted;
+    public MountedWeaponCatalog Mounted => _mounted ??= new(Root);
     public readonly List<BlueprintDef> Recipes = new();
     public readonly Dictionary<ushort, ServerGunProfile> Guns = new();
     public readonly Dictionary<ushort, GunDef> GunDefs = new();
@@ -27,6 +29,7 @@ public sealed class Catalog
 
     public void Load(string root)
     {
+        _mounted = null;
         Root = Path.GetFullPath(root);
         if (!Directory.Exists(Root)) throw new DirectoryNotFoundException(Root);
         Godot.ProjectSettings.ContentRoot = Root;

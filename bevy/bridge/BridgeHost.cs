@@ -41,6 +41,7 @@ public sealed partial class BridgeHost : IDisposable
     WeaponServices _weapons;
     CosmeticBulletServices _cosmetic;
     WarheadServices _warheads;
+    MountedWeaponServices _mounted;
     PlayerAppearanceNetSync _appearance;
     readonly Dictionary<uint, byte> _vehicleRecov = new();
     readonly List<JsonElement> _serviceSpecs = new();
@@ -48,7 +49,7 @@ public sealed partial class BridgeHost : IDisposable
     ZombieServices _zombies;
     int _seed = 1337;
     bool _worldChanged;
-    sealed record BridgeSave(int Seed, RetailLootStreamer.SaveData Loot, JsonElement[] Services, ResourceServices.Saved[] Resources = null, WorldServices.PropDoorSaved[] ObjectDoors = null, BodyCombatServices.Saved[] Bodies = null, VehicleServices.PartsSaved[] VehicleParts = null, double OriginX = 0, double OriginZ = 0, SavedProjectile[] Projectiles = null, WildlifeServices.Saved Wildlife = null, ZombieServices.Saved Zombies = null, WeaponServices.Saved[] Weapons = null, CosmeticBulletServices.WaterSaved[] CosmeticWater = null, WarheadServices.Saved[] StuckProjectiles = null, string Holiday = null);
+    sealed record BridgeSave(int Seed, RetailLootStreamer.SaveData Loot, JsonElement[] Services, ResourceServices.Saved[] Resources = null, WorldServices.PropDoorSaved[] ObjectDoors = null, BodyCombatServices.Saved[] Bodies = null, VehicleServices.PartsSaved[] VehicleParts = null, double OriginX = 0, double OriginZ = 0, SavedProjectile[] Projectiles = null, WildlifeServices.Saved Wildlife = null, ZombieServices.Saved Zombies = null, WeaponServices.Saved[] Weapons = null, CosmeticBulletServices.WaterSaved[] CosmeticWater = null, WarheadServices.Saved[] StuckProjectiles = null, string Holiday = null, MountedWeaponServices.Saved[] VehicleMounts = null);
     public sealed record BridgeEvent(long Seq, string Kind, object Data, long Tick);
     void Emit(string kind, object data) => _events.Add(new(++_eventSequence, kind, data, _server?.Session.CurrentTick ?? _client?.Applier.LastAppliedServerTick ?? 0));
     static readonly JsonSerializerOptions JsonOptions = new() { IncludeFields = true, PropertyNameCaseInsensitive = true, Converters = { new VectorJson(), new ByteArrayJson() } };
@@ -123,7 +124,7 @@ public sealed partial class BridgeHost : IDisposable
                 if (_server != null) Dispose(); else _client.Disconnect();
                 return new { disconnected = true, ownsWorld = false };
             case "diagnostics": RequireSession(); return new { host = _server != null, liveBullets = _server?.Combat.LiveBullets, stuckProjectilePoses = _warheads?.LivePoseCount };
-            case "catalog": RequireSession(); return new { items = _catalog.Metadata(), wildlife = WildlifeServices.Catalog(), gestures = GestureMetadata(), profileRules = ProfileMetadata(), bulletVisuals = CosmeticBulletServices.Metadata(), throwMotion = new {
+            case "catalog": RequireSession(); return new { items = _catalog.Metadata(), wildlife = WildlifeServices.Catalog(), gestures = GestureMetadata(), profileRules = ProfileMetadata(), bulletVisuals = CosmeticBulletServices.Metadata(), mountedWeapons = _catalog.Mounted.GunMetadata(), throwMotion = new {
                 speed = HandRules.ThrowSpeed, lift = HandRules.ThrowLift, weakScale = HandRules.WeakThrowScale,
                 releaseFraction = HandRules.ThrowReleaseFraction, cooldown = HandRules.ThrowCooldown,
                 clearProbe = HandRules.ThrowClearProbe, clearGap = HandRules.ThrowClearGap,
@@ -134,7 +135,8 @@ public sealed partial class BridgeHost : IDisposable
             case "npcCatalog": RequireSession(); return new { characters = NpcCatalog.Characters.Select(NpcMetadata.Character).ToArray(), dialogues = NpcCatalog.Dialogues, vendors = NpcCatalog.Vendors, quests = NpcCatalog.Quests };
             case "worldVehicles":
                 RequireSession();
-                var fleet = _vehicles.Register(r); _serviceSpecs.Add(r.Clone()); _worldChanged = true; return fleet;
+                var fleet = _vehicles.Register(r); _mounted.SyncFleet(); _serviceSpecs.Add(r.Clone()); _worldChanged = true; return fleet;
+            case "worldMountedInput": RequireSession(); return _mounted.HostInput(r);
             case "worldVehicleState": RequireSession(); return _vehicles.Publish(r);
             case "worldVehicleDamage": RequireSession(); return _bodies.HostVehicleDamage(r);
             case "worldVehicleExit": RequireSession(); return _vehicles.ExitProbe(r);
@@ -166,7 +168,7 @@ public sealed partial class BridgeHost : IDisposable
                 string path = Path.GetFullPath(Text(r, "path"));
                 Directory.CreateDirectory(Path.GetDirectoryName(path)!);
                 var saveJson = JsonNode.Parse(save.ToJson());
-                saveJson["BevyBridge"] = JsonSerializer.SerializeToNode(new BridgeSave(_seed, _loot?.Capture(), _serviceSpecs.ToArray(), _services.Harvesting.Capture(), _services.CapturePropDoors(), _bodies.Capture(), _vehicles.CaptureParts(), _originX, _originZ, CaptureProjectiles(), _wildlife.Capture(), _zombies.Capture(), _weapons.Capture(), _cosmetic.CaptureWater(), _warheads.Capture(), _worldHoliday));
+                saveJson["BevyBridge"] = JsonSerializer.SerializeToNode(new BridgeSave(_seed, _loot?.Capture(), _serviceSpecs.ToArray(), _services.Harvesting.Capture(), _services.CapturePropDoors(), _bodies.Capture(), _vehicles.CaptureParts(), _originX, _originZ, CaptureProjectiles(), _wildlife.Capture(), _zombies.Capture(), _weapons.Capture(), _cosmetic.CaptureWater(), _warheads.Capture(), _worldHoliday, _mounted.Capture()));
                 File.WriteAllText(path + ".tmp", saveJson.ToJsonString()); File.Move(path + ".tmp", path, true);
                 _server.PendingSave = save;
                 return new { path, version = save.Version };
@@ -190,6 +192,7 @@ public sealed partial class BridgeHost : IDisposable
                 _weapons.Restore(extra?.Weapons);
                 _cosmetic.RestoreWater(extra?.CosmeticWater);
                 _warheads.Restore(extra?.StuckProjectiles);
+                _mounted.Restore(extra?.VehicleMounts);
                 _services.Harvesting.Restore(extra?.Resources);
                 _services.RestorePropDoors(extra?.ObjectDoors); _bodies.Restore(extra?.Bodies); _vehicles.RestoreParts(extra?.VehicleParts);
                 if (extra?.Loot != null)
@@ -334,6 +337,7 @@ public sealed partial class BridgeHost : IDisposable
         _weapons = new WeaponServices(_server, _catalog, Emit);
         _cosmetic = new CosmeticBulletServices(_server,_geometry,_weapons,Emit);
         _warheads = new WarheadServices(_server,_weapons,_cosmetic,Emit);
+        _mounted = new MountedWeaponServices(_server,_catalog,_cosmetic);
         _appearance = new PlayerAppearanceNetSync(_server);
         _weapons.Noise=(owner,radius)=>{if(_server.Players.TryGetByOwner(owner,out var p))_zombies.Noise(p.Pos,radius);};
         _movingInput=false;_footNoiseTimer=0;
@@ -396,7 +400,7 @@ public sealed partial class BridgeHost : IDisposable
         if (_ownerReady && _client.State == NetSessionState.Connected)
             _client.SendPlayerState(_position, _yaw, _pitch, _velocity,
                 (byte)((StanceCode(_movement.Stance) << 1) | (_scopeSteady.Steadying ? MoveInput.ButtonSteady : 0)), _grounded, _recov, _held);
-        _network.Tick(); _client.Tick(); _server.TickSimulation(); _weapons.Step(); _cosmetic.Step();
+        _network.Tick(); _client.Tick(); _server.TickSimulation(); _weapons.Step(); _mounted.Step(); _cosmetic.Step();
         _warheads.Prune();
         if (_weapons.TakeSelectionChange(_client.PlayerId) is ushort selected) _held = selected;
         if(_server.CombatState.TryGet(_client.PlayerId,out var living)&&living.Alive&&!_server.VehicleHost.IsSeated(_client.PlayerId))
@@ -419,6 +423,7 @@ public sealed partial class BridgeHost : IDisposable
 
     object Action(string name, JsonElement args)
     {
+        if (name == "mountInput") return new { queued = _client.SendMountedInput(MountedWeaponServices.ReadInput(args)) };
         if (IsRemote) return RemoteAction(name, args);
         if (name == "requestGesture") return RequestGesture(args);
         if (name == "console" && PlayerDebugConsole(Text(args, "text"))) return new { queued = true };
@@ -538,6 +543,8 @@ public sealed partial class BridgeHost : IDisposable
                 stuckEuler = _warheads?.PoseOf(e.NetIdValue)?.Euler }).ToArray(),
             projectiles = ProjectileSnapshots(),
             bullets = _cosmetic?.Snapshots(),
+            vehicleMounts = _client.VehicleMounts.All.Select(v => new { vehicleNetId = v.VehicleNetId, headOut = v.HeadOut,
+                mounts = v.Mounts.Select((m,index) => new { index, yaw = m.Yaw, pitch = m.Pitch, ammo = m.Ammo, cooldownSeconds = m.CooldownSeconds, crewAlive = m.CrewAlive }).ToArray() }).ToArray(),
             animals = _wildlife?.Snapshots(_client) ?? RemoteAnimals(),
             deployables = _client.Deployables.All.Select(e => new { netId = e.NetIdValue, defId = e.DefId, position = Array(e.Pos), yaw = e.YawDegrees, health = e.Health, fuel = e.Fuel, onFire = e.OnFire, burnSeconds = _bodies?.BurnSeconds(false, e.NetIdValue), wreckSalvageable = _bodies?.Salvageable(false, e.NetIdValue), toggledOn = e.ToggledOn }).ToArray(),
             vehicles = _client.Vehicles.All.Select(e => new { netId = e.NetIdValue, typeId = e.TypeId, variant = e.Variant,
@@ -595,7 +602,7 @@ public sealed partial class BridgeHost : IDisposable
         _loot = null; _client?.Disconnect(); _server?.TearDown(); _client = null; _server = null;
         _udpTransport?.TearDown(); _udpTransport = null;
         _environment = null; _services = null; _vehicles = null; _bodies = null; _weapons = null;
-        _cosmetic = null; _warheads = null; _appearance = null; _wildlife = null; _zombies = null;
+        _cosmetic = null; _warheads = null; _mounted = null; _appearance = null; _wildlife = null; _zombies = null;
         _remoteWeapon = null; _remoteSpawnAdopted = false; _remoteProfileSent = false;
         _mapBindings = null;
     }
