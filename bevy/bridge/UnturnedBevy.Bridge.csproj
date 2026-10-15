@@ -50,6 +50,12 @@
     <Compile Include="$(IntermediateOutputPath)Data/WeaponInventory.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/BodyRules.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/AnimalBrain.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/NpcHeliBrain.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/NpcHeliSpawn.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/NpcHeliRules.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/NpcHeliTerrainGrid.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/SourceMapNodes.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/SourceCanopies.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/AnimalField.g.cs" />
     <Compile Include="../../game/AnimalCatalog.cs" Link="Source/AnimalCatalog.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/ZombieField.g.cs" />

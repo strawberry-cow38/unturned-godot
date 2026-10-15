@@ -41,9 +41,10 @@ namespace UnturnedGodot.Net
         public readonly float Damage;
         public readonly bool Melee;
         public readonly Vector3 Direction;
+        public readonly Vector3? ShotOrigin;
         public readonly long Tick;
-        public CombatBodyHit(CombatWorldHit hit, ushort attacker, float damage, bool melee, Vector3 direction, long tick)
-        { Hit = hit; Attacker = attacker; Damage = damage; Melee = melee; Direction = direction; Tick = tick; }
+        public CombatBodyHit(CombatWorldHit hit, ushort attacker, float damage, bool melee, Vector3 direction, long tick, Vector3? shotOrigin = null)
+        { Hit = hit; Attacker = attacker; Damage = damage; Melee = melee; Direction = direction; Tick = tick; ShotOrigin = shotOrigin; }
     }
     public readonly struct CombatBlast
     {
@@ -693,9 +694,9 @@ namespace UnturnedGodot.Net
                             // a destructible prop's collider: whittle its health; the break fx rides the
                             // replicated ObjectDestroyed event (not this local impact), so no double-fx.
                             if (bodyHit.AnimalNetId != 0 || bodyHit.ZombieNetId != 0)
-                                DamageBody?.Invoke(new CombatBodyHit(bodyHit, b.Shooter, b.AnimalDamage * b.Condition * b.FalloffAt(point) * b.DamageScale, false, dir, tick));
+                                DamageBody?.Invoke(new CombatBodyHit(bodyHit, b.Shooter, b.AnimalDamage * b.Condition * b.FalloffAt(point) * b.DamageScale, false, dir, tick, b.Origin));
                             else if (bodyHit.VehicleNetId != 0 || bodyHit.DeployableNetId != 0)
-                                DamageBody?.Invoke(new CombatBodyHit(bodyHit, b.Shooter, b.Gun.VehicleDamage * b.DamageScale, false, dir, tick));
+                                DamageBody?.Invoke(new CombatBodyHit(bodyHit, b.Shooter, b.Gun.VehicleDamage * b.DamageScale, false, dir, tick, b.Origin));
                             else if (hitResource >= 0) DamageResource?.Invoke(new CombatResourceHit(hitResource, b.Shooter,
                                 b.Gun.ResourceDamage * b.DamageScale * (b.Mounted ? b.FalloffAt(point) : 1f), b.Gun.ResourceDamage * b.DamageScale, false, b.Gun.AssetName, point, dir, tick));
                             else if (hitDestructible >= 0) DamageObject?.Invoke(hitDestructible, b.Gun.ObjectDamage * b.DamageScale, tick);

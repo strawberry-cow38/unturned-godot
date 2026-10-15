@@ -20,6 +20,13 @@ public static class Mathf
     public static int Min(int a, int b) => Math.Min(a, b);
     public static int Abs(int a) => Math.Abs(a);
     public static float Sqrt(float a) => MathF.Sqrt(a);
+    public const float Pi = MathF.PI;
+    public static float RadToDeg(float v) => v * (180f / MathF.PI);
+    public static float Atan2(float y,float x) => MathF.Atan2(y,x);
+    public static float Asin(float v) => MathF.Asin(v);
+    public static float MoveToward(float from,float to,float delta) => from + Math.Clamp(to-from,-delta,delta);
+    public static float Wrap(float value,float min,float max)
+    { float range=max-min;return range==0?min:((value-min)%range+range)%range+min; }
 }
 public partial struct Vector2(float x, float y)
 {

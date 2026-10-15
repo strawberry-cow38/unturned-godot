@@ -151,12 +151,13 @@ public static class MapServices
                 var v = Enumerable.Range(0, 9).Select(_ => reader.ReadSingle()).ToArray();
                 if (v.Any(x => !float.IsFinite(x))) throw new InvalidDataException("Non-finite resource placement");
                 var position = new[] { v[0], v[1], -v[2] };
-                float treeScaleY = 1;
+                float treeScaleY = 1, canopyScaleXZ = 1;
                 bool tree = ResourceField.IsTree(name);
                 if (tree)
                 {
                     var matrix = PlacementMatrix(new[] { v[3], 180 - v[4], -v[5] }, v[6..9]);
                     float sy = new Vector3(matrix.M21, matrix.M22, matrix.M23).Length(); treeScaleY = sy;
+                    canopyScaleXZ = Math.Max(new Vector3(matrix.M11, matrix.M12, matrix.M13).Length(),new Vector3(matrix.M31, matrix.M32, matrix.M33).Length());
                     position[1] -= ResourceField.TreeSink * (sy < .001f ? 1 : sy);
                 }
                 ushort reward = ResourceField.ForageReward(name);
@@ -181,7 +182,7 @@ public static class MapServices
                         }
                         if (debris.lo != null) trunkLength = Math.Max(1, (debris.hi[1] - debris.lo[1]) * Math.Max(.01f, treeScaleY));
                     }
-                    resourceMetadata.Add(new { index = resourceIndex, kind = tree ? "tree" : "ore", name, position, trunkLength });
+                    resourceMetadata.Add(new { index = resourceIndex, kind = tree ? "tree" : "ore", name, position, trunkLength, canopyScale = tree ? new[]{canopyScaleXZ,treeScaleY} : null });
                 }
                 if (reward != 0) resourceMetadata.Add(new { index = resourceIndex, position, rewardItemId = reward, resetSeconds = ResourceField.ForageResetSeconds });
                 resourceIndex++;

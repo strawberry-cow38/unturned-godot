@@ -2080,6 +2080,9 @@ namespace UnturnedGodot.Net
             _sendTo(sender, NetMessagePak.Pack(ReplicationIds.EventConsoleResult, evt.Write));
         }
 
+        /// <summary>Optional engine-host verbs, invoked only after the existing cheats gate.</summary>
+        public Func<ushort,string,string,(bool Success,string Text)?> HostConsole;
+
         /// <summary>The server-gated DevConsole verbs (§2.3: "one server-side validation choke point. No
         /// client ever writes authoritative state directly" -- including cheats). Returns the result line.</summary>
         public string RunConsole(ushort sender, string text)
@@ -2327,6 +2330,9 @@ namespace UnturnedGodot.Net
                 Diag.ConsoleApplied++;
                 return FormattableString.Invariant($"teleported to ({x:0.#}, {y:0.#}, {z:0.#})");
             }
+            var hostResult=HostConsole?.Invoke(sender,verb,arg);
+            if(hostResult.HasValue)
+            { if(hostResult.Value.Success)Diag.ConsoleApplied++;else Diag.ConsoleRejected++;return hostResult.Value.Text; }
             Diag.ConsoleRejected++;
             return $"unknown command '{verb}' -- give / xp / skill / teleport / learn / learnall / forget / blueprints";
         }

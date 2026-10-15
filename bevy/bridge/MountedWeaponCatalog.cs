@@ -29,7 +29,7 @@ public sealed class MountedWeaponCatalog
         public float YawRate { get; set; } public float PitchRate { get; set; }
         public GunDef Gun;
     }
-    public sealed record Fleet(byte TypeId,string Key,Mount[] Mounts,bool Tank,Vector3[] BodySeats);
+    public sealed record Fleet(byte TypeId,string Key,Mount[] Mounts,bool Tank,Vector3[] BodySeats,JsonElement Source);
     readonly Dictionary<byte,Fleet> _fleet = new();
     public float RearDepressionScale { get; }
     public Vector3 TankGunnerSeat { get; }
@@ -57,9 +57,10 @@ public sealed class MountedWeaponCatalog
             }
             byte type=row.GetProperty("typeId").GetByte();string key=row.GetProperty("key").GetString();
             var bodies=row.GetProperty("bodySeats").Deserialize<float[][]>().Select(V).ToArray();
-            _fleet.Add(type,new(type,key,mounts,key=="tank",bodies));
+            _fleet.Add(type,new(type,key,mounts,key=="tank",bodies,row.Clone()));
         }
     }
+    public IEnumerable<Fleet> All=>_fleet.Values;
     public Fleet For(byte type)=>_fleet.GetValueOrDefault(type);
     public bool TryGun(string id,out GunDef gun)
     {

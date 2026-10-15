@@ -422,3 +422,57 @@ parts = [match(r'public struct ServerStatus\s*\{.*?\n        \}', menu),
 (out/'SourceServerMenu.g.cs').write_text('// Generated original browser query and connection policy; do not edit.\nusing UnturnedGodot.Net; namespace UnturnedBevy { public static class SourceServerMenu {\n'+'\n'.join(parts)+'}}')
 puppet_clip = match(r'static string ClipFor\(byte anim\) => anim switch\s*\{.*?\n        \};', read('game/AnimalPuppets.cs'))
 (out/'AnimalPuppetData.g.cs').write_text('using UnturnedGodot.Net; namespace UnturnedBevy { public static class AnimalPuppetData {\n'+puppet_clip.replace('static string', 'public static string', 1)+'}}')
+
+# Original NpcHeli flight/combat state machine, with scene access replaced only
+# at its body/terrain/player/ray/clock boundaries. The native vehicle remains the
+# one real rigid body; this generated code returns the original four stick axes.
+heli=read('game/NpcHeli.cs')
+brain=heli[heli.index('        public const float CanopyClearance'):heli.index('        /// <summary>Spawn `name`')]
+brain=brain.replace('public override void _PhysicsProcess(double delta)','public void Step(double delta)')
+brain=brain.replace('!IsInstanceValid(Heli)','!Heli.Exists')
+brain=brain.replace('Heli.GlobalTransform.AffineInverse() * worldPoint','Heli.ToLocal(worldPoint)')
+brain=brain.replace('Heli.GlobalTransform.Basis.Z','Heli.Back').replace('Heli.GlobalTransform.Basis.X','Heli.Right')
+brain=brain.replace('Time.GetTicksMsec()','NowMsec').replace('Engine.GetPhysicsFrames()','PhysicsTick')
+brain=brain.replace('Mathf.Max(0.0,','Math.Max(0.0,')
+brain=brain.replace('PlayerController NearestPlayer()','NpcHeliPlayer NearestPlayer()').replace('PlayerController best = null','NpcHeliPlayer best = null')
+brain=brain.replace('foreach (var n in GetTree().GetNodesInGroup("players"))','foreach (var p in Players())')
+brain=brain.replace('if (n is not PlayerController p || p.Health <= 0f)','if (p.Health <= 0f)')
+brain=brain.replace('Vector3 to, Node target)','Vector3 to, NpcHeliPlayer target)')
+start=brain.index('            var space = Heli.GetWorld3D()')
+end=brain.index('            // ⭐⭐ AND THE TREES',start)
+brain=brain[:start]+'            if (!ClearWorld(Heli.NetId, from, to, target?.Owner ?? 0)) return false;\n\n'+brain[end:]
+brain=brain.replace('public static System.Func<Vector3, Vector3, bool> CanopyBlocks','public System.Func<Vector3, Vector3, bool> CanopyBlocks')
+brain=brain.replace('public static System.Action<Vector3, Vector3, string> NpcShot','public System.Action<Vector3, Vector3, string> NpcShot')
+(out/'NpcHeliBrain.g.cs').write_text('// Generated original game/NpcHeli.cs flight/combat rules; no body solve.\nusing Godot; using UnturnedGodot; namespace UnturnedBevy { public sealed partial class NpcHeliBrain {\n'+brain+'}}')
+
+# Original named-map-node parser and nearest-node/edge spawn selection. Body
+# construction/LookAt remains the native adapter, not a second physics solver.
+mapnodes=method(read('game/DevConsole.cs'),'static System.Collections.Generic.List<(string, Vector3)> Load()')
+mapnodes=mapnodes.replace('static System.Collections.Generic.List<(string, Vector3)> Load()', 'public static System.Collections.Generic.List<(string, Vector3)> Load(string path)')
+mapnodes=mapnodes.replace('            string path = ProjectSettings.GlobalizePath("res://content/" + MapNodeFile);\n','')
+(out/'SourceMapNodes.g.cs').write_text('using Godot; namespace UnturnedBevy { public static class SourceMapNodes {\n'+mapnodes+'}}')
+spawn=heli[heli.index('            var nodes = MapNodes.Locations;'):heli.index('            var v = Vehicle.BuildByName(name);',heli.index('public static NpcHeli Spawn'))]
+spawn=spawn.replace('            var nodes = MapNodes.Locations;\n','')
+(out/'NpcHeliSpawn.g.cs').write_text('using Godot; namespace UnturnedBevy { public sealed partial class NpcHeliBrain {\npublic sealed record SpawnPlan(string Name,Vector3 Target,Vector3 Position);\npublic static SpawnPlan Plan(System.Collections.Generic.List<(string Name,Vector3 Pos)> nodes,NpcHeliTerrain terr,Vector3 near) {\n'+spawn+'return new(best.Name,best.Pos,at);}}}')
+resource=read('game/ResourceField.cs')
+canopy=resource[resource.index('        struct Canopy {'):resource.index('        public bool IsAlive(int index)')]
+(out/'SourceCanopies.g.cs').write_text('using Godot; namespace UnturnedBevy { public sealed partial class SourceCanopies {\n'+canopy+'}}')
+
+# Source scalar vehicle setup rules; the accepted type chooses every datum.
+vehicle=read('game/Vehicle.cs')
+constants=["public const float PlayerRadius = "+number(r'_capsule = new CapsuleShape3D[^\n]*Radius = ([0-9.]+f)',player)+';',
+    match(r'public const float VehicleHealthScale[^;]+;',vehicle),
+    match(r'const float BatteryMax[^;]+;',vehicle).replace('const','public const',1)]
+for name,pattern in [('MainRotorHealth',r'v\._mainRotorHpMax = v\._mainRotorHp = ([^;]+);'),('TailRotorHealth',r'v\._tailRotorHpMax = v\._tailRotorHp = ([^;]+);'),('MainHubBox',r'Vector3 mainBox = ([^;]+);'),('TailHubBox',r'Vector3 tailBox = ([^;]+);')]:
+    expression=re.search(pattern,vehicle).group(1)
+    kind='Vector3' if 'Box' in name else 'float'
+    constants.append(f'public static {kind} {name}(NpcHeliSpec s) => {expression};')
+engine=re.search(r'v\.EngineHealthMax = v\.EngineHealth = ([^;]+);',vehicle).group(1)
+constants.append('public static float EngineHealth(NpcHeliSpec s) => '+engine+';')
+(out/'NpcHeliRules.g.cs').write_text('using Godot; namespace UnturnedBevy { public static class NpcHeliRules {\n'+'\n'.join(constants)+'}}')
+# Original terrain interpolation, with supplied heights already in world metres.
+# The scene adapter supplies each source tile including its original vertex grid.
+sample=method(read('game/Terrain.cs'),'public float SampleHeight(float worldX, float worldZ)')
+sample=sample.replace('(worldX - _bx) / UNIT','(worldX - X) / Dx').replace('(-worldZ - _bz) / UNIT','(worldZ - Z) / Dz')
+sample=sample.replace(' * TILE_HEIGHT - TILE_HEIGHT / 2f - RiverCutWorld(worldX, worldZ)','')
+(out/'NpcHeliTerrainGrid.g.cs').write_text('using Godot; namespace UnturnedBevy { public sealed partial class NpcHeliTerrainGrid {\n'+sample+'}}')

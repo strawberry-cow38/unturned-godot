@@ -15,15 +15,16 @@ public sealed class ResourceServices
     readonly Catalog _catalog;
     readonly Action<string, object> _emit;
     readonly Dictionary<int, ResourceNode> _nodes = new();
+    public SourceCanopies Canopies {get;} = new();
     public sealed record Saved(int Index, float Health, long RegrowTicks, long DropTicks, float[] Direction);
     public ResourceServices(NetWorldServer server, Catalog catalog, Action<string, object> emit)
     {
         _server = server; _catalog = catalog; _emit = emit;
         server.Combat.DamageResource = Damage;
     }
-    public void Clear() => _nodes.Clear();
+    public void Clear() { _nodes.Clear(); Canopies.Clear(); }
     public void TranslateWorld(Vector3 d)
-    { foreach (var node in _nodes.Values) node.Position = new(node.Position.X + d.x, node.Position.Y + d.y, node.Position.Z + d.z); }
+    { foreach (var node in _nodes.Values) node.Position = new(node.Position.X + d.x, node.Position.Y + d.y, node.Position.Z + d.z); Canopies.Translate(d.x,d.z,d.y); }
     public void Register(JsonElement r)
     {
         string kind = Text(r, "kind");
@@ -46,6 +47,8 @@ public sealed class ResourceServices
             RewardMax = ore ? ResourceRules.OreRewardMax : tree.Max };
         node.Spawn = (item, pos) => _server.WorldItems.ServerSpawn(_server.Ids.Mint(), item, new(pos.X, pos.Y, pos.Z), _server.Session.CurrentTick);
         _nodes[index] = node;
+        if(!ore&&r.TryGetProperty("canopyScale",out var scale)&&scale.ValueKind==JsonValueKind.Array)
+        {if(scale.GetArrayLength()!=2)throw new ArgumentException("Canopy scale requires XZ and Y");Canopies.Set(index,p.x,p.y,p.z,scale[0].GetSingle(),scale[1].GetSingle());}
     }
     void Damage(CombatResourceHit hit)
     {

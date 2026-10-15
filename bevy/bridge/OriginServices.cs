@@ -34,6 +34,7 @@ public sealed partial class BridgeHost
         _services.TranslateWorld(delta);
         _vehicles.TranslateWorld(delta);
         _mounted.TranslateWorld(delta);
+        _npcHelis.TranslateWorld(delta);
         _loot?.TranslateWorld(delta);
         _wildlife.TranslateWorld(delta);
         _zombies.TranslateWorld(delta);

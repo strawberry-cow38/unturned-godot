@@ -1901,6 +1901,10 @@ billboarding, original crew and NPC controllers remain separate work. Detailed
 capture names, fixture boundaries and source corrections are in
 bevy/docs/MOUNTED_NATIVE_PORT.md.
 
+### Bevy original NPC helicopter controller and source terrain adapter
+
+Extracted the current `NpcHeli` state machine and named-node/edge spawn planner into the managed host. The cheats-gated original `spawnheli` command now works through actual UDP, and accepted vehicle telemetry produces the exact original control axes without a second physics solve. Complete source terrain grids use bilinear/clamped sampling outside rendering range; source scaled canopy cylinders, attack muzzle provenance, saved lock/burst state and origin rebasing are retained. AI readiness tickets keep source spread after cadence acceptance, unlimited AI belts separate from occupied human seats and reject replay/stale/foreign completions. Native flight/instant rotor startup and actual crew bodies are the next integration checkpoints, not yet claimed complete. See `bevy/docs/NPC_HELICOPTERS.md` for the contract and adapter differences. Validation: 105 managed, 680 networking and 121 JSONL tests passed; independent source review passed. Immutable candidate: `bevy/.local/npc-brain-v66-final`.
+
 ### Bevy mounted muzzle stars in every rendering view
 
 Replaced the mounted flash CPU pose tied to the main camera with the original per-view billboard vertex stage. Each accepted star keeps its independent source roll in an instance tag and shares one HDR 2.6 additive material; source 50ms retirement, sound/light/smoke and operator spring are unchanged. Runtime quads skip flat-mesh frustum culling and shadows. The simultaneous front/side/reflected Vulkan fixture renders the same source star in all three views; the old CPU control loses the side star and flattens the reflected view, failing the same geometry assertions. Front-view pixels are identical. Source/shader and both opened images received independent peer review. Focused accepted-event tests cover material/tag/lifecycle integration; final results are recorded in MOUNTED_NATIVE_PORT.md.

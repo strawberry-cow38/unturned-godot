@@ -12,7 +12,7 @@ namespace UnturnedBevy;
 /// <summary>Vehicle's original aim/cycle/belt state, on the authoritative host.
 /// Clients send look/point and held trigger intent; accepted fleet and seat data
 /// determine the gun, muzzle, limits, ammunition and operator on every tick.</summary>
-public sealed class MountedWeaponServices
+public sealed partial class MountedWeaponServices
 {
     const float Dt=(float)SimClock.FixedDelta, Rad=MathF.PI/180f;
     // Transport guard, not a source fire-rate constant. Refresh each fixed tick;
@@ -211,7 +211,12 @@ public sealed class MountedWeaponServices
         var state=_states[id];var value=state.Mounts[index];var def=state.Spec.Mounts[index];
         if(value.CooldownSeconds>0||value.Ammo==0)return false;
         var frame=Frames(id).Pitch[index];var muzzle=U(frame.Point(MountedWeaponCatalog.V(def.Muzzle)));
-        var direction=U(NVector.Transform(-NVector.UnitZ,frame.Rotation));var gun=def.Gun;
+        var direction=U(NVector.Transform(-NVector.UnitZ,frame.Rotation));
+        return Launch(id,index,owner,npc,infinite,muzzle,direction);
+    }
+    bool Launch(uint id,int index,ushort owner,bool npc,bool infinite,Vector3 muzzle,Vector3 direction)
+    {
+        var state=_states[id];var value=state.Mounts[index];var def=state.Spec.Mounts[index];var gun=def.Gun;
         var profile=ProfileFor(gun,def.GunId,npc);
         var context=new WarheadServices.Payload(0,def.GunId,gun?.BlastRadius??0,gun?.BlastPlayerDamage??0,
             gun?.BlastZombieDamage??0,gun?.BlastVehicleDamage??0,gun==null?(ushort)0:WarheadRules.StickAmmoFor(gun),npc,(uint)_server.Session.CurrentTick);
