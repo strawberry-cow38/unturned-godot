@@ -12,8 +12,22 @@ public sealed partial class FiniteIslandObjects
     readonly Dictionary<string, bool> available = new(StringComparer.Ordinal);
     readonly List<Placement> placements = new();
     public IReadOnlyList<Placement> Placements => placements;
-    public FiniteIslandObjects(string contentDirectory) =>
+    readonly Dictionary<string,string> nameToGuid = new(StringComparer.Ordinal);
+    readonly Dictionary<string,string> guidToName = new(StringComparer.Ordinal);
+    public FiniteIslandObjects(string contentDirectory)
+    {
         objectsDirectory = Path.Combine(contentDirectory, "objects");
+        string catalog = Path.Combine(objectsDirectory, "guid_mesh.txt");
+        if (!File.Exists(catalog)) return;
+        foreach (var line in File.ReadLines(catalog))
+        {
+            var p = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (p.Length < 2) continue;
+            // EditorObjects.LoadCatalog keeps the FIRST alias in both directions.
+            nameToGuid.TryAdd(p[1], p[0]);
+            guidToName.TryAdd(p[0], p[1]);
+        }
+    }
 
     public Placement Place(string name, Vector3 position, Basis basis, string material = null)
     {

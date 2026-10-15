@@ -122,6 +122,8 @@ def main():
     parser.add_argument('--math-only', action='store_true')
     parser.add_argument('--paths-environment', type=Path,
                         help='Also compare original road/conform passes using this PEI Environment directory')
+    parser.add_argument('--saved-data', action='store_true',
+                        help='Compare original prop/road save and reopen, plus Godot Basis save operations')
     parser.add_argument('--scatter', action='store_true',
                         help='Also compare original foliage/resource bakes after final ground')
     parser.add_argument('--placements-content', type=Path,
@@ -129,6 +131,7 @@ def main():
     parser.add_argument('--dotnet', default=shutil.which('dotnet'))
     args = parser.parse_args()
     assert args.dotnet, 'Pass --dotnet or add dotnet to PATH'
+    assert not args.saved_data or args.placements_content, 'Saved data requires --placements-content'
     assert not args.scatter or args.placements_content, 'Scatter requires --placements-content'
     assert not args.placements_content or args.paths_environment, 'Placements require --paths-environment'
     args.work.mkdir(parents=True, exist_ok=True)
@@ -157,6 +160,10 @@ def main():
                 from extract_island_placement import extract as extract_placement
                 extract_placement(lambda p: (REPO / p).read_text(), folder, match, method)
                 source_files += ['bevy/bridge/FiniteIslandObjects.cs']
+            if args.saved_data:
+                from extract_island_save import extract as extract_save
+                extract_save(lambda p: (REPO / p).read_text(), folder, match, method)
+                source_files += ['bevy/bridge/FiniteIslandRoadsSaved.cs']
             if args.scatter:
                 from extract_island_scatter import extract as extract_scatter
                 extract_scatter(lambda p: (REPO / p).read_text(), folder, match, method)
@@ -192,6 +199,59 @@ def main():
                 X=o.Basis.X, Y=o.Basis.Y, Z=o.Basis.Z }).ToArray()
         }, options));
         roads.SavePaths''')
+        if args.saved_data:
+            program = program.replace('if (args.Length > 1 && args[1] == "--math-only") return;', r'''int[] Bits(Vector3 v) => new[] { v.X, v.Y, v.Z }.Select(BitConverter.SingleToInt32Bits).ToArray();
+var basisMath = new List<object>();
+foreach (float x in new[] { -90f, -89.999f, -20f, 0f, 38f, 89.999f, 90f, 270f })
+foreach (float y in new[] { 0f, 23f, 180f })
+foreach (float z in new[] { 0f, -49f })
+foreach (var scale in new[] { new Vector3(1,1,1), new Vector3(2,.35f,4), new Vector3(-2,3,4) })
+{
+    var basis = FiniteIslandObjects.FromEuler(x,y,z) * Basis.FromScale(scale);
+    var unit = basis.Orthonormalized();
+    basisMath.Add(new { x,y,z,scale, determinant=BitConverter.SingleToInt32Bits(basis.Determinant()),
+        axes=new[] { Bits(unit.X),Bits(unit.Y),Bits(unit.Z) }, scaleBits=Bits(basis.Scale), euler=Bits(unit.GetEuler()) });
+}
+File.WriteAllText(Path.Combine(args[0], "basis-save.json"), JsonSerializer.Serialize(basisMath, options));
+if (args.Length > 1 && args[1] == "--math-only") return;''')
+            program = program.replace('        using (var writer = new BinaryWriter(File.Create(path + "-surface.bin")))', r'''        objects.SaveProps(path + "-props.txt");
+        var restoredObjects = new FiniteIslandObjects(args[3]);
+        restoredObjects.LoadProps(path + "-props.txt");
+        File.WriteAllText(path + "-restored.json", JsonSerializer.Serialize(
+            restoredObjects.Placements.Select(o => new { o.Name,o.Position,o.Material,
+                X=o.Basis.X,Y=o.Basis.Y,Z=o.Basis.Z }).ToArray(), options));
+        var restoredRoads = new FiniteIslandRoads(surface,args[2]);
+        restoredRoads.LoadPaths(path + "-paths.dat");
+        restoredRoads.SavePaths(path + "-restored-paths.dat");
+        surface.SetHole(0,0,true); surface.SetHole(0,7,true);
+        surface.SetHole(0,8,true); surface.SetHole(surface.Width-2,surface.Height-2,true);
+        using (var river = new BinaryWriter(File.Create(path + "-input.rivers")))
+        {
+            river.Write(3); river.Write(2);
+            river.Write(3);
+            foreach (var p in new[] { new Vector3(80,40,-80),new Vector3(100,42,-100),new Vector3(120,38,-80) })
+            { river.Write(p.X);river.Write(p.Y);river.Write(p.Z); }
+            river.Write(8f);river.Write(4f);river.Write(5);
+            river.Write(2);
+            foreach (var p in new[] { new Vector3(100,40,-70),new Vector3(100,40,-110) })
+            { river.Write(p.X);river.Write(p.Y);river.Write(p.Z); }
+            river.Write(3f);river.Write(6f);river.Write(0);
+        }
+        surface.LoadRivers(path + "-input.rivers");
+        surface.SaveHeightmap(path + "-heightmap.bin");
+        var restoredSurface = new FiniteIslandSurface(new FiniteIslandLayout(x,z));
+        if (!restoredSurface.LoadHeightmap(path + "-heightmap.bin")) throw new Exception("restore failed");
+        restoredSurface.SaveHeightmap(path + "-restored-heightmap.bin");
+        File.WriteAllText(path + "-river-samples.json", JsonSerializer.Serialize(new {
+            restoredSurface.HoleCount, restoredSurface.RiverCount,
+            cuts=Enumerable.Range(0,81).Select(i => {
+                float wx=80+i%9*5, wz=-70-i/9*5;
+                return new { wx,wz,height=restoredSurface.SampleHeight(wx,wz),cut=restoredSurface.RiverCutWorld(wx,wz),
+                    normal=restoredSurface.NormalAt(wx,wz) };
+            }).ToArray(),
+            paths=restoredSurface.Rivers.Select(r => restoredSurface.RiverPathPoints(r.Anchors)).ToArray()
+        },options));
+        using (var writer = new BinaryWriter(File.Create(path + "-surface.bin")))''')
         if args.scatter:
             program = program.replace('        roads.SavePaths', '''        string assets = path + "-assets";
         FiniteIslandScatter.Bake(surface, seed, $"island_{seed}", args[3], assets);
@@ -220,6 +280,8 @@ def main():
         (folder / 'summary.jsonl').write_text(result.stdout)
     errors = []
     sources = [args.work / 'source/math.json']
+    if args.saved_data:
+        sources.append(args.work / 'source/basis-save.json')
     if not args.math_only:
         sources += sorted((args.work / 'source').glob('case*.*'))
     if args.scatter:

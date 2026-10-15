@@ -130,3 +130,38 @@ unchanged input bins and exact manifest bytes, then paints all ground dirt and
 rebakes the same seed: no stale grass or resource instance survives. It passes
 against immutable `finite-island-scatter-tests`. These are generated content data
 checks; native field materialization/render verification remains pending.
+
+Saved-map data now uses the original EditorObjects prop writer/reader and
+RoadField Paths.dat reader, including version 2–6 tangents, modes, offsets,
+loop flags and GUID bytes. Props preserve first GUID aliases, source YXZ Euler
+decomposition, signed scale and the eleventh material token. The original
+three-decimal file quantization remains intentional; reopen consumes those
+serialized values rather than reconstructing a seed. A failed road parse leaves
+the prior data/version intact before the caller chooses how to report failure.
+
+Terrain persistence now retains the original normalized grid, RLE splat,
+bit-packed holes and v2/v3 river-recipe formats. Missing or incompatible hole
+sidecars keep the source reset behavior, and saving filled ground deletes stale
+hole files. River curves and analytical cuts run unchanged, including v2 chaining,
+overlap maximum and repeated-load idempotence. Original SampleHeight now includes
+that cut; fresh generation still has no rivers. Scene rebuild, river-water meshes
+and editor journals remain native-consumer work, not hidden no-op methods.
+
+`verify_island_source.py --saved-data` with the existing paths/content options
+passes all 78 output files using actual GodotSharp. This covers four full map
+cases, 144 Basis cases (gimbals, pure rotations, nonuniform and mirrored scale),
+all prop text/reopened bases, exact roads, grid/splat/hole/river save/re-save bytes,
+and 81 river height/normal samples per map. Eleven focused regressions pass,
+including zero-scale/material/alias parsing, all five road versions, truncated
+road rollback, the 65,535-cell RLE boundary, stale holes, malformed masks, legacy
+river chaining and repeated reload. The earlier 15 finite tests also pass.
+
+This is still a data boundary. The native finite world, chart, authored spawn
+files, junction graph and custom-placeable sidecars, generated vehicle chooser,
+and BuildingGen runtime remain unfinished. The original source also has a reopen
+limit: it restores the seed marker and authored files without reconstructing
+IslandTiles/Routes. EditorPlayMode's generated zombie/loot/fauna/vehicle branch
+then does not run. That source behavior must be handled explicitly during the
+upcoming host-session integration; this adapter does not invent saved entities
+or silently regenerate over edited terrain. Existing baked charts must be reused
+on reopen, as ProcIslandMap.Rebind requires.

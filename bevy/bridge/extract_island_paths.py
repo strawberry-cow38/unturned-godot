@@ -21,9 +21,6 @@ def extract(read, out, match, method):
                  'ConformToPolylines', 'GatherConform', 'PaintSplat',
                  'PaintBelowHeight', 'PaintSteeperThan'):
         body = get(terrain, name)
-        if name == 'SampleHeight':
-            # This class is the fresh generator, before any editor river exists.
-            body = replace_once(body, ' - RiverCutWorld(worldX, worldZ)')
         if name == 'ConformToPolylines':
             body = replace_once(body, '                JournalH(gx, gy);')
             body = replace_once(body, '            _dirty = true;')
@@ -45,6 +42,8 @@ def extract(read, out, match, method):
         '// Generated from Terrain.cs: fresh-grid math, no journal/scene/GPU side effects.\n'
         'using Godot; using UnturnedGodot; namespace UnturnedBevy {\n'
         'public sealed partial class FiniteIslandSurface {\n' + '\n'.join(pieces) + '\n}}\n')
+    from extract_island_surface_save import extract as extract_surface_save
+    extract_surface_save(terrain, out, match, get)
 
     roads = read('game/RoadField.cs')
     pieces = [match(r'        struct RoadMat \{[^\n]+', roads)]

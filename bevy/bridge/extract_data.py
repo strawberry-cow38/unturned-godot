@@ -540,5 +540,8 @@ extract_island_placement(read, out, match, method)
 from extract_island_scatter import extract as extract_island_scatter
 extract_island_scatter(read, out, match, method)
 
+from extract_island_save import extract as extract_island_save
+extract_island_save(read, out, match, method)
+
 from extract_inventory import extract as extract_inventory
 extract_inventory(read, out, match, method)

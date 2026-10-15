@@ -4,8 +4,8 @@ using UnturnedGodot;
 namespace UnturnedBevy;
 
 /// <summary>Data backing for the original finite Terrain surface operations.
-/// Fresh generation has no river editor overlays. Saved authored rivers require
-/// the separate saved-map reader; they must not silently enter this path.</summary>
+/// Saved authored river recipes affect the same sampled surface as generation.
+/// Mesh/water rebuilding is left to the native renderer.</summary>
 public sealed partial class FiniteIslandSurface
 {
     readonly float[,] _grid;

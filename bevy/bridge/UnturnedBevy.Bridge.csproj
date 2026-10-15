@@ -14,12 +14,15 @@
     <Compile Include="../../game/ProcIsland.cs" Link="Source/ProcIsland.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/FiniteIslandLayout.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/FiniteIslandSurface.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/FiniteIslandSurfaceSaved.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/FiniteIslandRoads.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/FiniteIslandPaths.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/FiniteIslandPlacement.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/FiniteIslandObjects.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/FiniteIslandScatter.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/FiniteIslandSurfaceAssets.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/FiniteIslandObjectsSave.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/FiniteIslandRoadsSave.g.cs" />
     <Compile Include="../../game/NetContent.cs" Link="Source/NetContent.cs" />
     <Compile Include="../../game/Umbrellas.cs" Link="Source/Umbrellas.cs" />
     <Compile Include="../../game/VehiclePaints.cs" Link="Source/VehiclePaints.cs" />

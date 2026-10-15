@@ -2521,3 +2521,18 @@ pass. Native dashboard/drag/context/paperdoll integration remains separate and
 unverified visually. Viewed-container/Nearby Empty still needs authorized exact
 identity support, and nearby crafting-station policy remains separate. See
 `bevy/docs/INVENTORY_PORT.md`.
+
+### Bevy finite-world saved data — source formats and river sampling
+
+Ported original terrain grid/splat/hole/river persistence, prop text/Euler/scale
+save and reopen, and road versions 2–6. Original authored values and quantization
+survive; no seed regeneration replaces an edited map. Analytical river sampling
+now follows the original recipe and remains idempotent through repeated loads.
+Real Godot differential: 78 outputs PASS; 11 focused saved-data regressions PASS,
+plus the existing 15 finite cases. Source-only signed-zero formatting exposed one
+test expectation error, corrected without changing the writer.
+
+Native finite rendering/streaming, chart, remaining editor sidecars and separate
+BuildingGen consumers remain open. The original generated-spawn reopen gate is
+documented in `bevy/docs/FINITE_WORLD_PORT.md`; no new client authority path or
+invented saved NPC/vehicle state was added.

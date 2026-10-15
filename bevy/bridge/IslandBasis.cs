@@ -20,7 +20,7 @@ namespace Godot;
 
 // Only the source island consumer's value operations. Columns match Godot's
 // public axes; arithmetic order is retained for deterministic placement output.
-public struct Basis
+public partial struct Basis
 {
     public Vector3 Row0, Row1, Row2;
     public readonly Vector3 X => new(Row0.X, Row1.X, Row2.X);
