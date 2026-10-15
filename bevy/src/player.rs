@@ -162,6 +162,10 @@ pub struct PlayerBody {
     eye_height: f32,
     locomotion: crate::locomotion::Locomotion,
 }
+impl PlayerBody {
+    pub(crate) fn stance(&self) -> &str { &self.stance }
+    pub(crate) fn grounded(&self) -> bool { self.grounded }
+}
 #[derive(Component)]
 pub struct PlayerCamera;
 

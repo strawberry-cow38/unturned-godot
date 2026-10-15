@@ -18,6 +18,7 @@ mod driving;
 mod motion;
 mod parts;
 mod tools;
+mod weapon_fx;
 const LAYER: usize = 1;
 const ARMS_POSITION: Vec3 = Vec3::new(0., -1.75, 0.12);
 #[derive(Clone, Debug)]
@@ -26,6 +27,7 @@ pub struct GunVisual {
     pub mesh: String,
     pub texture: String,
     pub muzzle: Vec3,
+    pub ejects: bool,
     pub aim: Vec3,
     pub sight: Option<String>,
     pub sight_position: Vec3,
@@ -63,6 +65,7 @@ pub fn load_gun_visuals(root: &Path) -> Result<HashMap<String, GunVisual>, Conte
                 mesh: format!("{}_gun.txt", f[0]),
                 texture: format!("{}_albedo.png", f[0]),
                 muzzle: vector(f[1])?,
+                ejects: f[3].trim() == "1",
                 aim: vector(f[2])?,
                 sight: None,
                 sight_position: Vec3::ZERO,
@@ -126,6 +129,7 @@ pub fn load_gun_visuals(root: &Path) -> Result<HashMap<String, GunVisual>, Conte
 #[derive(Resource, Default)]
 struct ViewmodelState {
     camera: Option<Entity>,
+    frame: Option<Entity>,
     arms: Option<Entity>,
     held: Option<u16>,
     gun: Option<Entity>,
@@ -145,7 +149,7 @@ struct ViewmodelState {
     rotation_offset: Vec3,
     previous_look: Option<Vec2>,
     hands_off: bool,
-    hammer_delay: Option<f32>,
+    hammer_delay: Option<(f32, f32)>,
     driving: bool,
     seated: bool,
     tool_active: bool,
@@ -169,6 +173,10 @@ struct PendingHeld {
 }
 #[derive(Component)]
 struct ViewmodelCamera;
+/// The original viewport world. Head-look rotates its camera independently;
+/// already-ejected casings and sparks remain in this torso frame.
+#[derive(Component)]
+struct ViewmodelFrame;
 #[derive(Component)]
 struct HeldMesh;
 pub struct ViewmodelPlugin;
@@ -176,7 +184,7 @@ impl Plugin for ViewmodelPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ViewmodelState>()
             .init_resource::<ViewmodelStatus>()
-            .add_plugins(tools::ToolPlugin)
+            .add_plugins((tools::ToolPlugin, weapon_fx::WeaponEffectsPlugin))
             .add_systems(
                 Update,
                 (build_viewmodel, attach_held_mesh, animate_viewmodel)
@@ -221,6 +229,15 @@ fn build_viewmodel(
         return;
     };
     if state.camera.is_none() {
+        let frame = commands
+            .spawn((
+                Name::new("First-person viewport frame"),
+                ViewmodelFrame,
+                Transform::IDENTITY,
+                Visibility::Inherited,
+                ChildOf(main_camera),
+            ))
+            .id();
         let camera = commands
             .spawn((
                 Name::new("First-person viewmodel camera"),
@@ -239,7 +256,7 @@ fn build_viewmodel(
                 }),
                 RenderLayers::layer(LAYER),
                 Transform::IDENTITY,
-                ChildOf(main_camera),
+                ChildOf(frame),
                 ViewmodelCamera,
             ))
             .id();
@@ -252,9 +269,10 @@ fn build_viewmodel(
             },
             Transform::from_rotation(Quat::from_euler(EulerRot::XYZ, -0.5, -0.6, 0.)),
             RenderLayers::layer(LAYER),
-            ChildOf(camera),
+            ChildOf(frame),
         ));
         state.camera = Some(camera);
+        state.frame = Some(frame);
         match load_gun_visuals(&config.content_root) {
             Ok(table) => state.visuals = table,
             Err(e) => warn!("viewmodel table: {e}"),
@@ -346,7 +364,7 @@ fn build_viewmodel(
         &clip,
     ) {
         Ok(root) => {
-            commands.entity(root).insert(ChildOf(state.camera.unwrap()));
+            commands.entity(root).insert(ChildOf(state.frame.unwrap()));
             state.arms = Some(root);
             state.held = Some(held);
             state.hold_clip = clip;
@@ -707,7 +725,7 @@ fn animate_viewmodel(
                 );
             }
             "rechamber" => {
-                state.hammer_delay = Some(event.data["delay"].as_f64().unwrap_or(0.) as f32)
+                state.hammer_delay = weapon_fx::hammer_timing(&rig, &state.asset, &event.data)
             }
             "fire" => {
                 state.shot_hold = 0.25;
@@ -732,12 +750,13 @@ fn animate_viewmodel(
         }
     }
     let stance = snapshot.0["player"]["stance"].as_str().unwrap_or("stand");
-    if let Some(delay) = &mut state.hammer_delay {
+    if let Some((delay, speed)) = &mut state.hammer_delay {
         *delay -= dt;
         if *delay <= 0. {
+            let speed = *speed;
             state.hammer_delay = None;
             let clip = own_clip(&rig, &state.asset, "_Hammer", "");
-            play_once(&mut rig, &clip, 1.);
+            play_once(&mut rig, &clip, speed);
         }
     }
     let reloading = snapshot.0["weapon"]["reloading"].as_bool().unwrap_or(false);
@@ -994,6 +1013,8 @@ mod tests {
             .init_asset::<Mesh>().init_asset::<Image>().init_asset::<StandardMaterial>()
             .init_asset::<SkinnedMeshInverseBindposes>()
             .init_resource::<WorldConfig>().init_resource::<ContentCache>().init_resource::<ItemCatalog>()
+            .init_resource::<crate::world::WorldGeometry>().init_resource::<crate::impact::surfaces::SurfaceTable>()
+            .init_resource::<crate::player::WorldSessionEpoch>().init_asset::<AudioSource>()
             .init_resource::<Settings>().init_resource::<crate::use_items::HandUse>()
             .init_resource::<crate::vehicle::Occupancy>().init_resource::<crate::recoil::Recoil>()
             .init_resource::<ButtonInput<KeyCode>>().init_resource::<ButtonInput<MouseButton>>()

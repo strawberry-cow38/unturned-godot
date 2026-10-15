@@ -232,7 +232,7 @@ fn feedback(
             }
         }
     }
-    let target = torch.then_some(state.gun.zip(state.camera)).flatten();
+    let target = torch.then_some(state.gun.zip(state.frame)).flatten();
     if fx.sparks.is_some_and(|(gun, emitter)| {
         target.is_none_or(|(g, _)| gun != g) || emitters.get(emitter).is_err()
     }) {
@@ -359,6 +359,9 @@ mod tests {
             .init_asset::<SkinnedMeshInverseBindposes>()
             .init_asset::<AudioSource>()
             .init_resource::<WorldConfig>()
+            .init_resource::<crate::world::WorldGeometry>()
+            .init_resource::<crate::impact::surfaces::SurfaceTable>()
+            .init_resource::<crate::player::WorldSessionEpoch>()
             .init_resource::<ContentCache>()
             .insert_resource(catalog)
             .init_resource::<Settings>()
