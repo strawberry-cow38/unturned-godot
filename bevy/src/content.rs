@@ -55,6 +55,17 @@ impl ObjData {
     /// Original ParseObjSplitByZone: all three corners must lie in one zone.
     /// Triangles spanning separate zones stay outside, retaining authored attributes.
     pub fn split_zones(&self, zones: &[(Vec3, Vec3)]) -> (Self, Self) {
+        self.split_where(|triangle| {
+            zones.iter().any(|(min, max)| {
+                triangle
+                    .iter()
+                    .all(|p| p.cmpge(*min).all() && p.cmple(*max).all())
+            })
+        })
+    }
+    /// Source SplitMeshBy, returning (outside, inside) without changing triangle
+    /// winding or attributes. The predicate receives all three local corners.
+    pub fn split_where(&self, predicate: impl Fn([Vec3; 3]) -> bool) -> (Self, Self) {
         let empty = || Self {
             min: Vec3::splat(f32::INFINITY),
             max: Vec3::splat(f32::NEG_INFINITY),
@@ -62,12 +73,7 @@ impl ObjData {
         };
         let (mut outside, mut inside) = (empty(), empty());
         for (n, triangle) in self.positions.chunks_exact(3).enumerate() {
-            let enclosed = zones.iter().any(|(min, max)| {
-                triangle.iter().all(|p| {
-                    let p = Vec3::from_array(*p);
-                    p.cmpge(*min).all() && p.cmple(*max).all()
-                })
-            });
+            let enclosed = predicate([0, 1, 2].map(|i| Vec3::from_array(triangle[i])));
             let out = if enclosed { &mut inside } else { &mut outside };
             for i in n * 3..n * 3 + 3 {
                 let p = Vec3::from_array(self.positions[i]);
@@ -315,9 +321,13 @@ impl ContentCache {
             // Source Terrain, FoliageField and ResourceField generate mipmaps and
             // explicitly retain linear filtering; palette props remain nearest.
             let linear = path.starts_with("terrain")
-                || path.starts_with("veh_smoke") || path=="veh_fire.png"
+                || path.starts_with("veh_smoke")
+                || path == "veh_fire.png"
                 || (path.starts_with("foliage")
-                    && !path.rsplit('/').next().is_some_and(|p| p.starts_with("pebble")))
+                    && !path
+                        .rsplit('/')
+                        .next()
+                        .is_some_and(|p| p.starts_with("pebble")))
                 || path.starts_with("resources");
             let mipmaps = linear || path.starts_with("foliage");
             let handle = assets

@@ -66,6 +66,7 @@ pub struct ItemCatalog {
     pub bullet_visuals: Option<crate::bullets::Visuals>,
     pub mounted_weapons: HashMap<String, f32>,
     pub(crate) npc_crew: Option<crate::vehicle::turrets::crew::Definition>,
+    pub(crate) vehicle_lighting: Option<crate::vehicle::lighting::Definition>,
 }
 #[derive(Resource, Default)]
 pub struct ServiceManifest {
@@ -140,7 +141,13 @@ struct InteractionCandidate {
 impl InteractionFocus {
     /// Reserve the closest prompt for a source interaction with its own
     /// tap/release/hold lifecycle. The generic press dispatcher must not fire it.
-    pub fn offer_manual(&mut self, distance: f32, label: impl Into<String>, action: &str, args: Value) {
+    pub fn offer_manual(
+        &mut self,
+        distance: f32,
+        label: impl Into<String>,
+        action: &str,
+        args: Value,
+    ) {
         self.offer(distance, label, action, args.clone(), false);
         if let Some(candidate) = &mut self.candidate {
             if candidate.action == action && candidate.args == args {
@@ -150,8 +157,7 @@ impl InteractionFocus {
     }
     pub fn selected(&self, action: &str, id: u32) -> bool {
         self.candidate.as_ref().is_some_and(|candidate| {
-            candidate.action == action
-                && candidate.args["netId"].as_u64() == Some(u64::from(id))
+            candidate.action == action && candidate.args["netId"].as_u64() == Some(u64::from(id))
         })
     }
     pub fn has_candidate(&self) -> bool {
@@ -288,8 +294,11 @@ fn load_catalog(
         catalog.bullet_visuals =
             serde_json::from_value(response["result"]["bulletVisuals"].clone()).ok();
         catalog.mounted_weapons =
-            serde_json::from_value(response["result"]["mountedWeapons"].clone()).unwrap_or_default();
+            serde_json::from_value(response["result"]["mountedWeapons"].clone())
+                .unwrap_or_default();
         catalog.npc_crew = serde_json::from_value(response["result"]["npcCrew"].clone()).ok();
+        catalog.vehicle_lighting =
+            serde_json::from_value(response["result"]["vehicleLighting"].clone()).ok();
         Ok(serde_json::from_value::<Vec<ItemVisual>>(
             response["result"]["items"].clone(),
         )?)

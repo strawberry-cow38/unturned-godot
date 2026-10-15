@@ -11,6 +11,7 @@ mod exit;
 mod flight;
 mod geometry;
 mod hearing;
+pub(crate) mod lighting;
 mod npc;
 mod remote;
 mod render;
@@ -174,6 +175,7 @@ impl Plugin for VehiclePlugin {
             .add_plugins(turrets::fx::MountedEffectsPlugin)
             .add_plugins(npc::NpcFlightPlugin)
             .add_plugins(turrets::crew::CrewPlugin)
+            .add_plugins(lighting::LightingPlugin)
             .init_resource::<turrets::Operator>()
             .init_resource::<Vehicles>()
             .init_resource::<collision::Hulls>()
@@ -761,7 +763,8 @@ fn read_controls(
                     body.flags |= 1;
                 }
                 if edge(GameAction::VehicleLights) {
-                    body.flags ^= 2;
+                    let _ = bridge.request("action", json!({"name":"vehicleLighting",
+                        "args":{"netId":body.net_id,"action":"CycleHeadlights"}}));
                 }
                 if edge(GameAction::Fire)
                     && !motion.1.trigger_live(pressed(GameAction::Aim))
@@ -1086,7 +1089,7 @@ fn publish_bodies(
         return;
     }
     let mut unattended = Vec::new();
-    let mut drowned = Vec::new();
+    let mut physics_facts = Vec::new();
     for (body, pose, velocity) in &query {
         let (yaw, pitch, roll) = pose.rotation.to_euler(EulerRot::YXZ);
         let angles = [pitch.to_degrees(), yaw.to_degrees(), roll.to_degrees()];
@@ -1094,17 +1097,18 @@ fn publish_bodies(
             .seat
             .is_some_and(|s| s.driver && s.net_id == body.net_id)
         {
-            if body.engine_drowned {
-                drowned.push(json!({"netId":body.net_id,"engineDrowned":true}));
-            }
+            // Drowning permanently ruins the engine, but electrical shutdown
+            // follows current water contact. Send false too after recovery.
+            physics_facts.push(json!({"netId":body.net_id,
+                "engineDrowned":body.engine_drowned,"swamped":body.swamp.active}));
             if let Err(e)=bridge.request("action",json!({"name":"vehicleState","args":{"vehicleNetId":body.net_id,"pos":pose.translation.to_array(),"eulerDegrees":angles,
                 "linVel":velocity.linear.to_array(),"angVel":velocity.angular.to_array(),"steerDegrees":body.drivetrain.steering,"throttle":body.controls.throttle,"steer":body.controls.steer,"handbrake":body.controls.handbrake,"flags":body.flags,"recovAck":body.recov_counter}})) {warn!("Vehicle state: {e}");}
         } else {
             unattended.push(json!({"netId":body.net_id,"position":pose.translation.to_array(),"eulerDegrees":angles,"linVel":velocity.linear.to_array(),"angVel":velocity.angular.to_array(),
-            "steerDegrees":body.drivetrain.steering,"flags":body.flags,"engineDrowned":body.engine_drowned}));
+            "steerDegrees":body.drivetrain.steering,"flags":body.flags,"engineDrowned":body.engine_drowned,"swamped":body.swamp.active}));
         }
     }
-    unattended.extend(drowned);
+    unattended.extend(physics_facts);
     if model.network.owns_world && !unattended.is_empty() {
         if let Err(e) = bridge.request("worldVehicleState", json!({"vehicles":unattended})) {
             warn!("Host vehicle states: {e}");

@@ -31,9 +31,9 @@ replacement has evidence of parity.
 Measured source: 187 engine-independent C# files / 60,586 lines, 342 gameplay
 files / 146,706 lines, 319 in-engine test files / 62,166 lines, and 194 core test
 files / 45,176 lines. Historical repository summaries are stale. The current
-source protocol is version61; the port is now version66 for accepted equipment,
-resource contacts, mounted weapons, occupant rise and remote mounted flight
-effects. Inventory has22 pages including vehicle compartments.
+source protocol is version61; the port is now version68 for accepted equipment,
+resource contacts, mounted weapons, occupant rise, remote mounted flight
+effects, NPC crew and vehicle electrical/lamp state. Inventory has22 pages including vehicle compartments.
 
 ## Milestones
 

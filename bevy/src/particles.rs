@@ -8,6 +8,15 @@ use bevy::{
     prelude::*,
     render::render_resource::{Extent3d, PrimitiveTopology, TextureDimension, TextureFormat},
 };
+pub(crate) mod glass;
+
+/// Godot one-shot birth phases: (index + randomness * random) / amount,
+/// compressed by (1 - explosiveness) into the beginning of the lifetime.
+#[derive(Clone, Copy)]
+pub(crate) struct BurstTiming {
+    pub explosiveness: f32,
+    pub randomness: f32,
+}
 
 #[derive(Clone)]
 pub struct Spec {
@@ -16,6 +25,11 @@ pub struct Spec {
     pub duration: f32,
     pub one_shot: bool,
     pub radius: f32,
+    /// Source world-aligned emission box; None retains the existing sphere.
+    pub emission_box: Option<Vec3>,
+    pub burst_timing: Option<BurstTiming>,
+    /// CPUParticles3D uses two independent angular spreads, unlike a uniform cone.
+    pub cpu_spread: bool,
     pub spread: f32,
     pub speed: Vec2,
     pub gravity: Vec3,
@@ -47,6 +61,9 @@ impl Default for Spec {
             duration: 1.,
             one_shot: false,
             radius: 0.,
+            emission_box: None,
+            burst_timing: None,
+            cpu_spread: false,
             spread: 0.,
             speed: Vec2::ZERO,
             gravity: Vec3::ZERO,
@@ -88,15 +105,24 @@ pub struct Emitter {
     particles: Vec<Particle>,
     random: u64,
     initial: bool,
+    pending_births: Vec<f32>,
     opacity: f32,
 }
 impl Emitter {
+    #[cfg(test)]
+    pub(crate) fn source_spec(&self) -> &Spec {
+        &self.spec
+    }
     pub fn debug_state(&self) -> (f32, usize) {
         (self.age, self.particles.len())
     }
     /// Cease births, allowing existing particles to dissipate naturally.
     pub fn stop(&mut self) {
         self.spec.duration = self.age;
+        self.pending_births.clear();
+        if self.spec.one_shot {
+            self.initial = false;
+        }
     }
     pub fn set_opacity(&mut self, opacity: f32) {
         self.opacity = opacity.clamp(0., 1.);
@@ -122,7 +148,27 @@ impl Emitter {
         }
         let mut births = Vec::new();
         if spec.one_shot {
-            if self.initial {
+            if let Some(timing) = spec.burst_timing {
+                if self.initial {
+                    self.pending_births = (0..spec.amount)
+                        .map(|i| {
+                            (i as f32 + timing.randomness * random(&mut self.random))
+                                / spec.amount as f32
+                                * (1. - timing.explosiveness)
+                                * spec.life
+                        })
+                        .collect();
+                }
+                let end = self.age + dt;
+                self.pending_births.retain(|birth| {
+                    if *birth < end {
+                        births.push((end - *birth).min(dt));
+                        false
+                    } else {
+                        true
+                    }
+                });
+            } else if self.initial {
                 births.resize(spec.amount, dt);
             }
         } else if spec.life > 0. && spec.amount > 0 {
@@ -139,13 +185,25 @@ impl Emitter {
         self.initial = false;
         self.age += dt;
         for elapsed in births {
-            let offset =
-                direction(&mut self.random, 180.) * random(&mut self.random).cbrt() * spec.radius;
+            let offset = if let Some(extents) = spec.emission_box {
+                Vec3::new(
+                    random(&mut self.random),
+                    random(&mut self.random),
+                    random(&mut self.random),
+                )
+                .mul_add(Vec3::splat(2.), Vec3::splat(-1.))
+                    * extents
+            } else {
+                direction(&mut self.random, 180.) * random(&mut self.random).cbrt() * spec.radius
+            };
             let rotation =
                 Quat::from_rotation_arc(Vec3::Y, spec.direction.try_normalize().unwrap_or(Vec3::Y));
-            let velocity = rotation
-                * direction(&mut self.random, spec.spread)
-                * between(&mut self.random, spec.speed);
+            let launch = if spec.cpu_spread {
+                cpu_direction(&mut self.random, spec.spread, spec.direction)
+            } else {
+                rotation * direction(&mut self.random, spec.spread)
+            };
+            let velocity = launch * between(&mut self.random, spec.speed);
             let mut p = Particle {
                 position: origin + offset,
                 velocity,
@@ -163,7 +221,9 @@ impl Emitter {
         self.particles.retain(|p| p.age < spec.life);
     }
     fn finished(&self) -> bool {
-        self.particles.is_empty() && (self.spec.one_shot || self.age >= self.spec.duration)
+        self.particles.is_empty()
+            && self.pending_births.is_empty()
+            && (self.spec.one_shot || self.age >= self.spec.duration)
     }
 }
 impl Particle {
@@ -201,12 +261,14 @@ pub struct ParticlePlugin;
 pub struct ParticleUpdate;
 impl Plugin for ParticlePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, setup).add_systems(
-            PostUpdate,
-            update
-                .in_set(ParticleUpdate)
-                .after(bevy::transform::TransformSystems::Propagate),
-        );
+        app.add_systems(Startup, setup)
+            .add_systems(Update, glass::cleanup)
+            .add_systems(
+                PostUpdate,
+                update
+                    .in_set(ParticleUpdate)
+                    .after(bevy::transform::TransformSystems::Propagate),
+            );
     }
 }
 fn setup(
@@ -296,6 +358,7 @@ pub fn spawn(
                 particles: Vec::new(),
                 random: seed.max(1),
                 initial: true,
+                pending_births: Vec::new(),
                 opacity: 1.,
             },
             Mesh3d(meshes.add(mesh)),
@@ -324,6 +387,21 @@ fn direction(seed: &mut u64, spread: f32) -> Vec3 {
     let a = random(seed) * std::f32::consts::TAU;
     let r = (1. - y * y).max(0.).sqrt();
     Vec3::new(a.cos() * r, y, a.sin() * r)
+}
+// Godot4.6 scene/3d/cpu_particles_3d.cpp: two angles, then the original
+// binormal/normal/direction basis. Random draws are cosmetic, not authority.
+fn cpu_direction(seed: &mut u64, spread: f32, direction: Vec3) -> Vec3 {
+    let a = ((random(seed) * 2. - 1.) * spread).to_radians();
+    let b = ((random(seed) * 2. - 1.) * spread).to_radians();
+    let direction = direction.try_normalize().unwrap_or(Vec3::Z);
+    let cross = Vec3::Y.cross(direction);
+    let binormal = if cross.length_squared() < 0.00000001 {
+        Vec3::Z
+    } else {
+        cross.normalize()
+    };
+    let normal = binormal.cross(direction);
+    binormal * (a.sin() * b.cos()) + normal * b.sin() + direction * (a.cos() * b.cos())
 }
 fn curve<T: Copy + std::ops::Mul<f32, Output = T> + std::ops::Add<Output = T>>(
     points: &[(f32, T)],
@@ -545,7 +623,42 @@ mod tests {
             particles: vec![],
             random: 7,
             initial: true,
+            pending_births: Vec::new(),
             opacity: 1.,
+        }
+    }
+    #[test]
+    fn source_box_burst_keeps_delayed_births_and_finishes_once_across_frame_rates() {
+        for dt in [0.001, 0.02, 0.1] {
+            let extents = Vec3::new(0.2, 0.3, 0.06);
+            let mut e = emitter(Spec {
+                amount: 6,
+                life: 1.2,
+                one_shot: true,
+                emission_box: Some(extents),
+                burst_timing: Some(BurstTiming {
+                    explosiveness: 0.9,
+                    randomness: 0.5,
+                }),
+                ..default()
+            });
+            e.advance(0., Vec3::ZERO);
+            assert_eq!(e.particles.len(), 0);
+            assert!(!e.finished(), "delayed first shard is still pending");
+            for _ in 0..(0.2 / dt) as usize {
+                e.advance(dt, Vec3::ZERO);
+            }
+            assert_eq!(e.particles.len(), 6, "dt={dt}");
+            assert!(
+                e.particles
+                    .iter()
+                    .all(|p| p.position.abs().cmple(extents).all())
+            );
+            assert!(e.pending_births.is_empty());
+            e.advance(2., Vec3::ZERO);
+            assert!(e.finished());
+            e.advance(0.1, Vec3::ZERO);
+            assert!(e.particles.is_empty(), "one-shot must not restart");
         }
     }
     #[test]

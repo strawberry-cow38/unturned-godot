@@ -142,6 +142,7 @@ pub fn update(
     config: Res<WorldConfig>,
     settings: Res<Settings>,
     time: Res<Time>,
+    ui: Option<Res<crate::ui::UiState>>,
 ) {
     let live: HashSet<_> = bodies.iter().map(|(entity, _)| entity).collect();
     voices.0.retain(|entity, voice| {
@@ -156,6 +157,11 @@ pub fn update(
             false
         }
     });
+    // Retire disappeared vehicles even while paused, but retain active decoder
+    // position and the original wind-down envelope until SP simulation resumes.
+    if ui.as_deref().is_some_and(crate::player::simulation_paused) {
+        return;
+    }
     for (entity, body) in &bodies {
         let spec = &super::data::definition(body.type_id).unwrap().spec;
         let voice = voices.0.entry(entity).or_default();
@@ -290,6 +296,7 @@ pub(crate) fn spawn_sound(
 }
 pub fn volume(
     settings: Res<Settings>,
+    ui: Option<Res<crate::ui::UiState>>,
     listeners: Query<&GlobalTransform, With<SpatialListener>>,
     mut sounds: Query<(
         &VehicleSound,
@@ -298,6 +305,7 @@ pub fn volume(
         Option<&mut SpatialAudioSink>,
     )>,
 ) {
+    let paused = ui.as_deref().is_some_and(crate::player::simulation_paused);
     let listener = listeners.iter().next().map(GlobalTransform::translation);
     for (gain, pose, mut playback, sink) in &mut sounds {
         let in_range = listener
@@ -308,8 +316,14 @@ pub fn volume(
             0.
         });
         playback.volume = volume;
+        playback.paused = paused;
         if let Some(mut sink) = sink {
             sink.set_volume(volume);
+            if paused {
+                sink.pause();
+            } else {
+                sink.play();
+            }
         }
     }
 }
@@ -317,6 +331,105 @@ pub fn volume(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn actual_voice_settings_pause_pending_decoders_but_keep_network_menus_live() {
+        use crate::ui::{Screen, UiState};
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<Settings>()
+            .insert_resource(UiState {
+                screen: Screen::Paused,
+                ..default()
+            })
+            .add_systems(Update, volume);
+        let source = app
+            .world_mut()
+            .spawn((
+                VehicleSound {
+                    gain: 0.8,
+                    max_distance: 80.,
+                },
+                GlobalTransform::IDENTITY,
+                PlaybackSettings::LOOP,
+            ))
+            .id();
+        app.update();
+        assert!(
+            app.world().get::<PlaybackSettings>(source).unwrap().paused,
+            "a newly loaded sink must begin paused, not leak the siren while paused"
+        );
+        app.world_mut().resource_mut::<UiState>().networked = true;
+        app.update();
+        assert!(!app.world().get::<PlaybackSettings>(source).unwrap().paused);
+        app.world_mut().resource_mut::<UiState>().networked = false;
+        app.world_mut().resource_mut::<UiState>().screen = Screen::Playing;
+        app.update();
+        assert!(!app.world().get::<PlaybackSettings>(source).unwrap().paused);
+    }
+    #[test]
+    fn actual_vehicle_update_keeps_wind_down_alive_while_singleplayer_is_paused() {
+        use crate::ui::{Screen, UiState};
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<AudioSource>()
+            .init_resource::<Settings>()
+            .init_resource::<WorldConfig>()
+            .init_resource::<AudioVoices>()
+            .insert_resource(UiState {
+                screen: Screen::Paused,
+                ..default()
+            })
+            .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                std::time::Duration::from_millis(200),
+            ))
+            .add_systems(Update, update);
+        let car = super::super::tests::body(&mut app, "jeep", Vec3::ZERO);
+        app.world_mut().get_mut::<VehicleBody>(car).unwrap().flags = 0;
+        let sound = app
+            .world_mut()
+            .spawn((
+                VehicleSound {
+                    gain: 1.,
+                    max_distance: 300.,
+                },
+                PlaybackSettings::LOOP,
+            ))
+            .id();
+        let spec = &super::super::data::named("jeep").unwrap().spec;
+        let mut voice = Voice {
+            entity: Some(sound),
+            ..default()
+        };
+        assert!(voice.target(spec, true, 0., 6000., 0., false, 0.02));
+        assert!(voice.target(spec, false, 0., 1000., 0., false, 0.25));
+        let before = (voice.wind, voice.pitch, voice.gain);
+        app.world_mut()
+            .resource_mut::<AudioVoices>()
+            .0
+            .insert(car, voice);
+        for _ in 0..12 {
+            app.update();
+        }
+        let voice = &app.world().resource::<AudioVoices>().0[&car];
+        assert_eq!((voice.wind, voice.pitch, voice.gain), before);
+        assert!(
+            app.world().get_entity(sound).is_ok(),
+            "paused envelope must not retire the voice"
+        );
+        app.world_mut().resource_mut::<UiState>().networked = true;
+        for _ in 0..12 {
+            app.update();
+        }
+        assert!(
+            app.world().get_entity(sound).is_err(),
+            "network pause menus keep world audio clocks alive"
+        );
+        assert!(
+            app.world().resource::<AudioVoices>().0[&car]
+                .entity
+                .is_none()
+        );
+    }
     #[test]
     fn original_car_clip_withholds_engine_torque_and_loop_until_crank_finishes() {
         let spec = &super::super::data::named("jeep").unwrap().spec;

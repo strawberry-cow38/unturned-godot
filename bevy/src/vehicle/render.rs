@@ -107,8 +107,23 @@ pub fn build(
         cache.materials.insert(paint_key, m.clone());
         m
     };
+    let (body_override, lighting) =
+        super::lighting::geometry::build(commands, entity, d, root, cache, meshes, materials);
     let body_names = s.body.iter().chain(s.heli_body_meshes.iter().flatten());
     for name in body_names {
+        if s.body.as_ref() == Some(name)
+            && let Some(mesh) = &body_override
+        {
+            commands.spawn((
+                Name::new(name.clone()),
+                Mesh3d(mesh.clone()),
+                MeshMaterial3d(body_material.clone()),
+                Transform::IDENTITY,
+                Visibility::Inherited,
+                ChildOf(entity),
+            ));
+            continue;
+        }
         spawn_mesh(
             commands,
             entity,
@@ -133,6 +148,9 @@ pub fn build(
     });
     if let Some(parts) = &s.parts {
         for (name, c) in parts {
+            if super::lighting::geometry::consumes(name) {
+                continue;
+            }
             let m = materials.add(StandardMaterial {
                 base_color: Color::srgba(c[0], c[1], c[2], c[3]),
                 perceptual_roughness: 0.85,
@@ -269,7 +287,17 @@ pub fn build(
             }
         }
     }
-    super::turrets::build(commands, entity, d, root, cache, meshes, materials, body_material.clone());
+    commands.entity(entity).insert(lighting);
+    super::turrets::build(
+        commands,
+        entity,
+        d,
+        root,
+        cache,
+        meshes,
+        materials,
+        body_material.clone(),
+    );
     if s.heli || s.plane {
         aircraft::build(
             commands,

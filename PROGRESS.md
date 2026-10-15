@@ -2029,3 +2029,25 @@ the marked frame after re-enabling its profile. All three shadow captures were
 opened; the existing mixed-light/fade GPU regression also passes. Gameplay's
 independent source/code review and root's three-image/implementation review passed. Details and reproduction are in
 `bevy/docs/HDR_NIGHTVISION_PORT.md`; artifacts are `bevy-headlight-shadow-*`.
+
+
+### Native original vehicle lens geometry and accepted glass feedback (2026-10-15)
+
+Original head/tail/lightbar triangles now split through the shared attribute-preserving
+OBJ predicate. Source zones, independent material aliases, Kelvin hull classification,
+local emitter centers, hidden amplifier and exact helicopter navigation/belly-lens
+clusters are retained. The source GlassPane helper emits flat untextured chips and
+original glass sound with box/birth/spread timing; only accepted break facts create
+bursts. Per-body color history survives snapshot-before-event and skipped repair
+cycles without comparing the client's local clock to the server event clock. Damaged
+late joins remain damaged. SP pause now preserves playback and the engine wind-down
+envelope, while network menus keep audio clocks running.
+
+Four geometry, ten particle, three break-feedback and four audio tests pass. Opened
+actual-UDP police off/low/high/break/repair-siren frames and a near six-chip normal-shot
+burst; root and interfaces independently reviewed them. Opened Huey starboard and
+Hind port off/lit aircraft fixtures show the original nav lenses and downward belly
+beacon driven by accepted engine state and the source spool clock. Root independently
+reviewed all four aircraft frames. These are isolated production-system fixtures,
+not new fullgame driving evidence. Audio listening and reflected particle billboards
+remain unverified. Geometry/source details: `bevy/docs/VEHICLE_LAMPS_PORT.md`.
