@@ -1147,3 +1147,15 @@ The managed world can now host the original UDP protocol with a local UDP client
 ### Bevy accepted warhead, water impact and recovered-ammunition presentation
 
 The native impact consumer now uses accepted contact normals and water classification while its local probe only supplies material/decal-parent information. Rocket warheads reuse the source frag blast emitters/light/audio and the original sea+2m water-column rule; retained events are consumed once and session changes clean up old effects. Recovered world items adopt their captured frozen root pose through live updates, rebases and load IDs, retaining the ordinary authoritative pickup path. Native focused impact/effect/audio/item regressions pass (21 tests); the integrated native suite passed307. Real PEI input/render checks consumed a crossbow round, focused and picked up its recovered Arrow347, then consumed an RPG-7 round at the ocean and captured the accepted radius9 blast and source24-droplet column. No native damage was added. This journey exposed an authored door AABB-center export bug (world adapter fix separately) and the source arrow mesh +Y/LookAt -Z mismatch, which is being corrected in a separate mesh-only adapter checkpoint while preserving saved authority pose. Source camera flinch remains a tracked follow-up.
+
+### Bevy authored leaf authority offset regression (2026-10-15)
+
+A real crossbow capture hit the container's back wall despite its closed front
+leaf covering the aim point. Native physics was correct; the authority triangle
+export reused a zero-centred primitive without the authored leaf AABB centre.
+The exporter now applies that centre before placement and hinge rotation. Seven
+interactable tests pass, including an actual bridge worldRay test on the real
+Container_0 leaf: the old uncentred export misses, the production export hits the
+front, opening clears the old position and moves the hit surface with the leaf.
+Repeat live arrow evidence follows in the next combined renderer; HDR/lean
+compositor work remains separate and uncommitted until its visual verification.

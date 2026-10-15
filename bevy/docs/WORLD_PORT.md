@@ -338,3 +338,13 @@ camera (-450,23.5,-100), 2.1 m below sea level, in
 detail remain visible, the distant shore scatters into the water veil, and the
 HUD/crosshair stay sharp. Both logs report no shader errors and zero missing
 source assets. All 54 focused world tests passed after this integration.
+
+
+The live crossbow front-door check exposed an authority-only leaf offset bug:
+the shared box mesh helper centres its vertices, while native compound colliders
+already carried the actual authored AABB centre. Door export now translates
+those vertices by the same centre before applying placement/hinge transforms.
+A real Container_0 mesh/bridge regression reproduces the old front-leaf miss,
+then proves the production export hits the visible front, retires the closed
+position after opening, and hits the opened leaf. Repeat live arrow evidence is
+pending the next combined binary; the physical collider was already correct.

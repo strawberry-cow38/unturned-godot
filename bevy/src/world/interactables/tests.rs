@@ -263,3 +263,126 @@ fn only_source_barbecue_metadata_keeps_a_lit_lid_open() {
     assert_eq!(door_state(&snapshot, 1, true, true), Some((true, false)));
     assert_eq!(door_state(&snapshot, 1, true, false), Some((false, false)));
 }
+
+#[test]
+fn authored_container_leaf_export_hits_the_visible_front_and_follows_opening() {
+    let content = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../game/content");
+    let text = std::fs::read_to_string(content.join("objects/doors.txt")).unwrap();
+    let row: Vec<_> = text
+        .lines()
+        .find(|s| s.starts_with("Container_0 "))
+        .unwrap()
+        .split_whitespace()
+        .collect();
+    let n = |i: usize| row[i].parse::<f32>().unwrap();
+    let definition = LeafDefinition {
+        mesh: format!("objects/{}", row[1]),
+        pivot: [n(2), n(3), n(4)],
+        axis: [n(5), n(6), n(7)],
+        angle_degrees: n(8),
+        duration_seconds: n(9),
+        sound: None,
+        open_curve: None,
+        close_curve: None,
+    };
+    let data = ObjData::load(&content.join(&definition.mesh)).unwrap();
+    let center = (data.min + data.max) * 0.5;
+    let half = ((data.max - data.min).abs() * 0.5).max(Vec3::splat(0.075));
+    assert!(
+        center.y > 3.,
+        "fixture must retain the authored front offset"
+    );
+    let bridge = CoreBridge::launch(std::path::Path::new(env!("CARGO_MANIFEST_DIR")))
+        .expect("Build original bridge with bevy/check.sh before integration tests");
+    bridge
+        .request("init", json!({"contentRoot":content,"spawn":[0.,0.,0.]}))
+        .unwrap();
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins)
+        .insert_resource(bridge)
+        .init_resource::<WorldGeometry>()
+        .init_resource::<ServiceManifest>()
+        .init_resource::<Registry>()
+        .init_resource::<crate::player::WorldSessionEpoch>()
+        .add_systems(Update, export_geometry);
+    let parent_pose = Transform::from_xyz(7., 2., -11.)
+        .with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2))
+        .with_scale(Vec3::splat(1.2));
+    let parent = app.world_mut().spawn_empty().id();
+    let leaf = app
+        .world_mut()
+        .spawn((
+            leaf_pose(&definition, 0., false, false),
+            DoorLeaf {
+                parent,
+                net_id: 18,
+                source_index: 0,
+                definition: definition.clone(),
+                parent_pose,
+                swing: 0.,
+                target: false,
+                reverse: false,
+                solid: true,
+                dirty: true,
+                center,
+                half,
+                collision: Arc::new(leaf_collision(center, half)),
+                container: false,
+                lid_rises_when_lit: false,
+            },
+        ))
+        .id();
+    let ray = |world: &World, pose: Mat4| {
+        let at = pose.transform_point3(center);
+        let normal = pose.transform_vector3(Vec3::Y).normalize();
+        let reply = world
+            .resource::<CoreBridge>()
+            .request(
+                "worldRay",
+                json!({"from":(at+normal*2.).to_array(),"to":(at-normal*2.).to_array()}),
+            )
+            .unwrap();
+        reply["result"].clone()
+    };
+    let closed = parent_pose.to_matrix();
+    // Negative control reproduces the previous exporter: a valid box at the
+    // prop origin, missing the leaf's large authored offset. The same authority
+    // ray must miss it, then hit the corrected production export below.
+    let legacy: Vec<_> = leaf_collision(Vec3::ZERO, half)
+        .positions
+        .iter()
+        .map(|p| closed.transform_point3(Vec3::from_array(*p)).to_array())
+        .collect();
+    app.world()
+        .resource::<CoreBridge>()
+        .request(
+            "worldDynamicGeometry",
+            json!({"key":dynamic_key((false,18)),"meshes":[{"vertices":legacy}]}),
+        )
+        .unwrap();
+    assert_eq!(
+        ray(app.world(), closed)["hit"],
+        false,
+        "old uncentred export must reproduce the missed front leaf"
+    );
+    app.update();
+    assert_eq!(
+        ray(app.world(), closed)["hit"],
+        true,
+        "accepted shots must hit the actual visible front leaf, not a box at the prop origin"
+    );
+    let opened = leaf_pose(&definition, 1., true, false);
+    *app.world_mut().get_mut::<Transform>(leaf).unwrap() = opened;
+    app.world_mut().get_mut::<DoorLeaf>(leaf).unwrap().dirty = true;
+    app.update();
+    assert_eq!(
+        ray(app.world(), closed)["hit"],
+        false,
+        "closed-position authority box must retire on opening"
+    );
+    assert_eq!(
+        ray(app.world(), closed * opened.to_matrix())["hit"],
+        true,
+        "authority box must rotate around the same extracted hinge"
+    );
+}

@@ -256,11 +256,7 @@ fn spawn(
             };
             let center = (data.min + data.max) * 0.5;
             let half = ((data.max - data.min).abs() * 0.5).max(Vec3::splat(0.075));
-            let collision = Arc::new(super::ladder_box_geometry(&ObjData {
-                min: center - half,
-                max: center + half,
-                ..default()
-            }));
+            let collision = Arc::new(leaf_collision(center, half));
             let (open, reverse) = door_state(
                 &snapshot.0,
                 definition.net_id,
@@ -347,6 +343,20 @@ fn door_state(
         state["reverse"].as_bool().unwrap_or(false),
     ))
 }
+/// The shared primitive is centred at zero (ladder callers position its body).
+/// Door vertices remain in authored object space, like the native compound's
+/// centre offset; translating here keeps authority and visible leaf coincident.
+fn leaf_collision(center: Vec3, half: Vec3) -> ObjData {
+    let primitive = super::ladder_box_geometry(&ObjData {
+        min: -half,
+        max: half,
+        ..default()
+    });
+    let mut collision = ObjData::default();
+    collision.append_transformed(&primitive, Transform::from_translation(center));
+    collision
+}
+
 fn dynamic_key(id: (bool, u32)) -> String {
     format!(
         "{}:{}",
