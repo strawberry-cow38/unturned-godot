@@ -143,6 +143,7 @@ impl ProceduralRegion {
                 .collect(),
             layers: self.layers.clone(),
             holes: self.holes.clone().unwrap_or_default(),
+            splat: None,
         })
     }
 }
@@ -229,7 +230,7 @@ pub(super) fn value<'a>(v: &'a Value, key: &str) -> &'a Value {
 pub(super) fn f(v: &Value, key: &str) -> f32 {
     value(v, key).as_f64().unwrap_or(0.) as f32
 }
-fn vec(v: &Value, x: &str, y: &str, z: &str) -> Vec3 {
+pub fn vec(v: &Value, x: &str, y: &str, z: &str) -> Vec3 {
     Vec3::new(f(v, x), f(v, y), f(v, z))
 }
 pub(super) fn rows<'a>(r: &'a ProceduralRegion, key: &str) -> impl Iterator<Item = &'a Value> {
@@ -250,6 +251,15 @@ fn bridge_rotation(dir: Vec3, pier: bool) -> Quat {
     }
     let grade = dir.normalize_or_zero().y.clamp(-1., 1.).asin();
     Quat::from_axis_angle(Vec3::Y.cross(flat).normalize(), -grade) * stand
+}
+/// InfiniteRoads.DeckScale: the same width dresses the kit and its road surface.
+pub fn deck_scale(road: usize) -> f32 {
+    match road {
+        0 => 1.,
+        1 => 9.2 / 8.,
+        4 => 6.5 / 8.,
+        _ => 4.6 / 8.,
+    }
 }
 /// Model selection and placement follow RegionStreamer.Build and its kit bases.
 /// Wire spans and tunnel shell geometry are separate mesh consumers.
@@ -391,12 +401,7 @@ pub fn instances(region: &ProceduralRegion) -> Vec<AssetInstance> {
     for p in rows(region, "bridges") {
         let kind = p["kind"].as_u64().unwrap_or(0);
         let road = p["road"].as_u64().unwrap_or(0);
-        let width = match road {
-            0 => 1.,
-            1 => 9.2 / 8.,
-            4 => 6.5 / 8.,
-            _ => 4.6 / 8.,
-        };
+        let width = deck_scale(road as usize);
         let name = match kind {
             0 => "Bridge_Line_1_Deck_Unit",
             1 => "Bridge_Line_1_Pier",

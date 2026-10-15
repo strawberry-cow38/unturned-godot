@@ -4,6 +4,7 @@ mod foliage;
 mod procedural;
 mod procedural_roads;
 mod roads;
+mod terrain;
 mod tunnels;
 mod wires;
 use bevy::prelude::*;
@@ -68,7 +69,7 @@ pub struct WorldReady;
 pub struct WorldPlugin;
 impl Plugin for WorldPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(foliage::FoliagePlugin)
+        app.add_plugins((foliage::FoliagePlugin, terrain::TerrainPlugin))
             .init_resource::<WorldConfig>()
             .init_resource::<WorldState>()
             .init_resource::<WorldGeometry>()
@@ -230,6 +231,7 @@ pub struct TerrainPatch {
     pub layers: Vec<u8>,
     pub normals: Vec<[f32; 3]>,
     pub holes: Vec<bool>,
+    pub splat: Option<Arc<terrain::SplatField>>,
 }
 impl TerrainPatch {
     pub fn sample(&self, x: f32, z: f32) -> Option<f32> {
@@ -338,6 +340,7 @@ pub fn decode_retail_heightmap(
         layers: vec![2; S * S],
         holes: Vec::new(),
         normals: Vec::new(),
+        splat: None,
     })
 }
 fn load_retail_terrain(root: &Path) -> Result<Vec<TerrainPatch>, ContentError> {
@@ -366,6 +369,7 @@ fn load_retail_terrain(root: &Path) -> Result<Vec<TerrainPatch>, ContentError> {
             if data.len() != 256 * 256 * 8 {
                 return Err(ContentError("splatmap length is not 256 × 256 × 8".into()));
             }
+            patch.splat = Some(Arc::new(terrain::SplatField::retail(&data, patch.origin)?));
             for gz in 0..257 {
                 for gx in 0..257 {
                     let i = (((256 - gz).min(255)) * 256 + gx.min(255)) * 8;
@@ -381,6 +385,10 @@ fn load_retail_terrain(root: &Path) -> Result<Vec<TerrainPatch>, ContentError> {
             "no terrain tiles in {}",
             dir.display()
         )));
+    }
+    let merged = Arc::new(terrain::SplatField::merge_retail(&result));
+    for patch in &mut result {
+        patch.splat = Some(merged.clone());
     }
     Ok(result)
 }
@@ -791,31 +799,39 @@ fn build_world(
         );
     }
     for patch in &geometry.terrain {
-        for (layer, data) in patch
-            .mesh_by_layer(center, render_radius + 48.)
-            .into_iter()
-            .enumerate()
-        {
-            if data.positions.is_empty() {
-                continue;
-            }
-            let dir = if config.procedural_path.is_some() && matches!(layer, 0 | 3 | 6 | 7) {
-                "terrain_yukon"
-            } else {
-                terrain_dir
-            };
-            let texture = format!("{dir}/layer{layer}.png");
-            let material = cache.material(Some(&texture), false, &assets, &mut materials);
-            let shape = trimesh_collider(&data);
-            let mut entity = commands.spawn((
-                Name::new(format!("Terrain layer {layer}")),
-                Mesh3d(meshes.add(data.mesh())),
-                MeshMaterial3d(material),
-                WorldTerrain,
-            ));
-            if let Some(shape) = shape {
-                entity.insert((RigidBody::Fixed, shape));
-            }
+        let mut data = ObjData::default();
+        for layer in patch.mesh_by_layer(center, render_radius + 48.) {
+            data.append_transformed(&layer, Transform::IDENTITY);
+        }
+        if data.positions.is_empty() {
+            continue;
+        }
+        let shape = trimesh_collider(&data);
+        let fallback = cache.material(
+            Some(&format!("{terrain_dir}/layer2.png")),
+            false,
+            &assets,
+            &mut materials,
+        );
+        let mut entity = commands.spawn((
+            Name::new("Terrain splat surface"),
+            WorldTerrain,
+            Mesh3d(meshes.add(data.mesh())),
+            MeshMaterial3d(fallback),
+            terrain::TerrainSurface {
+                splat: terrain::SplatField::for_patch(patch),
+                root: config.content_root.clone(),
+                directories: std::array::from_fn(|layer| {
+                    if config.procedural_path.is_some() && matches!(layer, 0 | 3 | 6 | 7) {
+                        "terrain_yukon".into()
+                    } else {
+                        terrain_dir.into()
+                    }
+                }),
+            },
+        ));
+        if let Some(shape) = shape {
+            entity.insert((RigidBody::Fixed, shape));
         }
     }
     let within = |p: Vec3| Vec2::new(p.x - center.x, p.z - center.z).length() <= render_radius;
@@ -1355,6 +1371,15 @@ fn build_world(
                 state.missing_assets.push(path.display().to_string());
                 continue;
             };
+            let mesh = if instance.mesh == "objects/Bridge_Line_1_Deck_Unit" {
+                cache
+                    .meshes
+                    .entry(path.with_extension("deck_render"))
+                    .or_insert_with(|| meshes.add(procedural_roads::deck_render_mesh(&data).mesh()))
+                    .clone()
+            } else {
+                mesh
+            };
             if instance.foliage {
                 let group = ground_cover
                     .entry(instance.mesh)
@@ -1824,6 +1849,7 @@ mod tests {
             layers: vec![],
             holes: vec![],
             normals: vec![],
+            splat: None,
         };
         assert_eq!(p.sample(2., 2.), Some(6.));
         assert_eq!(p.sample(5., 2.), None);

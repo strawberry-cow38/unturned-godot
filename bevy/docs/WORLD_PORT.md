@@ -17,7 +17,7 @@ original source formats and remain the content replacement seam.
   their nearest filtering.
 - `world.rs`: GUID mappings and PEI/Washington/Yukon object placements; original
   placement orientation `Y(180-ey) * X(ex) * Z(-ez)` and Z-negated positions;
-  original map heightmaps and splatmap dominant layers; original resource and
+  original map heightmaps and all eight splatmap weights; original resource and
   foliage instance formats. Foliage v1 and the editor's v2 manual-placement flag
   are understood. Real objects, trees, grass, flowers and pebbles use their
   original meshes and textures.
@@ -55,6 +55,15 @@ original source formats and remain the content replacement seam.
   floors and replacement portal terrain. The bridge exports its source tunnel
   profiles and dimensions, avoiding a second set of hard-coded bore formulas.
   These surfaces supply the same meshes to rendering and fixed collision.
+- Generated bridge decks retain the source roadway plane and grade, replace
+  their baked markings with the owning road texture, and continue its measured
+  dash phase through the span. Rail decks use the source gravel bed. Only the
+  old roadway drawing faces are removed; the kit collider remains complete.
+- `world/terrain.wesl` selects the winning material per pixel from bilinear splat
+  weights, including the source 0.75-texel noise warp and sixteen-metre albedo
+  repeat. Retail tiles share a merged weight texture; generated regions sample
+  their vertex-centered one-hot weights. The original mixed regional texture
+  array, mipmaps, grass-only snow film and base wetness response are retained.
 - Ground cover uses the original upward fragment normals, alpha cutoff and
   distance fade in a Bevy material extension. This keeps double-sided grass
   from developing black backfaces. Source wind displacement remains separate.
@@ -85,21 +94,20 @@ Parsed placements and instance arrays are cached; retired render entities and
 colliders are removed. A geometry revision informs the authoritative host of
 changes. This synchronous rebuild can hitch; async chunk jobs, original LOD
 thresholds, non-foliage distance fades and floating origin still need Bevy systems.
-Generated regions currently use LOD0; far-landmark rings and bridge roadway
-overlays are not yet reproduced. Generated buildings come from a separate source
+Generated regions currently use LOD0; far-landmark rings are not yet reproduced.
+Generated buildings come from a separate source
 building/editor pipeline and are not produced by the terrain generator alone.
 
-Terrain currently uses the strongest splat layer per cell with the original
-layer texture and original sixteen-metre world texture repeat. The source's
-current terrain shader selects a winning layer per pixel from interpolated
-splat weights with edge noise; that finer selection and noise, terrain sculpting,
-editor overlays, analytic river cuts, terrain-hole sidecars, and shoreline
-geometry are not yet reproduced. Retail Paths.dat road splines now retain the
+Terrain sculpting, editor overlays, analytic river cuts, terrain-hole sidecars,
+authored landscape cut volumes, and shoreline geometry are not yet reproduced.
+Replacement tunnel-mouth terrain currently selects its material per triangle;
+its own fine splat textures still need the material used by regular terrain.
+Retail Paths.dat road splines now retain the
 source cubic curves, five-metre sampling, cross-slope banking, per-joint offsets,
 material width/depth, texture repeat, end ramps and sealed collision underside.
 Source road editor operations and lane AI bindings remain separate work.
 
-The existing custom shaders still require WGSL ports: ocean normal ripples and shoreline
+The remaining custom shaders require WGSL ports: ocean normal ripples and shoreline
 foam, planar reflections (the latest source intentionally keeps geometry flat), underwater rendering,
 wind/grass/wire displacement, rain shelter/wetness/puddles/glass/impacts, caustics,
 vehicle palette painting, character clothing/wear, flags, outlines and effects.
@@ -144,3 +152,9 @@ The tunnel/foliage milestone passed 74 Rust tests. Inspected captures include
 −12916, −19678), and `artifacts/godot-eaglefire/rig_00.png` (original Godot hip
 viewmodel at frame 60 for camera/framing comparison). The capture paths are
 evidence from the development environment, not a visual-golden test gate.
+
+The following terrain/bridge increment passed all 30 world tests, including raw
+splat orientation, cross-tile filtering, procedural texel-center alignment,
+eight-layer mip chains, graded bridge road UV phase, and the actual deck mesh's
+two removed roadway triangles. Its inspected render artifacts are
+`artifacts/bevy-pei-splat.png` and `artifacts/bevy-procedural-bridge-splat.png`.

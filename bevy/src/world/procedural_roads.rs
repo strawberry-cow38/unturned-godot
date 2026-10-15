@@ -1,7 +1,7 @@
 //! Original RegionStreamer.Build road ribbons, widening, bevels and junction paint.
 use super::{
     ObjData,
-    procedural::{ProceduralRegion, f, rows, value},
+    procedural::{ProceduralRegion, deck_scale, f, rows, value, vec},
     roads::triangle,
 };
 use bevy::prelude::*;
@@ -99,6 +99,66 @@ fn quad(
 }
 pub fn build(region: &ProceduralRegion) -> BTreeMap<String, RoadMesh> {
     let mut output = BTreeMap::<String, RoadMesh>::new();
+    // RegionStreamer.BuildMesh: replace the deck kit's baked two-way markings
+    // with the owning carriageway, preserving S0/S1 phase through approaches.
+    for p in rows(region, "bridges") {
+        if f(p, "kind") != 0. {
+            continue;
+        }
+        let kind = f(p, "road") as usize;
+        if kind > 4 {
+            continue;
+        }
+        let dir = vec(p, "dx", "dy", "dz").normalize_or_zero();
+        let across = Vec3::new(-dir.z, 0., dir.x).normalize_or_zero();
+        if across == Vec3::ZERO {
+            continue;
+        }
+        let center = vec(p, "x", "y", "z");
+        let along = dir * (7.8349 * 0.5); // InfiniteRoads.BridgePitch
+        let mut up = across.cross(dir).normalize();
+        if up.y < 0. {
+            up = -up;
+        }
+        let rail = kind == 4;
+        let tex_m = if rail { 4. } else { repeat(kind) };
+        let key = if rail {
+            "terrain/layer3.png".into()
+        } else {
+            texture(kind, false)
+        };
+        let out = output.entry(key).or_default();
+        let v = [f(p, "s0") / tex_m, f(p, "s1") / tex_m];
+        let wide = 8. * deck_scale(kind);
+        let offsets = if rail {
+            vec![wide, -wide]
+        } else {
+            vec![wide, half(kind), -half(kind), -wide]
+        };
+        let u = if rail {
+            vec![0., 2. * wide / tex_m]
+        } else {
+            vec![0., 0., 1., 1.]
+        };
+        for band in 0..offsets.len() - 1 {
+            if offsets[band] - offsets[band + 1] < 1e-3 {
+                continue;
+            }
+            quad(
+                out,
+                [
+                    center - along + across * offsets[band],
+                    center - along + across * offsets[band + 1],
+                    center + along + across * offsets[band],
+                    center + along + across * offsets[band + 1],
+                ],
+                Some([up; 2]),
+                [u[band], u[band + 1]],
+                v,
+                true,
+            );
+        }
+    }
     for p in rows(region, "roads") {
         let kind = f(p, "kind") as usize;
         if kind > 3 {
@@ -397,6 +457,41 @@ pub fn build(region: &ProceduralRegion) -> BTreeMap<String, RoadMesh> {
     output
 }
 
+/// RegionStreamer.DeckRenderMesh strips only the kit's roadway plane. Collision
+/// keeps the complete original mesh; the replacement road is solid in its own right.
+pub fn deck_render_mesh(source: &ObjData) -> ObjData {
+    let size = source.max - source.min;
+    let lateral = if size.x >= size.y && size.x >= size.z {
+        0
+    } else if size.y >= size.z {
+        1
+    } else {
+        2
+    };
+    let Some(up) = (0..3).find(|&axis| axis != lateral && (size[axis] - 5.25).abs() < 0.05) else {
+        return source.clone();
+    };
+    let mut out = ObjData {
+        min: source.min,
+        max: source.max,
+        ..default()
+    };
+    for (tri, positions) in source.positions.chunks_exact(3).enumerate() {
+        if positions
+            .iter()
+            .all(|p| p[up].abs() <= 0.01 && p[lateral].abs() <= 8.01)
+        {
+            continue;
+        }
+        let span = tri * 3..tri * 3 + 3;
+        out.positions.extend_from_slice(positions);
+        out.normals.extend_from_slice(&source.normals[span.clone()]);
+        out.uvs.extend_from_slice(&source.uvs[span.clone()]);
+        out.colors.extend_from_slice(&source.colors[span]);
+    }
+    out
+}
+
 /// RegionStreamer.RoadMat's marking-free mirrored asphalt band, retained as an
 /// in-memory image asset so a junction's UV scale stays the same as its ribbon.
 pub fn material(
@@ -494,6 +589,70 @@ pub fn material(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn bridge_surface_follows_grade_and_source_uv_phase_for_each_road_class() {
+        for kind in 0..5 {
+            let region: ProceduralRegion = serde_json::from_value(serde_json::json!({
+                "cells":1,"spacing":256.,"heights":[0.,0.,0.,0.],"trees":[],
+                "bridges":[{"kind":0,"road":kind,"x":0.,"y":20.,"z":0.,
+                    "dx":0.,"dy":0.1,"dz":1.,"s0":64.,"s1":71.8349}]
+            }))
+            .unwrap();
+            let meshes = build(&region);
+            let mesh = meshes.values().next().unwrap();
+            let expected_half = [8., 9.2, 4.6, 4.6, 6.5][kind];
+            assert!((mesh.visible.min.x + expected_half).abs() < 1e-5);
+            assert!((mesh.visible.max.x - expected_half).abs() < 1e-5);
+            assert_eq!(mesh.visible.positions, mesh.solid.positions);
+            for point in &mesh.visible.positions {
+                assert!((point[1] - 20. - point[2] * 0.1).abs() < 1e-5);
+            }
+            let tex_m = if kind == 4 {
+                4.
+            } else if kind == 3 {
+                8.
+            } else {
+                32.
+            };
+            assert!(
+                mesh.visible
+                    .uvs
+                    .iter()
+                    .any(|uv| (uv[1] - 64. / tex_m).abs() < 1e-5)
+            );
+            assert!(
+                mesh.visible
+                    .uvs
+                    .iter()
+                    .any(|uv| (uv[1] - 71.8349 / tex_m).abs() < 1e-5)
+            );
+        }
+    }
+    #[test]
+    fn bundled_bridge_strips_only_original_roadway_from_draw_mesh() {
+        let source = ObjData::load(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../game/content/objects/Bridge_Line_1_Deck_Unit.obj"),
+        )
+        .unwrap();
+        let original_count = source.positions.len();
+        let draw = deck_render_mesh(&source);
+        assert_eq!(original_count - draw.positions.len(), 6);
+        assert_eq!(source.positions.len(), original_count);
+        assert_eq!(draw.min, source.min);
+        assert_eq!(draw.max, source.max);
+        for triangle in draw.positions.chunks_exact(3) {
+            assert!(
+                !triangle
+                    .iter()
+                    .all(|p| p[2].abs() <= 0.01 && p[0].abs() <= 8.01)
+            );
+        }
+        // Parapet tops, soffit and sidewalls survive, so collision need not be
+        // compromised to remove the source texture's obsolete lane markings.
+        assert!(draw.positions.iter().any(|p| (p[2] - 1.25).abs() < 0.01));
+        assert!(draw.positions.iter().any(|p| (p[2] + 4.).abs() < 0.01));
+    }
     #[test]
     fn generated_ribbon_keeps_source_sloping_bevel_and_closed_collision() {
         let region:ProceduralRegion=serde_json::from_value(serde_json::json!({"cells":1,"spacing":256.,"heights":[10.,10.,10.,10.],"trees":[],

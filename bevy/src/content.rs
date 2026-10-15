@@ -364,7 +364,7 @@ fn build_pending_mipmaps(mut cache: ResMut<ContentCache>, mut images: ResMut<Ass
         false
     });
 }
-fn mip_chain(mut level: Vec<u8>, mut width: usize, mut height: usize) -> (Vec<u8>, u32) {
+pub(crate) fn mip_chain(mut level: Vec<u8>, mut width: usize, mut height: usize) -> (Vec<u8>, u32) {
     let mut all = level.clone();
     let mut levels = 1;
     while width > 1 || height > 1 {
