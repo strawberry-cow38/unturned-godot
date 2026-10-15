@@ -1459,3 +1459,19 @@ the source fixed label offset, while the ordinary-eye name is readable; this is
 recorded rather than claiming clearance from every angle. Accepted combat-ray
 occlusion against the native capsule remains a separate integration task.
 See bevy/docs/NPC_CHARACTER_PORT.md for exact scope and artifacts.
+
+### Bevy held attachment pose after accepted reload (2026-10-15)
+
+The native viewmodel resumes the original AttachStart clip after a reload/rack
+while T remains held, waiting for both accepted busy state and the rendered clip
+to finish. It resumes once and closes normally on release. This intentionally
+repairs the inherited source behavior that left projected magazine choices below
+the viewport after returning to the ordinary ready pose; no ammunition, authority
+timers or authored animation changed.
+
+The regression fails without the fix and covers both completion orders, repeated
+frames and release; all seven inspect/viewmodel tests pass. An actual Vulkan
+client connected to a separate UDP host kept T held through accepted magazine
+removal. Opened before/after image/state pairs show chamber 1, separate 30/29
+choices and the restored diagonal pose. Independent code and image reviews pass;
+the renderer and host quit cleanly. See bevy/docs/WEAPON_PORT.md.

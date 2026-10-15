@@ -811,8 +811,23 @@ fn animate_viewmodel(
             play_once(&mut rig, &clip, speed);
         }
     }
+    let reloading = snapshot.0["weapon"]["reloading"].as_bool().unwrap_or(false);
+    let hammering = snapshot.0["weapon"]["rechambering"]
+        .as_bool()
+        .unwrap_or(false);
     let attaching = ui.screen == Screen::Attachments && state.is_gun;
-    if attaching != state.attaching {
+    // Accepted reloads temporarily replace the attachment pose. Restore its
+    // authored clip once both the authority clock and rendered action finish;
+    // otherwise a held menu can strand its projected choices below the viewport.
+    let resume_attachment = attaching
+        && state.attaching
+        && !reloading
+        && !hammering
+        && snapshot.0["weapon"]["unloading"] != true
+        && state.hammer_delay.is_none()
+        && (rig.clip.ends_with("_Reload") || rig.clip.ends_with("_Hammer"))
+        && rig.data.anims.get(&rig.clip).is_some_and(|clip| rig.time >= clip.length);
+    if attaching != state.attaching || resume_attachment {
         if attaching {
             state.inspect_time = None;
             let clip = own_clip(&rig, &state.asset, "_AttachStart", "");
@@ -826,10 +841,6 @@ fn animate_viewmodel(
         }
         state.attaching = attaching;
     }
-    let reloading = snapshot.0["weapon"]["reloading"].as_bool().unwrap_or(false);
-    let hammering = snapshot.0["weapon"]["rechambering"]
-        .as_bool()
-        .unwrap_or(false);
     let moving = occupancy.seat.is_none()
         && !matches!(stance, "sitting" | "driving")
         && !ui.captures_input()

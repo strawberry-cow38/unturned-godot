@@ -48,9 +48,20 @@ The original hold-T menu now uses authority options, exact owned item/gun tokens
 source icon/rarity colors, projected hooks, simultaneous chord-spaced option
 rings, per-magazine rounds and shell-type/unload choices. It closes on release,
 selection replacement or session change. The original AttachStart clip presents
-the gun; release snaps back to its ready hold. Reload animations can finish in
-the normal hold while the menu stays open, as in the source; reopening presents
-it again and all buttons follow the current hook positions.
+the gun; release snaps back to its ready hold. After an accepted reload/rack,
+the native menu resumes that same authored AttachStart clip once the authority's
+busy state and the rendered action have both finished. This deliberately repairs
+the inherited source behavior that left a held menu on the normal ready pose,
+where projected magazine choices could fall below the viewport. It does not
+change ammunition, authority timers or the authored animation.
+
+The guarding lifecycle test fails without the repair and covers both authority
+clock and rendered-clip completion order, one-time resume and release. All seven
+inspect/viewmodel tests pass. A separate host/client UDP render kept T held
+through magazine removal and shows the original diagonal pose returning with
+accepted chamber 1 and separate 30/29 choices. The before/reloaded PNG and
+authority JSON pairs (`bevy-attachment-pose-before-reload` and
+`bevy-attachment-pose-resumed-held-t`) were opened and independently reviewed.
 
 Only accepted attachment state replaces native parts. The original source mesh
 and texture mappings drive each slot; factory iron offsets remain distinct from

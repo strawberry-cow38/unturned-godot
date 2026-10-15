@@ -120,5 +120,9 @@ ammo 1, separate 30/28 choices), `bevy-equipment-udp-exact-magazine-installed`
 in the bag). Each PNG has its accepted authority JSON beside it. Both processes
 quit cleanly. Two independent reviewers opened all three result images. The
 journey also confirmed the inherited reload/attachment-pose issue described in
-`WEAPON_PORT.md`; releasing and reopening the menu restores its presented pose.
-The native pose usability repair is a separate checkpoint.
+`WEAPON_PORT.md`. The separate native repair now resumes the authored attachment
+pose after both accepted busy state and the local reload/rack clip finish. A
+second actual UDP journey kept T held throughout removal: accepted ammo 1 and
+separate 30/29 choices remained fully visible when the pose returned. Opened
+`bevy-attachment-pose-before-reload` and `bevy-attachment-pose-resumed-held-t`
+PNG/state pairs use immutable npc-view-53; an independent review passed.

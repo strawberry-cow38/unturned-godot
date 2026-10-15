@@ -261,3 +261,57 @@ fn reload_blocks_start_and_world_load_clears_an_existing_gesture() {
         "Eaglefire_Equip"
     );
 }
+
+#[test]
+fn held_attachment_menu_resumes_after_accepted_reload_finishes() {
+    let (mut app, entity) = app("eaglefire", true);
+    app.world_mut().resource_mut::<GameSnapshot>().0["weapon"]["firemode"] = json!(1);
+    app.world_mut().resource_mut::<UiState>().screen = Screen::Attachments;
+    app.update();
+    assert_eq!(
+        app.world().get::<RigPlayback>(entity).unwrap().clip,
+        "Eaglefire_AttachStart"
+    );
+    app.world_mut()
+        .resource_mut::<Messages<CoreEvent>>()
+        .write(CoreEvent {
+            sequence: 10,
+            kind: "reload".into(),
+            data: json!({"playerId":1,"speed":1.}),
+        });
+    app.world_mut().resource_mut::<GameSnapshot>().0["weapon"]["reloading"] = json!(true);
+    app.update();
+    let reload = app.world().get::<RigPlayback>(entity).unwrap().clip.clone();
+    assert!(reload.ends_with("_Reload"));
+    // A quick UDP host can finish its clock before the slower rendered clip.
+    app.world_mut().resource_mut::<GameSnapshot>().0["weapon"]["reloading"] = json!(false);
+    app.update();
+    assert_eq!(app.world().get::<RigPlayback>(entity).unwrap().clip, reload);
+    {
+        let mut rig = app.world_mut().get_mut::<RigPlayback>(entity).unwrap();
+        rig.time = rig.data.anims[&rig.clip].length;
+    }
+    // Conversely a finished visual must still wait for accepted busy state.
+    app.world_mut().resource_mut::<GameSnapshot>().0["weapon"]["rechambering"] = json!(true);
+    app.update();
+    assert_eq!(app.world().get::<RigPlayback>(entity).unwrap().clip, reload);
+    app.world_mut().resource_mut::<GameSnapshot>().0["weapon"]["rechambering"] = json!(false);
+    app.update();
+    assert_eq!(
+        app.world().get::<RigPlayback>(entity).unwrap().clip,
+        "Eaglefire_AttachStart"
+    );
+    app.world_mut().get_mut::<RigPlayback>(entity).unwrap().time = 0.3;
+    app.update();
+    assert_eq!(
+        app.world().get::<RigPlayback>(entity).unwrap().time,
+        0.3,
+        "resume once, never restart each frame"
+    );
+    app.world_mut().resource_mut::<UiState>().screen = Screen::Playing;
+    app.update();
+    assert_eq!(
+        app.world().get::<RigPlayback>(entity).unwrap().clip,
+        "Eaglefire_Equip"
+    );
+}
