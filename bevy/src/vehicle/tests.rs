@@ -22,7 +22,7 @@ pub(super) fn physics_app(sea: Option<f32>) -> App {
     app.add_systems(PostUpdate, step_bodies.before(PhysicsSet::SyncBackend));
     app
 }
-pub(super) fn body(app: &mut App, key: &str, at: Vec3) -> Entity {
+pub(crate) fn body(app: &mut App, key: &str, at: Vec3) -> Entity {
     let d = data::named(key).unwrap();
     let s = &d.spec;
     app.world_mut()

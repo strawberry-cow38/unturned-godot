@@ -15,7 +15,7 @@ mod remote;
 mod render;
 mod spawns;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 mod tires;
 pub(crate) mod turrets;
 mod water;

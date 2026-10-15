@@ -28,6 +28,8 @@ pub use held::AvatarMuzzleUpdate;
 pub struct AvatarPlugin;
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AvatarUpdate;
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct PerspectiveInput;
 impl Plugin for AvatarPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(remotes::RemotePlayersPlugin)
@@ -53,7 +55,10 @@ impl Plugin for AvatarPlugin {
             )
             .add_systems(
                 Update,
-                controls.after(crate::ui::UiUpdate).before(PlayerUpdate),
+                controls
+                    .in_set(PerspectiveInput)
+                    .after(crate::ui::UiUpdate)
+                    .before(PlayerUpdate),
             )
             .add_systems(
                 Update,

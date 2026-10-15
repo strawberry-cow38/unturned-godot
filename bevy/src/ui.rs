@@ -20,6 +20,7 @@ mod network_menu;
 pub(crate) use map::MapDiagnostics;
 pub(crate) mod npc;
 mod vitals;
+pub(crate) mod tank_optics;
 
 const TEXT: Color = Color::srgb(0.88, 0.88, 0.91);
 const DIM: Color = Color::srgb(0.55, 0.56, 0.60);
@@ -380,6 +381,7 @@ impl Plugin for GameUiPlugin {
                 network_menu::NetworkMenuPlugin,
                 npc::NpcUiPlugin,
                 map::MapPlugin,
+                tank_optics::TankOpticsPlugin,
             ))
             .add_systems(Startup, spawn_ui_camera)
             .add_systems(Startup, spawn_hud)

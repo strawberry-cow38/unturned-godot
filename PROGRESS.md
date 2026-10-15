@@ -1687,3 +1687,22 @@ actual F control and source swing; save/load restores the closed state. The
 seven-hit frame retains the leaf/wood mark at ammo 23; the eighth shows clear
 ground/no prompt at ammo 22 and an empty accepted door registry. Quit exited 0,
 with no shader errors. Independent source and visual reviews passed. See bevy/docs/DEMO_DOOR_PORT.md.
+
+### Bevy: original tank periscope and gunsight
+
+Native TankOptics now uses the original binoculars mask for the first-person
+driver and item21 8x reticle for the closed-hatch gunner. Configured Aim presses
+cycle the source 8→12→4 FOV and sensitivity; seat exit, head-out, third person
+and death restore the base camera. Source mask cover/crop, circular0.47-height
+eyepiece, soft rim and alpha-weighted reticle edges are preserved below the HUD.
+Input follows the Perspective toggle and reads current accepted hatch state;
+visual FOV applies after the normal camera reset without compounding each frame.
+
+Five real native system tests pass, covering original tank seats/input, FOV
+lifecycle, pause/death/session/camera replacement, resize and accepted hatch timing.
+Six Vulkan fixtures were opened: periscope16:9/square and gunsight8x/12x/4x/square
+under bevy/artifacts/bevy-tank-*.png. Original lenses remain circular, the centred
+reticle stays fixed as the diagnostic 3D wall magnifies, and HUD stays above the
+housing. Source and independent image reviews passed; no shader errors occurred.
+These are presentation fixtures with injected seating, not playable mounted
+firing evidence. See bevy/docs/TANK_OPTICS_PORT.md for remaining integration.
