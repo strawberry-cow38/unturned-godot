@@ -7,6 +7,7 @@ pub mod origin;
 mod procedural;
 mod procedural_roads;
 mod roads;
+mod surface_tags;
 mod terrain;
 mod tunnels;
 pub mod underwater;
@@ -14,6 +15,7 @@ mod water;
 mod wires;
 use bevy::{math::DVec3, prelude::*};
 use bevy_rapier3d::prelude::{Collider, RigidBody};
+use crate::impact::surfaces::{Surface, SurfaceOverride};
 #[cfg(test)]
 use procedural::ProceduralTree;
 use procedural::{ProceduralRegion, procedural_tree_name, procedural_tree_transform};
@@ -848,6 +850,11 @@ fn build_world(
                 }),
             },
         ));
+        if config.procedural_path.is_some() {
+            // RegionStreamer.AddGround uses Grass; it is not in the retail
+            // terrain group whose collisions query authored splat materials.
+            entity.insert(SurfaceOverride(Surface::Grass));
+        }
         if let Some(shape) = shape {
             entity.insert((RigidBody::Fixed, shape));
         }
@@ -1200,6 +1207,7 @@ fn build_world(
             commands.spawn((
                 Name::new(format!("{name} trunk")),
                 WorldFoliage,
+                SurfaceOverride(surface_tags::tree(tree.kind)),
                 RigidBody::Fixed,
                 Collider::cylinder(height * 0.5 * tree.scale, radius * tree.scale),
                 Transform::from_translation(
@@ -1264,6 +1272,7 @@ fn build_world(
             let mut entity = commands.spawn((
                 Name::new(format!("Generated {texture}")),
                 WorldTerrain,
+                SurfaceOverride(surface_tags::road(&texture)),
                 Mesh3d(meshes.add(road.visible.mesh())),
                 MeshMaterial3d(material),
             ));
@@ -1325,6 +1334,7 @@ fn build_world(
                     let mut e = commands.spawn((
                         Name::new(format!("Generated tunnel {kind}")),
                         WorldTerrain,
+                        SurfaceOverride(surface_tags::tunnel(&kind)),
                         Mesh3d(mesh),
                         MeshMaterial3d(material),
                     ));
@@ -1372,6 +1382,9 @@ fn build_world(
     }
     let mut ground_cover: HashMap<String, (ObjData, Color)> = HashMap::new();
     for region in &proc_regions {
+        let rock_models: Vec<_> = procedural::rows(region, "boulderModels")
+            .filter_map(|m| m["name"].as_str())
+            .collect();
         for (index, instance) in procedural::instances(region).into_iter().enumerate() {
             let distance = instance.transform.translation.xz().distance(center.xz());
             let range = if instance.mesh.contains("pebble") {
@@ -1433,6 +1446,9 @@ fn build_world(
                 MeshMaterial3d(material),
                 instance.transform,
             ));
+            if rock_models.contains(&instance.mesh.trim_start_matches("objects/")) {
+                entity.insert(SurfaceOverride(Surface::Rock));
+            }
             if let Some(shape) = shape {
                 entity.insert((RigidBody::Fixed, shape));
             }

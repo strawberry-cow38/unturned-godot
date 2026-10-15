@@ -35,7 +35,7 @@ struct Wildlife {
     epoch: u64,
     registered: bool,
     failed: bool,
-    audio: HashMap<String, PanicBank>,
+    audio: HashMap<String, crate::sound::Bank>,
     last_event: u64,
 }
 #[derive(Component)]
@@ -276,42 +276,6 @@ fn sync(
 fn source_capsule(height: f32, radius: f32) -> Collider {
     Collider::capsule_y((height * 0.5 - radius).max(0.), radius)
 }
-#[derive(Default)]
-struct PanicBank {
-    clips: Vec<String>,
-    last: usize,
-}
-impl PanicBank {
-    fn load(root: &std::path::Path, rig: &str) -> Self {
-        let prefix = format!("{rig}_panic_");
-        let mut clips = std::fs::read_dir(root.join("audio/animals"))
-            .into_iter()
-            .flatten()
-            .filter_map(Result::ok)
-            .filter_map(|entry| {
-                let name = entry.file_name().to_string_lossy().into_owned();
-                (name.starts_with(&prefix) && (name.ends_with(".wav") || name.ends_with(".ogg")))
-                    .then(|| format!("audio/animals/{name}"))
-            })
-            .collect::<Vec<_>>();
-        clips.sort_unstable();
-        Self { clips, last: 0 }
-    }
-    fn pick(&mut self, seed: u64) -> Option<&str> {
-        if self.clips.is_empty() {
-            return None;
-        }
-        if self.clips.len() > 1 {
-            // Same no-consecutive-repeat bank selection as GameAudio.Pick.
-            let mut index = seed as usize % (self.clips.len() - 1);
-            if index >= self.last {
-                index += 1;
-            }
-            self.last = index;
-        }
-        Some(&self.clips[self.last])
-    }
-}
 fn panic_audio(
     mut events: MessageReader<CoreEvent>,
     mut wildlife: ResMut<Wildlife>,
@@ -344,10 +308,9 @@ fn panic_audio(
         let Some(rig) = rig else {
             continue;
         };
-        let bank = wildlife
-            .audio
-            .entry(rig.into())
-            .or_insert_with(|| PanicBank::load(&config.content_root, rig));
+        let bank = wildlife.audio.entry(rig.into()).or_insert_with(|| {
+            crate::sound::Bank::load(&config.content_root, "animals", &format!("{rig}_panic"))
+        });
         let Some(path) = bank.pick(event.sequence.wrapping_mul(6364136223846793005)) else {
             continue;
         };

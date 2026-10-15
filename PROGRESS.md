@@ -964,3 +964,20 @@ bevy/docs/WORLD_PORT.md. Per-volume water is explicitly an existing Godot TODO.
 - Accepted fire facts retain barrel ID, silenced flag, original clip/linear volume, actual muzzle velocity and one-use break status before wear, holstering or removal. Actual suppressed authority bullets use the source .80 velocity. The water-bottle barrel clears only after its accepted shot has captured that state; the next shot and save/load retain the broken state. Native receives a separate accepted burst notice.
 - Fixed an exact-selection condition mismatch: the bridge's selected pistol now supplies the optional core condition seam, so a broken same-ID pistol in the first weapon slot cannot veto the healthy second pistol or soften its damage.
 - All 70 bridge integration tests pass, including five new attachment checks. Tests observe real impact ticks at a17m wall (suppressed15.04m first step versus18.8m original), rejected triggers, bottle save/holster behavior, factory/saved sight state, and duplicate-pistol selection. Normal bridge DLL is rebuilt for native gun effects integration; original core/wire defaults remain unchanged.
+
+
+### Bevy accepted hit presentation — 2026-10-14
+
+Ported source blood, surface debris, hitmarker geometry/audio, original material
+classification and projected bullet-hole lifecycle from accepted server facts.
+The shared sound-bank selector now serves wildlife and weapon/impact effects.
+World review corrected generated surface labels and marker camera order. An
+actual PEI 20-damage cow hit rendered four red blood sprites at roughly eight
+metres (`bevy/artifacts/bevy-impact-blood.png` plus authority JSON); no duplicate
+wire/host burst. Full-app rendering caught a casing/decal Transform query conflict,
+fixed by separating surface classification from fresh attachment-pose queries.
+Eight impact tests cover event deduplication, owner markers, source material
+boxes/layers, Rapier hit normals, decal lifetime and current-pose attachment.
+Tree holes were not visually confirmed because approximate tree collision can
+miss bark projection; a flat-wall check remains on the ledger, along with Bevy
+forward-quad versus Godot box-projector edge differences.

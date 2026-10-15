@@ -145,10 +145,14 @@ fn source_fleet_assets_animate_and_load_without_invented_ragdoll_metadata() {
 fn source_panic_banks_are_silent_when_absent_and_never_repeat() {
     let root = WorldConfig::default().content_root;
     for name in ["deer", "horse"] {
-        assert!(PanicBank::load(&root, name).pick(0).is_none());
+        assert!(
+            crate::sound::Bank::load(&root, "animals", &format!("{name}_panic"))
+                .pick(0)
+                .is_none()
+        );
     }
     for name in ["pig", "cow"] {
-        let mut bank = PanicBank::load(&root, name);
+        let mut bank = crate::sound::Bank::load(&root, "animals", &format!("{name}_panic"));
         assert_eq!(bank.clips.len(), 3);
         let mut last = String::new();
         for seed in 0..30 {

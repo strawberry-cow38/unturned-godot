@@ -3,6 +3,7 @@ mod cli;
 mod content;
 mod entities;
 mod environment;
+mod impact;
 mod locomotion;
 mod particles;
 mod player;
@@ -10,6 +11,7 @@ mod projectiles;
 mod recoil;
 mod rig;
 mod settings;
+mod sound;
 mod ui;
 mod use_items;
 mod vehicle;
@@ -118,6 +120,7 @@ fn main() -> Result<()> {
             player::PlayerPlugin,
             vehicle::VehiclePlugin,
             wildlife::WildlifePlugin,
+            impact::ImpactPlugin,
         ))
         .add_systems(Update, capture_frame.after(entities::CollectInteractions))
         .run();
