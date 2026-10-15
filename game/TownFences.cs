@@ -54,6 +54,108 @@ namespace UnturnedGodot
         }
 
         // ==============================================================================================
+        // THE TOWN'S FOOTPRINT IN THE TERRAIN PAINT (strawberry 2026-10-15: "work on the roads/sidewalks leaving terrain paint
+        // dirt footprints").
+        // ==============================================================================================
+
+        /// <summary>How far past its paving the town's dirt reaches: the worn verge where a kerb meets the grass.</summary>
+        public float FootprintBorder = 1f;
+        /// <summary>How far inside a lot's line a texel must be for the lot to keep its own paint.</summary>
+        public float YardKeep = 0.5f;
+        /// <summary>The splat layer a footprint is painted in: Dirt, as the island generator paints its routes and buildings.</summary>
+        public const int FootprintLayer = 0;
+        /// <summary>What the last PaintFootprints painted.</summary>
+        public int FootprintTexels;
+
+        /// <summary>⭐ EVERYTHING THE TOWN PAVED LEAVES DIRT IN THE TERRAIN PAINT -- the streets and back lanes with their
+        /// pavements, the junction patches, the pavements pushed out round the parking bays, the parking lots -- with
+        /// FootprintBorder round it, the way ProcIslandSpawn paints its routes, camps and buildings. Under the paving it is what
+        /// shows through a seam instead of lawn; past it, a worn verge where a kerb meets the grass instead of a lawn mown to the
+        /// kerb's edge; and the grass scatter, which grows only on grass, keeps off the paving. Painted per 4 m splat texel, by
+        /// its centre -- the paint's own resolution -- so the verge is as ragged as retail's. UG_TOWNFOOTPRINTS=0: none (control).
+        /// Returns the texels painted.</summary>
+        public int PaintFootprints(RoadField roads, Terrain terr)
+        {
+            FootprintTexels = 0;
+            if (roads == null || terr == null || System.Environment.GetEnvironmentVariable("UG_TOWNFOOTPRINTS") == "0") return 0;
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            // the town's box: every street and lane it built, and every lot
+            float x0 = float.MaxValue, z0 = float.MaxValue, x1 = float.MinValue, z1 = float.MinValue;
+            void Grow(Vector3 q) { x0 = Mathf.Min(x0, q.X); x1 = Mathf.Max(x1, q.X); z0 = Mathf.Min(z0, q.Z); z1 = Mathf.Max(z1, q.Z); }
+            foreach (var list in new[] { Built, LaneRoads })
+                foreach (int r in list)
+                {
+                    float len = roads.RoadLength(r);
+                    for (float d = 0f; d <= len; d += 8f) if (roads.EvaluateAlong(r, d, out var q, out _, snapTerrain: false)) Grow(q);
+                    if (roads.EvaluateAlong(r, len, out var e, out _, snapTerrain: false)) Grow(e);
+                }
+            foreach (var pl in Plots) foreach (var c in pl.Boundary()) Grow(c);
+            if (x0 > x1) return 0;
+            float reach = 25f;                           // a street's half width, its pavement and the border, with room to spare
+            // ⚠ A LANE'S PAVEMENT IS NOT A STREET'S. Measured off every road at the street's pavement width, a back lane --
+            // LaneWalkWidth a side -- left a dirt band twice its width, metres into the yards either side of it.
+            float keep = PavementGap + _walkWidth + FootprintBorder, laneKeep = PavementGap + LaneWalkWidth + FootprintBorder;
+            var lots = new List<Vector3[]>();
+            foreach (var pl in Plots) if (pl.Kind == PlotKind.Parking) lots.Add(pl.Corners());
+            // ⚠ AND NOT IN A YARD. A splat texel is 4 m, so a verge measured off a lane's pavement reached metres past the
+            // fence on the lot line, over the lawn: a lot's own ground keeps its paint, whatever paving runs along its edge.
+            var yards = new List<(Vector3[] q, float x0, float z0, float x1, float z1)>();
+            foreach (var pl in Plots)
+            {
+                if (pl.Kind == PlotKind.Parking) continue;
+                var b = pl.Boundary();
+                float bx0 = float.MaxValue, bz0 = float.MaxValue, bx1 = float.MinValue, bz1 = float.MinValue;
+                foreach (var v in b) { bx0 = Mathf.Min(bx0, v.X); bx1 = Mathf.Max(bx1, v.X); bz0 = Mathf.Min(bz0, v.Z); bz1 = Mathf.Max(bz1, v.Z); }
+                yards.Add((b, bx0, bz0, bx1, bz1));
+            }
+            bool InQuad(Vector3[] q, float x, float z, float grow)
+            {
+                // inside the convex quad, or within `grow` of it
+                for (int i = 0; i < q.Length; i++)
+                {
+                    var a = q[i]; var b = q[(i + 1) % q.Length];
+                    var e = new Vector2(b.X - a.X, b.Z - a.Z); float el = e.Length();
+                    if (el < 1e-4f) continue;
+                    // the quad's corners run round it one way; whichever, a point outside is beyond SOME edge by more than grow
+                    var n = new Vector2(-e.Y, e.X) / el;
+                    var c = Vector2.Zero; foreach (var v in q) c += new Vector2(v.X, v.Z); c /= q.Length;
+                    if (n.Dot(c - new Vector2(a.X, a.Z)) > 0f) n = -n;                    // outward
+                    if (n.Dot(new Vector2(x - a.X, z - a.Z)) > grow) return false;
+                }
+                return true;
+            }
+            var why = new Dictionary<string, (int n, Vector3 at)>();
+            var builtSet = new HashSet<int>(Built); var laneSet = new HashSet<int>(LaneRoads);
+            bool Note(string k, Vector3 at) { why[k] = why.TryGetValue(k, out var w) ? (w.n + 1, w.at) : (1, at); return true; }
+            bool Paved(float x, float z)
+            {
+                var p = new Vector3(x, 0f, z);
+                foreach (var y in yards)
+                    if (x >= y.x0 && x <= y.x1 && z >= y.z0 && z <= y.z1 && InQuad(y.q, x, z, -YardKeep)) { Note("(a yard: left)", p); return false; }
+                // within a lane's reach of any road -- or a street's of a road that is not a lane
+                if (roads.DeepestRoadOverlap(p, laneKeep, out int rd, out _))
+                    return Note(laneSet.Contains(rd) ? "lane" : builtSet.Contains(rd) ? "street" : $"road {rd} (not the town's)", p);
+                if (roads.DeepestRoadOverlap(p, keep, out rd, out _)
+                    && (!laneSet.Contains(rd) || roads.DeepestRoadOverlap(p, keep, out rd, out _, skipRoad: rd) && !laneSet.Contains(rd)))
+                    return Note(builtSet.Contains(rd) ? "street" : $"road {rd} (not the town's)", p);
+                if (OnAnyPatch(x, -z, keep)) return Note("junction", p);
+                if (BayFrontAt(roads, p)) return Note("bay", p);
+                foreach (var q in lots) if (InQuad(q, x, z, FootprintBorder)) return Note("lot", p);
+                return false;
+            }
+            if (ProbeEverything)
+                foreach (var lp in LanePlans)
+                    if (lp.Pts != null && lp.Pts.Count >= 2)
+                        Log.Print($"[towngrid]   lane plan road {lp.Road}: ({lp.Pts[0].X:0},{lp.Pts[0].Z:0}) -> ({lp.Pts[^1].X:0},{lp.Pts[^1].Z:0}), "
+                                + $"{lp.Pts.Count} pts{(lp.OpenB ? ", a lot's way in" : "")}");
+            FootprintTexels = terr.PaintWhere(x0 - reach, z0 - reach, x1 + reach, z1 + reach, Paved, FootprintLayer);
+            Log.Print($"[towngrid] footprint: {FootprintTexels} splat texel(s) under the town's paving painted dirt "
+                    + $"({FootprintBorder:0.#} m past it, {Terrain.DefaultLayerNames[FootprintLayer]}) in {clock.ElapsedMilliseconds} ms -- "
+                    + string.Join(", ", System.Linq.Enumerable.Select(why, kv => $"{kv.Key} {kv.Value.n} (e.g. {kv.Value.at.X:0},{kv.Value.at.Z:0})")));
+            return FootprintTexels;
+        }
+
+        // ==============================================================================================
         // NO DOUBLE FENCES (strawberry 2026-10-14: "try to prevent plots from double fencing. dead space below a certain
         // size should just get eaten up by plots trying to meet").
         // ==============================================================================================

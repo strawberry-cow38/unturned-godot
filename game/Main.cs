@@ -10742,6 +10742,9 @@ namespace UnturnedGodot
             // the building plots, marked on the ground (strawberry 2026-10-12: "have the grid system mark plots for
             // buildings, with fixed sizes and shapes"), and the parking bays paved and painted -- as planned above
             int plots = noWalk ? 0 : town.MarkPlots(editor, rf, plan: false);
+            // the dirt the paving leaves in the terrain paint (strawberry 2026-10-15: "work on the roads/sidewalks leaving terrain
+            // paint dirt footprints") -- after the plots, whose parking lots are paving too
+            if (!noWalk) town.PaintFootprints(rf, terrain);
             // the dead space the plots left, filled (strawberry 2026-10-14: "procedural filling for dead space / empty lots /
             // parks. using hedges as splines"): hedgerows down the strips, pocket parks in the bigger pieces
             if (!noWalk) town.PlantGreens(rf, editor.Objects);

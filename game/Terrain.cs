@@ -400,6 +400,33 @@ void fragment() {
             Log.Print($"[terrain] painted {painted} texel(s) at or below y={maxY:0.#} as layer {layer} ({(layer < DefaultLayerNames.Length ? DefaultLayerNames[layer] : "?")})");
         }
 
+        /// <summary>Paint `layer` on every texel in the world box [x0,x1] x [z0,z1] whose CENTRE `paint` accepts. One pass, ONE
+        /// texture upload, for PaintBelowHeight's reason -- a generator painting the footprint of everything it built touches
+        /// thousands of texels. Returns how many it painted.</summary>
+        public int PaintWhere(float x0, float z0, float x1, float z1, System.Func<float, float, bool> paint, int layer)
+        {
+            if (_dom == null || _s0Img == null || paint == null) return 0;
+            var c0 = new Color(layer == 0 ? 1 : 0, layer == 1 ? 1 : 0, layer == 2 ? 1 : 0, layer == 3 ? 1 : 0);
+            var c1 = new Color(layer == 4 ? 1 : 0, layer == 5 ? 1 : 0, layer == 6 ? 1 : 0, layer == 7 ? 1 : 0);
+            // world -> texel, the inverse of the mapping below (note the negated Z)
+            int gx0 = System.Math.Max(0, Mathf.FloorToInt((Mathf.Min(x0, x1) - _bx) / UNIT));
+            int gx1 = System.Math.Min(_dw - 1, Mathf.CeilToInt((Mathf.Max(x0, x1) - _bx) / UNIT));
+            int gy0 = System.Math.Max(0, Mathf.FloorToInt((-Mathf.Max(z0, z1) - _bz) / UNIT));
+            int gy1 = System.Math.Min(_dh - 1, Mathf.CeilToInt((-Mathf.Min(z0, z1) - _bz) / UNIT));
+            int painted = 0;
+            for (int gx = gx0; gx <= gx1; gx++)
+                for (int gy = gy0; gy <= gy1; gy++)
+                {
+                    float wx = gx * UNIT + _bx, wz = -(gy * UNIT + _bz);
+                    if (!paint(wx, wz)) continue;
+                    _dom[gx, gy] = (byte)layer;
+                    _s0Img.SetPixel(gx, gy, c0); _s1Img.SetPixel(gx, gy, c1);
+                    painted++;
+                }
+            if (painted > 0) { UpdateSplat(_s0Tex, _s0Img); UpdateSplat(_s1Tex, _s1Img); }
+            return painted;
+        }
+
         /// <summary>Repaint every texel steeper than `minRise` metres of fall per metre travelled.
         ///
         /// strawberry: "turn grass thats above a certain steepness into dirt". Grass standing out of a cliff
