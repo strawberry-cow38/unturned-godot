@@ -40,6 +40,7 @@ public sealed partial class BridgeHost
     }
     void ProbeCraftingContext(JsonElement request)
     {
-        if (request.TryGetProperty("eye",out _)) RequestCraftingContext(request);
+        if (request.TryGetProperty("eye",out var eye) && eye.ValueKind != JsonValueKind.Null)
+            RequestCraftingContext(request);
     }
 }

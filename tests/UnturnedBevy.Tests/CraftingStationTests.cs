@@ -32,6 +32,15 @@ public sealed class CraftingStationTests
         => geometry.AddMesh([new(-4,-4,z),new(4,-4,z),new(0,8,z)],[0,1,2],deployable:station);
 
     [Test]
+    public void NullOptionalCameraLeavesBothReadOnlyViewsUsableWithoutSendingAProbe()
+    {
+        using var host=new BridgeHost();Call(host,"init",new{contentRoot=Content()});
+        Assert.That(Call(host,"craftingView",new{eye=(float[])null}).GetProperty("view").ValueKind,Is.EqualTo(JsonValueKind.Object));
+        Assert.That(Call(host,"inventoryView",new{eye=(float[])null}).GetProperty("items").ValueKind,Is.EqualTo(JsonValueKind.Array));
+        Assert.That(Field<uint>(host,"_craftContextNext"),Is.Zero,"Null has the same optional meaning as an absent camera");
+    }
+
+    [Test]
     public void ExcludingTheWholeStationStillFindsWallsAndOtherBodiesBehindItsNearestFace()
     {
         var geometry=new WorldGeometry(); Wall(geometry,2,7);geometry.Build();
