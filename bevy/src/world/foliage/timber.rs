@@ -19,6 +19,7 @@ pub(super) fn play(
     duration: f32,
     at: Vec3,
     epoch: u64,
+    elapsed: f32,
 ) {
     let (_, speed) = super::fall::predict();
     let db = -6. + 10. * (speed / 1.094).min(1.);
@@ -29,6 +30,11 @@ pub(super) fn play(
                     .wrapping_add(at.x.to_bits() as u64)
                     .wrapping_add(at.z.to_bits() as u64)),
             );
+    // A reliable remote fact may arrive after the measured start deadline.
+    // Seek the existing voice timeline, or omit a clip which already ended.
+    if elapsed >= duration / pitch {
+        return;
+    }
     world.spawn((
         Name::new("Source timber fall audio"),
         AudioPlayer::new(clip),
@@ -36,11 +42,12 @@ pub(super) fn play(
             .with_spatial(true)
             .with_spatial_scale(SpatialScale::new(0.5 / 91.))
             .with_volume(Volume::SILENT)
-            .with_speed(pitch),
+            .with_speed(pitch)
+            .with_start_position(std::time::Duration::from_secs_f32(elapsed * pitch)),
         Transform::from_translation(at),
         Voice {
             epoch,
-            elapsed: 0.,
+            elapsed,
             duration: duration / pitch + 0.1,
             db,
         },

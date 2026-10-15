@@ -1556,3 +1556,24 @@ pass407 native tests (four manual renders ignored) and62 managed tests. The
 updated Vulkan fixture passes with a visible-Chef authority-ray assertion and
 its PNG was opened; original low-camera hat/nameplate perspective is documented.
 Independent review found no blocker. See bevy/docs/NPC_CHARACTER_PORT.md.
+
+## 2026-10-15 — Bevy remote resource presentation
+
+Native trees now consume the accepted age carried by protocol63 resource
+contacts. Delayed canopy shakes start with source decay; fall integration catches
+up without restarting the debris deadline. Timber seeks to its existing pitched
+timeline and is omitted after it ends. The actual shipped clip is 8.256 seconds
+while source landing is 5.9167 seconds, so its original immediate-start backstop
+is preserved. Absent remote names resolve through the accepted manifest index;
+late joins keep dead-bitmap stumps without inventing historical falls.
+
+Fifteen resource tests pass against immutable resource-contact-59, including
+actual UDP host-fire→client-event→native-fall wiring and delayed/expired audio.
+The UDP regression fails on the prewire bridge with zero contacts instead of two.
+Four rendered stages in bevy/artifacts/resource-udp were opened and independently
+reviewed: standing, falling, landed debris and stump-only cleanup. Every snapshot
+identifies a remote client with ownsWorld=false; zero rewards precede the host
+timer and five original wood items follow it. Native animation alone cannot
+award them. The renderer exited 0 with no shader errors; audio playback could not
+be heard on this machine. Source timing and lifecycle review found no blocker.
+See bevy/docs/RESOURCES_PORT.md for remaining stump-BVH and audio-filter gaps.

@@ -151,11 +151,17 @@ fn present(world: &mut World) {
             if event.data["kind"].as_str() != Some("tree") { continue; }
             let Some(index) = event.data["index"].as_u64() else { continue; };
             let Some(tree) = registry.trees.get(&index).cloned() else { continue; };
+            // Remote facts carry elapsed source time known at receipt. A late
+            // event must not restart either the shake or the debris lifetime.
+            let age = event.data["ageSeconds"].as_f64().filter(|v| v.is_finite())
+                .unwrap_or(0.).max(0.) as f32;
             if event.kind == "resourceHit" {
                 if dead.contains(&index) { continue; }
+                let shake = (-5.5 * age).exp();
+                if shake < 0.01 { continue; }
                 for canopy in tree.canopies {
                     if let Ok(mut entity) = world.get_entity_mut(canopy) {
-                        entity.insert((Hit(1.), Reaction { shake: 1., ..default() }));
+                        entity.insert((Hit(shake), Reaction { shake, ..default() }));
                     }
                 }
             } else {
@@ -165,7 +171,7 @@ fn present(world: &mut World) {
                 let Some(direction) = vector(&event.data["direction"]) else { continue; };
                 let lifetime = event.data["debrisSeconds"].as_f64().unwrap_or(11.) as f32;
                 registry.pending.insert(index, PendingFall {
-                    identity: (tree.name.clone(),tree.instance), direction,lifetime,age:0. });
+                    identity: (tree.name.clone(),tree.instance), direction,lifetime,age });
             }
         }
         // Reliable accepted events may precede the 25Hz resource snapshot.
@@ -194,14 +200,16 @@ fn present(world: &mut World) {
                 let play = sound.as_ref().is_some_and(|(_, length)|
                     !fall.sound_played && fall.age >= (super::fall::predict().0-*length).max(0.));
                 if play { fall.sound_played = true; }
-                outputs.push((fall.leaf, leaf, fall.trunk, trunk, play.then_some(fall.base.translation)));
+                let sound_age = sound.as_ref().map_or(0., |(_, length)|
+                    (fall.age-(super::fall::predict().0-*length).max(0.)).max(0.));
+                outputs.push((fall.leaf, leaf, fall.trunk, trunk, play.then_some((fall.base.translation,sound_age))));
                 if fall.age >= fall.lifetime { retired.push(entity); }
             }
             for (leaf, a, trunk, b, at) in outputs {
                 if let Some(e) = leaf { if let Ok(mut e) = world.get_entity_mut(e) { e.insert(a); } }
                 if let Some(e) = trunk { if let Ok(mut e) = world.get_entity_mut(e) { e.insert(b); } }
-                if let (Some(at), Some((clip,length))) = (at,sound.as_ref()) {
-                    super::timber::play(world, clip.clone(), *length, at, epoch);
+                if let (Some((at,age)), Some((clip,length))) = (at,sound.as_ref()) {
+                    super::timber::play(world, clip.clone(), *length, at, epoch, age);
                 }
             }
             for entity in retired { let _ = world.despawn(entity); }

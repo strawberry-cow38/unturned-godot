@@ -403,27 +403,370 @@ fn accepted_fall_survives_event_before_snapshot_and_retains_only_its_source_dire
 
 #[test]
 fn measured_timber_starts_before_landing_pauses_and_retires_without_audio_device() {
-    let (mut app,_,_)=app();
-    app.world_mut().resource_mut::<GameSnapshot>().0["resources"]["dead"]=json!([48]);
-    event(&mut app,1,"resourceFelled",json!({"index":48,"kind":"tree","direction":[0,0,-1],"debrisSeconds":11}));
+    let (mut app, _, _) = app();
+    app.world_mut().resource_mut::<GameSnapshot>().0["resources"]["dead"] = json!([48]);
+    event(
+        &mut app,
+        1,
+        "resourceFelled",
+        json!({"index":48,"kind":"tree","direction":[0,0,-1],"debrisSeconds":11}),
+    );
     app.update();
-    let (entity,start)={let registry=app.world().resource::<Registry>();
-        (registry.remains[&48].debris.unwrap(),(super::super::fall::predict().0-registry.timber.as_ref().unwrap().1).max(0.))};
-    while app.world().get::<Fall>(entity).unwrap().age+0.02001<start {
-        assert!(!app.world().get::<Fall>(entity).unwrap().sound_played);app.update();
+    let (entity, start) = {
+        let registry = app.world().resource::<Registry>();
+        (
+            registry.remains[&48].debris.unwrap(),
+            (super::super::fall::predict().0 - registry.timber.as_ref().unwrap().1).max(0.),
+        )
+    };
+    while app.world().get::<Fall>(entity).unwrap().age + 0.02001 < start {
+        assert!(!app.world().get::<Fall>(entity).unwrap().sound_played);
+        app.update();
     }
     app.update();
     assert!(app.world().get::<Fall>(entity).unwrap().sound_played);
-    let voice=app.world_mut().query_filtered::<Entity,With<super::super::timber::Voice>>().single(app.world()).unwrap();
-    let age=app.world().get::<super::super::timber::Voice>(voice).unwrap().elapsed;
-    let fall_age=app.world().get::<Fall>(entity).unwrap().age;
-    app.world_mut().resource_mut::<UiState>().screen=Screen::Paused;
-    for _ in 0..10 {app.update();}
-    assert_eq!(app.world().get::<super::super::timber::Voice>(voice).unwrap().elapsed,age);
-    assert_eq!(app.world().get::<Fall>(entity).unwrap().age,fall_age);
+    let voice = app
+        .world_mut()
+        .query_filtered::<Entity, With<super::super::timber::Voice>>()
+        .single(app.world())
+        .unwrap();
+    let age = app
+        .world()
+        .get::<super::super::timber::Voice>(voice)
+        .unwrap()
+        .elapsed;
+    let fall_age = app.world().get::<Fall>(entity).unwrap().age;
+    app.world_mut().resource_mut::<UiState>().screen = Screen::Paused;
+    for _ in 0..10 {
+        app.update();
+    }
+    assert_eq!(
+        app.world()
+            .get::<super::super::timber::Voice>(voice)
+            .unwrap()
+            .elapsed,
+        age
+    );
+    assert_eq!(app.world().get::<Fall>(entity).unwrap().age, fall_age);
     assert!(app.world().get::<PlaybackSettings>(voice).unwrap().paused);
-    app.world_mut().resource_mut::<UiState>().screen=Screen::Playing;
-    let duration=app.world().get::<super::super::timber::Voice>(voice).unwrap().duration;
-    for _ in 0..(duration/0.02).ceil() as usize+2 {app.update();}
-    assert!(app.world().get_entity(voice).is_err(),"finite cleanup also works without a device/sink");
+    app.world_mut().resource_mut::<UiState>().screen = Screen::Playing;
+    let duration = app
+        .world()
+        .get::<super::super::timber::Voice>(voice)
+        .unwrap()
+        .duration;
+    for _ in 0..(duration / 0.02).ceil() as usize + 2 {
+        app.update();
+    }
+    assert!(
+        app.world().get_entity(voice).is_err(),
+        "finite cleanup also works without a device/sink"
+    );
+}
+
+#[test]
+fn remote_hit_uses_accepted_age_without_name_or_neighbor_shake() {
+    let (mut app, tree, neighbor) = app();
+    event(
+        &mut app,
+        1,
+        "resourceHit",
+        json!({
+            "index":48,"kind":"tree","name":null,"ageSeconds":0.3,"acceptedTick":50
+        }),
+    );
+    app.update();
+    let shake = app.world().get::<Hit>(tree).unwrap().0;
+    assert!((shake - (-5.5_f32 * 0.3).exp()).abs() < 1e-6);
+    assert!(app.world().get::<Hit>(neighbor).is_none());
+    event(
+        &mut app,
+        2,
+        "resourceHit",
+        json!({
+            "index":48,"kind":"tree","name":null,"ageSeconds":2.0
+        }),
+    );
+    app.update();
+    assert!(
+        app.world().get::<Hit>(tree).unwrap().0 < shake,
+        "an expired reliable hit never rearms a fresh shake"
+    );
+    assert_eq!(
+        app.world().resource::<GameSnapshot>().0["resources"]["dead"],
+        json!([])
+    );
+}
+
+#[test]
+fn remote_fall_adopts_age_then_waits_for_dead_snapshot_without_resetting_time() {
+    let (mut app, _, _) = app();
+    event(
+        &mut app,
+        1,
+        "resourceFelled",
+        json!({
+            "index":48,"kind":"tree","name":null,"direction":[1,0,0],
+            "debrisSeconds":11,"ageSeconds":3.4,"acceptedTick":50
+        }),
+    );
+    app.update();
+    assert!((app.world().resource::<Registry>().pending[&48].age - 3.4).abs() < 1e-5);
+    app.update();
+    app.world_mut().resource_mut::<GameSnapshot>().0["resources"]["dead"] = json!([48]);
+    app.update();
+    let entity = app.world().resource::<Registry>().remains[&48]
+        .debris
+        .unwrap();
+    let fall = app.world().get::<Fall>(entity).unwrap();
+    assert!(
+        (fall.age - 3.46).abs() < 0.0001,
+        "accepted age plus local queue time"
+    );
+    assert_eq!(fall.direction, Vec3::X);
+    assert!(
+        app.world()
+            .get::<Transform>(entity)
+            .unwrap()
+            .rotation
+            .angle_between(fall.base.rotation)
+            > 2_f32.to_radians(),
+        "late arrival advances the source rigid fall, not just its cleanup timer"
+    );
+    for _ in 0..380 {
+        app.update();
+    }
+    assert!(
+        app.world().get_entity(entity).is_err(),
+        "original eleven-second deadline survives transit"
+    );
+    assert!(
+        app.world().resource::<Registry>().remains.contains_key(&48),
+        "dead bitmap still owns stump"
+    );
+}
+
+#[test]
+fn expired_remote_fall_keeps_dead_stump_without_replaying_debris_or_timber() {
+    let (mut app, _, _) = app();
+    app.world_mut().resource_mut::<GameSnapshot>().0["resources"]["dead"] = json!([48]);
+    event(
+        &mut app,
+        1,
+        "resourceFelled",
+        json!({
+            "index":48,"kind":"tree","direction":[0,0,-1],"debrisSeconds":11,"ageSeconds":11
+        }),
+    );
+    app.update();
+    assert!(
+        app.world().resource::<Registry>().remains[&48]
+            .debris
+            .is_none()
+    );
+    assert_eq!(
+        app.world_mut().query::<&Fall>().iter(app.world()).count(),
+        0
+    );
+    assert_eq!(
+        app.world_mut()
+            .query::<&super::super::timber::Voice>()
+            .iter(app.world())
+            .count(),
+        0
+    );
+}
+
+#[test]
+fn delayed_remote_fall_seeks_timber_to_its_existing_timeline() {
+    let (mut app, _, _) = app();
+    app.world_mut().resource_mut::<GameSnapshot>().0["resources"]["dead"] = json!([48]);
+    let age = super::super::fall::predict().0 - 0.25;
+    event(
+        &mut app,
+        1,
+        "resourceFelled",
+        json!({
+            "index":48,"kind":"tree","direction":[0,0,-1],"debrisSeconds":11,"ageSeconds":age
+        }),
+    );
+    app.update();
+    let voice = app
+        .world_mut()
+        .query_filtered::<Entity, With<super::super::timber::Voice>>()
+        .single(app.world())
+        .unwrap();
+    let settings = app.world().get::<PlaybackSettings>(voice).unwrap();
+    let elapsed = app
+        .world()
+        .get::<super::super::timber::Voice>(voice)
+        .unwrap()
+        .elapsed;
+    let seek = settings.start_position.unwrap().as_secs_f32();
+    assert!(
+        seek > 0.5,
+        "late event must not replay timber from its start"
+    );
+    assert!((seek / settings.speed - (elapsed - 0.02)).abs() < 0.0001);
+    let duration = app
+        .world()
+        .get::<super::super::timber::Voice>(voice)
+        .unwrap()
+        .duration;
+    let remaining = duration - elapsed;
+    assert!(
+        remaining < duration * 0.5,
+        "late delivery leaves only the existing clip remainder"
+    );
+    for _ in 0..(remaining / 0.02).ceil() as usize + 2 {
+        app.update();
+    }
+    assert!(
+        app.world().get_entity(voice).is_err(),
+        "voice ends on its existing remainder"
+    );
+}
+
+pub(super) fn pump_pair(
+    host: &crate::bridge::CoreBridge,
+    client: &crate::bridge::CoreBridge,
+    count: usize,
+) -> serde_json::Value {
+    let mut state = serde_json::Value::Null;
+    for _ in 0..count {
+        host.request("tick", json!({})).unwrap();
+        state = client.request("tick", json!({})).unwrap()["state"].clone();
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    state
+}
+pub(super) fn udp_pair(
+    config: &WorldConfig,
+    spawn: Vec3,
+) -> (crate::bridge::CoreBridge, crate::bridge::CoreBridge) {
+    let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let port = socket.local_addr().unwrap().port();
+    drop(socket);
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let host = crate::bridge::CoreBridge::launch(root).expect("Build managed bridge first");
+    let client = crate::bridge::CoreBridge::launch(root).expect("Build managed bridge first");
+    host.request(
+        "init",
+        json!({"contentRoot":config.content_root,"starterKit":true,
+        "spawn":spawn.to_array(),"listenPort":port,"allowCheats":true}),
+    )
+    .unwrap();
+    client
+        .request(
+            "init",
+            json!({"contentRoot":config.content_root,"connectHost":"127.0.0.1","connectPort":port}),
+        )
+        .unwrap();
+    pump_pair(&host, &client, 20);
+    client.request("action",json!({"name":"console","args":{"text":format!("teleport {} {} {}",spawn.x+10.,spawn.y,spawn.z)}})).unwrap();
+    pump_pair(&host, &client, 12);
+    (host, client)
+}
+
+#[test]
+fn actual_udp_resource_contact_materializes_remote_fall_without_native_authority() {
+    let (mut app, _, _) = app();
+    let config = app.world().resource::<WorldConfig>().clone();
+    let (host, client) = udp_pair(&config, Vec3::new(0., 10., 1.));
+    host.request(
+        "worldServices",
+        json!({"resourceCount":50,"resources":[{
+        "index":48,"kind":"tree","name":"Pine_0","position":[0,10,0],
+        "health":1,"resetSeconds":30,"trunkLength":15}]}),
+    )
+    .unwrap();
+    host.request(
+        "worldGeometry",
+        json!({"meshes":[{"resourceIndex":48,
+        "vertices":[[-2,10,0],[2,10,0],[0,14,0]]}]}),
+    )
+    .unwrap();
+    pump_pair(&host, &client, 8);
+    host.request("action", json!({"name":"fire","args":{}}))
+        .unwrap();
+    let state = pump_pair(&host, &client, 16);
+    assert_eq!(state["network"]["ownsWorld"], false);
+    assert_eq!(state["resources"]["dead"], json!([48]));
+    let facts: Vec<_> = state["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| matches!(e["kind"].as_str(), Some("resourceHit" | "resourceFelled")))
+        .collect();
+    assert_eq!(
+        facts.len(),
+        2,
+        "actual reliable remote hit and fall must arrive"
+    );
+    for row in facts {
+        assert!(
+            row["data"]["name"].is_null(),
+            "identity comes from accepted manifest index"
+        );
+        event(
+            &mut app,
+            row["seq"].as_u64().unwrap(),
+            row["kind"].as_str().unwrap(),
+            row["data"].clone(),
+        );
+    }
+    app.world_mut().resource_mut::<GameSnapshot>().0 = state;
+    app.update();
+    let remains = &app.world().resource::<Registry>().remains[&48];
+    let debris = remains
+        .debris
+        .expect("wire event reaches the real native resource presenter");
+    assert!(app.world().get::<Fall>(debris).unwrap().direction.z < -0.99);
+    for _ in 0..570 {
+        app.update();
+    }
+    assert!(app.world().get_entity(debris).is_err());
+    let before = host.request("snapshot", json!({})).unwrap()["state"].clone();
+    assert_eq!(before["player"]["ammo"], 29);
+    assert!(
+        before["worldItems"].as_array().unwrap().is_empty(),
+        "render time awards no logs"
+    );
+    let after = pump_pair(&host, &client, 550);
+    assert!(
+        !after["worldItems"].as_array().unwrap().is_empty(),
+        "original host timer awards logs once"
+    );
+    assert_eq!(after["resources"]["dead"], json!([48]));
+}
+
+#[test]
+fn delayed_fall_after_timber_ends_keeps_remaining_debris_silently() {
+    let (mut app, _, _) = app();
+    app.world_mut().resource_mut::<GameSnapshot>().0["resources"]["dead"] = json!([48]);
+    event(
+        &mut app,
+        1,
+        "resourceFelled",
+        json!({
+            "index":48,"kind":"tree","direction":[0,0,-1],"debrisSeconds":11,"ageSeconds":10
+        }),
+    );
+    app.update();
+    let entity = app.world().resource::<Registry>().remains[&48]
+        .debris
+        .unwrap();
+    assert!(app.world().get::<Fall>(entity).unwrap().age > 10.);
+    assert_eq!(
+        app.world_mut()
+            .query::<&super::super::timber::Voice>()
+            .iter(app.world())
+            .count(),
+        0,
+        "the shipped8.256second clip already ended, including its source pitch range"
+    );
+    for _ in 0..51 {
+        app.update();
+    }
+    assert!(app.world().get_entity(entity).is_err());
 }

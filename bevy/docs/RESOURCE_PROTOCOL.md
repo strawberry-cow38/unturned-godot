@@ -36,13 +36,15 @@ after wire quantization.
 
 Name strings are omitted from the wire; the native view resolves an index through
 the accepted map manifest and original resource catalog. Local JSON retains its
-source name; remote JSON supplies `name:null`. Unknown/unloaded resources do not
+source name; remote JSON has an absent/null name. Unknown/unloaded resources do not
 gain guessed identity or direction. Late joins and save restoration receive
 lasting dead state, with no replay of historical falls.
 
-Native adoption of accepted age and an actual remote fall render are a separate
-presentation checkpoint. The existing native view already retains a fall fact
-until the corresponding dead snapshot arrives.
+The native view adopts accepted age before waiting for the corresponding dead
+snapshot. Hit amplitude decays from that age; rigid fall integration catches up,
+debris keeps its original deadline, and timber seeks to its existing timeline.
+Fully expired effects are omitted. This presentation never publishes resource
+health, damage, rewards, regrowth, or additional authority geometry.
 
 Four new core tests cover shared-grid round trips, every truncated prefix,
 invalid tags/floats/directions/lifetimes, once-only ordered delivery, persistent
@@ -57,5 +59,6 @@ journeys pass on immutable `bevy/.local/resource-contact-59`. That integrated
 artifact includes the separately owned bed-damage adapter's three tests; those
 changes are outside this protocol checkpoint. An isolated negative build removed
 only the bridge subscription: the real UDP test failed because the remote hit
-and fall were absent, while local production still succeeded. Native GPU
-evidence belongs to the presentation follow-up.
+and fall were absent, while local production still succeeded. The native
+follow-up uses this same immutable artifact; actual remote rendering and timing
+coverage are recorded in `RESOURCES_PORT.md`.
