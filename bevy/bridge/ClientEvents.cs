@@ -10,6 +10,7 @@ public sealed partial class BridgeHost
     void CreateClient(IClientTransport transport)
     {
         _npcView = new();
+        _storageView = new();
         _client = new NetWorldClient(transport, _name, contentHash: NetContent.Hash);
         DeployableNetSchema.RegisterAll(_client.Deployables.Schema);
         WorldServices.RegisterCrops(_client.Crops.Schema);
@@ -36,7 +37,7 @@ public sealed partial class BridgeHost
         _client.EquipmentFactReceived += e => {
             if (_server == null) _events.Add(new(++_eventSequence, EquipmentJson.FactName(e.Kind), EquipmentJson.Fact(_client.PlayerId,e), e.Tick));
         };
-        _client.StorageClosed += e => Emit("storageClosed", e);
+        _client.StorageClosed += e => { _storageView.Close(); Emit("storageClosed", e); };
         _client.VehicleMaintenance += e => Emit(e.Kind switch { VehicleMaintenanceKind.GlassBroken => "vehicleGlassBroken", VehicleMaintenanceKind.GlassRepaired => "vehicleGlassRepaired", VehicleMaintenanceKind.TireRepaired => "vehicleTireRepaired", _ => "vehicleHorn" }, new { netId=e.NetId, index=e.Index, label=e.Kind is VehicleMaintenanceKind.GlassBroken or VehicleMaintenanceKind.GlassRepaired?VehicleMaintenanceServices.Labels[e.Index]:null, position=Array(e.Position), normal=e.Kind==VehicleMaintenanceKind.GlassBroken?Array(e.Normal):null, halfSize=e.Kind==VehicleMaintenanceKind.GlassBroken?Array(e.HalfSize):null, acceptedTick=e.Tick });
         _client.VehicleLighting += e => Emit(e.Kind switch { VehicleLightingKind.AlarmHorn => "vehicleAlarmHorn", VehicleLightingKind.LampBroken => "vehicleLampBroken", _ => "vehicleLampRepaired" }, new { netId=e.NetId, lamp=e.Lamp, label=e.Lamp<VehicleLightRules.LampLabels.Length?VehicleLightRules.LampLabels[e.Lamp]:null, position=Array(e.Position), acceptedTick=e.Tick });
         _client.VehicleEntered += e => Emit("vehicleEntered", e);
@@ -72,7 +73,7 @@ public sealed partial class BridgeHost
         _client.ObjectDoorState += e => Emit("objectDoorState", e);
         _client.BedClaimed += e => Emit("bedClaimed", e);
         _client.SeatOccupied += e => Emit("seatOccupied", e);
-        _client.StorageOpened += e => Emit("storageOpened", e);
+        _client.StorageOpened += e => { _storageView.Open(e); Emit("storageOpened", e); };
         _client.CookerState += e => Emit("cookerState", e);
         _client.ItemPickupDenied += e => Emit("pickupDenied", e);
         _client.PlayerHurt += e => Emit("hurt", e);

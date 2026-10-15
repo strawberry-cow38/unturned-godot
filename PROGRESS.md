@@ -2281,3 +2281,27 @@ Bevy's extra emission-alpha attenuation. Slight dry-tint/PBR baseline difference
 remain explicit, and this stationary fixture does not claim fullgame rain-driving
 or articulated bus coverage. Combined application build passed and was frozen as
 `.local/native-feedback-rain-main`. Details: `bevy/docs/VEHICLE_RAIN_GLASS_PORT.md`.
+
+### Accepted vehicle trunk/cabin dashboard and durable contents
+
+F on the original Trunk zone now requests the existing server storage command;
+opening Inventory from an accepted seat requests the source glovebox and named
+seat pockets. A retained owner-only StorageView supplies accepted labels/pages
+independently of event acknowledgements. Own and container columns scroll
+separately in source order. Closing, late cabin replies, vehicle exit and a
+no-pump open-close-reopen race all follow the original dashboard lifecycle; the
+old pending guard fails the new real UDP race regression.
+
+The persistence audit also found that vehicle crates were omitted from saves.
+Already-created trunk/glovebox/pocket contents now save under the existing
+vehicle ordinal/type identity, using the original item/page serializer. Unopened
+cars stay lazy, transient crate IDs/view pages are not saved, old saves remain
+compatible, and repeated restore does not duplicate contents.
+
+Immutable vehicle-storage-v69-first passes134 managed bridge, nine core storage
+and45 base JSONL tests. Four native focused tests pass. The accepted bus-cabin
+Vulkan fixture also passed and both top/bottom images were opened: original
+named pockets remain reachable through the last Row5 seat and Nearby while the
+left Hands grid stays fixed. The current native40px dashboard scale is retained;
+this does not claim the wider original paperdoll/layout port. Source/code review
+passed. See `bevy/docs/VEHICLE_STORAGE_PORT.md`.

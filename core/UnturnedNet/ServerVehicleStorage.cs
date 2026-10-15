@@ -74,6 +74,14 @@ namespace UnturnedGodot.Net
 
         public int CrateCount => _crates.Count;
 
+        /// <summary>Read an already-created container without allocating one for
+        /// every parked vehicle while saving. False also covers a retired crate.</summary>
+        public bool TryGetCrate(uint vehicle, VehicleStorageKind kind, out InventoryReplication.CrateEntry crate)
+        {
+            crate = null;
+            return _crates.TryGetValue((vehicle, kind), out uint id) && _inventories.TryGetCrate(id, out crate);
+        }
+
         public ServerVehicleStorage(InventoryReplication inventories, VehicleReplication vehicles, NetIdMinter ids)
         {
             _inventories = inventories; _vehicles = vehicles; _ids = ids;

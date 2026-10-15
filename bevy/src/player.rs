@@ -62,7 +62,6 @@ impl Plugin for PlayerPlugin {
                     initialize_session,
                     ui_intents,
                     crate::world::origin::adopt_authority,
-                    close_storage_on_exit,
                     read_input,
                     physics_configuration,
                 )
@@ -603,20 +602,6 @@ fn ui_intents(
             Err(error) => model.notice(error.to_string()),
         }
     }
-}
-
-fn close_storage_on_exit(
-    bridge: Res<CoreBridge>,
-    ui: Res<UiState>,
-    model: Res<UiModel>,
-    mut previous: Local<Screen>,
-) {
-    if model.connected && *previous == Screen::Inventory && ui.screen != Screen::Inventory {
-        if let Err(error) = bridge.request("action", json!({"name":"closeStorage","args":{}})) {
-            warn!("Closing storage: {error}");
-        }
-    }
-    *previous = ui.screen;
 }
 
 fn save_path(map: &str) -> std::path::PathBuf {

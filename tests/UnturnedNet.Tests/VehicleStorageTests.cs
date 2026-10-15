@@ -270,5 +270,47 @@ namespace UnturnedNet.Tests
             Assert.That(onSeat.frozen, Is.LessThan((byte)100), "...and so does a seat pocket");
             Assert.That(onSeat.frozen, Is.EqualTo(inGlovebox.frozen), "at the same rate");
         }
+
+        [Test]
+        public void save_restores_vehicle_contents_by_ordinal_once_without_minting_unopened_containers()
+        {
+            var before = new TransactionalHarness(9591).Connected("saver");
+            uint car = SpawnCar(before, new Vector3(1, 0, 0));
+            SpawnCar(before, new Vector3(20, 0, 0)); // never opened
+            uint trunkId = before.Server.VehicleStorage.CrateFor(car, VehicleStorageKind.Trunk);
+            uint cabinId = before.Server.VehicleStorage.CrateFor(car, VehicleStorageKind.Cabin);
+            before.Server.Inventories.TryGetCrate(trunkId, out var trunk);
+            before.Server.Inventories.TryGetCrate(cabinId, out var cabin);
+            var exact = new Item(TransactionalFixtures.ScrapId) { quality = 37, gunAmmo = 17, gunMagId = 6 };
+            trunk.Storage.addItem(3, 1, 0, exact);
+            cabin.Storage.tryAddItem(new Item(TransactionalFixtures.BeansId));
+            cabin.Compartments[3].Grid.tryAddItem(new Item(TransactionalFixtures.ScrapId));
+            var save = WorldSave.Capture(before.Server, "PEI", 0, .5f, 1200);
+            Assert.That(before.Server.VehicleStorage.CrateCount, Is.EqualTo(2));
+            Assert.That(save.Vehicles[1].Trunk, Is.Null, "save must preserve lazy allocation");
+            Assert.That(WorldSave.TryParse(save.ToJson(), "PEI", out var loaded, out var error), Is.True, error);
+
+            var after = new TransactionalHarness(9592).Connected("saver");
+            after.Server.Ids.Mint(); // container/vehicle IDs are deliberately different
+            uint restored = SpawnCar(after, new Vector3(1, 0, 0));
+            SpawnCar(after, new Vector3(20, 0, 0));
+            loaded.ApplyWorld(after.Server, after.Server.Session.CurrentTick);
+            loaded.ApplyWorld(after.Server, after.Server.Session.CurrentTick); // idempotent overlay
+            Assert.That(after.Server.VehicleStorage.CrateCount, Is.EqualTo(2));
+            Assert.That(after.Server.VehicleStorage.TryGetCrate(restored, VehicleStorageKind.Trunk, out var boot), Is.True);
+            Assert.That(boot.Storage.getItemCount(), Is.EqualTo(1));
+            var jar = boot.Storage.getItem(0);
+            Assert.That((jar.x, jar.y, jar.item.quality, jar.item.gunAmmo, jar.item.gunMagId),
+                Is.EqualTo(((byte)3, (byte)1, (byte)37, 17, (ushort)6)));
+            Assert.That(after.Server.VehicleStorage.TryGetCrate(restored, VehicleStorageKind.Cabin, out var inside), Is.True);
+            Assert.That(inside.Storage.getItemCount(), Is.EqualTo(1));
+            Assert.That(inside.Compartments[3].Grid.getItemCount(), Is.EqualTo(1));
+            Assert.That(inside.Compartments[0].Grid.getItemCount(), Is.Zero);
+            var client = after.Clients[0];
+            after.Server.Vehicles.ServerSetSeat(new NetId(restored), 0, client.PlayerId, after.Server.Session.CurrentTick);
+            client.SendOpenVehicleStorage(restored, VehicleStorageKind.Cabin);
+            Assert.That(after.StepUntil(() => Mine(client)?.items[PlayerInventory.COMPARTMENT0 + 3].getItemCount() == 1), Is.True,
+                "restored contents must reach the ordinary owner-only inventory replica");
+        }
     }
 }

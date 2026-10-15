@@ -425,7 +425,7 @@ fn harness_tires(value: &str, spec: &data::VehicleSpec) -> Vec<usize> {
     }
     result
 }
-fn registration(
+pub(crate) fn registration(
     d: &data::VehicleDefinition,
     key: String,
     at: Vec3,

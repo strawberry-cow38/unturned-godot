@@ -29,8 +29,9 @@ eye; otherwise the nearest box within1.5m of the clipped endpoint wins, retainin
 source-order ties. Queries use player membership so a convex chassis stripped
 of player/look contact cannot hide its visible mesh. Current source `LookTrace`
 explicitly uses the active camera in both first and third person; earlier
-shoulder comments describe superseded behavior. Trunk and bifold interactions
-remain distinct pending work, never silently converted to hood or driver access. The panel displays accepted live vehicle figures and
+shoulder comments describe superseded behavior. Trunk focus now requests the
+accepted storage dashboard (see `VEHICLE_STORAGE_PORT.md`); bifold movement remains
+a separate interaction. Neither is converted to hood or driver access. The panel displays accepted live vehicle figures and
 builds lamp buttons once per open, keeping the same entities across damage and
 repair snapshots. Intact lamps disable their buttons. Fix sends the exact
 canonical lamp slot to the authority and waits for the resulting snapshot.

@@ -34,7 +34,9 @@ poses through `worldVehicleState`; the local driver uses the existing
   capsule, then submits the trusted host verdict before sending an exit intent.
   Centreline, rolled, bi-fold and helm door selection follows `VehicleExit.cs`.
 - Original trunk, glovebox and seat-pocket dimensions/labels are registered with
-  the managed `ServerVehicleStorage`; rendering those grids is a separate UI task.
+  the managed `ServerVehicleStorage`. Accepted trunk/cabin grids now render in
+  independently scrolling inventory columns and persist with their vehicle;
+  see `VEHICLE_STORAGE_PORT.md` for the source lifecycle and remaining layout gap.
 - All seven rotary-wing definitions now run the source collective/spool, original
   ignition clip gate, rotor-size pitch timing, hub-height ground effect, ETL,
   anisotropic drag, shaft-aligned descent, envelope backstop and inertial cyclic.
@@ -169,7 +171,7 @@ deck/superstructure collider details and riding; suspension surface-material
 selection and wheel dust; husk settling;
 dynamic headlights/sirens/beacons; towing, kingpin, sling, winch and cargo;
 turret weapons/hatches and optics;
-doors/hood/trunk animations and storage dashboard; refuel/battery/carjack
+doors/hood/trunk animations; refuel/battery/carjack
 interaction tools; remaining vehicle console/test entry points; remote-client
 puppets; seat switching and turret-specific seated poses/cameras. Jet afterburner
 and contrail shader effects are still pending.

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using SDG.Unturned;
@@ -212,6 +213,12 @@ namespace UnturnedGodot.Net
             public float Health { get; set; }
             public float Battery { get; set; }
             public bool Exploded { get; set; }
+            // Contents belong to the stable vehicle ordinal/type, never to its
+            // freshly minted container IDs or an owner's temporary view pages.
+            // Null in older saves and for containers nobody has opened.
+            public PageSave Trunk { get; set; }
+            public PageSave Glovebox { get; set; }
+            public List<PageSave> SeatPockets { get; set; }
         }
 
         public sealed class ContainerSave
@@ -466,12 +473,17 @@ namespace UnturnedGodot.Net
             int vi = 0;
             foreach (var v in host.Vehicles.All)
             {
+                host.VehicleStorage.TryGetCrate(v.NetIdValue, VehicleStorageKind.Trunk, out var trunk);
+                host.VehicleStorage.TryGetCrate(v.NetIdValue, VehicleStorageKind.Cabin, out var cabin);
                 save.Vehicles.Add(new VehicleSave
                 {
                     SpawnIndex = vi++, TypeId = v.TypeId,
                     X = v.Pos.x, Y = v.Pos.y, Z = v.Pos.z,
                     YawDegrees = v.YawDegrees, PitchDegrees = v.PitchDegrees, RollDegrees = v.RollDegrees,
                     Fuel = v.Fuel, Health = v.Health, Battery = v.Battery, Exploded = v.Exploded,
+                    Trunk = trunk == null ? null : CapturePage(trunk.Storage),
+                    Glovebox = cabin == null ? null : CapturePage(cabin.Storage),
+                    SeatPockets = cabin?.Compartments.Select(c => CapturePage(c.Grid)).ToList(),
                 });
             }
 
@@ -904,6 +916,21 @@ namespace UnturnedGodot.Net
                                             new Vector3(vs.PitchDegrees, vs.YawDegrees, vs.RollDegrees),
                                             Vector3.zero, Vector3.zero, 0f, vs.Fuel, vs.Health, vs.Battery, 0, tick);
                 host.Vehicles.ServerPublishVitals(new NetId(v.NetIdValue), vs.Fuel, vs.Health, vs.Battery, vs.Exploded, tick);
+                if (vs.Trunk != null)
+                {
+                    uint id = host.VehicleStorage.CrateFor(v.NetIdValue, VehicleStorageKind.Trunk);
+                    if (host.Inventories.TryGetCrate(id, out var trunk)) RestorePage(trunk.Storage, vs.Trunk);
+                }
+                if (vs.Glovebox != null)
+                {
+                    uint id = host.VehicleStorage.CrateFor(v.NetIdValue, VehicleStorageKind.Cabin);
+                    if (host.Inventories.TryGetCrate(id, out var cabin))
+                    {
+                        RestorePage(cabin.Storage, vs.Glovebox);
+                        for (int i = 0; i < cabin.Compartments.Length && i < (vs.SeatPockets?.Count ?? 0); i++)
+                            RestorePage(cabin.Compartments[i].Grid, vs.SeatPockets[i]);
+                    }
+                }
             }
 
             foreach (int i in HarvestedResources) host.Resources.ServerSetAlive(i, false, tick);

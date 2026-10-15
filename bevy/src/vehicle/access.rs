@@ -195,6 +195,9 @@ pub(crate) fn focus(
             "openVehicleHood",
             json!({"netId":body.net_id}),
         ),
+        Some("Trunk") => focus.offer_manual(
+            distance, "Open trunk", "openVehicleTrunk", json!({"netId":body.net_id}),
+        ),
         Some("Door") => focus.offer(
             distance,
             format!("Enter {}", def.spec.name),
@@ -209,7 +212,7 @@ pub(crate) fn focus(
             json!({"netId":body.net_id,"seat":0}),
             false,
         ),
-        // Trunk/bifold access must not silently become a door or hood. Their
+        // Bifold access must not silently become a door or hood. Its
         // distinct original interactions are tracked separately.
         _ => {}
     }

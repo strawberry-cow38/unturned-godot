@@ -533,7 +533,7 @@ public sealed partial class BridgeHost : IDisposable
         var occupied = _client.Vehicles.All.FirstOrDefault(v => v.DriverPlayerId == _client.PlayerId || (v.Passengers?.Contains(_client.PlayerId) ?? false));
         int seat = occupied == null ? -1 : occupied.DriverPlayerId == _client.PlayerId ? 0 : System.Array.IndexOf(occupied.Passengers, _client.PlayerId) + 1;
         return new { tick = _network.CurrentTick, origin = Origin, connected = _client.State == NetSessionState.Connected && (!IsRemote || _remoteSpawnAdopted), playerId = _client.PlayerId,
-            network = NetworkState(), players = PlayerReplicas(), npc = _npcView.Snapshot(),
+            network = NetworkState(), players = PlayerReplicas(), npc = _npcView.Snapshot(), storage = _storageView.Current,
             worldClock = ClockSnapshot(),
             weather = _environment?.State(),
             steady = SteadyState(),

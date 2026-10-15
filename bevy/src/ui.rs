@@ -15,6 +15,7 @@ mod appearance;
 pub(crate) mod backdrop;
 mod attachments;
 mod clothing;
+mod storage;
 mod crosshair;
 mod map;
 mod network_menu;
@@ -91,6 +92,7 @@ pub struct UiModel {
     pub held_item_id: u16,
     pub stance: String,
     pub pages: Vec<InventoryPage>,
+    pub storage: storage::View,
     pub worn: [u16; 7],
     pub recipes: Vec<Recipe>,
     pub notices: Vec<String>,
@@ -116,6 +118,7 @@ impl Default for UiModel {
             held_item_id: 0,
             stance: String::new(),
             pages: vec![],
+            storage: default(),
             worn: [0; 7],
             recipes: vec![],
             notices: vec![],
@@ -131,6 +134,7 @@ impl UiModel {
         self.last_event_seq = 0;
         self.notices.clear();
         self.pages.clear();
+        self.storage = default();
         self.worn = [0; 7];
         self.recipes.clear();
     }
@@ -151,6 +155,9 @@ impl UiModel {
             .as_str()
             .map(str::to_owned)
             .unwrap_or_else(|| p["stance"].to_string());
+        if let Ok(storage) = serde_json::from_value(snapshot["storage"].clone()) {
+            self.storage = storage;
+        }
         if let Ok(pages) = serde_json::from_value(snapshot["inventory"]["pages"].clone()) {
             self.pages = pages;
         }
@@ -397,6 +404,7 @@ impl Plugin for GameUiPlugin {
                 map::MapPlugin,
                 tank_optics::TankOpticsPlugin,
                 vehicle_controls::VehicleControlsPlugin,
+                storage::StoragePlugin,
             ))
             .add_systems(Startup, spawn_ui_camera)
             .add_systems(
@@ -975,7 +983,7 @@ fn rebuild_overlay(
 ) {
     // Do not destroy and rebuild the widgets for every 50 Hz player snapshot.
     let detail = match state.screen {
-        Screen::Inventory => format!("{:?}|{:?}|{}", model.pages, model.worn, catalog.items.len()),
+        Screen::Inventory => format!("{:?}|{:?}|{:?}|{}", model.pages, model.worn, model.storage, catalog.items.len()),
         Screen::Crafting => format!("{:?}", model.recipes),
         Screen::Console | Screen::Chat => format!("{:?}", model.notices),
         Screen::MainMenu | Screen::Connecting => model.status.clone(),
@@ -1193,29 +1201,81 @@ fn inventory_panel(
         panel.spawn(text("Waiting for inventory...", 16.0, DIM));
         return;
     }
-    let page = pages[state.page % pages.len()];
-    panel.spawn(row()).with_children(|p| {
-        button(p, "<", UiButton::Page(-1));
-        p.spawn(text(
-            format!(
-                "{}  |  {} x {}",
-                page_name(page.index),
-                page.width,
-                page.height
-            ),
-            18.0,
-            ACCENT,
-        ));
-        button(p, ">", UiButton::Page(1));
-    });
-    let cell = (650.0 / f32::from(page.width.max(1)))
-        .min(40.0)
-        .min(310.0 / f32::from(page.height.max(1)));
+    if model.storage.net_id != 0 {
+        storage::columns(panel, state, model, assets);
+    } else {
+        let page = pages[state.page % pages.len()];
+        panel.spawn(row()).with_children(|p| {
+            button(p, "<", UiButton::Page(-1));
+            p.spawn(text(
+                format!(
+                    "{}  |  {} x {}",
+                    page_name(page.index),
+                    page.width,
+                    page.height
+                ),
+                18.0,
+                ACCENT,
+            ));
+            button(p, ">", UiButton::Page(1));
+        });
+        let cell = (650.0 / f32::from(page.width.max(1)))
+            .min(40.0)
+            .min(310.0 / f32::from(page.height.max(1)));
+        inventory_grid(panel, page, state, assets, cell);
+    }
+    panel.spawn(text(
+        "Select an item, then an empty cell to move it. R rotates the selected item.",
+        13.0,
+        DIM,
+    ));
+    if let Some((pg, x, y)) = state.selected_item {
+        if let Some(item) = model
+            .pages
+            .iter()
+            .find(|p| p.index == pg)
+            .and_then(|p| p.items.iter().find(|i| i.x == x && i.y == y))
+        {
+            panel.spawn(text(
+                format!(
+                    "{}  |  {}% condition  |  {} deg",
+                    item.name,
+                    item.quality,
+                    u16::from(state.rotation) * 90
+                ),
+                16.0,
+                ACCENT,
+            ));
+            panel.spawn(row()).with_children(|p| {
+                if let Some(slot) = catalog
+                    .items
+                    .get(&item.id)
+                    .and_then(|item| clothing::slot(&item.item_type))
+                {
+                    button(p, "Wear", UiButton::Wear(slot));
+                } else {
+                    button(p, "Equip", UiButton::Equip);
+                    button(p, "Use", UiButton::Consume);
+                }
+                button(p, "Drop", UiButton::Drop);
+            });
+        }
+    }
+}
+
+fn inventory_grid(
+    panel: &mut ChildSpawnerCommands,
+    page: &InventoryPage,
+    state: &UiState,
+    assets: &AssetServer,
+    cell: f32,
+) {
     panel
         .spawn(Node {
             width: px(cell * f32::from(page.width)),
             height: px(cell * f32::from(page.height)),
             position_type: PositionType::Relative,
+            flex_shrink: 0.,
             ..default()
         })
         .with_children(|grid| {
@@ -1304,43 +1364,6 @@ fn inventory_panel(
                 });
             }
         });
-    panel.spawn(text(
-        "Select an item, then an empty cell to move it. R rotates the selected item.",
-        13.0,
-        DIM,
-    ));
-    if let Some((pg, x, y)) = state.selected_item {
-        if let Some(item) = model
-            .pages
-            .iter()
-            .find(|p| p.index == pg)
-            .and_then(|p| p.items.iter().find(|i| i.x == x && i.y == y))
-        {
-            panel.spawn(text(
-                format!(
-                    "{}  |  {}% condition  |  {} deg",
-                    item.name,
-                    item.quality,
-                    u16::from(state.rotation) * 90
-                ),
-                16.0,
-                ACCENT,
-            ));
-            panel.spawn(row()).with_children(|p| {
-                if let Some(slot) = catalog
-                    .items
-                    .get(&item.id)
-                    .and_then(|item| clothing::slot(&item.item_type))
-                {
-                    button(p, "Wear", UiButton::Wear(slot));
-                } else {
-                    button(p, "Equip", UiButton::Equip);
-                    button(p, "Use", UiButton::Consume);
-                }
-                button(p, "Drop", UiButton::Drop);
-            });
-        }
-    }
 }
 
 fn crafting_panel(panel: &mut ChildSpawnerCommands, state: &UiState, model: &UiModel) {
