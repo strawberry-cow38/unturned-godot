@@ -6083,11 +6083,12 @@ namespace UnturnedGodot
         /// curve -- run out at each end to the street's asphalt, and the mouth it opens there. Builds nothing.</summary>
         void PlanLanes(RoadField roads)
         {
-            LanePlans.Clear(); LaneMouths.Clear(); LaneDeadEnds = 0;
+            LanePlans.Clear(); LaneMouths.Clear(); LaneDeadEnds = 0; OrphanAlleys = 0;
             DeadNoStreet = DeadGlancing = DeadNoCorner = DeadOffPavement = DeadOnMouth = MouthsNearCorner = 0; FirstDeadEnd = Vector3.Zero;
             if (!BuildBackLanes || roads == null || Alleys.Count == 0) return;
             float Y(Vector3 q) => _heightAt != null ? _heightAt(q.X, q.Z) : q.Y;
             var taken = new bool[Alleys.Count];
+            var orphans = new List<Alley>();
             for (int i = 0; i < Alleys.Count; i++)
             {
                 if (taken[i]) continue;
@@ -6106,6 +6107,15 @@ namespace UnturnedGodot
                 var outB = OutAt(endB, knee ? kneeAt : endA);
                 var mA = streetA ? OpenMouth(roads, endA, outA) : null;
                 var mB = OpenMouth(roads, endB, outB);
+                // ⭐ AN ALLEY NEITHER END OF WHICH OPENS IS NO ALLEY (strawberry 2026-10-15, of a lane piece kerbed shut at both
+                // ends between a triangle lot and a fenced one: "i see an orphaned alley... fix dat"). Nobody can drive into it,
+                // so it is not laid at all, and its strip goes back to the lots round it -- this runs before GrowPlots.
+                if (mA == null && mB == null)
+                {
+                    orphans.Add(al); if (knee) orphans.Add(Alleys[partner]);
+                    if (OrphanAlleys++ == 0) FirstOrphanAlley = (endA + endB) * 0.5f;
+                    continue;
+                }
                 if (streetA && mA == null && LaneDeadEnds++ == 0) FirstDeadEnd = endA;
                 if (mB == null && LaneDeadEnds++ == 0) FirstDeadEnd = endB;
                 // ⚠ AN END THAT CANNOT OPEN IS CLOSED: pulled back far enough for the kerb BuildLanes lays across it to stand
@@ -6171,7 +6181,15 @@ namespace UnturnedGodot
                 }
                 else LanePlans.Add(new LanePlan { Pts = line, A = mA, B = mB });
             }
+            if (orphans.Count > 0)
+            {
+                foreach (var al in orphans) Alleys.Remove(al);
+                Log.Print($"[towngrid] orphaned alleys: {OrphanAlleys} could open onto no street at either end -- not laid, their ground "
+                        + $"given back to the lots (the first at {FirstOrphanAlley.X:0},{FirstOrphanAlley.Z:0})");
+            }
         }
+        /// <summary>What the last PlanLanes dropped: alleys neither end of which could open onto a street.</summary>
+        public int OrphanAlleys; public Vector3 FirstOrphanAlley;
 
         /// <summary>The height of the nearest of our streets' own profiles to a point: where a closed lane end stands.</summary>
         /// <summary>Each road's centreline, a sample a metre, for "where does it pass nearest" -- asked of every kerb station

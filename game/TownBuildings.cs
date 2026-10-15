@@ -23,9 +23,28 @@ namespace UnturnedGodot
             /// +Z away from it -- so the plan's south side, z = 0, is the front, on the street.</summary>
             public Transform3D Frame;
             public float PadY; public double Ms; public string Failed;
+            /// <summary>Its front door came out on the plan's north side, and the frame is turned half round to put it on the street.</summary>
+            public bool TurnedRound;
         }
         /// <summary>What the last PlanBuildings generated.</summary>
         public readonly List<TownBuilding> Buildings = new();
+
+        /// <summary>Seeds tried for a plan with its front door on the street before settling.</summary>
+        public const int FrontTries = 4;
+        /// <summary>What the last PlanBuildings retried, and turned round.</summary>
+        public int FrontRetried;
+
+        /// <summary>Which side of its plan a building's front door is on (ground floor), or None.</summary>
+        static Sides FrontEdge(BuildingGenResult r)
+        {
+            foreach (var d in r.Doors)
+            {
+                if (d.Role != DoorRole.Front || d.Floor != 0) continue;
+                if (d.AlongX) return d.Line == 0 ? Sides.South : d.Line == r.CellsZ ? Sides.North : Sides.None;
+                return d.Line == 0 ? Sides.West : d.Line == r.CellsX ? Sides.East : Sides.None;
+            }
+            return Sides.None;
+        }
 
         /// <summary>How far the ground floor stands over its pad -- the editor stage's own clearance.</summary>
         public const float BuildingClearance = 0.25f;
@@ -114,13 +133,28 @@ namespace UnturnedGodot
             var index = new Dictionary<Plot, int>();
             for (int i = 0; i < Plots.Count; i++) index[Plots[i]] = i;
             var clock = System.Diagnostics.Stopwatch.StartNew();
-            double genMs = 0;
+            double genMs = 0; FrontRetried = 0;
             foreach (var pl in pick)
             {
                 var b = new TownBuilding { Plot = pl, Spec = SpecFor(pl, index[pl]) };
                 var t0 = System.Diagnostics.Stopwatch.StartNew();
-                try { b.Result = BuildingGen.Generate(b.Spec); }
-                catch (System.Exception e) { b.Failed = e.Message; }
+                // ⚠ THE FRONT DOOR ON THE STREET. FitPlot may give up the side asked for ("no layout put the front door on the
+                // South side: it went where it could") -- 7 of 115 in the first whole town. So another seed, up to FrontTries;
+                // and failing those, a door on the plan's NORTH side is turned to the street with the whole building (same
+                // rectangle, half round).
+                BuildingGenResult first = null; int firstSeed = b.Spec.Seed;
+                for (int tryN = 0; tryN < FrontTries; tryN++)
+                {
+                    var spec = SpecFor(pl, index[pl]); spec.Seed = firstSeed + tryN * 7919;     // (BuildingGenSpec.Copy is internal to the core)
+                    BuildingGenResult res = null;
+                    try { res = BuildingGen.Generate(spec); }
+                    catch (System.Exception e) { b.Failed ??= e.Message; }
+                    if (res == null) continue;
+                    first ??= res;
+                    if (FrontEdge(res) == Sides.South) { b.Result = res; b.Spec = spec; if (tryN > 0) FrontRetried++; break; }
+                }
+                if (b.Result == null && first != null) { b.Result = first; if (FrontEdge(first) == Sides.North) b.TurnedRound = true; }
+                if (b.Result != null) b.Failed = null;
                 b.Ms = t0.Elapsed.TotalMilliseconds; genMs += b.Ms;
                 if (b.Result == null) { Buildings.Add(b); continue; }
                 // the pad: the building zone's ground, averaged, levelled -- cut and filled inside, only cut outside
@@ -134,12 +168,18 @@ namespace UnturnedGodot
                     }
                 b.PadY = sum / Mathf.Max(1, n);
                 b.Frame = FrameFor(pl, b.Result.CellsX, b.PadY + BuildingClearance);
+                if (b.TurnedRound)
+                {
+                    var f0 = b.Frame;
+                    b.Frame = new Transform3D(new Basis(-f0.Basis.X, Vector3.Up, -f0.Basis.Z),
+                                              f0.Origin + f0.Basis.X * (b.Result.CellsX * BuildingGen.Cell) + f0.Basis.Z * (b.Result.CellsZ * BuildingGen.Cell));
+                }
                 if (terr != null)
                 {
                     var f = b.Frame;
                     var at = f.Origin - Vector3.Up * BuildingClearance;
                     float padY = b.PadY;
-                    terr.ConformToSurface(at, f.Basis.X, f.Basis.Z, 0f, b.Result.CellsX * BuildingGen.Cell, 0f, b.Result.CellsZ * BuildingGen.Cell,
+                    terr.ConformToSurface(at, f.Basis.X.Normalized(), f.Basis.Z.Normalized(), 0f, b.Result.CellsX * BuildingGen.Cell, 0f, b.Result.CellsZ * BuildingGen.Cell,
                                           (x, z) => padY, Terrain.GridUnit, PadFeather,
                                           keepOut: (x, z) => roads.DeepestRoadOverlap(new Vector3(x, 0f, z), PavementGap + _walkWidth, out _, out _));
                 }
@@ -150,8 +190,7 @@ namespace UnturnedGodot
             {
                 if (b.Result == null) continue;
                 ok++;
-                bool front = false;
-                foreach (var d in b.Result.Doors) if (d.Role == DoorRole.Front && d.Floor == 0 && d.AlongX && d.Line == 0) front = true;
+                bool front = FrontEdge(b.Result) == Sides.South || b.TurnedRound && FrontEdge(b.Result) == Sides.North;
                 if (front) fronted++;
                 string k = $"{b.Result.Kind}";
                 kinds[k] = (kinds.TryGetValue(k, out int c) ? c : 0) + 1;
@@ -162,7 +201,7 @@ namespace UnturnedGodot
             }
             int failed = Buildings.Count - ok;
             Log.Print($"[towngrid] buildings ({BuildingsMode}): {ok} generated on {pick.Count} plots{(failed > 0 ? $", {failed} FAILED (first: {Buildings.Find(x => x.Failed != null)?.Failed})" : "")}, "
-                    + $"{fronted} with the front door on the street; generator {genMs:0} ms ({genMs / Mathf.Max(1, pick.Count):0} ms a building), "
+                    + $"{fronted} with the front door on the street ({FrontRetried} on another seed, {Buildings.FindAll(x => x.TurnedRound).Count} turned round); generator {genMs:0} ms ({genMs / Mathf.Max(1, pick.Count):0} ms a building), "
                     + $"pads included {clock.ElapsedMilliseconds} ms -- {string.Join(", ", System.Linq.Enumerable.Select(kinds, kv => $"{kv.Value} {kv.Key}"))}");
             return ok;
         }
