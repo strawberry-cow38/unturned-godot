@@ -7,6 +7,39 @@ namespace UnturnedNet.Tests
     [TestFixture]
     public class SeatedCombatCarrierTests
     {
+        [Test]
+        public void ExitRecoveryStopsInFlightSeatedCarrierOverwritingAcceptedDoorPosition()
+        {
+            var h = new TransactionalHarness(7352).Connected("passenger");
+            var c = h.Clients[0];
+            h.Server.PlayerHost.AcceptSeatedActions = true;
+            h.Server.VehicleHost.RepositionExitedOwner = h.Server.PlayerHost.RepositionOwner;
+            var car = h.Server.Vehicles.ServerSpawn(h.Server.Ids.Mint(), 0, 0, new Vector3(1, 0, 0), h.Server.Session.CurrentTick);
+            h.Server.Vehicles.ServerSetSeatCount(new NetId(car.NetIdValue), 2);
+            c.SendEnterVehicle(car.NetIdValue, 1);
+            Assert.That(h.StepUntil(() => h.Server.VehicleHost.IsSeated(c.PlayerId)), Is.True);
+            c.SendPlayerState(Vector3.zero, 0, 0, Vector3.zero, 0, true, 0);
+            h.Step(10);
+            var exit = new Vector3(2, 0, 1);
+            h.Server.VehicleHost.ResolveExit = (_, _) => (true, exit);
+            PlayerRecovEvent recovery = default;
+            c.PlayerRecov += e => recovery = e;
+            c.SendExitVehicle();
+            // Owner has not received the exit yet and keeps sending its last seat pose.
+            for (int n = 0; n < 20; n++) {
+                c.SendPlayerState(Vector3.zero, 0, 0, Vector3.zero, 0, true, 0);
+                h.Step();
+            }
+            Assert.That(h.Server.VehicleHost.IsSeated(c.PlayerId), Is.False);
+            h.Server.Players.TryGetByOwner(c.PlayerId, out var player);
+            Assert.That(player.Pos, Is.EqualTo(exit), "stale seat pose cannot move the accepted exit");
+            Assert.That(recovery.RecovCounter, Is.GreaterThan(0));
+            Assert.That(recovery.Pos, Is.EqualTo(exit));
+            c.SendPlayerState(exit + new Vector3(.1f, 0, 0), 0, 0, Vector3.zero, 0, true, recovery.RecovCounter);
+            h.Step(10);
+            Assert.That(player.Pos.x, Is.EqualTo(2.1f).Within(.02f), "echoing recovery resumes ordinary walking");
+        }
+
         [TestCase(false)]
         [TestCase(true)]
         public void OptionalSeatedCarrierDispatchesOnceWithoutAdoptingAnyMotion(bool enabled)

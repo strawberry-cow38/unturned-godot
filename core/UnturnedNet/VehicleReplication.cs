@@ -1021,6 +1021,12 @@ namespace UnturnedGodot.Net
         /// Terr.SampleHeight clamp here; null (every test/demo default) keeps the raw spot.</summary>
         public Func<Vector3, Vector3> AdjustExitSpot;
 
+        /// <summary>Optional owner recovery handshake after a seat exit. Needed
+        /// when seated clients keep streaming action carriers: an older packet
+        /// must not overwrite the exit before its reliable fact arrives. False
+        /// or null retains the original ServerTeleport fallback.</summary>
+        public Func<ushort, Vector3, long, bool> RepositionExitedOwner;
+
         /// <summary>The game layer's DOOR (Vehicle.ResolveDoorExit on the real node -- VehicleNetSync wires it, on the
         /// dedicated server and the listen host alike): may this seat of this vehicle get out, and where. `clear`
         /// false = the door is blocked. Null RESULT = no node to ask (it is being torn down) and null DELEGATE =
@@ -1397,7 +1403,8 @@ namespace UnturnedGodot.Net
                 var right = new Vector3(Mathf.Cos(yawRad), 0f, -Mathf.Sin(yawRad));
                 spot = door.HasValue && door.Value.clear ? door.Value.spot : v.Pos + right * 2.4f + new Vector3(0f, 1.0f, 0f);
                 if (AdjustExitSpot != null) spot = AdjustExitSpot(spot);   // §7 risk 6: terrain-snap a below-ground slope exit (a door spot is already on the ground; this only ever LIFTS, so it is a no-op there)
-                _players.ServerTeleport(playerId, spot, tick);
+                if (RepositionExitedOwner == null || !RepositionExitedOwner(playerId, spot, tick))
+                    _players.ServerTeleport(playerId, spot, tick);
             }
             // the event carries the final (post-clamp) spot: the exiting client's replica may be frozen
             // by a snapshot starvation/hold, but this fact rides ReliableOrdered and always arrives
