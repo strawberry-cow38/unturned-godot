@@ -163,7 +163,7 @@ fn smooth(shown: f32, target: f32, dt: f32) -> f32 {
 }
 // HUD.ContentBottom: reserve the band only for columns intersecting the
 // actual vitals rectangle, including its 12px clearance.
-fn content_bottom(viewport: Vec2, x0: f32, x1: f32, bottom: f32) -> f32 {
+pub(super) fn content_bottom(viewport: Vec2, x0: f32, x1: f32, bottom: f32) -> f32 {
     if x1 <= 24. || x0 >= 24. + 0.23 * viewport.x {
         bottom
     } else {

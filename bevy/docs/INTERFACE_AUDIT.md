@@ -69,7 +69,13 @@ managed read model. Native page/response controls preserve original indices,
 trades submit server intents, and pinning remains local presentation. Actual
 keyboard/mouse captures verified conditional choices, two pages, dollar buy/sell,
 independent scrolling, accepted quest grant and tracker/log/pin. Six focused
-native tests and peer code/image review pass. The quest log temporarily opens
-from Inventory; the original Information/map dashboard remains pending. See
+native tests and peer code/image review pass. The quest log now shares the original Information/map dashboard. See
 [NPC_UI_PORT.md](NPC_UI_PORT.md) for artifacts and the source quest 9/content and
 quest-persistence/progress gaps.
+
+The native Information screen now includes the original PEI/Washington/Yukon
+overviews and town positions, source map zoom/pan/markers, bounded tile residency,
+accepted player roster and shared quest pin/tracker. Real listen/UDP navigation
+and opened captures passed; nine map regressions cover source geometry, original
+assets, input and lifecycle. Skills, dashboard blur/transition effects and finite
+generated-island charts remain pending. See [INFORMATION_PORT.md](INFORMATION_PORT.md).

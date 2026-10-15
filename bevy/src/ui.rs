@@ -11,11 +11,13 @@ use bevy::{
 use serde::{Deserialize, Deserializer};
 use serde_json::{Value, json};
 
-mod attachments;
 mod appearance;
+mod attachments;
 mod clothing;
 mod crosshair;
+mod map;
 mod network_menu;
+pub(crate) use map::MapDiagnostics;
 pub(crate) mod npc;
 mod vitals;
 
@@ -225,6 +227,7 @@ pub enum Screen {
     Dead,
     Inventory,
     Crafting,
+    Information,
     Dialogue,
     Trade,
     Quests,
@@ -282,7 +285,11 @@ impl UiState {
         };
         matches!(
             screen,
-            Screen::MainMenu | Screen::Appearance | Screen::DirectConnect | Screen::Servers | Screen::Host
+            Screen::MainMenu
+                | Screen::Appearance
+                | Screen::DirectConnect
+                | Screen::Servers
+                | Screen::Host
         )
     }
 
@@ -372,6 +379,7 @@ impl Plugin for GameUiPlugin {
                 crosshair::CrosshairPlugin,
                 network_menu::NetworkMenuPlugin,
                 npc::NpcUiPlugin,
+                map::MapPlugin,
             ))
             .add_systems(Startup, spawn_ui_camera)
             .add_systems(Startup, spawn_hud)
@@ -584,8 +592,12 @@ fn keyboard_ui(
     mouse: Res<ButtonInput<MouseButton>>,
     mut characters: MessageReader<KeyboardInput>,
     mut intents: MessageWriter<UiIntent>,
+    world: Option<Res<crate::world::WorldConfig>>,
 ) {
-    if matches!(state.screen, Screen::Dialogue | Screen::Trade | Screen::Quests) {
+    if matches!(
+        state.screen,
+        Screen::Dialogue | Screen::Trade | Screen::Quests
+    ) {
         characters.clear();
         return;
     }
@@ -681,32 +693,42 @@ fn keyboard_ui(
         return;
     }
     characters.clear();
-    if state.screen == Screen::Playing {
-        if settings.just_pressed(GameAction::Inventory, &keys, &mouse)
+    if matches!(
+        state.screen,
+        Screen::Playing | Screen::Inventory | Screen::Crafting | Screen::Information
+    ) {
+        let dashboard = if settings.just_pressed(GameAction::Inventory, &keys, &mouse)
             || keys.just_pressed(KeyCode::Tab)
         {
-            state.screen = Screen::Inventory;
+            Some(Screen::Inventory)
         } else if settings.just_pressed(GameAction::Craft, &keys, &mouse) {
-            state.screen = Screen::Crafting;
-        } else if settings.just_pressed(GameAction::Console, &keys, &mouse)
-            || keys.just_pressed(KeyCode::F1)
+            Some(Screen::Crafting)
+        } else if settings.just_pressed(GameAction::Map, &keys, &mouse)
+            && world
+                .as_ref()
+                .is_none_or(|world| map::available(&world.map_name))
         {
-            state.screen = Screen::Console;
-        } else if settings.just_pressed(GameAction::Chat, &keys, &mouse) {
-            state.screen = Screen::Chat;
-        }
-    } else if state.screen == Screen::Inventory {
-        if settings.just_pressed(GameAction::Inventory, &keys, &mouse)
-            || keys.just_pressed(KeyCode::Tab)
-        {
-            state.screen = Screen::Playing;
-        } else if keys.just_pressed(KeyCode::KeyR) {
+            Some(Screen::Information)
+        } else {
+            None
+        };
+        if let Some(target) = dashboard {
+            state.screen = if state.screen == target {
+                Screen::Playing
+            } else {
+                target
+            };
+        } else if state.screen == Screen::Inventory && keys.just_pressed(KeyCode::KeyR) {
             state.rotation = (state.rotation + 1) % 2;
+        } else if state.screen == Screen::Playing {
+            if settings.just_pressed(GameAction::Console, &keys, &mouse)
+                || keys.just_pressed(KeyCode::F1)
+            {
+                state.screen = Screen::Console;
+            } else if settings.just_pressed(GameAction::Chat, &keys, &mouse) {
+                state.screen = Screen::Chat;
+            }
         }
-    } else if state.screen == Screen::Crafting
-        && settings.just_pressed(GameAction::Craft, &keys, &mouse)
-    {
-        state.screen = Screen::Playing;
     }
 }
 
@@ -719,6 +741,7 @@ fn activate_button(
     time: Res<Time<Real>>,
     mut options: ResMut<crate::LaunchOptions>,
     mut intents: MessageWriter<UiIntent>,
+    world: Option<Res<crate::world::WorldConfig>>,
 ) {
     let Ok(action) = buttons.get(event.entity) else {
         return;
@@ -735,6 +758,13 @@ fn activate_button(
             }
         }
         UiButton::Open(screen) => {
+            if *screen == Screen::Information
+                && world
+                    .as_ref()
+                    .is_some_and(|world| !map::available(&world.map_name))
+            {
+                return;
+            }
             if matches!(
                 state.screen,
                 Screen::DirectConnect | Screen::Servers | Screen::Host
@@ -919,7 +949,15 @@ fn rebuild_overlay(
     for root in &roots {
         commands.entity(root).despawn();
     }
-    if matches!(state.screen, Screen::Playing | Screen::Attachments | Screen::Dialogue | Screen::Trade | Screen::Quests) {
+    if matches!(
+        state.screen,
+        Screen::Playing
+            | Screen::Attachments
+            | Screen::Dialogue
+            | Screen::Trade
+            | Screen::Quests
+            | Screen::Information
+    ) {
         return;
     }
     commands
@@ -982,7 +1020,12 @@ fn rebuild_overlay(
                 Screen::Crafting => crafting_panel(panel, &state, &model),
                 Screen::Settings => settings_panel(panel, &state, &settings),
                 Screen::Console | Screen::Chat => console_panel(panel, &state, &model),
-                Screen::Playing | Screen::Attachments | Screen::Dialogue | Screen::Trade | Screen::Quests => {}
+                Screen::Playing
+                | Screen::Attachments
+                | Screen::Dialogue
+                | Screen::Trade
+                | Screen::Quests
+                | Screen::Information => {}
             });
         });
 }
@@ -1089,7 +1132,9 @@ fn inventory_panel(
     panel.spawn(row()).with_children(|p| {
         p.spawn(text("INVENTORY", 26.0, TEXT));
         button(p, "Crafting", UiButton::Open(Screen::Crafting));
-        button(p, "Quests", UiButton::Open(Screen::Quests));
+        if map::available(&model.map_name) {
+            button(p, "Information", UiButton::Open(Screen::Information));
+        }
         button(p, "Close", UiButton::Resume);
     });
     clothing::worn_buttons(panel, model);
@@ -1252,6 +1297,9 @@ fn crafting_panel(panel: &mut ChildSpawnerCommands, state: &UiState, model: &UiM
     panel.spawn(row()).with_children(|p| {
         p.spawn(text("CRAFTING", 26.0, TEXT));
         button(p, "Inventory", UiButton::Open(Screen::Inventory));
+        if map::available(&model.map_name) {
+            button(p, "Information", UiButton::Open(Screen::Information));
+        }
         button(p, "Close", UiButton::Resume);
     });
     if model.recipes.is_empty() {

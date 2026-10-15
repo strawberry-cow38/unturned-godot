@@ -55,9 +55,9 @@ Trade rows show the original item icons, dollar prices and current held counts.
 Buy, sell one and sell all submit the existing transaction; the accepted inventory
 and dollar stack drive redraws. Scroll offsets survive those redraws. Vehicle
 rows retain the source unavailable state. The original `trade`/`tradepick` debug
-presentation is available; it does not grant stock or money. The quest log is
-currently reached through Inventory's Quests button while the original Information
-map dashboard remains pending. Pinning changes the local tracker selection only.
+presentation is available; it does not grant stock or money. The quest log is now shared with the original Information/map dashboard, reached
+with M or from Inventory/Craft. Pinning changes the local tracker selection only;
+see [INFORMATION_PORT.md](INFORMATION_PORT.md) for live navigation and map evidence.
 
 Six native tests exercise real keyboard page/choice gating, original filtered
 indices, accepted-only vendor transitions, capped trade intents, actual UI tree
@@ -109,10 +109,9 @@ verification. NPC flag/quest/progress persistence is absent from the original
 WorldSave. The live Janitor test also verified that his response grants quest 9,
 but no definition 9 is shipped: the original catalog-driven log cannot display it.
 Tracked kill/tree/object progress has no current gameplay callers,
-and vehicle vendor delivery is explicitly unfinished in the source. The native
-Information/map dashboard, NPC editor and NpcHeli remain separate milestones.
+and vehicle vendor delivery is explicitly unfinished in the source. The NPC editor and NpcHeli remain separate milestones.
 
-Original Information/map dashboard navigation, dialogue/editor authoring, and the
+Dialogue/editor authoring and the
 legacy `menu`, `say`, `track`, `flag`, `quest` and `tradestock` debug verbs remain
 separate work. In particular the old flag/quest/stock shortcuts directly mutate
 local state and must not be copied into a remote native client. No missing quest

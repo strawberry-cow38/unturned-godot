@@ -1635,3 +1635,30 @@ meshes sit on their original mounts. These are explicit presentation fixtures,
 not player firing evidence. Independent source review found no blocker. See
 `bevy/docs/TURRET_PORT.md` for remaining aim/fire/crew, tank camera/body and NPC
 helicopter integration; the vehicle milestone remains incomplete.
+
+### Bevy: original Information/map dashboard
+
+M and the dashboard buttons now open the original retail map, shared accepted
+quest log and live player roster. Native projection preserves the source 1920m
+extent and engine Z for PEI/Washington/Yukon. Original overviews, town TSVs and
+4x4 detailed tiles load through the configured content root; source cyan/gold
+arrow/pin geometry, measured priority labels, cursor zoom, bounded drag, marker
+hit/removal and close/reopen retention are present. Tiles release outside the
+source visibility margin and below 2x. InfiniteWorld still deliberately has no
+retail MapUI. No map or quest authority is mutated locally.
+
+Nine focused map tests pass, alongside the earlier 38 UI tests and shared accepted
+quest pin regression. The first real render caught rejected absolute asset paths
+and roster/HUD overlap at 720p; both now have guarding regressions, preserving
+source geometry at 1080p. Real X11 wheel magnitude 2 also exposed a gain mismatch;
+source wheel direction now steps exactly 1.18, proven through actual input messages.
+
+The real PEI listen/UDP journey used matching immutable npc-view-53 processes.
+Opened bevy-information captures show original overview,5.23x tiles, M1 pin,
+pan and reopen retention, accepted two-player roster 5 m apart, Medic's defined
+Research Recovery 124, local pin/tracker, marker removal, six tile handles released
+at 1x, and Craft/Inventory/Information navigation. Pause/Quit exited 0. Source and
+independent overview/zoom image reviews found no blocker. The frozen screenshots
+predate only the final wheel gain correction; they are not a per-notch count claim.
+Skills, blur/MenuSwoop, finite generated-island chart and existing blank crafting
+recipe names remain explicit gaps. See bevy/docs/INFORMATION_PORT.md.

@@ -10,7 +10,7 @@ use bevy::{
 };
 
 #[derive(Resource)]
-pub(super) struct OriginalFont(Handle<Font>);
+pub(crate) struct OriginalFont(pub(crate) Handle<Font>);
 impl FromWorld for OriginalFont {
     fn from_world(world: &mut World) -> Self {
         Self(world.resource_mut::<Assets<Font>>().add(Font::from_bytes(

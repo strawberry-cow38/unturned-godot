@@ -273,3 +273,30 @@ fn session_epoch_or_disconnect_clears_old_vendor_pages_tracker_and_pin() {
     assert_eq!(app.world().resource::<Menu>().view, View::default());
     assert_eq!(app.world().resource::<UiState>().screen, Screen::Playing);
 }
+
+#[test]
+fn information_embeds_accepted_quests_and_pin_changes_no_authoritative_state() {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins)
+        .init_resource::<Menu>()
+        .init_resource::<UiState>()
+        .add_message::<UiIntent>()
+        .add_observer(activate);
+    let view:View=serde_json::from_value(json!({"revision":8,"quests":[{"id":124,"name":"Research Recovery","status":"active","objectives":[{"text":"Find 0/4 Research Capsules","done":false}]}]})).unwrap();
+    app.world_mut().resource_mut::<Menu>().view = view.clone();
+    app.world_mut().resource_mut::<UiState>().screen = Screen::Information;
+    let pin = app.world_mut().spawn((Button, Action::Pin(124))).id();
+    app.world_mut().trigger(Activate { entity: pin });
+    assert_eq!(app.world().resource::<Menu>().pinned, 124);
+    assert_eq!(app.world().resource::<Menu>().view, view);
+    assert!(intents(&mut app).is_empty());
+    app.world_mut().trigger(Activate { entity: pin });
+    assert_eq!(app.world().resource::<Menu>().pinned, 0);
+    app.world_mut().resource_mut::<UiState>().screen = Screen::Playing;
+    app.world_mut().trigger(Activate { entity: pin });
+    assert_eq!(
+        app.world().resource::<Menu>().pinned,
+        0,
+        "Detached map controls cannot change the pin"
+    );
+}

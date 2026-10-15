@@ -11,6 +11,8 @@ use bevy::{
     picking::hover::HoverMap,
 };
 
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(super) struct NpcUpdate;
 pub(super) struct NpcUiPlugin;
 impl Plugin for NpcUiPlugin {
     fn build(&self, app: &mut App) {
@@ -20,6 +22,7 @@ impl Plugin for NpcUiPlugin {
                 (console, refresh, input, draw, scroll)
                     .chain()
                     .in_set(UiUpdate)
+                    .in_set(NpcUpdate)
                     .after(keyboard_ui)
                     .before(rebuild_overlay),
             )
@@ -190,7 +193,7 @@ struct Objective {
     done: bool,
 }
 #[derive(Resource, Default, Debug)]
-struct Menu {
+pub(super) struct Menu {
     view: View,
     page: usize,
     vendor: String,
@@ -309,7 +312,7 @@ fn refresh(
     if menu.epoch != epoch.0 || snapshot.0["connected"] != true {
         if matches!(
             state.screen,
-            Screen::Dialogue | Screen::Trade | Screen::Quests
+            Screen::Dialogue | Screen::Trade | Screen::Quests | Screen::Information
         ) {
             state.screen = Screen::Playing
         }
@@ -330,7 +333,7 @@ fn refresh(
         && menu.view.revision == 0
         && !matches!(
             state.screen,
-            Screen::Dialogue | Screen::Trade | Screen::Quests
+            Screen::Dialogue | Screen::Trade | Screen::Quests | Screen::Information
         )
     {
         return;
@@ -447,7 +450,7 @@ fn activate(
             menu.selection = Some((*sell, *index))
         }
         Action::Trade(all) if state.screen == Screen::Trade => menu.trade(*all, &mut intents),
-        Action::Pin(id) if state.screen == Screen::Quests => {
+        Action::Pin(id) if matches!(state.screen, Screen::Quests | Screen::Information) => {
             menu.pinned = if menu.pinned == *id { 0 } else { *id };
             menu.poll = 0.
         }
@@ -662,49 +665,76 @@ fn trade(p: &mut ChildSpawnerCommands, menu: &Menu, assets: &AssetServer) {
     action_button(p, "Back [Esc]", Action::CloseTrade, true, false);
 }
 fn quests(p: &mut ChildSpawnerCommands, menu: &Menu) {
-    p.spawn(text("QUESTS", 24., TEXT));
-    p.spawn((
-        Scroller(2),
-        ScrollPosition(Vec2::new(0., menu.scroll[2])),
-        Node {
-            max_height: px(470),
-            overflow: Overflow::scroll_y(),
-            ..column()
-        },
-    ))
-    .with_children(|list| {
-        for quest in &menu.view.quests {
-            action_button(
-                list,
-                format!(
-                    "{}{} | {}",
-                    if menu.pinned == quest.id { "* " } else { "" },
-                    quest.name,
-                    quest.status
-                ),
-                Action::Pin(quest.id),
-                true,
-                menu.pinned == quest.id,
-            );
-            if quest.status == "completed" {
-                list.spawn(text(&quest.description, 14., DIM));
-            } else {
-                objectives(list, quest)
+    quest_panel(p, menu, 550., true);
+}
+impl Menu {
+    pub(super) fn quest_signature(&self) -> String {
+        format!(
+            "{:?}|{}|{}",
+            self.view.quests, self.view.unknown_quests, self.pinned
+        )
+    }
+}
+pub(super) fn quest_panel(
+    p: &mut ChildSpawnerCommands,
+    menu: &Menu,
+    height: f32,
+    standalone: bool,
+) {
+    p.spawn(Node {
+        width: percent(100),
+        height: px(height),
+        ..column()
+    })
+    .with_children(|p| {
+        p.spawn(text("QUESTS", 20., TEXT));
+        p.spawn((
+            Scroller(2),
+            ScrollPosition(Vec2::new(0., menu.scroll[2])),
+            Node {
+                height: px((height - if standalone { 110. } else { 60. }).max(30.)),
+                min_height: px(30),
+                width: percent(100),
+                overflow: Overflow::scroll_y(),
+                ..column()
+            },
+        ))
+        .with_children(|list| {
+            for quest in &menu.view.quests {
+                action_button(
+                    list,
+                    format!(
+                        "{}{} | {}",
+                        if menu.pinned == quest.id { "* " } else { "" },
+                        quest.name,
+                        quest.status
+                    ),
+                    Action::Pin(quest.id),
+                    true,
+                    menu.pinned == quest.id,
+                );
+                if quest.status == "completed" {
+                    list.spawn(text(&quest.description, 14., DIM));
+                } else {
+                    objectives(list, quest)
+                }
             }
-        }
-        if menu.view.quests.is_empty() {
-            list.spawn(text("No quests yet", 16., DIM));
+            if menu.view.quests.is_empty() {
+                list.spawn(text("No quests yet", 16., DIM));
+            }
+        });
+        p.spawn(text(
+            format!(
+                "{} not discovered | Click a quest to pin/unpin",
+                menu.view.unknown_quests
+            ),
+            13.,
+            DIM,
+        ));
+        if standalone {
+            action_button(p, "Inventory [Esc]", Action::Inventory, true, false);
         }
     });
-    p.spawn(text(
-        format!(
-            "{} not discovered | Click a quest to pin/unpin",
-            menu.view.unknown_quests
-        ),
-        13.,
-        DIM,
-    ));
-    action_button(p, "Inventory [Esc]", Action::Inventory, true, false);
 }
 fn draw(
     mut commands: Commands,
