@@ -1,6 +1,9 @@
 //! Feed the authority the same moving triangles that the native client renders.
 use super::*;
 use bevy::render::render_resource::PrimitiveTopology;
+mod source_world;
+#[cfg(test)]
+mod source_world_tests;
 
 #[derive(Clone)]
 struct Stamp {
@@ -82,6 +85,9 @@ pub fn upload(
         Option<&turrets::Mounts>,
         Option<&glazing::Glazing>,
         Option<&bifold::Built>,
+        Option<Ref<Collider>>,
+        Option<Ref<CollisionGroups>>,
+        &GlobalTransform,
     )>,
     hierarchy: Query<(
         Option<&ChildOf>,
@@ -101,6 +107,7 @@ pub fn upload(
         ),
         Without<crate::particles::Emitter>,
     >,
+    surfaces: Query<(&collision::hull_mesh::HullMesh, &Collider, &GlobalTransform)>,
     meshes: Res<Assets<Mesh>>,
     mut uploaded: ResMut<GeometryUploads>,
 ) {
@@ -125,18 +132,22 @@ pub fn upload(
     let mut live = HashSet::new();
     let roots: HashMap<_, _> = bodies
         .iter()
-        .map(|(entity, body, pose, mounts, glazing, door)| {
-            live.insert(body.net_id);
-            let stamp = Stamp::of(body, pose, mounts, glazing, door);
-            if uploaded
-                .previous
-                .get(&body.net_id)
-                .is_none_or(|last| last.changed(&stamp))
-            {
-                changed.insert(body.net_id, (stamp, Vec::new()));
-            }
-            (entity, body.net_id)
-        })
+        .map(
+            |(entity, body, pose, mounts, glazing, door, collider, groups, _)| {
+                live.insert(body.net_id);
+                let stamp = Stamp::of(body, pose, mounts, glazing, door);
+                if collider.is_some_and(|shape| shape.is_changed())
+                    || groups.is_some_and(|groups| groups.is_changed())
+                    || uploaded
+                        .previous
+                        .get(&body.net_id)
+                        .is_none_or(|last| last.changed(&stamp))
+                {
+                    changed.insert(body.net_id, (stamp, Vec::new()));
+                }
+                (entity, body.net_id)
+            },
+        )
         .collect();
     let vanished: Vec<_> = uploaded
         .previous
@@ -205,10 +216,12 @@ pub fn upload(
         } else if let Some(tire) = tire {
             format!("tire:{}", tire.index)
         } else if let Some(wheel) = wheel.filter(|wheel| {
-            bodies.get(wheel.body).is_ok_and(|(_, body, _, _, _, _)| {
-                let spec = &data::definition(body.type_id).unwrap().spec;
-                !spec.plane && !spec.tracked
-            })
+            bodies
+                .get(wheel.body)
+                .is_ok_and(|(_, body, _, _, _, _, _, _, _)| {
+                    let spec = &data::definition(body.type_id).unwrap().spec;
+                    !spec.plane && !spec.tracked
+                })
         }) {
             format!("tire:{}", wheel.index)
         } else {
@@ -216,6 +229,27 @@ pub fn upload(
         };
         if let Some(row) = mesh_request(mesh, hit_pose.as_ref().unwrap_or(pose), id, &part) {
             output.push(row);
+        }
+    }
+    // FinaliseHitboxLayers leaves world bit0 only on an actual fallback
+    // chassis. Add the live physics shape separately from combat triangles.
+    for (_, body, _, _, _, _, collider, groups, pose) in &bodies {
+        if let Some((_, rows)) = changed.get_mut(&body.net_id) {
+            if let (Some(collider), Some(groups)) = (collider, groups) {
+                if source_world::retained(&groups) && !rows.is_empty() {
+                    source_world::append(rows, &collider, pose, body.net_id);
+                }
+            }
+        }
+    }
+    for (hull, collider, pose) in &surfaces {
+        let Some(id) = roots.get(&hull.0) else {
+            continue;
+        };
+        if let Some((_, rows)) = changed.get_mut(id) {
+            if !rows.is_empty() {
+                source_world::append(rows, collider, pose, *id);
+            }
         }
     }
     for (id, (stamp, meshes)) in changed {
@@ -255,7 +289,9 @@ fn mesh_request(
     if !indices.len().is_multiple_of(3) {
         return None;
     }
-    Some(json!({"vertices":vertices,"indices":indices,"vehicleNetId":net_id,"bodyPart":part}))
+    Some(
+        json!({"vertices":vertices,"indices":indices,"vehicleNetId":net_id,"bodyPart":part,"sourceWorld":false,"combat":true}),
+    )
 }
 
 #[cfg(test)]
@@ -270,6 +306,8 @@ mod tests {
         );
         let row = mesh_request(&mesh, &pose, 77, "hull").unwrap();
         assert_eq!(row["vehicleNetId"], 77);
+        assert_eq!(row["sourceWorld"], false);
+        assert_eq!(row["combat"], true);
         assert_eq!(row["indices"].as_array().unwrap().len(), 36);
         let points: Vec<[f32; 3]> = serde_json::from_value(row["vertices"].clone()).unwrap();
         let min = points.iter().fold(Vec3::splat(f32::INFINITY), |a, p| {

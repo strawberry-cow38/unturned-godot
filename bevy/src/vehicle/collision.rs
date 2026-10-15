@@ -1,4 +1,7 @@
 //! Reuses the original shipped convex bakes; new meshes decompose off the render thread.
+pub(super) mod hull_mesh;
+#[cfg(test)]
+mod hull_mesh_tests;
 use super::{
     VehicleBody,
     data::{VehicleDefinition, definition},

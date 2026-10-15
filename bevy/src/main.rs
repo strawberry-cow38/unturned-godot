@@ -126,7 +126,7 @@ fn main() -> Result<()> {
                 .set(ImagePlugin::default_nearest()),
         )
         .add_plugins((
-            RapierPhysicsPlugin::<NoUserData>::default().in_fixed_schedule(),
+            RapierPhysicsPlugin::<vehicle::PhysicsHooks>::default().in_fixed_schedule(),
             content::ContentPlugin,
             particles::ParticlePlugin,
             projectiles::ProjectilePlugin,

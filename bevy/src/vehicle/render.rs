@@ -278,6 +278,7 @@ pub fn build(
             wheel_mat,
         );
     }
+    super::collision::hull_mesh::build(commands, entity, d, root, cache);
     if s.body.is_some()
         && s.hull_bands.is_none()
         && s.hull_boxes.is_none()
