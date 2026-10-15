@@ -63,6 +63,9 @@ namespace UnturnedGodot.Net
     /// </summary>
     public sealed class ServerTransactions
     {
+        /// <summary>Optional host presentation fact, invoked only after the exact
+        /// validated inventory instance was spent and its effects applied.</summary>
+        public Action<ushort, ConsumeCommand, ushort> ConsumeApplied;
         /// <summary>Server-side pickup reach: SP picks up by eye-ray focus at arm's length; the server
         /// bounds it generously (grid-quantized feet positions, no eye trace).</summary>
         public const float PickupReach = 6f;
@@ -1811,6 +1814,7 @@ namespace UnturnedGodot.Net
                     else page.removeItem(index);
                     Knowledge.ItemsSpent++;
                     Diag.ConsumesApplied++;
+                    ConsumeApplied?.Invoke(sender, cmd, asset.id);
                     return;
                 }
             }
@@ -1844,6 +1848,7 @@ namespace UnturnedGodot.Net
                 asset.useFood / 100f, asset.useWater / 100f, asset.useEnergy / 100f,
                 (asset.useVirus - asset.useDisinfectant) / 100f,
                 asset.useStopsBleeding, asset.useHealBroken, _tick());
+            ConsumeApplied?.Invoke(sender, cmd, asset.id);
         }
 
         void OnPlantCrop(ushort sender, PlantCropCommand cmd)

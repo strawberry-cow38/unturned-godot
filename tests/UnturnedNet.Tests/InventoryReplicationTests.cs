@@ -278,6 +278,12 @@ namespace UnturnedNet.Tests
             h.Server.CombatState.TryGet(a.PlayerId, out var ce);
             ce.HealthExact = 50f;
             ce.Health = 50;
+            int accepted = 0;
+            h.Server.Transactions.ConsumeApplied = (owner, cmd, item) => {
+                Assert.That(owner, Is.EqualTo(a.PlayerId)); Assert.That(item, Is.EqualTo(TransactionalFixtures.BeansId));
+                Assert.That(cmd.Page, Is.EqualTo(2)); Assert.That(ce.HealthExact, Is.EqualTo(60f), "fact follows applied effects");
+                accepted++;
+            };
             h.Server.CombatState.MarkDirty(ce, h.Server.Session.CurrentTick);
             h.Step(10);
 
@@ -291,6 +297,7 @@ namespace UnturnedNet.Tests
             a.SendConsume(2, 0, 0);   // nothing there anymore
             h.Step(15);
             Assert.That(h.Server.Transactions.Diag.ConsumesRejected, Is.EqualTo(1));
+            Assert.That(accepted, Is.EqualTo(1), "a stale cell never produces an accepted-use fact");
         }
 
         [Test]

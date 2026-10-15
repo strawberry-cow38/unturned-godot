@@ -18,10 +18,36 @@ namespace UnturnedGodot.Net
     {
         public readonly Vector3 Point;
         public readonly int DestructibleIndex, ResourceIndex;
-        public CombatWorldHit(Vector3 point, int destructibleIndex = -1, int resourceIndex = -1)
-        { Point = point; DestructibleIndex = destructibleIndex; ResourceIndex = resourceIndex; }
+        public readonly uint VehicleNetId, DeployableNetId;
+        public readonly string BodyPart;
+        public CombatWorldHit(Vector3 point, int destructibleIndex = -1, int resourceIndex = -1,
+            uint vehicleNetId = 0, uint deployableNetId = 0, string bodyPart = null)
+        { Point = point; DestructibleIndex = destructibleIndex; ResourceIndex = resourceIndex;
+          VehicleNetId = vehicleNetId; DeployableNetId = deployableNetId; BodyPart = bodyPart; }
     }
     public delegate bool CombatWorldRayDetailed(Vector3 from, Vector3 to, out CombatWorldHit hit);
+    /// <summary>Damage resolved by the server's world ray, never a client hit claim.
+    /// The host owns each real body's lifecycle and keeps its NetId spaces distinct.</summary>
+    public readonly struct CombatBodyHit
+    {
+        public readonly CombatWorldHit Hit;
+        public readonly ushort Attacker;
+        public readonly float Damage;
+        public readonly bool Melee;
+        public readonly Vector3 Direction;
+        public readonly long Tick;
+        public CombatBodyHit(CombatWorldHit hit, ushort attacker, float damage, bool melee, Vector3 direction, long tick)
+        { Hit = hit; Attacker = attacker; Damage = damage; Melee = melee; Direction = direction; Tick = tick; }
+    }
+    public readonly struct CombatBlast
+    {
+        public readonly Vector3 Position;
+        public readonly float Radius, VehicleDamage;
+        public readonly ushort Attacker, ItemId;
+        public readonly long Tick;
+        public CombatBlast(Vector3 position, float radius, float vehicleDamage, ushort attacker, ushort itemId, long tick)
+        { Position = position; Radius = radius; VehicleDamage = vehicleDamage; Attacker = attacker; ItemId = itemId; Tick = tick; }
+    }
     public readonly struct CombatResourceHit
     {
         public readonly int Index;
@@ -168,6 +194,8 @@ namespace UnturnedGodot.Net
         public IZombieHost ZombieHost;
         public CombatWorldRayDetailed WorldRayDetailed;
         public Action<CombatResourceHit> DamageResource;
+        public Action<CombatBodyHit> DamageBody;
+        public Action<CombatBlast> DamageHostBlast;
         public CombatWorldRay WorldRay;                       // optional world-geometry occlusion + bullet stops
         // destructible props (rubble): (index, amount, tick) -> destroyed? Set by the host to ServerDestructibles.DamageObject.
         // Null on the L0 default (no world = nothing destructible to hit).
@@ -398,6 +426,10 @@ namespace UnturnedGodot.Net
         /// <summary>Spend the thrown item from the thrower's bag; false = they had none, and the throw is refused.
         /// Wired by the host to ServerTransactions.SpendThrowable. Null in a fixture with no inventory layer.</summary>
         public System.Func<ushort, ushort, bool> SpendThrowable;
+        /// <summary>Optional live-host inventory gate. Null preserves legacy fixtures;
+        /// spending still occurs only after every validation has succeeded.</summary>
+        public Func<ushort, ushort, bool> CanThrow;
+        public Action<ushort, ushort, uint, long> ThrowAccepted;
 
         public void OnGrenade(ushort sender, in GrenadeCommand cmd, long tick)
         {
@@ -412,6 +444,7 @@ namespace UnturnedGodot.Net
             // blast by naming a bandage.
             ThrowableDef def = cmd.ItemId == 0 ? Throwables.Find(254) : Throwables.Find(cmd.ItemId);
             if (def == null) { Diag.GrenadesRejected++; return; }
+            if (CanThrow != null && !CanThrow(sender, def.Id)) { Diag.GrenadesRejected++; return; }
             // PAY FOR IT. Last of the checks on purpose: the only one with a side effect, so everything cheap is
             // rejected before anything leaves the bag.
             //
@@ -435,6 +468,7 @@ namespace UnturnedGodot.Net
                                               ExplodeTick = endTick, ItemId = def.Id, Def = def });
             _projectiles.ServerSpawn(id, KindOf(def), cmd.Origin, tick);
             Diag.GrenadesAccepted++;
+            ThrowAccepted?.Invoke(sender, def.Id, id.Value, tick);
         }
 
         static ProjectileKind KindOf(ThrowableDef d) => d.Kind switch
@@ -522,6 +556,7 @@ namespace UnturnedGodot.Net
                 float hitRelY = 0f, hitTop = 0f, hitHeadMin = PlayerHeadMinY, hitTorsoMin = PlayerTorsoMinY;   // per-hit zone splits (stance-adaptive)
                 Vector3 worldPoint = default;
                 int hitDestructible = -1, hitResource = -1;
+                CombatWorldHit bodyHit = default;
 
                 if (PvPEnabled)
                     foreach (var pe in _players.All)
@@ -545,7 +580,7 @@ namespace UnturnedGodot.Net
                     var wp = worldHit.Point;
                     float segLen = (next - b.Pos).magnitude;
                     float t = segLen > 1e-4f ? (wp - b.Pos).magnitude / segLen : 0f;
-                    if (t < bestT) { bestT = t; hitKind = 3; worldPoint = wp; hitDestructible = worldHit.DestructibleIndex; hitResource = worldHit.ResourceIndex; }
+                    if (t < bestT) { bestT = t; hitKind = 3; worldPoint = wp; hitDestructible = worldHit.DestructibleIndex; hitResource = worldHit.ResourceIndex; bodyHit = worldHit; }
                 }
 
                 if (hitKind != 0)
@@ -590,7 +625,9 @@ namespace UnturnedGodot.Net
                         case 3:
                             // a destructible prop's collider: whittle its health; the break fx rides the
                             // replicated ObjectDestroyed event (not this local impact), so no double-fx.
-                            if (hitResource >= 0) DamageResource?.Invoke(new CombatResourceHit(hitResource, b.Shooter,
+                            if (bodyHit.VehicleNetId != 0 || bodyHit.DeployableNetId != 0)
+                                DamageBody?.Invoke(new CombatBodyHit(bodyHit, b.Shooter, b.Gun.VehicleDamage, false, dir, tick));
+                            else if (hitResource >= 0) DamageResource?.Invoke(new CombatResourceHit(hitResource, b.Shooter,
                                 b.Gun.ResourceDamage, b.Gun.ResourceDamage, false, b.Gun.AssetName, point, dir, tick));
                             else if (hitDestructible >= 0) DamageObject?.Invoke(hitDestructible, b.Gun.ObjectDamage, tick);
                             // ...or a barricade (door/bed), which is not in that index space. Same segment,
@@ -682,7 +719,9 @@ namespace UnturnedGodot.Net
                     // collider (fence/sign/billboard). The break fx rides the replicated ObjectDestroyed event.
                     var to = origin + fwd * reach;
                     bool hitWorld = RayWorld(origin, to, out var worldHit);
-                    if (hitWorld && worldHit.ResourceIndex >= 0) DamageResource?.Invoke(new CombatResourceHit(worldHit.ResourceIndex,
+                    if (hitWorld && (worldHit.VehicleNetId != 0 || worldHit.DeployableNetId != 0))
+                        DamageBody?.Invoke(new CombatBodyHit(worldHit, pm.Attacker, melee.VehicleDamage * mult, true, fwd, tick));
+                    else if (hitWorld && worldHit.ResourceIndex >= 0) DamageResource?.Invoke(new CombatResourceHit(worldHit.ResourceIndex,
                         pm.Attacker, melee.ZombieDamage * mult, melee.ResourceDamage * mult, true, melee.AssetName, worldHit.Point, fwd, tick));
                     else if (hitWorld && worldHit.DestructibleIndex >= 0) DamageObject?.Invoke(worldHit.DestructibleIndex, melee.ObjectDamage * mult, tick);
                     // ...or a barricade in the same swing. Checked even when the ray found no destructible,
@@ -750,6 +789,7 @@ namespace UnturnedGodot.Net
             float radius = g.Def?.Radius ?? prof.Radius;
             float zombieDamage = g.Def?.ZombieDamage ?? prof.ZombieDamage;
             float playerDamage = g.Def?.PlayerDamage ?? prof.PlayerDamage;
+            DamageHostBlast?.Invoke(new CombatBlast(g.Pos, radius, g.Def?.VehicleDamage ?? 0f, g.Owner, g.ItemId, tick));
             if (ZombieHost != null)
                 foreach (var ze in _zombies.All)
                 {

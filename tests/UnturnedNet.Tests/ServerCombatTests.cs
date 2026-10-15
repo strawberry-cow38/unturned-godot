@@ -617,5 +617,53 @@ namespace UnturnedNet.Tests
             Assert.That(hit.Value.Weapon, Is.EqualTo("axe_pick"));
         }
 
+        [Test]
+        public void HostBodyRay_RoutesAcceptedBulletAndMelee_WithoutRubbleAlias()
+        {
+            var h = new Harness(50904).Connected("fighter"); var c = h.Clients[0];
+            h.Server.Players.TryGetByOwner(c.PlayerId, out var player);
+            var hits = new List<CombatBodyHit>(); int rubble = 0;
+            h.Server.Combat.WorldRayDetailed = (Vector3 from, Vector3 to, out CombatWorldHit hit) => {
+                hit = new CombatWorldHit((from + to) * .5f, vehicleNetId: 47, bodyPart: "mainRotor"); return true;
+            };
+            h.Server.Combat.DamageBody = hits.Add;
+            h.Server.Combat.DamageObject = (_, _, _) => { rubble++; return false; };
+            h.Server.Combat.SetGunProfile(c.PlayerId, new ServerGunProfile { VehicleDamage = 31f });
+            c.SendFire(Eye(player.Pos), Vector3.forward); h.Step(10);
+            Assert.That(hits.Count, Is.EqualTo(1)); Assert.That(hits[0].Damage, Is.EqualTo(31f));
+            Assert.That(hits[0].Hit.VehicleNetId, Is.EqualTo(47)); Assert.That(hits[0].Hit.BodyPart, Is.EqualTo("mainRotor"));
+            h.Server.Combat.WorldRayDetailed = (Vector3 from, Vector3 to, out CombatWorldHit hit) => {
+                hit = new CombatWorldHit((from + to) * .5f, deployableNetId: 94); return true;
+            };
+            h.Server.Combat.ResolveHeldMeleeProfile = (_, _) => new ServerMeleeProfile { VehicleDamage = 9f, StrongMult = 2f, HitDelayTicks = 1 };
+            c.SendMelee(true, 0); h.Step(10);
+            Assert.That(hits.Count, Is.EqualTo(2)); Assert.That(hits[1].Damage, Is.EqualTo(18f));
+            Assert.That(hits[1].Hit.DeployableNetId, Is.EqualTo(94)); Assert.That(hits[1].Melee, Is.True);
+            Assert.That(rubble, Is.Zero);
+        }
+
+        [Test]
+        public void HostThrowableGate_SpendsAndReportsOnlyAcceptedThrows_AndSmokeHasNoBlast()
+        {
+            var h = new Harness(50905).Connected("thrower"); var c = h.Clients[0];
+            h.Server.Players.TryGetByOwner(c.PlayerId, out var player);
+            bool owned = false; int spent = 0, accepted = 0; var blasts = new List<CombatBlast>();
+            h.Server.Combat.CanThrow = (_, _) => owned;
+            h.Server.Combat.SpendThrowable = (_, _) => { spent++; return true; };
+            h.Server.Combat.ThrowAccepted = (_, _, _, _) => accepted++;
+            h.Server.Combat.DamageHostBlast = blasts.Add;
+            c.SendGrenade(Eye(player.Pos), Vector3.zero, 254); h.Step(10);
+            Assert.That(spent, Is.Zero); Assert.That(accepted, Is.Zero);
+            owned = true;
+            c.SendGrenade(Eye(player.Pos), Vector3.zero, 254); h.Step(160);
+            Assert.That(spent, Is.EqualTo(1)); Assert.That(accepted, Is.EqualTo(1));
+            Assert.That(blasts.Count, Is.EqualTo(1)); Assert.That(blasts[0].VehicleDamage, Is.EqualTo(100f));
+            // Keep the thrower alive so the following smoke is a valid throw.
+            h.Server.Combat.PvPEnabled = false;
+            h.Server.CombatState.TryGet(c.PlayerId, out var state); state.Alive = true;
+            c.SendGrenade(Eye(player.Pos), Vector3.zero, 267); h.Step(160);
+            Assert.That(accepted, Is.EqualTo(2)); Assert.That(blasts.Count, Is.EqualTo(1));
+        }
+
     }
 }
