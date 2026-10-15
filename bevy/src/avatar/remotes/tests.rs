@@ -2,6 +2,7 @@ use super::*;
 use serde_json::json;
 
 mod actions;
+mod lights;
 mod visual;
 
 fn source_catalog() -> ItemCatalog {

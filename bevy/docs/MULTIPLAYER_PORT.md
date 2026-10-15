@@ -131,7 +131,19 @@ Native local and remote footsteps now share source stride, material/gait fallbac
 landing threshold, puddle fields and exact shelter probes; local swim banks and
 voice pause/session cleanup also run (see [FOOTSTEPS_PORT.md](FOOTSTEPS_PORT.md)).
 Actual listening remains unverified without an audio output device. Nameplates,
-reclined seats, remote light fixtures and muzzle effects remain presentation work; this checkpoint does not establish complete multiplayer.
+reclined seats and muzzle effects remain presentation work; this checkpoint does not establish complete multiplayer.
+
+Accepted remote worn/held light flags now use the same original brightest-colour
+emission masks as local equipment. Headlamp/NVG lenses and held torch bulbs glow;
+the original remote puppets do not emit extra spotlights. Switching flags keeps
+the same rig, equipment and per-player materials. A pending albedo suppresses
+emission until its mask can be built, preventing a temporary whole-mesh glow.
+The actual source-texture regression verifies 812 torch bulb/near-twin pixels,
+dark housing, original energies, delayed texture load and OFF without remount.
+Opened production render fixtures `bevy-remote-lamps-off.png` and
+`bevy-remote-lamps-on.png` show all three worn fixtures and four torch bulbs in a
+fixed dim scene. These are accepted-replica fixtures, not live UDP toggle proof.
+The combined native suite passed 356 tests (two opt-in visual fixtures ignored).
 
 ## Verification
 

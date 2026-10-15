@@ -1,6 +1,5 @@
 //! Player-local light switches from PlayerController; equipped facts stay authoritative.
 mod diagnostics;
-pub(crate) use diagnostics::LightDiagnostics;
 use super::*;
 use crate::player::WorldSessionEpoch;
 use bevy::{
@@ -10,6 +9,7 @@ use bevy::{
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
 use bevy_rapier3d::prelude::*;
+pub(crate) use diagnostics::LightDiagnostics;
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -49,8 +49,9 @@ struct Visuals {
     beam: Option<Entity>,
     dot: Option<Entity>,
     lamps: [Option<Entity>; 3],
-    masks: HashMap<AssetId<Image>, Handle<Image>>,
 }
+#[derive(Resource, Default)]
+pub(crate) struct EmissionMasks(HashMap<AssetId<Image>, Handle<Image>>);
 #[derive(Component)]
 struct LightVisual;
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -63,6 +64,7 @@ impl Plugin for LightPlugin {
         diagnostics::install(app);
         app.init_resource::<Switches>()
             .init_resource::<Visuals>()
+            .init_resource::<EmissionMasks>()
             .add_systems(Update, input.after(animate_viewmodel).in_set(LightInput))
             .add_systems(
                 PostUpdate,
@@ -559,50 +561,65 @@ fn emission_mask(source: &Image) -> Option<Image> {
     }
     Some(result)
 }
+pub(crate) fn apply_surface_emission(
+    id: u16,
+    lit: bool,
+    material: &mut StandardMaterial,
+    masks: &mut EmissionMasks,
+    images: &mut Assets<Image>,
+) {
+    let Some(texture) = &material.base_color_texture else {
+        return;
+    };
+    let key = texture.id();
+    let mask = if let Some(mask) = masks.0.get(&key) {
+        Some(mask.clone())
+    } else {
+        let mask = images
+            .get(texture)
+            .and_then(emission_mask)
+            .map(|image| images.add(image));
+        if let Some(mask) = &mask {
+            masks.0.insert(key, mask.clone());
+        }
+        mask
+    };
+    material.emissive_texture = mask;
+    material.emissive = LinearRgba::WHITE
+        * if lit && material.emissive_texture.is_some() {
+            match id {
+                151 | 152 => 3.,
+                1199 => 3.2,
+                334 | 1044 => std::env::var("UG_NVGLOW")
+                    .ok()
+                    .and_then(|s| s.parse::<f32>().ok())
+                    .filter(|n| n.is_finite())
+                    .unwrap_or(1.4),
+                _ => 3.6,
+            }
+        } else {
+            0.
+        };
+}
 fn emission(
     switches: Res<Switches>,
     surfaces: Query<(&LightSurface, &MeshMaterial3d<StandardMaterial>)>,
-    mut visuals: ResMut<Visuals>,
+    mut masks: ResMut<EmissionMasks>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
 ) {
     for (surface, handle) in &surfaces {
-        let Some(mut material) = materials.get_mut(&handle.0) else {
-            continue;
-        };
-        let Some(texture) = &material.base_color_texture else {
-            continue;
-        };
-        let key = texture.id();
-        let mask = if let Some(mask) = visuals.masks.get(&key) {
-            Some(mask.clone())
-        } else {
-            let mask = images
-                .get(texture)
-                .and_then(emission_mask)
-                .map(|image| images.add(image));
-            if let Some(mask) = &mask {
-                visuals.masks.insert(key, mask.clone());
-            }
-            mask
-        };
-        material.emissive_texture = mask;
-        material.emissive = LinearRgba::rgb(1., 1., 1.)
-            * if switches.surface_lit(surface.0) {
-                match surface.0 {
-                    151 | 152 => 3.,
-                    1199 => 3.2,
-                    334 | 1044 => std::env::var("UG_NVGLOW")
-                        .ok()
-                        .and_then(|s| s.parse::<f32>().ok())
-                        .filter(|n| n.is_finite())
-                        .unwrap_or(1.4),
-                    _ => 3.6,
-                }
-            } else {
-                0.
-            };
+        if let Some(mut material) = materials.get_mut(&handle.0) {
+            apply_surface_emission(
+                surface.0,
+                switches.surface_lit(surface.0),
+                &mut material,
+                &mut masks,
+                &mut images,
+            );
+        }
     }
 }
+
 #[cfg(test)]
 mod tests;

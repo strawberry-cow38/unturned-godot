@@ -19,12 +19,21 @@ fn render_remote_pose_fixture() {
         .unwrap_or_else(|_| "/tmp/bevy-remote-poses.png".into());
     let mut players = vec![row(1, Vec3::ZERO)];
     let held = std::env::var_os("UG_REMOTE_POSE_HELD").is_some();
+    let lamps = std::env::var("UG_REMOTE_POSE_LAMPS").ok();
     for (i, stance) in [0, 2, 3, 4].into_iter().enumerate() {
         let mut peer = row(i as u16 + 2, Vec3::new((i as f32 - 1.5) * 2., 0., 0.));
         peer["stance"] = json!(stance);
         if held {
             peer["heldItemId"] = json!([4, 121, 4, 0][i]);
             peer["attachments"] = json!({"sightId":21,"magazineId":6,"barrelId":7});
+        }
+        if let Some(mode) = &lamps {
+            peer["stance"] = json!(0);
+            peer["profile"]["face"] = json!(0);
+            peer["worn"]["hat"] = json!(0);
+            peer["heldItemId"] = json!(276);
+            peer["worn"]["glasses"] = json!([1199, 334, 1044, 0][i]);
+            peer["lights"] = json!({"worn":mode == "on", "held":mode == "on"});
         }
         players.push(peer);
     }
@@ -84,6 +93,7 @@ fn scene(
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     let side = std::env::var_os("UG_REMOTE_POSE_SIDE").is_some();
+    let lamps = std::env::var_os("UG_REMOTE_POSE_LAMPS").is_some();
     commands.spawn((
         Camera3d::default(),
         Tonemapping::TonyMcMapface,
@@ -93,7 +103,7 @@ fn scene(
     ));
     commands.spawn((
         DirectionalLight {
-            illuminance: 8000.,
+            illuminance: if lamps { 150. } else { 8000. },
             shadow_maps_enabled: true,
             ..default()
         },
@@ -101,7 +111,7 @@ fn scene(
     ));
     commands.insert_resource(GlobalAmbientLight {
         color: Color::WHITE,
-        brightness: 100.,
+        brightness: if lamps { 12. } else { 100. },
         ..default()
     });
     commands.spawn((

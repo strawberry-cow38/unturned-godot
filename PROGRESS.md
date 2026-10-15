@@ -1296,3 +1296,16 @@ source/code and controlled-image review found no blocker. No live helicopter
 flight is claimed by the controlled wash fixture. Hit/felling shudder, graphics
 UI toggle and previous-frame motion vectors remain explicit follow-up work; see
 bevy/docs/FOLIAGE_PORT.md.
+
+### Bevy accepted remote lamp and lens emission (2026-10-15)
+
+Remote headlamp/NVG lenses and handheld bulbs now consume accepted light flags,
+sharing the original emission-mask helper with local equipment while keeping
+per-player materials. Delayed textures remain dark until their mask loads;
+switches preserve the existing rig/equipment and add no remote spotlights. The
+actual palette regression passes, including812 original torch bulb/near-twin
+texels and OFF without remount. Opened original-asset OFF/ON renders show all
+three worn fixtures and four torch bulbs changing in the same dim scene. World
+review found no material-sharing or source-rule blocker. The combined native
+suite passes356 tests (two manual render fixtures ignored) against immutable
+profile-tests-33-final. These fixed replicas do not prove live UDP light toggles.
