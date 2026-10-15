@@ -99,6 +99,7 @@ Rules of the road:
 | render filtered weather audio, shared canopy targets and source lightning | `world::rain::audio::{filter::FilteredClip, MaterialTargets}`, `world::rain::lightning::Lightning` (`bevy/src`) | four Godot low-pass stages; cosmetic emitters never enter hearing; lightning flash uses render time, interval uses authority ticks |
 | convert original nonphysical light energy into native renderer units | `hdr::{directional_illuminance,point_lumens,ambient_brightness}` (`bevy/src/hdr.rs`) | derived Godot pi factors and Bevy default exposure; do not restore the old visual18klux calibration |
 | mirror tagged world lights onto first-person content or read the nearby light level | `viewmodel::lighting::{WorldLight,NearbyLight}` (`bevy/src/viewmodel/lighting/world.rs`) | exact source dynlight membership; 10 Hz, four pooled mirrors; shared sRGB level includes every candidate and updates while unarmed |
+| select and render accepted player gestures without optimistic animation | `avatar::gestures::{Definition,Playback}`, `avatar::held::apply_upper_body` (`bevy/src`) | source catalog owns rules; loop replicas and one-shot events are separate; upper-body overlay preserves locomotion legs |
 | apply goggles to world/arms while preserving HUD colors | `nightvision::NightVision`, `hdr::CompositePass` (`bevy/src`) | consumes actual local switch; source-sRGB tube pass follows independent world/VM ACES and precedes HUD; overlay dim/tint remain separate |
 
 ## 2. Sentinels that lie

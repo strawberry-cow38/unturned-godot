@@ -1173,3 +1173,9 @@ also expose original worn condition, attachments and light flags. The opt-in
 production-render pose fixture is added with visual review pending. Remote held
 weapons, gestures, names, footsteps, lighting and reclined furniture remain work;
 this checkpoint does not claim end-to-end multiplayer is playable.
+
+### Bevy accepted local player gestures
+
+- Consume the original managed GestureRules catalog; B/rebindable actions and the source `gesture` console selector send unchanged requests. Loop replicas and accepted one-shot events drive the real full-body clips without optimistic posing. Shared upper-body sampling preserves locomotion legs and source crouch/prone shoulder correction.
+- Five focused regressions pass, including a real B-key request through delayed server adoption and stop, actual original rig poses, retained-event deduplication, and the source null T-pose/one-shot-over-loop edge cases. Independent source review found no blocker.
+- Opened actual Vulkan captures `bevy-gesture-surrender`, `bevy-gesture-surrender-stopped`, and `bevy-gesture-wave`: accepted state6 raises both clothed arms; state0 restores idle; a one-shot raises the right hand without changing persistent state. Clean Quit completed. Long X11 synthetic toggle holds exposed repeat behavior; a dedicated input regression remains for the next UI slice.

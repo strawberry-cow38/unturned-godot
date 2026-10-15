@@ -18,6 +18,7 @@ use bevy::{
 use serde_json::Value;
 pub mod camera;
 mod death;
+pub(crate) mod gestures;
 mod held;
 mod pose;
 pub(crate) mod remotes;
@@ -34,6 +35,22 @@ impl Plugin for AvatarPlugin {
             .init_resource::<AvatarState>()
             .init_resource::<held::Mirror>()
             .init_resource::<death::Death>()
+            .init_resource::<gestures::Local>()
+            .add_message::<crate::entities::CoreEvent>()
+            .add_message::<crate::ui::UiIntent>()
+            .add_systems(
+                Update,
+                gestures::controls
+                    .after(crate::ui::UiUpdate)
+                    .before(PlayerUpdate),
+            )
+            .add_systems(
+                Update,
+                gestures::receive
+                    .after(AvatarUpdate)
+                    .after(crate::entities::ApplyInteractions)
+                    .before(RigAnimation),
+            )
             .add_systems(
                 Update,
                 controls.after(crate::ui::UiUpdate).before(PlayerUpdate),
@@ -52,7 +69,7 @@ impl Plugin for AvatarPlugin {
             )
             .add_systems(
                 Update,
-                (held::mirror, held::animate, pose::apply)
+                (held::mirror, held::animate, gestures::animate, pose::apply)
                     .chain()
                     .after(RigAnimation)
                     .before(CharacterUpdate),

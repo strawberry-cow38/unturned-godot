@@ -322,7 +322,11 @@ fn ui_intents(
     mut world: ResMut<WorldState>,
     mut session: ResMut<Session>,
     mut input: ResMut<PlayerInput>,
-    mut hand_use: (ResMut<crate::use_items::HandUse>, ResMut<WorldSessionEpoch>),
+    mut hand_use: (
+        ResMut<crate::use_items::HandUse>,
+        ResMut<WorldSessionEpoch>,
+        Res<crate::entities::ItemCatalog>,
+    ),
     mut trigger: ResMut<crate::weapons::Trigger>,
     mut hand_events: MessageWriter<crate::use_items::HandEvent>,
     mut commands: Commands,
@@ -398,7 +402,24 @@ fn ui_intents(
             UiIntent::Save => bridge.request("save", json!({"path":save_path(&options.0.map)})),
             UiIntent::Load => bridge.request("load", json!({"path":save_path(&options.0.map)})),
             UiIntent::Action { name, args } => {
-                bridge.request("action", json!({"name":name,"args":args}))
+                let gesture = if name == "console" {
+                    crate::avatar::gestures::console(
+                        args["text"].as_str().unwrap_or(""),
+                        snapshot.0["player"]["gesture"].as_u64().unwrap_or(0) as u8,
+                        &hand_use.2.gestures,
+                        &mut model,
+                    )
+                } else {
+                    None
+                };
+                match gesture {
+                    Some(Some(gesture)) => bridge.request(
+                        "action",
+                        json!({"name":"requestGesture","args":{"gesture":gesture}}),
+                    ),
+                    Some(None) => continue,
+                    None => bridge.request("action", json!({"name":name,"args":args})),
+                }
             }
         };
         match result {

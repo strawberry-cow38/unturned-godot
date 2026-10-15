@@ -126,10 +126,35 @@ pub(super) fn animate(
         snapshot.0["player"]["stance"].as_str(),
         Some("crouch" | "prone")
     );
+    apply_upper_body(body, clip, time, preserve, &mut transforms);
+    let aim_name = clip_name(source, asset);
+    let aim = gun.then(|| body.data.anims.get(&aim_name)).flatten();
+    for bone in &body.data.bones {
+        let Some(entity) = body.bones.get(&bone.name) else {
+            continue;
+        };
+        let Ok(mut pose) = transforms.get_mut(*entity) else {
+            continue;
+        };
+        if let Some((clip, track)) = aim.and_then(|c| c.tracks.get(&bone.name).map(|t| (c, t))) {
+            *pose = apply_additive(track, clip.length, status.aim_alpha, *pose);
+        }
+    }
+}
+/// RiggedCharacter's shared gun/gesture upper-body layer. Locomotion legs are
+/// never sampled from the action; crouch/prone preserve spine/skull and counter
+/// the shoulders by the authored spine delta.
+pub(crate) fn apply_upper_body(
+    body: &RigPlayback,
+    clip: &crate::rig::Clip,
+    time: f32,
+    preserve: bool,
+    transforms: &mut Query<&mut Transform>,
+) {
     let spine = body
         .bones
         .get("Spine")
-        .and_then(|e| transforms.get(*e).ok())
+        .and_then(|entity| transforms.get(*entity).ok())
         .copied();
     let counter = spine
         .map(|pose| {
@@ -137,12 +162,10 @@ pub(super) fn animate(
                 * clip
                     .tracks
                     .get("Spine")
-                    .map_or(pose, |t| sample_track(t, time, pose))
+                    .map_or(pose, |track| sample_track(track, time, pose))
                     .rotation
         })
         .unwrap_or(Quat::IDENTITY);
-    let aim_name = clip_name(source, asset);
-    let aim = gun.then(|| body.data.anims.get(&aim_name)).flatten();
     for bone in &body.data.bones {
         let Some(entity) = body.bones.get(&bone.name) else {
             continue;
@@ -160,11 +183,9 @@ pub(super) fn animate(
                 pose.rotation = counter * pose.rotation;
             }
         }
-        if let Some((clip, track)) = aim.and_then(|c| c.tracks.get(&bone.name).map(|t| (c, t))) {
-            *pose = apply_additive(track, clip.length, status.aim_alpha, *pose);
-        }
     }
 }
+
 fn clip_name(rig: &RigPlayback, asset: &str) -> String {
     clip(rig, asset, "_Aim", "Gun_Aim")
 }

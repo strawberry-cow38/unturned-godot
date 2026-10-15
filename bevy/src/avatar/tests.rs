@@ -109,7 +109,7 @@ fn actual_rapier_shoulder_sweep_catches_thin_wall_and_ignores_dropped_items() {
     assert_eq!(result[1], 2., "dropped can does not push source camera");
 }
 
-fn avatar_app() -> App {
+pub(super) fn avatar_app() -> App {
     use crate::{
         character::{CharacterPlugin, ClothesMaterial},
         content::ContentCache,
