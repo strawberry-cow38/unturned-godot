@@ -35,6 +35,14 @@ namespace SDG.Unturned
     /// </summary>
     public static class ZombieCombat
     {
+        /// <summary>Outward normal at an entry returned by RayCapsule, using the same vertical axis.</summary>
+        public static Vector3 CapsuleNormal(Vector3 point, Vector3 foot, float radius, float height)
+        {
+            float low = foot.y + radius;
+            float high = low + MathF.Max(0f, height - 2f * radius);
+            return (point - new Vector3(foot.x, Math.Clamp(point.y, low, high), foot.z)).normalized;
+        }
+
         /// <summary>Ray against a vertical capsule standing at <paramref name="foot"/>. Returns the
         /// distance along the ray to the entry point, or -1 for a miss. <paramref name="dir"/> must be
         /// normalised.</summary>

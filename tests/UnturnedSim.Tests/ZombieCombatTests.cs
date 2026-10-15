@@ -32,6 +32,15 @@ namespace UnturnedSim.Tests
         // --- the capsule maths --------------------------------------------------------------------
 
         [Test]
+        public void Contact_normals_share_the_ray_capsule_axis_for_side_and_caps()
+        {
+            var foot = new Vector3(3, 4, 5);
+            Assert.That(ZombieCombat.CapsuleNormal(new Vector3(3.4f, 5, 5), foot, .4f, 1.8f), Is.EqualTo(new Vector3(1, 0, 0)));
+            Assert.That(ZombieCombat.CapsuleNormal(new Vector3(3, 5.8f, 5), foot, .4f, 1.8f), Is.EqualTo(new Vector3(0, 1, 0)));
+            Assert.That(ZombieCombat.CapsuleNormal(new Vector3(3, 4, 5), foot, .4f, 1.8f), Is.EqualTo(new Vector3(0, -1, 0)));
+        }
+
+        [Test]
         public void A_Ray_Down_The_Middle_Hits_At_The_Near_Face()
         {
             // Zombie standing at x=10, radius 0.4. A ray along +x at chest height should enter at 9.6.

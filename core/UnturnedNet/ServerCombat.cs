@@ -17,13 +17,16 @@ namespace UnturnedGodot.Net
     public readonly struct CombatWorldHit
     {
         public readonly Vector3 Point;
+        /// <summary>Actual host surface normal, when the ray provider can supply one.
+        /// Null deliberately means unknown (the legacy closest-approach actor test is not a surface hit).</summary>
+        public readonly Vector3? Normal;
         public readonly int DestructibleIndex, ResourceIndex;
         public readonly uint VehicleNetId, DeployableNetId, AnimalNetId, ZombieNetId;
         public readonly string BodyPart;
         public CombatWorldHit(Vector3 point, int destructibleIndex = -1, int resourceIndex = -1,
-            uint vehicleNetId = 0, uint deployableNetId = 0, string bodyPart = null, uint animalNetId = 0, uint zombieNetId = 0)
+            uint vehicleNetId = 0, uint deployableNetId = 0, string bodyPart = null, uint animalNetId = 0, uint zombieNetId = 0, Vector3? normal = null)
         { Point = point; DestructibleIndex = destructibleIndex; ResourceIndex = resourceIndex;
-          VehicleNetId = vehicleNetId; DeployableNetId = deployableNetId; BodyPart = bodyPart; AnimalNetId = animalNetId; ZombieNetId = zombieNetId; }
+          VehicleNetId = vehicleNetId; DeployableNetId = deployableNetId; BodyPart = bodyPart; AnimalNetId = animalNetId; ZombieNetId = zombieNetId; Normal = normal; }
     }
     public delegate bool CombatWorldRayDetailed(Vector3 from, Vector3 to, out CombatWorldHit hit);
     /// <summary>Damage resolved by the server's world ray, never a client hit claim.
@@ -257,6 +260,8 @@ namespace UnturnedGodot.Net
             public ServerGunProfile Gun;
             public float Condition = 1f;   // Durability.DamageMultiplier of the gun that fired it
             public float AnimalDamage;   // source ShotDamage captured before shells/equipment can change
+            public object HostContext;
+            public int Pellet;
             // PlayerController.Bullet.FalloffAt: distance from this shot's original
             // position, not from the shooter after they move or change weapons.
             public float FalloffAt(Vector3 point)
@@ -328,6 +333,12 @@ namespace UnturnedGodot.Net
         /// The exact command sequence joins local cosmetic context to this fact;
         /// it cannot change the authoritative bullet and adds no packet fields.</summary>
         public Action<ushort, FireCommand, long> ShotCommandAccepted;
+        /// <summary>Optional immutable host payload captured before accepted-shot equipment mutation.
+        /// It follows this particular round through weapon switches and origin changes.</summary>
+        public Func<ushort, object> CaptureBulletContext;
+        /// <summary>Authoritative contact AFTER direct damage, before retiring the round.
+        /// No client hit claims or wire changes; null preserves existing host behavior.</summary>
+        public Action<CombatBulletImpact> BulletImpact;
         public Action<ushort, bool, long> MeleeAccepted;
         public Func<ushort, long, bool> TryBeginReload;
         public Func<ushort, long, int?> CompleteReload;
@@ -401,6 +412,7 @@ namespace UnturnedGodot.Net
             }
             cs.LastFireTick = tick;
             cs.Ammo--;
+            object hostContext = CaptureBulletContext?.Invoke(sender);
             ShotAccepted?.Invoke(sender, tick);
             ShotCommandAccepted?.Invoke(sender, cmd, tick);
             for (int i = 0; i < Math.Max(1, gun.Pellets); i++)
@@ -415,6 +427,7 @@ namespace UnturnedGodot.Net
                     Gun = gun,
                     Condition = held.HasValue ? Durability.DamageMultiplier(held.Value) : 1f,
                     AnimalDamage = gun.AnimalDamage,
+                    HostContext = hostContext, Pellet = i,
                 });
             // EVERY OTHER CLIENT HEARS AND SEES THIS. Broadcast after the shot is ACCEPTED, so a rejected
             // trigger pull (reloading, dry, rate-limited, out of range) cannot make a phantom crack across the
@@ -661,6 +674,8 @@ namespace UnturnedGodot.Net
                             Diag.BulletHitsWorld++;
                             break;
                     }
+                    BulletImpact?.Invoke(new CombatBulletImpact(b.Shooter, b.Seq, b.Pellet, point,
+                        hitKind == 3 ? bodyHit.Normal : null, b.Vel, b.HostContext, tick));
                     _bullets.RemoveAt(i);
                     continue;
                 }
@@ -796,7 +811,18 @@ namespace UnturnedGodot.Net
             Explode(g, tick);
         }
 
-        void Explode(GrenadeEntity g, long tick)
+        /// <summary>Trusted host warhead impact, sharing grenade damage/armor/occlusion without inventing
+        /// a throwable event or item id. The host publishes its own accepted visual identity.</summary>
+        public void ServerDetonateWeaponAt(Vector3 pos, float radius, float playerDamage, float zombieDamage,
+            float vehicleDamage, ushort owner, long tick)
+        {
+            if (!(radius > 0) || !float.IsFinite(radius)) return;
+            Explode(new GrenadeEntity { Owner = owner, Pos = pos,
+                Def = new ThrowableDef { Kind = EThrowableKind.Explosive, Radius = radius,
+                    PlayerDamage = playerDamage, ZombieDamage = zombieDamage, VehicleDamage = vehicleDamage } }, tick, false);
+        }
+
+        void Explode(GrenadeEntity g, long tick, bool broadcast = true)
         {
             // Smoke and flares do NO damage -- their retail .dats carry no damage keys and no `Explosive` flag
             // at all. They still broadcast, because every client has to be told to build the cloud or light the
@@ -841,8 +867,11 @@ namespace UnturnedGodot.Net
                     if (dmg > 0f) ApplyPlayerDamage(pe.OwnerPlayerId, dmg, g.Owner, tick, out _, sourcePos: g.Pos,
                                                     zone: Durability.Zone.Whole, armor: ArmorKind.Explosion);   // the BLAST is the source, not the thrower -- right even after they have moved away or the frag was theirs
                 }
-            var evt = new GrenadeExplodedEvent { Pos = g.Pos, Radius = radius, ItemId = g.ItemId };
-            _broadcast(NetMessagePak.Pack(ReplicationIds.EventGrenadeExploded, evt.Write));
+            if (broadcast)
+            {
+                var evt = new GrenadeExplodedEvent { Pos = g.Pos, Radius = radius, ItemId = g.ItemId };
+                _broadcast(NetMessagePak.Pack(ReplicationIds.EventGrenadeExploded, evt.Write));
+            }
         }
 
         bool RayWorld(Vector3 from, Vector3 to, out CombatWorldHit hit)
