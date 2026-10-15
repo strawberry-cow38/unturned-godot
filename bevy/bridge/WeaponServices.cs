@@ -14,11 +14,13 @@ public sealed class WeaponServices
     readonly Dictionary<ushort, WeaponState> _states = new();
     readonly Dictionary<ushort, Queue<ShotFacts>> _shots = new();
     public Action<ushort,float> Noise;
-    public sealed record ShotFacts(string Gun, ushort ItemId, byte Quality, float HandlingPenalty, float RecoilMultiplier, long SelectionVersion, long Tick);
+    public sealed record ShotFacts(string Gun, ushort ItemId, byte Quality, float HandlingPenalty, float RecoilMultiplier, long SelectionVersion, long Tick,
+        int BarrelId,bool Silenced,string ShootClip,float ShotVolume,float MuzzleVelocity,bool BarrelBroken);
     public WeaponServices(NetWorldServer server, Catalog catalog, Action<string, object> emit)
     {
         _server = server; _catalog = catalog; _emit = emit;
         server.Combat.ResolveHeldGunProfile = owner => State(owner).Profile;
+        server.Combat.HeldCondition = owner => State(owner).Condition;
         server.Combat.CanFire = owner => State(owner).CanFire();
         server.Combat.ShotAccepted = (owner, tick) => {
             var state=State(owner); var facts=state.CaptureShot(tick);
@@ -95,6 +97,7 @@ public sealed partial class WeaponState
     int Ammo { get => _combat?.Ammo ?? 0; set { if (_combat != null) _combat.Ammo = value; } }
     public ServerGunProfile Profile { get; private set; }
     public float RepairRate => Melee?.Repair == true ? Melee.VehicleDamage * 3f : 0;
+    public byte? Condition => _ownedHeld!=null&&Durability.HasCondition(Assets.find(_ownedHeld.id))?_ownedHeld.quality:null;
 
     public WeaponState(NetWorldServer server, Catalog catalog, ushort owner, Action<string, object> emit)
     { _server = server; _catalog = catalog; _owner = owner; _emit = emit; }
@@ -133,6 +136,7 @@ public sealed partial class WeaponState
         _heldItem = gun; Gun = gun == null ? null : _catalog.GunDefs[gun.id];
         _reloading = _hammerPending = _hammerActive = false; _cycleReadyTick = 0; _shotCount = 0; _combat.ReloadDoneTick = -1;
         if (Gun == null) { Ammo = 0; Profile = null; return; }
+        AttachmentNoise.SeedDefaults(gun,Assets.find(gun.id)?.itemName);
         var modes = AvailableModes();
         if (!modes.Contains(gun.gunFiremode)) gun.gunFiremode = modes.Contains(1) ? 1 : modes.Contains(2) ? 2 : modes[0];
         Ammo = gun.gunAmmo < 0 ? Gun.AmmoMax : gun.gunAmmo;
@@ -189,6 +193,7 @@ public sealed partial class WeaponState
         if (Profile == null) return;
         Profile.MagCapacity = ChamberedCap; Profile.Pellets = PelletsPerShot;
         Profile.AnimalDamage = ShotDamage();
+        Profile.MuzzleVelocity = Gun.MuzzleVelocity*(Suppressed?AttachmentNoise.SilencedVelocityMultiplier:1);
     }
     void SaveGunState()
     {
@@ -234,16 +239,21 @@ public sealed partial class WeaponState
         byte quality=_heldItem.quality;
         float handling=Durability.HandlingPenalty(quality);
         float skill=_server.Skills.TryGet(_owner,out var skills)?skills.Skills.SharpshooterRecoilMultiplier():1;
-        return new(Profile.AssetName,_heldItem.id,quality,handling,handling*skill,_selectionVersion,tick);
+        int barrelId=AttachmentNoise.InstalledId(_heldItem,"Barrel");
+        var barrel=AttachmentNoise.BarrelFor(barrelId);
+        string own=AttachmentNoise.Snd(Profile.AssetName+"_shoot.ogg","eaglefire_shoot.ogg");
+        string clip=string.IsNullOrEmpty(barrel.ShootClip)?own:AttachmentNoise.Snd(barrel.ShootClip,own);
+        return new(Profile.AssetName,_heldItem.id,quality,handling,handling*skill,_selectionVersion,tick,
+            barrelId,Suppressed,clip,barrel.Volume,Profile.MuzzleVelocity,AttachmentNoise.BreaksOnShot(barrelId));
     }
+    static int BarrelMask=>1<<System.Array.IndexOf(AttachmentNoise.Slots,"Barrel");
     public bool Suppressed => (Gun?.IntegrallySuppressed??false)
-        || (_heldItem?.gunBarrelId>0?AttachmentNoise.IsSilencer(_heldItem.gunBarrelId):_heldItem?.gunAttach>=0&&(_heldItem.gunAttach&(1<<3))!=0);
+        || (_heldItem?.gunBarrelId>0?AttachmentNoise.IsSilencer(_heldItem.gunBarrelId):_heldItem?.gunAttach>=0&&(_heldItem.gunAttach&BarrelMask)!=0);
     public float MeleeNoise => Melee?.Alert??0;
     public void Shot(long tick)
     {
         if (Gun == null) return;
         _chambered = HasChamber && Ammo > 0;
-        Durability.UseWeapon(_heldItem, Assets.find(_heldItem.id), _random.NextDouble);
         if (Gun.RechamberAfterShotCount > 0 && ++_shotCount >= Gun.RechamberAfterShotCount)
         {
             _shotCount = 0;
@@ -251,7 +261,18 @@ public sealed partial class WeaponState
             _cycleReadyTick = tick + Ticks(Gun.RechamberAfterShotDelay) + Ticks(hammer);
             _emit("rechamber", new { playerId = _owner, delay = Gun.RechamberAfterShotDelay, seconds = hammer });
         }
+        int barrel=AttachmentNoise.InstalledId(_heldItem,"Barrel");
+        if(AttachmentNoise.BreaksOnShot(barrel))
+        {
+            AttachmentNoise.SetInstalledId(_heldItem,"Barrel",-1);
+            if(_heldItem.gunAttach>=0)_heldItem.gunAttach&=~BarrelMask;
+            _emit("barrelBroken",new{playerId=_owner,itemId=_heldItem.id,barrelId=barrel,text="The bottle silencer burst"});
+        }
+        // ServerCombat spawns this shot immediately after ShotAccepted returns.
+        // Keep its already-resolved profile until the next CanFire refresh: the
+        // barrel that just broke still silenced THIS projectile's velocity.
         SaveGunState();
+        Durability.UseWeapon(_heldItem, Assets.find(_heldItem.id), _random.NextDouble);
     }
     public bool BeginReload(long tick)
     {
@@ -350,6 +371,9 @@ public sealed partial class WeaponState
         selectionVersion = _selectionVersion, broken = _ownedHeld?.quality == 0,
         canFire = Gun != null && _combat?.Alive == true && _heldItem?.quality > 0 && _heldItem.gunFiremode != 0,
         ammo = Gun == null ? 0 : Ammo, capacity = Gun == null ? 0 : MagCapacity, chambered = Gun != null && _chambered,
-        firemode = Gun == null ? -1 : _heldItem.gunFiremode, magazineId = _loadedMagId, shellItemId = UsesShells ? ShellAsset?.id ?? 0 : 0 };
+        firemode = Gun == null ? -1 : _heldItem.gunFiremode, magazineId = _loadedMagId, shellItemId = UsesShells ? ShellAsset?.id ?? 0 : 0,
+        attachments=Gun==null?null:new{ sightId=_heldItem.gunSightId,barrelId=_heldItem.gunBarrelId,gripId=_heldItem.gunGripId,
+            tacticalId=_heldItem.gunTacticalId,magazineId=_heldItem.gunMagId,mask=_heldItem.gunAttach,seeded=_heldItem.gunAttachSeeded},
+        silenced=Gun!=null&&Suppressed };
     static int Ticks(double seconds) => Math.Max(1, (int)Math.Ceiling(seconds / SimClock.FixedDelta));
 }

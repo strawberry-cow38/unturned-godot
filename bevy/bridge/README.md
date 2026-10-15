@@ -404,3 +404,20 @@ this closes the original node-orphan leak without reviving killed slots.
 The exact source walkability box queries exported triangle surfaces via a BVH;
 fully contained convex volumes still require native solid-shape metadata because
 the current host geometry contract carries triangles rather than convex shapes.
+
+
+Accepted `fire.data` also captures `barrelId`, `silenced`, `shootClip`,
+`shotVolume` (linear), `muzzleVelocity`, and `barrelBroken` before an attachment
+breaks or the gun is holstered. Sound filenames follow original barrel audio and
+Viewmodel fallback rules. `weapon.attachments` exposes `sightId`, `barrelId`,
+`gripId`, `tacticalId`, `magazineId`, `mask`, and `seeded`; `weapon.silenced` is the
+current state for the next shot. Factory irons seed once, with saved custom
+attachments retained. The original source seeds no factory barrel.
+
+Suppressed bullets use the source .80 velocity multiplier in actual authority
+flight. A water-bottle silencer remains effective for its one accepted shot, then
+clears its installed ID and mask bit and emits `barrelBroken` with the original
+notice. Rejected triggers never break it. The retained shot facts remain silenced
+afterward so delayed native muzzle/audio consumers cannot turn that shot loud.
+The optional core condition lookup uses the bridge's exact selected backing item,
+including two same-ID pistols in different weapon slots.

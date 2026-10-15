@@ -310,7 +310,9 @@ public sealed partial class BridgeHost : IDisposable
             var facts=_weapons.TakeShot(e.PlayerId,e.Gun);
             Emit("fire",new{playerId=e.PlayerId,origin=e.Origin,dir=e.Dir,gun=e.Gun,
                 itemId=facts?.ItemId,quality=facts?.Quality,handlingPenalty=facts?.HandlingPenalty,
-                recoilMultiplier=facts?.RecoilMultiplier,selectionVersion=facts?.SelectionVersion,acceptedTick=facts?.Tick});
+                recoilMultiplier=facts?.RecoilMultiplier,selectionVersion=facts?.SelectionVersion,acceptedTick=facts?.Tick,
+                barrelId=facts?.BarrelId,silenced=facts?.Silenced,shootClip=facts?.ShootClip,shotVolume=facts?.ShotVolume,
+                muzzleVelocity=facts?.MuzzleVelocity,barrelBroken=facts?.BarrelBroken});
         };
         _client.PlayerMeleed += e => Emit("melee", e);
         _client.PlayerGestured += e => Emit("gesture", e);

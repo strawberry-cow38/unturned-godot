@@ -290,9 +290,11 @@ zdata = ['using Godot; using UnturnedGodot; namespace UnturnedBevy { public stat
 
 # Pure source attachment/noise rules shared by authoritative hearing.
 attachment = read('game/AttachmentFit.cs')
-parts = attachment[attachment.index('        public readonly struct BarrelDef'):attachment.index('        public static string MeshFor')]
-parts += method(attachment, 'public static int InstalledId(Item gun, string slot)')
-(out / 'AttachmentNoise.g.cs').write_text('using SDG.Unturned; namespace UnturnedBevy { public static class AttachmentNoise {' + parts + '}}')
+parts = attachment[attachment.index('    public static class AttachmentFit'):attachment.index('        public static System.Collections.Generic.List<(string Slot, Godot.Mesh Mesh')]
+parts = parts.replace('public static class AttachmentFit', 'public static class AttachmentNoise')
+parts += attachment[attachment.index('        public readonly struct BarrelDef'):attachment.index('        public static string MeshFor')]
+parts += match(r'static string Snd[^\n]+;', read('game/Viewmodel.cs')).replace('static string Snd', 'public static string Snd')
+(out / 'AttachmentNoise.g.cs').write_text('using SDG.Unturned; using Godot; namespace UnturnedBevy {' + parts + '}}')
 noise = read('game/SoundBus.cs')
 constants = '\n'.join(re.findall(r'public const float \w+\s*=\s*[0-9.]+f;', noise))
 (out / 'NoiseRules.g.cs').write_text('namespace UnturnedBevy { public static class NoiseRules {' + constants + '}}')
