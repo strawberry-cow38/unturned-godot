@@ -22,6 +22,8 @@ public sealed class ResourceServices
         server.Combat.DamageResource = Damage;
     }
     public void Clear() => _nodes.Clear();
+    public void TranslateWorld(Vector3 d)
+    { foreach (var node in _nodes.Values) node.Position = new(node.Position.X + d.x, node.Position.Y + d.y, node.Position.Z + d.z); }
     public void Register(JsonElement r)
     {
         string kind = Text(r, "kind");

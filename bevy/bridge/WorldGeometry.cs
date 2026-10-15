@@ -27,6 +27,21 @@ public sealed class WorldGeometry
     }
     public void Clear() { _triangles.Clear(); _terrainTriangles.Clear(); _root = null; _terrainRoot = null; _dynamic.Clear(); }
     public void ClearDynamic() => _dynamic.Clear();
+    public void TranslateWorld(Vector3 delta)
+    {
+        Triangle Shift(Triangle t) => t with { A = t.A + delta, B = t.B + delta, C = t.C + delta };
+        void Tree(Node n)
+        {
+            if (n == null) return;
+            n.Min += delta; n.Max += delta;
+            if (n.Leaf != null) for (int i = 0; i < n.Leaf.Length; i++) n.Leaf[i] = Shift(n.Leaf[i]);
+            Tree(n.Left); Tree(n.Right);
+        }
+        for (int i = 0; i < _triangles.Count; i++) _triangles[i] = Shift(_triangles[i]);
+        for (int i = 0; i < _terrainTriangles.Count; i++) _terrainTriangles[i] = Shift(_terrainTriangles[i]);
+        Tree(_root); Tree(_terrainRoot); foreach (var tree in _dynamic.Values) Tree(tree);
+    }
+
     public void SetDynamic(string key, WorldGeometry geometry)
     {
         if (string.IsNullOrWhiteSpace(key)) throw new ArgumentException("Dynamic geometry requires a stable key");
@@ -43,7 +58,7 @@ public sealed class WorldGeometry
             if (terrain) _terrainTriangles.Add(triangle);
         }
     }
-    public void AddTerrain(RegionData data) => AddHeightfield((float)data.Coord.MinX, (float)data.Coord.MinZ, data.Cells, data.Spacing, data.Heights, data.Holes);
+    public void AddTerrain(RegionData data, double originX = 0, double originZ = 0) => AddHeightfield((float)(data.Coord.MinX - originX), (float)(data.Coord.MinZ - originZ), data.Cells, data.Spacing, data.Heights, data.Holes);
     public void AddHeightfield(float originX, float originZ, int cells, float spacing, float[] heights, bool[] holes = null)
     {
         if (cells < 1 || cells > 2048 || !float.IsFinite(spacing) || spacing <= 0 || heights.Length != (cells + 1) * (cells + 1)

@@ -22,7 +22,7 @@ while ((line = Console.ReadLine()) != null)
         var result = host.Handle(op, request);
         shutdown = op == "shutdown";
         bool includeState = request.TryGetProperty("includeState", out var stateFlag) ? stateFlag.GetBoolean()
-            : op is "init" or "tick" or "snapshot" or "action" or "save" or "load";
+            : op is "init" or "tick" or "snapshot" or "action" or "save" or "load" or "rebase";
         bool includeRecipes = request.TryGetProperty("includeRecipes", out var recipeFlag) ? recipeFlag.GetBoolean() : op != "tick";
         Console.WriteLine(JsonSerializer.Serialize(new { id, ok = true, result, state = includeState ? host.State(includeRecipes) : null }, options));
     }

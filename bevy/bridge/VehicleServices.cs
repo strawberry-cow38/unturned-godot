@@ -43,7 +43,7 @@ public sealed class VehicleServices
     {
         if (!_parts.TryGetValue(id, out var p)) return;
         if (part?.StartsWith("tire:") == true && int.TryParse(part.AsSpan(5), out int tire) && tire is >= 0 and < 8 && _server.Vehicles.TryGet(id, out var e))
-            _server.Vehicles.ServerSetPoppedTires(new(id), (byte)(e.PoppedTireMask | (1 << tire)), _server.Session.CurrentTick);
+            _server.Vehicles.ServerSetPoppedTires(new(id), (byte)(e.PoppedTireMask | (1 << tire)), _server.Session.CurrentTick + 1);
         p.Engine = Math.Max(0, p.Engine - amount * (part == "engine" ? 1 : engineShare));
         if (part == "mainRotor") p.Main = Math.Max(0, p.Main - amount);
         if (part == "tailRotor") p.Tail = Math.Max(0, p.Tail - amount);
@@ -152,7 +152,7 @@ public sealed class VehicleServices
     }
     public object Publish(JsonElement request)
     {
-        int count = 0; long tick = _server.Session.CurrentTick;
+        int count = 0; long tick = _server.Session.CurrentTick + 1;
         foreach (var state in request.GetProperty("vehicles").EnumerateArray())
         {
             uint id = checked((uint)Int(state, "netId"));
@@ -171,6 +171,11 @@ public sealed class VehicleServices
             count++;
         }
         return new { updated = count };
+    }
+    public void TranslateWorld(Vector3 delta)
+    {
+        foreach (var key in _exits.Keys.ToArray()) { var v = _exits[key]; _exits[key] = (v.tick, v.clear, v.pos + delta); }
+        foreach (var key in _bodySpecs.Keys.ToArray()) _bodySpecs[key] = CoordinateJson.Entry(_bodySpecs[key], delta);
     }
     public object ExitProbe(JsonElement request)
     {

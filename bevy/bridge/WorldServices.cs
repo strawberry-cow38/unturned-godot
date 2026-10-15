@@ -173,6 +173,21 @@ public sealed partial class WorldServices
     }
     static IEnumerable<JsonElement> Entries(JsonElement spec, string key) => spec.TryGetProperty(key, out var array)
         ? array.EnumerateArray() : Enumerable.Empty<JsonElement>();
+    public void TranslateWorld(Vector3 delta)
+    {
+        Harvesting.TranslateWorld(delta);
+        foreach (var key in _drops.Keys.ToArray()) _drops[key] = CoordinateJson.Entry(_drops[key], delta);
+        foreach (var key in _objectDoorMeta.Keys.ToArray())
+        { var value = _objectDoorMeta[key]; _objectDoorMeta[key] = (value.position + delta, value.swingSide); }
+        for (int i = 0; i < _taps.Count; i++)
+        {
+            var tap = _taps[i]; var matrix = tap.Transform;
+            matrix.Translation += new System.Numerics.Vector3(delta.x, delta.y, delta.z);
+            System.Numerics.Matrix4x4.Invert(matrix, out var inverse);
+            _taps[i] = tap with { Transform = matrix, Inverse = inverse };
+        }
+        if (MapResult != null) MapResult = CoordinateJson.ServiceSpec(JsonSerializer.SerializeToElement(MapResult), delta);
+    }
     public void AdoptSavedBits()
     {
         _broken.Clear();

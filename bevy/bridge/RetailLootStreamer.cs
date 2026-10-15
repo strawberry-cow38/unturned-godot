@@ -28,6 +28,11 @@ public sealed class RetailLootStreamer
         var source = new RetailLootData(); source.LoadFromPei(MapRoot); _points = source.Points().ToArray();
         _server = server; _geometry = geometry;
     }
+    public void TranslateWorld(Vector3 d)
+    {
+        for (int i = 0; i < _points.Length; i++)
+        { var p = _points[i]; _points[i] = (p.Index, p.ItemId, p.Table, p.X + d.x, p.Y + d.y, p.Z + d.z); }
+    }
     public SaveData Capture()
     {
         ObservePickedUp();

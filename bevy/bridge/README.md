@@ -11,7 +11,7 @@ Requests have `{id,op,...}`; replies have `{id,ok,result,state}` or
 the actual outcome appears in subsequent replicated state.
 
 - `init`: `contentRoot` is an absolute content directory; optional `name`, `mapId`,
-  `spawn:[x,y,z]`, `yaw`, `seed:1337`, `starterKit:false`. Returns protocol version, capabilities and
+  `spawn:[x,y,z]`, `origin:[doubleX,doubleZ]`, `yaw`, `seed:1337`, `starterKit:false`. Returns protocol version, capabilities and
   action names. The explicit starter kit is a development fixture seeded by the
   authority; normal starts have empty inventories.
 - `simulate`: `input:{moveX,moveY,jump,grounded,stance,yaw,pitch,velocity?,heldItemId}`.
@@ -272,3 +272,35 @@ repair and save/load preserve them. Trusted native water physics may publish
 `engineDrowned:true` through `worldVehicleState`; this irreversible source flag
 prevents a blowtorch repairing a drowned engine. Tire hits update the original
 replicated popped-tire mask, so replacing a tire remains the existing transaction.
+
+
+Floating origins use `rebase {shift:[sx,0,sz],expectedEpoch:N}`. The shift must be
+an integer multiple of the original 256m region size. Positive shift adds to the
+absolute origin and subtracts from every local position. `state.origin` contains
+`{epoch,x,z}` (double absolute X/Z); initial `spawn` is already local relative to
+optional `init.origin`. Terrain generation still takes absolute region indices.
+The native caller pauses publication, applies the returned shift to bodies,
+interpolation and scene roots, then resumes. Add `originEpoch` to coordinate
+requests: stale epochs are rejected before processing. Load and a distant respawn
+can also change the origin, so adopt it from every returned state, including
+action replies. While dead, suppress native distance-triggered rebases; respawn
+moves the origin to the source spawn/claimed bed before its recovery packet.
+
+The barrier drains the real memory transport and its reliable queues without
+advancing any simulation clock, translates authority/replicas/pending combat,
+then sends a reliable full snapshot at that same tick. IDs, inventory references,
+seats, velocity, recovery windows and deadlines stay intact. Retained event
+positions and registered static/moving geometry move with the frame. Saving
+preserves the double origin and local registration metadata. Distant authoritative
+positions use an optional unbounded store; in-range quantization and the existing
+bounded wire remain unchanged. Far replicas become useful again when their area
+enters the local wire window. This transaction is for this integrated host;
+remote UDP peers would require a negotiated epoch barrier before participating.
+
+`worldVehicleDamage {netId,amount,engineShare?,bodyPart?,point?,direction?}` is a
+trusted host physics operation for source crash/rotor-strike results. It is not a
+client game command. Parts are hull, engine, mainRotor, tailRotor or tire:0..7.
+Default engine share is .5 for hull and zero for other parts. Accepted damage uses
+the same authoritative pools, fuse and event path as weapons; native physics never
+writes whole HP snapshots. Writes between simulation ticks are marked for the
+next snapshot so a stationary car or newly popped tire cannot miss replication.

@@ -36,10 +36,138 @@ class BridgeTests(unittest.TestCase):
         self.assertTrue(response['ok'], response)
         return response
 
+    def reject(self, op, **args):
+        self.seq += 1
+        self.process.stdin.write(json.dumps(dict(id=self.seq, op=op, **args)) + '\n')
+        self.process.stdin.flush()
+        response = json.loads(self.process.stdout.readline())
+        self.assertEqual(self.seq, response['id'])
+        self.assertFalse(response['ok'], response)
+        return response
+
     def pump(self, count=6):
         for _ in range(count):
             result = self.call('tick')
         return result['state']
+
+    def test_rebase_drains_old_frame_actions_preserves_clock_ids_and_geometry(self):
+        self.call('init', spawn=[1025, 0, 0], starterKit=True)
+        self.call('worldServices', objectDoors=[dict(netId=900, position=[1025, 0, -1])],
+                  resourceCount=1, resources=[dict(index=0, position=[1025, 0, 1], rewardItemId=13, resetSeconds=10)])
+        vehicle = self.call('worldVehicles', vehicles=[dict(typeId=1,key='origin-car',position=[1025,0,-2],health=300,healthMax=300,fuel=10)])['result']['vehicles'][0]['netId']
+        triangle = [[1020,-1,-3],[1030,-1,-3],[1025,5,-3]]
+        self.call('worldGeometry', meshes=[dict(vertices=triangle)])
+        self.call('worldDynamicGeometry', key='car', meshes=[dict(vehicleNetId=vehicle,vertices=[[1020,-1,-2],[1030,-1,-2],[1025,5,-2]])])
+        before = self.pump()
+        item = before['inventory']['pages'][2]['items'][0]
+        self.call('action',name='dropItem',args=dict(page=2,x=item['x'],y=item['y']))
+        # Reliable drop is still queued when the atomic coordinate barrier begins.
+        result = self.call('rebase', shift=[1024,0,0], expectedEpoch=0)
+        state = result['state']
+        self.assertEqual(before['tick'], state['tick'])
+        self.assertEqual(before['worldClock'], state['worldClock'])
+        self.assertAlmostEqual(before['player']['food'],state['player']['food'],places=4) # barrier can catch up one pending replica
+        self.assertEqual(before['player']['correctionVersion'],state['player']['correctionVersion'])
+        self.assertEqual([1,0,0], state['player']['position'])
+        self.assertEqual(dict(epoch=1,x=1024,z=0),state['origin'])
+        self.assertEqual(vehicle,state['vehicles'][0]['netId'])
+        self.assertEqual([1,0,-2],state['vehicles'][0]['position'])
+        self.assertEqual(1,len(state['worldItems']))
+        self.assertLess(abs(state['worldItems'][0]['position'][0]-1),4) # original drop includes scatter
+        hit = self.call('worldRay',**dict(**{'from':[1,1,0]},to=[1,1,-4]))['result']
+        self.assertTrue(hit['hit']); self.assertEqual(vehicle,hit['vehicleNetId'])
+        self.call('action',name='toggleObjectDoor',args=dict(netId=900),originEpoch=1)
+        self.call('action',name='forageResource',args=dict(index=0),originEpoch=1)
+        state=self.pump()
+        self.assertTrue(state['interactables']['objectDoors'][0]['open'])
+        self.assertEqual([0],state['resources']['dead'])
+        self.assertEqual([1,0,0],state['player']['position'],'translated recovery anchor accepts next local pose')
+        self.reject('tick', input=dict(position=[1025,0,0]),originEpoch=0)
+        self.reject('rebase',shift=[1024,0,0],expectedEpoch=0)
+        self.assertEqual(state['tick'],self.call('snapshot')['state']['tick'])
+
+    def test_rebase_translates_retained_fire_facts_and_pending_grenade_without_restarting_fuse(self):
+        self.call('init',spawn=[1025,0,0],starterKit=True)
+        self.call('action',name='console',args=dict(text='give 254'))
+        self.call('tick',input=dict(heldItemId=4))
+        self.pump()
+        self.call('action',name='fire',args=dict(origin=[1025,1.6,0],dir=[0,0,-1]))
+        self.pump(3)
+        self.call('action',name='grenade',args=dict(origin=[1025,1.6,0],velocity=[0,1,-2],itemId=254))
+        state=self.call('rebase',shift=[1024,0,0],expectedEpoch=0)['state']
+        fire=next(e for e in state['events'] if e['kind']=='fire')
+        self.assertAlmostEqual(1,fire['data']['origin']['x'])
+        state=self.pump(5)
+        self.assertEqual(1,len(state['projectiles']))
+        projectile=state['projectiles'][0]; self.assertAlmostEqual(1,projectile['position'][0])
+        age=state['tick']
+        state=self.call('rebase',shift=[-1024,0,0],expectedEpoch=1)['state']
+        self.assertEqual(age,state['tick'])
+        self.assertEqual(projectile['netId'],state['projectiles'][0]['netId'])
+        self.assertAlmostEqual(1025,state['projectiles'][0]['position'][0])
+        self.pump(150)
+        events=self.call('snapshot')['state']['events']
+        self.assertEqual(1,len([e for e in events if e['kind']=='throwAccepted']))
+        explosion=next(e for e in events if e['kind']=='grenadeExploded')
+        self.assertAlmostEqual(1025,explosion['data']['pos']['x'])
+
+    def test_rebase_save_keeps_absolute_origin_and_distant_authoritative_items(self):
+        large=256_000_000.0
+        self.call('init',spawn=[1025,0,0],origin=[large,-large],starterKit=True)
+        self.call('worldSpawn',items=[dict(itemId=67,position=[-12000.125,2,15000.25])])
+        self.call('worldServices',objectDoors=[dict(netId=901,position=[1025,0,-1])])
+        self.pump()
+        self.call('rebase',shift=[1024,0,0],expectedEpoch=0)
+        with tempfile.TemporaryDirectory() as folder:
+            path=str(Path(folder)/'origin.json')
+            self.call('save',path=path)
+            saved=json.loads(Path(path).read_text())
+            self.assertEqual(large+1024,saved['BevyBridge']['OriginX'])
+            self.assertEqual(-13024.125,saved['WorldItems'][0]['X'])
+            self.call('rebase',shift=[-1024,0,0],expectedEpoch=1)
+            state=self.call('load',path=path)['state']
+            self.assertEqual(large+1024,state['origin']['x'])
+            self.assertEqual(3,state['origin']['epoch'])
+            self.assertEqual([1,0,0],state['player']['position'])
+            self.call('action',name='toggleObjectDoor',args=dict(netId=901))
+            self.assertTrue(self.pump()['interactables']['objectDoors'][0]['open'])
+            self.call('save',path=path)
+            saved=json.loads(Path(path).read_text())
+            self.assertEqual(-13024.125,saved['WorldItems'][0]['X'],'loading far objects never clamps stored authority to the wire window')
+            self.assertEqual(15000.25,saved['WorldItems'][0]['Z'])
+
+    def test_distant_respawn_rebases_to_original_absolute_spawn_before_recovery_packet(self):
+        self.call('init',spawn=[0,0,0],starterKit=True)
+        for epoch in range(5):
+            self.call('action',name='console',args=dict(text='tp 1025 0 0'))
+            state=self.pump(8)
+            self.assertAlmostEqual(1025,state['player']['position'][0])
+            self.call('rebase',shift=[1024,0,0],expectedEpoch=epoch)
+        state=self.call('snapshot')['state']
+        self.assertEqual(5120,state['origin']['x'])
+        self.call('action',name='console',args=dict(text='give 254'))
+        self.pump()
+        self.call('action',name='grenade',args=dict(origin=[1,1.6,0],velocity=[0,0,0],itemId=254))
+        state=self.pump(155)
+        self.assertFalse(state['player']['alive'])
+        state=self.call('action',name='respawn',args={})['state']
+        self.assertEqual(0,state['origin']['x'])
+        state=self.pump(8)
+        self.assertTrue(state['player']['alive'])
+        self.assertEqual([0,0,0],state['player']['position'],'actual original spawn survives five origin shifts')
+
+    def test_host_vehicle_damage_preserves_split_pools_and_rejects_invalid_parts(self):
+        vehicle=self.call('worldVehicles',vehicles=[dict(typeId=1,key='damage',position=[0,0,-2],health=300,healthMax=300,
+            engineRegion=dict(rear=False,threshold=0,health=120),hitRegions=[dict(bodyPart='mainRotor',center=[0,1,0],size=[1,1,1],health=50)])])['result']['vehicles'][0]['netId']
+        self.call('worldVehicleDamage',netId=vehicle,amount=10,bodyPart='mainRotor')
+        self.call('worldVehicleDamage',netId=vehicle,amount=20,bodyPart='hull',engineShare=.5)
+        state=self.pump(); car=state['vehicles'][0]
+        self.assertEqual(280,car['health']); self.assertEqual(110,car['engineHealth']); self.assertEqual(40,car['mainRotorHealth'])
+        self.reject('worldVehicleDamage',netId=vehicle,amount=1,bodyPart='tire:20')
+        self.call('worldVehicleDamage',netId=vehicle,amount=1,bodyPart='tire:1')
+        self.assertEqual(2,self.pump()['vehicles'][0]['poppedTireMask'])
+        self.call('worldVehicleState', vehicles=[dict(netId=vehicle,position=[0,0,-3])])
+        self.assertEqual([0,0,-3], self.pump()['vehicles'][0]['position'], 'host write after prior snapshot is dirtied for the next snapshot')
 
     def test_movement_preserves_stance_speed_and_yaw(self):
         r = self.call('simulate', input=dict(moveX=0, moveY=1, grounded=True, stance='sprint', yaw=90))

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using SDG.Unturned;
 using UnturnedGodot;
 using UnturnedGodot.Net;
@@ -113,13 +114,26 @@ public sealed class BodyCombatServices
             h.Melee ? "hull" : _vehicles.HitPart(h.Hit.VehicleNetId, h.Hit.Point, h.Hit.BodyPart));
         else if (h.Hit.DeployableNetId != 0) DamageDeployable(h.Hit.DeployableNetId, h.Damage, h.Attacker);
     }
+    public object HostVehicleDamage(JsonElement request)
+    {
+        uint id = checked((uint)Int(request, "netId"));
+        if (!_server.Vehicles.TryGet(id, out var vehicle)) throw new ArgumentException($"Unknown vehicle {id}");
+        string part = Text(request, "bodyPart", "hull");
+        float amount = Float(request, "amount"), share = Float(request, "engineShare", part == "hull" ? .5f : 0);
+        if (amount < 0 || share < 0 || share > 1) throw new ArgumentException("Invalid host damage amount/engine share");
+        if (part is not ("hull" or "engine" or "mainRotor" or "tailRotor") && !(part.StartsWith("tire:") && int.TryParse(part.AsSpan(5), out int tire) && tire is >= 0 and < 8))
+            throw new ArgumentException("Unknown host vehicle body part");
+        bool accepted = amount > 0 && !vehicle.Exploded;
+        if (accepted) DamageVehicle(id, amount, share, 0, Vec(request, "point", vehicle.Pos), Vec(request, "direction"), part);
+        return new { accepted, netId = id };
+    }
     void DamageVehicle(uint id, float amount, float engineShare, ushort attacker, Vector3 point, Vector3 direction, string part = "hull")
     {
         if (amount <= 0 || !_server.Vehicles.TryGet(id, out var e) || e.Exploded) return;
         bool hull = part is null or "hull";
         _vehicles.DamageParts(id, amount, engineShare, part);
         float health = hull ? Math.Max(0, e.Health - amount) : e.Health;
-        _server.Vehicles.ServerPublishVitals(new(id), _vehicles.FuelFor(id, e.Fuel), health, e.Battery, false, Tick);
+        _server.Vehicles.ServerPublishVitals(new(id), _vehicles.FuelFor(id, e.Fuel), health, e.Battery, false, Tick + 1);
         _emit("vehicleDamage", new { netId = id, amount, engineShare, bodyPart = part, point = Array(point), direction = Array(direction), attacker, health });
         var life = State(true, id);
         if (hull && health <= 0 && life.Fuse == NoTime) life.Fuse = Tick + Ticks(BodyRules.VehicleFuse);
