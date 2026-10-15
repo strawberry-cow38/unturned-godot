@@ -713,3 +713,30 @@ requested separately. Character rows in `npcCatalog` and map service metadata
 share explicit appearance fields plus source-sanitized `displayName` (numeric
 character IDs are not unique). See `../docs/NPC_UI_PORT.md` for the schema,
 regressions and preserved source gaps.
+
+### Owner pose lifecycle
+
+Integrated startup and load wait for the accepted owner join snapshot before
+sending any position. This prevents the previous native pose from overwriting a
+nearby save during the handshake, and preserves saved facing at both near and
+far locations. Fresh sessions retain their requested initial yaw.
+
+`worldServices.seats` uses the existing `position`, `face` and `recline` metadata
+as an authoritative furniture anchor: ordinary chairs subtract the original
+`PropSeat.HipSeated`; beds use their root directly. Accepted occupancy invokes
+the opt-in `StationarySeatOf` authority seam. Entry sends one recovery and
+subsequent carriers retain combat without asserting walking position or fall
+velocity. Standing resumes the original envelope. Anchors shift with world
+origin, disappear with the session, and release on death or accepted vehicle
+boarding; vehicle pose authority keeps its existing path.
+
+Eight managed regressions cover near/far load, chair/bed action and stand,
+actual UDP observers, origin/reset, death/respawn and vehicle transfer. Two core
+cases cover the opt-in boundary, hostile carrier position and restored walking
+enforcement. The occupied-bed combat fixture now shoots from the side to avoid
+its correctly positioned player's capsule. Live `bevy-owner-pose-*` captures
+show the restored save, stable accepted bed pose, firing and stand-up with an
+unchanged correction counter. Their diagnostic camera stays fixed; the PNGs
+verify interaction/weapon state and the JSON sidecars establish owner position
+and correction stability. This repairs authority wiring omitted by the
+original integrated path; it does not relax movement validation.

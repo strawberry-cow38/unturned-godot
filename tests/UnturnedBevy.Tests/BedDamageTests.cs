@@ -113,15 +113,18 @@ public sealed class BedDamageTests
         Call(remote,"init",new{contentRoot=Root(),connectHost="127.0.0.1",connectPort=port,mapId="Fixture"});Pump(host,20,remote);
         Action(host,"console",new{text="teleport 3 0 0"});Pump(host,10,remote);
         Action(host,"claimBed",new{netId=1});Action(host,"sitSeat",new{netId=1});Pump(host,10,remote);
+        // The seated host really occupies the bed's end now. Shoot from the side
+        // so its authoritative player capsule does not intercept the bed shot.
+        Action(remote,"console",new{text="teleport 3 0 0"});Pump(host,10,remote);
         Action(remote,"console",new{text="give 4"});Pump(host,10,remote);
         var page = State(remote).GetProperty("inventory").GetProperty("pages").EnumerateArray()
             .First(p=>p.GetProperty("items").EnumerateArray().Any(i=>i.GetProperty("id").GetInt32()==4));
         var item=page.GetProperty("items").EnumerateArray().First(i=>i.GetProperty("id").GetInt32()==4);
         Action(remote,"equipAndHold",new{page=page.GetProperty("index").GetInt32(),x=item.GetProperty("x").GetInt32(),y=item.GetProperty("y").GetInt32()});Pump(host,80,remote);
-        var direction = new Vector3(0, .225f-1.75f, -3).normalized;
+        var direction = new Vector3(-3, .225f-1.75f, 0).normalized;
         for(int shot=1;shot<=6;shot++)
         {
-            Action(remote,"fire",new{origin=new[]{0f,1.75f,3f},dir=new[]{direction.x,direction.y,direction.z}});Pump(host,12,remote);
+            Action(remote,"fire",new{origin=new[]{3f,1.75f,0f},dir=new[]{direction.x,direction.y,direction.z}});Pump(host,12,remote);
             Assert.That(Server(host).Interactables.BedCount,Is.EqualTo(shot<6?1:0),"Eaglefire Vehicle_Damage35 against Bed.Health200");
         }
         Assert.That(State(remote).GetProperty("weapon").GetProperty("ammo").GetInt32(),Is.EqualTo(24));

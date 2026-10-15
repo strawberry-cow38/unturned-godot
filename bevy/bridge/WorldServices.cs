@@ -50,6 +50,7 @@ public sealed partial class WorldServices
     public WorldServices(NetWorldServer server, Catalog catalog, Action<string, object> emit)
     {
         _server = server; Harvesting = new(server, catalog, emit);
+        BindStationarySeats();
         FarmRegistry.Load(); CropRegistry.Load(); NpcCatalog.Load();
         RegisterCrops(server.Crops.Schema);
         server.Transactions.FuelStations = _fuel;
@@ -105,11 +106,7 @@ public sealed partial class WorldServices
             _server.Interactables.RegisterObjectDoor(id, pos, Bool(d, "open"), side);
             _objectDoorMeta[id] = (pos, side);
         }
-        foreach (var d in Entries(spec, "seats"))
-        {
-            uint id = checked((uint)Int(d, "netId"));
-            if (!_retiredBedSeats.Contains(id)) _server.Interactables.RegisterSeat(id, Vec(d, "position"));
-        }
+        foreach (var d in Entries(spec, "seats")) RegisterStationarySeat(d);
         foreach (var d in Entries(spec, "deadzones"))
         {
             var kind = Enum.TryParse<DeadzoneKind>(Text(d, "kind", "Radiation"), true, out var k) ? k : throw new ArgumentException("Unknown deadzone kind");
@@ -179,6 +176,7 @@ public sealed partial class WorldServices
     public void TranslateWorld(Vector3 delta)
     {
         Harvesting.TranslateWorld(delta);
+        TranslateStationarySeats(delta);
         foreach (var key in _drops.Keys.ToArray()) _drops[key] = CoordinateJson.Entry(_drops[key], delta);
         foreach (var key in _objectDoorMeta.Keys.ToArray())
         { var value = _objectDoorMeta[key]; _objectDoorMeta[key] = (value.position + delta, value.swingSide); }
@@ -199,6 +197,7 @@ public sealed partial class WorldServices
     public void Step()
     {
         long tick = _server.Session.CurrentTick;
+        ReleaseInvalidStationaryOccupants(tick);
         _server.ItemMovers.Step((float)SimClock.FixedDelta);
         _containers.Tick(); Harvesting.Step();
         foreach (int i in Regrown(tick)) _server.Transactions.SetResourceAlive(i, true);

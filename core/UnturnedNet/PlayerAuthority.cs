@@ -202,6 +202,10 @@ namespace UnturnedGodot.Net
         /// packet carries held selection and deduplicated combat only; the seat
         /// remains the sole transform authority. Default preserves legacy hosts.</summary>
         public bool AcceptSeatedActions;
+        /// <summary>Optional source-world furniture anchors. Accepted occupancy
+        /// resolves here; a prop seat's snap is never a walking-envelope claim.
+        /// Null preserves hosts without the source seat adapter.</summary>
+        public Func<ushort, StationarySeatPose?> StationarySeatOf;
 
         /// <summary>mp-event-coalesce (v10): the sink for each deduped carried combat event -- wired in
         /// NetWorldHost to route Kind -> ServerCombat.OnFire/OnMelee/OnGrenade/OnReload (ServerCombat lives
@@ -249,6 +253,7 @@ namespace UnturnedGodot.Net
             public bool HasSeq; public ushort LastSeq;
             public long LastAccrueTick;            // server tick the banks last accrued at
             public float HBank, UpBank, DownBank;  // the per-axis allowance banks (metres)
+            public uint StationarySeatId;           // last accepted host-owned furniture anchor, 0 while on foot/in vehicle
             public byte RecovCounter;              // increments per violation (the retail input.recov shape)
             public bool Recovering;                // discard claims until RecovAck echoes the counter
             public bool HasAdopted;
@@ -328,7 +333,18 @@ namespace UnturnedGodot.Net
             // v57: what the hands hold and the stance/lamp bits, as the held input every server reader already asks
             // (TryGetHeldInput). BEFORE the combat carry below, because a shot in this packet was fired holding what
             // this packet says -- the broken-gun refusal and the worn-gun damage read it.
-            bool seated = AcceptSeatedActions && _isSeated(sender);
+            var stationary = AcceptSeatedActions ? StationarySeatOf?.Invoke(sender) : null;
+            bool seated = AcceptSeatedActions && (_isSeated(sender) || stationary.HasValue);
+            if (stationary is StationarySeatPose seat)
+            {
+                // One authoritative entry recovery also retires old in-flight
+                // walking claims. Subsequent carriers cannot move the anchor,
+                // trigger falling damage, or create an endless rollback loop.
+                if (st.StationarySeatId != seat.NetId) RepositionOwner(sender, seat.Position, tick);
+                _players.ServerDrive(sender, seat.Position, seat.YawDegrees, cmd.Seq, tick);
+                st.StationarySeatId = seat.NetId;
+            }
+            else st.StationarySeatId = 0;
             _players.ServerSetStateInput(sender, seated ? (byte)0 : cmd.Buttons, cmd.HeldItemId);
 
             // ---- mp-event-coalesce (v10): apply the redundant combat carry BEFORE the recov-ack gate and
@@ -496,6 +512,7 @@ namespace UnturnedGodot.Net
             // claim (shell now sitting there, re-quantized) lands a ~zero delta and adopts clean
             Vector3 landed = _players.TryGetByOwner(playerId, out var e) ? e.Pos : pos;
             st.PeakFallSpeed = 0f; st.WasAirborne = false;   // P3b: a respawn wipes any in-flight fall so the resume claim can't inherit a phantom landing
+            st.StationarySeatId = 0; // a later accepted re-entry starts a fresh furniture window
             st.RecovCounter++;
             st.Recovering = true;
             var evt = new PlayerRecovEvent { Pos = landed, Vel = Vector3.zero, RecovCounter = st.RecovCounter };

@@ -161,6 +161,7 @@ deployable = read('game/Deployable.cs')
 def number(pattern, text):
     return re.search(pattern, text, re.S).group(1)
 rules = {
+    'PropSeatHipSeated': number(r'public const float HipSeated = ([0-9.]+f)', read('game/PropSeat.cs')),
     'VehicleFuse': number(r'const float ExplodeDelay = ([0-9.]+f)', vehicle),
     'DeployableFuse': number(r'const float ExplodeDelay = ([0-9.]+f)', deployable),
     'CoolSeconds': number(r'WreckSalvageable => _exploded && _burnTime >= ([0-9.]+f)', vehicle),

@@ -27,6 +27,7 @@ public sealed partial class BridgeHost : IDisposable
     bool _allowCheats = true;
     string _name = "Survivor", _map = "bevy";
     int _correctionVersion;
+    bool _ownerReady;
     readonly List<BridgeEvent> _events = new();
     long _eventSequence;
     readonly WorldGeometry _geometry = new();
@@ -298,7 +299,7 @@ public sealed partial class BridgeHost : IDisposable
 
     void StartSession(WorldSave save)
     {
-        _scopeSteady.Reset(); _wantsSteady = false; _localProfileSent = false;
+        _scopeSteady.Reset(); _wantsSteady = false; _localProfileSent = false; _ownerReady = false;
         _worldChanged = false; _geometry.ClearDynamic();
         _network = new MemNetwork(); _movement = new PlayerMovementSim(); _stance = new PlayerStanceSim(); _recov = 0; _events.Clear(); _velocity = Vector3.zero; _lastRecipeState = null; _cachedRecipes = null;
         if (IsRemote) { StartRemote(); return; }
@@ -349,13 +350,17 @@ public sealed partial class BridgeHost : IDisposable
         _vehicles.RestoreFuel(save);
         _services.AdoptSavedBits();
         CreateClient(LocalTransport());
-        for (int n = 0; n < 100 && _client.State != NetSessionState.Connected; n++) Tick();
-        if (_client.State != NetSessionState.Connected) throw new InvalidOperationException("Local server handshake did not complete");
+        // Accept precedes the reliable owner snapshot. Publishing the old
+        // native pose in that interval can overwrite a nearby saved position
+        // (and yaw) before we ever read the restored owner.
+        for (int n = 0; n < 100 && (_client.State != NetSessionState.Connected
+            || !_client.Players.TryGetByOwner(_client.PlayerId, out _)); n++) Tick();
+        if (_client.State != NetSessionState.Connected || !_client.Players.TryGetByOwner(_client.PlayerId, out var player))
+            throw new InvalidOperationException("Local server owner snapshot did not arrive");
+        _position = player.Pos;
+        if (save != null) { _yaw = player.YawDegrees; _correctionVersion++; }
+        _ownerReady = true;
         for (int n = 0; n < 4; n++) Tick();
-        if (save != null && _server.Players.TryGetByOwner(_client.PlayerId, out var player))
-        {
-            _position = player.Pos; _yaw = player.YawDegrees; _correctionVersion++;
-        }
     }
 
     object Simulate(JsonElement input)
@@ -387,7 +392,7 @@ public sealed partial class BridgeHost : IDisposable
         // Make that target representable before core emits its bounded recovery packet.
         if (_server.CombatState.TryGet(_client.PlayerId, out var life) && !life.Alive
             && life.RespawnAtTick == _server.Session.CurrentTick + 1) PrepareRespawnFrame();
-        if (_client.State == NetSessionState.Connected)
+        if (_ownerReady && _client.State == NetSessionState.Connected)
             _client.SendPlayerState(_position, _yaw, _pitch, _velocity,
                 (byte)((StanceCode(_movement.Stance) << 1) | (_scopeSteady.Steadying ? MoveInput.ButtonSteady : 0)), _grounded, _recov, _held);
         _network.Tick(); _client.Tick(); _server.TickSimulation(); _weapons.Step(); _cosmetic.Step();

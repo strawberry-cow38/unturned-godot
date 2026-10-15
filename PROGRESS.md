@@ -1577,3 +1577,33 @@ timer and five original wood items follow it. Native animation alone cannot
 award them. The renderer exited 0 with no shader errors; audio playback could not
 be heard on this machine. Source timing and lifecycle review found no blocker.
 See bevy/docs/RESOURCES_PORT.md for remaining stump-BVH and audio-filter gaps.
+
+## 2026-10-15 — Bevy saved owner and furniture pose authority
+
+The live bed destruction journey revealed two real authority bugs. During
+integrated load, the local client published its old native pose after Accept but
+before the saved owner snapshot arrived, overwriting nearby saves and distant
+saved facing. Startup now waits for that accepted snapshot before publication.
+Accepted prop seats also lacked a host pose provider: their source snap exceeded
+the walking envelope, causing the native seat and recovery to fight every tick.
+An opt-in stationary-seat callback now adopts the original chair hip or bed root
+and facing, sends one entry recovery, and carries deduplicated combat without
+adopting motion. Walking bounds remain unchanged. Source death stand-up and
+accepted vehicle boarding release furniture; origin shift and fresh sessions
+preserve their existing lifecycle.
+
+Eight new managed cases cover near/far save restoration, chairs/beds, actual UDP
+observers, firing/stand, rebase/reset and death/vehicle transfer. Two core cases
+cover the optional host boundary and resumed walking validation. The initial
+four tests failed the old implementation; removing the final death-release
+adapter also fails its lifecycle regression. All70 managed,658 core and121
+JSONL integration tests pass. The occupied-bed damage regression now fires from the side, because the
+correctly positioned occupant's capsule intercepts its former central shot.
+
+Opened live bevy-owner-pose loaded/seated/stable/stood captures show the real
+saved pose restored, accepted seat394, an accepted shot (30→29 rounds), and
+Stand up→Lie down interaction. The diagnostic camera remains fixed: JSON records
+establish owner movement and correctionVersion3 remaining stable from tick4624
+through6086 and6349, rather than the old8→53→218 loop. Independent source and
+image review found no blocker. The renderer exited cleanly. See the bridge
+README owner-pose lifecycle section for the adapter boundary.
