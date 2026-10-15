@@ -2423,3 +2423,29 @@ remote browsing, accepted private queue state, ingredient escrow, cancellation
 and exact refunds; the old bridge without the read operation fails the same
 test. Final immutable bridge is `.local/crafting-view-v70`. The replacement
 native category grid/detail/queue is in progress and being rendered separately.
+
+### Original bus folding door through accepted UDP state
+
+The original bus now uses its source mesh cuts, trim caps, lowered pocket,
+nested hinges and moving panes. Full leaf contact boxes preserve the original
+vehicle/combat obstruction while the player can board through the leaves;
+stationary folding also refreshes the authority geometry. Source branch order
+prevents door cuts from replacing aircraft or baked-light body handling.
+
+Protocol 70 command 78/event 59 carries authenticated driver or focused look
+intents and accepted open/phase/edge facts. Extracted Toggle/Cycle/Update bodies
+retain 0.8s motion, moving refusal, the 2.5s boarding/leaving hold and 0.2s retry.
+Save/load retains active timing and canonicalizes the source's expired negative
+hold to zero. Native keys and focus never mutate the phase; passive moving
+status has no F hint, and one source sound voice retriggers on accepted edges.
+
+Five managed bus tests, three wire tests, seven native bus tests and the shared
+passive interaction regression pass. The combined immutable candidate passes
+144 managed, 710 core and 128 JSONL tests. Geometry/uploader tests include actual
+bus assets, articulated pane repair, collision filters and a negative control
+for the full leaf box. Both original Godot closed/open references and all four
+native geometry views were rendered, opened and independently reviewed. A
+separate real UDP remote/native key fixture visibly closes, folds, opens and
+recloses the bus at accepted phases 0→0.45→1→0; all four images were opened.
+This fixture is not a full playable-map OS-input claim, and audio-device
+listening remains unavailable. See `bevy/docs/BUS_DOOR_PORT.md`.

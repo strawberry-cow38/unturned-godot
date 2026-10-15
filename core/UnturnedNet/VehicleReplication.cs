@@ -101,6 +101,9 @@ namespace UnturnedGodot.Net
             public uint GlassMask { get; internal set; }
             public uint BrokenGlassMask { get; internal set; }
             public byte TireMask { get; internal set; }
+            public bool HasBiFoldDoor { get; internal set; }
+            public bool DoorOpen { get; internal set; }
+            public float DoorFold { get; internal set; }
             // A6 rope tow (published by the disjoint ServerPublishTow writer, never the transform/vitals paths):
             public uint TowedNetId { get; internal set; }   // the vehicle THIS entity tows (0 = not towing). "Am I towed" is DERIVED client-side (being someone else's TowedNetId) -- NEVER replicated (a redundant TowedByNetId would be a hash-divergence footgun).
             public float TowRestLen { get; internal set; }  // the tow rope's rest length (quantized via QuantizeClampedFloat); cosmetic sag on the client rope. 0 when not towing.
@@ -519,6 +522,8 @@ namespace UnturnedGodot.Net
                 h = NetHash.MixByte(h, e.LampMask);
                 h = NetHash.MixByte(h, e.BrokenLampMask);
                 h = NetHash.MixUInt32(h, e.GlassMask); h = NetHash.MixUInt32(h, e.BrokenGlassMask); h = NetHash.MixByte(h, e.TireMask);
+                h = NetHash.MixByte(h, e.HasBiFoldDoor ? (byte)1 : (byte)0);
+                if (e.HasBiFoldDoor) { h = NetHash.MixByte(h, e.DoorOpen ? (byte)1 : (byte)0); h = NetHash.MixUInt32(h, BitConverter.SingleToUInt32Bits(e.DoorFold)); }
             }
             return h;
         }
@@ -569,6 +574,8 @@ namespace UnturnedGodot.Net
             w.WriteBit(e.HighBeam); w.WriteBits(e.LightbarPattern, 2);
             w.WriteBits(e.LampMask, 7); w.WriteBits(e.BrokenLampMask, 7);
             w.WriteBits(e.GlassMask,18); w.WriteBits(e.BrokenGlassMask,18); w.WriteUInt8(e.TireMask);
+            w.WriteBit(e.HasBiFoldDoor);
+            if (e.HasBiFoldDoor) { w.WriteBit(e.DoorOpen); w.WriteFloat(e.DoorFold); }
         }
 
         static bool ReadEntity(NetPakReader r, out VehicleEntity e)
@@ -612,8 +619,12 @@ namespace UnturnedGodot.Net
                 || (brokenMask & ~lampMask) != 0 || (highBeam && (flags & FlagHeadlights) == 0)) return false;
             if (!r.ReadBits(18, out uint glassMask) || !r.ReadBits(18, out uint brokenGlass) || (brokenGlass & ~glassMask) != 0
                 || !r.ReadUInt8(out byte tireMask)) return false;
+            if (!r.ReadBit(out bool hasDoor)) return false;
+            bool doorOpen = false; float doorFold = 0;
+            if (hasDoor && (!r.ReadBit(out doorOpen) || !r.ReadFloat(out doorFold) || !float.IsFinite(doorFold) || doorFold < 0 || doorFold > 1)) return false;
             e = new VehicleEntity
             {
+                HasBiFoldDoor = hasDoor, DoorOpen = doorOpen, DoorFold = doorFold,
                 GlassMask = glassMask, BrokenGlassMask = brokenGlass, TireMask = tireMask,
                 HighBeam = highBeam, LightbarPattern = (byte)pattern, LampMask = (byte)lampMask, BrokenLampMask = (byte)brokenMask,
                 NetIdValue = id, TypeId = typeId, Variant = variant, DriverPlayerId = driver,
@@ -1353,6 +1364,9 @@ namespace UnturnedGodot.Net
             return false;
         }
 
+        /// <summary>Optional source boarding/leaving cosmetic cycle, after an accepted occupancy edge.</summary>
+        public Action<uint> SeatChanged;
+
         void ServerEnter(ushort sender, uint netId, byte wantSeat)
         {
             long tick = _tick();
@@ -1417,6 +1431,7 @@ namespace UnturnedGodot.Net
             }
             var evt = new VehicleEnteredEvent { NetId = netId, PlayerId = sender, Seat = (byte)seat };
             _broadcast(NetMessagePak.Pack(ReplicationIds.EventVehicleEntered, evt.Write));
+            SeatChanged?.Invoke(netId);
         }
 
 
@@ -1473,6 +1488,7 @@ namespace UnturnedGodot.Net
             // by a snapshot starvation/hold, but this fact rides ReliableOrdered and always arrives
             var evt = new VehicleExitedEvent { NetId = netId, PlayerId = playerId, Pos = spot };
             _broadcast(NetMessagePak.Pack(ReplicationIds.EventVehicleExited, evt.Write));
+            SeatChanged?.Invoke(netId);
             return true;
         }
 

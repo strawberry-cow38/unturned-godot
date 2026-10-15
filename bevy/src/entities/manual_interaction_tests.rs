@@ -53,6 +53,32 @@ fn manual_source_hold_cannot_be_dispatched_by_generic_press() {
             .interaction
             .contains("Door")
     );
+    assert!(
+        app.world()
+            .resource::<UiModel>()
+            .interaction
+            .starts_with("[F]")
+    );
+    *app.world_mut().resource_mut::<InteractionFocus>() = default();
+    app.world_mut()
+        .resource_mut::<InteractionFocus>()
+        .offer_status(1., "door opening", "toggleDoor", json!({"netId":1}));
+    app.update();
+    assert_eq!(
+        app.world().resource::<UiModel>().interaction,
+        "door opening"
+    );
+    for _ in 0..8 {
+        snapshot = app
+            .world()
+            .resource::<CoreBridge>()
+            .request("tick", json!({}))
+            .unwrap();
+    }
+    assert_eq!(
+        snapshot["state"]["interactables"]["doors"][0]["open"], false,
+        "passive status must neither advertise nor dispatch F"
+    );
     *app.world_mut().resource_mut::<InteractionFocus>() = default();
     app.world_mut().resource_mut::<InteractionFocus>().offer(
         1.,

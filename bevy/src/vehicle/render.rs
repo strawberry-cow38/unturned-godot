@@ -78,6 +78,16 @@ pub fn build(
     };
     let (body_override, lighting) =
         super::lighting::geometry::build(commands, entity, d, root, cache, meshes, materials);
+    let door = super::bifold::build(
+        commands,
+        entity,
+        d,
+        root,
+        cache,
+        meshes,
+        body_material.clone(),
+    );
+    let body_override = body_override.or_else(|| door.as_ref().map(|(mesh, _)| mesh.clone()));
     let body_names = s.body.iter().chain(s.heli_body_meshes.iter().flatten());
     for name in body_names {
         if s.body.as_ref() == Some(name)
@@ -179,7 +189,19 @@ pub fn build(
             );
         }
     }
-    super::glazing::build(commands, entity, d, root, cache, meshes, materials);
+    super::glazing::build(
+        commands,
+        entity,
+        d,
+        root,
+        cache,
+        meshes,
+        materials,
+        door.as_ref().map(|(_, door)| door),
+    );
+    if let Some((_, door)) = door {
+        commands.entity(entity).insert(door);
+    }
     let wheel_mat = cache.material(s.wheel_tex.as_deref(), false, assets, materials);
     if let Some(name) = &s.wheel {
         let split = if !s.tracked && !s.plane {

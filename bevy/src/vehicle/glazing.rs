@@ -9,7 +9,7 @@ use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 use std::path::Path;
 
-mod collision;
+pub(super) mod collision;
 mod effects;
 mod rain;
 mod upload;
@@ -130,6 +130,7 @@ pub(super) fn build(
     cache: &mut ContentCache,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
+    bifold: Option<&super::bifold::Built>,
 ) {
     let Some(name) = &d.spec.glass_mesh else {
         commands.entity(entity).insert(Glazing::default());
@@ -166,14 +167,15 @@ pub(super) fn build(
                 })
             },
         );
+        let attached = bifold.and_then(|door| door.pane(LABELS[index as usize], &d.spec));
         let child = commands
             .spawn((
                 Name::new(format!("Glass_{}", LABELS[index as usize])),
                 Mesh3d(mesh),
                 MeshMaterial3d(mat),
-                Transform::IDENTITY,
+                attached.map_or(Transform::IDENTITY, |(_, pose)| pose),
                 Visibility::Inherited,
-                ChildOf(entity),
+                ChildOf(attached.map_or(entity, |(parent, _)| parent)),
                 bevy::light::NotShadowCaster,
                 Pane {
                     index,
@@ -183,6 +185,9 @@ pub(super) fn build(
                 },
             ))
             .id();
+        if attached.is_some() {
+            super::bifold::pane(commands, child, &data);
+        }
         if debug_color.is_none() {
             commands.entity(child).insert(rain::RainPane {
                 body: entity,
@@ -196,10 +201,15 @@ pub(super) fn build(
         .insert((glazing, rain::Cover::default()));
 }
 
-fn adopt(
+pub(super) fn adopt(
     snapshot: Res<GameSnapshot>,
     mut bodies: Query<(&mut VehicleBody, &mut Glazing)>,
-    mut panes: Query<(&Pane, &mut Visibility, Option<&mut CollisionGroups>)>,
+    mut panes: Query<(
+        &Pane,
+        &mut Visibility,
+        Option<&mut CollisionGroups>,
+        Has<super::bifold::DoorPane>,
+    )>,
 ) {
     let Some(rows) = snapshot.0["vehicles"].as_array() else {
         return;
@@ -219,7 +229,7 @@ fn adopt(
         body.glass_mask = row["glassMask"].as_u64().unwrap_or(0) as u32;
         body.broken_glass_mask = glazing.broken;
         for entity in &glazing.panes {
-            let Ok((pane, mut visibility, groups)) = panes.get_mut(*entity) else {
+            let Ok((pane, mut visibility, groups, door)) = panes.get_mut(*entity) else {
                 continue;
             };
             let intact = glazing.broken & (1 << pane.index) == 0;
@@ -229,7 +239,11 @@ fn adopt(
                 Visibility::Hidden
             };
             if let Some(mut groups) = groups {
-                *groups = collision::player_groups(intact);
+                *groups = if door {
+                    super::bifold::groups(intact)
+                } else {
+                    collision::player_groups(intact)
+                };
             }
         }
     }

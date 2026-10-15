@@ -196,7 +196,18 @@ pub(crate) fn focus(
             json!({"netId":body.net_id}),
         ),
         Some("Trunk") => focus.offer_manual(
-            distance, "Open trunk", "openVehicleTrunk", json!({"netId":body.net_id}),
+            distance,
+            "Open trunk",
+            "openVehicleTrunk",
+            json!({"netId":body.net_id}),
+        ),
+        Some("BiFold") => super::bifold::input::offer(
+            &mut focus,
+            &snapshot.0,
+            body.net_id,
+            distance,
+            from,
+            direction,
         ),
         Some("Door") => focus.offer(
             distance,
@@ -212,8 +223,7 @@ pub(crate) fn focus(
             json!({"netId":body.net_id,"seat":0}),
             false,
         ),
-        // Bifold access must not silently become a door or hood. Its
-        // distinct original interactions are tracked separately.
+        // Unimplemented access kinds never silently become a driver door.
         _ => {}
     }
 }

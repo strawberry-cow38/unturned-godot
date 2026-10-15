@@ -138,6 +138,7 @@ struct InteractionCandidate {
     args: Value,
     open_storage: bool,
     manual: bool,
+    show_binding: bool,
 }
 impl InteractionFocus {
     /// Reserve the closest prompt for a source interaction with its own
@@ -153,6 +154,21 @@ impl InteractionFocus {
         if let Some(candidate) = &mut self.candidate {
             if candidate.action == action && candidate.args == args {
                 candidate.manual = true;
+            }
+        }
+    }
+    /// A passive source status occupies focus without advertising or dispatching a key.
+    pub fn offer_status(
+        &mut self,
+        distance: f32,
+        label: impl Into<String>,
+        action: &str,
+        args: Value,
+    ) {
+        self.offer_manual(distance, label, action, args.clone());
+        if let Some(candidate) = &mut self.candidate {
+            if candidate.action == action && candidate.args == args {
+                candidate.show_binding = false;
             }
         }
     }
@@ -189,6 +205,7 @@ impl InteractionFocus {
             args,
             open_storage,
             manual: false,
+            show_binding: true,
         });
     }
 }
@@ -763,11 +780,15 @@ fn apply_interaction(
     let Some(candidate) = &focus.candidate else {
         return;
     };
-    model.interaction = format!(
-        "[{}] {}",
-        settings.bindings[&GameAction::Interact].label(),
-        candidate.label
-    );
+    model.interaction = if candidate.show_binding {
+        format!(
+            "[{}] {}",
+            settings.bindings[&GameAction::Interact].label(),
+            candidate.label
+        )
+    } else {
+        candidate.label.clone()
+    };
     if candidate.manual || !settings.just_pressed(GameAction::Interact, &keys, &mouse) {
         return;
     }

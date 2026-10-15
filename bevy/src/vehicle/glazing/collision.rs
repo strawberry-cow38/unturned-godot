@@ -4,7 +4,7 @@ use super::*;
 use std::collections::HashMap;
 
 #[derive(Resource, Default)]
-pub(super) struct Shapes(HashMap<AssetId<Mesh>, Collider>);
+pub(in crate::vehicle) struct Shapes(HashMap<AssetId<Mesh>, Collider>);
 
 pub(super) fn player_groups(intact: bool) -> CollisionGroups {
     CollisionGroups::new(
@@ -13,7 +13,7 @@ pub(super) fn player_groups(intact: bool) -> CollisionGroups {
     )
 }
 
-pub(super) fn install(
+pub(in crate::vehicle) fn install(
     mut commands: Commands,
     mut shapes: ResMut<Shapes>,
     meshes: Res<Assets<Mesh>>,

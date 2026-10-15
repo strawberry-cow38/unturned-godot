@@ -2,6 +2,7 @@
 pub(crate) mod access;
 pub(crate) mod maintenance;
 mod audio;
+mod bifold;
 pub(crate) use audio::spawn_sound as spawn_ranged_audio;
 mod collision;
 mod contacts;
@@ -190,6 +191,7 @@ impl Plugin for VehiclePlugin {
             .add_plugins(turrets::crew::CrewPlugin)
             .add_plugins(lighting::LightingPlugin)
             .add_plugins(glazing::GlazingPlugin)
+            .add_plugins(bifold::BiFoldPlugin)
             .init_resource::<turrets::Operator>()
             .init_resource::<Vehicles>()
             .init_resource::<collision::Hulls>()

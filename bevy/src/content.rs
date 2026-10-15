@@ -20,6 +20,9 @@ use std::{
     sync::Arc,
 };
 
+#[path = "content/cut.rs"]
+pub(crate) mod cut;
+
 pub struct ContentPlugin;
 impl Plugin for ContentPlugin {
     fn build(&self, app: &mut App) {

@@ -74,6 +74,7 @@ fn vehicle(app: &mut App, key: &'static str, pose: Transform) -> Entity {
                     &mut cache,
                     &mut meshes,
                     &mut materials,
+                    None,
                 );
             },
         )

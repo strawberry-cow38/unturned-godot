@@ -10,6 +10,7 @@ struct Stamp {
     damage: u16,
     mounts: Vec<f32>,
     glass: Vec<f32>,
+    door: f32,
 }
 impl Stamp {
     fn of(
@@ -17,12 +18,14 @@ impl Stamp {
         pose: &Transform,
         mounts: Option<&turrets::Mounts>,
         glazing: Option<&glazing::Glazing>,
+        door: Option<&bifold::Built>,
     ) -> Self {
         Self {
             position: pose.translation,
             rotation: pose.rotation,
             mounts: mounts.map_or_else(Vec::new, turrets::Mounts::signature),
             glass: glazing.map_or_else(Vec::new, |g| g.signature.clone()),
+            door: door.map_or(0., |door| door.phase),
             damage: (body.popped_tire_mask as u16) | ((body.flags as u16) << 8),
             articulation: [
                 body.flight.main_phase,
@@ -34,6 +37,7 @@ impl Stamp {
     }
     fn changed(&self, other: &Self) -> bool {
         self.damage != other.damage
+            || (self.door - other.door).abs() > 0.00001
             || self.mounts != other.mounts
             || self.glass.len() != other.glass.len()
             || self
@@ -77,6 +81,7 @@ pub fn upload(
         &Transform,
         Option<&turrets::Mounts>,
         Option<&glazing::Glazing>,
+        Option<&bifold::Built>,
     )>,
     hierarchy: Query<(
         Option<&ChildOf>,
@@ -92,6 +97,7 @@ pub fn upload(
             Option<&render::WheelVisual>,
             Option<&tires::TireVisual>,
             Option<&glazing::Pane>,
+            Option<&bifold::Leaf>,
         ),
         Without<crate::particles::Emitter>,
     >,
@@ -119,9 +125,9 @@ pub fn upload(
     let mut live = HashSet::new();
     let roots: HashMap<_, _> = bodies
         .iter()
-        .map(|(entity, body, pose, mounts, glazing)| {
+        .map(|(entity, body, pose, mounts, glazing, door)| {
             live.insert(body.net_id);
-            let stamp = Stamp::of(body, pose, mounts, glazing);
+            let stamp = Stamp::of(body, pose, mounts, glazing, door);
             if uploaded
                 .previous
                 .get(&body.net_id)
@@ -149,7 +155,7 @@ pub fn upload(
             uploaded.previous.remove(&id);
         }
     }
-    for (entity, mesh, pose, visibility, wheel, tire, pane) in &parts {
+    for (entity, mesh, pose, visibility, wheel, tire, pane, leaf) in &parts {
         if *visibility == Visibility::Hidden {
             continue;
         }
@@ -185,7 +191,11 @@ pub fn upload(
         let Some((_, output)) = changed.get_mut(&id) else {
             continue;
         };
-        let Some(mesh) = meshes.get(&mesh.0) else {
+        // Original bus DoorHit is a complete leaf AABB box. The hollow visual
+        // panel is not a second ray surface and cannot open holes in that box.
+        let hit_pose =
+            leaf.map(|leaf| pose.mul_transform(Transform::from_translation(leaf.center)));
+        let Some(mesh) = meshes.get(leaf.map_or(&mesh.0, |leaf| &leaf.contact_mesh)) else {
             continue;
         };
         // Rotor bullets resolve against the tiny source hub regions, not the entire blade.
@@ -195,7 +205,7 @@ pub fn upload(
         } else if let Some(tire) = tire {
             format!("tire:{}", tire.index)
         } else if let Some(wheel) = wheel.filter(|wheel| {
-            bodies.get(wheel.body).is_ok_and(|(_, body, _, _, _)| {
+            bodies.get(wheel.body).is_ok_and(|(_, body, _, _, _, _)| {
                 let spec = &data::definition(body.type_id).unwrap().spec;
                 !spec.plane && !spec.tracked
             })
@@ -204,7 +214,7 @@ pub fn upload(
         } else {
             "hull".into()
         };
-        if let Some(row) = mesh_request(mesh, pose, id, &part) {
+        if let Some(row) = mesh_request(mesh, hit_pose.as_ref().unwrap_or(pose), id, &part) {
             output.push(row);
         }
     }

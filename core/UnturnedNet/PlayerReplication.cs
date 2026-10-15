@@ -246,6 +246,7 @@ namespace UnturnedGodot.Net
         public const byte CommandAttachmentOptions = 73;
         public const byte CommandVehicleMaintenance = 76; // v69: indexed source mechanics repairs and manual horn
         public const byte CommandLearnSkillNode = 77; // v70: owner-only original skill graph purchase
+        public const byte CommandVehicleDoor = 78; // v70: source bus driver/focused toggle intent.
         public const byte CommandVehicleLighting = 75; // v68: source light switches and lamp repair intents
         public const byte CommandMountedInput = 74; // v64: accepted operator aim/trigger intent
 
@@ -311,6 +312,7 @@ namespace UnturnedGodot.Net
         public const byte EventResourceContact = 54; // v63: accepted tree/ore hit and fall presentation facts
         public const byte EventMountedShot = 55; // v64: actual mounted muzzle/barrel and launch identity
         public const byte EventVehicleMaintenance = 58; // v69: accepted glazing/repair/manual horn facts
+        public const byte EventVehicleDoor = 59; // v70: actual open/close edge, no late-join replay.
         public const byte EventVehicleLighting = 57; // v68: accepted alarm horn/lamp contact facts
         public const byte EventMountedFlight = 56; // v66: accepted source mounted continuation/retirement/blast pictures
         public const byte EventObjectDoorState = 43;   // v37: a prop door's open bit. Its own event rather than reusing EventDoorState(34): that one carries a LOCK and is keyed into Door's id space, and two id spaces sharing one message is how a container's door ends up swinging a player's front door.
