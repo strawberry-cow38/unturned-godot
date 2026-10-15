@@ -95,3 +95,25 @@ device prevents an audible listening test.
 
 Weapon animation/ADS, detailed vehicle views, procedural structures, source
 foliage shading and the remaining parity ledger still need further validation.
+
+## Native weapon trigger and first-person animation milestone
+
+- Native suite: 92 tests passed. This includes original additive aim transforms,
+  source RK4 viewmodel springs, held-food prefab LOD/animation paths, and trigger
+  acceptance bookkeeping. Burst rounds count authoritative fire events, so
+  cadence rejections and duplicate events cannot shorten or repeat a burst.
+- Live keyboard/mouse tests with a real authoritative AR-15: holding fire for
+  three seconds in semi mode spent exactly one round (30 to 29); burst spent
+  exactly three (29 to 26); safety spent none. Reload without a spare magazine
+  kept ammunition at 26. Snapshots and screenshots are saved as
+  `bevy-semi-held-three-seconds`, `bevy-burst-held-three-seconds`, and
+  `bevy-safety-and-no-free-reload` under ignored artifacts.
+- Visual review found a source zero-position sentinel for legacy iron sights;
+  the original fallback offset is now applied. Viewmodel bones also need
+  inherited Bevy visibility for their held-mesh descendants. Corrected captures
+  are pending. The source still-image harness resizes its oversized viewport;
+  gameplay instead crops it. Native FOV therefore keeps the source's 60-degree
+  vertical field of view rather than matching that distorted still framing.
+- Inventory Equip now uses exact-instance `equipAndHold`, and hotbar selection
+  uses authoritative cells. Two identical weapons cannot substitute for the
+  selected instance while the slot transaction is pending.

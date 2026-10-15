@@ -24,20 +24,39 @@ pub struct PlayerCameraUpdate;
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Session>()
+            .init_resource::<crate::weapons::Trigger>()
             .init_resource::<PlayerInput>()
             .init_resource::<GameSnapshot>()
             .add_systems(Startup, spawn_player.after(WorldReady))
             .add_systems(
                 Update,
-                (initialize_session, ui_intents, close_storage_on_exit, read_input, physics_configuration)
+                (
+                    initialize_session,
+                    ui_intents,
+                    close_storage_on_exit,
+                    read_input,
+                    physics_configuration,
+                )
                     .chain()
                     .in_set(PlayerUpdate)
                     .after(crate::ui::UiUpdate)
                     .after(WorldReady),
             )
-            .add_systems(Update, (sync_seated_body, camera_follow).chain().in_set(PlayerCameraUpdate).after(crate::vehicle::VehicleUpdate).after(PlayerUpdate))
+            .add_systems(
+                Update,
+                (sync_seated_body, camera_follow)
+                    .chain()
+                    .in_set(PlayerCameraUpdate)
+                    .after(crate::vehicle::VehicleUpdate)
+                    .after(PlayerUpdate),
+            )
             .add_systems(FixedUpdate, simulate.before(PhysicsSet::SyncBackend))
-            .add_systems(FixedUpdate, publish_body.after(PhysicsSet::Writeback).after(crate::vehicle::VehiclePublish));
+            .add_systems(
+                FixedUpdate,
+                publish_body
+                    .after(PhysicsSet::Writeback)
+                    .after(crate::vehicle::VehiclePublish),
+            );
     }
 }
 
@@ -108,6 +127,9 @@ struct PlayerInput {
     jump: bool,
     jump_held: bool,
     fire: bool,
+    fire_pressed: bool,
+    secondary_pressed: bool,
+    selector: bool,
     reload: bool,
     yaw: f32,
     pitch: f32,
@@ -316,6 +338,12 @@ fn ui_intents(
         };
         match result {
             Ok(response) => {
+                if matches!(intent, UiIntent::Action { name, .. } if matches!(name.as_str(),"holdItem"|"equipAndHold"))
+                {
+                    if let Some(held) = response["result"]["heldItemId"].as_u64() {
+                        input.held_item_id = held as u16;
+                    }
+                }
                 if matches!(intent, UiIntent::Load) {
                     if let Some(position) = vector(&response["state"]["player"]["position"]) {
                         for (mut transform, mut body) in &mut player {
@@ -327,8 +355,11 @@ fn ui_intents(
                     }
                     model.notice("World loaded");
                     input.yaw = response["state"]["player"]["yaw"].as_f64().unwrap_or(0.) as f32;
-                    input.pitch = response["state"]["player"]["pitch"].as_f64().unwrap_or(0.) as f32;
-                    input.held_item_id = response["state"]["player"]["heldItemId"].as_u64().unwrap_or(0) as u16;
+                    input.pitch =
+                        response["state"]["player"]["pitch"].as_f64().unwrap_or(0.) as f32;
+                    input.held_item_id = response["state"]["player"]["heldItemId"]
+                        .as_u64()
+                        .unwrap_or(0) as u16;
                 } else if matches!(intent, UiIntent::Save) {
                     model.notice("World saved");
                 }
@@ -340,7 +371,12 @@ fn ui_intents(
     }
 }
 
-fn close_storage_on_exit(bridge: Res<CoreBridge>, ui: Res<UiState>, model: Res<UiModel>, mut previous: Local<Screen>) {
+fn close_storage_on_exit(
+    bridge: Res<CoreBridge>,
+    ui: Res<UiState>,
+    model: Res<UiModel>,
+    mut previous: Local<Screen>,
+) {
     if model.connected && *previous == Screen::Inventory && ui.screen != Screen::Inventory {
         if let Err(error) = bridge.request("action", json!({"name":"closeStorage","args":{}})) {
             warn!("Closing storage: {error}");
@@ -368,12 +404,14 @@ fn save_path(map: &str) -> std::path::PathBuf {
 }
 
 fn read_input(
+    bridge: Res<CoreBridge>,
+    occupancy: Option<Res<crate::vehicle::Occupancy>>,
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
     motion: Res<AccumulatedMouseMotion>,
     settings: Res<Settings>,
     ui: Res<UiState>,
-    model: Res<UiModel>,
+    mut model: ResMut<UiModel>,
     mut input: ResMut<PlayerInput>,
     mut windows: Query<(&mut CursorOptions, &mut Window), With<PrimaryWindow>>,
 ) {
@@ -394,6 +432,9 @@ fn read_input(
     if !playing {
         input.movement = Vec2::ZERO;
         input.fire = false;
+        input.fire_pressed = false;
+        input.secondary_pressed = false;
+        input.selector = false;
         input.jump = false;
         input.jump_held = false;
         input.reload = false;
@@ -408,6 +449,9 @@ fn read_input(
     input.jump |= pressed(GameAction::Jump);
     input.jump_held = held(GameAction::Jump);
     input.fire = held(GameAction::Fire);
+    input.fire_pressed |= pressed(GameAction::Fire);
+    input.secondary_pressed |= pressed(GameAction::Aim);
+    input.selector |= pressed(GameAction::Firemode);
     input.reload |= pressed(GameAction::Reload);
     if pressed(GameAction::CrouchToggle) {
         input.crouch_toggle = !input.crouch_toggle;
@@ -427,18 +471,42 @@ fn read_input(
         "stand"
     }
     .into();
-    input.yaw = (input.yaw - motion.delta.x * settings.mouse_sensitivity).rem_euclid(360.0);
-    let sign = if settings.invert_look_y { 1.0 } else { -1.0 };
-    input.pitch =
-        (input.pitch + motion.delta.y * settings.mouse_sensitivity * sign).clamp(-89.0, 89.0);
+    let aircraft_controls = occupancy
+        .as_ref()
+        .and_then(|o| o.seat)
+        .is_some_and(|seat| seat.driver && seat.aircraft)
+        && !held(GameAction::FreeLook);
+    if !aircraft_controls {
+        input.yaw = (input.yaw - motion.delta.x * settings.mouse_sensitivity).rem_euclid(360.0);
+        let sign = if settings.invert_look_y { 1.0 } else { -1.0 };
+        input.pitch =
+            (input.pitch + motion.delta.y * settings.mouse_sensitivity * sign).clamp(-89.0, 89.0);
+    }
     for (action, slot) in [(GameAction::Hotbar1, 0), (GameAction::Hotbar2, 1)] {
         if pressed(action) {
-            input.held_item_id = model
+            let held = model
                 .pages
                 .iter()
                 .find(|page| page.index == slot)
                 .and_then(|page| page.items.first())
                 .map_or(0, |item| item.id);
+            if input.held_item_id == held {
+                input.held_item_id = 0;
+            } else if held != 0 {
+                match bridge.request(
+                    "action",
+                    json!({"name":"holdItem","args":{"page":slot,"x":0,"y":0}}),
+                ) {
+                    Ok(reply) => {
+                        if let Some(id) = reply["result"]["heldItemId"].as_u64() {
+                            input.held_item_id = id as u16;
+                        }
+                    }
+                    Err(error) => model.notice(error.to_string()),
+                }
+            } else {
+                input.held_item_id = 0;
+            }
         }
     }
 }
@@ -452,6 +520,10 @@ fn simulate(
     context: ReadRapierContext,
     world: Res<WorldState>,
     occupancy: Option<Res<crate::vehicle::Occupancy>>,
+    catalog: Res<crate::entities::ItemCatalog>,
+    snapshot: Res<GameSnapshot>,
+    viewmodel: Res<crate::viewmodel::ViewmodelStatus>,
+    mut trigger: ResMut<crate::weapons::Trigger>,
     ladders: Query<(&crate::world::WorldObject, &GlobalTransform, &Collider), Without<PlayerBody>>,
     mut bodies: Query<(
         Entity,
@@ -469,6 +541,7 @@ fn simulate(
         return;
     };
     if occupancy.is_some_and(|o| o.seat.is_some()) || !model.alive {
+        trigger.cancel();
         controller.translation = None;
         return;
     }
@@ -523,7 +596,7 @@ fn simulate(
     let response = bridge.request("simulate",json!({"input":{
         "moveX":input.movement.x,"moveY":input.movement.y,"jump":input.jump,"grounded":body.grounded,
         "stance":wanted_stance,"yaw":input.yaw,"pitch":input.pitch,"velocity":body.velocity.to_array(),"heldItemId":input.held_item_id,
-        "headroom":headroom,"capsuleHeight":body.height
+        "headroom":headroom,"capsuleHeight":body.height,"equipmentAllowsSprint":!viewmodel.aiming
     }}));
     input.jump = false;
     match response {
@@ -572,7 +645,28 @@ fn simulate(
                 translation.y = -0.025;
             }
             controller.translation = Some(translation);
-            if input.fire && input.held_item_id != 0 {
+            trigger.acknowledge(&snapshot.0);
+            let item = catalog.items.get(&input.held_item_id);
+            let buttons = crate::weapons::Buttons {
+                fire: input.fire,
+                press: std::mem::take(&mut input.fire_pressed),
+                strong: std::mem::take(&mut input.secondary_pressed),
+                reload: std::mem::take(&mut input.reload),
+                selector: std::mem::take(&mut input.selector),
+            };
+            let actions = trigger.step(
+                0.02,
+                input.held_item_id,
+                item.map_or(&Value::Null, |i| &i.gun),
+                item.map_or(&Value::Null, |i| &i.melee),
+                &snapshot.0["weapon"],
+                buttons,
+                !ui.captures_input()
+                    && viewmodel.ready
+                    && viewmodel.held == input.held_item_id
+                    && !matches!(body.stance.as_str(), "swim" | "climb"),
+            );
+            for action in actions {
                 let eye = body.eye_height;
                 let direction = Quat::from_euler(
                     EulerRot::YXZ,
@@ -580,11 +674,19 @@ fn simulate(
                     input.pitch.to_radians(),
                     0.0,
                 ) * Vec3::NEG_Z;
-                if let Err(error) = bridge.request("action",json!({"name":"fire","args":{"origin":(transform.translation+Vec3::Y*eye).to_array(),"dir":direction.to_array()}})) { model.notice(error.to_string()); }
-            }
-            if input.reload {
-                input.reload = false;
-                if let Err(error) = bridge.request("action", json!({"name":"reload","args":{}})) {
+                let request = match action {
+                    crate::weapons::Intent::Fire => {
+                        json!({"name":"fire","args":{"origin":(transform.translation+Vec3::Y*eye).to_array(),"dir":direction.to_array()}})
+                    }
+                    crate::weapons::Intent::Melee(strong) => {
+                        json!({"name":"melee","args":{"strong":strong,"yawDegrees":input.yaw}})
+                    }
+                    crate::weapons::Intent::Reload => json!({"name":"reload","args":{}}),
+                    crate::weapons::Intent::Selector(mode) => {
+                        json!({"name":"setFiremode","args":{"mode":mode}})
+                    }
+                };
+                if let Err(error) = bridge.request("action", request) {
                     model.notice(error.to_string());
                 }
             }
@@ -596,7 +698,7 @@ fn simulate(
 fn publish_body(
     bridge: Res<CoreBridge>,
     ui: Res<UiState>,
-    input: Res<PlayerInput>,
+    mut input: ResMut<PlayerInput>,
     mut session: ResMut<Session>,
     mut model: ResMut<UiModel>,
     mut snapshot: ResMut<GameSnapshot>,
@@ -624,6 +726,7 @@ fn publish_body(
     match bridge.request("tick",json!({"input":{"position":transform.translation.to_array(),"velocity":body.velocity.to_array(),"grounded":body.grounded,"yaw":input.yaw,"pitch":input.pitch,"stance":body.stance,"heldItemId":input.held_item_id}})) {
         Ok(response) => {
             let state = &response["state"];
+            if let Some(held)=state["player"]["heldItemId"].as_u64() {input.held_item_id=held as u16;}
             let version = state["player"]["correctionVersion"].as_u64().unwrap_or(0);
             if version != session.correction_version {
                 if let Some(position) = vector(&state["player"]["position"]) { transform.translation = position; body.velocity = Vec3::ZERO; body.grounded = false; body.locomotion=default(); }
@@ -640,26 +743,43 @@ fn sync_seated_body(
     occupancy: Option<Res<crate::vehicle::Occupancy>>,
     snapshot: Res<GameSnapshot>,
     mut input: ResMut<PlayerInput>,
-    mut bodies: Query<(Entity, &mut Transform, &mut PlayerBody, &mut KinematicCharacterController, Option<&ColliderDisabled>)>,
+    mut bodies: Query<(
+        Entity,
+        &mut Transform,
+        &mut PlayerBody,
+        &mut KinematicCharacterController,
+        Option<&ColliderDisabled>,
+    )>,
 ) {
     let seat = occupancy.as_ref().and_then(|o| o.seat);
     for (entity, mut transform, mut body, mut controller, disabled) in &mut bodies {
         if let Some(seat) = seat {
-            let yaw = seat.eye_pose.rotation.to_euler(EulerRot::YXZ).0.to_degrees();
-            if !input.in_vehicle { input.yaw = (input.yaw - yaw).rem_euclid(360.); }
+            let yaw = seat
+                .eye_pose
+                .rotation
+                .to_euler(EulerRot::YXZ)
+                .0
+                .to_degrees();
+            if !input.in_vehicle {
+                input.yaw = (input.yaw - yaw).rem_euclid(360.);
+            }
             input.in_vehicle = true;
             input.vehicle_yaw = yaw;
             *transform = seat.body_pose;
             body.velocity = seat.velocity;
             body.grounded = false;
-            body.stance = if seat.driver {"driving"} else {"sitting"}.into();
+            body.stance = if seat.driver { "driving" } else { "sitting" }.into();
             body.locomotion = default();
             controller.translation = None;
-            if disabled.is_none() { commands.entity(entity).insert(ColliderDisabled); }
+            if disabled.is_none() {
+                commands.entity(entity).insert(ColliderDisabled);
+            }
         } else if input.in_vehicle {
             input.in_vehicle = false;
             input.yaw = (input.yaw + input.vehicle_yaw).rem_euclid(360.);
-            if let Some(position) = vector(&snapshot.0["player"]["position"]) { transform.translation = position; }
+            if let Some(position) = vector(&snapshot.0["player"]["position"]) {
+                transform.translation = position;
+            }
             transform.rotation = Quat::IDENTITY;
             body.velocity = Vec3::ZERO;
             body.grounded = false;
@@ -688,9 +808,16 @@ fn camera_follow(
             p.fov = settings.field_of_view.to_radians();
         }
         if let Some((position, yaw, pitch)) = config.fixed_camera {
-            *transform = Transform::from_translation(position).with_rotation(
-                Quat::from_euler(EulerRot::YXZ, yaw.to_radians(), pitch.to_radians(), 0.),
-            );
+            if let Projection::Perspective(p) = &mut *projection {
+                p.fov = 70_f32.to_radians();
+                p.far = 6000.;
+            }
+            *transform = Transform::from_translation(position).with_rotation(Quat::from_euler(
+                EulerRot::YXZ,
+                yaw.to_radians(),
+                pitch.to_radians(),
+                0.,
+            ));
             continue;
         }
         if ui.screen != Screen::MainMenu
@@ -741,11 +868,7 @@ fn has_headroom(
     }
     // Original HeadroomFor: omit the bottom 0.25m and slim to radius 0.30m,
     // so the supporting floor is not mistaken for a ceiling.
-    let probe = Collider::capsule(
-        Vec3::Y * 0.55,
-        Vec3::Y * (wanted_height - 0.3),
-        0.3,
-    );
+    let probe = Collider::capsule(Vec3::Y * 0.55, Vec3::Y * (wanted_height - 0.3), 0.3);
     let mut blocked = false;
     context.intersect_shape(
         feet,

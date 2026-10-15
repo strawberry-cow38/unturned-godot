@@ -20,10 +20,12 @@ use std::{
 };
 
 pub struct RigPlugin;
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct RigAnimation;
 impl Plugin for RigPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<RigLibrary>()
-            .add_systems(Update, animate_rigs);
+            .add_systems(Update, animate_rigs.in_set(RigAnimation));
     }
 }
 #[derive(Clone, Deserialize, Debug)]
@@ -96,8 +98,18 @@ pub struct RigData {
 }
 impl RigData {
     pub fn load(path: &Path) -> Result<Self, ContentError> {
-        let data: Self = serde_json::from_slice(&fs::read(path)?)
+        let mut data: Self = serde_json::from_slice(&fs::read(path)?)
             .map_err(|e| ContentError(format!("{}: {e}", path.display())))?;
+        if path.file_name().is_some_and(|name| name == "rig.json") {
+            for bank in ["consumable_anims.json", "throwable_anims.json"] {
+                let bank = path.with_file_name(bank);
+                if bank.is_file() {
+                    let clips: HashMap<String, Clip> = serde_json::from_slice(&fs::read(&bank)?)
+                        .map_err(|e| ContentError(format!("{}: {e}", bank.display())))?;
+                    data.anims.extend(clips);
+                }
+            }
+        }
         data.validate()?;
         Ok(data)
     }
@@ -262,6 +274,13 @@ pub struct RigPlayback {
     pub paused: bool,
     /// Optional upper-body/action layer; empty mask means every track in the layer.
     pub overlay: Option<RigOverlay>,
+    /// Source SetupAimAdditive: end minus start, applied in the parent frame.
+    pub additive: Option<RigAdditive>,
+}
+#[derive(Clone)]
+pub struct RigAdditive {
+    pub clip: String,
+    pub weight: f32,
 }
 #[derive(Clone)]
 pub struct RigOverlay {
@@ -345,6 +364,7 @@ pub fn spawn_rig(
             .spawn((
                 Name::new(bone.name.clone()),
                 bone.transform(),
+                Visibility::Inherited,
                 ChildOf(parent),
             ))
             .id();
@@ -380,6 +400,7 @@ pub fn spawn_rig(
         looping: true,
         paused: false,
         overlay: None,
+        additive: None,
     });
     Ok(root)
 }
@@ -425,6 +446,17 @@ fn clip_time(time: f32, length: f32, looping: bool) -> f32 {
         time.clamp(0., length)
     }
 }
+fn apply_additive(track: &Track, length: f32, weight: f32, mut pose: Transform) -> Transform {
+    let start = sample_track(track, 0., Transform::IDENTITY);
+    let end = sample_track(track, length, Transform::IDENTITY);
+    let weight = weight.clamp(0., 1.);
+    // Left multiplication is essential for pistols' multi-axis aim. Right
+    // multiplication conjugates the delta by the current weapon pose.
+    pose.rotation =
+        Quat::IDENTITY.slerp(end.rotation * start.rotation.inverse(), weight) * pose.rotation;
+    pose.translation += (end.translation - start.translation) * weight;
+    pose
+}
 fn animate_rigs(
     time: Res<Time>,
     mut players: Query<&mut RigPlayback>,
@@ -469,6 +501,13 @@ fn animate_rigs(
                     }
                 }
             }
+            if let Some(additive) = &player.additive {
+                if let Some(clip) = player.data.anims.get(&additive.clip) {
+                    if let Some(track) = clip.tracks.get(&bone.name) {
+                        pose = apply_additive(track, clip.length, additive.weight, pose);
+                    }
+                }
+            }
             *transform = pose;
         }
         if let Some(clip) = clip {
@@ -489,6 +528,34 @@ fn animate_rigs(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn additive_aim_uses_parent_frame_and_preserves_the_live_base_pose() {
+        let start = Quat::from_euler(EulerRot::XYZ, 0.5, -0.7, 0.3);
+        let delta = Quat::from_euler(EulerRot::XYZ, -0.4, 0.6, 0.2);
+        let end = delta * start;
+        let key = |t, q: Quat| [t, q.x, q.y, q.z, q.w];
+        let track = Track {
+            pos: Some(vec![[0., 1., 2., 3.], [1., 1.1, 2.2, 3.3]]),
+            rot: Some(vec![key(0., start), key(1., end)]),
+            ..default()
+        };
+        let pose = Transform::from_rotation(start).with_translation(Vec3::new(7., 8., 9.));
+        let full = apply_additive(&track, 1., 1., pose);
+        assert!(full.rotation.angle_between(end) < 0.001);
+        assert!((full.translation - Vec3::new(7.1, 8.2, 9.3)).length() < 0.0001);
+        let zero = apply_additive(&track, 1., 0., pose);
+        assert!(zero.rotation.angle_between(start) < 0.001);
+        assert_eq!(zero.translation, pose.translation);
+        // Reload/locomotion may have changed the base pose since the aim clip.
+        let other = Quat::from_rotation_y(1.2);
+        let mixed = apply_additive(&track, 1., 0.5, Transform::from_rotation(other));
+        assert!(
+            mixed
+                .rotation
+                .angle_between(Quat::IDENTITY.slerp(delta, 0.5) * other)
+                < 0.001
+        );
+    }
     #[test]
     fn keyed_animation_interpolates_and_clamps() {
         let track = Track {

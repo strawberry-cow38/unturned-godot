@@ -714,7 +714,7 @@ fn activate_button(
                 let name = match action {
                     UiButton::Drop => "dropItem",
                     UiButton::Consume => "consume",
-                    _ => "equipItem",
+                    _ => "equipAndHold",
                 };
                 intents.write(UiIntent::Action {
                     name: name.into(),

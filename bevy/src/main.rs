@@ -10,6 +10,7 @@ mod settings;
 mod ui;
 mod viewmodel;
 mod vehicle;
+mod weapons;
 mod world;
 
 use anyhow::Result;
