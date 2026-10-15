@@ -1,5 +1,6 @@
 // Source game/content/water.gdshader and swell.gdshaderinc. Physical wave height
 // stays zero (WaveField.Flat); only the optical normal ripples.
+import unturned_bevy::world::water_optics::{linear,water_shallow};
 import bevy_pbr::render::{
     forward_io::{VertexOutput,FragmentOutput},
     pbr_fragment::pbr_input_from_standard_material,
@@ -32,9 +33,6 @@ fn fbm5(p0:vec2<f32>)->f32{
     for(var i=0;i<5;i++){s+=a*(gnoise(p)-0.5);p*=2.03;a*=0.5;}
     return s;
 }
-fn linear(c:vec3<f32>)->vec3<f32>{
-    return select(c/12.92,pow((c+0.055)/1.055,vec3<f32>(2.4)),c>=vec3<f32>(0.04045));
-}
 @fragment
 fn fragment(in:VertexOutput,@builtin(front_facing) front:bool)->FragmentOutput{
     var pbr=pbr_input_from_standard_material(in,front);
@@ -60,7 +58,7 @@ fn fragment(in:VertexOutput,@builtin(front_facing) front:bool)->FragmentOutput{
     }
 }
     foam=clamp(foam,0.0,1.0);
-    let body=linear(vec3<f32>(0.060,0.245,0.44));
+    let body=water_shallow();
     var reflected=linear(vec3<f32>(0.52,0.67,0.86));
     let displaced=clamp(uv+normal.xz*0.04*lod,vec2<f32>(0.001),vec2<f32>(0.999));
     if motion.w>0.0 {

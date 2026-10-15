@@ -9,6 +9,7 @@ mod procedural_roads;
 mod roads;
 mod terrain;
 mod tunnels;
+pub mod underwater;
 mod water;
 mod wires;
 use bevy::{math::DVec3, prelude::*};
@@ -73,12 +74,14 @@ pub struct WorldReady;
 pub struct WorldPlugin;
 impl Plugin for WorldPlugin {
     fn build(&self, app: &mut App) {
+        bevy::shader::load_shader_library!(app, "world/water_optics.wesl");
         app.add_plugins((
             foliage::FoliagePlugin,
             terrain::TerrainPlugin,
             interactables::InteractablePlugin,
             origin::OriginPlugin,
             water::WaterPlugin,
+            underwater::UnderwaterPlugin,
         ))
         .init_resource::<WorldConfig>()
         .init_resource::<WorldState>()

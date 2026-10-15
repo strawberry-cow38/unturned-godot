@@ -150,7 +150,7 @@ fn prepare(
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<WaterMaterial>>,
     surfaces: Query<Entity, (With<WaterSurface>, Without<MeshMaterial3d<WaterMaterial>>)>,
-    cameras: Query<(Entity, Option<&RenderLayers>), (With<PlayerCamera>, Without<DepthPrepass>)>,
+    cameras: Query<(Entity, Option<&RenderLayers>, Option<&DepthPrepass>), With<PlayerCamera>>,
 ) {
     let Ok(window) = windows.single() else { return };
     if mirror.texture == Handle::default() {
@@ -171,11 +171,15 @@ fn prepare(
             Transform::default(),
         ));
     }
-    for (entity, layers) in &cameras {
-        commands.entity(entity).insert((
-            DepthPrepass,
-            layers.cloned().unwrap_or_default().with(WATER_LAYER),
-        ));
+    for (entity, layers, depth) in &cameras {
+        if depth.is_none()
+            || !layers.is_some_and(|layers| layers.intersects(&RenderLayers::layer(WATER_LAYER)))
+        {
+            commands.entity(entity).insert((
+                DepthPrepass,
+                layers.cloned().unwrap_or_default().with(WATER_LAYER),
+            ));
+        }
     }
     for entity in &surfaces {
         let material = materials.add(WaterMaterial {
@@ -423,6 +427,21 @@ mod tests {
         assert!(scene_light(Some(&RenderLayers::layer(0))));
         assert!(!scene_light(Some(&RenderLayers::layer(1))));
         assert!(!scene_light(Some(&RenderLayers::layer(18))));
+    }
+    #[test]
+    fn underwater_depth_prepass_does_not_hide_the_water_surface() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<Mirror>()
+            .init_resource::<Assets<Image>>()
+            .init_resource::<Assets<WaterMaterial>>()
+            .add_systems(Update, prepare);
+        app.world_mut().spawn((Window::default(), PrimaryWindow));
+        let camera = app.world_mut().spawn((PlayerCamera, DepthPrepass)).id();
+        app.update();
+        let layers = app.world().get::<RenderLayers>(camera).unwrap();
+        assert!(layers.intersects(&RenderLayers::layer(WATER_LAYER)));
+        assert!(layers.intersects(&RenderLayers::layer(0)));
     }
     #[test]
     fn ocean_extent_keeps_source_retail_margin_and_generated_region_steps() {

@@ -920,3 +920,24 @@ bevy/docs/WORLD_PORT.md.
 - Five native integration tests exercise all four real rigs, bone motion, Rapier hit capsules, death freeze, retirement/epoch reset and once-only retained panic audio. World and root read-only reviews found no blocking issue.
 - Rendered real PEI through Vulkan/Xvfb and inspected close rear/side cow captures after original console spawning and idle/wander/flee behavior. Both atlas and articulated silhouette are visible; no live ECS/shader failures. Inspection files: bevy/artifacts/bevy-wildlife-cow-rear.png and bevy-wildlife-cow-side.png.
 - Recorded actual current zombie/human-NPC boundaries in bevy/docs/NPC_AUDIT.md. InfiniteTerrain has no original fauna source; finite ProcIslandSpawn fauna remains explicitly outstanding. Shared flesh/hit feedback follows separately.
+
+
+### Bevy submerged-camera optics and retained terrain caustics (2026-10-14)
+
+Ported the original underwater eye-height hysteresis, crossed-sine warp,
+per-channel weather extinction, shared surface/veil palette, depth-dependent
+scattering blur and vignette. The render schedule captures opaque world geometry
+before transparents, matching Godot's 3D screen texture, and composites before
+the first-person camera and HUD. A real six-level mip chain uses the source
+integer 2x2 downsample footprint; dry cameras skip it. UG_UNDERWATER and the
+UG_WATEROPTICS legacy A/B remain available. The original terrain caustic formula
+is retained with its current source strength0 default, not silently re-enabled.
+
+54 focused native world tests pass, including camera hysteresis/teardown,
+world-camera-only optics, weather extinction, reverse depth, mip availability,
+and a regression for an existing DepthPrepass suppressing water render-layer
+setup. Actual and forced submerged PEI Vulkan captures were opened and inspected:
+near geometry remains visible, distant detail scatters, refraction moves edges,
+and HUD/crosshair remain sharp. Neither render reports shader errors or missing
+assets. Source references, artifact paths and remaining weather work are in
+bevy/docs/WORLD_PORT.md. Per-volume water is explicitly an existing Godot TODO.

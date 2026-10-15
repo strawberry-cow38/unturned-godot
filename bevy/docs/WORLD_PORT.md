@@ -38,8 +38,8 @@ original source formats and remain the content replacement seam.
   its ground height. The town focus is separate from gameplay spawn, so a menu
   camera does not place the player inside the busiest building.
 - The legacy ocean uses the map's own Lighting.dat sea level. The 0.99+ sentinel
-  suppresses it (Yukon has water volumes instead). Its current Bevy material is a
-  static transparent surface; this is not yet the source ocean shader.
+  suppresses it (Yukon has water volumes instead). The current flat source ocean
+  shader, planar reflections and submerged-camera optics are described below.
 - The original `InfiniteTerrain.Generate` output can be rendered through the
   engine-independent C# bridge's JSON export: row-major heights, authored normals,
   layers, holes and all placement metadata. Moving regions request the original
@@ -295,7 +295,44 @@ They show the visible shallow bed, shore/wall foam and actual reflected trees an
 dock geometry. Reflections remain aligned after translation and yaw. Both runs
 reported zero missing source assets and no shader validation errors.
 
-Still separate from this surface milestone: the underwater optical postprocess,
-rain impact ripples/puddles and submerged terrain caustics, per-volume water, and
-exposing the live reflection settings through the graphics menu. Physical
+Still separate from this surface milestone: rain impact ripples/puddles and
+exposing the live reflection settings through the graphics menu. Per-volume
+water is also absent, but is an existing Godot TODO (Terrain.cs skips Yukon
+water volumes), rather than a feature lost in this engine migration. Physical
 buoyancy remains correctly flat because the current source sets `WaveField.Flat`.
+
+
+## Submerged camera optics
+
+`world/underwater.rs` drives the effect from the world camera's eye, with the
+original 6 cm enter / 0 cm exit hysteresis. A forced `UG_UNDERWATER=metres` view
+and the `UG_WATEROPTICS=0` legacy comparison remain available. The render pass
+uses original crossed-sine refraction, per-channel Beer–Lambert extinction,
+weather-driven sediment, depth-dependent veil, scattering blur and vignette.
+The shallow/deep palette lives in one `water_optics.wesl` library shared with the
+surface. No camera-relative effect data requires a floating-origin adjustment.
+
+The source 3D screen texture captures opaque geometry before transparents; the
+native pass retains that ordering, then composites the submerged result before
+the first-person camera and HUD. Each active view receives six real mip levels,
+including LOD interpolation at the source maximum 4.2. The mip chain uses the
+original integer 2×2 box footprint, including odd dimensions, as implemented by
+[Godot 4.6 screen copying](https://github.com/godotengine/godot/blob/4.6-stable/servers/rendering/renderer_rd/renderer_scene_render_rd.cpp#L348)
+and its [mipmap kernel](https://github.com/godotengine/godot/blob/4.6-stable/servers/rendering/renderer_rd/shaders/effects/copy.glsl#L75).
+The pass supports sampled or multisampled depth, recreates mip targets on resize,
+and skips rendering while dry. Original terrain caustic noise and depth fade are
+retained in the terrain material, with the source's current strength **0**; they
+remain off by default as requested in the original 2026-10-09 change.
+
+Regressions cover eye hysteresis and teardown, camera-only uniform publication,
+weather extinction, reverse-depth reconstruction and actual mip availability.
+A render-layer regression also guards water visibility when the underwater
+plugin inserts `DepthPrepass` before the reflection setup.
+
+Two fresh Vulkan captures were rendered and inspected: the actual PEI shore at
+camera (-450,23.5,-100), 2.1 m below sea level, in
+`artifacts/bevy-underwater-shore.png`; and the above-water coast camera forced to
+4 m submersion in `artifacts/bevy-underwater-forced.png`. Nearby wall and seabed
+detail remain visible, the distant shore scatters into the water veil, and the
+HUD/crosshair stay sharp. Both logs report no shader errors and zero missing
+source assets. All 54 focused world tests passed after this integration.

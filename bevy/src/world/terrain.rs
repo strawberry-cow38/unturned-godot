@@ -134,6 +134,9 @@ pub struct TerrainExtension {
     pub settings: Vec4,
     #[uniform(108)]
     pub boundary: Vec4,
+    /// mean sea height, elapsed time, source caustic strength (currently zero)
+    #[uniform(109)]
+    pub water: Vec4,
     #[texture(102, dimension = "2d_array")]
     #[sampler(103)]
     pub albedos: Handle<Image>,
@@ -303,6 +306,7 @@ fn convert(
                 origin.shader_offset().y,
                 0.,
             ),
+            water: Vec4::new(-100000., 0., 0., 0.),
             albedos,
             splat0: splats[0].clone(),
             splat1: splats[1].clone(),
@@ -320,11 +324,18 @@ fn convert(
             .insert(MeshMaterial3d(material));
     }
 }
-fn weather(snapshot: Res<GameSnapshot>, mut materials: ResMut<Assets<TerrainMaterial>>) {
+fn weather(
+    snapshot: Res<GameSnapshot>,
+    time: Res<Time>,
+    world: Res<super::WorldState>,
+    mut materials: ResMut<Assets<TerrainMaterial>>,
+) {
     let state = &snapshot.0["weather"];
     let snow = state["snowCover"].as_f64().unwrap_or(0.) as f32;
     let wet = state["rainWetness"].as_f64().unwrap_or(0.) as f32;
     for (_, material) in materials.iter_mut() {
+        material.extension.water.x = world.sea_level.unwrap_or(-100000.);
+        material.extension.water.y = time.elapsed_secs();
         if material.extension.settings.z != snow || material.extension.settings.w != wet {
             material.extension.settings.z = snow;
             material.extension.settings.w = wet;

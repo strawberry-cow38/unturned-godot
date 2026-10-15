@@ -1,4 +1,5 @@
 import bevy_pbr::render::pbr_fragment::pbr_input_from_standard_material;
+import unturned_bevy::world::water_optics::linear;
 @if(PREPASS_PIPELINE)
 import bevy_pbr::{prepass::io::{VertexOutput,FragmentOutput},deferred::functions::deferred_output};
 @else
@@ -12,6 +13,7 @@ import bevy_pbr::render::{forward_io::{VertexOutput,FragmentOutput},pbr_function
 @group(constants::MATERIAL_BIND_GROUP) @binding(106) var splat1:texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(107) var splat_sampler1:sampler;
 @group(constants::MATERIAL_BIND_GROUP) @binding(108) var<uniform> boundary:vec4<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(109) var<uniform> water:vec4<f32>;
 
 // Terrain.TERRAIN_SHADER's precision-robust gradient noise, without retuning.
 fn chashv(p:vec2<f32>)->f32{
@@ -26,6 +28,16 @@ fn cnoise(p:vec2<f32>)->f32{
     let c=dot(cgrad(i+vec2<f32>(0.0,1.0)),f-vec2<f32>(0.0,1.0));
     let d=dot(cgrad(i+vec2<f32>(1.0,1.0)),f-vec2<f32>(1.0,1.0));
     return mix(mix(a,b,u.x),mix(c,d,u.x),u.y)*0.8+0.5;
+}
+fn cfbm(p0:vec2<f32>)->f32{
+    var p=p0;var s=0.0;var a=0.5;
+    for(var i=0;i<4;i++){s+=a*cnoise(p);p*=2.03;a*=0.5;}
+    return s;
+}
+fn caustics(p:vec2<f32>,t:f32)->f32{
+    let a=cfbm(p+vec2<f32>(t,t*0.4));
+    let b=cfbm(p*1.31+vec2<f32>(-t*0.7,t*0.55)+17.3);
+    return pow(clamp(1.0-abs(a-b)*4.0,0.0,1.0),4.0);
 }
 @fragment
 fn fragment(in:VertexOutput,@builtin(front_facing) is_front:bool)->FragmentOutput{
@@ -47,6 +59,16 @@ fn fragment(in:VertexOutput,@builtin(front_facing) is_front:bool)->FragmentOutpu
         snow=clamp(smoothstep(0.35,0.95,settings.z*1.45-cnoise(absolute*0.07)*0.45),0.0,1.0);
         pbr.material.base_color=vec4<f32>(mix(pbr.material.base_color.rgb,textureSampleGrad(albedos,albedo_sampler,tiled,6,dx,dy).rgb,snow),1.0);
         pbr.material.perceptual_roughness=mix(1.0,0.82,snow);
+    }
+    // Terrain.cs retains the web with strength0 since 2026-10-09. Keep its
+    // source formula available without paying the noise cost while disabled.
+    let depth=water.x-in.world_position.y;
+    if water.z>0.0 && depth>0.0{
+        var cp=mat2x2<f32>(vec2<f32>(0.87,0.5),vec2<f32>(-0.5,0.87))*(absolute*0.11);
+        cp+=0.8*(vec2<f32>(cfbm(cp*0.5),cfbm(cp*0.5+7.0))-0.5);
+        let caust=max(caustics(cp,water.y*0.25),caustics(cp*1.6+9.0,-water.y*0.2));
+        let fade=clamp(depth/0.4,0.0,1.0)*(1.0-clamp(depth/9.0,0.0,1.0));
+        pbr.material.base_color=vec4<f32>(pbr.material.base_color.rgb+linear(vec3<f32>(0.55,0.9,1.0))*caust*water.z*fade,1.0);
     }
     // Source dry-to-wet base response; roof shelter and puddle/impact shaders are
     // separate consumers and are deliberately not approximated here.
