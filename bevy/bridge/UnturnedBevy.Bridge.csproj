@@ -53,6 +53,8 @@
     <Compile Include="$(IntermediateOutputPath)Data/NpcHeliBrain.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/NpcHeliSpawn.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/NpcHeliRules.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/NpcCrewRules.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/NpcHeliCrewBody.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/NpcHeliTerrainGrid.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/SourceMapNodes.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/SourceCanopies.g.cs" />

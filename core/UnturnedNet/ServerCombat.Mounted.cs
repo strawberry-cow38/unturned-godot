@@ -23,12 +23,12 @@ namespace UnturnedGodot.Net
                 || !float.IsFinite(profile.GravityMultiplier) || !DamageValid(profile.PlayerDamage)
                 || !DamageValid(profile.ZombieDamage) || !DamageValid(profile.AnimalDamage)
                 || !DamageValid(profile.VehicleDamage) || !DamageValid(profile.ObjectDamage)
-                || !DamageValid(profile.ResourceDamage)) return false;
+                || !DamageValid(profile.ResourceDamage) || (profile.HumanoidDamage.HasValue && !DamageValid(profile.HumanoidDamage.Value))) return false;
             if (npc ? owner != 0 : owner == 0 || !_state.IsAlive(owner) || !_players.TryGetByOwner(owner, out _)) return false;
             _bullets.Add(new Bullet {
                 Pos = origin, Origin = origin, Vel = direction.normalized * profile.MuzzleVelocity,
                 StepsLeft = profile.BallisticSteps, Gravity = -9.81f * profile.GravityMultiplier,
-                Shooter = owner, Seq = sequence, Gun = profile.Copy(), AnimalDamage = profile.AnimalDamage,
+                Shooter = owner, Seq = sequence, Gun = profile.Copy(), AnimalDamage = profile.AnimalDamage, HumanoidDamage = profile.HumanoidDamage ?? profile.PlayerDamage,
                 HostContext = context, Npc = npc, Mounted = true, FiringVehicle = firingVehicle,
             });
             Diag.ShotsAccepted++;

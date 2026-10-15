@@ -476,3 +476,20 @@ sample=method(read('game/Terrain.cs'),'public float SampleHeight(float worldX, f
 sample=sample.replace('(worldX - _bx) / UNIT','(worldX - X) / Dx').replace('(-worldZ - _bz) / UNIT','(worldZ - Z) / Dz')
 sample=sample.replace(' * TILE_HEIGHT - TILE_HEIGHT / 2f - RiverCutWorld(worldX, worldZ)','')
 (out/'NpcHeliTerrainGrid.g.cs').write_text('using Godot; namespace UnturnedBevy { public sealed partial class NpcHeliTerrainGrid {\n'+sample+'}}')
+
+# Exact TargetDummy health bands and original appearance. No invented crew clip:
+# TargetDummy.Build + AttachGun never start AnimationPlayer.
+dummy=read('game/TargetDummy.cs');humanoid=read('game/Humanoid.cs')
+constants=re.findall(r'public const float [^;]+;',humanoid)
+constants.append('public static readonly Vector3 BodySize = '+number(r'Shape = new BoxShape3D \{ Size = (new Vector3[^}]+) \}',dummy).strip()+';')
+constants.append('public static readonly Vector3 BodyCenter = '+number(r'Position = (new Vector3[^;]+),\n',dummy).strip()+';')
+constants.append('public static readonly Color Tint = '+number(r'CharacterTint = (new Color[^;]+);',dummy)+';')
+constants.append('public static readonly Vector3 GunRotationDegrees = '+number(r'Name = "GunMesh"[^\n]+RotationDegrees = (new Vector3[^}]+) \}',read('game/RiggedCharacter.cs')).strip()+';')
+constants.append('public const int Face = '+number(r'face_(\d+).png',dummy)+';')
+constants.append('public const string Rig = "'+number(r'Build\("res://content/([^"\n]+)"',dummy)+'";')
+(out/'NpcCrewRules.g.cs').write_text('using Godot; namespace UnturnedBevy { public static class NpcCrewRules {\n'+'\n'.join(constants).replace('Humanoid.','')+'}}')
+hit=method(dummy,'public float TakeHit(float baseDamage, Vector3 worldPoint)')
+hit=hit.replace('Humanoid.','NpcCrewRules.').replace('            DamageNumbers.Instance?.Show(worldPoint, dmg, zone);\n','')
+hit=hit.replace('                _respawnT = RespawnSeconds;\n','').replace('                if (_visual != null) _visual.Visible = false;\n','')
+hit=hit.replace('                SetCollisionLayerValue(1, false);', '                OnDown?.Invoke();')
+(out/'NpcHeliCrewBody.g.cs').write_text('using Godot; namespace UnturnedBevy { public sealed partial class NpcHeliCrewBody {\n'+hit+'}}')

@@ -179,7 +179,7 @@ namespace UnturnedGodot.Net
     // these (§3.4 "client fx stay client-local, triggered by events -- the viewmodel never crosses the wire").
     // ---------------------------------------------------------------------------------------------------
 
-    public enum HitTargetKind : byte { Player = 1, Zombie = 2 }
+    public enum HitTargetKind : byte { Player = 1, Zombie = 2, Humanoid = 3 } // v67: accepted vehicle crew, not a player identity
 
     /// <summary>To the SHOOTER only: your shot/swing (by seq) authoritatively landed. Damage waits for this
     /// (§3.4 "firing plays fx immediately, damage waits for HitConfirm").</summary>
@@ -187,7 +187,7 @@ namespace UnturnedGodot.Net
     {
         public ushort Seq;
         public byte TargetKind;   // HitTargetKind
-        public uint TargetId;     // player: ownerPlayerId; zombie: NetId
+        public uint TargetId;     // player: ownerPlayerId; zombie: NetId; humanoid: vehicle NetId
         public float Damage;
         public bool Killed;
         public bool Headshot;
@@ -206,8 +206,8 @@ namespace UnturnedGodot.Net
         {
             evt = default;
             if (!r.ReadUInt16(out ushort seq)) return false;
-            if (!r.ReadUInt8(out byte kind)) return false;
-            if (!r.ReadUInt32(out uint id)) return false;
+            if (!r.ReadUInt8(out byte kind) || kind < (byte)HitTargetKind.Player || kind > (byte)HitTargetKind.Humanoid) return false;
+            if (!r.ReadUInt32(out uint id) || id == 0) return false;
             if (!NetWire.ReadDamage(r, out float dmg)) return false;
             if (!r.ReadBit(out bool killed)) return false;
             if (!r.ReadBit(out bool head)) return false;

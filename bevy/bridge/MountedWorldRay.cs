@@ -12,6 +12,7 @@ public sealed partial class BridgeHost
     {
         bool found=_zombies.Ray((Vector3 a,Vector3 b,out CombatWorldHit h)=>
             _wildlife.RayExcludingVehicle(vehicle,a,b,out h),from,to,out hit);
+        if(_npcHelis!=null)found=_npcHelis.RayCrew(vehicle,from,to,found,ref hit);
         if(_cosmetic.RayWater(from,to,out var point,out var normal)
             &&(!found||(point-from).sqrMagnitude<(hit.Point-from).sqrMagnitude))
         {hit=new(point,normal:normal,water:true);return true;}

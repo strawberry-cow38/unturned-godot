@@ -21,14 +21,16 @@ namespace UnturnedGodot.Net
         /// Null deliberately means unknown (the legacy closest-approach actor test is not a surface hit).</summary>
         public readonly Vector3? Normal;
         public readonly bool Thin, Water;
+        /// <summary>Host humanoid on a vehicle: zero means none, otherwise original mount index plus one.</summary>
+        public readonly byte CrewSlot;
         public readonly int DestructibleIndex, ResourceIndex;
         public readonly uint VehicleNetId, DeployableNetId, AnimalNetId, ZombieNetId;
         public readonly string BodyPart;
         public CombatWorldHit(Vector3 point, int destructibleIndex = -1, int resourceIndex = -1,
             uint vehicleNetId = 0, uint deployableNetId = 0, string bodyPart = null, uint animalNetId = 0, uint zombieNetId = 0, Vector3? normal = null,
-            bool thin = false, bool water = false)
+            bool thin = false, bool water = false, byte crewSlot = 0)
         { Point = point; DestructibleIndex = destructibleIndex; ResourceIndex = resourceIndex;
-          VehicleNetId = vehicleNetId; DeployableNetId = deployableNetId; BodyPart = bodyPart; AnimalNetId = animalNetId; ZombieNetId = zombieNetId; Normal = normal; Thin = thin; Water = water; }
+          VehicleNetId = vehicleNetId; DeployableNetId = deployableNetId; BodyPart = bodyPart; AnimalNetId = animalNetId; ZombieNetId = zombieNetId; Normal = normal; Thin = thin; Water = water; CrewSlot = crewSlot; }
     }
     public delegate bool CombatWorldRayDetailed(Vector3 from, Vector3 to, out CombatWorldHit hit);
     public delegate bool CombatMountedWorldRay(uint firingVehicle, Vector3 from, Vector3 to, out CombatWorldHit hit);
@@ -45,6 +47,11 @@ namespace UnturnedGodot.Net
         public readonly long Tick;
         public CombatBodyHit(CombatWorldHit hit, ushort attacker, float damage, bool melee, Vector3 direction, long tick, Vector3? shotOrigin = null)
         { Hit = hit; Attacker = attacker; Damage = damage; Melee = melee; Direction = direction; Tick = tick; ShotOrigin = shotOrigin; }
+    }
+    public readonly struct CombatHumanoidResult
+    {
+        public readonly float Damage;public readonly bool Killed,Headshot;
+        public CombatHumanoidResult(float damage,bool killed,bool headshot){Damage=damage;Killed=killed;Headshot=headshot;}
     }
     public readonly struct CombatBlast
     {
@@ -87,6 +94,9 @@ namespace UnturnedGodot.Net
     public sealed class ServerGunProfile
     {
         public float PlayerDamage = 40f;        // Eaglefire Player_Damage
+        // Optional source TargetDummy round damage (e.g. a loaded shell). Null uses
+        // PlayerDamage. Captured at launch so later ammo/weapon changes cannot alter it.
+        public float? HumanoidDamage;
         public float ZombieDamage = 99f;        // Eaglefire Zombie_Damage (flat vs zombies, like the SP StepBullets path)
         public float ResourceDamage = 40f;       // host canonical bullet damage against tree trunks
         public float AnimalDamage = 40f;         // source canonical GunDef.Damage; wildlife has no limb multiplier
@@ -208,6 +218,8 @@ namespace UnturnedGodot.Net
         public CombatWorldRayDetailed BulletRayDetailed;
         public Action<CombatResourceHit> DamageResource;
         public Action<CombatBodyHit> DamageBody;
+        /// <summary>Optional original TargetDummy host. Null preserves existing world-body behavior.</summary>
+        public Func<CombatBodyHit,CombatHumanoidResult?> DamageHumanoid;
         public Action<CombatBlast> DamageHostBlast;
         /// <summary>Optional host wildlife melee query: attacker, origin, forward, reach including
         /// source's .5m allowance, final damage, tick. True consumes this fallback world swing.</summary>
@@ -268,6 +280,7 @@ namespace UnturnedGodot.Net
             public ServerGunProfile Gun;
             public float Condition = 1f;   // Durability.DamageMultiplier of the gun that fired it
             public float AnimalDamage;   // source ShotDamage captured before shells/equipment can change
+            public float HumanoidDamage;
             public object HostContext;
             public int Pellet;
             public int Pierced;
@@ -454,7 +467,7 @@ namespace UnturnedGodot.Net
                     Seq = cmd.Seq,
                     Gun = gun,
                     Condition = held.HasValue ? Durability.DamageMultiplier(held.Value) : 1f,
-                    AnimalDamage = gun.AnimalDamage,
+                    AnimalDamage = gun.AnimalDamage, HumanoidDamage = gun.HumanoidDamage ?? gun.PlayerDamage,
                     HostContext = hostContext, Pellet = i,
                 });
             }
@@ -693,7 +706,13 @@ namespace UnturnedGodot.Net
                         case 3:
                             // a destructible prop's collider: whittle its health; the break fx rides the
                             // replicated ObjectDestroyed event (not this local impact), so no double-fx.
-                            if (bodyHit.AnimalNetId != 0 || bodyHit.ZombieNetId != 0)
+                            if (bodyHit.CrewSlot != 0)
+                            {
+                                var result=DamageHumanoid?.Invoke(new CombatBodyHit(bodyHit,b.Shooter,b.HumanoidDamage*b.Condition*b.FalloffAt(point)*b.DamageScale,false,dir,tick,b.Origin));
+                                if(result.HasValue&&float.IsFinite(result.Value.Damage)&&result.Value.Damage>=0)
+                                    SendHitConfirm(b.Shooter,b.Seq,HitTargetKind.Humanoid,bodyHit.VehicleNetId,result.Value.Damage,result.Value.Killed,result.Value.Headshot);
+                            }
+                            else if (bodyHit.AnimalNetId != 0 || bodyHit.ZombieNetId != 0)
                                 DamageBody?.Invoke(new CombatBodyHit(bodyHit, b.Shooter, b.AnimalDamage * b.Condition * b.FalloffAt(point) * b.DamageScale, false, dir, tick, b.Origin));
                             else if (bodyHit.VehicleNetId != 0 || bodyHit.DeployableNetId != 0)
                                 DamageBody?.Invoke(new CombatBodyHit(bodyHit, b.Shooter, b.Gun.VehicleDamage * b.DamageScale, false, dir, tick, b.Origin));
@@ -708,7 +727,7 @@ namespace UnturnedGodot.Net
                                     DamageMountedBarricadeAlong(b.FiringVehicle, b.Pos, next, b.Gun.VehicleDamage * b.DamageScale, tick);
                                 else DamageBarricadeAlong?.Invoke(b.Pos, next, b.Gun.VehicleDamage * b.DamageScale, tick);
                             }
-                            BroadcastImpact(point, bodyHit.AnimalNetId != 0 || bodyHit.ZombieNetId != 0 ? ImpactSurface.Flesh : ImpactSurface.World);
+                            BroadcastImpact(point, bodyHit.CrewSlot != 0 || bodyHit.AnimalNetId != 0 || bodyHit.ZombieNetId != 0 ? ImpactSurface.Flesh : ImpactSurface.World);
                             Diag.BulletHitsWorld++;
                             break;
                     }
@@ -808,7 +827,8 @@ namespace UnturnedGodot.Net
                     // collider (fence/sign/billboard). The break fx rides the replicated ObjectDestroyed event.
                     var to = origin + fwd * reach;
                     bool hitWorld = RayWorld(origin, to, out var worldHit);
-                    if (hitWorld && (worldHit.VehicleNetId != 0 || worldHit.DeployableNetId != 0))
+                    if (hitWorld && worldHit.CrewSlot != 0) { } // original TargetDummy has bullet hits only
+                    else if (hitWorld && (worldHit.VehicleNetId != 0 || worldHit.DeployableNetId != 0))
                         DamageBody?.Invoke(new CombatBodyHit(worldHit, pm.Attacker, melee.VehicleDamage * mult, true, fwd, tick));
                     else if (hitWorld && worldHit.ResourceIndex >= 0) DamageResource?.Invoke(new CombatResourceHit(worldHit.ResourceIndex,
                         pm.Attacker, melee.ZombieDamage * mult, melee.ResourceDamage * mult, true, melee.AssetName, worldHit.Point, fwd, tick));

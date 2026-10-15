@@ -31,6 +31,11 @@ public sealed partial class MountedWeaponServices
         for(int i=0;i<state.Mounts.Length;i++)state.Mounts[i]=state.Mounts[i] with{CrewAlive=true};
         Publish(id,state);
     }
+    public void SetNpcCrewAlive(uint id,int index,bool alive)
+    {
+        if(!_states.TryGetValue(id,out var state)||index<0||index>=state.Mounts.Length)return;
+        state.Mounts[index]=state.Mounts[index] with{CrewAlive=alive};Publish(id,state);
+    }
     public bool NpcCrewAlive(uint id,int seat)
     {
         if(!_states.TryGetValue(id,out var state))return false;

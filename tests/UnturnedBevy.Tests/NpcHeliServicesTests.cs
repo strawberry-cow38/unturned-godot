@@ -10,7 +10,7 @@ using UnityEngine;
 namespace UnturnedBevyTests;
 
 [TestFixture,NonParallelizable]
-public sealed class NpcHeliServicesTests
+public sealed partial class NpcHeliServicesTests
 {
     static readonly JsonSerializerOptions Options=new(){PropertyNamingPolicy=JsonNamingPolicy.CamelCase,IncludeFields=true,Converters={new VectorJson(),new ByteArrayJson()}};
     BridgeHost _host,_peer;int _port;

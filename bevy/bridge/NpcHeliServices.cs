@@ -11,7 +11,7 @@ namespace UnturnedBevy;
 
 /// <summary>Original NpcHeli controller over the accepted host airframe. Its only
 /// motion result is a four-axis input; Bevy keeps the one physical vehicle body.</summary>
-public sealed class NpcHeliServices
+public sealed partial class NpcHeliServices
 {
     readonly NetWorldServer _server;readonly Catalog _catalog;readonly MountedWeaponServices _mounts;
     readonly WorldGeometry _geometry;readonly SourceCanopies _canopies;readonly CombatMountedWorldRay _ray;
@@ -20,7 +20,7 @@ public sealed class NpcHeliServices
     readonly List<NpcHeliTerrainGrid> _grids=new();
     NpcHeliTerrain _terrain;string _nodeFile="nodes.tsv";
     long Tick=>_server.Session.CurrentTick;
-    public sealed record Saved(float[] Bounds,string NodeFile,float[] NodeOffset,Entry[] Vehicles,NpcHeliTerrainGrid.Saved[] Terrain=null);
+    public sealed record Saved(float[] Bounds,string NodeFile,float[] NodeOffset,Entry[] Vehicles,NpcHeliTerrainGrid.Saved[] Terrain=null,CrewSaved[] Crew=null);
     public sealed record Entry(int Ordinal,byte TypeId,NpcHeliBrain.Saved Brain,float[] LastAttack,double AttackAge);
     Vector3 _nodeOffset;
     public NpcHeliServices(NetWorldServer server,Catalog catalog,MountedWeaponServices mounts,WorldGeometry geometry,
@@ -33,6 +33,10 @@ public sealed class NpcHeliServices
             {brain.Heli.LastAttackedFrom=G(origin);brain.Heli.LastAttackedAtMsec=Tick*20.0;}
             previousHit?.Invoke(hit);
         };
+        var previousWorld=server.Combat.WorldRayDetailed;var previousBullet=server.Combat.BulletRayDetailed;
+        server.Combat.WorldRayDetailed=(Vector3 a,Vector3 b,out CombatWorldHit h)=>{bool found=previousWorld(a,b,out h);return RayCrew(0,a,b,found,ref h);};
+        server.Combat.BulletRayDetailed=(Vector3 a,Vector3 b,out CombatWorldHit h)=>{bool found=previousBullet(a,b,out h);return RayCrew(0,a,b,found,ref h);};
+        server.Combat.DamageHumanoid=DamageCrew;
         var priorConsole=server.Transactions.HostConsole;
         server.Transactions.HostConsole=(owner,verb,arg)=>verb=="spawnheli"?SpawnConsole(owner,arg):priorConsole?.Invoke(owner,verb,arg);
     }
@@ -55,7 +59,11 @@ public sealed class NpcHeliServices
         _nodeFile=Text(request,"nodeFile",_nodeFile);
         if(Path.GetFileName(_nodeFile)!=_nodeFile)throw new ArgumentException("NPC nodeFile must be a content filename");
         ReloadNodes();foreach(var brain in _brains.Values)brain.Terr=_terrain;
-        if(Bool(request,"replace"))_brains.Clear();
+        if(Bool(request,"replace"))
+        {
+            foreach(var body in _crew.Values)_mounts.SetNpcCrewAlive(body.Vehicle,body.Index,false);
+            _brains.Clear();_crew.Clear();
+        }
         if(request.TryGetProperty("vehicles",out var vehicles))foreach(var row in vehicles.EnumerateArray())
             Attach(checked((uint)Int(row,"netId")),G(Vec(row,"target")),Text(row,"targetName"),true);
         return new{registered=_brains.Count,locations=_nodes.Count,hasTerrain=_terrain!=null,terrainPatches=_grids.Count};
@@ -90,7 +98,7 @@ public sealed class NpcHeliServices
         var brain=new NpcHeliBrain{Heli=body,Terr=_terrain,Target=target,TargetName=name,NowMsec=Tick*20.0,PhysicsTick=(ulong)Tick,
             Players=()=>_server.Players.All.Select(p=>new NpcHeliPlayer(p.OwnerPlayerId,G(p.Pos),_server.CombatState.TryGet(p.OwnerPlayerId,out var c)&&c.Alive?c.HealthExact:0)),
             ClearWorld=ClearShot,CanopyBlocks=_canopies.CanopyBlocksSegment,NpcShot=(_,direction,_)=>{_mounts.CompleteNpc(pending,U(direction));pending=null;}};
-        _brains.Add(id,brain);Adopt(brain,vehicle);
+        _brains.Add(id,brain);Adopt(brain,vehicle);AttachCrew(id,equipCrew);
     }
     bool ClearShot(uint id,GVector a,GVector b,ushort target)
     {
@@ -119,7 +127,7 @@ public sealed class NpcHeliServices
     {
         foreach(var pair in _brains.ToArray())
         {
-            if(!_server.Vehicles.TryGet(pair.Key,out var v)){pair.Value.Heli.Exists=false;_brains.Remove(pair.Key);continue;}
+            if(!_server.Vehicles.TryGet(pair.Key,out var v)){pair.Value.Heli.Exists=false;_brains.Remove(pair.Key);foreach(var key in _crew.Keys.Where(k=>k.Item1==pair.Key).ToArray())_crew.Remove(key);continue;}
             var brain=pair.Value;Adopt(brain,v);brain.NowMsec=Tick*20.0;brain.PhysicsTick=(ulong)Tick;
             if(v.Exploded||v.DriverPlayerId!=0){brain.Heli.Input=default;continue;}
             brain.Step(SimClock.FixedDelta);
@@ -128,7 +136,7 @@ public sealed class NpcHeliServices
     public object[] Snapshots()=>_brains.Select(pair=>{
         var b=pair.Value;var c=b.Heli.Input;bool active=_server.Vehicles.TryGet(pair.Key,out var v)&&!v.Exploded&&v.DriverPlayerId==0;
         return (object)new{netId=pair.Key,active,rotorRunning=v?.EngineOn??false,controls=new{collective=c.Collective,yaw=c.Yaw,pitch=c.Pitch,roll=c.Roll},
-            phase=b.Phase.ToString().ToLowerInvariant(),mode=b.Mode.ToString().ToLowerInvariant(),target=Array(U(b.Target)),targetName=b.TargetName,
+            crews=CrewSnapshots(pair.Key),phase=b.Phase.ToString().ToLowerInvariant(),mode=b.Mode.ToString().ToLowerInvariant(),target=Array(U(b.Target)),targetName=b.TargetName,
             lastSeen=Array(U(b.LastSeen)),lockSeconds=b.DebugLockLeftSec,range=b.DebugRange,wantHeight=b.DebugWantY,
             wantClimb=b.DebugWantClimbMps,wantNoseUp=b.LastWantNoseUpDeg,orbitStrafing=b.OrbitStrafing,burstLeft=b.DebugBurstLeft};
     }).ToArray();
@@ -157,7 +165,7 @@ public sealed class NpcHeliServices
         return new(b.HasValue?[b.Value.minX,b.Value.maxX,b.Value.minZ,b.Value.maxZ]:null,_nodeFile,Array(_nodeOffset),
             fleet.Select((v,i)=>(v,i)).Where(p=>_brains.ContainsKey(p.v.NetIdValue)).Select(p=>{
                 var brain=_brains[p.v.NetIdValue];return new Entry(p.i,p.v.TypeId,brain.Capture(),Array(U(brain.Heli.LastAttackedFrom)),brain.NowMsec-brain.Heli.LastAttackedAtMsec);
-            }).ToArray(),_grids.Select(g=>g.Capture()).ToArray());
+            }).ToArray(),_grids.Select(g=>g.Capture()).ToArray(),CaptureCrew());
     }
     public void Restore(Saved saved)
     {
@@ -172,6 +180,7 @@ public sealed class NpcHeliServices
             var brain=_brains[id];brain.Restore(e.Brain);brain.Heli.LastAttackedFrom=G(Vec(JsonSerializer.SerializeToElement(e.LastAttack)));
             brain.Heli.LastAttackedAtMsec=brain.NowMsec-e.AttackAge;
         }
+        RestoreCrew(saved.Crew);
     }
     public void TranslateWorld(Vector3 delta)
     {
