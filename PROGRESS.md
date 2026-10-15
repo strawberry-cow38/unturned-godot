@@ -2240,3 +2240,26 @@ presses. The Vulkan production panel asserts all17 rows remain one line; both
 top/bottom captures were opened and independently reviewed. Source/code review
 passed. See `bevy/docs/VEHICLE_CONTROLS_PORT.md` and
 `bevy-mechanics-maintenance-{top,bottom}.png`.
+
+### Accepted handheld player damage and immutable flight profiles
+
+The native hurt-feedback UDP journey exposed an adapter bug: current handheld
+assets use canonical `Damage`, while Catalog still read removed `Player_Damage`
+and `Zombie_Damage` fields. A real accepted rifle or slug hit consequently sent
+a zero-damage hurt event. Catalog now uses the current field, and WeaponState
+refreshes both channels from the unchanged source `ShotDamage` calculation so
+loaded shell overrides work. Existing zone, condition and mounted/NPC rules stay
+owned by their original code.
+
+Review also found that handheld bullets retained a mutable gun profile. Each
+accepted trigger now copies its launch profile once, shared by that shot's
+pellets, as the mounted path already did. A slow-flight regression reproduces
+95HP instead of80 when the next round's damage changes20→5; after the fix, the
+old shot removes20 and the next removes5. All34 focused core combat/mounted
+tests pass. Real UDP rifle head/torso/leg and selected slug cases reproduce
+zero damage before the fix and now pass with40/20/12/40, one ammo spend and one
+owner event. All28 related Python damage/scatter/attachments/zombie/seated
+integration tests and all132 managed bridge tests pass. The combined native UI
+suite also passes79 tests,
+including accepted UDP hurt presentation; seven renderer cases remain opt-in.
+Source/code review passed. Immutable managed output: `.local/player-damage-v69`.

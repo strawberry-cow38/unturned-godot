@@ -795,5 +795,31 @@ namespace UnturnedNet.Tests
             Assert.That(accepted.Value.Hit.Point.x, Is.EqualTo(origin.x));
         }
 
+        [Test]
+        public void PlayerFlight_KeepsAcceptedRoundDamageWhenTheNextShellChanges()
+        {
+            var h = new Harness(50911).Connected("shooter", "victim");
+            var shooter = h.Clients[0]; var victim = h.Clients[1];
+            h.Server.Players.TryGetByOwner(shooter.PlayerId, out var player);
+            h.Server.Players.ServerTeleport(victim.PlayerId, player.Pos + Vector3.forward * 6, h.Server.Session.CurrentTick);
+            h.Server.CombatState.TryGet(victim.PlayerId, out var life);
+            var profile = new ServerGunProfile {
+                PlayerDamage = 20, MuzzleVelocity = 10, GravityMultiplier = 0, BallisticSteps = 100,
+            };
+            h.Server.Combat.SetGunProfile(shooter.PlayerId, profile);
+            var cmd = new FireCommand { Seq = 1, Origin = player.Pos + new Vector3(0, 1.1f, 0), Dir = Vector3.forward };
+            h.Server.Combat.OnFire(shooter.PlayerId, in cmd, h.Server.Session.CurrentTick);
+            Assert.That(h.Server.Combat.LiveBullets, Is.EqualTo(1));
+            // A loaded-shell change updates the held profile while the accepted
+            // projectile is still travelling. It may affect only future shots.
+            profile.PlayerDamage = 5;
+            h.Step(40);
+            Assert.That(life.HealthExact, Is.EqualTo(80).Within(.001));
+            cmd.Seq = 2;
+            h.Server.Combat.OnFire(shooter.PlayerId, in cmd, h.Server.Session.CurrentTick);
+            h.Step(40);
+            Assert.That(life.HealthExact, Is.EqualTo(75).Within(.001));
+        }
+
     }
 }

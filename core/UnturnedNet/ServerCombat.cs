@@ -443,6 +443,9 @@ namespace UnturnedGodot.Net
             }
             cs.LastFireTick = tick;
             cs.Ammo--;
+            // A shell/attachment refresh mutates the held profile. Every pellet
+            // of this accepted shot keeps its launch data, like mounted rounds.
+            gun = gun.Copy();
             object hostContext = CaptureBulletContext?.Invoke(sender);
             ShotAccepted?.Invoke(sender, tick);
             ShotCommandAccepted?.Invoke(sender, cmd, tick);
