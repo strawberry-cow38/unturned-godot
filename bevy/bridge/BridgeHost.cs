@@ -564,7 +564,7 @@ public sealed partial class BridgeHost : IDisposable
                 fuel = _vehicles?.FuelFor(e.NetIdValue, e.Fuel) ?? e.Fuel, health = e.Health, battery = e.Battery, flags = e.Flags, engineHealth = _vehicles?.EngineHealth(e.NetIdValue),
                 mainRotorHealth = _vehicles?.MainRotorHealth(e.NetIdValue), tailRotorHealth = _vehicles?.TailRotorHealth(e.NetIdValue), engineDrowned = _vehicles?.EngineDrowned(e.NetIdValue), onFire = _bodies?.OnFire(true, e.NetIdValue),
                 burnSeconds = _bodies?.BurnSeconds(true, e.NetIdValue), wreckSalvageable = _bodies?.Salvageable(true, e.NetIdValue),
-                driverPlayerId = e.DriverPlayerId, passengers = e.Passengers, seatCount = e.SeatCount,
+                driverPlayerId = e.DriverPlayerId, passengers = e.Passengers, seatCount = VehicleSeatCount(e),
                 towedNetId = e.TowedNetId, towRestLen = e.TowRestLen, paintRgb = e.PaintRgb, poppedTireMask = e.PoppedTireMask,
                 recovCounter = _vehicleRecov.GetValueOrDefault(e.NetIdValue) }).ToArray(),
             zombies = _zombies?.Snapshots(_client) ?? RemoteZombies(), zombieField = _zombies?.Summary(),
