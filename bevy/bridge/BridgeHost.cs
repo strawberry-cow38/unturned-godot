@@ -487,6 +487,7 @@ public sealed partial class BridgeHost : IDisposable
         _client.Vitals.TryGet(_client.PlayerId, out var vitals);
         _client.Inventories.TryGet(_client.PlayerId, out var entry);
         _client.Skills.TryGet(_client.PlayerId, out var skills);
+        _client.Profiles.TryGet(_client.PlayerId, out var profile);
         var inv = entry?.Inventory;
         var events = _events.ToArray();
         var occupied = _client.Vehicles.All.FirstOrDefault(v => v.DriverPlayerId == _client.PlayerId || (v.Passengers?.Contains(_client.PlayerId) ?? false));
@@ -496,6 +497,7 @@ public sealed partial class BridgeHost : IDisposable
             weather = _environment.State(),
             weapon = _weapons.Snapshot(_client.PlayerId),
             player = new { position = Array(_position), velocity = Array(_velocity), yaw = _yaw, pitch = _pitch,
+                profile = profile == null ? null : new { name = profile.Name, face = profile.Face, avatarHash = profile.AvatarHash },
                 stance = _movement.Stance.ToString().ToLowerInvariant(), hp = combat?.Health ?? 100, alive = combat?.Alive ?? true, kills = combat?.Kills ?? 0,
                 food = vitals?.Sim.Food ?? 1, water = vitals?.Sim.Water ?? 1, stamina = vitals?.Sim.Stamina ?? 1,
                 infection = vitals?.Sim.Infection ?? 0, oxygen = vitals?.Sim.Oxygen ?? 1,
@@ -508,7 +510,9 @@ public sealed partial class BridgeHost : IDisposable
                     quality = j.item.quality, icon = Assets.find(j.item.id)?.iconPath, gunAmmo = j.item.gunAmmo,
                     frozen = j.item.frozen, cooked = j.item.cooked, cookStyle = j.item.cookStyle }).ToArray() }).ToArray(),
                 worn = new { hat = inv?.wornHat?.id ?? 0, glasses = inv?.wornGlasses?.id ?? 0, mask = inv?.wornMask?.id ?? 0,
-                    shirt = inv?.wornShirt?.id ?? 0, vest = inv?.wornVest?.id ?? 0, backpack = inv?.wornBackpack?.id ?? 0, pants = inv?.wornPants?.id ?? 0 } },
+                    shirt = inv?.wornShirt?.id ?? 0, vest = inv?.wornVest?.id ?? 0, backpack = inv?.wornBackpack?.id ?? 0, pants = inv?.wornPants?.id ?? 0 },
+                wornQuality = new { hat = inv?.wornHat?.quality ?? 0, glasses = inv?.wornGlasses?.quality ?? 0, mask = inv?.wornMask?.quality ?? 0,
+                    shirt = inv?.wornShirt?.quality ?? 0, vest = inv?.wornVest?.quality ?? 0, backpack = inv?.wornBackpack?.quality ?? 0, pants = inv?.wornPants?.quality ?? 0 } },
             recipes = Recipes(inv, skills?.Skills, includeRecipes),
             skills = new { experience = skills?.Skills.experience ?? 0, groups = skills?.Skills.skills },
             worldItems = _client.WorldItems.All.Select(e => new { netId = e.NetIdValue, itemId = e.ItemId, amount = e.Amount,

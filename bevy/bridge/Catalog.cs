@@ -98,6 +98,7 @@ public sealed class Catalog
         return (object)new { id = a.id, name = a.itemName, type = a.type.ToString().ToLowerInvariant(), asset, mesh, texture,
             attachmentMesh = AttachmentNoise.MeshFor(a.id), attachmentTexture = AttachmentNoise.TexPathFor(a.id),
             icon = a.iconPath, width = a.size_x, height = a.size_y, stackSize = a.stackSize, slot = a.slot.ToString(),
+            hasCondition = Durability.HasCondition(a),
             handKind = HandRules.KindOf(a).ToString().ToLowerInvariant(), canEquipFromBag = a.slot.CanEquipFromBag(),
             preferredSlot = a.slot.PreferredSlot(), tool = ToolDef.ById(a.id), gravityMultiplier = Umbrellas.For(a.id),
             throwable = Throwables.Find(a.id),

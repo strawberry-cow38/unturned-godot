@@ -514,3 +514,13 @@ Cosmetic launch context also retains the original local origin/direction before
 wire quantization. It becomes visible only after the matching combat sequence is
 accepted; the authoritative command still uses the unchanged packed values.
 Pending local origins and anchors cross the same atomic origin barrier.
+
+Local appearance reads `player.profile {name,face,avatarHash}` from the actual
+client profile replica, and `inventory.wornQuality` alongside the seven existing
+worn item IDs. Empty slots have ID0 and quality0. `catalog.items[].hasCondition`
+uses the original durability classification, so presentation can ignore quality
+for items without condition. Profile changes use the existing `setProfile`
+action (`name`, `avatarPng` byte array, `face`); server name sanitization, face
+validation and the 100-tick rate gate remain intact. A fresh session starts with
+the server's Survivor/face0 profile until that intent is accepted. Skin, hair and
+beard customization are not fields in the current profile protocol.
