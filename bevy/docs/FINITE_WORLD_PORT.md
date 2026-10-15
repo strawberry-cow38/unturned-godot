@@ -114,3 +114,19 @@ three complete source-output cases, original basis handedness/world scaling and
 missing-art behavior. The tiny `pei-road-materials.dat` fixture is the original
 PEI Environment/Roads.dat metadata (172bytes); full retail map installation is
 not required for these tests. Runtime-art presence still uses the project content.
+
+The original foliage/resource bakes are now extracted as `FiniteIslandScatter`.
+They run after final paint/conform, keep the exact source random streams and
+acceptance loops, and write the original 12-float foliage and 9-float resource
+formats into a caller-owned output directory. Art and manifest files are copied;
+retail instance bins are never copied or modified. Resource manifest row order
+is preserved verbatim because it defines the authority registry index space.
+
+The extended `--scatter` differential passes 149 files across the same four cases.
+The 1×1 case has 56,117 foliage instances and 501 resources in 31 nonempty type files;
+the 3×3 case has 575,438 foliage instances and 5,076 resources. The regression compares
+every small-island binary against source-derived count/length/SHA fixtures, checks
+unchanged input bins and exact manifest bytes, then paints all ground dirt and
+rebakes the same seed: no stale grass or resource instance survives. It passes
+against immutable `finite-island-scatter-tests`. These are generated content data
+checks; native field materialization/render verification remains pending.

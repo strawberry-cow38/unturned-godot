@@ -122,11 +122,14 @@ def main():
     parser.add_argument('--math-only', action='store_true')
     parser.add_argument('--paths-environment', type=Path,
                         help='Also compare original road/conform passes using this PEI Environment directory')
+    parser.add_argument('--scatter', action='store_true',
+                        help='Also compare original foliage/resource bakes after final ground')
     parser.add_argument('--placements-content', type=Path,
                         help='Also compare original object/paint/spawn consumers using this content directory')
     parser.add_argument('--dotnet', default=shutil.which('dotnet'))
     args = parser.parse_args()
     assert args.dotnet, 'Pass --dotnet or add dotnet to PATH'
+    assert not args.scatter or args.placements_content, 'Scatter requires --placements-content'
     assert not args.placements_content or args.paths_environment, 'Placements require --paths-environment'
     args.work.mkdir(parents=True, exist_ok=True)
     # Extract only the original GenerateIsland orchestration with the same strict
@@ -154,6 +157,9 @@ def main():
                 from extract_island_placement import extract as extract_placement
                 extract_placement(lambda p: (REPO / p).read_text(), folder, match, method)
                 source_files += ['bevy/bridge/FiniteIslandObjects.cs']
+            if args.scatter:
+                from extract_island_scatter import extract as extract_scatter
+                extract_scatter(lambda p: (REPO / p).read_text(), folder, match, method)
             (folder / 'Log.cs').write_text('namespace UnturnedGodot; public static class Log { public static void Print(string s) {} public static void Err(string s) {} }')
             includes = ''.join(f'<Compile Include="{escape(str(REPO / p))}" />' for p in source_files)
             dependency, name = args.godot_sharp.resolve(), 'GodotSharp'
@@ -186,6 +192,11 @@ def main():
                 X=o.Basis.X, Y=o.Basis.Y, Z=o.Basis.Z }).ToArray()
         }, options));
         roads.SavePaths''')
+        if args.scatter:
+            program = program.replace('        roads.SavePaths', '''        string assets = path + "-assets";
+        FiniteIslandScatter.Bake(surface, seed, $"island_{seed}", args[3], assets);
+        FiniteIslandScatter.BakeResources(surface, seed, $"island_{seed}", args[3], assets);
+        roads.SavePaths''')
         (folder / 'Program.cs').write_text(program)
         project = ('<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType>'
                    '<TargetFramework>net8.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings>'
@@ -211,11 +222,14 @@ def main():
     sources = [args.work / 'source/math.json']
     if not args.math_only:
         sources += sorted((args.work / 'source').glob('case*.*'))
+    if args.scatter:
+        sources += sorted((args.work / 'source').glob('case*-assets/**/*.bin'))
     for source in sources:
-        bridge = args.work / 'bridge' / source.name
+        relative = source.relative_to(args.work / 'source')
+        bridge = args.work / 'bridge' / relative
         a, b = source.read_bytes(), bridge.read_bytes()
         if a == b:
-            print(f'PASS {source.name}: {len(a)} bytes {hashlib.sha256(a).hexdigest()}')
+            print(f'PASS {relative}: {len(a)} bytes {hashlib.sha256(a).hexdigest()}')
         elif source.suffix == '.json':
             errors.append(f'{source.name}: {first_difference(json.loads(a), json.loads(b))}')
         else:

@@ -2488,3 +2488,17 @@ fingerprints, source basis handedness/world scaling and missing-art behavior.
 Foliage/resources, chart, source save/reopen, native streaming/collision/world
 entry and the separate BuildingGen runtime are still pending; see
 `bevy/docs/FINITE_WORLD_PORT.md`.
+
+### Bevy finite-world source scatter — original foliage and resources
+
+Extracted complete ProcIslandFoliage loops/writers into a data-only adapter with
+explicit source/output roots. Source art and resource manifest are retained;
+PEI position bins are never copied. Scatter reads the final paint/conformed
+terrain and preserves source type-specific random streams, resource order,
+spacing/clearance and original binary formats.
+
+Real-Godot differential: 149 files PASS across four cases. The small-island guard
+checks all 31 type files, exact manifest and untouched source positions, then
+repaints the same seed entirely dirt and confirms every old instance is removed.
+That regression passes; no seed-only scatter cache was introduced. Chart,
+original save/reopen and native finite/BuildingGen consumers remain unfinished.
