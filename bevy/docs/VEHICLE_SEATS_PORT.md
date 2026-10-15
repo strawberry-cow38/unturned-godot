@@ -118,3 +118,15 @@ optics test supplies a real animated skull plus 160° driver peek and proves bot
 are overridden. Source/code and all four cabin/window images received independent
 parent review. The source `game/testing/tests/NetTests.cs::NetRideFreelook` also
 documents the move from hand-authored DriverEyeLocal to the seated model's head.
+
+The full PEI police-car lightbar journey also exercised the ordinary driver arms.
+Their broad foreground silhouette prompted an original-engine comparison:
+Godot4.6.2, the existing source build, `UG_FP=1 --drivetest=DIR` at50Hz produced
+`artifacts/godot-driving-reference/rig_02.png` (frame70). Opening that image
+confirms the authored `Idle_Drive` forearms occupy much of the lower half of the
+view, on either side of the wheel, as in the native police-car capture
+`bevy-lightbar-play-pattern-accepted-preblur.png`. No pose adjustment was made
+from appearance alone. Different vehicles and environmental lighting prevent
+this comparison from establishing exact camera or lighting parity. The source
+run completed its six captures; it logged its existing pre-tree global-position
+and renderer-finalization warnings.

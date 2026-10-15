@@ -1,4 +1,5 @@
 //! Native single-body vehicle host. Seating and owner state use the original wire commands.
+pub(crate) mod access;
 mod audio;
 pub(crate) use audio::spawn_sound as spawn_ranged_audio;
 mod collision;
@@ -21,6 +22,7 @@ mod spawns;
 #[cfg(test)]
 pub(crate) mod tests;
 mod tires;
+pub(crate) use tires::TireVisual;
 pub(crate) mod turrets;
 mod water;
 
@@ -103,6 +105,7 @@ pub struct VehicleBody {
     wreck: damage::Wreck,
 }
 impl VehicleBody {
+    pub(crate) fn gear_count(&self) -> usize { self.drivetrain.gear_count() }
     /// Original helicopter downwash used only by foliage presentation.
     pub(crate) fn foliage_wash(&self) -> Option<(Vec3, f32, f32)> {
         let spec = &data::definition(self.type_id)?.spec;
@@ -223,6 +226,9 @@ impl Plugin for VehiclePlugin {
                     .in_set(crate::entities::CollectInteractions)
                     .after(crate::player::PlayerCameraUpdate),
             )
+            .add_systems(Update, access::focus.in_set(access::VehicleAccess)
+                .after(crate::entities::CollectInteractions)
+                .before(crate::entities::ApplyInteractions))
             .add_systems(
                 FixedUpdate,
                 turrets::input::send
@@ -705,9 +711,7 @@ fn read_controls(
     model: Res<UiModel>,
     occupancy: Res<Occupancy>,
     bridge: Res<CoreBridge>,
-    camera: Query<&Transform, With<PlayerCamera>>,
     mut query: Query<(Entity, &mut VehicleBody, &Transform)>,
-    mut focus: ResMut<crate::entities::InteractionFocus>,
     context: (ReadRapierContext, Query<&ChildOf>),
     players: Query<Entity, With<crate::player::PlayerBody>>,
     cache: Res<ContentCache>,
@@ -833,41 +837,9 @@ fn read_controls(
         }
         return;
     }
-    let Ok(eye) = camera.single() else {
-        return;
-    };
-    let mut nearest = None;
-    let mut distance = 3.5;
-    for (_, body, pose) in &query {
-        let d = data::definition(body.type_id).unwrap();
-        let local = pose
-            .compute_affine()
-            .inverse()
-            .transform_point3(eye.translation);
-        let direction = pose.rotation.inverse() * (*eye.forward());
-        for zone in &d.access {
-            if zone.kind != "Door" {
-                continue;
-            }
-            let center = Vec3::from_array(zone.center);
-            let half = Vec3::from_array(zone.size) * 0.5;
-            if let Some(hit) = ray_box(local, direction, center - half, center + half, distance) {
-                distance = hit;
-                nearest = Some((body.net_id, zone.seat.max(0) as u8, d.spec.name.clone()));
-            }
-        }
-    }
-    if let Some((id, seat, name)) = nearest {
-        focus.offer(
-            distance,
-            format!("Enter {name}"),
-            "enterVehicle",
-            json!({"netId":id,"seat":seat}),
-            false,
-        );
-    }
+
 }
-fn ray_box(origin: Vec3, dir: Vec3, min: Vec3, max: Vec3, limit: f32) -> Option<f32> {
+pub(crate) fn ray_box(origin: Vec3, dir: Vec3, min: Vec3, max: Vec3, limit: f32) -> Option<f32> {
     let mut near = 0f32;
     let mut far = limit;
     for i in 0..3 {

@@ -51,6 +51,7 @@ pub(super) fn approach(current: f32, target: f32, step: f32) -> f32 {
     current + (target - current).clamp(-step, step)
 }
 impl Drivetrain {
+    pub(crate) fn gear_count(&self) -> usize { self.gears.len() }
     pub fn new(spec: &VehicleSpec) -> Self {
         let mut state = Self {
             rpm: 1000.,

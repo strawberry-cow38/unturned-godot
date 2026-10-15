@@ -2160,3 +2160,27 @@ The guarding actual-police/slope/capsule test proves the old behavior reaches
 no damage, and immediately places the physical capsule at the accepted doorway.
 Six origin tests and three existing seated tests also pass. A rebuilt fullgame
 exit/health capture remains the final visual confirmation.
+
+### Native original lightbar selector, mechanics panel and shared vehicle access
+
+Ctrl tap/220ms hold now opens the source LightbarRadial and sends accepted
+protocol68 actions; release/click, cancel priority, disabled off, driver ownership
+and the original frosted HUD backdrop are retained. The original hood Mechanics
+panel displays actual vehicle figures and stable lamp repair controls. F/rebound
+close consumes the edge. No optimistic lighting or repair state is written.
+
+The actual PEI hood journey exposed an independent direct-box/query-mask gap.
+Shared vehicle access now clips the original2.6m look segment against actual
+meshes, selects its owning vehicle, and applies the source sphere/box fallback,
+all-zone ordering and nearest endpoint rules. The shipped tilted police geometry
+regression reproduces the stripped-convex-root failure and rejects a nearer wall.
+
+Nine focused controls tests, three access tests,105 vehicle tests and the Vulkan
+production panel fixture pass. Real fullgame F-entry, L/Ctrl, accepted pattern/off,
+hood focus/open/scroll/close and final HUD-inclusive frost captures were opened
+and independently reviewed. The first panel image caught wrapped status labels
+and bright disabled captions; actual one-line layout and Godot disabled alpha0.5
+now have CPU/GPU assertions. Original Godot driving-arm comparison required no
+pose change. Glazing/free indexed tire buttons and accepted manual horn are the
+next native slice, using the separately verified protocol69 authority. See
+`bevy/docs/VEHICLE_CONTROLS_PORT.md` and `bevy-mechanics-panel-final.png`.

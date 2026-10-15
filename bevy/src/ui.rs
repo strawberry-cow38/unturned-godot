@@ -21,6 +21,7 @@ mod network_menu;
 pub(crate) use map::MapDiagnostics;
 pub(crate) mod npc;
 mod vitals;
+mod vehicle_controls;
 pub(crate) mod tank_optics;
 
 const TEXT: Color = Color::srgb(0.88, 0.88, 0.91);
@@ -234,6 +235,8 @@ pub enum Screen {
     Trade,
     Quests,
     Attachments,
+    Lightbar,
+    Mechanics,
     Settings,
     Console,
     Chat,
@@ -385,6 +388,7 @@ impl Plugin for GameUiPlugin {
                 npc::NpcUiPlugin,
                 map::MapPlugin,
                 tank_optics::TankOpticsPlugin,
+                vehicle_controls::VehicleControlsPlugin,
             ))
             .add_systems(Startup, spawn_ui_camera)
             .add_systems(
@@ -617,7 +621,7 @@ fn keyboard_ui(
 ) {
     if matches!(
         state.screen,
-        Screen::Dialogue | Screen::Trade | Screen::Quests
+        Screen::Dialogue | Screen::Trade | Screen::Quests | Screen::Lightbar | Screen::Mechanics
     ) {
         characters.clear();
         return;
@@ -982,6 +986,8 @@ fn rebuild_overlay(
         state.screen,
         Screen::Playing
             | Screen::Attachments
+            | Screen::Lightbar
+            | Screen::Mechanics
             | Screen::Dialogue
             | Screen::Trade
             | Screen::Quests
@@ -1055,6 +1061,8 @@ fn rebuild_overlay(
                 Screen::Console | Screen::Chat => console_panel(panel, &state, &model),
                 Screen::Playing
                 | Screen::Attachments
+                | Screen::Lightbar
+                | Screen::Mechanics
                 | Screen::Dialogue
                 | Screen::Trade
                 | Screen::Quests

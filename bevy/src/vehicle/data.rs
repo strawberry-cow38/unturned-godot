@@ -78,6 +78,8 @@ pub struct VehicleSpec {
     pub access_required: bool,
     pub box_size: [f32; 3],
     pub box_center: [f32; 3],
+    pub landing_gear_size: [f32; 3],
+    pub landing_gear_center: [f32; 3],
     pub extra_boxes: Option<Vec<([f32; 3], [f32; 3])>>,
     pub hull_boxes: Option<Vec<([f32; 3], [f32; 3], f32)>>,
     pub hull_bands: Option<Vec<([f32; 3], [f32; 3])>>,
