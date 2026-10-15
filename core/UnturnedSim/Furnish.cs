@@ -357,14 +357,17 @@ namespace UnturnedSim
         static void Furnish(BuildingGenResult res, int seed)
         {
             var rng = new Rng(seed ^ 0x51ED);
+            // (a basement's last, on draws of its own: a building is furnished above ground as it was without one)
+            var cellar = new Rng(seed ^ 0xBA5E);
             var all = new List<Furnisher>();
-            for (int f = 0; f < res.Floors; f++)
+            foreach (int f in Enumerable.Range(0, res.Floors).Append(-1))
             {
+                if (f < 0 && !res.HasBasement) continue;
                 var fp = new FloorPlan(res, f);
                 var done = new List<Furnisher>();
                 foreach (var room in res.Layout.Where(r => r.Floor == f))
                 {
-                    var fu = new Furnisher(res, fp, room, rng) { Seed = seed };
+                    var fu = new Furnisher(res, fp, room, f < 0 ? cellar : rng) { Seed = seed };
                     fu.Run();
                     done.Add(fu);
                 }
@@ -622,6 +625,11 @@ namespace UnturnedSim
 
             public void Run()
             {
+                // a basement's: its utility room the laundry; a bare or a store basement's big room the cellar's odds and ends
+                // (a rec room is a living room, a workshop a workshop)
+                if (_room == _res.BasementUtility) Utility();
+                else if (_room.Floor < 0 && _room.Kind == RoomKind.Storage) Cellar();
+                else
                 switch (_room.Kind)
                 {
                     case RoomKind.Bedroom: Bedroom(); break;
@@ -2120,6 +2128,44 @@ namespace UnturnedSim
                 foreach (var top in _res.Furniture.Where(t => t.On == m).ToList()) _res.Furniture.Remove(top);
                 _mine.Remove(m); _res.Furniture.Remove(m);
                 Recount(m.Footprint);
+            }
+
+            /// <summary>A basement's utility room: the washer and the dryer side by side against a wall, a hamper, a rack, and a
+            /// gas bottle and a drum in the corners. (The kit has no furnace or water heater.)</summary>
+            void Utility()
+            {
+                Laundry();
+                AlongWalls(new[] { "Shelf_3" }, 1, Side.Left);
+                foreach (var n in new[] { "Barrel_0", "Propane_0" })
+                    Put(n, Against(n, Side.Back).Where(p => Corner(n, p)), (x, z, yaw) => NearestDoor(x, z));
+            }
+
+            /// <summary>The washer against a wall away from the door, the dryer beside it, a hamper by them.</summary>
+            void Laundry()
+            {
+                var washer = Put("Washer_0", Against("Washer_0", Side.Back), (x, z, yaw) => NearestDoor(x, z));
+                double Beside(float x, float z) => washer == null ? 0 : -Math.Sqrt((x - washer.X) * (x - washer.X) + (z - washer.Z) * (z - washer.Z));
+                Put("Dryer_0", Against("Dryer_0", Side.Back), (x, z, yaw) => Beside(x, z));
+                Put("Laundry_Hamper_0", Against("Laundry_Hamper_0", Side.Back), (x, z, yaw) => Beside(x, z));
+            }
+
+            /// <summary>A basement's big room, bare or a store: racks along the walls (more in a store, with pallets of crates on
+            /// the floor), boxes, a crate and drums in the corners -- and a bare one's laundry, out in the open.</summary>
+            void Cellar()
+            {
+                bool store = _res.Basement == BasementStyle.Storage;
+                AlongWalls(new[] { "Shelf_0", "Shelf_3" }, store ? 4 : 2, Side.Left);
+                if (store)
+                    for (int k = 0; k < 2; k++)
+                    {
+                        var (cx, cz) = Centre();
+                        var pal = PutWithRoom("Pallet_Wood_0", 1.6f, cx, cz);
+                        if (pal == null) break;
+                        On(pal, "Crate_3", 0f, 0f, pal.Yaw);
+                    }
+                foreach (var n in new[] { "Crate_0", "Cardboard_0", "Barrel_0", "Barrel_0" })
+                    Put(n, Against(n, Side.Back).Where(p => Corner(n, p)), (x, z, yaw) => NearestDoor(x, z));
+                if (_res.BasementUtility == null) Laundry();
             }
 
             void Storage()
