@@ -1040,3 +1040,7 @@ Clothing shader compiled cleanly; session quit normally. See
 `bevy/docs/ZOMBIE_PORT.md` and `bevy/artifacts/bevy-zombie-{medic-live,chef-live,accepted-death}.png`.
 No zombie attacks/loot or infinite-world spawn points were invented where the
 selected source has none. Player appearance/third-person integration follows.
+
+### Bevy native source tracer and rocket presentation (2026-10-14)
+
+Accepted managed cosmetic flights now drive original crossed tracer strips and rocket mesh/audio in Bevy. Muzzle context crosses the viewmodel/world projections at the source0.6m depth plane, and native renderers never create a second damage/impact path. Original10m shape, suppression, caliber style, rocket orientation and actual ocean slab registration are covered by nine native tests; eight managed integration tests cover accepted sequence/precision/ballistics/piercing/origin lifecycle. The current complete native suite passes242 tests. Real PEI mouse shots rendered rifle flight18.8m and RPG flight10m with ammo decrements; inspected rocket capture visibly shows source model and anchored tail. A later source-color correction is unit-verified but exact final HDR brightness remains unreviewed. Added opt-in fixed-fps capture timing, preserving normal gameplay timing. See `bevy/docs/BULLET_PORT.md` for evidence and remaining authoritative rocket/arrow, corpse-collider and audio-hardware boundaries.

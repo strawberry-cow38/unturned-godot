@@ -806,7 +806,9 @@ fn simulate(
                 ) * Vec3::NEG_Z;
                 let request = match action {
                     crate::weapons::Intent::Fire => {
-                        json!({"name":"fire","args":{"origin":(transform.translation+Vec3::Y*eye).to_array(),"dir":direction.to_array()}})
+                        let origin = transform.translation + Vec3::Y * eye;
+                        json!({"name":"fire","args":{"origin":origin.to_array(),"dir":direction.to_array(),
+                            "visual":crate::bullets::fire_context(viewmodel.aim_alpha,viewmodel.muzzle_offset,origin)}})
                     }
                     crate::weapons::Intent::Melee(strong) => {
                         json!({"name":"melee","args":{"strong":strong,"yawDegrees":input.yaw}})

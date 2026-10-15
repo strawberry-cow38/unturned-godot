@@ -1,4 +1,5 @@
 mod bridge;
+mod bullets;
 mod character;
 mod cli;
 mod content;
@@ -81,6 +82,13 @@ fn main() -> Result<()> {
         .canonicalize()
         .map_err(|e| anyhow::anyhow!("locating bundled game content: {e}"))?;
     let mut app = App::new();
+    if let Some(fps) = options.fixed_fps {
+        let frame = std::time::Duration::from_secs_f64(1. / f64::from(fps));
+        let mut clock = Time::<Virtual>::default();
+        clock.set_max_delta(clock.max_delta().max(frame));
+        app.insert_resource(clock);
+        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(frame));
+    }
     app.insert_resource(bridge)
         .insert_resource(config)
         .insert_resource(settings)
@@ -124,7 +132,7 @@ fn main() -> Result<()> {
             wildlife::WildlifePlugin,
             impact::ImpactPlugin,
         ))
-        .add_plugins((character::CharacterPlugin, zombie::ZombiePlugin))
+        .add_plugins((character::CharacterPlugin, zombie::ZombiePlugin, bullets::BulletPlugin))
         .add_systems(Update, capture_frame.after(entities::CollectInteractions))
         .run();
     Ok(())
@@ -176,7 +184,7 @@ fn capture_frame(
         })
         .collect();
     let event = event.map(|e| json!({"seq":e.sequence,"kind":e.kind,"data":e.data}));
-    let evidence = json!({"map":options.0.map,"renderFrame":*frames,"spawn":world.spawn.to_array(),"state":snapshot.0,"particles":effects,"captureEvent":event});
+    let evidence = json!({"map":options.0.map,"fixedFps":options.0.fixed_fps,"renderFrame":*frames,"spawn":world.spawn.to_array(),"state":snapshot.0,"particles":effects,"captureEvent":event});
     if let Err(error) = std::fs::write(path.with_extension("json"), evidence.to_string()) {
         warn!("Cannot write capture state: {error}");
     }

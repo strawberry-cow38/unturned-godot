@@ -113,6 +113,7 @@ impl BridgeProcess {
                 | "action"
                 | "worldGeometry"
                 | "worldDynamicGeometry"
+                | "worldCosmeticGeometry"
                 | "worldVehicleState"
                 | "worldZombieState"
                 | "worldZombieNoise"

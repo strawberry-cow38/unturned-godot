@@ -53,6 +53,7 @@ pub struct ItemVisual {
 pub struct ItemCatalog {
     pub items: HashMap<u16, ItemVisual>,
     pub throw_motion: Value,
+    pub bullet_visuals: Option<crate::bullets::Visuals>,
 }
 #[derive(Resource, Default)]
 pub struct ServiceManifest {
@@ -156,6 +157,8 @@ fn load_catalog(
     }
     match bridge.request("catalog", json!({})).and_then(|response| {
         catalog.throw_motion = response["result"]["throwMotion"].clone();
+        catalog.bullet_visuals =
+            serde_json::from_value(response["result"]["bulletVisuals"].clone()).ok();
         Ok(serde_json::from_value::<Vec<ItemVisual>>(
             response["result"]["items"].clone(),
         )?)

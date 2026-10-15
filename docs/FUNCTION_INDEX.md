@@ -73,6 +73,7 @@ Rules of the road:
 | resolve original attachment fit, installed IDs, factory irons and shot audio | generated `AttachmentNoise` from `game/AttachmentFit.cs` / `Viewmodel.Snd` | no copied attachment tables; barrel ID9400 is consumed after its one accepted shot |
 | atomically fit/remove a physical attachment or select magazine/shell ammo | `WeaponState.QueueAttachment` / `AttachmentOptions` (`bevy/bridge/AttachmentServices.cs`), generated `AttachmentTransaction` and `WeaponAmmoActions` | selected-gun and incoming-item tokens; same original placement/round rules; preflight before mutation |
 | render source cosmetic bullet flight without duplicating damage | `CosmeticBulletServices` / generated `CosmeticScatter` / `BallisticsMath` (`bevy/bridge`) | accepted combat sequence joins visual context; `state.bullets` is visual only; ocean boxes never enter solid-world damage geometry |
+| render original tracer strips and project the actual FP muzzle | `bullets::{tracer,muzzle_projection,fire_context}` / `viewmodel::project_muzzle` (`bevy/src`) | accepted visual flight only; muzzle depth0.6m, max strip10m; no damage/impact publication |
 | emit host hearing with original rain masking | `ZombieServices.Noise(position,radius)` | zero is silent; source radius and authority weather |
 
 ## 2. Sentinels that lie

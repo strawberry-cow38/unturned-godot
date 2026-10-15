@@ -176,6 +176,7 @@ pub struct ViewmodelStatus {
     pub ready: bool,
     pub aiming: bool,
     pub aim_alpha: f32,
+    pub muzzle_offset: Option<Vec3>,
     tool: tools::Kind,
     tool_active: bool,
 }
@@ -221,7 +222,7 @@ impl Plugin for ViewmodelPlugin {
             )
             .add_systems(
                 PostUpdate,
-                project_attachment_hooks
+                (project_attachment_hooks, project_muzzle)
                     .in_set(ProjectAttachmentHooks)
                     .after(bevy::camera::CameraUpdateSystems)
                     .after(bevy::transform::TransformSystems::Propagate),
@@ -912,6 +913,44 @@ fn project_attachment_hooks(
             anchors.0.insert(slot.into(), screen);
         }
     }
+}
+fn project_muzzle(
+    state: Res<ViewmodelState>,
+    catalog: Res<ItemCatalog>,
+    cameras: Query<(&Camera, &GlobalTransform), With<ViewmodelCamera>>,
+    world_cameras: Query<(&Camera, &GlobalTransform), With<PlayerCamera>>,
+    transforms: Query<&GlobalTransform>,
+    mut status: ResMut<ViewmodelStatus>,
+) {
+    status.muzzle_offset = None;
+    if !state.is_gun || state.hands_off || state.driving {
+        return;
+    }
+    let Some(visual) = state.visuals.get(&state.asset) else {
+        return;
+    };
+    let Some(gun) = state.gun.and_then(|entity| transforms.get(entity).ok()) else {
+        return;
+    };
+    let (Ok((camera, view)), Ok((world_camera, world_view))) =
+        (cameras.single(), world_cameras.single())
+    else {
+        return;
+    };
+    if !camera.is_active {
+        return;
+    }
+    let Some(metadata) = &catalog.bullet_visuals else {
+        return;
+    };
+    status.muzzle_offset = crate::bullets::muzzle_projection(
+        gun.transform_point(visual.muzzle),
+        view.to_matrix(),
+        camera.clip_from_view(),
+        world_camera.clip_from_view(),
+        world_view.rotation(),
+        metadata.muzzle_anchor_depth,
+    );
 }
 fn relative_pose(
     entity: Entity,

@@ -14,6 +14,7 @@ pub struct Options {
     pub screenshot: Option<PathBuf>,
     pub screenshot_frame: u32,
     pub screenshot_event: Option<String>,
+    pub fixed_fps: Option<u32>,
     pub exit_after_capture: bool,
     pub help: bool,
 }
@@ -32,6 +33,7 @@ impl Default for Options {
             screenshot: None,
             screenshot_frame: 90,
             screenshot_event: None,
+            fixed_fps: None,
             exit_after_capture: true,
             help: false,
         }
@@ -66,9 +68,13 @@ impl Options {
                 "--shot" => options.screenshot = Some(value()?.into()),
                 "--shot-frame" => options.screenshot_frame = value()?.parse()?,
                 "--shot-event" => options.screenshot_event = Some(value()?),
+                "--fixed-fps" => options.fixed_fps = Some(value()?.parse()?),
                 "--" => {}
                 _ => bail!("Unknown option {arg}. Use --help."),
             }
+        }
+        if options.fixed_fps == Some(0) {
+            bail!("--fixed-fps must be greater than zero");
         }
         if options.ticks == 0 {
             bail!("--ticks must be greater than zero");
@@ -120,12 +126,25 @@ Usage: bevy/run.sh [options]\n\
   --shot PATH              Capture the rendered window and exit\n\
   --shot-frame 90          Wait this many rendered frames before capture\n\
   --shot-event NAME        Capture when an authoritative event is rendered\n\
+  --fixed-fps N            Deterministic render diagnostic (source movie mode)\n\
   --stay                   Keep running; F12 repeats the capture\n\
   --help                   Show this help";
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn render_fixed_fps_is_explicit_and_rejects_zero() {
+        assert_eq!(
+            Options::parse(Vec::<String>::new()).unwrap().fixed_fps,
+            None
+        );
+        assert_eq!(
+            Options::parse(["--fixed-fps=50".into()]).unwrap().fixed_fps,
+            Some(50)
+        );
+        assert!(Options::parse(["--fixed-fps=0".into()]).is_err());
+    }
     #[test]
     fn paths_with_spaces_and_both_option_forms_are_preserved() {
         let options = Options::parse(
