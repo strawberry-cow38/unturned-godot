@@ -204,7 +204,7 @@ fn shift_world(world: &mut World, shift: Vec3, offset: DVec2) {
     // UI and first-person render-layer cameras are separate coordinate spaces.
     // Every other spatial root, including audio/debris/replicas, moves once.
     let roots: Vec<_> = world
-        .query_filtered::<(Entity, Option<&RenderLayers>), (
+        .query_filtered::<(Entity, Option<&RenderLayers>, Has<super::water::WaterSurface>), (
             With<Transform>,
             Without<ChildOf>,
             Without<Node>,
@@ -212,8 +212,8 @@ fn shift_world(world: &mut World, shift: Vec3, offset: DVec2) {
             Without<DirectionalLight>,
         )>()
         .iter(world)
-        .filter(|(_, layers)| layers.is_none_or(|l| l.intersects(&RenderLayers::layer(0))))
-        .map(|(entity, _)| entity)
+        .filter(|(_, layers, water)| *water || layers.is_none_or(|l| l.intersects(&RenderLayers::layer(0))))
+        .map(|(entity, _, _)| entity)
         .collect();
     let mut shifted = HashSet::new();
     for root in roots {

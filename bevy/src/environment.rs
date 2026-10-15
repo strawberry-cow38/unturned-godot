@@ -92,7 +92,7 @@ impl Default for Environment {
 #[derive(Component)]
 struct Sun;
 #[derive(Component)]
-struct Sky;
+pub(crate) struct Sky;
 #[derive(Component)]
 struct SoundGain(f32);
 #[derive(Component)]
@@ -241,6 +241,11 @@ struct SkyMaterial {
     stars: Handle<Image>,
 }
 impl Material for SkyMaterial {
+    fn enable_prepass() -> bool {
+        // A background sphere must not look like opaque terrain to water's
+        // shoreline-depth query (the main pass already disables depth writes).
+        false
+    }
     fn fragment_shader() -> ShaderRef {
         "embedded://unturned_bevy/sky.wesl".into()
     }

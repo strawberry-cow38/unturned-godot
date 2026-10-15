@@ -255,3 +255,47 @@ A second live journey (`artifacts/bevy-origin-before-crossing` and
 (176, 59.406, 34). Roads, trees and grass remained visible, 25,254 authority
 triangles were refreshed, and the player remained connected/alive with source
 fall damage applied. The log reported zero missing source assets.
+
+## Terrain layers and water
+
+`world/layers.rs` exports the original dominant terrain grid to the authority and
+provides the native surface sampler. Retail rows retain the source negative-Z
+direction, four-metre spacing, nearest midpoint-even sampling and map-edge clamp.
+Equal raw splat weights keep the first channel, including zero for an empty texel.
+Generated regions retain their original layer samples. Wildlife therefore keeps
+the source `Terrain.IsWater(layer) == (layer == 5)` sand proxy; it does not infer
+this classification from sea level or the renderer's noise-warped material blend.
+
+`world/water.rs` and `water.wesl` port the current flat-water source: original
+five-octave Hoskins gradient noise, ripple-distance fade, source depth-based
+shore foam, shallow tint, brightness-dependent sky damping and Fresnel alpha.
+The executable source Fresnel exponent is 2; nearby source comments describe
+older intermediate tuning values and are not used instead. The mirror target is
+half the window size from its first frame and resizes with it. It renders the
+same sky, terrain, props and trees/resources, with reflection-only copies of
+scene lights that omit shadow maps. Grass, particles, UI and the first-person
+fill light stay outside the reflection pass. Native sRGB texture views decode
+the target on sampling, so the Godot render-target workaround is not applied a
+second time.
+
+The mirror uses a proper camera rotation and a texture-Y flip. A projection
+regression compares screen edges and rolled cameras to the mathematically exact
+plane reflection, avoiding reversed mesh winding. The sky is excluded from the
+depth prepass so it cannot produce false shoreline foam. The ocean's dedicated
+render layer is explicitly included in origin shifts. Retail ocean bounds and
+the infinite world's 256-metre centering follow the original source; the now-flat
+surface uses a quad, with opaque terrain depth hiding land, rather than retaining
+the obsolete vertex-displacement grid. `UG_REFLECT=0`, `UG_REFLEVERY`,
+`UG_REFLSTR`, `UG_REFLDEBUG` and `UG_NOWATER=1` remain useful diagnostics.
+
+Two actual PEI shoreline renders were inspected: `artifacts/bevy-water-coast.png`
+at camera (-450,30,-100), yaw 90/pitch -7, and
+`artifacts/bevy-water-coast-offset.png` at (-448,30,-78), yaw 100/pitch -7.
+They show the visible shallow bed, shore/wall foam and actual reflected trees and
+dock geometry. Reflections remain aligned after translation and yaw. Both runs
+reported zero missing source assets and no shader validation errors.
+
+Still separate from this surface milestone: the underwater optical postprocess,
+rain impact ripples/puddles and submerged terrain caustics, per-volume water, and
+exposing the live reflection settings through the graphics menu. Physical
+buoyancy remains correctly flat because the current source sets `WaveField.Flat`.

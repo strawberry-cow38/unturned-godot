@@ -2,12 +2,14 @@
 use crate::content::{ContentCache, ContentError, ObjData, load_guid_map};
 mod foliage;
 pub mod interactables;
+pub mod layers;
 pub mod origin;
 mod procedural;
 mod procedural_roads;
 mod roads;
 mod terrain;
 mod tunnels;
+mod water;
 mod wires;
 use bevy::{math::DVec3, prelude::*};
 use bevy_rapier3d::prelude::{Collider, RigidBody};
@@ -76,6 +78,7 @@ impl Plugin for WorldPlugin {
             terrain::TerrainPlugin,
             interactables::InteractablePlugin,
             origin::OriginPlugin,
+            water::WaterPlugin,
         ))
         .init_resource::<WorldConfig>()
         .init_resource::<WorldState>()
@@ -381,8 +384,7 @@ fn load_retail_terrain(root: &Path) -> Result<Vec<TerrainPatch>, ContentError> {
             for gz in 0..257 {
                 for gx in 0..257 {
                     let i = (((256 - gz).min(255)) * 256 + gx.min(255)) * 8;
-                    patch.layers[gz * 257 + gx] =
-                        (0..8).max_by_key(|n| data[i + n]).unwrap_or(2) as u8;
+                    patch.layers[gz * 257 + gx] = layers::dominant(&data[i..i + 8]);
                 }
             }
         }
@@ -640,43 +642,31 @@ fn build_world(
             }
         }
     }
+    if std::env::var("UG_NOWATER").as_deref() == Ok("1") {
+        state.sea_level = None;
+    }
     if let Some(sea) = state.sea_level {
-        let mesh = meshes.add(Plane3d::default().mesh().size(8192., 8192.));
-        let material = materials.add(StandardMaterial {
-            base_color: Color::srgba(0.10, 0.29, 0.36, 0.68),
-            alpha_mode: AlphaMode::Blend,
-            perceptual_roughness: 0.18,
-            reflectance: 0.7,
-            double_sided: true,
-            cull_mode: None,
-            ..default()
-        });
+        let focus = if streaming {
+            players.iter().next().map(|p| p.translation).unwrap_or(old_spawn)
+        } else {
+            explicit_center.unwrap_or(Vec3::ZERO)
+        };
+        let (center, size) = water::ocean_bounds(
+            &geometry.terrain,
+            config.procedural_path.is_some(),
+            focus,
+        );
+        // Current source WaveField.Flat never displaces vertices. A flat quad
+        // produces the same visible surface; the opaque terrain depth hides land.
+        let mesh = meshes.add(Plane3d::default().mesh().size(size.x, size.y));
+        let material = materials.add(StandardMaterial::default());
         commands.spawn((
-            Name::new("Legacy ocean"),
+            Name::new("Source ocean"),
             WorldTerrain,
+            water::WaterSurface,
             Mesh3d(mesh),
             MeshMaterial3d(material),
-            Transform::from_xyz(
-                if streaming {
-                    players
-                        .iter()
-                        .next()
-                        .map(|p| p.translation.x)
-                        .unwrap_or(old_spawn.x)
-                } else {
-                    explicit_center.map_or(0., |p| p.x)
-                },
-                sea,
-                if streaming {
-                    players
-                        .iter()
-                        .next()
-                        .map(|p| p.translation.z)
-                        .unwrap_or(old_spawn.z)
-                } else {
-                    explicit_center.map_or(0., |p| p.z)
-                },
-            ),
+            Transform::from_xyz(center.x, sea, center.y),
         ));
     }
 
@@ -1080,6 +1070,7 @@ fn build_world(
                             transform,
                             WorldFoliage,
                             resource.clone(),
+                            water::Reflective,
                         ));
                         state.foliage_count += 1;
                     }
@@ -1232,6 +1223,7 @@ fn build_world(
                     MeshMaterial3d(material),
                     transform,
                     WorldFoliage,
+                    water::Reflective,
                 ));
                 state.foliage_count += 1;
             }

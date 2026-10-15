@@ -884,3 +884,27 @@ gun/melee/grenade authority, corpse retirement/point respawn, save continuity an
 rebasing. A terrain-streaming regression keeps animal poses stable while collision
 chunks await finalization. Native wildlife render verification is the following
 checkpoint; the separate InfiniteTerrain world has no source fauna registration.
+
+### 2026-10-14 — Bevy original terrain layers and planar water
+
+Native terrain now exports the original dominant-layer grids to the managed host
+and shares the same sampler with upcoming impact effects. Retail row reflection,
+nearest-even grid sampling, map-edge clamping and first-max weight ties match
+Terrain.SampleDominantLayer; the original layer-5 sand/water proxy is preserved.
+
+The temporary ocean material is replaced by the source flat-water shader: real
+planar scenery/sky reflections, original ripple normals and distance fade,
+depth-based shoreline foam, source tint/brightness damping and Fresnel alpha.
+The mirror preserves window aspect at half resolution, uses exact reflected
+projection without reversing mesh winding, and disables shadow maps on copies
+of scene lights while excluding the first-person fill. Water's own render layer
+now follows origin shifts; the sky no longer contaminates the depth prepass.
+Retail bounds, generated region centering and water diagnostic switches follow
+source. Physical water stays flat, matching the current WaveField.Flat switch.
+
+48 focused native world regressions pass. Two Vulkan captures were opened and
+inspected at translated/rotated PEI shoreline cameras: reflected trees/dock stay
+aligned, near seabed is visible, and shore foam follows geometry. Both logs are
+free of shader errors and missing assets. Artifact paths and remaining underwater,
+rain/caustic, water-volume and graphics-option work are recorded in
+bevy/docs/WORLD_PORT.md.

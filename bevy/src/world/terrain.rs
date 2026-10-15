@@ -67,7 +67,8 @@ impl SplatField {
             (size.x / 4.).round() as usize,
             (size.y / 4.).round() as usize,
         );
-        let mut pixels = vec![[0, 0, 255, 0, 0, 0, 0, 0]; width * height];
+        // Terrain.Load merges missing splat tiles into zero-filled buffers.
+        let mut pixels = vec![[0; 8]; width * height];
         for patch in patches {
             if let Some(field) = &patch.splat {
                 let offset = (patch.origin - origin) / 4.;

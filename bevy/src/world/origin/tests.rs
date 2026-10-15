@@ -62,6 +62,11 @@ fn rebase_moves_render_and_real_rapier_query_without_advancing_time_or_velocity(
         .world_mut()
         .spawn((Transform::from_xyz(1., 2., 3.), RenderLayers::layer(1)))
         .id();
+    let water = app.world_mut().spawn((
+        Transform::from_xyz(1024., 25.6, -1536.),
+        RenderLayers::layer(17),
+        super::super::water::WaterSurface,
+    )).id();
     for _ in 0..4 {
         app.update();
     }
@@ -70,6 +75,10 @@ fn rebase_moves_render_and_real_rapier_query_without_advancing_time_or_velocity(
     let time = app.world().resource::<Time<Fixed>>().elapsed();
     let shift = Vec3::new(1024., 0., -1536.);
     shift_world(app.world_mut(), shift, shift.xz().as_dvec2());
+    assert_eq!(
+        app.world().get::<Transform>(water).unwrap().translation,
+        Vec3::new(0.,25.6,0.),
+    );
     assert_eq!(
         app.world().get::<Transform>(root).unwrap().translation,
         Vec3::new(6., 2., 236.)

@@ -218,7 +218,7 @@ fn register_world_geometry(
         }
         bridge.request(
             "worldGeometry",
-            json!({"replace":true,"finalize":false,"meshes":[]}),
+            json!({"replace":true,"finalize":false,"meshes":[],"terrainLayers":crate::world::layers::authority_grids(&geometry.terrain)}),
         )?;
         for patch in &geometry.terrain {
             for data in patch.mesh_by_layer(geometry.loaded_center, geometry.loaded_radius) {
