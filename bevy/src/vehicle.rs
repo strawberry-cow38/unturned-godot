@@ -720,7 +720,10 @@ fn read_controls(
     time: Res<Time>,
 ) {
     let active = ui.screen == crate::ui::Screen::Playing && model.alive;
-    let pressed = |action| settings.pressed(action, &keys, &mouse);
+    // Source DriveVehicle gates held axes/buttons on captured cursor, while
+    // discrete seat/ignition/light keys remain live during MapUI.Close.
+    let captured = !ui.captures_input();
+    let pressed = |action| captured && settings.pressed(action, &keys, &mouse);
     let edge = |action| settings.just_pressed(action, &keys, &mouse);
     for (_, mut body, _) in &mut query {
         body.controls = Controls {
@@ -783,7 +786,7 @@ fn read_controls(
                     let _ = bridge.request("action", json!({"name":"vehicleLighting",
                         "args":{"netId":body.net_id,"action":"CycleHeadlights"}}));
                 }
-                if edge(GameAction::Fire)
+                if captured && edge(GameAction::Fire)
                     && !motion.1.trigger_live(pressed(GameAction::Aim))
                     && body.battery > 0.
                     && body.flags & 128 == 0
@@ -792,17 +795,21 @@ fn read_controls(
                 }
                 let mut cyclic = Vec2::ZERO;
                 if spec.heli || spec.plane {
-                    let delta = if pressed(GameAction::FreeLook) {
+                    let delta = if !captured || pressed(GameAction::FreeLook) {
                         Vec2::ZERO
                     } else {
                         motion.0.delta
                     };
-                    let arrows = Vec2::new(
-                        keys.pressed(KeyCode::ArrowDown) as u8 as f32
-                            - keys.pressed(KeyCode::ArrowUp) as u8 as f32,
-                        keys.pressed(KeyCode::ArrowRight) as u8 as f32
-                            - keys.pressed(KeyCode::ArrowLeft) as u8 as f32,
-                    );
+                    let arrows = if captured {
+                        Vec2::new(
+                            keys.pressed(KeyCode::ArrowDown) as u8 as f32
+                                - keys.pressed(KeyCode::ArrowUp) as u8 as f32,
+                            keys.pressed(KeyCode::ArrowRight) as u8 as f32
+                                - keys.pressed(KeyCode::ArrowLeft) as u8 as f32,
+                        )
+                    } else {
+                        Vec2::ZERO
+                    };
                     cyclic = body.flight.input(
                         delta,
                         arrows,
@@ -828,7 +835,8 @@ fn read_controls(
                     pitch: cyclic.x,
                     roll: cyclic.y,
                     yaw: steer,
-                    ground_mode: spec.plane
+                    ground_mode: captured
+                        && spec.plane
                         && (keys.pressed(KeyCode::ControlLeft)
                             || keys.pressed(KeyCode::ControlRight)),
                     ..default()
@@ -1103,3 +1111,6 @@ fn publish_bodies(
         }
     }
 }
+
+#[cfg(test)]
+mod swoop_tests;

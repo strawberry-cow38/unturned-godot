@@ -29,6 +29,8 @@ mod mounted_tests;
 mod menu_tests;
 #[cfg(test)]
 mod collision_tests;
+#[cfg(test)]
+mod swoop_tests;
 
 pub struct PlayerPlugin;
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]

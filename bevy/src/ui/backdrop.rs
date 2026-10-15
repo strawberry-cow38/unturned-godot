@@ -20,7 +20,7 @@ use bevy::{
 /// by the source menu's animation, not advanced by the renderer.
 #[derive(Component, Clone, Copy, Debug)]
 pub(crate) struct Backdrop {
-    fade: f32,
+    pub(super) fade: f32,
     style: Style,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

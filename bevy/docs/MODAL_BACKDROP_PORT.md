@@ -45,11 +45,10 @@ dashboard closes, vitals return to the ordinary HUD so the higher AmmoPie screen
 copy still includes them. Simultaneous dashboard/modal layers also compose in
 source order. Camera replacement and tab changes keep only one dashboard pass.
 
-The source `MenuSwoop` panel slide and 85 ms opening/closing animation are still
-separate UI work; existing native dashboard callers currently open immediately
-and supply fade 1. The renderer API accepts the caller's fade for that later
-integration. The native skills page and other source canvas blend behavior are
-outside this adapter.
+Dashboard fade now comes from the shared original `MenuSwoop` clock; see
+`MENU_SWOOP_PORT.md` for panel movement, input lifetime and transition verification.
+The native skills page and other source canvas blend behavior remain outside this
+adapter.
 
 Two routing/clock CPU cases, the complete 59-case UI group and five lightning
 cases pass. Independent source/render-schedule review passed. The actual Vulkan
@@ -83,9 +82,13 @@ Dashboard artifacts use `bevy-dashboard-backdrop-*`; the expanded AmmoPie test
 uses `bevy-modal-backdrop-layered-*`. Run the dashboard case by replacing the
 test name below with
 `ui::backdrop::tests::visual::gpu_dashboard_keeps_layer12_vitals_above_panels_without_radial_vignette`.
-The fullgame Inventory/Crafting/Information capture is queued with the next
-application build; this checkpoint's rendering evidence uses real UI/camera
-systems over a controlled scene and its production root hooks have ECS coverage.
+The actual fullgame Inventory/Crafting/Information capture subsequently passed:
+`bevy-dashboard-{inventory,crafting,information}-fullgame.png` and JSON at frames
+1228/1307/1339. Root and world independently opened all three. World frost, sharp
+panels/text and sharp vitals are present; Information's vitals remain above its
+panel. Blank crafting titles exposed a separate managed read-model gap being
+fixed by root. Those application captures predate MenuSwoop and prove backdrop
+integration, not animated transitions.
 Run the ignored fixture on a display with Vulkan, for example from the repo root:
 
 ```sh

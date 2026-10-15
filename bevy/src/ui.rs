@@ -18,6 +18,7 @@ mod clothing;
 mod crosshair;
 mod map;
 mod network_menu;
+mod swoop;
 pub(crate) use map::MapDiagnostics;
 pub(crate) mod npc;
 mod vitals;
@@ -245,6 +246,8 @@ pub enum Screen {
 #[derive(Resource, Debug)]
 pub struct UiState {
     pub screen: Screen,
+    /// MapUI leaves the cursor free until its closing MenuSwoop completes.
+    pub(crate) map_closing: bool,
     pub networked: bool,
     pub network_menu: network_menu::Menu,
     pub map: String,
@@ -263,6 +266,7 @@ impl Default for UiState {
     fn default() -> Self {
         Self {
             screen: Screen::MainMenu,
+            map_closing: false,
             networked: false,
             network_menu: default(),
             map: "PEI".into(),
@@ -299,10 +303,13 @@ impl UiState {
     }
 
     pub fn captures_input(&self) -> bool {
-        self.screen != Screen::Playing
+        self.screen != Screen::Playing || self.map_closing
     }
 
     pub fn close_overlay(&mut self) {
+        if self.screen == Screen::Information {
+            self.map_closing = true;
+        }
         self.screen = match self.screen {
             Screen::Settings => self.settings_return,
             Screen::MainMenu => Screen::MainMenu,
@@ -381,6 +388,7 @@ impl Plugin for GameUiPlugin {
             .add_plugins((
                 HudPlugin,
                 backdrop::BackdropPlugin,
+                swoop::SwoopPlugin,
                 attachments::AttachmentMenuPlugin,
                 vitals::VitalsPlugin,
                 crosshair::CrosshairPlugin,
@@ -956,7 +964,7 @@ fn page_name(index: u8) -> String {
 
 fn rebuild_overlay(
     mut commands: Commands,
-    roots: Query<Entity, With<OverlayRoot>>,
+    roots: Query<(Entity, Option<&swoop::Swoop>), With<OverlayRoot>>,
     state: Res<UiState>,
     model: Res<UiModel>,
     catalog: Res<crate::entities::ItemCatalog>,
@@ -979,8 +987,8 @@ fn rebuild_overlay(
         return;
     }
     *cache = signature;
-    for root in &roots {
-        commands.entity(root).despawn();
+    for (root, animation) in &roots {
+        swoop::replace::<OverlayRoot>(&mut commands, root, animation, &state, &model);
     }
     if matches!(
         state.screen,
@@ -1022,6 +1030,7 @@ fn rebuild_overlay(
             )),
         ))
         .insert_if(backdrop::Backdrop::dashboard(1.), || dashboard)
+        .insert_if(swoop::Swoop(state.screen), || dashboard)
         .with_children(|root| {
             root.spawn((
                 vitals::MenuPanel,

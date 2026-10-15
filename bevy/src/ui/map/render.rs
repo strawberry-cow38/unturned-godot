@@ -170,7 +170,7 @@ fn navbar(p: &mut ChildSpawnerCommands, width: f32, settings: &Settings) {
 }
 pub(super) fn build(
     mut commands: Commands,
-    roots: Query<Entity, With<Root>>,
+    roots: Query<(Entity, Option<&crate::ui::swoop::Swoop>), With<Root>>,
     state: Res<UiState>,
     model: Res<UiModel>,
     map: Res<Dashboard>,
@@ -182,7 +182,7 @@ pub(super) fn build(
 ) {
     let Some(layout) = map.layout else {
         cached.clear();
-        for entity in &roots {
+        for (entity, _) in &roots {
             commands.entity(entity).despawn();
         }
         return;
@@ -205,8 +205,8 @@ pub(super) fn build(
         return;
     }
     *cached = signature;
-    for entity in &roots {
-        commands.entity(entity).despawn();
+    for (entity, animation) in &roots {
+        crate::ui::swoop::replace::<Root>(&mut commands, entity, animation, &state, &model);
     }
     if state.screen != Screen::Information || !model.connected {
         return;
@@ -226,6 +226,7 @@ pub(super) fn build(
             },
             GlobalZIndex(20),
             crate::ui::backdrop::Backdrop::dashboard(1.),
+            crate::ui::swoop::Swoop(Screen::Information),
         ))
         .with_children(|p| {
             p.spawn((

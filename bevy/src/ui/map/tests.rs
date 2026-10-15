@@ -228,6 +228,13 @@ fn real_dashboard_systems_preserve_view_across_close_and_clear_session_annotatio
     assert!(
         world.get::<crate::ui::backdrop::Backdrop>(dashboard_root).is_some()
     );
+    assert_eq!(
+        world
+            .get::<crate::ui::swoop::Swoop>(dashboard_root)
+            .unwrap()
+            .0,
+        Screen::Information
+    );
     // Node requires a transparent BackgroundColor even when the bundle omits it.
     assert_eq!(
         world.get::<BackgroundColor>(dashboard_root).unwrap().0.alpha(),

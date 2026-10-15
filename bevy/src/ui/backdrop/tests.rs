@@ -137,15 +137,21 @@ fn production_inventory_crafting_and_vitals_use_dashboard_without_flat_scrim() {
     };
     let mut app = App::new();
     app.add_plugins((MinimalPlugins, bevy::asset::AssetPlugin::default()))
+        .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            std::time::Duration::from_millis(100),
+        ))
         .init_asset::<Image>()
         .init_resource::<UiState>()
         .init_resource::<UiModel>()
         .init_resource::<UiSettings>()
         .init_resource::<crate::profile::LocalProfile>()
         .init_resource::<crate::entities::ItemCatalog>()
-        .add_plugins(crate::ui::vitals::VitalsPlugin)
+        .add_plugins((
+            crate::ui::vitals::VitalsPlugin,
+            crate::ui::swoop::SwoopPlugin,
+        ))
         .add_systems(Update, rebuild_overlay)
-        .add_systems(PostUpdate, route);
+        .add_systems(PostUpdate, route.in_set(BackdropRouting));
     app.world_mut().resource_mut::<UiModel>().connected = true;
     for screen in [Screen::Inventory, Screen::Crafting, Screen::Paused] {
         app.world_mut().resource_mut::<UiState>().screen = screen;

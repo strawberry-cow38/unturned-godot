@@ -2201,3 +2201,18 @@ JSONL catalog/title journeys pass. Gameplay independently reviewed source/code.
 bridge and opened by root: all first-page names, quantities, durations and
 requirements are readable. This repairs the title read model; the larger source
 crafting grid/category/queue interface is still pending.
+
+### Bevy original dashboard MenuSwoop
+
+Inventory, Crafting and Information now use the original 85ms MenuSwoop clock,
+source easing and 54px travel, retaining progress across snapshot rebuilds and
+reversal. Retiring panels immediately lose interaction and frost; Information
+moves below HUD and keeps the cursor free until its close completes, while tab
+navigation never recaptures another menu. Real player and vehicle input tests
+prove closing-map capture blocks mouse/continuous drive input while preserving
+source discrete ignition behavior. Eight focused,68 UI and107 vehicle tests pass;
+the ten-frame Vulkan sequence was opened and checks same-run scene restoration
+and unchanged vitals. Actual fullgame Inventory/Crafting/Information captures
+also confirm committed dashboard frost/layering. One shared native frost pass
+retains the documented outgoing-panel resampling limit; Skills/original layouts
+remain separate. Details and reproduction: `bevy/docs/MENU_SWOOP_PORT.md`.
