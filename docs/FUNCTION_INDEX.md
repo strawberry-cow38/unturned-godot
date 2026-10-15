@@ -61,6 +61,16 @@ Rules of the road:
 
 ---
 
+### Bevy authoritative zombie adapters
+
+| Need | Reuse | Notes |
+|---|---|---|
+| run current chunked zombie decisions | `ZombieServices` (`bevy/bridge/ZombieServices.cs`) | generated original Chunk/Flow code; native owns the only HOT physics solve |
+| test a source walkability box against exported geometry | `WorldGeometry.OverlapsBox` (`bevy/bridge/GeometryOverlap.cs`) | BVH + triangle/AABB separating axes; surfaces, not solid-volume containment |
+| persist zombie flow/population/corpse and native unsticking state | `ZombieServices.Capture/Restore`, `ZombieFlowField.Capture/Restore` | remaining corpse ticks; original outfit seeds and killed-slot refill clocks |
+| sample submerged native camera state and warp | `world::underwater::UnderwaterState`, `WOBBLE/WOBBLE_SPEED` (`bevy/src/world/underwater.rs`) | eye-height 6cm/0cm hysteresis; shared palette/veil in `world/water_optics.wesl` |
+| emit host hearing with original rain masking | `ZombieServices.Noise(position,radius)` | zero is silent; source radius and authority weather |
+
 ## 2. Sentinels that lie
 
 The single highest-value table in this document. Each of these returns a value that is

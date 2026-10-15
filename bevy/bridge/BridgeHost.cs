@@ -22,6 +22,8 @@ public sealed partial class BridgeHost : IDisposable
     byte _recov;
     ushort _held;
     bool _grounded = true;
+    bool _movingInput;
+    float _footNoiseTimer;
     bool _allowCheats = true;
     string _name = "Survivor", _map = "bevy";
     int _correctionVersion;
@@ -39,9 +41,10 @@ public sealed partial class BridgeHost : IDisposable
     readonly Dictionary<uint, byte> _vehicleRecov = new();
     readonly List<JsonElement> _serviceSpecs = new();
     WildlifeServices _wildlife;
+    ZombieServices _zombies;
     int _seed = 1337;
     bool _worldChanged;
-    sealed record BridgeSave(int Seed, RetailLootStreamer.SaveData Loot, JsonElement[] Services, ResourceServices.Saved[] Resources = null, WorldServices.PropDoorSaved[] ObjectDoors = null, BodyCombatServices.Saved[] Bodies = null, VehicleServices.PartsSaved[] VehicleParts = null, double OriginX = 0, double OriginZ = 0, SavedProjectile[] Projectiles = null, WildlifeServices.Saved Wildlife = null);
+    sealed record BridgeSave(int Seed, RetailLootStreamer.SaveData Loot, JsonElement[] Services, ResourceServices.Saved[] Resources = null, WorldServices.PropDoorSaved[] ObjectDoors = null, BodyCombatServices.Saved[] Bodies = null, VehicleServices.PartsSaved[] VehicleParts = null, double OriginX = 0, double OriginZ = 0, SavedProjectile[] Projectiles = null, WildlifeServices.Saved Wildlife = null, ZombieServices.Saved Zombies = null);
     public sealed record BridgeEvent(long Seq, string Kind, object Data, long Tick);
     void Emit(string kind, object data) => _events.Add(new(++_eventSequence, kind, data, _server?.Session.CurrentTick ?? 0));
     static readonly JsonSerializerOptions JsonOptions = new() { IncludeFields = true, PropertyNameCaseInsensitive = true, Converters = { new VectorJson(), new ByteArrayJson() } };
@@ -79,7 +82,7 @@ public sealed partial class BridgeHost : IDisposable
                 if (Bool(r, "starterKit")) SeedStarterKit();
                 for (int n = 0; n < 6; n++) Tick();
                 return new { protocolVersion = 1, fixedDelta = SimClock.FixedDelta, catalogItems = _catalog.Count,
-                    recipes = _catalog.Recipes.Count, movementHeights = new { stand = PlayerMovementDef.HEIGHT_STAND, crouch = PlayerMovementDef.HEIGHT_CROUCH, prone = PlayerMovementDef.HEIGHT_PRONE }, capabilities = new[] { "movement", "memSession", "inventory", "vitals", "combat", "crafting", "save", "terrain", "catalog", "worldGeometry", "worldLoot", "worldWildlife", "worldClock", "weather", "eventAck", "rebase" },
+                    recipes = _catalog.Recipes.Count, movementHeights = new { stand = PlayerMovementDef.HEIGHT_STAND, crouch = PlayerMovementDef.HEIGHT_CROUCH, prone = PlayerMovementDef.HEIGHT_PRONE }, capabilities = new[] { "movement", "memSession", "inventory", "vitals", "combat", "crafting", "save", "terrain", "catalog", "worldGeometry", "worldLoot", "worldWildlife", "worldZombies", "worldClock", "weather", "eventAck", "rebase" },
                     actions = Actions.Keys.Append("respawn").Append("setFiremode").Append("holdItem").Append("equipAndHold").Order().ToArray() };
             case "rebase": return Rebase(r);
             case "simulate":
@@ -138,7 +141,7 @@ public sealed partial class BridgeHost : IDisposable
                 string path = Path.GetFullPath(Text(r, "path"));
                 Directory.CreateDirectory(Path.GetDirectoryName(path)!);
                 var saveJson = JsonNode.Parse(save.ToJson());
-                saveJson["BevyBridge"] = JsonSerializer.SerializeToNode(new BridgeSave(_seed, _loot?.Capture(), _serviceSpecs.ToArray(), _services.Harvesting.Capture(), _services.CapturePropDoors(), _bodies.Capture(), _vehicles.CaptureParts(), _originX, _originZ, CaptureProjectiles(), _wildlife.Capture()));
+                saveJson["BevyBridge"] = JsonSerializer.SerializeToNode(new BridgeSave(_seed, _loot?.Capture(), _serviceSpecs.ToArray(), _services.Harvesting.Capture(), _services.CapturePropDoors(), _bodies.Capture(), _vehicles.CaptureParts(), _originX, _originZ, CaptureProjectiles(), _wildlife.Capture(), _zombies.Capture()));
                 File.WriteAllText(path + ".tmp", saveJson.ToJsonString()); File.Move(path + ".tmp", path, true);
                 _server.PendingSave = save;
                 return new { path, version = save.Version };
@@ -156,6 +159,7 @@ public sealed partial class BridgeHost : IDisposable
                 Dispose(); Start(loaded);
                 RestoreProjectiles(extra?.Projectiles);
                 _wildlife.Restore(extra?.Wildlife);
+                _zombies.Restore(extra?.Zombies);
                 _services.Harvesting.Restore(extra?.Resources);
                 _services.RestorePropDoors(extra?.ObjectDoors); _bodies.Restore(extra?.Bodies); _vehicles.RestoreParts(extra?.VehicleParts);
                 if (extra?.Loot != null)
@@ -216,6 +220,9 @@ public sealed partial class BridgeHost : IDisposable
                 _loot.Step(force: true);
                 return new { points = _loot.PointCount, live = _loot.LiveCount };
             case "worldWildlife": RequireSession(); return _wildlife.Register(r, _originX, _originZ);
+            case "worldZombies": RequireSession(); return _zombies.Register(r, _originX, _originZ);
+            case "worldZombieState": RequireSession(); return _zombies.Publish(r);
+            case "worldZombieNoise": RequireSession(); _zombies.Noise(Vec(r,"position"),Float(r,"radius")); return new{queued=true};
             case "worldSpawns":
                 return new { players = LevelSpawns.PlayerSpawns(Text(r, "mapRoot")).Select(s => new { x = s.x, z = s.z, yaw = s.yaw }).ToArray() };
             case "worldSpawn":
@@ -274,7 +281,11 @@ public sealed partial class BridgeHost : IDisposable
         _vehicles = new VehicleServices(_server, _geometry, Emit); _vehicleRecov.Clear();
         _bodies = new BodyCombatServices(_server, _geometry, _vehicles, Emit);
         _wildlife = new WildlifeServices(_server, _geometry, Emit);
+        _zombies = new ZombieServices(_server, _geometry, Emit);
+        _zombies.RainIntensity=()=>_environment.Sim.BlendAlpha*_environment.Severity;
         _weapons = new WeaponServices(_server, _catalog, Emit);
+        _weapons.Noise=(owner,radius)=>{if(_server.Players.TryGetByOwner(owner,out var p))_zombies.Noise(p.Pos,radius);};
+        _movingInput=false;_footNoiseTimer=0;
         _bodies.RepairRate = _weapons.RepairRate;
         _bodies.RequestSalvage = id => _client.SendSalvageDeployable(id);
         _server.Combat.CanThrow = (owner, id) => _server.Inventories.TryGet(owner, out var bag) && bag.Inventory.getItemCount(id) > 0;
@@ -346,6 +357,7 @@ public sealed partial class BridgeHost : IDisposable
 
     object Simulate(JsonElement input)
     {
+        _movingInput=Math.Abs(Float(input,"moveX"))>.01f||Math.Abs(Float(input,"moveY"))>.01f;
         _yaw = Float(input, "yaw", _yaw); _pitch = Float(input, "pitch", _pitch);
         _grounded = Bool(input, "grounded", _grounded);
         _held = checked((ushort)Int(input, "heldItemId", _held));
@@ -372,7 +384,17 @@ public sealed partial class BridgeHost : IDisposable
             _client.SendPlayerState(_position, _yaw, _pitch, _velocity, (byte)(StanceCode(_movement.Stance) << 1), _grounded, _recov, _held);
         _network.Tick(); _client.Tick(); _server.TickSimulation(); _weapons.Step();
         if (_weapons.TakeSelectionChange(_client.PlayerId) is ushort selected) _held = selected;
-        _loot?.Step(); _services.Step(); _bodies.Step(); _wildlife.Step(); _environment.Step(_server);
+        if(_server.CombatState.TryGet(_client.PlayerId,out var living)&&living.Alive&&!_server.VehicleHost.IsSeated(_client.PlayerId))
+        {
+            _footNoiseTimer-=(float)SimClock.FixedDelta;
+            if(_movingInput&&_footNoiseTimer<=0)
+            {
+                _footNoiseTimer=.4f;
+                float noise=StealthDetection.Radius(_movement.Stance,true)*(_server.Skills.TryGet(_client.PlayerId,out var skills)?skills.Skills.SneakyBeakyNoiseMultiplier():1);
+                if(noise>2)_zombies.Noise(_position,noise);
+            }
+        }
+        _loot?.Step(); _services.Step(); _bodies.Step(); _wildlife.Step(); _zombies.Step(); _environment.Step(_server);
         if (_worldChanged) PublishFullSnapshot();
         _server.TickReplication();
         if (_client.Players.TryGetByOwner(_client.PlayerId, out var own)) _client.AckCombat(own.LastProcessedCombatSeq);
@@ -459,7 +481,7 @@ public sealed partial class BridgeHost : IDisposable
             weather = _environment.State(),
             weapon = _weapons.Snapshot(_client.PlayerId),
             player = new { position = Array(_position), velocity = Array(_velocity), yaw = _yaw, pitch = _pitch,
-                stance = _movement.Stance.ToString().ToLowerInvariant(), hp = combat?.Health ?? 100, alive = combat?.Alive ?? true,
+                stance = _movement.Stance.ToString().ToLowerInvariant(), hp = combat?.Health ?? 100, alive = combat?.Alive ?? true, kills = combat?.Kills ?? 0,
                 food = vitals?.Sim.Food ?? 1, water = vitals?.Sim.Water ?? 1, stamina = vitals?.Sim.Stamina ?? 1,
                 infection = vitals?.Sim.Infection ?? 0, oxygen = vitals?.Sim.Oxygen ?? 1,
                 bleeding = vitals?.Bleeding ?? false, broken = vitals?.Broken ?? false, radiation = vitals?.Sim.Radiation ?? 0,
@@ -488,7 +510,7 @@ public sealed partial class BridgeHost : IDisposable
                 driverPlayerId = e.DriverPlayerId, passengers = e.Passengers, seatCount = e.SeatCount,
                 towedNetId = e.TowedNetId, towRestLen = e.TowRestLen, paintRgb = e.PaintRgb, poppedTireMask = e.PoppedTireMask,
                 recovCounter = _vehicleRecov.GetValueOrDefault(e.NetIdValue) }).ToArray(),
-            zombies = _client.Zombies.All.Select(e => new { netId = e.NetIdValue, position = Array(e.Pos), yaw = e.YawDegrees, animState = e.AnimState, speciality = e.Speciality }).ToArray(),
+            zombies = _zombies.Snapshots(_client), zombieField = _zombies.Summary(),
             crops = _client.Crops.All.Select(e => new { netId = e.NetIdValue, seedId = e.SeedId, position = Array(e.Pos), grown = _client.Crops.IsGrown(e, _client.Applier.LastAppliedServerTick), plantedAtTick = e.PlantedAtTick }).ToArray(),
             interactables = new {
                 doors = _client.InteractableState.ReplicaDoors.Select(d => new { netId = d.Key, open = d.Value.Open, locked = d.Value.Locked }),

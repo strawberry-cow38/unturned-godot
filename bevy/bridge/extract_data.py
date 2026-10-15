@@ -227,3 +227,72 @@ for signature in ['static float NearestDistSq(List<Vector3> anchors, float x, fl
         body = body.replace('Terrain.IsWater(Terr.SampleDominantLayer(p.X, p.Z))', 'SampleLayer(p.X, p.Z) == 5')
     field_parts.append(body)
 (out / 'AnimalField.g.cs').write_text('// Generated source fauna tables, deterministic rolls and streaming.\nusing Godot; using UnturnedGodot; using System.Collections.Generic; namespace UnturnedBevy { public sealed partial class WildlifeServices {\n' + '\n'.join(field_parts) + '}}')
+
+# Current zombie rewrite: retain the complete chunk/flow algorithms. The old
+# ZombieSim/Controller is not the implementation used by this source branch.
+zfield = read('game/ZombieChunkField.cs')
+zfield = zfield.replace('namespace UnturnedGodot', 'namespace UnturnedBevy').replace('public partial class ZombieChunkField : Node3D', 'public sealed partial class ZombieServices')
+zfield = zfield.replace('ZombieBody', 'ZombieBodyState')
+zfield = '\n'.join(line for line in zfield.splitlines() if not any(key in line for key in [
+    'public PlayerController Player;', 'public Terrain Terr;', 'BoxShape3D _probe;',
+    'System.Action<Vector3, float> _noiseHandler;', 'public override void _EnterTree()', 'public override void _ExitTree()']))
+zfield = zfield.replace('public override void _PhysicsProcess(double delta)', 'void SourceStep(double delta)')
+zfield = zfield.replace('Terr != null && Terrain.IsWater(Terr.SampleDominantLayer(q.X, q.Z))', 'SampleLayer(q.X, q.Z) == 5')
+zfield = zfield.replace('Terr != null && Terrain.IsWater(Terr.SampleDominantLayer(gx, gz))', 'SampleLayer(gx, gz) == 5')
+zfield = zfield.replace('Terr != null ? Terr.SampleHeight(gx, gz) : 0f', 'SampleGround(gx, gz)')
+zfield = zfield.replace('Terr != null ? Terr.SampleHeight(nx, nz) : z.Pos.Y', 'SampleGround(nx, nz)')
+zfield = zfield.replace('else if (Player != null) _anchors.Add(Player.GlobalPosition);\n            else foreach (var p in PlayerRegistry.All) if (GodotObject.IsInstanceValid(p)) _anchors.Add(p.GlobalPosition);',
+    'else foreach (var p in _server.Players.All) _anchors.Add(G(p.Pos));')
+zfield = zfield.replace('else if (c.Tier == Tier.Frozen && c.Live != null) c.Live = null;',
+    'else if (c.Tier == Tier.Frozen && c.Live != null) Freeze(c);')
+zfield = zfield.replace('!GodotObject.IsInstanceValid(z.Body)', 'z.Body.Freed')
+zfield = zfield.replace('z.Body.QueueFree()', 'Retire(z.Body)')
+zfield = zfield.replace('var space = GetWorld3D()?.DirectSpaceState;', '')
+zfield = zfield.replace('z.Body = new ZombieBodyState(z.Table, z.Outfit);\n                    AddChild(z.Body);\n                    z.Body.GlobalPosition = z.Pos;', 'z.Body = BuildBody(z.Table, z.Outfit, z.Pos);')
+zfield = zfield.replace('SeePlayer(space, z.Pos, out var seen)', 'SeePlayer(z.Pos, out var seen)')
+old_see = method(zfield, 'bool SeePlayer(PhysicsDirectSpaceState3D space, Vector3 from, out Vector3 seen)')
+new_see = old_see.replace('PhysicsDirectSpaceState3D space, ', '')
+new_see = '\n'.join(line for line in new_see.splitlines() if not any(k in line for k in ['if (space == null)', 'var q = PhysicsRayQueryParameters3D', 'q.From = eye;', 'q.To = a +', 'using var hit =']))
+new_see = new_see.replace('if (hit.Count == 0)', 'if (!_geometry.RayDetailed(U(eye), U(a + Vector3.Up * 1.0f), out _))')
+zfield = zfield.replace(old_see, new_see)
+old_walk = method(zfield, 'bool Walkable(int cx, int cz)')
+new_walk = '''bool Walkable(int cx, int cz)
+        {
+            var key = (cx, cz);
+            if (_walkCache.TryGetValue(key, out bool cached)) return cached;
+            if (!_geometry.HasTerrain) return true;
+            float wx = (cx + 0.5f) * ZombieFlowField.Cell, wz = (cz + 0.5f) * ZombieFlowField.Cell;
+            float gy = SampleGround(wx, wz);
+            bool walk = !_geometry.OverlapsBox(new(wx, gy + 1.35f, wz), new(ZombieFlowField.Cell * 0.9f, 1.7f, ZombieFlowField.Cell * 0.9f));
+            _walkCache[key] = walk;
+            return walk;
+        }'''
+# Assert these dimensions remain source authored instead of silently drifting.
+for expected in ['gy + 1.35f', 'ZombieFlowField.Cell * 0.9f, 1.7f, ZombieFlowField.Cell * 0.9f']:
+    assert expected in old_walk
+zfield = zfield.replace(old_walk, new_walk)
+(out / 'ZombieField.g.cs').write_text('// Generated original current zombie chunk rules with explicit engine boundaries.\nusing UnturnedGodot;\n' + zfield)
+(out / 'ZombieFlow.g.cs').write_text(read('game/ZombieFlowField.cs').replace('public class ZombieFlowField', 'public partial class ZombieFlowField'))
+clothing = read('game/inventory/ClothingContent.cs').split('        // Load a res://content-relative PNG')[0] + '}}'
+(out / 'ClothingData.g.cs').write_text(clothing)
+zbody = read('game/ZombieBody.cs')
+wardrobe = zbody[zbody.index('            uint rand = _outfit;'):zbody.index('            // ⚠ FACE 19')]
+wardrobe += '\nreturn new(variant, shirtId, pantsId, hatId, gearId);'
+zdata = ['using Godot; using UnturnedGodot; namespace UnturnedBevy { public static class ZombieRules {',
+    'public record Wardrobe(int Variant, int ShirtId, int PantsId, int HatId, int GearId);',
+    match(r'static uint Next\(ref uint r\) \{[^\n]+\}', zbody),
+    'public static Wardrobe Roll(byte _table,uint _outfit) {' + wardrobe + '}',
+    match(r'const float ClipNaturalSpeed[^;]+;', zbody).replace('const float', 'public const float'),
+    'public const double CorpseSeconds = ' + number(r'CreateTimer\(([0-9.]+)\)', zbody) + ';',
+    'public const float Health = ' + number(r'public float Health = ([0-9.]+f)', zbody) + ';',
+    '}}']
+(out / 'ZombieRules.g.cs').write_text('\n'.join(zdata))
+
+# Pure source attachment/noise rules shared by authoritative hearing.
+attachment = read('game/AttachmentFit.cs')
+parts = attachment[attachment.index('        public readonly struct BarrelDef'):attachment.index('        public static string MeshFor')]
+parts += method(attachment, 'public static int InstalledId(Item gun, string slot)')
+(out / 'AttachmentNoise.g.cs').write_text('using SDG.Unturned; namespace UnturnedBevy { public static class AttachmentNoise {' + parts + '}}')
+noise = read('game/SoundBus.cs')
+constants = '\n'.join(re.findall(r'public const float \w+\s*=\s*[0-9.]+f;', noise))
+(out / 'NoiseRules.g.cs').write_text('namespace UnturnedBevy { public static class NoiseRules {' + constants + '}}')

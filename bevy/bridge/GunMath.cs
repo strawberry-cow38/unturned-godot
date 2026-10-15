@@ -12,9 +12,11 @@ public static class Mathf
     public static float Cos(float v) => MathF.Cos(v);
     public static float Sin(float v) => MathF.Sin(v);
     public static float Min(float a, float b) => Math.Min(a, b);
+    public static int Min(int a, int b) => Math.Min(a, b);
+    public static int Abs(int a) => Math.Abs(a);
     public static float Sqrt(float a) => MathF.Sqrt(a);
 }
-public struct Vector2(float x, float y)
+public partial struct Vector2(float x, float y)
 {
     public float X = x, Y = y;
     public static Vector2 Right => new(1, 0);

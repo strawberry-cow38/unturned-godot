@@ -26,7 +26,7 @@ public sealed partial class WildlifeServices
     {
         _server=server; _geometry=geometry; _emit=emit;
         var previousHit=server.Combat.DamageBody;
-        server.Combat.DamageBody=h=>{if(h.Hit.AnimalNetId!=0)Damage(h.Hit.AnimalNetId,h.Damage,h.Hit.Point,h.Direction,h.Attacker);else previousHit?.Invoke(h);};
+        server.Combat.DamageBody=h=>{if(h.Hit.AnimalNetId!=0)Damage(h.Hit.AnimalNetId,h.Damage,h.Hit.Point,h.Direction,h.Attacker,h.Melee?"melee":"bullet");else previousHit?.Invoke(h);};
         var previousBlast=server.Combat.DamageHostBlast;
         server.Combat.DamageHostBlast=b=>{previousBlast?.Invoke(b);Blast(b);};
         server.Combat.DamageAnimalMelee=Melee;
@@ -97,11 +97,11 @@ public sealed partial class WildlifeServices
         }
         return found;
     }
-    void Damage(uint id,float amount,UVector point,UVector direction,ushort attacker)
+    void Damage(uint id,float amount,UVector point,UVector direction,ushort attacker,string source)
     {
         if(amount<=0||!_brains.TryGetValue(id,out var a)||a.Dead)return;
         a.DamageHit(amount,G(point),G(direction));
-        _emit("animalHit",new{netId=id,damage=amount,point=Array(point),direction=Array(direction),killed=a.Dead,health=a.Health,attacker});
+        _emit("animalHit",new{netId=id,damage=amount,point=Array(point),direction=Array(direction),killed=a.Dead,health=a.Health,attacker,source,impactEmitted=source=="bullet",hitConfirmedEmitted=false});
     }
     bool Melee(ushort owner,UVector origin,UVector direction,float reach,float damage,long tick)
     {
@@ -115,7 +115,7 @@ public sealed partial class WildlifeServices
             if(a.Dead)continue;
             var point=U(a.GlobalPosition)+new UVector(0,.5f,0);var to=point-origin;
             if(to.magnitude>=reach||UVector.Dot(to.normalized,direction)<=.3f)continue;
-            Damage(a.NetId,damage,point,direction,owner);return true;
+            Damage(a.NetId,damage,point,direction,owner,"melee");return true;
         }
         return false;
     }
@@ -125,7 +125,7 @@ public sealed partial class WildlifeServices
         {
             if(a.Dead)continue;var p=U(a.GlobalPosition);float range=(p-b.Position).magnitude;
             if(range>b.Radius||_geometry.BlastBlocked(b.Position,p))continue;
-            Damage(a.NetId,ExplosionMath.Linear(b.AnimalDamage,range,b.Radius),p,(p-b.Position).normalized,b.Attacker);
+            Damage(a.NetId,ExplosionMath.Linear(b.AnimalDamage,range,b.Radius),p,(p-b.Position).normalized,b.Attacker,"blast");
         }
     }
     public void Step()

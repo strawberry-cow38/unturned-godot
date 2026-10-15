@@ -359,3 +359,48 @@ the original flare's full authority lifetime is 3450 ticks. Optional save metada
 restores the remaining flight and its age without spending another inventory item
 or replaying a throw fact. A replica awaiting retirement has `remainingTicks:0`
 and no flight metadata. Core packet layouts are unchanged.
+
+
+`worldZombies {mapRoot,points?}` hosts the **current** `ZombieChunkField`,
+`ZombieFlowField`, `ZombieBody` damage rules, and `ZombieTables` wardrobe parser.
+Register after finalized terrain geometry. Omit points for real
+`Spawns/Animals.dat`; supplied generated points already use local X/Y/Z.
+Layer-5 filtering, deterministic outfit seeds, 64m chunks, tier hysteresis,
+budgets, nearest-first 48-body cap, sight, sound, separation and flow all come
+from the original source. Dormant legacy `ZombieSim` AI is not enabled.
+
+Only promoted physical bodies and eight-second corpses appear in `state.zombies`.
+Rows contain the existing replica fields plus `hasBody`, `hotBody`, exact
+`hostPosition`, `hostYaw` (degrees), `velocity`, `desiredVelocity:[x,z]`, `health`,
+`dead`, `table`, `outfit`, `variant`, `shirtId/pantsId/hatId/gearId`,
+`corpseRemainingTicks`, `deathImpulse`, and optional native `motion`.
+`state.zombieField` reports chunk/population/body and navigation diagnostics.
+WARM/COLD records remain managed data without a native collider or puppet.
+
+Native performs the single source body movement solve, then sends trusted host
+`worldZombieState {bodies:[{netId,position,velocity,yaw,motion?}]}` before the next
+bridge tick. Optional motion preserves the unsticking window across save/load:
+`{windowPosition:[x,y,z],windowTime,escapeTime,positionInitialized}`. Origin shifts
+translate its position with the body; the remaining scalar state is unchanged.
+Unknown/dead IDs are ignored and all accepted updates are validated before mutation.
+The bridge never integrates another HOT body's position.
+
+Accepted gun/melee and owner footstep sounds use original source radii, stance,
+skills, suppression, cadence and rain masking. Native vehicle horn/engine facts
+can use `worldZombieNoise {position:[x,y,z],radius}`; this is a host sound emission,
+not a client damage request. Zero radius is silent. Zombie bullets use the current
+source canonical gun damage, exact capsule and original falloff, rather than the
+legacy cylinder/speciality profile. Melee retains original typed-world priority
+and one-zombie plus one-animal cones; blasts retain linear falloff and world occlusion.
+`zombieHit`/`animalHit` expose `source:"bullet"|"melee"|"blast"`,
+`impactEmitted` (bullet only), and `hitConfirmedEmitted:false` so native blood and
+hitmarkers are not duplicated. Current zombie kills increment the real replicated
+kill count; the current source implements no attack loop, death loot, or XP award.
+
+Save metadata retains full chunk population/killed-slot timers, deterministic
+outfits, native motion, alert/flow state and remaining corpse lifetime. Immediate
+HOT→FROZEN teleport unloads live bodies before dropping the chunk's live list;
+this closes the original node-orphan leak without reviving killed slots.
+The exact source walkability box queries exported triangle surfaces via a BVH;
+fully contained convex volumes still require native solid-shape metadata because
+the current host geometry contract carries triangles rather than convex shapes.

@@ -941,3 +941,11 @@ near geometry remains visible, distant detail scatters, refraction moves edges,
 and HUD/crosshair remain sharp. Neither render reports shader errors or missing
 assets. Source references, artifact paths and remaining weather work are in
 bevy/docs/WORLD_PORT.md. Per-volume water is explicitly an existing Godot TODO.
+
+### Bevy current zombie authority (2026-10-14)
+
+- Extracted the branch's actual ZombieChunkField and ZombieFlowField unchanged apart from explicit engine probes/body lifecycle boundaries. Retained original retail Animals.dat/Zombies.dat parsing, layer-5 filter, deterministic wardrobe, 64m tiers/hysteresis, budgets, nearest-first 48 visible-body cap, sight, sound, rain masking and source flow/separation. WARM/COLD records remain authority data; native publishes the one HOT physics body's real pose and unsticking state.
+- Current ZombieBody combat uses its exact capsule, 100 HP, canonical gun damage/condition/falloff, original mixed zombie+animal melee loops and linear occluded blast. Eight-second corpses persist independently of live chunk records. Kill count is replicated, with no invented attack loop, XP award or death loot absent from this source. Optional core tags preserve existing wire formats and legacy host defaults.
+- Saves retain chunk killed-slot/refill clocks, outfit seeds, flow/navigation caches, native motion and remaining corpse lifetime. Rebase preserves IDs and timers and shifts all position-bearing caches. Fixed the original HOT-to-FROZEN teleport orphan by releasing live bodies before dropping the chunk list; a regression proves unload/thaw and killed-slot retention.
+- 634 network tests pass; 53 preexisting bridge checks and 12 new zombie checks pass, covering actual firearm/melee/grenade intents, suppression, world occlusion, source navigation probes, native pose adoption, binary map parsing, caps, corpse saves, rebase and independent category melee behavior. Native physics/rig/ragdoll presentation and visual verification are the parallel interface agent's next checkpoint.
+- World walkability currently intersects the exact exported triangle surfaces. A box fully enclosed within a source convex solid requires native solid-shape metadata, which the current triangle-only bridge format does not carry; this remaining fidelity limit is documented rather than replaced with guessed occupancy.

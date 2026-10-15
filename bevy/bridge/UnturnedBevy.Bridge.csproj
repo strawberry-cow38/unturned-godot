@@ -50,6 +50,13 @@
     <Compile Include="$(IntermediateOutputPath)Data/AnimalBrain.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/AnimalField.g.cs" />
     <Compile Include="../../game/AnimalCatalog.cs" Link="Source/AnimalCatalog.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/ZombieField.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/ZombieFlow.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/ZombieRules.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/AttachmentNoise.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/NoiseRules.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/ClothingData.g.cs" />
+    <Compile Include="../../game/ZombieTables.cs" Link="Source/ZombieTables.cs" />
   </ItemGroup>
   <Target Name="ExtractOriginalData" BeforeTargets="BeforeCompile">
     <Exec Command="python3 &quot;$(MSBuildProjectDirectory)/extract_data.py&quot; &quot;$(MSBuildProjectDirectory)/$(IntermediateOutputPath)Data&quot;" />

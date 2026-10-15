@@ -13,6 +13,7 @@ public sealed class WeaponServices
     readonly Action<string, object> _emit;
     readonly Dictionary<ushort, WeaponState> _states = new();
     readonly Dictionary<ushort, Queue<ShotFacts>> _shots = new();
+    public Action<ushort,float> Noise;
     public sealed record ShotFacts(string Gun, ushort ItemId, byte Quality, float HandlingPenalty, float RecoilMultiplier, long SelectionVersion, long Tick);
     public WeaponServices(NetWorldServer server, Catalog catalog, Action<string, object> emit)
     {
@@ -21,6 +22,7 @@ public sealed class WeaponServices
         server.Combat.CanFire = owner => State(owner).CanFire();
         server.Combat.ShotAccepted = (owner, tick) => {
             var state=State(owner); var facts=state.CaptureShot(tick);
+            if(!state.Suppressed)Noise?.Invoke(owner,NoiseRules.Gunshot);
             if(facts!=null)
             {
                 if(!_shots.TryGetValue(owner,out var queue))_shots[owner]=queue=new();
@@ -32,7 +34,10 @@ public sealed class WeaponServices
         server.Combat.CompleteReload = (owner, tick) => State(owner).CompleteReload(tick);
         server.Combat.ResolveHeldMeleeProfile = (owner, strong) => State(owner).MeleeProfile(strong);
         server.Combat.CanMelee = (owner, strong) => State(owner).CanMelee(strong);
-        server.Combat.MeleeAccepted = (owner, strong, tick) => State(owner).MeleeUsed(strong, tick);
+        server.Combat.MeleeAccepted = (owner, strong, tick) => {
+            var state=State(owner);if(state.MeleeNoise>0)Noise?.Invoke(owner,state.MeleeNoise);
+            state.MeleeUsed(strong,tick);
+        };
     }
     public ShotFacts TakeShot(ushort owner,string gun)
     {
@@ -231,6 +236,9 @@ public sealed partial class WeaponState
         float skill=_server.Skills.TryGet(_owner,out var skills)?skills.Skills.SharpshooterRecoilMultiplier():1;
         return new(Profile.AssetName,_heldItem.id,quality,handling,handling*skill,_selectionVersion,tick);
     }
+    public bool Suppressed => (Gun?.IntegrallySuppressed??false)
+        || (_heldItem?.gunBarrelId>0?AttachmentNoise.IsSilencer(_heldItem.gunBarrelId):_heldItem?.gunAttach>=0&&(_heldItem.gunAttach&(1<<3))!=0);
+    public float MeleeNoise => Melee?.Alert??0;
     public void Shot(long tick)
     {
         if (Gun == null) return;
