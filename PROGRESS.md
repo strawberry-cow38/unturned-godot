@@ -2449,3 +2449,23 @@ separate real UDP remote/native key fixture visibly closes, folds, opens and
 recloses the bus at accepted phases 0→0.45→1→0; all four images were opened.
 This fixture is not a full playable-map OS-input claim, and audio-device
 listening remains unavailable. See `bevy/docs/BUS_DOOR_PORT.md`.
+
+### Bevy finite-world source boundary — original island layout
+
+Audited the three distinct world paths: existing endless InfiniteTerrain,
+finite ProcIsland towns using original prefab buildings, and separate core
+BuildingGen plans materialized by EditorBuildings. The finite/runtime and
+BuildingGen consumers remain unfinished; the staged scope and source save/order
+requirements are recorded in `bevy/docs/FINITE_WORLD_PORT.md`.
+
+The first engine-free adapter compiles ProcIsland unchanged and extracts the
+exact Terrain.GenerateIsland sequence, removing only its final scene rebuild.
+Real GodotSharp comparison matches every byte of four complete height grids and
+four layout records (small, rectangular/lakes, default3×3 and repeat). This
+exposed and guarded an existing Godot angle-shim rounding error: the source's
+once-rounded conversion constant is now preserved; Unity compatibility math is
+unchanged. A separate actual-Godot math comparison covers epsilon boundaries,
+scaled/negative/equal/reversed edges and sign behavior. Nine finite regressions
+pass; the shared29-test run also covers existing NPC, occupant and light paths.
+No finite world option or renderer is linked yet; road conformity, final paint,
+placements/scatter, original save/reopen and both runtime consumers follow.

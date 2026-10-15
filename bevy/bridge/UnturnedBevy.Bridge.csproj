@@ -11,6 +11,8 @@
     <ProjectReference Include="../../core/UnturnedNet/UnturnedNet.csproj" />
     <ProjectReference Include="../../core/BugReportCore/BugReportCore.csproj" />
     <Compile Include="../../game/ToolDef.cs" Link="Source/ToolDef.cs" />
+    <Compile Include="../../game/ProcIsland.cs" Link="Source/ProcIsland.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/FiniteIslandLayout.g.cs" />
     <Compile Include="../../game/NetContent.cs" Link="Source/NetContent.cs" />
     <Compile Include="../../game/Umbrellas.cs" Link="Source/Umbrellas.cs" />
     <Compile Include="../../game/VehiclePaints.cs" Link="Source/VehiclePaints.cs" />

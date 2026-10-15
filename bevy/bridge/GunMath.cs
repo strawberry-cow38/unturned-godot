@@ -1,6 +1,6 @@
 // Value-only adapters let original parsers and pure harvesting methods compile unchanged without a Godot SDK, native library or runtime.
 namespace Godot;
-public static class Mathf
+public static partial class Mathf
 {
     public static int CeilToInt(float v) => (int)MathF.Ceiling(v);
     public static int FloorToInt(float v) => (int)MathF.Floor(v);
@@ -21,7 +21,9 @@ public static class Mathf
     public static int Abs(int a) => Math.Abs(a);
     public static float Sqrt(float a) => MathF.Sqrt(a);
     public const float Pi = MathF.PI;
-    public static float RadToDeg(float v) => v * (180f / MathF.PI);
+    // GodotSharp rounds its decimal conversion constant once. Dividing by the
+    // already rounded MathF.PI loses one ULP (a right angle becomes 89.99999).
+    public static float RadToDeg(float v) => v * (float)57.295779513082320876798154814M;
     public static float Atan2(float y,float x) => MathF.Atan2(y,x);
     public static float Asin(float v) => MathF.Asin(v);
     public static float MoveToward(float from,float to,float delta) => from + Math.Clamp(to-from,-delta,delta);

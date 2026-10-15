@@ -527,3 +527,6 @@ extract_vehicle_maintenance(read, out, match, method)
 
 from extract_vehicle_doors import extract as extract_vehicle_doors
 extract_vehicle_doors(read, out, match, method)
+
+from extract_island import extract as extract_island
+extract_island(read, out, match, method)
