@@ -15,6 +15,11 @@ replication follows mutations. Singleplayer continues to use a real server and
 client over the existing memory transport. Inventory, combat and world changes
 must route through existing authoritative commands.
 
+The user confirmed this hybrid architecture on 2026-10-15: finish a working
+hybrid game first, then pursue a Rust-only runtime as the next phase. The
+[Rust migration plan](RUST_MIGRATION_PLAN.md) maps the retained C# systems,
+verification gates and removal of the .NET shipping/build dependency.
+
 Each native launch copies the built bridge and its dependencies into an owned
 temporary directory. The child runs from that immutable copy, which is removed
 after it exits, so later builds cannot overwrite mapped .NET assemblies. Build
@@ -31,9 +36,9 @@ replacement has evidence of parity.
 Measured source: 187 engine-independent C# files / 60,586 lines, 342 gameplay
 files / 146,706 lines, 319 in-engine test files / 62,166 lines, and 194 core test
 files / 45,176 lines. Historical repository summaries are stale. The current
-source protocol is version61; the port is now version70 for accepted equipment,
+source protocol is version61; the port is now version72 for accepted equipment,
 resource contacts, mounted weapons, occupant rise, remote mounted flight
-effects, NPC crew, vehicle electrical/lamp state, glazing/maintenance, full fleet fuel/health ranges, original skill nodes, bus doors and inventory instance actions. Inventory has22 pages including vehicle compartments.
+effects, NPC crew, vehicle electrical/lamp state, glazing/maintenance, full fleet fuel/health ranges, original skill nodes, bus doors, exact inventory/magazine actions and source crafting-station context. Inventory has22 pages including vehicle compartments.
 
 ## Milestones
 
