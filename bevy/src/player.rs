@@ -1434,13 +1434,25 @@ fn camera_follow(
     mut perspective: ResMut<crate::avatar::Perspective>,
     time: Res<Time>,
     context: ReadRapierContext,
-    vehicles: crate::avatar::camera::VehicleCameras,
+    mut vehicles: crate::avatar::camera::VehicleCameras,
     lean: Option<Res<lean::LeanState>>,
     mut camera: Query<(&mut Transform, &mut Projection), (With<PlayerCamera>, Without<PlayerBody>)>,
 ) {
     let Ok((entity, body, posture)) = body.single() else {
         return;
     };
+    // Source advances DriverPeekOffset once per frame, including its return
+    // toward zero in third person, before choosing FP or chase presentation.
+    let vehicle_seat = occupancy.as_ref().and_then(|o| o.seat);
+    let vehicle_eye = vehicles
+        .seated_eye(
+            vehicle_seat,
+            &perspective,
+            input.yaw,
+            time.delta_secs(),
+            simulation_paused(&ui),
+        )
+        .or_else(|| vehicle_seat.map(|seat| seat.eye_pose));
     for (mut transform, mut projection) in &mut camera {
         if let Projection::Perspective(p) = &mut *projection {
             p.fov = settings.field_of_view.to_radians();
@@ -1483,17 +1495,12 @@ fn camera_follow(
                 input.pitch.to_radians(),
                 0.0,
             );
-            if let Some(eye) = occupancy
-                .as_ref()
-                .and_then(|o| o.seat)
-                .map(|s| s.eye_pose)
-                .or_else(|| {
-                    prop_occupancy
-                        .as_ref()
-                        .and_then(|o| o.seat)
-                        .map(|s| s.eye_pose)
-                })
-            {
+            if let Some(eye) = vehicle_eye.or_else(|| {
+                prop_occupancy
+                    .as_ref()
+                    .and_then(|o| o.seat)
+                    .map(|s| s.eye_pose)
+            }) {
                 transform.translation = eye.translation;
                 transform.rotation = eye.rotation * look;
             } else {

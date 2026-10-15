@@ -6,6 +6,7 @@ use crate::{
 use serde_json::json;
 
 mod visual;
+mod ordinary;
 
 fn near(actual: Vec3, expected: Vec3) {
     assert!(

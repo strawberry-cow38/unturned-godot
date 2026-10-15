@@ -53,9 +53,9 @@ renderer must use the override rather than that field's generic fallback.
 Occupancy adopts after the current accepted mount pose. Protocol65's
 `gunnerRise` is used directly without a second interpolation; fixtures/older
 adapters without it retain original3/s easing and SP-pause behavior. The ordinary
-vehicle body-seat path is preserved. Its pre-existing passenger camera fallback
-still uses seat-pan+1.05m until animated skull anchoring is integrated; this tank
-change does not claim that remaining ordinary-passenger detail.
+vehicle body-seat path is preserved. Ordinary first-person eyes now consume the
+original animated Skull anchor; the generic seat-pan+1.05m remains its source
+fallback, as described below.
 
 Five native tests cover actual tank meshes/hatches, all yaw directions with
 independent cannon pitch, a tilted hull, accepted partial rise, SP/MP pause,
@@ -79,3 +79,42 @@ raised the gunner to the cupola, selected/fired the HMG, and accepted F1 back to
 driver while preserving HMG slot1 and accepted ammo395. Source-anchor and input
 evidence is in `bevy-mounted-*-verified` artifacts; the separate HUD ordering fix
 and final integrated validation are tracked in `MOUNTED_NATIVE_PORT.md`.
+
+## Ordinary seated eyes and driver window peek
+
+`avatar::camera::VehicleCameras::seated_eye` reads the previously completed local
+player rig pose, matching the original `PositionDriveCam` before `UpdateBody`.
+The Skull translation is converted back into rig space, then placed using the
+current accepted body seat and full current hull transform. This prevents a
+previous-frame hull position or world-origin shift from dragging the camera.
+The source `(0,.16,-.10)` eye offset and additional `.15m` rise remain in vehicle
+axes; looking up or down does not rotate that offset around the skull. Missing
+rig/bone returns the original fallback unchanged; a near-zero unposed skull
+returns fallback plus `.15m`. A new session never consumes the old avatar rig.
+
+The first-person driver slides toward the own-side window only beyond 40° of
+ride-look yaw. Source division 240 on the own side and 360 across the cab produce
+settled offsets of −.5m and +.3333m at ±160°. The offset lerps at 4/s on the render
+clock, freezes with singleplayer pause, and eases to zero for a passenger or
+third-person view. Entering another vehicle resets it; a same-vehicle seat swap
+preserves the easing state. Tank periscope/sight/cupola overrides replace both
+skull tracking and peek. Existing third-person collision/eye-plane aim remain
+unchanged, and no accepted capsule or body position is moved by this camera code.
+
+Focused tests use actual Idle_Drive/Idle_Sit rigs on a tilted and moving hull,
+missing/skipped skeleton data, session replacement, source peek transitions and
+actual tank optic meshes. Four Vulkan source-mesh fixtures were rendered and
+opened: `bevy-seated-driver`, `bevy-seated-passenger`, `bevy-seated-driver-left`,
+and `bevy-seated-driver-right` under `artifacts/`. Their sidecars show opposite
+seat eyes at X −.5/+.5 and Y 1.4172; after 70 frames, the driver's left peek reaches
+X −.9984 while the across-cab peek reaches only X −.1677. The own-side frame clears
+the window; the across-cab frame remains inside behind the seats. These fixtures
+validate camera placement with original art, not full environmental/glass parity.
+
+Five ordinary-camera regressions pass (four skull/peek cases and the actual tank
+optic override), alongside the existing aircraft/chase and tank-seat checks.
+The prior-pose test samples the completed bones before the camera frame; the
+optics test supplies a real animated skull plus 160° driver peek and proves both
+are overridden. Source/code and all four cabin/window images received independent
+parent review. The source `game/testing/tests/NetTests.cs::NetRideFreelook` also
+documents the move from hand-authored DriverEyeLocal to the seated model's head.

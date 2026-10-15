@@ -1,6 +1,7 @@
 //! Original shoulder camera geometry and eye-origin aim convergence.
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
+mod seated;
 #[derive(Resource)]
 pub struct Perspective {
     pub first_person: bool,
@@ -157,7 +158,11 @@ pub struct VehicleCameras<'w, 's> {
     vehicles: Query<
         'w,
         's,
-        (&'static crate::vehicle::VehicleBody, &'static Transform),
+        (
+            &'static crate::vehicle::VehicleBody,
+            &'static Transform,
+            Option<&'static crate::vehicle::turrets::Mounts>,
+        ),
         (
             Without<crate::player::PlayerCamera>,
             Without<crate::player::PlayerBody>,
@@ -173,8 +178,23 @@ pub struct VehicleCameras<'w, 's> {
         ),
     >,
     parents: Query<'w, 's, &'static ChildOf>,
+    seated: seated::SeatedEyes<'w, 's>,
 }
 impl VehicleCameras<'_, '_> {
+    /// Camera-only source head anchor. The accepted capsule/body seat stays fixed.
+    pub fn seated_eye(
+        &mut self,
+        seat: Option<crate::vehicle::OccupiedSeat>,
+        view: &Perspective,
+        yaw: f32,
+        dt: f32,
+        paused: bool,
+    ) -> Option<Transform> {
+        let vehicle = seat.and_then(|seat| self.vehicles.get(seat.vehicle).ok());
+        self.seated
+            .eye(seat, vehicle, view.first_person, yaw, dt, paused)
+    }
+
     fn size(&self, vehicle: Entity) -> f32 {
         let mut min = Vec3::splat(f32::INFINITY);
         let mut max = Vec3::splat(f32::NEG_INFINITY);
@@ -219,7 +239,7 @@ impl VehicleCameras<'_, '_> {
         view: &Perspective,
         context: Option<&RapierContext>,
     ) -> Option<Transform> {
-        let (body, pose) = self.vehicles.get(seat.vehicle).ok()?;
+        let (body, pose, _) = self.vehicles.get(seat.vehicle).ok()?;
         let spec = &crate::vehicle::data::definition(body.type_id)?.spec;
         let size = self.size(seat.vehicle);
         let (target, wanted, up, rotation) = vehicle_pose(*pose, size, spec.plane, spec.heli, view);

@@ -29,11 +29,7 @@ impl Mounts {
         Some(frame.with_translation(frame.transform_point(local)))
     }
 
-    pub(in crate::vehicle) fn seat_eye(
-        &self,
-        definition: &VehicleDefinition,
-        seat: usize,
-    ) -> Option<Vec3> {
+    pub(crate) fn seat_eye(&self, definition: &VehicleDefinition, seat: usize) -> Option<Vec3> {
         match seat {
             0 if self.hatches.as_ref()?.has_driver() => {
                 Some(Vec3::from_array(tank::DATA.periscope_eye))
