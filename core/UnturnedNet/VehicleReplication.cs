@@ -367,7 +367,13 @@ namespace UnturnedGodot.Net
         // ---- client-side event application (idempotent -- a delta snapshot may carry the same state) ----
 
         public void ApplyEntered(VehicleEnteredEvent evt, long tick)
-            => ServerSetSeat(new NetId(evt.NetId), evt.Seat, evt.PlayerId, tick);
+        {
+            // A reliable seat switch may precede its delta snapshot. Reflect the
+            // one accepted seat immediately, without briefly drawing the same
+            // owner as both driver and passenger (or erasing another occupant).
+            ApplyExited(new VehicleExitedEvent { NetId = evt.NetId, PlayerId = evt.PlayerId }, tick);
+            ServerSetSeat(new NetId(evt.NetId), evt.Seat, evt.PlayerId, tick);
+        }
 
         public void ApplyExited(VehicleExitedEvent evt, long tick)
         {
@@ -1284,12 +1290,19 @@ namespace UnturnedGodot.Net
         {
             if (!_vehicles.TryGet(new NetId(netId), out var v)) return false;
             if (v.Exploded) return false;
-            if (IsDriver(sender)) return false;
             if (!_combat.IsAlive(sender)) return false;
             if (!_players.TryGetByOwner(sender, out var p)) return false;
-            if ((v.Pos - p.Pos).magnitude > EnterReach) return false;
             var id = new NetId(netId);
             int seats = _vehicles.SeatsOn(id);
+            // Source TrySwitchSeat: exact seat in the CURRENT vehicle, neither
+            // the current seat nor AnySeat/out-of-range fallback. A long cabin
+            // may place its accepted occupant beyond the external entry radius;
+            // the server's existing seat binding is the authorization here.
+            if (_seatByPlayer.TryGetValue(sender, out var held))
+                return held.NetId == netId && wantSeat < seats && wantSeat != held.Seat
+                    && _vehicles.SeatOccupant(id, wantSeat) == 0;
+            if (IsDriver(sender)) return false;
+            if ((v.Pos - p.Pos).magnitude > EnterReach) return false;
             // The request names a seat, not an entire empty vehicle. Preserve the
             // original AnySeat/out-of-range fallback while rejecting a claimed slot
             // at the command choke point (including a one-seat entry race).
@@ -1346,7 +1359,15 @@ namespace UnturnedGodot.Net
             // A player occupies ONE seat. Without this, asking for a second seat in the same car would
             // leave him indexed in both and free only one of them on exit.
             if (_seatByPlayer.TryGetValue(sender, out var held) && (held.NetId != netId || held.Seat != seat))
+            {
                 _vehicles.ServerSetSeat(new NetId(held.NetId), held.Seat, 0, tick);
+                if (held.Seat == 0)
+                {
+                    _drivenByPlayer.Remove(sender);
+                    _driven.Remove(held.NetId);
+                    _vehicles.ServerClearInput(new NetId(held.NetId));
+                }
+            }
 
             _vehicles.ServerSetSeat(id, seat, sender, tick);
             _seatByPlayer[sender] = (netId, seat);

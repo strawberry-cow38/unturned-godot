@@ -1799,3 +1799,20 @@ networking suite passes672. Existing native bullet/projectile/mounted-FX tests
 pass14 cases against the final candidate. Independent wire/source review passed.
 The playable mounted GPU journey remains pending; no remote visual equivalence
 is claimed from the managed tests alone. See bevy/docs/MOUNTED_WEAPONS.md.
+
+### Bevy: authoritative source vehicle seat switching
+
+The existing enter command now carries source TrySwitchSeat within the already
+accepted vehicle: exact free different seat only, no occupied/current/out-of-range
+or AnySeat fallback, and no adjacent-vehicle transfer. Server seat ownership
+authorizes movement inside long cabins without reusing external entry reach.
+Leaving the driver seat clears its authority window and held input while keeping
+vehicle velocity and ignition. Reliable observers clear only the switching
+owner's prior slot before applying the new one, including before delta delivery.
+
+Three new core wire tests and one real UDP bridge journey pass; the same UDP
+regression fails the preceding frozen v66 bridge at the first driver→passenger
+request. Full networking675 and bridge mounted/switch11 pass. Independent core
+review passed. Native F1–F12 dispatch, gaze/slot retention, source tank rise/body
+and optic anchors remain grouped with the ongoing playable mounted checkpoint.
+See bevy/docs/VEHICLE_SEATS_PORT.md.
