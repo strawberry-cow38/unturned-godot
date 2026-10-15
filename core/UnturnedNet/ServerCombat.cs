@@ -324,6 +324,10 @@ namespace UnturnedGodot.Net
         public Func<ushort, bool> CanFire;
         public Func<ushort, bool, bool> CanMelee;
         public Action<ushort, long> ShotAccepted;
+        /// <summary>Optional host visual identity seam, after acceptance/equipment use.
+        /// The exact command sequence joins local cosmetic context to this fact;
+        /// it cannot change the authoritative bullet and adds no packet fields.</summary>
+        public Action<ushort, FireCommand, long> ShotCommandAccepted;
         public Action<ushort, bool, long> MeleeAccepted;
         public Func<ushort, long, bool> TryBeginReload;
         public Func<ushort, long, int?> CompleteReload;
@@ -398,6 +402,7 @@ namespace UnturnedGodot.Net
             cs.LastFireTick = tick;
             cs.Ammo--;
             ShotAccepted?.Invoke(sender, tick);
+            ShotCommandAccepted?.Invoke(sender, cmd, tick);
             for (int i = 0; i < Math.Max(1, gun.Pellets); i++)
                 _bullets.Add(new Bullet
                 {

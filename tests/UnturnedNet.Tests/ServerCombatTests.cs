@@ -571,6 +571,29 @@ namespace UnturnedNet.Tests
         }
 
         [Test]
+        public void AcceptedShotCommand_CarriesOnlyAcceptedSequenceAndNeverRepeatsOnRingResend()
+        {
+            var h = new Harness(50908).Connected("shooter"); var client = h.Clients[0];
+            h.Server.Players.TryGetByOwner(client.PlayerId, out var player);
+            var accepted = new List<(ushort Owner, FireCommand Command, long Tick)>();
+            h.Server.Combat.ShotCommandAccepted = (owner, command, tick) => accepted.Add((owner, command, tick));
+            client.SendFire(Eye(player.Pos) + new Vector3(100, 0, 0), Vector3.forward);
+            h.Step(10);
+            Assert.That(accepted, Is.Empty, "invalid fire cannot create a cosmetic launch fact");
+            ushort sequence = client.SendFire(Eye(player.Pos), Vector3.forward);
+            h.Step(2);
+            Assert.That(accepted.Count, Is.EqualTo(1));
+            Assert.That(accepted[0].Owner, Is.EqualTo(client.PlayerId));
+            Assert.That(accepted[0].Command.Seq, Is.EqualTo(sequence));
+            Assert.That((accepted[0].Command.Origin - Eye(player.Pos)).magnitude, Is.LessThan(.05f));
+            Assert.That(accepted[0].Tick, Is.GreaterThan(0));
+            h.Step(50);
+            Assert.That(accepted.Count, Is.EqualTo(1), "redundant combat ring is still deduplicated");
+            Assert.That(h.Server.Combat.Diag.ShotsAccepted, Is.EqualTo(1));
+            Assert.That(h.Server.Combat.AmmoOf(client.PlayerId), Is.EqualTo(29));
+        }
+
+        [Test]
         public void HostResourceRay_UsesDistinctResourceIndex_AndAcceptedGunProfile()
         {
             var h = new Harness(50902).Connected("shooter"); var c = h.Clients[0];
