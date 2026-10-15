@@ -656,3 +656,18 @@ extension. Older saves keep the current world's holiday. Native remote loading
 must rebuild holiday props/resources from the accepted value, as the original
 `ApplyServerHoliday` path does; merely obtaining the bindings cannot correct a
 world already rendered with another calendar.
+
+`profileAvatar {playerId,avatarHash}` reads the original accepted profile avatar
+cache on demand. Both values identify the current player/picture; `avatarHash`
+is the u64 from `players[].profile.avatarHash`. The result gives `status` as
+`missing` (no live owner/profile), `stale` (accepted hash changed), `none` (hash0),
+`pending` (reliable bytes have not arrived), or `ready` with `png` as a byte array.
+Only `ready` returns bytes. A retained `profileAvatar {avatarHash}` event reports
+the original `AvatarArrived` fact; it carries no PNG. Cache textures by hash and
+retry pending queries when that event arrives. Departed profiles retained by the
+original cache cannot be queried as current players. No PNG rides normal state.
+
+`catalog.profileRules` exposes the original name length/fallback, avatar size and
+byte cap, and face count. Pre-session `profileRules {name}` returns those `rules`
+plus the original `ProfileRules.SanitizeName` output and `changed`; it initializes
+no session. Server and receiving-client validation remain the original code.

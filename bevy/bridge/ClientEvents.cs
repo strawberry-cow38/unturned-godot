@@ -29,6 +29,7 @@ public sealed partial class BridgeHost
             Emit("melee",new{playerId=e.PlayerId,strong=e.Strong,itemId=facts?.ItemId,repeated=facts?.Repeated,acceptedTick=facts?.Tick});
         };
         _client.PlayerGestured += e => Emit("gesture", e);
+        _client.AvatarArrived += hash => Emit("profileAvatar", new { avatarHash = hash });
         _client.StorageClosed += e => Emit("storageClosed", e);
         _client.VehicleEntered += e => Emit("vehicleEntered", e);
         _client.VehicleExited += e => {

@@ -1276,3 +1276,7 @@ after host disposal; a focused real-bridge regression now guards the closed-sess
 path. Source/world reviewers found no blocking lifecycle/glide issue, and root
 independently opened the client, host/pause and confirmed-leave captures. See MULTIPLAYER_PORT.md for captures and remaining wire/UI
 work. LEAN_PORT.md now includes the completed original/native roll comparison.
+
+### Bevy accepted profile picture query
+
+Remote nameplates can now request original validated avatar bytes by live player ID and accepted hash, outside snapshots. Missing players, stale hashes, no picture and pending reliable bytes are distinct; retained arrival events carry only the hash. Original name/avatar rules and sanitizer are available without opening a session. Real UDP regressions caught the source cache retaining departed profiles, now guarded by live player and connected-session checks; they also cover late reliable data and a rejected replacement preserving the accepted picture. All 33 UDP/status/map/profile tests pass; the existing 121 bridge regressions passed before the final isolated disconnected-query guard. Root and world reviews found no blocker. Native rendering is a separate checkpoint.

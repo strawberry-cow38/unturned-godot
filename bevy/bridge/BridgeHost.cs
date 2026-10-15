@@ -71,6 +71,8 @@ public sealed partial class BridgeHost : IDisposable
             case "serverProbeStart": return _serverProbe.Start(Text(r, "host"), Int(r, "port", 47872));
             case "serverProbePoll": return _serverProbe.Poll(r.GetProperty("token").GetInt64());
             case "serverProbeCancel": return _serverProbe.Cancel(r.GetProperty("token").GetInt64());
+            case "profileRules": return ReadProfileRules(r);
+            case "profileAvatar": RequireSession(); return ReadProfileAvatar(r);
             case "reconnect": return ReconnectRemote();
             case "init":
                 Dispose(); _geometry.Clear(); _serviceSpecs.Clear(); _originX = _originZ = 0; _originEpoch = 0;
@@ -118,7 +120,7 @@ public sealed partial class BridgeHost : IDisposable
                 if (_server != null) Dispose(); else _client.Disconnect();
                 return new { disconnected = true, ownsWorld = false };
             case "diagnostics": RequireSession(); return new { host = _server != null, liveBullets = _server?.Combat.LiveBullets, stuckProjectilePoses = _warheads?.LivePoseCount };
-            case "catalog": RequireSession(); return new { items = _catalog.Metadata(), wildlife = WildlifeServices.Catalog(), gestures = GestureMetadata(), bulletVisuals = CosmeticBulletServices.Metadata(), throwMotion = new {
+            case "catalog": RequireSession(); return new { items = _catalog.Metadata(), wildlife = WildlifeServices.Catalog(), gestures = GestureMetadata(), profileRules = ProfileMetadata(), bulletVisuals = CosmeticBulletServices.Metadata(), throwMotion = new {
                 speed = HandRules.ThrowSpeed, lift = HandRules.ThrowLift, weakScale = HandRules.WeakThrowScale,
                 releaseFraction = HandRules.ThrowReleaseFraction, cooldown = HandRules.ThrowCooldown,
                 clearProbe = HandRules.ThrowClearProbe, clearGap = HandRules.ThrowClearGap,
