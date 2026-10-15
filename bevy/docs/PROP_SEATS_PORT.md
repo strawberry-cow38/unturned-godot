@@ -93,8 +93,9 @@ The source server melee ray is horizontal at feet + 1.2m, so a low mattress on
 the same ground is below that ray. This inherited targeting limitation is kept
 separate from the damage adapter. Source explosion code does not call bed damage.
 The original save format has no bed health/claim record; native session reload
-reconstructs this diagnostic fixture. Persistence extensions and the standalone
-demo door remain separate work.
+reconstructs this diagnostic fixture. Health persistence extensions remain
+separate work. The original standalone door is covered by
+[DEMO_DOOR_PORT.md](DEMO_DOOR_PORT.md).
 
 Seed-selection references: Godot 4.6
 [RandomPCG](https://github.com/godotengine/godot/blob/4.6-stable/core/math/random_pcg.cpp)

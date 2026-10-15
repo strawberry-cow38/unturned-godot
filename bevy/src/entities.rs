@@ -131,8 +131,25 @@ struct InteractionCandidate {
     action: String,
     args: Value,
     open_storage: bool,
+    manual: bool,
 }
 impl InteractionFocus {
+    /// Reserve the closest prompt for a source interaction with its own
+    /// tap/release/hold lifecycle. The generic press dispatcher must not fire it.
+    pub fn offer_manual(&mut self, distance: f32, label: impl Into<String>, action: &str, args: Value) {
+        self.offer(distance, label, action, args.clone(), false);
+        if let Some(candidate) = &mut self.candidate {
+            if candidate.action == action && candidate.args == args {
+                candidate.manual = true;
+            }
+        }
+    }
+    pub fn selected(&self, action: &str, id: u32) -> bool {
+        self.candidate.as_ref().is_some_and(|candidate| {
+            candidate.action == action
+                && candidate.args["netId"].as_u64() == Some(u64::from(id))
+        })
+    }
     pub fn has_candidate(&self) -> bool {
         self.candidate.is_some()
     }
@@ -160,6 +177,7 @@ impl InteractionFocus {
             action: action.into(),
             args,
             open_storage,
+            manual: false,
         });
     }
 }
@@ -731,7 +749,7 @@ fn apply_interaction(
         settings.bindings[&GameAction::Interact].label(),
         candidate.label
     );
-    if !settings.just_pressed(GameAction::Interact, &keys, &mouse) {
+    if candidate.manual || !settings.just_pressed(GameAction::Interact, &keys, &mouse) {
         return;
     }
     match bridge.request(
@@ -751,3 +769,6 @@ fn apply_interaction(
         _ => {}
     }
 }
+
+#[cfg(test)]
+mod manual_interaction_tests;

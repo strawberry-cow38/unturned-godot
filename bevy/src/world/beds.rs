@@ -111,7 +111,7 @@ fn source_pick(count: usize) -> Option<usize> {
         }
     }
 }
-fn source_anchor(rows: &[Value]) -> Vec3 {
+pub(super) fn source_anchor(rows: &[Value]) -> Vec3 {
     source_pick(rows.len())
         .and_then(|i| {
             Some(Vec3::new(

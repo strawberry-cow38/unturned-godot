@@ -97,7 +97,7 @@ public sealed partial class WorldServices
             if (Int(d, "dropItemId") > 0) _drops[index] = d.Clone();
         }
         foreach (var d in Entries(spec, "doors"))
-            _server.Interactables.RegisterDoor(checked((uint)Int(d, "netId")), Vec(d, "position"), checked((ulong)Int(d, "owner")), Bool(d, "locked"));
+            RegisterDoorBody(d);
         foreach (var d in Entries(spec, "beds"))
             RegisterBedBody(d);
         foreach (var d in Entries(spec, "objectDoors"))
@@ -177,6 +177,7 @@ public sealed partial class WorldServices
     {
         Harvesting.TranslateWorld(delta);
         TranslateStationarySeats(delta);
+        TranslateDoors(delta);
         foreach (var key in _drops.Keys.ToArray()) _drops[key] = CoordinateJson.Entry(_drops[key], delta);
         foreach (var key in _objectDoorMeta.Keys.ToArray())
         { var value = _objectDoorMeta[key]; _objectDoorMeta[key] = (value.position + delta, value.swingSide); }
@@ -198,6 +199,7 @@ public sealed partial class WorldServices
     {
         long tick = _server.Session.CurrentTick;
         ReleaseInvalidStationaryOccupants(tick);
+        StepDoors();
         _server.ItemMovers.Step((float)SimClock.FixedDelta);
         _containers.Tick(); Harvesting.Step();
         foreach (int i in Regrown(tick)) _server.Transactions.SetResourceAlive(i, true);

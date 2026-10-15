@@ -1662,3 +1662,28 @@ independent overview/zoom image reviews found no blocker. The frozen screenshots
 predate only the final wheel gain correction; they are not a per-notch count claim.
 Skills, blur/MenuSwoop, finite generated-island chart and existing blank crafting
 recipe names remain explicit gaps. See bevy/docs/INFORMATION_PORT.md.
+
+### Bevy original fallback door — accepted controls, hinge and destruction
+
+The explicit --demo-furniture path now renders the original Door.cs beside the
+existing diagnostic bed; ordinary retail maps remain unchanged. The shared source
+anchor, independent door1 identity, 1×2×.12 leaf, fixed left hinge and .45s swing
+are reused. Tap-release toggles, one-second hold requests owner-validated locking,
+and focus loss cancels the hold. A central manual-focus reservation prevents a
+second generic press from toggling it. Original local keyring audio and accepted
+8m hinge noise follow their source paths. Only hosts register authority/geometry.
+
+The existing accepted barricade seam now applies source 250 HP / VehicleDamage to
+doors at the nearest obstruction, removing replicas and triangles on death and
+filtering late uploads. Duplicate registration cannot heal or revive. Hinge
+metadata uses a local offset, guarding rebase→save→load coordinates. Original
+unified arcBlocked=false behavior and missing HP persistence remain explicit;
+no client damage, blast damage or guessed arc validation was introduced.
+
+Seven native regressions pass; the isolated v2 managed adapter passes 3 door plus
+3 existing bed-damage tests, including real UDP owner rejection and eight-shot
+observer retirement. Opened production PEI closed/locked/open screenshots show
+actual F control and source swing; save/load restores the closed state. The
+seven-hit frame retains the leaf/wood mark at ammo 23; the eighth shows clear
+ground/no prompt at ammo 22 and an empty accepted door registry. Quit exited 0,
+with no shader errors. Independent source and visual reviews passed. See bevy/docs/DEMO_DOOR_PORT.md.

@@ -279,6 +279,7 @@ fn shift_world(world: &mut World, shift: Vec3, offset: DVec2) {
     crate::entities::npcs::shift_origin(world, shift);
     super::interactables::shift_origin(world, shift);
     super::beds::shift_origin(world, shift);
+    super::demo_door::shift_origin(world, shift);
     super::rain::shift_origin(world, shift);
     super::foliage::shift_origin(world, shift);
     super::terrain::shift_origin(

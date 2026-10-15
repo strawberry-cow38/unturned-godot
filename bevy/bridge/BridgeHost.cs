@@ -329,6 +329,7 @@ public sealed partial class BridgeHost : IDisposable
         _bodies = new BodyCombatServices(_server, _geometry, _vehicles, Emit);
         _wildlife = new WildlifeServices(_server, _geometry, Emit);
         _zombies = new ZombieServices(_server, _geometry, Emit);
+        _services.DoorNoise = _zombies.Noise;
         _zombies.RainIntensity=()=>_environment.Sim.BlendAlpha*_environment.Severity;
         _weapons = new WeaponServices(_server, _catalog, Emit);
         _cosmetic = new CosmeticBulletServices(_server,_geometry,_weapons,Emit);

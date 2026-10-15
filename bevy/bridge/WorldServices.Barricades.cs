@@ -20,11 +20,13 @@ public sealed partial class WorldServices
     /// hit/damage operation exists; core invokes this after its own world ray.</summary>
     public void AttachBarricadeDamage(WorldGeometry geometry)
     {
-        geometry.DynamicAlive = key => !_bedBodies.TryGetValue(key, out var bed) || bed.Health > 0;
+        geometry.DynamicAlive = key => (!_bedBodies.TryGetValue(key, out var bed) || bed.Health > 0)
+            && (!_doorBodies.TryGetValue(key, out var door) || door.Health > 0);
         _server.Combat.DamageBarricadeAlong = (from, to, amount, tick) =>
         {
-            if (!geometry.RayDynamicKey(from, to, out var key) || key == null
-                || !_bedBodies.TryGetValue(key, out var bed) || bed.Health <= 0) return false;
+            if (!geometry.RayDynamicKey(from, to, out var key) || key == null) return false;
+            if (DamageDoor(key, amount, geometry)) return true;
+            if (!_bedBodies.TryGetValue(key, out var bed) || bed.Health <= 0) return false;
             if (!(amount > 0) || !float.IsFinite(amount)) return true;
             bed.Health = Math.Max(0, bed.Health - amount);
             if (bed.Health > 0) return true;
