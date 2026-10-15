@@ -20,6 +20,7 @@ public sealed partial class BridgeHost
         _client.PlayerRecov += e => { _position = e.Pos; _velocity = e.Vel; _recov = e.RecovCounter; _movement.Velocity = WorldToLocal(_velocity, _yaw); _correctionVersion++; };
         _client.ConsoleResult += e => Emit("console", e);
         _client.HitConfirmed += e => Emit("hit", e);
+        _client.MagazineTransferred += e => Emit("magazineTransfer", new { requestId=e.RequestId, magazineToken=e.MagazineToken, acceptedTick=e.Tick, applied=e.Applied, result=e.Result.ToString(), amount=e.Amount });
         _client.CraftQueue_ += e => { _craftQueue = e; _craftQueueTick = _network.CurrentTick; Emit("craftQueue", e); };
         _client.PlayerFired += e => {
             var facts=_weapons?.TakeShot(e.PlayerId,e.Gun);

@@ -1,6 +1,6 @@
 # Original InventoryUI port
 
-The current checkpoint adds the managed read model and two owner-instance
+The current checkpoint adds the managed read model and owner-instance
 transactions. The authored native dashboard, paperdoll and interaction modules
 are being integrated separately; this document does not yet claim a complete
 inventory UI or visual validation of the new dashboard.
@@ -15,6 +15,15 @@ ready quick-craft recipes in original registry order. Source `ResolveMoveDest`,
 `StoreTarget`, `FirstFreeOwnCell`, salvage descriptions, quality color and fluid
 labels are extracted from the current Godot code. Fluid lazy initialization runs
 on a clone: opening a context menu never mutates a replica.
+
+The `tiles` projection supplies the original MakeTile facts for grid and seven
+worn slots: real amount/quality, rarity and condition colors, fuel/fluid bars,
+frozen/preserved food, source currency denomination order and the single active
+autodrink bottle. ActiveAutoDrink runs on a private owned-page clone in original
+page/item order; viewed storage cannot acquire its badge. `acceptedTick` is the
+owner client's last applied snapshot tick, wrapped to the same u32 clock used by
+completion facts. A client can wait for the echo after an event without editing
+its inventory optimistically.
 
 Addresses retain owner instance tokens. Container view cells do not gain invented
 owner tokens. Equip suggestions preserve original slot choice, displaced-item
@@ -44,18 +53,55 @@ Craft callers keep their previous behavior. The bridge captures its item-to-
 salvage mapping while its own catalog owns the original static recipe registry,
 so creating another bridge cannot silently substitute recipe indices.
 
+## Protocol71 magazine completion
+
+Protocol70 was published before the magazine UI completion adapter. Protocol71
+therefore adds Command81 and Event60 and explicitly refuses70 peers. Legacy
+Command39 retains its original encoding and admission behavior.
+
+| Message | Payload | Authority |
+|---|---|---|
+|81 MagazineTransfer|Nonzero u32 request ID; exact owned magazine address/token; load or unload; exact owned round address/token for load, or only the expected loose-round ID for unload|Alive connection owner; current root cell, ID and instance tokens; original MagRules and inventory insertion/removal path|
+|60 MagazineTransfer|Owner-only request ID, captured magazine token, accepted tick, bounded result, resulting magazine amount only on success|Never broadcast; refusal amount is zero; no client quantity or outcome assertion|
+
+Malformed/truncated reads publish no partial command or event. Unload still adds
+the loose round before decrementing the magazine, so a full bag loses nothing.
+The handler uses exactly the same mutation as39; only81 adds instance admission
+and an explicit completion. Source UI timers still choose when to ask for each
+round; this adds no new timing authority.
+
+The host retains one request/result per connected owner. An identical replay
+returns the original result without moving another round; a stale or altered
+request ID is refused. Wrap comparison is signed u32 distance, and disconnect
+clears the entry. UI request IDs must survive closing/reopening Inventory.
+
+The result distinguishes stale magazine/round, dead owner, non-magazine,
+MagRules refusal, full bag and stale request. It solves a demonstrated ambiguity:
+legacy39 full-bag unload produces neither a state change nor a completion event.
+A client cannot distinguish that refusal from network delay by watching counts.
+The native timer consumes accepted facts and waits for the corresponding owner
+snapshot before rechecking the next source stack. It does not write ammo counts.
+
 ## Validation and remaining integration
 
-The frozen `inventory-view-v70-second` candidate passes five actual UDP inventory
-regressions and all six current CraftingPresentation tests. These cover owner
-privacy/read-only fluid presentation, cooker lifecycle, stale same-ID replacement,
-foreign token, wrong item type, dead owner, exact empty replication, and selecting
-a worn duplicate for salvage while the pristine copy remains. The repeated stale
-salvage request cannot spend the other copy or enqueue another job. The existing
-source craft timer determines when outputs arrive. Sixteen focused core wire,
-command-table and crafting tests pass; the complete core suite passes 712 tests.
-The full managed bridge suite passes 159 tests, including existing crafting,
-vehicle, network, save and finite-data consumers. All 128 JSONL protocol tests pass against the same frozen candidate.
+The frozen `inventory-magazine-v71-final` candidate passes all 714 core tests,
+189 managed bridge tests and 128 JSONL protocol tests. Seventeen focused managed
+cases cover the seven InventoryView tests, four magazine UDP cases and six
+CraftingPresentation cases. The magazine tests exercise accepted load/unload,
+owner-only delivery, unchanged inventory before the request is processed, exact
+same-ID replacement/foreign-token/dead-owner refusal, incompatible cartridge,
+full-bag refusal without loss, request replay and published protocol70 rejection.
+A legacy39 full-bag request is the negative control: no changed count and no
+completion event. Core tests cover atomic malformed/truncated command/event
+reads, bounded tags, request-counter wrap and disconnect cleanup, alongside all
+unchanged legacy magazine regressions.
+
+Tile tests use real UDP fuel/clothing/currency/bottle contents, verify exact
+original denomination/worn order, and prove that repeated display reads do not
+seed either owner or viewed-container fluid instances. Existing empty/salvage
+cases retain owner privacy, cooker lifecycle and the selected worn duplicate's
+consumption while the pristine copy survives; the original craft queue still
+owns escrow and completion timing.
 
 Source InventoryUI offers Empty for fuel cans in viewed storage and Nearby too.
 Command79 intentionally admits owned pages only; viewed-container/ground Empty
@@ -65,5 +111,10 @@ not present that unsupported request as successful. Nearby crafting-station tags
 also remain the separate authority integration task; this read model currently
 uses the existing empty-station policy. No new craft ability or station bypass is
 introduced. Native drag/split/hold-transfer/context/quick-craft, hotbar bindings,
-timed magazine loading, paperdoll lighting and complete dashboard renders remain
+timed magazine UI integration, paperdoll lighting and complete dashboard renders remain
 pending until their own tests and actual UI journeys pass.
+
+The exact81 adapter also currently admits only owned magazine/round instances.
+Original InventoryUI can address viewed pages; those operations need a separate
+validated view/ground identity seam before native UI can enable them safely.
+This limitation does not broaden legacy39 or claim the complete dashboard done.

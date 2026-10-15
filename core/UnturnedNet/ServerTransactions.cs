@@ -61,7 +61,7 @@ namespace UnturnedGodot.Net
     /// world items, pickup/drop move items between a grid and the world, consume heals the combat state,
     /// and the DevConsole's cheats run HERE, against authoritative state, or not at all.
     /// </summary>
-    public sealed class ServerTransactions
+    public sealed partial class ServerTransactions
     {
         /// <summary>Installed source weapon authority owns ammunition,
         /// attachments and wear. Legacy client-state/grid-half commands must
@@ -539,6 +539,9 @@ namespace UnturnedGodot.Net
             commands.Register<ConsumeCommand>(ReplicationIds.CommandConsume, ConsumeCommand.TryRead,
                 OnConsume,
                 validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.Page < PlayerInventory.PAGES);
+
+            commands.Register<MagazineTransferCommand>(ReplicationIds.CommandMagazineTransfer,
+                MagazineTransferCommand.TryRead, OnMagazineTransfer);
 
             commands.Register<MagLoadCommand>(ReplicationIds.CommandMagLoad, MagLoadCommand.TryRead,
                 OnMagLoad,
@@ -1481,6 +1484,16 @@ namespace UnturnedGodot.Net
         /// the RULE rather than the state, which is the same bug wearing a better disguise.</summary>
         void OnMagLoad(ushort sender, MagLoadCommand cmd)
         {
+            var result = ApplyMagazineTransfer(sender, cmd, out _);
+            if (result == MagazineTransferResult.Applied) Diag.MagLoadsApplied++;
+            else Diag.MagLoadsRejected++;
+        }
+
+        // Same mutation for legacy39 and exact81. Only the new adapter adds
+        // instance/alive admission and a correlated owner-only result.
+        MagazineTransferResult ApplyMagazineTransfer(ushort sender, MagLoadCommand cmd, out ushort amount)
+        {
+            amount = 0;
             var inv = SenderInventory(sender);
             var magPage = inv.items[cmd.MagPage];
             byte magIndex = magPage.getIndex(cmd.MagX, cmd.MagY);
@@ -1488,9 +1501,9 @@ namespace UnturnedGodot.Net
             // Identity, not just position: a slot the client believed held this magazine may hold something
             // else by the time the command lands, and loading rounds into whatever moved there is worse
             // than refusing.
-            if (magJar?.item == null || magJar.item.id != cmd.MagId) { Diag.MagLoadsRejected++; return; }
+            if (magJar?.item == null || magJar.item.id != cmd.MagId) return MagazineTransferResult.StaleMagazine;
             var magAsset = Assets.find(magJar.item.id);
-            if (magAsset == null || !magAsset.IsMagazine) { Diag.MagLoadsRejected++; return; }
+            if (magAsset == null || !magAsset.IsMagazine) return MagazineTransferResult.NotMagazine;
 
             if (cmd.Unloading)
             {
@@ -1504,31 +1517,32 @@ namespace UnturnedGodot.Net
                 // spending one round per magazine body created. That is an item printer, not an unload.
                 if (magJar.item.amount <= 0 || roundAsset == null || roundAsset.IsMagazine
                     || held == null || held != roundAsset.magRound)
-                { Diag.MagLoadsRejected++; return; }
+                    return MagazineTransferResult.RuleRefused;
 
                 // ADD FIRST, DECREMENT ONLY IF IT LANDED. A full bag must abort before the magazine loses a
                 // round, or unloading into a full inventory destroys ammunition -- silently, since nothing
                 // reports a failed tryAddItem.
-                if (!inv.tryAddItem(new Item(cmd.RoundId, 1))) { Diag.MagLoadsRejected++; return; }
+                if (!inv.tryAddItem(new Item(cmd.RoundId, 1))) return MagazineTransferResult.NoRoom;
                 MagRules.ApplyUnload(magJar.item, magAsset);
-                Diag.MagLoadsApplied++;
-                return;
+                amount = magJar.item.amount;
+                return MagazineTransferResult.Applied;
             }
 
             var roundPage = inv.items[cmd.RoundPage];
             byte roundIndex = roundPage.getIndex(cmd.RoundX, cmd.RoundY);
             var roundJar = roundIndex == byte.MaxValue ? null : roundPage.getItem(roundIndex);
             if (roundJar?.item == null || roundJar.item.id != cmd.RoundId || roundJar.item.amount <= 0)
-            { Diag.MagLoadsRejected++; return; }
+                return MagazineTransferResult.StaleRound;
 
             var bullet = Assets.find(roundJar.item.id);
-            if (!MagRules.ApplyLoad(magJar.item, magAsset, bullet)) { Diag.MagLoadsRejected++; return; }
+            if (!MagRules.ApplyLoad(magJar.item, magAsset, bullet)) return MagazineTransferResult.RuleRefused;
 
             // Spend the round only after the load is committed, and free the slot at zero so an emptied
             // stack does not linger as a ghost the client cannot pick up.
             roundJar.item.amount--;
             if (roundJar.item.amount <= 0) roundPage.removeItem(roundIndex);
-            Diag.MagLoadsApplied++;
+            amount = magJar.item.amount;
+            return MagazineTransferResult.Applied;
         }
 
         /// <summary>Adopt the client's gun state onto the server's copy of that item, so the owner echo carries

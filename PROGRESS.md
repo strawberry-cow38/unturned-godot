@@ -2600,3 +2600,25 @@ pass, including same-seed repaint and non-mutating reopen. Three source PNGs wer
 opened and independently reviewed by root. Native finite-world consumers, PNG
 persistence and Information framing remain the next integration, with retail and
 Infinite paths retained. See `bevy/docs/FINITE_WORLD_PORT.md`.
+
+
+### Bevy inventory tiles and exact magazine completion
+
+Added read-only original tile facts for condition, food preservation, fluid/fuel,
+currency denominations and the single active owned autodrink bottle. Lazy fluid
+initialization and source bottle selection run on private clones. Added the
+accepted owner snapshot tick so the timed UI can wait for the inventory echo.
+
+Protocol 71 adds exact owned per-round Command 81 and owner-only result Event 60;
+published version 70 peers are explicitly refused. Legacy 39 keeps its bytes and mutation
+path. New requests validate root cell/token/alive state, retain add-before-spend
+unload behavior, and report applied or refused results. One remembered request
+per owner prevents replayed rounds and resets on disconnect. The real full-bag
+legacy request is a negative control: no changed count and no completion.
+
+Final immutable `inventory-magazine-v71-final` passes 714 core, 189 managed and 128
+JSONL tests, including 17 focused managed cases and a real UDP 70/71 refusal.
+Independent authority and tile reviews passed. Native Inventory integration and
+portrait GPU work remain uncommitted; this does not complete the Inventory UI.
+Viewed-container exact magazine/Empty authorization remains an explicit gap.
+See `bevy/docs/INVENTORY_PORT.md`.

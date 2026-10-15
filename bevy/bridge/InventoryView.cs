@@ -22,7 +22,7 @@ public static class InventoryView
         byte StorePage, Destination PaperdollTake, EquipPlan Equip);
     public sealed record QuickCraft(int Index, string Name, ushort ItemId, string Icon);
     public sealed record Load(bool Consumed, bool Allowed, string Message, int Batch, ushort RoundId);
-    public sealed record View(ItemView[] Items, QuickCraft[] QuickCrafts, object Cooker, Load Load);
+    public sealed record View(ItemView[] Items, QuickCraft[] QuickCrafts, object Cooker, Load Load, InventoryTiles.View Tiles, uint AcceptedTick);
 
     static ushort RoundId(string round) => string.IsNullOrEmpty(round) ? (ushort)0
         : Assets.all().FirstOrDefault(a => a.isAmmo && a.magRound == round)?.id ?? 0;
@@ -49,7 +49,7 @@ public static class InventoryView
             : q < 100 && kind == Durability.Kind.Clothing ? $"  ·  protects at {q}%" : "";
         return $"Condition: {q}%{tag}";
     }
-    static string ShownName(ItemAsset a, Item item)
+    internal static string ShownName(ItemAsset a, Item item)
     {
         string name = Cooking.DisplayName(a.itemName, a.id, item.cooked, (ECookStyle)item.cookStyle, a.type == EItemType.FOOD);
         return Freezing.Label(item.frozen) is string frozen ? $"{frozen} {name}" : name;
@@ -58,7 +58,7 @@ public static class InventoryView
 
     public static View Read(Catalog catalog, InventoryReplication replicas, ushort owner,
         OwnerEquipmentState held, PlayerSkills skills, ICollection<string> known, object cooker = null,
-        (int Page, int X, int Y)? loadFrom = null, (int Page, int X, int Y)? loadTo = null)
+        (int Page, int X, int Y)? loadFrom = null, (int Page, int X, int Y)? loadTo = null, uint acceptedTick = 0)
     {
         replicas.TryGet(owner, out var entry); var inventory = entry?.Inventory;
         var result = new List<ItemView>();
@@ -142,7 +142,7 @@ public static class InventoryView
             load = new(consumed, allowed, consumed ? MagRules.Message(check) : "",
                 allowed ? Math.Min(bullet.item.amount, MagRules.Capacity(m) - magazine.item.amount) : 0, b?.id ?? 0);
         }
-        return new(result.ToArray(), quick, cooker, load);
+        return new(result.ToArray(), quick, cooker, load, InventoryTiles.Read(inventory), acceptedTick);
     }
 }
 
@@ -173,6 +173,6 @@ public sealed partial class BridgeHost
             kind = ((ECookerKind)kind).ToString(), on = _inventoryCookerOn, fuel = _inventoryCookerFuel / 255f,
             needsFuel = Cooking.NeedsFuel((ECookerKind)kind) } : null;
         return InventoryView.Read(_catalog, _client.Inventories, _client.PlayerId, held, skills?.Skills,
-            _client.KnownBlueprints, cooker, Address("loadFrom"), Address("loadTo"));
+            _client.KnownBlueprints, cooker, Address("loadFrom"), Address("loadTo"), unchecked((uint)_client.Applier.LastAppliedServerTick));
     }
 }

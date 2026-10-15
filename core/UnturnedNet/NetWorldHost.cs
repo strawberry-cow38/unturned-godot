@@ -658,6 +658,7 @@ namespace UnturnedGodot.Net
                 // land while their inventory still exists to receive it. Order matters here, not style.
                 CraftQueue.RefundAll(peer.PlayerId);
                 CraftQueue.Forget(peer.PlayerId);
+                Transactions.ForgetMagazineTransfers(peer.PlayerId);
                 Inventories.ServerRemove(peer.PlayerId, Session.CurrentTick);   // also releases any crate they held open
                 Composer.ForgetClient(peer.PlayerId);
                 _pendingRecoveryFulls.Remove(peer.PlayerId);   // a reused playerId must not inherit a stale hold
@@ -1060,6 +1061,7 @@ namespace UnturnedGodot.Net
             RegisterVehicleLightingEvents();
             RegisterVehicleMaintenanceEvents();
             RegisterVehicleDoorEvents();
+            RegisterMagazineTransferEvents();
             RegisterMountedFlightEvents();
             RegisterResourceContactEvents();
             Applier.DesyncDetected += report => DesyncDetected?.Invoke(report);   // (already NetLog'd in the applier)

@@ -159,4 +159,54 @@ public sealed class InventoryViewTests
         Assert.That(replacement.quality, Is.EqualTo(91));
     }
 
+    [Test]
+    public void UdpTilesShowExactWornConditionCurrencyFuelAndOnlyFirstSafeAutodrinkBottle()
+    {
+        var fluid = Assets.all().First(a => a.IsFluidContainer && a.size_x == 1 && a.size_y == 1);
+        for (byte x = 0; x < 3; x++) {
+            var bottle = Put(fluid,x); bottle.autoDrink = true; bottle.fluidType = FluidRules.Water;
+            bottle.fluidQuality = x == 0 ? (byte)2 : FluidRules.Clean; bottle.fluidAmount = 200;
+        }
+        var fuel = Assets.all().First(a => a.IsFuelContainer); Put(fuel,5).fuelLevel=300;
+        var money=Put(Assets.find(Currency.StackId),0,5); money.amount=188;
+        var shirt = Assets.all().First(a => a.type == EItemType.SHIRT);
+        Inventory.wearShirt(new Item(shirt.id) { quality=37 });
+        Pump();
+        var tiles=View().GetProperty("tiles");
+        var cells=tiles.GetProperty("cells").EnumerateArray().ToArray();
+        JsonElement Tile(byte x,byte y=0) => cells.Single(c=>c.GetProperty("page").GetByte()==2
+            && c.GetProperty("x").GetByte()==x && c.GetProperty("y").GetByte()==y).GetProperty("tile");
+        Assert.That(cells.Count(c=>c.GetProperty("tile").GetProperty("activeAutoDrink").GetBoolean()),Is.EqualTo(1));
+        Assert.That(Tile(0).GetProperty("activeAutoDrink").GetBoolean(),Is.False,"unsafe water must never get the badge");
+        Assert.That(Tile(1).GetProperty("activeAutoDrink").GetBoolean(),Is.True,"first safe owner bottle in source order");
+        Assert.That(Tile(2).GetProperty("activeAutoDrink").GetBoolean(),Is.False);
+        Assert.That(Tile(5).GetProperty("fill").GetProperty("capacity").GetSingle(),Is.EqualTo(fuel.fuelCapacity));
+        Assert.That(Tile(5).GetProperty("fill").GetProperty("amount").GetSingle(),Is.EqualTo(300));
+        var wallet=Tile(0,5); Assert.That(wallet.GetProperty("money").GetBoolean(),Is.True);
+        Assert.That(wallet.GetProperty("denominations").EnumerateArray().Sum(d=>d.GetProperty("value").GetInt32()),Is.EqualTo(188));
+        Assert.That(wallet.GetProperty("denominations").EnumerateArray().Select(d=>d.GetProperty("id").GetUInt16()),
+            Is.EqualTo(Currency.Breakdown(188)));
+        var worn=tiles.GetProperty("worn").EnumerateArray().Single(w=>w.GetProperty("slot").GetByte()==3).GetProperty("tile");
+        Assert.That(worn.GetProperty("id").GetUInt16(),Is.EqualTo(shirt.id));
+        Assert.That(worn.GetProperty("quality").GetByte(),Is.EqualTo(37));
+        Assert.That(worn.GetProperty("width").GetByte(),Is.EqualTo(shirt.size_x));
+        Assert.That(Call(_host,"inventoryView").GetProperty("tiles").GetProperty("cells").GetArrayLength(),Is.Zero);
+    }
+
+    [Test]
+    public void TileReadSeedsPrivateBottlesWithoutChangingFreshReplicaAndExcludesViewedAutodrink()
+    {
+        var fluid=Assets.all().First(a=>a.IsFluidContainer && FluidRules.Safe(a.fluidDefaultType,a.fluidDefaultQuality));
+        var inventory=new PlayerInventory();
+        var own=new Item(fluid.id) {autoDrink=true,fluidAmount=-1};
+        var external=new Item(fluid.id) {autoDrink=true,fluidAmount=-1};
+        inventory.items[2].addItem(0,0,0,own); inventory.items[7].addItem(0,0,0,external);
+        var tiles=InventoryTiles.Read(inventory);
+        Assert.That(tiles.Cells.Single(c=>c.Page==2).Tile.ActiveAutoDrink,Is.True);
+        Assert.That(tiles.Cells.Single(c=>c.Page==7).Tile.ActiveAutoDrink,Is.False);
+        Assert.That(tiles.Cells[0].Tile.Fill.Amount,Is.EqualTo(fluid.fluidCapacity));
+        Assert.That(own.fluidAmount,Is.EqualTo(-1)); Assert.That(external.fluidAmount,Is.EqualTo(-1));
+        Assert.That(tiles.Worn,Has.Length.EqualTo(7)); Assert.That(tiles.Worn.All(w=>w.Tile==null),Is.True);
+    }
+
 }
