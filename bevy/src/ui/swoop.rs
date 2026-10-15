@@ -5,10 +5,26 @@ use bevy::{picking::Pickable, prelude::*, ui_widgets::Button};
 
 const SECONDS: f32 = 0.085;
 const RISE: f32 = 54.;
-const SCREENS: [Screen; 4] = [Screen::Inventory, Screen::Crafting, Screen::Information, Screen::Skills];
+const SCREENS: [Screen; 4] = [
+    Screen::Inventory,
+    Screen::Crafting,
+    Screen::Information,
+    Screen::Skills,
+];
 
 #[derive(Component, Clone, Copy)]
 pub(super) struct Swoop(pub Screen);
+/// Custom UI materials consume this raw parent modulation, independently of
+/// any source pixel alpha. The clock never multiplies its own prior result.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub(super) struct SwoopAlpha(pub f32);
+impl Default for SwoopAlpha {
+    fn default() -> Self {
+        Self(1.)
+    }
+}
+#[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash)]
+pub(super) struct SwoopAnimation;
 #[derive(Component)]
 struct Retiring;
 #[derive(Component)]
@@ -58,6 +74,7 @@ impl Plugin for SwoopPlugin {
             .add_systems(
                 PostUpdate,
                 animate
+                    .in_set(SwoopAnimation)
                     .before(super::backdrop::BackdropRouting)
                     .before(bevy::ui::UiSystems::Layout),
             );
@@ -143,6 +160,9 @@ fn paint(world: &mut World, entity: Entity, alpha: f32, closing: bool) {
             .insert(Pickable::IGNORE)
             .remove::<(Button, UiButton)>();
     }
+    if let Some(mut modulation) = entity.get_mut::<SwoopAlpha>() {
+        modulation.0 = alpha;
+    }
     // Fully-open widgets need no persistent color override.
     if alpha == 1. && !entity.contains::<Paint>() {
         return;
@@ -175,6 +195,13 @@ fn paint(world: &mut World, entity: Entity, alpha: f32, closing: bool) {
 }
 
 fn animate(world: &mut World) {
+    // A material node moved outside an animated root resumes its own alpha.
+    // Settled roots can then keep the existing traversal fast path.
+    for mut alpha in world.query::<&mut SwoopAlpha>().iter_mut(world) {
+        if alpha.0 != 1. {
+            alpha.0 = 1.;
+        }
+    }
     let selected = world.resource::<UiState>().screen;
     let model = world.resource::<UiModel>();
     let live = model.connected && model.alive;
@@ -205,7 +232,9 @@ fn animate(world: &mut World) {
             }
             if closing && screen == Screen::Information {
                 // MapUI.Close ducks its departing canvas under HUD layer10.
-                entity.remove::<Backdrop>().insert((GlobalZIndex(9), super::layers::BelowHud));
+                entity
+                    .remove::<Backdrop>()
+                    .insert((GlobalZIndex(9), super::layers::BelowHud));
             } else {
                 // Out hides the backdrop immediately; retain layer11 routing
                 // for Inventory/Crafting while their panels finish fading.

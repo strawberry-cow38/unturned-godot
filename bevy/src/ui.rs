@@ -19,6 +19,7 @@ pub(crate) mod backdrop;
 mod attachments;
 mod clothing;
 pub(crate) mod crafting;
+mod inventory;
 mod input_order;
 mod storage;
 mod crosshair;
@@ -421,6 +422,7 @@ impl Plugin for GameUiPlugin {
                 storage::StoragePlugin,
             ))
             .add_plugins(input_order::InputOrderPlugin)
+            .add_plugins(inventory::InventoryPlugin)
             .add_plugins((navbar::NavbarPlugin, skills::SkillsPlugin, crafting::CraftingPlugin))
             .add_systems(Startup, spawn_ui_camera)
             .add_systems(
@@ -651,8 +653,13 @@ fn keyboard_ui(
     world: Option<Res<crate::world::WorldConfig>>,
     occupancy: Option<Res<crate::vehicle::Occupancy>>,
     crafting: Option<Res<crafting::Menu>>,
+    inventory_typing: Option<Res<inventory::Typing>>,
 ) {
     if state.screen == Screen::Crafting && crafting.as_ref().is_some_and(|menu| menu.typing()) {
+        characters.clear();
+        return;
+    }
+    if state.screen==Screen::Inventory && inventory_typing.is_some_and(|typing|typing.0) && !keys.just_pressed(KeyCode::Escape) {
         characters.clear();
         return;
     }
@@ -1034,6 +1041,7 @@ fn rebuild_overlay(
             | Screen::Information
             | Screen::Skills
             | Screen::Crafting
+            | Screen::Inventory
     ) {
         return;
     }

@@ -176,7 +176,11 @@ fn map_close_ducks_below_hud_and_reopen_reverses_without_a_second_root() {
     );
     assert!(app.world().get::<Backdrop>(map).is_none());
     assert_eq!(app.world().get::<GlobalZIndex>(map).unwrap().0, 9);
-    assert!(app.world().get::<super::super::layers::BelowHud>(map).is_some());
+    assert!(
+        app.world()
+            .get::<super::super::layers::BelowHud>(map)
+            .is_some()
+    );
     assert_eq!(
         app.world().get::<UiTransform>(map).unwrap().translation.y,
         px(40.5)
@@ -226,57 +230,29 @@ fn map_tab_switch_does_not_hold_the_cursor_after_the_new_tab_closes() {
 }
 
 #[test]
-fn real_inventory_snapshot_rebuild_preserves_progress_and_close_keeps_no_live_buttons() {
+fn custom_material_alpha_follows_one_clock_and_resets_when_detached() {
     let mut app = app();
-    app.add_plugins((
-        bevy::app::TaskPoolPlugin::default(),
-        bevy::asset::AssetPlugin::default(),
-    ))
-    .init_resource::<crate::settings::Settings>()
-    .init_resource::<crate::entities::ItemCatalog>()
-    .init_resource::<crate::profile::LocalProfile>()
-    .add_systems(Update, super::super::rebuild_overlay);
-    let overlay = |app: &mut App| {
-        app.world_mut()
-            .query_filtered::<Entity, With<super::super::OverlayRoot>>()
-            .single(app.world())
-            .unwrap()
-    };
-    step(&mut app, 0.02125);
-    let first = overlay(&mut app);
-    approx(app.world().get::<Backdrop>(first).unwrap().fade, 0.578125);
+    let (root, child) = root(&mut app, Screen::Inventory);
     app.world_mut()
-        .resource_mut::<UiModel>()
-        .pages
-        .push(super::super::InventoryPage {
-            index: 2,
-            width: 5,
-            height: 5,
-            ..default()
-        });
-    step(&mut app, 0.02125);
-    let replacement = overlay(&mut app);
-    assert_ne!(first, replacement);
-    assert!(app.world().get_entity(first).is_err());
-    approx(
-        app.world().get::<Backdrop>(replacement).unwrap().fade,
-        0.875,
-    );
-    app.world_mut().resource_mut::<UiState>().screen = Screen::Playing;
-    step(&mut app, 0.);
-    assert!(
-        app.world()
-            .get::<super::super::OverlayRoot>(replacement)
-            .is_none()
-    );
-    assert!(app.world().get::<Retiring>(replacement).is_some());
-    assert_eq!(
-        app.world_mut()
-            .query_filtered::<Entity, With<UiButton>>()
-            .iter(app.world())
-            .count(),
-        0
-    );
+        .entity_mut(child)
+        .insert(SwoopAlpha::default());
     step(&mut app, 0.0425);
-    assert!(app.world().get_entity(replacement).is_err());
+    approx(app.world().get::<SwoopAlpha>(child).unwrap().0, 0.875);
+    step(&mut app, 0.);
+    approx(app.world().get::<SwoopAlpha>(child).unwrap().0, 0.875);
+    app.world_mut().resource_mut::<UiState>().screen = Screen::Playing;
+    step(&mut app, 0.02125);
+    approx(app.world().get::<SwoopAlpha>(child).unwrap().0, 0.0625);
+    app.world_mut().resource_mut::<UiState>().screen = Screen::Inventory;
+    step(&mut app, 0.);
+    approx(
+        app.world().get::<SwoopAlpha>(child).unwrap().0,
+        1. - 0.75f32.powi(3),
+    );
+    app.world_mut().entity_mut(child).remove::<ChildOf>();
+    step(&mut app, 0.);
+    approx(app.world().get::<SwoopAlpha>(child).unwrap().0, 1.);
+    app.world_mut().entity_mut(child).insert(ChildOf(root));
+    step(&mut app, 0.085);
+    approx(app.world().get::<SwoopAlpha>(child).unwrap().0, 1.);
 }

@@ -134,7 +134,7 @@ fn dashboard_vitals_stay_above_frost_and_below_a_higher_modal() {
 }
 
 #[test]
-fn production_inventory_and_vitals_use_dashboard_without_flat_scrim() {
+fn production_pause_and_vitals_do_not_use_dashboard_frost() {
     use crate::ui::{
         OverlayRoot, Screen, Settings as UiSettings, UiModel, UiState, rebuild_overlay,
     };
@@ -156,8 +156,8 @@ fn production_inventory_and_vitals_use_dashboard_without_flat_scrim() {
         .add_systems(Update, rebuild_overlay)
         .add_systems(PostUpdate, route.in_set(BackdropRouting));
     app.world_mut().resource_mut::<UiModel>().connected = true;
-    // Crafting has its own production renderer regression in crafting/render/tests.
-    for screen in [Screen::Inventory, Screen::Paused] {
+    // Inventory and Crafting now assert their metadata in their real renderers.
+    for screen in [Screen::Paused] {
         app.world_mut().resource_mut::<UiState>().screen = screen;
         app.update();
         let world = app.world_mut();

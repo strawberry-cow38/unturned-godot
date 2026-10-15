@@ -395,7 +395,7 @@ fn layout(
         **t = label.into();
     }
 }
-fn drawn_wide(image: &Image) -> bool {
+pub(super) fn drawn_wide(image: &Image) -> bool {
     let mut lo = UVec2::splat(u32::MAX);
     let mut hi = UVec2::ZERO;
     for y in 0..image.height() {

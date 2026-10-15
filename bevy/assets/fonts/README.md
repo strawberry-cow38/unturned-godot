@@ -30,3 +30,9 @@ Subset SHA256: `093addf06053b5099fded7eca7a0228df786acdf6cac178be9308e91ba7f965b
 Reproduce with fontTools 4.67.0: `TTFont(source, recalcTimestamp=False)`,
 `subset.Options().recalc_timestamp = False`, `Subsetter.populate(unicodes=[0x2713, 0x2717])`,
 then `subsetter.subset(font)` and `font.save(destination)`.
+
+`DejaVuSans_InventorySnow.ttf` similarly preserves U+2744, the exact fallback
+chosen by Godot's TextServer for InventoryUI's frozen-food label on this host.
+It uses the same DejaVu source and license above. Reproduce with the same subset
+steps, using `unicodes=[0x2744]`.
+Subset SHA256: `6838457a97277d2cacc857b303f8b17f36bb255eefe05bda9078e708a32262bd`.

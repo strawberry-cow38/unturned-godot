@@ -1,9 +1,45 @@
 # Original InventoryUI port
 
-The current checkpoint adds the managed read model and owner-instance
-transactions. The authored native dashboard, paperdoll and interaction modules
-are being integrated separately; this document does not yet claim a complete
-inventory UI or visual validation of the new dashboard.
+The native dashboard now consumes the managed read model and routes original
+inventory gestures through accepted transactions. It replaces the temporary
+click-select/move panel. The remaining widget and viewed-item limitations are
+listed below; this checkpoint does not claim complete InventoryUI parity.
+
+## Native dashboard and interaction
+
+`ui::inventory` follows the original 40px grid, independent left/right scrolling,
+equipment slots, worn-item order, context panel, split strip, quick-craft area and
+hotbar. Tile facts use original item art and font, rarity/condition, fluid/fuel,
+food preservation and money fan policies. Original Godot runtime SpinBox arrows
+and slider grabbers are included with their MIT attribution. Centered headings
+and right-aligned counts retain the source unwrapped glyph metrics. Tooltips use
+the original half-second stationary-hover delay and retained popup anchor.
+
+The isolated portrait uses the original rig, outfit, held weapon and Equip-end
+upper-body pose, with original camera framing, room/Sun lighting and Filmic
+mapping. Shared avatar helpers also correct the original `leftHook` selection
+for bows on remote players. Portrait images preserve transparency and follow the
+dashboard's Swoop alpha; the viewport stays alive until the close transition
+finishes. This is a presentation view, not another player or physics body.
+
+The shared ordered input stream supplies per-event pointer positions and keys.
+Left drag/drop, four orientations with R/Space, right-click selection or one-item
+carry after the source six-pixel threshold, Ctrl transfer/drop, H hold-transfer,
+hover U/R recipe lookup, hotbar binding, equipment/drop/salvage, split preview
+drag and cooker controls retain source intent. No drawn page is mutated before
+the server accepts the operation. Magazine timers consume owner-only results
+and the corresponding accepted snapshot, retaining request IDs through reopen.
+Closing cancels pending equipment/selection and hold-transfer operations; an
+already-sent move may finish, but its delayed reply cannot equip or close a newly
+opened dashboard.
+
+Numeric split text is retained across accepted refresh, commits on Enter or focus
+loss, and never sends an inventory command itself. Arrow steps/repeat, focused
+wheel, right-click min/max and the original slider geometry are implemented.
+Unlike the original automatic Refresh suppression while carrying or selecting,
+the adapter adopts accepted changes while retaining the live editor and gesture
+identity. Swoop progress survives those rebuilds; retiring roots have no live
+buttons. Full SpinBox expressions and captured vertical drag remain a follow-up.
 
 ## Accepted presentation
 
@@ -82,7 +118,7 @@ A client cannot distinguish that refusal from network delay by watching counts.
 The native timer consumes accepted facts and waits for the corresponding owner
 snapshot before rechecking the next source stack. It does not write ammo counts.
 
-## Validation and remaining integration
+## Validation
 
 The frozen `inventory-magazine-v71-final` candidate passes all 714 core tests,
 189 managed bridge tests and 128 JSONL protocol tests. Seventeen focused managed
@@ -103,18 +139,44 @@ cases retain owner privacy, cooker lifecycle and the selected worn duplicate's
 consumption while the pristine copy survives; the original craft queue still
 owns escrow and completion timing.
 
+The native focused suite passes 32 tests, including real UDP move/split and
+magazine sequencing, ordered input, retained editor focus, close/reopen delayed
+equip, actual dashboard Swoop rebuild/retirement and portrait state/first-frame
+transforms. The separate avatar suite covers shared held geometry and the
+compound bow's original Left_Hook versus an ordinary rifle's Right_Hook.
+The complete UI filter passes 160 tests with 17 opt-in render cases ignored;
+the avatar filter passes 33 with one opt-in render ignored. These use immutable
+`native-inventory-aligned-final` and `crafting-station-live-v72-final`.
+
+The production Vulkan fixture opens four stages using actual accepted bridge
+state: dashboard/portrait, right-click context, drag of the split preview with
+accepted 30→27+3, then a magazine unload and its operation wheel. All images were
+opened and checked. `bevy-inventory-aligned-{0,1,2,3}.png` and its JSON sidecar
+record this journey; it drives the production ordered-input controller, not an
+OS mouse. A separate original Godot `--invsel` render is retained as
+`godot-inventory-selection-reference.png` for layout/widget comparison. Earlier
+portrait renders cover rifle, compound bow and night lighting. Full-game OS
+inventory interaction remains separate evidence from these production fixtures.
+
+## Remaining parity
+
 Source InventoryUI offers Empty for fuel cans in viewed storage and Nearby too.
 Command79 intentionally admits owned pages only; viewed-container/ground Empty
 still needs exact live container/item identity plus view/reach authorization.
-The read model retains the source option, but the upcoming native context must
-not present that unsupported request as successful. Nearby crafting-station tags
-also remain the separate authority integration task; this read model currently
-uses the existing empty-station policy. No new craft ability or station bypass is
-introduced. Native drag/split/hold-transfer/context/quick-craft, hotbar bindings,
-timed magazine UI integration, paperdoll lighting and complete dashboard renders remain
-pending until their own tests and actual UI journeys pass.
+The read model retains the source option; native context reports that the item
+must first be taken into the owned inventory. Salvage has the same exact-owner
+restriction. Nearby crafting stations are now integrated through protocol72's
+accepted source-camera probe; quick craft receives only host-accepted tags and
+the host rechecks the action. See CRAFTING_PORT.md.
 
 The exact81 adapter also currently admits only owned magazine/round instances.
 Original InventoryUI can address viewed pages; those operations need a separate
 validated view/ground identity seam before native UI can enable them safely.
 This limitation does not broaden legacy39 or claim the complete dashboard done.
+
+Money split/carry previews still need their own source denomination projection
+when their preview amount differs from the accepted stack. General SpinBox
+expressions and captured, accelerated vertical dragging are not yet implemented.
+Rejected legacy hold-transfer requests remain reserved until H is released,
+rather than inventing a completion or local inventory change. These are explicit
+follow-ups after this reviewed dashboard checkpoint.

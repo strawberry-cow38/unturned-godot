@@ -153,7 +153,7 @@ fn adopt(
     life.previous = ui.screen;
 }
 
-fn container_pages(model: &UiModel) -> Vec<(u8, String)> {
+pub(super) fn container_pages(model: &UiModel) -> Vec<(u8, String)> {
     let mut result = vec![
         (9, "Freezer".into()),
         (
