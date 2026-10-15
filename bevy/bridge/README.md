@@ -82,6 +82,12 @@ wear at the actual shot. `recoilMultiplier` is the original sharpshooter skill
 multiplier times condition handling penalty; native stance settling remains
 separate. These optional bridge fields survive holstering and retained-event
 delivery without changing the original `PlayerFiredEvent` wire format.
+Accepted `impact.data` keeps the original `pos` and `surface` (`0` flesh, `1` world)
+and adds optional `normal:[x,y,z]`, `water`, `thin`, `playerId`, `sequence`, `pellet`
+and `acceptedTick` from the exact authoritative contact. One original reliable
+impact produces one retained event; `bulletPierced` must not produce a second
+splash. Unknown analytic normals remain absent. Native water effects should use
+`water:true`, since the splash slab intentionally has no solid physics collider.
 
 Static geometry accepts `meshes:[{vertices:[[x,y,z],...],indices?:[i0,i1,i2,...],
 terrain?:false,destructibleIndex?:-1,resourceIndex?:-1}]`; omitted indices mean sequential triples.

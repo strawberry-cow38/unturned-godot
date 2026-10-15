@@ -342,7 +342,13 @@ public sealed partial class BridgeHost : IDisposable
         _client.VehicleExitRefused += e => Emit("vehicleExitRefused", e);
         _client.VehicleRecov += e => { _vehicleRecov[e.NetId] = e.RecovCounter; Emit("vehicleRecov", e); };
         _client.ChatMessage += e => Emit("chat", e);
-        _client.ImpactFx += e => Emit("impact", e);
+        _client.ImpactFx += e => {
+            var facts=_warheads.TakeImpact();
+            Emit("impact",new{pos=e.Pos,surface=e.Surface,
+                normal=facts?.Normal is Vector3 normal?Array(normal):null,
+                water=facts?.Water,thin=facts?.Thin,playerId=facts?.Shooter,
+                sequence=facts?.Sequence,pellet=facts?.Pellet,acceptedTick=facts?.Tick});
+        };
         _client.GrenadeExploded += e => Emit("grenadeExploded", e);
         _client.PlayerDied += e => { if (e.Victim == _client.PlayerId) _client.ClearCombatRing(); Emit("death", e); };
         _client.PlayerRespawned += e => {

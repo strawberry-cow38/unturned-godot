@@ -1075,6 +1075,8 @@ Managed scope steadying now runs original ScopeSteadySim shell prediction and pu
 
 The trusted host now applies original thin-surface/water continuation after direct damage and warheads, before recoverable-ammo placement. Optional core seams retain default behavior and the wire format. Actual water slabs are bullet-only geometry; movement, melee and blast shelter keep their original masks. The source two-surface cap, velocity and all four damage-channel reductions,0.06m exit, one-step cost and no contact-step gravity are preserved. No production prop is guessed to be thin. Six real bridge journeys cover target damage behind surfaces, water entry normals/backfaces/tangents, the cap, solid stops, melee mask separation, final bolt recovery and rocket detonation; the old DLL fails the behind-surface damage regression. All110 bridge integration tests and642 network tests pass in private builds. Peer review found no remaining authority blocker. Native water impact presentation and accepted scatter remain explicit follow-ups; see `bevy/docs/WARHEAD_PORT.md`.
 
+Accepted impact facts now carry the actual contact normal, water/thin classification, shot/pellet identity and tick on the existing retained event. This preserves one impact per wire fact, including coincident pellets, and lets native water effects avoid the solid-only collision fallback. Four real-host regressions cover water then solid, shotgun identities, animal capsule normals and rebase draining; all 114 bridge tests pass in the frozen private impact build. The old executable fails the water-metadata regression. Native splash consumption remains a separate rendering task.
+
 
 ### Bevy source light falloff and fixed-night verification — 2026-10-15
 

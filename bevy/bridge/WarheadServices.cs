@@ -15,6 +15,7 @@ public sealed class WarheadServices
     readonly NetWorldServer _server;
     readonly Action<string,object> _emit;
     readonly Dictionary<uint,Pose> _stuck=new();
+    readonly Queue<CombatBulletImpact> _impacts=new();
     public WarheadServices(NetWorldServer server,WeaponServices weapons,CosmeticBulletServices cosmetic,Action<string,object> emit)
     {
         _server=server;_emit=emit;
@@ -32,6 +33,10 @@ public sealed class WarheadServices
     }
     void Impact(CombatBulletImpact hit)
     {
+        // ServerCombat is the sole ImpactFx publisher. It queues one reliable event
+        // immediately before this callback for every player/zombie/world contact.
+        // Preserve that order instead of matching nearby quantized positions.
+        _impacts.Enqueue(hit);
         if(hit.Context is not Payload payload)return;
         if(payload.Radius>0)
         {
@@ -41,6 +46,7 @@ public sealed class WarheadServices
                 itemId=payload.ItemId,gun=payload.Gun,position=Array(hit.Point),radius=payload.Radius});
         }
     }
+    public CombatBulletImpact? TakeImpact() => _impacts.TryDequeue(out var hit)?hit:null;
     CombatBulletContinuation? Continue(CombatBulletImpact hit)
     {
         if(hit.Context is not Payload payload)return null;

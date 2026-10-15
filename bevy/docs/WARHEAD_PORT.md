@@ -90,3 +90,14 @@ continued; they also cover water costs/no back-face hit, two-surface cap, ordina
 solid stopping, arrow recovery only at the final contact, and rocket detonation
 at the water surface. The pre-continuation executable fails the behind-sheet
 vehicle test with health1000 instead of975.5.
+
+The existing retained `impact` event now includes the corresponding accepted
+contact's normal, water/thin classification, player/sequence/pellet and tick.
+Original wire position/surface fields remain unchanged. The managed adapter
+joins the sole core publisher's reliable ordered facts to its contact queue;
+it does not deduplicate coincident shotgun hits by position or emit another FX.
+The origin barrier drains that queue before translating retained positions,
+while normals remain directions. Four real-host regressions cover water-to-solid
+ordering, coincident pellets, actual animal capsule normals and the origin
+barrier. Native must consume these fields for water classification; the
+managed metadata alone does not establish splash rendering parity.
