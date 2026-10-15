@@ -32,18 +32,24 @@ namespace UnturnedGodot
         {
             public readonly string Name;
             public readonly float Pitch;
-            public Style(string name, float pitch) { Name = name; Pitch = pitch; }
+            /// <summary>The style's WRECKED section (split bay-only by split_fence_parts.py), or null, and how many of this
+            /// style's bays it spans post to post: Fence_Wood_Broken_0 is 4 m of a 2 m-pitch fence, so two.</summary>
+            public readonly string Wreck;
+            public readonly int WreckBays;
+            public Style(string name, float pitch, string wreck = null, int wreckBays = 1)
+            { Name = name; Pitch = pitch; Wreck = wreck; WreckBays = wreck != null ? wreckBays : 0; }
             public string PostPiece => Name + "_Post";
             public string BayPiece => Name + "_Bay";
+            public string WreckPiece => Wreck + "_Bay";
             public override string ToString() => Name;
         }
 
-        public static readonly Style WoodPrivacy = new("Fence_Wood_0", 2.0f);       // 2.3 m posts, eight boards, two rails
+        public static readonly Style WoodPrivacy = new("Fence_Wood_0", 2.0f, "Fence_Wood_Broken_0", 2);   // 2.3 m posts, eight boards, two rails
         public static readonly Style WoodRanch = new("Fence_Wood_1", 2.0f);         // 1.25 m posts, three rails
         public static readonly Style WoodPicket = new("Fence_Wood_2", 3.8718f);     // white pickets, scalloped top
-        public static readonly Style WoodPalisade = new("Fence_Wood_3", 6.0f);      // 3.75 m posts, a solid panel
-        public static readonly Style ChainLink = new("Fence_Metal_0", 4.0f);        // 2.3 m, cutout mesh
-        public static readonly Style ChainLinkTall = new("Fence_Metal_1", 6.0f);    // 3.9 m, angled top
+        public static readonly Style WoodPalisade = new("Fence_Wood_3", 6.0f, "Fence_Wood_Broken_3");   // 3.75 m posts, a solid panel
+        public static readonly Style ChainLink = new("Fence_Metal_0", 4.0f, "Fence_Metal_Broken_0");    // 2.3 m, cutout mesh
+        public static readonly Style ChainLinkTall = new("Fence_Metal_1", 6.0f, "Fence_Metal_Broken_1"); // 3.9 m, angled top
         public static readonly Style StoneWall = new("Fence_Stone_0", 4.0f);        // 2 m wall, 0.7 m pillars
         public static readonly Style StoneWallTall = new("Fence_Stone_1", 6.0f);    // 4.4 m wall, 0.7 m pillars
         public static readonly Style[] All =
@@ -73,8 +79,14 @@ namespace UnturnedGodot
         public const float CellSize = 64f;
 
         /// <summary>One bay: the posts it runs between and how much of the native bay it lays -- 1 = whole (fitted to the
-        /// gap), under 1 = cut short at B.</summary>
-        public struct Bay { public int A, B; public float Keep; }
+        /// gap), under 1 = cut short at B. A WRECK spans Span bays' worth of run between its two posts, with none between.</summary>
+        public struct Bay { public int A, B; public float Keep; public bool Wreck; public int Span; }
+
+        /// <summary>How far from a dropped marker a wreck may land: the group of bays nearest it, within this.</summary>
+        public const float WreckSnap = 6f;
+        /// <summary>The sharpest a curve may turn across a wreck that spans more than one bay: it is one rigid piece, a chord
+        /// across what would have been a post.</summary>
+        public const float WreckMaxTurnDeg = 6f;
 
         /// <summary>Every fence of one style laid so far: its posts (each on the ground at its centre) and its bays.</summary>
         public sealed class Run
@@ -152,13 +164,32 @@ namespace UnturnedGodot
                 return k;
             }
 
+            /// <summary>One straight leg of a line, or the whole of a curve: where arc length s is, and its fitted bays.</summary>
+            sealed class Leg
+            {
+                public Func<float, Vector3> At; public float Len; public bool Curved;
+                public readonly List<(float s0, float s1, float keep)> Fit = new();
+                public readonly HashSet<int> WreckStart = new();
+            }
+
+            /// <summary>Wrecks laid so far.</summary>
+            public int Wrecks { get; private set; }
+
             /// <summary>A fence along `pts`. `smooth` = a curve THROUGH the points (Catmull-Rom, as every spline tool here
-            /// draws one); otherwise straight legs with a post on every corner.</summary>
-            public void AddLine(Style s, IReadOnlyList<Vector3> pts, bool smooth = false)
+            /// draws one); otherwise straight legs with a post on every corner.
+            ///
+            /// ⭐ WRECKS GO IN ON THE POST RHYTHM (strawberry 2026-10-14: "add support for the fence broken props to be inserted
+            /// along the spline (lining up with the fences ofc)"). A wreck replaces whole bays -- WreckBays of them, never a
+            /// cut one -- between two of the run's own posts, fitted exactly as the bays either side of it are: so it starts
+            /// and ends on the same posts they do. `wreckAt`: put one in the group of bays nearest each point (within
+            /// WreckSnap). `wear`: also break each eligible group with that chance, from `seed`.</summary>
+            public void AddLine(Style s, IReadOnlyList<Vector3> pts, bool smooth = false,
+                                IReadOnlyList<Vector3> wreckAt = null, float wear = 0f, ulong seed = 0)
             {
                 if (s == null || pts == null || pts.Count < 2) return;
                 var r = RunFor(s);
                 Lines++;
+                var legs = new List<Leg>();
                 if (!smooth || pts.Count < 3)
                 {
                     for (int k = 0; k + 1 < pts.Count; k++)
@@ -166,34 +197,79 @@ namespace UnturnedGodot
                         var a = pts[k]; var b = pts[k + 1];
                         float len = new Vector2(b.X - a.X, b.Z - a.Z).Length();
                         if (len < 1e-3f) continue;
-                        Length += len;
-                        int pa = PostAt(r, a), pb = PostAt(r, b);
-                        Fit(len, s.Pitch, _fit);
-                        int prev = pa;
-                        for (int i = 0; i < _fit.Count; i++)
-                        {
-                            var (_, s1, keep) = _fit[i];
-                            int next = i == _fit.Count - 1 ? pb : PostAt(r, a.Lerp(b, s1 / len));
-                            if (next != prev) r.Bays.Add(new Bay { A = prev, B = next, Keep = keep });
-                            prev = next;
-                        }
+                        legs.Add(new Leg { At = t => a.Lerp(b, Mathf.Clamp(t / len, 0f, 1f)), Len = len });
                     }
-                    return;
                 }
-                var curve = SplineTiling.CurveThrough(pts, true);
-                float total = curve.GetBakedLength();
-                if (total < 1e-3f) return;
-                Length += total;
-                Fit(total, s.Pitch, _fit);
-                int p0 = PostAt(r, curve.SampleBaked(0f, true));
-                for (int i = 0; i < _fit.Count; i++)
+                else
                 {
-                    var (_, s1, keep) = _fit[i];
-                    int p1 = PostAt(r, curve.SampleBaked(Mathf.Min(s1, total), true));
-                    if (p1 != p0) r.Bays.Add(new Bay { A = p0, B = p1, Keep = keep });
-                    p0 = p1;
+                    var curve = SplineTiling.CurveThrough(pts, true);
+                    float total = curve.GetBakedLength();
+                    if (total >= 1e-3f) legs.Add(new Leg { At = t => curve.SampleBaked(Mathf.Clamp(t, 0f, total), true), Len = total, Curved = true });
                 }
-                if (_fit.Count == 0) PostAt(r, curve.SampleBaked(total, true));
+                foreach (var leg in legs) { Fit(leg.Len, s.Pitch, _fit); leg.Fit.AddRange(_fit); Length += leg.Len; }
+                if (s.Wreck != null && (wreckAt != null || wear > 0f)) MarkWrecks(s, legs, wreckAt, wear, seed);
+                foreach (var leg in legs)
+                {
+                    int prev = PostAt(r, leg.At(0f));
+                    for (int i = 0; i < leg.Fit.Count;)
+                    {
+                        bool wreck = leg.WreckStart.Contains(i);
+                        int span = wreck ? s.WreckBays : 1;
+                        var (_, s1, keep) = leg.Fit[i + span - 1];
+                        int next = PostAt(r, leg.At(s1));
+                        if (next != prev) r.Bays.Add(new Bay { A = prev, B = next, Keep = wreck ? 1f : keep, Wreck = wreck, Span = span });
+                        if (wreck) Wrecks++;
+                        prev = next;
+                        i += span;
+                    }
+                    if (leg.Fit.Count == 0) PostAt(r, leg.At(leg.Len));
+                }
+            }
+
+            /// <summary>Choose the bays that are wrecked: whole ones only, WreckBays in a row, and -- on a curve, where a wreck
+            /// spanning several bays is a rigid chord across their posts -- only where the line hardly turns.</summary>
+            static void MarkWrecks(Style s, List<Leg> legs, IReadOnlyList<Vector3> wreckAt, float wear, ulong seed)
+            {
+                int k = s.WreckBays;
+                bool Eligible(Leg leg, int i)
+                {
+                    if (i < 0 || i + k > leg.Fit.Count) return false;
+                    for (int j = i; j < i + k; j++)
+                        if (leg.Fit[j].keep < 0.999f || leg.WreckStart.Contains(j)) return false;
+                    for (int j = i - k + 1; j < i; j++) if (j >= 0 && leg.WreckStart.Contains(j)) return false;   // inside another
+                    if (k > 1 && leg.Curved)
+                    {
+                        var p0 = leg.At(leg.Fit[i].s0); var p1 = leg.At(leg.Fit[i].s1); var p2 = leg.At(leg.Fit[i + k - 1].s1);
+                        var d0 = new Vector2(p1.X - p0.X, p1.Z - p0.Z); var d1 = new Vector2(p2.X - p1.X, p2.Z - p1.Z);
+                        if (d0.LengthSquared() < 1e-6f || d1.LengthSquared() < 1e-6f) return false;
+                        if (Mathf.RadToDeg(Mathf.Abs(d0.AngleTo(d1))) > WreckMaxTurnDeg) return false;
+                    }
+                    return true;
+                }
+                if (wreckAt != null)
+                    foreach (var m in wreckAt)
+                    {
+                        Leg best = null; int bi = -1; float bd = WreckSnap;
+                        foreach (var leg in legs)
+                            for (int i = 0; i + k <= leg.Fit.Count; i++)
+                            {
+                                if (!Eligible(leg, i)) continue;
+                                var mid = leg.At((leg.Fit[i].s0 + leg.Fit[i + k - 1].s1) * 0.5f);
+                                float d = new Vector2(mid.X - m.X, mid.Z - m.Z).Length();
+                                if (d < bd) { bd = d; best = leg; bi = i; }
+                            }
+                        best?.WreckStart.Add(bi);
+                    }
+                if (wear <= 0f) return;
+                ulong h = seed ^ 0x9E3779B97F4A7C15UL;
+                foreach (var leg in legs)
+                    for (int i = 0; i + k <= leg.Fit.Count; i++)
+                    {
+                        h ^= h >> 33; h *= 0xFF51AFD7ED558CCDUL; h ^= h >> 33; h += 0x632BE59BD9B4E5C1UL;
+                        if ((h >> 40) / (float)(1UL << 24) >= wear || !Eligible(leg, i)) continue;
+                        leg.WreckStart.Add(i);
+                        i += k;                                   // (and a whole bay before the next can start)
+                    }
             }
 
             /// <summary>Build every line added so far under `parent`: merged meshes and convex colliders, one of each per
@@ -202,11 +278,12 @@ namespace UnturnedGodot
             public int Build(Node3D parent, EditorObjects objs, string name = "Fences", float cellSize = CellSize)
             {
                 if (parent == null || objs == null) return 0;
-                int made = 0, posts = 0, bays = 0, cut = 0;
+                int made = 0, posts = 0, bays = 0, cut = 0, wrecks = 0;
                 foreach (var r in _runs.Values)
                 {
                     var post = Piece.Of(objs, r.Style.PostPiece);
                     var bay = Piece.Of(objs, r.Style.BayPiece);
+                    var wreck = r.Style.Wreck != null ? Piece.Of(objs, r.Style.WreckPiece) : null;
                     if (post == null || bay == null)
                     {
                         Log.Print($"[fence] {r.Style}: piece meshes missing ({r.Style.PostPiece}/{r.Style.BayPiece}) -- run tools/split_fence_parts.py");
@@ -252,7 +329,10 @@ namespace UnturnedGodot
                     foreach (var b in r.Bays)
                     {
                         var pa = r.Posts[b.A]; var pb = r.Posts[b.B];
-                        CellAt((pa + pb) * 0.5f).AddBay(bay, pa, pb, b.Keep, r.Style.Pitch);
+                        // ⭐ a wreck is the broken prop's infill over its whole span, and NO collider: what is left of it is
+                        // boards on the ground and a panel hanging off a post -- the gap is the point of a broken fence
+                        if (b.Wreck && wreck != null) { CellAt((pa + pb) * 0.5f).AddBay(wreck, pa, pb, 1f, r.Style.Pitch * b.Span, false); wrecks++; }
+                        else CellAt((pa + pb) * 0.5f).AddBay(bay, pa, pb, b.Keep, r.Style.Pitch * Mathf.Max(1, b.Span));
                         bays++; if (b.Keep < 0.999f) cut++;
                     }
                     var mat = objs.PreviewMaterial(r.Style.Name);
@@ -269,7 +349,7 @@ namespace UnturnedGodot
                         made++;
                     }
                 }
-                Log.Print($"[fence] {Lines} line(s), {Length:0} m: {posts} posts, {bays} bays ({cut} cut short) in {made} cell(s)"
+                Log.Print($"[fence] {Lines} line(s), {Length:0} m: {posts} posts, {bays} bays ({cut} cut short, {wrecks} wrecked) in {made} cell(s)"
                         + $" -- {string.Join(", ", ListStyles())}");
                 return made;
             }
@@ -355,7 +435,7 @@ namespace UnturnedGodot
             /// <summary>A bay from post ground point `a` to `b`, laying `keep` of the native bay: the piece's local x from
             /// -pitch/2 runs to a, its far end (cut at -pitch/2 + keep*pitch) to b, racked so its bottom follows the line
             /// between the two grounds and its verticals stay vertical.</summary>
-            public void AddBay(Piece p, Vector3 a, Vector3 b, float keep, float pitch)
+            public void AddBay(Piece p, Vector3 a, Vector3 b, float keep, float pitch, bool collide = true)
             {
                 var chord = b - a;
                 var flat = new Vector3(chord.X, 0f, chord.Z);
@@ -368,6 +448,7 @@ namespace UnturnedGodot
                 var xf = new Transform3D(basis, a + chord * (half / span));
                 float cutAt = keep >= 0.999f ? float.PositiveInfinity : -half + span;
                 Append(p, xf, cutAt);
+                if (!collide) return;
                 var box = p.Box;
                 float x0 = Mathf.Max(box.Position.X, -half), x1 = Mathf.Min(box.End.X, cutAt);
                 if (x1 > x0)

@@ -12,7 +12,7 @@ namespace UnturnedGodot
     /// (EditorObjects.AddFenceSpline), so picking it up and deleting it works like any prop.
     ///
     /// Keys while on: 1-8 pick the fence, C switches a curve through the points / straight legs with a post on every
-    /// corner, Shift+J off.</summary>
+    /// corner, B drops a broken section where the cursor is (the fences that have a broken prop), Shift+J off.</summary>
     public partial class EditorFenceSpline : Node3D
     {
         readonly Editor _editor;
@@ -25,6 +25,9 @@ namespace UnturnedGodot
         int _style;
         bool _corners;
         readonly List<Vector3> _path = new();
+        /// <summary>Where a broken section should go, dropped with B: kept as points and resolved when the fence is laid
+        /// (the nearest whole bays to each), because the bays are not known until the line is finished.</summary>
+        readonly List<Vector3> _wreckAt = new();
         MeshInstance3D _preview;
 
         public bool Active => _on;
@@ -36,7 +39,7 @@ namespace UnturnedGodot
         }
 
         public string ModeText => _on
-            ? $"FENCE · {Style.Name} (1-8) · {(_corners ? "corners" : "curve")} (C) · {_path.Count} point(s) · ENTER lays it · Backspace drops a point · Esc · Shift+J off"
+            ? $"FENCE · {Style.Name} (1-8) · {(_corners ? "corners" : "curve")} (C) · {_path.Count} point(s) · B = broken here ({_wreckAt.Count}{(Style.Wreck == null ? ", none for this fence" : "")}) · ENTER lays it · Backspace drops a point · Esc · Shift+J off"
             : "Shift+J = fence";
 
         public void SetActive(bool on) { if (_on != on) Toggle(); }
@@ -45,7 +48,7 @@ namespace UnturnedGodot
         {
             _on = !_on;
             if (_on) Log.Print($"[editor-fence-spline] ON: {Style.Name}, {(_corners ? "corners" : "curve")}");
-            else { _path.Clear(); ClearPreview(); }
+            else { _path.Clear(); _wreckAt.Clear(); ClearPreview(); }
         }
 
         public override void _UnhandledInput(InputEvent ev)
@@ -58,7 +61,12 @@ namespace UnturnedGodot
             {
                 bool used = true;
                 if (k.Keycode == Key.Z && Input.IsKeyPressed(Key.Ctrl)) _editor.Undo();
-                else if (k.Keycode == Key.Escape) { _path.Clear(); ClearPreview(); }
+                else if (k.Keycode == Key.Escape) { _path.Clear(); _wreckAt.Clear(); ClearPreview(); }
+                else if (k.Keycode == Key.B && !Input.IsKeyPressed(Key.Shift) && !Input.IsKeyPressed(Key.Ctrl))
+                {
+                    if (Style.Wreck == null) Log.Print($"[editor-fence-spline] {Style.Name} has no broken prop");
+                    else if (RaycastTerrain(GetViewport().GetMousePosition(), out var at)) _wreckAt.Add(at);
+                }
                 else if (k.Keycode == Key.Backspace) { if (_path.Count > 0) _path.RemoveAt(_path.Count - 1); }
                 else if (k.Keycode is Key.Enter or Key.KpEnter) { if (_path.Count >= 2) Lay(); }
                 else if (k.Keycode == Key.C && !Input.IsKeyPressed(Key.Ctrl)) _corners = !_corners;
@@ -82,8 +90,8 @@ namespace UnturnedGodot
 
         void Lay()
         {
-            var node = _objects.AddFenceSpline(Style, _path.ToArray(), !_corners);
-            _path.Clear(); ClearPreview();
+            var node = _objects.AddFenceSpline(Style, _path.ToArray(), !_corners, _wreckAt.Count > 0 ? _wreckAt.ToArray() : null);
+            _path.Clear(); _wreckAt.Clear(); ClearPreview();
             if (node == null) { Log.Print("[editor-fence-spline] nothing laid -- the path is shorter than a post gap"); return; }
             var placed = new List<Node3D> { node };
             _editor.PushUndo("lay fence", () => _objects.RemovePlaced(placed));

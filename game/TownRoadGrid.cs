@@ -4510,6 +4510,7 @@ namespace UnturnedGodot
             PlanLanes(roads);
             int stepped = LayParkingBays(roads);
             GrowPlots(roads);
+            MeetPlots(roads);     // ...and the slivers growth left between neighbours, closed: no dead grass with a fence down each side
             // the parking lots over whatever room the plots' yards left beside them, and only then their ways in -- a lot laid
             // again may come in somewhere else (TownParking)
             StretchLots(roads);
@@ -5896,8 +5897,9 @@ namespace UnturnedGodot
             }
             // the Y of each end: the ground the lot was laid on (marks drape it to the terrain where there is one)
             foreach (var f in Fences) { f.A.Y = f.Plot.Front.Y; f.B.Y = f.Plot.Front.Y; }
+            DropDoubleFences();
             float total = 0f; foreach (var f in Fences) total += Flat(f.A, f.B);
-            Log.Print($"[towngrid] yard fences: {Fences.Count} runs, {total:0} m, round {Plots.Count} lots (designated -- nothing placed)");
+            Log.Print($"[towngrid] yard fences: {Fences.Count} runs, {total:0} m, round {Plots.Count} lots");
         }
 
         /// <summary>A back lane's cross-section: half its carriageway, each pavement's width and kerb, and the radius its

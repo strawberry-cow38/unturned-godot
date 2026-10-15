@@ -26,8 +26,14 @@ UVs, so each piece wears the source prop's palette texture unchanged.
 ⚠ THESE PROPS ARE Z-UP WITH THEIR LENGTH ON LOCAL +X (Fence_Road_0, the guardrail, is the odd one: its length is on
 +Y, and it was split by colour, see split_prop_by_palette.py). So a post is narrow in X and Y and tall in Z.
 
+⭐ A WRECK IS SPLIT THE SAME WAY, BAY ONLY (--bay-only). Fence_Wood_Broken_0, _Broken_3, Fence_Metal_Broken_0 and _1 span
+post-to-post exactly like their intact props (4 / 6 / 4 / 6 m), so their infill drops into a run between two of ITS posts
+and lines up with the bays either side (strawberry 2026-10-14: "add support for the fence broken props to be inserted along
+the spline (lining up with the fences ofc)"). Their own end posts are thrown away -- the run stands its own there, so the
+joint is the same post as everywhere else. Each wears the same palette PNG as its intact prop (byte-identical).
+
 Usage:
-  split_fence_parts.py Fence_Wood_0 [Fence_Metal_0 ...] [--register] [--dry-run]
+  split_fence_parts.py Fence_Wood_0 [Fence_Metal_0 ...] [--register] [--dry-run] [--bay-only]
 """
 import argparse, os, shutil, sys, uuid
 
@@ -138,7 +144,7 @@ def corner(v, vt, vn, c):
     return (v[c[0]], vt[c[1]] if c[1] >= 0 else None, vn[c[2]] if c[2] >= 0 else None)
 
 
-def split(name, dry, register):
+def split(name, dry, register, bay_only=False):
     src = os.path.join(OBJ_DIR, name + '.obj')
     v, vt, vn, faces = read_obj(src)
     comps = components(v, faces)
@@ -198,8 +204,9 @@ def split(name, dry, register):
         return []
     tex = os.path.join(OBJ_DIR, name + '_tex.png')
     out = []
-    for part, tris, note in (('Post', post_tris, f'one post, recentred on x = 0 (pitch {pitch:.4f} m)'),
-                             ('Bay', bay_tris, f'the infill between two post centres {pitch:.4f} m apart, x = 0 midway')):
+    parts = (('Post', post_tris, f'one post, recentred on x = 0 (pitch {pitch:.4f} m)'),
+             ('Bay', bay_tris, f'the infill between two post centres {pitch:.4f} m apart, x = 0 midway'))
+    for part, tris, note in (parts[1:] if bay_only else parts):
         pn = f'{name}_{part}'
         write_obj(os.path.join(OBJ_DIR, pn + '.obj'), tris, name, part, note)
         if os.path.exists(tex):
@@ -222,6 +229,7 @@ if __name__ == '__main__':
     ap.add_argument('names', nargs='+')
     ap.add_argument('--register', action='store_true')
     ap.add_argument('--dry-run', action='store_true')
+    ap.add_argument('--bay-only', action='store_true', help='a wreck: write its bay, not its (leaning) post')
     a = ap.parse_args()
     for n in a.names:
-        split(n, a.dry_run, a.register)
+        split(n, a.dry_run, a.register, a.bay_only)
