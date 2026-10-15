@@ -1,4 +1,6 @@
 //! Player-local light switches from PlayerController; equipped facts stay authoritative.
+mod diagnostics;
+pub(crate) use diagnostics::LightDiagnostics;
 use super::*;
 use crate::player::WorldSessionEpoch;
 use bevy::{
@@ -53,15 +55,19 @@ struct Visuals {
 struct LightVisual;
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct LightInput;
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct LightPresentation;
 pub(super) struct LightPlugin;
 impl Plugin for LightPlugin {
     fn build(&self, app: &mut App) {
+        diagnostics::install(app);
         app.init_resource::<Switches>()
             .init_resource::<Visuals>()
             .add_systems(Update, input.after(animate_viewmodel).in_set(LightInput))
             .add_systems(
                 PostUpdate,
                 render
+                    .in_set(LightPresentation)
                     .after(bevy::transform::TransformSystems::Propagate)
                     .after(crate::avatar::AvatarMuzzleUpdate)
                     .before(bevy::camera::visibility::VisibilitySystems::CalculateBounds)

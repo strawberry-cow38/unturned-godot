@@ -66,7 +66,7 @@ fn request_scan(mut scan: ResMut<Scan>, ui: Option<Res<crate::ui::UiState>>) {
 
 /// Match Godot IsVisibleInTree, including an explicitly-visible emitter under
 /// a hidden headlight container. Bevy Visibility::Visible overrides its parent.
-fn visible_in_tree(
+pub(crate) fn visible_in_tree(
     mut entity: Entity,
     nodes: &Query<(Option<&Visibility>, Option<&ChildOf>)>,
 ) -> bool {

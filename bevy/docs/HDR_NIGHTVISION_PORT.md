@@ -126,10 +126,26 @@ regression verifies creation, repeated on/off transitions and camera movement
 through both InheritedVisibility and the ViewVisibility consumed by PBR.
 Thirteen focused lighting tests pass. Opened fresh `bevy-headlamp-visible-now`,
 `bevy-headlamp-hidden-now` and delayed `bevy-headlamp-hidden-settled` images show
-the main pool dimming when switched off, but retain a faint ground pool relative
-to the earlier clean night baseline. This residual is a separate unresolved
-render issue; the switch sidecar and propagation regression do not prove that
-all GPU light contribution has disappeared.
+the main pool dimming when switched off, but retained a ground pool. A controlled
+same-process OFF→ON→OFF run then identified its actual source: the shadowless
+water-reflection clone remained visible after the real lamp hid. Bevy0.20's
+default GPU clustering also lacks per-view RenderLayers filtering, so that
+reflection copy illuminated the main scene and doubled the ON contribution.
+Reflection copies now inherit source/ancestor visibility before light culling;
+the supported CPU clustering path isolates world, first-person and reflection
+lights. Real Bevy cluster tests cover all three views, repeated off/on, layer
+migration, hidden ancestors and despawn. Seven water regressions pass.
+
+Opened corrected `bevy-lamp-fixed-before`, `bevy-lamp-fixed-on` and
+`bevy-lamp-fixed-after` PNG/JSON pairs confirm full OFF restoration. The same
+450×270 grass sample's mean green channel is1.327→30.210→1.326 on an8-bit scale;
+before/after mean absolute RGB difference is[0.0025,0.0118,0.0243], with moving
+cloud/water presentation. Both original and reflection lamp extraction flags
+are false after OFF. The earlier unfixed run measured1.33→53.61→30.70.
+`UG_LIGHT_DIAGNOSTICS=1` records actual last-completed-frame light visibility,
+positions, intensity and layers in capture sidecars; normal play avoids that
+per-frame JSON work. Root independently opened all three final images. This
+closes the residual without raising source light energy.
 Other scope variants remain unverified.
 
 The Godot and upstream BakingLab MIT notices are in

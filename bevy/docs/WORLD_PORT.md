@@ -279,6 +279,15 @@ fill light stay outside the reflection pass. Native sRGB texture views decode
 the target on sampling, so the Godot render-target workaround is not applied a
 second time.
 
+Reflection lights now follow source/ancestor visibility before native light
+culling and retire when their source despawns or leaves the world layer. The
+shared HDR startup selects Bevy0.20's CPU cluster assignment, whose per-view
+RenderLayers filtering keeps shadowless reflection copies and first-person
+mirrors from illuminating other cameras. Real three-camera cluster tests and a
+same-process midnight headlamp OFF→ON→OFF capture guard both boundaries; the
+final OFF pixels return to the original baseline. See HDR_NIGHTVISION_PORT.md
+for the measured capture and optional actual-light sidecars.
+
 The mirror uses a proper camera rotation and a texture-Y flip. A projection
 regression compares screen edges and rolled cameras to the mathematically exact
 plane reflection, avoiding reversed mesh winding. The sky is excluded from the

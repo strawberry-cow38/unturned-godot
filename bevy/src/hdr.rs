@@ -1,5 +1,6 @@
 //! Independent source world/viewmodel HDR pipelines and non-HDR canvas composite.
 mod light_units;
+pub(crate) mod layers;
 mod render;
 pub(crate) mod viewport;
 pub(crate) use render::CompositePass;
@@ -144,6 +145,7 @@ impl Plugin for HdrPlugin {
         .init_resource::<SourceSettings>()
         .init_resource::<ViewmodelTarget>()
         .init_resource::<viewport::ViewmodelViewport>()
+        .add_systems(Startup, layers::configure)
         .add_systems(PostUpdate, configure.before(CameraUpdateSystems));
         render::install(app);
         light_units::install(app);

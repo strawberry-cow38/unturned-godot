@@ -110,19 +110,27 @@ pub struct WaterPlugin;
 impl Plugin for WaterPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "water.wesl");
+        install_lights(app);
         app.add_plugins(MaterialPlugin::<WaterMaterial>::default())
             .init_resource::<WaterSettings>()
             .init_resource::<Mirror>()
             .add_systems(Update, (prepare, mark_reflective).chain().after(WorldReady))
             .add_systems(
-                PostUpdate,
-                sync_lights.after(bevy::transform::TransformSystems::Propagate),
-            )
-            .add_systems(
                 Update,
                 update_mirror.after(PlayerCameraUpdate).after(prepare),
             );
     }
+}
+fn install_lights(app: &mut App) {
+    app.add_systems(
+        PostUpdate,
+        sync_lights
+            .after(bevy::transform::TransformSystems::Propagate)
+            .after(crate::viewmodel::lights::LightPresentation)
+            .before(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate)
+            .before(bevy::light::SimulationLightSystems::UpdateBounds)
+            .before(bevy::light::SimulationLightSystems::UpdateDirectionalLightCascades),
+    );
 }
 fn mirror_size(window: &Window) -> UVec2 {
     // Source SizeToWindow: preserve aspect from the very first sample.
@@ -251,6 +259,7 @@ fn sync_lights(
         ),
     >,
     copies: Query<(Entity, &ReflectionLight)>,
+    visibility: Query<(Option<&Visibility>, Option<&ChildOf>)>,
 ) {
     // Same visible scene lights, with shadow maps disabled only for this pass.
     // The viewmodel fill belongs to layer1 and must never brighten the ocean.
@@ -273,6 +282,7 @@ fn sync_lights(
             .unwrap_or_else(|| {
                 commands
                     .spawn((
+                        Name::new("Source water reflection light"),
                         ReflectionLight(source_entity),
                         RenderLayers::layer(REFLECTION_LAYER),
                     ))
@@ -280,7 +290,15 @@ fn sync_lights(
             });
         let mut copy = commands.entity(entity);
         // This runs after propagation, so publish both forms before extraction.
-        copy.insert((pose.compute_transform(), *pose));
+        copy.insert((
+            pose.compute_transform(),
+            *pose,
+            if crate::viewmodel::lighting::visible_in_tree(source_entity, &visibility) {
+                Visibility::Visible
+            } else {
+                Visibility::Hidden
+            },
+        ));
         if let Some(light) = directional {
             let mut light = light.clone();
             light.shadow_maps_enabled = false;
@@ -375,6 +393,8 @@ fn update_mirror(
     }
 }
 
+#[cfg(test)]
+mod light_tests;
 #[cfg(test)]
 mod tests {
     use super::*;

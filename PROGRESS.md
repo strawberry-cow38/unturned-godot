@@ -1215,3 +1215,17 @@ FX; managed/native connection lifecycle is continuing separately.
 ### Bevy client-only UDP bridge (2026-10-15)
 
 A remote bridge now creates only the original UDP client and reads actual owner/world replicas. Its asynchronous join waits for the accepted owner spawn before sending any movement. Original commands preserve server validation; local host services, registration, save/load and damage are unavailable. Equip waits for accepted inventory changes, recovery/death/automatic respawn use existing events, and unknown host-only metadata is explicitly listed rather than invented. Review found and fixed host disconnect retaining a listener: owned sessions now dispose fully, while remote disconnect keeps a reportable terminal state. Eighteen real-socket NUnit tests and all121 bridge tests pass against frozen `remote-client-18`; a separate two-process JSONL journey also passes join/spawn/inventory/port reuse/shutdown. Native connection flow and the documented wire feature gaps remain separate work.
+
+### Bevy reflection-light lifecycle and viewport isolation (2026-10-15)
+
+A controlled midnight OFF→ON→OFF capture identified a surviving reflection
+copy after the real headlamp hid. The copy now follows source/ancestor visibility
+before light culling. Bevy0.20's GPU cluster path also omits per-view render-layer
+filtering; using its supported CPU path keeps world, first-person and water
+reflection lights isolated instead of doubling local illumination. Seven water
+tests pass, including actual three-camera cluster contents, repeated switches,
+private-layer migration, hidden ancestry and despawn; ten HDR and eight player
+light tests also pass. Opened corrected images return the same grass sample
+from mean green1.327 to30.210 ON and1.326 OFF, versus the previous1.33→53.61→30.70.
+Root independently reviewed the final trio. Optional UG_LIGHT_DIAGNOSTICS=1
+sidecars retain actual derived light visibility for future capture diagnosis.

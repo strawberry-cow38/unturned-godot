@@ -2,7 +2,7 @@
 mod world;
 use super::{LAYER, PlayerCamera, ViewmodelCamera, ViewmodelFrame};
 use bevy::{camera::visibility::RenderLayers, prelude::*};
-pub(crate) use world::{NearbyLight, WorldLight};
+pub(crate) use world::{NearbyLight, WorldLight, visible_in_tree};
 
 #[derive(Component)]
 struct ViewmodelLight(u8);
