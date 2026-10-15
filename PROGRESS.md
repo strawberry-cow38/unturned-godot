@@ -2738,3 +2738,9 @@ open; this does not mark full finite parity complete. See FINITE_WORLD_PORT.md.
   reproduces false contact/drop. Previous HullMesh/world-authority cases pass.
   Frozen executable `native-authored-hulls-final`; authority fixture bridge
   `crafting-station-live-v72-final`. See `bevy/docs/VEHICLE_WORLD_COLLISION.md`.
+
+### 2026-10-15 — Shared original held equipment and bow hook
+
+- Extracted the existing remote held geometry/attachment builder and Equip-end upper-body pose for reuse by the isolated Inventory portrait. Original cull-off materials, late-catalog retry, body attachment transforms, bottle fit and remote muzzle identity remain intact; callers choose only accepted equipment and render layer. Own-clip naming now reuses the existing viewmodel helper.
+- Corrected remote bows to consume original gun leftHook. Local/Inventory source passed it, but the old RemotePlayers caller omitted the optional argument. This is an explicit remote adapter correction; ordinary right-hook guns retain their mount.
+- Verification: immutable native-inventory-aligned-final passes33 avatar tests (one opt-in render ignored), including actual compound-bow Left_Hook versus rifle Right_Hook. Original-asset rifle/bow portrait images opened and independently reviewed; shared builder/source review passed. Inventory dashboard integration remains its next separate checkpoint.

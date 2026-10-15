@@ -623,7 +623,7 @@ fn held_clips(root: &Path, asset: &str) -> Option<(String, String, bool)> {
     }
     None
 }
-fn own_clip(rig: &RigPlayback, asset: &str, suffix: &str, fallback: &str) -> String {
+pub(crate) fn own_clip(rig: &RigPlayback, asset: &str, suffix: &str, fallback: &str) -> String {
     let cap = asset.chars().next().map_or_else(String::new, |first| {
         first.to_uppercase().to_string() + &asset[first.len_utf8()..]
     });

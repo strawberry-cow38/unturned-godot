@@ -177,6 +177,17 @@ source body mount and zero-ID factory-irons fallback, which differ from the
 first-person alignment rules. A replica arriving before the catalog retries once
 the item definition becomes available.
 
+The held mesh/attachment builder and Equip-end pose are shared with the inventory
+portrait through `avatar::held_item`. It preserves original hook fallback,
++90°Z rotation, double-sided material and bottle attachment fit. Source gun
+`leftHook` now selects Left_Hook for remote bows as it already does for local
+and inventory bodies; the old Godot RemotePlayers caller omitted that optional
+argument. This is an explicit correction of that remote caller, not a claim of
+unchanged old remote pixels. Ordinary guns retain Right_Hook. The 33 focused
+avatar regressions pass, including source compound-bow/ordinary-rifle hook
+selection, and the original-asset rifle/bow portrait images were opened and
+independently reviewed.
+
 Gun and melee holds use the original equip clip's final upper-body pose. Accepted
 melee facts play the weapon's weak/strong clip and return to that hold; bare fists
 use the original punch clips and unknown items do not invent punches. Looping

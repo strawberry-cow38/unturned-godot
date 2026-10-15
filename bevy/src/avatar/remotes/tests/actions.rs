@@ -229,3 +229,40 @@ fn accepted_melee_uses_own_clips_returns_to_hold_and_unknown_items_never_become_
     event(&mut app, 4, "melee", json!({"playerId":2,"strong":true}));
     assert!(app.world().get::<Actions>(root).unwrap().swing.is_none());
 }
+
+#[test]
+fn source_bows_use_left_hook_while_ordinary_guns_keep_right_hook() {
+    let mut app = with_catalog();
+    let root = body(&app);
+    let bow = app
+        .world()
+        .resource::<ItemCatalog>()
+        .items
+        .values()
+        .find(|i| i.asset.as_deref() == Some("bow_compound"))
+        .unwrap()
+        .id;
+    assert_eq!(
+        app.world().resource::<ItemCatalog>().items[&bow].gun["leftHook"],
+        true
+    );
+    equip(&mut app, bow);
+    let held = app.world().get::<Held>(root).unwrap().root.unwrap();
+    assert_eq!(
+        app.world().get::<ChildOf>(held).unwrap().parent(),
+        app.world().get::<RigPlayback>(root).unwrap().bones["Left_Hook"]
+    );
+    assert!(
+        app.world()
+            .get::<Transform>(held)
+            .unwrap()
+            .rotation
+            .abs_diff_eq(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2), 1e-6)
+    );
+    equip(&mut app, 4);
+    let held = app.world().get::<Held>(root).unwrap().root.unwrap();
+    assert_eq!(
+        app.world().get::<ChildOf>(held).unwrap().parent(),
+        app.world().get::<RigPlayback>(root).unwrap().bones["Right_Hook"]
+    );
+}

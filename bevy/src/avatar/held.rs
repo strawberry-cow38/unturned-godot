@@ -40,16 +40,7 @@ const LOWER: [&str; 7] = [
     "Right_Foot",
 ];
 pub(crate) fn clip(rig: &RigPlayback, asset: &str, suffix: &str, fallback: &str) -> String {
-    let named = asset
-        .chars()
-        .next()
-        .map(|c| c.to_ascii_uppercase().to_string() + &asset[1..] + suffix)
-        .unwrap_or_default();
-    if rig.data.anims.contains_key(&named) {
-        named
-    } else {
-        fallback.to_owned()
-    }
+    crate::viewmodel::own_clip(rig, asset, suffix, fallback)
 }
 fn overlay(rig: &RigPlayback, asset: &str, gun: bool, held: u16) -> Option<(String, f32)> {
     let source = &rig.clip;

@@ -20,6 +20,7 @@ pub mod camera;
 mod death;
 pub(crate) mod gestures;
 mod held;
+pub(crate) mod held_item;
 mod pose;
 pub(crate) mod remotes;
 pub use camera::Perspective;
@@ -219,7 +220,7 @@ fn spawn(
         Err(e) => error!("Player body rig: {e}"),
     }
 }
-fn outfit(state: &Value, arms: bool, catalog: &crate::entities::ItemCatalog) -> Appearance {
+pub(crate) fn outfit(state: &Value, arms: bool, catalog: &crate::entities::ItemCatalog) -> Appearance {
     outfit_parts(
         &state["inventory"]["worn"],
         &state["inventory"]["wornQuality"],

@@ -6,7 +6,7 @@ mod lights;
 mod profiles;
 mod visual;
 
-fn source_catalog() -> ItemCatalog {
+pub(crate) fn source_catalog() -> ItemCatalog {
     static CATALOG: std::sync::OnceLock<Value> = std::sync::OnceLock::new();
     let result = CATALOG.get_or_init(|| {
         let bridge =

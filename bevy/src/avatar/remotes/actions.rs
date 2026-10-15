@@ -121,21 +121,7 @@ pub(super) fn animate(
             continue;
         };
         let preserve = matches!(stance(row), "crouch" | "prone");
-        let hold = held
-            .asset
-            .as_deref()
-            .and_then(|asset| {
-                clip(
-                    rig,
-                    asset,
-                    "_Equip",
-                    if held.gun { "Gun_Equip" } else { "Melee_Equip" },
-                )
-            })
-            .map(|name| {
-                let length = rig.data.anims[&name].length;
-                (name, length)
-            });
+        let hold = crate::avatar::held_item::ready_pose(rig, held);
         if let Some((name, elapsed)) = action.swing.as_ref().or(hold.as_ref()) {
             if let Some(clip) = rig.data.anims.get(name) {
                 crate::avatar::held::apply_upper_body(

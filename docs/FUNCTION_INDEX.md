@@ -432,3 +432,9 @@ Companion documents:
 | Need | Reuse | Notes |
 | --- | --- | --- |
 | Materialize an ordinary accepted deployable with source seating and collision | `deployables::DeployablePlugin`, `deployables::geometry::{Bounds,seat,authority}` | original rotated mesh AABB, yaw/stand-up and Ceiling/Wall/Container seating; fixed native box and same host geometry keyed by accepted ID; session/revision retirement, no remote authority upload; specialized fluid/storage/fixture/turbine and utility flows remain separate |
+
+### Bevy shared held equipment
+
+| Need | Reuse | Notes |
+| --- | --- | --- |
+| Render accepted held geometry or the original Equip-end body pose | `avatar::held_item::{sync,ready_pose,apply_ready}`, `viewmodel::own_clip` | one hook/attachment builder for remote bodies and portrait; source leftHook, +90°Z, body attachment transforms and explicit view layer; unresolved catalog retries; no inventory/combat mutation |
