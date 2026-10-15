@@ -280,7 +280,7 @@ enum UiButton {
 }
 
 #[derive(Component)]
-struct OverlayRoot;
+pub(crate) struct OverlayRoot;
 #[derive(Component)]
 struct HudRoot;
 #[derive(Component)]

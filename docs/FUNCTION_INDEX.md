@@ -75,6 +75,8 @@ Rules of the road:
 | render source cosmetic bullet flight without duplicating damage | `CosmeticBulletServices` / generated `CosmeticScatter` / `BallisticsMath` (`bevy/bridge`) | accepted combat sequence joins visual context; `state.bullets` is visual only; ocean boxes never enter solid-world damage geometry |
 | render original tracer strips and project the actual FP muzzle | `bullets::{tracer,muzzle_projection,fire_context}` / `viewmodel::project_muzzle` (`bevy/src`) | accepted visual flight only; muzzle depth0.6m, max strip10m; no damage/impact publication |
 | emit host hearing with original rain masking | `ZombieServices.Noise(position,radius)` | zero is silent; source radius and authority weather |
+| render filtered weather audio, shared canopy targets and source lightning | `world::rain::audio::{filter::FilteredClip, MaterialTargets}`, `world::rain::lightning::Lightning` (`bevy/src`) | four Godot low-pass stages; cosmetic emitters never enter hearing; lightning flash uses render time, interval uses authority ticks |
+
 
 ## 2. Sentinels that lie
 

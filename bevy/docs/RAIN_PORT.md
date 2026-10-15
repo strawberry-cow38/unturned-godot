@@ -58,6 +58,54 @@ any nonzero intensity. The native adapter selects one precipitation mode at a
 time; existing particles may finish when the mode changes. A regression guards
 snow not restarting rain. Dry weather creates no empty meshes or draw warnings.
 
+## Audio and lightning
+
+`audio.rs` ports `RainAudio`, `RainMaterialAudio` and the upward `ShelterProbe`.
+Three original rain beds retain their intensity thresholds, dB curves, random
+WAV start offsets and 180 dB/s fades. Four pooled positional emitters follow the
+nearest vehicle, tree canopy, authored metal roof and tent. The foliage target
+also supplies the precipitation canopy mask; there is one shared nearest-tree
+query. Material emitters never enter zombie hearing.
+
+The independent upward cover query includes thin ceilings, rejects tiny props
+and lamp fixtures through their parent hierarchy, and follows the original
+0.15-second poll. Its 0.35-second shelter ramp drives the small level trim; a
+separate 0.07-second spectral ramp follows the logarithmic 6,000–20,500 Hz knee.
+Enclosed intact vehicle cabins use the original roof/tracked/plane/Pod metadata.
+The current first-person cabin gate compares the camera with the occupied eye
+pose; a dedicated third-person camera-mode hook remains to follow that feature.
+
+`audio/filter.rs` adapts Godot 4.6's MIT-licensed `AudioFilterSW` low-pass and
+`AudioEffectFilterInstance` routing (license in `licenses/GODOT_AUDIO_FILTER.txt`).
+The source sets filter property `db=3`, which actually selects four biquad stages;
+the adapter preserves that engine behavior and its resonance 0.25. Stereo
+histories are independent. The source WAVs and Ogg are decoded once into bounded
+PCM caches. Looping wraps the whole clip after a random initial offset, while
+live cutoff changes preserve filter history. Filtering runs at each clip's
+sample rate; the original bus may instead resample to its output mix rate.
+Positional playback uses Rodio's attenuation and spatial panning, so its exact
+falloff is an engine adapter difference from Godot's `AudioStreamPlayer3D`.
+
+`lightning.rs` consumes retained, accepted `weatherStrike` facts and the active
+weather's lightning interval metadata. Strike frequency follows authority ticks;
+flash decay, repeated return strokes and delayed thunder use render time. Each
+strike queues its own delayed clap, and four voices preserve overlapping rumbles.
+The source cloud shader receives the warm tint, azimuth and flash envelope,
+including the isotropic zenith floor that avoids a pinwheel overhead. A separate
+postpass supplies the source's small fullscreen lift after the HUD, converting
+to sRGB around the addition to match Godot's non-HDR canvas. A linear GPU blend
+would incorrectly turn a 9% black lift into approximately 33% grey. The console
+renders afterward, matching its source layer100 above the flash at layer90;
+sunlight and ambient light are not changed. Pause and session replacement freeze or clear the
+appropriate playback and visual state. `UG_STRIKE_AT` retains the source capture
+seam, and `UG_WEATHER=lightning` fires the initial diagnostic strike.
+
+The current source has no independent wind/snow ambience driver. It feeds the
+same nonzero weather intensity into rain audio during snowfall, and that
+behavior is retained. A snowfall Ogg existing in the content tree does not
+supply missing mix rules. General `AmbienceAudio` also has no shelter filter in
+the current source; this adapter does not invent one.
+
 ## Verification and remaining work
 
 Eleven focused tests cover original pool and billboard constants, camera jumps,
@@ -79,8 +127,22 @@ intensity during snowfall; that separate source behavior is retained. These
 captures produced no shader validation or empty-mesh warnings. All 66 world
 tests pass after the fixture-parent review fix.
 
-Layered rain/wind/snow audio, shelter low-pass and material emitters, lightning
-and delayed thunder, wet glass, plant/wire wind deformation and player-built
-roof metadata remain separate work. Snowflakes retain the original unshaded
+Five audio tests decode all seven original clips, check full-file wrapping,
+measure low/high-frequency filter response, preserve stereo isolation, and drive
+actual Rapier thin-cover removal plus playback volume/pause/stop state. Four
+lightning tests cover source distance/clap selection, overlapping delayed booms,
+the retained event → actual camera uniform/playback lifecycle with pause and
+session cleanup, and the console camera route. All20 rain tests pass. This machine has no audio output device: these tests verify
+PCM and mixer state, not a listening comparison.
+
+The accepted console strike was rendered on the real PEI map at night in
+`artifacts/bevy-lightning-before.png` and `bevy-lightning-strike.png`. Both images
+were opened: directional warm cloud illumination and the small foreground lift
+are visible while the console stays above the flash. The first capture exposed
+an overly bright linear blend; the final sRGB-addition pass fixes it. The final
+Vulkan run reported no shader validation errors.
+
+Wet glass, plant/wire wind deformation, broken-window cabin openness and
+player-built metal-roof metadata remain separate work. Snowflakes retain the original unshaded
 square material, which does not use the rain roof/canopy shader. The rendering
 adapter is not evidence that those unfinished systems are ported.

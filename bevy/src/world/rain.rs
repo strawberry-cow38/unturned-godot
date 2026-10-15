@@ -1,5 +1,7 @@
 //! Source RainSystem3D, RainRoofMap and wet material presentation.
+mod audio;
 mod field;
+pub(crate) mod lightning;
 pub mod roof;
 pub(super) mod wet;
 mod wind;
@@ -51,7 +53,12 @@ impl Plugin for RainPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<RainState>()
             .init_resource::<roof::RoofMap>()
-            .add_plugins((field::FieldPlugin, wet::WetPlugin))
+            .add_plugins((
+                field::FieldPlugin,
+                wet::WetPlugin,
+                audio::RainAudioPlugin,
+                lightning::LightningPlugin,
+            ))
             .add_systems(Startup, roof::setup)
             .add_systems(
                 FixedUpdate,
@@ -107,6 +114,7 @@ fn conditions(
     rain.daylight = crate::environment::daylight(day);
 }
 pub(super) fn shift_origin(world: &mut World, shift: Vec3) {
+    audio::shift_origin(world, shift);
     if let Some(mut roof) = world.get_resource_mut::<roof::RoofMap>() {
         roof.shift(shift);
     }

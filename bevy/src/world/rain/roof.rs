@@ -373,7 +373,7 @@ pub fn update(
 fn small(size: Vec3) -> bool {
     size.y <= 1.7 || size.x * size.z <= 1.5
 }
-fn lamp_fixture(name: &str) -> bool {
+pub(super) fn lamp_fixture(name: &str) -> bool {
     name.starts_with("Streetlight")
         || name.starts_with("Street_Light")
         || name.starts_with("Traffic_Light")

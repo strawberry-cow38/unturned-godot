@@ -4,7 +4,10 @@ use crate::{
     entities::CoreEvent,
     player::{GameSnapshot, PlayerCamera, PlayerUpdate},
     settings::Settings,
-    world::WorldConfig,
+    world::{
+        WorldConfig,
+        rain::lightning::{Lightning, LightningUpdate},
+    },
 };
 use bevy::{
     asset::embedded_asset,
@@ -47,7 +50,8 @@ impl Plugin for EnvironmentPlugin {
                     apply_volume,
                 )
                     .chain()
-                    .after(PlayerUpdate),
+                    .after(PlayerUpdate)
+                    .after(LightningUpdate),
             );
     }
 }
@@ -213,6 +217,8 @@ struct SkyParameters {
     offsets: Vec4,
     factors: Vec4,
     moon: Vec4,
+    lightning_tint: Vec4,
+    lightning_direction: Vec4,
 }
 impl SkyParameters {
     fn new(light: Lighting, env: &Environment) -> Self {
@@ -232,6 +238,8 @@ impl SkyParameters {
                 env.elapsed,
             ),
             moon: linear(Vec3::new(0.749, 0.804, 0.808)),
+            lightning_tint: Vec4::ZERO,
+            lightning_direction: Vec3::NEG_Z.extend(0.),
         }
     }
 }
@@ -367,6 +375,7 @@ fn update_environment(
     mut ambient: ResMut<GlobalAmbientLight>,
     mut materials: ResMut<Assets<SkyMaterial>>,
     mut clear: ResMut<ClearColor>,
+    lightning: Res<Lightning>,
 ) {
     cloud_step(&mut env, time.delta_secs());
     let light = lighting(env.time, env.storm, env.overcast);
@@ -392,6 +401,9 @@ fn update_environment(
             transform.translation = camera.translation;
             if let Some(mut mat) = materials.get_mut(handle) {
                 mat.parameters = SkyParameters::new(light, &env);
+                mat.parameters.lightning_tint =
+                    linear(lightning.tint).truncate().extend(lightning.flash);
+                mat.parameters.lightning_direction = lightning.direction.extend(0.);
             }
         }
     }

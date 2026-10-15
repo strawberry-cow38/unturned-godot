@@ -4,7 +4,6 @@ use crate::{
     particles::random,
     player::{PlayerCamera, WorldSessionEpoch},
     ui::UiState,
-    world::{WorldFoliage, WorldResource},
 };
 use bevy::{
     asset::{RenderAssetUsages, embedded_asset},
@@ -16,7 +15,6 @@ use bevy::{
     render::render_resource::{AsBindGroup, PrimitiveTopology},
     shader::ShaderRef,
 };
-use bevy_rapier3d::prelude::Collider;
 use std::collections::VecDeque;
 
 pub struct FieldPlugin;
@@ -187,8 +185,6 @@ pub(super) struct Field {
     elapsed: f32,
     cooldown: f32,
     trail: VecDeque<(f32, Vec3)>,
-    canopy: Vec4,
-    canopy_poll: f32,
 }
 impl Default for Field {
     fn default() -> Self {
@@ -201,8 +197,6 @@ impl Default for Field {
             elapsed: 0.,
             cooldown: 0.,
             trail: default(),
-            canopy: Vec4::ZERO,
-            canopy_poll: 0.,
         }
     }
 }
@@ -219,8 +213,6 @@ impl Field {
         for (_, at) in &mut self.trail {
             *at -= shift;
         }
-        self.canopy.x -= shift.x;
-        self.canopy.y -= shift.z;
     }
     fn follow(&mut self, camera: Vec3, dt: f32) -> (Vec3, bool) {
         self.elapsed += dt;
@@ -336,10 +328,7 @@ fn update(
         &mut Visibility,
     )>,
     mut meshes: ResMut<Assets<Mesh>>,
-    trees: Query<
-        (&GlobalTransform, Option<&WorldResource>, &Name),
-        (With<WorldFoliage>, With<Collider>),
-    >,
+    targets: Res<super::audio::MaterialTargets>,
 ) {
     if crate::player::simulation_paused(&ui) {
         return;
@@ -356,29 +345,6 @@ fn update(
     }
     let dt = time.delta_secs();
     let (origin, restart) = field.follow(cp, dt);
-    field.canopy_poll -= dt;
-    if field.canopy_poll <= 0. {
-        field.canopy_poll = 0.25;
-        field.canopy = Vec4::ZERO;
-        // RainMaterialAudio queries the widest (pine) foliage radius. The
-        // nearest tree then chooses its own canopy shadow and audio radius.
-        let mut closest = 28. * 28.;
-        for (pose, resource, name) in &trees {
-            let name = resource.map_or(name.as_str(), |r| r.name.as_str());
-            if !["Pine", "Birch", "Maple", "Redwood"]
-                .iter()
-                .any(|n| name.contains(n))
-            {
-                continue;
-            }
-            let d = pose.translation().distance_squared(cp);
-            if d < closest {
-                closest = d;
-                let p = pose.translation();
-                field.canopy = Vec4::new(p.x, p.z, if name.contains("Pine") { 6. } else { 4. }, 1.);
-            }
-        }
-    }
     let active = rain.intensity > 0.02;
     if restart && active {
         if rain.snow {
@@ -394,7 +360,7 @@ fn update(
         .snow
         .step(dt, origin, Vec3::new(0., -1.1, 0.), active && rain.snow);
     let cam = camera.compute_transform();
-    let canopy = field.canopy;
+    let canopy = targets.canopy;
     for (entity, kind, handle, pose, mut visibility) in &mut query {
         let pool = if kind.snow {
             &mut field.snow
@@ -523,6 +489,7 @@ mod tests {
             .init_resource::<Field>()
             .init_resource::<RainState>()
             .init_resource::<RoofMap>()
+            .init_resource::<super::super::audio::MaterialTargets>()
             .init_resource::<WorldSessionEpoch>()
             .insert_resource(UiState {
                 screen: crate::ui::Screen::Playing,

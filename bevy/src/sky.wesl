@@ -6,6 +6,7 @@ struct SkyParameters {
     top: vec4<f32>, horizon: vec4<f32>, ground: vec4<f32>, sun: vec4<f32>,
     direction: vec4<f32>, rim: vec4<f32>, cloud_ambient: vec4<f32>,
     offsets: vec4<f32>, factors: vec4<f32>, moon: vec4<f32>,
+    lightning_tint: vec4<f32>, lightning_direction: vec4<f32>,
 }
 @group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> sky: SkyParameters;
 @group(constants::MATERIAL_BIND_GROUP) @binding(1) var clouds: texture_2d<f32>;
@@ -54,6 +55,19 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         var rim = sky.cloud_ambient.xyz + sky.horizon.xyz + sky.rim.xyz;
         rim = mix(rim, sky.sun.xyz, sun_factor);
         rim = mix(rim, sky.moon.xyz, moon_factor * 0.25);
+        if sky.lightning_tint.w > 0.001 {
+            let vxz = view_dir.xz;
+            let vlen = length(vxz);
+            let zdamp = smoothstep(0.0, 0.15, vlen);
+            // Source zenith guard: azimuth fades to the isotropic floor overhead.
+            var vdir = sky.lightning_direction.xyz;
+            if vlen > 0.00001 { vdir = vec3<f32>(vxz.x, 0.0, vxz.y) / vlen; }
+            let dir_w = mix(0.125, pow(clamp(dot(vdir, sky.lightning_direction.xyz), 0.0, 1.0) * 0.5 + 0.5, 3.0), zdamp);
+            let shaped = sky.lightning_tint.w * dir_w * macro_alpha * (1.0 - small * 0.4);
+            body += sky.lightning_tint.xyz * shaped * 1.6;
+            rim += sky.lightning_tint.xyz * shaped * 2.4;
+            col += sky.lightning_tint.xyz * sky.lightning_tint.w * dir_w * 0.08;
+        }
         let body_alpha = clamp(macro_alpha + macro_alpha * medium + macro_alpha * small, 0.0, 1.0);
         let alpha = body_alpha * clamp(view_dir.y * 2.0, 0.0, 1.0);
         col = mix(col, mix(rim, body, body_alpha), alpha);
