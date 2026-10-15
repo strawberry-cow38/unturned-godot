@@ -59,6 +59,29 @@ foreach (var (x, z, seed, lakes) in cases)
         layout.Tiles, layout.Buildings, layout.Routes, layout.Trails,
         layout.Camps, layout.Landmarks };
     File.WriteAllText(path + ".json", JsonSerializer.Serialize(data, options));
+    // A second source boundary: final road curves/conform, still before prop
+    // painting/scatter. Both sides run the extracted original operations.
+    if (args.Length > 2 && args[1] == "--paths")
+    {
+        var surface = new FiniteIslandSurface(layout);
+        surface.PaintBelowHeight(29.6f, 5);
+        surface.PaintSteeperThan(.58f, 0);
+        var roads = new FiniteIslandRoads(surface, args[2]);
+        int roadCount = FiniteIslandPaths.SpawnRoutes(surface, roads);
+        int trails = FiniteIslandPaths.SpawnTrails(surface, roads);
+        roads.SavePaths(path + "-paths.dat");
+        using (var writer = new BinaryWriter(File.Create(path + "-surface.bin")))
+        {
+            writer.Write(surface.Width); writer.Write(surface.Height);
+            for (int gx=0; gx<surface.Width; gx++)
+                for (int gz=0; gz<surface.Height; gz++) writer.Write(surface.Grid[gx,gz]);
+            for (int gx=0; gx<surface.Width-1; gx++)
+                for (int gz=0; gz<surface.Height-1; gz++) writer.Write(surface.Layers[gx,gz]);
+        }
+        File.WriteAllText(path + "-curves.json", JsonSerializer.Serialize(new {
+            roadCount, trails, surface.IslandRoutes, FiniteIslandPaths.DebugCurves,
+            FiniteIslandPaths.DebugKinds, FiniteIslandPaths.DebugRoutes }, options));
+    }
     Console.WriteLine(JsonSerializer.Serialize(new { x, z, seed, lakes,
         heights=Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path+".bin"))),
         graph=Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path+".json"))),
@@ -97,9 +120,14 @@ def main():
     parser.add_argument('--godot-sharp', type=Path, required=True)
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--math-only', action='store_true')
+    parser.add_argument('--paths-environment', type=Path,
+                        help='Also compare original road/conform passes using this PEI Environment directory')
+    parser.add_argument('--placements-content', type=Path,
+                        help='Also compare original object/paint/spawn consumers using this content directory')
     parser.add_argument('--dotnet', default=shutil.which('dotnet'))
     args = parser.parse_args()
     assert args.dotnet, 'Pass --dotnet or add dotnet to PATH'
+    assert not args.placements_content or args.paths_environment, 'Placements require --paths-environment'
     args.work.mkdir(parents=True, exist_ok=True)
     # Extract only the original GenerateIsland orchestration with the same strict
     # source marker as the bridge build. No bridge shim is part of the reference.
@@ -117,13 +145,48 @@ def main():
         (folder / 'Program.cs').write_text(PROGRAM)
         if mode == 'source':
             extract(lambda p: (REPO / p).read_text(), folder, match, method)
+            source_files = ['game/ProcIsland.cs', 'bevy/bridge/FiniteIslandLayout.cs']
+            if args.paths_environment:
+                from extract_island_paths import extract as extract_paths
+                extract_paths(lambda p: (REPO / p).read_text(), folder, match, method)
+                source_files += ['bevy/bridge/FiniteIslandSurface.cs', 'bevy/bridge/FiniteIslandRoads.cs']
+            if args.placements_content:
+                from extract_island_placement import extract as extract_placement
+                extract_placement(lambda p: (REPO / p).read_text(), folder, match, method)
+                source_files += ['bevy/bridge/FiniteIslandObjects.cs']
             (folder / 'Log.cs').write_text('namespace UnturnedGodot; public static class Log { public static void Print(string s) {} public static void Err(string s) {} }')
-            includes = ''.join(f'<Compile Include="{escape(str(REPO / p))}" />' for p in
-                               ['game/ProcIsland.cs', 'bevy/bridge/FiniteIslandLayout.cs'])
+            includes = ''.join(f'<Compile Include="{escape(str(REPO / p))}" />' for p in source_files)
             dependency, name = args.godot_sharp.resolve(), 'GodotSharp'
         else:
             includes = ''
             dependency, name = args.bridge.resolve(), 'UnturnedBevy.Bridge'
+        program = PROGRAM
+        if not args.paths_environment:
+            # Keep the first-stage verifier usable with its earlier immutable
+            # bridge DLL, which deliberately has no road/surface classes.
+            start = program.index('    // A second source boundary:')
+            end = program.index('    Console.WriteLine(', start)
+            program = program[:start] + program[end:]
+        if args.placements_content:
+            program = program.replace('        surface.PaintBelowHeight', '''        var objects = new FiniteIslandObjects(args[3]);
+        var spawned = FiniteIslandPaths.Spawn(surface, objects);
+        surface.PaintBelowHeight''')
+            program = program.replace('        var roads =', '''        FiniteIslandPaths.PaintGroundwork(surface);
+        var players = FiniteIslandPaths.ChoosePlayerSpawns(surface, seed);
+        FiniteIslandPaths.SpawnTownFurniture(surface, objects);
+        var roads =''')
+            program = program.replace('        int trails =', '''        FiniteIslandPaths.SpawnRoadside(surface, objects);
+        int trails =''')
+            program = program.replace('        roads.SavePaths', '''        FiniteIslandPaths.SpawnCamps(surface, objects);
+        FiniteIslandPaths.SpawnLandmarks(surface, objects);
+        var spawns = FiniteIslandPaths.GenerateSpawnTables(surface, seed);
+        File.WriteAllText(path + "-placements.json", JsonSerializer.Serialize(new {
+            spawned, players, spawns,
+            objects = objects.Placements.Select(o => new { o.Name, o.Position, o.Material,
+                X=o.Basis.X, Y=o.Basis.Y, Z=o.Basis.Z }).ToArray()
+        }, options));
+        roads.SavePaths''')
+        (folder / 'Program.cs').write_text(program)
         project = ('<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType>'
                    '<TargetFramework>net8.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings>'
                    '</PropertyGroup><ItemGroup>' + includes +
@@ -137,6 +200,10 @@ def main():
             command = [args.dotnet, str(folder / 'bin/Debug/net8.0/Compare.dll'), str(folder)]
             if args.math_only:
                 command.append('--math-only')
+            elif args.paths_environment:
+                command += ['--paths', str(args.paths_environment.resolve())]
+                if args.placements_content:
+                    command.append(str(args.placements_content.resolve()))
             result = subprocess.run(command,
                                     stdout=subprocess.PIPE, stderr=log, text=True, check=True)
         (folder / 'summary.jsonl').write_text(result.stdout)

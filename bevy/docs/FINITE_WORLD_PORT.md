@@ -77,3 +77,40 @@ curves feed `Terrain.ConformToPolylines`, whose town-pad exclusion, nearest-segm
 claim and different-road ceiling affect final height and collision. Existing
 native `world::roads` already reads the original saved Paths.dat format and can
 reuse these exported joints. Foliage remains after this conformity and all paint.
+
+The second data stage now retains the original RoadField joint/tangent/5m-walk
+and Paths.dat writer, Terrain conformity and winner-take-all paint, and original
+ProcIslandSpawn object/groundwork/player/zombie/loot/animal consumers.
+`FiniteIslandGeneration.Generate` keeps the source static scratch and the whole
+dependent sequence under one lock. Its order is towns and boulders; shoreline,
+steep and worked-ground paint; player spawns and town furniture; spline conformity;
+roadside objects, trails, camps and landmarks; gameplay spawn points. The original
+layout remains inspectable separately from the conformed grid and filtered route
+list. No authority state is created by this data-stage call.
+
+EditorObjects.Place is replaced by a value sink retaining the original object
+name, material variant and full basis; missing original OBJ art remains missing.
+The source's standing correction, world/proc Z flip, tilted boulder and fence
+bases and world scaling are preserved. The small Basis value adapter retains
+Godot4.6's arithmetic order and license; the differential reference uses actual
+GodotSharp Basis. Only scene creation, texture upload, editor journaling and
+explicitly listed diagnostic reports are removed from extracted methods. Fresh
+finite generation has no authored river overlay; saved-map river loading is a
+separate remaining requirement.
+
+`verify_island_source.py --paths-environment <PEI/Environment>
+--placements-content <game/content>` matches all25 output files byte for byte
+against real GodotSharp: complete original layout, final height/splat grids,
+original Paths.dat, sampled/debug curves, every placed prop basis/material and
+all generated spawn records. Cases are 1×1 seed1234, 2×1 seed9876 with lakes,
+3×3 seed771177, then repeated1234. They place759,794,2355,759 objects with zero
+missing art. The default3×3 case includes104 prefab buildings,24 player spawns,
+1971 zombie points,378 loot points and297 animal points. These are source counts,
+not replacement density targets. Foliage/resources, source chart, original
+save/reopen, native world entry/streaming and BuildingGen runtime are still pending.
+
+Five consumer regressions pass against immutable `finite-island-consumers-first`:
+three complete source-output cases, original basis handedness/world scaling and
+missing-art behavior. The tiny `pei-road-materials.dat` fixture is the original
+PEI Environment/Roads.dat metadata (172bytes); full retail map installation is
+not required for these tests. Runtime-art presence still uses the project content.

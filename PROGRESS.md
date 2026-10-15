@@ -2469,3 +2469,22 @@ scaled/negative/equal/reversed edges and sign behavior. Nine finite regressions
 pass; the shared29-test run also covers existing NPC, occupant and light paths.
 No finite world option or renderer is linked yet; road conformity, final paint,
 placements/scatter, original save/reopen and both runtime consumers follow.
+
+### Bevy finite-world source consumers — roads, ground and placements
+
+Added the original RoadField tangent/sample/save operations, Terrain paint and
+road conformity, and ProcIslandSpawn town/boulder/furniture/roadside/camp/landmark
+and player/zombie/loot/animal placement consumers. The data-stage orchestrator
+preserves source order and serializes access to its static scratch. Original OBJ
+names, house material variants, standing correction, tilted/scaled bases and
+missing-art results are retained. No authority or native world mode is created.
+
+The actual GodotSharp differential matches all25 output files byte for byte for
+small, rectangular/lakes, default3×3 and repeated-seed cases: every final terrain
+sample/paint cell, road path/joint/curve and prop/spawn record. The3×3 case has2355
+props, including104 buildings, and the source24 player/1971 zombie/378 loot/297
+animal points. Five new consumer regressions pass, including complete output
+fingerprints, source basis handedness/world scaling and missing-art behavior.
+Foliage/resources, chart, source save/reopen, native streaming/collision/world
+entry and the separate BuildingGen runtime are still pending; see
+`bevy/docs/FINITE_WORLD_PORT.md`.

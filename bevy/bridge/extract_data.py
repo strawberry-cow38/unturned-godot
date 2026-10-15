@@ -530,3 +530,9 @@ extract_vehicle_doors(read, out, match, method)
 
 from extract_island import extract as extract_island
 extract_island(read, out, match, method)
+
+from extract_island_paths import extract as extract_island_paths
+extract_island_paths(read, out, match, method)
+
+from extract_island_placement import extract as extract_island_placement
+extract_island_placement(read, out, match, method)
