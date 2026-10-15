@@ -20,7 +20,7 @@ impl FromWorld for OriginalFont {
 }
 
 #[derive(SystemParam)]
-pub(super) struct Raster<'w> {
+pub(crate) struct Raster<'w> {
     fonts: Res<'w, Assets<Font>>,
     font: Res<'w, OriginalFont>,
     pipeline: ResMut<'w, TextPipeline>,
@@ -30,15 +30,40 @@ pub(super) struct Raster<'w> {
     atlases: ResMut<'w, FontAtlasSet>,
     pub images: ResMut<'w, Assets<Image>>,
 }
-pub(super) struct Bitmap {
+pub(crate) struct Bitmap {
     pub image: Image,
     pub offset: Vec2,
+    pub origin: Vec2,
+    pub layout: Vec2,
 }
 impl Raster<'_> {
     pub fn render(&mut self, text: &str) -> Option<Bitmap> {
+        let layout = self.layout(text, 64., false)?;
+        bake(&layout, &self.images, 12., 0.85)
+    }
+    /// Original InfoBillboard.FitLabel: actual font advance width, base size
+    /// reduced one pixel at a time, with a 15px minimum and an 8px side margin.
+    pub fn render_fitted(
+        &mut self,
+        text: &str,
+        base: f32,
+        max_width: f32,
+        outline: f32,
+        outline_alpha: f32,
+    ) -> Option<Bitmap> {
+        let mut size = base;
+        loop {
+            let layout = self.layout(text, size, true)?;
+            if size <= 15. || layout.size.x <= max_width {
+                return bake(&layout, &self.images, outline, outline_alpha);
+            }
+            size -= 1.;
+        }
+    }
+    fn layout(&mut self, text: &str, size: f32, source_label: bool) -> Option<TextLayoutInfo> {
         let font = TextFont {
             font: self.font.0.clone().into(),
-            font_size: FontSize::Px(64.),
+            font_size: FontSize::Px(size),
             ..default()
         };
         let span = TextElement::Text {
@@ -77,12 +102,30 @@ impl Raster<'_> {
                 FontHinting::default(),
             )
             .ok()?;
-        bake(&layout, &self.images)
+        if source_label {
+            // Godot's non-MSDF FontFile takes ceil(FreeType ascender), rather
+            // than centering the font inside Bevy's default 1.2em line height.
+            // Read the same embedded font's shaped metrics, not an ink offset
+            // calibrated for one string or one font size.
+            if let Some(line) = computed.buffer().lines().next()
+                && let Some(run) = line.runs().next()
+            {
+                let shift = run.metrics().ascent.ceil() - line.metrics().baseline;
+                for glyph in &mut layout.glyphs {
+                    glyph.position.y += shift;
+                }
+            }
+        }
+        Some(layout)
     }
 }
 
-fn bake(layout: &TextLayoutInfo, images: &Assets<Image>) -> Option<Bitmap> {
-    const OUTLINE: i32 = 12;
+fn bake(
+    layout: &TextLayoutInfo,
+    images: &Assets<Image>,
+    radius: f32,
+    outline_alpha: f32,
+) -> Option<Bitmap> {
     if layout.glyphs.is_empty() {
         return None;
     }
@@ -93,8 +136,9 @@ fn bake(layout: &TextLayoutInfo, images: &Assets<Image>) -> Option<Bitmap> {
         min = min.min(glyph.position - half);
         max = max.max(glyph.position + half);
     }
-    min = min.floor() - Vec2::splat(OUTLINE as f32);
-    max = max.ceil() + Vec2::splat(OUTLINE as f32);
+    let pad = radius.ceil() as i32;
+    min = min.floor() - Vec2::splat(pad as f32);
+    max = max.ceil() + Vec2::splat(pad as f32);
     let size = (max - min).as_uvec2();
     if size.x == 0 || size.y == 0 || size.x > 4096 || size.y > 1024 {
         return None;
@@ -131,17 +175,24 @@ fn bake(layout: &TextLayoutInfo, images: &Assets<Image>) -> Option<Bitmap> {
             if alpha == 0 {
                 continue;
             }
-            for oy in -OUTLINE..=OUTLINE {
-                let spread = ((OUTLINE * OUTLINE - oy * oy) as f32).sqrt().floor() as i32;
+            for oy in -pad..=pad {
                 let dy = y as i32 + oy;
                 if dy < 0 || dy as usize >= height {
                     continue;
                 }
-                for ox in -spread..=spread {
+                for ox in -pad..=pad {
+                    let distance = ((ox * ox + oy * oy) as f32).sqrt();
+                    // Keep the existing integer-radius nameplate dilation
+                    // byte-identical; fractional strokes cover the edge pixel.
+                    let coverage = if radius.fract() == 0. {
+                        if distance <= radius { 1. } else { 0. }
+                    } else {
+                        (radius + 0.5 - distance).clamp(0., 1.)
+                    };
                     let dx = x as i32 + ox;
                     if dx >= 0 && (dx as usize) < width {
                         let dst = &mut outline[dy as usize * width + dx as usize];
-                        *dst = (*dst).max(alpha);
+                        *dst = (*dst).max((alpha as f32 * coverage).round() as u8);
                     }
                 }
             }
@@ -150,7 +201,7 @@ fn bake(layout: &TextLayoutInfo, images: &Assets<Image>) -> Option<Bitmap> {
     let mut rgba = Vec::with_capacity(width * height * 4);
     for (pixel, edge) in pixels.into_iter().zip(outline) {
         let fg = pixel[3] as f32 / 255.;
-        let alpha = fg + edge as f32 / 255. * 0.85 * (1. - fg);
+        let alpha = fg + edge as f32 / 255. * outline_alpha * (1. - fg);
         let weight = if alpha > 0. { fg / alpha } else { 0. };
         rgba.extend([
             (pixel[0] as f32 * weight).round() as u8,
@@ -163,5 +214,48 @@ fn bake(layout: &TextLayoutInfo, images: &Assets<Image>) -> Option<Bitmap> {
         image: super::rgba_image(rgba, size.x, size.y),
         // Preserve Label3D's centred layout rather than centring ink bearings.
         offset: ((min + max) * 0.5 - layout.size * 0.5) * Vec2::new(1., -1.) * (0.16 / 64.),
+        origin: min,
+        layout: layout.size,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::text::{GlyphAtlasInfo, PositionedGlyph};
+    #[test]
+    fn existing_nameplate_integer_outline_keeps_its_original_disk_and_alpha() {
+        let mut images = Assets::<Image>::default();
+        let atlas = images.add(super::super::rgba_image(vec![255; 4], 1, 1));
+        let mut layout = TextLayoutInfo::default();
+        layout.size = Vec2::ONE;
+        layout.glyphs.push(PositionedGlyph {
+            position: Vec2::splat(0.5),
+            atlas_info: GlyphAtlasInfo {
+                texture: atlas.id(),
+                rect: Rect::new(0., 0., 1., 1.),
+                offset: Vec2::ZERO,
+                is_alpha_mask: true,
+            },
+            section_index: 0,
+            line_index: 0,
+        });
+        let bitmap = bake(&layout, &images, 12., 0.85).unwrap();
+        assert_eq!(bitmap.image.size(), UVec2::splat(25));
+        assert_eq!(bitmap.offset, Vec2::ZERO);
+        let pixels = bitmap.image.data.unwrap();
+        for y in 0..25_i32 {
+            for x in 0..25_i32 {
+                let p = &pixels[((y * 25 + x) * 4) as usize..][..4];
+                let expected = if (x, y) == (12, 12) {
+                    [255; 4]
+                } else if (x - 12).pow(2) + (y - 12).pow(2) <= 144 {
+                    [0, 0, 0, 217]
+                } else {
+                    [0; 4]
+                };
+                assert_eq!(p, expected, "pixel ({x},{y})");
+            }
+        }
+    }
 }

@@ -93,7 +93,7 @@ Rules of the road:
 | step deadzone exposure | `DeadzoneSim.Step` (`core/UnturnedSim/DeadzoneSim.cs:103`) | — the *sim* is shared; the volume/bookkeeping layer around it is duplicated |
 | find nearby zombies / bullets vs zombies | `ZombieSpatial.QuerySphere` `:71` / `QuerySegment` `:117` | a linear scan — these already fall back to one when it is cheaper |
 | format a fluid volume | `FluidDef.Litres` (`game/FluidTank.cs:94`) | — 1 unit = 1 mL everywhere |
-| show a look-at info panel | `InfoBillboard` (`game/InfoBillboard.cs`) | build another Label3D rig |
+| show a look-at info panel | source `InfoBillboard` (`game/InfoBillboard.cs`); native `info_billboard::{FocusedInfo,Content,Bar}` | one accepted focus submits the fixed source canvas; do not build another Label3D rig or treat this presentation as gameplay authority |
 | cut a pitched roof slab so it meets the next slope (ridge, hip, valley, a wall it leans on) | `RoofShapes.PlumbFaces` (`core/UnturnedSim/RoofShapes.cs`) — WallSurface applies it to every pitched `Roof` | cut it square and shift it about: a square cut leaves a V `t/cos(pitch)` deep at every ridge |
 | a tapered surface's outline over one solid | `RoofShapes.TaperPolygon` — WallSurface's `ClipToTaper` is a wrapper | re-lerp the insets: a negative inset (cut line outside the surface) must still clip to the rectangle |
 | the faces of the convex hull of a few points | `ConvexHull.Faces` (`core/UnturnedSim/ConvexHull.cs`) — outward normal, plane offset, ordered loop | use it past a few dozen points: it is brute force, O(n^4) |

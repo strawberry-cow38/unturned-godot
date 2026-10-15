@@ -1,5 +1,5 @@
 //! Original Nameplate: ordinary world depth, camera-facing image/text and 60m range.
-mod raster;
+pub(crate) mod raster;
 pub(crate) use raster::OriginalFont;
 use bevy::{
     asset::{RenderAssetUsages, embedded_asset},

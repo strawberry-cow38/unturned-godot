@@ -11,6 +11,7 @@ mod hdr;
 mod nightvision;
 mod network;
 mod impact;
+mod info_billboard;
 mod locomotion;
 mod particles;
 mod player;
@@ -143,6 +144,7 @@ fn main() -> Result<()> {
             wildlife::WildlifePlugin,
             impact::ImpactPlugin,
         ))
+        .add_plugins(info_billboard::InfoBillboardPlugin)
         .add_plugins((
             hdr::HdrPlugin,
             nightvision::NightVisionPlugin,

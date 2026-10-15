@@ -107,3 +107,6 @@ are distinct systems; porting the former does not complete the latter.
 Ordinary accepted deployable body rendering is now integrated; source seating,
 bounds and host collision are tracked in [DEPLOYABLES_PORT.md](DEPLOYABLES_PORT.md).
 The specialized bodies, placement tools and utility networks remain unfinished.
+The shared native look-at canvas is verified separately in
+[INFO_BILLBOARD_PORT.md](INFO_BILLBOARD_PORT.md); its isolated render does not
+complete the individual gameplay focus and pickup producers.
