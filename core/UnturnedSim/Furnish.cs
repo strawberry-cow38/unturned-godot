@@ -665,8 +665,8 @@ namespace UnturnedSim
             /// <summary>Ceiling lights (strawberry: "apply ceiling lights to ur layouts"): a pendant in the rooms you sit in
             /// -- over the table where there is one -- a flush mount in the rest; one to about every 9 m of each of the
             /// room's rectangles, at the middle of its share. Hung from the ceiling: the next floor's slab underside, a
-            /// flat roof's, or under a pitched roof the roof itself over the spot. Not under a stair hole or over a
-            /// flight, not in a wall.</summary>
+            /// flat roof's, or under a pitched roof the ceiling's (BuildWalls). Not under a stair hole or over a flight,
+            /// not in a wall.</summary>
             // (every 6 m hung four to seven pendants in one living room, a grid like an office's)
             const float LightEvery = 9f;
             /// <summary>How far the pendant hangs below the ceiling (Ceiling_Lamp_Pendant_0, astraclaw).</summary>
@@ -680,10 +680,10 @@ namespace UnturnedSim
                 bool top = f == _res.Floors - 1;
                 float Ceil(float x, float z)
                 {
-                    if (!top) return (f + 1) * Storey - Slab;                               // the floor above's underside
-                    if (_res.Roof == RoofKind.Flat) return (f + 1) * Storey;                 // the roof slab sits on the wall heads
-                    float h = RoofTopAt(_res, x, z);
-                    return float.IsNaN(h) ? (f + 1) * Storey : h;
+                    // the floor above's underside, or under a pitched roof the ceiling's, the same (BuildWalls); a flat roof's
+                    // slab sits on the wall heads
+                    if (!top || _res.Roof != RoofKind.Flat) return (f + 1) * Storey - Slab;
+                    return (f + 1) * Storey;
                 }
                 var spots = new List<(float X, float Z)>();
                 foreach (var q in _room.Rects)
@@ -2474,8 +2474,8 @@ namespace UnturnedSim
             }
             /// <summary>A wall clock's 1 m face has its top this far under the ceiling over it (strawberry, round 12: "hang them
             /// much higher on the walls", then "bring clocks down slightly" from 0.15; the lead: top storeys as the rest), on
-            /// every storey: its middle 2.85 m up under a storey's 3.75 m ceiling (the floor above's slab), 3.35 under a top
-            /// storey's 4.25 m wall heads, lower where a pitched roof comes down nearer. It was 2.5 m, at a standing player's eye.</summary>
+            /// every storey: its middle 2.85 m up under a storey's 3.75 m ceiling (the floor above's slab, or a pitched roof's
+            /// ceiling), 3.35 under a flat roof on a top storey's 4.25 m wall heads. It was 2.5 m, at a standing player's eye.</summary>
             const float ClockUnderCeiling = 0.4f;
             /// <summary>The height the clock's clearance over what stands under it is judged at (Clock): where it hung before.</summary>
             const float ClockClearedAt = 2.5f;

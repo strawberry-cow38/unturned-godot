@@ -691,6 +691,12 @@ namespace UnturnedSim
             ["Ship_1"] = (4, 3, 6),
         };
 
+        /// <summary>The texel a ceiling wears, on a slab's underside (its back face, TexelBack): the palette's Tile -- its
+        /// lightest neutral that is neither wall, floor nor concrete (FloorTexels), the nearest a retail palette comes to
+        /// plaster (House_02's d9d9d9, House_09's e0e0e0, an apartment's bfbfbf or a0a0a0). -1 for "the same as its top"
+        /// when the palette is not in the table.</summary>
+        public static int CeilingTexel(string palette) => palette != null && FloorTexels.TryGetValue(palette, out var t) ? t.Tile : -1;
+
         /// <summary>The texel a room's floor wears: tile where water is, concrete where vehicles and stock are, the
         /// building's floor colour everywhere else. -1 for "the palette's default" when the palette is not in the table.</summary>
         public static int FloorTexelFor(string palette, RoomKind k)
@@ -2508,6 +2514,14 @@ namespace UnturnedSim
             float Dm = D * Cell, he = Ext * 0.5f;
             var bay = res.Bay;
             var tops = new List<WallPlan>();
+            // A pitched roof's rooms look up at a ceiling, not into the roof (strawberry, 2026-10-15: "do single floor homes
+            // not have ceilings?" -- they did not: the walls stopped at their heads and the roof's underside was overhead,
+            // 6 m up at the ridge): a slab as the floor of a storey over them would be, its top at the wall heads, so the
+            // ceiling is at OpeningTop as it is under every floor above -- the attic's floor, the space under the roof
+            // above it. Its top the building's floor colour, as a floor's; underneath, the palette's ceiling texel. A flat
+            // roof is its own ceiling: the slab on the wall heads, painted so underneath.
+            int floorTexel = FloorTexels.TryGetValue(res.Palette ?? "", out var flt) ? flt.Floor : -1, ceilingTexel = CeilingTexel(res.Palette);
+            void Ceiling(WallPlan slab) { slab.Texel = floorTexel; slab.TexelBack = ceilingTexel; res.Walls.Add(slab); }
             // A lower floor's own roof over [xa, xb] (strawberry: "slope from the wall off the edge"): a SHED leaning on
             // the wall of the floor above, rising from its eave at the open end to that wall -- RoofShapes' Shed, so it is
             // the same roof the editor's Shed button builds. Pitched no steeper than lets it meet that wall under its
@@ -2517,7 +2531,16 @@ namespace UnturnedSim
             // the full-length row (Wing.Z0) -- the arm's roof goes no further north than the arm.
             void Lower(float xa, float xb, WallPlan endWall, bool westEnd, float head, float zN)
             {
-                if (res.Roof == RoofKind.Flat) { res.Walls.Add(SlabPlan(xa, xb, -he, zN + he, head + Slab, SurfaceKind.Roof)); return; }
+                if (res.Roof == RoofKind.Flat)
+                {
+                    var flat = SlabPlan(xa, xb, -he, zN + he, head + Slab, SurfaceKind.Roof);
+                    flat.TexelBack = ceilingTexel;
+                    res.Walls.Add(flat);
+                    return;
+                }
+                // under the shed, a ceiling (Ceiling): from SlabInset inside the open end's outer face to the floor above's
+                // slab, which it meets edge to edge, at that slab's height
+                Ceiling(SlabPlan(westEnd ? xa + SlabInset : xa - SlabInset, westEnd ? xb + SlabInset : xb - SlabInset, -he + SlabInset, zN + he - SlabInset, head, SurfaceKind.Floor));
                 float minX = westEnd ? xa - RoofOverhang : xa, maxX = westEnd ? xb : xb + RoofOverhang;
                 float run = maxX - minX;
                 float pitch = MathF.Min(res.RoofPitch, MathF.Atan((Storey - 0.6f) / run) * 180f / MathF.PI);
@@ -2911,11 +2934,16 @@ namespace UnturnedSim
             float head = floors * Storey;
             if (res.Shape != FootprintShape.Rect && floors == 1)
             {
-                if (res.Roof == RoofKind.Flat) res.Walls.AddRange(Slabs(res, head + Slab, SurfaceKind.Roof));
-                else CrossGable(res, head);
+                if (res.Roof == RoofKind.Flat) foreach (var sl in Slabs(res, head + Slab, SurfaceKind.Roof)) { sl.TexelBack = ceilingTexel; res.Walls.Add(sl); }
+                else
+                {
+                    CrossGable(res, head);
+                    foreach (var sl in Slabs(res, head, SurfaceKind.Floor)) Ceiling(sl);
+                }
             }
             else if (res.Roof != RoofKind.Flat)
             {
+                Ceiling(SlabPlan(t0 * Cell - he + SlabInset, t1 * Cell + he - SlabInset, -he + SlabInset, Dm + he - SlabInset, head, SurfaceKind.Floor));
                 var rs = new RoofSpec
                 {
                     Kind = res.Roof, MinX = t0 * Cell - he - RoofOverhang, MaxX = t1 * Cell + he + RoofOverhang,
@@ -2936,7 +2964,12 @@ namespace UnturnedSim
                     else w.GableRise = tri;
                 }
             }
-            else res.Walls.Add(SlabPlan(t0 * Cell - he, t1 * Cell + he, -he, Dm + he, head + Slab, SurfaceKind.Roof));
+            else
+            {
+                var flat = SlabPlan(t0 * Cell - he, t1 * Cell + he, -he, Dm + he, head + Slab, SurfaceKind.Roof);
+                flat.TexelBack = ceilingTexel;
+                res.Walls.Add(flat);
+            }
 
             // ---- the stairs: k1 flight rows against the south wall, centred along the bay. One flight climbs east up row
             // 0; with alternating rows, odd floors climb west up row 1, so each lands beside the next one's foot.
