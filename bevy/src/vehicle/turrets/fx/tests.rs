@@ -217,6 +217,41 @@ fn source_gatling_report_cap_keeps_each_flash_and_npc_cannon_has_original_scale(
     }
     app.update();
     assert_eq!(count::<Flash>(&mut app), 3);
+    let flashes: Vec<_> = app
+        .world_mut()
+        .query_filtered::<(
+            &MeshMaterial3d<material::FlashMaterial>,
+            &bevy::mesh::MeshTag,
+            &Transform,
+            Has<NoFrustumCulling>,
+            Has<NotShadowCaster>,
+        ), With<Flash>>()
+        .iter(app.world())
+        .map(|(material, tag, pose, no_cull, no_shadow)| {
+            (material.0.id(), tag.value, *pose, no_cull, no_shadow)
+        })
+        .collect();
+    assert_eq!(
+        flashes.len(),
+        3,
+        "production flashes use the per-view material"
+    );
+    assert!(
+        flashes
+            .iter()
+            .all(|(material, tag, pose, no_cull, no_shadow)| {
+                *material == flashes[0].0
+                    && f32::from_bits(*tag).is_finite()
+                    && pose.rotation == Quat::IDENTITY
+                    && *no_cull
+                    && *no_shadow
+            }),
+        "one shared material, per-instance roll, no CPU camera basis or flat-AABB culling"
+    );
+    assert_ne!(
+        flashes[0].1, flashes[1].1,
+        "accepted flashes retain independent source rolls"
+    );
     assert_eq!(
         count::<voices::Voice>(&mut app),
         1,

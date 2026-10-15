@@ -109,10 +109,24 @@ actual boarding, F2, Aim cycling to12x and F1 return. Opened captures
 `bevy-mounted-v4-driver-return-verified` retain the original optic presentations;
 the scheduling regressions establish the input behavior on the receiving frame.
 
-Mounted muzzle stars currently face the main player camera in a CPU transform.
-The original `muzzleflash.gdshader` billboards separately in each rendering view;
-scope and reflection cameras therefore still need the same per-view vertex
-adapter. Main-camera flash validation does not establish secondary-view parity.
+Mounted muzzle stars now use the original per-view vertex billboard. The current
+view's right/up basis rotates each source quad independently for the main camera,
+scopes and reflections. A mesh-instance tag retains each accepted shot's random
+roll while sharing one HDR 2.6 additive material. The 50ms accepted-fact lifecycle,
+light, report, smoke and operator spring remain unchanged. Shader-oriented quads
+bypass the unchanged flat mesh bounds and never cast shadows.
+
+The three-camera Vulkan fixture shows the same original star from front, side
+and reflected angles (`bevy-mounted-flash-views.png`). All three retain 9524 lit
+pixels and 153×148 bounds. Selecting the old CPU orientation makes the side view
+vanish and the angled view flatten (`bevy-mounted-flash-cpu-reference.png`); the
+same fixture assertions fail. Front-view pixels match between implementations.
+These are simultaneous-view contract checks and opened images, not saved visual
+goldens. Independent source/shader and image reviews passed. Runtime tests verify
+actual accepted facts create the per-view material with independent roll tags,
+shared material identity and the required culling/shadow guards. Both focused
+accepted-event tests pass against the immutable mounted-muzzle-v66-final bridge;
+the runtime-linked Vulkan fixture passes without shader validation errors.
 
 Original door-gunner characters and their damage/removal, NPC helicopter
 flight/targeting/burst/flee behavior, and complete armed-fleet multiplayer gameplay

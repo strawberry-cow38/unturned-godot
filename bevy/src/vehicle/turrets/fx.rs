@@ -10,12 +10,14 @@ use crate::{
     world::WorldConfig,
 };
 use bevy::{
+    camera::visibility::NoFrustumCulling,
     image::{ImageLoaderSettings, ImageSampler},
     light::NotShadowCaster,
     prelude::*,
 };
 use std::collections::HashMap;
 
+mod material;
 #[cfg(test)]
 mod tests;
 mod voices;
@@ -25,7 +27,8 @@ pub(in crate::vehicle) struct MountedEffectsPlugin;
 pub(crate) struct MountedEffectsUpdate;
 impl Plugin for MountedEffectsPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Effects>()
+        app.add_plugins(material::FlashMaterialPlugin)
+            .init_resource::<Effects>()
             .add_systems(Startup, prepare)
             .add_systems(
                 Update,
@@ -38,7 +41,7 @@ impl Plugin for MountedEffectsPlugin {
             )
             .add_systems(
                 PostUpdate,
-                (billboard, voices::update)
+                voices::update
                     .after(TransformSystems::Propagate)
                     .before(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate),
             );
@@ -55,37 +58,30 @@ struct Effects {
 #[derive(Resource)]
 struct Art {
     flash: Handle<Mesh>,
-    material: Handle<StandardMaterial>,
+    material: Handle<material::FlashMaterial>,
 }
 #[derive(Component)]
 struct Transient;
 #[derive(Component)]
 struct Lifetime(f32);
 #[derive(Component)]
-struct Flash(f32);
+struct Flash;
 fn prepare(
     mut commands: Commands,
     assets: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut materials: ResMut<Assets<material::FlashMaterial>>,
 ) {
     commands.insert_resource(Art {
         flash: meshes.add(Rectangle::new(2.6, 2.6)),
-        material: materials.add(StandardMaterial {
-            base_color: Color::linear_rgba(2.6, 2.6, 2.6, 1.),
-            base_color_texture: Some(
-                assets
-                    .load_builder()
-                    .with_settings(|s: &mut ImageLoaderSettings| {
-                        s.sampler = ImageSampler::linear();
-                    })
-                    .load("muzzleflash.png"),
-            ),
-            unlit: true,
-            cull_mode: None,
-            alpha_mode: AlphaMode::Add,
-            ..default()
-        }),
+        material: materials.add(material::source_material(
+            assets
+                .load_builder()
+                .with_settings(|s: &mut ImageLoaderSettings| {
+                    s.sampler = ImageSampler::linear();
+                })
+                .load("muzzleflash.png"),
+        )),
     });
 }
 fn clip(fx: &mut Effects, root: &std::path::Path, gun: &str, reload: bool) -> Option<String> {
@@ -188,7 +184,11 @@ fn receive(
             Mesh3d(art.flash.clone()),
             MeshMaterial3d(art.material.clone()),
             Transform::from_scale(Vec3::splat(scale)),
-            Flash(roll),
+            Flash,
+            material::roll_tag(roll),
+            // The vertex shader rotates into each current view, outside the
+            // flat source mesh AABB. Its 50ms lifetime bounds this tiny draw.
+            NoFrustumCulling,
             NotShadowCaster,
             ChildOf(root),
         ));
@@ -275,22 +275,5 @@ fn receive(
                 );
             }
         }
-    }
-}
-fn billboard(
-    camera: Query<&GlobalTransform, (With<PlayerCamera>, Without<Flash>)>,
-    parents: Query<&GlobalTransform, Without<Flash>>,
-    mut flashes: Query<(&Flash, &ChildOf, &mut Transform, &mut GlobalTransform)>,
-) {
-    let Ok(camera) = camera.single() else {
-        return;
-    };
-    for (flash, parent, mut pose, mut global) in &mut flashes {
-        let Ok(parent) = parents.get(parent.parent()) else {
-            continue;
-        };
-        pose.rotation =
-            parent.rotation().inverse() * camera.rotation() * Quat::from_rotation_z(-flash.0);
-        *global = parent.mul_transform(*pose);
     }
 }

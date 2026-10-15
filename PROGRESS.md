@@ -1900,3 +1900,7 @@ players driving. Offscreen remote flight/blast rendering, secondary-view flash
 billboarding, original crew and NPC controllers remain separate work. Detailed
 capture names, fixture boundaries and source corrections are in
 bevy/docs/MOUNTED_NATIVE_PORT.md.
+
+### Bevy mounted muzzle stars in every rendering view
+
+Replaced the mounted flash CPU pose tied to the main camera with the original per-view billboard vertex stage. Each accepted star keeps its independent source roll in an instance tag and shares one HDR 2.6 additive material; source 50ms retirement, sound/light/smoke and operator spring are unchanged. Runtime quads skip flat-mesh frustum culling and shadows. The simultaneous front/side/reflected Vulkan fixture renders the same source star in all three views; the old CPU control loses the side star and flattens the reflected view, failing the same geometry assertions. Front-view pixels are identical. Source/shader and both opened images received independent peer review. Focused accepted-event tests cover material/tag/lifecycle integration; final results are recorded in MOUNTED_NATIVE_PORT.md.
