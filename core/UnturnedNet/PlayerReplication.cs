@@ -247,6 +247,8 @@ namespace UnturnedGodot.Net
         public const byte CommandVehicleMaintenance = 76; // v69: indexed source mechanics repairs and manual horn
         public const byte CommandLearnSkillNode = 77; // v70: owner-only original skill graph purchase
         public const byte CommandVehicleDoor = 78; // v70: source bus driver/focused toggle intent.
+        public const byte CommandEmptyFuel = 79; // v70: empty an exact owned fuel-container instance.
+        public const byte CommandSalvageItem = 80; // v70: salvage the exact owned item through the original queue.
         public const byte CommandVehicleLighting = 75; // v68: source light switches and lamp repair intents
         public const byte CommandMountedInput = 74; // v64: accepted operator aim/trigger intent
 

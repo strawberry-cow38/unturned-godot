@@ -59,14 +59,14 @@ namespace UnturnedGodot.Net
 
         /// <summary>Take the ingredients and start the clock. Returns false when the bag cannot pay, in which
         /// case nothing is taken and nothing is queued.</summary>
-        public bool Enqueue(ushort owner, ushort blueprintIndex)
+        public bool Enqueue(ushort owner, ushort blueprintIndex, Item prefer = null)
         {
             if (Blueprints == null || blueprintIndex >= Blueprints.Count) return false;
             var bp = Blueprints[blueprintIndex];
             if (bp == null) return false;
             if (!_inventories.TryGet(owner, out var entry)) return false;
 
-            var adapter = new Crafting.PlayerInvAdapter(entry.Inventory);
+            var adapter = new Crafting.PlayerInvAdapter(entry.Inventory) { Prefer = prefer };
             if (!Crafting.CanCraft(bp, adapter, out _)) return false;
 
             // Spend now. Consume=false inputs are TOOLS -- they must be present (CanCraft just checked) and are

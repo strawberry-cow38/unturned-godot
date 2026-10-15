@@ -145,6 +145,9 @@ namespace UnturnedGodot.Net
         /// falls back to crafting instantly -- named with a trailing underscore only because `Crafting` is the
         /// static rules class this file already leans on, and shadowing it would be worse.</summary>
         public ServerCrafting Crafting_;
+        /// <summary>Host catalog lookup for the exact InventoryUI salvage recipe.
+        /// Null preserves hosts that do not install source salvage metadata.</summary>
+        public Func<ushort, int> SalvageRecipe;
         /// <summary>v55: who knows which locked recipes. Null (bare L0 harnesses) = everyone knows everything, which is
         /// what every craft meant before blueprints could be locked.</summary>
         public ServerBlueprints Knowledge;
@@ -524,6 +527,11 @@ namespace UnturnedGodot.Net
                 OnCraft,
                 validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.BlueprintIndex < Blueprints.Count);
 
+            commands.Register<SalvageItemCommand>(ReplicationIds.CommandSalvageItem, SalvageItemCommand.TryRead,
+                OnSalvageItem,
+                validate: (sender, cmd) => _inventories.TryGet(sender, out _)
+                    && _combat.TryGet(sender, out var life) && life.Alive);
+
             commands.Register<CraftCancelCommand>(ReplicationIds.CommandCraftCancel, CraftCancelCommand.TryRead,
                 OnCraftCancel,
                 validate: (sender, cmd) => _inventories.TryGet(sender, out _));
@@ -537,6 +545,25 @@ namespace UnturnedGodot.Net
                 validate: (sender, cmd) => _inventories.TryGet(sender, out _)
                                            && cmd.MagPage < PlayerInventory.PAGES
                                            && cmd.RoundPage < PlayerInventory.PAGES);
+
+            // Source EmptyFuelSelected writes fuelLevel=0 in the bag or hand.
+            // Keep that behavior, with the actual owner instance validated here
+            // so a delayed menu cannot empty a replacement at the same address.
+            commands.Register<EmptyFuelCommand>(ReplicationIds.CommandEmptyFuel, EmptyFuelCommand.TryRead,
+                (sender, cmd) =>
+                {
+                    var inventory = SenderInventory(sender);
+                    var page = inventory?.items[cmd.Address.Page];
+                    byte index = page?.getIndex(cmd.Address.X, cmd.Address.Y) ?? byte.MaxValue;
+                    var jar = index == byte.MaxValue ? null : page.getItem(index);
+                    if (jar?.item?.id != cmd.Address.Id || jar.x != cmd.Address.X || jar.y != cmd.Address.Y
+                        || jar.GetAsset()?.IsFuelContainer != true || _inventories.ItemIdentityProvider == null
+                        || _inventories.ItemIdentityProvider(jar.item) != cmd.Token) return;
+                    jar.item.fuelLevel = 0;
+                    _inventories.ServerMarkDirty(sender);
+                },
+                validate: (sender, cmd) => _inventories.TryGet(sender, out _)
+                    && _combat.TryGet(sender, out var life) && life.Alive);
 
             // THE ON/OFF BUTTON. Reach-checked exactly like opening the thing: the client can already only
             // see a cooker it is standing at, and this makes the server agree rather than take its word.
@@ -1380,6 +1407,31 @@ namespace UnturnedGodot.Net
                 var evt = new ItemPickupDeniedEvent { NetId = cmd.NetId };
                 _sendTo(sender, NetMessagePak.Pack(ReplicationIds.EventItemPickupDenied, evt.Write));
             }
+        }
+
+        void OnSalvageItem(ushort sender, SalvageItemCommand cmd)
+        {
+            var inventory = SenderInventory(sender);
+            var page = inventory?.items[cmd.Address.Page];
+            byte index = page?.getIndex(cmd.Address.X, cmd.Address.Y) ?? byte.MaxValue;
+            var jar = index == byte.MaxValue ? null : page.getItem(index);
+            int recipe = SalvageRecipe?.Invoke(cmd.Address.Id) ?? -1;
+            if (jar?.item == null || jar.x != cmd.Address.X || jar.y != cmd.Address.Y
+                || jar.item.id != cmd.Address.Id || _inventories.ItemIdentityProvider == null
+                || _inventories.ItemIdentityProvider(jar.item) != cmd.Token
+                || recipe < 0 || recipe >= Blueprints.Count || recipe > ushort.MaxValue || Crafting_ == null)
+            { Diag.CraftsRejected++; return; }
+            var bp = Blueprints[recipe];
+            _skills.TryGet(sender, out var skills);
+            // Match the existing craft admission and require the selected copy
+            // to be a consumed ingredient. This is no generic recipe bypass.
+            if (bp == null || bp.RequiresStation || bp.Operation != "Craft"
+                || !Crafting.MeetsSkill(bp, skills?.Skills)
+                || (Knowledge != null && !Knowledge.Knows(sender, bp))
+                || !bp.Inputs.Exists(i => i.Consume && i.Amount > 0 && Crafting.Resolve(i.Guid) == jar.item.id))
+            { Diag.CraftsRejected++; return; }
+            if (Crafting_.Enqueue(sender, (ushort)recipe, jar.item)) Diag.CraftsApplied++;
+            else Diag.CraftsRejected++;
         }
 
         void OnCraft(ushort sender, CraftCommand cmd)

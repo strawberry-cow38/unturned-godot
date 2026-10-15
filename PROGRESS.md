@@ -2502,3 +2502,22 @@ checks all 31 type files, exact manifest and untouched source positions, then
 repaints the same seed entirely dirt and confirms every old instance is removed.
 That regression passes; no seed-only scatter cache was introduced. Chart,
 original save/reopen and native finite/BuildingGen consumers remain unfinished.
+
+### Bevy Inventory read model and exact owner actions
+
+Added read-only original InventoryUI presentation for item/context text, fluid
+contents, cooker state, magazine compatibility, equip displacement and the first
+eighteen ready quick-craft recipes. Generated source helpers retain the original
+placement and presentation rules without mutating accepted inventory replicas.
+Protocol 70 commands 79/80 validate an alive sender and exact owned item token for
+EmptyFuel and selected-copy Salvage; salvage retains the existing timed craft
+queue and original Prefer consumption order. Ordinary Craft remains unchanged.
+
+The immutable inventory-view-v70-second candidate passes all 712 core, 159 managed
+bridge and 128 JSONL tests. Five new actual-UDP cases cover privacy, stale/foreign
+identity, dead/type rejection, cooker lifecycle and choosing the worn duplicate
+without spending its pristine neighbour; sixteen focused core wire/craft tests
+pass. Native dashboard/drag/context/paperdoll integration remains separate and
+unverified visually. Viewed-container/Nearby Empty still needs authorized exact
+identity support, and nearby crafting-station policy remains separate. See
+`bevy/docs/INVENTORY_PORT.md`.

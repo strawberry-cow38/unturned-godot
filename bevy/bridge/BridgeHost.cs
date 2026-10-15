@@ -107,6 +107,7 @@ public sealed partial class BridgeHost : IDisposable
                     actions = Actions.Keys.Append("respawn").Append("setFiremode").Append("holdItem").Append("equipAndHold").Order().ToArray() };
             case "rebase": return Rebase(r);
             case "craftingView": RequireSession(); return ReadCrafting(r);
+            case "inventoryView": RequireSession(); return ReadInventory(r);
             case "simulate":
                 RequireSession();
                 return Simulate(r.TryGetProperty("input", out var input) ? input : r);
@@ -370,6 +371,7 @@ public sealed partial class BridgeHost : IDisposable
         foreach (var spec in _serviceSpecs)
             if (spec.TryGetProperty("vehicles", out _)) _vehicles.Register(spec); else _services.Register(spec);
         _server.Transactions.Blueprints = _catalog.Recipes;
+        ConfigureInventoryTransactions();
         _server.PendingSave = save;
         save?.ApplyWorld(_server, 0);
         _vehicles.RestoreFuel(save);
