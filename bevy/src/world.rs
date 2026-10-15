@@ -64,6 +64,15 @@ impl Default for WorldConfig {
         }
     }
 }
+impl WorldConfig {
+    pub(crate) fn nodes_file(&self) -> String {
+        if self.map_name.eq_ignore_ascii_case("PEI") {
+            "nodes.tsv".into()
+        } else {
+            format!("nodes_{}.tsv", self.map_name)
+        }
+    }
+}
 #[derive(Resource, Default)]
 pub struct WorldState {
     pub ready: bool,
@@ -1706,7 +1715,7 @@ fn resource_shape(name: &str, transform: Transform) -> Option<(Collider, ObjData
         },
     ))
 }
-fn trimesh_collider(data: &ObjData) -> Option<Collider> {
+pub(crate) fn trimesh_collider(data: &ObjData) -> Option<Collider> {
     let vertices = data
         .positions
         .iter()

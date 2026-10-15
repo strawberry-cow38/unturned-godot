@@ -11,6 +11,7 @@ mod exit;
 mod flight;
 mod geometry;
 mod hearing;
+mod npc;
 mod remote;
 mod render;
 pub(crate) mod seats;
@@ -171,6 +172,7 @@ impl Plugin for VehiclePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Occupancy>()
             .add_plugins(turrets::fx::MountedEffectsPlugin)
+            .add_plugins(npc::NpcFlightPlugin)
             .add_plugins(turrets::crew::CrewPlugin)
             .init_resource::<turrets::Operator>()
             .init_resource::<Vehicles>()
@@ -872,6 +874,7 @@ fn ray_box(origin: Vec3, dir: Vec3, min: Vec3, max: Vec3, limit: f32) -> Option<
 fn step_bodies(
     world: Res<WorldState>,
     network: Option<Res<crate::player::GameSnapshot>>,
+    pilots: Option<Res<npc::Autopilots>>,
     ui: Option<Res<UiState>>,
     geometry: Option<Res<WorldGeometry>>,
     context: ReadRapierContext,
@@ -925,6 +928,7 @@ fn step_bodies(
         // left the collision window. The authority retains its parked pose, and the
         // original single body wakes when its region is physically present again.
         let outside = body.driver_player_id == 0
+            && !pilots.as_ref().is_some_and(|p| p.managed(body.net_id))
             && geometry.as_ref().is_some_and(|g| {
                 g.loaded_radius > 0.
                     && pose.translation.xz().distance(g.loaded_center.xz()) > g.loaded_radius
@@ -1034,7 +1038,8 @@ fn step_bodies(
                         flight::ground_effect(spec.rotor_radius, hit.map(|(_, distance)| distance));
                 }
             }
-            let driven = body.driver_player_id != 0;
+            let driven = body.driver_player_id != 0
+                || pilots.as_ref().is_some_and(|p| p.active(body.net_id));
             let exploded = body.flags & 32 != 0;
             let flight = body.flight.step(
                 spec,

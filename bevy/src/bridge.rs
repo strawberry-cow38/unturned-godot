@@ -151,6 +151,7 @@ impl BridgeProcess {
                 | "worldServices"
                 | "worldLoot"
                 | "worldVehicles"
+                | "worldNpcHelis"
         ) {
             request
                 .entry("originEpoch")

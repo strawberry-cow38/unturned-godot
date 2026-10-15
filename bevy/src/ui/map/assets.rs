@@ -47,11 +47,7 @@ impl MapAssets {
                 path.file_name().unwrap_or_default().to_string_lossy()
             );
         }
-        let nodes = if config.map_name == "PEI" {
-            "nodes.tsv".into()
-        } else {
-            format!("nodes_{}.tsv", config.map_name)
-        };
+        let nodes = config.nodes_file();
         self.towns = std::fs::read_to_string(config.content_root.join(nodes))
             .map(|s| parse_nodes(&s))
             .unwrap_or_default();

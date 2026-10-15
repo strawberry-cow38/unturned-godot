@@ -26,6 +26,7 @@ pub struct Flight {
     ignition_length: f32,
     ignition_remaining: f32,
     ignition_fired: bool,
+    instant_start: bool,
     ge_applied: f32,
     drag_forward: f32,
     lift_cap: f32,
@@ -285,6 +286,7 @@ impl Flight {
             ignition_length,
             ignition_remaining: 0.,
             ignition_fired: false,
+            instant_start: false,
             ge_applied: 1.,
             drag_forward: if spec.heli && spec.speed_max > 0.01 {
                 level_flight_acceleration(spec.heli_thrust * 1.05) / spec.speed_max.powi(2)
@@ -308,6 +310,14 @@ impl Flight {
                 .map(|w| (w.tuning.max_suspension_force, w.tuning.friction_slip))
                 .collect(),
         }
+    }
+    /// Vehicle.SpawnRotorRunning plus its NPC DebugInstantStart flag. Controls
+    /// still ramp the source collective; only the already-flying disc is warm.
+    pub(super) fn spawn_rotor_running(&mut self) {
+        self.spool = 1.;
+        self.instant_start = true;
+        self.ignition_remaining = 0.;
+        self.ignition_fired = true;
     }
     pub fn input(
         &mut self,
@@ -347,7 +357,7 @@ impl Flight {
         self.grace = (self.grace - dt).max(0.);
         let running = input.engine && !exploded;
         let want = if running { 1. } else { 0. };
-        let spool_up = if spec.heli && self.ignition_length > 0.1 {
+        let spool_up = if spec.heli && !self.instant_start && self.ignition_length > 0.1 {
             self.ignition_length * 0.74
         } else {
             3.2
@@ -360,7 +370,11 @@ impl Flight {
         self.ignition_remaining = (self.ignition_remaining - dt).max(0.);
         if running && self.spool < 0.05 && !self.ignition_fired {
             self.ignition_fired = true;
-            self.ignition_remaining = self.ignition_length * 0.74;
+            self.ignition_remaining = if self.instant_start {
+                0.
+            } else {
+                self.ignition_length * 0.74
+            };
         } else if !running && self.spool < 0.01 {
             self.ignition_fired = false;
         }
