@@ -908,3 +908,8 @@ aligned, near seabed is visible, and shore foam follows geometry. Both logs are
 free of shader errors and missing assets. Artifact paths and remaining underwater,
 rain/caustic, water-volume and graphics-option work are recorded in
 bevy/docs/WORLD_PORT.md.
+
+### Bevy accepted-shot recoil condition (2026-10-14)
+
+- Native recoil consumes the optional accepted-shot `recoilMultiplier` captured by the bridge before weapon wear, holstering or skill changes; older facts retain the replicated-condition fallback.
+- Six native recoil regressions pass, including a worn rifle shot whose condition and skill survive holstering before event delivery (`/tmp/unturned-bevy-shot-recoil-tests.log`).

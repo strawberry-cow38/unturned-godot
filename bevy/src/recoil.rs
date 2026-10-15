@@ -193,8 +193,15 @@ impl Recoil {
                 .as_f64()
                 .map(|v| v as f32)
                 .unwrap_or_else(|| num(skill, "level", 0.) / num(skill, "max", 7.).max(1.));
-            let multiplier =
-                (1. - mastery * 0.4) * if quality < 0.5 { 2. - quality * 2. } else { 1. };
+            // Accepted shot metadata is captured before wear, holstering or a
+            // skill change. Older peers still use the replicated condition.
+            let multiplier = event["data"]["recoilMultiplier"]
+                .as_f64()
+                .filter(|v| v.is_finite() && *v >= 0.)
+                .map(|v| v as f32)
+                .unwrap_or_else(|| {
+                    (1. - mastery * 0.4) * if quality < 0.5 { 2. - quality * 2. } else { 1. }
+                });
             self.kick(&item.gun, multiplier, sequence);
         }
         if let (Some(tick), Some(last)) = (snapshot["tick"].as_u64(), self.last_shot_tick) {
@@ -212,6 +219,30 @@ impl Recoil {
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn accepted_shot_keeps_condition_and_skill_after_holstering() {
+        let mut catalog = ItemCatalog::default();
+        catalog.items.insert(
+            4,
+            serde_json::from_value(json!({
+                "id":4,"name":"test","type":"Gun","asset":"eaglefire",
+                "gun":{"recoilMinY":4.,"recoilMaxY":4.}
+            }))
+            .unwrap(),
+        );
+        let mut r = Recoil::default();
+        let mut s = json!({"playerId":1,"events":[],"player":{"stance":"stand"},
+            "weapon":{"held":null},"inventory":{"pages":[]},
+            "skills":{"groups":[[{}, {"mastery":1.}]]}});
+        r.update(&s, &catalog, 1, 0.1, false);
+        s["events"] = json!([{"seq":1,"kind":"fire","data":{
+            "playerId":1,"gun":"eaglefire","quality":25,"recoilMultiplier":1.5
+        }}]);
+        assert_eq!(r.update(&s, &catalog, 1, 0.1, false), Vec2::new(0., 6.));
+        s["events"][0]["seq"] = json!(2);
+        s["events"][0]["data"]["recoilMultiplier"] = json!(0.9);
+        assert!((r.update(&s, &catalog, 1, 0.1, false).y - 3.6).abs() < 0.00001);
+    }
     #[test]
     fn aim_walks_the_whole_pattern_and_never_recovers_on_its_own() {
         let gun =
