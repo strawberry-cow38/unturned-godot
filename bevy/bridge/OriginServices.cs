@@ -32,6 +32,7 @@ public sealed partial class BridgeHost
         _services.TranslateWorld(delta);
         _vehicles.TranslateWorld(delta);
         _loot?.TranslateWorld(delta);
+        _wildlife.TranslateWorld(delta);
         for (int i = 0; i < _serviceSpecs.Count; i++) _serviceSpecs[i] = CoordinateJson.ServiceSpec(_serviceSpecs[i], delta);
         for (int i = 0; i < _events.Count; i++)
         {

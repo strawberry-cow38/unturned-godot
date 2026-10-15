@@ -6,7 +6,7 @@ namespace UnturnedBevy;
 
 /// <summary>Host geometry for authoritative combat. Clients submit aim, never
 /// hits. The local world loader supplies static meshes and keyed moving bodies.</summary>
-public sealed class WorldGeometry
+public sealed partial class WorldGeometry
 {
     readonly List<Triangle> _triangles = new();
     readonly Dictionary<string, Node> _dynamic = new();
@@ -25,7 +25,7 @@ public sealed class WorldGeometry
         public Node Left, Right;
         public Triangle[] Leaf;
     }
-    public void Clear() { _triangles.Clear(); _terrainTriangles.Clear(); _root = null; _terrainRoot = null; _dynamic.Clear(); }
+    public void Clear() { _triangles.Clear(); _terrainTriangles.Clear(); _root = null; _terrainRoot = null; _dynamic.Clear(); _layerPatches.Clear(); }
     public void ClearDynamic() => _dynamic.Clear();
     public void TranslateWorld(Vector3 delta)
     {
@@ -40,6 +40,7 @@ public sealed class WorldGeometry
         for (int i = 0; i < _triangles.Count; i++) _triangles[i] = Shift(_triangles[i]);
         for (int i = 0; i < _terrainTriangles.Count; i++) _terrainTriangles[i] = Shift(_terrainTriangles[i]);
         Tree(_root); Tree(_terrainRoot); foreach (var tree in _dynamic.Values) Tree(tree);
+        foreach (var p in _layerPatches) { p.X += delta.x; p.Z += delta.z; }
     }
 
     public void SetDynamic(string key, WorldGeometry geometry)

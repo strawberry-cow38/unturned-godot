@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Protocol + authority integration tests against the running managed executable."""
 import json
+import os
 from pathlib import Path
 import subprocess
 import struct
@@ -8,7 +9,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
-DLL = ROOT / 'bevy/bridge/bin/Debug/net8.0/UnturnedBevy.Bridge.dll'
+DLL = Path(os.environ.get('UG_BRIDGE_DLL', ROOT / 'bevy/bridge/bin/Debug/net8.0/UnturnedBevy.Bridge.dll'))
 DOTNET = str(Path.home() / '.dotnet/dotnet')
 
 

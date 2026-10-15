@@ -3,6 +3,7 @@
 Build: `dotnet build bevy/bridge/UnturnedBevy.Bridge.csproj`.
 Run: `dotnet bevy/bridge/bin/Debug/net8.0/UnturnedBevy.Bridge.dll`.
 Protocol tests: `python3 bevy/bridge/test_bridge.py` (build first).
+Wildlife authority tests: `python3 bevy/bridge/test_wildlife.py`.
 
 This host references the original core projects. It does not load Godot. Standard
 input/output carry one JSON object per line. Diagnostics use standard error.
@@ -11,7 +12,7 @@ Requests have `{id,op,...}`; replies have `{id,ok,result,state}` or
 the actual outcome appears in subsequent replicated state.
 
 - `init`: `contentRoot` is an absolute content directory; optional `name`, `mapId`,
-  `spawn:[x,y,z]`, `origin:[doubleX,doubleZ]`, `yaw`, `seed:1337`, `starterKit:false`. Returns protocol version, capabilities and
+  `spawn:[x,y,z]`, `origin:[doubleX,doubleZ]`, `yaw`, `seed:1337`, `starterKit:false`, `allowCheats:true`. `UG_DEDICATED_NOCHEATS=1` changes the cheats default. Returns protocol version, capabilities and
   action names. The explicit starter kit is a development fixture seeded by the
   authority; normal starts have empty inventories.
 - `simulate`: `input:{moveX,moveY,jump,grounded,stance,yaw,pitch,velocity?,heldItemId}`.
@@ -39,6 +40,10 @@ the actual outcome appears in subsequent replicated state.
   `Spawns/Jars.dat`. Original parsers and weighted rolls feed server-owned loot;
   spawning follows all players at the original 95/125m thresholds and 600-item cap.
 - `worldSpawns`: `mapRoot`; original player spawn parser returns `{players:[{x,z,yaw}]}`.
+- `worldWildlife`: `mapRoot`; loads original `Spawns/Fauna.dat` tables and points.
+  Optional `points:[[x,y,z],...]` selects the original generated-point loader; these
+  positions are already local world coordinates, while retail file positions are
+  converted from Unity coordinates and the active absolute origin.
 - `worldSpawn`: `items:[{itemId,amount:1,quality:100,position:[x,y,z]}]`; trusted host
   scene registration, not a player command. Creates real authoritative world items.
 - `shutdown`: reply and exit.
@@ -71,6 +76,33 @@ geometry; use `replace:false` to append chunks. Defer BVH construction with
 `finalize:false`, then finalize the last chunk. Combat rays use this host-owned
 BVH; the player never supplies a claimed hit. `worldRay:{from,to}` is a read-only
 diagnostic returning `{hit,point,destructibleIndex,resourceIndex}`.
+
+`terrainLayers:[{origin:[x,z],width,height,spacing:[dx,dz],layers:[byte,...]}]`
+supplies the original dominant-layer field. Rows are Z, columns X; PEI has negative
+Z spacing. Sampling rounds to the nearest grid point with midpoint-even ties and
+clamps at the edge. Layer 5 remains the source's sand/water proxy, including dry
+sand; missing metadata returns 255 rather than inferring water from sea height.
+
+Wildlife retains the original `AnimalAgent` brain, species stats, fauna-table
+selection, 130/165m stream distances and 36-animal cap. `state.animals` contains
+actual `AnimalReplication` position/yaw/species/anim fields plus source clip,
+health, bodyHeight/radius, rig/texture, rigYawFix, dead, corpseRemainingTicks and
+deathImpulse. The local host renders `hostPosition`/`hostYaw` from the brain's
+50Hz pose; remote replicas retain their original 12.5Hz publication cadence.
+There is one terrain-followed body, with no second native AI or movement solve.
+`animalPanic`, `animalHit` and `animalDied` are retained accepted facts. Bullet,
+melee and grenade damage use the existing validated combat commands; bullet
+damage captures shell selection, condition and distance falloff at fire time.
+The original animal melee proximity cone follows typed tree/prop/body targets;
+untyped walls do not add a new melee gate. Vision, bullets and blasts use source
+world occlusion. Source corpses last 12 seconds, then fauna points can respawn;
+the current source has no animal death loot or XP. Save/load preserves brain
+RNG, targets, timers, health and corpse lifetime, and rebasing preserves all IDs.
+Original `spawnanimal`/`animal` console commands accept species name/prefix and
+count 1–12, use the persistent golden-angle placement sequence, and respect the
+server cheat gate. No animals are invented for `InfiniteTerrain`: its source
+world does not register wildlife; the separate finite-island fauna generator is
+an outstanding native world path.
 
 Coordinates use Bevy/Godot right-handed Y-up, camera forward -Z. Terrain normals are
 flat XYZ floats; layers are integers rather than JSON's base64 byte-array encoding.
@@ -109,8 +141,8 @@ source markers that fail on drift. Filesystem/value adapters preserve the small
 Godot API surface those sources use; no Godot engine or SDK is loaded.
 
 Current integration limits: an available client command does not imply its world
-entity or host service is registered. Animal/zombie sensing and movement,
-attachment effects, blowtorch repair and remaining presentation still need host
+entity or host service is registered. Zombie sensing and movement,
+attachment effects and remaining presentation still need host
 adapters. Weather timers restart on load as in the original scene lifecycle;
 clock/day, retail loot provenance and resource timers persist.
 

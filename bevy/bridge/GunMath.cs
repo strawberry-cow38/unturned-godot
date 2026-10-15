@@ -11,6 +11,8 @@ public static class Mathf
     public static float Max(float a, float b) => Math.Max(a, b);
     public static float Cos(float v) => MathF.Cos(v);
     public static float Sin(float v) => MathF.Sin(v);
+    public static float Min(float a, float b) => Math.Min(a, b);
+    public static float Sqrt(float a) => MathF.Sqrt(a);
 }
 public struct Vector2(float x, float y)
 {

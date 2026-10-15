@@ -115,6 +115,7 @@ donor = match(r'public static string AnimationDonorFor\(string gunName\)\s*=>[^;
 # loose-round consumption remain verbatim, hosted on authoritative inventories.
 player = read('game/PlayerController.cs')
 parts = [player[player.index('        bool UsesMagItem =>'):player.index('        // infAmmo: refill')],
+         match(r'float ShotDamage\(\)\s*=>[^;]+;', player),
          player[player.index('        public SDG.Unturned.ItemAsset HeldGunAsset'):player.index('        // Loose ammo (shotgun shells')],
          player[player.index('        bool FeedsLooseRounds =>'):player.index('        /// <summary>Put <paramref name="n"/> loose rounds')],
          player[player.index('        int ConsumeShells(int want)'):player.index('        // --- shotgun ammo-type picker API')]]
@@ -172,3 +173,57 @@ rules = {
     'DeployableDamage': number(r'v.TakeDamage\(SDG.Unturned.ExplosionMath.Linear\(([0-9.]+f)', deployable),
 }
 (out / 'BodyRules.g.cs').write_text('namespace UnturnedBevy { public static class BodyRules {\n' + '\n'.join(f'public const float {key} = {value};' for key, value in rules.items()) + '}}')
+# Source wildlife behavior: retain the actual methods and constants, replacing
+# only scene ownership, collision queries and presentation with explicit adapters.
+animal = read('game/AnimalAgent.cs')
+field = read('game/AnimalField.cs')
+def method(source, signature):
+    return match(re.escape(signature) + r'\s*\{.*?\n        \}', source)
+
+def adapt_brain(body):
+    body = body.replace('Rig?.Play(', 'Play(')
+    body = body.replace('Terr != null && Terrain.IsWater(Terr.SampleDominantLayer(tx, tz))', 'SampleLayer(tx, tz) == 5')
+    body = body.replace('public override void _Process(double delta)', 'public void Step(double delta)')
+    body = '\n'.join(line for line in body.splitlines() if 'if (Rig != null && !IsInstanceValid(Rig))' not in line)
+    body = body.replace('GameAudio.PlayAt(this, GameAudio.Pick("animals", AnimalCatalog.Get(Species).Rig + "_panic"), GlobalPosition, -2f, 8f, 90f);', 'Panic?.Invoke();')
+    if 'void CheckVision' in body:
+        start = body.index('            var space = GetWorld3D()')
+        end = body.index('            FleeFrom(eye.Value);', start)
+        body = body[:start] + '            if (Occluded(head, eye.Value)) return;\n' + body[end:]
+    if 'void DamageHit' in body:
+        body = '\n'.join(line for line in body.splitlines() if 'CollisionLayer = 0;' not in line and 'RemoveFromGroup(' not in line)
+        body = body.replace('-GlobalTransform.Basis.Z', 'Forward')
+        start = body.index('                Rig?.RagdollStart(')
+        end = body.index('                return;', start)
+        body = body[:start] + '                Died?.Invoke((f + Vector3.Up * 0.5f).Normalized() * 6f);\n' + body[end:]
+    return body
+
+brain_parts = [animal[animal.index('        Vector3 _target;'):animal.index('        public void Begin()')],
+    match(r'public const float RigYawFix[^;]+;', animal),
+    'public const double CorpseSeconds = ' + number(r'CreateTimer\(([0-9.]+)\)', animal) + ';']
+for signature in ['void StartIdle()', 'void PickTarget()', 'public void DamageHit(float amount, Vector3 point, Vector3 dir)',
+                  'void FleeFrom(Vector3 threat)', 'void CheckVision(double delta)', 'public override void _Process(double delta)']:
+    brain_parts.append(adapt_brain(method(animal, signature)))
+(out / 'AnimalBrain.g.cs').write_text('// Generated unchanged behavior from game/AnimalAgent.cs with explicit engine adapters.\nusing Godot; using UnturnedGodot.Net; namespace UnturnedBevy { public sealed partial class AnimalBrain {\n' + '\n'.join(brain_parts) + '}}')
+
+field_parts = [field[field.index('        struct Pt'):field.index('        // Streaming anchors')]]
+field_parts.append(match(r'public const int PublishDivisorTicks[^;]+;', read('game/AnimalNetSync.cs')))
+console = read('game/DevConsole.cs')
+field_parts.append(match(r'const float GoldenAngle[^;]+;', console))
+spawn_console = console[console.index('                var kinds = new System.Collections.Generic.List<(string name, ushort id)>(AnimalField.SpawnableKinds());'):console.index('\n            // ---- temperature')]
+spawn_console = spawn_console[:spawn_console.rindex('                return;')]
+spawn_console = spawn_console.replace('AnimalField.SpawnableKinds()', 'Kinds.Select(k => (k.Value.rig, k.Key))')
+spawn_console = spawn_console.replace('                if (Player == null) { Echo("no player to spawn near"); return; }', '')
+spawn_console = spawn_console.replace('Player.GlobalPosition', 'playerPosition').replace('af.BuildAnimal(', 'BuildAnimal(').replace('GD.Randi()', '(uint)Random.Shared.NextInt64(0, 1L << 32)')
+field_parts.append('void SpawnConsole(string arg, Vector3 playerPosition, Action<string> Echo) {' + spawn_console + '}')
+field_parts[0] = field_parts[0].replace('Dictionary<int, Node3D>', 'Dictionary<int, AnimalBrain>')
+for signature in ['static float NearestDistSq(List<Vector3> anchors, float x, float z)', 'public void HubProcess(double delta)']:
+    body = method(field, signature)
+    if 'HubProcess' in signature:
+        body = body[:body.index('            if (!_animCam')] + '\n        }'
+        body = body.replace(' || Terr == null', ' || !GeometryReady')
+        body = body.replace('!IsInstanceValid(kv.Value)', 'kv.Value.Freed')
+        body = body.replace('kv.Value.QueueFree()', 'Remove(kv.Value)')
+        body = body.replace('Terrain.IsWater(Terr.SampleDominantLayer(p.X, p.Z))', 'SampleLayer(p.X, p.Z) == 5')
+    field_parts.append(body)
+(out / 'AnimalField.g.cs').write_text('// Generated source fauna tables, deterministic rolls and streaming.\nusing Godot; using UnturnedGodot; using System.Collections.Generic; namespace UnturnedBevy { public sealed partial class WildlifeServices {\n' + '\n'.join(field_parts) + '}}')

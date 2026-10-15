@@ -47,6 +47,9 @@
     <Compile Include="$(IntermediateOutputPath)Data/WeaponClips.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/WeaponInventory.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/BodyRules.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/AnimalBrain.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/AnimalField.g.cs" />
+    <Compile Include="../../game/AnimalCatalog.cs" Link="Source/AnimalCatalog.cs" />
   </ItemGroup>
   <Target Name="ExtractOriginalData" BeforeTargets="BeforeCompile">
     <Exec Command="python3 &quot;$(MSBuildProjectDirectory)/extract_data.py&quot; &quot;$(MSBuildProjectDirectory)/$(IntermediateOutputPath)Data&quot;" />

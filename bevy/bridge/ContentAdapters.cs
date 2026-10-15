@@ -28,7 +28,7 @@ namespace Godot
         public void Dispose() => _reader.Dispose();
     }
     public static class GD { public static void PushWarning(string message) => Console.Error.WriteLine(message); }
-    public struct Vector3(float x, float y, float z)
+    public partial struct Vector3(float x, float y, float z)
     {
         public float X = x, Y = y, Z = z;
         public static Vector3 operator +(Vector3 a, Vector3 b) => new(a.X + b.X, a.Y + b.Y, a.Z + b.Z);

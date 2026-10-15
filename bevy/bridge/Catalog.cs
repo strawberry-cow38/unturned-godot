@@ -65,7 +65,8 @@ public sealed class Catalog
             }
             _reloadSeconds[id] = reloadSeconds;
             Guns[id] = new ServerGunProfile { AssetName = Path.GetFileNameWithoutExtension(path),
-                PlayerDamage = gun.PlayerDamage, ZombieDamage = gun.ZombieDamage, ResourceDamage = gun.Damage,
+                PlayerDamage = gun.PlayerDamage, ZombieDamage = gun.ZombieDamage, ResourceDamage = gun.Damage, AnimalDamage = gun.Damage,
+                FalloffStart = gun.FalloffStart, FalloffEnd = gun.FalloffEnd, FalloffMin = gun.FalloffMin,
                 ObjectDamage = gun.ObjectDamage, VehicleDamage = gun.VehicleDamage,
                 FirerateTicks = gun.Firerate, CyclicRateRPM = gun.CyclicRateRPM,
                 MuzzleVelocity = gun.MuzzleVelocity, BallisticSteps = gun.BallisticSteps,

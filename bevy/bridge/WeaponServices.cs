@@ -166,6 +166,7 @@ public sealed partial class WeaponState
     {
         if (Profile == null) return;
         Profile.MagCapacity = ChamberedCap; Profile.Pellets = PelletsPerShot;
+        Profile.AnimalDamage = ShotDamage();
     }
     void SaveGunState()
     {

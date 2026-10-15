@@ -858,3 +858,29 @@ exit transitions and different camera/steering orientations. Root and peer revie
 inspected live pilot, sideways-steering and look-behind captures; authority
 confirmed seat 0, with 27.42° wheel angle in the steering image. Capture details
 and the separate in-progress water shader finding are in `bevy/docs/VALIDATION.md`.
+
+### 2026-10-14 — Bevy wildlife authority and retained source behavior
+
+The managed host extracts the actual AnimalAgent brain and AnimalField fauna
+parser/streaming methods at build time. Deer, pig, cow and horse keep their source
+stats, deterministic spawn rolls, idle/wander/flee rules, sight cone, terrain
+grounding, 130/165m distances and 36-animal cap. Native presentation consumes the
+exact host pose alongside the original AnimalReplication data; no second animal
+movement simulation runs. Signed dominant-layer grids preserve PEI's reversed Z
+rows, nearest-even grid sampling, clamping and layer-5 sand/water semantics.
+
+Optional core host seams connect validated bullet, deferred melee and grenade
+commands to wildlife. Bullet damage captures shell choice and condition, with
+source distance falloff preserved across origin shifts. Original console animal
+spawning uses its persistent golden-angle sequence and the server cheat gate.
+Accepted panic/hit/death facts are retained; saves preserve brain RNG, targets,
+timers, health and remaining 12-second corpse lifetime. The source has no animal
+death loot/XP and the shipped rigs have no ragdoll metadata; those facts remain
+explicit rather than being replaced with invented behavior.
+
+All 633 engine-free network tests and 52 bridge integration tests pass. New checks
+exercise real fauna binary data, sight/wall behavior, sand grids, streaming caps,
+gun/melee/grenade authority, corpse retirement/point respawn, save continuity and
+rebasing. A terrain-streaming regression keeps animal poses stable while collision
+chunks await finalization. Native wildlife render verification is the following
+checkpoint; the separate InfiniteTerrain world has no source fauna registration.
