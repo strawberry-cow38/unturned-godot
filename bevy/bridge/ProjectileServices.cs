@@ -26,12 +26,14 @@ public sealed partial class BridgeHost
     }
     object[] ProjectileSnapshots()
     {
-        long tick = _server.Session.CurrentTick;
+        long tick = _server?.Session.CurrentTick ?? _client.Applier.LastAppliedServerTick;
         return _client.Projectiles.All.Select(e => {
-            bool found = _server.Combat.TryGetProjectileFlight(e.NetIdValue, out var p);
+            ProjectileFlight p = default;
+            bool found = _server != null && _server.Combat.TryGetProjectileFlight(e.NetIdValue, out p);
             return (object)new { netId = e.NetIdValue, kind = e.Kind, position = Array(e.Pos), lastChangedTick = e.LastChangedTick,
                 itemId = found ? (ushort?)p.ItemId : null, velocity = found ? Array(p.Velocity) : null,
-                retireTick = found ? (long?)p.RetireTick : null, remainingTicks = found ? Math.Max(0, p.RetireTick - tick) : 0,
+                retireTick = found ? (long?)p.RetireTick : null,
+                remainingTicks = found ? (long?)Math.Max(0, p.RetireTick - tick) : _server == null ? null : 0,
                 elapsedTicks = found ? (long?)Math.Max(0, tick - p.SpawnTick) : null,
                 lifetimeTicks = found ? (long?)(p.RetireTick - p.SpawnTick) : null };
         }).ToArray();

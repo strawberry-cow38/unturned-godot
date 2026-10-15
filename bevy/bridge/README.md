@@ -587,6 +587,29 @@ Optional `init.listenPort` starts the same integrated world on the original UDP
 transport, with `serverName`, `maxPlayers` and `motd` metadata. It defaults to
 cheats off and a bounded shared origin. The local player also traverses UDP;
 `state.network` reports session metadata and `state.players` exposes peer replicas.
-This is the managed host boundary; native hosting/joining and client-only state
-adoption remain separate work. See [the multiplayer ledger](../docs/MULTIPLAYER_PORT.md)
-for the eight real-socket tests and remaining integration.
+The managed client-only boundary uses `init.connectHost` and optional
+`connectPort` (47872 by default), mutually exclusive with `listenPort`. It creates
+only the original UDP client. Init returns while connecting; continue `tick`
+without requiring a player body until `state.connected` becomes true. The first
+actual owner replica sets `player.position` and increments `correctionVersion`
+before any owner position is sent. A caller's local map-spawn hint never replaces
+the server's selected spawn.
+
+`state.network` reports `mode`, `ownsWorld`, `awaitingSpawn`, session `state`,
+`reason`, source `rejectReason`/`rejectText`/`retryable`, protocol and the original
+16-digit hexadecimal `contentHash`. `wireGaps` lists host-only enrichments which
+are absent from this protocol. Unknown weather, absolute day, projectile lifetime,
+weapon timers, precise stuck poses and vehicle part health remain absent rather
+than fabricated. Inventory, vitals, entities, events and peer appearances come
+from the actual client replicas. Equip waits for a changed accepted inventory;
+ambiguous identical items cannot supply an exact instance identity over this wire.
+
+A client-only session refuses host registration, damage, save/load and rebase
+operations. Unsupported attachment/repair/explicit-respawn intents return
+`queued:false` with a retained refusal; the original server automatic respawn
+still works. Nonempty `password` is refused because the existing handshake has no
+password field. `disconnect` closes an owned host and releases its listener,
+leaving no state and refusing later ticks. A remote disconnect retains a readable
+terminal network state until replacement. `shutdown` works in either mode.
+See [the multiplayer ledger](../docs/MULTIPLAYER_PORT.md) for verified boundaries
+and the native/remaining protocol integration.

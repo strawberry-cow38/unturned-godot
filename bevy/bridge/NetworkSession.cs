@@ -28,6 +28,7 @@ public sealed partial class BridgeHost
         _maxPeers = peers;
         _serverName = Text(request, "serverName", "Bevy world");
         _motd = Text(request, "motd");
+        ConfigureRemote(request);
     }
 
     IServerTransport ServerTransport()
@@ -52,7 +53,7 @@ public sealed partial class BridgeHost
 
     void CheckNetworkOrigin(double x, double z)
     {
-        if (_listenPort != 0 && (x != 0 || z != 0))
+        if ((_listenPort != 0 || IsRemote) && (x != 0 || z != 0))
             throw new InvalidOperationException("UDP worlds require the shared zero origin; remote origin negotiation is not implemented");
     }
 
@@ -64,14 +65,24 @@ public sealed partial class BridgeHost
     }
 
     object NetworkState() => new {
-        mode = _listenPort == 0 ? "local" : "listen",
-        port = _listenPort,
+        mode = IsRemote ? "client" : _listenPort == 0 ? "local" : "listen",
+        ownsWorld = _server != null,
+        host = _connectHost,
+        port = IsRemote ? _connectPort : _listenPort,
         serverName = _client.Session.ServerName,
         maxPlayers = _client.Session.ServerMaxPlayers,
         state = _client.State.ToString(),
         reason = _client.Session.DisconnectReason.ToString(),
-        peers = _server.Session.Peers.Count,
+        rejectReason = _client.Session.RejectReason.ToString(),
+        rejectText = _client.State == NetSessionState.Disconnected && _client.Session.DisconnectReason != NetDisconnectReason.None
+            ? NetRejectText.Describe(_client.Session.RejectReason, _client.Session.RejectServerVersion, NetProtocol.Version) : null,
+        retryable = NetRejectText.IsRetryable(_client.Session.RejectReason),
+        serverProtocol = _client.Session.RejectServerVersion,
+        contentHash = NetContent.Hash.ToString("X16"),
+        peers = _server?.Session.Peers.Count,
         protocol = NetProtocol.Version,
+        awaitingSpawn = IsRemote && !_remoteSpawnAdopted,
+        wireGaps = IsRemote ? RemoteWireGaps : System.Array.Empty<string>(),
     };
 
     object[] PlayerReplicas() => _client.Players.All.Select(player => {

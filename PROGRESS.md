@@ -1211,3 +1211,7 @@ original clothes/gear, standing/prone scoped rifles and a crouched knife render
 coherently. These fixtures are not live UDP gameplay evidence. Remaining remote
 presentation includes footsteps, names, reclined furniture, lights and muzzle
 FX; managed/native connection lifecycle is continuing separately.
+
+### Bevy client-only UDP bridge (2026-10-15)
+
+A remote bridge now creates only the original UDP client and reads actual owner/world replicas. Its asynchronous join waits for the accepted owner spawn before sending any movement. Original commands preserve server validation; local host services, registration, save/load and damage are unavailable. Equip waits for accepted inventory changes, recovery/death/automatic respawn use existing events, and unknown host-only metadata is explicitly listed rather than invented. Review found and fixed host disconnect retaining a listener: owned sessions now dispose fully, while remote disconnect keeps a reportable terminal state. Eighteen real-socket NUnit tests and all121 bridge tests pass against frozen `remote-client-18`; a separate two-process JSONL journey also passes join/spawn/inventory/port reuse/shutdown. Native connection flow and the documented wire feature gaps remain separate work.

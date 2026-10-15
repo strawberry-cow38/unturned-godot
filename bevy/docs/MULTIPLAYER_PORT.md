@@ -29,6 +29,41 @@ barrier cannot negotiate an origin with remote peers. Valid respawns near the
 wire boundary remain in that frame. Initial spawns outside the wire's range are
 rejected, using the core constants rather than a duplicated range.
 
+## Managed client-only session
+
+`init.connectHost` plus optional `connectPort` creates the original UDP client
+without a local server or host services. Joining is asynchronous. Native code must
+keep polling before creating the owner body; the first actual owner replica
+provides its spawn and recovery epoch before any position publication. Normal
+movement still has one native physics body and the existing server envelope.
+Inventory, combat, skills, world entities and appearances read client replicas.
+Commands retain connection identity and original validators; no local console or
+damage shortcuts run in this mode.
+
+Host-only registration, save/load, damage and rebasing are refused. Unknown
+host enrichments remain absent and `network.wireGaps` enumerates them: exact held
+instance identity, weapon timers, attachment transactions, repair, explicit
+respawn, weather/absolute day, cosmetic flights, detailed impact/warhead/stuck-pose
+facts, projectile expiry, vehicle part health, host wildlife/zombie data, map
+bindings, password authentication and accepted shot tick. These are concrete
+protocol follow-ups. The existing automatic respawn and recovery events work.
+The original handshake has no password field, so a nonempty password is refused.
+
+`disconnect` tears down an owned integrated/listen world, closes its UDP port and
+leaves no authority to tick. Remote disconnect instead retains its terminal
+network envelope so the UI can report source rejection text and retry policy.
+Session replacement discards old replicas and services. `shutdown` remains valid
+in either mode.
+
+Nine additional actual-UDP integration tests (18 total) cover first spawn,
+accepted equip/fire, independent owner inventory, cheats and host-operation
+rejection, recovery/death/automatic respawn, chat/gesture/rejoin, full-server
+refusal, local/client mode replacement, host listener release and unsupported
+passwords. The frozen executable also passes all121 existing bridge tests. A
+separate two-process JSONL smoke verifies join, authoritative spawn, accepted
+inventory, port reuse after host disconnect and clean remote process shutdown.
+These checks establish the managed boundary, not complete remote gameplay.
+
 ## Native remote bodies
 
 Accepted peer replicas now create the original human rig, face, clothing and gear
@@ -101,12 +136,11 @@ dotnet test tests/UnturnedBevy.Tests/UnturnedBevy.Tests.csproj
 
 ## Remaining integration
 
-This checkpoint establishes the managed listen transport. Native host/join
-controls, a client-only bridge mode, world/replica adoption, remaining remote-player
-presentation, networking while menus are open, connection failures/reconnection,
-browser UI, moderation UI, dedicated world boot, and cross-process gameplay
-journeys remain to be ported and tested. Several current snapshot fields and
-weapon/vehicle adapters still read host services; a remote client must replace
-those reads with the source client prediction and replicated/event data, without
-constructing another local authority. Infinite-world multiplayer needs a separate
-origin protocol and is not established by these bounded UDP tests.
+Managed listen and client-only transport boundaries are implemented. Native
+host/join controls, replica/world adoption, remaining remote-player presentation,
+networking while menus are open, connection failures/reconnection, browser UI,
+moderation UI, dedicated world boot, and cross-process rendered gameplay journeys
+remain to be ported and tested. The explicit wire gaps above require authoritative
+protocol/adaptation work; a client must never construct another local authority
+to fill them. Infinite-world multiplayer needs a separate origin protocol and is
+not established by these bounded UDP tests.

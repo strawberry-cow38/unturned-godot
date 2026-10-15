@@ -23,7 +23,11 @@ public sealed partial class BridgeHost
         {
             _scopeSteady.Reset(); _wantsSteady = false; return;
         }
-        bool seated = _server.VehicleHost.IsSeated(_client.PlayerId) || _server.Interactables.IsSeated(_client.PlayerId);
+        bool seated = _server != null
+            ? _server.VehicleHost.IsSeated(_client.PlayerId) || _server.Interactables.IsSeated(_client.PlayerId)
+            : _client.Vehicles.All.Any(v => v.DriverPlayerId == _client.PlayerId
+                || (v.Passengers?.Contains(_client.PlayerId) ?? false))
+                || _client.InteractableState.ReplicaSeats.Any(s => s.Value == _client.PlayerId);
         float oxygen = vitals.Sim.Oxygen;
         _scopeSteady.Step(_wantsSteady && !seated, ref oxygen, (float)SimClock.FixedDelta);
         // Prediction must keep the drain between snapshot arrivals, exactly as
