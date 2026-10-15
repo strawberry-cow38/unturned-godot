@@ -1496,43 +1496,50 @@ namespace UnturnedGodot
         public int MetersCleared;
 
         /// <summary>⭐ NOTHING STANDS ON A METER (strawberry 2026-10-15: "prevent street lights or hydrants being placed on top of
-        /// parking meters"). PlaceLights' meters already keep MeterClear off the street lamps and hydrants it puts up first --
-        /// but not off anything placed AFTER them: the signal masts and stop signs at the junctions, and the parking lots'
-        /// own lamps. So once the town is up, a meter with any of those within MeterClear of it gives way: the space keeps
-        /// its paint and loses its meter, the rule the meters already followed. UG_TOWNMETERCLASH=1 only counts (the control).
-        /// Returns the meters taken down.</summary>
+        /// parking meters" -- then "meters should override lamp posts, by shoving the lamppost away"). PlaceLights now puts the
+        /// meters down first and shoves its street lamps clear of them, and keeps its hydrants off the bays altogether; this is
+        /// for what comes AFTER it. A lamp within MeterClear of a meter -- a parking lot's own -- is shoved straight away from it
+        /// to MeterClear; a signal mast or a stop sign is traffic control and stays, and the meter gives way to it instead (the
+        /// space keeps its paint). UG_TOWNMETERCLASH=1 only counts: the control. Returns the meters taken down.</summary>
         public int ClearMeterClashes(EditorObjects objs)
         {
             MetersCleared = 0;
             if (objs == null) return 0;
-            var standing = new List<(Vector3 at, string what)>();
+            var standing = new List<(Node3D node, string what)>();
             foreach (var what in new[] { StreetLightProp, HydrantProp, TrafficLightProp, StopSignProp })
-                foreach (var n in objs.PlacedOfNodes(what)) standing.Add((n.GlobalPosition, what));
+                foreach (var n in objs.PlacedOfNodes(what)) standing.Add((n, what));
             var drop = new List<Node3D>();
             var by = new Dictionary<string, int>();
-            Vector3 firstAt = Vector3.Zero;
             var nearest = new List<string>();
+            int moved = 0;
+            bool control = System.Environment.GetEnvironmentVariable("UG_TOWNMETERCLASH") == "1";
             foreach (var m in objs.PlacedOfNodes(ParkingMeterProp))
             {
                 var mp = m.GlobalPosition;
                 float nd = float.MaxValue; string nw = "";
-                foreach (var (q, what) in standing) { float dq = Flat(q, mp); if (dq < nd) { nd = dq; nw = what; } }
+                foreach (var (q, what) in standing) { float dq = Flat(q.GlobalPosition, mp); if (dq < nd) { nd = dq; nw = what; } }
                 if (nd < 4f) nearest.Add($"{nd:0.00} m {nw} at ({mp.X:0.0},{mp.Z:0.0})");
                 foreach (var (q, what) in standing)
                 {
-                    if (Flat(q, mp) >= MeterClear) continue;
-                    if (drop.Count == 0) firstAt = mp;
-                    drop.Add(m);
+                    var qp = q.GlobalPosition;
+                    float dq = Flat(qp, mp);
+                    if (dq >= MeterClear) continue;
                     by[what] = (by.TryGetValue(what, out int c) ? c : 0) + 1;
-                    break;
+                    if (control) continue;
+                    if (what == StreetLightProp)
+                    {
+                        var away = new Vector3(qp.X - mp.X, 0f, qp.Z - mp.Z);
+                        away = away.LengthSquared() < 1e-6f ? Vector3.Right : away.Normalized();
+                        q.GlobalPosition = new Vector3(mp.X, qp.Y, mp.Z) + away * (MeterClear + 0.05f);
+                        moved++;
+                    }
+                    else if (!drop.Contains(m)) drop.Add(m);
                 }
             }
-            bool control = System.Environment.GetEnvironmentVariable("UG_TOWNMETERCLASH") == "1";
-            if (!control && drop.Count > 0) objs.RemovePlaced(drop);
-            MetersCleared = control ? 0 : drop.Count;
-            Log.Print($"[towngrid] meters: {drop.Count} stood within {MeterClear:0.#} m of "
-                    + (by.Count == 0 ? "nothing" : string.Join(", ", System.Linq.Enumerable.Select(by, kv => $"{kv.Value} x {kv.Key}")))
-                    + (drop.Count > 0 ? $" (the first at {firstAt.X:0.0},{firstAt.Z:0.0}) -- {(control ? "LEFT (control)" : "taken down")}" : ""));
+            if (drop.Count > 0) objs.RemovePlaced(drop);
+            MetersCleared = drop.Count;
+            Log.Print($"[towngrid] meters: {(by.Count == 0 ? "nothing stood" : string.Join(", ", System.Linq.Enumerable.Select(by, kv => $"{kv.Value} x {kv.Key}")) + " stood")} "
+                    + $"within {MeterClear:0.#} m of one{(control ? " -- LEFT (control)" : $" -- {moved} lamp(s) shoved off, {drop.Count} meter(s) gave way to a signal or sign")}");
             if (nearest.Count > 0) Log.Print($"[towngrid] meters within 4 m of something standing: {string.Join("; ", nearest)}");
             return MetersCleared;
         }

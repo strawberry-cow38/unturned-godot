@@ -2724,7 +2724,30 @@ namespace UnturnedGodot
                          $"far point {(c || !ClearOfRoads(roads, jc + new Vector3(1000f, 0f, 1000f)) ? "inside (WRONG)" : "clear")}");
             }
 
-            var standing = new List<Vector3>();     // the lamps and hydrants on the pavements, which the meters keep clear of
+            // ---- PARKING METERS FIRST, one to a space along every paid zone. ⭐ THEY OUTRANK THE LAMPS (strawberry 2026-10-15:
+            // "meters should override lamp posts, by shoving the lamppost away"): a space's meter stands where its space says,
+            // and the lamps below are shoved along the pavement to keep MeterClear off every one of them. (The meters used to
+            // be placed last and give way -- a space without its meter, and still a lamp 1.33 m from the next one.)
+            MetersPlaced = MetersCrowded = PaidZones = FreeZones = 0; LampsShoved = LampsLost = HydrantsSlid = HydrantsOffBays = 0;
+            foreach (var bay in Bays) { if (bay.Paid) PaidZones++; else FreeZones++; }
+            var meters = new List<(Vector3 at, Vector3 outw)>();
+            if (ParkingMeters)
+                foreach (var bay in Bays)
+                {
+                    if (!bay.Paid) continue;
+                    for (int k = 0; k < bay.Spaces; k++)
+                    {
+                        float d = bay.First + (k + 0.5f) * bay.SpaceLength;
+                        if (!roads.EvaluateAlong(bay.Road, d, out var pos, out var tan, snapTerrain: false)) continue;
+                        var outw = new Vector3(tan.Z, 0f, -tan.X).Normalized() * bay.Side;     // from the road out to this pavement
+                        var at = pos + outw * (roads.RoadHalfWidth(bay.Road) + BayExtra(bay.Road, bay.Side, d) + RoadGapForLights + MeterSetback);
+                        at.Y = Mathf.Max(pos.Y, terr != null ? terr.SampleHeight(at.X, at.Z) : pos.Y) + PavementKerb;
+                        meters.Add((at, outw));
+                    }
+                }
+            bool NearMeter(Vector3 q) { foreach (var (m, _) in meters) if (Flat(m, q) < MeterClear) return true; return false; }
+
+            var standing = new List<Vector3>();     // the lamps and hydrants up so far
             // ---- STREET LIGHTS, down each street's pavement.
             if (StreetLights)
                 foreach (int r in Built)
@@ -2735,21 +2758,43 @@ namespace UnturnedGodot
                     if (to - from < 1f) continue;
                     int n = Mathf.Max(1, Mathf.FloorToInt((to - from) / LampSpacing));
                     float half = roads.RoadHalfWidth(r);
+                    // where a lamp at arc d on `side` stands, or false where it may not (a mouth, a lot's way in, off the paving)
+                    bool LampAt(float d, int side, out Vector3 at, out Vector3 right)
+                    {
+                        at = right = Vector3.Zero;
+                        if (MouthAt(r, side, d - 1f, d + 1f) != null) return false;      // the lane's way in
+                        if (EntranceAt(r, side, d - 1.5f, d + 1.5f) != null) return false;   // a parking lot's
+                        if (!roads.EvaluateAlong(r, d, out var pos, out var tan, snapTerrain: false)) return false;
+                        right = new Vector3(tan.Z, 0f, -tan.X).Normalized();
+                        // ...on the pavement wherever it is, which round a parking bay is a bay's depth further out
+                        at = pos + right * (side * (half + BayExtra(r, side, d) + RoadGapForLights + LampSetback));
+                        if (!PushClear(roads, ref at, right * side)) return false;
+                        at.Y = Mathf.Max(pos.Y, terr != null ? terr.SampleHeight(at.X, at.Z) : pos.Y) + PavementKerb;
+                        return true;
+                    }
                     for (int k = 0; k <= n; k++)
                     {
-                        float d = from + k * LampSpacing;
-                        if (d > to) break;
-                        if (!roads.EvaluateAlong(r, d, out var pos, out var tan, snapTerrain: false)) continue;
-                        var right = new Vector3(tan.Z, 0f, -tan.X).Normalized();
+                        float d0 = from + k * LampSpacing;
+                        if (d0 > to) break;
                         // ⚠ ALTERNATE SIDES. Lamps down one kerb only light one half of a street and look like
                         // a runway; staggering them is what a real street does and halves the count.
                         int side = (k % 2 == 0) ? 1 : -1;
-                        if (MouthAt(r, side, d - 1f, d + 1f) != null) continue;      // the lane's way in
-                        if (EntranceAt(r, side, d - 1.5f, d + 1.5f) != null) continue;   // a parking lot's
-                        // ...on the pavement wherever it is, which round a parking bay is a bay's depth further out
-                        var at = pos + right * (side * (half + BayExtra(r, side, d) + RoadGapForLights + LampSetback));
-                        if (!PushClear(roads, ref at, right * side)) continue;
-                        at.Y = Mathf.Max(pos.Y, terr != null ? terr.SampleHeight(at.X, at.Z) : pos.Y) + PavementKerb;
+                        if (!LampAt(d0, side, out var at, out var right)) continue;
+                        if (NearMeter(at))
+                        {
+                            // shoved along its pavement to the nearest spot either way clear of every meter -- never past the
+                            // street's own trimmed ends, never into a mouth or a lot's way in
+                            bool found = false;
+                            for (float shove = 0.5f; shove <= LampSpacing * 0.5f && !found; shove += 0.5f)
+                                foreach (float sg in new[] { 1f, -1f })
+                                {
+                                    float d = d0 + sg * shove;
+                                    if (d < t0 + 1f || d > to) continue;
+                                    if (LampAt(d, side, out var a2, out var r2) && !NearMeter(a2)) { at = a2; right = r2; found = true; break; }
+                                }
+                            if (!found) { LampsLost++; continue; }
+                            LampsShoved++;
+                        }
                         // the arm has to reach OVER the carriageway, so the lamp faces across the road
                         float yaw = ProcIsland.YawForDir(-right.X * side, right.Z * side);
                         var basis = SplineTiling.SeatedBasis(terr, at, yaw, 6f, out _);
@@ -2761,6 +2806,9 @@ namespace UnturnedGodot
             // ---- HYDRANTS, sparse, on the pavement (strawberry 2026-10-12: "add hydrants to the sidewalks,
             // somewhat uncommon"). ⚠ DETERMINISTIC, like everything else the grid places: a hydrant that
             // moved between launches would be a prop appearing and disappearing in a saved town.
+            // ⭐ NEVER BESIDE A PARKING BAY (strawberry 2026-10-15: "parking cubbies shouldnt spawn hydrants bc.. parking in front of
+            // a hydrant"): a hydrant keeps HydrantBayClear off either end of every bay on its side of the street, sliding along
+            // the kerb -- or across to the other side -- to the nearest spot that does; none, and the street has no hydrant.
             if (Hydrants)
                 foreach (int r in Built)
                 {
@@ -2769,46 +2817,64 @@ namespace UnturnedGodot
                     float L = roads.RoadLength(r);
                     float t0 = TrimFor(roads, r, false, CornerRadius), t1 = TrimFor(roads, r, true, CornerRadius);
                     if (L - t0 - t1 < 12f) continue;
-                    float d = Mathf.Lerp(t0 + 4f, L - t1 - 4f, Unit(h, 16));
-                    if (!roads.EvaluateAlong(r, d, out var pos, out var tan, snapTerrain: false)) continue;
-                    var side = ((h >> 40) & 1UL) == 0 ? 1f : -1f;
-                    if (MouthAt(r, (int)side, d - 1.5f, d + 1.5f) != null) side = -side;     // never in a lane's mouth
-                    if (MouthAt(r, (int)side, d - 1.5f, d + 1.5f) != null) continue;
-                    var rr = new Vector3(tan.Z, 0f, -tan.X).Normalized();       // symmetric use: either kerb will do
-                    var at = pos + rr * (side * (roads.RoadHalfWidth(r) + BayExtra(r, (int)side, d) + RoadGapForLights + HydrantSetback));
-                    if (!PushClear(roads, ref at, rr * side)) continue;
-                    at.Y = Mathf.Max(pos.Y, terr != null ? terr.SampleHeight(at.X, at.Z) : pos.Y) + PavementKerb;
-                    var hb = SplineTiling.SeatedBasis(terr, at, Unit(h, 32) * 360f, 6f, out _);
-                    var hn = objs.Place(HydrantProp, at, hb);
-                    if (hn != null) { into?.Add(hn); made++; standing.Add(at); }
+                    float lo = t0 + 4f, hi = L - t1 - 4f;
+                    float want = Mathf.Lerp(lo, hi, Unit(h, 16));
+                    var side0 = ((h >> 40) & 1UL) == 0 ? 1 : -1;
+                    bool oldRule = System.Environment.GetEnvironmentVariable("UG_TOWNHYDRANTBAYS") == "1";   // the control: as before
+                    bool BesideBay(int side, float d)
+                    {
+                        if (oldRule) return false;
+                        foreach (var bay in Bays)
+                            if (bay.Road == r && bay.Side == side && d > Mathf.Min(bay.A, bay.B) - HydrantBayClear && d < Mathf.Max(bay.A, bay.B) + HydrantBayClear) return true;
+                        return false;
+                    }
+                    bool placedH = false;
+                    bool wantedBay = BesideBay(side0, want);
+                    if (wantedBay && HydrantsOffBays++ == 0 && roads.EvaluateAlong(r, want, out var wbp, out _, snapTerrain: false)) FirstHydrantOffBay = wbp;
+                    for (float slide = 0f; slide <= hi - lo && !placedH; slide += 1f)
+                        foreach (float sg in slide == 0f ? new[] { 1f } : new[] { 1f, -1f })
+                        {
+                            float d = want + sg * slide;
+                            if (d < lo || d > hi) continue;
+                            foreach (int side in new[] { side0, -side0 })
+                            {
+                                if (BesideBay(side, d) || MouthAt(r, side, d - 1.5f, d + 1.5f) != null || EntranceAt(r, side, d - 1.5f, d + 1.5f) != null) continue;
+                                if (!roads.EvaluateAlong(r, d, out var pos, out var tan, snapTerrain: false)) continue;
+                                var rr = new Vector3(tan.Z, 0f, -tan.X).Normalized();       // symmetric use: either kerb will do
+                                var at = pos + rr * (side * (roads.RoadHalfWidth(r) + BayExtra(r, side, d) + RoadGapForLights + HydrantSetback));
+                                if (!PushClear(roads, ref at, rr * side)) continue;
+                                bool crowd = !oldRule && NearMeter(at);
+                                if (!oldRule) foreach (var q in standing) if (Flat(q, at) < MeterClear) { crowd = true; break; }
+                                if (crowd) continue;
+                                at.Y = Mathf.Max(pos.Y, terr != null ? terr.SampleHeight(at.X, at.Z) : pos.Y) + PavementKerb;
+                                var hb = SplineTiling.SeatedBasis(terr, at, Unit(h, 32) * 360f, 6f, out _);
+                                var hn = objs.Place(HydrantProp, at, hb);
+                                if (hn != null) { into?.Add(hn); made++; standing.Add(at); }
+                                if (slide > 0f || side != side0)
+                                {
+                                    if (HydrantsSlid++ == 0 && roads.EvaluateAlong(r, want, out var wp, out _, snapTerrain: false)) FirstHydrantSlid = (wp, at);
+                                }
+                                placedH = true;
+                                break;
+                            }
+                            if (placedH) break;
+                        }
                 }
 
-            // ---- PARKING METERS, one to a space along every paid zone
-            MetersPlaced = MetersCrowded = PaidZones = FreeZones = 0;
-            foreach (var bay in Bays) { if (bay.Paid) PaidZones++; else FreeZones++; }
-            if (ParkingMeters)
-                foreach (var bay in Bays)
-                {
-                    if (!bay.Paid) continue;
-                    for (int k = 0; k < bay.Spaces; k++)
-                    {
-                        float d = bay.First + (k + 0.5f) * bay.SpaceLength;
-                        if (!roads.EvaluateAlong(bay.Road, d, out var pos, out var tan, snapTerrain: false)) continue;
-                        var outw = new Vector3(tan.Z, 0f, -tan.X).Normalized() * bay.Side;     // from the road out to this pavement
-                        var at = pos + outw * (roads.RoadHalfWidth(bay.Road) + BayExtra(bay.Road, bay.Side, d) + RoadGapForLights + MeterSetback);
-                        bool crowded = false;
-                        foreach (var q in standing) if (Flat(q, at) < MeterClear) { crowded = true; break; }
-                        if (crowded) { MetersCrowded++; continue; }
-                        at.Y = Mathf.Max(pos.Y, terr != null ? terr.SampleHeight(at.X, at.Z) : pos.Y) + PavementKerb;
-                        // facing its space: like the lamps' arms, back over the road (its front is local +Y, Z-up as they are)
-                        var mb = SplineTiling.SeatedBasis(terr, at, ProcIsland.YawForDir(-outw.X, outw.Z), 6f, out _);
-                        var mn = objs.Place(ParkingMeterProp, at, mb);
-                        if (mn != null) { into?.Add(mn); made++; if (MetersPlaced++ == 0) FirstMeterAt = at; }
-                    }
-                }
+            // ...and the meters themselves, now that nothing else stands where they do
+            foreach (var (at, outw) in meters)
+            {
+                // facing its space: like the lamps' arms, back over the road (its front is local +Y, Z-up as they are)
+                var mb = SplineTiling.SeatedBasis(terr, at, ProcIsland.YawForDir(-outw.X, outw.Z), 6f, out _);
+                var mn = objs.Place(ParkingMeterProp, at, mb);
+                if (mn != null) { into?.Add(mn); made++; if (MetersPlaced++ == 0) FirstMeterAt = at; }
+            }
             if (Bays.Count > 0)
-                GD.Print($"[towngrid] street parking: {PaidZones} zones marked paid, {FreeZones} free; {MetersPlaced} meters, one a space"
-                        + $"{(MetersCrowded > 0 ? $" ({MetersCrowded} spaces left without, a lamp or hydrant already there)" : "")}{(MetersPlaced > 0 ? $"; the first at ({FirstMeterAt.X:0.0},{FirstMeterAt.Z:0.0})" : "")}");
+                GD.Print($"[towngrid] street parking: {PaidZones} zones marked paid, {FreeZones} free; {MetersPlaced} meters, one a space; "
+                        + $"{LampsShoved} lamp(s) shoved along to clear one{(LampsLost > 0 ? $", {LampsLost} with nowhere to go" : "")}; "
+                        + $"{HydrantsSlid} hydrant(s) slid along (off a bay, a meter or a lamp){(HydrantsSlid > 0 ? $", the first from ({FirstHydrantSlid.wanted.X:0},{FirstHydrantSlid.wanted.Z:0}) to ({FirstHydrantSlid.went.X:0.0},{FirstHydrantSlid.went.Z:0.0})" : "")}"
+                        + $"{(HydrantsOffBays > 0 ? $"; {HydrantsOffBays} of them had wanted a spot beside a bay, the first at ({FirstHydrantOffBay.X:0},{FirstHydrantOffBay.Z:0})" : "")}"
+                        + $"{(MetersPlaced > 0 ? $"; the first meter at ({FirstMeterAt.X:0.0},{FirstMeterAt.Z:0.0})" : "")}");
 
             // ---- TRAFFIC SIGNALS, one per approach at a junction that has three or more.
             if (TrafficLights && Junctions != Control.None)
@@ -2890,6 +2956,13 @@ namespace UnturnedGodot
         public string ParkingMeterProp = "Parking_Meter_0";
         public float MeterSetback = 0.45f;
         public int MetersPlaced, PaidZones, FreeZones, MetersCrowded; public Vector3 FirstMeterAt;
+        /// <summary>What the last PlaceLights moved for the meters: lamps shoved along their pavement to clear one, lamps that had
+        /// nowhere to go within half a lamp spacing, and hydrants slid along the kerb (or across) to keep off the bays.</summary>
+        public int LampsShoved, LampsLost, HydrantsSlid, HydrantsOffBays;
+        /// <summary>Where the first hydrant that wanted a spot beside a bay wanted it (its street's centreline there).</summary>
+        public Vector3 FirstHydrantOffBay;
+        /// <summary>The first slid hydrant: where its street's centreline was at the spot it wanted, and where it went.</summary>
+        public (Vector3 wanted, Vector3 went) FirstHydrantSlid;
         /// <summary>⭐ PAID OR FREE: a zone on a main street, or in front of a shop or an apartment block, is marked paid -- the
         /// town centre's kerbside; one in front of houses only, on a side street, parks free.</summary>
         bool PaidZone(RoadField roads, int r, List<(Plot pl, Vector3 was)> fronting)
@@ -2902,6 +2975,8 @@ namespace UnturnedGodot
         public bool Hydrants = !NoProps;
         public float HydrantChance = 0.35f;
         public float HydrantSetback = 0.8f;
+        /// <summary>How far past either end of a parking bay a hydrant keeps -- nobody may park in front of one.</summary>
+        public float HydrantBayClear = 3f;
         public string HydrantProp = "Fire_Hydrant_0";
         public string StreetLightProp = "Street_Light_0", TrafficLightProp = "Traffic_Light_0";
         /// <summary>Metres between lamps; they alternate sides, so one side sees twice this.</summary>
