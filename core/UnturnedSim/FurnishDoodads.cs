@@ -559,6 +559,8 @@ namespace UnturnedSim
                     if (w.Kind == SurfaceKind.Wall) _solid.Add(Box(w));
                 var c = res.Chimney;
                 if (c.X1 > c.X0) _solid.Add(Grow(c, 0.2f));
+                // a basement's hatch -- its well, and the cellar door thrown open beside it -- and the way onto its stairs
+                if (res.HatchWell.X1 > res.HatchWell.X0) { _solid.Add(Grow(res.HatchWell, 1.0f)); _solid.Add(Grow(res.HatchLeafRect, 0.5f)); }
                 if (_solid.Count == 0) return;
                 _box = (_solid.Min(b => b.X0), _solid.Min(b => b.Z0), _solid.Max(b => b.X1), _solid.Max(b => b.Z1));
                 // the outside faces: a full-storey outside wall of the ground storey, the side of it with no room

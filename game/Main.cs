@@ -7765,9 +7765,10 @@ namespace UnturnedGodot
                 // be LOOKED at. The L1 test proves its numbers are wall-shaped; only a render shows whether
                 // the building it rebuilt is the building it read.
                 string imp = System.Environment.GetEnvironmentVariable("UG_EDITIMPORT");
-                // UG_EDITGEN=kind,seed[,minRooms,maxFloors,perFloor[,width,depth[,front,back,nowin[,shape[,porch[,chimney[,fit[,shop]]]]]]]]] (sides
-                // as NESW letters, shape R/L/T, porch N/F/B/FB, chimney N/Y, anything else auto; fit F: width x depth is a plot to fit
-                // inside, BuildingGenSpec.FitPlot; shop a Business name, Cafe/Hardware/...) generates a building from a seed instead
+                // UG_EDITGEN=kind,seed[,minRooms,maxFloors,perFloor[,width,depth[,front,back,nowin[,shape[,porch[,chimney[,fit[,shop[,basement[,style[,way]]]]]]]]]]]]
+                // (sides as NESW letters, shape R/L/T, porch N/F/B/FB, chimney N/Y, anything else auto; fit F: width x depth is a plot to fit
+                // inside, BuildingGenSpec.FitPlot; shop a Business name, Cafe/Hardware/...; basement Y/N, its style U/S/F/W -- bare, store,
+                // finished, workshop -- and its way down S/H, stairs or hatch) generates a building from a seed instead
                 // (BuildingGen), so a generated one can be looked at the same way. Frame it with UG_EDITCAM.
                 string gen = System.Environment.GetEnvironmentVariable("UG_EDITGEN");
                 if (!string.IsNullOrEmpty(imp)) buildings.ImportRetail(imp);
@@ -7804,6 +7805,19 @@ namespace UnturnedGodot
                         } : UnturnedSim.ChimneyChoice.Auto,
                         FitPlot = g.Length > 13 && g[13].ToUpperInvariant() == "F",
                         Business = g.Length > 14 && System.Enum.TryParse<UnturnedSim.Business>(g[14], true, out var shop) ? shop : UnturnedSim.Business.None,
+                        Basement = g.Length > 15 ? g[15].ToUpperInvariant() switch
+                        {
+                            "Y" => UnturnedSim.BasementChoice.Require, "N" => UnturnedSim.BasementChoice.Forbid, _ => UnturnedSim.BasementChoice.Auto,
+                        } : UnturnedSim.BasementChoice.Auto,
+                        BasementStyle = g.Length > 16 ? g[16].ToUpperInvariant() switch
+                        {
+                            "U" => UnturnedSim.BasementStyle.Unfinished, "S" => UnturnedSim.BasementStyle.Storage, "F" => UnturnedSim.BasementStyle.Finished,
+                            "W" => UnturnedSim.BasementStyle.Workshop, _ => UnturnedSim.BasementStyle.Auto,
+                        } : UnturnedSim.BasementStyle.Auto,
+                        BasementAccess = g.Length > 17 ? g[17].ToUpperInvariant() switch
+                        {
+                            "S" => UnturnedSim.BasementAccess.Stairs, "H" => UnturnedSim.BasementAccess.Hatch, _ => UnturnedSim.BasementAccess.Auto,
+                        } : UnturnedSim.BasementAccess.Auto,
                     });
                 }
                 else if (buildings.Walls.Count == 0) DrawDemoBuilding(buildings);
