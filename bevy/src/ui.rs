@@ -12,6 +12,7 @@ use serde::{Deserialize, Deserializer};
 use serde_json::{Value, json};
 
 mod appearance;
+pub(crate) mod backdrop;
 mod attachments;
 mod clothing;
 mod crosshair;
@@ -376,6 +377,7 @@ impl Plugin for GameUiPlugin {
             .add_message::<UiIntent>()
             .add_plugins((
                 HudPlugin,
+                backdrop::BackdropPlugin,
                 attachments::AttachmentMenuPlugin,
                 vitals::VitalsPlugin,
                 crosshair::CrosshairPlugin,

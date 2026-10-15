@@ -2051,3 +2051,23 @@ beacon driven by accepted engine state and the source spool clock. Root independ
 reviewed all four aircraft frames. These are isolated production-system fixtures,
 not new fullgame driving evidence. Audio listening and reflected particle billboards
 remain unverified. Geometry/source details: `bevy/docs/VEHICLE_LAMPS_PORT.md`.
+
+
+### Native source modal frost over the completed HUD (2026-10-15)
+
+Added the shared `Backdrop::ammo_pie(fade)` component and a dedicated modal UI
+camera. The source screen copy includes the completed world, viewmodel and HUD;
+modal content stays sharp, lightning follows it, and console remains above both.
+The adapter preserves Godot's non-glow Gaussian mip kernel, sRGB RGBA8 intermediate
+quantization, original 25 weighted samples, vignette and existing eased fade.
+View-owned textures resize and retire with their camera, and missing pipelines
+cannot swap the shared render target. Mechanics retains its dim-only behavior.
+
+Two lifecycle/clock cases, all 59 UI tests and five lightning tests pass. The real
+Vulkan fixture passes after correcting its letterboxed image control, with four
+opened no-fade/full-fade/restored/resized screenshots. Prior HUD and background
+variation decrease by more than 99%, modal/console controls remain pixel-identical,
+and closing restores the baseline exactly. Source/schedule review passed; actual
+vehicle radial integration follows in the UI checkpoint. Lower source layer11
+inventory/map backdrops remain separate. Details and reproduction are in
+`bevy/docs/MODAL_BACKDROP_PORT.md`.

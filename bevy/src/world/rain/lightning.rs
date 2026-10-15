@@ -168,7 +168,11 @@ impl Plugin for LightningPlugin {
         .init_resource::<Thunder>()
         .add_systems(Startup, setup)
         .add_systems(Update, update.after(RainUpdate).in_set(LightningUpdate))
-        .add_systems(Update, route_console.after(crate::ui::UiUpdate));
+        .add_systems(Update, route_console.after(crate::ui::UiUpdate))
+        .add_systems(
+            PostUpdate,
+            route_flash.after(crate::ui::backdrop::BackdropRouting),
+        );
         render::install(app);
     }
 }
@@ -204,7 +208,7 @@ fn setup(
         Name::new("Source console layer100 camera"),
         Camera2d,
         Camera {
-            order: 3,
+            order: 4,
             clear_color: ClearColorConfig::None,
             ..default()
         },
@@ -237,7 +241,6 @@ fn update(
     ui: Res<UiState>,
     settings: Res<Settings>,
     mut facts: MessageReader<CoreEvent>,
-    overlay: Query<Entity, With<IsDefaultUiCamera>>,
     mut voices: Query<(&ThunderVoice, &mut PlaybackSettings, Option<&mut AudioSink>)>,
 ) {
     if flash.epoch != epoch.0 {
@@ -327,7 +330,26 @@ fn update(
             if paused { sink.pause() } else { sink.play() }
         }
     }
-    for entity in &overlay {
+}
+fn route_flash(
+    mut commands: Commands,
+    flash: Res<Lightning>,
+    overlay: Query<
+        (Entity, Has<crate::ui::backdrop::ModalCamera>),
+        Or<(
+            With<IsDefaultUiCamera>,
+            With<crate::ui::backdrop::ModalCamera>,
+        )>,
+    >,
+) {
+    // Layer90 follows both the ordinary HUD and modal layer60. Headless/test
+    // callers without the modal plugin keep their original default-camera path.
+    let modal_exists = overlay.iter().any(|(_, modal)| modal);
+    for (entity, modal) in &overlay {
+        if modal_exists && !modal {
+            commands.entity(entity).remove::<FlashUniform>();
+            continue;
+        }
         commands.entity(entity).insert(FlashUniform {
             color: flash.tint.extend(if flash.flash > 0.001 {
                 flash.flash.min(1.2) * 0.09
@@ -357,6 +379,26 @@ mod tests {
         assert!(app.world().get::<UiTargetCamera>(panel).is_none());
     }
     #[test]
+    fn flash_follows_modal_ui_and_returns_to_default_if_camera_is_removed() {
+        let mut app = App::new();
+        app.init_resource::<Lightning>()
+            .add_systems(PostUpdate, route_flash);
+        let hud = app.world_mut().spawn(IsDefaultUiCamera).id();
+        app.world_mut().resource_mut::<Lightning>().flash = 1.;
+        app.update();
+        assert!(app.world().get::<FlashUniform>(hud).is_some());
+        let modal = app.world_mut().spawn(crate::ui::backdrop::ModalCamera).id();
+        app.update();
+        assert!(app.world().get::<FlashUniform>(hud).is_none());
+        assert_eq!(
+            app.world().get::<FlashUniform>(modal).unwrap().color.w,
+            0.09
+        );
+        app.world_mut().entity_mut(modal).despawn();
+        app.update();
+        assert!(app.world().get::<FlashUniform>(hud).is_some());
+    }
+    #[test]
     fn retained_strike_drives_overlay_thunder_pause_and_session_reset() {
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))
@@ -374,7 +416,8 @@ mod tests {
                 std::time::Duration::from_millis(20),
             ))
             .add_message::<CoreEvent>()
-            .add_systems(Update, update);
+            .add_systems(Update, update)
+            .add_systems(PostUpdate, route_flash);
         let clip = app
             .world_mut()
             .resource_mut::<Assets<AudioSource>>()
