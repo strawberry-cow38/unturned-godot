@@ -118,6 +118,7 @@ impl Plugin for InteractablePlugin {
                 (spawn, adopt, export_geometry, adopt_occupancy)
                     .chain()
                     .after(WorldServicesReady)
+                    .after(super::beds::DemoFurnitureReady)
                     .before(PlayerCameraUpdate),
             )
             .add_systems(FixedUpdate, animate.before(PhysicsSet::SyncBackend))

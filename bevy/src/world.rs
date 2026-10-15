@@ -1,5 +1,6 @@
 //! Original map/content assembly. Missing retail terrain is reported explicitly.
 use crate::content::{ContentCache, ContentError, ObjData, load_guid_map};
+pub(crate) mod beds;
 mod foliage;
 mod holiday;
 pub mod interactables;
@@ -83,6 +84,7 @@ impl Plugin for WorldPlugin {
     fn build(&self, app: &mut App) {
         bevy::shader::load_shader_library!(app, "world/water_optics.wesl");
         app.add_plugins((
+            beds::BedPlugin,
             foliage::FoliagePlugin,
             foliage::ResourcePresentationPlugin,
             terrain::TerrainPlugin,

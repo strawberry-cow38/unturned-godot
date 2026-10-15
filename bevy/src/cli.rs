@@ -11,6 +11,7 @@ pub struct Options {
     pub player_name: String,
     pub network_ready: bool,
     pub vehicle: Option<String>,
+    pub demo_furniture: bool,
     pub play: bool,
     pub headless: bool,
     pub ticks: u32,
@@ -33,6 +34,7 @@ impl Default for Options {
             player_name: std::env::var("UG_USERNAME").unwrap_or_else(|_| "Survivor".into()),
             network_ready: false,
             vehicle: None,
+            demo_furniture: false,
             play: false,
             headless: false,
             ticks: 250,
@@ -69,6 +71,7 @@ impl Options {
                 "--help" | "-h" => options.help = true,
                 "--play" | "--peiplay" => options.play = true,
                 "--headless" => options.headless = true,
+                "--demo-furniture" => options.demo_furniture = true,
                 "--stay" => options.exit_after_capture = false,
                 "--map" => options.map = value()?,
                 "--seed" => options.seed = value()?.parse()?,
@@ -173,6 +176,7 @@ Usage: bevy/run.sh [options]\n\
   --content PATH           Bundled game/content directory\n\
   --seed 1337              Procedural world seed\n\
   --vehicle jeep          Spawn an original vehicle beside the player for testing\n\
+  --demo-furniture        Original fallback bed at source map anchor (diagnostic)\n\
   --headless --ticks 250   Exercise the core bridge without a renderer\n\
   --shot PATH              Capture the rendered window and exit\n\
   --shot-frame 90          Wait this many rendered frames before capture\n\

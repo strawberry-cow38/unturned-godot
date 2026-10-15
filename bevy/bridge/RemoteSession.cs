@@ -43,7 +43,7 @@ public sealed partial class BridgeHost
     void CheckRemoteOperation(string operation)
     {
         if (!IsRemote || operation is "init" or "disconnect" or "shutdown" or "simulate" or "tick" or "snapshot"
-            or "catalog" or "npcCatalog" or "npcView" or "diagnostics" or "action" or "terrain" or "reconnect"
+            or "catalog" or "worldSpawns" or "npcCatalog" or "npcView" or "diagnostics" or "action" or "terrain" or "reconnect"
             or "serverProbeStart" or "serverProbePoll" or "serverProbeCancel" or "mapBindings" or "profileAvatar" or "profileRules" or "localProfile" or "setLocalFace" or "attachmentOptions") return;
         throw new InvalidOperationException($"{operation} requires world authority; this session is a remote client");
     }

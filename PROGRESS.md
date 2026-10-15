@@ -1416,3 +1416,24 @@ repair is tracked separately and does not alter these authority results.
 - Fixed actual map NPC metadata loss: default JSON serialization ignored `NpcCharacterDef` public fields. Map and catalog now share explicit full appearance properties and original sanitized display name; a placed Chef/custom-character regression preserves engine coordinates and all16 fields.
 - Reproduced a source server bug with a failing nested-batch regression: vendor responses cleared their one-shot fact before deferred command publication. Clearing now follows event construction; packet format is unchanged. Core17 NPC tests, four new real UDP/read-model tests, all53 managed tests and all121 bridge tests pass on immutable `npc-view-53`.
 - Native character/interface/render validation is a separate checkpoint. No NPC placements, quest progress producers, save fields or vehicle vendor delivery were invented where the current source/content lacks them; see `bevy/docs/NPC_UI_PORT.md`.
+
+### Bevy original fallback bed interaction (2026-10-15)
+
+Added explicit `--demo-furniture`, off for normal retail play. It materializes
+the original Bed.cs box/material at WorldBuilder's seeded map-spawn anchor,
+with independent bed ID and a seat appended after authored chairs. Only the
+host registers it; local and actual UDP clients wait for accepted claim/seat
+replicas, then share the source reclined body/camera. F sends claim, lie down,
+and stand intents. Claimed-bed respawn retains the source half-metre lift.
+Geometry is republished after world reload/streaming, and session/origin cleanup
+keeps its metadata and collision aligned. A real UDP regression caught a
+read-only worldSpawns request missing from the remote allowlist; the old bridge
+fails that regression and the corrected bridge passes.
+
+Seven focused tests cover authority, real UDP, the authored-seat prefix,
+respawn, default-off/cleanup, original Godot PCG selection, and actual Rapier
+focus/occlusion. Production PEI captures show accepted owner 1, seat 394
+occupancy, the original reclined rig and successful stand; code and four images
+passed independent review and the renderer quit cleanly. Full native dedicated
+fallback launching, bed damage/destruction and the separate demo door remain
+explicit work, as documented in bevy/docs/PROP_SEATS_PORT.md.
