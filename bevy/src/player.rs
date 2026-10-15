@@ -29,6 +29,7 @@ impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Session>()
             .init_resource::<WorldSessionEpoch>()
+            .init_resource::<crate::recoil::Recoil>()
             .init_resource::<crate::weapons::Trigger>()
             .init_resource::<crate::use_items::HandUse>()
             .add_message::<crate::use_items::HandEvent>()
@@ -40,6 +41,7 @@ impl Plugin for PlayerPlugin {
                 (
                     initialize_session,
                     ui_intents,
+                    crate::world::origin::adopt_authority,
                     close_storage_on_exit,
                     read_input,
                     physics_configuration,
@@ -221,6 +223,7 @@ fn spawn_player(mut commands: Commands, world: Res<WorldState>) {
 }
 
 fn initialize_session(
+    origin: Res<crate::world::origin::WorldOrigin>,
     bridge: Res<CoreBridge>,
     options: Res<LaunchOptions>,
     world: Res<WorldState>,
@@ -242,7 +245,7 @@ fn initialize_session(
     }
     model.map_name = options.0.map.clone();
     ui.map = options.0.map.clone();
-    match bridge.request("init", json!({"contentRoot":options.0.content,"name":"Survivor","mapId":options.0.map,"spawn":world.spawn.to_array(),"yaw":world.spawn_yaw,"seed":options.0.seed})) {
+    match bridge.request("init", json!({"contentRoot":options.0.content,"name":"Survivor","mapId":options.0.map,"spawn":world.spawn.to_array(),"origin":[origin.offset.x,origin.offset.y],"yaw":world.spawn_yaw,"seed":options.0.seed})) {
         Ok(response) if response["result"]["protocolVersion"] == 1 => {
             model.reset_session();
             model.adopt_snapshot(&response["state"]); snapshot.0 = response["state"].clone();
@@ -453,8 +456,12 @@ fn read_input(
     mut model: ResMut<UiModel>,
     mut input: ResMut<PlayerInput>,
     mut windows: Query<(&mut CursorOptions, &mut Window), With<PrimaryWindow>>,
+    mut recoil: (ResMut<crate::recoil::Recoil>,Res<GameSnapshot>,Res<crate::entities::ItemCatalog>,Res<WorldSessionEpoch>,Res<Time>),
 ) {
     let playing = !ui.captures_input() && model.connected;
+    let kick=recoil.0.update(&recoil.1.0,&recoil.2,recoil.3.0,recoil.4.delta_secs(),simulation_paused(&ui));
+    input.yaw=(input.yaw+kick.x).rem_euclid(360.);
+    input.pitch=(input.pitch+kick.y).clamp(-89.,89.);
     for (mut cursor, mut window) in &mut windows {
         cursor.visible = !playing;
         cursor.grab_mode = if playing {
@@ -988,6 +995,7 @@ fn prop_exit_position(
     None
 }
 fn camera_follow(
+    origin: Res<crate::world::origin::WorldOrigin>,
     settings: Res<Settings>,
     config: Res<crate::world::WorldConfig>,
     ui: Res<UiState>,
@@ -1010,7 +1018,7 @@ fn camera_follow(
                 p.fov = 70_f32.to_radians();
                 p.far = 6000.;
             }
-            *transform = Transform::from_translation(position).with_rotation(Quat::from_euler(
+            *transform = Transform::from_translation(origin.local(position)).with_rotation(Quat::from_euler(
                 EulerRot::YXZ,
                 yaw.to_radians(),
                 pitch.to_radians(),
@@ -1057,6 +1065,35 @@ pub(crate) fn simulation_paused(ui: &UiState) -> bool {
             && matches!(ui.settings_return, Screen::MainMenu | Screen::Paused))
 }
 
+/// A queued authority teleport can be drained by the origin barrier itself.
+/// Adopt it before the next movement solve, using the normal correction contract.
+pub(crate) fn adopt_origin_correction(world:&mut World,state:&Value)->Vec<(Entity,Vec3)> {
+    let version=state["player"]["correctionVersion"].as_u64().unwrap_or(0);
+    if world.get_resource::<Session>().is_some_and(|s|s.correction_version==version) {return Vec::new();}
+    let Some(position)=vector(&state["player"]["position"]) else{return Vec::new();};
+    if let Some(mut session)=world.get_resource_mut::<Session>() {session.correction_version=version;}
+    let mut moved=Vec::new();
+    for (entity,mut transform,mut body) in world.query::<(Entity,&mut Transform,&mut PlayerBody)>().iter_mut(world) {
+        transform.translation=position;body.velocity=Vec3::ZERO;body.grounded=false;body.locomotion=default();
+        moved.push((entity,position));
+    }
+    moved
+}
+#[cfg(test)]
+pub(crate) fn origin_test_player(world:&mut World,position:Vec3,correction:u64)->Entity {
+    world.insert_resource(Session{correction_version:correction,..default()});
+    world.spawn((Transform::from_translation(position),PlayerBody{velocity:Vec3::X*3.,grounded:true,height:2.,stance:"stand".into(),eye_height:1.75,locomotion:default()})).id()
+}
+
+/// Translate private movement anchors; the world-origin pass moves body/camera
+/// transforms and Rapier together exactly once.
+pub fn shift_origin(world:&mut World,shift:Vec3) {
+    if let Some(mut input)=world.get_resource_mut::<PlayerInput>() {
+        if let Some((anchor,exit))=&mut input.prop_exit {*anchor-=shift;*exit-=shift;}
+    }
+    for mut body in world.query::<&mut PlayerBody>().iter_mut(world) {body.locomotion.shift_origin(shift);}
+}
+
 fn physics_configuration(ui: Res<UiState>, mut configs: Query<&mut RapierConfiguration>) {
     for mut config in &mut configs {
         config.gravity = Vec3::new(0., -9.8, 0.);
@@ -1100,14 +1137,29 @@ fn eye_height(stance: &str) -> f32 {
     }
 }
 pub(crate) fn vector(value: &Value) -> Option<Vec3> {
-    let array: [f32; 3] = serde_json::from_value(value.clone()).ok()?;
-    let vector = Vec3::from_array(array);
-    vector.is_finite().then_some(vector)
+    let v=if let Some(a)=value.as_array() {
+        if a.len()!=3 {return None;}
+        Vec3::new(a[0].as_f64()? as f32,a[1].as_f64()? as f32,a[2].as_f64()? as f32)
+    }else {
+        // Original network event structs retain their {x,y,z} payload, while
+        // bridge snapshot adapters deliberately write compact three-vectors.
+        Vec3::new(value["x"].as_f64()? as f32,value["y"].as_f64()? as f32,value["z"].as_f64()? as f32)
+    };
+    v.is_finite().then_some(v)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn source_event_vectors_and_snapshot_vectors_share_one_finite_decoder() {
+        let source=json!({"pos":{"x":0.,"y":0.109375,"z":-1.609375},"radius":9.3125,"itemId":262});
+        let expected=Vec3::new(0.,0.109375,-1.609375);
+        assert_eq!(vector(&source["pos"]),Some(expected));
+        assert_eq!(vector(&json!(expected.to_array())),Some(expected));
+        assert_eq!(vector(&json!({"x":1.,"y":2.})),None);
+        assert_eq!(vector(&json!([0.,0.,1e100])),None);
+    }
     #[test]
     fn chair_exit_fans_around_a_wall_and_keeps_the_player_when_surrounded() {
         use bevy::ecs::system::SystemState;

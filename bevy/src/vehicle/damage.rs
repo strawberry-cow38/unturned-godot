@@ -20,7 +20,7 @@ pub fn update(
     mut events: MessageReader<CoreEvent>,
     mut bodies: Query<(Entity, &mut VehicleBody, &Transform)>,
     hierarchy: Query<&ChildOf>,
-    parts: Query<(Entity, &MeshMaterial3d<StandardMaterial>)>,
+    parts: Query<(Entity, &MeshMaterial3d<StandardMaterial>), Without<crate::particles::Emitter>>,
     wheels: Query<(&render::WheelVisual, &Transform)>,
     aircraft: Query<(Entity, &render::aircraft::AircraftPart)>,
     mut cache: ResMut<ContentCache>,
@@ -91,12 +91,8 @@ pub fn update(
                 // seed makes replayed accepted facts reproducible without changing its ranges.
                 let mut random =
                     (event.sequence.wrapping_mul(0x9e3779b97f4a7c15) ^ wheel.index as u64).max(1);
-                let mut range = |extent: f32| {
-                    random ^= random << 13;
-                    random ^= random >> 7;
-                    random ^= random << 17;
-                    (((random >> 40) as f32 / 16777216.) * 2. - 1.) * extent
-                };
+                let mut range =
+                    |extent: f32| (crate::particles::random(&mut random) * 2. - 1.) * extent;
                 let linear =
                     (outward * 45. + Vec3::Y * 55. + Vec3::new(range(15.), 0., range(15.))) / 18.;
                 let angular = Vec3::new(range(12.), range(12.), range(12.));

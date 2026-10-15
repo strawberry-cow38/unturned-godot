@@ -13,6 +13,7 @@ pub struct Options {
     pub ticks: u32,
     pub screenshot: Option<PathBuf>,
     pub screenshot_frame: u32,
+    pub screenshot_event: Option<String>,
     pub exit_after_capture: bool,
     pub help: bool,
 }
@@ -30,6 +31,7 @@ impl Default for Options {
             ticks: 250,
             screenshot: None,
             screenshot_frame: 90,
+            screenshot_event: None,
             exit_after_capture: true,
             help: false,
         }
@@ -63,6 +65,7 @@ impl Options {
                 "--ticks" => options.ticks = value()?.parse()?,
                 "--shot" => options.screenshot = Some(value()?.into()),
                 "--shot-frame" => options.screenshot_frame = value()?.parse()?,
+                "--shot-event" => options.screenshot_event = Some(value()?),
                 "--" => {}
                 _ => bail!("Unknown option {arg}. Use --help."),
             }
@@ -116,6 +119,7 @@ Usage: bevy/run.sh [options]\n\
   --headless --ticks 250   Exercise the core bridge without a renderer\n\
   --shot PATH              Capture the rendered window and exit\n\
   --shot-frame 90          Wait this many rendered frames before capture\n\
+  --shot-event NAME        Capture when an authoritative event is rendered\n\
   --stay                   Keep running; F12 repeats the capture\n\
   --help                   Show this help";
 

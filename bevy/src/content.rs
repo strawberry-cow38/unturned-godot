@@ -286,6 +286,7 @@ impl ContentCache {
             // Source Terrain, FoliageField and ResourceField generate mipmaps and
             // explicitly retain linear filtering; palette props remain nearest.
             let linear = path.starts_with("terrain")
+                || path.starts_with("veh_smoke") || path=="veh_fire.png"
                 || path.starts_with("foliage")
                 || path.starts_with("resources");
             let handle = assets

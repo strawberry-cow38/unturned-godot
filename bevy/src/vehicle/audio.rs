@@ -15,6 +15,7 @@ pub struct Engine {
     pub starts: u64,
     pub horns: u64,
     pub cranking: f32,
+    pub exhaust_puff: f32,
     was_running: bool,
     ignition_length: f32,
     horn_cooldown: f32,
@@ -25,6 +26,7 @@ impl Engine {
             starts: 0,
             horns: 0,
             cranking: 0.,
+            exhaust_puff: 0.,
             was_running: running,
             ignition_length,
             horn_cooldown: 0.,
@@ -34,6 +36,7 @@ impl Engine {
         self.horn_cooldown = (self.horn_cooldown - dt).max(0.);
         if running && !self.was_running {
             self.starts += 1;
+            self.exhaust_puff = 1.;
             if !spec.heli {
                 self.cranking = if self.ignition_length > 0.3 {
                     self.ignition_length.min(2.5)
@@ -44,6 +47,9 @@ impl Engine {
         }
         self.was_running = running;
         self.cranking = (self.cranking - dt).max(0.);
+        if running {
+            self.exhaust_puff = (self.exhaust_puff - dt).max(0.);
+        }
     }
     pub fn horn(&mut self, spec: &VehicleSpec) {
         if spec.horn.is_some() && self.horn_cooldown <= 0. {
@@ -239,10 +245,10 @@ pub fn update(
         }
     }
 }
-pub(super) fn spawn_sound(
+pub(crate) fn spawn_sound(
     commands: &mut Commands,
     assets: &AssetServer,
-    parent: Entity,
+    parent: impl Into<Option<Entity>>,
     path: &str,
     looping: bool,
     gain: f32,
@@ -251,7 +257,7 @@ pub(super) fn spawn_sound(
     distance: f32,
     master: f32,
 ) -> Entity {
-    commands
+    let entity = commands
         .spawn((
             AudioPlayer::new(assets.load(path.to_owned())),
             (if looping {
@@ -268,9 +274,12 @@ pub(super) fn spawn_sound(
                 max_distance: distance,
             },
             Transform::default(),
-            ChildOf(parent),
         ))
-        .id()
+        .id();
+    if let Some(parent) = parent.into() {
+        commands.entity(entity).insert(ChildOf(parent));
+    }
+    entity
 }
 pub fn volume(
     settings: Res<Settings>,

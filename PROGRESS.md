@@ -795,3 +795,51 @@ A native regression found that a queued accepted console teleport was not recove
 Trusted native collision facts can now request the original immediate aircraft explosion, while normal hull damage keeps its four-second fuse. Rotor strikes damage the contacted authoritative rubble indices; malformed batches reject before any mutation. Both dead helicopter rotors kill hull health through the normal fuse. Original driver-only hurtmain/killmain/hurttail/killtail console diagnostics use the same persisted rotor pools.
 
 Validation: 630/630 network tests and 43/43 executable bridge integration tests passed. This covers exact flare lifetime through save/load, no duplicate spend/fact, queued teleport/rebase, mapping restoration, rotor pool separation, prop damage, immediate versus delayed explosions, and malformed contact rejection. Native visual effects/contact integration remains with the renderer owners and is not inferred from these authority checks.
+
+### 2026-10-14 — Bevy recoil, throwable effects and native origin synchronization
+
+Accepted shots now move real aim through the original cumulative recoil pattern,
+including stance settling, skill and condition multipliers. Authoritative event
+ticks keep burst progression correct across slow render frames. Live semi-auto
+captures show one round spent and the original first-pattern aim increment still
+present after settling. Original blue smoke and red flare palettes, sparks,
+plumes and ground light were inspected in Vulkan captures. A visual failure led
+to a regression fix for authority event positions encoded as objects rather than
+snapshot arrays. Flare light/fade follows exact remaining server lifetime after
+load. Shared particle meshes cover the source emitter curves, atlas animation,
+moving parents and origin changes.
+
+Native world rebasing now moves scene transforms, Rapier bodies/query state,
+streamed geometry, shader origins, private movement caches and pending event
+coordinates together without advancing simulation. Absolute procedural locations
+retain double precision. Real bridge tests caught queued teleport recovery across
+the barrier; an optional source authority hook now preserves the accepted pose.
+Distant tunnel and live threshold-crossing captures were inspected, including
+terrain, roads, foliage, player landing and refreshed authoritative triangles.
+`bevy/check.sh` builds the bridge and passed all 141 native tests at this checkpoint;
+the corresponding managed milestone passed 43 bridge and 630 network tests.
+Final source review corrected particle growth to zero-tangent Hermite curves,
+verified against measured Godot samples. Night captures show flare ground
+lighting and the accepted grenade flash/fireball/dust; the capture harness waits
+one mesh upload after the event. The final native suite passes 143 tests.
+Vehicle capture findings are recorded in the entry below.
+
+### 2026-10-14 — Bevy vehicle contact damage and visible destruction
+
+Native rotor cylinders now publish source contact damage, accepted prop strikes,
+spark/debris bursts and metal impacts through the authoritative host. The original
+car/aircraft crash thresholds, grace periods and immediate high-speed aircraft
+explosion are preserved. Original smoke textures, animated fire atlas, rotor
+pools, exhaust outlets, cold-start/rev rates and wreck cooling are native particle
+emitters. Existing particles drift independently of the chassis and survive
+origin shifts; presentation meshes never enter authoritative collision geometry.
+
+Actual pilot-seat `killmain` input was rendered and inspected: main-hub fire and
+smoke follow the accepted dead rotor, with a healthy tail and hull. A separate
+popped-tire capture exposed a missing unattended all-wheel parking brake. Its
+Rapier regression failed with 26m of sliding before restoring the exact source
+mass-scaled brake, then passed; the final tire image shows a parked Jeep, bare
+rim and retained tread. All 38 focused vehicle tests and the consolidated 142
+native tests pass. Final inspected images are `bevy-huey-rotor.png` and
+`bevy-jeep-popped-fixed.png`; the remaining vehicle scope stays explicit in
+`bevy/docs/VEHICLE_PORT.md`.

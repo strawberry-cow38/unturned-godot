@@ -38,8 +38,8 @@ fn texture(kind: usize, ramp: bool) -> String {
     )
 }
 fn ground(r: &ProceduralRegion, x: f32, z: f32) -> f32 {
-    let gx = ((x - r.origin_x) / r.spacing).clamp(0., r.cells as f32);
-    let gz = ((z - r.origin_z) / r.spacing).clamp(0., r.cells as f32);
+    let gx = ((x - r.origin_x as f32) / r.spacing).clamp(0., r.cells as f32);
+    let gz = ((z - r.origin_z as f32) / r.spacing).clamp(0., r.cells as f32);
     let i = (gx as usize).min(r.cells - 1);
     let j = (gz as usize).min(r.cells - 1);
     let s = r.cells + 1;

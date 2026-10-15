@@ -31,19 +31,20 @@ fn cnoise(p:vec2<f32>)->f32{
 fn fragment(in:VertexOutput,@builtin(front_facing) is_front:bool)->FragmentOutput{
     var pbr=pbr_input_from_standard_material(in,is_front);
     let world=in.world_position.xz;
-    let jitter=(vec2<f32>(cnoise(world*1.9),cnoise(world*1.9+37.1))-0.5)*2.0*settings.x*vec2<f32>(1.0,boundary.x);
+    let absolute=world+boundary.yz;
+    let jitter=(vec2<f32>(cnoise(absolute*1.9),cnoise(absolute*1.9+37.1))-0.5)*2.0*settings.x*vec2<f32>(1.0,boundary.x);
     let uv=(world-rect.xy)/rect.zw+jitter/vec2<f32>(textureDimensions(splat0));
     let w0=textureSample(splat0,splat_sampler0,uv);let w1=textureSample(splat1,splat_sampler1,uv);
     let weights=array<f32,8>(w0.x,w0.y,w0.z,w0.w,w1.x,w1.y,w1.z,w1.w);
     var best=0;var weight=weights[0];
     for(var i=1;i<8;i++){if weights[i]>weight{best=i;weight=weights[i];}}
-    let tiled=world/settings.y;
+    let tiled=absolute/settings.y;
     let dx=dpdx(tiled);let dy=dpdy(tiled);
     pbr.material.base_color=vec4<f32>(textureSampleGrad(albedos,albedo_sampler,tiled,best,dx,dy).rgb,1.0);
     pbr.material.perceptual_roughness=1.0;
     var snow=0.0;
     if settings.z>0.0 && best==2{
-        snow=clamp(smoothstep(0.35,0.95,settings.z*1.45-cnoise(world*0.07)*0.45),0.0,1.0);
+        snow=clamp(smoothstep(0.35,0.95,settings.z*1.45-cnoise(absolute*0.07)*0.45),0.0,1.0);
         pbr.material.base_color=vec4<f32>(mix(pbr.material.base_color.rgb,textureSampleGrad(albedos,albedo_sampler,tiled,6,dx,dy).rgb,snow),1.0);
         pbr.material.perceptual_roughness=mix(1.0,0.82,snow);
     }

@@ -19,7 +19,7 @@ use std::{
     sync::{Arc, Weak},
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SplatField {
     pub origin: Vec2,
     pub size: Vec2,
@@ -151,7 +151,7 @@ impl MaterialExtension for TerrainExtension {
         Self::fragment_shader()
     }
 }
-type TerrainMaterial = ExtendedMaterial<StandardMaterial, TerrainExtension>;
+pub(super) type TerrainMaterial = ExtendedMaterial<StandardMaterial, TerrainExtension>;
 #[derive(Resource, Default)]
 struct TextureCache {
     albedos: HashMap<String, Handle<Image>>,
@@ -248,6 +248,7 @@ fn splat_images(field: &SplatField, images: &mut Assets<Image>) -> [Handle<Image
     })
 }
 fn convert(
+    origin: Res<super::origin::WorldOrigin>,
     mut commands: Commands,
     mut materials: ResMut<Assets<TerrainMaterial>>,
     mut images: ResMut<Assets<Image>>,
@@ -297,8 +298,8 @@ fn convert(
                 } else {
                     1.
                 },
-                0.,
-                0.,
+                origin.shader_offset().x,
+                origin.shader_offset().y,
                 0.,
             ),
             albedos,
@@ -425,5 +426,19 @@ mod tests {
         }
         assert_eq!(image.data.as_ref().unwrap().len(), expected);
         assert_eq!((width, height), (1, 1));
+    }
+}
+
+pub(super) fn shift_origin(world: &mut World, shift: Vec3, offset: Vec2) {
+    for mut surface in world.query::<&mut TerrainSurface>().iter_mut(world) {
+        Arc::make_mut(&mut surface.splat).origin -= shift.xz();
+    }
+    if let Some(mut materials) = world.get_resource_mut::<Assets<TerrainMaterial>>() {
+        for (_, material) in materials.iter_mut() {
+            material.extension.rect.x -= shift.x;
+            material.extension.rect.y -= shift.z;
+            material.extension.boundary.y = offset.x;
+            material.extension.boundary.z = offset.y;
+        }
     }
 }

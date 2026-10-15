@@ -2,13 +2,14 @@
 use crate::content::{ContentCache, ContentError, ObjData, load_guid_map};
 mod foliage;
 pub mod interactables;
+pub mod origin;
 mod procedural;
 mod procedural_roads;
 mod roads;
 mod terrain;
 mod tunnels;
 mod wires;
-use bevy::prelude::*;
+use bevy::{math::DVec3, prelude::*};
 use bevy_rapier3d::prelude::{Collider, RigidBody};
 #[cfg(test)]
 use procedural::ProceduralTree;
@@ -29,7 +30,7 @@ pub struct WorldConfig {
     pub spawn_center: Option<Vec3>,
     pub spawn_radius: f32,
     /// Original UG_INF_CAM absolute XYZ and yaw/pitch in degrees.
-    pub fixed_camera: Option<(Vec3, f32, f32)>,
+    pub fixed_camera: Option<(DVec3, f32, f32)>,
     /// JSON exported from the original engine-independent InfiniteTerrain generator.
     pub procedural_path: Option<PathBuf>,
     pub foliage: bool,
@@ -74,6 +75,7 @@ impl Plugin for WorldPlugin {
             foliage::FoliagePlugin,
             terrain::TerrainPlugin,
             interactables::InteractablePlugin,
+            origin::OriginPlugin,
         ))
         .init_resource::<WorldConfig>()
         .init_resource::<WorldState>()
@@ -91,6 +93,7 @@ impl Plugin for WorldPlugin {
 fn world_needs_reload(
     state: Res<WorldState>,
     geometry: Res<WorldGeometry>,
+    origin: Res<origin::WorldOrigin>,
     config: Res<WorldConfig>,
     ui: Res<crate::ui::UiState>,
     players: Query<&Transform, With<crate::player::PlayerBody>>,
@@ -99,7 +102,11 @@ fn world_needs_reload(
         return true;
     }
     if let Some((position, _, _)) = config.fixed_camera {
-        return stream_due(position, geometry.stream_anchor, config.spawn_radius);
+        return stream_due(
+            origin.local(position),
+            geometry.stream_anchor,
+            config.spawn_radius,
+        );
     }
     ui.screen != crate::ui::Screen::MainMenu
         && players
@@ -107,21 +114,17 @@ fn world_needs_reload(
             .next()
             .is_some_and(|p| stream_due(p.translation, geometry.stream_anchor, config.spawn_radius))
 }
-fn parse_csv(source: &str) -> Option<Vec<f32>> {
-    source
-        .split(',')
-        .map(|s| s.trim().parse::<f32>().ok().filter(|v| v.is_finite()))
-        .collect()
-}
-fn parse_capture_camera(source: &str) -> Option<(Vec3, f32, f32)> {
-    let values = parse_csv(source)?;
-    (values.len() >= 3).then(|| {
-        (
-            Vec3::new(values[0], values[1], values[2]),
-            values.get(3).copied().unwrap_or(0.),
-            values.get(4).copied().unwrap_or(-20.),
-        )
-    })
+fn parse_capture_camera(source: &str) -> Option<(DVec3, f32, f32)> {
+    let values = origin::parse_absolute(source)?;
+    (values.len() >= 3)
+        .then(|| {
+            (
+                DVec3::new(values[0], values[1], values[2]),
+                values.get(3).copied().unwrap_or(0.) as f32,
+                values.get(4).copied().unwrap_or(-20.) as f32,
+            )
+        })
+        .filter(|(_, yaw, pitch)| yaw.is_finite() && pitch.is_finite())
 }
 fn stream_due(player: Vec3, anchor: Vec3, radius: f32) -> bool {
     player.xz().distance(anchor.xz()) > (radius * 0.4).clamp(32., 96.)
@@ -521,6 +524,7 @@ fn build_world(
     mut geometry: ResMut<WorldGeometry>,
     mut cache: ResMut<ContentCache>,
     mut sources: ResMut<WorldSourceCache>,
+    mut origin: ResMut<origin::WorldOrigin>,
     players: Query<&Transform, With<crate::player::PlayerBody>>,
     assets: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -531,18 +535,33 @@ fn build_world(
     for entity in &existing {
         commands.entity(entity).despawn();
     }
+    let streaming = state.ready;
     let procedural_start = config
         .procedural_path
         .as_ref()
         .and_then(|_| std::env::var("UG_INF_AT").ok())
-        .and_then(|s| parse_csv(&s))
+        .and_then(|s| origin::parse_absolute(&s))
         .filter(|v| v.len() >= 2);
-    let explicit_center = config
+    // Camera/config coordinates remain absolute. Geometry and physics are local.
+    let absolute_center = config
         .fixed_camera
         .map(|c| c.0)
-        .or(config.spawn_center)
-        .or_else(|| procedural_start.as_ref().map(|v| Vec3::new(v[0], 0., v[1])));
-    let streaming = state.ready;
+        .or(config.spawn_center.map(Vec3::as_dvec3))
+        .or_else(|| {
+            procedural_start
+                .as_ref()
+                .map(|v| DVec3::new(v[0], 0., v[1]))
+        });
+    if !streaming {
+        origin.offset = if config.procedural_path.is_some() {
+            let p = absolute_center.unwrap_or(DVec3::new(128., 0., 128.));
+            (p.xz() / 256.).floor() * 256.
+        } else {
+            default()
+        };
+        origin.epoch = 0;
+    }
+    let explicit_center = absolute_center.map(|p| origin.local(p));
     let old_spawn = state.spawn;
     let old_yaw = state.spawn_yaw;
     let old_focus = state.focus;
@@ -568,7 +587,7 @@ fn build_world(
     let mut proc_regions = Vec::new();
     if let Some(path) = &config.procedural_path {
         let center = if let Some((position, _, _)) = config.fixed_camera {
-            position
+            origin.local(position)
         } else if streaming {
             players
                 .iter()
@@ -581,7 +600,8 @@ fn build_world(
         match procedural::regions(
             &bridge,
             options.0.seed,
-            center,
+            origin.to_absolute(center),
+            origin.offset,
             config.spawn_radius + 48.,
             path,
             &mut sources.procedural,
@@ -693,7 +713,7 @@ fn build_world(
         }
     };
     let center = if let Some((position, _, _)) = config.fixed_camera {
-        position
+        origin.local(position)
     } else if streaming {
         players
             .iter()
@@ -768,7 +788,7 @@ fn build_world(
         procedural_start
             .as_ref()
             .and_then(|v| v.get(2).copied())
-            .unwrap_or(0.),
+            .unwrap_or(0.) as f32,
     ));
     state.spawn = Vec3::new(
         spawn_point.x,
@@ -1144,7 +1164,7 @@ fn build_world(
         }
     }
     for region in &proc_regions {
-        let origin = Vec2::new(region.origin_x, region.origin_z);
+        let origin = Vec2::new(region.origin_x as f32, region.origin_z as f32);
         for tree in &region.trees {
             let name = region
                 .structures
@@ -1780,11 +1800,11 @@ mod tests {
     fn original_fixed_camera_knob_preserves_degrees_and_rejects_nonfinite_values() {
         assert_eq!(
             parse_capture_camera("-12916,70,-19678,88,-10"),
-            Some((Vec3::new(-12916., 70., -19678.), 88., -10.))
+            Some((DVec3::new(-12916., 70., -19678.), 88., -10.))
         );
         assert_eq!(
             parse_capture_camera("1,2,3"),
-            Some((Vec3::new(1., 2., 3.), 0., -20.))
+            Some((DVec3::new(1., 2., 3.), 0., -20.))
         );
         assert!(parse_capture_camera("1,2").is_none());
         assert!(parse_capture_camera("NaN,2,3").is_none());

@@ -54,6 +54,9 @@ pub fn swim_velocity(feet: Vec3, sea: f32, yaw: f32, pitch: f32, axes: Vec2, jum
 }
 
 impl Locomotion {
+    pub fn shift_origin(&mut self,shift:Vec3) {
+        if let Some(path)=&mut self.mantle {for point in &mut path.points {*point-=shift;}}
+    }
     fn detach(&mut self) {
         if self.ladder.is_some() {
             self.cooldown = 0.45;

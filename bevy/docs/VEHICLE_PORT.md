@@ -26,7 +26,8 @@ poses through `worldVehicleState`; the local driver uses the existing
   fade/stability limit, rear handbrake and tracked differential steering.
   The anti-roll bar applies a pure torque even with one wheel airborne.
 - Original voxel buoyancy, mass-scaled water damping, steady hull heave/roll
-  damping and boat propulsion/rudder. This currently samples a flat native sea.
+  damping and boat propulsion/rudder. The flat native sea matches current source:
+  `WaveField.Flat = true` forces both the visual field and physical height to zero.
 - Authoritative occupancy drives player body/camera through public `Occupancy`.
   Driver ignition/lights stream as owner flags. Door focus joins the shared
   nearest-interaction collector. Exit tests the own-door chest path and standing
@@ -79,6 +80,22 @@ poses through `worldVehicleState`; the local driver uses the existing
   wheel meshes use 18 kg sphere bodies, source kick ranges, ten-second lifetime and
   independent last-second fade. Native simulation clocks stop during pause, and
   explicit session epochs reset geometry/presentation on every load.
+- Native particle meshes render original light/heavy damage smoke, four-frame
+  flame atlas, independent rotor smoke/fire and authored exhaust outlets. Rates,
+  sizes, lifetimes, rotor thresholds, cold-start/rev steps and the 40–60 second
+  wreck fade follow source. Existing particles drift in world space; smoke meshes
+  are excluded from combat geometry and charred-hull material replacement.
+- Physical rotor cylinder overlaps exclude the own body and stopped blades;
+  source 0.22-second strikes send rotor and destructible damage together to the
+  managed host. Accepted contacts trigger source spark/debris bursts and metal
+  audio. Crash detection preserves horizontal car impacts, full-3D aircraft
+  impacts, decaying approach speed, spawn grace and cooldown. High-speed aircraft
+  crashes request authoritative immediate explosion, while ordinary damage keeps
+  the original four-second fuse. Recovery resets the detector's velocity history.
+- Floating-origin changes shift cached spawn/seat positions once and invalidate
+  uploaded geometry without touching the already-shifted physical Transform.
+  Explicit `--vehicle` captures support original `UG_TIREPOP` through accepted
+  host damage; regular map spawns do not read this testing variable.
 
 ## Verification
 
@@ -121,14 +138,28 @@ the adapter now retains that accepted impulse until its physical handle exists.
 All 29 focused vehicle tests passed. `bevy-jeep-tires.png` was captured from the
 fresh Vulkan binary and opened: the full Jeep, actual tread/rim split, interior
 seats and steering wheel are visible on the original PEI slope, with no asset or
-renderer errors. Destruction smoke/fire rendering remains a later verification.
+renderer errors.
+
+The subsequent 38-test vehicle suite passes, including real rotor overlaps,
+vertical aircraft crash publication, accepted-contact FX, origin cache shifts,
+and loaded wreck cooling. `bevy-huey-rotor.png` was captured after entering the
+pilot seat and issuing the original authoritative `killmain` command: fire and
+smoke appear at the destroyed main hub while the tail and hull remain healthy.
+`bevy-jeep-popped-fixed.png` shows the accepted tire mask 9, a bare rear rim and
+retained front tread. The first tire capture revealed an unattended vehicle
+rolling down the PEI slope; the original all-wheel parking brake was missing.
+A real Rapier slope regression failed with 26m of sliding before the fix and
+passes with the source mass-scaled brake restored. The final capture keeps the
+Jeep parked in frame. Both final Vulkan captures were opened and inspected; no
+live renderer or bridge errors occurred. The consolidated native suite passes
+all 142 tests at this checkpoint.
 
 ## Still required for vehicle parity
 
 This milestone is not the whole 11,264-line vehicle shell. The following remains:
-aircraft turbulence, rotor strikes, airframe damage and crash presentation; ship
+aircraft turbulence; ship
 deck/superstructure collider details and riding; suspension surface-material
-selection and wheel dust; continuous damage smoke/fire and husk settling;
+selection and wheel dust; husk settling;
 dynamic headlights/sirens/beacons; towing, kingpin, sling, winch and cargo;
 turret weapons/hatches and optics;
 doors/hood/trunk animations and storage dashboard; repair/refuel/battery/carjack

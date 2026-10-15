@@ -680,3 +680,24 @@ fn collect_focus(
         );
     }
 }
+
+pub(super) fn shift_origin(world: &mut World, shift: Vec3) {
+    if let Some(mut registry) = world.get_resource_mut::<Registry>() {
+        registry.exported.clear();
+        for seat in registry.seats.values_mut() {
+            seat.position = (Vec3::from_array(seat.position) - shift).to_array();
+        }
+    }
+    for mut leaf in world.query::<&mut DoorLeaf>().iter_mut(world) {
+        leaf.parent_pose.translation -= shift;
+        leaf.dirty = true;
+    }
+    if let Some(mut occupancy) = world.get_resource_mut::<PropOccupancy>() {
+        if let Some(seat) = &mut occupancy.seat {
+            seat.body_pose.translation -= shift;
+            seat.eye_pose.translation -= shift;
+            seat.anchor -= shift;
+            seat.exit_position -= shift;
+        }
+    }
+}

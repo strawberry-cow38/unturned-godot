@@ -1,9 +1,12 @@
 //! Native single-body vehicle host. Seating and owner state use the original wire commands.
 mod audio;
+pub(crate) use audio::spawn_sound as spawn_ranged_audio;
 mod collision;
+mod contacts;
 mod damage;
 pub mod data;
 mod dynamics;
+mod effects;
 mod exit;
 mod flight;
 mod geometry;
@@ -33,6 +36,22 @@ use std::collections::{HashMap, HashSet};
 pub struct VehicleUpdate;
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct VehiclePublish;
+/// Cached world-space values follow the same origin shift as the root bodies.
+/// Root transforms themselves are moved by the central world-origin pass.
+pub fn shift_origin(world: &mut World, shift: Vec3) {
+    if let Some(mut vehicles) = world.get_resource_mut::<Vehicles>() {
+        for point in &mut vehicles.points {
+            point.position -= shift;
+        }
+    }
+    if let Some(mut occupancy) = world.get_resource_mut::<Occupancy>() {
+        if let Some(seat) = &mut occupancy.seat {
+            seat.body_pose.translation -= shift;
+            seat.eye_pose.translation -= shift;
+        }
+    }
+    geometry::shift_origin(world);
+}
 #[derive(Resource, Default)]
 pub struct Occupancy {
     pub seat: Option<OccupiedSeat>,
@@ -128,6 +147,9 @@ impl Plugin for VehiclePlugin {
             .init_resource::<geometry::GeometryUploads>()
             .init_resource::<audio::AudioVoices>()
             .init_resource::<damage::WreckMaterial>()
+            .init_resource::<effects::Effects>()
+            .add_message::<contacts::DamageRequest>()
+            .add_message::<contacts::Feedback>()
             .add_systems(
                 Update,
                 (
@@ -151,10 +173,21 @@ impl Plugin for VehiclePlugin {
                     .in_set(crate::entities::CollectInteractions)
                     .after(crate::player::PlayerCameraUpdate),
             )
-            .add_systems(FixedUpdate, step_bodies.before(PhysicsSet::SyncBackend))
+            .add_systems(
+                FixedUpdate,
+                (contacts::detect, step_bodies)
+                    .chain()
+                    .before(PhysicsSet::SyncBackend),
+            )
             .add_systems(
                 Update,
-                (damage::update, damage::hide_wheels, damage::fade_debris)
+                (
+                    damage::update,
+                    damage::hide_wheels,
+                    damage::fade_debris,
+                    effects::update,
+                    effects::feedback,
+                )
                     .chain()
                     .after(crate::entities::ApplyInteractions),
             )
@@ -164,7 +197,8 @@ impl Plugin for VehiclePlugin {
             )
             .add_systems(
                 FixedUpdate,
-                publish_bodies
+                (publish_bodies, contacts::publish)
+                    .chain()
                     .after(PhysicsSet::Writeback)
                     .in_set(VehiclePublish),
             );
@@ -179,6 +213,7 @@ fn register_spawns(
     options: Res<crate::LaunchOptions>,
     snapshot: Res<GameSnapshot>,
     epoch: Res<crate::player::WorldSessionEpoch>,
+    origin: Res<crate::world::origin::WorldOrigin>,
     mut vehicles: ResMut<Vehicles>,
     mut commands: Commands,
     mut occupancy: ResMut<Occupancy>,
@@ -205,6 +240,9 @@ fn register_spawns(
                 }
             })
             .unwrap_or_default();
+        for point in &mut vehicles.points {
+            point.position = origin.to_local(point.position);
+        }
         vehicles.map = config.map_name.clone();
         vehicles.epoch = epoch.0;
     }
@@ -269,13 +307,49 @@ fn register_spawns(
         "worldVehicles",
         json!({"replace":false,"vehicles":requests}),
     ) {
-        Ok(_) => {
+        Ok(reply) => {
+            // Preserve Main's explicit vehicle-render harness: the normal world never
+            // reads this variable, and the resulting mask still comes from authority.
+            if indices.contains(&usize::MAX) {
+                if let (Some(d), Ok(pop)) = (
+                    options.0.vehicle.as_deref().and_then(data::named),
+                    std::env::var("UG_TIREPOP"),
+                ) {
+                    let key = format!("{}:vehicle:harness:{}", config.map_name, d.key);
+                    let net = reply["result"]["vehicles"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .find(|v| v["key"] == key)
+                        .and_then(|v| v["netId"].as_u64());
+                    if let Some(net) = net {
+                        for tire in harness_tires(&pop, &d.spec) {
+                            if let Err(e)=bridge.request("worldVehicleDamage",json!({"netId":net,"amount":1.,"engineShare":0.,"bodyPart":format!("tire:{tire}")})) {warn!("Vehicle tire harness: {e}");}
+                        }
+                    }
+                }
+            }
             vehicles.registered.extend(indices);
         }
         Err(e) => {
             warn!("Vehicle registration: {e}");
         }
     }
+}
+fn harness_tires(value: &str, spec: &data::VehicleSpec) -> Vec<usize> {
+    if spec.plane || spec.tracked {
+        return vec![];
+    }
+    let mut result = Vec::new();
+    for index in value
+        .split(',')
+        .filter_map(|n| n.trim().parse::<usize>().ok())
+    {
+        if index < spec.wheels().len().min(8) && !result.contains(&index) {
+            result.push(index);
+        }
+    }
+    result
 }
 fn registration(
     d: &data::VehicleDefinition,
@@ -308,7 +382,7 @@ fn registration(
         hit_regions.push(json!({"bodyPart":"mainRotor","center":s.rotor_hub,"size":main,"health":if s.main_rotor_hp > 0. { s.main_rotor_hp } else { s.health * 0.45 }}));
         hit_regions.push(json!({"bodyPart":"tailRotor","center":s.tail_rotor_hub,"size":tail,"health":if s.tail_rotor_hp > 0. { s.tail_rotor_hp } else { s.health * 0.28 }}));
     }
-    json!({"key":key,"typeId":d.type_id,"variant":variant,
+    json!({"key":key,"typeId":d.type_id,"variant":variant,"isHeli":s.heli,"isPlane":s.plane,
         "position":at.to_array(),"yaw":yaw,"health":s.health*10.,"healthMax":s.health*10.,"fuel":s.fuel,"battery":10000,
         "speedMax":s.speed_max(),"climbMax":s.heli_climb_max,"fallMax":s.heli_fall_max,"seatCount":d.seats.len(),"seatOffsets":d.seats,"hasDoors":true,
         "hitRegions":hit_regions,"engineRegion":{"rear":s.rear_engine,"threshold":s.box_center[2] + if s.rear_engine { 0.15 } else { -0.15 } * s.box_size[2],"health":s.health * 10. * 0.4},
@@ -320,7 +394,12 @@ fn sync_vehicles(
     model: Res<UiModel>,
     config: Res<WorldConfig>,
     mut vehicles: ResMut<Vehicles>,
-    mut query: Query<(&mut VehicleBody, &mut Transform, &mut Velocity)>,
+    mut query: Query<(
+        &mut VehicleBody,
+        &mut Transform,
+        &mut Velocity,
+        &mut contacts::ContactState,
+    )>,
     mut cache: ResMut<ContentCache>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -351,7 +430,8 @@ fn sync_vehicles(
             continue;
         };
         if let Some(entity) = vehicles.entities.get(&row.net_id) {
-            if let Ok((mut body, mut transform, mut velocity)) = query.get_mut(*entity) {
+            if let Ok((mut body, mut transform, mut velocity, mut contact)) = query.get_mut(*entity)
+            {
                 // Owner ignition/light intent is streamed with its physical pose. A stale
                 // replica arriving before the next fixed tick must not cancel that intent.
                 if row.driver_player_id != local_player
@@ -386,6 +466,7 @@ fn sync_vehicles(
                     *transform = replica_pose(&row);
                     velocity.linear = Vec3::from_array(row.lin_vel);
                     velocity.angular = Vec3::from_array(row.ang_vel);
+                    contact.adopt_velocity(&d.spec, velocity.linear);
                     body.recov_counter = row.recov_counter;
                 }
             }
@@ -431,6 +512,7 @@ fn sync_vehicles(
                 },
                 pose,
                 Visibility::default(),
+                contacts::ContactState::new(spec),
                 RigidBody::Dynamic,
                 CollisionGroups::new(Group::GROUP_4, Group::ALL & !Group::GROUP_3),
                 Velocity {
@@ -816,6 +898,13 @@ fn step_bodies(
                 &mut wheels,
                 body.drivetrain.surface_grip,
             );
+            // Vehicle._Process applies an all-wheel parking brake while unattended.
+            // Driver Space only brakes the rear axle and cannot stand in for this.
+            if body.driver_player_id == 0 && body.flags & 32 == 0 {
+                for wheel in &mut wheels.wheels {
+                    wheel.brake = spec.brake * spec.mass() / 900. * 13.;
+                }
+            }
         }
         let mut afloat = false;
         if !spec.heli && !spec.plane && spec.water != "Boat" {

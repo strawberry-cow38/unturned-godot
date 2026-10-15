@@ -42,6 +42,11 @@ pub struct GeometryUploads {
     map: String,
     epoch: u64,
 }
+pub(super) fn shift_origin(world: &mut World) {
+    if let Some(mut uploads) = world.get_resource_mut::<GeometryUploads>() {
+        uploads.previous.clear();
+    }
+}
 pub fn upload(
     bridge: Res<CoreBridge>,
     model: Res<UiModel>,
@@ -52,14 +57,17 @@ pub fn upload(
     geometry: Res<WorldGeometry>,
     bodies: Query<(Entity, &VehicleBody, &Transform)>,
     hierarchy: Query<(Option<&ChildOf>, Option<&Visibility>)>,
-    parts: Query<(
-        Entity,
-        &Mesh3d,
-        &GlobalTransform,
-        &Visibility,
-        Option<&render::WheelVisual>,
-        Option<&tires::TireVisual>,
-    )>,
+    parts: Query<
+        (
+            Entity,
+            &Mesh3d,
+            &GlobalTransform,
+            &Visibility,
+            Option<&render::WheelVisual>,
+            Option<&tires::TireVisual>,
+        ),
+        Without<crate::particles::Emitter>,
+    >,
     meshes: Res<Assets<Mesh>>,
     mut uploaded: ResMut<GeometryUploads>,
 ) {

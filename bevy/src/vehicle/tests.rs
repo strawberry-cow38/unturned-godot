@@ -1,6 +1,6 @@
 use super::*;
 
-fn physics_app(sea: Option<f32>) -> App {
+pub(super) fn physics_app(sea: Option<f32>) -> App {
     let mut app = App::new();
     app.add_plugins((
         MinimalPlugins,
@@ -22,7 +22,7 @@ fn physics_app(sea: Option<f32>) -> App {
     app.add_systems(PostUpdate, step_bodies.before(PhysicsSet::SyncBackend));
     app
 }
-fn body(app: &mut App, key: &str, at: Vec3) -> Entity {
+pub(super) fn body(app: &mut App, key: &str, at: Vec3) -> Entity {
     let d = data::named(key).unwrap();
     let s = &d.spec;
     app.world_mut()
@@ -85,6 +85,64 @@ fn ticks(app: &mut App, n: usize) {
     }
 }
 #[test]
+fn origin_shift_moves_cached_seat_and_spawn_positions_without_moving_body_twice() {
+    let mut world = World::new();
+    let pose = Transform::from_xyz(801., 7., -804.);
+    let body = world.spawn(pose).id();
+    world.insert_resource(Vehicles {
+        points: vec![spawns::SpawnPoint {
+            index: 9,
+            type_id: 1,
+            position: pose.translation,
+            yaw: 42.,
+            water: false,
+        }],
+        ..default()
+    });
+    world.insert_resource(Occupancy {
+        seat: Some(OccupiedSeat {
+            vehicle: body,
+            net_id: 14,
+            seat: 0,
+            body_pose: pose,
+            eye_pose: pose.with_translation(pose.translation + Vec3::Y),
+            velocity: Vec3::Z * 7.,
+            driver: true,
+            aircraft: false,
+        }),
+    });
+    let shift = Vec3::new(800., 0., -800.);
+    shift_origin(&mut world, shift);
+    assert_eq!(
+        world.resource::<Vehicles>().points[0].position,
+        Vec3::new(1., 7., -4.)
+    );
+    let seat = world.resource::<Occupancy>().seat.unwrap();
+    assert_eq!(seat.body_pose.translation, Vec3::new(1., 7., -4.));
+    assert_eq!(seat.eye_pose.translation, Vec3::new(1., 8., -4.));
+    assert_eq!(seat.velocity, Vec3::Z * 7.);
+    assert_eq!(
+        *world.get::<Transform>(body).unwrap(),
+        pose,
+        "the exclusive root pass owns the one physical transform shift"
+    );
+}
+#[test]
+fn explicit_tire_harness_accepts_only_source_supported_wheels_and_aircraft_registration_is_exact() {
+    let jeep = data::named("jeep").unwrap();
+    assert_eq!(harness_tires("0,3,0,-1,4,99,bad", &jeep.spec), vec![0, 3]);
+    assert!(harness_tires("0,1", &data::named("jet").unwrap().spec).is_empty());
+    let helicopter = data::named("huey").unwrap();
+    assert_eq!(
+        registration(jeep, "car".into(), Vec3::ZERO, 0., 0)["isHeli"],
+        false
+    );
+    assert_eq!(
+        registration(helicopter, "heli".into(), Vec3::ZERO, 0., 0)["isHeli"],
+        true
+    );
+}
+#[test]
 fn accepted_explosion_charred_meshes_and_impulse_reach_the_single_native_body_once() {
     let mut app = physics_app(None);
     app.add_plugins(bevy::asset::AssetPlugin::default())
@@ -115,7 +173,7 @@ fn accepted_explosion_charred_meshes_and_impulse_reach_the_single_native_body_on
     app.world_mut().write_message(crate::entities::CoreEvent {
         sequence: 51,
         kind: "vehicleExploded".into(),
-        data: json!({"netId":1,"impulse":[0,18000,0],"torqueImpulse":[2800,0,0]}),
+        data: json!({"netId":1,"impulse":{"x":0,"y":18000,"z":0},"torqueImpulse":{"x":2800,"y":0,"z":0}}),
     });
     ticks(&mut app, 3);
     let native = app.world().get::<VehicleBody>(car).unwrap();
@@ -168,6 +226,42 @@ fn pause_preserves_native_vehicle_ignition_and_water_clocks() {
     let native = app.world().get::<VehicleBody>(car).unwrap();
     assert_eq!(native.engine.cranking, 2.);
     assert!(!native.engine_drowned && native.swamp.elapsed == 0.);
+}
+#[test]
+fn unattended_punctured_car_keeps_its_parking_brake_on_a_real_slope() {
+    let mut app = physics_app(None);
+    let slope = Quat::from_rotation_x(0.18);
+    app.world_mut().spawn((
+        RigidBody::Fixed,
+        Collider::cuboid(30., 0.25, 50.),
+        Transform::from_xyz(0., -0.25, 0.).with_rotation(slope),
+    ));
+    let car = body(&mut app, "jeep", Vec3::new(0., 2., 0.));
+    {
+        let mut b = app.world_mut().get_mut::<VehicleBody>(car).unwrap();
+        b.driver_player_id = 0;
+        b.flags = 0;
+        b.controls.engine = false;
+        b.popped_tire_mask = 9;
+    }
+    app.world_mut().get_mut::<Transform>(car).unwrap().rotation = slope;
+    ticks(&mut app, 200);
+    let start = app.world().get::<Transform>(car).unwrap().translation;
+    ticks(&mut app, 250);
+    let end = app.world().get::<Transform>(car).unwrap().translation;
+    assert!(
+        end.distance(start) < 0.8,
+        "unattended parking brake must prevent downhill escape despite two popped tires: start={start}, end={end}"
+    );
+    let brakes = &app
+        .world()
+        .get::<RayCastVehicleController>(car)
+        .unwrap()
+        .wheels;
+    assert!(
+        brakes.iter().all(|w| w.brake > 0.),
+        "all wheels park; rear-only is the driver's handbrake turn"
+    );
 }
 #[test]
 fn native_car_drowns_and_cannot_restart_while_its_trapped_air_escapes() {

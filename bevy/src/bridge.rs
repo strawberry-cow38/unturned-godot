@@ -24,6 +24,12 @@ impl CoreBridge {
             process.ack_events = process.ack_events.max(sequence);
         }
     }
+    /// Only the exclusive native origin barrier may acknowledge a new frame.
+    pub fn adopt_origin(&self, epoch: u64) {
+        if let Ok(mut process) = self.0.lock() {
+            process.origin_epoch = epoch;
+        }
+    }
     pub fn launch(manifest: &Path) -> Result<Self> {
         let dll = manifest.join("bridge/bin/Debug/net8.0/UnturnedBevy.Bridge.dll");
         if !dll.is_file() {
@@ -64,6 +70,7 @@ impl CoreBridge {
             next_id: 1,
             failed: false,
             ack_events: 0,
+            origin_epoch: 0,
         })))
     }
 
@@ -82,6 +89,7 @@ struct BridgeProcess {
     next_id: u64,
     failed: bool,
     ack_events: u64,
+    origin_epoch: u64,
 }
 
 impl BridgeProcess {
@@ -96,8 +104,25 @@ impl BridgeProcess {
         request.insert("op".into(), json!(operation));
         if operation == "init" {
             self.ack_events = 0;
+            self.origin_epoch = 0;
         }
         request.insert("ackEvents".into(), json!(self.ack_events));
+        if matches!(
+            operation,
+            "tick"
+                | "action"
+                | "worldGeometry"
+                | "worldDynamicGeometry"
+                | "worldVehicleState"
+                | "worldVehicleDamage"
+                | "worldServices"
+                | "worldLoot"
+                | "worldVehicles"
+        ) {
+            request
+                .entry("originEpoch")
+                .or_insert_with(|| json!(self.origin_epoch));
+        }
         let result = (|| {
             serde_json::to_writer(&mut self.stdin, &request)?;
             self.stdin.write_all(b"\n")?;

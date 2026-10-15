@@ -149,3 +149,46 @@ foliage shading and the remaining parity ledger still need further validation.
 - Session loads reset hand transactions, player capsules and projectile replicas;
   explicit session epochs also refresh vehicle and door geometry even when IDs
   and transforms happen to match the previous session.
+
+## Native recoil, throwable effects and world-origin integration
+
+- The integrated bridge build and native runner `bevy/check.sh` passed 141 tests;
+  the final native suite passed 143 after parking and curve regressions;
+  the corresponding managed milestone passed 43 bridge and 630 network tests.
+  The runner builds the actual bridge used by the native origin regressions.
+- Live firing captures `bevy-recoil-before` / `bevy-recoil-after` show one held
+  semi-auto shot spending one round (30 to 29). Pitch remains at 0.25670373° and
+  yaw at 359.98474° after settling, matching the first original Eaglefire pattern
+  increment. Recoil changes real aim, with original stance/skill/condition rules;
+  the viewmodel only adds its separate positional shake. Event ticks preserve the
+  pattern when several fixed updates arrive in one slow rendered frame.
+- Visual inspection found a real event contract bug: authority event vectors use
+  `{x,y,z}`, while snapshot positions use arrays. The native decoder now accepts
+  both finite forms, with a regression using the actual smoke event payload.
+  This also restores event-positioned gun audio.
+- `bevy-smoke-cloud-fixed`, `bevy-flare-live`, and
+  `bevy-flare-clear-ground` were opened and inspected. The original blue smoke
+  palette produces a growing lit cloud (33 particles initially, 220 when mature).
+  The original red flare has a white-hot tip, sparks, tinted smoke and a visible
+  red light pool on the ground. Flare fading uses the remaining authoritative
+  lifetime, including after load, instead of starting a fresh local timer.
+- Source blast and vehicle emitters share native billboard meshes. Tests cover
+  continuous birth rates across frame rates, moving parents, origin shifts,
+  one-shot bursts, texture-atlas cycles per particle lifetime, stop/fade cleanup,
+  and loaded flare light intensity. Peer review measured the original Godot
+  growth curve and corrected its Hermite interpolation while keeping color
+  gradients linear. The regression checks original quarter-life sample values.
+- `bevy-night-flare` shows the original sparks, plume, hot tip and a broad
+  reddish ground light pool at night. `bevy-night-blast-initial` confirms the
+  short flash; `bevy-night-blast` captures the accepted grenade fireball and
+  both dust bursts after mesh upload (28/36/24 particles at age 0.2152s).
+  The event-triggered capture waits one render extraction so the transient mesh
+  is visible. Both images were opened and inspected; no live renderer errors.
+- Distant procedural captures `bevy-distant-origin-tunnel`,
+  `bevy-origin-before-crossing`, and `bevy-origin-crossing` were inspected by the
+  world reviewer. A live 1024m shift changed the absolute origin to
+  `[-12032,-19712]`, retained local owner position `[176,59.406,34]`, and refreshed
+  25,254 authority triangles with no missing assets or stale-frame errors. The
+  original fall damage remained active. Real bridge/Rapier tests cover same-tick
+  rebasing, queued teleport recovery, render/physics agreement and stale-coordinate
+  rejection. See `WORLD_PORT.md` for the exact scope.

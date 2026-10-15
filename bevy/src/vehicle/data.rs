@@ -46,6 +46,7 @@ pub struct VehicleSpec {
     pub steer_axis: [f32; 3],
     pub seat_model_file: Option<String>,
     pub seat_model: [f32; 3],
+    pub exhaust_pos: Option<[f32; 3]>,
     pub retract_gear: bool,
     pub rotor_hub: [f32; 3],
     pub tail_rotor_hub: [f32; 3],

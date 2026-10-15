@@ -93,7 +93,7 @@ props, resources and foliage, without restarting the session or changing spawn.
 Parsed placements and instance arrays are cached; retired render entities and
 colliders are removed. A geometry revision informs the authoritative host of
 changes. This synchronous rebuild can hitch; async chunk jobs, original LOD
-thresholds, non-foliage distance fades and floating origin still need Bevy systems.
+thresholds and non-foliage distance fades still need Bevy systems.
 Generated regions currently use LOD0; far-landmark rings are not yet reproduced.
 Generated buildings come from a separate source
 building/editor pipeline and are not produced by the terrain generator alone.
@@ -110,7 +110,7 @@ Source road editor operations and lane AI bindings remain separate work.
 The remaining custom shaders require WGSL ports: ocean normal ripples and shoreline
 foam, planar reflections (the latest source intentionally keeps geometry flat), underwater rendering,
 wind/grass/wire displacement, rain shelter/wetness/puddles/glass/impacts, caustics,
-vehicle palette painting, character clothing/wear, flags, outlines and effects.
+character clothing/wear, flags, outlines and remaining effects.
 The source water-volume implementation is itself incomplete and should not be
 mistaken for an already-solved upstream feature.
 
@@ -205,3 +205,53 @@ position (−476.445, 32.5, −111.1), F toggles PEI shipping-container door 18;
 saved authority snapshot records `open:true`, and both original leaves visibly
 swing 90 degrees. The regression checks that this visible pose agrees with
 Rapier, rather than accepting a moving collider with a displaced mesh.
+
+
+## Floating origin and the authority barrier
+
+`world/origin.rs` implements the original 256-metre region shift, triggered beyond
+`UG_INF_REBASE` (default 1024 metres). Absolute origin and diagnostic camera/start
+coordinates use doubles. Generated terrain and all world-coordinate structures
+are localized before conversion to floats; region-local trees/ground cover,
+normals, directions and model pivots retain their original values. Cached regions
+remain absolute so revisiting them after a later shift does not accumulate error.
+
+The native origin pass and the original managed authority shift as one barrier.
+The managed host drains pending packets and publishes a full snapshot at the same
+tick; native roots, Rapier bodies/colliders, interpolation, terrain samples,
+collision exports, seats, vehicle caches and world-space particle data follow.
+Rapier collision detection refreshes immediately without integrating physics, so
+movement rays before the next normal physics sync see the correct frame. UI and
+the separate first-person camera retain their own coordinates. Terrain patterns
+use the original modulo-32768 shader origin to remain continuous across ordinary
+shifts, retaining the source's phase reset when that 32-km period wraps.
+
+Every native coordinate-bearing request carries the adopted origin epoch. A stale
+request is rejected explicitly. Origin adoption runs at frame/fixed boundaries,
+between UI intents and movement actions, and immediately after player publication
+before projectile replicas. Pending effect messages translate in place, preserving
+reader cursors and event deduplication. Load/respawn can change the origin too;
+queued authoritative teleports adopt their new correction before the next native
+movement solve. The original bounded X/Z wire range is ±4096 metres; distant
+storage remains in the original authority with the active play area near zero.
+
+Run `bevy/check.sh` to build the original managed bridge and execute native tests.
+Its arguments pass through to Cargo, e.g. `bevy/check.sh world::origin::tests`.
+The origin integration test deliberately requires a built bridge and does not
+silently skip its native→authority round trip. Five regressions cover source floor
+rounding, sub-metre detail at 1e9 metres, structure coordinates versus normals,
+real Rapier query/writeback continuity, retained event-reader state, and a queued
+teleport drained during a same-tick origin change.
+
+The distant native capture `artifacts/bevy-distant-origin-tunnel.png` was rendered
+and inspected together with its authority JSON: the original twin tunnel at
+absolute (−12916, −19678) uses origin (−13056, −19712), with the live player near
+local (140, 59, 34), healthy and connected rather than clamped to the wire boundary.
+
+A second live journey (`artifacts/bevy-origin-before-crossing` and
+`artifacts/bevy-origin-crossing`, PNG plus JSON) teleported the player to local
+(1200, 100, 34), then crossed the default threshold. Origin advanced by 1024 m to
+(−12032, −19712), epoch 1; the body landed on the streamed source terrain at local
+(176, 59.406, 34). Roads, trees and grass remained visible, 25,254 authority
+triangles were refreshed, and the player remained connected/alive with source
+fall damage applied. The log reported zero missing source assets.

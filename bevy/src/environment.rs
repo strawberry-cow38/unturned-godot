@@ -42,6 +42,7 @@ impl Plugin for EnvironmentPlugin {
                     update_environment,
                     ambience,
                     gun_audio,
+                    blast_audio,
                     hand_audio,
                     apply_volume,
                 )
@@ -513,6 +514,50 @@ fn gun_audio(
             Transform::from_translation(position),
             SoundGain(db_gain(if local { -3. } else { 9. })),
         ));
+    }
+}
+fn blast_audio(
+    mut commands: Commands,
+    mut events: MessageReader<CoreEvent>,
+    catalog: Res<crate::entities::ItemCatalog>,
+    assets: Res<AssetServer>,
+    config: Res<WorldConfig>,
+    settings: Res<Settings>,
+) {
+    for event in events.read().filter(|e| e.kind == "grenadeExploded") {
+        let id = event.data["itemId"].as_u64().unwrap_or(254) as u16;
+        if catalog
+            .items
+            .get(&id)
+            .is_some_and(|i| crate::projectiles::effects::throwable_kind(&i.throwable["kind"]) != 0)
+        {
+            continue;
+        }
+        let Some(at) = crate::player::vector(&event.data["pos"]) else {
+            continue;
+        };
+        let radius = event.data["radius"].as_f64().unwrap_or(8.) as f32;
+        let path = format!("audio/explosions/bomb_fire_{:02}.wav", event.sequence % 7);
+        if !config.content_root.join(&path).is_file() {
+            continue;
+        }
+        let mut seed = event.sequence.max(1);
+        let pitch = 0.95 + 0.1 * crate::particles::random(&mut seed);
+        let node = crate::vehicle::spawn_ranged_audio(
+            &mut commands,
+            &assets,
+            None,
+            &path,
+            false,
+            db_gain((-2. + radius * 0.6).clamp(-2., 6.)),
+            pitch,
+            12.,
+            260.,
+            settings.master_volume,
+        );
+        commands
+            .entity(node)
+            .insert(Transform::from_translation(at));
     }
 }
 fn hand_audio(

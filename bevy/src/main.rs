@@ -4,14 +4,16 @@ mod content;
 mod entities;
 mod environment;
 mod locomotion;
+mod particles;
 mod player;
 mod projectiles;
+mod recoil;
 mod rig;
 mod settings;
 mod ui;
 mod use_items;
-mod viewmodel;
 mod vehicle;
+mod viewmodel;
 mod weapons;
 mod world;
 
@@ -104,6 +106,7 @@ fn main() -> Result<()> {
         .add_plugins((
             RapierPhysicsPlugin::<NoUserData>::default().in_fixed_schedule(),
             content::ContentPlugin,
+            particles::ParticlePlugin,
             projectiles::ProjectilePlugin,
             entities::EntityPlugin,
             environment::EnvironmentPlugin,
@@ -114,7 +117,7 @@ fn main() -> Result<()> {
             player::PlayerPlugin,
             vehicle::VehiclePlugin,
         ))
-        .add_systems(Update, capture_frame)
+        .add_systems(Update, capture_frame.after(entities::CollectInteractions))
         .run();
     Ok(())
 }
@@ -126,12 +129,23 @@ fn capture_frame(
     snapshot: Res<player::GameSnapshot>,
     keys: Res<ButtonInput<KeyCode>>,
     mut frames: Local<u32>,
+    particles: Query<(&particles::Emitter, &GlobalTransform)>,
+    mut events: MessageReader<entities::CoreEvent>,
+    mut pending_event: Local<Option<entities::CoreEvent>>,
 ) {
     if !world.ready {
         return;
     }
     *frames += 1;
-    if *frames != options.0.screenshot_frame && !keys.just_pressed(KeyCode::F12) {
+    // Dynamic particle meshes need one extraction/upload before a useful shot.
+    // Capture the following frame while the short blast is still alive.
+    let event = pending_event.take();
+    *pending_event = events
+        .read()
+        .find(|event| options.0.screenshot_event.as_deref() == Some(event.kind.as_str()))
+        .cloned();
+    let timed = options.0.screenshot_event.is_none() && *frames == options.0.screenshot_frame;
+    if !timed && event.is_none() && !keys.just_pressed(KeyCode::F12) {
         return;
     }
     let Some(path) = &options.0.screenshot else {
@@ -146,7 +160,15 @@ fn capture_frame(
     let should_exit = options.0.exit_after_capture;
     // Keep the authority snapshot beside each render so visual review can also
     // verify position, stance, health and the entities that should be visible.
-    let evidence = json!({"map":options.0.map,"renderFrame":*frames,"spawn":world.spawn.to_array(),"state":snapshot.0});
+    let effects: Vec<_> = particles
+        .iter()
+        .map(|(emitter, pose)| {
+            let (age, count) = emitter.debug_state();
+            json!({"position":pose.translation().to_array(),"age":age,"particles":count})
+        })
+        .collect();
+    let event = event.map(|e| json!({"seq":e.sequence,"kind":e.kind,"data":e.data}));
+    let evidence = json!({"map":options.0.map,"renderFrame":*frames,"spawn":world.spawn.to_array(),"state":snapshot.0,"particles":effects,"captureEvent":event});
     if let Err(error) = std::fs::write(path.with_extension("json"), evidence.to_string()) {
         warn!("Cannot write capture state: {error}");
     }

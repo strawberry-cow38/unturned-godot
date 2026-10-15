@@ -2,7 +2,10 @@
 //! already in the runtime's right-handed space; only retail files need Z reflection.
 use super::{ContentError, TerrainPatch};
 use crate::bridge::CoreBridge;
-use bevy::prelude::*;
+use bevy::{
+    math::{DVec2, DVec3},
+    prelude::*,
+};
 use serde::Deserialize;
 use serde_json::Value;
 use std::{collections::HashMap, path::Path, sync::Arc};
@@ -21,9 +24,9 @@ pub struct ProceduralRegion {
     #[serde(default, alias = "Holes")]
     pub holes: Option<Vec<bool>>,
     #[serde(default)]
-    pub origin_x: f32,
+    pub origin_x: f64,
     #[serde(default)]
-    pub origin_z: f32,
+    pub origin_z: f64,
     #[serde(default, alias = "Trees")]
     pub trees: Vec<ProceduralTree>,
     #[serde(default)]
@@ -118,6 +121,26 @@ pub struct Boulder {
     pub kind: u8,
 }
 impl ProceduralRegion {
+    /// Subtract the double origin before any world coordinate becomes an f32.
+    /// Region-local foliage positions, directions, normals and model pivots stay intact.
+    pub fn localized(&self, origin: DVec2) -> Self {
+        let mut local = self.clone();
+        local.origin_x -= origin.x;
+        local.origin_z -= origin.y;
+        for (kind, values) in &mut local.structures {
+            let (xs, zs): (&[&str], &[&str]) = match kind.to_ascii_lowercase().as_str() {
+                "roads" => (&["x0", "x1"], &["z0", "z1"]),
+                "roadpatches" => (&["x", "anchorx"], &["z", "anchorz"]),
+                "poles" => (&["x", "nx"], &["z", "nz"]),
+                "tunnels" => (&["x", "sx"], &["z", "sz"]),
+                "roadmarks" | "stopsigns" | "bridges" | "rails" | "levelcrossings"
+                | "crossingsigns" | "pylons" | "tunnelmouths" => (&["x"], &["z"]),
+                _ => continue,
+            };
+            translate_fields(values, xs, zs, origin);
+        }
+        local
+    }
     pub fn patch(&self) -> Result<TerrainPatch, ContentError> {
         let count = (self.cells + 1)
             .checked_mul(self.cells + 1)
@@ -132,7 +155,7 @@ impl ProceduralRegion {
             return Err(ContentError("invalid procedural height grid".into()));
         }
         Ok(TerrainPatch {
-            origin: Vec2::new(self.origin_x, self.origin_z),
+            origin: Vec2::new(self.origin_x as f32, self.origin_z as f32),
             cells: self.cells,
             spacing: self.spacing,
             heights: self.heights.clone(),
@@ -147,18 +170,62 @@ impl ProceduralRegion {
         })
     }
 }
+fn translate_numbers(value: &mut Value, shift: f64) {
+    match value {
+        Value::Number(n) => {
+            if let Some(n) = n
+                .as_f64()
+                .and_then(|n| serde_json::Number::from_f64(n - shift))
+            {
+                *value = Value::Number(n)
+            }
+        }
+        Value::Array(values) => {
+            for v in values {
+                translate_numbers(v, shift)
+            }
+        }
+        _ => {}
+    }
+}
+fn translate_fields(value: &mut Value, xs: &[&str], zs: &[&str], origin: DVec2) {
+    match value {
+        Value::Array(values) => {
+            for v in values {
+                translate_fields(v, xs, zs, origin)
+            }
+        }
+        Value::Object(values) => {
+            for (key, v) in values {
+                let key = key.to_ascii_lowercase();
+                if xs.contains(&key.as_str()) {
+                    translate_numbers(v, origin.x)
+                } else if zs.contains(&key.as_str()) {
+                    translate_numbers(v, origin.y)
+                } else {
+                    translate_fields(v, xs, zs, origin)
+                }
+            }
+        }
+        _ => {}
+    }
+}
 pub fn region_coord(p: Vec3) -> (i32, i32) {
     ((p.x / 256.).floor() as i32, (p.z / 256.).floor() as i32)
 }
 pub fn regions(
     bridge: &CoreBridge,
     seed: i32,
-    center: Vec3,
+    center: DVec3,
+    origin: DVec2,
     radius: f32,
     initial: &Path,
     cache: &mut HashMap<(i32, i32, i32), Arc<ProceduralRegion>>,
 ) -> Result<Vec<Arc<ProceduralRegion>>, ContentError> {
-    let (cx, cz) = region_coord(center);
+    let (cx, cz) = (
+        (center.x / 256.).floor() as i32,
+        (center.z / 256.).floor() as i32,
+    );
     let ring = (radius / 256.).ceil() as i32;
     let mut cells = Vec::new();
     for z in cz - ring..=cz + ring {
@@ -193,7 +260,7 @@ pub fn regions(
             region.patch()?;
             cache.insert(key, Arc::new(region));
         }
-        result.push(cache[&key].clone());
+        result.push(Arc::new(cache[&key].localized(origin)));
     }
     // Preserve a small warm band, not an unbounded history of every visited region.
     cache.retain(|&(s, x, z), _| s == seed && (x - cx).abs().max((z - cz).abs()) <= ring + 1);
@@ -264,7 +331,7 @@ pub fn deck_scale(road: usize) -> f32 {
 /// Model selection and placement follow RegionStreamer.Build and its kit bases.
 /// Wire spans and tunnel shell geometry are separate mesh consumers.
 pub fn instances(region: &ProceduralRegion) -> Vec<AssetInstance> {
-    let origin = Vec3::new(region.origin_x, 0., region.origin_z);
+    let origin = Vec3::new(region.origin_x as f32, 0., region.origin_z as f32);
     let mut out = Vec::new();
     const FOLIAGE: [&str; 9] = [
         "foliage/grass_00",

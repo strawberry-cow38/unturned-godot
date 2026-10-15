@@ -592,6 +592,7 @@ fn animate_viewmodel(
     mouse: Res<ButtonInput<MouseButton>>,
     time: Res<Time>,
     ui: Res<UiState>,
+    recoil: Res<crate::recoil::Recoil>,
 ) {
     let Some(root) = state.arms else {
         events.clear();
@@ -671,10 +672,7 @@ fn animate_viewmodel(
                         sample("shakeMinX", "shakeMaxX", 1),
                         sample("shakeMinY", "shakeMaxY", 2),
                         sample("shakeMinZ", "shakeMaxZ", 3),
-                    );
-                    let pitch = sample("recoilMinX", "recoilMaxX", 4);
-                    let yaw = sample("recoilMinY", "recoilMaxY", 5);
-                    state.motion.recoil.position += Vec3::new(pitch, -yaw, -yaw);
+                    ) * recoil.stance_multiplier();
                 }
             }
             _ => {}
