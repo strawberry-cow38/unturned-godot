@@ -95,6 +95,9 @@ namespace UnturnedGodot
             // ⚠ A LANE'S PAVEMENT IS NOT A STREET'S. Measured off every road at the street's pavement width, a back lane --
             // LaneWalkWidth a side -- left a dirt band twice its width, metres into the yards either side of it.
             float keep = PavementGap + _walkWidth + FootprintBorder, laneKeep = PavementGap + LaneWalkWidth + FootprintBorder;
+            // a kerb-only street's: its kerb stone, and NO border -- a splat texel is 4 m, so one painted even a border's width past
+            // the kerb bleeds out to the foot of the lawn laid over the rest (TownVerges)
+            float keepKerb = PavementGap + KerbBand;
             var lots = new List<Vector3[]>();
             foreach (var pl in Plots) if (pl.Kind == PlotKind.Parking) lots.Add(pl.Corners());
             // ⚠ AND NOT IN A YARD. A splat texel is 4 m, so a verge measured off a lane's pavement reached metres past the
@@ -133,10 +136,14 @@ namespace UnturnedGodot
                 foreach (var y in yards)
                     if (x >= y.x0 && x <= y.x1 && z >= y.z0 && z <= y.z1 && InQuad(y.q, x, z, -YardKeep)) { Note("(a yard: left)", p); return false; }
                 // within a lane's reach of any road -- or a street's of a road that is not a lane
-                if (roads.DeepestRoadOverlap(p, laneKeep, out int rd, out _))
+                if (roads.DeepestRoadOverlap(p, laneKeep, out int rd, out float dl)
+                    && !(ProfileOf(rd) == StreetProfile.KerbOnly && dl < laneKeep - keepKerb))      // (a kerb-only street: below)
                     return Note(laneSet.Contains(rd) ? "lane" : builtSet.Contains(rd) ? "street" : $"road {rd} (not the town's)", p);
-                if (roads.DeepestRoadOverlap(p, keep, out rd, out _)
-                    && (!laneSet.Contains(rd) || roads.DeepestRoadOverlap(p, keep, out rd, out _, skipRoad: rd) && !laneSet.Contains(rd)))
+                // ⚠ A KERB-ONLY STREET HAS NO PAVEMENT TO LEAVE A FOOTPRINT ROUND (TownVerges): its kerb stone, and grass laid over
+                // the rest. Measured at a street's pavement width it painted a band of dirt along the foot of every such lawn.
+                bool NotItsReach(int r2, float depth) => laneSet.Contains(r2) || (ProfileOf(r2) == StreetProfile.KerbOnly && depth < keep - keepKerb);
+                if (roads.DeepestRoadOverlap(p, keep, out rd, out float dp)
+                    && (!NotItsReach(rd, dp) || roads.DeepestRoadOverlap(p, keep, out rd, out dp, skipRoad: rd) && !NotItsReach(rd, dp)))
                     return Note(builtSet.Contains(rd) ? "street" : $"road {rd} (not the town's)", p);
                 if (OnAnyPatch(x, -z, keep)) return Note("junction", p);
                 if (BayFrontAt(roads, p)) return Note("bay", p);

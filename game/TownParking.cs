@@ -1375,8 +1375,7 @@ namespace UnturnedGodot
             var tm = turf.Commit();
             if (tm != null && tm.GetSurfaceCount() > 0)
             {
-                parent.AddChild(new MeshInstance3D { Name = "Parking_Lots_Grass", Mesh = tm,
-                                                     MaterialOverride = new StandardMaterial3D { AlbedoColor = StreetGrassColour, Roughness = 1f } });
+                parent.AddChild(new MeshInstance3D { Name = "Parking_Lots_Grass", Mesh = tm, MaterialOverride = GroundGrassMaterial() });
                 made++;
             }
             int lanes = 0; foreach (var lot in ParkingLotsLaid) foreach (var e in lot.Entrances) if (e.Lane != null && e.Lane.Road >= 0) lanes++;
@@ -1574,7 +1573,7 @@ namespace UnturnedGodot
                         at.Y = LotSurfaceY(lot, at.X, at.Z, Ground(at.X, at.Z)) + _lotKerbH + 0.04f;
                         ulong h = Mix(((ulong)(uint)Seed << 32) ^ Mix((ulong)(uint)Mathf.RoundToInt(at.X * 8f) ^ ((ulong)(uint)Mathf.RoundToInt(at.Z * 8f) << 24) ^ 0x1077EEUL));
                         string tree = MedianTrees[(int)(Unit(h, 0) * MedianTrees.Length) % MedianTrees.Length];
-                        var node = objs.Place(tree, at, new Basis(Vector3.Up, Unit(h, 16) * Mathf.Tau).Scaled(Vector3.One * PlanterTreeScale));
+                        var node = objs.Place(tree, SeatedTree(at, PlanterTreeScale), new Basis(Vector3.Up, Unit(h, 16) * Mathf.Tau).Scaled(Vector3.One * PlanterTreeScale));
                         if (node == null) continue;
                         into?.Add(node); LotTrees++;
                     }
@@ -1612,7 +1611,7 @@ namespace UnturnedGodot
                         at.Y = LotSurfaceY(lot, at.X, at.Z, Ground(at.X, at.Z)) + _lotKerbH + 0.04f;
                         ulong h = Mix(((ulong)(uint)Seed << 32) ^ Mix((ulong)(uint)Mathf.RoundToInt(at.X * 8f) ^ ((ulong)(uint)Mathf.RoundToInt(at.Z * 8f) << 24) ^ 0xED6E7EUL));
                         string tree = MedianTrees[(int)(Unit(h, 0) * MedianTrees.Length) % MedianTrees.Length];
-                        var node = objs.Place(tree, at, new Basis(Vector3.Up, Unit(h, 16) * Mathf.Tau).Scaled(Vector3.One * PlanterTreeScale));
+                        var node = objs.Place(tree, SeatedTree(at, PlanterTreeScale), new Basis(Vector3.Up, Unit(h, 16) * Mathf.Tau).Scaled(Vector3.One * PlanterTreeScale));
                         if (node == null) continue;
                         into?.Add(node); LotTrees++;
                     }

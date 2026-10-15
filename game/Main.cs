@@ -10747,7 +10747,8 @@ namespace UnturnedGodot
             // renders; a town to PLAY skips them unless UG_TOWNPROBES=1 asks
             bool probes = !playSeed.HasValue || TownRoadGrid.ProbeEverything;
             town.Probes = probes;
-            if (playSeed.HasValue) town.MarkLots = false;
+            // (UG_TOWNLOTMARKS=0: the renders without them too -- to see the ground as a player does)
+            if (playSeed.HasValue || System.Environment.GetEnvironmentVariable("UG_TOWNLOTMARKS") == "0") town.MarkLots = false;
             var walkProto = new EditorSidewalk { Width = town.PavementWidth }; editor.AddChild(walkProto);
             // ⭐ THE PLOTS AND THEIR PARKING ARE LAID OUT BEFORE THE PAVEMENT (strawberry 2026-10-12: "widened
             // sections of road, with dotted lines for parking"). A parking bay moves the kerb, the pavement and the

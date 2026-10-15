@@ -7434,7 +7434,7 @@ namespace UnturnedGodot
                     if (!At(treeAt[k], out var at, out _)) continue;
                     string tree = MedianTrees[(int)(Unit(Mix(h ^ ((ulong)(uint)k * 0x9E37UL)), 0) * MedianTrees.Length) % MedianTrees.Length];
                     var turn = new Basis(Vector3.Up, Unit(Mix(h ^ ((ulong)(uint)k * 0x51UL) ^ 0xA5UL), 0) * Mathf.Tau);
-                    Plant(tree, at, turn.Scaled(Vector3.One * MedianTreeScale));
+                    Plant(tree, SeatedTree(at, MedianTreeScale), turn.Scaled(Vector3.One * MedianTreeScale));     // let into the turf as the world's trees are
                     if (k + 1 >= treeAt.Count) continue;
                     // a hedge between this tree and the next, its pieces butted core to core along the median (PiecesAlong: the
                     // greens' edge-to-edge rule) and stood the way retail stands a hedge (HedgeBasis: it is a Z-up mesh)
@@ -7594,8 +7594,7 @@ namespace UnturnedGodot
             var gm = grassSt.Commit();
             if (gm != null && gm.GetSurfaceCount() > 0)
             {
-                var mi = new MeshInstance3D { Name = "Boulevard_Median_Grass", Mesh = gm,
-                    MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.40f, 0.58f, 0.26f), Roughness = 1f } };
+                var mi = new MeshInstance3D { Name = "Boulevard_Median_Grass", Mesh = gm, MaterialOverride = GroundGrassMaterial() };   // the terrain's grass (TownVerges)
                 parent.AddChild(mi);
                 made++;
             }

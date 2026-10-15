@@ -32,7 +32,68 @@ namespace UnturnedGodot
         public float GrassEndClear = 3f;
         /// <summary>How high the verge's grass sits over the paving it is laid on: a slab of turf, not a decal.</summary>
         public float VergeLift = 0.04f;
-        public static readonly Color StreetGrassColour = new Color(0.40f, 0.58f, 0.26f);     // the boulevard median's grass
+        /// <summary>The flat green the turf was drawn in before it took the terrain's grass -- now only the fallback when the
+        /// terrain's textures cannot be had.</summary>
+        public static readonly Color StreetGrassColour = new Color(0.40f, 0.58f, 0.26f);
+
+        // ---- THE TERRAIN'S OWN GRASS (strawberry 2026-10-15: "make grass medians everywhere use the real grass terrain texture") ----
+        // Every patch of turf the town lays -- verges, kerb-only lawns, planters, a lot's islands and edges, the boulevard's
+        // median -- is drawn with the terrain's grass: the SAME albedo array (layer 2), tiled the same 16 m in world space off
+        // the same floating-origin position, so where a lawn meets the ground the texture runs straight on; and it takes the
+        // terrain's snow the way the terrain's grass does. Grass never takes the terrain's wet look, so neither does this.
+        // ⚠ GLSL IN A C# @-STRING: a double quote ends the literal (Terrain.cs learned it with a 19-error build). None here.
+        const string GroundGrassShader = @"
+shader_type spatial;
+uniform sampler2DArray albedos : source_color, filter_linear_mipmap, repeat_enable;
+uniform float tileWorld = 16.0;
+global uniform vec2 ug_origin;
+global uniform float snow_cover;
+varying vec3 wpos;
+void vertex() { wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz; }
+float chashv(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
+vec2 cgrad(vec2 ip) { float h = chashv(ip) * 6.2831853; return vec2(cos(h), sin(h)); }
+float cnoise(vec2 p) {
+    vec2 i = floor(p), f = fract(p); vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+    float a = dot(cgrad(i), f), b = dot(cgrad(i + vec2(1.0, 0.0)), f - vec2(1.0, 0.0));
+    float c = dot(cgrad(i + vec2(0.0, 1.0)), f - vec2(0.0, 1.0)), d = dot(cgrad(i + vec2(1.0, 1.0)), f - vec2(1.0, 1.0));
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y) * 0.8 + 0.5;
+}
+void fragment() {
+    vec2 pxz = wpos.xz + ug_origin;
+    vec2 tuv = pxz / tileWorld;
+    ALBEDO = texture(albedos, vec3(tuv, 2.0)).rgb;
+    ROUGHNESS = 1.0;
+    if (snow_cover > 0.0) {
+        float sn = cnoise(pxz * 0.07);
+        float snowAmt = clamp(smoothstep(0.35, 0.95, snow_cover * 1.45 - sn * 0.45), 0.0, 1.0);
+        if (snowAmt > 0.0) {
+            ALBEDO = mix(ALBEDO, texture(albedos, vec3(tuv, 6.0)).rgb, snowAmt);
+            ROUGHNESS = mix(ROUGHNESS, 0.82, snowAmt);
+        }
+    }
+}
+";
+        static ShaderMaterial _groundGrass; static Texture2DArray _groundGrassFrom;
+        /// <summary>The terrain's grass, for turf (above). One material, shared; the flat green if the terrain's textures are missing.</summary>
+        public static Material GroundGrassMaterial()
+        {
+            var arr = Terrain.GroundAlbedos();
+            if (arr == null) return new StandardMaterial3D { AlbedoColor = StreetGrassColour, Roughness = 1f };
+            if (_groundGrass != null && ReferenceEquals(_groundGrassFrom, arr)) return _groundGrass;
+            RainSystem3D.EnsureGlobals();       // its globals (ug_origin, snow_cover) must exist before it compiles, as the terrain's do
+            _groundGrass = new ShaderMaterial { Shader = new Shader { Code = GroundGrassShader } };
+            _groundGrass.SetShaderParameter("albedos", arr);
+            _groundGrass.SetShaderParameter("tileWorld", 16f);
+            _groundGrassFrom = arr;
+            return _groundGrass;
+        }
+
+        /// <summary>Where a tree's origin goes to stand at `at` the way the world's trees stand on the terrain: let into the ground
+        /// ResourceField.TreeSink per unit of its scale, its root flare under the surface rather than sat on top of it
+        /// (strawberry 2026-10-15: "make sure trees placed in those planters sit at the correct height, like how they are on
+        /// normal terrain"). Every tree the town plants goes through here -- a placed prop never had the sink ResourceField gives
+        /// the world's own.</summary>
+        public static Vector3 SeatedTree(Vector3 at, float scale) => new Vector3(at.X, at.Y - ResourceField.TreeSink * Mathf.Abs(scale), at.Z);
         readonly Dictionary<int, StreetProfile> _streetProfile = new();
         /// <summary>What the last PlanProfiles gave: streets (roads, not lines) of each profile.</summary>
         public int PavedStreets, VergeStreets, KerbOnlyStreets;
@@ -257,7 +318,7 @@ namespace UnturnedGodot
                 }
             }
             int made = 0;
-            var grassMat = new StandardMaterial3D { AlbedoColor = StreetGrassColour, Roughness = 1f };
+            var grassMat = GroundGrassMaterial();
             foreach (var (st, name) in new[] { (verge, "Street_Verges"), (apron, "Street_KerbGrass") })
             {
                 var mesh = st.Commit();
@@ -322,7 +383,8 @@ namespace UnturnedGodot
             {
                 string tree = MedianTrees[(int)(Unit(h, 0) * MedianTrees.Length) % MedianTrees.Length];
                 var turn = new Basis(Vector3.Up, Unit(h, 16) * Mathf.Tau);
-                var node = objs.Place(tree, at, turn.Scaled(Vector3.One * (planter ? PlanterTreeScale : StreetTreeScale)));
+                float sc = planter ? PlanterTreeScale : StreetTreeScale;
+                var node = objs.Place(tree, SeatedTree(at, sc), turn.Scaled(Vector3.One * sc));
                 if (node == null) return;
                 StreetTrees.Add((at, planter, road));
                 standing.Add(at);
@@ -387,8 +449,7 @@ namespace UnturnedGodot
                                                      MaterialOverride = new StandardMaterial3D { AlbedoColor = PlanterRimColour, Roughness = 1f } });
             var tm = turf.Commit();
             if (tm != null && tm.GetSurfaceCount() > 0)
-                parent.AddChild(new MeshInstance3D { Name = "Street_Planters_Turf", Mesh = tm,
-                                                     MaterialOverride = new StandardMaterial3D { AlbedoColor = StreetGrassColour, Roughness = 1f } });
+                parent.AddChild(new MeshInstance3D { Name = "Street_Planters_Turf", Mesh = tm, MaterialOverride = GroundGrassMaterial() });
             Log.Print($"[towngrid] street trees: {PlantersLaid} in square planters, {VergeTreesPlanted} down verges ({StreetTrees.Count} placed)");
             return StreetTrees.Count;
         }

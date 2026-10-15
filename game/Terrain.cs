@@ -258,10 +258,17 @@ void fragment() {
             return mat;
         }
 
+        /// <summary>The eight layer albedos the live terrain was built with (layer 2 grass, 6 snow), for things laid ON the ground
+        /// that must look like it -- the town's verges and lawns (TownRoadGrid.GroundGrassMaterial). Loaded from MapDir if no
+        /// terrain material has been built; null if the textures are missing.</summary>
+        public static Texture2DArray GroundAlbedos() => _liveAlbedos ??= LoadAlbedoArray();
+        static Texture2DArray _liveAlbedos;
+
         static ShaderMaterial BuildTerrainMaterial(Texture2D splat0, Texture2D splat1)
         {
             var arr = LoadAlbedoArray();
             if (arr == null) return null;
+            _liveAlbedos = arr;
 
             RainSystem3D.EnsureGlobals();   // the shader reads the rain_wetness/rain_intensity globals -- they MUST exist before it compiles
             var mat = new ShaderMaterial { Shader = new Shader { Code = TERRAIN_SHADER } };
