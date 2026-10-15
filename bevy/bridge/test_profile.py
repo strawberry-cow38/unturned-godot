@@ -30,6 +30,7 @@ class ProfileTests(unittest.TestCase):
         state=self.pump();self.assertEqual(3,state['inventory']['worn']['shirt']);self.assertEqual(27,state['inventory']['wornQuality']['shirt'])
         catalog={i['id']:i for i in self.call('catalog')['result']['items']}
         self.assertTrue(catalog[3]['hasCondition']);self.assertFalse(catalog[6]['hasCondition'])
+        self.assertEqual('common',catalog[3]['rarity']);self.assertGreater(catalog[5004]['stackSize'],1)
         self.call('action',name='unwearClothing',args=dict(slot=2))
         state=self.pump();self.assertEqual(0,state['inventory']['worn']['shirt']);self.assertEqual(0,state['inventory']['wornQuality']['shirt'])
         self.assertEqual(27,next(i['quality'] for p in state['inventory']['pages'] for i in p['items'] if i['id']==3))
