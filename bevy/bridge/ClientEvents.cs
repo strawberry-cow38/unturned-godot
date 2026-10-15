@@ -14,6 +14,7 @@ public sealed partial class BridgeHost
         InventoryClosed();
         _craftQueue = default;
         _craftQueueTick = 0;
+        ResetCraftingContext();
         _client = new NetWorldClient(transport, _name, contentHash: NetContent.Hash);
         DeployableNetSchema.RegisterAll(_client.Deployables.Schema);
         WorldServices.RegisterCrops(_client.Crops.Schema);
@@ -22,6 +23,7 @@ public sealed partial class BridgeHost
         _client.HitConfirmed += e => Emit("hit", e);
         _client.MagazineTransferred += e => Emit("magazineTransfer", new { requestId=e.RequestId, magazineToken=e.MagazineToken, acceptedTick=e.Tick, applied=e.Applied, result=e.Result.ToString(), amount=e.Amount });
         _client.CraftQueue_ += e => { _craftQueue = e; _craftQueueTick = _network.CurrentTick; Emit("craftQueue", e); };
+        _client.CraftingContext += ReceiveCraftingContext;
         _client.PlayerFired += e => {
             var facts=_weapons?.TakeShot(e.PlayerId,e.Gun);
             Emit("fire",new{playerId=e.PlayerId,origin=e.Origin,dir=e.Dir,gun=e.Gun,

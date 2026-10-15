@@ -346,6 +346,7 @@ namespace UnturnedGodot.Net
             RegisterVehicleLightingCommands();
             RegisterVehicleMaintenanceCommands();
             RegisterVehicleDoorCommands();
+            RegisterCraftingContextCommands();
             VehicleHost = new ServerVehicles(Vehicles, Players, CombatState, () => Session.CurrentTick, BroadcastEvent, SendEventTo);
             // The respray seam: ServerVehicles owns the car and the reach, ServerTransactions owns the bag and
             // the content table. One hook rather than each growing a copy of the other's half.
@@ -659,6 +660,7 @@ namespace UnturnedGodot.Net
                 CraftQueue.RefundAll(peer.PlayerId);
                 CraftQueue.Forget(peer.PlayerId);
                 Transactions.ForgetMagazineTransfers(peer.PlayerId);
+                ForgetCraftingContext(peer.PlayerId);
                 Inventories.ServerRemove(peer.PlayerId, Session.CurrentTick);   // also releases any crate they held open
                 Composer.ForgetClient(peer.PlayerId);
                 _pendingRecoveryFulls.Remove(peer.PlayerId);   // a reused playerId must not inherit a stale hold
@@ -1062,6 +1064,7 @@ namespace UnturnedGodot.Net
             RegisterVehicleMaintenanceEvents();
             RegisterVehicleDoorEvents();
             RegisterMagazineTransferEvents();
+            RegisterCraftingContextEvents();
             RegisterMountedFlightEvents();
             RegisterResourceContactEvents();
             Applier.DesyncDetected += report => DesyncDetected?.Invoke(report);   // (already NetLog'd in the applier)

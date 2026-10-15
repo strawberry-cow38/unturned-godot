@@ -67,6 +67,7 @@ fn fixture() -> (App, Entity, Entity) {
     .init_resource::<ButtonInput<MouseButton>>()
     .init_resource::<PlayerInput>()
     .init_resource::<WorldSessionEpoch>()
+    .init_resource::<CraftingEye>()
     .init_resource::<LeanState>()
     .add_systems(FixedUpdate, step.before(PhysicsSet::SyncBackend))
     .add_systems(Update, (ease, camera_follow).chain());

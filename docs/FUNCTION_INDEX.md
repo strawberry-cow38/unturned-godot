@@ -86,6 +86,8 @@ Rules of the road:
 | decide if a bed may be claimed | `BedClaims.CanClaim/Claim` (`core/UnturnedSim/BedClaims.cs:63`/`:73`) | — replicas use `Adopt` `:122`, which skips validation on purpose |
 | decide if a hose may connect | `FluidHoseRule.Completion` (`core/UnturnedSim/FluidHoseRule.cs:21`) | — the wire-tool twin is still inline in `PlayerController`, see DUPLICATE_AUDIT |
 | check a craft / run a craft | `Crafting.CanCraft/DoCraft` (`core/UnturnedSim/Crafting.cs:40`/`:67`) | — `DoCraft` re-validates itself |
+| browse and craft with source nearby station access | `NetWorldClient.SendCraftingContext`, `CraftingStations.{At,EyeAllowed}`, `BridgeHost.AcceptedCraftingStations`, `player::CraftingEye` | protocol72 owner fact; source camera/ranges/world ray; exact request replay cannot spend again; each craft rechecks host tags before the existing queue |
+| distinguish source world queries from transported bullet triangles | `WorldGeometry.StationBlocked`, `WorldGeometry.AddMesh` (`sourceWorld`, `combat`), `TryDynamicBounds` | exclude the whole queried station inside BVH traversal; vehicle hit meshes lack world bit; fallback world-only hulls never add broad bullet/navigation surfaces |
 | step deadzone exposure | `DeadzoneSim.Step` (`core/UnturnedSim/DeadzoneSim.cs:103`) | — the *sim* is shared; the volume/bookkeeping layer around it is duplicated |
 | find nearby zombies / bullets vs zombies | `ZombieSpatial.QuerySphere` `:71` / `QuerySegment` `:117` | a linear scan — these already fall back to one when it is cheaper |
 | format a fluid volume | `FluidDef.Litres` (`game/FluidTank.cs:94`) | — 1 unit = 1 mL everywhere |

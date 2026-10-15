@@ -58,7 +58,8 @@ public static class InventoryView
 
     public static View Read(Catalog catalog, InventoryReplication replicas, ushort owner,
         OwnerEquipmentState held, PlayerSkills skills, ICollection<string> known, object cooker = null,
-        (int Page, int X, int Y)? loadFrom = null, (int Page, int X, int Y)? loadTo = null, uint acceptedTick = 0)
+        (int Page, int X, int Y)? loadFrom = null, (int Page, int X, int Y)? loadTo = null, uint acceptedTick = 0,
+        ICollection<string> stations = null)
     {
         replicas.TryGet(owner, out var entry); var inventory = entry?.Inventory;
         var result = new List<ItemView>();
@@ -128,7 +129,7 @@ public static class InventoryView
         // excludes salvage/recolour and only displays known, ready recipes.
         var quick = inventory == null ? [] : BlueprintRegistry.Applicable(new Crafting.PlayerInvAdapter(inventory))
             .Where(bp => !BlueprintRegistry.IsRecolour(bp) && !BlueprintRegistry.IsSalvage(bp)
-                && Crafting.HasStations(bp, Array.Empty<string>()) && Crafting.MeetsSkill(bp, skills) && Crafting.Knows(bp, known))
+                && Crafting.HasStations(bp, stations ?? Array.Empty<string>()) && Crafting.MeetsSkill(bp, skills) && Crafting.Knows(bp, known))
             .Take(18).Select(bp => new QuickCraft(catalog.Recipes.IndexOf(bp), SourceCraftingMenu.Title(bp),
                 SourceCraftingMenu.OutAsset(bp)?.id ?? 0, SourceCraftingMenu.OutAsset(bp)?.iconPath)).ToArray();
         Load load = null;
@@ -166,6 +167,7 @@ public sealed partial class BridgeHost
     { if (_inventoryCookerKind != null && e.NetId == _storageView.Current.NetId) { _inventoryCookerOn = e.On; _inventoryCookerFuel = e.Fuel; } }
     object ReadInventory(JsonElement request)
     {
+        ProbeCraftingContext(request);
         _client.Equipment.TryGet(_client.PlayerId, out var held); _client.Skills.TryGet(_client.PlayerId, out var skills);
         (int, int, int)? Address(string key) => request.TryGetProperty(key, out var cell) && cell.ValueKind == JsonValueKind.Object
             ? (Int(cell, "page", -1), Int(cell, "x", -1), Int(cell, "y", -1)) : null;
@@ -173,6 +175,7 @@ public sealed partial class BridgeHost
             kind = ((ECookerKind)kind).ToString(), on = _inventoryCookerOn, fuel = _inventoryCookerFuel / 255f,
             needsFuel = Cooking.NeedsFuel((ECookerKind)kind) } : null;
         return InventoryView.Read(_catalog, _client.Inventories, _client.PlayerId, held, skills?.Skills,
-            _client.KnownBlueprints, cooker, Address("loadFrom"), Address("loadTo"), unchecked((uint)_client.Applier.LastAppliedServerTick));
+            _client.KnownBlueprints, cooker, Address("loadFrom"), Address("loadTo"), unchecked((uint)_client.Applier.LastAppliedServerTick),
+            AcceptedCraftingStations);
     }
 }

@@ -16,6 +16,8 @@ fn pregame_subpanels_keep_actual_menu_camera_and_local_pause_policy() {
     .init_resource::<Settings>()
     .init_resource::<UiState>()
     .init_resource::<PlayerInput>()
+    .init_resource::<CraftingEye>()
+    .init_resource::<WorldSessionEpoch>()
     .init_resource::<crate::avatar::Perspective>()
     .insert_resource(WorldState {
         focus: Vec3::new(100., 30., -70.),

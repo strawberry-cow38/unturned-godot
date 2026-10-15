@@ -17,6 +17,7 @@ public sealed partial class WorldGeometry
             if(node.Leaf==null)return VisitBox(node.Left)||VisitBox(node.Right);
             foreach(var t in node.Leaf)
             {
+                if(!t.Combat)continue;
                 if(t.Destructible>=0&&DestructibleAlive?.Invoke(t.Destructible)==false)continue;
                 if(t.Resource>=0&&ResourceAlive?.Invoke(t.Resource)==false)continue;
                 if(t.Vehicle!=0&&VehicleExists?.Invoke(t.Vehicle)==false)continue;

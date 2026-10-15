@@ -34,11 +34,10 @@ populate tiles; progress interpolates from simulation ticks, so singleplayer
 pause does not advance it. Cancel uses the displayed server slot and waits for
 accepted removal/refund. The existing wire exposes at most eight queue entries.
 
-The current original unified server categorically rejects recipes requiring
-stations (`ServerTransactions.OnCraft`). This projection reports that actual
-admission boundary with empty station tags, matching the existing bridge's
-recipe state; it does not claim that station crafting is functional. The source
-local menu's nearby-station discovery remains a distinct integration gap.
+Nearby station access now uses an owner-only probe and fresh server validation
+for each craft, with source ranges and world-layer visibility. Legacy Craft16
+retains its no-station admission. See [CRAFTING_STATIONS.md](CRAFTING_STATIONS.md)
+for protocol72, tests and the inspected first-person playable UI journey.
 
 Six managed presentation tests pass: original catalog/title policies,
 browse/index/category restrictions, typed unknown/salvage visibility, lookup,
@@ -109,5 +108,6 @@ still pass with the original-target guard preventing duplicate bubbled Undo.
 Text-writing-direction, control-character display/insertion submenus, cross-field
 or external text drops, and Windows OS click recognition remain unverified or
 pending. Arbitrarily interleaved keyboard edits and pointer operations within one
-OS batch are not claimed to have a unified edit dispatch order. Nearby-station
-authority also remains open; this is not a complete crafting parity claim.
+OS batch are not claimed to have a unified edit dispatch order. Target-item
+operations and complete deployable/editor integration remain separate work;
+this is not a complete crafting parity claim.

@@ -23,7 +23,7 @@ public sealed partial class WorldGeometry
     public Func<uint, string, bool> VehiclePartSolid { get; set; }
     public Func<uint, bool> DeployableExists { get; set; }
     public Func<string, bool> DynamicAlive { get; set; }
-    readonly record struct Triangle(Vector3 A, Vector3 B, Vector3 C, int Destructible, int Resource = -1, uint Vehicle = 0, uint Deployable = 0, string Part = null, bool Thin = false, bool Water = false);
+    readonly record struct Triangle(Vector3 A, Vector3 B, Vector3 C, int Destructible, int Resource = -1, uint Vehicle = 0, uint Deployable = 0, string Part = null, bool Thin = false, bool Water = false, bool SourceWorld = true, bool Combat = true);
     sealed class Node
     {
         public Vector3 Min, Max;
@@ -33,6 +33,11 @@ public sealed partial class WorldGeometry
     public void Clear() { _triangles.Clear(); _terrainTriangles.Clear(); _capsules.Clear(); _root = null; _terrainRoot = null; ClearDynamic(); _layerPatches.Clear(); }
     public void ClearDynamic() { _dynamic.Clear(); _dynamicCapsules.Clear(); }
     public void RemoveDynamic(string key) { _dynamic.Remove(key); _dynamicCapsules.Remove(key); }
+    public bool TryDynamicBounds(string key, out Vector3 min, out Vector3 max)
+    {
+        if (_dynamic.TryGetValue(key,out var node)) { min=node.Min;max=node.Max;return true; }
+        min=max=default;return false;
+    }
     public void TranslateWorld(Vector3 delta)
     {
         Triangle Shift(Triangle t) => t with { A = t.A + delta, B = t.B + delta, C = t.C + delta };
@@ -68,13 +73,13 @@ public sealed partial class WorldGeometry
             throw new ArgumentException("Invalid world capsule dimensions or position");
         _capsules.Add(new(foot, radius, height));
     }
-    public void AddMesh(Vector3[] vertices, int[] indices, int destructible = -1, bool terrain = false, int resource = -1, uint vehicle = 0, uint deployable = 0, string bodyPart = null, bool thin = false, bool water = false)
+    public void AddMesh(Vector3[] vertices, int[] indices, int destructible = -1, bool terrain = false, int resource = -1, uint vehicle = 0, uint deployable = 0, string bodyPart = null, bool thin = false, bool water = false, bool? sourceWorld = null, bool combat = true)
     {
         if (indices.Length % 3 != 0) throw new ArgumentException("Triangle indices must be triples");
         if (indices.Any(i => i < 0 || i >= vertices.Length)) throw new ArgumentException("Triangle index exceeds vertices");
         for (int n = 0; n < indices.Length; n += 3)
         {
-            var triangle = new Triangle(vertices[indices[n]], vertices[indices[n + 1]], vertices[indices[n + 2]], destructible, resource, vehicle, deployable, bodyPart, thin, water);
+            var triangle = new Triangle(vertices[indices[n]], vertices[indices[n + 1]], vertices[indices[n + 2]], destructible, resource, vehicle, deployable, bodyPart, thin, water, sourceWorld ?? vehicle == 0, combat);
             _triangles.Add(triangle);
             if (terrain) _terrainTriangles.Add(triangle);
         }
@@ -117,12 +122,12 @@ public sealed partial class WorldGeometry
     {
         bool found = RayDetailed(from, to, out var result); hit = result.Point; destructible = result.DestructibleIndex; return found;
     }
-    bool RayContact(Vector3 from,Vector3 to,out Vector3 point,out Triangle triangle,out Vector3 normal,out string dynamicKey,bool worldOnly=false,uint excludedVehicle=0)
+    bool RayContact(Vector3 from,Vector3 to,out Vector3 point,out Triangle triangle,out Vector3 normal,out string dynamicKey,bool worldOnly=false,uint excludedVehicle=0,uint excludedDeployable=0,bool sourceWorldOnly=false)
     {
         float nearest=1f;triangle=default;bool found=false;dynamicKey=null;
-        Visit(_root,from,to-from,ref nearest,ref triangle,ref found,worldOnly,excludedVehicle);
+        Visit(_root,from,to-from,ref nearest,ref triangle,ref found,worldOnly,excludedVehicle,excludedDeployable,sourceWorldOnly);
         foreach(var pair in _dynamic)
-            if(Visit(pair.Value,from,to-from,ref nearest,ref triangle,ref found,worldOnly,excludedVehicle))dynamicKey=pair.Key;
+            if(Visit(pair.Value,from,to-from,ref nearest,ref triangle,ref found,worldOnly,excludedVehicle,excludedDeployable,sourceWorldOnly))dynamicKey=pair.Key;
         normal=Vector3.Cross(triangle.B-triangle.A,triangle.C-triangle.A).normalized;
         if(Vector3.Dot(normal,to-from)>0)normal=-normal;
         float length=(to-from).magnitude;
@@ -133,6 +138,7 @@ public sealed partial class WorldGeometry
             { found=true;dynamicKey=null;triangle=new(default,default,default,-1); }
             foreach(var group in _dynamicCapsules)
                 if(excludedVehicle==0||group.Key!="vehicle:"+excludedVehicle)
+                if(excludedDeployable==0||group.Key!="deployable:"+excludedDeployable)
                 if(VisitCapsules(group.Value,from,direction,length,ref nearest,ref normal))
                 { found=true;dynamicKey=group.Key;triangle=new(default,default,default,-1); }
         }
@@ -164,6 +170,10 @@ public sealed partial class WorldGeometry
             normal:normal,thin:triangle.Thin,water:triangle.Water):new(to);
         return found;
     }
+    /// <summary>Original station visibility ignores that station's entire body,
+    /// then still tests every other opaque body along the eye-to-origin segment.</summary>
+    public bool StationBlocked(uint station, Vector3 eye, Vector3 origin)
+        => RayContact(eye,origin,out _,out _,out _,out _,excludedDeployable:station,sourceWorldOnly:true);
     public bool RayCosmetic(Vector3 from,Vector3 to,out Vector3 point,out bool thin,out bool water)
     {
         bool found=RayContact(from,to,out point,out var triangle,out _,out _);thin=triangle.Thin;water=triangle.Water;return found;
@@ -179,19 +189,21 @@ public sealed partial class WorldGeometry
         Visit(_terrainRoot, new(x, 10000, z), new(0, -20000, 0), ref t, ref triangle, ref hit);
         return hit ? 10000 - 20000 * t : 0;
     }
-    bool Visit(Node node, Vector3 origin, Vector3 dir, ref float nearest, ref Triangle nearestTriangle, ref bool found, bool worldOnly = false,uint excludedVehicle=0)
+    bool Visit(Node node, Vector3 origin, Vector3 dir, ref float nearest, ref Triangle nearestTriangle, ref bool found, bool worldOnly = false,uint excludedVehicle=0,uint excludedDeployable=0,bool sourceWorldOnly=false)
     {
         if (node == null || !Box(node.Min, node.Max, origin, dir, nearest)) return false;
         if (node.Leaf == null)
         {
-            bool left = Visit(node.Left, origin, dir, ref nearest, ref nearestTriangle, ref found, worldOnly,excludedVehicle);
-            bool right = Visit(node.Right, origin, dir, ref nearest, ref nearestTriangle, ref found, worldOnly,excludedVehicle);
+            bool left = Visit(node.Left, origin, dir, ref nearest, ref nearestTriangle, ref found, worldOnly,excludedVehicle,excludedDeployable,sourceWorldOnly);
+            bool right = Visit(node.Right, origin, dir, ref nearest, ref nearestTriangle, ref found, worldOnly,excludedVehicle,excludedDeployable,sourceWorldOnly);
             return left || right;
         }
         bool changed = false;
         foreach (var triangle in node.Leaf)
         {
+            if(sourceWorldOnly ? !triangle.SourceWorld : !triangle.Combat)continue;
             if(excludedVehicle!=0&&triangle.Vehicle==excludedVehicle)continue;
+            if(excludedDeployable!=0&&triangle.Deployable==excludedDeployable)continue;
             if (worldOnly && (triangle.Vehicle != 0 || triangle.Deployable != 0)) continue;
             if (triangle.Destructible >= 0 && DestructibleAlive?.Invoke(triangle.Destructible) == false) continue;
             if (triangle.Resource >= 0 && ResourceAlive?.Invoke(triangle.Resource) == false) continue;

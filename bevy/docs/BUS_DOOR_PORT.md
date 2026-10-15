@@ -113,4 +113,3 @@ placement or audible hardware verification follows from the test setup.
 The broad first-person driving forearms match the original opened
 `godot-driving-reference/rig_02.png`. Source own-body layers and seated Skull
 eye placement also match; no speculative body/arms change was made.
-

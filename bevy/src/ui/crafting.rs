@@ -511,6 +511,9 @@ fn refresh(
     time: Res<Time>,
     mut menu: ResMut<Menu>,
     mut model: ResMut<UiModel>,
+    eye: Option<Res<crate::player::CraftingEye>>,
+    origin: Option<Res<crate::world::origin::WorldOrigin>>,
+    epoch: Option<Res<WorldSessionEpoch>>,
 ) {
     if state.screen != Screen::Crafting || !model.connected {
         return;
@@ -520,7 +523,13 @@ fn refresh(
         return;
     }
     menu.poll = 0.15;
-    match bridge.request("craftingView", serde_json::to_value(&menu.browse).unwrap()) {
+    let mut request = serde_json::to_value(&menu.browse).unwrap();
+    if let (Some(eye), Some(origin), Some(epoch)) = (eye, origin, epoch) {
+        if let Some(eye) = eye.request(&origin, &epoch) {
+            request["eye"] = json!(eye);
+        }
+    }
+    match bridge.request("craftingView", request) {
         Ok(reply) => {
             menu.options = reply["result"].clone();
             menu.requested = Some(menu.browse.clone());

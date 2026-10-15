@@ -250,7 +250,8 @@ public sealed partial class BridgeHost : IDisposable
                 if (r.TryGetProperty("terrainLayers", out var layerPatches)) foreach (var patch in layerPatches.EnumerateArray()) _geometry.AddLayers(patch);
                 if (r.TryGetProperty("meshes", out var meshes)) foreach (var mesh in meshes.EnumerateArray())
                     _geometry.AddMesh(mesh.GetProperty("vertices").EnumerateArray().Select(Vec).ToArray(),
-                        mesh.TryGetProperty("indices", out var ix) ? ix.EnumerateArray().Select(v => v.GetInt32()).ToArray() : Enumerable.Range(0, mesh.GetProperty("vertices").GetArrayLength()).ToArray(), Int(mesh, "destructibleIndex", -1), Bool(mesh, "terrain"), Int(mesh, "resourceIndex", -1), vehicle: checked((uint)Int(mesh, "vehicleNetId")), deployable: checked((uint)Int(mesh, "deployableNetId")), bodyPart: Text(mesh, "bodyPart", "hull"), thin: Bool(mesh,"thin"), water: Bool(mesh,"water"));
+                        mesh.TryGetProperty("indices", out var ix) ? ix.EnumerateArray().Select(v => v.GetInt32()).ToArray() : Enumerable.Range(0, mesh.GetProperty("vertices").GetArrayLength()).ToArray(), Int(mesh, "destructibleIndex", -1), Bool(mesh, "terrain"), Int(mesh, "resourceIndex", -1), vehicle: checked((uint)Int(mesh, "vehicleNetId")), deployable: checked((uint)Int(mesh, "deployableNetId")), bodyPart: Text(mesh, "bodyPart", "hull"), thin: Bool(mesh,"thin"), water: Bool(mesh,"water"),
+                        sourceWorld: mesh.TryGetProperty("sourceWorld", out var worldLayerStatic) ? worldLayerStatic.GetBoolean() : null, combat: Bool(mesh,"combat",true));
                 if (Bool(r, "finalize", true)) _geometry.Build();
                 return new { triangles = _geometry.Count };
             case "worldLoot":
@@ -291,7 +292,8 @@ public sealed partial class BridgeHost : IDisposable
                     var verts = mesh.GetProperty("vertices").EnumerateArray().Select(Vec).ToArray();
                     dynamicGeometry.AddMesh(verts, mesh.TryGetProperty("indices", out var dynamicIx)
                         ? dynamicIx.EnumerateArray().Select(v => v.GetInt32()).ToArray() : Enumerable.Range(0, verts.Length).ToArray(),
-                        Int(mesh, "destructibleIndex", -1), resource: Int(mesh, "resourceIndex", -1), vehicle: checked((uint)Int(mesh, "vehicleNetId")), deployable: checked((uint)Int(mesh, "deployableNetId")), bodyPart: Text(mesh, "bodyPart", "hull"), thin: Bool(mesh,"thin"), water: Bool(mesh,"water"));
+                        Int(mesh, "destructibleIndex", -1), resource: Int(mesh, "resourceIndex", -1), vehicle: checked((uint)Int(mesh, "vehicleNetId")), deployable: checked((uint)Int(mesh, "deployableNetId")), bodyPart: Text(mesh, "bodyPart", "hull"), thin: Bool(mesh,"thin"), water: Bool(mesh,"water"),
+                        sourceWorld: mesh.TryGetProperty("sourceWorld", out var worldLayerDynamic) ? worldLayerDynamic.GetBoolean() : null, combat: Bool(mesh,"combat",true));
                 }
                 if (r.TryGetProperty("capsules", out var capsules)) foreach (var capsule in capsules.EnumerateArray())
                     dynamicGeometry.AddCapsule(Vec(capsule, "foot"), Float(capsule, "radius"), Float(capsule, "height"));
@@ -330,6 +332,8 @@ public sealed partial class BridgeHost : IDisposable
         _geometry.DestructibleAlive = i => i >= _server.Destructibles.Count || _server.Destructibles.IsAlive(i);
         _geometry.ResourceAlive = i => i >= _server.Resources.Count || _server.Resources.IsAlive(i);
         _server.Combat.WorldRayDetailed = _geometry.RayDetailed;
+        _server.CraftingStationsAt = (_, eye) => CraftingStations.At(_server, _geometry, eye);
+        _server.CraftingEyeAllowed = (owner, eye) => CraftingStations.EyeAllowed(_server,_geometry,owner,eye);
         _server.Combat.WorldRay = _geometry.Ray;
         _server.Combat.GroundHeight = _geometry.GroundHeight;
         _server.Combat.ResolveHeldGunProfile = owner =>
@@ -448,6 +452,8 @@ public sealed partial class BridgeHost : IDisposable
 
     object Action(string name, JsonElement args)
     {
+        if (name == "craftingContext") return RequestCraftingContext(args);
+        if (name == "craft" && args.TryGetProperty("eye",out _)) return RequestCraftingContext(args,craft:true);
         if (name == "vehicleDoor") return new { queued = _client.SendVehicleDoor(VehicleDoorServices.ReadCommand(args)) };
         if (name == "vehicleMaintenance") return new { queued = _client.SendVehicleMaintenance(VehicleMaintenanceServices.ReadCommand(args)) };
         if (name == "vehicleLighting") return new { queued = _client.SendVehicleLighting(VehicleLightingServices.ReadCommand(args)) };
@@ -512,12 +518,13 @@ public sealed partial class BridgeHost : IDisposable
             if (Assets.find(id) != null) entry.Inventory.tryAddItemAuto(new Item(id, 1), out _);
     }
 
-    (ulong Inventory, ulong Skills, string Knowledge)? _lastRecipeState;
+    (ulong Inventory, ulong Skills, string Knowledge, string Stations)? _lastRecipeState;
     object[] _cachedRecipes;
     object[] Recipes(PlayerInventory inventory, PlayerSkills skills, bool force)
     {
         var key = (_client.Inventories.StateHashFor(_client.PlayerId), _client.Skills.StateHashFor(_client.PlayerId),
-            string.Join('|', (_client.KnownBlueprints ?? new HashSet<string>()).Order()));
+            string.Join('|', (_client.KnownBlueprints ?? new HashSet<string>()).Order()),
+            string.Join('|', AcceptedCraftingStations));
         bool changed = _lastRecipeState != key;
         if (changed || _cachedRecipes == null)
         {
@@ -602,7 +609,7 @@ public sealed partial class BridgeHost : IDisposable
     {
         string reason = "Inventory unavailable";
         bool can = inv != null && Crafting.CanCraft(bp, new Crafting.PlayerInvAdapter(inv), skills, out reason);
-        if (bp.RequiresStation) { can = false; reason = "Requires crafting station"; }
+        if (!Crafting.HasStations(bp, AcceptedCraftingStations)) { can = false; reason = "Requires crafting station"; }
         if (bp.Locked && !(_client.KnownBlueprints?.Contains(bp.Key) ?? false)) { can = false; reason = "Recipe not learned"; }
         return new { index = i, name = SourceCraftingMenu.Title(bp), operation = bp.Operation, craftable = can, reason, seconds = bp.Seconds,
             inputs = bp.Inputs.Select(Ingredient).ToArray(), outputs = bp.Outputs.Select(Ingredient).ToArray() };

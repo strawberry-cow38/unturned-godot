@@ -20,7 +20,8 @@ public static class CraftingView
 
     public static View Read(Catalog catalog, PlayerInventory inventory, PlayerSkills skills,
         ICollection<string> known, string category = "All", string query = "", string lookup = "",
-        ushort lookupItemId = 0, int selected = -1, int quantity = 1, bool opening = false)
+        ushort lookupItemId = 0, int selected = -1, int quantity = 1, bool opening = false,
+        ICollection<string> stations = null)
     {
         var all = BlueprintRegistry.Index();
         query = (query ?? "").Trim();
@@ -47,7 +48,7 @@ public static class CraftingView
         string Blocker(BlueprintDef bp, int qty)
         {
             if (adapter == null) return "Inventory unavailable";
-            string reason = SourceCraftingMenu.CraftBlocker(bp, adapter, skills, known, Array.Empty<string>(), qty);
+            string reason = SourceCraftingMenu.CraftBlocker(bp, adapter, skills, known, stations ?? Array.Empty<string>(), qty);
             // Authoritative tool admission also excludes broken copies.
             if (reason == null && !Crafting.CanCraft(bp, adapter, skills, out var why)) reason = why;
             return reason;
@@ -101,11 +102,13 @@ public sealed partial class BridgeHost
     long _craftQueueTick;
     object ReadCrafting(JsonElement request)
     {
+        ProbeCraftingContext(request);
         _client.Inventories.TryGet(_client.PlayerId, out var owner);
         _client.Skills.TryGet(_client.PlayerId, out var skills);
         var view = CraftingView.Read(_catalog, owner?.Inventory, skills?.Skills, _client.KnownBlueprints,
             Text(request, "category", "All"), Text(request, "search"), Text(request, "lookup"),
-            checked((ushort)Int(request, "itemId")), Int(request, "selected", -1), Int(request, "quantity", 1), Bool(request, "opening"));
+            checked((ushort)Int(request, "itemId")), Int(request, "selected", -1), Int(request, "quantity", 1), Bool(request, "opening"),
+            AcceptedCraftingStations);
         var queue = (_craftQueue.Jobs ?? System.Array.Empty<(ushort Bp, float Left, float Of)>()).Select((job, slot) =>
         {
             var bp = job.Bp < _catalog.Recipes.Count ? _catalog.Recipes[job.Bp] : null;

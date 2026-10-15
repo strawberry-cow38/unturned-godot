@@ -233,6 +233,8 @@ fn reclined_accepted_seat_keeps_controller_upright_and_camera_at_head_then_resto
         .init_resource::<crate::world::origin::WorldOrigin>()
         .init_resource::<crate::world::WorldConfig>()
         .init_resource::<Settings>()
+        .init_resource::<CraftingEye>()
+        .init_resource::<WorldSessionEpoch>()
         .add_systems(Update, sync_seated_body.before(simulate))
         .add_systems(Update, camera_follow.after(simulate));
     app.insert_resource(PlayerInput::with_view(90., 20.));
@@ -253,11 +255,18 @@ fn reclined_accepted_seat_keeps_controller_upright_and_camera_at_head_then_resto
     assert_eq!(app.world().get::<PlayerBody>(body).unwrap().stance, "sitting");
     let actual = app.world().get::<Transform>(camera).unwrap();
     assert!((actual.translation-eye).length() < 1e-5);
+    assert_eq!(app.world().resource::<CraftingEye>().request(
+        app.world().resource::<crate::world::origin::WorldOrigin>(),
+        app.world().resource::<WorldSessionEpoch>()), Some(eye.to_array()));
     assert!(actual.rotation.abs_diff_eq(yaw * Quat::from_rotation_x(20_f32.to_radians()), 1e-5));
     assert!(app.world().get::<KinematicCharacterController>(body).unwrap().translation.is_none());
     app.world_mut().resource_mut::<crate::avatar::Perspective>().first_person = false;
     app.update();
     let pivot = pose.translation + Vec3::Y * app.world().resource::<crate::avatar::Perspective>().pivot_height;
+    assert_eq!(app.world().resource::<CraftingEye>().request(
+        app.world().resource::<crate::world::origin::WorldOrigin>(),
+        app.world().resource::<WorldSessionEpoch>()), Some(app.world().get::<Transform>(camera).unwrap().translation.to_array()),
+        "source station access uses the completed camera in third person too");
     let third = app.world().get::<Transform>(camera).unwrap();
     assert!(((third.translation-pivot).length()-2.).abs() < 1e-4, "furniture keeps the source shoulder orbit in third person");
     assert!(third.rotation.abs_diff_eq(Quat::from_rotation_y(85_f32.to_radians()) * Quat::from_rotation_x(20_f32.to_radians()), 1e-5));

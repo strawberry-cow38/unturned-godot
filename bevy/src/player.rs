@@ -18,6 +18,8 @@ use serde_json::{Value, json};
 
 pub(crate) mod lean;
 pub(crate) mod flinch;
+mod crafting_eye;
+pub(crate) use crafting_eye::CraftingEye;
 
 #[cfg(test)]
 mod network_tests;
@@ -55,6 +57,7 @@ impl Plugin for PlayerPlugin {
             .init_resource::<PlayerInput>()
             .init_resource::<lean::LeanState>()
             .init_resource::<GameSnapshot>()
+            .init_resource::<CraftingEye>()
             .add_systems(Startup, spawn_player.after(WorldReady))
             .add_systems(
                 Update,
@@ -419,6 +422,7 @@ fn ui_intents(
         ResMut<WorldSessionEpoch>,
         Res<crate::entities::ItemCatalog>,
         ResMut<crate::world::origin::WorldOrigin>,
+        Option<Res<CraftingEye>>,
     ),
     mut trigger: ResMut<crate::weapons::Trigger>,
     mut hand_events: MessageWriter<crate::use_items::HandEvent>,
@@ -562,7 +566,17 @@ fn ui_intents(
                         json!({"name":"requestGesture","args":{"gesture":gesture}}),
                     ),
                     Some(None) => continue,
-                    None => bridge.request("action", json!({"name":name,"args":args})),
+                    None => {
+                        let mut args = args.clone();
+                        if name == "craft" {
+                            if let Some(eye) = hand_use.4.as_ref()
+                                .and_then(|eye| eye.request(&hand_use.3, &hand_use.1))
+                            {
+                                args["eye"] = json!(eye);
+                            }
+                        }
+                        bridge.request("action", json!({"name":name,"args":args}))
+                    },
                 }
             }
         };
@@ -1442,6 +1456,7 @@ fn camera_follow(
     mut vehicles: crate::avatar::camera::VehicleCameras,
     lean: Option<Res<lean::LeanState>>,
     mut camera: Query<(&mut Transform, &mut Projection), (With<PlayerCamera>, Without<PlayerBody>)>,
+    mut crafting_eye: (ResMut<CraftingEye>, Res<WorldSessionEpoch>),
 ) {
     let Ok((entity, body, posture)) = body.single() else {
         return;
@@ -1470,6 +1485,7 @@ fn camera_follow(
             *transform = Transform::from_translation(origin.local(position)).with_rotation(
                 Quat::from_euler(EulerRot::YXZ, yaw.to_radians(), pitch.to_radians(), 0.),
             );
+            crafting_eye.0.set(transform.translation, &origin, &crafting_eye.1);
             continue;
         }
         if !ui.menu_camera() {
@@ -1480,6 +1496,7 @@ fn camera_follow(
                     .and_then(|s| vehicles.follow(s, &perspective, context.single().ok().as_ref()))
                 {
                     *transform = pose;
+                    crafting_eye.0.set(transform.translation, &origin, &crafting_eye.1);
                     continue;
                 }
                 if let Some(seat) = prop_occupancy.as_ref().and_then(|o| o.seat) {
@@ -1491,6 +1508,7 @@ fn camera_follow(
                         StanceHeights::default().for_stance("sitting"),
                         input.seat_yaw + input.yaw, input.pitch, 0., time.delta_secs(),
                     );
+                    crafting_eye.0.set(transform.translation, &origin, &crafting_eye.1);
                     continue;
                 }
             }
@@ -1534,6 +1552,9 @@ fn camera_follow(
             *transform = Transform::from_translation(world.focus + Vec3::new(26.0, 17.0, 30.0))
                 .looking_at(world.focus, Vec3::Y);
         }
+        // CraftingStationTags explicitly uses the completed _cam position,
+        // including source shoulder/chase views. Never reuse a previous shot.
+        crafting_eye.0.set(transform.translation, &origin, &crafting_eye.1);
     }
 }
 

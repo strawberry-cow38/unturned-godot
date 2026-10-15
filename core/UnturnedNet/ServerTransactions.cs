@@ -1437,29 +1437,27 @@ namespace UnturnedGodot.Net
             else Diag.CraftsRejected++;
         }
 
-        void OnCraft(ushort sender, CraftCommand cmd)
+        void OnCraft(ushort sender, CraftCommand cmd) => TryCraftWithStations(sender, cmd.BlueprintIndex, null);
+
+        // Legacy16 supplies no station context and therefore still rejects
+        // station recipes. The new eye-context request supplies only HOST tags.
+        internal bool TryCraftWithStations(ushort sender, ushort blueprintIndex, ICollection<string> stations)
         {
-            var bp = Blueprints[cmd.BlueprintIndex];
-            // station proximity and target-item operations (RepairTargetItem/Ammo/Salvage) are deferred --
-            // reject rather than mis-apply (the SP crafting UI drives those flows locally).
-            if (bp.RequiresStation || bp.Operation != "Craft") { Diag.CraftsRejected++; return; }
+            if (blueprintIndex >= Blueprints.Count || SenderInventory(sender) == null)
+            { Diag.CraftsRejected++; return false; }
+            var bp = Blueprints[blueprintIndex];
+            if (bp == null || !Crafting.HasStations(bp, stations) || bp.Operation != "Craft")
+            { Diag.CraftsRejected++; return false; }
             _skills.TryGet(sender, out var skillsEntry);
-            if (!Crafting.MeetsSkill(bp, skillsEntry?.Skills)) { Diag.CraftsRejected++; return; }
-            // AN UNKNOWN BLUEPRINT IS NOT CRAFTABLE, whatever the client drew. Checked here, before ServerCrafting
-            // takes a single ingredient, so a refused craft costs nothing.
-            if (Knowledge != null && !Knowledge.Knows(sender, bp)) { Diag.CraftsRejected++; Diag.CraftsUnknownBlueprint++; return; }
-            // TIMED NOW (master 2026-09-06: "add crafting timed jobs to the server"). This used to be a
-            // straight DoCraft in the same tick, which meant the per-recipe times were enforced by the SP
-            // client and ignored by the authoritative side. ServerCrafting takes the ingredients up front and
-            // pays out when the clock runs down; the instant path stays only as the fallback for a host that
-            // never wired a queue, so a bare test harness still crafts.
-            if (Crafting_ != null)
-            {
-                if (Crafting_.Enqueue(sender, cmd.BlueprintIndex)) Diag.CraftsApplied++; else Diag.CraftsRejected++;
-                return;
-            }
-            var adapter = new Crafting.PlayerInvAdapter(SenderInventory(sender));
-            if (Crafting.DoCraft(bp, adapter)) Diag.CraftsApplied++; else Diag.CraftsRejected++;
+            if (!Crafting.MeetsSkill(bp, skillsEntry?.Skills)) { Diag.CraftsRejected++; return false; }
+            if (Knowledge != null && !Knowledge.Knows(sender, bp))
+            { Diag.CraftsRejected++; Diag.CraftsUnknownBlueprint++; return false; }
+            // Original server queue escrows supplies now and pays out on its
+            // existing clock. Hosts without a queue retain their instant path.
+            bool applied = Crafting_ != null ? Crafting_.Enqueue(sender, blueprintIndex)
+                : Crafting.DoCraft(bp, new Crafting.PlayerInvAdapter(SenderInventory(sender)));
+            if (applied) Diag.CraftsApplied++; else Diag.CraftsRejected++;
+            return applied;
         }
 
         /// <summary>Spend the item that was just fitted onto a gun.

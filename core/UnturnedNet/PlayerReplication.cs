@@ -249,6 +249,7 @@ namespace UnturnedGodot.Net
         public const byte CommandVehicleDoor = 78; // v70: source bus driver/focused toggle intent.
         public const byte CommandEmptyFuel = 79; // v70: empty an exact owned fuel-container instance.
         public const byte CommandMagazineTransfer = 81; // v71: exact owner per-round request with completion result.
+        public const byte CommandCraftingContext = 82; // v72: bounded source-camera probe/craft, never client station tags.
         public const byte CommandSalvageItem = 80; // v70: salvage the exact owned item through the original queue.
         public const byte CommandVehicleLighting = 75; // v68: source light switches and lamp repair intents
         public const byte CommandMountedInput = 74; // v64: accepted operator aim/trigger intent
@@ -316,6 +317,7 @@ namespace UnturnedGodot.Net
         public const byte EventMountedShot = 55; // v64: actual mounted muzzle/barrel and launch identity
         public const byte EventVehicleMaintenance = 58; // v69: accepted glazing/repair/manual horn facts
         public const byte EventMagazineTransfer = 60; // v71: owner-only exact magazine request completion.
+        public const byte EventCraftingContext = 61; // v72: owner-only station access and contextual craft outcome.
         public const byte EventVehicleDoor = 59; // v70: actual open/close edge, no late-join replay.
         public const byte EventVehicleLighting = 57; // v68: accepted alarm horn/lamp contact facts
         public const byte EventMountedFlight = 56; // v66: accepted source mounted continuation/retirement/blast pictures
