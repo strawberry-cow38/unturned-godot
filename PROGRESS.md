@@ -1940,3 +1940,23 @@ The playable NPC flight capture exposed seatCount0 on a real Hind. Its server re
 Three normal Eaglefire fire intents now drive a repeatable host/UDP-observer/native-render fixture: ammunition30→27, accepted head health100→60→20→0, unchanged hull and opposite crew, and removal of only the killed rig/held subtree. A third late client confirms the dead gunner never reappears. Both before/after Vulkan PNGs and authority sidecars were rendered/opened and independently reviewed; the aircraft is intentionally stationary, so this is an authority/render round trip rather than a full-game flight/input claim.
 
 The integration audit found that the native moving-hull uploader could treat descendant crew skin as vehicle triangles. It now stops at the crew ancestor marker, preserving the source TargetDummy box as the only crew hit region. A real-rig uploader-to-managed-ray regression removes only that marker as a negative control and proves the old path creates a vehicle-tagged obstacle. Six crew tests and the existing articulated-cannon authority upload regression pass against immutable npc-crew-v67-final. See bevy/docs/NPC_CREW_PORT.md for artifacts and reproduction.
+
+### Bevy remote aircraft clocks and audio (2026-10-15)
+
+Remote aircraft now run the same source spool, ignition latch and blade phases as
+native physical aircraft, once per 50 Hz step. The remote branch advances only
+presentation and keeps its one body kinematic; accepted ownership handoffs do not
+add display-frame ticks or run another flight simulation. Aircraft ignition now
+re-arms only after the original full-stop threshold, fixing replay on a mid-spool
+switch flip. The existing original engine loop follows spool and retires after
+rundown or accepted explosion.
+
+Six new clock/ECS/real-UDP regressions pass; the complete focused flight, audio and
+remote groups pass fourteen tests. They cover original mesh/clip consumption,
+separate rotor rates/health factors, source ignition, ownership, pause, explosion
+and despawn. An actual UDP host/observer renderer captures original Huey and
+Otter off/running/stopped states; the fixture host holds the aircraft still and
+switches accepted flags. This is not two native players flying together. Exact
+late-join spool phase, remote part-health pools, collective and landing gear are
+still absent from the wire. Details and capture instructions are in
+`bevy/docs/REMOTE_AIRCRAFT_PORT.md`.

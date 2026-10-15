@@ -1,6 +1,25 @@
 //! VehicleReplicaView: wire-only puppets glide toward a bounded extrapolation;
 //! the accepted local driver keeps the existing single native physics body.
 use super::*;
+
+/// Runs only in the fixed-step remote-body branch. The local driver's one body
+/// advances the same clock inside Flight::step; ownership changes never add an
+/// extra display-frame tick. The wire has no spool age or phase, so new puppets
+/// start the source clock locally instead of inventing a synchronized RPM.
+pub(super) fn advance_aircraft_presentation(body: &mut VehicleBody, dt: f32) {
+    let Some(def) = data::definition(body.type_id) else {
+        return;
+    };
+    let spec = &def.spec;
+    if !spec.heli && !spec.plane {
+        return;
+    }
+    let exploded = body.flags & 32 != 0;
+    let running = body.flags & 1 != 0 && body.engine_health > 0. && body.health > 0. && !exploded;
+    body.engine.step(spec, running, dt);
+    body.flight
+        .advance_presentation(spec, running, exploded, dt);
+}
 #[derive(Component, Default)]
 pub(super) struct Puppet {
     active: bool,
@@ -144,3 +163,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod aircraft_tests;

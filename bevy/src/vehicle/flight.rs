@@ -9,6 +9,7 @@ use bevy::{
 };
 use bevy_rapier3d::prelude::*;
 use std::path::Path;
+mod presentation;
 
 #[derive(Clone, Debug)]
 pub struct Flight {
@@ -17,6 +18,7 @@ pub struct Flight {
     pub main_phase: f32,
     pub tail_phase: f32,
     pub prop_phase: f32,
+    pub(crate) ignition_starts: u64,
     pub stick: Vec2, // pitch, roll, before cross-axis deadzone
     pub main_health: f32,
     pub tail_health: f32,
@@ -277,6 +279,7 @@ impl Flight {
             main_phase: 0.,
             tail_phase: 0.,
             prop_phase: 0.,
+            ignition_starts: 0,
             stick: Vec2::ZERO,
             main_health: 1.,
             tail_health: 1.,
@@ -355,29 +358,7 @@ impl Flight {
         dt: f32,
     ) -> FlightStep {
         self.grace = (self.grace - dt).max(0.);
-        let running = input.engine && !exploded;
-        let want = if running { 1. } else { 0. };
-        let spool_up = if spec.heli && !self.instant_start && self.ignition_length > 0.1 {
-            self.ignition_length * 0.74
-        } else {
-            3.2
-        };
-        self.spool = approach(
-            self.spool,
-            want,
-            dt / if want > self.spool { spool_up } else { 5.5 },
-        );
-        self.ignition_remaining = (self.ignition_remaining - dt).max(0.);
-        if running && self.spool < 0.05 && !self.ignition_fired {
-            self.ignition_fired = true;
-            self.ignition_remaining = if self.instant_start {
-                0.
-            } else {
-                self.ignition_length * 0.74
-            };
-        } else if !running && self.spool < 0.01 {
-            self.ignition_fired = false;
-        }
+        self.advance_presentation(spec, input.engine, exploded, dt);
         if driven && !exploded {
             if spec.heli {
                 let idle = if spec.heli_thrust > 0.01 {
@@ -424,14 +405,6 @@ impl Flight {
         } else {
             self.collective = 0.;
         }
-        let phase_scale = if exploded { 0. } else { self.spool };
-        self.main_phase = (self.main_phase
-            + dt * phase_scale * (0.30 + 0.70 * self.main_health) * 46.)
-            % std::f32::consts::TAU;
-        self.tail_phase = (self.tail_phase
-            + dt * phase_scale * (0.30 + 0.70 * self.tail_health) * 120.)
-            % std::f32::consts::TAU;
-        self.prop_phase = (self.prop_phase + dt * phase_scale * 150.) % std::f32::consts::TAU;
         if spec.heli {
             self.helicopter(spec, pose, velocity, input, contact, exploded)
         } else {

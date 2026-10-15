@@ -159,7 +159,14 @@ pub fn update(
     for (entity, body) in &bodies {
         let spec = &super::data::definition(body.type_id).unwrap().spec;
         let voice = voices.0.entry(entity).or_default();
-        if body.engine.starts > voice.starts {
+        // Aircraft latch ignition in StepHeli/StepPlane until the disc has fully
+        // stopped. A switch off/on during spool-down must not replay the starter.
+        let starts = if spec.heli || spec.plane {
+            body.flight.ignition_starts
+        } else {
+            body.engine.starts
+        };
+        if starts > voice.starts {
             if let Some(path) = ignition_path(spec) {
                 if config.content_root.join(path).is_file() {
                     spawn_sound(
@@ -177,7 +184,7 @@ pub fn update(
                 }
             }
         }
-        voice.starts = body.engine.starts;
+        voice.starts = starts;
         if body.engine.horns > voice.horns {
             if let Some(path) = spec.horn.as_deref() {
                 if config.content_root.join(path).is_file() {

@@ -916,6 +916,7 @@ fn step_bodies(
             !crate::network::owns_world(&n.0)
                 && n.0["playerId"].as_u64() != Some(body.driver_player_id as u64)
         }) {
+            remote::advance_aircraft_presentation(&mut body, 0.02);
             *rigid_body = RigidBody::KinematicPositionBased;
             *force = default();
             *impulse = default();
