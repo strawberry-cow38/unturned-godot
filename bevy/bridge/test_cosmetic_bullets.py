@@ -37,6 +37,21 @@ class CosmeticBulletTests(unittest.TestCase):
         self.assertAlmostEqual(.032,first['tracerWidth']);self.assertEqual([1.9,.85,.2],first['tracerColor'])
         self.assertEqual(29,state['player']['ammo'],'cosmetic launch consumes no extra ammunition')
 
+    def test_visual_launch_retains_original_local_precision_before_wire_quantization(self):
+        origin=[.012345,1.512345,.023456];direction=[.123456,.003456,-.992345]
+        self.call('action',name='fire',args=dict(origin=origin,dir=direction,visual=dict(aimAlpha=1)))
+        state=self.pump(6)
+        launch=next(e['data'] for e in state['events'] if e['kind']=='bulletLaunched')
+        wire=next(e['data'] for e in state['events'] if e['kind']=='fire')
+        length=math.sqrt(sum(v*v for v in direction))
+        for axis in range(3):
+            self.assertAlmostEqual(origin[axis],launch['origin'][axis],places=6)
+            self.assertAlmostEqual(direction[axis]/length,launch['direction'][axis],places=6)
+        packed=wire['origin']
+        if isinstance(packed,dict):packed=[packed[k] for k in ['x','y','z']]
+        self.assertGreater(max(abs(a-b) for a,b in zip(packed,origin)),.0001,
+            'authority remains the actual packed command; local cosmetics retain source float precision')
+
     def test_cosmetic_pellets_retire_on_wall_without_duplicate_impact_or_damage(self):
         self.configure(gun=dict(Id=112,GunAmmo=6,GunMagId=113))
         self.call('worldGeometry',meshes=[dict(vertices=[[-100,-100,-20],[100,-100,-20],[100,100,-20],[-100,100,-20]],indices=[0,1,2,0,2,3])])

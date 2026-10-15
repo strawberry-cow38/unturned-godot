@@ -12,7 +12,7 @@ namespace UnturnedBevy;
 /// but never damages anything or emits an authoritative impact/hitmarker.</summary>
 public sealed partial class CosmeticBulletServices
 {
-    public sealed record Context(float AimAlpha,int? PatternShot,UVector? MuzzleAnchor);
+    public sealed record Context(float AimAlpha,int? PatternShot,UVector? MuzzleAnchor,UVector? Origin=null,UVector? Direction=null);
     sealed record Pending(Context Context,long Until);
     sealed class Bullet
     {
@@ -50,9 +50,12 @@ public sealed partial class CosmeticBulletServices
     }
     public static Context ReadContext(JsonElement args)
     {
-        if(args.ValueKind!=JsonValueKind.Object||!args.TryGetProperty("visual",out var v)||v.ValueKind!=JsonValueKind.Object)return new(0,null,null);
+        if(args.ValueKind!=JsonValueKind.Object)return new(0,null,null);
+        UVector? origin=args.TryGetProperty("origin",out _)?Vec(args,"origin"):null;
+        UVector? direction=args.TryGetProperty("dir",out _)?Vec(args,"dir"):null;
+        if(!args.TryGetProperty("visual",out var v)||v.ValueKind!=JsonValueKind.Object)return new(0,null,null,origin,direction);
         return new(Math.Clamp(Float(v,"aimAlpha"),0,1),v.TryGetProperty("patternShot",out _)?Math.Clamp(Int(v,"patternShot"),0,65535):null,
-            v.TryGetProperty("muzzleAnchor",out _)?Vec(v,"muzzleAnchor"):null);
+            v.TryGetProperty("muzzleAnchor",out _)?Vec(v,"muzzleAnchor"):null,origin,direction);
     }
     public void Queue(ushort owner,ushort sequence,Context context)
     {
@@ -77,21 +80,21 @@ public sealed partial class CosmeticBulletServices
         if(gun.PatternClimb>0){pattern.Shot++;pattern.Tick=facts.Tick;_patterns[owner]=pattern;}
         int patternShot=context.PatternShot??pattern.Shot;
         long shotId=Interlocked.Increment(ref _nextShot);
-        var aim=G(command.Dir).Normalized();int pellet=0;
+        var aim=G(context.Direction??command.Dir).Normalized();var origin=context.Origin??command.Origin;int pellet=0;
         var color=GunDef.TracerColor(gun.CaliberName);float[] tint=[color.r,color.g,color.b];
         var launched=new List<object>();
         foreach(var direction in Directions(gun,aim,context.AimAlpha,facts.RecoilMultiplier,patternShot,Math.Max(1,flight.Pellets)))
         {
             var bullet=new Bullet{Id=Interlocked.Increment(ref _nextBullet),ShotId=shotId,LaunchTick=facts.Tick,
                 Owner=owner,Sequence=command.Seq,ItemId=facts.ItemId,Pellet=pellet++,Gun=facts.Gun,
-                Position=command.Origin,Origin=command.Origin,Velocity=U(direction)*facts.MuzzleVelocity,
+                Position=origin,Origin=origin,Velocity=U(direction)*facts.MuzzleVelocity,
                 Anchor=context.MuzzleAnchor,StepsLeft=Math.Max(1,flight.Steps),Gravity=flight.Gravity,
                 Width=CosmeticRules.TracerBaseW*GunDef.TracerScale(gun.CaliberName),Color=tint,
                 Silenced=facts.Silenced,Rocket=gun.Action=="Rocket",BlastRadius=gun.BlastRadius};
             _bullets.Add(bullet);launched.Add(new{id=bullet.Id,pellet=bullet.Pellet,velocity=Array(bullet.Velocity)});
         }
         _emit("bulletLaunched",new{shotId,playerId=owner,sequence=command.Seq,itemId=facts.ItemId,gun=facts.Gun,
-            origin=Array(command.Origin),direction=Array(U(aim)),acceptedTick=facts.Tick,aimAlpha=context.AimAlpha,patternShot,
+            origin=Array(origin),direction=Array(U(aim)),acceptedTick=facts.Tick,aimAlpha=context.AimAlpha,patternShot,
             pelletCount=pellet,muzzleVelocity=facts.MuzzleVelocity,gravity=flight.Gravity,steps=flight.Steps,
             silenced=facts.Silenced,tracerWidth=CosmeticRules.TracerBaseW*GunDef.TracerScale(gun.CaliberName),tracerColor=tint,
             rocket=gun.Action=="Rocket",muzzleAnchor=context.MuzzleAnchor.HasValue?Array(context.MuzzleAnchor.Value):null,bullets=launched});
@@ -164,7 +167,7 @@ public sealed partial class CosmeticBulletServices
     public void TranslateWorld(UVector delta)
     {
         foreach(var b in _bullets){b.Position+=delta;b.Origin+=delta;if(b.Anchor.HasValue)b.Anchor+=delta;}
-        foreach(var key in _contexts.Keys.ToArray()){var p=_contexts[key];if(p.Context.MuzzleAnchor.HasValue)_contexts[key]=p with{Context=p.Context with{MuzzleAnchor=p.Context.MuzzleAnchor+delta}};}
+        foreach(var key in _contexts.Keys.ToArray()){var p=_contexts[key];_contexts[key]=p with{Context=p.Context with{MuzzleAnchor=p.Context.MuzzleAnchor+delta,Origin=p.Context.Origin+delta}};}
         for(int i=0;i<_water.Count;i++)_water[i]=_water[i] with{Center=_water[i].Center+delta};
     }
     public sealed record WaterSaved(float[] Center,float[] Size);

@@ -509,3 +509,8 @@ The console `weather` command now runs the original extracted
 emits one retained cosmetic `weatherStrike` fact, while clear/rain/variants use
 the original WeatherSim transitions. The existing server cheat gate applies;
 refused commands produce neither a strike nor a weather mutation.
+
+Cosmetic launch context also retains the original local origin/direction before
+wire quantization. It becomes visible only after the matching combat sequence is
+accepted; the authoritative command still uses the unchanged packed values.
+Pending local origins and anchors cross the same atomic origin barrier.
