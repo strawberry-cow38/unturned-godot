@@ -54,6 +54,10 @@
     <Compile Include="$(IntermediateOutputPath)Data/ZombieFlow.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/ZombieRules.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/AttachmentNoise.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/AttachmentTransaction.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/GunVisualData.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/ItemRarity.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/WeaponAmmoActions.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/NoiseRules.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/ClothingData.g.cs" />
     <Compile Include="../../game/ZombieTables.cs" Link="Source/ZombieTables.cs" />

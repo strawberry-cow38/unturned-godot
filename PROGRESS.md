@@ -981,3 +981,10 @@ boxes/layers, Rapier hit normals, decal lifetime and current-pose attachment.
 Tree holes were not visually confirmed because approximate tree collision can
 miss bark projection; a flat-wall check remains on the ledger, along with Bevy
 forward-quad versus Godot box-projector edge differences.
+
+### Bevy atomic attachment and ammunition actions (2026-10-14)
+
+- Added an authoritative attachment-options/intent adapter over original AttachmentFit and AttachmentMenu helpers. Options expose actual source slot capabilities/colors and individual carried item tokens; requests retain exact gun/item references and revalidate at the server tick. Preflight uses the original grid placement algorithm on clones, so refused full-bag swaps neither delete/duplicate items nor move the clicked object. Installed factory irons do not mint bag items.
+- Extracted original specific-magazine swap, removal and rack transitions. Same-ID magazines retain their own round counts; the chamber survives tactical swaps, outgoing magazines return actual rounds, a full-bag removal drops its magazine, and animation/auto-rack gates remain. Loose-shell selection returns the old type before loading only the carried new type, and animated unload preserves rounds on refused returns. Per-player caliber selection persists with bridge saves; opaque gun tokens invalidate menus across load.
+- Attachment refusals emit retained text notices. Accepted melee facts now keep item ID/repeated status before wear or selection changes. Accepted fire separates source barrel-only flash suppression from integral gun suppression for tracer/hearing/velocity. The current source's FMJ-only rack-ejection mapping and absent Grip slot remain explicit.
+- All79 managed bridge integration tests pass, including9 new transaction/capability/ammo/save/fact tests. Root independently reviewed source transitions and preflight with no blocking finding. Normal DLL was rebuilt and its9 focused journeys passed again; native attachment UI/model/ring rendering and visual verification are root's next checkpoint.

@@ -44,7 +44,7 @@ public sealed partial class BridgeHost : IDisposable
     ZombieServices _zombies;
     int _seed = 1337;
     bool _worldChanged;
-    sealed record BridgeSave(int Seed, RetailLootStreamer.SaveData Loot, JsonElement[] Services, ResourceServices.Saved[] Resources = null, WorldServices.PropDoorSaved[] ObjectDoors = null, BodyCombatServices.Saved[] Bodies = null, VehicleServices.PartsSaved[] VehicleParts = null, double OriginX = 0, double OriginZ = 0, SavedProjectile[] Projectiles = null, WildlifeServices.Saved Wildlife = null, ZombieServices.Saved Zombies = null);
+    sealed record BridgeSave(int Seed, RetailLootStreamer.SaveData Loot, JsonElement[] Services, ResourceServices.Saved[] Resources = null, WorldServices.PropDoorSaved[] ObjectDoors = null, BodyCombatServices.Saved[] Bodies = null, VehicleServices.PartsSaved[] VehicleParts = null, double OriginX = 0, double OriginZ = 0, SavedProjectile[] Projectiles = null, WildlifeServices.Saved Wildlife = null, ZombieServices.Saved Zombies = null, WeaponServices.Saved[] Weapons = null);
     public sealed record BridgeEvent(long Seq, string Kind, object Data, long Tick);
     void Emit(string kind, object data) => _events.Add(new(++_eventSequence, kind, data, _server?.Session.CurrentTick ?? 0));
     static readonly JsonSerializerOptions JsonOptions = new() { IncludeFields = true, PropertyNameCaseInsensitive = true, Converters = { new VectorJson(), new ByteArrayJson() } };
@@ -107,6 +107,7 @@ public sealed partial class BridgeHost : IDisposable
                 clearProbe = HandRules.ThrowClearProbe, clearGap = HandRules.ThrowClearGap,
                 fuseSeconds = Throwables.FuseSeconds, useSeconds = _catalog.Clip("", "TU_0") }, deployables = DeployableDef.All, containers = ContainerSchema.All,
                 crops = FarmRegistry.All.Select(d => new { seedId = d.Id, growthSeconds = d.Growth, yieldItemId = d.Grow, name = CropRegistry.TryBySeed(d.Id, out string name) ? name : null }).ToArray() };
+            case "attachmentOptions": RequireSession(); return _weapons.AttachmentOptions(_client.PlayerId);
             case "npcCatalog": RequireSession(); return new { characters = NpcCatalog.Characters, dialogues = NpcCatalog.Dialogues, vendors = NpcCatalog.Vendors, quests = NpcCatalog.Quests };
             case "worldVehicles":
                 RequireSession();
@@ -141,7 +142,7 @@ public sealed partial class BridgeHost : IDisposable
                 string path = Path.GetFullPath(Text(r, "path"));
                 Directory.CreateDirectory(Path.GetDirectoryName(path)!);
                 var saveJson = JsonNode.Parse(save.ToJson());
-                saveJson["BevyBridge"] = JsonSerializer.SerializeToNode(new BridgeSave(_seed, _loot?.Capture(), _serviceSpecs.ToArray(), _services.Harvesting.Capture(), _services.CapturePropDoors(), _bodies.Capture(), _vehicles.CaptureParts(), _originX, _originZ, CaptureProjectiles(), _wildlife.Capture(), _zombies.Capture()));
+                saveJson["BevyBridge"] = JsonSerializer.SerializeToNode(new BridgeSave(_seed, _loot?.Capture(), _serviceSpecs.ToArray(), _services.Harvesting.Capture(), _services.CapturePropDoors(), _bodies.Capture(), _vehicles.CaptureParts(), _originX, _originZ, CaptureProjectiles(), _wildlife.Capture(), _zombies.Capture(), _weapons.Capture()));
                 File.WriteAllText(path + ".tmp", saveJson.ToJsonString()); File.Move(path + ".tmp", path, true);
                 _server.PendingSave = save;
                 return new { path, version = save.Version };
@@ -160,6 +161,7 @@ public sealed partial class BridgeHost : IDisposable
                 RestoreProjectiles(extra?.Projectiles);
                 _wildlife.Restore(extra?.Wildlife);
                 _zombies.Restore(extra?.Zombies);
+                _weapons.Restore(extra?.Weapons);
                 _services.Harvesting.Restore(extra?.Resources);
                 _services.RestorePropDoors(extra?.ObjectDoors); _bodies.Restore(extra?.Bodies); _vehicles.RestoreParts(extra?.VehicleParts);
                 if (extra?.Loot != null)
@@ -311,10 +313,13 @@ public sealed partial class BridgeHost : IDisposable
             Emit("fire",new{playerId=e.PlayerId,origin=e.Origin,dir=e.Dir,gun=e.Gun,
                 itemId=facts?.ItemId,quality=facts?.Quality,handlingPenalty=facts?.HandlingPenalty,
                 recoilMultiplier=facts?.RecoilMultiplier,selectionVersion=facts?.SelectionVersion,acceptedTick=facts?.Tick,
-                barrelId=facts?.BarrelId,silenced=facts?.Silenced,shootClip=facts?.ShootClip,shotVolume=facts?.ShotVolume,
+                barrelId=facts?.BarrelId,silenced=facts?.Silenced,barrelSilenced=facts?.BarrelSilenced,shootClip=facts?.ShootClip,shotVolume=facts?.ShotVolume,
                 muzzleVelocity=facts?.MuzzleVelocity,barrelBroken=facts?.BarrelBroken});
         };
-        _client.PlayerMeleed += e => Emit("melee", e);
+        _client.PlayerMeleed += e => {
+            var facts=_weapons.TakeMelee(e.PlayerId,e.Strong);
+            Emit("melee",new{playerId=e.PlayerId,strong=e.Strong,itemId=facts?.ItemId,repeated=facts?.Repeated,acceptedTick=facts?.Tick});
+        };
         _client.PlayerGestured += e => Emit("gesture", e);
         _client.StorageClosed += e => Emit("storageClosed", e);
         _client.VehicleEntered += e => Emit("vehicleEntered", e);
@@ -406,6 +411,7 @@ public sealed partial class BridgeHost : IDisposable
     {
         if (name == "console" && RotorConsole(Text(args, "text"))) return new { queued = true };
         if (name == "console" && _wildlife.Console(_client.PlayerId, Text(args, "text"))) return new { queued = true };
+        if (name is "installAttachment" or "removeAttachment" or "chooseShellType" or "unloadShells" or "rackGun") return _weapons.AttachmentAction(_client.PlayerId,name,args);
         if (name == "toolUse") return new { queued = _bodies.ToolUse(_client.PlayerId, Bool(args, "active")) };
         if (name == "equipAndHold")
         {

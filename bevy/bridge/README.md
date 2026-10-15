@@ -421,3 +421,46 @@ notice. Rejected triggers never break it. The retained shot facts remain silence
 afterward so delayed native muzzle/audio consumers cannot turn that shot loud.
 The optional core condition lookup uses the bridge's exact selected backing item,
 including two same-ID pistols in different weapon slots.
+
+`attachmentOptions` reads the selected gun's actual capabilities and owned item
+instances. Its result contains `gun` (address/ID), `gunName`, `gunToken`,
+`selectionVersion`, `busy`, `canRack`, and `slots`. Each slot contains `name`,
+`visible`, `available`, `installedId`, `detachable`, source RGBA `color`, `kind`
+(`attachment`, `magazine`, or `shell`), `choices`, and optional `shells`.
+Each physical choice is `{page,x,y,id,amount,quality,instanceToken}`; shell choices
+are `{id,count,selected}`. No item is invented for a missing bag choice. Capabilities
+come from the original resolved visual tables: the current source has no Grip
+node, and AUG's integral Sight is hidden. A loose-shell Magazine can remain gray
+in the source icon recipe while still offering its ammo-type picker.
+
+New listen-host actions require `gunToken` and `selectionVersion` from those
+options: `installAttachment {slot,page,x,y,instanceToken}`, `removeAttachment
+{slot}`, `chooseShellType {itemId}`, `unloadShells {}`, and `rackGun {}`.
+Requests capture exact owned references and are revalidated during the authority
+tick. `queued:false` includes a refusal reason; accepted queued mutations emit
+`attachmentChanged`, and later refusals emit `attachmentRejected` with `reason`.
+Native must wait for the actual snapshot and accepted event before changing its
+held model. Tokens are opaque process-local identities and change after load.
+
+Non-magazine fitting extracts the original `AttachmentMenu.FitAttachmentTo`.
+A cloned-grid preflight runs the same placement algorithm before touching the
+real objects, closing its full-bag rollback hole without replacing Item references.
+Factory irons never mint inventory items and return after removing a scope.
+Specific-magazine actions extract the original `LoadMagInstance`,
+`RemoveMagazine`, and `RackGun`, keeping exact selected rounds, chamber contents,
+reservoir capacity, animation gates and auto-rack timing. An outgoing magazine
+keeps its rounds; full-bag removal drops that magazine, while a swap that cannot
+return its predecessor is refused atomically. Rack retains the source's current
+FMJ5004 ejection mapping even for another chamber type (an existing source gap).
+Loose-shell choices eject the old type before loading only the new type actually
+carried; animated unload refuses to discard rounds if the bag has no room.
+Per-player caliber choices persist in bridge save metadata so reload cannot
+reinterpret a saved slug tube as buckshot.
+
+Accepted `fire.data.barrelSilenced` is distinct from `silenced`: the former is the
+original BarrelDef flash gate; the latter additionally includes integral gun
+suppression for tracers/hearing/velocity. This intentionally preserves the current
+source's bare-barrel flash on intrinsically suppressed guns. Accepted `melee.data`
+adds `itemId`, `repeated`, and `acceptedTick`, captured before wear or switching,
+so delayed native animation/audio consumers never identify an old swing by the
+currently selected weapon. Neither addition changes the network packet format.

@@ -298,3 +298,60 @@ parts += match(r'static string Snd[^\n]+;', read('game/Viewmodel.cs')).replace('
 noise = read('game/SoundBus.cs')
 constants = '\n'.join(re.findall(r'public const float \w+\s*=\s*[0-9.]+f;', noise))
 (out / 'NoiseRules.g.cs').write_text('namespace UnturnedBevy { public static class NoiseRules {' + constants + '}}')
+
+# The original fitting transaction operates on pure inventory models. Retain its
+# exact reference removal and factory-iron return rules; host preflight adds
+# atomic refusal when a displaced item has no place to go.
+menu = read('game/AttachmentMenu.cs')
+fit = method(menu, 'public static bool FitAttachmentTo(Item held, PlayerInventory inv, string slot, ushort newId, Item clicked,\n                                           out string refusal)')
+remove = method(menu, 'static bool TakeFromBagInstanceIn(PlayerInventory inv, Item want)').replace('static bool ', 'public static bool ')
+(out / 'AttachmentTransaction.g.cs').write_text('using SDG.Unturned; namespace UnturnedBevy { public static class AttachmentTransaction {\n' + (fit+remove+method(menu, 'internal static Color SlotColor(bool canAccept, ItemAsset installed)')).replace('internal static Color', 'public static Godot.Color').replace('new Color(', 'new Godot.Color(').replace('Colors.White', 'new Godot.Color(1,1,1)').replace('AttachmentFit.', 'AttachmentNoise.') + '}}')
+
+# Source Viewmodel visual table resolution determines which slot nodes actually
+# exist. The host needs those capabilities but never builds the mesh or a node.
+visual = [match(r'struct GunVisual \{[^\n]+\}',viewmodel),
+    'static System.Collections.Generic.Dictionary<string, GunVisual> _extraVisuals;',
+    'static System.Collections.Generic.Dictionary<string, (Vector3 Hook, string Mesh)> _magHooks;',
+    'static GunVisual Visual(string name) => ExtraVisual(name);']
+for signature in ['public static bool IsKnownGun(string name)', 'static GunVisual ExtraVisual(string name)',
+                  'static System.Collections.Generic.Dictionary<string, (Vector3 Hook, string Mesh)> LoadMagHooks()',
+                  'static System.Collections.Generic.Dictionary<string, GunVisual> LoadExtraVisuals()',
+                  'public static (string Mesh, Vector3 Hook) MagazineVisualFor(string gunName)',
+                  'static Vector3 V3(string s)']:
+    visual.append(method(viewmodel,signature))
+visual += [match(r'static Color Col[^\n]+\}',viewmodel), match(r'static string Snd[^\n]+;',viewmodel),
+    'public static bool HasSight(string name) => IsKnownGun(name) && HasMesh(Visual(name).Sight);',
+    'public static bool HasMagazine(string name) => HasMesh(MagazineVisualFor(name).Mesh);',
+    'static bool HasMesh(string file) => file != null && System.IO.File.Exists(ProjectSettings.GlobalizePath("res://content/" + file));',
+    'public static bool IntegralSight(string _gunTxt) => ' + match(r'public bool IntegralSight => ([^;]+);',viewmodel).split('=>',1)[1]]
+(out / 'GunVisualData.g.cs').write_text('using Godot; namespace UnturnedBevy { public static class GunVisualData {\n'+'\n'.join(visual)+'}}')
+# Specific-mag transitions retain source ammo and chamber rules. Only animation
+# timing and world drops cross an engine boundary; guards/preflight are hosted.
+mag_actions = [match(r'string MagAmmoType =>[^;]+;', player)]
+for signature in ['public void LoadMagInstance(SDG.Unturned.Item mag)', 'public void RemoveMagazine()', 'public void RackGun()']:
+    body=method(player,signature)
+    body=body.replace('_dead', '_combat?.Alive != true').replace('_magSwapAnimTimer > 0', 'MagazineBusy')
+    body=body.replace('Skills.DexterityReloadSpeed()', 'ReloadSpeed')
+    body=body.replace('_viewmodel?.SetReloading(true, sp);', 'BeginMagazineAnimation(sp);')
+    body=body.replace('_viewmodel?.PlayHammer(sp);', 'BeginRackAnimation(sp);')
+    body=body.replace('(_viewmodel?.ReloadLength ?? ReloadTime)', '_catalog.ReloadSeconds(_heldItem.id)')
+    body=body.replace('(_viewmodel?.HammerLength ?? 0.4)', 'HammerSeconds')
+    body=body.replace('_magSwapAnimTimer = ', '_magSwapUntil = Tick + Ticks(')
+    lines=[]
+    for line in body.splitlines():
+        if '_magSwapUntil = ' in line:
+            line=line.replace(';', ');', 1)
+        lines.append(line)
+    body='\n'.join(lines)
+    body=body.replace('!(_viewmodel?.ReloadIncludesChambering ?? false)', 'Profile.AssetName != "sks"')
+    body=body.replace('DropWorldItem(mag, GlobalPosition + Vector3.Up)', 'DropAmmo(mag)')
+    body=body.replace('DropWorldItem(round, GlobalPosition + Vector3.Up)', 'DropAmmo(round)')
+    mag_actions.append(body)
+for signature in ['int CountOfShell(ushort id)', 'public System.Collections.Generic.List<(SDG.Unturned.ItemAsset asset, int count, bool selected)> ShellTypeChoices()']:
+    mag_actions.append(match(re.escape(signature) + r'[^\n]*\n\s*\{.*?\n        \}', player))
+(out / 'WeaponAmmoActions.g.cs').write_text('using SDG.Unturned; namespace UnturnedBevy { public sealed partial class WeaponState {\n'+'\n'.join(mag_actions)+'}}')
+
+rarity=read('game/inventory/ItemTool.cs')
+rarity=rarity[:rarity.index('        // ItemTool.getQualityColor')]+'}}'
+rarity=rarity.replace('Godot.Colors.White','new Godot.Color(1,1,1)')
+(out / 'ItemRarity.g.cs').write_text(rarity)

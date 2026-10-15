@@ -13,9 +13,11 @@ public sealed class WeaponServices
     readonly Action<string, object> _emit;
     readonly Dictionary<ushort, WeaponState> _states = new();
     readonly Dictionary<ushort, Queue<ShotFacts>> _shots = new();
+    readonly Dictionary<ushort, Queue<MeleeFacts>> _melees = new();
+    public sealed record MeleeFacts(ushort ItemId, bool Repeated, bool Strong, long Tick);
     public Action<ushort,float> Noise;
     public sealed record ShotFacts(string Gun, ushort ItemId, byte Quality, float HandlingPenalty, float RecoilMultiplier, long SelectionVersion, long Tick,
-        int BarrelId,bool Silenced,string ShootClip,float ShotVolume,float MuzzleVelocity,bool BarrelBroken);
+        int BarrelId,bool Silenced,bool BarrelSilenced,string ShootClip,float ShotVolume,float MuzzleVelocity,bool BarrelBroken);
     public WeaponServices(NetWorldServer server, Catalog catalog, Action<string, object> emit)
     {
         _server = server; _catalog = catalog; _emit = emit;
@@ -37,7 +39,10 @@ public sealed class WeaponServices
         server.Combat.ResolveHeldMeleeProfile = (owner, strong) => State(owner).MeleeProfile(strong);
         server.Combat.CanMelee = (owner, strong) => State(owner).CanMelee(strong);
         server.Combat.MeleeAccepted = (owner, strong, tick) => {
-            var state=State(owner);if(state.MeleeNoise>0)Noise?.Invoke(owner,state.MeleeNoise);
+            var state=State(owner);
+            if(!_melees.TryGetValue(owner,out var queue))_melees[owner]=queue=new();
+            queue.Enqueue(state.CaptureMelee(strong,tick));
+            if(state.MeleeNoise>0)Noise?.Invoke(owner,state.MeleeNoise);
             state.MeleeUsed(strong,tick);
         };
     }
@@ -48,6 +53,24 @@ public sealed class WeaponServices
         string wireGun=shot.Gun.Length>PlayerFiredEvent.MaxGunNameLength?shot.Gun[..PlayerFiredEvent.MaxGunNameLength]:shot.Gun;
         return wireGun==gun?shot:null;
     }
+    public MeleeFacts TakeMelee(ushort owner,bool strong)
+    {
+        if(!_melees.TryGetValue(owner,out var queue)||queue.Count==0)return null;
+        var facts=queue.Dequeue();return facts.Strong==strong?facts:null;
+    }
+    public sealed record Saved(string Name, Dictionary<int,ushort> Shells);
+    public Saved[] Capture() => _states.Select(p=>new Saved(_server.Transactions.NameOf(p.Key),p.Value.CaptureShells())).ToArray();
+    public void Restore(Saved[] saved)
+    {
+        if(saved==null)return;
+        foreach(var player in _server.CombatState.All)
+        {
+            var data=saved.FirstOrDefault(s=>s.Name==_server.Transactions.NameOf(player.OwnerPlayerId));
+            if(data!=null)State(player.OwnerPlayerId).RestoreShells(data.Shells);
+        }
+    }
+    public object AttachmentOptions(ushort owner) => State(owner).AttachmentOptions();
+    public object AttachmentAction(ushort owner,string action,System.Text.Json.JsonElement args) => State(owner).QueueAttachment(action,args);
     WeaponState State(ushort owner)
     {
         if (!_states.TryGetValue(owner, out var s)) _states[owner] = s = new(_server, _catalog, owner, _emit);
@@ -134,6 +157,7 @@ public sealed partial class WeaponState
         }
         SaveGunState();
         _heldItem = gun; Gun = gun == null ? null : _catalog.GunDefs[gun.id];
+        ResetAttachmentAnimation();
         _reloading = _hammerPending = _hammerActive = false; _cycleReadyTick = 0; _shotCount = 0; _combat.ReloadDoneTick = -1;
         if (Gun == null) { Ammo = 0; Profile = null; return; }
         AttachmentNoise.SeedDefaults(gun,Assets.find(gun.id)?.itemName);
@@ -228,7 +252,7 @@ public sealed partial class WeaponState
     }
     public bool CanFire()
     {
-        if (Gun == null || _heldItem?.gunFiremode == 0 || _heldItem?.quality == 0 || _server.Session.CurrentTick < _cycleReadyTick) return false;
+        if (_unloading || MagazineBusy || Gun == null || _heldItem?.gunFiremode == 0 || _heldItem?.quality == 0 || _server.Session.CurrentTick < _cycleReadyTick) return false;
         if (_reloading && Gun.ShellReload && Ammo > 0)
         { _reloading = false; _combat.ReloadDoneTick = -1; _emit("reloadCancelled", new { playerId = _owner }); }
         UpdateProfile(); return true;
@@ -244,11 +268,12 @@ public sealed partial class WeaponState
         string own=AttachmentNoise.Snd(Profile.AssetName+"_shoot.ogg","eaglefire_shoot.ogg");
         string clip=string.IsNullOrEmpty(barrel.ShootClip)?own:AttachmentNoise.Snd(barrel.ShootClip,own);
         return new(Profile.AssetName,_heldItem.id,quality,handling,handling*skill,_selectionVersion,tick,
-            barrelId,Suppressed,clip,barrel.Volume,Profile.MuzzleVelocity,AttachmentNoise.BreaksOnShot(barrelId));
+            barrelId,Suppressed,barrel.Silenced,clip,barrel.Volume,Profile.MuzzleVelocity,AttachmentNoise.BreaksOnShot(barrelId));
     }
     static int BarrelMask=>1<<System.Array.IndexOf(AttachmentNoise.Slots,"Barrel");
     public bool Suppressed => (Gun?.IntegrallySuppressed??false)
         || (_heldItem?.gunBarrelId>0?AttachmentNoise.IsSilencer(_heldItem.gunBarrelId):_heldItem?.gunAttach>=0&&(_heldItem.gunAttach&BarrelMask)!=0);
+    public WeaponServices.MeleeFacts CaptureMelee(bool strong,long tick) => new(_ownedHeld?.id??0,Melee?.Repeated??false,strong,tick);
     public float MeleeNoise => Melee?.Alert??0;
     public void Shot(long tick)
     {
@@ -276,7 +301,7 @@ public sealed partial class WeaponState
     }
     public bool BeginReload(long tick)
     {
-        if (Gun == null || _reloading || tick < _cycleReadyTick || Ammo >= ChamberedCap) return false;
+        if (Gun == null || _reloading || _unloading || MagazineBusy || tick < _cycleReadyTick || Ammo >= ChamberedCap) return false;
         if (UsesMagItem && (FindBestMag()?.item.amount ?? 0) <= 0) return Dry();
         if (UsesShells && CountShells() <= 0) return Dry();
         if (!UsesMagItem && !UsesShells && Gun.Caliber > 0) return Dry();
@@ -356,6 +381,7 @@ public sealed partial class WeaponState
     public void Step()
     {
         if (_combat == null) return;
+        StepAttachmentActions();
         if (_pendingEquip != null)
         {
             var accepted = Inventory.items[_pendingSlot].items.FirstOrDefault(j => ReferenceEquals(j.item, _pendingEquip));
@@ -364,10 +390,10 @@ public sealed partial class WeaponState
             { _pendingEquip = null; _emit("equipRefused", new { playerId = _owner }); }
         }
         if (_selected != null && !_selectionPending && _ownedHeld == null) _selectionChange = 0;
-        if (!_combat.Alive) { _reloading = false; _combat.ReloadDoneTick = -1; }
+        if (!_combat.Alive) { ResetAttachmentAnimation(); _reloading = false; _combat.ReloadDoneTick = -1; }
         if (Gun == null && _heldItem == null) Ammo = 0;
     }
-    public object Snapshot() => new { held = HeldAddress(), reloading = _reloading, rechambering = _server.Session.CurrentTick < _cycleReadyTick,
+    public object Snapshot() => new { held = HeldAddress(), reloading = _reloading || _unloading || MagazineBusy, unloading = _unloading, rechambering = _server.Session.CurrentTick < _cycleReadyTick,
         selectionVersion = _selectionVersion, broken = _ownedHeld?.quality == 0,
         canFire = Gun != null && _combat?.Alive == true && _heldItem?.quality > 0 && _heldItem.gunFiremode != 0,
         ammo = Gun == null ? 0 : Ammo, capacity = Gun == null ? 0 : MagCapacity, chambered = Gun != null && _chambered,
