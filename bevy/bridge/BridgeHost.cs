@@ -68,6 +68,10 @@ public sealed partial class BridgeHost : IDisposable
         CheckRemoteOperation(op);
         switch (op)
         {
+            case "serverProbeStart": return _serverProbe.Start(Text(r, "host"), Int(r, "port", 47872));
+            case "serverProbePoll": return _serverProbe.Poll(r.GetProperty("token").GetInt64());
+            case "serverProbeCancel": return _serverProbe.Cancel(r.GetProperty("token").GetInt64());
+            case "reconnect": return ReconnectRemote();
             case "init":
                 Dispose(); _geometry.Clear(); _serviceSpecs.Clear(); _originX = _originZ = 0; _originEpoch = 0;
                 ConfigureNetwork(r);
@@ -569,6 +573,7 @@ public sealed partial class BridgeHost : IDisposable
         // must not be inherited by a newly connected owner with the same ID.
         if (_server != null) foreach (var player in _server.CombatState.All)
             ServerGestures.TryTakePending(player.OwnerPlayerId, out _);
+        _serverProbe.Cancel();
         _loot = null; _client?.Disconnect(); _server?.TearDown(); _client = null; _server = null;
         _udpTransport?.TearDown(); _udpTransport = null;
         _environment = null; _services = null; _vehicles = null; _bodies = null; _weapons = null;

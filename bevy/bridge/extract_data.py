@@ -403,3 +403,21 @@ weather_command=weather_command.replace('ApplyCommand(string arg)', 'ApplyComman
 appearance=read('game/PlayerAppearanceNetSync.cs')
 appearance=appearance.replace('AttachmentFit.InstalledId','UnturnedBevy.AttachmentNoise.InstalledId')
 (out/'PlayerAppearanceNetSync.g.cs').write_text(appearance)
+
+# Browser status and connection policy are engine-free source methods. The bridge
+# schedules this exact blocking query on one worker and never blocks its frame.
+menu = read('game/MainMenuServers.cs')
+connect = read('game/MainMenuConnect.cs')
+session = read('game/ClientWorldSession.cs')
+parts = [match(r'public struct ServerStatus\s*\{.*?\n        \}', menu),
+         match(r'const int StatusReqBytes[^;]+;', menu),
+         method(menu, 'static ServerStatus StatusQueryFull(string host, ushort port, uint nonce)').replace('static ServerStatus', 'public static ServerStatus', 1),
+         method(menu, 'static string ReadBoundedString(byte[] r, ref int o, int cap)'),
+         method(menu, 'public static string Sanitize(string v, int maxChars)'),
+         method(connect, 'public static string PingGateRefusal(int serverMaxPing, int measuredPing)'),
+         match(r'public const int ConnectAttempts[^;]+;', connect),
+         match(r'public const int RejectRetryLimit[^;]+;', session),
+         match(r'public const float LinkTimeoutSeconds[^;]+;', session)]
+(out/'SourceServerMenu.g.cs').write_text('// Generated original browser query and connection policy; do not edit.\nusing UnturnedGodot.Net; namespace UnturnedBevy { public static class SourceServerMenu {\n'+'\n'.join(parts)+'}}')
+puppet_clip = match(r'static string ClipFor\(byte anim\) => anim switch\s*\{.*?\n        \};', read('game/AnimalPuppets.cs'))
+(out/'AnimalPuppetData.g.cs').write_text('using UnturnedGodot.Net; namespace UnturnedBevy { public static class AnimalPuppetData {\n'+puppet_clip.replace('static string', 'public static string', 1)+'}}')

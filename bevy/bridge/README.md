@@ -613,3 +613,26 @@ leaving no state and refusing later ticks. A remote disconnect retains a readabl
 terminal network state until replacement. `shutdown` works in either mode.
 See [the multiplayer ledger](../docs/MULTIPLAYER_PORT.md) for verified boundaries
 and the native/remaining protocol integration.
+
+`serverProbeStart {host,port}` is available before `init` and returns `token`,
+`contentHash`, and original `connectAttempts`/`rejectRetryLimit`/`linkTimeoutSeconds`
+policy. `serverProbePoll {token}` is nonblocking and returns `pending`; completion
+adds `status {ok,ping,players,max,version,protocol,pvp,passworded,hasFlags,maxPing,
+map,gamemode,motd,iconBytes,compatible,pingRefusal,refusal}`. Version/content hashes
+are16-digit hexadecimal strings. The exact original1200-byte UDP browser request,
+1.5s socket timeout, nonce check, bounded optional fields and text sanitization
+run on one worker. A new token supersedes an older query; it queues behind any
+running query. `serverProbeCancel {token}` invalidates its result without blocking
+for that worker. Stale/cancelled polls report `cancelled:true`. Native owns the
+source four-attempt UI loop and cancellation generation. `compatible` is the
+original content-hash check; the subsequent handshake owns protocol admission.
+
+`reconnect` retries an initial retryable rejection through the source
+`NetWorldClient.Connect`. The original session policy permits four rejection
+retries, independently of the four browser probes. A previously joined session
+must use `init` again to create fresh replicas; explicit disconnect has already
+closed its socket. No movement publishes while awaiting the new owner's spawn.
+Remote animal rows also expose the source puppet clip and static species body
+height/radius; these do not authorize a remote physics body. Original
+`AnimalPuppets` selects these clips on the normal engine-driven animation player
+and has no collider; its comment describing a frozen pose is stale.

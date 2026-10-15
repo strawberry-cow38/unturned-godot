@@ -215,4 +215,82 @@ public sealed class RemoteSessionTests
         }));
         Assert.That(_remote.State(), Is.Null);
     }
+
+    [Test]
+    public void RetryableInitialRefusalCanReconnectAfterCapacityClearsWithoutLocalInit()
+    {
+        Listen(maxPlayers: 2);
+        var blocker = new NetWorldClient(new SDG.NetTransport.Udp.UdpClientTransport("127.0.0.1", _port),
+            "Blocker", contentHash: UnturnedGodot.NetContent.Hash);
+        try
+        {
+            blocker.Connect();
+            for (int i = 0; i < 20; i++) { blocker.Tick(); Call(_host, "tick"); Thread.Sleep(1); }
+            Assert.That(blocker.State, Is.EqualTo(NetSessionState.Connected));
+            Join(); Pump(20);
+            Assert.That(State(_remote).GetProperty("network").GetProperty("rejectReason").GetString(), Is.EqualTo("ServerFull"));
+            blocker.Disconnect();
+            for (int i = 0; i < 8; i++) Call(_host, "tick");
+            Assert.That(Call(_remote, "reconnect").GetProperty("queued").GetBoolean(), Is.True);
+            Assert.That(State(_remote).GetProperty("connected").GetBoolean(), Is.False);
+            Pump(30);
+            Assert.That(State(_remote).GetProperty("connected").GetBoolean(), Is.True);
+            Assert.That(State(_remote).GetProperty("player").GetProperty("position")[0].GetSingle(), Is.EqualTo(35).Within(.02));
+            Assert.Throws<InvalidOperationException>(() => Call(_remote, "reconnect"), "Joined sessions require fresh replicas via init");
+        }
+        finally { blocker.Disconnect(); }
+    }
+
+    [Test]
+    public void AsyncProbeReadsRealHostBeforeAnyClientWorldExists()
+    {
+        Listen();
+        var start = Call(_remote, "serverProbeStart", new { host = "127.0.0.1", port = _port });
+        long token = start.GetProperty("token").GetInt64();
+        Assert.That(_remote.State(), Is.Null);
+        JsonElement result = default;
+        for (int i = 0; i < 500; i++)
+        {
+            Call(_host, "tick");
+            result = Call(_remote, "serverProbePoll", new { token });
+            if (!result.GetProperty("pending").GetBoolean()) break;
+            Thread.Sleep(2);
+        }
+        Assert.That(result.GetProperty("pending").GetBoolean(), Is.False);
+        var status = result.GetProperty("status");
+        Assert.That(status.GetProperty("ok").GetBoolean(), Is.True);
+        Assert.That(status.GetProperty("compatible").GetBoolean(), Is.True);
+        Assert.That(status.GetProperty("map").GetString(), Is.EqualTo("PEI"));
+        Assert.That(status.GetProperty("players").GetInt32(), Is.EqualTo(1));
+        Assert.That(status.GetProperty("max").GetInt32(), Is.EqualTo(4));
+        Assert.That(_remote.State(), Is.Null, "A status probe must never create a world or player");
+    }
+
+    [Test]
+    public void RemoteAnimalMetadataUsesOriginalPuppetClipsAndStaticSpeciesDataOnly()
+    {
+        Listen();
+        for (byte species = 0; species < 4; species++)
+        {
+            var id = Server.Ids.Mint();
+            Server.Animals.ServerSpawn(id, species, new(36 + species, 8, -22), Server.Session.CurrentTick);
+            Server.Animals.ServerPublish(id, new(36 + species, 8, -22), 90,
+                species == 3 ? (byte)AnimalNetAnim.Dead : (byte)(species + 1), Server.Session.CurrentTick);
+        }
+        Join(); Pump(20);
+        var animals = State(_remote).GetProperty("animals").EnumerateArray().ToArray();
+        Assert.That(animals.Length, Is.EqualTo(4));
+        string[] clips = ["Walk", "Eat", "Glance_0", "Idle"];
+        float[] heights = [1.3f, .75f, 1.45f, 1.81f];
+        foreach (var animal in animals)
+        {
+            int species = animal.GetProperty("species").GetInt32();
+            Assert.That(animal.GetProperty("clip").GetString(), Is.EqualTo(clips[species]));
+            Assert.That(animal.GetProperty("bodyHeight").GetSingle(), Is.EqualTo(heights[species]));
+            Assert.That(animal.GetProperty("radius").GetSingle(), Is.EqualTo(AnimalBrain.RadiusFor(heights[species])));
+            Assert.That(animal.TryGetProperty("health", out _), Is.False);
+            Assert.That(animal.TryGetProperty("corpseRemainingTicks", out _), Is.False);
+            Assert.That(animal.GetProperty("remote").GetBoolean(), Is.True);
+        }
+    }
 }

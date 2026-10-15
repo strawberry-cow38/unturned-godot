@@ -1216,6 +1216,10 @@ FX; managed/native connection lifecycle is continuing separately.
 
 A remote bridge now creates only the original UDP client and reads actual owner/world replicas. Its asynchronous join waits for the accepted owner spawn before sending any movement. Original commands preserve server validation; local host services, registration, save/load and damage are unavailable. Equip waits for accepted inventory changes, recovery/death/automatic respawn use existing events, and unknown host-only metadata is explicitly listed rather than invented. Review found and fixed host disconnect retaining a listener: owned sessions now dispose fully, while remote disconnect keeps a reportable terminal state. Eighteen real-socket NUnit tests and all121 bridge tests pass against frozen `remote-client-18`; a separate two-process JSONL journey also passes join/spawn/inventory/port reuse/shutdown. Native connection flow and the documented wire feature gaps remain separate work.
 
+### Bevy asynchronous server status and initial-join retry
+
+The bridge now extracts the original browser UDP query, bounded decoder, sanitizer, ping gate and connection policy into a nonblocking start/poll/cancel adapter. A single worker bounds overlapping requests and stale tokens cannot adopt a newer screen's result. Source initial-rejection reconnect is exposed separately from fresh-session joins; static remote animal clips/dimensions now use original puppet/species data without inventing health or a second physics body. All27 real-socket/status tests and all121 existing bridge tests pass against the same frozen bridge executable (`probe-tests-26`/`probe-tests-27` have identical assembly hashes), including cancellation, silent timeout, truncated data, nonce/content mismatch, capacity-clearing retry, and pre-world status. The source's rejection retry count is four, independently of its four browser probes.
+
 ### Bevy reflection-light lifecycle and viewport isolation (2026-10-15)
 
 A controlled midnight OFF→ON→OFF capture identified a surviving reflection

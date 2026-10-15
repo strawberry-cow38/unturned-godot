@@ -24,7 +24,8 @@ public sealed partial class AnimalBrain
     public Action Panic;
     public Action<Vector3> Died;
     public Vector3 Forward => new(-MathF.Sin(Yaw * MathF.PI / 180), 0, -MathF.Cos(Yaw * MathF.PI / 180));
-    public float Radius => Mathf.Clamp(Mathf.Max(BodyH, .6f) * .38f, .25f, .7f);
+    public static float RadiusFor(float bodyHeight) => Mathf.Clamp(Mathf.Max(bodyHeight, .6f) * .38f, .25f, .7f);
+    public float Radius => RadiusFor(BodyH);
     public void Begin() => StartIdle();
     void Play(string clip) => Clip = clip;
     float GroundY(float x, float z) => SampleGround(x, z);

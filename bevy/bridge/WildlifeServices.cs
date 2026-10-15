@@ -153,6 +153,7 @@ public sealed partial class WildlifeServices
             rigYawFix=AnimalBrain.RigYawFix,corpseRemainingTicks=a?.Dead==true?Math.Max(0,a.RetireTick-Tick):0,
             deathImpulse=a?.Dead==true?Array(U(a.DeathImpulse)):null};
     }).ToArray();
+    public static float BodyHeightFor(ushort id) => Kinds.TryGetValue(id, out var kind) ? kind.bodyH : 1f;
     public static object[] Catalog() => Kinds.Select(k=>new{animalId=k.Key,species=AnimalCatalog.SpeciesForAnimalId(k.Key),rig=$"{k.Value.rig}_rig.json",
         texture=$"objects/{k.Value.tex}",bodyHeight=k.Value.bodyH,health=k.Value.health,rigYawFix=AnimalBrain.RigYawFix}).Cast<object>().ToArray();
     public void TranslateWorld(UVector d)

@@ -43,7 +43,8 @@ public sealed partial class BridgeHost
     void CheckRemoteOperation(string operation)
     {
         if (!IsRemote || operation is "init" or "disconnect" or "shutdown" or "simulate" or "tick" or "snapshot"
-            or "catalog" or "npcCatalog" or "diagnostics" or "action" or "terrain") return;
+            or "catalog" or "npcCatalog" or "diagnostics" or "action" or "terrain" or "reconnect"
+            or "serverProbeStart" or "serverProbePoll" or "serverProbeCancel") return;
         throw new InvalidOperationException($"{operation} requires world authority; this session is a remote client");
     }
 
@@ -55,6 +56,21 @@ public sealed partial class BridgeHost
         _remoteWeapon = new RemoteWeaponView(_client, _catalog, Emit);
         // Handshake is intentionally asynchronous. The native frame loop keeps
         // polling while connecting; a fast local spin cannot advance a remote server.
+    }
+
+    object ReconnectRemote()
+    {
+        RequireSession();
+        if (!IsRemote) throw new InvalidOperationException("reconnect requires a remote client");
+        if (_remoteSpawnAdopted)
+            throw new InvalidOperationException("A previously joined session must be replaced with init to clear old replicas");
+        if (_client.State != NetSessionState.Disconnected
+            || _client.Session.DisconnectReason != NetDisconnectReason.Rejected
+            || !NetRejectText.IsRetryable(_client.Session.RejectReason))
+            return new { queued = false };
+        _remoteProfileSent = false;
+        _client.Connect(); // Source ClientWorldSession retry path; native owns retry count/policy.
+        return new { queued = true };
     }
 
     void TickRemote()
@@ -122,7 +138,9 @@ public sealed partial class BridgeHost
         var kind = AnimalCatalog.Get(e.Species);
         return (object)new { netId = e.NetIdValue, species = e.Species, animalId = kind.AnimalId,
             position = Array(e.Pos), yaw = e.YawDegrees, animState = e.AnimState, dead = e.IsDead,
-            remote = true, rig = $"{kind.Rig}_rig.json", texture = $"objects/{kind.Tex}", rigYawFix = AnimalBrain.RigYawFix };
+            remote = true, clip = AnimalPuppetData.ClipFor(e.AnimState), bodyHeight = WildlifeServices.BodyHeightFor(kind.AnimalId),
+            radius = AnimalBrain.RadiusFor(WildlifeServices.BodyHeightFor(kind.AnimalId)),
+            rig = $"{kind.Rig}_rig.json", texture = $"objects/{kind.Tex}", rigYawFix = AnimalBrain.RigYawFix };
     }).ToArray();
 
     object[] RemoteZombies() => _client.Zombies.All.Select(e => (object)new {

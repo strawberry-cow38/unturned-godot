@@ -64,6 +64,8 @@
     <Compile Include="$(IntermediateOutputPath)Data/CosmeticScatter.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/WeaponAmmoActions.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/PlayerAppearanceNetSync.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/SourceServerMenu.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/AnimalPuppetData.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/NoiseRules.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/ClothingData.g.cs" />
     <Compile Include="../../game/ZombieTables.cs" Link="Source/ZombieTables.cs" />

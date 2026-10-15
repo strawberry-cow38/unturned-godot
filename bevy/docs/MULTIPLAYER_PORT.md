@@ -64,6 +64,27 @@ separate two-process JSONL smoke verifies join, authoritative spawn, accepted
 inventory, port reuse after host disconnect and clean remote process shutdown.
 These checks establish the managed boundary, not complete remote gameplay.
 
+## Asynchronous status and initial-join retry
+
+The managed status adapter extracts the original `StatusQueryFull`, bounded
+string decoder/sanitizer and ping-refusal helper. Start/poll/cancel operations
+work before any world exists. One worker runs the original1200-byte query;
+replacement tokens discard stale answers and queue behind a running request.
+The UI can keep drawing and owns the original four probe attempts, cancellation
+generation and30-second connection timeout. The source rejected-join policy
+allows four retries (separate from the four status probes). `reconnect` preserves
+the original initial-rejection `Client.Connect` path; a session that previously
+joined must use fresh `init` to prevent old replica state leaking across joins.
+
+Nine further real UDP tests bring this managed suite to27: nonblocking/superseded
+status requests, malformed endpoints, exact request size, nonce rejection, truncated optional data,
+content mismatch, sanitized text, cancellation, silent timeout, source policy
+metadata, real host status before world creation, successful retry after capacity
+clears, and remote animal clip/species metadata. Remote animals use the original
+puppet clip mapping and static dimensions only; unknown health and corpse expiry
+remain absent. Native remote puppets must preserve the source's lack of a body.
+All121 existing bridge tests also pass against this unchanged executable.
+
 ## Native remote bodies
 
 Accepted peer replicas now create the original human rig, face, clothing and gear
