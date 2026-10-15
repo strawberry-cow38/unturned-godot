@@ -5022,8 +5022,12 @@ namespace UnturnedGodot
         /// <summary>UG_TOWNNOTRIANGLES=1: the diagonal's leftover wedges stay grass -- the control.</summary>
         public bool TriangleLots = System.Environment.GetEnvironmentVariable("UG_TOWNNOTRIANGLES") != "1";
         /// <summary>The smallest wedge worth a lot (square metres), how far its building keeps off every edge, and the
-        /// smallest building zone, in 3 m cells a side.</summary>
-        public float TriangleMinArea = 120f, TriangleYard = 1.5f; public int TriangleMinCells = 2;
+        /// smallest building zone, in 3 m cells a side.
+        /// ⚠ FOUR CELLS, the smallest the building generator lays a plan in (strawberry 2026-10-15: "the teal plots arent scaled
+        /// properly to the building size"): it said so of every smaller zone -- "a depth of 2 cells is too shallow for two rows
+        /// of rooms: 4 at least" -- and built 4x4 anyway, over the pavement. A wedge with no zone that big has no building zone,
+        /// and an empty lot is a pocket park (PlanGreens).</summary>
+        public float TriangleMinArea = 120f, TriangleYard = 1.5f; public int TriangleMinCells = 4;
         /// <summary>What the last PlaceTriangleLots did: lots laid, how many of them with a building zone, and the
         /// leftovers it passed over (too small, or not a wedge: an L round a lot's corner).</summary>
         public int TrianglesLaid, TrianglesZoned, TrianglesPassed;

@@ -11104,7 +11104,7 @@ namespace UnturnedGodot
                         tcam.GlobalPosition = at - pb.Frame.Basis.Z.Normalized() * 16f + Vector3.Up * 10f;
                         tcam.Fov = 60f;
                         tcam.LookAt(at + Vector3.Up * 3f, Vector3.Up);
-                        Log.Print($"[towngrid] party camera on building {pk} of {party.Count} with a party wall ({pb.Plot.Kind}, {pb.Party})");
+                        Log.Print($"[towngrid] party camera on building {pk} of {party.Count} with a party wall ({pb.Plot.Kind}, {pb.Party}) at ({at.X:0.0},{at.Z:0.0})");
                         goto noTown;
                     }
                 }

@@ -31,10 +31,62 @@ namespace UnturnedGodot
         /// <summary>What the last PlanBuildings generated.</summary>
         public readonly List<TownBuilding> Buildings = new();
 
+        /// <summary>The yard a porch or canopy needs in front of the plan to stand clear of the plot's line.</summary>
+        public const float PorchRoom = 3.5f;
+
+        /// <summary>The extent of what the building STANDS on the ground with -- its walls, a porch's posts and floor, its steps --
+        /// as (x0, z0, x1, z1) in the lattice's metres. Not its roofs: an eave over a pavement is an eave, not a building on it.</summary>
+        static (float x0, float z0, float x1, float z1) PlanExtent(BuildingGenResult r)
+        {
+            float x0 = 0f, z0 = 0f, x1 = r.CellsX * BuildingGen.Cell, z1 = r.CellsZ * BuildingGen.Cell;
+            foreach (var w in r.Walls)
+            {
+                if (w.Kind == SurfaceKind.Roof || w.Kind == SurfaceKind.Floor && w.Y > 0.5f) continue;
+                var basis = Basis.FromEuler(new Vector3(Mathf.DegToRad(w.Pitch), Mathf.DegToRad(w.Yaw), 0f));
+                var o = new Vector3(w.X, w.Y, w.Z);
+                foreach (var c in new[] { Vector3.Zero, new Vector3(w.Length, 0f, 0f), new Vector3(0f, w.Height, 0f), new Vector3(w.Length, w.Height, 0f) })
+                {
+                    var q = o + basis * c;
+                    x0 = Mathf.Min(x0, q.X); x1 = Mathf.Max(x1, q.X); z0 = Mathf.Min(z0, q.Z); z1 = Mathf.Max(z1, q.Z);
+                }
+            }
+            return (x0, z0, x1, z1);
+        }
+
+        /// <summary>Does any of the building's extent stand on paving -- a carriageway, its pavement, a junction's patch? Sampled
+        /// every metre round the extent's outline, in the world.</summary>
+        bool OnPaving(RoadField roads, TownBuilding b)
+        {
+            var (x0, z0, x1, z1) = PlanExtent(b.Result);
+            // ⚠ A LANE'S PAVEMENT IS NOT A STREET'S (PaintFootprints' lesson again): measured at a street's reach, every house
+            // backing onto a lane stood "on the paving" by its back wall
+            float keep = PavementGap + _walkWidth, laneKeep = PavementGap + LaneWalkWidth;
+            var lanes = new HashSet<int>(LaneRoads);
+            bool Paved(Vector3 q)
+            {
+                q.Y = 0f;
+                if (roads.DeepestRoadOverlap(q, laneKeep, out _, out _)) return true;
+                return roads.DeepestRoadOverlap(q, keep, out int rd, out _)
+                       && (!lanes.Contains(rd) || roads.DeepestRoadOverlap(q, keep, out rd, out _, skipRoad: rd) && !lanes.Contains(rd));
+            }
+            var corners = new[] { new Vector3(x0, 0f, z0), new Vector3(x1, 0f, z0), new Vector3(x1, 0f, z1), new Vector3(x0, 0f, z1) };
+            for (int i = 0; i < 4; i++)
+            {
+                var a = corners[i]; var c = corners[(i + 1) % 4];
+                int n = Mathf.Max(1, Mathf.CeilToInt(a.DistanceTo(c)));
+                for (int k = 0; k <= n; k++)
+                {
+                    var q = b.Frame * a.Lerp(c, (float)k / n);
+                    if (Paved(q) || OnAnyPatch(q.X, -q.Z, 0.0)) return true;
+                }
+            }
+            return false;
+        }
+
         /// <summary>Seeds tried for a plan with its front door on the street before settling.</summary>
         public const int FrontTries = 4;
         /// <summary>What the last PlanBuildings retried, and turned round.</summary>
-        public int FrontRetried;
+        public int FrontRetried, OnPavingDropped;
 
         /// <summary>Which side of its plan a building's front door is on (ground floor), or None.</summary>
         static Sides FrontEdge(BuildingGenResult r)
@@ -70,6 +122,10 @@ namespace UnturnedGodot
                 // ⚠ NO BASEMENTS YET: a town's ground is not cut under one until the terrain bending lands (tinyclaw's), and a
                 // basement in uncut ground is a stair room whose flight runs into the earth
                 Basement = BasementChoice.Forbid,
+                // ⚠ A PORCH STANDS OUTSIDE THE FOOTPRINT (bitvox 2026-10-15: "one building there in the small triangle piece of land
+                // is extending onto the sidewalk"): a front porch or a shop's canopy reaches PorchRoom past the plan, and a lot
+                // with less front yard than that -- a triangle lot's zone is 1.5 m off its line -- put it over the pavement
+                Porches = pl.YardFront < PorchRoom ? (pl.YardBack < PorchRoom ? PorchChoice.None : PorchChoice.Back) : PorchChoice.Auto,
             };
             // ⭐ WHAT IS ROUND IT (strawberry 2026-10-15: "give plots some more context about them and their neighbors, and
             // features around them"): no windows in a party wall; the front door toward its own parking lot where it has one
@@ -170,7 +226,7 @@ namespace UnturnedGodot
             var index = new Dictionary<Plot, int>();
             for (int i = 0; i < Plots.Count; i++) index[Plots[i]] = i;
             var clock = System.Diagnostics.Stopwatch.StartNew();
-            double genMs = 0; FrontRetried = 0;
+            double genMs = 0; FrontRetried = 0; OnPavingDropped = 0;
             foreach (var pl in pick)
             {
                 var b = new TownBuilding { Plot = pl, Spec = SpecFor(pl, index[pl]) };
@@ -219,6 +275,15 @@ namespace UnturnedGodot
                     terr.ConformToSurface(at, f.Basis.X.Normalized(), f.Basis.Z.Normalized(), 0f, b.Result.CellsX * BuildingGen.Cell, 0f, b.Result.CellsZ * BuildingGen.Cell,
                                           (x, z) => padY, Terrain.GridUnit, PadFeather,
                                           keepOut: (x, z) => roads.DeepestRoadOverlap(new Vector3(x, 0f, z), PavementGap + _walkWidth, out _, out _));
+                }
+                // and never over the paving, whatever stands outside the plan: a building that would is not built (and said so)
+                if (OnPaving(roads, b))
+                {
+                    var (ex0, ez0, ex1, ez1) = PlanExtent(b.Result);
+                    Log.Print($"[towngrid]   not built: a {b.Result.Kind} on a {pl.Kind} plot would stand on the paving -- asked {b.Spec.Width}x{b.Spec.Depth} cells "
+                            + $"(zone {pl.BuildWidth:0.0}x{pl.BuildDepth:0.0} m, front yard {pl.YardFront:0.0} m), got {b.Result.CellsX}x{b.Result.CellsZ}, "
+                            + $"standing x {ex0:0.0}..{ex1:0.0} z {ez0:0.0}..{ez1:0.0}{(b.Result.Notes.Count > 0 ? " -- " + string.Join("; ", b.Result.Notes) : "")}");
+                    b.Failed = "it would stand on the paving"; b.Result = null; OnPavingDropped++;
                 }
                 Buildings.Add(b);
             }
@@ -269,7 +334,7 @@ namespace UnturnedGodot
                             + $"{b.Ms:0} ms{(b.Result.Notes.Count > 0 ? " -- " + string.Join("; ", b.Result.Notes) : "")}");
             }
             int failed = Buildings.Count - ok;
-            Log.Print($"[towngrid] buildings ({BuildingsMode}): {ok} generated on {pick.Count} plots{(failed > 0 ? $", {failed} FAILED (first: {Buildings.Find(x => x.Failed != null)?.Failed})" : "")}, "
+            Log.Print($"[towngrid] buildings ({BuildingsMode}): {ok} generated on {pick.Count} plots{(failed > 0 ? $", {failed} not built (first: {Buildings.Find(x => x.Failed != null)?.Failed}; {OnPavingDropped} would have stood on the paving)" : "")}, "
                     + $"{fronted} with the front door where it was asked ({FrontRetried} on another seed, {Buildings.FindAll(x => x.TurnedRound).Count} turned round, "
                     + $"{Buildings.FindAll(x => x.Result != null && x.Spec.FrontSide != Sides.South).Count} toward their parking lot), {partied} with a party wall; generator {genMs:0} ms ({genMs / Mathf.Max(1, pick.Count):0} ms a building), "
                     + $"pads included {clock.ElapsedMilliseconds} ms -- {string.Join(", ", System.Linq.Enumerable.Select(kinds, kv => $"{kv.Value} {kv.Key}"))}");

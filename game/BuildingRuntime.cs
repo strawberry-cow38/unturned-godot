@@ -245,6 +245,7 @@ namespace UnturnedGodot
             int roofTexel = WallMaterials.Count > 0 ? WallMaterials.At(Mathf.PosMod(mat, WallMaterials.Count)).RoofTexel : -1;
             var walls = new List<WallSurface>();
             float wx = res.CellsX * BuildingGen.Cell, dz = res.CellsZ * BuildingGen.Cell;
+            if (System.Environment.GetEnvironmentVariable("UG_NOPARTYINSET") == "1") party = Sides.None;   // (the control: walls stacked)
             foreach (var pl in res.Walls)
                 NewWall(root, walls, new Vector3(pl.X, pl.Y, pl.Z) + PartyInset(pl, wx, dz, party), pl.Yaw, pl.Length, pl.Thickness, mat, pl.Openings,
                         pl.Height, pl.Pitch, pl.Kind, pl.GableRise, pl.Kind == SurfaceKind.Roof ? roofTexel : pl.Texel,
