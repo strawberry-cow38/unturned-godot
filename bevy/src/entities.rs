@@ -34,17 +34,33 @@ pub struct ItemVisual {
     pub is_fluid_container: bool,
     #[serde(default)]
     pub is_deployable: bool,
+    #[serde(default)]
+    pub hand_kind: String,
+    #[serde(default)]
+    pub consume_animation: Value,
+    #[serde(default)]
+    pub throwable: Value,
+    #[serde(default)]
+    pub tool: Value,
+    #[serde(default)]
+    pub gravity_multiplier: f32,
 }
 #[derive(Resource, Default)]
 pub struct ItemCatalog {
     pub items: HashMap<u16, ItemVisual>,
+    pub throw_motion: Value,
 }
 #[derive(Resource, Default)]
 pub struct ServiceManifest {
     pub map: String,
     pub objects: HashMap<usize, Value>,
     pub resources: HashMap<(String, usize), Value>,
+    pub object_doors: Vec<Value>,
+    pub container_doors: Vec<Value>,
+    pub seats: Vec<Value>,
 }
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct WorldServicesReady;
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CollectInteractions;
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -69,6 +85,7 @@ struct Replicas {
     map_name: String,
     geometry_map: String,
     geometry_revision: u64,
+    session_epoch: u64,
 }
 #[derive(Component)]
 pub struct WorldItemReplica {
@@ -94,7 +111,7 @@ impl Plugin for EntityPlugin {
                 Update,
                 (
                     load_catalog,
-                    register_world_geometry,
+                    register_world_geometry.in_set(WorldServicesReady),
                     sync_static_life,
                     sync_world_items,
                     forward_events,
@@ -116,20 +133,25 @@ fn load_catalog(
     mut catalog: ResMut<ItemCatalog>,
     mut replicas: ResMut<Replicas>,
     mut commands: Commands,
+    epoch: Res<crate::player::WorldSessionEpoch>,
+    mut services: ResMut<ServiceManifest>,
 ) {
-    if replicas.map_name != config.map_name {
+    if replicas.map_name != config.map_name || replicas.session_epoch != epoch.0 {
         for (_, entity) in replicas.entities.drain() {
             commands.entity(entity).despawn();
         }
         replicas.last_event = 0;
-        replicas.geometry_map.clear();
+        if replicas.map_name != config.map_name { replicas.geometry_map.clear(); }
         replicas.geometry_revision = 0;
+        replicas.session_epoch = epoch.0;
+        services.map.clear();
         replicas.map_name = config.map_name.clone();
     }
     if !model.connected || !catalog.items.is_empty() {
         return;
     }
     match bridge.request("catalog", json!({})).and_then(|response| {
+        catalog.throw_motion = response["result"]["throwMotion"].clone();
         Ok(serde_json::from_value::<Vec<ItemVisual>>(
             response["result"]["items"].clone(),
         )?)
@@ -162,10 +184,16 @@ fn register_world_geometry(
         if services.map != config.map_name {
             services.objects.clear();
             services.resources.clear();
+            services.object_doors.clear();
+            services.container_doors.clear();
+            services.seats.clear();
             if config.procedural_path.is_none() {
                 if let Some(root) = &config.map_root {
                     let reply = bridge.request("mapServices", json!({"mapRoot":root,"mapName":config.map_name,"contentRoot":config.content_root}))?;
                     let result = &reply["result"];
+                    services.object_doors = result["objectDoors"].as_array().cloned().unwrap_or_default();
+                    services.container_doors = result["containerDoors"].as_array().cloned().unwrap_or_default();
+                    services.seats = result["seats"].as_array().cloned().unwrap_or_default();
                     for object in result["objects"].as_array().into_iter().flatten() {
                         if let Some(index) = object["sourceIndex"].as_u64() {
                             services.objects.insert(index as usize, object.clone());

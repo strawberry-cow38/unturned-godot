@@ -158,3 +158,43 @@ splat orientation, cross-tile filtering, procedural texel-center alignment,
 eight-layer mip chains, graded bridge road UV phase, and the actual deck mesh's
 two removed roadway triangles. Its inspected render artifacts are
 `artifacts/bevy-pei-splat.png` and `artifacts/bevy-procedural-bridge-splat.png`.
+
+## Authored doors and seats
+
+`world/interactables.rs` consumes the original `mapServices` metadata and
+replicated door/container/seat state. PEI registers 57 standalone door groups,
+345 container door groups and 393 seat anchors. Leaves load the real extracted
+OBJ meshes, hinges, axes, durations, sounds and sampled open/close curves,
+including overshoot. Containers follow their replicated inventory-open flag;
+only source-classified lit barbecues also hold the lid up. Display coolers restore
+the measured transparent pane; picnic cool boxes do not acquire glass.
+
+The original prop body owns each animated leaf collider. Leaf boxes retain the
+source 0.15 m minimum thickness, disable while swinging, and wait for the local
+player capsule to leave an endpoint before becoming solid. Render transforms
+and the managed bullet/line-of-sight geometry use the same hinge pose. Geometry
+is resent when the world streams or the session reloads. A real Rapier regression
+covers closed/open collision, clear-space probes, and the rendered world pose:
+Rapier 0.37's child-rigid-body inverse transform expression displaced meshes
+under rotated parents while leaving their collision correct, so leaves use child
+colliders attached to the existing prop body rather than nested rigid bodies.
+
+Focus resolves source placement indices, distinguishes container and standalone
+door ID namespaces, and selects the closest unoccupied authored seat to the
+actual hit point. F sends the original validated toggle/storage/sit intent.
+Seating adopts server occupancy and uses the source Idle_Sit pelvis offset;
+standing uses the existing player collision-safe exit probe. No local toggle or
+occupancy mutation bypasses the server.
+
+Six native regressions cover real source curves, hinge transforms, Idle_Sit
+pelvis alignment, overlapping ID namespaces, barbecue behavior, and actual
+Rapier collision/render transforms. The first live shipping-container capture
+also exposed a managed reach-anchor bug: a long prop's root is too far from the
+visible leaf. The bridge now uses the transformed source ClosedLeafCentreWorld
+anchor, with a guarding server round-trip test, without inflating reach.
+
+Remaining authored-interaction presentation: whole-prop selection outlines,
+nonlocal creature overlap gates, pane health/shards, powered appliance interior
+lights, toaster/vending/elevator special motion, NPC dialogue, and generated
+building fixtures. The cooler pane currently renders the source tint, alpha and
+roughness; shared authoritative pane damage remains separate work.

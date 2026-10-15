@@ -1,6 +1,7 @@
 //! Original map/content assembly. Missing retail terrain is reported explicitly.
 use crate::content::{ContentCache, ContentError, ObjData, load_guid_map};
 mod foliage;
+pub mod interactables;
 mod procedural;
 mod procedural_roads;
 mod roads;
@@ -69,16 +70,20 @@ pub struct WorldReady;
 pub struct WorldPlugin;
 impl Plugin for WorldPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((foliage::FoliagePlugin, terrain::TerrainPlugin))
-            .init_resource::<WorldConfig>()
-            .init_resource::<WorldState>()
-            .init_resource::<WorldGeometry>()
-            .init_resource::<WorldSourceCache>()
-            .add_systems(Startup, build_world.in_set(WorldReady))
-            .add_systems(
-                Update,
-                build_world.run_if(world_needs_reload).in_set(WorldReady),
-            );
+        app.add_plugins((
+            foliage::FoliagePlugin,
+            terrain::TerrainPlugin,
+            interactables::InteractablePlugin,
+        ))
+        .init_resource::<WorldConfig>()
+        .init_resource::<WorldState>()
+        .init_resource::<WorldGeometry>()
+        .init_resource::<WorldSourceCache>()
+        .add_systems(Startup, build_world.in_set(WorldReady))
+        .add_systems(
+            Update,
+            build_world.run_if(world_needs_reload).in_set(WorldReady),
+        );
     }
 }
 /// Request a rebuild by changing WorldConfig, then setting WorldState.ready = false.
