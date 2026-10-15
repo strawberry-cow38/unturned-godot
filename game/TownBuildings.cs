@@ -65,6 +65,9 @@ namespace UnturnedGodot
                 Depth = Mathf.Max(1, Mathf.RoundToInt(pl.BuildDepth / BuildingGen.Cell)),
                 FitPlot = true,
                 FrontSide = Sides.South,
+                // ⚠ NO BASEMENTS YET: a town's ground is not cut under one until the terrain bending lands (tinyclaw's), and a
+                // basement in uncut ground is a stair room whose flight runs into the earth
+                Basement = BasementChoice.Forbid,
             };
             switch (pl.Kind)
             {
@@ -206,31 +209,30 @@ namespace UnturnedGodot
             return ok;
         }
 
-        /// <summary>The generator's runtime builder: a BuildingGenResult and the frame it stands in, to the building's nodes. Set
-        /// by whoever owns it (the editor's stage and the town share it); null until then, and the town shows massing.</summary>
-        public static System.Func<BuildingGenResult, Transform3D, Node3D> RuntimeBuilder;
+        /// <summary>UG_TOWNMASSING=1: the buildings as their massing (a box per floor cell, a red post at the front door) -- the
+        /// check on the town's half alone.</summary>
+        public static bool ShowMassing = System.Environment.GetEnvironmentVariable("UG_TOWNMASSING") == "1";
 
-        /// <summary>Every generated building, built: through RuntimeBuilder where there is one, as massing where not. Returns
-        /// the buildings put up, and logs what they cost to build -- the half of the whole-town decision the generator's own
-        /// time is not.</summary>
-        public int BuildBuildings(Node3D parent)
+        /// <summary>Every generated building, BUILT by the generator's runtime builder (BuildingRuntime -- the editor stage's own
+        /// path, lifted out of it) in its frame. Returns the buildings put up and logs what building cost: the half of the
+        /// whole-town decision the generator's ~90-140 ms a building is not.</summary>
+        public int BuildBuildings(Node3D parent, EditorObjects objs)
         {
             if (parent == null || Buildings.Count == 0) return 0;
-            if (RuntimeBuilder == null) return BuildBuildingMassing(parent);
+            if (ShowMassing) return BuildBuildingMassing(parent);
             var clock = System.Diagnostics.Stopwatch.StartNew();
-            int made = 0, failed = 0;
+            int made = 0, failed = 0, walls = 0, props = 0;
             foreach (var b in Buildings)
             {
                 if (b.Result == null) continue;
                 Node3D node = null;
-                try { node = RuntimeBuilder(b.Result, b.Frame); }
-                catch (System.Exception e) { if (failed++ == 0) Log.Err($"[towngrid] building on a {b.Plot.Kind} plot failed to build: {e.Message}"); }
+                try { node = BuildingRuntime.Build(b.Result, b.Frame, parent, objs, $"Building_{b.Plot.Kind}_{made}"); }
+                catch (System.Exception e) { if (failed++ == 0) Log.Err($"[towngrid] building on a {b.Plot.Kind} plot failed to build: {e.Message}\n{e.StackTrace}"); }
                 if (node == null) continue;
-                if (node.GetParent() == null) parent.AddChild(node);
-                made++;
+                made++; walls += BuildingRuntime.LastWalls; props += BuildingRuntime.LastProps;
             }
-            Log.Print($"[towngrid] buildings built: {made} in {clock.ElapsedMilliseconds} ms ({clock.ElapsedMilliseconds / Mathf.Max(1, made)} ms a building)"
-                    + (failed > 0 ? $", {failed} FAILED" : ""));
+            Log.Print($"[towngrid] buildings built: {made} in {clock.ElapsedMilliseconds} ms ({clock.ElapsedMilliseconds / Mathf.Max(1, made)} ms a building), "
+                    + $"{walls} surfaces, {props} pieces of furniture{(failed > 0 ? $", {failed} FAILED" : "")}");
             return made;
         }
 

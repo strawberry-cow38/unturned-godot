@@ -10768,7 +10768,7 @@ namespace UnturnedGodot
             if (!noWalk) town.PlantGreens(rf, editor.Objects);
             // the yard fences PlanPlots designated, laid as fences (strawberry 2026-10-14: "work on getting fences as splines")
             if (!noWalk) town.BuildFences(editor, editor.Objects);
-            if (!noWalk) town.BuildBuildings(editor);     // (as massing until the generator's runtime builder is set)
+            if (!noWalk) town.BuildBuildings(editor, editor.Objects);     // built by the generator's runtime builder (UG_TOWNMASSING=1: massing)
             // the parking lots' street lights, and blocks if they have any (strawberry 2026-10-14: "add streetlight support for
             // parking lots too")
             if (!noWalk) town.PlaceParkingProps(editor.Objects);

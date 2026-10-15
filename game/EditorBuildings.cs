@@ -109,22 +109,7 @@ namespace UnturnedGodot
         /// AABB: a WallSurface is a Node3D, and its mesh child's bounds would miss the openings partition and
         /// go stale mid-drag. Local box is X 0..Length, Y 0..Height, Z +/-Thickness/2 -- the same frame
         /// Rebuild generates in.</summary>
-        static Aabb SurfaceAabb(WallSurface w)
-        {
-            float t = w.Thickness * 0.5f;
-            var xf = w.GlobalTransform;
-            var lo = new Vector3(float.MaxValue, float.MaxValue, float.MaxValue);
-            var hi = new Vector3(float.MinValue, float.MinValue, float.MinValue);
-            for (int i = 0; i < 8; i++)
-            {
-                var c = xf * new Vector3((i & 1) == 0 ? 0f : w.Length,
-                                         (i & 2) == 0 ? 0f : w.Height,
-                                         (i & 4) == 0 ? -t : t);
-                lo = new Vector3(Mathf.Min(lo.X, c.X), Mathf.Min(lo.Y, c.Y), Mathf.Min(lo.Z, c.Z));
-                hi = new Vector3(Mathf.Max(hi.X, c.X), Mathf.Max(hi.Y, c.Y), Mathf.Max(hi.Z, c.Z));
-            }
-            return new Aabb(lo, hi - lo);
-        }
+        static Aabb SurfaceAabb(WallSurface w) => BuildingRuntime.SurfaceAabb(w);
 
         /// <summary>Does this box already contain something? Used to warn, NOT to refuse -- strawberry chose
         /// "warn red", and refusing would fight you every time you deliberately run a partition into a wall.
@@ -846,23 +831,10 @@ namespace UnturnedGodot
                               float insetR0 = 0f, float insetR1 = 0f,
                               int materialBack = -1, int texelBack = -1)
         {
-            // NO SNAPPING HERE. This is the path Load() and ImportRetail() come through, and rounding a
-            // length on the way in makes loading lossy: an imported wall measured off the mesh to the
-            // centimetre was being rounded to the nearest 3 m -- up to 1.5 m per wall -- so imported buildings
-            // mis-met at their corners and openings recovered against the true length fell off the shortened
-            // end, where the partition clamps them away silently. It also meant Load() was not the inverse of
-            // Save(). Snapping is a DRAWING aid and now lives in AddWall.
-            var w = new WallSurface
-            {
-                Length = Mathf.Max(0.01f, length), Height = height, Thickness = thickness, MaterialId = material, Kind = kind,
-                GableRise = gableRise, Texel = texel,
-                InsetL0 = insetL0, InsetL1 = insetL1, InsetR0 = insetR0, InsetR1 = insetR1,
-                MaterialIdBack = materialBack, TexelBack = texelBack,
-                Position = origin, RotationDegrees = new Vector3(pitchDeg, yawDeg, 0f),
-            };
-            AddChild(w);
-            if (openings != null) { w.Openings.AddRange(openings); w.Rebuild(); }
-            _walls.Add(w);
+            // NO SNAPPING HERE (Load() and ImportRetail() come through this; a length rounded on the way in made loading lossy --
+            // see BuildingRuntime.NewWall). The surface itself is the shared runtime builder's; the pick map is the stage's.
+            var w = BuildingRuntime.NewWall(this, _walls, origin, yawDeg, length, thickness, material, openings, height, pitchDeg, kind,
+                                            gableRise, texel, insetL0, insetL1, insetR0, insetR1, materialBack, texelBack);
             _pickToWall[w.BodyRid] = w;
             return w;
         }
@@ -2379,87 +2351,12 @@ namespace UnturnedGodot
         /// LIMITATION: reaching the centreline fills the junction because the neighbour's own body covers
         /// the rest. At the 15-degree yaw snap's sharper angles a true mitre would need more, so a sliver of
         /// notch can survive on a very acute corner.</summary>
-        public List<(WallSurface W, float Len, Vector3 Pos)> SolveCorners()
-        {
-            const float MaxGrow = 1.6f;        // a wall thickness and a bit; past that it is not a junction
-            var undo = new List<(WallSurface, float, Vector3)>();
-            // Foundations solve too: a foundation is a wall, so it has the same missing quarter at every
-            // corner, and being underground is exactly why nobody would notice.
-            var walls = new List<WallSurface>();
-            foreach (var w in _walls)
-                if (IsInstanceValid(w) && (w.Kind == SurfaceKind.Wall || w.Kind == SurfaceKind.Foundation)) walls.Add(w);
-
-            var growStart = new float[walls.Count];
-            var growEnd = new float[walls.Count];
-            for (int i = 0; i < walls.Count; i++)
-            {
-                var a = walls[i];
-                var a0 = a.UVToWorld(0f, 0f);
-                var ad = new Vector3(a.UVToWorld(a.Length, 0f).X - a0.X, 0f, a.UVToWorld(a.Length, 0f).Z - a0.Z);
-                if (ad.LengthSquared() < 1e-6f) continue;
-                ad = ad.Normalized();
-
-                for (int j = 0; j < walls.Count; j++)
-                {
-                    if (i == j) continue;
-                    var b = walls[j];
-                    // parallel walls are a seam, not a corner -- extending them just overlaps two walls
-                    float dy = Mathf.Abs(Mathf.Wrap(a.RotationDegrees.Y - b.RotationDegrees.Y, -90f, 90f));
-                    if (dy < 20f) continue;
-                    // and they must be the same storey, or a foundation solves against the wall above it
-                    if (Mathf.Abs(a.Position.Y - b.Position.Y) > 0.6f) continue;
-
-                    if (!CrossOnPlan(a0, ad, b.UVToWorld(0f, 0f), b.UVToWorld(b.Length, 0f), out float t, out float s2))
-                        continue;
-                    if (s2 < -0.02f || s2 > 1.02f) continue;          // the crossing is off the end of b
-
-                    // How far PAST the crossing to run, and the two junctions want different answers.
-                    //
-                    // At a CORNER -- the crossing is at one of b's own ends -- stopping on b's centreline
-                    // leaves the outer quarter square uncovered by either wall. That square IS the notch,
-                    // so run on to b's far face. At a TEE the crossing is mid-span of b, b's own body
-                    // already fills everything past it, and running to the far face would poke out the
-                    // other side of the wall you just joined.
-                    bool atEndOfB = s2 < 0.08f || s2 > 0.92f;
-                    float target = t + (atEndOfB ? b.Thickness * 0.5f : 0f);
-
-                    // target is ABSOLUTE, so an end already past it grows by nothing and the pass stays
-                    // idempotent -- that is what makes it safe to run over an import.
-                    if (target < 0f && target >= -MaxGrow) growStart[i] = Mathf.Max(growStart[i], -target);
-                    else if (target > a.Length && target <= a.Length + MaxGrow)
-                        growEnd[i] = Mathf.Max(growEnd[i], target - a.Length);
-                }
-            }
-
-            for (int i = 0; i < walls.Count; i++)
-            {
-                if (growStart[i] <= 1e-4f && growEnd[i] <= 1e-4f) continue;
-                var w = walls[i];
-                undo.Add((w, w.Length, w.Position));
-                var dir = (w.UVToWorld(1f, 0f) - w.UVToWorld(0f, 0f)).Normalized();
-                w.Position -= dir * growStart[i];
-                w.Length += growStart[i] + growEnd[i];
-                w.Rebuild();
-            }
-            return undo;
-        }
+        public List<(WallSurface W, float Len, Vector3 Pos)> SolveCorners() => BuildingRuntime.SolveCorners(_walls);
 
         /// <summary>Where the ray (from, dir) crosses the segment b0..b1, in PLAN. `t` is distance along the
         /// ray, `s` the 0..1 parameter along the segment.</summary>
         static bool CrossOnPlan(Vector3 from, Vector3 dir, Vector3 b0, Vector3 b1, out float t, out float s)
-        {
-            t = s = 0f;
-            var p = new Vector2(from.X, from.Z);
-            var d = new Vector2(dir.X, dir.Z);
-            var q = new Vector2(b0.X, b0.Z);
-            var e = new Vector2(b1.X, b1.Z) - q;
-            float den = d.X * e.Y - d.Y * e.X;
-            if (Mathf.Abs(den) < 1e-6f) return false;          // parallel in plan
-            var r = q - p;
-            t = (r.X * e.Y - r.Y * e.X) / den;
-            s = (r.X * d.Y - r.Y * d.X) / den;
-            return true;
-        }
+            => BuildingRuntime.CrossOnPlan(from, dir, b0, b1, out t, out s);
 
         public void RestoreCorners(List<(WallSurface W, float Len, Vector3 Pos)> undo)
         {
@@ -3520,65 +3417,11 @@ namespace UnturnedGodot
         public int FitStairsToStructure(Vector3 origin, float yawDeg, float run, float width, float rise = 0f, bool cutFloor = true)
         {
             if (rise <= 0f) rise = StoreyHeight;
-            float yaw = Mathf.DegToRad(yawDeg);
-            var back = new Vector3(-Mathf.Sin(yaw), 0f, -Mathf.Cos(yaw));
-            var right = new Vector3(Mathf.Cos(yaw), 0f, -Mathf.Sin(yaw));
-
-            // ---- the invisible ramp -------------------------------------------------------------------
-            // Lies on the tread NOSES: from the foot at origin to the top tread's walking surface, which is
-            // exactly one storey up and one run back. Half a tread of lift so it rests on the noses rather
-            // than cutting through them.
-            var foot = origin + back * (run * 0.5f) + right * (width * 0.5f)
-                     + new Vector3(0f, rise * 0.5f + WallOpenings.StairTreadThickness * 0.5f, 0f);
-            float slope = Mathf.Sqrt(run * run + rise * rise);
-            var ramp = new StaticBody3D { Name = "StairRamp" };
-            var shape = new CollisionShape3D
-            {
-                Shape = new BoxShape3D { Size = new Vector3(width, WallOpenings.StairTreadThickness, slope) },
-            };
-            ramp.AddChild(shape);
-            AddChild(ramp);
-            ramp.GlobalPosition = foot;
-            // Pitch so the box lies along the flight: atan(rise/run) about the flight's lateral axis.
-            ramp.GlobalRotation = new Vector3(Mathf.Atan2(rise, run), yaw, 0f);
-            _stairRamps.Add(ramp);
+            // the invisible ramp on the tread noses, and the hole the flight arrives through: the shared runtime builder's, with
+            // the stage's own PunchHole (whose whole-slab case goes through RemoveWall and its undo)
+            _stairRamps.Add(BuildingRuntime.StairRamp(this, origin, yawDeg, run, width, rise));
             if (!cutFloor) return 0;   // the caller cut the hole itself (a generated switchback's spans its landing)
-
-            // ---- cut the floor above ------------------------------------------------------------------
-            // The flight's plan footprint, grown slightly so the opening clears the treads rather than
-            // touching them exactly (Aabb contact is a coin-flip and a hole flush with the tread reads as
-            // a seam you can catch on).
-            const float Margin = WallOpenings.StairHoleMargin;
-            var a = origin;
-            var b = origin + back * run + right * width;
-            float minX = Mathf.Min(a.X, b.X) - Margin, maxX = Mathf.Max(a.X, b.X) + Margin;
-            float minZ = Mathf.Min(a.Z, b.Z) - Margin, maxZ = Mathf.Max(a.Z, b.Z) + Margin;
-            float topY = origin.Y + rise;
-
-            int cut = 0;
-            foreach (var w in new List<WallSurface>(_walls))
-            {
-                if (!IsInstanceValid(w) || w.Kind != SurfaceKind.Floor) continue;
-                var box = SurfaceAabb(w);
-                // Only the slab this flight actually arrives at: its top must sit within half a storey of
-                // the landing. A floor two storeys up is not this staircase's problem.
-                if (Mathf.Abs(box.End.Y - topY) > rise * 0.5f) continue;
-                if (box.End.X < minX || box.Position.X > maxX || box.End.Z < minZ || box.Position.Z > maxZ) continue;
-
-                // Corners in the slab's own UV space. A floor is a wall lying down, so its U/V are the plan
-                // axes -- take all four and bound them, since yaw makes which-is-which change.
-                float u0 = float.MaxValue, v0 = float.MaxValue, u1 = float.MinValue, v1 = float.MinValue;
-                bool ok = true;
-                foreach (var c in new[] { new Vector3(minX, box.End.Y, minZ), new Vector3(maxX, box.End.Y, minZ),
-                                          new Vector3(minX, box.End.Y, maxZ), new Vector3(maxX, box.End.Y, maxZ) })
-                {
-                    if (!w.WorldToUV(c, out float u, out float v)) { ok = false; break; }
-                    u0 = Mathf.Min(u0, u); u1 = Mathf.Max(u1, u);
-                    v0 = Mathf.Min(v0, v); v1 = Mathf.Max(v1, v);
-                }
-                if (ok && PunchHole(w, u0, v0, u1, v1)) cut++;
-            }
-            return cut;
+            return BuildingRuntime.CutStairHole(_walls, origin, yawDeg, run, width, rise, PunchHole);
         }
 
         public int AddStairs(Vector3 origin, float yawDeg, float run = 0f, float width = 0f)
