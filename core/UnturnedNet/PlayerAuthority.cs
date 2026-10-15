@@ -198,6 +198,11 @@ namespace UnturnedGodot.Net
         /// verbatim -- the teeth proof that the envelope, not luck, is what rejects the cheats.</summary>
         public bool DisableEnvelope;
 
+        /// <summary>Optional host adapter for armed passengers. A seated state
+        /// packet carries held selection and deduplicated combat only; the seat
+        /// remains the sole transform authority. Default preserves legacy hosts.</summary>
+        public bool AcceptSeatedActions;
+
         /// <summary>mp-event-coalesce (v10): the sink for each deduped carried combat event -- wired in
         /// NetWorldHost to route Kind -> ServerCombat.OnFire/OnMelee/OnGrenade/OnReload (ServerCombat lives
         /// on a different object, so the authority can't call it directly). (sender, event, tick).</summary>
@@ -277,7 +282,7 @@ namespace UnturnedGodot.Net
             // driver's walk claims drop at the choke point, exactly like CommandMoveInput's gate
             commands.Register<PlayerStateCommand>(ReplicationIds.CommandPlayerState, PlayerStateCommand.TryRead,
                 (sender, cmd) => OnPlayerState(sender, cmd),
-                validate: (sender, cmd) => _combat.IsAlive(sender) && !_isSeated(sender));
+                validate: (sender, cmd) => _combat.IsAlive(sender) && (AcceptSeatedActions || !_isSeated(sender)));
         }
 
         /// <summary>True once this owner's stream has had a claim ACCEPTED -- the entity is client-driven
@@ -323,7 +328,8 @@ namespace UnturnedGodot.Net
             // v57: what the hands hold and the stance/lamp bits, as the held input every server reader already asks
             // (TryGetHeldInput). BEFORE the combat carry below, because a shot in this packet was fired holding what
             // this packet says -- the broken-gun refusal and the worn-gun damage read it.
-            _players.ServerSetStateInput(sender, cmd.Buttons, cmd.HeldItemId);
+            bool seated = AcceptSeatedActions && _isSeated(sender);
+            _players.ServerSetStateInput(sender, seated ? (byte)0 : cmd.Buttons, cmd.HeldItemId);
 
             // ---- mp-event-coalesce (v10): apply the redundant combat carry BEFORE the recov-ack gate and
             // the envelope, so a player who momentarily trips the movement envelope still legitimately fired
@@ -345,6 +351,19 @@ namespace UnturnedGodot.Net
                 }
             }
             if (st.HasCombatSeq) _players.SetCombatAck(sender, st.LastCombatSeq, tick);
+
+            if (seated)
+            {
+                // Deliberately ignore every claimed motion field, including a
+                // hostile teleport, fall velocity or stale recovery echo. Clear
+                // walking-only vitals/fall history while retaining combat ACKs.
+                st.PeakFallSpeed = 0; st.WasAirborne = false;
+                if (st.HasAdopted) st.Adopted = new DrivenPlayerState {
+                    Pos = e.Pos, YawDegrees = e.YawDegrees, Vel = Vector3.zero,
+                    Grounded = true, TempBand = cmd.TempBand,
+                };
+                return;
+            }
 
             // recov ack wait: while recovering, discard every claim whose RecovAck lags the counter --
             // the client is still walking a rolled-back-in-flight position. The event rides
