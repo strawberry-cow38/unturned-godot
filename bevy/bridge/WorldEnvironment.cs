@@ -6,11 +6,11 @@ namespace UnturnedBevy;
 /// <summary>Engine adapter for WeatherManager's core weather, outlook and snow-cover
 /// rules. The original types, schedule, seasonal model and clock replication remain
 /// authoritative; Bevy consumes the conditions and supplies visual/audio effects.</summary>
-public sealed class WorldEnvironment
+public sealed partial class WorldEnvironment
 {
     readonly WeatherType[] _types;
     readonly WeatherSchedule[] _schedule;
-    readonly int _seed, _snowSchedule, _snowType, _baseDay;
+    readonly int _seed, _snowSchedule, _snowType, _baseDay, VariantBase;
     int _day;
     public WeatherSim Sim { get; }
     public WeatherOutlook.Day Today { get; private set; }
@@ -29,7 +29,7 @@ public sealed class WorldEnvironment
         server.Clock.ServerConfigure(save?.TimeOfDay01 ?? WorldDefaults.StartTime,
             save?.DayLengthSeconds > 0 ? save.DayLengthSeconds : WorldDefaults.DefaultDayLength, 0);
         var types = new List<WeatherType>(WeatherSim.PeiTypes());
-        int variants = types.Count; types.AddRange(WeatherSim.VariantTypes());
+        int variants = types.Count; VariantBase = variants; types.AddRange(WeatherSim.VariantTypes());
         _snowType = types.Count; types.AddRange(WeatherSim.SnowTypes());
         var schedule = new List<WeatherSchedule>(WeatherSim.PeiSchedule());
         schedule.AddRange(WeatherSim.VariantSchedule(variants));

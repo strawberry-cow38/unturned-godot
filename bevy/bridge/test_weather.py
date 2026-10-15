@@ -24,3 +24,25 @@ class WeatherTests(unittest.TestCase):
                 self.assertEqual((8,28),(weather['minLightningInterval'],weather['maxLightningInterval']))
             finally: other.tearDown()
         finally: h.tearDown()
+
+    def test_original_console_weather_and_strike_are_authorized_and_retained_once(self):
+        h=host.BridgeTests();h.setUp()
+        try:
+            h.call('action',name='console',args=dict(text='weather lightning'))
+            state=h.call('snapshot')['state']
+            strikes=[e for e in state['events'] if e['kind']=='weatherStrike']
+            self.assertEqual(1,len(strikes))
+            self.assertTrue(any(e['kind']=='console' and e['data']['text']=='weather -> lightning' for e in state['events']))
+            self.assertEqual(strikes,[e for e in h.pump(3)['events'] if e['kind']=='weatherStrike'])
+            h.call('action',name='console',args=dict(text='weather heavy'))
+            self.assertEqual('Heavy Rain',h.call('snapshot')['state']['weather']['name'])
+            h.call('action',name='console',args=dict(text='weather clear'))
+            self.assertEqual('Clear',h.call('snapshot')['state']['weather']['name'])
+            h.call('init',allowCheats=False)
+            h.call('action',name='console',args=dict(text='weather lightning'))
+            h.call('action',name='console',args=dict(text='weather heavy'))
+            state=h.call('snapshot')['state']
+            self.assertEqual('Clear',state['weather']['name'])
+            self.assertFalse(any(e['kind']=='weatherStrike' for e in state['events']))
+            self.assertTrue(any(e['kind']=='console' and 'disabled' in e['data']['text'] for e in state['events']))
+        finally:h.tearDown()

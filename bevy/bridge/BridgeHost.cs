@@ -413,6 +413,7 @@ public sealed partial class BridgeHost : IDisposable
 
     object Action(string name, JsonElement args)
     {
+        if (name == "console" && WeatherConsole(Text(args, "text"))) return new { queued = true };
         if (name == "console" && RotorConsole(Text(args, "text"))) return new { queued = true };
         if (name == "console" && _wildlife.Console(_client.PlayerId, Text(args, "text"))) return new { queued = true };
         if (name is "installAttachment" or "removeAttachment" or "chooseShellType" or "unloadShells" or "rackGun") return _weapons.AttachmentAction(_client.PlayerId,name,args);

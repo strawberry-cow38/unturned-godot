@@ -503,3 +503,9 @@ uses these values and existing blend alpha; it does not create weather authority
 `UG_SNOWCOVER` seeds the authoritative coverage once, clamped to0..1, then the
 original accumulation/temperature-driven melt rules continue. This preserves the
 source render diagnostic without an independent native snow override.
+
+The console `weather` command now runs the original extracted
+`WeatherManager.ApplyCommand` switch in the managed host. `weather lightning`
+emits one retained cosmetic `weatherStrike` fact, while clear/rain/variants use
+the original WeatherSim transitions. The existing server cheat gate applies;
+refused commands produce neither a strike nor a weather mutation.

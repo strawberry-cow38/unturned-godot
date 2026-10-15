@@ -383,3 +383,9 @@ for key in ['MaxLen','tHead']:
 constants.append('public const int Segments = '+number(r'const int N = (\d+)',tracer)+';')
 constants.append(match(r'public static readonly Vector3 RocketMeshFix = new\([^;]+;',read('game/SamMissile.cs')))
 (out/'CosmeticRules.g.cs').write_text('using Godot; namespace UnturnedBevy { public static class CosmeticRules {\n'+'\n'.join(constants)+'}}')
+
+# Console weather changes remain in the authoritative host. Strike is a cosmetic
+# accepted fact; the source switch and actual weather asset indices are retained.
+weather_command=method(read('game/WeatherManager.cs'),'public bool ApplyCommand(string arg)')
+weather_command=weather_command.replace('ApplyCommand(string arg)', 'ApplyCommand(string arg, System.Action strike)').replace('Strike();','strike();')
+(out/'WeatherCommands.g.cs').write_text('namespace UnturnedBevy { public sealed partial class WorldEnvironment {\n'+weather_command+'}}')
