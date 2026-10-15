@@ -19,6 +19,7 @@ pub(crate) mod backdrop;
 mod attachments;
 mod clothing;
 pub(crate) mod crafting;
+mod input_order;
 mod storage;
 mod crosshair;
 pub(crate) mod hurt;
@@ -419,6 +420,7 @@ impl Plugin for GameUiPlugin {
                 vehicle_controls::VehicleControlsPlugin,
                 storage::StoragePlugin,
             ))
+            .add_plugins(input_order::InputOrderPlugin)
             .add_plugins((navbar::NavbarPlugin, skills::SkillsPlugin, crafting::CraftingPlugin))
             .add_systems(Startup, spawn_ui_camera)
             .add_systems(

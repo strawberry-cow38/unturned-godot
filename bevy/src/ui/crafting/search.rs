@@ -14,8 +14,12 @@ use bevy::{
     ui_widgets::TextInput,
 };
 use std::collections::VecDeque;
+mod pointer;
+mod popup;
+mod primary;
 
 #[derive(Component)]
+#[require(pointer::State)]
 pub(super) struct Field {
     placeholder: Entity,
     requested: String,
@@ -30,7 +34,7 @@ struct FocusFrame {
 pub(super) struct History {
     states: Vec<EditState>,
     at: usize,
-    actions: Vec<(usize, bool)>,
+    actions: Vec<(usize, Edit)>,
     pending: VecDeque<Edit>,
 }
 struct EditState {
@@ -42,8 +46,14 @@ enum Edit {
     Native(TextEdit),
     Paste(ClipboardRead),
     History(bool),
+    Pointer(pointer::Operation),
+    Primary(primary::Read, Vec2),
+    PublishPrimary,
 }
 impl History {
+    fn enqueue(&mut self, text: &EditableText, edit: Edit) {
+        self.actions.push((text.pending_edits.len(), edit));
+    }
     fn new(text: &EditableText) -> Self {
         Self {
             states: vec![Self::snapshot(text)],
@@ -99,6 +109,7 @@ pub(super) struct SearchPlugin;
 impl Plugin for SearchPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<FocusFrame>()
+            .init_resource::<primary::Primary>()
             .add_observer(changed)
             .add_observer(shortcuts)
             .add_observer(pointer_focus)
@@ -110,6 +121,8 @@ impl Plugin for SearchPlugin {
             )
             .add_systems(Update, synchronize.in_set(UiUpdate).before(keyboard_ui))
             .add_systems(PostUpdate, edit_history.before(EditableTextSystems));
+        pointer::install(app);
+        popup::install(app);
     }
 }
 fn pointer_focus(
@@ -153,6 +166,7 @@ fn synchronize(
     fields: Query<(Entity, &Field, &EditableText)>,
     mut placeholders: Query<&mut Visibility>,
     mut borders: Query<&mut BorderColor>,
+    popup: Res<popup::Popup>,
 ) {
     let current = focus.get().filter(|e| fields.get(*e).is_ok());
     if ui.screen != Screen::Crafting {
@@ -163,7 +177,8 @@ fn synchronize(
         frame.passive = None;
         return;
     }
-    let stop = frame.before.is_some()
+    let stop = !popup.typing()
+        && frame.before.is_some()
         && (keys.just_pressed(KeyCode::Escape) || keys.just_pressed(KeyCode::Enter))
         && !frame.reactivated
         && frame
@@ -174,7 +189,7 @@ fn synchronize(
         frame.passive = frame.before;
         focus.clear();
     }
-    menu.typing = current.is_some() || stop;
+    menu.typing = current.is_some() || stop || popup.typing();
     for (entity, field, text) in &fields {
         if let Ok(mut visible) = placeholders.get_mut(field.placeholder) {
             *visible = if text.value().to_string().is_empty() && !text.is_composing() {
@@ -185,7 +200,10 @@ fn synchronize(
         }
         if let Ok(mut border) = borders.get_mut(entity) {
             *border = BorderColor::all(
-                if current == Some(entity) || frame.passive == Some(entity) {
+                if current == Some(entity)
+                    || frame.passive == Some(entity)
+                    || popup.owns_field(entity)
+                {
                     Color::srgb(0.62, 0.78, 0.94)
                 } else {
                     Color::NONE
@@ -222,6 +240,11 @@ fn shortcuts(
     keys: Res<ButtonInput<Key>>,
     mut fields: Query<(&EditableText, &mut History), With<Field>>,
 ) {
+    // Another observer may leave an unhandled key bubbling (TextInput does so
+    // for Undo). Handle only the original field, never again at its ancestors.
+    if event.event_target() != event.original_event_target() {
+        return;
+    }
     let Ok((text, mut history)) = fields.get_mut(event.original_event_target()) else {
         return;
     };
@@ -245,23 +268,23 @@ fn shortcuts(
         "y" if !cfg!(target_os = "macos") => true,
         _ => return,
     };
-    history.actions.push((text.pending_edits.len(), redo));
+    history.enqueue(text, Edit::History(redo));
     event.propagate(false);
 }
 fn edit_history(
-    mut fields: Query<(&mut EditableText, &mut History), With<Field>>,
+    mut fields: Query<(Entity, &mut EditableText, &mut History, &mut pointer::State), With<Field>>,
     mut fonts: ResMut<FontCx>,
     mut layouts: ResMut<LayoutCx>,
     mut clipboard: ResMut<Clipboard>,
+    mut primary: ResMut<primary::Primary>,
+    mut popup: ResMut<popup::Popup>,
 ) {
-    for (mut text, mut history) in &mut fields {
+    for (entity, mut text, mut history, mut pointer) in &mut fields {
         let edits = std::mem::take(&mut text.pending_edits);
         let mut actions = std::mem::take(&mut history.actions).into_iter().peekable();
         for (index, edit) in edits.into_iter().map(Some).chain([None]).enumerate() {
             while actions.peek().is_some_and(|(at, _)| *at == index) {
-                history
-                    .pending
-                    .push_back(Edit::History(actions.next().unwrap().1));
+                history.pending.push_back(actions.next().unwrap().1);
             }
             if let Some(edit) = edit {
                 history.pending.push_back(Edit::Native(edit));
@@ -307,6 +330,42 @@ fn edit_history(
                 },
                 Edit::Native(edit) => text.queue_edit(edit),
                 Edit::History(redo) => history.restore(&mut text, redo, &mut fonts, &mut layouts),
+                Edit::Pointer(operation) => {
+                    if let Some(next) = pointer::apply(
+                        operation,
+                        entity,
+                        &mut text,
+                        &mut pointer,
+                        &mut fonts,
+                        &mut layouts,
+                        &mut primary,
+                        &mut popup,
+                    ) {
+                        history.pending.push_front(next);
+                    }
+                }
+                Edit::Primary(read, point) => match read.poll() {
+                    Some(value) => {
+                        // Unlike regular paste, source middle-click always
+                        // deselects and moves to the clicked position first.
+                        text.queue_edit(TextEdit::MoveToPoint(point));
+                        if let Some(value) = value {
+                            let value: String = value.chars().filter(|c| *c >= ' ').collect();
+                            if !value.is_empty() {
+                                text.queue_edit(TextEdit::Insert(value.into()));
+                            }
+                        }
+                    }
+                    None => {
+                        history.pending.push_front(Edit::Primary(read, point));
+                        break;
+                    }
+                },
+                Edit::PublishPrimary => {
+                    if let Some(value) = text.editor.selected_text() {
+                        primary.write(value);
+                    }
+                }
             }
             text.apply_pending_edits(&mut fonts, &mut layouts.0, &mut clipboard, |c| c >= ' ');
             if immediate {
@@ -389,7 +448,8 @@ pub(super) fn prepare(
                 color: Color::srgb(0.62, 0.78, 0.94),
                 selection_color: Color::srgba(0.5, 0.5, 0.5, 1.),
                 selected_text_color: Some(Color::WHITE),
-                unfocused_selection_color: Color::NONE,
+                // Source draws retained selection even while its popup owns focus.
+                unfocused_selection_color: Color::srgba(0.5, 0.5, 0.5, 1.),
                 ..default()
             },
         ))
@@ -419,6 +479,19 @@ pub(super) fn prepare(
         placeholder,
         requested: value.into(),
     });
+    commands.spawn((
+        pointer::Surface(entity),
+        Node {
+            position_type: PositionType::Absolute,
+            left: px(0.),
+            top: px(0.),
+            width: percent(100.),
+            height: percent(100.),
+            ..default()
+        },
+        ZIndex(2),
+        ChildOf(entity),
+    ));
     entity
 }
 #[cfg(test)]

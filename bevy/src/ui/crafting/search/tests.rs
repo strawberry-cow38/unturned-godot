@@ -2,6 +2,7 @@ use super::*;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::ui_widgets::TextInputPlugin;
 
+mod affordances;
 mod dispatch;
 
 fn editor() -> (App, Entity, Entity) {
@@ -12,6 +13,8 @@ fn editor() -> (App, Entity, Entity) {
         .init_resource::<FontCx>()
         .init_resource::<LayoutCx>()
         .init_resource::<Clipboard>()
+        .init_resource::<primary::Primary>()
+        .init_resource::<popup::Popup>()
         .init_resource::<Assets<Font>>()
         .init_resource::<bevy::text::RemSize>()
         .init_resource::<crate::character::nameplate::OriginalFont>()
@@ -153,9 +156,16 @@ fn repaint_preserves_exact_field_selection_ime_focus_and_reparents_before_old_ro
         .single(app.world())
         .unwrap();
     let old = app.world().get::<ChildOf>(e).unwrap().parent();
+    let style = app.world().get::<TextCursorStyle>(e).unwrap();
+    assert_eq!(
+        style.unfocused_selection_color, style.selection_color,
+        "source retained selection remains painted while the edit popup owns focus"
+    );
     app.init_resource::<FontCx>()
         .init_resource::<LayoutCx>()
         .init_resource::<Clipboard>()
+        .init_resource::<primary::Primary>()
+        .init_resource::<popup::Popup>()
         .insert_resource(InputFocus::from_entity(e))
         .init_resource::<bevy::text::RemSize>();
     app.world_mut()
@@ -227,6 +237,7 @@ fn first_escape_latches_dashboard_guard_then_second_escape_is_available_to_close
     app.world_mut().resource_mut::<Menu>().open = true;
     app.insert_resource(InputFocus::from_entity(e))
         .init_resource::<FocusFrame>()
+        .init_resource::<popup::Popup>()
         .init_resource::<ButtonInput<KeyCode>>();
     app.world_mut()
         .resource_mut::<ButtonInput<KeyCode>>()

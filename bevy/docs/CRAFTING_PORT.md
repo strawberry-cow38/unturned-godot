@@ -80,8 +80,34 @@ captures were opened.
 
 Search supports the original caret, Unicode selection, IME, normal clipboard
 shortcuts, control-character paste filtering and deferred undo/redo history.
-The field is retained through queue updates and resize. Remaining LineEdit
-parity includes its default context menu, X11 primary-selection/middle paste,
-and selected-text drag/drop. Windows OS double-click recognition has not been
-verified. Nearby-station authority and those editing affordances remain explicit
-gaps; this is not a complete crafting parity claim.
+The field is retained through queue updates and resize. Its original edit popup
+now offers Cut, Copy, Paste, Select All, Clear, Undo and Redo, preserving the same
+field, selection and pending edits while the popup owns focus. Source labels,
+enabled states, font, colors, keyboard navigation and Menu-key entry are used.
+Linux primary selection remains separate from the ordinary clipboard: mouse
+selection publishes it, and middle-click strips source ASCII escapes and inserts
+at the clicked caret without replacing the old selection. Selected text can be
+moved or Ctrl-copied within the field; failed/cancelled drops preserve the source.
+Double-click selects words and triple-click selects all with the source caret.
+
+The shared `ui::input_order` reducer records each window's event-time logical and
+physical keys, mouse buttons and cursor position. The search consumes its ordered
+mouse events; touch and custom pointers keep the normal picking path. A same-frame
+Ctrl/press/move/release/Ctrl-up test proves drop modifiers survive the final empty
+held state. Focus loss and popup ownership cancel a drag without deleting its text;
+a popup-open/release/dismiss/move regression prevents stale capture revival. Independent
+consumers such as Inventory read the same immutable batch.
+
+The isolated real X11/Vulkan journey uses right-click, popup keyboard Copy,
+middle paste, double-click, selected-text drag and Ctrl+Z. Its seven assertions
+retain exactly one field entity and update Browse from the actual editor. Four
+`bevy-search-pointer-{popup,primary,dragged,undo}.png` captures were opened. Separate
+actual X11 tests cover primary-versus-normal clipboard isolation and source
+control-character filtering; the existing three keyboard dispatch regressions
+still pass with the original-target guard preventing duplicate bubbled Undo.
+
+Text-writing-direction, control-character display/insertion submenus, cross-field
+or external text drops, and Windows OS click recognition remain unverified or
+pending. Arbitrarily interleaved keyboard edits and pointer operations within one
+OS batch are not claimed to have a unified edit dispatch order. Nearby-station
+authority also remains open; this is not a complete crafting parity claim.

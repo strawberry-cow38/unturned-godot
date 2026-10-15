@@ -5680,6 +5680,7 @@ name = "unturned-bevy"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arboard",
  "bevy",
  "bevy_rapier3d",
  "fastnoise-lite",
