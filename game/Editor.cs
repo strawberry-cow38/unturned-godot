@@ -22,6 +22,7 @@ namespace UnturnedGodot
         public Node3D World { get; private set; }        // the loaded map (terrain + objects) = the edit target
         public EditorCamera Camera { get; private set; }
         public EditorObjects Objects;                     // Phase 2 objects sub-editor (set by BuildEditor)
+        public bool IsPlaying { get; set; }                // editor tools must not consume playtest input
         public EditorSpawns Spawns;                       // Phase 3 spawns sub-editor (set by BuildEditor)
         public EditorEnvironment Environment;             // Phase 4 environment sub-editor (set by BuildEditor)
         public EditorTerrain TerrainEd;                   // Phase 5 terrain sub-editor (set by BuildEditor)
@@ -80,6 +81,7 @@ namespace UnturnedGodot
         /// is covered automatically, and directly by the tools that change state WITHOUT an undo step.</summary>
         public void MarkDirty()
         {
+            _redo.Clear(); // a new non-history edit also invalidates the old redo branch
             IsDirty = true;
         }
 
@@ -103,10 +105,12 @@ namespace UnturnedGodot
 
         // Undo stack (source EditorInteract Ctrl+Z). Each reversible action pushes a label + a closure that undoes it;
         // Ctrl+Z pops + runs the newest. General so every sub-editor can register (objects wired first).
-        readonly System.Collections.Generic.List<(string label, System.Action undo)> _history = new();
-        public void PushUndo(string label, System.Action undo)
+        readonly System.Collections.Generic.List<(string label, System.Action undo, System.Action redo)> _history = new();
+        readonly System.Collections.Generic.List<(string label, System.Action undo, System.Action redo)> _redo = new();
+        public void PushUndo(string label, System.Action undo, System.Action redo = null)
         {
-            _history.Add((label, undo));
+            _redo.Clear();
+            _history.Add((label, undo, redo));
             MarkDirty();   // every reversible action is by definition a change -- one choke point, so a new tool
                            // that pushes undo gets dirty-tracking without having to remember to ask for it
             if (_history.Count > 256) _history.RemoveAt(0);   // cap the stack
@@ -116,6 +120,7 @@ namespace UnturnedGodot
         /// consumes itself doing nothing.</summary>
         public void PopUndo()
         {
+            _redo.Clear();
             if (_history.Count > 0) _history.RemoveAt(_history.Count - 1);
         }
 
@@ -125,11 +130,20 @@ namespace UnturnedGodot
             var e = _history[^1];
             _history.RemoveAt(_history.Count - 1);
             e.undo();
-            MarkDirty();   // undoing is itself a change against what is on disk
+            if (e.redo != null) _redo.Add(e); else _redo.Clear(); // legacy undo-only actions form a redo boundary
+            IsDirty = true;   // undoing is itself a change; keep the just-created redo branch
             Log.Print($"[editor] undo: {e.label} ({_history.Count} left)");
             return true;
         }
         public int UndoDepth => _history.Count;
+        public int RedoDepth => _redo.Count;
+        public bool Redo()
+        {
+            if (_redo.Count == 0) return false;
+            var e = _redo[^1]; _redo.RemoveAt(_redo.Count - 1);
+            e.redo(); _history.Add(e); IsDirty = true;
+            Log.Print($"[editor] redo: {e.label}"); return true;
+        }
 
         // Source EditorInteract gates ALL world input on Glazier.ShouldGameProcessInput (false when the pointer is over UI).
         // Godot equivalent: a Control is under the mouse (dashboard buttons/panels). Every tool checks this so clicks/keys

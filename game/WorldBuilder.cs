@@ -1997,6 +1997,10 @@ namespace UnturnedGodot
             // transforms can be written -- every Slot handed out above is dangling until this runs. Closing
             // batchOpen sends anything placed later (Client holiday props at the join handshake) down the node
             // path, since their groups would never be flushed.
+            // Authored lettering is map data, not an editor-only overlay. EditorObjects loads its own pickable
+            // copies; other modes get the same meshes (and optional solid-letter collision), exactly once.
+            if (mode != WorldMode.Editor)
+                TextPropStore.LoadRuntime(root, MapUI.MapFolder, visuals: mode != WorldMode.Dedicated, collision: mode != WorldMode.Aerial);
             // ---- PEOPLE ------------------------------------------------------------------------------------
             // NPCs are STATIC WORLD DATA, not replicated entities, and that is the whole design rather than a
             // shortcut. They stand where the map author put them and they do not move, so every peer can build

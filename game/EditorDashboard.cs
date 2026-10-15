@@ -202,6 +202,7 @@ namespace UnturnedGodot
             }
             else if (k.Keycode == Key.Escape)                          // ESC: toggle the pause menu (source EditorUI)
             {
+                if (Editor?.Objects?.TextTool?.BlocksWorld == true) return; // let the text tool cancel its draft/placement first
                 TogglePause(); GetViewport().SetInputAsHandled();
             }
             else if (k.Keycode == Key.F1) { _visObjects = !_visObjects; Editor?.Objects?.SetVisible(_visObjects); ShowMessage($"Objects: {(_visObjects ? "shown" : "hidden")}"); GetViewport().SetInputAsHandled(); }   // level-visibility toggles (source EditorLevelVisibilityUI F1-F9)
