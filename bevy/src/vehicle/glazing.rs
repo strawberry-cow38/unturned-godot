@@ -11,6 +11,7 @@ use std::path::Path;
 
 mod collision;
 mod effects;
+mod rain;
 mod upload;
 
 /// Canonical wire bits. Missing files do not renumber the remaining panes.
@@ -63,7 +64,8 @@ pub(super) struct Glazing {
 pub(super) struct GlazingPlugin;
 impl Plugin for GlazingPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<collision::Shapes>()
+        app.add_plugins(rain::RainGlassPlugin)
+            .init_resource::<collision::Shapes>()
             .add_systems(
                 Update,
                 (collision::install, adopt)
@@ -181,9 +183,17 @@ pub(super) fn build(
                 },
             ))
             .id();
+        if debug_color.is_none() {
+            commands.entity(child).insert(rain::RainPane {
+                body: entity,
+                axis: rain::dominant_axis(&data.positions),
+            });
+        }
         glazing.panes.push(child);
     }
-    commands.entity(entity).insert(glazing);
+    commands
+        .entity(entity)
+        .insert((glazing, rain::Cover::default()));
 }
 
 fn adopt(

@@ -2263,3 +2263,21 @@ integration tests and all132 managed bridge tests pass. The combined native UI
 suite also passes79 tests,
 including accepted UDP hurt presentation; seven renderer cases remain opt-in.
 Source/code review passed. Immutable managed output: `.local/player-damage-v69`.
+
+### Native original RainGlass material and source renderer comparison
+
+Original vehicle panes now render mesh-local beads/released trails and world-height
+runners from the source RainGlass shader, with current-view refraction, source
+material parameters and above-hull shelter polling. Accepted pane visibility,
+collision and repair remain unchanged. The source shader TIME continues during
+pause while its CPU shelter timer pauses; existing and late wreck panes receive
+the original opaque char override.
+
+Four focused regressions pass, plus the real Vulkan dry/wet/later/covered sequence.
+The matching original Godot police-pane helper also ran successfully. All images
+were opened; root and world independently confirmed corresponding bead/runner
+placement, time changes and covered removal. The comparison caught and fixed
+Bevy's extra emission-alpha attenuation. Slight dry-tint/PBR baseline differences
+remain explicit, and this stationary fixture does not claim fullgame rain-driving
+or articulated bus coverage. Combined application build passed and was frozen as
+`.local/native-feedback-rain-main`. Details: `bevy/docs/VEHICLE_RAIN_GLASS_PORT.md`.

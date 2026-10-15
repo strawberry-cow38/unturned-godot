@@ -1,0 +1,23 @@
+# Original RainGlass material
+
+`vehicle/glazing/rain` ports `GlassPane.RainGlassMat`, `GlassPane.DominantFaceAxis`, `Vehicle.RainCoverTick`, and `content/rain_glass.gdshader`. It replaces each normal pane's translucent material without changing pane identity, accepted damage, collision, ray uploads or repair authority. The existing `UG_GLASSDEBUG` material remains available.
+
+## Source behavior
+
+Opposite triangle normals fold into the same area-weighted bucket, using the original 0.985 match threshold and first-maximum tie. The dominant normal defines a mesh-local pane frame; the grid therefore stays attached to tilted and moving original geometry. Beads retain the source 70-cells-per-metre grid, fifteen-cell neighborhood, appearance/hold/release timing, tapered trails, 0.020 refraction and rim terms. The separate fourteen-column runners use mesh-local width and world height, including the original 0.30–0.70m/s speed and 0.038 refraction. Wetness controls beads, current rain controls runners, and owner shelter suppresses both. The source face-selection value is diagnostic only; the shader does not actually multiply the rain field by it.
+
+The owner checks shelter every 0.5 seconds from the source hull/roof top plus0.25m through the existing source shelter query. Singleplayer pause freezes that CPU timer. Shader time continues through pause, follows engine time scale and wraps at3600 seconds, matching Godot4.6's `TIME` behavior. `UG_RUNNERS=0` and `UG_GLASSDEBUGVIEW` preserve the source diagnostic switches.
+
+Each camera receives one pre-transparent transmission copy. The fragment shader samples that current view at LOD0, preserving the source single screen-copy pass rather than feeding one pane through another. The double-sided material keeps original tint, metallic and roughness, has no depth prepass/shadow, and lowers roughness toward0.03 under water. Godot's final forward pass adds emission before its final alpha blend. Bevy's PBR helper would additionally multiply emission by base alpha, so the adapter adds the source scene-copy/rim emission after PBR lighting and before common fog/output. This avoids double alpha attenuation and re-exposure of copied scene color.
+
+`CharWreck` replaces the custom material with the existing opaque wreck material, including geometry materialized after the accepted explosion. Broken/repair masks still operate on the same mesh entity and collider. Parent despawn removes every pane; no independent renderer life authority is added.
+
+## Verification and limits
+
+Four focused CPU regressions pass: dominant-axis voting/ties; actual original pane material conversion, moving frame, accepted visibility, wreck and late-wreck lifecycle; real Rapier shelter above the hull; and pause behavior separating the shelter timer from shader time. The actual Vulkan material fixture also passes, with image checks proving visible wet pixels, time-varying runners and exact dry restoration when covered. All four images were opened: `bevy-rain-glass-{dry,wet,later,covered}.png` with JSON. Root and world independently compared the wet/later/covered frames against original Godot police-windshield renders and found no rain-field or timing blocker.
+
+The reproducible reference helper runs Godot4.6.2 with the actual original police pane and shader. It changes only `TIME` to a fixed1.2/2.4-second uniform, records the source shader hash, and captures matching dry/wet/later/covered frames. Both renderers show corresponding bead positions and world-height runners. The native dry tint remains slightly brighter in this controlled setup; the comparison does not establish identical cross-engine PBR lighting. These are opt-in source comparison images, not visual golden gates.
+
+Run the native fixture from a test executable with `UG_RAIN_GLASS_SHOT=<absolute PNG prefix>` and filter `vehicle::glazing::rain::tests::visual::render_original_windshield_rain_dry_run_and_shelter --ignored --exact`. Use Xvfb/Vulkan, unset `WAYLAND_DISPLAY`, and set `WINIT_UNIX_BACKEND=x11`. The original reference is `python3 bevy/tools/rain_glass_reference.py --godot <Godot4.6 executable> --output <PNG prefix>` with the same Vulkan ICD. Both completed successfully. The fixture is a stationary material comparison; fullgame driving in rain, articulated bus panes and multiple overlapping glass views remain separate validation work.
+
+The combined application built successfully and was frozen as `.local/native-feedback-rain-main` for the next fullgame feedback journey. The earlier accepted-shot/break/repair UDP evidence remains documented in [VEHICLE_GLAZING_PORT.md](VEHICLE_GLAZING_PORT.md).
