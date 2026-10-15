@@ -58,8 +58,48 @@ seat lifecycle. A missing vehicle row now triggers that cleanup even if a host
 caller omitted `OnVehicleRemoved`, preventing stranded occupancy after registry
 replacement. Source seat switching is a separate subsequent integration.
 
+## Remote flight and blast presentation
+
+Protocol66 appends event56 (`MountedFlight`) and explicitly refuses version65
+peers. The existing accepted `MountedShot` starts a remote picture using the same
+embedded source gun profile, zero gravity, lifetime, tracer tint/width and rocket
+flag. It never creates a remote combat round. The remote view advances original
+`BallisticsMath.NextPos` only to observed server snapshot ticks; it does not
+guess a local collision or extrapolate beyond the accepted clock. Consequently,
+remote positions update with snapshot delivery rather than the host's50Hz body
+step. Existing native `state.bullets` presentation consumes these rows.
+
+The new reliable fact has three bounded variants. `Continue` carries the exact
+source pierced position, velocity, remaining steps and pierce count. `Retire`
+carries the accepted final point and impact/expiry reason. `Blast` carries the
+point, source gun/radius and owner of an explosion already applied by the host's
+warhead service. Identity is the launch tick plus mounted shot sequence; event
+ticks survive unsigned rollover. Every variant is validated and decoded
+atomically, including truncated tails. There is no client request, damage or
+reward path. The remote picture holds at most1024 active rounds, discarding the
+oldest picture if that presentation limit is reached.
+
+Integrated sessions keep their existing local flight/effect events and ignore
+the remote echo. Remote readers emit the same retained `bulletRetired` and
+`bulletExplosion` facts used by native effects. A late join does not replay a
+historical launch, but can see a newly accepted explosion afterward. Disconnect
+and session replacement discard all old flight state. Accepted final actor
+contacts now retire the matching host cosmetic round too: an NPC hit cannot
+leave its tracer passing through a player whose capsule is absent from cosmetic
+world geometry. Water continuation is transmitted without giving the remote
+client water geometry or authority; detailed remote impact material/splash facts
+remain a separate wire integration.
+
 ## Verification and remaining presentation
 
 The managed tests exercise real UDP driver-to-gunner takeover and return, owner-only controls, exact source belts and muzzles, parent yaw without parent pitch, source rear-deck depression, look-versus-point gates, stale/replayed inputs, crew/player distinctions, persisted state, origin barriers and late joins. Core tests reject every truncated command/event/registry prefix, verify small row deltas among100 idle vehicles, reject old protocol versions, and hit an actual player's head-height band with an NPC round to distinguish the source flat/falloff rule from ordinary2x head damage.
 
-Native articulated models were rendered in the preceding vehicle checkpoint. Playable mounted input, accepted belt HUD, firing effects and camera-anchor presentation are still pending their native integration and live visual verification. The host occupant anchor and rise are covered by managed/real-UDP regressions above. Remote cosmetic mounted flights and warhead visuals still require their accepted presentation adapter; the shared server already owns damage. NPC helicopter navigation, targeting and live damageable crew are subsequent source-controller work, not implied by this launch seam.
+Five managed flight regressions exercise actual UDP cannon flight into a wall,
+one accepted blast including a late observer, water continuation against the
+host's exact position/velocity history, and NPC player contact without duplicate
+hitmarkers or blasts. The bounded read-only view also checks source lifetime,
+snapshot-clock pacing, active-round disconnect and session replacement. Three core regressions cover all
+variant round trips/truncated tails, malformed values, ordered once-only delivery,
+absence of client health/combat mutations, late join and version65 refusal.
+
+Native articulated models were rendered in the preceding vehicle checkpoint. Playable mounted input, accepted belt HUD, firing effects and camera-anchor presentation are still pending their native integration and live visual verification. The host occupant anchor and rise are covered by managed/real-UDP regressions above. The remote flight/blast adapter now feeds the existing native consumers; its playable mounted GPU journey remains pending. NPC helicopter navigation, targeting and live damageable crew are subsequent source-controller work, not implied by this launch seam.

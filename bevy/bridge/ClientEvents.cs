@@ -25,7 +25,8 @@ public sealed partial class BridgeHost
                 barrelId=facts?.BarrelId,silenced=facts?.Silenced,barrelSilenced=facts?.BarrelSilenced,shootClip=facts?.ShootClip,shotVolume=facts?.ShotVolume,
                 muzzleVelocity=facts?.MuzzleVelocity,barrelBroken=facts?.BarrelBroken});
         };
-        _client.MountedShot += e => _events.Add(new(++_eventSequence,"mountShot",new { vehicleNetId=e.VehicleNetId,index=e.Mount,operatorPlayerId=e.Shot.PlayerId,npc=e.Npc,gun=e.Shot.Gun,muzzle=Array(e.Shot.Origin),direction=Array(e.Shot.Dir),tick=e.Tick,remainingAmmo=e.RemainingAmmo,sequence=e.Sequence },e.Tick));
+        _client.MountedShot += ReceiveMountedShot;
+        _client.MountedFlight += ReceiveMountedFlight;
         _client.PlayerMeleed += e => {
             var facts=_weapons?.TakeMelee(e.PlayerId,e.Strong);
             Emit("melee",new{playerId=e.PlayerId,strong=e.Strong,itemId=facts?.ItemId,repeated=facts?.Repeated,acceptedTick=facts?.Tick});

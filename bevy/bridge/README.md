@@ -608,13 +608,13 @@ the server's selected spawn.
 `reason`, source `rejectReason`/`rejectText`/`retryable`, protocol and the original
 16-digit hexadecimal `contentHash`. `wireGaps` lists host-only enrichments which
 are absent from this protocol. Unknown weather, absolute day, projectile lifetime,
-weapon timers, precise stuck poses and vehicle part health remain absent rather
-than fabricated. Inventory, vitals, entities, events and peer appearances come
-from the actual client replicas. Equip waits for a changed accepted inventory;
-ambiguous identical items cannot supply an exact instance identity over this wire.
+precise stuck poses and vehicle part health remain absent rather than fabricated.
+Inventory, weapon timers, exact item identity, vitals, entities, events and peer
+appearances come from actual client replicas. Protocol62 equipment requests use
+accepted owner tokens and selection epochs for identical item instances.
 
 A client-only session refuses host registration, damage, save/load and rebase
-operations. Unsupported attachment/repair/explicit-respawn intents return
+operations. Unsupported repair/explicit-respawn intents return
 `queued:false` with a retained refusal; the original server automatic respawn
 still works. Nonempty `password` is refused because the existing handshake has no
 password field. `disconnect` closes an owned host and releases its listener,
@@ -749,9 +749,18 @@ mount angles, finite belts and cooldowns independently of held inventory.
 UDP sessions. Protocol64 adds IDs20/74/55; old peers are explicitly refused.
 `worldMountedInput` is the separate trusted AI lane and is unavailable remotely.
 See [MOUNTED_WEAPONS.md](../docs/MOUNTED_WEAPONS.md) for fields, source rules,
-validation, persistence and the remaining remote cosmetic flight work.
+validation, persistence and remote cosmetic flight.
 
 `state.vehicleMounts[].gunnerRise` is protocol65 accepted source hatch progress
 (0..1). Use it directly for the tank gunner body; its authoritative player pose
 already uses the same source seat/yaw/rise before combat. Ordinary body seats use
 the embedded source fleet table, independent of native asserted offsets.
+
+Protocol66 appends accepted mounted `Continue`/`Retire`/`Blast` facts. Remote
+`state.bullets` uses the same original mounted profile and advances only to
+observed server ticks, with no local geometry or damage. Exact pierced position,
+velocity and remaining steps replace the prior flight; an accepted final contact
+removes it. Remote `bulletExplosion` is emitted only for a host-applied blast,
+including a new blast seen after joining mid-flight. No historical launches are
+replayed. The held-weapon cosmetic/warhead gaps remain separate. See the mounted
+document above for bounds, timing and actual UDP regression evidence.

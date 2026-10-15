@@ -61,6 +61,11 @@ public sealed class MountedWeaponCatalog
         }
     }
     public Fleet For(byte type)=>_fleet.GetValueOrDefault(type);
+    public bool TryGun(string id,out GunDef gun)
+    {
+        var mount=_fleet.Values.SelectMany(f=>f.Mounts).FirstOrDefault(m=>m.GunId==id);
+        gun=mount?.Gun;return mount!=null;
+    }
     public object GunMetadata()=>_fleet.Values.SelectMany(f=>f.Mounts).DistinctBy(m=>m.GunId)
         .ToDictionary(m=>m.GunId,m=>m.Gun?.BlastRadius??0);
     public static Vector3 V(float[] v)=>new(v[0],v[1],v[2]);

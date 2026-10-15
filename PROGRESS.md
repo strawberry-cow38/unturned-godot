@@ -1749,3 +1749,28 @@ ServerExit cleanup even when a host omitted OnVehicleRemoved. Bare harnesses
 retain the null-provider hull-origin behavior. Independent source review passed.
 Native tank body/camera validation
 and seat switching are separate ongoing checkpoints.
+
+### Bevy: accepted mounted flight and blast presentation over UDP
+
+Protocol66 appends Event56 for source mounted-flight continuation, retirement and
+already-applied warhead blasts; version65 peers fail explicitly. Launch identity
+uses the existing accepted mountShot tick/sequence and the original embedded gun
+profile. Remote state.bullets advances shared BallisticsMath only to observed
+server snapshot ticks, adopts exact water/thin velocity/step changes, and never
+creates geometry, damage or local impact guesses. Existing native tracer/rocket
+and explosion consumers receive the same view/events. Integrated echoes are
+ignored, late joins do not replay old launches, newly accepted blasts still reach
+late observers, and disconnect clears active pictures without inventing contact.
+An accepted NPC/player hit now retires its matching host cosmetic picture even
+when that player's capsule is absent from cosmetic world geometry.
+
+Five managed regressions include real separate UDP host/client cannon→wall blast,
+late observer, water continuation checked against exact host history, NPC/player
+contact, active-round disconnect and bounded source-clock/lifetime behavior.
+Three core cases cover all union prefixes and malformed values, ordered one-shot
+delivery with no health/combat mutation, late join and version refusal. The frozen
+mounted-flight-v66-final candidate passes92 managed and121 JSONL tests; the
+networking suite passes672. Existing native bullet/projectile/mounted-FX tests
+pass14 cases against the final candidate. Independent wire/source review passed.
+The playable mounted GPU journey remains pending; no remote visual equivalence
+is claimed from the managed tests alone. See bevy/docs/MOUNTED_WEAPONS.md.

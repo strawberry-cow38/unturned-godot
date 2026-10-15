@@ -121,7 +121,7 @@ public sealed partial class BridgeHost : IDisposable
             case "snapshot": RequireSession(); return null;
             case "disconnect":
                 RequireSession();
-                if (_server != null) Dispose(); else _client.Disconnect();
+                if (_server != null) Dispose(); else { _client.Disconnect(); _remoteMounted?.Clear(); }
                 return new { disconnected = true, ownsWorld = false };
             case "diagnostics": RequireSession(); return new { host = _server != null, liveBullets = _server?.Combat.LiveBullets, stuckProjectilePoses = _warheads?.LivePoseCount };
             case "catalog": RequireSession(); return new { items = _catalog.Metadata(), wildlife = WildlifeServices.Catalog(), gestures = GestureMetadata(), profileRules = ProfileMetadata(), bulletVisuals = CosmeticBulletServices.Metadata(), mountedWeapons = _catalog.Mounted.GunMetadata(), throwMotion = new {
@@ -542,7 +542,7 @@ public sealed partial class BridgeHost : IDisposable
                 stuckDirection = _warheads?.PoseOf(e.NetIdValue)?.Direction, stuckNormal = _warheads?.PoseOf(e.NetIdValue)?.Normal,
                 stuckEuler = _warheads?.PoseOf(e.NetIdValue)?.Euler }).ToArray(),
             projectiles = ProjectileSnapshots(),
-            bullets = _cosmetic?.Snapshots(),
+            bullets = _cosmetic?.Snapshots() ?? _remoteMounted?.Snapshots(),
             vehicleMounts = _client.VehicleMounts.All.Select(v => new { vehicleNetId = v.VehicleNetId, headOut = v.HeadOut, gunnerRise = v.GunnerRise,
                 mounts = v.Mounts.Select((m,index) => new { index, yaw = m.Yaw, pitch = m.Pitch, ammo = m.Ammo, cooldownSeconds = m.CooldownSeconds, crewAlive = m.CrewAlive }).ToArray() }).ToArray(),
             animals = _wildlife?.Snapshots(_client) ?? RemoteAnimals(),
@@ -603,7 +603,7 @@ public sealed partial class BridgeHost : IDisposable
         _udpTransport?.TearDown(); _udpTransport = null;
         _environment = null; _services = null; _vehicles = null; _bodies = null; _weapons = null;
         _cosmetic = null; _warheads = null; _mounted = null; _appearance = null; _wildlife = null; _zombies = null;
-        _remoteWeapon = null; _remoteSpawnAdopted = false; _remoteProfileSent = false;
+        _remoteWeapon = null; _remoteMounted = null; _remoteSpawnAdopted = false; _remoteProfileSent = false;
         _mapBindings = null;
     }
 }

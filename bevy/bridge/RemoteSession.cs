@@ -35,8 +35,8 @@ public sealed partial class BridgeHost
 
     static readonly string[] RemoteWireGaps = [
         "repairTool",
-        "explicitRespawn", "weather", "dayNumber", "cosmeticBullets", "acceptedImpactDetails",
-        "warheadEffects", "stuckProjectilePose", "projectileLifetime", "vehiclePartHealth",
+        "explicitRespawn", "weather", "dayNumber", "heldCosmeticBullets", "acceptedImpactDetails",
+        "heldWarheadEffects", "stuckProjectilePose", "projectileLifetime", "vehiclePartHealth",
         "wildlifeHostState", "zombieHostState", "password", "acceptedShotTick",
     ];
 
@@ -54,6 +54,8 @@ public sealed partial class BridgeHost
         _position = Vector3.zero; _velocity = Vector3.zero; _held = 0;
         CreateClient(new UdpClientTransport(_connectHost, _connectPort));
         _remoteWeapon = new RemoteWeaponView(_client, _catalog, Emit);
+        _remoteMounted = new RemoteMountedFlights(_catalog.Mounted,
+            (kind,data,tick)=>_events.Add(new(++_eventSequence,kind,data,tick)));
         // Handshake is intentionally asynchronous. The native frame loop keeps
         // polling while connecting; a fast local spin cannot advance a remote server.
     }
@@ -77,7 +79,8 @@ public sealed partial class BridgeHost
     {
         _network.Tick();
         _client.Tick();
-        if (_client.State != NetSessionState.Connected) return;
+        if (_client.State != NetSessionState.Connected) { _remoteMounted.Clear(); return; }
+        _remoteMounted.Step(unchecked((uint)_client.Applier.LastAppliedServerTick));
         if (!_remoteProfileSent)
         {
             SendConfiguredProfile();

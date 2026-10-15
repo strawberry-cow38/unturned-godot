@@ -42,12 +42,20 @@ damage shortcuts run in this mode.
 
 Host-only registration, save/load, damage and rebasing are refused. Unknown
 host enrichments remain absent and `network.wireGaps` enumerates them: repair, explicit
-respawn, weather/absolute day, cosmetic flights, detailed impact/warhead/stuck-pose
+respawn, weather/absolute day, held-weapon cosmetic flights, detailed impact/held-warhead/stuck-pose
 facts, projectile expiry, vehicle part health, host wildlife/zombie data,
 password authentication and accepted shot tick. Authored map bindings now use the
 read-only adapter described below. These are concrete
 protocol follow-ups. The existing automatic respawn and recovery events work.
 The original handshake has no password field, so a nonempty password is refused.
+
+Mounted flight and blasts now have an accepted presentation path: protocol66
+reuses each original gun's launch profile and sends exact continuation,
+retirement and already-applied explosion facts. Remote pictures advance only to
+observed server snapshot ticks and cannot cause damage. Actual UDP cannon,
+water-continuation, NPC contact and late-observer regressions cover this path;
+the mounted native gameplay render remains pending. See
+[MOUNTED_WEAPONS.md](MOUNTED_WEAPONS.md).
 
 `disconnect` tears down an owned integrated/listen world, closes its UDP port and
 leaves no authority to tick. Remote disconnect instead retains its terminal

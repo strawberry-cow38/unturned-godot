@@ -25,7 +25,7 @@ public sealed partial class CosmeticBulletServices
         public UVector? Anchor;
         public float Gravity,Width,BlastRadius;
         public float[] Color;
-        public bool Silenced,Rocket;
+        public bool Silenced,Rocket,Mounted;
     }
     sealed record WaterBox(UVector Center,UVector Size);
     readonly NetWorldServer _server;
@@ -116,7 +116,7 @@ public sealed partial class CosmeticBulletServices
     {
         var color=GunDef.TracerColor(gun?.CaliberName);float[] tint=[color.r,color.g,color.b];
         var bullet=new Bullet{Id=Interlocked.Increment(ref _nextBullet),ShotId=Interlocked.Increment(ref _nextShot),LaunchTick=Tick,
-            Owner=owner,Sequence=sequence,Gun=gunId,Position=origin,Origin=origin,Velocity=direction*profile.MuzzleVelocity,
+            Owner=owner,Sequence=sequence,Mounted=true,Gun=gunId,Position=origin,Origin=origin,Velocity=direction*profile.MuzzleVelocity,
             StepsLeft=profile.BallisticSteps,Gravity=0,Width=CosmeticRules.TracerBaseW*GunDef.TracerScale(gun?.CaliberName),
             Color=tint,Rocket=gun?.Action=="Rocket",BlastRadius=radius};
         _bullets.Add(bullet);
@@ -139,6 +139,9 @@ public sealed partial class CosmeticBulletServices
                     b.Velocity*=thin?CosmeticRules.ThinVelKeep:CosmeticRules.WaterVelKeep;
                     b.Position=point+direction*CosmeticRules.PierceExit;
                     if(--b.StepsLeft<=0)Retire(i,"expired");
+                    else if(b.Mounted)PublishMounted(new(){Kind=MountedFlightKind.Continue,LaunchTick=(uint)b.LaunchTick,
+                        Tick=(uint)Tick,Sequence=b.Sequence,Position=b.Position,Velocity=b.Velocity,
+                        RemainingSteps=checked((ushort)b.StepsLeft),Pierced=checked((byte)b.Pierced)});
                     continue;
                 }
                 b.Position=point;Retire(i,"impact");continue;
@@ -195,8 +198,21 @@ public sealed partial class CosmeticBulletServices
     void Retire(int index,string reason)
     {
         var b=_bullets[index];_bullets.RemoveAt(index);
+        if(b.Mounted)PublishMounted(new(){Kind=MountedFlightKind.Retire,LaunchTick=(uint)b.LaunchTick,
+            Tick=(uint)Tick,Sequence=b.Sequence,Position=b.Position,Velocity=b.Velocity,
+            Reason=reason=="impact"?MountedFlightRetirement.Impact:MountedFlightRetirement.Expired});
         _emit("bulletRetired",new{id=b.Id,shotId=b.ShotId,playerId=b.Owner,reason,position=Array(b.Position),velocity=Array(b.Velocity),acceptedTick=Tick});
     }
+    public void RetireMountedAt(uint launchTick,ushort sequence,UVector point)
+    {
+        for(int i=_bullets.Count-1;i>=0;i--)
+        {
+            var b=_bullets[i];
+            if(!b.Mounted||(uint)b.LaunchTick!=launchTick||b.Sequence!=sequence)continue;
+            b.Position=point;Retire(i,"impact");
+        }
+    }
+    void PublishMounted(MountedFlightEvent fact)=>_server.BroadcastEvent(NetMessagePak.Pack(ReplicationIds.EventMountedFlight,fact.Write));
     public object[] Snapshots()=>_bullets.Select(b=>(object)new{id=b.Id,shotId=b.ShotId,playerId=b.Owner,sequence=b.Sequence,
         pellet=b.Pellet,itemId=b.ItemId,gun=b.Gun,origin=Array(b.Origin),position=Array(b.Position),velocity=Array(b.Velocity),
         gravity=b.Gravity,remainingSteps=b.StepsLeft,launchTick=b.LaunchTick,silenced=b.Silenced,tracerWidth=b.Width,

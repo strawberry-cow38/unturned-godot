@@ -1054,6 +1054,7 @@ namespace UnturnedGodot.Net
                                                                     InteractableState, Profiles, Equipment, VehicleMounts });   // wave 2 (v11): 13/14/15; v13: Destructibles(16); v14: InteractableState(17); v17: Profiles(18) -- symmetric with the server Composer
             RegisterEquipmentEvents();
             RegisterMountedEvents();
+            RegisterMountedFlightEvents();
             RegisterResourceContactEvents();
             Applier.DesyncDetected += report => DesyncDetected?.Invoke(report);   // (already NetLog'd in the applier)
             Events.Register(ReplicationIds.EventJoinSnapshot, reader =>

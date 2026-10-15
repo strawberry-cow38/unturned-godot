@@ -196,19 +196,25 @@ public sealed class MountedWeaponServices
         }
         state.Mounts[i]=current with{Yaw=y,Pitch=p};
     }
+    /// <summary>Same captured source flight for host damage and remote picture.
+    /// A remote reader uses only speed/steps; it never launches ServerCombat.</summary>
+    public static ServerGunProfile ProfileFor(GunDef gun,string gunId,bool npc)
+    {
+        float damage=gun?.PlayerDamage??(npc?30:40),vehicle=gun?.VehicleDamage??(npc?40:10),obj=gun?.ObjectDamage??(npc?20:25);
+        int steps=gun==null?(npc?125:75):!npc&&gun.BallisticSteps>0?gun.BallisticSteps:Math.Max(1,(int)(gun.Range/2));
+        return new ServerGunProfile{AssetName=gunId,PlayerDamage=damage,ZombieDamage=damage,AnimalDamage=damage,
+            ResourceDamage=damage,VehicleDamage=vehicle,ObjectDamage=obj,MuzzleVelocity=gun?.MuzzleVelocity??120,
+            BallisticSteps=steps,GravityMultiplier=0,Pellets=1,FalloffStart=gun?.FalloffStart??0,FalloffEnd=gun?.FalloffEnd??0,FalloffMin=gun?.FalloffMin??1};
+    }
     bool Fire(uint id,int index,ushort owner,bool npc,bool infinite)
     {
         var state=_states[id];var value=state.Mounts[index];var def=state.Spec.Mounts[index];
         if(value.CooldownSeconds>0||value.Ammo==0)return false;
         var frame=Frames(id).Pitch[index];var muzzle=U(frame.Point(MountedWeaponCatalog.V(def.Muzzle)));
         var direction=U(NVector.Transform(-NVector.UnitZ,frame.Rotation));var gun=def.Gun;
-        float damage=gun?.PlayerDamage??(npc?30:40),vehicle=gun?.VehicleDamage??(npc?40:10),obj=gun?.ObjectDamage??(npc?20:25);
-        int steps=gun==null?(npc?125:75):!npc&&gun.BallisticSteps>0?gun.BallisticSteps:Math.Max(1,(int)(gun.Range/2));
-        var profile=new ServerGunProfile{AssetName=def.GunId,PlayerDamage=damage,ZombieDamage=damage,AnimalDamage=damage,
-            ResourceDamage=damage,VehicleDamage=vehicle,ObjectDamage=obj,MuzzleVelocity=gun?.MuzzleVelocity??120,
-            BallisticSteps=steps,GravityMultiplier=0,Pellets=1,FalloffStart=gun?.FalloffStart??0,FalloffEnd=gun?.FalloffEnd??0,FalloffMin=gun?.FalloffMin??1};
+        var profile=ProfileFor(gun,def.GunId,npc);
         var context=new WarheadServices.Payload(0,def.GunId,gun?.BlastRadius??0,gun?.BlastPlayerDamage??0,
-            gun?.BlastZombieDamage??0,gun?.BlastVehicleDamage??0,gun==null?(ushort)0:WarheadRules.StickAmmoFor(gun),npc);
+            gun?.BlastZombieDamage??0,gun?.BlastVehicleDamage??0,gun==null?(ushort)0:WarheadRules.StickAmmoFor(gun),npc,(uint)_server.Session.CurrentTick);
         ushort sequence=++_shotSequence;
         if(!_server.Combat.ServerLaunchMounted(owner,sequence,muzzle,direction,profile,context,npc))return false;
         state.Mounts[index]=value with{Ammo=(ushort)(infinite?value.Ammo:value.Ammo-1),CooldownSeconds=def.Cycle};

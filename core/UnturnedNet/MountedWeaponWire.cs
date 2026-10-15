@@ -51,10 +51,7 @@ namespace UnturnedGodot.Net
         public PlayerFiredEvent Shot;
         public bool IsValid => VehicleNetId != 0 && Mount < VehicleMountReplication.MaxMounts
             && (Npc ? Shot.PlayerId == 0 : Shot.PlayerId != 0)
-            && MountedWire.Finite(Shot.Origin) && MountedWire.Finite(Shot.Dir)
-            && Math.Abs(Shot.Dir.sqrMagnitude - 1) < .01f
-            && !string.IsNullOrEmpty(Shot.Gun) && Shot.Gun.Length <= PlayerFiredEvent.MaxGunNameLength
-            && System.Linq.Enumerable.All(Shot.Gun, c => c is >= 'a' and <= 'z' or >= '0' and <= '9' or '_');
+            && MountedWire.ValidShot(Shot);
         public void Write(NetPakWriter w)
         {
             if (!IsValid) throw new ArgumentException("Invalid accepted mounted shot");
@@ -73,6 +70,10 @@ namespace UnturnedGodot.Net
 
     internal static class MountedWire
     {
+        public static bool ValidShot(PlayerFiredEvent shot) => Finite(shot.Origin) && Finite(shot.Dir)
+            && Math.Abs(shot.Dir.sqrMagnitude-1)<.01f
+            && !string.IsNullOrEmpty(shot.Gun) && shot.Gun.Length<=PlayerFiredEvent.MaxGunNameLength
+            && System.Linq.Enumerable.All(shot.Gun,c=>c is >= 'a' and <= 'z' or >= '0' and <= '9' or '_');
         // Raw finite coordinates preserve source muzzle geometry and distant
         // integrated aim targets. Only host state turns an aim point into a shot.
         public static bool Finite(Vector3 v) => float.IsFinite(v.x) && float.IsFinite(v.y) && float.IsFinite(v.z)

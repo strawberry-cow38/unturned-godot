@@ -9,16 +9,17 @@ namespace UnturnedBevy;
 /// fed only by authoritative accepted-round contacts. Cosmetic bullets never enter here.</summary>
 public sealed class WarheadServices
 {
-    public sealed record Payload(ushort ItemId,string Gun,float Radius,float PlayerDamage,float ZombieDamage,float VehicleDamage,ushort StickItemId,bool Npc=false);
+    public sealed record Payload(ushort ItemId,string Gun,float Radius,float PlayerDamage,float ZombieDamage,float VehicleDamage,ushort StickItemId,bool Npc=false,uint? MountedLaunchTick=null);
     public sealed record Pose(float[] Direction,float[] Normal,float[] Euler);
     public sealed record Saved(int WorldItemIndex,ushort ItemId,Pose Pose);
     readonly NetWorldServer _server;
+    readonly CosmeticBulletServices _cosmetic;
     readonly Action<string,object> _emit;
     readonly Dictionary<uint,Pose> _stuck=new();
     readonly Queue<CombatBulletImpact> _impacts=new();
     public WarheadServices(NetWorldServer server,WeaponServices weapons,CosmeticBulletServices cosmetic,Action<string,object> emit)
     {
-        _server=server;_emit=emit;
+        _server=server;_emit=emit;_cosmetic=cosmetic;
         server.Combat.CaptureBulletContext=owner=>weapons.CaptureWarhead(owner);
         server.Combat.BulletImpact=Impact;
         server.Combat.ContinueBullet=Continue;
@@ -44,6 +45,13 @@ public sealed class WarheadServices
                 payload.ZombieDamage,payload.VehicleDamage,hit.Shooter,hit.Tick,payload.Npc);
             _emit("bulletExplosion",new{playerId=hit.Shooter,sequence=hit.Sequence,pellet=hit.Pellet,
                 itemId=payload.ItemId,gun=payload.Gun,position=Array(hit.Point),radius=payload.Radius});
+            if(payload.MountedLaunchTick is uint launch)
+            {
+                var fact=new MountedFlightEvent{Kind=MountedFlightKind.Blast,LaunchTick=launch,Tick=(uint)hit.Tick,
+                    Sequence=hit.Sequence,Radius=payload.Radius,
+                    Shot=new(){PlayerId=hit.Shooter,Gun=payload.Gun,Origin=hit.Point,Dir=hit.Velocity.normalized}};
+                _server.BroadcastEvent(NetMessagePak.Pack(ReplicationIds.EventMountedFlight,fact.Write));
+            }
         }
     }
     public CombatBulletImpact? TakeImpact() => _impacts.TryDequeue(out var hit)?hit:null;
@@ -61,6 +69,7 @@ public sealed class WarheadServices
                 water=hit.Water,thin=hit.Thin,pierced=hit.Pierced+1,velocityKeep=velocity,damageKeep=damage});
             return new(velocity,damage,CosmeticRules.PierceExit);
         }
+        if(payload.MountedLaunchTick is uint launch)_cosmetic.RetireMountedAt(launch,hit.Sequence,hit.Point);
         Stick(hit,payload);return null;
     }
     void Stick(CombatBulletImpact hit,Payload payload)
