@@ -696,8 +696,9 @@ namespace UnturnedNet.Tests
             Assert.That(h.Server.Projectiles.Count, Is.Zero);
         }
 
-        [Test]
-        public void HostWildlifeBullet_UsesCanonicalDamageConditionAndShotOriginFalloff()
+        [TestCase(false)]
+        [TestCase(true)]
+        public void HostWildlifeBullet_UsesCanonicalDamageConditionAndShotOriginFalloff(bool currentZombieBody)
         {
             var h = new Harness(50908).Connected("hunter"); var c = h.Clients[0];
             h.Server.Players.TryGetByOwner(c.PlayerId, out var player);
@@ -709,13 +710,14 @@ namespace UnturnedNet.Tests
             h.Server.Combat.DamageBody = hits.Add;
             h.Server.Combat.DamageObject = (_, _, _) => { rubble++; return false; };
             h.Server.Combat.WorldRayDetailed = (Vector3 from, Vector3 to, out CombatWorldHit hit) => {
-                hit = new CombatWorldHit(origin + Vector3.forward * 10, animalNetId: 731); return true;
+                hit = new CombatWorldHit(origin + Vector3.forward * 10, animalNetId: currentZombieBody ? 0u : 731u,
+                    zombieNetId: currentZombieBody ? 731u : 0u); return true;
             };
             h.Server.Combat.CanFire = _ => false;
             c.SendFire(origin, Vector3.forward); h.Step(10); Assert.That(hits, Is.Empty);
             h.Server.Combat.CanFire = _ => true;
             c.SendFire(origin, Vector3.forward); h.Step(10);
-            Assert.That(hits.Count, Is.EqualTo(1)); Assert.That(hits[0].Hit.AnimalNetId, Is.EqualTo(731));
+            Assert.That(hits.Count, Is.EqualTo(1)); Assert.That(currentZombieBody ? hits[0].Hit.ZombieNetId : hits[0].Hit.AnimalNetId, Is.EqualTo(731));
             Assert.That(hits[0].Damage, Is.EqualTo(80 * Durability.DamageMultiplier(50) * .625f).Within(.001f));
             Assert.That(hits[0].Attacker, Is.EqualTo(c.PlayerId)); Assert.That(rubble, Is.Zero);
         }

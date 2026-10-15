@@ -18,12 +18,12 @@ namespace UnturnedGodot.Net
     {
         public readonly Vector3 Point;
         public readonly int DestructibleIndex, ResourceIndex;
-        public readonly uint VehicleNetId, DeployableNetId, AnimalNetId;
+        public readonly uint VehicleNetId, DeployableNetId, AnimalNetId, ZombieNetId;
         public readonly string BodyPart;
         public CombatWorldHit(Vector3 point, int destructibleIndex = -1, int resourceIndex = -1,
-            uint vehicleNetId = 0, uint deployableNetId = 0, string bodyPart = null, uint animalNetId = 0)
+            uint vehicleNetId = 0, uint deployableNetId = 0, string bodyPart = null, uint animalNetId = 0, uint zombieNetId = 0)
         { Point = point; DestructibleIndex = destructibleIndex; ResourceIndex = resourceIndex;
-          VehicleNetId = vehicleNetId; DeployableNetId = deployableNetId; BodyPart = bodyPart; AnimalNetId = animalNetId; }
+          VehicleNetId = vehicleNetId; DeployableNetId = deployableNetId; BodyPart = bodyPart; AnimalNetId = animalNetId; ZombieNetId = zombieNetId; }
     }
     public delegate bool CombatWorldRayDetailed(Vector3 from, Vector3 to, out CombatWorldHit hit);
     /// <summary>Damage resolved by the server's world ray, never a client hit claim.
@@ -642,7 +642,7 @@ namespace UnturnedGodot.Net
                         case 3:
                             // a destructible prop's collider: whittle its health; the break fx rides the
                             // replicated ObjectDestroyed event (not this local impact), so no double-fx.
-                            if (bodyHit.AnimalNetId != 0)
+                            if (bodyHit.AnimalNetId != 0 || bodyHit.ZombieNetId != 0)
                                 DamageBody?.Invoke(new CombatBodyHit(bodyHit, b.Shooter, b.AnimalDamage * b.Condition * b.FalloffAt(point), false, dir, tick));
                             else if (bodyHit.VehicleNetId != 0 || bodyHit.DeployableNetId != 0)
                                 DamageBody?.Invoke(new CombatBodyHit(bodyHit, b.Shooter, b.Gun.VehicleDamage, false, dir, tick));
@@ -652,7 +652,7 @@ namespace UnturnedGodot.Net
                             // ...or a barricade (door/bed), which is not in that index space. Same segment,
                             // so a shot that stopped at a door is the shot that damages it.
                             else DamageBarricadeAlong?.Invoke(b.Pos, next, b.Gun.VehicleDamage, tick);
-                            BroadcastImpact(point, bodyHit.AnimalNetId != 0 ? ImpactSurface.Flesh : ImpactSurface.World);
+                            BroadcastImpact(point, bodyHit.AnimalNetId != 0 || bodyHit.ZombieNetId != 0 ? ImpactSurface.Flesh : ImpactSurface.World);
                             Diag.BulletHitsWorld++;
                             break;
                     }
