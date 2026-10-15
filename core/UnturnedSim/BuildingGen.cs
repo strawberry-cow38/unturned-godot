@@ -291,6 +291,9 @@ namespace UnturnedSim
         /// <summary>The spec the plan was drawn from when FitPlot changed it to fit (fewer rooms, more floors, smaller
         /// rooms...), else null: what the building actually answers to.</summary>
         public BuildingGenSpec Fitted;
+        /// <summary>A front door side was asked for and no layout could put the door there: it went where it could (said in
+        /// the notes). FitPlot's search reads it, so a plan that keeps the street door beats one that fits as well without.</summary>
+        internal bool FrontLost;
         /// <summary>Its basement's style, None (Auto) for no basement: storey -1, under the whole ground floor
         /// (BuildingGenBasement.cs). Its rooms are in Layout on floor -1, its walls, floor and flight in Walls and Stairs.</summary>
         public BasementStyle Basement;
@@ -765,6 +768,11 @@ namespace UnturnedSim
             // badly); Lopsided, fits with rooms out of proportion; past it, over the plot by that many cells
             const int Lopsided = 1000;
             BuildingGenSpec best = null; BuildingGenResult bestBuilt = null; int bestScore = int.MaxValue, tries = 0;
+            // and the street door before all but the plot: a plan that fits with its front door wherever it could go (no
+            // layout put it on the side asked for) comes after every one that fits with it there, even out of proportion;
+            // one over the plot that lost it, after every one over the plot that kept it, however much further over -- the
+            // plot is lost either way, the street door need not be (the first that fitted won outright before, door or none)
+            long bestKey = long.MaxValue; bool bestLost = false;
             // and when nothing fits whole, all of it again without a garage the spec did not ask for (a garage is two
             // cells by three, for a car: strawberry, "yes 2x3"), and the house goes without one, as it would without a room
             bool sawGarage = false;
@@ -802,8 +810,9 @@ namespace UnturnedSim
                                 r.Fitted = s;
                                 score = Shortfall(r).Sum(x => x.Weight);
                             }
-                            if (score < bestScore) { best = s; bestBuilt = r; bestScore = score; }
-                            if (score > 0) continue;
+                            long key = (over > 0 ? 2L << 32 : 0) + (plan.FrontLost ? 1L << 32 : 0) + score;
+                            if (key < bestKey) { best = s; bestBuilt = r; bestScore = score; bestKey = key; bestLost = plan.FrontLost; }
+                            if (score > 0 || plan.FrontLost) continue;
                             var gave = new List<string>();
                             if (shape != spec.Shape) gave.Add("a rectangle, not an L or a T");
                             if (compact > 0) gave.Add($"rooms smaller (compact {compact})");
@@ -818,10 +827,12 @@ namespace UnturnedSim
             }
             var closest = bestBuilt ?? (best == null ? GenerateOnce(spec) : GenerateOnce(best));
             closest.Fitted = best;
-            closest.Notes.Add(bestScore < Lopsided
-                ? $"fitted the {spec.Width}x{spec.Depth} plot as {closest.CellsX}x{closest.CellsZ}, but short of {string.Join(", ", Shortfall(closest).Select(x => x.What))}"
-                : bestScore == Lopsided ? $"fitted the {spec.Width}x{spec.Depth} plot as {closest.CellsX}x{closest.CellsZ}, but only with rooms out of proportion"
-                : $"could not fit the {spec.Width}x{spec.Depth} plot: {closest.CellsX}x{closest.CellsZ} is the closest of {tries} plans");
+            string Short() => string.Join(", ", Shortfall(closest).Select(x => x.What));
+            closest.Notes.Add(bestScore > Lopsided ? $"could not fit the {spec.Width}x{spec.Depth} plot: {closest.CellsX}x{closest.CellsZ} is the closest of {tries} plans"
+                : bestLost ? $"fitted the {spec.Width}x{spec.Depth} plot as {closest.CellsX}x{closest.CellsZ}, but no plan that fits it put the front door on the {spec.FrontSide} side"
+                             + (bestScore == Lopsided ? ", and only with rooms out of proportion" : bestScore > 0 ? $", and short of {Short()}" : "")
+                : bestScore < Lopsided ? $"fitted the {spec.Width}x{spec.Depth} plot as {closest.CellsX}x{closest.CellsZ}, but short of {Short()}"
+                : $"fitted the {spec.Width}x{spec.Depth} plot as {closest.CellsX}x{closest.CellsZ}, but only with rooms out of proportion");
             return closest;
         }
 
@@ -1396,6 +1407,7 @@ namespace UnturnedSim
             }
             if (ground == null) throw new InvalidOperationException($"BuildingGen: no ground floor connected for {kind} seed {spec.Seed} (min {spec.MinRooms} rooms, {spec.MinFloors}-{spec.MaxFloors} floors, {spec.MaxRoomsPerFloor}/floor): {string.Join(", ", onFloor[0])}");
             res.CellsX = W; res.CellsZ = D;
+            res.FrontLost = spec.FrontSide != Sides.None && frontAsked == Sides.None;
             if (wantW > 0 && W > wantW) res.Notes.Add($"{W} cells long, not the {wantW} asked for: its rooms need it");
             if (wantD > 0 && D != wantD) res.Notes.Add($"{D} cells deep, not the {wantD} asked for");
             res.Bay = multi ? (bx0, 0, bx0 + L, bayRows) : (0, 0, 0, 0);
