@@ -16,6 +16,7 @@ mod appearance;
 mod clothing;
 mod crosshair;
 mod network_menu;
+pub(crate) mod npc;
 mod vitals;
 
 const TEXT: Color = Color::srgb(0.88, 0.88, 0.91);
@@ -224,6 +225,9 @@ pub enum Screen {
     Dead,
     Inventory,
     Crafting,
+    Dialogue,
+    Trade,
+    Quests,
     Attachments,
     Settings,
     Console,
@@ -367,6 +371,7 @@ impl Plugin for GameUiPlugin {
                 vitals::VitalsPlugin,
                 crosshair::CrosshairPlugin,
                 network_menu::NetworkMenuPlugin,
+                npc::NpcUiPlugin,
             ))
             .add_systems(Startup, spawn_ui_camera)
             .add_systems(Startup, spawn_hud)
@@ -580,6 +585,10 @@ fn keyboard_ui(
     mut characters: MessageReader<KeyboardInput>,
     mut intents: MessageWriter<UiIntent>,
 ) {
+    if matches!(state.screen, Screen::Dialogue | Screen::Trade | Screen::Quests) {
+        characters.clear();
+        return;
+    }
     if let Some(action) = state.capturing {
         if keys.just_pressed(KeyCode::Escape) {
             state.capturing = None;
@@ -910,7 +919,7 @@ fn rebuild_overlay(
     for root in &roots {
         commands.entity(root).despawn();
     }
-    if matches!(state.screen, Screen::Playing | Screen::Attachments) {
+    if matches!(state.screen, Screen::Playing | Screen::Attachments | Screen::Dialogue | Screen::Trade | Screen::Quests) {
         return;
     }
     commands
@@ -973,7 +982,7 @@ fn rebuild_overlay(
                 Screen::Crafting => crafting_panel(panel, &state, &model),
                 Screen::Settings => settings_panel(panel, &state, &settings),
                 Screen::Console | Screen::Chat => console_panel(panel, &state, &model),
-                Screen::Playing | Screen::Attachments => {}
+                Screen::Playing | Screen::Attachments | Screen::Dialogue | Screen::Trade | Screen::Quests => {}
             });
         });
 }
@@ -1080,6 +1089,7 @@ fn inventory_panel(
     panel.spawn(row()).with_children(|p| {
         p.spawn(text("INVENTORY", 26.0, TEXT));
         button(p, "Crafting", UiButton::Open(Screen::Crafting));
+        button(p, "Quests", UiButton::Open(Screen::Quests));
         button(p, "Close", UiButton::Resume);
     });
     clothing::worn_buttons(panel, model);

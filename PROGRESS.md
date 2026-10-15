@@ -1475,3 +1475,26 @@ client connected to a separate UDP host kept T held through accepted magazine
 removal. Opened before/after image/state pairs show chamber 1, separate 30/29
 choices and the restored diagonal pose. Independent code and image reviews pass;
 the renderer and host quit cleanly. See bevy/docs/WEAPON_PORT.md.
+
+### Bevy accepted NPC dialogue, dollar trade and quest panels (2026-10-15)
+
+Added native DialogueUI/TradeUI/QuestLog/Tracker over the accepted managed read
+model. Message pages finish before responses become selectable; the displayed
+choice maps to its original source index. Accepted dialogue/vendor revisions own
+navigation, trade commands leave local inventory untouched, and session changes
+retire old pages, selections and pins. Long vendor columns scroll independently
+and retain their offset across wallet redraws. Quests use original objective
+sentences and ready/active/completed rules; the temporary entry is Inventory's
+Quests button until the Information/map dashboard is ported.
+
+Six native regressions pass against frozen npc-view-53, complementing its 53 managed,
+121 protocol and 17 NPC core checks. Real Vulkan keyboard/mouse captures verify
+Chef 59→60 two-page dialogue and the newly unlocked conditional response; accepted
+wallet $100→$15 after Maple Syrup, $15→$65 after selling an MRE, and $65→$0 after Dough;
+scroll retention; Medic quest 124 grant, 0/4 Research Capsules tracker/log and visible pin.
+All images were opened, and code plus quest layout received independent review.
+The renderer exited normally via Pause/Quit. Live Janitor verification exposed
+an existing content gap: his quest 9 has no shipped definition and therefore no
+catalog log row. No quest content or authority was invented to mask it. Original
+quest persistence/progress callsites, Information/map UI and editor remain in the
+ledger. See bevy/docs/NPC_UI_PORT.md for exact source boundaries and artifacts.

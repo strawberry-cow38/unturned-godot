@@ -76,7 +76,9 @@ items and another owner's token cannot satisfy a stale request. The original
 magazine/chamber, shell, reload and attachment rules remain shared with integrated
 play. Remote `attachmentOptions` returns `pending:true` until its matching reply.
 See [EQUIPMENT_PROTOCOL.md](EQUIPMENT_PROTOCOL.md) for field bounds, IDs, compatibility
-and verification; native interactive fitting remains a separate checkpoint.
+and verification. Native fitting now handles pending/busy replies, exact duplicate
+magazine choices and accepted slot replacement. Live UDP mouse/keyboard journeys
+verified fitting/removal and held-T reload recovery; see [WEAPON_PORT.md](WEAPON_PORT.md).
 
 ## Asynchronous status and initial-join retry
 
@@ -119,7 +121,8 @@ placement row numbers remain unchanged. A holiday change uses the streaming
 rebuild, keeping the owner, terrain cache, origin and camera focus; host collision
 uploads wait for the matching new geometry. The old leaves remain valid until
 that rebuild. Disconnect clears the complete manifest, including seats and NPC
-metadata. NPC dialogue/trade presentation is still separate work.
+metadata. Accepted NPC dialogue/trade/quest panels are now native; their source
+boundaries and live integrated-world evidence are in [NPC_UI_PORT.md](NPC_UI_PORT.md).
 
 This exposed a host omission: the bridge had parsed local seasonal content but
 left the original Accept holiday argument empty. The host now captures one source
@@ -299,10 +302,9 @@ regression. The corrected guard changes no rendered geometry.
 
 ## Remaining integration
 
-Read-only remote map bindings are a managed follow-up awaiting native adoption;
-without them remote fixture/container interactions remain unavailable, while
-native static world geometry renders. Remaining remote-player presentation,
-moderation UI, dedicated world boot and the explicit wire gaps above require
+Read-only remote map bindings and their authored door/container/seat interactions
+are adopted natively and have live UDP validation as described above. Remaining
+remote-player presentation, moderation UI, dedicated world boot and the explicit wire gaps above require
 further port work. A client must never construct another local authority to fill
 them. Infinite-world multiplayer needs a separate origin protocol and is not
 established by these bounded UDP tests. Remote vehicle tow ropes, source light/

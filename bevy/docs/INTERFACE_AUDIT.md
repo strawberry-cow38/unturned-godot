@@ -63,3 +63,13 @@ saved Godot face preferences import once. See [PROFILE_PORT.md](PROFILE_PORT.md)
 for authority, validation and remaining menu/launcher boundaries.
 
 The later player-camera journey exposed an incorrect generic first-person `+` glyph. `ui/crosshair.rs` replaces it with the current source's four 2x9px arms and 3px center dot, each with a 1.5px black halo. Their geometry is anchored about exact screen center and only shown for an alive on-foot third-person view (including prop seats); normal first-person and vehicle views hide it. The source 12/s gap tween consumes real `Spread_Aim`, owner speed and the existing unapplied pitch recoil, without a second shot accumulator. Two focused tests cover the actual UI system's camera/seat/death transitions and the source geometry/bloom thresholds. Native cannon-aim/gunsight state is not ported yet, so its separate first-person crosshair exception remains pending. Fresh visual verification follows in the combined camera checkpoint.
+
+NPC dialogue, vendor and touched-quest panels are now driven by the accepted
+managed read model. Native page/response controls preserve original indices,
+trades submit server intents, and pinning remains local presentation. Actual
+keyboard/mouse captures verified conditional choices, two pages, dollar buy/sell,
+independent scrolling, accepted quest grant and tracker/log/pin. Six focused
+native tests and peer code/image review pass. The quest log temporarily opens
+from Inventory; the original Information/map dashboard remains pending. See
+[NPC_UI_PORT.md](NPC_UI_PORT.md) for artifacts and the source quest 9/content and
+quest-persistence/progress gaps.

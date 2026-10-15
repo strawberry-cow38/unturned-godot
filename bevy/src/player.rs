@@ -519,7 +519,10 @@ fn ui_intents(
             UiIntent::Save => bridge.request("save", json!({"path":save_path(&options.0.map)})),
             UiIntent::Load => bridge.request("load", json!({"path":save_path(&options.0.map)})),
             UiIntent::Action { name, args } => {
-                if name == "console" && crate::entities::npcs::is_console_command(args["text"].as_str().unwrap_or("")) {
+                if name == "console"
+                    && (crate::entities::npcs::is_console_command(args["text"].as_str().unwrap_or(""))
+                        || crate::ui::npc::is_console_command(args["text"].as_str().unwrap_or("")))
+                {
                     continue;
                 }
                 let gesture = if name == "console" {
