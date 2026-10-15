@@ -23,6 +23,8 @@ public sealed class WorldEnvironment
     public WorldEnvironment(NetWorldServer server, int seed, WorldSave save = null)
     {
         if (float.TryParse(Environment.GetEnvironmentVariable("UG_PUDDLE"), out float puddle)) PuddleLevel = Math.Clamp(puddle, 0, 1);
+        // RainSystem3D.EnsureGlobals seeds this diagnostic on every source world path.
+        if (float.TryParse(Environment.GetEnvironmentVariable("UG_SNOWCOVER"), out float snow) && float.IsFinite(snow)) SnowCover = Math.Clamp(snow, 0, 1);
         _seed = seed; _baseDay = save?.Day ?? 0;
         server.Clock.ServerConfigure(save?.TimeOfDay01 ?? WorldDefaults.StartTime,
             save?.DayLengthSeconds > 0 ? save.DayLengthSeconds : WorldDefaults.DefaultDayLength, 0);
@@ -76,6 +78,8 @@ public sealed class WorldEnvironment
         rainWetness = Sim.BlendAlpha * Severity, rainPuddle = PuddleLevel,
         blendAlpha = Sim.BlendAlpha, severity = Severity, rainIntensity = Sim.BlendAlpha * Severity,
         isRaining = Sim.IsRaining && !IsSnowing, isSnowing = IsSnowing, snowCover = SnowCover,
+        hasLightning = Sim.Active?.HasLightning ?? false, minLightningInterval = Sim.Active?.MinLightningInterval ?? 0,
+        maxLightningInterval = Sim.Active?.MaxLightningInterval ?? 0,
         windMain = Sim.WindMain, fogDensity = Sim.FogDensity, today = Today, tomorrow = Tomorrow,
         dayMeanC = MeanTemperature(_day) };
 }

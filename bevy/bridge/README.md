@@ -496,3 +496,10 @@ while temporary bullets clear, matching the source. Per-bone corpse colliders
 are not exported yet. Authoritative rocket splash/recoverable arrow behavior is
 still limited by the existing server combat implementation; cosmetic retirement
 does not bypass that authority boundary.
+
+Weather snapshots also expose the active original asset's `hasLightning`,
+`minLightningInterval`, and `maxLightningInterval`. Native cosmetic scheduling
+uses these values and existing blend alpha; it does not create weather authority.
+`UG_SNOWCOVER` seeds the authoritative coverage once, clamped to0..1, then the
+original accumulation/temperature-driven melt rules continue. This preserves the
+source render diagnostic without an independent native snow override.
