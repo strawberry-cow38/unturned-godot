@@ -18,6 +18,7 @@ fn app() -> App {
     app.add_plugins((MinimalPlugins, AssetPlugin::default()))
         .init_asset::<Image>()
         .init_resource::<ViewmodelTarget>()
+        .init_resource::<viewport::ViewmodelViewport>()
         .insert_resource(SourceSettings {
             enabled: true,
             aces: true,
@@ -131,7 +132,7 @@ fn separate_viewport_keeps_one_tonemap_and_tracks_resize_and_inactive_arms() {
         .get(&image)
         .unwrap()
         .texture_descriptor;
-    assert_eq!((texture.size.width, texture.size.height), (1600, 900));
+    assert_eq!((texture.size.width, texture.size.height), (1840, 1305));
 }
 #[test]
 fn source_night_vision_changes_world_glow_but_not_viewmodel_profile() {
@@ -153,4 +154,46 @@ fn source_night_vision_changes_world_glow_but_not_viewmodel_profile() {
         Vec4::ZERO,
         "scope stays HDR and linear for the later viewmodel tone map"
     );
+}
+
+#[test]
+fn source_lean_only_rolls_composite_and_resize_does_not_accumulate_fov() {
+    let mut app = app();
+    let main = app
+        .world_mut()
+        .spawn((Camera3d::default(), PlayerCamera))
+        .id();
+    let vm = app
+        .world_mut()
+        .spawn((Camera3d::default(), ViewmodelCamera))
+        .id();
+    let ui = app.world_mut().spawn((Camera2d, IsDefaultUiCamera)).id();
+    app.init_resource::<crate::player::lean::LeanState>();
+    app.world_mut()
+        .resource_mut::<crate::player::lean::LeanState>()
+        .angle = 20_f32.to_radians();
+    let Projection::Perspective(original) = app.world().get::<Projection>(main).unwrap().clone()
+    else {
+        panic!()
+    };
+    for _ in 0..3 {
+        app.update();
+    }
+    let viewport = *app.world().resource::<viewport::ViewmodelViewport>();
+    assert_eq!(viewport.target, UVec2::new(1472, 1044));
+    let Projection::Perspective(expanded) = app.world().get::<Projection>(vm).unwrap() else {
+        panic!()
+    };
+    assert!((expanded.fov - viewport.vertical_fov(viewport::SOURCE_FOV)).abs() < 1e-6);
+    let Projection::Perspective(main) = app.world().get::<Projection>(main).unwrap() else {
+        panic!()
+    };
+    assert_eq!(
+        original.fov, main.fov,
+        "world camera keeps its own field of view"
+    );
+    let mapping = app.world().get::<CompositeMapping>(ui).unwrap();
+    assert_eq!(mapping.sizes, Vec4::new(1280., 720., 1472., 1044.));
+    let (sin, cos) = 20_f32.to_radians().sin_cos();
+    assert_eq!(mapping.roll, Vec4::new(cos, sin, 0., 0.));
 }

@@ -1,13 +1,34 @@
 # Source HDR, viewmodel composite and night vision
 
 `hdr.rs` gives the original world and first-person viewmodel independent HDR
-render targets. The viewmodel clears transparently into a window-sized
+render targets. The viewmodel clears transparently into the source 1.15×1.45 expanded
 `Rgba16Float` image and composites over the completed world before the HUD.
 Resizing preserves its image handle and viewport scale factor; an inactive
 viewmodel never leaves the previous frame's arms visible. The world, UI and
 console share a matching HDR intermediate, with Bevy tone mapping disabled so
 neither completed 3D image is tone mapped again. The source canvas composite is
 performed in sRGB, after each 3D viewport's own tone map.
+
+`hdr/viewport.rs` shares the source integer target sizing, width-locked FOV
+conversion and crop coordinates. The source nominal vertical60° framing is
+expanded before Bevy updates projection matrices; centre cropping retains the
+same on-screen weapon size. The composite applies the original negative lean
+angle around screen centre in pixel space, with transparent samples outside the
+padded image. The 3D arms and ADS alignment are unchanged. Attachment overlay
+pixels and tracer muzzle projection subtract the crop margin only, exactly like
+source `VpToScreen`; they do not acquire an invented extra image roll. Physical
+pixels drive targets and normalized projections, while UI margins account for
+window scale. Ten focused HDR tests cover projection landmarks across aspects,
+integer rounding/HiDPI, centre-pivot lean, resize, and non-accumulating FOV.
+The fresh native Vulkan journey produced opened `bevy-lean-upright-settled`,
+`bevy-lean-left-hip`, `bevy-lean-right-hip`, both left/right ADS and
+`bevy-lean-third-person` PNG/JSON pairs.
+The settled nominal framing matches the earlier fitted8x hip image, ±20° lean
+keeps the HUD upright, and the ADS reticle remains at screen centre without
+transparent viewport wedges. Third-person view omits the viewmodel. All settled
+sidecars report ready=true; the shader logs contain no validation errors. The first upright capture occurred
+during equip and is not used for that framing comparison. Interface peer review
+checked the source FOV/crop/roll equations and ordering before the live run.
 
 Light units come from both engines' renderer implementations. In Godot's default
 nonphysical mode directional, omni and spot energies are multiplied by pi before

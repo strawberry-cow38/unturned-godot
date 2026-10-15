@@ -1179,3 +1179,18 @@ this checkpoint does not claim end-to-end multiplayer is playable.
 - Consume the original managed GestureRules catalog; B/rebindable actions and the source `gesture` console selector send unchanged requests. Loop replicas and accepted one-shot events drive the real full-body clips without optimistic posing. Shared upper-body sampling preserves locomotion legs and source crouch/prone shoulder correction.
 - Five focused regressions pass, including a real B-key request through delayed server adoption and stop, actual original rig poses, retained-event deduplication, and the source null T-pose/one-shot-over-loop edge cases. Independent source review found no blocker.
 - Opened actual Vulkan captures `bevy-gesture-surrender`, `bevy-gesture-surrender-stopped`, and `bevy-gesture-wave`: accepted state6 raises both clothed arms; state0 restores idle; a one-shot raises the right hand without changing persistent state. Clean Quit completed. Long X11 synthetic toggle holds exposed repeat behavior; a dedicated input regression remains for the next UI slice.
+
+### Bevy source viewmodel padding and lean composite (2026-10-15)
+
+The independent first-person target now uses the original 1.15×1.45 expansion,
+nearest-even pixel sizing and width-locked FOV before camera projection updates.
+The final composite crops around screen centre and applies the original negative
+2D lean roll; arms, scope alignment and the source crop-only muzzle/UI projection
+retain their original coordinate rules. Ten focused HDR tests pass, covering
+resize, HiDPI, projection landmarks, roll and repeated-frame FOV stability.
+Opened actual Vulkan captures verify settled upright framing, both ±20° hip and
+8× ADS views, and third-person: the reticle stays centred, HUD stays upright,
+there are no transparent viewport wedges and third-person omits the viewmodel.
+Independent source-equation and live-image reviews found no blocker. This
+completes the previously pending lean render integration. Lamp-off residual
+diagnosis remains separate; see `bevy/docs/HDR_NIGHTVISION_PORT.md`.

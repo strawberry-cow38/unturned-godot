@@ -1,6 +1,7 @@
 //! Independent source world/viewmodel HDR pipelines and non-HDR canvas composite.
 mod light_units;
 mod render;
+pub(crate) mod viewport;
 pub(crate) use render::CompositePass;
 #[cfg(test)]
 mod tests;
@@ -52,6 +53,14 @@ struct HdrSettings {
 struct Composite {
     image: Handle<Image>,
     active: bool,
+}
+#[derive(Component, Clone, Copy, ExtractComponent, ShaderType)]
+#[extract_app(RenderApp)]
+struct CompositeMapping {
+    // Physical screen xy, expanded texture zw. Ratios also work at HiDPI.
+    sizes: Vec4,
+    // cos(lean), sin(lean); inverse of source negative TextureRect rotation.
+    roll: Vec4,
 }
 #[derive(Resource, Default)]
 struct ViewmodelTarget {
@@ -129,9 +138,12 @@ impl Plugin for HdrPlugin {
             ExtractComponentPlugin::<HdrSettings>::default(),
             UniformComponentPlugin::<HdrSettings>::default(),
             ExtractComponentPlugin::<Composite>::default(),
+            ExtractComponentPlugin::<CompositeMapping>::default(),
+            UniformComponentPlugin::<CompositeMapping>::default(),
         ))
         .init_resource::<SourceSettings>()
         .init_resource::<ViewmodelTarget>()
+        .init_resource::<viewport::ViewmodelViewport>()
         .add_systems(PostUpdate, configure.before(CameraUpdateSystems));
         render::install(app);
         light_units::install(app);
@@ -149,6 +161,9 @@ fn configure(
     mut images: ResMut<Assets<Image>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     nightvision: Res<crate::nightvision::NightVision>,
+    mut viewport: ResMut<viewport::ViewmodelViewport>,
+    lean: Option<Res<crate::player::lean::LeanState>>,
+    mut vm_projection: Query<&mut Projection, With<ViewmodelCamera>>,
     cameras: Query<(
         Entity,
         &Camera,
@@ -161,10 +176,25 @@ fn configure(
     )>,
 ) {
     let Ok(window) = windows.single() else { return };
-    let size = UVec2::new(
-        window.physical_width().max(1),
-        window.physical_height().max(1),
+    *viewport = viewport::ViewmodelViewport::new(
+        UVec2::new(window.physical_width(), window.physical_height()),
+        window.scale_factor(),
     );
+    let size = viewport.target;
+    for mut projection in &mut vm_projection {
+        if let Projection::Perspective(projection) = &mut *projection {
+            projection.fov = viewport.vertical_fov(viewport::SOURCE_FOV);
+        }
+    }
+    let (sin, cos) = lean.as_ref().map_or(0., |lean| lean.angle).sin_cos();
+    let mapping = CompositeMapping {
+        sizes: viewport
+            .screen
+            .as_vec2()
+            .extend(viewport.target.x as f32)
+            .extend(viewport.target.y as f32),
+        roll: Vec4::new(cos, sin, 0., 0.),
+    };
     if target_image.size != size {
         if let Some(handle) = target_image.image.as_ref() {
             if let Some(mut image) = images.get_mut(handle) {
@@ -214,10 +244,13 @@ fn configure(
             ));
         }
         if ui {
-            commands.entity(entity).insert(Composite {
-                image: image.clone(),
-                active,
-            });
+            commands.entity(entity).insert((
+                Composite {
+                    image: image.clone(),
+                    active,
+                },
+                mapping,
+            ));
         }
     }
 }

@@ -1003,6 +1003,7 @@ fn project_attachment_hooks(
     cameras: Query<(&Camera, &GlobalTransform), With<ViewmodelCamera>>,
     transforms: Query<&GlobalTransform>,
     mut anchors: ResMut<AttachmentAnchors>,
+    viewport: Option<Res<crate::hdr::viewport::ViewmodelViewport>>,
 ) {
     anchors.0.clear();
     if ui.screen != Screen::Attachments {
@@ -1022,7 +1023,12 @@ fn project_attachment_hooks(
         ("Magazine", Vec3::new(0., 0.0166, 0.0238)),
     ] {
         if let Ok(screen) = camera.world_to_viewport(view, gun.transform_point(hook)) {
-            anchors.0.insert(slot.into(), screen);
+            anchors.0.insert(
+                slot.into(),
+                viewport
+                    .as_ref()
+                    .map_or(screen, |viewport| viewport.viewport_to_screen(screen)),
+            );
         }
     }
 }
@@ -1033,6 +1039,7 @@ fn project_muzzle(
     world_cameras: Query<(&Camera, &GlobalTransform), With<PlayerCamera>>,
     transforms: Query<&GlobalTransform>,
     mut status: ResMut<ViewmodelStatus>,
+    viewport: Option<Res<crate::hdr::viewport::ViewmodelViewport>>,
 ) {
     status.muzzle_offset = None;
     if !state.is_gun || state.hands_off || state.driving {
@@ -1058,7 +1065,9 @@ fn project_muzzle(
     status.muzzle_offset = crate::bullets::muzzle_projection(
         gun.transform_point(visual.muzzle),
         view.to_matrix(),
-        camera.clip_from_view(),
+        viewport.as_ref().map_or(camera.clip_from_view(), |viewport| {
+            viewport.cropped_projection(camera.clip_from_view())
+        }),
         world_camera.clip_from_view(),
         world_view.rotation(),
         metadata.muzzle_anchor_depth,
@@ -1096,10 +1105,9 @@ fn pose_viewmodel(
 ) {
     for mut projection in &mut cameras {
         if let Projection::Perspective(p) = &mut *projection {
-            // Source OversizeFov takes a vertical 60 degrees and converts it to
-            // the oversized viewport's horizontal FOV. At native screen size
-            // the same framing is simply a vertical 60 degrees.
-            p.fov = 60_f32.to_radians();
+            // Nominal source framing; HDR expands the actual target/FOV in
+            // PostUpdate before Bevy updates camera projection matrices.
+            p.fov = crate::hdr::viewport::SOURCE_FOV;
         }
     }
     let Some(root) = state.arms else { return };

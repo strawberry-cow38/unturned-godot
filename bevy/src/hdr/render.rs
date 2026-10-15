@@ -1,4 +1,4 @@
-use super::{Composite, HdrSettings};
+use super::{Composite, CompositeMapping, HdrSettings};
 use bevy::{
     core_pipeline::{
         Core2dSystems, Core3dSystems, FullscreenShader,
@@ -96,6 +96,7 @@ fn initialize(
                 texture_2d(TextureSampleType::Float { filterable: true }),
                 sampler(SamplerBindingType::Filtering),
                 texture_2d(TextureSampleType::Float { filterable: true }),
+                uniform_buffer::<CompositeMapping>(true),
             ),
         ),
     );
@@ -309,13 +310,18 @@ fn draw(
     pass.draw(0..3, 0..1);
 }
 fn composite(
-    view: ViewQuery<(&ViewTarget, &Composite)>,
+    view: ViewQuery<(
+        &ViewTarget,
+        &Composite,
+        &DynamicUniformIndex<CompositeMapping>,
+    )>,
     pipelines: Res<Pipelines>,
     cache: Res<PipelineCache>,
     images: Res<RenderAssets<GpuImage>>,
+    uniforms: Res<ComponentUniforms<CompositeMapping>>,
     mut context: RenderContext,
 ) {
-    let (target, settings) = view.into_inner();
+    let (target, settings, index) = view.into_inner();
     if !settings.active {
         return;
     }
@@ -328,11 +334,19 @@ fn composite(
     let Some(image) = images.get(&settings.image) else {
         return;
     };
+    let Some(uniforms) = uniforms.uniforms().binding() else {
+        return;
+    };
     let output = target.post_process_write();
     let bind = context.render_device().create_bind_group(
         "source_viewmodel_canvas",
         &cache.get_bind_group_layout(&pipelines.composite_layout),
-        &BindGroupEntries::sequential((output.source, &pipelines.sampler, &image.texture_view)),
+        &BindGroupEntries::sequential((
+            output.source,
+            &pipelines.sampler,
+            &image.texture_view,
+            uniforms,
+        )),
     );
     let mut pass = context
         .command_encoder()
@@ -350,6 +364,6 @@ fn composite(
             multiview_mask: None,
         });
     pass.set_pipeline(pipeline);
-    pass.set_bind_group(0, &bind, &[]);
+    pass.set_bind_group(0, &bind, &[index.index()]);
     pass.draw(0..3, 0..1);
 }
