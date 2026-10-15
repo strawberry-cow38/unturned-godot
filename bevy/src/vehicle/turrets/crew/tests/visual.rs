@@ -1,4 +1,5 @@
-//! Explicit accepted-crew presentation fixture; no AI, flight or damage authority.
+//! Explicit accepted-crew presentation fixture. Optional authority mode routes
+//! real Fire commands through a host and renders a separate UDP observer.
 use super::*;
 use bevy::{
     app::AppExit,
@@ -14,16 +15,18 @@ struct Shot {
     wreck: bool,
 }
 #[test]
-#[ignore = "requires Vulkan/display; UG_CREW_VEHICLE=huey|orca UG_CREW_DEAD=1 UG_CREW_SIDE=1 UG_CREW_WRECK=1 UG_CREW_SHOT=png"]
+#[ignore = "requires Vulkan/display; UG_CREW_VEHICLE=huey|orca UG_CREW_DEAD=1 UG_CREW_SIDE=1 UG_CREW_WRECK=1 UG_CREW_AUTHORITY=1 UG_CREW_SHOT=png"]
 fn render_original_door_crew() {
-    let key = if std::env::var("UG_CREW_VEHICLE").as_deref() == Ok("orca") {
+    let authoritative = std::env::var("UG_CREW_AUTHORITY").as_deref() == Ok("1");
+    let journey = authoritative.then(super::authority::Journey::new);
+    let key = if !authoritative && std::env::var("UG_CREW_VEHICLE").as_deref() == Ok("orca") {
         "orca"
     } else {
         "huey"
     };
-    let dead = std::env::var("UG_CREW_DEAD").as_deref() == Ok("1");
+    let dead = !authoritative && std::env::var("UG_CREW_DEAD").as_deref() == Ok("1");
     let other = std::env::var("UG_CREW_SIDE").as_deref() == Ok("1");
-    let wreck = std::env::var("UG_CREW_WRECK").as_deref() == Ok("1");
+    let wreck = !authoritative && std::env::var("UG_CREW_WRECK").as_deref() == Ok("1");
     let path = std::env::var("UG_CREW_SHOT").unwrap_or_else(|_| "/tmp/bevy-crew.png".into());
     let config = WorldConfig::default();
     let mut app = App::new();
@@ -78,8 +81,12 @@ fn render_original_door_crew() {
         PostUpdate,
         capture.after(bevy::transform::TransformSystems::Propagate),
     );
-    app.world_mut().resource_mut::<ItemCatalog>().npc_crew = Some(definition());
-    let body = build(&mut app, key, 17);
+    app.world_mut().resource_mut::<ItemCatalog>().npc_crew = Some(
+        journey
+            .as_ref()
+            .map_or_else(definition, |j| j.metadata.clone()),
+    );
+    let body = build(&mut app, key, journey.as_ref().map_or(17, |j| j.id));
     if wreck {
         app.world_mut().get_mut::<VehicleBody>(body).unwrap().flags |= 32;
     }
@@ -93,6 +100,11 @@ fn render_original_door_crew() {
         .collect::<Vec<_>>();
     app.world_mut().resource_mut::<GameSnapshot>().0 = json!({"connected":true,"network":{"mode":"client","ownsWorld":false},
         "vehicleMounts":[{"vehicleNetId":17,"headOut":false,"mounts":rows}]});
+    if let Some(journey) = journey {
+        app.world_mut().resource_mut::<GameSnapshot>().0 = journey.peer_state.clone();
+        app.insert_resource(journey)
+            .add_systems(Update, super::authority::advance.before(VehicleUpdate));
+    }
     app.insert_resource(Shot {
         path: path.clone(),
         expected: if dead { 1 } else { 2 },
@@ -138,7 +150,19 @@ fn render_original_door_crew() {
         )
         .unwrap();
     app.run();
-    assert!(std::path::Path::new(&path).is_file());
+    if authoritative {
+        assert!(capture_path(&path, "before").is_file());
+        assert!(capture_path(&path, "after").is_file());
+    } else {
+        assert!(std::path::Path::new(&path).is_file());
+    }
+}
+fn capture_path(base: &str, stage: &str) -> std::path::PathBuf {
+    let base = std::path::Path::new(base);
+    base.with_file_name(format!(
+        "{}-{stage}.png",
+        base.file_stem().unwrap().to_string_lossy()
+    ))
 }
 fn capture(
     mut frame: Local<u32>,
@@ -149,12 +173,37 @@ fn capture(
     skins: Query<&MeshMaterial3d<StandardMaterial>>,
     materials: Res<Assets<StandardMaterial>>,
     rig_skins: Query<&crate::rig::RigSkin, With<Crew>>,
+    journey: Option<Res<super::authority::Journey>>,
 ) {
     *frame += 1;
-    if *frame != 70 {
+    if *frame != 70 && !(journey.is_some() && *frame == 140) {
         return;
     }
-    assert_eq!(crew.iter().count(), shot.expected);
+    let mut exit_after_capture = true;
+    let mut path = std::path::PathBuf::from(&shot.path);
+    let expected = if let Some(journey) = &journey {
+        let before = *frame == 70;
+        assert_eq!(journey.shots, if before { 0 } else { 3 });
+        assert_eq!(journey.ammo(), if before { 30 } else { 27 });
+        assert_eq!(journey.health(0), if before { 100. } else { 0. });
+        assert_eq!(journey.health(1), 100.);
+        assert_eq!(journey.peer_alive(0), before);
+        assert!(journey.peer_alive(1));
+        let expected = if before { 2 } else { 1 };
+        path = capture_path(&shot.path, if before { "before" } else { "after" });
+        let mut evidence = journey.evidence();
+        evidence["nativeCrewCount"] = expected.into();
+        std::fs::write(
+            path.with_extension("json"),
+            serde_json::to_string_pretty(&evidence).unwrap(),
+        )
+        .unwrap();
+        exit_after_capture = !before;
+        expected
+    } else {
+        shot.expected
+    };
+    assert_eq!(crew.iter().count(), expected);
     if shot.wreck {
         assert!(bodies.iter().all(|body| body.flags & 32 != 0));
         for skin in &rig_skins {
@@ -174,10 +223,12 @@ fn capture(
     }
     commands
         .spawn(Screenshot::primary_window())
-        .observe(save_to_disk(shot.path.clone()))
+        .observe(save_to_disk(path))
         .observe(
-            |_: On<ScreenshotCaptured>, mut exit: MessageWriter<AppExit>| {
-                exit.write(AppExit::Success);
+            move |_: On<ScreenshotCaptured>, mut exit: MessageWriter<AppExit>| {
+                if exit_after_capture {
+                    exit.write(AppExit::Success);
+                }
             },
         );
 }

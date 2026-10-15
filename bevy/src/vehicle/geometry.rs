@@ -59,7 +59,11 @@ pub fn upload(
     config: Res<WorldConfig>,
     geometry: Res<WorldGeometry>,
     bodies: Query<(Entity, &VehicleBody, &Transform, Option<&turrets::Mounts>)>,
-    hierarchy: Query<(Option<&ChildOf>, Option<&Visibility>)>,
+    hierarchy: Query<(
+        Option<&ChildOf>,
+        Option<&Visibility>,
+        Has<turrets::crew::Crew>,
+    )>,
     parts: Query<
         (
             Entity,
@@ -137,10 +141,12 @@ pub fn upload(
                 net_id = Some(*id);
                 break;
             }
-            let Ok((parent, visibility)) = hierarchy.get(owner) else {
+            let Ok((parent, visibility, crew)) = hierarchy.get(owner) else {
                 break;
             };
-            if visibility == Some(&Visibility::Hidden) {
+            // TargetDummy's explicit source box is the only crew hit region.
+            // Bind-pose skin, arms and attached gun are not vehicle hulls.
+            if crew || visibility == Some(&Visibility::Hidden) {
                 break;
             }
             let Some(parent) = parent else {

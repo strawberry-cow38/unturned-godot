@@ -29,7 +29,7 @@ pub(crate) struct Definition {
     clip: Option<String>,
 }
 #[derive(Component)]
-struct Crew {
+pub(in crate::vehicle) struct Crew {
     gun: String,
     attached: bool,
 }

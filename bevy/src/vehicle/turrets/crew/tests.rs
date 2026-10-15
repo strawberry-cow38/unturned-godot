@@ -291,4 +291,5 @@ fn live_crew_remains_on_wreck_and_late_materials_receive_original_char_override(
     );
 }
 
+mod authority;
 mod visual;
