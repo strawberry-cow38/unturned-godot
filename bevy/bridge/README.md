@@ -220,4 +220,55 @@ original render-test starting level; `snowCover` already carries accumulation.
 Chainsaws use the original weak-hit path at the extracted 0.225-second interval
 (12 ticks at 50 Hz), without a delayed swing or a strong attack. Catalog exposes
 `repeatedHitSeconds`; native input/animation may continuously request weak cuts.
-Repair tools are excluded from damaging melee and need the separate repair path.
+Repair tools are excluded from damaging melee and use `toolUse` below.
+
+Host combat meshes additionally accept `vehicleNetId`, `deployableNetId`, and
+`bodyPart` (default `hull`). The ray chooses the nearest actual triangle; a client
+never supplies a hit verdict. Removed entities stop blocking rays even before
+the native scene removes their meshes. `worldVehicles` accepts `healthMax`,
+ordered `hitRegions:[{bodyPart,center,size}]` and `engineRegion:{rear,threshold}`;
+the server resolves source rotor boxes and engine half-space in the vehicle's
+local frame. Accepted `vehicleDamage` facts contain `netId,amount,engineShare,
+bodyPart,point,direction,attacker,health`; direct engine/rotor hits do not subtract
+hull HP. Melee and blasts retain source half-damage to the engine.
+
+Vehicle and generator destruction runs on the server's original four-second
+fuse, followed by the source blast, 60-second burn/cooling, and 360-second corpse
+retirement. Non-generators break immediately. `vehicleExploded` includes source
+impulse/torque; `deployableBroken`/`deployableExploded` describe presentation.
+Snapshots include `onFire,burnSeconds,wreckSalvageable`. Save extensions retain
+remaining fuses and elapsed burns, including when elapsed time exceeds the new
+session's tick count. Original network scalar/flag layouts are unchanged.
+
+`action toolUse {active:true}` refreshes a five-tick held-input lease; send false
+on release, UI capture, equipment changes or death. The server validates the
+exact held repair tool and uses the original eye reach to find the target.
+Repairs retain fractional HP across wire quantization and use source
+`VehicleDamage*3` per second. A continuous three-second hold salvages a cold
+wreck; hot or instant salvage is refused. `vehicleRepaired` gives accepted
+`netId,amount,health,healthMax` for proportional native engine/rotor repair.
+
+`consumeAccepted {playerId,itemId,page,x,y,tick}` follows actual source effects
+and spending. Native consumption sends the intent at its source clip completion.
+`throwAccepted {playerId,itemId,netId,tick}` follows validation and spending;
+this host additionally requires an owned throwable. `state.projectiles` exposes
+original replicas `{netId,kind,position,lastChangedTick}`. The existing wire has
+no velocity/exact item/expiration field: families are grenade0, smoke1, flare2.
+Inventory instances include `frozen,cooked,cookStyle`; any nonzero frozen value
+blocks eating. Weapon `selectionVersion` changes with the exact held reference,
+including same-ID replacements; `broken` and `canFire` expose hard validity
+without confusing rate/bolt/reload timers with permanent inability to fire.
+
+`mapServices.containerDoors` supplies the same authored leaf schema as
+`objectDoors`, keyed by the container's real `netId` and `sourceIndex`.
+These assemblies follow `state.containers.doorsOpen`, plus `cookerOn` only where
+`lidRisesWhenLit` is true (the original barbecue rule). PEI currently registers
+345 container door groups, 57 standalone doors and 393 seat anchors.
+
+Vehicle subsystem pools are also host-owned: `engineRegion.health` and each
+rotor `hitRegions[].health` initialize the source maxima. Snapshots expose
+`engineHealth,mainRotorHealth,tailRotorHealth,engineDrowned`; damage, proportional
+repair and save/load preserve them. Trusted native water physics may publish
+`engineDrowned:true` through `worldVehicleState`; this irreversible source flag
+prevents a blowtorch repairing a drowned engine. Tire hits update the original
+replicated popped-tire mask, so replacing a tire remains the existing transaction.

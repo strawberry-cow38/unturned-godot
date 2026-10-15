@@ -101,7 +101,7 @@ public sealed partial class WorldServices
             _server.Interactables.RegisterBed(checked((uint)Int(d, "netId")), Vec(d, "position"), Float(d, "yaw"));
         foreach (var d in Entries(spec, "objectDoors"))
         {
-            uint id = checked((uint)Int(d, "netId")); var pos = Vec(d, "position"); var side = Vec(d, "swingSide");
+            uint id = checked((uint)Int(d, "netId")); var pos = Vec(d, "interactionPosition", Vec(d, "position")); var side = Vec(d, "swingSide");
             _server.Interactables.RegisterObjectDoor(id, pos, Bool(d, "open"), side);
             _objectDoorMeta[id] = (pos, side);
         }
@@ -154,7 +154,11 @@ public sealed partial class WorldServices
             }
             MapKey = Text(spec, "mapKey");
             return MapResult = new { objects = mappings, resources = spec.GetProperty("mapResources").Clone(),
-                objectDoors = Entries(spec, "objectDoors").ToArray(), seats = Entries(spec, "seats").ToArray(), npcs = Entries(spec, "npcs").ToArray(),
+                objectDoors = Entries(spec, "objectDoors").ToArray(),
+                containerDoors = Entries(spec, "containerDoors").Select(d => {
+                    var node = System.Text.Json.Nodes.JsonNode.Parse(d.GetRawText());
+                    node["netId"] = containerIds[Int(d, "containerOrdinal")]; return node;
+                }).ToArray(), seats = Entries(spec, "seats").ToArray(), npcs = Entries(spec, "npcs").ToArray(),
                 resourceCount = _server.Resources.Count, destructibleCount = _server.Destructibles.Count,
                 containerCount = containers.Count, fixtureCount = fixturesCount(), deadzoneCount = _server.Deadzones.VolumeCount };
         }

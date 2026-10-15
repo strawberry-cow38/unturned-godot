@@ -196,6 +196,7 @@ namespace UnturnedGodot.Net
         public Action<CombatResourceHit> DamageResource;
         public Action<CombatBodyHit> DamageBody;
         public Action<CombatBlast> DamageHostBlast;
+        public Func<Vector3, Vector3, bool> BlastOccluded;
         public CombatWorldRay WorldRay;                       // optional world-geometry occlusion + bullet stops
         // destructible props (rubble): (index, amount, tick) -> destroyed? Set by the host to ServerDestructibles.DamageObject.
         // Null on the L0 default (no world = nothing destructible to hit).
@@ -762,12 +763,12 @@ namespace UnturnedGodot.Net
         /// broadcast, so every client renders it -- rather than growing a second, subtly different explosion
         /// that would drift from this one the first time either was tuned. strawberry 2026-09-05: microwaves
         /// "will EXPLODE if you add metal".</summary>
-        public void ServerDetonateAt(Vector3 pos, float radius, float playerDamage, long tick)
+        public void ServerDetonateAt(Vector3 pos, float radius, float playerDamage, long tick, float? zombieDamage = null)
         {
             var g = new GrenadeEntity { NetIdValue = 0, Owner = 0, Pos = pos,
                                         Def = new ThrowableDef { Id = 0, Kind = EThrowableKind.Explosive,
                                                                  Radius = radius, PlayerDamage = playerDamage,
-                                                                 ZombieDamage = playerDamage, VehicleDamage = 0f } };
+                                                                 ZombieDamage = zombieDamage ?? playerDamage, VehicleDamage = 0f } };
             Explode(g, tick);
         }
 
@@ -830,6 +831,7 @@ namespace UnturnedGodot.Net
 
         bool Blocked(Vector3 a, Vector3 b)
         {
+            if (BlastOccluded != null) return BlastOccluded(a, b);
             if (WorldRay == null && WorldRayDetailed == null) return false;
             var up = new Vector3(0f, 0.8f, 0f);   // chest height, like the SP ExplosionBlocked LoS ray
             return RayWorld(a + up, b + up, out _);

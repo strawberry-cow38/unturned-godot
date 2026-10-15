@@ -42,7 +42,7 @@ public static class MapServices
         var rubble = DestructibleField.LoadCatalog();
         var mappings = new List<ObjectMapping>();
         var fixtures = new List<object>(); var containers = new List<object>(); var destructibles = new List<object>(); var taps = new List<object>();
-        var objectDoors = new List<object>(); var seats = new List<object>(); var npcs = new List<object>();
+        var objectDoors = new List<object>(); var containerDoors = new List<object>(); var seats = new List<object>(); var npcs = new List<object>();
         var doorCatalog = WorldBuilder.LoadDoorCatalog(objectDir + Path.DirectorySeparatorChar);
         var seatCatalog = WorldBuilder.LoadSeatCatalog(objectDir + Path.DirectorySeparatorChar);
         int index = 0, sourceIndex = -1;
@@ -64,6 +64,13 @@ public static class MapServices
             {
                 containerOrdinal = containers.Count;
                 containers.Add(new { cfg.mesh, cfg.table, cfg.display, cfg.label, position = pos, yaw });
+                if (doorCatalog.TryGetValue(cfg.mesh, out var containerLeaves))
+                {
+                    var models = DoorModels(objectDir, cfg.mesh, containerLeaves);
+                    if (models.Length > 0) containerDoors.Add(new { containerOrdinal = containerOrdinal.Value, sourceIndex,
+                        name = cfg.mesh, position = pos, rotation = new[] { F(p[4]), yaw, -F(p[6]) }, scale = new[] { F(p[7]), F(p[8]), F(p[9]) },
+                        open = false, lidRisesWhenLit = ContainerNetSync.IsCooker(cfg.mesh, out var cookKind) && cookKind == SDG.Unturned.ECookerKind.Barbecue, leaves = models });
+                }
             }
             else
             {
@@ -78,19 +85,19 @@ public static class MapServices
                     var transform = PlacementMatrix(rotation, scale); transform.Translation = new(pos[0], pos[1], pos[2]);
                     if (doorCatalog.TryGetValue(name, out var leaves))
                     {
-                        var models = leaves.Where(d => File.Exists(Path.Combine(objectDir, d.MeshFile))).Select(d => {
-                            string curveBase = d.MeshFile.EndsWith("_door.obj") ? d.MeshFile[..^"_door.obj".Length] : name;
-                            return new { mesh = "objects/" + d.MeshFile, pivot = new[] { d.Pivot.X, d.Pivot.Y, d.Pivot.Z },
-                                axis = new[] { d.Axis.X, d.Axis.Y, d.Axis.Z }, angleDegrees = d.AngleDeg,
-                                durationSeconds = d.DurationSec, defaultOpen = d.DefaultOpen, sound = d.Sound,
-                                openCurve = WorldBuilder.LoadDoorCurve(objectDir + Path.DirectorySeparatorChar, curveBase, "open")?.Select(k => new[] { k.X, k.Y }).ToArray(),
-                                closeCurve = WorldBuilder.LoadDoorCurve(objectDir + Path.DirectorySeparatorChar, curveBase, "close")?.Select(k => new[] { k.X, k.Y }).ToArray() };
-                        }).ToArray();
+                        var models = DoorModels(objectDir, name, leaves);
                         if (models.Length > 0)
                         {
                             objectDoorId = checked((uint)objectDoors.Count + 1);
+                            // Match ObjectDoor.ClosedLeafCentreWorld: a long prop's
+                            // root can be far behind the leaf the player touches.
+                            var lead = leaves.First(d => File.Exists(Path.Combine(objectDir, d.MeshFile)));
+                            var leafBounds = MeshBounds(Path.Combine(objectDir, lead.MeshFile));
+                            var centre = Vector3.Transform(new((leafBounds.lo[0] + leafBounds.hi[0]) * .5f,
+                                (leafBounds.lo[1] + leafBounds.hi[1]) * .5f, (leafBounds.lo[2] + leafBounds.hi[2]) * .5f), transform);
                             objectDoors.Add(new { netId = objectDoorId.Value, sourceIndex, name, position = pos, rotation, scale,
-                                open = models[0].defaultOpen, leaves = models });
+                                interactionPosition = new[] { centre.X, centre.Y, centre.Z },
+                                open = leaves.First(d => File.Exists(Path.Combine(objectDir, d.MeshFile))).DefaultOpen, leaves = models });
                         }
                     }
                     if (seatCatalog.TryGetValue(name, out var anchors)) foreach (var seat in anchors)
@@ -196,7 +203,7 @@ public static class MapServices
             center = new[] { z.Center.X, z.Center.Y, z.Center.Z }, halfExtent = new[] { z.HalfExtent.X, z.HalfExtent.Y, z.HalfExtent.Z },
             kind = z.Kind.ToString(), shape = z.Shape.ToString() });
         var spec = JsonSerializer.SerializeToElement(new { mapRoot = Text(request, "mapRoot"), resourceCount = resourceIndex, resources = resourceMetadata,
-            destructibleCount = index, destructibles, containers, fixtures, taps, objectDoors, seats, npcs, deadzones = zones });
+            destructibleCount = index, destructibles, containers, fixtures, taps, objectDoors, containerDoors, seats, npcs, deadzones = zones });
         return new(spec, mappings.ToArray(), resources.ToArray());
     }
     static float F(string s) => float.Parse(s, CultureInfo.InvariantCulture);
@@ -227,4 +234,16 @@ public static class MapServices
     internal static Matrix4x4 PlacementMatrix(float[] rotation, float[] scale) =>
         Matrix4x4.CreateRotationZ(rotation[2] * MathF.PI / 180) * Matrix4x4.CreateRotationX(rotation[0] * MathF.PI / 180)
         * Matrix4x4.CreateRotationY(rotation[1] * MathF.PI / 180) * Matrix4x4.CreateScale(scale[0], scale[1], scale[2]);
+    static object[] DoorModels(string objectDir, string name, IEnumerable<WorldBuilder.DoorCatalogEntry> leaves)
+    {
+        return leaves.Where(d => File.Exists(Path.Combine(objectDir, d.MeshFile))).Select(d => {
+                            string curveBase = d.MeshFile.EndsWith("_door.obj") ? d.MeshFile[..^"_door.obj".Length] : name;
+                            return new { mesh = "objects/" + d.MeshFile, pivot = new[] { d.Pivot.X, d.Pivot.Y, d.Pivot.Z },
+                                axis = new[] { d.Axis.X, d.Axis.Y, d.Axis.Z }, angleDegrees = d.AngleDeg,
+                                durationSeconds = d.DurationSec, defaultOpen = d.DefaultOpen, sound = d.Sound,
+                                openCurve = WorldBuilder.LoadDoorCurve(objectDir + Path.DirectorySeparatorChar, curveBase, "open")?.Select(k => new[] { k.X, k.Y }).ToArray(),
+                                closeCurve = WorldBuilder.LoadDoorCurve(objectDir + Path.DirectorySeparatorChar, curveBase, "close")?.Select(k => new[] { k.X, k.Y }).ToArray() };
+                        }).ToArray();
+    }
+
 }

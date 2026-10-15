@@ -279,7 +279,8 @@ class BridgeTests(unittest.TestCase):
         self.assertGreater(items[13]['consumeAnimation']['seconds'], 0)
         self.assertAlmostEqual(1.63, catalog['throwMotion']['useSeconds'], delta=.02)
         self.call('action', name='fire', args={})
-        self.assertEqual(29, self.pump()['weapon']['ammo'])
+        first_selection = self.pump()['weapon']
+        self.assertEqual(29, first_selection['ammo'])
         self.call('worldSpawn', items=[dict(itemId=253, position=[0, 0, -.5])])
         pack = self.pump()['worldItems'][0]['netId']
         self.call('action', name='pickupItem', args=dict(netId=pack))
@@ -294,6 +295,7 @@ class BridgeTests(unittest.TestCase):
         self.assertTrue(self.call('action', name='equipAndHold', args=address)['result']['queued'])
         state = self.pump()
         self.assertEqual(30, state['weapon']['ammo'], 'selected the requested fresh twin')
+        self.assertGreater(state['weapon']['selectionVersion'], first_selection['selectionVersion'])
         self.assertEqual(0, state['weapon']['held']['page'])
         self.call('action', name='fire', args={})
         self.pump(8)
@@ -344,6 +346,161 @@ class BridgeTests(unittest.TestCase):
             door = self.pump()['interactables']['objectDoors'][0]
             self.assertTrue(door['open'])
             self.assertTrue(door['reverse'])
+
+    def test_vehicle_hit_fuse_explosion_and_cooling_survive_save(self):
+        spec = dict(typeId=1, key='testcar', position=[0, 0, -2], health=20, fuel=100000, battery=100)
+        ident = self.call('worldVehicles', vehicles=[spec])['result']['vehicles'][0]['netId']
+        self.call('worldDynamicGeometry', key=f'vehicle:{ident}', meshes=[dict(vehicleNetId=ident,
+                  vertices=[[-2, 0, -2], [2, 0, -2], [0, 4, -2]])])
+        self.call('action', name='fire', args={})
+        state = self.pump()
+        self.assertEqual(0, state['vehicles'][0]['health'])
+        self.assertTrue(state['vehicles'][0]['onFire'])
+        self.assertFalse(state['vehicles'][0]['flags'] & 32)
+        self.assertTrue(any(e['kind'] == 'vehicleDamage' for e in state['events']))
+        self.pump(100)
+        with tempfile.TemporaryDirectory() as folder:
+            path = str(Path(folder) / 'fuse.json')
+            self.call('save', path=path)
+            self.call('load', path=path)
+            self.assertFalse(self.pump(30)['vehicles'][0]['flags'] & 32)
+            state = self.pump(80)
+            self.assertTrue(state['vehicles'][0]['flags'] & 32)
+            self.assertTrue(any(e['kind'] == 'vehicleExploded' for e in state['events']))
+            self.assertFalse(state['vehicles'][0]['wreckSalvageable'])
+            self.pump(200)
+            self.call('save', path=path)
+            self.call('load', path=path)
+            self.assertGreater(self.pump()['vehicles'][0]['burnSeconds'], 4)
+            state = self.pump(2800)
+            self.assertTrue(state['vehicles'][0]['wreckSalvageable'])
+            # Native loader rebinds meshes because original save restoration can
+            # mint different entity IDs. Old dynamic geometry is discarded.
+            current_id = state['vehicles'][0]['netId']
+            self.call('worldDynamicGeometry', key=f'vehicle:{current_id}', meshes=[dict(vehicleNetId=current_id,
+                      vertices=[[-2,0,-2],[2,0,-2],[0,4,-2]])])
+            self.call('action', name='respawn', args={})
+            self.pump()
+            self.call('action', name='console', args=dict(text='give 76'))
+            state = self.pump()
+            page, item = next((p['index'],i) for p in state['inventory']['pages'] for i in p['items'] if i['id']==76)
+            self.call('action',name='equipAndHold',args=dict(page=page,x=item['x'],y=item['y']))
+            self.pump()
+            for _ in range(20):
+                self.call('action',name='toolUse',args=dict(active=True))
+                state = self.pump(4)
+            self.assertEqual(1,len(state['vehicles']), 'half a source hold is not enough')
+            self.call('action',name='toolUse',args=dict(active=False))
+            self.pump(6)
+            for _ in range(40):
+                self.call('action',name='toolUse',args=dict(active=True))
+                state = self.pump(4)
+            self.assertEqual([],state['vehicles'])
+            self.assertEqual(3,sum(i['amount'] for i in state['worldItems'] if i['itemId']==67))
+
+    def test_vehicle_engine_region_does_not_subtract_hull_and_world_wall_blocks(self):
+        spec = dict(typeId=1, key='engine', position=[0, 0, -2], health=100, fuel=10, battery=10,
+                    engineRegion=dict(rear=True, threshold=-1, health=100))
+        ident = self.call('worldVehicles', vehicles=[spec])['result']['vehicles'][0]['netId']
+        mesh = dict(vehicleNetId=ident, vertices=[[-2, 0, -2], [2, 0, -2], [0, 4, -2]])
+        self.call('worldDynamicGeometry', key='car', meshes=[mesh])
+        self.call('worldGeometry', meshes=[dict(vertices=[[-2, 0, -1], [2, 0, -1], [0, 4, -1]])], replace=False)
+        self.call('action', name='fire', args={})
+        state = self.pump()
+        self.assertFalse(any(e['kind'] == 'vehicleDamage' for e in state['events']))
+        self.call('worldGeometry', meshes=[])
+        self.call('worldDynamicGeometry', key='car', meshes=[mesh])
+        self.call('action', name='fire', args={})
+        state = self.pump()
+        damage = next(e['data'] for e in state['events'] if e['kind'] == 'vehicleDamage')
+        self.assertEqual('engine', damage['bodyPart'])
+        self.assertEqual(100, state['vehicles'][0]['health'])
+        self.assertEqual(65, state['vehicles'][0]['engineHealth'])
+        with tempfile.TemporaryDirectory() as folder:
+            path = str(Path(folder) / 'engine.json')
+            self.call('save', path=path)
+            self.call('load', path=path)
+            self.assertEqual(65, self.pump()['vehicles'][0]['engineHealth'])
+
+    def test_blowtorch_repairs_at_source_rate_only_while_held_and_aimed(self):
+        ident = self.call('worldVehicles', vehicles=[dict(typeId=1, key='repair', position=[0,0,-2], health=100, healthMax=300, fuel=10, battery=10)])['result']['vehicles'][0]['netId']
+        self.call('worldDynamicGeometry', key='repair', meshes=[dict(vehicleNetId=ident,
+                  vertices=[[-2,0,-2],[2,0,-2],[0,4,-2]])])
+        self.assertFalse(self.call('action', name='toolUse', args=dict(active=True))['result']['queued'])
+        self.assertEqual(100, self.pump()['vehicles'][0]['health'])
+        self.call('action', name='console', args=dict(text='give 76'))
+        state = self.pump()
+        page, item = next((p['index'],i) for p in state['inventory']['pages'] for i in p['items'] if i['id']==76)
+        self.call('action',name='equipAndHold',args=dict(page=page,x=item['x'],y=item['y']))
+        self.pump()
+        for _ in range(50):
+            self.call('action',name='toolUse',args=dict(active=True))
+            state = self.pump(1)
+        self.assertGreaterEqual(state['vehicles'][0]['health'],128, '25Hz replica can trail the final repair tick')
+        self.call('action',name='toolUse',args=dict(active=False))
+        repaired = self.pump()
+        self.assertAlmostEqual(130, repaired['vehicles'][0]['health'], delta=.51, msg='original vehicle wire retains half-HP steps')
+        self.assertAlmostEqual(30, sum(e['data']['amount'] for e in repaired['events'] if e['kind'] == 'vehicleRepaired'), delta=.001)
+        # Turning away still runs the source torch visual, but cannot heal a car behind.
+        for _ in range(10):
+            self.call('action',name='toolUse',args=dict(active=True))
+            self.call('tick',input=dict(yaw=180))
+        self.assertLessEqual(self.pump()['vehicles'][0]['health'],131)
+
+    def test_deployable_damage_breaks_nonburning_and_generator_obeys_fuse(self):
+        self.call('action', name='console', args=dict(text='give 458'))
+        self.pump()
+        self.call('action', name='placeDeployable', args=dict(defId=458, pos=[0, 0, -2], yawDegrees=0))
+        state = self.pump()
+        ident = state['deployables'][0]['netId']
+        self.call('worldDynamicGeometry', key=f'deployable:{ident}', meshes=[dict(deployableNetId=ident,
+                  vertices=[[-2, 0, -2], [2, 0, -2], [0, 4, -2]])])
+        for _ in range(13):
+            self.call('action', name='fire', args={})
+            state = self.pump()
+        self.assertEqual(0, state['deployables'][0]['health'])
+        self.assertTrue(state['deployables'][0]['onFire'])
+        self.call('action', name='salvageDeployable', args=dict(netId=ident))
+        self.assertEqual(1, len(self.pump()['deployables']), 'hot wreck cannot bypass source cooldown')
+        state = self.pump(200)
+        self.assertTrue(any(e['kind'] == 'deployableExploded' for e in state['events']))
+        self.assertGreaterEqual(state['deployables'][0]['burnSeconds'], 0)
+        # Non-generators shatter immediately, without inventing a fire/fuse.
+        self.call('init', contentRoot=str(ROOT / 'game/content'), starterKit=True, spawn=[0, 0, 0])
+        self.call('action', name='console', args=dict(text='give 459'))
+        self.pump()
+        self.call('action', name='placeDeployable', args=dict(defId=459, pos=[0, 0, -2], yawDegrees=0))
+        ident = self.pump()['deployables'][0]['netId']
+        self.call('worldDynamicGeometry', key='lamp', meshes=[dict(deployableNetId=ident,
+                  vertices=[[-2, 0, -2], [2, 0, -2], [0, 4, -2]])])
+        for _ in range(9):
+            self.call('action', name='fire', args={})
+            state = self.pump()
+        self.assertEqual([], state['deployables'])
+        self.assertTrue(any(e['kind'] == 'deployableBroken' for e in state['events']))
+        self.assertFalse(self.call('worldRay', **{'from':[0,1.6,0],'to':[0,1.6,-5]})['result']['hit'])
+
+    def test_consumable_and_throw_facts_require_real_spent_item(self):
+        state = self.call('snapshot')['state']
+        page, item = next((p['index'], i) for p in state['inventory']['pages'] for i in p['items'] if i['id'] == 13)
+        self.assertEqual((0, 0, 0), (item['frozen'], item['cooked'], item['cookStyle']))
+        args = dict(page=page, x=item['x'], y=item['y'])
+        self.call('action', name='consume', args=args)
+        self.call('action', name='consume', args=args)
+        state = self.pump()
+        facts = [e for e in state['events'] if e['kind'] == 'consumeAccepted']
+        self.assertEqual(1, len(facts))
+        self.assertEqual(13, facts[0]['data']['itemId'])
+        self.call('action', name='grenade', args=dict(origin=[0, 1.6, 0], velocity=[0, 1, -2], itemId=254))
+        self.assertEqual([], self.pump()['projectiles'], 'absent grenade cannot be thrown for free')
+        self.call('action', name='console', args=dict(text='give 254'))
+        self.pump()
+        self.call('action', name='grenade', args=dict(origin=[0, 1.6, 0], velocity=[0, 1, -2], itemId=254))
+        state = self.pump()
+        self.assertEqual(1, len(state['projectiles']))
+        self.assertEqual(0, state['projectiles'][0]['kind'])
+        self.assertEqual(1, len([e for e in state['events'] if e['kind'] == 'throwAccepted']))
+        self.assertFalse(any(i['id'] == 254 for p in state['inventory']['pages'] for i in p['items']))
 
     def test_dynamic_geometry_replaces_only_the_named_body(self):
         wall = dict(vertices=[[-2, 0, -4], [2, 0, -4], [0, 4, -4]])
@@ -449,9 +606,21 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual([], self.pump(40)['destructibles']['dead'])
         self.assertTrue(self.call('worldRay', **ray)['result']['hit'])
 
+    def test_long_prop_door_reach_uses_leaf_centre_not_distant_prop_root(self):
+        self.call('init',contentRoot=str(ROOT/'game/content'),spawn=[-476.445,32.5,-111.1])
+        manifest = self.call('mapServices',mapName='PEI',mapRoot='')['result']
+        door = next(d for d in manifest['objectDoors'] if d['name']=='Container_0' and abs(d['position'][0]+476.445)<.1)
+        self.assertGreater(abs(door['position'][2]+111.1),6)
+        self.call('action',name='toggleObjectDoor',args=dict(netId=door['netId']))
+        state = self.pump()
+        replica = next(d for d in state['interactables']['objectDoors'] if d['netId']==door['netId'])
+        self.assertNotEqual(door['open'],replica['open'])
+
     def test_real_map_services_register_all_and_do_not_duplicate_after_load(self):
         request = dict(mapName='PEI', mapRoot='')
         result = self.call('mapServices', **request)['result']
+        self.assertGreater(len(result['containerDoors']), 300)
+        self.assertTrue(all('lidRisesWhenLit' in d and d['netId'] for d in result['containerDoors']))
         self.assertEqual(696, result['containerCount'])
         self.assertEqual(11, result['fixtureCount'])
         self.assertEqual(1, result['deadzoneCount'])

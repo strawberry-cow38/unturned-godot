@@ -145,7 +145,7 @@ hand = player[player.index('        public enum HandKind'):player.index('       
 parts = ['using SDG.Unturned; namespace UnturnedGodot { public static class HandRules {', hand]
 for key in ['CarjackItemId', 'TireItemId']:
     parts.append(match(r'public const ushort ' + key + r'[^;]+;', player))
-for key in ['ThrowCooldown', 'ThrowSpeed', 'WeakThrowScale', 'ThrowLift', 'ThrowReleaseFraction', 'ThrowClearProbe', 'RepeatedHitInterval']:
+for key in ['ThrowCooldown', 'ThrowSpeed', 'WeakThrowScale', 'ThrowLift', 'ThrowReleaseFraction', 'ThrowClearProbe', 'RepeatedHitInterval', 'LookReach']:
     parts.append(match(r'const float ' + key + r'[^;]+;', player).replace('const float', 'public const float'))
 parts.append('}}')
 (out / 'HandRules.g.cs').write_text('\n'.join(parts))
@@ -153,3 +153,22 @@ parts.append('}}')
 doors = builder[builder.index('        public struct DoorCatalogEntry'):builder.index('        /// <summary>Where you can sit on a prop')]
 seats = builder[builder.index('        public static System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<(Vector3 Pos, Vector3 Face)>> LoadSeatCatalog'):builder.index('        // The full placed world')]
 (out / 'DoorCatalog.g.cs').write_text('using Godot; namespace UnturnedGodot { public static partial class WorldBuilder {\n' + doors + seats + '}}')
+
+# Body lifecycle values come from the actual vehicle/deployable node paths.
+vehicle = read('game/Vehicle.cs')
+deployable = read('game/Deployable.cs')
+def number(pattern, text):
+    return re.search(pattern, text, re.S).group(1)
+rules = {
+    'VehicleFuse': number(r'const float ExplodeDelay = ([0-9.]+f)', vehicle),
+    'DeployableFuse': number(r'const float ExplodeDelay = ([0-9.]+f)', deployable),
+    'CoolSeconds': number(r'WreckSalvageable => _exploded && _burnTime >= ([0-9.]+f)', vehicle),
+    'RetireSeconds': number(r'else if \(_burnTime < ([0-9.]+f)\)   // EXTINGUISHED', vehicle),
+    'SalvageSeconds': number(r'const float SalvageTime = ([0-9.]+f)', player),
+    'VehicleRadius': number(r'void ExplodeDamage\(\).*?const float R = ([0-9.]+f)', vehicle),
+    'VehicleDamage': number(r'v.TakeDamage\(SDG.Unturned.ExplosionMath.Linear\(([0-9.]+f)', vehicle),
+    'VehiclePlayerDamage': number(r'pl.TakeDamage\(SDG.Unturned.ExplosionMath.Linear\(([0-9.]+f)', vehicle),
+    'DeployableRadius': number(r'void ExplodeDamage\(\).*?const float R = ([0-9.]+f)', deployable),
+    'DeployableDamage': number(r'v.TakeDamage\(SDG.Unturned.ExplosionMath.Linear\(([0-9.]+f)', deployable),
+}
+(out / 'BodyRules.g.cs').write_text('namespace UnturnedBevy { public static class BodyRules {\n' + '\n'.join(f'public const float {key} = {value};' for key, value in rules.items()) + '}}')

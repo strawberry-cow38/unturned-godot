@@ -36,6 +36,7 @@ public sealed class WeaponServices
     public bool SetFiremode(ushort owner, NetWorldClient client, int mode) => State(owner).SetFiremode(client, mode);
     public void Step() { foreach (var player in _server.CombatState.All) State(player.OwnerPlayerId).Step(); }
     public object Snapshot(ushort owner) => State(owner).Snapshot();
+    public float RepairRate(ushort owner) => State(owner).RepairRate;
 }
 
 public sealed partial class WeaponState
@@ -48,6 +49,8 @@ public sealed partial class WeaponState
     PlayerCombatReplication.CombatEntity _combat;
     Item _heldItem;
     Item _ownedHeld, _selected;
+    Item _selectionObserved;
+    long _selectionVersion;
     ushort _selectedId;
     bool _selectionPending;
     Item _pendingEquip;
@@ -69,6 +72,7 @@ public sealed partial class WeaponState
     readonly Action<byte, byte, byte, ushort, ushort> NetReloadSwap = null;
     int Ammo { get => _combat?.Ammo ?? 0; set { if (_combat != null) _combat.Ammo = value; } }
     public ServerGunProfile Profile { get; private set; }
+    public float RepairRate => Melee?.Repair == true ? Melee.VehicleDamage * 3f : 0;
 
     public WeaponState(NetWorldServer server, Catalog catalog, ushort owner, Action<string, object> emit)
     { _server = server; _catalog = catalog; _owner = owner; _emit = emit; }
@@ -88,6 +92,7 @@ public sealed partial class WeaponState
                 if (chosen && asset != null && HandRules.CanEquipItemAsset(asset) && asset.slot.CanEquipInPage(page))
                 { _ownedHeld = jar.item; break; }
             }
+        if (!ReferenceEquals(_ownedHeld, _selectionObserved)) { _selectionObserved = _ownedHeld; _selectionVersion++; }
         Item gun = _ownedHeld != null && _catalog.GunDefs.ContainsKey(_ownedHeld.id) ? _ownedHeld : null;
         if (ReferenceEquals(gun, _heldItem))
         {
@@ -308,6 +313,8 @@ public sealed partial class WeaponState
         if (Gun == null && _heldItem == null) Ammo = 0;
     }
     public object Snapshot() => new { held = HeldAddress(), reloading = _reloading, rechambering = _server.Session.CurrentTick < _cycleReadyTick,
+        selectionVersion = _selectionVersion, broken = _ownedHeld?.quality == 0,
+        canFire = Gun != null && _combat?.Alive == true && _heldItem?.quality > 0 && _heldItem.gunFiremode != 0,
         ammo = Gun == null ? 0 : Ammo, capacity = Gun == null ? 0 : MagCapacity, chambered = Gun != null && _chambered,
         firemode = Gun == null ? -1 : _heldItem.gunFiremode, magazineId = _loadedMagId, shellItemId = UsesShells ? ShellAsset?.id ?? 0 : 0 };
     static int Ticks(double seconds) => Math.Max(1, (int)Math.Ceiling(seconds / SimClock.FixedDelta));

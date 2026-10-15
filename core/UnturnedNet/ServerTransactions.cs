@@ -66,6 +66,9 @@ namespace UnturnedGodot.Net
         /// <summary>Optional host presentation fact, invoked only after the exact
         /// validated inventory instance was spent and its effects applied.</summary>
         public Action<ushort, ConsumeCommand, ushort> ConsumeApplied;
+        /// <summary>Optional host wreck temperature/hold gate, additional to the
+        /// normal reach and ownership checks. Null preserves existing hosts.</summary>
+        public Func<ushort, uint, bool> CanSalvageWreck;
         /// <summary>Server-side pickup reach: SP picks up by eye-ray focus at arm's length; the server
         /// bounds it generously (grid-quantized feet positions, no eye trace).</summary>
         public const float PickupReach = 6f;
@@ -321,6 +324,7 @@ namespace UnturnedGodot.Net
                                         && _deployables.TryGet(cmd.NetId, out var e)
                                         && MayModify(sender, e)
                                         && e.OnFire   // only a dead/burning wreck tears down (SP: blowtorch a cooled wreck)
+                                        && (CanSalvageWreck == null || CanSalvageWreck(sender, cmd.NetId))
                                         && (e.Pos - pos).magnitude <= DeployableReplication.WireReach);
 
             // B2: hold-F pickup returns the LIVE deployable to the bag (distinct intent from Salvage's scrap --
@@ -815,6 +819,22 @@ namespace UnturnedGodot.Net
             }
             var evt = new DeployablePlacedEvent { NetId = e.NetIdValue, DefId = e.DefId, OwnerPlayerId = sender, Pos = e.Pos, YawDegrees = e.YawDegrees, MountUp = e.MountUp };
             _broadcast(NetMessagePak.Pack(ReplicationIds.EventDeployablePlaced, evt.Write));
+        }
+
+        /// <summary>Authoritative destruction by a host body lifecycle. Uses the
+        /// same storage spill and wire/pipe removal facts as player teardown,
+        /// without granting the salvage reward for shooting a live device.</summary>
+        public bool ServerDestroyDeployable(uint netId)
+        {
+            if (!_deployables.TryGet(netId, out var e)) return false;
+            _deployables.Schema.TryGet(e.DefId, out var def);
+            SpillStorage(netId, def, e.Pos);
+            BroadcastPipeCascade(netId);
+            var wires = _deployables.ServerRemove(netId, _tick());
+            _broadcast(NetMessagePak.Pack(ReplicationIds.EventDeployableRemoved, new DeployableRemovedEvent { NetId = netId }.Write));
+            foreach (uint id in wires)
+                _broadcast(NetMessagePak.Pack(ReplicationIds.EventWireRemoved, new WireRemovedEvent { WireId = id }.Write));
+            return true;
         }
 
         void OnSalvageDeployable(ushort sender, SalvageDeployableCommand cmd)

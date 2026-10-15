@@ -16,6 +16,63 @@ public sealed class VehicleServices
     readonly HashSet<uint> _withDoors = new();
     readonly Dictionary<string, uint> _keys = new();
     readonly Dictionary<uint, float> _fuel = new();
+    readonly Dictionary<uint, JsonElement> _bodySpecs = new();
+    readonly Dictionary<uint, Parts> _parts = new();
+    sealed class Parts
+    {
+        public float Engine, EngineMax, Main, MainMax, Tail, TailMax;
+        public bool Drowned;
+    }
+    public sealed record PartsSaved(int Ordinal, float Engine, float Main, float Tail, bool Drowned);
+    public PartsSaved[] CaptureParts()
+    {
+        var fleet = _server.Vehicles.All.ToArray();
+        return fleet.Select((v, i) => _parts.TryGetValue(v.NetIdValue, out var p) ? new PartsSaved(i, p.Engine, p.Main, p.Tail, p.Drowned) : null).Where(p => p != null).ToArray();
+    }
+    public void RestoreParts(PartsSaved[] saved)
+    {
+        var fleet = _server.Vehicles.All.ToArray();
+        foreach (var s in saved ?? []) if (s.Ordinal >= 0 && s.Ordinal < fleet.Length && _parts.TryGetValue(fleet[s.Ordinal].NetIdValue, out var p))
+        { p.Engine = Math.Clamp(s.Engine, 0, p.EngineMax); p.Main = Math.Clamp(s.Main, 0, p.MainMax); p.Tail = Math.Clamp(s.Tail, 0, p.TailMax); p.Drowned = s.Drowned; }
+    }
+    public float EngineHealth(uint id) => _parts.TryGetValue(id, out var p) ? p.Engine : 0;
+    public float MainRotorHealth(uint id) => _parts.TryGetValue(id, out var p) ? p.Main : 0;
+    public float TailRotorHealth(uint id) => _parts.TryGetValue(id, out var p) ? p.Tail : 0;
+    public bool EngineDrowned(uint id) => _parts.TryGetValue(id, out var p) && p.Drowned;
+    public void DamageParts(uint id, float amount, float engineShare, string part)
+    {
+        if (!_parts.TryGetValue(id, out var p)) return;
+        if (part?.StartsWith("tire:") == true && int.TryParse(part.AsSpan(5), out int tire) && tire is >= 0 and < 8 && _server.Vehicles.TryGet(id, out var e))
+            _server.Vehicles.ServerSetPoppedTires(new(id), (byte)(e.PoppedTireMask | (1 << tire)), _server.Session.CurrentTick);
+        p.Engine = Math.Max(0, p.Engine - amount * (part == "engine" ? 1 : engineShare));
+        if (part == "mainRotor") p.Main = Math.Max(0, p.Main - amount);
+        if (part == "tailRotor") p.Tail = Math.Max(0, p.Tail - amount);
+    }
+    public void RepairParts(uint id, float amount, float maximum)
+    {
+        if (!_parts.TryGetValue(id, out var p) || maximum <= 0) return;
+        float fraction = amount / maximum;
+        if (!p.Drowned) p.Engine = Math.Min(p.EngineMax, p.Engine + p.EngineMax * fraction);
+        p.Main = Math.Min(p.MainMax, p.Main + p.MainMax * fraction);
+        p.Tail = Math.Min(p.TailMax, p.Tail + p.TailMax * fraction);
+    }
+    public float HealthMax(uint id) => _bodySpecs.TryGetValue(id, out var spec) ? Float(spec, "healthMax", Float(spec, "health")) : 0;
+    public string HitPart(uint id, Vector3 point, string reported)
+    {
+        if (!_bodySpecs.TryGetValue(id, out var spec) || !_server.Vehicles.TryGet(id, out var e)) return reported ?? "hull";
+        if (reported?.StartsWith("tire:") == true && int.TryParse(reported.AsSpan(5), out int tire) && tire is >= 0 and < 8 && (e.PoppedTireMask & (1 << tire)) == 0) return reported;
+        if (reported?.StartsWith("lamp:") == true || reported?.StartsWith("glass:") == true) return reported;
+        var rotation = System.Numerics.Quaternion.CreateFromYawPitchRoll(e.YawDegrees * Mathf.Deg2Rad, e.PitchDegrees * Mathf.Deg2Rad, e.RollDegrees * Mathf.Deg2Rad);
+        var p = System.Numerics.Vector3.Transform(new(point.x - e.Pos.x, point.y - e.Pos.y, point.z - e.Pos.z), System.Numerics.Quaternion.Inverse(rotation));
+        if (spec.TryGetProperty("hitRegions", out var regions)) foreach (var region in regions.EnumerateArray())
+        {
+            var center = Vec(region, "center"); var size = Vec(region, "size");
+            if (size.x > 0 && Math.Abs(p.X - center.x) <= size.x * .5f && Math.Abs(p.Y - center.y) <= size.y * .5f && Math.Abs(p.Z - center.z) <= size.z * .5f)
+                return Text(region, "bodyPart", "hull");
+        }
+        if (spec.TryGetProperty("engineRegion", out var engine) && (Bool(engine, "rear") ? p.Z > Float(engine, "threshold") : p.Z < Float(engine, "threshold"))) return "engine";
+        return "hull";
+    }
     public float FuelFor(uint id, float fallback) => _fuel.GetValueOrDefault(id, fallback);
     public void SaveFuel(WorldSave save)
     {
@@ -49,7 +106,7 @@ public sealed class VehicleServices
         if (Bool(request, "replace", true))
         {
             foreach (var vehicle in _server.Vehicles.All.ToArray()) _server.Vehicles.ServerRemove(new(vehicle.NetIdValue), tick);
-            _storage.Clear(); _exits.Clear(); _withDoors.Clear(); _keys.Clear(); _fuel.Clear();
+            _storage.Clear(); _exits.Clear(); _withDoors.Clear(); _keys.Clear(); _fuel.Clear(); _bodySpecs.Clear(); _parts.Clear();
         }
         var result = new List<object>();
         foreach (var spec in request.GetProperty("vehicles").EnumerateArray())
@@ -79,6 +136,16 @@ public sealed class VehicleServices
             }
             if (key.Length > 0) _keys[key] = id.Value;
             _fuel[id.Value] = Float(spec, "fuel");
+            _bodySpecs[id.Value] = spec.Clone();
+            var parts = new Parts();
+            if (spec.TryGetProperty("engineRegion", out var engine)) parts.Engine = parts.EngineMax = Float(engine, "health");
+            if (spec.TryGetProperty("hitRegions", out var regions)) foreach (var region in regions.EnumerateArray())
+                switch (Text(region, "bodyPart"))
+                {
+                    case "mainRotor": parts.Main = parts.MainMax = Float(region, "health"); break;
+                    case "tailRotor": parts.Tail = parts.TailMax = Float(region, "health"); break;
+                }
+            _parts[id.Value] = parts;
             result.Add(new { netId = id.Value, typeId = type, key });
         }
         return new { vehicles = result };
@@ -96,6 +163,7 @@ public sealed class VehicleServices
             // combat after the host's last replica. Damage is an explicit fact.
             flags = (byte)((flags & ~VehicleReplication.FlagExploded) | (e.Flags & VehicleReplication.FlagExploded));
             _fuel[id] = fuel;
+            if (Bool(state, "engineDrowned") && _parts.TryGetValue(id, out var parts)) { parts.Drowned = true; parts.Engine = 0; }
             if (e.DriverPlayerId == 0)
                 _server.Vehicles.ServerPublish(new(id), Vec(state, "position", e.Pos), Vec(state, "eulerDegrees", new(e.PitchDegrees, e.YawDegrees, e.RollDegrees)),
                     Vec(state, "linVel", e.LinVel), Vec(state, "angVel", e.AngVel), Float(state, "steerDegrees", e.SteerDegrees), fuel, health, battery, flags, tick);

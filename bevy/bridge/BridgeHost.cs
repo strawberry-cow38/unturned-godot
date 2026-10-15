@@ -33,12 +33,13 @@ public sealed class BridgeHost : IDisposable
     WorldEnvironment _environment;
     WorldServices _services;
     VehicleServices _vehicles;
+    BodyCombatServices _bodies;
     WeaponServices _weapons;
     readonly Dictionary<uint, byte> _vehicleRecov = new();
     readonly List<JsonElement> _serviceSpecs = new();
     int _seed = 1337;
     bool _worldChanged;
-    sealed record BridgeSave(int Seed, RetailLootStreamer.SaveData Loot, JsonElement[] Services, ResourceServices.Saved[] Resources = null, WorldServices.PropDoorSaved[] ObjectDoors = null);
+    sealed record BridgeSave(int Seed, RetailLootStreamer.SaveData Loot, JsonElement[] Services, ResourceServices.Saved[] Resources = null, WorldServices.PropDoorSaved[] ObjectDoors = null, BodyCombatServices.Saved[] Bodies = null, VehicleServices.PartsSaved[] VehicleParts = null);
     public sealed record BridgeEvent(long Seq, string Kind, object Data);
     void Emit(string kind, object data) => _events.Add(new(++_eventSequence, kind, data));
     static readonly JsonSerializerOptions JsonOptions = new() { IncludeFields = true, PropertyNameCaseInsensitive = true, Converters = { new VectorJson(), new ByteArrayJson() } };
@@ -123,7 +124,7 @@ public sealed class BridgeHost : IDisposable
                 string path = Path.GetFullPath(Text(r, "path"));
                 Directory.CreateDirectory(Path.GetDirectoryName(path)!);
                 var saveJson = JsonNode.Parse(save.ToJson());
-                saveJson["BevyBridge"] = JsonSerializer.SerializeToNode(new BridgeSave(_seed, _loot?.Capture(), _serviceSpecs.ToArray(), _services.Harvesting.Capture(), _services.CapturePropDoors()));
+                saveJson["BevyBridge"] = JsonSerializer.SerializeToNode(new BridgeSave(_seed, _loot?.Capture(), _serviceSpecs.ToArray(), _services.Harvesting.Capture(), _services.CapturePropDoors(), _bodies.Capture(), _vehicles.CaptureParts()));
                 File.WriteAllText(path + ".tmp", saveJson.ToJsonString()); File.Move(path + ".tmp", path, true);
                 _server.PendingSave = save;
                 return new { path, version = save.Version };
@@ -136,7 +137,7 @@ public sealed class BridgeHost : IDisposable
                 _serviceSpecs.Clear(); if (extra?.Services != null) _serviceSpecs.AddRange(extra.Services);
                 Dispose(); Start(loaded);
                 _services.Harvesting.Restore(extra?.Resources);
-                _services.RestorePropDoors(extra?.ObjectDoors);
+                _services.RestorePropDoors(extra?.ObjectDoors); _bodies.Restore(extra?.Bodies); _vehicles.RestoreParts(extra?.VehicleParts);
                 if (extra?.Loot != null)
                 {
                     _loot = new RetailLootStreamer(extra.Loot.MapRoot, _server, _geometry);
@@ -179,7 +180,7 @@ public sealed class BridgeHost : IDisposable
                 }
                 if (r.TryGetProperty("meshes", out var meshes)) foreach (var mesh in meshes.EnumerateArray())
                     _geometry.AddMesh(mesh.GetProperty("vertices").EnumerateArray().Select(Vec).ToArray(),
-                        mesh.TryGetProperty("indices", out var ix) ? ix.EnumerateArray().Select(v => v.GetInt32()).ToArray() : Enumerable.Range(0, mesh.GetProperty("vertices").GetArrayLength()).ToArray(), Int(mesh, "destructibleIndex", -1), Bool(mesh, "terrain"), Int(mesh, "resourceIndex", -1));
+                        mesh.TryGetProperty("indices", out var ix) ? ix.EnumerateArray().Select(v => v.GetInt32()).ToArray() : Enumerable.Range(0, mesh.GetProperty("vertices").GetArrayLength()).ToArray(), Int(mesh, "destructibleIndex", -1), Bool(mesh, "terrain"), Int(mesh, "resourceIndex", -1), vehicle: checked((uint)Int(mesh, "vehicleNetId")), deployable: checked((uint)Int(mesh, "deployableNetId")), bodyPart: Text(mesh, "bodyPart", "hull"));
                 if (Bool(r, "finalize", true)) _geometry.Build();
                 return new { triangles = _geometry.Count };
             case "worldLoot":
@@ -211,13 +212,13 @@ public sealed class BridgeHost : IDisposable
                     var verts = mesh.GetProperty("vertices").EnumerateArray().Select(Vec).ToArray();
                     dynamicGeometry.AddMesh(verts, mesh.TryGetProperty("indices", out var dynamicIx)
                         ? dynamicIx.EnumerateArray().Select(v => v.GetInt32()).ToArray() : Enumerable.Range(0, verts.Length).ToArray(),
-                        Int(mesh, "destructibleIndex", -1), resource: Int(mesh, "resourceIndex", -1));
+                        Int(mesh, "destructibleIndex", -1), resource: Int(mesh, "resourceIndex", -1), vehicle: checked((uint)Int(mesh, "vehicleNetId")), deployable: checked((uint)Int(mesh, "deployableNetId")), bodyPart: Text(mesh, "bodyPart", "hull"));
                 }
                 dynamicGeometry.Build(); _geometry.SetDynamic(Text(r, "key"), dynamicGeometry);
                 return new { key = Text(r, "key"), triangles = dynamicGeometry.Count };
             case "worldRay":
                 bool hit = _geometry.RayDetailed(Vec(r, "from"), Vec(r, "to"), out var rayHit);
-                return new { hit, point = Array(rayHit.Point), destructibleIndex = rayHit.DestructibleIndex, resourceIndex = rayHit.ResourceIndex };
+                return new { hit, point = Array(rayHit.Point), destructibleIndex = rayHit.DestructibleIndex, resourceIndex = rayHit.ResourceIndex, vehicleNetId = rayHit.VehicleNetId, deployableNetId = rayHit.DeployableNetId, bodyPart = rayHit.BodyPart };
             case "shutdown": return null;
             default: throw new ArgumentException($"Unknown bridge operation: {op}");
         }
@@ -225,7 +226,7 @@ public sealed class BridgeHost : IDisposable
 
     void Start(WorldSave save = null)
     {
-        _worldChanged = false;
+        _worldChanged = false; _geometry.ClearDynamic();
         _network = new MemNetwork(); _movement = new PlayerMovementSim(); _stance = new PlayerStanceSim(); _recov = 0; _events.Clear(); _velocity = Vector3.zero; _lastRecipeState = null; _cachedRecipes = null;
         _server = new NetWorldServer(new MemServerTransport(_network));
         _environment = new WorldEnvironment(_server, _seed, save);
@@ -241,7 +242,13 @@ public sealed class BridgeHost : IDisposable
         DeployableNetSchema.RegisterAll(_server.Deployables.Schema);
         _services = new WorldServices(_server, _catalog, Emit);
         _vehicles = new VehicleServices(_server, _geometry, Emit); _vehicleRecov.Clear();
+        _bodies = new BodyCombatServices(_server, _geometry, _vehicles, Emit);
         _weapons = new WeaponServices(_server, _catalog, Emit);
+        _bodies.RepairRate = _weapons.RepairRate;
+        _bodies.RequestSalvage = id => _client.SendSalvageDeployable(id);
+        _server.Combat.CanThrow = (owner, id) => _server.Inventories.TryGet(owner, out var bag) && bag.Inventory.getItemCount(id) > 0;
+        _server.Combat.ThrowAccepted = (owner, id, netId, tick) => Emit("throwAccepted", new { playerId = owner, itemId = id, netId, tick });
+        _server.Transactions.ConsumeApplied = (owner, cmd, id) => Emit("consumeAccepted", new { playerId = owner, itemId = id, page = cmd.Page, x = cmd.X, y = cmd.Y, tick = _server.Session.CurrentTick });
         _server.Vitals.SurvivalDrain = true;
         foreach (var spec in _serviceSpecs)
             if (spec.TryGetProperty("vehicles", out _)) _vehicles.Register(spec); else _services.Register(spec);
@@ -325,7 +332,7 @@ public sealed class BridgeHost : IDisposable
             _client.SendPlayerState(_position, _yaw, _pitch, _velocity, (byte)(StanceCode(_movement.Stance) << 1), _grounded, _recov, _held);
         _network.Tick(); _client.Tick(); _server.TickSimulation(); _weapons.Step();
         if (_weapons.TakeSelectionChange(_client.PlayerId) is ushort selected) _held = selected;
-        _loot?.Step(); _services.Step(); _environment.Step(_server);
+        _loot?.Step(); _services.Step(); _bodies.Step(); _environment.Step(_server);
         if (_worldChanged)
         {
             // Map registration happens after the local client joins. Bitmap deltas
@@ -350,6 +357,7 @@ public sealed class BridgeHost : IDisposable
 
     object Action(string name, JsonElement args)
     {
+        if (name == "toolUse") return new { queued = _bodies.ToolUse(_client.PlayerId, Bool(args, "active")) };
         if (name == "equipAndHold")
         {
             var choice = _weapons.EquipAndHold(_client.PlayerId, _client, Int(args, "page", -1), Int(args, "x", -1), Int(args, "y", -1));
@@ -431,18 +439,22 @@ public sealed class BridgeHost : IDisposable
             inventory = new { pages = inv?.items.Select(p => new { index = p.page, width = p.width, height = p.height,
                 items = p.items.Select(j => new { id = j.item.id, name = Assets.find(j.item.id)?.itemName ?? $"Item {j.item.id}",
                     x = j.x, y = j.y, rot = j.rot, width = j.size_x, height = j.size_y, amount = j.item.amount,
-                    quality = j.item.quality, icon = Assets.find(j.item.id)?.iconPath, gunAmmo = j.item.gunAmmo }).ToArray() }).ToArray(),
+                    quality = j.item.quality, icon = Assets.find(j.item.id)?.iconPath, gunAmmo = j.item.gunAmmo,
+                    frozen = j.item.frozen, cooked = j.item.cooked, cookStyle = j.item.cookStyle }).ToArray() }).ToArray(),
                 worn = new { hat = inv?.wornHat?.id ?? 0, glasses = inv?.wornGlasses?.id ?? 0, mask = inv?.wornMask?.id ?? 0,
                     shirt = inv?.wornShirt?.id ?? 0, vest = inv?.wornVest?.id ?? 0, backpack = inv?.wornBackpack?.id ?? 0, pants = inv?.wornPants?.id ?? 0 } },
             recipes = Recipes(inv, skills?.Skills, includeRecipes),
             skills = new { experience = skills?.Skills.experience ?? 0, groups = skills?.Skills.skills },
             worldItems = _client.WorldItems.All.Select(e => new { netId = e.NetIdValue, itemId = e.ItemId, amount = e.Amount,
                 quality = e.Quality, position = Array(e.Pos), settled = e.Settled }).ToArray(),
-            deployables = _client.Deployables.All.Select(e => new { netId = e.NetIdValue, defId = e.DefId, position = Array(e.Pos), yaw = e.YawDegrees, health = e.Health, fuel = e.Fuel, toggledOn = e.ToggledOn }).ToArray(),
+            projectiles = _client.Projectiles.All.Select(e => new { netId = e.NetIdValue, kind = e.Kind, position = Array(e.Pos), lastChangedTick = e.LastChangedTick }).ToArray(),
+            deployables = _client.Deployables.All.Select(e => new { netId = e.NetIdValue, defId = e.DefId, position = Array(e.Pos), yaw = e.YawDegrees, health = e.Health, fuel = e.Fuel, onFire = e.OnFire, burnSeconds = _bodies.BurnSeconds(false, e.NetIdValue), wreckSalvageable = _bodies.Salvageable(false, e.NetIdValue), toggledOn = e.ToggledOn }).ToArray(),
             vehicles = _client.Vehicles.All.Select(e => new { netId = e.NetIdValue, typeId = e.TypeId, variant = e.Variant,
                 position = Array(e.Pos), yaw = e.YawDegrees, eulerDegrees = Array(new(e.PitchDegrees, e.YawDegrees, e.RollDegrees)),
                 linVel = Array(e.LinVel), angVel = Array(e.AngVel), steerDegrees = e.SteerSigned,
-                fuel = _vehicles.FuelFor(e.NetIdValue, e.Fuel), health = e.Health, battery = e.Battery, flags = e.Flags,
+                fuel = _vehicles.FuelFor(e.NetIdValue, e.Fuel), health = e.Health, battery = e.Battery, flags = e.Flags, engineHealth = _vehicles.EngineHealth(e.NetIdValue),
+                mainRotorHealth = _vehicles.MainRotorHealth(e.NetIdValue), tailRotorHealth = _vehicles.TailRotorHealth(e.NetIdValue), engineDrowned = _vehicles.EngineDrowned(e.NetIdValue), onFire = _bodies.OnFire(true, e.NetIdValue),
+                burnSeconds = _bodies.BurnSeconds(true, e.NetIdValue), wreckSalvageable = _bodies.Salvageable(true, e.NetIdValue),
                 driverPlayerId = e.DriverPlayerId, passengers = e.Passengers, seatCount = e.SeatCount,
                 towedNetId = e.TowedNetId, towRestLen = e.TowRestLen, paintRgb = e.PaintRgb, poppedTireMask = e.PoppedTireMask,
                 recovCounter = _vehicleRecov.GetValueOrDefault(e.NetIdValue) }).ToArray(),

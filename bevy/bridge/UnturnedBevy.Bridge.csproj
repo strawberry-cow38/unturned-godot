@@ -46,6 +46,7 @@
     <Compile Include="$(IntermediateOutputPath)Data/DoorCatalog.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/WeaponClips.g.cs" />
     <Compile Include="$(IntermediateOutputPath)Data/WeaponInventory.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)Data/BodyRules.g.cs" />
   </ItemGroup>
   <Target Name="ExtractOriginalData" BeforeTargets="BeforeCompile">
     <Exec Command="python3 &quot;$(MSBuildProjectDirectory)/extract_data.py&quot; &quot;$(MSBuildProjectDirectory)/$(IntermediateOutputPath)Data&quot;" />
