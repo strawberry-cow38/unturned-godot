@@ -182,7 +182,15 @@ namespace UnturnedGodot.Net
         internal void Touch(ushort owner)
         {
             if (_batch > 0) { _dirty.Add(owner); return; }
-            Changed?.Invoke(owner);
+            Publish(owner);
+        }
+
+        void Publish(ushort owner)
+        {
+            // Vendor is part of this accepted owner-state event, including deferred command batches.
+            // Clear only AFTER the event subscriber has constructed the packet.
+            try { Changed?.Invoke(owner); }
+            finally { if (_byOwner.TryGetValue(owner, out var p)) p.PendingVendor = ""; }
         }
 
         /// <summary>Run `body` as one command: every state change inside it produces exactly one push.</summary>
@@ -195,7 +203,7 @@ namespace UnturnedGodot.Net
                 _batch--;
                 if (_batch == 0 && _dirty.Count > 0)
                 {
-                    foreach (var o in _dirty) Changed?.Invoke(o);
+                    foreach (var o in _dirty) Publish(o);
                     _dirty.Clear();
                 }
             }
@@ -271,7 +279,6 @@ namespace UnturnedGodot.Net
                 vendor = r.Vendor;
                 p.PendingVendor = r.Vendor;
                 Touch(owner);
-                p.PendingVendor = "";
                 return true;
             }
             next = r.Dialogue;

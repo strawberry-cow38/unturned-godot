@@ -697,3 +697,15 @@ An explicit `name` overrides the configured default and is sanitized before the
 handshake. Both local and UDP clients publish once connected, and rejoining
 publishes again. Omit the opt-in to retain the existing test harness defaults.
 See `docs/PROFILE_PORT.md` for native paths, legacy import and validation.
+
+### Accepted NPC presentation
+
+`npcView {speakerKey?,vendor?,pinnedQuest?}` returns dialogue pages and filtered
+original response indices, a distinct retained vendor-opening revision, accepted
+wallet/item counts, touched quests and the source auto-tracker. It evaluates the
+original rules over client replicas and never mutates authority. `state.npc`
+contains the compact conversation/vendor revisions; the full read model is
+requested separately. Character rows in `npcCatalog` and map service metadata
+share explicit appearance fields plus source-sanitized `displayName` (numeric
+character IDs are not unique). See `../docs/NPC_UI_PORT.md` for the schema,
+regressions and preserved source gaps.

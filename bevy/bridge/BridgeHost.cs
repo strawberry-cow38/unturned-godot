@@ -129,7 +129,8 @@ public sealed partial class BridgeHost : IDisposable
                 fuseSeconds = Throwables.FuseSeconds, useSeconds = _catalog.Clip("", "TU_0") }, deployables = DeployableDef.All, containers = ContainerSchema.All,
                 crops = FarmRegistry.All.Select(d => new { seedId = d.Id, growthSeconds = d.Growth, yieldItemId = d.Grow, name = CropRegistry.TryBySeed(d.Id, out string name) ? name : null }).ToArray() };
             case "attachmentOptions": RequireSession(); return IsRemote ? _remoteWeapon.AttachmentOptions() : _weapons.AttachmentOptions(_client.PlayerId);
-            case "npcCatalog": RequireSession(); return new { characters = NpcCatalog.Characters, dialogues = NpcCatalog.Dialogues, vendors = NpcCatalog.Vendors, quests = NpcCatalog.Quests };
+            case "npcView": RequireSession(); return ReadNpcView(r);
+            case "npcCatalog": RequireSession(); return new { characters = NpcCatalog.Characters.Select(NpcMetadata.Character).ToArray(), dialogues = NpcCatalog.Dialogues, vendors = NpcCatalog.Vendors, quests = NpcCatalog.Quests };
             case "worldVehicles":
                 RequireSession();
                 var fleet = _vehicles.Register(r); _serviceSpecs.Add(r.Clone()); _worldChanged = true; return fleet;
@@ -497,7 +498,7 @@ public sealed partial class BridgeHost : IDisposable
         var occupied = _client.Vehicles.All.FirstOrDefault(v => v.DriverPlayerId == _client.PlayerId || (v.Passengers?.Contains(_client.PlayerId) ?? false));
         int seat = occupied == null ? -1 : occupied.DriverPlayerId == _client.PlayerId ? 0 : System.Array.IndexOf(occupied.Passengers, _client.PlayerId) + 1;
         return new { tick = _network.CurrentTick, origin = Origin, connected = _client.State == NetSessionState.Connected && (!IsRemote || _remoteSpawnAdopted), playerId = _client.PlayerId,
-            network = NetworkState(), players = PlayerReplicas(),
+            network = NetworkState(), players = PlayerReplicas(), npc = _npcView.Snapshot(),
             worldClock = ClockSnapshot(),
             weather = _environment?.State(),
             steady = SteadyState(),

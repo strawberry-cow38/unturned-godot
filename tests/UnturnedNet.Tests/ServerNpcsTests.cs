@@ -332,6 +332,23 @@ namespace UnturnedNet.Tests
             Assert.That(npcs.For(1).OpenDialogue, Is.EqualTo(59), "and the conversation is still up behind it");
         }
 
+        [Test]
+        public void BatchedVendorIsPresentForTheOneAcceptedStatePush()
+        {
+            var (npcs, _, _) = Rig();
+            npcs.Open(1, 59);
+            var vendors = new List<string>();
+            npcs.Changed = owner => vendors.Add(npcs.For(owner).PendingVendor);
+            // NetWorldHost runs every NPC command inside Batch. The unbatched test cannot catch
+            // clearing PendingVendor before the deferred owner-state event is constructed.
+            npcs.Batch(() => npcs.Batch(() =>
+                Assert.That(npcs.Choose(1, 59, 0, out _, out _), Is.True)));
+            Assert.That(vendors, Is.EqualTo(new[] { "abc" }));
+            Assert.That(npcs.For(1).PendingVendor, Is.Empty);
+            npcs.For(1).SetFlag(61, 1);
+            Assert.That(vendors, Is.EqualTo(new[] { "abc", "" }), "An unrelated flag must not reopen the shop");
+        }
+
         // The state is PER PLAYER. Two people in the same conversation must not share a flag or a position in it.
         [Test]
         public void StateIsPerPlayer()

@@ -9,6 +9,7 @@ public sealed partial class BridgeHost
 {
     void CreateClient(IClientTransport transport)
     {
+        _npcView = new();
         _client = new NetWorldClient(transport, _name, contentHash: NetContent.Hash);
         DeployableNetSchema.RegisterAll(_client.Deployables.Schema);
         WorldServices.RegisterCrops(_client.Crops.Schema);
@@ -61,7 +62,7 @@ public sealed partial class BridgeHost
         _client.ResourceRespawned += e => Emit("resourceRespawned", e);
         _client.ObjectDestroyed += e => Emit("objectDestroyed", e);
         _client.ObjectRestored += e => Emit("objectRestored", e);
-        _client.NpcState += e => Emit("npcState", e);
+        _client.NpcState += e => { _npcView.Adopt(e); Emit("npcState", e); };
         _client.DoorStateChanged += e => Emit("doorState", e);
         _client.ObjectDoorState += e => Emit("objectDoorState", e);
         _client.BedClaimed += e => Emit("bedClaimed", e);

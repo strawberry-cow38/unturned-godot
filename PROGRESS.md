@@ -1409,3 +1409,10 @@ captures were opened and independently reviewed by two agents, and client/host
 quit cleanly. See bevy/docs/EQUIPMENT_PROTOCOL.md. The live journey also confirmed
 the inherited held-T pose ending at ready after reload; its native usability
 repair is tracked separately and does not alter these authority results.
+
+### Bevy accepted NPC read model and vendor publication (2026-10-15)
+
+- Added read-only `npcView` using original dialogue/trade/quest rules over accepted owner events and inventory/skills. Event acknowledgements no longer erase the UI's conversation facts; selected pages, original response indices, wallet counts and auto-tracker are separate from unchanged authoritative commands.
+- Fixed actual map NPC metadata loss: default JSON serialization ignored `NpcCharacterDef` public fields. Map and catalog now share explicit full appearance properties and original sanitized display name; a placed Chef/custom-character regression preserves engine coordinates and all16 fields.
+- Reproduced a source server bug with a failing nested-batch regression: vendor responses cleared their one-shot fact before deferred command publication. Clearing now follows event construction; packet format is unchanged. Core17 NPC tests, four new real UDP/read-model tests, all53 managed tests and all121 bridge tests pass on immutable `npc-view-53`.
+- Native character/interface/render validation is a separate checkpoint. No NPC placements, quest progress producers, save fields or vehicle vendor delivery were invented where the current source/content lacks them; see `bevy/docs/NPC_UI_PORT.md`.

@@ -197,7 +197,7 @@ public static class MapServices
                 || !float.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out float y)
                 || !float.TryParse(parts[3], NumberStyles.Float, CultureInfo.InvariantCulture, out float z)) continue;
             float.TryParse(parts[4], NumberStyles.Float, CultureInfo.InvariantCulture, out float yaw);
-            npcs.Add(new { key = parts[0], position = new[] { x, y, z }, yaw, character });
+            npcs.Add(new { key = parts[0], position = new[] { x, y, z }, yaw, character = NpcMetadata.Character(character) });
         }
         var zones = DeadzoneMap.Load("deadzones" + suffix.ToLowerInvariant() + ".tsv").Select(z => new {
             center = new[] { z.Center.X, z.Center.Y, z.Center.Z }, halfExtent = new[] { z.HalfExtent.X, z.HalfExtent.Y, z.HalfExtent.Z },
