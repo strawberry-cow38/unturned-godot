@@ -423,6 +423,7 @@ namespace UnturnedGodot
             for (int i = 0; i < Built.Count && n < max; i += stride)
             {
                 int r = Built[i];
+                if (ProfileOf(r) == StreetProfile.KerbOnly) continue;          // no footway to stand on
                 float L = roads.RoadLength(r);
                 if (L < 30f) continue;
                 float d = L * 0.5f;
@@ -430,7 +431,8 @@ namespace UnturnedGodot
                 var right = new Vector3(tan.Z, 0f, -tan.X).Normalized();
                 int side = n % 2 == 0 ? 1 : -1;
                 if (MouthAt(r, side, d - 3f, d + 3f) != null || EntranceAt(r, side, d - 3f, d + 3f) != null) side = -side;
-                var at = pos + right * (side * (roads.RoadHalfWidth(r) + BayExtra(r, side, d) + PavementGap + _walkWidth * 0.5f));
+                // a metre in from the back of the pavement: on the footway behind a verge, clear of a planter or a lamp at the kerb
+                var at = pos + right * (side * (roads.RoadHalfWidth(r) + BayExtra(r, side, d) + PavementGap + PavementWidth - 1f));
                 at.Y = (terr != null ? Mathf.Max(terr.SampleHeight(at.X, at.Z), pos.Y) : pos.Y) + PavementKerb + 0.1f;
                 // facing along the street (the spawn's yaw: 0 looks down +Z, 180 down -Z -- MapShowcase's)
                 spawns.AddSpawn(at, Mathf.RadToDeg(Mathf.Atan2(tan.X, tan.Z)));

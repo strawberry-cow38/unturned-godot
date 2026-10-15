@@ -10799,6 +10799,9 @@ namespace UnturnedGodot
             // single lane roads with short sidewalks/kerbs and no markings") -- after the corners, whose fill their own
             // kerb returns join, and before that fill is laid
             if (!noWalk) town.BuildLanes(editor, rf);
+            // the grass of the verge and kerb-only streets (strawberry 2026-10-15: "support for kerb but no sidewalk for roads, as
+            // well as kerb-grass median-sidewalk") -- over the runs the pavement was just laid in
+            if (!noWalk) town.BuildStreetGrass(editor, rf, walkProto);
             // the asphalt under each kerb corner, from the same fillet the kerb was laid on -- then the
             // coverage probes again, because what the player sees is the slab PLUS this
             Lap("pavements");
@@ -10806,8 +10809,12 @@ namespace UnturnedGodot
             Log.Print($"[towngrid] corner asphalt: {cornerFill} triangles under {corners} kerb corners");
             if (probes) town.ProbeCoverage(rf, "with corner asphalt");
             Lap("corner fill");
-            int lights = town.PlaceLights(rf, editor.Objects);
+            var kerbside = new System.Collections.Generic.List<Node3D>();     // everything PlaceLights stands on the kerb
+            int lights = town.PlaceLights(rf, editor.Objects, kerbside);
             town.PlantMedians(rf, editor.Objects);     // hedges and trees down the grass medians
+            // street trees, clear of all of that: in square planters down the paved streets, in the verges (strawberry 2026-10-15:
+            // "square grass "planters" for trees on sidewalks")
+            if (!noWalk) town.PlantStreetTrees(editor, rf, editor.Objects, walkProto, kerbside);
             // the building plots, marked on the ground (strawberry 2026-10-12: "have the grid system mark plots for
             // buildings, with fixed sizes and shapes"), and the parking bays paved and painted -- as planned above
             int plots = noWalk ? 0 : town.MarkPlots(editor, rf, plan: false);
@@ -11278,6 +11285,37 @@ namespace UnturnedGodot
                 }
                 // UG_TOWNCLOSE=bv: the boulevard, along its median from just off one end, so the median's nose, the
                 // lanes either side of it and the plain main it crosses all read in one frame
+                // UG_TOWNCLOSE=vg|ko|tp|sq|vb|lg: a verge, a kerb-only street, a tree planter, a square-cut bay, a bay through a verge, a lot's grass -- standing on the
+                // carriageway a little way back, looking along the kerb
+                if (closeEnv == "sq")
+                    foreach (var sqBay in town.Bays)
+                        if (sqBay.Taper <= TownRoadGrid.SquareTaper + 1e-4f && rf.EvaluateAlong(sqBay.Road, sqBay.A, out var sqP, out var sqT, snapTerrain: false))
+                        {
+                            var sqOut = new Vector3(sqT.Z, 0f, -sqT.X).Normalized() * sqBay.Side;
+                            var sqAt = sqP + sqOut * rf.RoadHalfWidth(sqBay.Road);
+                            if (!town.Shots.TryGetValue("sq", out var sqWas)
+                                || new Vector2(sqWas.at.X - site.X, sqWas.at.Z - site.Z).Length() > new Vector2(sqAt.X - site.X, sqAt.Z - site.Z).Length())
+                                town.Shots["sq"] = (sqAt, new Vector3(sqT.X, 0f, sqT.Z).Normalized(), sqOut);
+                        }
+                // ...a lot (lg): from over its street, down onto its middle -- one with dividers if there is one, it shows both turfs
+                if (closeEnv == "lg" && (town.Shots.TryGetValue("lgd", out var lgShot) || town.Shots.TryGetValue("lgp", out lgShot)))
+                {
+                    tcam.GlobalPosition = lgShot.at - lgShot.along * 22f + new Vector3(0f, 16f, 0f);
+                    tcam.Fov = 60f;
+                    tcam.LookAt(lgShot.at + lgShot.along * 2f, Vector3.Up);
+                    Log.Print($"[towngrid] lg camera at {lgShot.at}");
+                    goto noTown;
+                }
+                if ((closeEnv == "vg" || closeEnv == "ko" || closeEnv == "tp" || closeEnv == "sq" || closeEnv == "vb") && town.Shots.TryGetValue(closeEnv, out var shot))
+                {
+                    bool low = closeEnv == "tp" || closeEnv == "sq";     // a planter, a bay's step: at eye height, under the trees
+                    tcam.GlobalPosition = low ? shot.at - shot.along * 8f - shot.outw * 2.5f + new Vector3(0f, 1.9f, 0f)
+                                              : shot.at - shot.along * 15f - shot.outw * 3.5f + new Vector3(0f, 5.5f, 0f);
+                    tcam.Fov = 60f;
+                    tcam.LookAt(low ? shot.at + shot.along * 1.5f + shot.outw * 1.2f : shot.at + shot.along * 8f + shot.outw * 2f, Vector3.Up);
+                    Log.Print($"[towngrid] {closeEnv} camera at {shot.at}");
+                    goto noTown;
+                }
                 if (closeEnv == "bv" && town.Medians.Count > 0)
                 {
                     var bvM = town.Medians[0];
