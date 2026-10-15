@@ -247,7 +247,7 @@ fn picker_touch_release_keeps_prior_hit_after_the_pointer_disappears() {
     assert!(!app.world().entity(entity).contains::<Pressed>());
 }
 
-fn mouse_frame(
+pub(in crate::ui) fn mouse_frame(
     app: &mut App,
     current: &[Entity],
     previous: &[Entity],

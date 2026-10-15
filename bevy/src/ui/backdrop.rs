@@ -18,7 +18,7 @@ use bevy::{
 /// Put this on a full-screen modal UI root. The renderer owns its target camera;
 /// removing the component restores ordinary UI routing. Fade is already eased
 /// by the source menu's animation, not advanced by the renderer.
-#[derive(Component, Clone, Copy, Debug)]
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Backdrop {
     pub(super) fade: f32,
     style: Style,

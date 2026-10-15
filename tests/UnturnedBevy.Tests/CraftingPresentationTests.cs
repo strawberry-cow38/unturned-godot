@@ -53,6 +53,7 @@ public sealed class CraftingPresentationTests
         Assert.That(view.Categories.Select(c => c.Name), Is.EqualTo(SourceCraftingMenu.CatOrder));
         Assert.That(view.Tiles.Length, Is.EqualTo(view.Categories.Single(c => c.Name == "All").Count));
         Assert.That(view.Tiles.Length, Is.GreaterThan(20));
+        Assert.That(view.Selected.Index, Is.EqualTo(view.Tiles[0].Index), "source Rebuild selects the first indexed result on open");
         foreach (var tile in view.Tiles)
         {
             var bp = _catalog.Recipes[tile.Index];
@@ -96,6 +97,7 @@ public sealed class CraftingPresentationTests
         inventory.items[PlayerInventory.STORAGE].tryAddItem(new Item(ingredient, 1));
         var view = CraftingView.Read(_catalog, inventory, null, new HashSet<string>(), query: SourceCraftingMenu.Title(bp), selected: index, quantity: 999);
         Assert.That(view.Selected.Quantity, Is.EqualTo(3)); Assert.That(view.Selected.MaxQuantity, Is.EqualTo(3));
+        Assert.That(view.Selected.OutputAmount, Is.EqualTo(bp.Outputs.Count > 0 ? bp.Outputs[0].Amount : 1));
         var row = view.Selected.Ingredients.First(i => i.Id == ingredient);
         Assert.That(row.Have, Is.EqualTo(3 * input.Amount));
         Assert.That(row.Total, Is.EqualTo(3 * input.Amount)); Assert.That(view.Selected.Craftable, Is.True);
@@ -106,5 +108,27 @@ public sealed class CraftingPresentationTests
         }
         Assert.That(inventory.getItemCount(ingredient), Is.EqualTo(3 * input.Amount), "a read never spends ingredients");
         Assert.That(inventory.items[PlayerInventory.STORAGE].items.Sum(j => j.item.id == ingredient ? j.item.amount : 0), Is.EqualTo(1));
+        var emptySearch = CraftingView.Read(_catalog, inventory, null, new HashSet<string>(), query: "nothing matches this query");
+        Assert.That(emptySearch.Tiles, Is.Empty);
+        Assert.That(emptySearch.CraftableCount, Is.EqualTo(view.CraftableCount), "header availability counts the whole source index, not the filtered tiles");
+        Assert.That(emptySearch.CraftableCount, Is.GreaterThan(0));
     }
+    [Test]
+    public void ReopeningRetainsBrowseAndIndexedSelectionAndOnlyFallsBackForAnEmptyCategory()
+    {
+        var inventory = new PlayerInventory(); var known = new HashSet<string>();
+        var initial = CraftingView.Read(_catalog, inventory, null, known);
+        var category = initial.Categories.First(c => c.Name != "All" && c.Count > 0).Name;
+        var emptyCategory = initial.Categories.First(c => c.Count == 0).Name;
+        var reopen = CraftingView.Read(_catalog, inventory, null, known, category, "Birch",
+            selected: initial.Selected.Index, quantity: 1, opening: true);
+        Assert.That(reopen.Category, Is.EqualTo(category));
+        Assert.That(reopen.Search, Is.EqualTo("Birch"));
+        Assert.That(reopen.Selected.Index, Is.EqualTo(initial.Selected.Index), "source keeps a valid indexed selection even outside the filtered results");
+        Assert.That(CraftingView.Read(_catalog, inventory, null, known, emptyCategory, opening: true).Category,
+            Is.EqualTo("All"));
+        Assert.That(CraftingView.Read(_catalog, inventory, null, known, emptyCategory, opening: false).Category,
+            Is.EqualTo(emptyCategory), "the fallback belongs to Open, not ordinary refresh");
+    }
+
 }

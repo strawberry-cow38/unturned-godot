@@ -2536,3 +2536,26 @@ Native finite rendering/streaming, chart, remaining editor sidecars and separate
 BuildingGen consumers remain open. The original generated-spawn reopen gate is
 documented in `bevy/docs/FINITE_WORLD_PORT.md`; no new client authority path or
 invented saved NPC/vehicle state was added.
+
+### Bevy original native Crafting dashboard and playable round trip
+
+Replaced the generic recipe list with the original category/search/grid/detail
+and accepted queue dashboard. Read-only projection now retains original opening
+selection, global craftable counts and output quantity. Native controls retain
+source quantity/lookup/rotation, second-press double-click, six-pixel queue drag,
+x-only cancellation hit testing, simulation-time progress and persistent text
+editing. Clipboard, IME and deferred undo state survive widget refreshes.
+
+Six managed presentation tests,17 focused native tests, actual X11 clipboard
+and an additional real-picker same-frame cancellation regression pass; the
+combined UI run passes129. The eight-stage Vulkan fixture passes and every image
+was opened, alongside original Godot and padlock references. Full playable PEI
+X11 input confirms Birch search/retention, two accepted crafts, exact cancellation
+and full refund. It also verifies accepted Heavy Lifter learning (500 ->480XP)
+and return to Crafting. See `bevy/docs/CRAFTING_PORT.md` and `SKILLS_PORT.md`.
+
+The playable test exposed focused-keyboard modifier batching, handled in a
+separate failing-first engine patch. Nearby-station authority, default search
+context menu, primary selection/middle paste and text drag/drop remain explicit
+Crafting gaps. Inventory still awaits its separate native replacement; finite
+world and broader port milestones remain in progress.

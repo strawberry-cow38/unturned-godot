@@ -18,6 +18,7 @@ mod appearance;
 pub(crate) mod backdrop;
 mod attachments;
 mod clothing;
+pub(crate) mod crafting;
 mod storage;
 mod crosshair;
 pub(crate) mod hurt;
@@ -418,7 +419,7 @@ impl Plugin for GameUiPlugin {
                 vehicle_controls::VehicleControlsPlugin,
                 storage::StoragePlugin,
             ))
-            .add_plugins((navbar::NavbarPlugin, skills::SkillsPlugin))
+            .add_plugins((navbar::NavbarPlugin, skills::SkillsPlugin, crafting::CraftingPlugin))
             .add_systems(Startup, spawn_ui_camera)
             .add_systems(
                 PreUpdate,
@@ -647,7 +648,12 @@ fn keyboard_ui(
     mut intents: MessageWriter<UiIntent>,
     world: Option<Res<crate::world::WorldConfig>>,
     occupancy: Option<Res<crate::vehicle::Occupancy>>,
+    crafting: Option<Res<crafting::Menu>>,
 ) {
+    if state.screen == Screen::Crafting && crafting.as_ref().is_some_and(|menu| menu.typing()) {
+        characters.clear();
+        return;
+    }
     if matches!(
         state.screen,
         Screen::Dialogue | Screen::Trade | Screen::Quests | Screen::Lightbar | Screen::Mechanics
@@ -781,8 +787,9 @@ fn keyboard_ui(
             } else {
                 target
             };
-        } else if state.screen == Screen::Inventory && keys.just_pressed(KeyCode::KeyR) {
-            state.rotation = (state.rotation + 1) % 2;
+        } else if state.screen == Screen::Inventory && state.selected_item.is_some()
+            && (keys.just_pressed(KeyCode::KeyR) || keys.just_pressed(KeyCode::Space)) {
+            state.rotation = (state.rotation + 1) % 4;
         } else if state.screen == Screen::Playing {
             if settings.just_pressed(GameAction::Console, &keys, &mouse)
                 || keys.just_pressed(KeyCode::Backquote)
@@ -1024,6 +1031,7 @@ fn rebuild_overlay(
             | Screen::Quests
             | Screen::Information
             | Screen::Skills
+            | Screen::Crafting
     ) {
         return;
     }

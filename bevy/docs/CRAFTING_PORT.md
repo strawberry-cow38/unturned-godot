@@ -1,0 +1,81 @@
+# Original crafting menu and accepted queue
+
+The replacement uses the current `game/inventory/CraftingMenu.cs`, including
+its category grid, typed search, item lookup, detail table and quantity controls.
+`craftingView` is a read-only projection of the accepted owner's inventory,
+skills and blueprint knowledge. Crafting/cancellation use the existing
+`SendCraft`/`SendCraftCancel` commands; reading or selecting a tile spends nothing.
+
+The managed extractor retains the original category order/type policy,
+output/owner title resolution, ingredient/tool lookup, output lookup, search
+matching, learning instructions and first-blocker order. Only method visibility
+and instance dependencies become explicit parameters. Browsing starts from
+`BlueprintRegistry.Index()`, while every tile retains its index into the wire's
+full catalog. Recolors and salvage stay outside All. Browsing and bag lookup
+hide unknown recipes and unheld salvage; a typed search can reveal both.
+Search matches output title, ingredient names and skill names, ignoring case.
+
+Details count only carried pages, clamp quantity against consumed ingredients,
+and require tools once. The source table's visual quirk is preserved: tool rows
+use `Amount*quantity` for their sufficient-color comparison while displaying
+`-` in TOTAL; the craft gate still requires the tool once. Broken tools also
+obey the existing authoritative `Crafting.CanCraft` admission rule.
+
+The native menu uses the original icons, category/grid/detail/queue arrangement,
+shared four-tab navbar, frost, Swoop and vitals exclusion. It adapts the authored
+2560-wide sizes to the native viewport, with independently clipped scrolling.
+Rebound U/R lookup uses the hovered item when empty-handed; R/Space rotates a
+carried placement through all four source orientations. Double-click crafts one
+eligible recipe, retaining its identity across widget replacement; the current
+desktop implementation uses the original X11 backend's
+[400ms/5px recognition](https://github.com/godotengine/godot/blob/4.6-stable/platform/linuxbsd/x11/display_server_x11.cpp#L4882).
+Queue slot0 is active and draws rightmost. Only accepted owner queue events
+populate tiles; progress interpolates from simulation ticks, so singleplayer
+pause does not advance it. Cancel uses the displayed server slot and waits for
+accepted removal/refund. The existing wire exposes at most eight queue entries.
+
+The current original unified server categorically rejects recipes requiring
+stations (`ServerTransactions.OnCraft`). This projection reports that actual
+admission boundary with empty station tags, matching the existing bridge's
+recipe state; it does not claim that station crafting is functional. The source
+local menu's nearby-station discovery remains a distinct integration gap.
+
+Six managed presentation tests pass: original catalog/title policies,
+browse/index/category restrictions, typed unknown/salvage visibility, lookup,
+quantity, output counts, reopen/selection retention and carried-versus-viewed
+storage counts. A real two-process UDP test passes remote browsing, accepted
+queue privacy, ingredient escrow, cancel and refund. The earlier bridge without
+`craftingView` fails that test at its first query.
+
+Seventeen focused native crafting/search tests pass, plus the actual system
+clipboard test under X11 and an additional real-picker same-frame click test.
+The combined UI run passes 129 tests. The production Vulkan fixture passes all
+eight stages: catalog/detail, quantity and accepted queue, cancellation/refund,
+search, 1024x768 resize and close to zero roots. All eight
+`bevy-crafting-0.png` through `-7.png` captures were opened. The original
+`godot-crafting-reference.png` and isolated original padlock geometry were also
+rendered and opened. The fixture exercises production widgets with an integrated
+bridge; it does not substitute for OS input checks.
+
+A full playable PEI journey uses real X11 mouse/keyboard input: open Crafting,
+search Birch, first Escape stops editing, second closes, reopen retains the
+search, accept console-granted logs/saw, choose quantity two, queue both jobs,
+cancel one and then the other, and receive both logs back. Captures
+`bevy-crafting-pei-*.png/json` record accepted inventory/queue ticks and matching
+production UI. Early captures can lag the accepted queue until the next
+read-model poll; the later event tick confirms the fast cancellation succeeded.
+Skills can be opened from that game, learn Heavy Lifter for 20 XP and return to
+the retained crafting search. The relevant captures were opened and inspected.
+
+The playable check also exposed an engine focused-keyboard modifier batching
+bug: a 12ms Ctrl+A chord consumed in one slow frame inserted `a` after Ctrl had
+already been released. Its failing-first regressions and narrow engine fix are
+tracked separately in `vendor/bevy_input_focus/PATCHES.md`.
+
+Search supports the original caret, Unicode selection, IME, normal clipboard
+shortcuts, control-character paste filtering and deferred undo/redo history.
+The field is retained through queue updates and resize. Remaining LineEdit
+parity includes its default context menu, X11 primary-selection/middle paste,
+and selected-text drag/drop. Windows OS double-click recognition has not been
+verified. Nearby-station authority and those editing affordances remain explicit
+gaps; this is not a complete crafting parity claim.

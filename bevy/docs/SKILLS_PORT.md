@@ -89,6 +89,10 @@ stretches its 2560-wide logical canvas into a 720x760 window; it is a source
 layout/theme reference, not a pixel golden for the native logical viewport.
 
 This fixture validates the production graph over an integrated authority; the
-separate managed tests validate UDP/save/rejoin. A complete playable-map Skills
-journey has not yet been captured. Grant descriptions still have no original
-gameplay effect consumers and remain descriptive as above.
+separate managed tests validate UDP/save/rejoin. A real X11 playable PEI journey now also opens Skills, selects Heavy Lifter,
+activates Learn and observes accepted XP 500 -> 480, the learned node and newly
+available dependents. `bevy-crafting-pei-skills-open.png` and
+`bevy-crafting-pei-skills-learned.png` were opened and inspected. Returning to
+Crafting preserves the search. Advanced-pillar navigation still has the separate
+fixture evidence above. Grant descriptions still have no original gameplay effect
+consumers and remain descriptive as above.

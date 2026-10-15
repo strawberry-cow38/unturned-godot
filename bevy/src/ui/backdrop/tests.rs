@@ -15,7 +15,10 @@ fn routes_only_requested_roots_and_recovers_after_camera_replacement() {
         app.world().get::<Settings>(camera).unwrap().parameters.x,
         0.7
     );
-    assert_eq!(app.world().get::<Camera>(camera).unwrap().order, super::super::layers::MODAL_ORDER);
+    assert_eq!(
+        app.world().get::<Camera>(camera).unwrap().order,
+        super::super::layers::MODAL_ORDER
+    );
     assert!(app.world().get::<UiTargetCamera>(hud).is_none());
     app.world_mut().entity_mut(camera).despawn();
     app.update();
@@ -131,7 +134,7 @@ fn dashboard_vitals_stay_above_frost_and_below_a_higher_modal() {
 }
 
 #[test]
-fn production_inventory_crafting_and_vitals_use_dashboard_without_flat_scrim() {
+fn production_inventory_and_vitals_use_dashboard_without_flat_scrim() {
     use crate::ui::{
         OverlayRoot, Screen, Settings as UiSettings, UiModel, UiState, rebuild_overlay,
     };
@@ -153,7 +156,8 @@ fn production_inventory_crafting_and_vitals_use_dashboard_without_flat_scrim() {
         .add_systems(Update, rebuild_overlay)
         .add_systems(PostUpdate, route.in_set(BackdropRouting));
     app.world_mut().resource_mut::<UiModel>().connected = true;
-    for screen in [Screen::Inventory, Screen::Crafting, Screen::Paused] {
+    // Crafting has its own production renderer regression in crafting/render/tests.
+    for screen in [Screen::Inventory, Screen::Paused] {
         app.world_mut().resource_mut::<UiState>().screen = screen;
         app.update();
         let world = app.world_mut();

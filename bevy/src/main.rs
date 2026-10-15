@@ -164,7 +164,11 @@ fn capture_frame(
     light_facts: Res<viewmodel::lights::LightDiagnostics>,
     lean: Res<player::lean::LeanState>,
     profile: Res<profile::LocalProfile>,
-    information: Res<ui::MapDiagnostics>,
+    dashboard: (
+        Res<ui::MapDiagnostics>,
+        Res<ui::UiState>,
+        Res<ui::crafting::Menu>,
+    ),
     keys: Res<ButtonInput<KeyCode>>,
     mut frames: Local<u32>,
     particles: Query<(&particles::Emitter, &GlobalTransform)>,
@@ -212,7 +216,7 @@ fn capture_frame(
         })
         .collect();
     let event = event.map(|e| json!({"seq":e.sequence,"kind":e.kind,"data":e.data}));
-    let evidence = json!({"map":options.0.map,"fixedFps":options.0.fixed_fps,"renderFrame":*frames,"spawn":world.spawn.to_array(),"state":snapshot.0,"profilePreference":{"ready":profile.ready,"name":profile.name,"face":profile.face,"hasAvatar":profile.has_avatar},"presentation":{"held":viewmodel.held,"ready":viewmodel.ready,"aiming":viewmodel.aiming,"inspecting":viewmodel.inspecting,"aimAlpha":viewmodel.aim_alpha,"scopeZoom":viewmodel.scope_zoom,"lean":{"angleRadians":lean.angle,"eyeHeight":lean.eye_height},"lights":{"tacticalId":lights.tactical_id,"tactical":lights.tactical_lit,"held":lights.held_lit,"head":lights.head_lit,"nightvision":lights.nightvision,"military":lights.military}},"information":information.0,"lastCompletedFrameLights":light_facts.0,"particles":effects,"captureEvent":event});
+    let evidence = json!({"map":options.0.map,"fixedFps":options.0.fixed_fps,"renderFrame":*frames,"spawn":world.spawn.to_array(),"state":snapshot.0,"profilePreference":{"ready":profile.ready,"name":profile.name,"face":profile.face,"hasAvatar":profile.has_avatar},"presentation":{"held":viewmodel.held,"ready":viewmodel.ready,"aiming":viewmodel.aiming,"inspecting":viewmodel.inspecting,"aimAlpha":viewmodel.aim_alpha,"scopeZoom":viewmodel.scope_zoom,"lean":{"angleRadians":lean.angle,"eyeHeight":lean.eye_height},"lights":{"tacticalId":lights.tactical_id,"tactical":lights.tactical_lit,"held":lights.held_lit,"head":lights.head_lit,"nightvision":lights.nightvision,"military":lights.military}},"information":dashboard.0.0,"interface":{"screen":format!("{:?}",dashboard.1.screen),"capturesInput":dashboard.1.captures_input(),"crafting":dashboard.2.diagnostics()},"lastCompletedFrameLights":light_facts.0,"particles":effects,"captureEvent":event});
     let mut evidence = evidence;
     evidence["mountedPresentation"] = json!({
         "vehicle": mounted.0.seat.map(|s| s.net_id),

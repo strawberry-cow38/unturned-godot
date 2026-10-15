@@ -77,11 +77,24 @@ The native Information screen now includes the original PEI/Washington/Yukon
 overviews and town positions, source map zoom/pan/markers, bounded tile residency,
 accepted player roster and shared quest pin/tracker. Real listen/UDP navigation
 and opened captures passed; nine map regressions cover source geometry, original
-assets, input and lifecycle. Skills, dashboard blur/transition effects and finite
-generated-island charts remain pending. See [INFORMATION_PORT.md](INFORMATION_PORT.md).
+assets, input and lifecycle. Skills and dashboard blur/transition effects now have native replacements with
+reviewed source renders; see [SKILLS_PORT.md](SKILLS_PORT.md),
+[MODAL_BACKDROP_PORT.md](MODAL_BACKDROP_PORT.md) and
+[MENU_SWOOP_PORT.md](MENU_SWOOP_PORT.md). Finite generated-island charts remain pending. See [INFORMATION_PORT.md](INFORMATION_PORT.md).
 
 Accepted damage and blast events now drive the original local camera spring,
 including the existing accepted gun impulse in third person. Actual camera/ray
 ordering, collision and lifecycle regressions plus a rendered kick/recovery
-sequence passed. The separate pain overlay/directional hurt HUD remains pending;
-see [CAMERA_FLINCH_PORT.md](CAMERA_FLINCH_PORT.md).
+sequence passed. Accepted local hurt events now also drive the source directional wedges and
+pain overlay; low HP applies the original vignette/desaturation at the correct
+canvas boundary. Opened playable-world captures cover healthy, hurt, low HP,
+inventory/equipment, death and respawn. See
+[CAMERA_FLINCH_PORT.md](CAMERA_FLINCH_PORT.md),
+[HURT_FEEDBACK_PORT.md](HURT_FEEDBACK_PORT.md) and
+[LOW_HEALTH_PORT.md](LOW_HEALTH_PORT.md).
+
+The original Crafting category/grid/search/detail/accepted queue dashboard now
+has native tests, eight opened Vulkan stages and a real X11 playable PEI
+craft/cancel/refund journey. Search/selection survive reopen and queue refresh.
+Station authority and remaining LineEdit affordances are explicit gaps in
+[CRAFTING_PORT.md](CRAFTING_PORT.md); Inventory's replacement is separate.
