@@ -93,6 +93,7 @@ public sealed partial class BridgeHost : IDisposable
                 RequireSession();
                 if (r.TryGetProperty("input", out var body))
                 {
+                    ReadSteady(body);
                     _position = Vec(body, "position", _position); _velocity = Vec(body, "velocity", _velocity);
                     _grounded = Bool(body, "grounded", _grounded);
                     _yaw = Float(body, "yaw", _yaw); _pitch = Float(body, "pitch", _pitch);
@@ -265,6 +266,7 @@ public sealed partial class BridgeHost : IDisposable
 
     void Start(WorldSave save = null)
     {
+        _scopeSteady.Reset(); _wantsSteady = false;
         _worldChanged = false; _geometry.ClearDynamic();
         _network = new MemNetwork(); _movement = new PlayerMovementSim(); _stance = new PlayerStanceSim(); _recov = 0; _events.Clear(); _velocity = Vector3.zero; _lastRecipeState = null; _cachedRecipes = null;
         _server = new NetWorldServer(new MemServerTransport(_network));
@@ -368,6 +370,7 @@ public sealed partial class BridgeHost : IDisposable
 
     object Simulate(JsonElement input)
     {
+        ReadSteady(input);
         _movingInput=Math.Abs(Float(input,"moveX"))>.01f||Math.Abs(Float(input,"moveY"))>.01f;
         _yaw = Float(input, "yaw", _yaw); _pitch = Float(input, "pitch", _pitch);
         _grounded = Bool(input, "grounded", _grounded);
@@ -387,12 +390,14 @@ public sealed partial class BridgeHost : IDisposable
 
     void Tick()
     {
+        StepSteady();
         // Automatic death timer and explicit respawn use the same source target.
         // Make that target representable before core emits its bounded recovery packet.
         if (_server.CombatState.TryGet(_client.PlayerId, out var life) && !life.Alive
             && life.RespawnAtTick == _server.Session.CurrentTick + 1) PrepareRespawnFrame();
         if (_client.State == NetSessionState.Connected && !_client.Vehicles.All.Any(v => v.DriverPlayerId == _client.PlayerId || (v.Passengers?.Contains(_client.PlayerId) ?? false)))
-            _client.SendPlayerState(_position, _yaw, _pitch, _velocity, (byte)(StanceCode(_movement.Stance) << 1), _grounded, _recov, _held);
+            _client.SendPlayerState(_position, _yaw, _pitch, _velocity,
+                (byte)((StanceCode(_movement.Stance) << 1) | (_scopeSteady.Steadying ? MoveInput.ButtonSteady : 0)), _grounded, _recov, _held);
         _network.Tick(); _client.Tick(); _server.TickSimulation(); _weapons.Step(); _cosmetic.Step();
         if (_weapons.TakeSelectionChange(_client.PlayerId) is ushort selected) _held = selected;
         if(_server.CombatState.TryGet(_client.PlayerId,out var living)&&living.Alive&&!_server.VehicleHost.IsSeated(_client.PlayerId))
@@ -495,6 +500,7 @@ public sealed partial class BridgeHost : IDisposable
         return new { tick = _network.CurrentTick, origin = Origin, connected = _client.State == NetSessionState.Connected, playerId = _client.PlayerId,
             worldClock = new { day = _environment.DayAt(_client.Clock, _server.Session.CurrentTick), timeOfDay = _client.Clock.TimeOfDayAt(_server.Session.CurrentTick), dayLengthSeconds = _client.Clock.DayLengthSeconds },
             weather = _environment.State(),
+            steady = SteadyState(),
             weapon = _weapons.Snapshot(_client.PlayerId),
             player = new { position = Array(_position), velocity = Array(_velocity), yaw = _yaw, pitch = _pitch,
                 profile = profile == null ? null : new { name = profile.Name, face = profile.Face, avatarHash = profile.AvatarHash },

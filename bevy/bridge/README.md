@@ -524,3 +524,16 @@ action (`name`, `avatarPng` byte array, `face`); server name sanitization, face
 validation and the 100-tick rate gate remain intact. A fresh session starts with
 the server's Survivor/face0 profile until that intent is accepted. Skin, hair and
 beard customization are not fields in the current profile protocol.
+
+Scope steady uses the original shell prediction and `ScopeSteadySim`. Movement
+input accepts `steadyKey`, `aiming` and `scopeZoom`; all three source gates must
+pass before requesting a breath hold. `state.steady` reports `active`, `blend`,
+`rateScale` and `lockout`. The accepted `MoveInput.ButtonSteady` bit rides the
+existing player-state command and server vitals own oxygen expenditure. The
+predictive client copy also retains its drained oxygen between quantized
+snapshots, as the original PlayerController explicitly requires; throwing that
+copy away can skip the floor and leave visual steadying active indefinitely.
+At the floor the hold stops, rate returns to1, and the2.5s lockout counts down
+only after release. Init/load/death reset transient hold state. No wire or core
+rule changes are needed, and `simulate` only records intent while `tick` steps
+steadying exactly once.
